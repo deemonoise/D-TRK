@@ -1,0 +1,123 @@
+#include "engine.h"
+#include <Arduino.h>
+#include <new>
+#include "driver/gptimer.h"
+#include "esp_heap_caps.h"
+#include "esp_random.h"
+#include "hw/midi_uart.h"
+#include "sequencer.h"
+
+namespace engine {
+namespace {
+
+mt::Sequencer* seq;
+hw::MidiUart midi;
+gptimer_handle_t timer;
+TaskHandle_t task;
+QueueHandle_t cmds;
+SemaphoreHandle_t projMutex;
+portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
+Status st{};
+
+bool IRAM_ATTR onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void*) {
+  BaseType_t woken = pdFALSE;
+  vTaskNotifyGiveFromISR(task, &woken);
+  return woken == pdTRUE;
+}
+
+uint64_t nowUs() {
+  uint64_t v = 0;
+  gptimer_get_raw_count(timer, &v);
+  return v;
+}
+
+void handle(const Command& c) {
+  const uint64_t now = nowUs();
+  switch (c.cmd) {
+    case Cmd::StartStop:
+      if (seq->playing()) seq->stop(now, midi);
+      else seq->start(now, midi);
+      break;
+    case Cmd::TogglePlay: seq->togglePlay(now, midi); break;
+    case Cmd::Stop: seq->stop(now, midi); break;
+    case Cmd::QueuePattern: seq->queuePattern(c.arg); break;
+    case Cmd::SelectPattern: seq->selectPattern(c.arg); break;
+    case Cmd::SetBpm: seq->setBpm(c.arg); break;
+    case Cmd::SendProgram: seq->sendProgram(c.arg, midi); break;
+    case Cmd::ReleaseTies: seq->releaseTies(now, midi); break;
+    case Cmd::ChainEdit: seq->chainEdited(now, midi, c.arg >> 8, static_cast<mt::ChainOp>(c.arg & 0xFF)); break;
+  }
+}
+
+void publish() {
+  const Status s{seq->playing(), seq->paused(), seq->heardPattern(), static_cast<int8_t>(seq->pendingPattern()),
+                 seq->playPos(), seq->loopCount(), static_cast<int8_t>(seq->heardSongPos())};
+  portENTER_CRITICAL(&statusMux);
+  st = s;
+  portEXIT_CRITICAL(&statusMux);
+}
+
+void run(void*) {
+  for (;;) {
+    xSemaphoreTake(projMutex, portMAX_DELAY);
+    Command c;
+    while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
+    const uint64_t next = seq->process(nowUs(), midi);
+    xSemaphoreGive(projMutex);
+    publish();
+
+    if (next != mt::kNever) {
+      if (next <= nowUs() + 30) continue;  // due almost now: spin once more
+      gptimer_alarm_config_t a = {};
+      a.alarm_count = next;
+      gptimer_set_alarm_action(timer, &a);
+      if (nowUs() >= next) continue;  // passed while arming: don't rely on a past alarm firing
+    }
+    // Woken by the alarm or by post(); the timeout is only a safety net.
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
+  }
+}
+
+}  // namespace
+
+void begin(mt::Project* p) {
+  // ~34 KB: keep it out of PSRAM, the engine touches it on every event.
+  void* mem = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  seq = mem ? new (mem) mt::Sequencer(*p) : new mt::Sequencer(*p);
+  seq->seed(esp_random());
+  midi.begin();
+  cmds = xQueueCreate(16, sizeof(Command));
+  projMutex = xSemaphoreCreateMutex();
+
+  gptimer_config_t cfg = {};
+  cfg.clk_src = GPTIMER_CLK_SRC_DEFAULT;
+  cfg.direction = GPTIMER_COUNT_UP;
+  cfg.resolution_hz = 1000000;
+  ESP_ERROR_CHECK(gptimer_new_timer(&cfg, &timer));
+  gptimer_event_callbacks_t cbs = {};
+  cbs.on_alarm = onAlarm;
+  ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer, &cbs, nullptr));
+  ESP_ERROR_CHECK(gptimer_enable(timer));
+  ESP_ERROR_CHECK(gptimer_start(timer));
+
+  xTaskCreatePinnedToCore(run, "engine", 6144, nullptr, configMAX_PRIORITIES - 2, &task, 0);
+}
+
+bool post(Cmd c, uint16_t arg) {
+  const Command cmd{c, arg};
+  const bool ok = xQueueSend(cmds, &cmd, 0) == pdTRUE;
+  xTaskNotifyGive(task);
+  return ok;
+}
+
+Status status() {
+  portENTER_CRITICAL(&statusMux);
+  const Status s = st;
+  portEXIT_CRITICAL(&statusMux);
+  return s;
+}
+
+void lockProject() { xSemaphoreTake(projMutex, portMAX_DELAY); }
+void unlockProject() { xSemaphoreGive(projMutex); }
+
+}  // namespace engine
