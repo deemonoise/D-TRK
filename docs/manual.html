@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Руководство MIDI Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<style>
+/* Layout: sticky table of contents on the left (wide screens), single reading column; device-screen motifs in mono. */
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --fg: #1b1f1c;
+  --muted: #5c645f;
+  --line: #d7dbd5;
+  --accent: #b5410f;      /* edit-red, like the value being edited on the device */
+  --hi: #c99a00;          /* status yellow: toasts, SHIFT, solo */
+  --lcd: #11161a;
+  --lcd-fg: #d9e3dc;
+  --kbd-bg: #e6e8e3;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121614; --panel: #1a1f1c; --fg: #e3e8e4; --muted: #98a29c; --line: #2c3430;
+    --accent: #f07a45; --hi: #e8c547; --lcd: #0a0d0f; --lcd-fg: #d9e3dc; --kbd-bg: #262d29;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121614; --panel: #1a1f1c; --fg: #e3e8e4; --muted: #98a29c; --line: #2c3430;
+  --accent: #f07a45; --hi: #e8c547; --lcd: #0a0d0f; --lcd-fg: #d9e3dc; --kbd-bg: #262d29;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15.5px; line-height: 1.6; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 80px; display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 48px; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-inline: 16px; } nav.toc { position: static !important; max-height: none !important; } }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 20px); align-self: start; max-height: calc(100vh - 40px); overflow-y: auto; font-size: 13.5px; }
+nav.toc .brand { font-family: var(--font-mono); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: flex; gap: 10px; padding: 4px 8px; border-radius: 4px; color: var(--fg); text-decoration: none; }
+nav.toc a::before { content: counter(s, decimal-leading-zero); font-family: var(--font-mono); color: var(--muted); font-size: 12px; padding-top: 1px; }
+nav.toc a:hover, nav.toc a:focus-visible { background: var(--panel); outline: none; }
+main { min-width: 0; max-width: 760px; }
+header.top h1 { font-size: 34px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -.01em; text-wrap: balance; }
+header.top p.lead { color: var(--muted); margin: 0 0 24px; max-width: 62ch; }
+h2 { font-size: 23px; margin: 56px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); text-wrap: balance; scroll-margin-top: 16px; }
+h2 .num { font-family: var(--font-mono); font-size: 14px; color: var(--accent); font-weight: 500; margin-right: 10px; vertical-align: 3px; }
+h3 { font-size: 17px; margin: 28px 0 8px; }
+p, li { max-width: 68ch; }
+ul, ol { padding-left: 1.3em; }
+li { margin: 3px 0; }
+code, .m { font-family: var(--font-mono); font-size: .9em; }
+kbd { font-family: var(--font-mono); font-size: .82em; background: var(--kbd-bg); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.tbl { overflow-x: auto; margin: 12px 0 18px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; background: color-mix(in srgb, var(--panel) 85%, var(--line)); }
+td:first-child { white-space: nowrap; }
+td.code { font-family: var(--font-mono); font-weight: 600; color: var(--accent); }
+.note { border-left: 3px solid var(--hi); background: var(--panel); padding: 10px 14px; margin: 14px 0; border-radius: 0 6px 6px 0; max-width: 68ch; }
+.note.warn { border-left-color: var(--accent); }
+.note p { margin: 0; }
+/* The device screen diagram */
+.lcd { background: var(--lcd); color: var(--lcd-fg); font-family: var(--font-mono); font-size: 12.5px; border-radius: 8px; padding: 10px; margin: 16px 0; overflow-x: auto; }
+.lcd .row { display: flex; gap: 14px; white-space: nowrap; padding: 4px 6px; }
+.lcd .bar { background: #1d262c; border-radius: 3px; }
+.lcd .work { padding: 26px 6px; color: #7f8d86; text-align: center; }
+.lcd .tabs { display: grid; grid-template-columns: repeat(5, minmax(56px, 1fr)); gap: 4px; }
+.lcd .tabs span { background: #1d262c; text-align: center; padding: 4px 0; border-radius: 3px; }
+.lcd .tabs span.on { background: #2f3e48; color: #fff; }
+.lcd .y { color: #e8c547; }
+.lcd .r { color: #f07a45; }
+.steps { display: grid; gap: 10px; counter-reset: st; padding: 0; list-style: none; }
+.steps li { counter-increment: st; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+.steps li::before { content: counter(st); font-family: var(--font-mono); font-weight: 600; color: var(--accent); }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Содержание">
+  <div class="brand">MIDI Tracker · 8 дорожек</div>
+  <ol>
+    <li><a href="#start">Быстрый старт</a></li>
+    <li><a href="#hw">Органы управления</a></li>
+    <li><a href="#screen">Экран и статус-бар</a></li>
+    <li><a href="#grid">GRID: редактор</a></li>
+    <li><a href="#fx">Эффекты (fx)</a></li>
+    <li><a href="#euclid">Euclid</a></li>
+    <li><a href="#track">TRACK: дорожка</a></li>
+    <li><a href="#proj">PROJ: проект</a></li>
+    <li><a href="#bank">BANK: паттерны</a></li>
+    <li><a href="#song">Song mode</a></li>
+    <li><a href="#file">FILE: сохранение</a></li>
+    <li><a href="#import">Импорт MIDI</a></li>
+    <li><a href="#midi">MIDI-выход</a></li>
+    <li><a href="#limits">Лимиты</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <h1>MIDI Tracker — руководство</h1>
+  <p class="lead">Секвенсор с трекерным интерфейсом на WT32-SC01 Plus: 8 MIDI-дорожек, банк из 16 паттернов, цепочка песни, Euclid-генератор, импорт MIDI-файлов. Управление — сенсорный экран, энкодер и две кнопки, Play и Shift.</p>
+</header>
+
+<h2 id="start"><span class="num">01</span>Быстрый старт</h2>
+<ol class="steps">
+  <li><div>Вставьте microSD-карту в формате <b>FAT32</b> со схемой разделов <b>MBR</b> и включите устройство. Если карты нет, загрузится демо-бит на дорожках 1–3.</div></li>
+  <li><div>Нажмите <kbd>Play</kbd>. Секвенсор пошлёт MIDI Start и начнёт играть с первого шага. Повторное нажатие — Stop.</div></li>
+  <li><div>Во вкладке <b>GRID</b> тапните клетку, тапните её ещё раз — включится правка. Нажимайте клавиши мини-клавиатуры внизу или крутите энкодер.</div></li>
+  <li><div>Во вкладке <b>FILE</b> выберите <b>Save As…</b>, введите имя и нажмите OK. При следующем включении проект загрузится сам.</div></li>
+</ol>
+
+<h2 id="hw"><span class="num">02</span>Органы управления</h2>
+<div class="tbl"><table>
+  <tr><th>Действие</th><th>Что делает</th></tr>
+  <tr><td><kbd>Play</kbd></td><td>Старт с первого шага / стоп. На паузе тоже перезапускает с начала.</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>Play</kbd></td><td>Пауза и продолжение: стоп → старт, игра → пауза, пауза → продолжить с того же места.</td></tr>
+  <tr><td><kbd>Shift</kbd></td><td>Модификатор, сам по себе ничего не делает. Пока зажат, вместо вкладки FILE горит жёлтое <span class="m">SHIFT</span>.</td></tr>
+  <tr><td>Поворот энкодера</td><td>Перемещение курсора или выбор строки. В режиме правки — изменение значения. С Shift — крупный шаг (обычно ×10).</td></tr>
+  <tr><td>Клик энкодера</td><td>Включить или выключить правку, выбрать пункт меню.</td></tr>
+  <tr><td>Долгое нажатие энкодера</td><td>0,5 с: контекстное меню или закрытие диалога.</td></tr>
+  <tr><td>Тап</td><td>Выбор. Повторный тап по выбранному — правка.</td></tr>
+  <tr><td>Долгий тап</td><td>0,5 с: контекстное меню.</td></tr>
+  <tr><td>Перетаскивание</td><td>Прокрутка. В режиме правки — изменение значения: вверх больше, вниз меньше.</td></tr>
+</table></div>
+<p>Play работает на любом экране, даже поверх открытого меню.</p>
+
+<h3>Подключение</h3>
+<div class="tbl"><table>
+  <tr><th>GPIO</th><th>Назначение</th></tr>
+  <tr><td class="m">10</td><td>MIDI TX (UART, 31250 бод)</td></tr>
+  <tr><td class="m">11 / 12</td><td>Энкодер A / B (EC11)</td></tr>
+  <tr><td class="m">13</td><td>Кнопка энкодера</td></tr>
+  <tr><td class="m">14</td><td>Play</td></tr>
+  <tr><td class="m">21</td><td>Shift</td></tr>
+  <tr><td class="m">41 / 40 / 39 / 38</td><td>microSD: CS / MOSI / CLK / MISO (встроенный слот)</td></tr>
+</table></div>
+<p>Кнопки замыкают вывод на GND, внутренняя подтяжка включена. MIDI OUT — TRS тип A, 3,3 В:</p>
+<ul>
+  <li>+3,3 В → 33 Ом → Ring (контакт 4 DIN)</li>
+  <li>GPIO10 → 10 Ом → Tip (контакт 5 DIN)</li>
+  <li>GND → Sleeve (контакт 2 DIN)</li>
+</ul>
+<p>Буфер 74HC14 (два инвертора подряд) ставить по желанию. MIDI-входа нет, устройство всегда ведущее по клоку.</p>
+
+<h2 id="screen"><span class="num">03</span>Экран и статус-бар</h2>
+<div class="lcd" role="img" aria-label="Схема экрана: статус-бар, рабочая область, вкладки">
+  <div class="row bar"><span>S03 P05<span class="y">*</span></span><span>&gt;P07</span><span>120 BPM</span><span>5/16</span><span>PLAY</span><span>L3</span></div>
+  <div class="work">рабочая область вкладки</div>
+  <div class="tabs"><span class="on">GRID</span><span>TRACK</span><span>BANK</span><span>PROJ</span><span>FILE</span></div>
+</div>
+<div class="tbl"><table>
+  <tr><th>Элемент</th><th>Значение</th></tr>
+  <tr><td class="m">P05</td><td>Паттерн, который сейчас звучит. В song mode — <span class="m">S03 P05</span>: третий элемент цепочки, паттерн 5. <span class="m">S--</span> — цепочка ещё не началась.</td></tr>
+  <tr><td class="m">*</td><td>Есть несохранённые изменения.</td></tr>
+  <tr><td class="m">&gt;P07</td><td>Паттерн в очереди: переключится в конце прохода. В song mode не показывается.</td></tr>
+  <tr><td class="m">120 BPM</td><td>Темп. Тап включает правку темпа (красный): энкодер ±1, с Shift ±10, диапазон 20–300. Выход — клик, тап по рабочей области или смена вкладки.</td></tr>
+  <tr><td class="m">5/16</td><td>Шаг / длина паттерна.</td></tr>
+  <tr><td class="m">PLAY</td><td>Состояние: PLAY, PAUSE, STOP. Тап работает как кнопка Play, с Shift — как Shift+Play.</td></tr>
+  <tr><td class="m">L3</td><td>Счётчик проходов паттерна. По нему работает условие CND.</td></tr>
+</table></div>
+<p>Вкладки переключаются только тапом по нижней панели. Жёлтые сообщения (toast) на 1,5 секунды закрывают правую часть статус-бара.</p>
+<p><b>Меню</b> открываются по центру экрана, видно до 12 пунктов, длинные списки прокручиваются перетаскиванием. Энкодер: поворот — выбор, клик — выполнить, долгое нажатие — закрыть. Тап вне меню тоже закрывает его. Серые пункты сейчас недоступны.</p>
+
+<h2 id="grid"><span class="num">04</span>GRID: редактор паттерна</h2>
+<p>GRID всегда редактирует паттерн, который звучит. Когда паттерн меняется (очередь, цепочка, загрузка), курсор переходит на шаг 1, правка выключается, выделение снимается.</p>
+
+<h3>Два вида</h3>
+<ul>
+  <li><b>Overview</b> (по умолчанию): 8 колонок, по одной на дорожку. В клетке — нота, полоска громкости и жёлтая точка, если в шаге есть fx. Каждый четвёртый шаг подсвечен, строка воспроизведения выделена.</li>
+  <li><b>Detail</b>: пара дорожек (1–2, 3–4, 5–6, 7–8), у каждой шесть полей: NOTE, VEL, FX1, FX1 VAL, FX2, FX2 VAL.</li>
+</ul>
+<p>Цвет имени дорожки: жёлтый — solo, серый — не слышна, белый — обычная.</p>
+
+<h3>Энкодер</h3>
+<div class="tbl"><table>
+  <tr><th>Ввод</th><th>Без правки</th><th>В правке</th></tr>
+  <tr><td>Поворот</td><td>Шаг вверх/вниз (по кругу)</td><td>Изменить значение поля</td></tr>
+  <tr><td><kbd>Shift</kbd>+поворот</td><td>Overview: другая дорожка. Detail: другое поле</td><td>Крупный шаг</td></tr>
+  <tr><td>Клик</td><td>Включить правку (toast с именем поля)</td><td>Выключить правку</td></tr>
+  <tr><td><kbd>Shift</kbd>+клик</td><td colspan="2">Переключить Overview / Detail</td></tr>
+  <tr><td>Долгое</td><td colspan="2">Контекстное меню</td></tr>
+  <tr><td><kbd>Shift</kbd>+долгое</td><td colspan="2">Undo</td></tr>
+</table></div>
+
+<h3>Что меняет поворот в правке</h3>
+<ul>
+  <li><b>NOTE.</b> На пустом шаге ставится последняя введённая на дорожке нота (сначала C-4). Дальше нота двигается по ступеням лада проекта, с Shift — на октаву. Энкодером нельзя очистить шаг или поставить OFF, для этого есть меню.</li>
+  <li><b>VEL.</b> 0–127, с Shift ×10. Значение 0 показано как <span class="m">...</span> и означает «громкость дорожки по умолчанию».</li>
+  <li><b>FX1 / FX2.</b> Перебор команд: <span class="m">...</span>, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM. Выбор команды ставит её значение по умолчанию.</li>
+  <li><b>FX VAL.</b> ±1, с Shift ×10. У CND с Shift шаг тот же. Пока команда не выбрана, значение не меняется.</li>
+</ul>
+<p>Одна сессия правки (от включения до выключения) — один шаг undo.</p>
+
+<h3>Мини-клавиатура</h3>
+<p>Появляется внизу экрана в правке поля NOTE. Двенадцать клавиш — октава текущей ноты. Жёлтая полоска отмечает ноты лада, красная рамка — текущую ноту. Тап по клавише записывает ноту, любую, лад здесь не ограничивает. Октаву меняет <kbd>Shift</kbd>+поворот энкодера.</p>
+
+<h3>Касания</h3>
+<div class="tbl"><table>
+  <tr><th>Жест</th><th>Действие</th></tr>
+  <tr><td>Тап по клетке</td><td>Курсор туда. Тап по клетке с курсором — правка вкл/выкл. Снимает выделение.</td></tr>
+  <tr><td><kbd>Shift</kbd>+тап</td><td>Выделение: первый тап ставит угол, следующие двигают противоположный.</td></tr>
+  <tr><td>Долгий тап</td><td>Курсор туда и контекстное меню.</td></tr>
+  <tr><td><kbd>Shift</kbd>+долгий тап</td><td>Undo.</td></tr>
+  <tr><td>Тап по имени дорожки</td><td>Mute. С Shift — solo.</td></tr>
+  <tr><td>Перетаскивание</td><td>Прокрутка строк. Отключает follow до следующего старта.</td></tr>
+</table></div>
+<p><b>Follow</b>: во время игры, если курсор не трогали 2 секунды, экран сам листает к играющему шагу. Включается и выключается в контекстном меню.</p>
+
+<h3>Контекстное меню</h3>
+<div class="tbl"><table>
+  <tr><th>Без выделения</th><th>С выделением</th></tr>
+  <tr><td style="white-space:normal">Copy step · Paste · Clear step · Note OFF · Copy track · Clear track · <b>Euclid…</b> · Transpose +1 · Transpose −1 · Transpose +12 · Detail view / Overview · Follow: ON/OFF · Undo</td>
+      <td>Copy sel · Paste · Clear sel · Note OFF sel · Transpose +1 · Transpose −1 · Transpose +12 · Transpose −12 · Undo · Clear selection</td></tr>
+</table></div>
+<ul>
+  <li>Transpose ±1 — на ступень лада, ±12 — на октаву. Затрагивает только шаги с нотой. Без выделения действует на всю дорожку.</li>
+  <li>Paste вставляет в позицию курсора или в левый верхний угол выделения. Не выходит за 8-ю дорожку и длину паттерна.</li>
+  <li>Буфер обмена переживает загрузку другого проекта — так можно переносить куски между проектами.</li>
+  <li>Если за время открытого меню паттерн сменился, действие не выполнится (toast «PATTERN CHANGED»).</li>
+</ul>
+
+<h3>Undo</h3>
+<p>32 шага. Каждый шаг — снимок целого паттерна. Отменяет правки в GRID, операции меню, Euclid, а также Copy-to, Clear и Length в BANK. Параметры TRACK и PROJ, темп, mute/solo и правки цепочки не отменяются. Redo нет. Load, New и импорт очищают историю.</p>
+
+<h3>Шаг</h3>
+<ul>
+  <li>Нота: <span class="m">C-4</span> = 60, диезы — <span class="m">C#4</span>. Октава −1 показана как <span class="m">m</span>.</li>
+  <li><span class="m">---</span> — пустой шаг, <span class="m">OFF</span> — явное снятие ноты (обрывает TIE и звучащую ноту дорожки).</li>
+  <li>Громкость 1–127 или <span class="m">...</span> (по умолчанию дорожки). Два слота fx, пустой — <span class="m">...</span>.</li>
+</ul>
+
+<h2 id="fx"><span class="num">05</span>Эффекты (fx)</h2>
+<p>В каждом шаге два слота. Если в обоих одна команда, работает первая.</p>
+<div class="tbl"><table>
+  <tr><th>Код</th><th>Значение</th><th>Что делает</th></tr>
+  <tr><td class="code">CHN</td><td>1–16</td><td>MIDI-канал этого шага: ноты, CC, PB, PGM.</td></tr>
+  <tr><td class="code">RAT</td><td>2–8</td><td>Ретриггер: N равных ударов внутри шага. Gate — доля подшага, максимум 95%.</td></tr>
+  <tr><td class="code">PRB</td><td>0–100</td><td>Вероятность срабатывания шага, %.</td></tr>
+  <tr><td class="code">GAT</td><td>1–800%</td><td>Длина ноты в % от шага. До 100% — шаг 1%, дальше 107, 114 … 800%.</td></tr>
+  <tr><td class="code">TIE</td><td>—</td><td>Нота не снимается и тянется через пустые шаги (см. ниже).</td></tr>
+  <tr><td class="code">NDG</td><td>−50…+50</td><td>Сдвиг всего шага на ±% длины шага. Отрицательный сдвиг работает.</td></tr>
+  <tr><td class="code">CHD</td><td>tri 7th su2 su4 6th ad9 pwr oct</td><td>Аккорд от ноты: до 4 нот, ноты выше 127 отбрасываются.</td></tr>
+  <tr><td class="code">STR</td><td>1–50</td><td>Страм: k-я нота аккорда позже на k×STR% шага.</td></tr>
+  <tr><td class="code">CND</td><td>FST, A:B</td><td>Условие по проходам (см. ниже).</td></tr>
+  <tr><td class="code">VRN</td><td>0–64</td><td>Случайный разброс громкости ±N.</td></tr>
+  <tr><td class="code">NRN</td><td>1–7</td><td>Случайный сдвиг ноты на ±N ступеней лада.</td></tr>
+  <tr><td class="code">CCA</td><td>0–127</td><td>CC с номером «CC A» дорожки (по умолчанию 74).</td></tr>
+  <tr><td class="code">CCB</td><td>0–127</td><td>CC с номером «CC B» дорожки (по умолчанию 71).</td></tr>
+  <tr><td class="code">PBN</td><td>−64…+63</td><td>Pitch bend: 8192 + v×128. Сам не сбрасывается, верните 0 отдельным шагом.</td></tr>
+  <tr><td class="code">PGM</td><td>0–127</td><td>Program Change.</td></tr>
+</table></div>
+
+<h3>Аккорды CHD</h3>
+<p>tri = 1-3-5, 7th = 1-3-5-7, su2 = 1-2-5, su4 = 1-4-5, 6th = 1-3-5-6, ad9 = 1-3-5-9 — ступени лада проекта. pwr = нота + квинта (7 полутонов), oct = нота + октава. При хроматическом ладе аккорд строится как в мажоре от этой ноты.</p>
+
+<h3>Условие CND</h3>
+<ul>
+  <li><span class="m">FST</span> — только на первом проходе после старта или смены паттерна.</li>
+  <li><span class="m">A:B</span> — на A-м проходе из каждых B. Например, <span class="m">2:4</span> — на 2-м, 6-м, 10-м… B от 2 до 8.</li>
+  <li>Проходы считает счётчик <span class="m">L</span> в статус-баре. Он сбрасывается при старте и при смене паттерна.</li>
+</ul>
+
+<h3>TIE</h3>
+<ul>
+  <li>Следующая нота той же высоты и на том же канале продолжает звук без повторного удара (легато). Конец определяет её gate или ещё один TIE.</li>
+  <li>Другая нота начинается, а старая снимается через 1 мс (перекрытие).</li>
+  <li>TIE снимают: OFF, mute, несработавший CND/PRB на шаге с нотой, смена паттерна.</li>
+  <li>У аккорда TIE не работает. У RAT связан только последний удар.</li>
+</ul>
+
+<h3>Порядок обработки шага</h3>
+<p>Сначала CND, потом PRB. Если любое условие не прошло, шаг молчит целиком, вместе с CC/PB/PGM. Затем канал (CHN), затем контроллеры (в начале шага с учётом NDG), затем ноты. Контроллеры отправляются и на шагах без ноты, и на OFF. Заглушённая дорожка не отправляет ничего.</p>
+
+<h2 id="euclid"><span class="num">06</span>Euclid</h2>
+<p>Генератор евклидовых ритмов для одной дорожки. Откройте в GRID без выделения: долгий тап по клетке нужной дорожки (или долгое нажатие энкодера) → <b>Euclid…</b> (пункт ниже середины, меню прокручивается).</p>
+<div class="tbl"><table>
+  <tr><th>Строка</th><th>Значения</th><th>Смысл</th></tr>
+  <tr><td>Hits</td><td>0…Length</td><td>Число ударов.</td></tr>
+  <tr><td>Length</td><td>1…длина паттерна</td><td>Длина ритма. Повторяется по всему паттерну.</td></tr>
+  <tr><td>Rotation</td><td>±(Length−1)</td><td>Сдвиг ритма вправо/влево.</td></tr>
+  <tr><td>Fill</td><td>ROOT, UP, DOWN, UP/DOWN, RANDOM</td><td>Откуда брать ноты: одна нота или движение по ладу.</td></tr>
+  <tr><td>Base note</td><td>0–127</td><td>Стартовая нота, привязывается к ладу.</td></tr>
+  <tr><td>Range</td><td>1–4 OCT</td><td>Диапазон для UP/DOWN/RANDOM.</td></tr>
+  <tr><td>Velocity</td><td>1–127</td><td>Громкость ударов.</td></tr>
+  <tr><td>Accent every</td><td>OFF, 1–64</td><td>Каждый N-й удар — акцент.</td></tr>
+  <tr><td>Accent vel</td><td>1–127</td><td>Громкость акцента.</td></tr>
+  <tr><td>Seed / Reseed</td><td>—</td><td>Вариант для RANDOM. Reseed (или <kbd>Shift</kbd>+клик) — новый случайный.</td></tr>
+  <tr><td>Mode</td><td>REPLACE, MERGE</td><td>REPLACE переписывает дорожку, MERGE пишет только в пустые шаги.</td></tr>
+</table></div>
+<ul>
+  <li>Каждое изменение сразу пишется в дорожку и звучит.</li>
+  <li><b>OK</b> оставляет результат, его можно отменить через undo. <b>CANCEL</b>, долгое нажатие или уход с GRID возвращают дорожку как была.</li>
+  <li>Параметры запоминаются для каждой дорожки до выключения питания, в файл не сохраняются.</li>
+</ul>
+<p>Работа со списком такая же, как в PROJ: поворот — строка, клик — правка, поворот в правке — значение. Тап выбирает строку, повторный тап — правка, перетаскивание в правке меняет значение.</p>
+
+<h2 id="track"><span class="num">07</span>TRACK: настройки дорожки</h2>
+<p>Дорожка та же, что под курсором в GRID. Сменить: тап по стрелкам в заголовке или <kbd>Shift</kbd>+поворот вне правки.</p>
+<div class="tbl"><table>
+  <tr><th>Параметр</th><th>Значения</th><th>По умолчанию</th></tr>
+  <tr><td>Name</td><td>до 8 символов: A–Z 0–9 - _ пробел</td><td>TRK1…TRK8</td></tr>
+  <tr><td>Channel</td><td>1–16</td><td>номер дорожки</td></tr>
+  <tr><td>Def vel</td><td>1–127</td><td>100</td></tr>
+  <tr><td>Def gate</td><td>1–800%</td><td>50%</td></tr>
+  <tr><td>CC A / CC B</td><td>номер CC 0–127</td><td>74 / 71</td></tr>
+  <tr><td>Program</td><td>--- или 0–127</td><td>--- (не отправлять)</td></tr>
+  <tr><td>Mute / Solo</td><td>ON / OFF</td><td>OFF</td></tr>
+</table></div>
+<ul>
+  <li><b>Name:</b> клик — правка. Поворот меняет символ, <kbd>Shift</kbd>+поворот или тап по символу двигает курсор.</li>
+  <li><b>Program</b> отправляется сразу при изменении и при каждом старте. Значение «сырое»: 0 = первый патч.</li>
+  <li><b>Solo:</b> если solo включено хоть у одной дорожки, играют только они. Mute важнее solo.</li>
+</ul>
+
+<h2 id="proj"><span class="num">08</span>PROJ: проект и паттерн</h2>
+<div class="tbl"><table>
+  <tr><th>Параметр</th><th>Значения</th><th>Область</th></tr>
+  <tr><td>BPM</td><td>20–300</td><td>проект</td></tr>
+  <tr><td>Scale root</td><td>C…B</td><td>проект</td></tr>
+  <tr><td>Scale</td><td>13 ладов</td><td>проект</td></tr>
+  <tr><td>Length</td><td>4–128</td><td>звучащий паттерн</td></tr>
+  <tr><td>Resolution</td><td>1/4, 1/8, 1/16, 1/32, 1/8T, 1/16T</td><td>звучащий паттерн</td></tr>
+  <tr><td>Swing</td><td>50–75%</td><td>звучащий паттерн</td></tr>
+</table></div>
+<p><b>Лады:</b> Chromatic, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor, Pentatonic major, Pentatonic minor, Blues. По умолчанию C Chromatic, то есть без ограничений.</p>
+<p><b>Как работает лад.</b> Ноты не фильтруются, лад задаёт ступени. По ступеням ходят: ввод ноты энкодером, Transpose ±1, NRN, CHD и Euclid. Нота вне лада при первом движении сначала прижимается к ближайшей нижней ноте лада. Октавные сдвиги и мини-клавиатура лад не учитывают. Смена лада не переписывает уже введённые ноты.</p>
+<p><b>Swing</b> задерживает каждый второй шаг: 75% — на половину шага.</p>
+
+<h2 id="bank"><span class="num">09</span>BANK: банк паттернов</h2>
+<p>Плитки 4×4 — паттерны P01–P16. На плитке номер, длина, разрешение и восемь квадратиков: заполненный значит, что на дорожке есть данные.</p>
+<ul>
+  <li>Звучащий паттерн — залит, жёлтая рамка. В очереди — мигающая двойная рамка. Источник копирования — красная рамка.</li>
+</ul>
+<div class="tbl"><table>
+  <tr><th>Ввод</th><th>Действие</th></tr>
+  <tr><td>Тап / клик</td><td><b>В очередь</b>: во время игры переключится в конце прохода, при остановке — сразу.</td></tr>
+  <tr><td><kbd>Shift</kbd>+тап / клик</td><td><b>Сразу</b>: переключить со следующего шага, позиция сохраняется.</td></tr>
+  <tr><td>Долгий тап / нажатие</td><td>Меню паттерна.</td></tr>
+  <tr><td>Поворот</td><td>Выбор плитки.</td></tr>
+</table></div>
+<p><b>Меню паттерна:</b></p>
+<ul>
+  <li><b>Copy to…</b> — затем тап по плитке-цели. Копируется всё: шаги, длина, разрешение, свинг. Тап по той же плитке отменяет.</li>
+  <li><b>Clear</b> — с подтверждением. Сбрасывает и длину (16), разрешение (1/16), свинг (50).</li>
+  <li><b>Length 16 / 32 / 64</b> — быстрая смена длины.</li>
+  <li><b>Song mode</b> — включает режим песни.</li>
+</ul>
+<p>Любая смена паттерна снимает TIE. Счётчик проходов сбрасывается.</p>
+
+<h2 id="song"><span class="num">10</span>Song mode</h2>
+<p>Цепочка до 64 элементов, каждый — номер паттерна. Включение: меню плитки → <b>Song mode</b>. В режиме песни вкладка BANK показывает список цепочки вместо плиток.</p>
+<ul>
+  <li>Заголовок: <span class="m">SONG n/64</span>, кнопки <b>+ ADD</b> (добавить звучащий паттерн в конец) и <b>SONG OFF</b>.</li>
+  <li>Строка: <span class="m">&gt;</span> у играющего элемента, номер, паттерн, длина и разрешение.</li>
+  <li>Поворот — выбор строки. Клик — правка строки (поворот или перетаскивание меняют паттерн). На пустой цепочке клик добавляет звучащий паттерн.</li>
+  <li>Долгое нажатие — меню строки: <b>Insert Pxx before</b>, <b>Delete</b>, <b>Duplicate</b>, <b>Append Pxx</b>, <b>Song mode off</b>. Pxx — звучащий паттерн.</li>
+</ul>
+<h3>Как играет песня</h3>
+<ul>
+  <li>Старт — с первого элемента. В конце прохода — следующий элемент, после последнего — снова первый.</li>
+  <li>Включение режима во время игры: цепочка начнётся с конца текущего прохода. Выключение: текущий паттерн продолжит крутиться.</li>
+  <li>Правки цепочки во время игры подхватываются с конца прохода. Вставка или удаление строки выше играющей не сбивает позицию.</li>
+  <li>Два одинаковых элемента подряд звучат как повтор: TIE и счётчик CND сохраняются.</li>
+  <li>Пустая цепочка — играет текущий паттерн, как без режима песни.</li>
+  <li>Очередь паттернов в режиме песни не работает, плитки недоступны.</li>
+  <li>При остановке в GRID показывается и редактируется первый элемент цепочки, в статус-баре <span class="m">S01</span>.</li>
+</ul>
+
+<h2 id="file"><span class="num">11</span>FILE: сохранение и загрузка</h2>
+<div class="note warn"><p>Карта должна быть в <b>FAT32</b> со схемой разделов <b>MBR</b>. exFAT (обычен для карт больше 32 ГБ) и GPT не читаются, на экране будет «NO SD CARD». На Mac: <code>diskutil eraseDisk FAT32 MIDI MBRFormat /dev/diskN</code>. Команда стирает карту целиком.</p></div>
+<div class="tbl"><table>
+  <tr><th>Пункт</th><th>Что делает</th></tr>
+  <tr><td>Save</td><td>Сохранить под текущим именем. Без имени работает как Save As. Можно во время игры.</td></tr>
+  <tr><td>Save As…</td><td>Экранная клавиатура, затем OK. Если файл с таким именем уже есть — спросит Overwrite.</td></tr>
+  <tr><td>Load…</td><td>Список проектов. Если есть несохранённые правки — спросит подтверждение. Остановит воспроизведение.</td></tr>
+  <tr><td>New</td><td>Пустой проект. Тоже спросит про несохранённое.</td></tr>
+  <tr><td>Import MIDI…</td><td>Импорт <span class="m">.mid</span> из папки <span class="m">/midi</span>.</td></tr>
+  <tr><td>Retry</td><td>Есть только без карты: подключить карту заново.</td></tr>
+</table></div>
+<ul>
+  <li><b>Имя проекта:</b> до 16 символов, A–Z a–z 0–9 _ -. Регистр сохраняется, но имена, отличающиеся только регистром, — один и тот же файл.</li>
+  <li><b>Клавиатура:</b> цифры, A–Z, - _, DEL, CANCEL, OK. <kbd>Shift</kbd>+клавиша — строчная буква. Энкодер: поворот — клавиша, клик — нажать, долгое — отмена.</li>
+  <li><b>Надёжность:</b> сохранение пишет временный файл, проверяет его, прежнюю версию переименовывает в <span class="m">.bak</span>. Если файл повреждён, Load предложит <b>Load backup</b>.</li>
+  <li><b>Автозагрузка:</b> при включении загружается последний сохранённый или загруженный проект. Если он повреждён — берётся <span class="m">.bak</span> (toast «LOADED BACKUP»). Если и это не вышло — демо и toast «AUTOLOAD: …». New отключает автозагрузку до следующего сохранения.</li>
+  <li>Сохраняются все паттерны, настройки дорожек (включая mute/solo и Program), темп, лад, цепочка и режим песни. Не сохраняются undo, буфер обмена и параметры Euclid.</li>
+</ul>
+<div class="tbl"><table>
+  <tr><th>Путь</th><th>Содержимое</th></tr>
+  <tr><td class="m">/projects/имя.mtp</td><td>проект</td></tr>
+  <tr><td class="m">/projects/имя.bak</td><td>предыдущая версия</td></tr>
+  <tr><td class="m">/last.txt</td><td>имя проекта для автозагрузки</td></tr>
+  <tr><td class="m">/midi/*.mid</td><td>файлы для импорта</td></tr>
+</table></div>
+<p>Папки <span class="m">/projects</span> и <span class="m">/midi</span> создаются сами.</p>
+
+<h2 id="import"><span class="num">12</span>Импорт MIDI</h2>
+<p>Положите файл в <span class="m">/midi</span> и выберите <b>FILE → Import MIDI…</b>. Поддерживаются SMF формата 0 и 1, до 512 КБ и 16 384 нот. Источник — пара «трек файла + канал», их может быть до 32.</p>
+<h3>Экран сопоставления</h3>
+<ul>
+  <li>Для каждого источника с нотами: строка <span class="m">имя chN → T1…T8 / skip</span> с числом нот и диапазоном, под ней <b>transpose</b> ±24 полутона. По умолчанию первые восемь источников идут на T1–T8.</li>
+</ul>
+<div class="tbl"><table>
+  <tr><th>Параметр</th><th>Значения</th><th>Смысл</th></tr>
+  <tr><td>Offset bars</td><td>0–999</td><td>Пропустить такты (4/4) от начала файла.</td></tr>
+  <tr><td>Quantize</td><td>6 разрешений</td><td>Сетка и разрешение паттернов, по умолчанию 1/16.</td></tr>
+  <tr><td>Pattern length</td><td>4–128</td><td>Длина паттерна. Файл режется на куски этой длины.</td></tr>
+  <tr><td>First pattern</td><td>P01–P16</td><td>С какого паттерна писать.</td></tr>
+  <tr><td>Mono</td><td>Highest, Lowest, First</td><td>Какую ноту оставить, если на шаг дорожки попало несколько.</td></tr>
+  <tr><td>Source channel</td><td>OFF / ON</td><td>ON — писать fx CHN с каналом из файла.</td></tr>
+  <tr><td>Use tempo</td><td>ON / OFF</td><td>Взять первый темп файла. «keep» — в файле нет темпа.</td></tr>
+  <tr><td>Microtiming</td><td>OFF / ON</td><td>ON — сохранить отклонения от сетки через NDG.</td></tr>
+</table></div>
+<ul>
+  <li><b>IMPORT</b> покажет, какие паттерны будут перезаписаны (<span class="m">OVERWRITE P01-P04?</span>), и после подтверждения остановит воспроизведение и запишет.</li>
+  <li>Очищаются только целевые дорожки в записанных паттернах. Остальные дорожки и паттерны не трогаются.</li>
+  <li>Длина ноты пишется через GAT, если отличается от Def gate дорожки больше чем на 10 процентных пунктов. Ноты длиннее 800% шага укорачиваются. Пустые такты в конце файла тоже становятся паттернами.</li>
+  <li>Отброшенные ноты (дальше P16, лишние по правилу Mono, вне 0–127 после транспонирования) указываются в итоговом сообщении.</li>
+  <li>После импорта undo очищается, проект помечается несохранённым.</li>
+</ul>
+
+<h2 id="midi"><span class="num">13</span>MIDI-выход</h2>
+<ul>
+  <li>Канал — канал дорожки или fx CHN.</li>
+  <li><b>Clock</b> (24 PPQN) идёт только во время игры.</li>
+  <li><b>Play (старт):</b> Program Change для дорожек с заданным Program, затем Start.</li>
+  <li><b>Play (стоп):</b> Note Off всем звучащим нотам, затем Stop. Позиция — шаг 1.</li>
+  <li><b>Shift+Play (пауза):</b> Note Off и Stop. <b>Продолжение:</b> Song Position Pointer (позиция внутри текущего паттерна) и Continue.</li>
+  <li>Повторный удар уже звучащей ноты сначала отправляет её Note Off.</li>
+</ul>
+
+<h2 id="limits"><span class="num">14</span>Лимиты</h2>
+<div class="tbl"><table>
+  <tr><th>Что</th><th>Сколько</th></tr>
+  <tr><td>Дорожки / паттерны / шаги</td><td>8 / 16 / 4–128</td></tr>
+  <tr><td>Цепочка песни</td><td>64 элемента</td></tr>
+  <tr><td>Undo</td><td>32 шага</td></tr>
+  <tr><td>BPM / Swing</td><td>20–300 / 50–75%</td></tr>
+  <tr><td>fx в шаге</td><td>2</td></tr>
+  <tr><td>Файлов в списке</td><td>128</td></tr>
+  <tr><td>Имя проекта / дорожки</td><td>16 / 8 символов</td></tr>
+  <tr><td>Импорт MIDI</td><td>512 КБ, 16 384 ноты, 32 источника</td></tr>
+  <tr><td>Долгое нажатие</td><td>0,5 с</td></tr>
+</table></div>
+<p><b>Проект по умолчанию:</b> 120 BPM, C Chromatic, дорожки TRK1–TRK8 на каналах 1–8, громкость 100, gate 50%, CC A 74, CC B 71, паттерны по 16 шагов 1/16 без свинга.</p>
+</main>
+</div>
+
+</html>
