@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Схема пайки трекера</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column of a build sheet; wide schematic scrolls inside its own box. */
+:root {
+  --bg: #f3f4f1; --panel: #ffffff; --ink: #1d2226; --dim: #5d666d; --line: #c9cfd2;
+  --v33: #c8382f; --gnd: #1d2226; --sda: #1f6fc2; --scl: #a87a00; --int: #8445c4;
+  --btn: #237a48; --led: #d0661a; --ledfill: #f2c39c; --key: #e6e9e7;
+  --spkp: #8445c4; --spkn: #0f7f86;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #15191c; --panel: #1d2327; --ink: #e4e8ea; --dim: #97a1a8; --line: #39434a;
+  --v33: #ff6a5e; --gnd: #e4e8ea; --sda: #5aa5f0; --scl: #e0b33a; --int: #b98af0;
+  --btn: #4cc184; --led: #ff9a4d; --ledfill: #5b3a22; --key: #2a3237; --spkp: #b98af0; --spkn: #4fc3c9; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #15191c; --panel: #1d2327; --ink: #e4e8ea; --dim: #97a1a8; --line: #39434a;
+  --v33: #ff6a5e; --gnd: #e4e8ea; --sda: #5aa5f0; --scl: #e0b33a; --int: #b98af0;
+  --btn: #4cc184; --led: #ff9a4d; --ledfill: #5b3a22; --key: #2a3237; --spkp: #b98af0; --spkn: #4fc3c9; color-scheme: dark }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+main { max-width: 1000px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; gap: 28px; }
+h1 { font: 600 2rem/1.15 var(--display); margin: 0; text-wrap: balance; }
+h2 { font: 600 1.3rem/1.2 var(--display); margin: 0 0 10px; text-wrap: balance; }
+.lead { color: var(--dim); max-width: 68ch; margin: 6px 0 0; }
+section { min-width: 0; }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.scroll { overflow-x: auto; }
+.scroll svg { min-width: 760px; }
+svg { display: block; width: 100%; height: auto; color: var(--ink); }
+figcaption { color: var(--dim); font-size: 13.5px; margin-top: 10px; max-width: 80ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; padding: 0; list-style: none; font-size: 13.5px; }
+.legend li { display: flex; align-items: center; gap: 8px; }
+.legend i { width: 26px; height: 4px; border-radius: 2px; display: inline-block; }
+.two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+@media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 12px/1.3 var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+td.m, .m { font-family: var(--mono); font-size: 13.5px; }
+ol, ul { margin: 0; padding-left: 1.3em; max-width: 72ch; }
+li + li { margin-top: 6px; }
+.note { border-left: 3px solid var(--v33); padding: 2px 0 2px 12px; max-width: 72ch; }
+/* SVG classes */
+.blk { fill: var(--panel); stroke: currentColor; stroke-width: 1.5; }
+.pad { fill: var(--panel); stroke: currentColor; stroke-width: 1.3; }
+.bt { font: 600 15px var(--display); fill: currentColor; }
+.sub { font: 400 11.5px var(--body); fill: var(--dim); }
+.pin { font: 500 12px var(--mono); fill: currentColor; }
+.lbl { font: 500 12px var(--body); fill: currentColor; }
+.w { stroke-width: 2; stroke-linecap: round; fill: none; }
+.v33 { stroke: var(--v33); } .gnd { stroke: var(--gnd); } .sda { stroke: var(--sda); }
+.scl { stroke: var(--scl); } .int { stroke: var(--int); } .btn { stroke: var(--btn); } .led { stroke: var(--led); }
+.dot.v33 { fill: var(--v33); stroke: none; } .dot.gnd { fill: var(--gnd); stroke: none; }
+.v33t { fill: var(--v33); } .sdat { fill: var(--sda); } .sclt { fill: var(--scl); } .intt { fill: var(--int); }
+.sw { fill: var(--panel); stroke: var(--btn); stroke-width: 1.8; }
+.ledf { fill: var(--led); stroke: var(--led); stroke-width: 1.5; stroke-linejoin: round; }
+.res { fill: var(--panel); stroke: var(--v33); stroke-width: 1.8; }
+.scr { fill: var(--key); stroke: var(--line); }
+.key { fill: var(--key); stroke: var(--line); stroke-width: 1.2; }
+.key.trk { stroke: var(--btn); stroke-width: 1.8; }
+.kn { font: 600 18px var(--display); fill: currentColor; }
+.kl { font: 500 11.5px var(--body); fill: var(--dim); }
+.ledbody { fill: var(--ledfill); stroke: var(--led); stroke-width: 1.8; }
+.ledflat { stroke: var(--ink); stroke-width: 2.5; }
+.ledrim { fill: var(--ledfill); stroke: var(--led); stroke-width: 1.5; }
+.leg { stroke: var(--dim); stroke-width: 3; stroke-linecap: round; }
+.pwr, .pwrr { stroke: var(--v33); } .pwrt { fill: var(--v33); }
+.sig, .sigr { stroke: var(--sda); } .sigt { fill: var(--sda); }
+.sw.pwrs { stroke: var(--v33); }
+.dot.pwr { fill: var(--v33); stroke: none; }
+.spkp { stroke: var(--spkp); } .spkn { stroke: var(--spkn); }
+.spkpt { fill: var(--spkp); } .spknt { fill: var(--spkn); }
+.dot.spkp { fill: var(--spkp); stroke: none; } .dot.spkn { fill: var(--spkn); stroke: none; }
+.res.spkp { stroke: var(--spkp); }
+.sw.spkps { stroke: var(--spkp); }
+.scroll .hp { min-width: 640px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Схема пайки трекера</h1>
+  <p class="lead">Всё, что паяется к WT32-SC01 Plus: питание от аккумулятора, MIDI OUT, энкодер, Play и Shift, восемь кнопок дорожек со светодиодами, гнездо для наушников. Дисплей, тач и microSD уже разведены на плате.</p>
+</header>
+
+<section>
+  <h2>Принципиальная схема</h2>
+  <figure>
+    <div class="scroll"><svg viewBox="0 0 1170 930" role="img" aria-label="Общая схема: LiPo через IP5306 и тумблер питает плату 5 В; GPIO10 через 10 Ом на Tip MIDI-гнезда, 3,3 В через 33 Ом на Ring; энкодер на GPIO 11, 12, 13; Play на 14, Shift на 21; PCF8575 на GPIO 43 и 44 разъёма Debug с восемью кнопками и восемью светодиодами."><rect x="20" y="100" width="80" height="130" rx="6" class="blk"/><text x="60.0" y="122" class="bt" text-anchor="middle">LiPo</text><text x="60.0" y="138" class="sub" text-anchor="middle">103450</text><circle cx="100" cy="140" r="3" class="pad"/><text x="91" y="144" class="pin" text-anchor="end">+</text><circle cx="100" cy="200" r="3" class="pad"/><text x="91" y="204" class="pin" text-anchor="end">−</text><rect x="150" y="100" width="130" height="130" rx="6" class="blk"/><text x="215.0" y="122" class="bt" text-anchor="middle">IP5306</text><text x="215" y="172" class="sub" text-anchor="middle">Type-C — зарядка</text><circle cx="150" cy="140" r="3" class="pad"/><text x="159" y="144" class="pin">B+</text><circle cx="150" cy="200" r="3" class="pad"/><text x="159" y="204" class="pin">B−</text><circle cx="280" cy="140" r="3" class="pad"/><text x="271" y="144" class="pin" text-anchor="end">VOUT</text><circle cx="280" cy="200" r="3" class="pad"/><text x="271" y="204" class="pin" text-anchor="end">GND</text><line x1="100" y1="140" x2="150" y2="140" class="w pwr"/><line x1="100" y1="200" x2="150" y2="200" class="w gnd"/><text x="215" y="252" class="sub" text-anchor="middle">VOUT/GND — площадки</text><text x="215" y="266" class="sub" text-anchor="middle">выпаянного USB-A</text><line x1="280" y1="140" x2="302" y2="140" class="w pwr"/><circle cx="302" cy="140" r="3" class="sw pwrs"/><circle cx="338" cy="140" r="3" class="sw pwrs"/><line x1="304" y1="138" x2="338" y2="128" class="w pwr"/><line x1="338" y1="140" x2="380" y2="140" class="w pwr"/><text x="320" y="120" class="lbl" text-anchor="middle">тумблер</text><text x="345" y="160" class="sub" text-anchor="middle">5 В</text><line x1="280" y1="200" x2="380" y2="200" class="w gnd"/><rect x="380" y="60" width="170" height="820" rx="6" class="blk"/><text x="465.0" y="82" class="bt" text-anchor="middle">WT32-SC01 Plus</text><text x="465.0" y="98" class="sub" text-anchor="middle">разъём расширения</text><circle cx="380" cy="140" r="3" class="pad"/><text x="389" y="144" class="pin">5V</text><circle cx="380" cy="200" r="3" class="pad"/><text x="389" y="204" class="pin">GND</text><text x="465" y="840" class="sub" text-anchor="middle">свой Type-C — только</text><text x="465" y="854" class="sub" text-anchor="middle">прошивка, тумблер выкл.</text><circle cx="550" cy="130" r="3" class="pad"/><text x="541" y="134" class="pin" text-anchor="end">IO10</text><circle cx="550" cy="270" r="3" class="pad"/><text x="541" y="274" class="pin" text-anchor="end">IO11</text><circle cx="550" cy="330" r="3" class="pad"/><text x="541" y="334" class="pin" text-anchor="end">IO12</text><circle cx="550" cy="365" r="3" class="pad"/><text x="541" y="369" class="pin" text-anchor="end">IO13</text><circle cx="550" cy="450" r="3" class="pad"/><text x="541" y="454" class="pin" text-anchor="end">IO14</text><circle cx="550" cy="500" r="3" class="pad"/><text x="541" y="504" class="pin" text-anchor="end">IO21</text><circle cx="550" cy="580" r="3" class="pad"/><text x="541" y="584" class="pin" text-anchor="end">IO43 TXD0</text><circle cx="550" cy="610" r="3" class="pad"/><text x="541" y="614" class="pin" text-anchor="end">IO44 RXD0</text><circle cx="550" cy="720" r="3" class="pad"/><text x="541" y="724" class="pin" text-anchor="end">3V3</text><circle cx="550" cy="770" r="3" class="pad"/><text x="541" y="774" class="pin" text-anchor="end">GND</text><line x1="550" y1="720" x2="590" y2="720" class="w pwr"/><line x1="590" y1="720" x2="590" y2="708" class="w pwr"/><line x1="582" y1="708" x2="598" y2="708" class="w pwr"/><text x="590" y="703" class="lbl pwrt" text-anchor="middle">3,3 В</text><line x1="392" y1="560" x2="392" y2="630" class="w" stroke-dasharray="3 3"/><text x="400" y="560" class="sub">разъём Debug</text><line x1="550" y1="770" x2="590" y2="770" class="w gnd"/><line x1="590" y1="770" x2="590" y2="777" class="w gnd"/><line x1="583" y1="777" x2="597" y2="777" class="w gnd"/><line x1="585.5" y1="780" x2="594.5" y2="780" class="w gnd"/><line x1="588" y1="783" x2="592" y2="783" class="w gnd"/><rect x="820" y="66" width="150" height="154" rx="6" class="blk"/><text x="832" y="88" class="bt" text-anchor="start">MIDI OUT</text><text x="832" y="104" class="sub" text-anchor="start">TRS 3,5 мм, тип A</text><circle cx="820" cy="130" r="3" class="pad"/><text x="829" y="134" class="pin">Tip</text><circle cx="820" cy="165" r="3" class="pad"/><text x="829" y="169" class="pin">Ring</text><circle cx="820" cy="195" r="3" class="pad"/><text x="829" y="199" class="pin">Sleeve</text><line x1="550" y1="130" x2="670" y2="130" class="w sig"/><rect x="670" y="125" width="34" height="10" class="res sigr"/><text x="687.0" y="120" class="sub" text-anchor="middle">10 Ом</text><line x1="704" y1="130" x2="820" y2="130" class="w sig"/><line x1="630" y1="165" x2="630" y2="153" class="w pwr"/><line x1="622" y1="153" x2="638" y2="153" class="w pwr"/><text x="630" y="148" class="lbl pwrt" text-anchor="middle">3,3 В</text><line x1="630" y1="165" x2="670" y2="165" class="w pwr"/><rect x="670" y="160" width="34" height="10" class="res pwrr"/><text x="687.0" y="155" class="sub" text-anchor="middle">33 Ом</text><line x1="704" y1="165" x2="820" y2="165" class="w pwr"/><line x1="820" y1="195" x2="780" y2="195" class="w gnd"/><line x1="780" y1="195" x2="780" y2="202" class="w gnd"/><line x1="773" y1="202" x2="787" y2="202" class="w gnd"/><line x1="775.5" y1="205" x2="784.5" y2="205" class="w gnd"/><line x1="778" y1="208" x2="782" y2="208" class="w gnd"/><text x="740" y="122" class="sub">DIN 5</text><text x="740" y="157" class="sub">DIN 4</text><rect x="820" y="230" width="150" height="180" rx="6" class="blk"/><text x="832" y="252" class="bt" text-anchor="start">Энкодер EC11</text><circle cx="820" cy="270" r="3" class="pad"/><text x="829" y="274" class="pin">A</text><circle cx="820" cy="300" r="3" class="pad"/><text x="829" y="304" class="pin">C</text><circle cx="820" cy="330" r="3" class="pad"/><text x="829" y="334" class="pin">B</text><circle cx="820" cy="365" r="3" class="pad"/><text x="829" y="369" class="pin">SW</text><circle cx="820" cy="390" r="3" class="pad"/><text x="829" y="394" class="pin">SW</text><line x1="550" y1="270" x2="820" y2="270" class="w sig"/><line x1="550" y1="330" x2="820" y2="330" class="w sig"/><line x1="550" y1="365" x2="820" y2="365" class="w sig"/><line x1="820" y1="300" x2="780" y2="300" class="w gnd"/><line x1="780" y1="300" x2="780" y2="307" class="w gnd"/><line x1="773" y1="307" x2="787" y2="307" class="w gnd"/><line x1="775.5" y1="310" x2="784.5" y2="310" class="w gnd"/><line x1="778" y1="313" x2="782" y2="313" class="w gnd"/><line x1="820" y1="390" x2="780" y2="390" class="w gnd"/><line x1="780" y1="390" x2="780" y2="397" class="w gnd"/><line x1="773" y1="397" x2="787" y2="397" class="w gnd"/><line x1="775.5" y1="400" x2="784.5" y2="400" class="w gnd"/><line x1="778" y1="403" x2="782" y2="403" class="w gnd"/><text x="985" y="300" class="sub">C — средний</text><text x="985" y="314" class="sub">из тройки</text><text x="985" y="378" class="sub">кнопка вала</text><line x1="550" y1="450" x2="820" y2="450" class="w sig"/><circle cx="820" cy="450" r="3" class="sw btns"/><circle cx="856" cy="450" r="3" class="sw btns"/><line x1="822" y1="448" x2="856" y2="438" class="w btn"/><line x1="856" y1="450" x2="890" y2="450" class="w gnd"/><line x1="890" y1="450" x2="890" y2="457" class="w gnd"/><line x1="883" y1="457" x2="897" y2="457" class="w gnd"/><line x1="885.5" y1="460" x2="894.5" y2="460" class="w gnd"/><line x1="888" y1="463" x2="892" y2="463" class="w gnd"/><text x="838" y="434" class="lbl" text-anchor="middle">Play</text><line x1="550" y1="500" x2="820" y2="500" class="w sig"/><circle cx="820" cy="500" r="3" class="sw btns"/><circle cx="856" cy="500" r="3" class="sw btns"/><line x1="822" y1="498" x2="856" y2="488" class="w btn"/><line x1="856" y1="500" x2="890" y2="500" class="w gnd"/><line x1="890" y1="500" x2="890" y2="507" class="w gnd"/><line x1="883" y1="507" x2="897" y2="507" class="w gnd"/><line x1="885.5" y1="510" x2="894.5" y2="510" class="w gnd"/><line x1="888" y1="513" x2="892" y2="513" class="w gnd"/><text x="838" y="484" class="lbl" text-anchor="middle">Shift</text><text x="985" y="478" class="sub">MX, вывод к GPIO,</text><text x="985" y="492" class="sub">второй на GND</text><rect x="640" y="525" width="150" height="375" rx="6" class="blk"/><text x="652" y="547" class="bt" text-anchor="start">PCF8575</text><text x="652" y="563" class="sub" text-anchor="start">адрес 0x20–0x27, сам</text><circle cx="640" cy="580" r="3" class="pad"/><text x="649" y="584" class="pin">SDA</text><circle cx="640" cy="610" r="3" class="pad"/><text x="649" y="614" class="pin">SCL</text><circle cx="640" cy="720" r="3" class="pad"/><text x="649" y="724" class="pin">VCC</text><circle cx="640" cy="770" r="3" class="pad"/><text x="649" y="774" class="pin">GND</text><line x1="550" y1="580" x2="640" y2="580" class="w sig"/><line x1="550" y1="610" x2="640" y2="610" class="w sig"/><line x1="590" y1="720" x2="640" y2="720" class="w pwr"/><circle cx="590" cy="720" r="3.2" class="dot pwr"/><line x1="590" y1="770" x2="640" y2="770" class="w gnd"/><circle cx="590" cy="770" r="3.2" class="dot gnd"/><text x="652" y="810" class="sub">INT — не нужен</text><text x="652" y="826" class="sub">A0–A2 — не паять</text><text x="566" y="574" class="lbl sigt" text-anchor="middle">SDA</text><text x="566" y="604" class="lbl sigt" text-anchor="middle">SCL</text><circle cx="790" cy="575" r="3" class="pad"/><text x="781" y="579" class="pin" text-anchor="end">P00</text><circle cx="790" cy="595" r="3" class="pad"/><text x="781" y="599" class="pin" text-anchor="end">P10</text><line x1="790" y1="575" x2="830" y2="575" class="w btn"/><circle cx="830" cy="575" r="3" class="sw btns"/><circle cx="866" cy="575" r="3" class="sw btns"/><line x1="832" y1="573" x2="866" y2="563" class="w btn"/><line x1="866" y1="575" x2="900" y2="575" class="w gnd"/><line x1="900" y1="575" x2="900" y2="582" class="w gnd"/><line x1="893" y1="582" x2="907" y2="582" class="w gnd"/><line x1="895.5" y1="585" x2="904.5" y2="585" class="w gnd"/><line x1="898" y1="588" x2="902" y2="588" class="w gnd"/><line x1="790" y1="595" x2="960" y2="595" class="w led"/><line x1="960" y1="588" x2="960" y2="602" class="w led"/><polygon points="960,595 974,588 974,602" class="ledf"/><line x1="974" y1="595" x2="1040" y2="595" class="w pwr"/><rect x="1040" y="590" width="34" height="10" class="res pwrr"/><text x="1057.0" y="585" class="sub" text-anchor="middle">R1</text><line x1="1074" y1="595" x2="1140" y2="595" class="w pwr"/><circle cx="1140" cy="595" r="3.2" class="dot pwr"/><text x="935" y="579" class="lbl">кн. 1</text><text x="1004" y="589" class="sub" text-anchor="middle">LED 1</text><circle cx="790" cy="615" r="3" class="pad"/><text x="781" y="619" class="pin" text-anchor="end">P01</text><circle cx="790" cy="635" r="3" class="pad"/><text x="781" y="639" class="pin" text-anchor="end">P11</text><line x1="790" y1="615" x2="830" y2="615" class="w btn"/><circle cx="830" cy="615" r="3" class="sw btns"/><circle cx="866" cy="615" r="3" class="sw btns"/><line x1="832" y1="613" x2="866" y2="603" class="w btn"/><line x1="866" y1="615" x2="900" y2="615" class="w gnd"/><line x1="900" y1="615" x2="900" y2="622" class="w gnd"/><line x1="893" y1="622" x2="907" y2="622" class="w gnd"/><line x1="895.5" y1="625" x2="904.5" y2="625" class="w gnd"/><line x1="898" y1="628" x2="902" y2="628" class="w gnd"/><line x1="790" y1="635" x2="960" y2="635" class="w led"/><line x1="960" y1="628" x2="960" y2="642" class="w led"/><polygon points="960,635 974,628 974,642" class="ledf"/><line x1="974" y1="635" x2="1040" y2="635" class="w pwr"/><rect x="1040" y="630" width="34" height="10" class="res pwrr"/><text x="1057.0" y="625" class="sub" text-anchor="middle">R2</text><line x1="1074" y1="635" x2="1140" y2="635" class="w pwr"/><circle cx="1140" cy="635" r="3.2" class="dot pwr"/><text x="935" y="619" class="lbl">кн. 2</text><text x="1004" y="629" class="sub" text-anchor="middle">LED 2</text><circle cx="790" cy="655" r="3" class="pad"/><text x="781" y="659" class="pin" text-anchor="end">P02</text><circle cx="790" cy="675" r="3" class="pad"/><text x="781" y="679" class="pin" text-anchor="end">P12</text><line x1="790" y1="655" x2="830" y2="655" class="w btn"/><circle cx="830" cy="655" r="3" class="sw btns"/><circle cx="866" cy="655" r="3" class="sw btns"/><line x1="832" y1="653" x2="866" y2="643" class="w btn"/><line x1="866" y1="655" x2="900" y2="655" class="w gnd"/><line x1="900" y1="655" x2="900" y2="662" class="w gnd"/><line x1="893" y1="662" x2="907" y2="662" class="w gnd"/><line x1="895.5" y1="665" x2="904.5" y2="665" class="w gnd"/><line x1="898" y1="668" x2="902" y2="668" class="w gnd"/><line x1="790" y1="675" x2="960" y2="675" class="w led"/><line x1="960" y1="668" x2="960" y2="682" class="w led"/><polygon points="960,675 974,668 974,682" class="ledf"/><line x1="974" y1="675" x2="1040" y2="675" class="w pwr"/><rect x="1040" y="670" width="34" height="10" class="res pwrr"/><text x="1057.0" y="665" class="sub" text-anchor="middle">R3</text><line x1="1074" y1="675" x2="1140" y2="675" class="w pwr"/><circle cx="1140" cy="675" r="3.2" class="dot pwr"/><text x="935" y="659" class="lbl">кн. 3</text><text x="1004" y="669" class="sub" text-anchor="middle">LED 3</text><circle cx="790" cy="695" r="3" class="pad"/><text x="781" y="699" class="pin" text-anchor="end">P03</text><circle cx="790" cy="715" r="3" class="pad"/><text x="781" y="719" class="pin" text-anchor="end">P13</text><line x1="790" y1="695" x2="830" y2="695" class="w btn"/><circle cx="830" cy="695" r="3" class="sw btns"/><circle cx="866" cy="695" r="3" class="sw btns"/><line x1="832" y1="693" x2="866" y2="683" class="w btn"/><line x1="866" y1="695" x2="900" y2="695" class="w gnd"/><line x1="900" y1="695" x2="900" y2="702" class="w gnd"/><line x1="893" y1="702" x2="907" y2="702" class="w gnd"/><line x1="895.5" y1="705" x2="904.5" y2="705" class="w gnd"/><line x1="898" y1="708" x2="902" y2="708" class="w gnd"/><line x1="790" y1="715" x2="960" y2="715" class="w led"/><line x1="960" y1="708" x2="960" y2="722" class="w led"/><polygon points="960,715 974,708 974,722" class="ledf"/><line x1="974" y1="715" x2="1040" y2="715" class="w pwr"/><rect x="1040" y="710" width="34" height="10" class="res pwrr"/><text x="1057.0" y="705" class="sub" text-anchor="middle">R4</text><line x1="1074" y1="715" x2="1140" y2="715" class="w pwr"/><circle cx="1140" cy="715" r="3.2" class="dot pwr"/><text x="935" y="699" class="lbl">кн. 4</text><text x="1004" y="709" class="sub" text-anchor="middle">LED 4</text><circle cx="790" cy="735" r="3" class="pad"/><text x="781" y="739" class="pin" text-anchor="end">P04</text><circle cx="790" cy="755" r="3" class="pad"/><text x="781" y="759" class="pin" text-anchor="end">P14</text><line x1="790" y1="735" x2="830" y2="735" class="w btn"/><circle cx="830" cy="735" r="3" class="sw btns"/><circle cx="866" cy="735" r="3" class="sw btns"/><line x1="832" y1="733" x2="866" y2="723" class="w btn"/><line x1="866" y1="735" x2="900" y2="735" class="w gnd"/><line x1="900" y1="735" x2="900" y2="742" class="w gnd"/><line x1="893" y1="742" x2="907" y2="742" class="w gnd"/><line x1="895.5" y1="745" x2="904.5" y2="745" class="w gnd"/><line x1="898" y1="748" x2="902" y2="748" class="w gnd"/><line x1="790" y1="755" x2="960" y2="755" class="w led"/><line x1="960" y1="748" x2="960" y2="762" class="w led"/><polygon points="960,755 974,748 974,762" class="ledf"/><line x1="974" y1="755" x2="1040" y2="755" class="w pwr"/><rect x="1040" y="750" width="34" height="10" class="res pwrr"/><text x="1057.0" y="745" class="sub" text-anchor="middle">R5</text><line x1="1074" y1="755" x2="1140" y2="755" class="w pwr"/><circle cx="1140" cy="755" r="3.2" class="dot pwr"/><text x="935" y="739" class="lbl">кн. 5</text><text x="1004" y="749" class="sub" text-anchor="middle">LED 5</text><circle cx="790" cy="775" r="3" class="pad"/><text x="781" y="779" class="pin" text-anchor="end">P05</text><circle cx="790" cy="795" r="3" class="pad"/><text x="781" y="799" class="pin" text-anchor="end">P15</text><line x1="790" y1="775" x2="830" y2="775" class="w btn"/><circle cx="830" cy="775" r="3" class="sw btns"/><circle cx="866" cy="775" r="3" class="sw btns"/><line x1="832" y1="773" x2="866" y2="763" class="w btn"/><line x1="866" y1="775" x2="900" y2="775" class="w gnd"/><line x1="900" y1="775" x2="900" y2="782" class="w gnd"/><line x1="893" y1="782" x2="907" y2="782" class="w gnd"/><line x1="895.5" y1="785" x2="904.5" y2="785" class="w gnd"/><line x1="898" y1="788" x2="902" y2="788" class="w gnd"/><line x1="790" y1="795" x2="960" y2="795" class="w led"/><line x1="960" y1="788" x2="960" y2="802" class="w led"/><polygon points="960,795 974,788 974,802" class="ledf"/><line x1="974" y1="795" x2="1040" y2="795" class="w pwr"/><rect x="1040" y="790" width="34" height="10" class="res pwrr"/><text x="1057.0" y="785" class="sub" text-anchor="middle">R6</text><line x1="1074" y1="795" x2="1140" y2="795" class="w pwr"/><circle cx="1140" cy="795" r="3.2" class="dot pwr"/><text x="935" y="779" class="lbl">кн. 6</text><text x="1004" y="789" class="sub" text-anchor="middle">LED 6</text><circle cx="790" cy="815" r="3" class="pad"/><text x="781" y="819" class="pin" text-anchor="end">P06</text><circle cx="790" cy="835" r="3" class="pad"/><text x="781" y="839" class="pin" text-anchor="end">P16</text><line x1="790" y1="815" x2="830" y2="815" class="w btn"/><circle cx="830" cy="815" r="3" class="sw btns"/><circle cx="866" cy="815" r="3" class="sw btns"/><line x1="832" y1="813" x2="866" y2="803" class="w btn"/><line x1="866" y1="815" x2="900" y2="815" class="w gnd"/><line x1="900" y1="815" x2="900" y2="822" class="w gnd"/><line x1="893" y1="822" x2="907" y2="822" class="w gnd"/><line x1="895.5" y1="825" x2="904.5" y2="825" class="w gnd"/><line x1="898" y1="828" x2="902" y2="828" class="w gnd"/><line x1="790" y1="835" x2="960" y2="835" class="w led"/><line x1="960" y1="828" x2="960" y2="842" class="w led"/><polygon points="960,835 974,828 974,842" class="ledf"/><line x1="974" y1="835" x2="1040" y2="835" class="w pwr"/><rect x="1040" y="830" width="34" height="10" class="res pwrr"/><text x="1057.0" y="825" class="sub" text-anchor="middle">R7</text><line x1="1074" y1="835" x2="1140" y2="835" class="w pwr"/><circle cx="1140" cy="835" r="3.2" class="dot pwr"/><text x="935" y="819" class="lbl">кн. 7</text><text x="1004" y="829" class="sub" text-anchor="middle">LED 7</text><circle cx="790" cy="855" r="3" class="pad"/><text x="781" y="859" class="pin" text-anchor="end">P07</text><circle cx="790" cy="875" r="3" class="pad"/><text x="781" y="879" class="pin" text-anchor="end">P17</text><line x1="790" y1="855" x2="830" y2="855" class="w btn"/><circle cx="830" cy="855" r="3" class="sw btns"/><circle cx="866" cy="855" r="3" class="sw btns"/><line x1="832" y1="853" x2="866" y2="843" class="w btn"/><line x1="866" y1="855" x2="900" y2="855" class="w gnd"/><line x1="900" y1="855" x2="900" y2="862" class="w gnd"/><line x1="893" y1="862" x2="907" y2="862" class="w gnd"/><line x1="895.5" y1="865" x2="904.5" y2="865" class="w gnd"/><line x1="898" y1="868" x2="902" y2="868" class="w gnd"/><line x1="790" y1="875" x2="960" y2="875" class="w led"/><line x1="960" y1="868" x2="960" y2="882" class="w led"/><polygon points="960,875 974,868 974,882" class="ledf"/><line x1="974" y1="875" x2="1040" y2="875" class="w pwr"/><rect x="1040" y="870" width="34" height="10" class="res pwrr"/><text x="1057.0" y="865" class="sub" text-anchor="middle">R8</text><line x1="1074" y1="875" x2="1140" y2="875" class="w pwr"/><circle cx="1140" cy="875" r="3.2" class="dot pwr"/><text x="935" y="859" class="lbl">кн. 8</text><text x="1004" y="869" class="sub" text-anchor="middle">LED 8</text><line x1="1140" y1="595" x2="1140" y2="583" class="w pwr"/><line x1="1132" y1="583" x2="1148" y2="583" class="w pwr"/><text x="1140" y="578" class="lbl pwrt" text-anchor="middle">3,3 В</text><line x1="1140" y1="595" x2="1140" y2="875" class="w pwr"/><text x="967" y="912" class="sub" text-anchor="middle">катод (короткая нога, срез) — к P1x</text></svg></div>
+    <ul class="legend">
+      <li><i style="background:var(--v33)"></i>питание (5 В от IP5306, 3,3 В от платы)</li>
+      <li><i style="background:var(--gnd)"></i>GND</li>
+      <li><i style="background:var(--sda)"></i>сигнал на GPIO</li>
+      <li><i style="background:var(--btn)"></i>кнопка</li>
+      <li><i style="background:var(--led)"></i>катод LED</li>
+    </ul>
+    <figcaption>Каждый знак «земли» — провод на общий GND платы, флаг «3,3 В» — на вывод 3V3 платы. Все входы платы с внутренней подтяжкой, внешние резисторы к кнопкам и энкодеру не нужны. Блок PCF8575 с кнопками дорожек необязателен: без него прошивка работает.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Таблица соединений</h2>
+  <div class="scroll"><table>
+    <tr><th>Откуда</th><th>Куда</th><th>Примечание</th></tr>
+    <tr><th colspan="3">Питание</th></tr>
+    <tr><td class="m">LiPo +  /  −</td><td class="m">IP5306 B+  /  B−</td><td>аккумулятор 103450 с платой защиты</td></tr>
+    <tr><td class="m">IP5306 VOUT</td><td class="m">тумблер → плата 5V</td><td>VOUT и GND — площадки выпаянного USB-A модуля</td></tr>
+    <tr><td class="m">IP5306 GND</td><td class="m">плата GND</td><td></td></tr>
+    <tr><th colspan="3">MIDI OUT</th></tr>
+    <tr><td class="m">плата IO10</td><td class="m">10 Ом → Tip</td><td>MIDI DIN pin 5</td></tr>
+    <tr><td class="m">плата 3V3</td><td class="m">33 Ом → Ring</td><td>MIDI DIN pin 4</td></tr>
+    <tr><td class="m">плата GND</td><td class="m">Sleeve</td><td>MIDI DIN pin 2, экран</td></tr>
+    <tr><th colspan="3">Энкодер EC11 и кнопки</th></tr>
+    <tr><td class="m">плата IO11  /  IO12</td><td class="m">энкодер A  /  B</td><td>крайние выводы тройки; крутится наоборот — поменять местами</td></tr>
+    <tr><td class="m">плата GND</td><td class="m">энкодер C</td><td>средний вывод тройки</td></tr>
+    <tr><td class="m">плата IO13</td><td class="m">кнопка вала</td><td>второй вывод кнопки вала — на GND</td></tr>
+    <tr><td class="m">плата IO14</td><td class="m">кнопка Play</td><td>второй вывод — на GND</td></tr>
+    <tr><td class="m">плата IO21</td><td class="m">кнопка Shift</td><td>второй вывод — на GND</td></tr>
+    <tr><th colspan="3">Наушники (необязательно)</th></tr>
+    <tr><td class="m">разъём SPK+</td><td class="m">150 Ом → Tip</td><td>левое ухо</td></tr>
+    <tr><td class="m">разъём SPK+</td><td class="m">150 Ом → Ring</td><td>правое ухо, свой резистор</td></tr>
+    <tr><td class="m">разъём SPK−</td><td class="m">Sleeve</td><td><b>не GND</b>: гнездо изолировано</td></tr>
+    <tr><td class="m">разъём SPK+  /  SPK−</td><td class="m">динамик + (через выключатель)  /  −</td><td>динамик 4–8 Ом, выключатель по желанию</td></tr>
+    <tr><th colspan="3">Кнопки дорожек (необязательно)</th></tr>
+    <tr><td class="m">плата 3V3</td><td class="m">PCF VCC + шина 3,3 В</td><td>шина питает все 8 резисторов LED</td></tr>
+    <tr><td class="m">плата GND</td><td class="m">PCF GND</td><td>A0, A1, A2 не паять: прошивка сама найдёт адрес 0x20–0x27</td></tr>
+    <tr><td class="m">Debug TXD0 (IO43)  /  RXD0 (IO44)</td><td class="m">PCF SDA  /  SCL</td><td>разъём Debug; 3V3 и GND можно взять с него же</td></tr>
+    <tr><td class="m">—</td><td class="m">PCF INT</td><td>не подключать: модуль опрашивается каждые 5 мс</td></tr>
+    <tr><td class="m">PCF P00 … P07</td><td class="m">кнопка 1 … 8</td><td>второй вывод кнопки — на GND</td></tr>
+    <tr><td class="m">PCF P10 … P17</td><td class="m">катод LED 1 … 8</td><td>анод — через свой резистор на 3,3 В</td></tr>
+  </table></div>
+  <p class="note">Желательно конденсаторы 10 нФ с выводов A и B энкодера на GND — меньше дребезга. Не обязательно: в прошивке есть фильтр.</p>
+</section>
+
+<section>
+  <h2>Питание: важное</h2>
+  <ul>
+    <li>Тумблер стоит после IP5306, поэтому аккумулятор заряжается через Type-C модуля и при выключенном трекере.</li>
+    <li><b>Прошивать только с выключенным тумблером.</b> Иначе на линии 5V встретятся два источника: USB компьютера и IP5306.</li>
+    <li>Аккумулятор не подключать напрямую ни к 5V, ни к 3V3 платы — только через IP5306.</li>
+    <li>Минусы аккумулятора, IP5306 и платы — общая земля; всё остальное на схеме садится на неё же.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>MIDI-гнездо</h2>
+  <ul>
+    <li>Распиновка TRS <b>тип A</b>: Tip = pin 5, Ring = pin 4. Для устройств с типом B (некоторые Arturia, Novation) — переходник A→B или поменять местами провода на Tip и Ring.</li>
+    <li>Для 5-контактного DIN: те же резисторы на pin 5 и pin 4, GND на pin 2.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Наушники</h2>
+  <figure>
+    <div class="scroll"><svg class="hp" viewBox="0 0 770 300" role="img" aria-label="Наушники: SPK+ через два резистора 150 Ом на Tip и Ring гнезда 3,5 мм, SPK− на Sleeve. Динамик подключён параллельно, плюс через выключатель. Sleeve не соединяется с GND.">
+<rect x="20" y="50" width="160" height="220" rx="6" class="blk"/><text x="100" y="74" class="bt" text-anchor="middle">WT32-SC01 Plus</text><text x="100" y="90" class="sub" text-anchor="middle">разъём SPK (NS4168)</text>
+<circle cx="180" cy="100" r="3" class="pad"/><text x="171" y="104" class="pin" text-anchor="end">SPK+</text>
+<circle cx="180" cy="240" r="3" class="pad"/><text x="171" y="244" class="pin" text-anchor="end">SPK−</text>
+<text x="100" y="186" class="sub" text-anchor="middle">мостовой выход:</text><text x="100" y="200" class="sub" text-anchor="middle">оба вывода под сигналом</text>
+<line x1="180" y1="100" x2="470" y2="100" class="w spkp"/><circle cx="300" cy="100" r="3.2" class="dot spkp"/>
+<line x1="300" y1="100" x2="300" y2="122" class="w spkp"/><circle cx="300" cy="125" r="3" class="sw spkps"/><circle cx="300" cy="155" r="3" class="sw spkps"/><line x1="302" y1="127" x2="314" y2="155" class="w spkp"/><text x="322" y="144" class="sub">выкл.</text>
+<line x1="300" y1="158" x2="300" y2="168" class="w spkp"/>
+<rect x="255" y="168" width="90" height="46" rx="6" class="blk"/><text x="300" y="188" class="lbl" text-anchor="middle">Динамик</text><text x="300" y="204" class="sub" text-anchor="middle">4–8 Ом</text>
+<line x1="300" y1="214" x2="300" y2="240" class="w spkn"/><circle cx="300" cy="240" r="3.2" class="dot spkn"/>
+<line x1="470" y1="100" x2="470" y2="200" class="w spkp"/><circle cx="470" cy="160" r="3.2" class="dot spkp"/>
+<line x1="470" y1="160" x2="500" y2="160" class="w spkp"/><rect x="500" y="155" width="34" height="10" class="res spkp"/><text x="517" y="150" class="sub" text-anchor="middle">150 Ом</text><line x1="534" y1="160" x2="600" y2="160" class="w spkp"/>
+<line x1="470" y1="200" x2="500" y2="200" class="w spkp"/><rect x="500" y="195" width="34" height="10" class="res spkp"/><text x="517" y="190" class="sub" text-anchor="middle">150 Ом</text><line x1="534" y1="200" x2="600" y2="200" class="w spkp"/>
+<line x1="180" y1="240" x2="600" y2="240" class="w spkn"/>
+<rect x="600" y="104" width="150" height="160" rx="6" class="blk"/><text x="612" y="126" class="bt">Наушники</text><text x="612" y="142" class="sub">TRS 3,5 мм, изолированное</text>
+<circle cx="600" cy="160" r="3" class="pad"/><text x="609" y="164" class="pin">Tip — L</text>
+<circle cx="600" cy="200" r="3" class="pad"/><text x="609" y="204" class="pin">Ring — R</text>
+<circle cx="600" cy="240" r="3" class="pad"/><text x="609" y="244" class="pin">Sleeve</text>
+<text x="230" y="92" class="lbl spkpt">SPK+</text><text x="390" y="260" class="lbl spknt" text-anchor="middle">SPK− — не GND, не соединять с землёй</text>
+</svg></div>
+    <ul class="legend">
+      <li><i style="background:var(--spkp)"></i>SPK+</li>
+      <li><i style="background:var(--spkn)"></i>SPK− (не земля)</li>
+    </ul>
+    <figcaption>Встроенный усилитель NS4168 выведен на разъём SPK платы, пайка к GPIO не нужна. Сигнал моно, на оба уха одинаковый. Выключатель в проводе динамика необязателен: без него динамик и наушники звучат вместе.</figcaption>
+  </figure>
+  <p class="note"><b>Выход SPK мостовой: ни один из двух выводов не земля.</b> Sleeve гнезда — на SPK−, никогда на GND платы. Гнездо не должно касаться GND, корпуса MIDI-гнезда и USB. В это гнездо — только наушники: кабель в микшер, звуковую карту или активные колонки соединит SPK− с их землёй и замкнёт выход усилителя.</p>
+  <ul>
+    <li>Резисторы 100–220 Ом, 0,25 Вт, по одному на Tip и Ring. Меньше 100 Ом — громко и большой ток через наушники, больше — тише. 150 Ом — середина.</li>
+    <li>Гнездо — в пластиковом корпусе или в пластиковой стенке: печатный корпус подходит.</li>
+    <li>Встроенный размыкающий контакт гнезда для отключения динамика не подходит: у обычных гнёзд он соединён с Tip, а Tip идёт через резистор. Нужен отдельный выключатель.</li>
+    <li>Первое включение — с громкостью PROJ → Volume на минимуме и не надевая наушники.</li>
+  </ul>
+</section>
+
+<section class="two">
+  <div>
+    <h2>Какая кнопка дорожки какая</h2>
+    <figure>
+      <svg viewBox="0 0 540 262" role="img" aria-label="Расположение кнопок: под экраном Shift, Play, энкодер; ниже кнопки 1–4, у переднего края 5–8. Вид снизу зеркален: кнопка 1 справа."><text x="130" y="22" class="bt" text-anchor="middle">Вид сверху</text><rect x="20" y="34" width="220" height="26" rx="3" class="scr"/><text x="130" y="51" class="sub" text-anchor="middle">экран</text><rect x="28" y="74" width="46" height="46" rx="5" class="key"/><text x="51" y="102" class="kl" text-anchor="middle">Shift</text><rect x="81" y="74" width="46" height="46" rx="5" class="key"/><text x="104" y="102" class="kl" text-anchor="middle">Play</text><rect x="187" y="74" width="46" height="46" rx="5" class="key"/><text x="210" y="102" class="kl" text-anchor="middle">Энк.</text><rect x="28" y="127" width="46" height="46" rx="5" class="key trk"/><text x="51" y="155" class="kn" text-anchor="middle">1</text><rect x="81" y="127" width="46" height="46" rx="5" class="key trk"/><text x="104" y="155" class="kn" text-anchor="middle">2</text><rect x="134" y="127" width="46" height="46" rx="5" class="key trk"/><text x="157" y="155" class="kn" text-anchor="middle">3</text><rect x="187" y="127" width="46" height="46" rx="5" class="key trk"/><text x="210" y="155" class="kn" text-anchor="middle">4</text><rect x="28" y="180" width="46" height="46" rx="5" class="key trk"/><text x="51" y="208" class="kn" text-anchor="middle">5</text><rect x="81" y="180" width="46" height="46" rx="5" class="key trk"/><text x="104" y="208" class="kn" text-anchor="middle">6</text><rect x="134" y="180" width="46" height="46" rx="5" class="key trk"/><text x="157" y="208" class="kn" text-anchor="middle">7</text><rect x="187" y="180" width="46" height="46" rx="5" class="key trk"/><text x="210" y="208" class="kn" text-anchor="middle">8</text><text x="130" y="250" class="sub" text-anchor="middle">передний край</text><text x="410" y="22" class="bt" text-anchor="middle">Вид снизу, со стороны пайки</text><rect x="300" y="34" width="220" height="26" rx="3" class="scr"/><text x="410" y="51" class="sub" text-anchor="middle">экран</text><rect x="308" y="74" width="46" height="46" rx="5" class="key"/><text x="331" y="102" class="kl" text-anchor="middle">Энк.</text><rect x="414" y="74" width="46" height="46" rx="5" class="key"/><text x="437" y="102" class="kl" text-anchor="middle">Play</text><rect x="467" y="74" width="46" height="46" rx="5" class="key"/><text x="490" y="102" class="kl" text-anchor="middle">Shift</text><rect x="308" y="127" width="46" height="46" rx="5" class="key trk"/><text x="331" y="155" class="kn" text-anchor="middle">4</text><rect x="361" y="127" width="46" height="46" rx="5" class="key trk"/><text x="384" y="155" class="kn" text-anchor="middle">3</text><rect x="414" y="127" width="46" height="46" rx="5" class="key trk"/><text x="437" y="155" class="kn" text-anchor="middle">2</text><rect x="467" y="127" width="46" height="46" rx="5" class="key trk"/><text x="490" y="155" class="kn" text-anchor="middle">1</text><rect x="308" y="180" width="46" height="46" rx="5" class="key trk"/><text x="331" y="208" class="kn" text-anchor="middle">8</text><rect x="361" y="180" width="46" height="46" rx="5" class="key trk"/><text x="384" y="208" class="kn" text-anchor="middle">7</text><rect x="414" y="180" width="46" height="46" rx="5" class="key trk"/><text x="437" y="208" class="kn" text-anchor="middle">6</text><rect x="467" y="180" width="46" height="46" rx="5" class="key trk"/><text x="490" y="208" class="kn" text-anchor="middle">5</text><text x="410" y="250" class="sub" text-anchor="middle">передний край</text></svg>
+      <figcaption>Номер кнопки = номер дорожки = номер вывода +1 (кнопка 1 — P00 и P10). При пайке крышка лежит лицом вниз, поэтому слева направо порядок обратный: кнопка 1 оказывается справа.</figcaption>
+    </figure>
+  </div>
+  <div>
+    <h2>Полярность светодиода</h2>
+    <figure>
+      <svg viewBox="0 0 420 200" role="img" aria-label="Светодиод: длинная ножка — анод, к резистору и 3,3 В; короткая ножка со стороны среза — катод, к выводу P1x."><path d="M150,30 a30,30 0 0 1 60,0 v62 h-60 z" class="ledbody"/><line x1="150" y1="92" x2="150" y2="30" class="w ledflat"/><rect x="143" y="92" width="74" height="8" class="ledrim"/><line x1="165" y1="100" x2="165" y2="160" class="leg"/><line x1="195" y1="100" x2="195" y2="185" class="leg"/><text x="138" y="52" class="lbl" text-anchor="end">срез на ободке</text><text x="160" y="152" class="lbl" text-anchor="end">катод −, короткая</text><text x="160" y="168" class="sub" text-anchor="end">→ P1x</text><text x="205" y="170" class="lbl">анод +, длинная</text><text x="205" y="186" class="sub">→ резистор → 3,3 В</text></svg>
+      <figcaption>Светодиод вставляется в окно корпуса свича MX, ножки проходят насквозь. Перевёрнутый светодиод не сгорит, просто не будет светить.</figcaption>
+    </figure>
+  </div>
+</section>
+<section>
+  <h2>Резисторы светодиодов</h2>
+  <div class="scroll"><table>
+    <tr><th>Цвет светодиода</th><th>Падение</th><th>Резистор</th><th>Ток</th></tr>
+    <tr><td>красный, жёлтый, оранжевый</td><td class="m">≈ 2,0 В</td><td class="m">330 Ом</td><td class="m">≈ 4 мА</td></tr>
+    <tr><td>зелёный (жёлто-зелёный)</td><td class="m">≈ 2,1 В</td><td class="m">330 Ом</td><td class="m">≈ 3,5 мА</td></tr>
+    <tr><td>белый, синий, ярко-зелёный</td><td class="m">≈ 2,9–3,1 В</td><td class="m">47–68 Ом</td><td class="m">≈ 3–8 мА</td></tr>
+  </table></div>
+  <p class="note">С белыми и синими при 3,3 В запас по напряжению всего 0,2–0,4 В, и яркость заметно гуляет от экземпляра к экземпляру. Красные или жёлтые с 330 Ом надёжнее. Не меньше 47 Ом: PCF8575 держит до 25 мА на вывод, но 8 светодиодов вместе не должны брать больше ~80 мА.</p>
+</section>
+
+<section>
+  <h2>Перед включением</h2>
+  <ol>
+    <li>Прозвонить: 5V и GND платы не закорочены; тумблер в положении «выкл.» размыкает VOUT.</li>
+    <li>Если стоит гнездо наушников: Sleeve не звонится с GND платы, Tip и Ring звонятся с SPK+ через 150 Ом.</li>
+    <li>A0, A1, A2 на модуле можно не трогать. Если модуль то находится, то нет (адрес «плавает»), замкнуть все три площадки на GND.</li>
+    <li>Посмотреть, есть ли на модуле резисторы подтяжки SDA и SCL (обычно 4,7–10 кОм к VCC). Если нет — поставить 4,7 кОм от каждой линии на 3,3 В.</li>
+    <li>Питать модуль только от 3,3 В, не от 5 В: иначе на GPIO платы придёт 5 В.</li>
+    <li>Прозвонить, что TXD0 и RXD0 не закорочены между собой и на GND. GPIO 1, 2, 42 не трогать: они заняты встроенным RS485.</li>
+    <li>После прошивки открыть монитор порта: строка <span class="m">trackio: PCF8575 not found</span> значит, что модуль не отвечает — проверить SDA/SCL и питание; <span class="m">trackio: PCF8575 at 0x..</span> — найден.</li>
+  </ol>
+</section>
+</main>
+</body>
+</html>

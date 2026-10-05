@@ -63,6 +63,33 @@ void test_names() {
   TEST_ASSERT_EQUAL_STRING("tri", chordName(kChordTriad));
 }
 
+void test_degree_note() {
+  const int cmaj[8] = {60, 62, 64, 65, 67, 69, 71, 72};
+  for (int b = 0; b < 8; ++b) TEST_ASSERT_EQUAL(cmaj[b], degreeNote(b, 0, ScaleType::Major, 60));
+  // Short scales continue into the next octave: C minor pentatonic C Eb F G Bb | C Eb F
+  TEST_ASSERT_EQUAL(70, degreeNote(4, 0, ScaleType::PentatonicMinor, 60));
+  TEST_ASSERT_EQUAL(72, degreeNote(5, 0, ScaleType::PentatonicMinor, 60));
+  TEST_ASSERT_EQUAL(75, degreeNote(6, 0, ScaleType::PentatonicMinor, 60));
+  TEST_ASSERT_EQUAL(77, degreeNote(7, 0, ScaleType::PentatonicMinor, 60));
+  // Blues (6 notes): button 7 = II + octave
+  TEST_ASSERT_EQUAL(75, degreeNote(7, 0, ScaleType::Blues, 60));
+  // Root shifts the tonic; Chromatic plays major degrees
+  TEST_ASSERT_EQUAL(62, degreeNote(0, 2, ScaleType::Major, 60));
+  TEST_ASSERT_EQUAL(66, degreeNote(2, 2, ScaleType::Major, 60));
+  TEST_ASSERT_EQUAL(65, degreeNote(3, 0, ScaleType::Chromatic, 60));
+  // Above 127: same degree an octave (or more) lower
+  TEST_ASSERT_EQUAL(120, degreeNote(7, 0, ScaleType::Major, 120));
+  TEST_ASSERT_EQUAL(127, degreeNote(4, 0, ScaleType::Major, 120));
+  TEST_ASSERT_EQUAL(119, degreeNote(6, 0, ScaleType::Major, 120));
+}
+
+void test_scale_degrees() {
+  TEST_ASSERT_EQUAL(12, scaleDegrees(ScaleType::Chromatic));
+  TEST_ASSERT_EQUAL(7, scaleDegrees(ScaleType::Major));
+  TEST_ASSERT_EQUAL(5, scaleDegrees(ScaleType::PentatonicMinor));
+  TEST_ASSERT_EQUAL(6, scaleDegrees(ScaleType::Blues));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_masks);
@@ -70,5 +97,7 @@ int main() {
   RUN_TEST(test_move_degrees);
   RUN_TEST(test_chords);
   RUN_TEST(test_names);
+  RUN_TEST(test_degree_note);
+  RUN_TEST(test_scale_degrees);
   return UNITY_END();
 }

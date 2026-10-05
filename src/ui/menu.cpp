@@ -38,8 +38,7 @@ void Menu::move(int delta) {
   for (int n = delta > 0 ? delta : -delta; n > 0; --n) {
     int i = sel_;
     for (int k = 0; k < count_; ++k) {
-      i += dir;
-      if (i < 0 || i >= count_) break;  // no wrap
+      i = (i + dir + count_) % count_;
       if (items_[i].enabled) {
         sel_ = i;
         break;

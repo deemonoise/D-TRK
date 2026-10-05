@@ -21,6 +21,11 @@ bool stopEngine();
 // Works while playing. On success live.name = name.
 Result save(mt::Project& live, const char* name);
 
+// Wi-Fi upload: checks tmpPath as a project (CRC, version) and moves it to /projects/fileName
+// (<name>.mtp or <name>.bak). Replacing a .mtp rotates the old one to .bak, like save().
+// On failure tmpPath is left for the caller to remove.
+Result installProject(const char* tmpPath, const char* fileName);
+
 // Reads into a temporary Project; on success stops the engine and replaces live.
 // live.name = name (must be validName). EngineBusy: the engine did not stop, live untouched.
 // The caller clears undo and the dirty flag.

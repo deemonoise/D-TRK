@@ -28,6 +28,17 @@ constexpr Info kInfo[] = {
     {"CCB", 0, 127, 64, false},  // CCB
     {"PBN", -64, 63, 0, true},   // PBN
     {"PGM", 0, 127, 0, false},   // PGM
+    {"SLD", 1, 255, 16, false},  // SLD: slide time x4 ms
+    {"VIB", 0, 255, 0x44, false},  // VIB: xy = speed, depth (hex)
+    {"ARP", 0, 255, 0x37, false},  // ARP: xy = +x, +y semitones (hex)
+    {"VSL", -64, 63, -8, true},  // VSL: volume change per step
+    {"OFS", 0, 255, 0, false},   // OFS: sample start, /256
+    {"CUT", 1, 96, 6, false},    // CUT: ticks
+    {"DEC", 0, 127, 64, false},  // DCY..CON: FM macro locks
+    {"COL", 0, 127, 64, false},
+    {"SHP", 0, 127, 64, false},
+    {"SWP", 0, 127, 64, false},
+    {"CON", 0, 127, 64, false},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -69,7 +80,10 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::TIE: snprintf(out, 5, " --"); return;
     case Fx::GAT: snprintf(out, 5, "%3u", gatePercent(v)); return;
     case Fx::NDG:
-    case Fx::PBN: snprintf(out, 5, "%+3d", fxSigned(v)); return;
+    case Fx::PBN:
+    case Fx::VSL: snprintf(out, 5, "%+3d", fxSigned(v)); return;
+    case Fx::VIB:
+    case Fx::ARP: snprintf(out, 5, " %02X", v); return;
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
     case Fx::CND:
       if (v == 0) snprintf(out, 5, "FST");
@@ -91,6 +105,8 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   cur = cur < in.min ? in.min : (cur > in.max ? in.max : cur);
   return static_cast<uint8_t>(cur);
 }
+
+bool fxSynthOnly(Fx f) { return f >= Fx::SLD && f < Fx::Count; }
 
 Fx fxNextCmd(Fx f, int delta) {
   const int n = static_cast<int>(Fx::Count);

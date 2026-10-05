@@ -1,10 +1,13 @@
 #include <Arduino.h>
 #include <new>
+#include "audio/audio.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
+#include "hw/pins.h"
 #include "hw/sdcard.h"
+#include "hw/trackio.h"
 #include "model.h"
 #include "storage/storage.h"
 #include "ui/app.h"
@@ -38,10 +41,13 @@ void setup() {
 
   lcd.init();
   lcd.setRotation(1);
-  lcd.setBrightness(200);
+  pinMode(pins::kLcdBacklight, OUTPUT);
+  digitalWrite(pins::kLcdBacklight, HIGH);
 
   hw::inputBegin();
+  hw::trackioBegin();
   engine::begin(project);
+  audio::begin(project);
   app.begin(&lcd, project);
   engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));  // song position display
   if (fromBak) app.toast("LOADED BACKUP");
@@ -56,5 +62,6 @@ void loop() {
   hw::InputEvent ev;
   while (hw::inputPoll(ev, 0)) app.onInput(ev);
   app.tick();
+  audio::pollLog();
   vTaskDelay(1);
 }

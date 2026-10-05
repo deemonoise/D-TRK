@@ -10,7 +10,7 @@ namespace ui {
 
 class App;
 
-// FILE -> Import MIDI: reads /midi/<name>.mid, then a mapping list (source -> track, transpose,
+// FILE -> Import MIDI: reads <dir>/<name> (.mid / .midi; dir is /midi or a subfolder), then a mapping list (source -> track, transpose,
 // globals) with IMPORT / CANCEL. Fills the work area. All buffers live in PSRAM while open and
 // are freed by close() (CANCEL, IMPORT done, EncLong, leaving the tab).
 class ImportDialog {
@@ -21,7 +21,7 @@ class ImportDialog {
   explicit ImportDialog(App& app) : app_(app) {}
   ~ImportDialog() { close(); }
   // Reads and parses the file; false (with a toast) when nothing can be imported.
-  bool open(const char* name);
+  bool open(const char* dir, const char* name);
   void close();
   bool isOpen() const { return importRow_ >= 0; }  // rows built (not while reading)
   void onInput(const hw::InputEvent& ev);
@@ -35,7 +35,7 @@ class ImportDialog {
   enum MenuId : int { kCancel, kDoImport };
   struct State;
 
-  bool readAndParse(const char* name);
+  bool readAndParse(const char* dir, const char* name);
   void buildRows();
   bool isAction(int row) const { return row == importRow_ || row == cancelRow_; }
   void action(int row);

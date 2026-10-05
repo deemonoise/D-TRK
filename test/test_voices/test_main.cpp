@@ -31,9 +31,25 @@ void test_release_all() {
   TEST_ASSERT_FALSE(v.active(0, 60));
 }
 
+void test_eight_channel_table() {
+  VoicesN<8> w;
+  TEST_ASSERT_TRUE(sizeof(w) < sizeof(Voices));
+  TEST_ASSERT_FALSE(w.noteOn(7, 60, 1));
+  TEST_ASSERT_TRUE(w.active(7, 60));
+  int n = 0;
+  w.releaseAll([&](uint8_t ch, uint8_t note) {
+    ++n;
+    TEST_ASSERT_EQUAL(7, ch);
+    TEST_ASSERT_EQUAL(60, note);
+  });
+  TEST_ASSERT_EQUAL(1, n);
+  TEST_ASSERT_FALSE(w.noteOff(7, 60, 1));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_retrigger_and_stale_off);
   RUN_TEST(test_release_all);
+  RUN_TEST(test_eight_channel_table);
   return UNITY_END();
 }

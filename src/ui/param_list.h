@@ -11,6 +11,8 @@ struct Param {
   const char* label;
   std::function<void(char* out, int n)> format;
   std::function<void(int delta)> edit;  // called under engine::lockProject()
+  std::function<bool()> dim;            // true: drawn grey (does not apply now); empty = never
+  std::function<bool()> warn;           // true: value drawn red (e.g. missing sample); empty = never
 };
 
 // Rows of "label  value". Turn = select, click = edit (value red), turn while editing = edit(delta),

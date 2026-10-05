@@ -20,9 +20,13 @@ class Screen {
   virtual void onProjectReplaced() {}
   // EncTurn / EncClick / EncLong; PlayPress and Shift are handled by App.
   virtual void onInput(const hw::InputEvent& ev) = 0;
+  // Play button; true = handled here (the transport stays as it is).
+  virtual bool onPlay() { return false; }
   // Absolute screen coordinates; only events inside the work area (or Drag) arrive here.
   virtual void onTouch(const TouchEvent& ev) = 0;
   virtual void draw(LGFX_Sprite& s, int y0, int h) = 0;
+  // Every UI tick for the active screen (background work such as the Wi-Fi server).
+  virtual void poll() {}
   // Extra redraw request on top of App's own (status changes already redraw).
   virtual bool wantsRedraw(const engine::Status&) { return false; }
 };

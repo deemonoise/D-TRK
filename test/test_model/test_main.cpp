@@ -71,6 +71,66 @@ void test_track_audible_mute_solo() {
   delete p;
 }
 
+void test_reset_audio_defaults() {
+  Project* p = new Project();
+  TEST_ASSERT_EQUAL(static_cast<int>(TrackOut::Midi), static_cast<int>(p->tracks[3].out));
+  TEST_ASSERT_EQUAL(3, p->tracks[3].instr);  // track N defaults to instrument N
+  TEST_ASSERT_EQUAL(100, p->tracks[3].vol);
+  TEST_ASSERT_EQUAL(40, p->masterVol);
+  TEST_ASSERT_TRUE(p->preview);
+  TEST_ASSERT_EQUAL_STRING("INS1", p->instruments[0].name);
+  TEST_ASSERT_EQUAL_STRING("INS16", p->instruments[15].name);
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Chip), static_cast<int>(p->instruments[0].type));
+  TEST_ASSERT_FALSE(p->trackInternal(3));
+  p->tracks[3].out = TrackOut::Int;
+  TEST_ASSERT_TRUE(p->trackInternal(3));
+  p->instruments[2].vol = 5;
+  p->masterVol = 0;
+  p->reset();
+  TEST_ASSERT_EQUAL(100, p->instruments[2].vol);
+  TEST_ASSERT_EQUAL(40, p->masterVol);
+  TEST_ASSERT_FALSE(p->trackInternal(3));
+  delete p;
+}
+
+void test_env_time_curve() {
+  TEST_ASSERT_EQUAL(0, envTimeMs(0));
+  TEST_ASSERT_EQUAL(1, envTimeMs(1));
+  TEST_ASSERT_EQUAL(10000, envTimeMs(127));
+  for (int v = 1; v < 127; ++v) TEST_ASSERT_TRUE(envTimeMs(v) <= envTimeMs(v + 1));
+}
+
+void test_fm_decay_ms_range() {
+  TEST_ASSERT_EQUAL(5, fmDecayMs(0));
+  TEST_ASSERT_EQUAL(4000, fmDecayMs(127));
+  for (int v = 1; v < 128; ++v) TEST_ASSERT_TRUE(fmDecayMs(v) >= fmDecayMs(v - 1));
+}
+
+void test_lfo_hz_range() {
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.05f, lfoHz(0));
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, 30.f, lfoHz(127));
+}
+
+void test_fm_gated_machines() {
+  TEST_ASSERT_TRUE(fmGated(static_cast<uint8_t>(FmMachine::Tone)));
+  TEST_ASSERT_TRUE(fmGated(static_cast<uint8_t>(FmMachine::Chord)));
+  TEST_ASSERT_FALSE(fmGated(static_cast<uint8_t>(FmMachine::Kick)));
+  TEST_ASSERT_FALSE(fmGated(static_cast<uint8_t>(FmMachine::Hat)));
+  TEST_ASSERT_FALSE(fmGated(200));  // out of range = Kick
+}
+
+void test_fm_set_machine_defaults() {
+  Instrument m;
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Kick), m.machine);
+  m.macro[kMacCol] = 1;
+  fmSetMachine(m, static_cast<uint8_t>(FmMachine::Chord));
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Chord), m.machine);
+  TEST_ASSERT_EQUAL(0, m.macro[kMacShp]);  // chord type maj
+  TEST_ASSERT_TRUE(m.macro[kMacCol] != 1);
+  fmSetMachine(m, 99);
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Count) - 1, m.machine);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_step_is_six_bytes_and_empty_by_default);
@@ -80,5 +140,11 @@ int main() {
   RUN_TEST(test_project_reset_defaults);
   RUN_TEST(test_project_reset_clears_song_mode);
   RUN_TEST(test_track_audible_mute_solo);
+  RUN_TEST(test_reset_audio_defaults);
+  RUN_TEST(test_env_time_curve);
+  RUN_TEST(test_fm_decay_ms_range);
+  RUN_TEST(test_lfo_hz_range);
+  RUN_TEST(test_fm_gated_machines);
+  RUN_TEST(test_fm_set_machine_defaults);
   return UNITY_END();
 }

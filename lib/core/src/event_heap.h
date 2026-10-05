@@ -3,6 +3,8 @@
 
 namespace mt {
 
+constexpr uint8_t kNoTrack = 0xFF;
+
 struct SchedEvent {
   uint64_t t;    // absolute time, us
   uint32_t id;   // pairs a NoteOn with its NoteOff; 0 for other messages
@@ -10,6 +12,7 @@ struct SchedEvent {
   uint8_t b[3];
   uint8_t len;
   bool cont;     // NoteOn that continues a held note: silent if the note still owns its voice
+  uint8_t track; // source track (routing, activity LEDs), kNoTrack for clock / transport
   uint16_t seq;  // push order, set by EventHeap (wraps; fits the padding)
   bool isNoteOff() const { return (b[0] & 0xF0) == 0x80; }
   // Order at the same time: NoteOff, then other messages (CC, program, bend), then NoteOn.

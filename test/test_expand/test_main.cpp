@@ -310,6 +310,48 @@ void test_chord_ignores_tie() {
   for (int i = 0; i < 3; ++i) TEST_ASSERT_TRUE(out.ev[i * 2 + 1].kind == EvKind::NoteOff);
 }
 
+void test_synth_fx_on_int_track() {
+  track.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::VIB, 0x44};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(3, out.count);
+  TEST_ASSERT_TRUE(out.ev[0].kind == EvKind::SynthFx);
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::VIB), out.ev[0].note);
+  TEST_ASSERT_EQUAL(0x44, out.ev[0].vel);
+  TEST_ASSERT_EQUAL(0, out.ev[0].offsetUs);
+  TEST_ASSERT_TRUE(out.ev[1].kind == EvKind::NoteOn);
+}
+
+void test_synth_fx_ignored_on_midi_track() {
+  Step s = note(60);
+  s.fx[0] = {Fx::VIB, 0x44};
+  s.fx[1] = {Fx::CUT, 3};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(2, out.count);
+  TEST_ASSERT_TRUE(out.ev[0].kind == EvKind::NoteOn);
+  Step e;
+  e.fx[0] = {Fx::SLD, 10};
+  TEST_ASSERT_FALSE(expandStep(e, track, ctx, rng, out));  // nothing plays
+  track.out = TrackOut::Int;
+  TEST_ASSERT_TRUE(expandStep(e, track, ctx, rng, out));  // slide without a note
+  TEST_ASSERT_EQUAL(1, out.count);
+  TEST_ASSERT_TRUE(out.ev[0].kind == EvKind::SynthFx);
+}
+
+void test_fm_lock_fx_on_int_track() {
+  track.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::COL, 99};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_TRUE(out.ev[0].kind == EvKind::SynthFx);
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::COL), out.ev[0].note);
+  TEST_ASSERT_EQUAL(99, out.ev[0].vel);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_empty_and_off_produce_nothing);
@@ -338,5 +380,8 @@ int main() {
   RUN_TEST(test_velocity_random);
   RUN_TEST(test_chord_ignores_tie);
   RUN_TEST(test_default_gate_uses_gat_encoding);
+  RUN_TEST(test_synth_fx_on_int_track);
+  RUN_TEST(test_synth_fx_ignored_on_midi_track);
+  RUN_TEST(test_fm_lock_fx_on_int_track);
   return UNITY_END();
 }

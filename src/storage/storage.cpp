@@ -5,6 +5,7 @@
 #include <string.h>
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
+#include "file_rules.h"
 #include "hw/sdcard.h"
 #include "project_io.h"
 
@@ -36,10 +37,11 @@ void freeProject(mt::Project* p) {
 // If one of these fires, a field was added/removed: update snapshot() below and
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
 static_assert(sizeof(mt::Step) == 6, "Step layout changed: update snapshot() and project_io");
-static_assert(sizeof(mt::TrackCfg) == 17, "TrackCfg changed: update snapshot() and project_io");
+static_assert(sizeof(mt::TrackCfg) == 20, "TrackCfg changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Pattern) == 3 + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 98576, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Instrument) == 62, "Instrument changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 99594, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -52,6 +54,9 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.chain, live.chain, sizeof(out.chain));
   out.chainLen = live.chainLen;
   out.songMode = live.songMode;
+  memcpy(out.instruments, live.instruments, sizeof(out.instruments));
+  out.masterVol = live.masterVol;
+  out.preview = live.preview;
   engine::unlockProject();
   for (int i = 0; i < mt::kPatterns; ++i) {
     engine::lockProject();
@@ -148,10 +153,7 @@ bool sanitize(const char* in, char out[17]) {
   return n > 0;
 }
 
-bool validName(const char* name) {
-  char nm[17];
-  return strlen(name) <= 16 && sanitize(name, nm) && strcmp(nm, name) == 0;
-}
+bool validName(const char* name) { return mt::projectBaseValid(name); }
 
 bool exists(const char* name, bool bak) {
   if (!hw::sdReady()) return false;
@@ -194,6 +196,39 @@ Result save(mt::Project& live, const char* name) {
   engine::lockProject();
   memcpy(live.name, nm, sizeof(nm));
   engine::unlockProject();
+  return Result::Ok;
+}
+
+Result installProject(const char* tmpPath, const char* fileName) {
+  if (!hw::sdReady()) return Result::NoSd;
+  if (!mt::webFileAllowed(mt::WebDir::Projects, fileName)) return Result::BadFile;
+  mt::Project* chk = allocProject();
+  if (!chk) return Result::NoMemory;
+  const Result r = readFile(tmpPath, *chk);
+  freeProject(chk);
+  if (r != Result::Ok) return r;
+
+  char dst[48];
+  snprintf(dst, sizeof(dst), "%s%s", kDir, fileName);
+  fs::FS& fs = hw::sdFs();
+  const size_t n = strlen(fileName);
+  const bool mtp = n > 4 && strcmp(fileName + n - 4, ".mtp") == 0;
+  char bak[48] = {0};
+  bool rotated = false;
+  if (fs.exists(dst)) {
+    if (mtp) {
+      snprintf(bak, sizeof(bak), "%s%.*s.bak", kDir, static_cast<int>(n - 4), fileName);
+      if (fs.exists(bak)) fs.remove(bak);
+      if (!fs.rename(dst, bak)) return Result::WriteFail;
+      rotated = true;
+    } else if (!fs.remove(dst)) {
+      return Result::WriteFail;
+    }
+  }
+  if (!fs.rename(tmpPath, dst)) {
+    if (rotated) fs.rename(bak, dst);
+    return Result::WriteFail;
+  }
   return Result::Ok;
 }
 

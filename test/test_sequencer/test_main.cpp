@@ -13,13 +13,40 @@ struct Rec {
   uint8_t len;
 };
 
+struct SynRec {
+  uint64_t t;   // scheduled time passed to synth()
+  uint64_t at;  // when it was sent (sink->now)
+  uint8_t track;
+  uint8_t b[3];
+  uint8_t len;
+};
+
 struct FakeSink : MidiSink {
   std::vector<Rec> log;
+  std::vector<SynRec> syn;  // messages for INT tracks
   uint64_t now = 0;
   void send(const uint8_t* b, uint8_t len) override {
     Rec r{now, {0, 0, 0}, len};
     memcpy(r.b, b, len);
     log.push_back(r);
+  }
+  void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) override {
+    SynRec r{t, now, track, {0, 0, 0}, len};
+    memcpy(r.b, b, len);
+    syn.push_back(r);
+  }
+  // Synth messages whose high nibble (or whole status for 0xF_) matches.
+  std::vector<SynRec> synKind(uint8_t kind) const {
+    std::vector<SynRec> out;
+    for (const auto& r : syn)
+      if ((kind >= 0xF0 ? r.b[0] : (r.b[0] & 0xF0)) == kind) out.push_back(r);
+    return out;
+  }
+  size_t sendNotes() const {
+    size_t n = 0;
+    for (const auto& r : log)
+      if ((r.b[0] & 0xF0) == 0x80 || (r.b[0] & 0xF0) == 0x90) ++n;
+    return n;
   }
   std::vector<uint64_t> times(uint8_t status, int note = -1) const {
     std::vector<uint64_t> out;
@@ -166,6 +193,17 @@ void test_muted_track_is_silent() {
   seq->start(0, *sink);
   run(0, 200000);
   TEST_ASSERT_EQUAL(0, sink->times(0x90).size());
+}
+
+void test_activity_marks_sounding_tracks() {
+  p->patterns[0].steps[2][0].note = 60;
+  p->patterns[0].steps[5][0].note = 62;
+  p->tracks[5].mute = true;
+  seq->start(0, *sink);
+  TEST_ASSERT_EQUAL_HEX8(0, seq->takeActivity());
+  run(0, 1000);
+  TEST_ASSERT_EQUAL_HEX8(1 << 2, seq->takeActivity());
+  TEST_ASSERT_EQUAL_HEX8(0, seq->takeActivity());  // cleared by take
 }
 
 void test_tie_holds_until_next_note_with_overlap() {
@@ -777,14 +815,14 @@ void test_stall_keeps_controls_of_skipped_steps() {
 void test_send_program_now() {
   p->tracks[2].channel = 5;
   p->tracks[2].program = 10;
-  seq->sendProgram(2, *sink);
+  seq->sendProgram(0, 2, *sink);
   TEST_ASSERT_EQUAL(1, sink->log.size());
   TEST_ASSERT_EQUAL(2, sink->log[0].len);
   TEST_ASSERT_EQUAL_HEX8(0xC5, sink->log[0].b[0]);
   TEST_ASSERT_EQUAL(10, sink->log[0].b[1]);
   p->tracks[2].program = kNoProgram;
-  seq->sendProgram(2, *sink);
-  seq->sendProgram(kTracks, *sink);
+  seq->sendProgram(0, 2, *sink);
+  seq->sendProgram(0, kTracks, *sink);
   TEST_ASSERT_EQUAL(1, sink->log.size());
 }
 
@@ -1340,6 +1378,210 @@ void test_song_edit_while_stopped_shows_first_entry() {
   TEST_ASSERT_EQUAL(2, seq->heardPattern());
 }
 
+
+// --- INT tracks (internal synth) ---
+
+void test_midi_track_does_not_reach_synth() {
+  p->patterns[0].steps[0][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 200000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(0, sink->synKind(0x90).size());
+  TEST_ASSERT_EQUAL(0, sink->synKind(0x80).size());
+}
+
+void test_int_track_notes_go_to_synth_only() {
+  p->tracks[2].out = TrackOut::Int;
+  p->patterns[0].steps[2][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 200000);
+  TEST_ASSERT_EQUAL(0, sink->sendNotes());
+  TEST_ASSERT_TRUE(sink->times(0xF8).size() > 0);  // clock as before
+  auto on = sink->synKind(0x90);
+  auto off = sink->synKind(0x80);
+  TEST_ASSERT_EQUAL(1, on.size());
+  TEST_ASSERT_EQUAL(1, off.size());
+  TEST_ASSERT_EQUAL(2, on[0].track);
+  TEST_ASSERT_EQUAL(60, on[0].b[1]);
+  TEST_ASSERT_EQUAL(0, on[0].t);
+  TEST_ASSERT_EQUAL(2, off[0].track);
+  TEST_ASSERT_EQUAL(62500, off[0].t);
+}
+
+// The synth gets the scheduled time, not the (later) time the engine got around to send it.
+void test_int_track_events_carry_scheduled_time() {
+  p->tracks[2].out = TrackOut::Int;
+  p->patterns[0].steps[2][0].note = 60;
+  p->patterns[0].steps[2][1].note = 62;
+  seq->start(0, *sink);
+  uint64_t t = 0;
+  while (t <= 300000) {  // every wakeup 300 us late
+    sink->now = t;
+    const uint64_t next = seq->process(t, *sink);
+    if (next == kNever) break;
+    t = (next > t ? next : t + 1) + 300;
+  }
+  auto on = sink->synKind(0x90);
+  TEST_ASSERT_EQUAL(2, on.size());
+  for (const auto& r : on) TEST_ASSERT_TRUE(r.t <= r.at);
+  TEST_ASSERT_EQUAL_UINT64(300, on[1].at - on[1].t);  // step 1: sent late, stamped on time
+  const uint64_t stepUs = 60000000ull / p->bpm / 4;
+  TEST_ASSERT_UINT64_WITHIN(1, stepUs, on[1].t - on[0].t);
+}
+
+void test_int_and_midi_same_channel_and_note_both_sound() {
+  p->tracks[1].out = TrackOut::Int;
+  p->tracks[1].channel = 0;  // same channel as track 0
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[1][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 200000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(1, sink->times(0x80, 60).size());  // no retrigger NoteOff
+  TEST_ASSERT_EQUAL(1, sink->synKind(0x90).size());
+  TEST_ASSERT_EQUAL(1, sink->synKind(0x80).size());
+}
+
+void test_int_track_muted_sends_nothing_to_synth() {
+  p->tracks[3].out = TrackOut::Int;
+  p->tracks[3].mute = true;
+  p->patterns[0].steps[3][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 200000);
+  TEST_ASSERT_EQUAL(0, sink->synKind(0x90).size());
+  TEST_ASSERT_EQUAL_HEX8(0, seq->takeActivity());
+}
+
+void test_int_track_marks_activity() {
+  p->tracks[4].out = TrackOut::Int;
+  p->patterns[0].steps[4][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 1000);
+  TEST_ASSERT_EQUAL_HEX8(1 << 4, seq->takeActivity());
+}
+
+void test_int_track_stop_sends_off_and_all_off() {
+  p->tracks[2].out = TrackOut::Int;
+  p->patterns[0].steps[2][0].note = 60;
+  p->patterns[0].steps[2][0].fx[0] = {Fx::GAT, 200};
+  seq->start(0, *sink);
+  run(0, 50000);
+  sink->now = 50000;
+  sink->syn.clear();
+  seq->stop(50000, *sink);
+  auto off = sink->synKind(0x80);
+  TEST_ASSERT_EQUAL(1, off.size());
+  TEST_ASSERT_EQUAL(2, off[0].track);
+  TEST_ASSERT_EQUAL(60, off[0].b[1]);
+  auto all = sink->synKind(0xFF);
+  TEST_ASSERT_EQUAL(1, all.size());
+  TEST_ASSERT_EQUAL(2, all[0].track);
+  TEST_ASSERT_EQUAL(0, sink->sendNotes());
+}
+
+void test_int_track_pgm_goes_to_synth() {
+  p->tracks[2].out = TrackOut::Int;
+  p->patterns[0].steps[2][0].fx[0] = {Fx::PGM, 5};
+  p->patterns[0].steps[0][0].fx[0] = {Fx::PGM, 7};
+  seq->start(0, *sink);
+  run(0, 1000);
+  auto pg = sink->synKind(0xC0);
+  TEST_ASSERT_EQUAL(1, pg.size());
+  TEST_ASSERT_EQUAL(2, pg[0].track);
+  TEST_ASSERT_EQUAL(5, pg[0].b[1]);
+  auto mid = sink->times(0xC0);
+  TEST_ASSERT_EQUAL(1, mid.size());  // track 0 on channel 1 as before
+}
+
+void test_send_program_int_track_uses_instrument() {
+  p->tracks[2].out = TrackOut::Int;
+  p->tracks[2].instr = 9;
+  seq->sendProgram(0, 2, *sink);
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+  auto pg = sink->synKind(0xC0);
+  TEST_ASSERT_EQUAL(1, pg.size());
+  TEST_ASSERT_EQUAL(9, pg[0].b[1]);
+}
+
+void test_start_resets_int_tracks() {
+  p->tracks[1].out = TrackOut::Int;
+  p->tracks[6].out = TrackOut::Int;
+  seq->start(0, *sink);
+  auto fe = sink->synKind(0xFE);
+  TEST_ASSERT_EQUAL(2, fe.size());
+  TEST_ASSERT_EQUAL(1, fe[0].track);
+  TEST_ASSERT_EQUAL(6, fe[1].track);
+}
+
+void test_track_out_change_releases_held_notes() {
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][0].fx[0] = {Fx::GAT, 200};
+  seq->start(0, *sink);
+  run(0, 50000);
+  p->tracks[0].out = TrackOut::Int;
+  sink->now = 50000;
+  seq->trackOutChanged(50000, 0, *sink);
+  TEST_ASSERT_EQUAL(1, sink->times(0x80, 60).size());  // MIDI note released at once
+  run(50000, 400000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x80, 60).size());  // and only once
+}
+
+void test_int_track_synth_fx_before_note() {
+  p->tracks[2].out = TrackOut::Int;
+  Step& st = p->patterns[0].steps[2][0];
+  st.note = 60;
+  st.fx[0] = {Fx::ARP, 0x47};
+  seq->start(0, *sink);
+  run(0, 1000);
+  int stepAt = -1, arpAt = -1, onAt = -1;
+  for (size_t i = 0; i < sink->syn.size(); ++i) {
+    const SynRec& r = sink->syn[i];
+    if (r.b[0] == 0xF5 && r.b[1] == 0xF0) stepAt = static_cast<int>(i);
+    if (r.b[0] == 0xF5 && r.b[1] == static_cast<uint8_t>(Fx::ARP)) arpAt = static_cast<int>(i);
+    if ((r.b[0] & 0xF0) == 0x90) onAt = static_cast<int>(i);
+  }
+  TEST_ASSERT_TRUE(stepAt >= 0 && arpAt > stepAt && onAt > arpAt);
+  const SynRec& sr = sink->syn[stepAt];
+  TEST_ASSERT_EQUAL(2, sr.track);
+  TEST_ASSERT_EQUAL(3, sr.len);
+  TEST_ASSERT_EQUAL_HEX8(0x80 | 24, sr.b[2]);  // new step with a note, 24 ticks
+  TEST_ASSERT_EQUAL_HEX8(0x47, sink->syn[arpAt].b[2]);
+  TEST_ASSERT_EQUAL(0, sink->syn[arpAt].t);
+}
+
+void test_midi_track_synth_fx_go_nowhere() {
+  Step& st = p->patterns[0].steps[0][0];
+  st.note = 60;
+  st.fx[0] = {Fx::VIB, 0x44};
+  p->patterns[0].steps[0][1].fx[0] = {Fx::CUT, 2};  // fx-only step
+  seq->start(0, *sink);
+  run(0, 300000);
+  TEST_ASSERT_EQUAL(0, sink->syn.size());
+  for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(0xF5, r.b[0]);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
+}
+
+void test_int_track_step_markers() {
+  p->tracks[1].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::Eighth;
+  p->patterns[0].steps[1][0].note = 60;                // plain note: marker with the note flag
+  p->patterns[0].steps[1][1].fx[0] = {Fx::VSL, 0xF0};  // fx-only step: marker without it
+  p->patterns[0].steps[1][2].fx[0] = {Fx::CCA, 10};    // no synth fx, no note: nothing
+  seq->start(0, *sink);
+  run(0, 3 * 250000 - 1);
+  auto f5 = sink->synKind(0xF5);
+  TEST_ASSERT_EQUAL(3, f5.size());
+  TEST_ASSERT_EQUAL_HEX8(0xF0, f5[0].b[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x80 | 48, f5[0].b[2]);
+  TEST_ASSERT_EQUAL(0, f5[0].t);
+  TEST_ASSERT_EQUAL_HEX8(0xF0, f5[1].b[1]);
+  TEST_ASSERT_EQUAL_HEX8(48, f5[1].b[2]);
+  TEST_ASSERT_EQUAL(250000, f5[1].t);
+  TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(Fx::VSL), f5[2].b[1]);
+  TEST_ASSERT_EQUAL_HEX8(0xF0, f5[2].b[2]);
+  TEST_ASSERT_EQUAL(0, sink->synKind(0xB0).size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -1351,6 +1593,7 @@ int main() {
   RUN_TEST(test_resume_sends_song_position_and_continue);
   RUN_TEST(test_retrigger_ignores_stale_note_off);
   RUN_TEST(test_muted_track_is_silent);
+  RUN_TEST(test_activity_marks_sounding_tracks);
   RUN_TEST(test_tie_holds_until_next_note_with_overlap);
   RUN_TEST(test_set_bpm_while_playing);
   RUN_TEST(test_stop_rewinds);
@@ -1423,5 +1666,19 @@ int main() {
   RUN_TEST(test_song_edit_next_entry_in_lookahead);
   RUN_TEST(test_song_enable_in_lookahead);
   RUN_TEST(test_song_edit_while_stopped_shows_first_entry);
+  RUN_TEST(test_midi_track_does_not_reach_synth);
+  RUN_TEST(test_int_track_notes_go_to_synth_only);
+  RUN_TEST(test_int_track_events_carry_scheduled_time);
+  RUN_TEST(test_int_and_midi_same_channel_and_note_both_sound);
+  RUN_TEST(test_int_track_muted_sends_nothing_to_synth);
+  RUN_TEST(test_int_track_marks_activity);
+  RUN_TEST(test_int_track_stop_sends_off_and_all_off);
+  RUN_TEST(test_int_track_pgm_goes_to_synth);
+  RUN_TEST(test_send_program_int_track_uses_instrument);
+  RUN_TEST(test_start_resets_int_tracks);
+  RUN_TEST(test_track_out_change_releases_held_notes);
+  RUN_TEST(test_int_track_synth_fx_before_note);
+  RUN_TEST(test_midi_track_synth_fx_go_nowhere);
+  RUN_TEST(test_int_track_step_markers);
   return UNITY_END();
 }

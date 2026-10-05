@@ -39,6 +39,7 @@ bool sdBegin() {
   }
   if (!SD.exists("/projects")) SD.mkdir("/projects");
   if (!SD.exists("/midi")) SD.mkdir("/midi");
+  if (!SD.exists("/samples")) SD.mkdir("/samples");
   return true;
 }
 
@@ -92,8 +93,18 @@ bool FileSource::skip(size_t n) {
   }
   n -= inBuf;
   pos_ = len_ = 0;
-  const size_t target = f_.position() + n;
-  return target <= f_.size() && f_.seek(target);
+  const size_t at = f_.position(), size = f_.size();
+  if (at > size || n > size - at) return false;  // past the end (no overflow on huge n)
+  return f_.seek(at + n);
+}
+
+bool sdNextEntry(fs::File& dir, String& name, bool& isDir) {
+  isDir = false;
+  const String path = dir.getNextFileName(&isDir);
+  if (path.isEmpty()) return false;
+  const int slash = path.lastIndexOf('/');
+  name = slash >= 0 ? path.substring(slash + 1) : path;
+  return true;
 }
 
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, bool (*accept)(const char*)) {
@@ -102,17 +113,60 @@ int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, b
   if (!d || !d.isDirectory()) return 0;
   const size_t extLen = strlen(ext);
   int n = 0;
-  while (n < max) {
-    fs::File f = d.openNextFile();
-    if (!f) break;
-    if (f.isDirectory()) continue;
-    const char* name = f.name();
+  String entry;
+  bool isDir;
+  while (n < max && sdNextEntry(d, entry, isDir)) {
+    if (isDir) continue;
+    const char* name = entry.c_str();
     const size_t len = strlen(name);
     if (len <= extLen || len - extLen >= kNameMax || name[0] == '.') continue;
     if (strcasecmp(name + len - extLen, ext) != 0) continue;
     memcpy(names[n], name, len - extLen);
     names[n][len - extLen] = 0;
     if (accept && !accept(names[n])) continue;
+    ++n;
+  }
+  qsort(names, n, kNameMax, cmpName);
+  return n;
+}
+
+int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*names)[kNameMax], int max) {
+  if (!ready) return 0;
+  fs::File d = SD.open(dir);
+  if (!d || !d.isDirectory()) return 0;
+  int n = 0;
+  String entry;
+  bool isDir;
+  while (n < max && sdNextEntry(d, entry, isDir)) {
+    if (isDir) continue;
+    const char* name = entry.c_str();
+    const size_t len = strlen(name);
+    if (len >= kNameMax || name[0] == '.') continue;
+    bool match = false;
+    for (int e = 0; e < extCount && !match; ++e) {
+      const size_t el = strlen(exts[e]);
+      match = len > el && strcasecmp(name + len - el, exts[e]) == 0;
+    }
+    if (!match) continue;
+    memcpy(names[n++], name, len + 1);
+  }
+  qsort(names, n, kNameMax, cmpName);
+  return n;
+}
+
+int sdListDirs(const char* dir, char (*names)[kNameMax], int max) {
+  if (!ready) return 0;
+  fs::File d = SD.open(dir);
+  if (!d || !d.isDirectory()) return 0;
+  int n = 0;
+  String entry;
+  bool isDir;
+  while (n < max && sdNextEntry(d, entry, isDir)) {
+    if (!isDir) continue;
+    const char* name = entry.c_str();
+    const size_t len = strlen(name);
+    if (len == 0 || len >= kNameMax || name[0] == '.') continue;
+    memcpy(names[n], name, len + 1);
     ++n;
   }
   qsort(names, n, kNameMax, cmpName);

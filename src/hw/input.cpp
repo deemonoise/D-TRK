@@ -129,4 +129,8 @@ void inputBegin() {
 
 bool inputPoll(InputEvent& ev, TickType_t wait) { return xQueueReceive(queue, &ev, wait) == pdTRUE; }
 
+void inputPush(InputType t, int8_t delta) {
+  if (queue) emit(t, delta);
+}
+
 }  // namespace hw

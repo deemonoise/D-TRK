@@ -6,7 +6,6 @@
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_ST7796 panel_;
   lgfx::Bus_Parallel8 bus_;
-  lgfx::Light_PWM light_;
   lgfx::Touch_FT5x06 touch_;
 
  public:
@@ -45,15 +44,8 @@ class LGFX : public lgfx::LGFX_Device {
       cfg.bus_shared = false;
       panel_.config(cfg);
     }
-    {
-      auto cfg = light_.config();
-      cfg.pin_bl = 45;
-      cfg.invert = false;
-      cfg.freq = 44100;
-      cfg.pwm_channel = 7;
-      light_.config(cfg);
-      panel_.setLight(&light_);
-    }
+    // No Light_PWM: the backlight (pins::kLcdBacklight) is driven high as a plain GPIO, since its
+    // 44.1 kHz PWM whined in the audio path.
     {
       auto cfg = touch_.config();
       cfg.i2c_port = 1;

@@ -55,7 +55,7 @@ struct ImportDialog::State {
   mt::ImportResult result{};
 };
 
-bool ImportDialog::open(const char* name) {
+bool ImportDialog::open(const char* dir, const char* name) {
   close();
   void* m = allocPsram<State>();
   notes_ = allocPsram<mt::SmfNote>(kNoteCap);
@@ -67,7 +67,8 @@ bool ImportDialog::open(const char* name) {
   }
   state_ = new (m) State();
   strlcpy(state_->file, name, sizeof(state_->file));
-  if (!readAndParse(name)) {
+  if (char* dot = strrchr(state_->file, '.')) *dot = 0;  // title without the extension
+  if (!readAndParse(dir, name)) {
     close();
     return false;
   }
@@ -90,14 +91,13 @@ void ImportDialog::close() {
   importRow_ = cancelRow_ = -1;
 }
 
-bool ImportDialog::readAndParse(const char* name) {
+bool ImportDialog::readAndParse(const char* dir, const char* name) {
   if (!hw::sdReady()) {
     app_.toast(storage::resultText(storage::Result::NoSd));
     return false;
   }
-  char path[48];
-  // FAT lookups ignore case, so NAME.MID opens as well.
-  snprintf(path, sizeof(path), "/midi/%s.mid", name);
+  char path[260];
+  snprintf(path, sizeof(path), "%s/%s", dir, name);
   app_.showBusy("READING...");
   fs::File f = hw::sdFs().open(path, FILE_READ);
   if (!f) {

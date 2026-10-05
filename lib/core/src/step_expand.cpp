@@ -1,4 +1,5 @@
 #include "step_expand.h"
+#include "fx_info.h"
 
 namespace mt {
 
@@ -55,7 +56,10 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
       case Fx::PGM:
         out.ev[out.count++] = {nudge, EvKind::Program, ch, static_cast<uint8_t>(f.val & 127), 0};
         break;
-      default: break;
+      default:
+        if (fxSynthOnly(f.cmd) && t.out == TrackOut::Int)
+          out.ev[out.count++] = {nudge, EvKind::SynthFx, ch, static_cast<uint8_t>(f.cmd), f.val};
+        break;
     }
   }
 

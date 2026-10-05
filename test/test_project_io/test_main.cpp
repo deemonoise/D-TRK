@@ -83,6 +83,52 @@ static void fillFull(Project& p) {
     }
   // Non-default params with no notes: still written.
   p.patterns[15].length = 32;
+  // Internal audio.
+  p.tracks[2].out = TrackOut::Int;
+  p.tracks[2].instr = 9;
+  p.tracks[2].vol = 77;
+  p.tracks[6].out = TrackOut::Int;
+  p.tracks[6].instr = 15;
+  p.tracks[6].vol = 0;
+  p.masterVol = 83;
+  p.preview = false;
+  Instrument& i1 = p.instruments[1];
+  strcpy(i1.name, "BASS_x1");
+  i1.type = InstrType::Chip;
+  i1.vol = 99;
+  i1.transpose = -24;
+  i1.fine = 37;
+  i1.attack = 1;
+  i1.decay = 2;
+  i1.sustain = 3;
+  i1.release = 127;
+  i1.mono = true;
+  i1.glide = 200;
+  i1.wave = static_cast<uint8_t>(Wave::Wt1) + 15;
+  i1.duty = 12;
+  i1.pwmRate = 100;
+  i1.pwmDepth = 49;
+  Instrument& i15 = p.instruments[15];
+  strcpy(i15.name, "KIT");
+  i15.type = InstrType::Sample;
+  i15.vol = 1;
+  i15.transpose = 24;
+  i15.fine = -50;
+  strcpy(i15.sample, "drum_loop-0123ab");  // full 16 chars
+  i15.root = 48;
+  i15.start = 0x1234;
+  i15.end = 0xFEDC;
+  i15.loop = static_cast<uint8_t>(LoopMode::PingPong);
+  i15.loopStart = 0x8001;
+  i15.reverse = true;
+  Instrument& i3 = p.instruments[3];
+  i3.type = InstrType::Fm;
+  i3.machine = static_cast<uint8_t>(FmMachine::Clap);
+  for (int k = 0; k < kFmMacros; ++k) i3.macro[k] = static_cast<uint8_t>(10 + k * 20);
+  i3.lfoWave = static_cast<uint8_t>(LfoWave::Random);
+  i3.lfoRate = 127;
+  i3.lfoDepth = -64;
+  i3.lfoDest = static_cast<uint8_t>(LfoDest::Vol);
 }
 
 static void assertSame(const Project& x, const Project& y) {
@@ -104,6 +150,44 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(c.program, d.program);
     TEST_ASSERT_EQUAL(c.mute, d.mute);
     TEST_ASSERT_EQUAL(c.solo, d.solo);
+  }
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(static_cast<int>(x.tracks[t].out), static_cast<int>(y.tracks[t].out));
+    TEST_ASSERT_EQUAL(x.tracks[t].instr, y.tracks[t].instr);
+    TEST_ASSERT_EQUAL(x.tracks[t].vol, y.tracks[t].vol);
+  }
+  TEST_ASSERT_EQUAL(x.masterVol, y.masterVol);
+  TEST_ASSERT_EQUAL(x.preview, y.preview);
+  for (int i = 0; i < kInstruments; ++i) {
+    const Instrument &m = x.instruments[i], &n = y.instruments[i];
+    TEST_ASSERT_EQUAL_STRING(m.name, n.name);
+    TEST_ASSERT_EQUAL(static_cast<int>(m.type), static_cast<int>(n.type));
+    TEST_ASSERT_EQUAL(m.vol, n.vol);
+    TEST_ASSERT_EQUAL(m.transpose, n.transpose);
+    TEST_ASSERT_EQUAL(m.fine, n.fine);
+    TEST_ASSERT_EQUAL(m.attack, n.attack);
+    TEST_ASSERT_EQUAL(m.decay, n.decay);
+    TEST_ASSERT_EQUAL(m.sustain, n.sustain);
+    TEST_ASSERT_EQUAL(m.release, n.release);
+    TEST_ASSERT_EQUAL(m.mono, n.mono);
+    TEST_ASSERT_EQUAL(m.glide, n.glide);
+    TEST_ASSERT_EQUAL(m.wave, n.wave);
+    TEST_ASSERT_EQUAL(m.duty, n.duty);
+    TEST_ASSERT_EQUAL(m.pwmRate, n.pwmRate);
+    TEST_ASSERT_EQUAL(m.pwmDepth, n.pwmDepth);
+    TEST_ASSERT_EQUAL_STRING(m.sample, n.sample);
+    TEST_ASSERT_EQUAL(m.root, n.root);
+    TEST_ASSERT_EQUAL(m.start, n.start);
+    TEST_ASSERT_EQUAL(m.end, n.end);
+    TEST_ASSERT_EQUAL(m.loop, n.loop);
+    TEST_ASSERT_EQUAL(m.loopStart, n.loopStart);
+    TEST_ASSERT_EQUAL(m.reverse, n.reverse);
+    TEST_ASSERT_EQUAL(m.machine, n.machine);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(m.macro, n.macro, kFmMacros);
+    TEST_ASSERT_EQUAL(m.lfoWave, n.lfoWave);
+    TEST_ASSERT_EQUAL(m.lfoRate, n.lfoRate);
+    TEST_ASSERT_EQUAL(m.lfoDepth, n.lfoDepth);
+    TEST_ASSERT_EQUAL(m.lfoDest, n.lfoDest);
   }
   for (int i = 0; i < kPatterns; ++i) {
     const Pattern &p = x.patterns[i], &q = y.patterns[i];
@@ -144,7 +228,7 @@ void test_load_resets_target_first() {
 void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
-  TEST_ASSERT_TRUE(out.buf.size() < 300);
+  TEST_ASSERT_TRUE(out.buf.size() < 1500);  // header, PROJ, TRKS, INST (16 x 48), FMIN (16 x 16), TOUT, AUDI
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
@@ -441,6 +525,180 @@ void test_proj_chunk_larger_is_skipped() {
   assertSame(a, b);
 }
 
+// ---- Internal audio chunks ----
+
+// Copy of a saved file without the given chunks, with a fresh CRC.
+static std::vector<uint8_t> withoutChunks(const std::vector<uint8_t>& f, std::initializer_list<const char*> ids) {
+  std::vector<uint8_t> r(f.begin(), f.begin() + 8);
+  size_t pos = 8;
+  while (pos + 8 <= f.size() - 12) {
+    const uint32_t size = f[pos + 4] | (f[pos + 5] << 8) | (f[pos + 6] << 16) |
+                          (static_cast<uint32_t>(f[pos + 7]) << 24);
+    bool drop = false;
+    for (const char* id : ids) drop = drop || memcmp(f.data() + pos, id, 4) == 0;
+    if (!drop) r.insert(r.end(), f.begin() + pos, f.begin() + pos + 8 + size);
+    pos += 8 + size;
+  }
+  finish(r);
+  return r;
+}
+
+static bool hasChunk(const std::vector<uint8_t>& f, const char* id) {
+  size_t pos = 8;
+  while (pos + 8 <= f.size()) {
+    if (memcmp(f.data() + pos, id, 4) == 0) return true;
+    pos += 8 + (f[pos + 4] | (f[pos + 5] << 8) | (f[pos + 6] << 16) | (static_cast<uint32_t>(f[pos + 7]) << 24));
+  }
+  return false;
+}
+
+void test_audio_chunks_written() {
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "INST"));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TOUT"));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "AUDI"));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "FMIN"));
+}
+
+void test_old_file_gets_audio_defaults() {
+  fillFull(a);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"INST", "TOUT", "AUDI", "FMIN"});
+  TEST_ASSERT_FALSE(hasChunk(f, "INST"));
+  b.masterVol = 3;
+  b.instruments[1].vol = 5;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  Project* def = new Project();
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(static_cast<int>(TrackOut::Midi), static_cast<int>(b.tracks[t].out));
+    TEST_ASSERT_EQUAL(t, b.tracks[t].instr);
+    TEST_ASSERT_EQUAL(100, b.tracks[t].vol);
+  }
+  TEST_ASSERT_EQUAL(40, b.masterVol);
+  TEST_ASSERT_TRUE(b.preview);
+  TEST_ASSERT_EQUAL_STRING("INS2", b.instruments[1].name);
+  TEST_ASSERT_EQUAL(def->instruments[1].vol, b.instruments[1].vol);
+  TEST_ASSERT_EQUAL(def->instruments[3].machine, b.instruments[3].machine);
+  TEST_ASSERT_EQUAL(def->instruments[3].lfoDepth, b.instruments[3].lfoDepth);
+  TEST_ASSERT_EQUAL(a.patterns[5].steps[3][9].note, b.patterns[5].steps[3][9].note);
+  delete def;
+}
+
+static std::vector<uint8_t> instRecord(const char* name) {
+  std::vector<uint8_t> r(48, 0);
+  memcpy(r.data(), name, strlen(name) < 8 ? strlen(name) : 8);
+  return r;
+}
+
+void test_audio_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> to = {kTracks};
+  for (int t = 0; t < kTracks; ++t) {
+    to.push_back(7);    // out
+    to.push_back(200);  // instr
+    to.push_back(255);  // vol
+  }
+  putChunk(f, "TOUT", to);
+  putChunk(f, "AUDI", {250, 9});
+  std::vector<uint8_t> in = {1};
+  std::vector<uint8_t> r(48, 0xFF);  // every byte garbage, no terminators
+  r[10] = static_cast<uint8_t>(-100);  // transpose
+  r[11] = 100;                         // fine
+  in.insert(in.end(), r.begin(), r.end());
+  putChunk(f, "INST", in);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(static_cast<int>(TrackOut::Midi), static_cast<int>(b.tracks[t].out));
+    TEST_ASSERT_TRUE(b.tracks[t].instr < kInstruments);
+    TEST_ASSERT_EQUAL(127, b.tracks[t].vol);
+  }
+  TEST_ASSERT_EQUAL(kMasterVolMax, b.masterVol);
+  TEST_ASSERT_TRUE(b.preview);
+  const Instrument& m = b.instruments[0];
+  TEST_ASSERT_EQUAL(8, strlen(m.name));
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Chip), static_cast<int>(m.type));
+  TEST_ASSERT_EQUAL(127, m.vol);
+  TEST_ASSERT_EQUAL(-24, m.transpose);
+  TEST_ASSERT_EQUAL(50, m.fine);
+  TEST_ASSERT_EQUAL(127, m.attack);
+  TEST_ASSERT_EQUAL(127, m.decay);
+  TEST_ASSERT_EQUAL(127, m.sustain);
+  TEST_ASSERT_EQUAL(127, m.release);
+  TEST_ASSERT_TRUE(m.mono);
+  TEST_ASSERT_EQUAL(0, m.wave);
+  TEST_ASSERT_EQUAL(99, m.duty);
+  TEST_ASSERT_EQUAL(127, m.pwmRate);
+  TEST_ASSERT_EQUAL(49, m.pwmDepth);
+  TEST_ASSERT_EQUAL(kSampleNameMax, strlen(m.sample));
+  TEST_ASSERT_EQUAL(127, m.root);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopMode::Off), m.loop);
+  TEST_ASSERT_TRUE(m.reverse);
+  TEST_ASSERT_EQUAL_STRING("INS2", b.instruments[1].name);  // not stored: default
+}
+
+void test_inst_count_over_max() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> in = {20};
+  for (int i = 0; i < 20; ++i) {
+    char nm[9];
+    snprintf(nm, sizeof(nm), "N%d", i);
+    std::vector<uint8_t> r = instRecord(nm);
+    r[9] = static_cast<uint8_t>(i);  // vol
+    in.insert(in.end(), r.begin(), r.end());
+  }
+  putChunk(f, "INST", in);
+  putChunk(f, "AUDI", {55, 0});  // still parsed after the oversized one
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL_STRING("N0", b.instruments[0].name);
+  TEST_ASSERT_EQUAL_STRING("N15", b.instruments[15].name);
+  TEST_ASSERT_EQUAL(15, b.instruments[15].vol);
+  TEST_ASSERT_EQUAL(55, b.masterVol);
+  TEST_ASSERT_FALSE(b.preview);
+}
+
+void test_audio_chunks_too_small() {
+  {
+    std::vector<uint8_t> f = fileHeader();
+    putChunk(f, "INST", {2, 0, 0});  // count says more than the chunk holds
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  }
+  {
+    std::vector<uint8_t> f = fileHeader();
+    putChunk(f, "TOUT", {8, 1, 2});
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  }
+  {
+    std::vector<uint8_t> f = fileHeader();
+    putChunk(f, "AUDI", {50});
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  }
+}
+
+void test_fmin_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> in = {1};
+  std::vector<uint8_t> r(16, 0xFF);
+  r[8] = 100;  // lfoDepth
+  in.insert(in.end(), r.begin(), r.end());
+  putChunk(f, "FMIN", in);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const Instrument& m = b.instruments[0];
+  TEST_ASSERT_EQUAL(0, m.machine);
+  for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_EQUAL(127, m.macro[k]);
+  TEST_ASSERT_EQUAL(0, m.lfoWave);
+  TEST_ASSERT_EQUAL(127, m.lfoRate);
+  TEST_ASSERT_EQUAL(63, m.lfoDepth);
+  TEST_ASSERT_EQUAL(0, m.lfoDest);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -460,5 +718,11 @@ int main() {
   RUN_TEST(test_trks_count_not_eight);
   RUN_TEST(test_unknown_chunk_huge_size);
   RUN_TEST(test_proj_chunk_larger_is_skipped);
+  RUN_TEST(test_audio_chunks_written);
+  RUN_TEST(test_old_file_gets_audio_defaults);
+  RUN_TEST(test_audio_garbage_clamped);
+  RUN_TEST(test_inst_count_over_max);
+  RUN_TEST(test_audio_chunks_too_small);
+  RUN_TEST(test_fmin_garbage_clamped);
   return UNITY_END();
 }

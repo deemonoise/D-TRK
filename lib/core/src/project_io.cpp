@@ -9,6 +9,11 @@ constexpr size_t kProjSize = 17 + 2 + 4 + kChainMax;
 constexpr size_t kTrackSize = 9 + 6 + 1;
 constexpr size_t kTrksSize = 1 + kTracks * kTrackSize;
 constexpr size_t kPatHeader = 4;
+constexpr size_t kInstSize = 48;  // 47 bytes of fields + 1 reserved
+constexpr size_t kToutSize = 3;
+constexpr size_t kAudiSize = 2;
+constexpr size_t kFminSize = 16;  // 10 bytes of fields + reserved
+static_assert(kFminSize <= kInstSize, "readRecords buffer");
 
 uint32_t rd32(const uint8_t* b) {
   return b[0] | (b[1] << 8) | (b[2] << 16) | (static_cast<uint32_t>(b[3]) << 24);
@@ -21,7 +26,81 @@ void wr32(uint8_t* b, uint32_t v) {
   wr16(b, static_cast<uint16_t>(v));
   wr16(b + 2, static_cast<uint16_t>(v >> 16));
 }
+uint16_t rd16(const uint8_t* b) { return static_cast<uint16_t>(b[0] | (b[1] << 8)); }
 uint8_t clampu(int v, int lo, int hi) { return static_cast<uint8_t>(v < lo ? lo : (v > hi ? hi : v)); }
+int8_t clamps(int8_t v, int lo, int hi) { return static_cast<int8_t>(v < lo ? lo : (v > hi ? hi : v)); }
+
+void packInst(const Instrument& m, uint8_t* b) {
+  memset(b, 0, kInstSize);
+  memcpy(b, m.name, 8);
+  b[8] = static_cast<uint8_t>(m.type);
+  b[9] = m.vol;
+  b[10] = static_cast<uint8_t>(m.transpose);
+  b[11] = static_cast<uint8_t>(m.fine);
+  b[12] = m.attack;
+  b[13] = m.decay;
+  b[14] = m.sustain;
+  b[15] = m.release;
+  b[16] = m.mono ? 1 : 0;
+  b[17] = m.glide;
+  b[18] = m.wave;
+  b[19] = m.duty;
+  b[20] = m.pwmRate;
+  b[21] = m.pwmDepth;
+  memcpy(b + 22, m.sample, kSampleNameMax);
+  b[38] = m.root;
+  wr16(b + 39, m.start);
+  wr16(b + 41, m.end);
+  b[43] = m.loop;
+  wr16(b + 44, m.loopStart);
+  b[46] = m.reverse ? 1 : 0;
+}
+
+void packFm(const Instrument& m, uint8_t* b) {
+  memset(b, 0, kFminSize);
+  b[0] = m.machine;
+  memcpy(b + 1, m.macro, kFmMacros);
+  b[6] = m.lfoWave;
+  b[7] = m.lfoRate;
+  b[8] = static_cast<uint8_t>(m.lfoDepth);
+  b[9] = m.lfoDest;
+}
+
+void unpackFm(const uint8_t* b, Instrument& m) {
+  m.machine = b[0] < static_cast<int>(FmMachine::Count) ? b[0] : 0;
+  for (int k = 0; k < kFmMacros; ++k) m.macro[k] = clampu(b[1 + k], 0, 127);
+  m.lfoWave = b[6] < static_cast<int>(LfoWave::Count) ? b[6] : 0;
+  m.lfoRate = clampu(b[7], 0, 127);
+  m.lfoDepth = clamps(static_cast<int8_t>(b[8]), -64, 63);
+  m.lfoDest = b[9] < static_cast<int>(LfoDest::Count) ? b[9] : 0;
+}
+
+void unpackInst(const uint8_t* b, Instrument& m) {
+  memcpy(m.name, b, 8);
+  m.name[8] = 0;
+  m.type = b[8] < static_cast<int>(InstrType::Count) ? static_cast<InstrType>(b[8]) : InstrType::Chip;
+  m.vol = clampu(b[9], 0, 127);
+  m.transpose = clamps(static_cast<int8_t>(b[10]), -24, 24);
+  m.fine = clamps(static_cast<int8_t>(b[11]), -50, 50);
+  m.attack = clampu(b[12], 0, 127);
+  m.decay = clampu(b[13], 0, 127);
+  m.sustain = clampu(b[14], 0, 127);
+  m.release = clampu(b[15], 0, 127);
+  m.mono = b[16] != 0;
+  m.glide = b[17];
+  m.wave = b[18] < kWaveCount ? b[18] : 0;
+  m.duty = clampu(b[19], 1, 99);
+  m.pwmRate = clampu(b[20], 0, 127);
+  m.pwmDepth = clampu(b[21], 0, 49);
+  memcpy(m.sample, b + 22, kSampleNameMax);
+  m.sample[kSampleNameMax] = 0;
+  m.root = clampu(b[38], 0, 127);
+  m.start = rd16(b + 39);
+  m.end = rd16(b + 41);
+  m.loop = b[43] < static_cast<int>(LoopMode::Count) ? b[43] : 0;
+  m.loopStart = rd16(b + 44);
+  m.reverse = b[46] != 0;
+}
 
 class CrcSink {
  public:
@@ -116,6 +195,50 @@ LoadErr readTrks(CrcSource& in, uint32_t size, Project& p) {
   return in.skip(size - used) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
+// Chunk of count records of recSize bytes; records past max are skipped.
+template <class F>
+LoadErr readRecords(CrcSource& in, uint32_t size, size_t recSize, int max, F&& f) {
+  uint8_t count;
+  if (size < 1) return LoadErr::BadValue;
+  if (!in.read(&count, 1)) return LoadErr::Truncated;
+  if (size < 1 + static_cast<uint32_t>(count) * recSize) return LoadErr::BadValue;
+  const int n = count < max ? count : max;
+  for (int i = 0; i < n; ++i) {
+    uint8_t b[kInstSize];  // the largest record
+    if (!in.read(b, recSize)) return LoadErr::Truncated;
+    f(i, b);
+  }
+  return in.skip(size - 1 - static_cast<uint32_t>(n) * recSize) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+LoadErr readTout(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kToutSize, kTracks, [&](int t, const uint8_t* b) {
+    TrackCfg& c = p.tracks[t];
+    c.out = b[0] < static_cast<int>(TrackOut::Count) ? static_cast<TrackOut>(b[0]) : TrackOut::Midi;
+    c.instr = clampu(b[1], 0, kInstruments - 1);
+    c.vol = clampu(b[2], 0, 127);
+  });
+}
+
+LoadErr readInst(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kInstSize, kInstruments,
+                     [&](int i, const uint8_t* b) { unpackInst(b, p.instruments[i]); });
+}
+
+LoadErr readFmin(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kFminSize, kInstruments,
+                     [&](int i, const uint8_t* b) { unpackFm(b, p.instruments[i]); });
+}
+
+LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
+  if (size < kAudiSize) return LoadErr::BadValue;
+  uint8_t b[kAudiSize];
+  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  p.masterVol = clampu(b[0], 0, kMasterVolMax);
+  p.preview = b[1] != 0;
+  return in.skip(size - kAudiSize) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
   uint8_t h[kPatHeader];
   if (size < kPatHeader) return LoadErr::BadValue;
@@ -194,6 +317,31 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  if (!o.chunk("INST", 1 + kInstruments * kInstSize)) return false;
+  count = kInstruments;
+  if (!o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kInstSize];
+    packInst(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+  if (!o.chunk("FMIN", 1 + kInstruments * kFminSize) || !o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kFminSize];
+    packFm(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  count = kTracks;
+  if (!o.chunk("TOUT", 1 + kTracks * kToutSize) || !o.write(&count, 1)) return false;
+  for (const TrackCfg& c : p.tracks) {
+    const uint8_t b[kToutSize] = {static_cast<uint8_t>(c.out), c.instr, c.vol};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0)};
+  if (!o.chunk("AUDI", kAudiSize) || !o.write(au, sizeof(au))) return false;
+
   for (int i = 0; i < kPatterns; ++i) {
     const Pattern& pt = p.patterns[i];
     if (!patternStored(pt)) continue;
@@ -238,6 +386,10 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     if (memcmp(ch, "PROJ", 4) == 0) e = readProj(in, size, out);
     else if (memcmp(ch, "TRKS", 4) == 0) e = readTrks(in, size, out);
     else if (memcmp(ch, "PATN", 4) == 0) e = readPatn(in, size, out);
+    else if (memcmp(ch, "INST", 4) == 0) e = readInst(in, size, out);
+    else if (memcmp(ch, "FMIN", 4) == 0) e = readFmin(in, size, out);
+    else if (memcmp(ch, "TOUT", 4) == 0) e = readTout(in, size, out);
+    else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;
   }

@@ -6,14 +6,14 @@
 
 namespace mt {
 
-enum class EvKind : uint8_t { NoteOn, NoteOff, Cc, PitchBend, Program };
+enum class EvKind : uint8_t { NoteOn, NoteOff, Cc, PitchBend, Program, SynthFx };
 
 struct StepEvent {
   int32_t offsetUs;  // relative to the step start, may be negative (NDG)
   EvKind kind;
   uint8_t ch;
-  uint8_t note;  // Cc: controller; PitchBend: LSB; Program: program
-  uint8_t vel;   // Cc: value; PitchBend: MSB
+  uint8_t note;  // Cc: controller; PitchBend: LSB; Program: program; SynthFx: Fx
+  uint8_t vel;   // Cc: value; PitchBend: MSB; SynthFx: value
 };
 
 // 8 ratchets x 4 chord notes x 2, plus controls. A step has two fx slots, so
@@ -35,7 +35,7 @@ struct ExpandCtx {
 };
 
 // Expands one step of one track into events. Control events (CC, pitch bend,
-// program) come first, even on a step without a note or on OFF. Then, per
+// program; synth fx on INT tracks only) come first, even on a step without a note or on OFF. Then, per
 // ratchet hit and per chord note, each NoteOn is directly followed by its
 // NoteOff (except a tied last note). Returns false if nothing plays.
 bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, ExpandOut& out);

@@ -1,8 +1,10 @@
 #include "engine.h"
 #include <Arduino.h>
+#include <atomic>
 #include <new>
 #include "driver/gptimer.h"
 #include "esp_heap_caps.h"
+#include "audio/audio.h"
 #include "esp_random.h"
 #include "hw/midi_uart.h"
 #include "sequencer.h"
@@ -10,25 +12,28 @@
 namespace engine {
 namespace {
 
+// MIDI tracks go to the UART, INT tracks to the synth queue (stamped with their scheduled time:
+// the synth plays them there, whatever the jitter of the engine wakeup).
+struct Router : mt::MidiSink {
+  hw::MidiUart uart;
+  void send(const uint8_t* b, uint8_t len) override { uart.send(b, len); }
+  void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) override { audio::post(t, track, b, len); }
+};
+
 mt::Sequencer* seq;
-hw::MidiUart midi;
+Router midi;
 gptimer_handle_t timer;
 TaskHandle_t task;
 QueueHandle_t cmds;
 SemaphoreHandle_t projMutex;
 portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
 Status st{};
+std::atomic<uint8_t> activity{0};
 
 bool IRAM_ATTR onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void*) {
   BaseType_t woken = pdFALSE;
   vTaskNotifyGiveFromISR(task, &woken);
   return woken == pdTRUE;
-}
-
-uint64_t nowUs() {
-  uint64_t v = 0;
-  gptimer_get_raw_count(timer, &v);
-  return v;
 }
 
 void handle(const Command& c) {
@@ -43,8 +48,9 @@ void handle(const Command& c) {
     case Cmd::QueuePattern: seq->queuePattern(c.arg); break;
     case Cmd::SelectPattern: seq->selectPattern(c.arg); break;
     case Cmd::SetBpm: seq->setBpm(c.arg); break;
-    case Cmd::SendProgram: seq->sendProgram(c.arg, midi); break;
+    case Cmd::SendProgram: seq->sendProgram(now, c.arg, midi); break;
     case Cmd::ReleaseTies: seq->releaseTies(now, midi); break;
+    case Cmd::TrackOut: seq->trackOutChanged(now, c.arg, midi); break;
     case Cmd::ChainEdit: seq->chainEdited(now, midi, c.arg >> 8, static_cast<mt::ChainOp>(c.arg & 0xFF)); break;
   }
 }
@@ -63,7 +69,9 @@ void run(void*) {
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
     const uint64_t next = seq->process(nowUs(), midi);
+    const uint8_t act = seq->takeActivity();
     xSemaphoreGive(projMutex);
+    if (act) activity.fetch_or(act, std::memory_order_relaxed);
     publish();
 
     if (next != mt::kNever) {
@@ -80,12 +88,18 @@ void run(void*) {
 
 }  // namespace
 
+uint64_t nowUs() {
+  uint64_t v = 0;
+  gptimer_get_raw_count(timer, &v);
+  return v;
+}
+
 void begin(mt::Project* p) {
   // ~34 KB: keep it out of PSRAM, the engine touches it on every event.
   void* mem = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   seq = mem ? new (mem) mt::Sequencer(*p) : new mt::Sequencer(*p);
   seq->seed(esp_random());
-  midi.begin();
+  midi.uart.begin();
   cmds = xQueueCreate(16, sizeof(Command));
   projMutex = xSemaphoreCreateMutex();
 
@@ -116,6 +130,8 @@ Status status() {
   portEXIT_CRITICAL(&statusMux);
   return s;
 }
+
+uint8_t takeActivity() { return activity.exchange(0, std::memory_order_relaxed); }
 
 void lockProject() { xSemaphoreTake(projMutex, portMAX_DELAY); }
 void unlockProject() { xSemaphoreGive(projMutex); }

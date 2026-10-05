@@ -5,7 +5,7 @@
 namespace hw {
 
 // microSD over SPI. UI task only; the engine never touches the card.
-bool sdBegin();  // (re)mounts, creates /projects and /midi
+bool sdBegin();  // (re)mounts, creates /projects, /midi and /samples
 bool sdReady();
 fs::FS& sdFs();
 
@@ -34,10 +34,21 @@ class FileSource : public mt::ByteSource {
   size_t pos_ = 0, len_ = 0;
 };
 
-constexpr int kNameMax = 32;  // file name without the extension, incl. terminator
+// Next entry of an open directory: its name (no path) and whether it is a folder; false at the end.
+// Entries are not opened, so a name the card cannot read (non-ASCII, shown as "?") is skipped by the
+// caller's filters instead of ending the listing.
+bool sdNextEntry(fs::File& dir, String& name, bool& isDir);
+
+constexpr int kNameMax = 96;  // listed file / folder name, incl. terminator
 // Names in dir ending with ext (e.g. ".mtp"), extension stripped, sorted. Returns the count.
 // accept (optional) filters base names, e.g. storage::validName.
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max,
            bool (*accept)(const char* base) = nullptr);
+
+// Files in dir ending with one of exts (any case), full names with the extension, sorted.
+int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*names)[kNameMax], int max);
+
+// Subfolders of dir (names shorter than kNameMax, no hidden ones), sorted. Returns the count.
+int sdListDirs(const char* dir, char (*names)[kNameMax], int max);
 
 }  // namespace hw

@@ -3,27 +3,44 @@
 #include "import_dialog.h"
 #include "keyboard.h"
 #include "screen.h"
+#include "wifi_dialog.h"
 
 namespace ui {
 
-// Save / Save As / Load / New / Import MIDI (stage 6). Load shows /projects/*.mtp.
+// Two sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
+// transfer; Load shows /projects/*.mtp) and SAMPLES (the flash sample bank: import WAV from /samples and its subfolders,
+// delete, compact).
 class FileScreen : public Screen {
  public:
-  explicit FileScreen(App& app) : app_(app), import_(app) {}
+  explicit FileScreen(App& app) : app_(app), import_(app), wifi_(app) {}
   void onEnter() override;
   void onLeave() override;
   void onInput(const hw::InputEvent& ev) override;
+  bool onPlay() override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  void poll() override { wifi_.poll(); }
+  bool wantsRedraw(const engine::Status&) override { return wifi_.wantsRedraw(); }
 
  private:
-  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRetry, kActions };
-  enum MenuId : int { kCancel, kDiscardLoad, kDiscardNew, kLoadBak, kOverwrite };
+  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kWifi, kRetry, kActions };
+  enum MenuId : int {
+    kCancel, kDiscardLoad, kDiscardNew, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
+    kDeleteSample, kDeleteUsed
+  };
+  static constexpr int kSectionSel = kActions;  // PROJECTS focus on the header section switch
+  // SAMPLES rows: Import, Compact, then the bank entries.
+  enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kFirstSample };
   static constexpr int kHeaderH = 28;
-  static constexpr int kActionH = 36;
+  static constexpr int kActionH = 34;
   static constexpr int kRowH = 24;
   static constexpr int kMaxFiles = 128;
+  static constexpr int kWavDepthMax = 4;  // subfolders below /samples
   static constexpr int kListRows = (kAreaH - kHeaderH) / kRowH;  // incl. the Back row
+  static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
+  static constexpr int kSampleRows = (kAreaH - kHeaderH - kInfoH) / kRowH;
+  static constexpr int kSwitchX = 208;  // "PROJECTS | SAMPLES" in the header
+  static constexpr int kSwitchW = 18 * kCharW;
 
   bool enabled(int a) const;
   void moveSel(int delta);
@@ -37,11 +54,43 @@ class FileScreen : public Screen {
   void chooseFile(int idx);
   void doLoad(bool bak);
   void doNew();
+  void startWifi();
   void listScroll(int rows);
+  // Folder browsing (MIDI import from /midi, WAV import from /samples).
+  bool browsing() const { return midiList_ || wavList_; }
+  char* curDir() { return midiList_ ? midiDir_ : wavDir_; }
+  const char* curDir() const { return midiList_ ? midiDir_ : wavDir_; }
+  size_t curDirCap() const { return midiList_ ? sizeof(midiDir_) : sizeof(wavDir_); }
+  const char* rootDir() const { return midiList_ ? "/midi" : "/samples"; }
+  bool atRoot() const;
+  void reopenList();  // lists curDir() again
+  bool listUp();      // to the parent folder; false at the root
+  void drawHeader(LGFX_Sprite& s, int y0);
+  void setSection(bool samples);
+  // SAMPLES
+  bool sampleEnabled(int row) const;
+  int sampleRowCount() const;
+  void sampleMove(int delta);
+  void sampleRun(int row);
+  void openWavList();
+  // WAV preview in the import list (Play): stopPreview() also frees the buffer.
+  void togglePreview();
+  void stopPreview();
+  void importAs(const char* initial);
+  void doImport(const char* name, bool replace = false);
+  void doDelete(const char* name);
+  void doCompact();
+  bool playbackBusy();  // toasts STOP PLAYBACK FIRST
+  int usedBy(const char* sample) const;  // first instrument playing it, or -1
+  static void progress(uint32_t done, uint32_t total, void* ctx);
+  void samplesInput(const hw::InputEvent& ev);
+  void samplesTouch(const TouchEvent& ev);
+  void drawSamples(LGFX_Sprite& s, int top);
 
   App& app_;
   Keyboard kb_;
   ImportDialog import_;
+  WifiDialog wifi_;
   int sel_ = kSave;
   int y0_ = kAreaY;
   // Load / import list, PSRAM while open.
@@ -50,8 +99,22 @@ class FileScreen : public Screen {
   int listSel_ = 0;  // 0 = Back, i + 1 = names_[i]
   int listTop_ = 0;
   int dragAcc_ = 0;
-  bool midiList_ = false;  // names_ lists /midi/*.mid
+  bool midiList_ = false;  // names_ lists folders, then *.mid in midiDir_
+  int dirCount_ = 0;       // folders at the start of names_
+  char midiDir_[160] = "/midi";  // kept between imports
   char pending_[hw::kNameMax] = {0};  // target of a confirmation menu
+  bool samples_ = false;              // SAMPLES section shown
+  int ssel_ = kImportRow;             // SampleRow or kFirstSample + bank index
+  int stop_ = 0;                      // first visible SAMPLES row
+  bool wavList_ = false;              // names_ lists folders, then *.wav in wavDir_
+  char wavDir_[128] = "/samples";     // kept between imports
+  char wavFile_[hw::kNameMax] = {0};  // WAV being imported
+  int16_t* pvBuf_ = nullptr;          // previewed WAV, PSRAM
+  int pvSel_ = -1;                    // listSel_ it belongs to
+  const char* busyLabel_ = "";
+  char busyMsg_[32] = {0};
+  int lastPct_ = -1;
+  uint32_t lastBusyMs_ = 0;
 };
 
 }  // namespace ui

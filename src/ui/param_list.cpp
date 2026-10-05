@@ -28,9 +28,7 @@ void ParamList::onInput(const hw::InputEvent& ev) {
       if (edit_) {
         edit(ev.delta * (ev.shift ? 10 : 1));
       } else {
-        sel_ += ev.delta;
-        if (sel_ < 0) sel_ = 0;
-        if (sel_ >= count_) sel_ = count_ - 1;
+        sel_ = ((sel_ + ev.delta) % count_ + count_) % count_;
         ensureVisible();
       }
       break;
@@ -84,12 +82,14 @@ void ParamList::draw(LGFX_Sprite& s, int y) {
   for (int i = top_; i < top_ + n; ++i) {
     const int ry = y + (i - top_) * kRowH;
     const bool sel = i == sel_;
+    const bool dim = params_[i].dim && params_[i].dim();
     if (sel) s.fillRect(0, ry, kScreenW, kRowH, kSelBg);
-    s.setTextColor(sel ? kCursor : kText);
+    s.setTextColor(sel ? kCursor : (dim ? kDim : kText));
     s.drawString(params_[i].label, kLabelX, ry + (kRowH - kCharH) / 2);
     buf[0] = 0;
     if (params_[i].format) params_[i].format(buf, sizeof(buf));
-    s.setTextColor(sel && edit_ ? kEditCursor : kText);
+    const bool warn = params_[i].warn && params_[i].warn();
+    s.setTextColor(sel && edit_ ? kEditCursor : (warn ? kRed : (dim ? kDim : kText)));
     s.drawString(buf, kValueX, ry + (kRowH - kCharH) / 2);
   }
   if (n < count_) {  // scroll marks

@@ -2,7 +2,11 @@
 #include <new>
 #include <stdio.h>
 #include <string.h>
+#include "audio/audio.h"
 #include "esp_heap_caps.h"
+#include "hw/trackio.h"
+#include "storage/settings.h"
+#include "track_leds.h"
 
 namespace ui {
 namespace {
@@ -41,6 +45,10 @@ void App::begin(LGFX* lcd, mt::Project* p) {
     spr_->setFont(font());
   }
 
+  // Master volume is a device setting: it overrides the project's and is kept in NVS.
+  p_->masterVol = storage::loadVolume(p_->masterVol);
+  savedVol_ = p_->masterVol;
+
   status_ = engine::status();
   lastBpm_ = p_->bpm;
   screen()->onEnter();
@@ -58,7 +66,13 @@ void App::setTab(Tab t) {
   dirty_ = true;
 }
 
-void App::transport() { engine::post(shift_ ? engine::Cmd::TogglePlay : engine::Cmd::StartStop); }
+void App::transport() {
+  if (transportLocked_) {
+    toast("WI-FI MODE");
+    return;
+  }
+  engine::post(shift_ ? engine::Cmd::TogglePlay : engine::Cmd::StartStop);
+}
 
 void App::setBpmEdit(bool on) {
   if (on && !bpmEdit_) bpmTarget_ = p_->bpm;
@@ -70,9 +84,15 @@ void App::onInput(const hw::InputEvent& ev) {
   shift_ = ev.shift;
   dirty_ = true;
   switch (ev.type) {
-    case InputType::PlayPress: transport(); return;
+    case InputType::PlayPress:
+      if (!menu_.isOpen() && !bpmEdit_ && screen()->onPlay()) return;
+      transport();
+      return;
     case InputType::ShiftDown: shift_ = true; return;
     case InputType::ShiftUp: shift_ = false; return;
+    case InputType::TrackPress:
+      if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
+      return;
     default: break;
   }
   if (menu_.isOpen()) {
@@ -135,6 +155,8 @@ void App::projectReplaced() {
   markSaved();
   setBpmEdit(false);
   lastBpm_ = p_->bpm;
+  p_->masterVol = savedVol_;  // the device volume, not the file's
+  volChangedAt_ = 0;
   // Let the sequencer re-read songMode/chain (shows S01 while stopped).
   engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));
   for (Screen* sc : screens_)
@@ -154,6 +176,51 @@ bool App::doUndo() {
   engine::unlockProject();
   markDirty();
   return true;
+}
+
+// Grid takes selection and note entry; Shift + N mutes on every other screen too.
+void App::trackKey(int n, bool shift) {
+  if (n < 0 || n >= mt::kTracks) return;
+  if (tab_ == Tab::Grid && grid_.trackKey(n, shift)) return;
+  if (!shift) {
+    setCurTrack(n);
+    return;
+  }
+  mt::TrackCfg& t = p_->tracks[n];
+  engine::lockProject();
+  t.mute = !t.mute;
+  engine::unlockProject();
+  markDirty();
+  char msg[16];
+  snprintf(msg, sizeof(msg), "TRACK %d %s", n + 1, t.mute ? "MUTE" : "ON");
+  toast(msg);
+}
+
+void App::updateLeds(uint32_t now) {
+  const uint8_t act = engine::takeActivity();
+  uint8_t flash = 0;
+  for (int i = 0; i < mt::kTracks; ++i) {
+    if (act & (1u << i)) flashUntil_[i] = now + kFlashMs;
+    if (static_cast<int32_t>(flashUntil_[i] - now) > 0) flash |= static_cast<uint8_t>(1u << i);
+  }
+  hw::trackLeds(mt::trackLedMask(curTrack_, flash));
+}
+
+// Writes the volume to NVS once it has stayed put for a second (an encoder sweep = one write).
+void App::saveVolumeIdle(uint32_t now) {
+  if (p_->masterVol == savedVol_) {
+    volChangedAt_ = 0;
+    return;
+  }
+  if (volChangedAt_ == 0 || p_->masterVol != pendingVol_) {
+    pendingVol_ = p_->masterVol;
+    volChangedAt_ = now | 1;
+    return;
+  }
+  if (now - volChangedAt_ < 1000) return;
+  storage::saveVolume(pendingVol_);
+  savedVol_ = pendingVol_;
+  volChangedAt_ = 0;
 }
 
 void App::toast(const char* msg) {
@@ -188,16 +255,38 @@ void App::tick() {
     dirty_ = true;
   }
   const uint32_t now = millis();
+  updateLeds(now);
+  saveVolumeIdle(now);
+  pollCpu(now);
   if (toast_[0] && static_cast<int32_t>(now - toastUntil_) >= 0) {
     toast_[0] = 0;
     dirty_ = true;
   }
+  screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
 
   if (dirty_ && now - lastDraw_ >= kFrameMs) {
     draw();
     dirty_ = false;
     lastDraw_ = now;
+  }
+}
+
+// Average audio load over the last window: total render time / total block duration. Red when a
+// block overran its period (an audible gap) or the average is >= 85 %, yellow >= 60 %. A window
+// without blocks (audio parked) keeps the last value.
+void App::pollCpu(uint32_t now) {
+  if (now - cpuAt_ < kCpuMs) return;
+  cpuAt_ = now;
+  const audio::Load l = audio::takeLoad();
+  if (!l.blocks) return;
+  constexpr uint32_t kBlockUs = audio::kBlock * 1000000u / audio::kRate;
+  const int pct = static_cast<int>(static_cast<uint64_t>(l.sumUs) * 100 / (static_cast<uint64_t>(l.blocks) * kBlockUs));
+  const uint16_t color = (l.peakUs > kBlockUs || pct >= 85) ? kRed : (pct >= 60 ? kYellow : kDim);
+  if (pct != cpu_ || color != cpuColor_) {
+    cpu_ = pct;
+    cpuColor_ = color;
+    dirty_ = true;
   }
 }
 
@@ -255,14 +344,18 @@ void App::drawStatus() {
   }
   spr_->setTextColor(kText);
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
-  spr_->drawString(buf, 200, 4);
-  spr_->drawString(status_.playing ? "PLAY" : (status_.paused ? "PAUSE" : "STOP"), 300, 4);
+  spr_->drawString(buf, 200, 4);  // up to "128/128"
+  spr_->drawString(status_.playing ? "PLAY" : (status_.paused ? "PAUSE" : "STOP"), 264, 4);
   snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
-  spr_->drawString(buf, 400, 4);
+  spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+  snprintf(buf, sizeof(buf), "CPU %3d%%", cpu_ > 999 ? 999 : cpu_);
+  spr_->setTextColor(cpuColor_);
+  spr_->drawString(buf, 416, 4);
 }
 
 void App::drawTabs() {
-  static const char* const kNames[] = {"GRID", "TRACK", "BANK", "PROJ", "FILE"};
+  static const char* const kNames[] = {"GRID", "TRACK", "BANK", "INST", "PROJ", "FILE"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(Tab::Count), "tab names");
   spr_->fillRect(0, kTabY, kScreenW, kTabH, kStatusBg);
   for (int i = 0; i < static_cast<int>(Tab::Count); ++i) {
     const int x = i * kTabW;

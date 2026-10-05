@@ -4,35 +4,56 @@
 namespace ui {
 namespace {
 
-constexpr char kDel = 1, kOk = 2, kCancel = 3;
+constexpr char kDel = 1, kOk = 2, kCancel = 3, kPage = 4;
 
-struct Key {
-  char ch;
-  uint8_t col, row, w;
-  const char* label;
-};
-
-// Columns in key units of a 10-wide grid.
-constexpr Key kKeys[] = {
-    {'1', 0, 0, 1, "1"}, {'2', 1, 0, 1, "2"}, {'3', 2, 0, 1, "3"}, {'4', 3, 0, 1, "4"}, {'5', 4, 0, 1, "5"},
-    {'6', 5, 0, 1, "6"}, {'7', 6, 0, 1, "7"}, {'8', 7, 0, 1, "8"}, {'9', 8, 0, 1, "9"}, {'0', 9, 0, 1, "0"},
-    {'A', 0, 1, 1, "A"}, {'B', 1, 1, 1, "B"}, {'C', 2, 1, 1, "C"}, {'D', 3, 1, 1, "D"}, {'E', 4, 1, 1, "E"},
-    {'F', 5, 1, 1, "F"}, {'G', 6, 1, 1, "G"}, {'H', 7, 1, 1, "H"}, {'I', 8, 1, 1, "I"}, {'J', 9, 1, 1, "J"},
-    {'K', 0, 2, 1, "K"}, {'L', 1, 2, 1, "L"}, {'M', 2, 2, 1, "M"}, {'N', 3, 2, 1, "N"}, {'O', 4, 2, 1, "O"},
-    {'P', 5, 2, 1, "P"}, {'Q', 6, 2, 1, "Q"}, {'R', 7, 2, 1, "R"}, {'S', 8, 2, 1, "S"}, {'T', 9, 2, 1, "T"},
-    {'U', 0, 3, 1, "U"}, {'V', 1, 3, 1, "V"}, {'W', 2, 3, 1, "W"}, {'X', 3, 3, 1, "X"}, {'Y', 4, 3, 1, "Y"},
-    {'Z', 5, 3, 1, "Z"}, {'-', 6, 3, 1, "-"}, {'_', 7, 3, 1, "_"}, {kDel, 8, 3, 2, "DEL"},
-    {kCancel, 0, 4, 5, "CANCEL"}, {kOk, 5, 4, 5, "OK"},
-};
-constexpr int kKeyCount = sizeof(kKeys) / sizeof(kKeys[0]);
+// Rows of single-width keys, 10 per row (columns in key units of a 10-wide grid).
+constexpr const char* kLetterRows[] = {"1234567890", "ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ-_"};
+constexpr const char* kSymbolRows[] = {"!@#$%^&*()", "-_=+[]{}\\|", ";:'\",.<>/?", "`~"};
 
 }  // namespace
 
-void Keyboard::open(const char* title, const char* initial, std::function<void(const char*)> onOk) {
+void Keyboard::layout() {
+  keyCount_ = 0;
+  auto add = [this](char ch, int col, int row, int w, const char* label) {
+    Key& k = keys_[keyCount_++];
+    k.ch = ch;
+    k.col = static_cast<uint8_t>(col);
+    k.row = static_cast<uint8_t>(row);
+    k.w = static_cast<uint8_t>(w);
+    if (label) {
+      strlcpy(k.label, label, sizeof(k.label));
+    } else {
+      k.label[0] = ch;
+      k.label[1] = 0;
+    }
+  };
+  const char* const* rows = symbols_ ? kSymbolRows : kLetterRows;
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; rows[r][c]; ++c) add(rows[r][c], c, r, 1, nullptr);
+  if (symbols_) add(' ', 2, 3, 6, "SPACE");
+  add(kDel, 8, 3, 2, "DEL");
+  if (textMode_) {
+    add(kCancel, 0, 4, 4, "CANCEL");
+    add(kPage, 4, 4, 2, symbols_ ? "ABC" : "#+=");
+    add(kOk, 6, 4, 4, "OK");
+  } else {
+    add(kCancel, 0, 4, 5, "CANCEL");
+    add(kOk, 5, 4, 5, "OK");
+  }
+  if (textMode_ && !symbols_)  // lower case is the default for passwords
+    for (int i = 0; i < keyCount_; ++i)
+      if (keys_[i].ch >= 'A' && keys_[i].ch <= 'Z') keys_[i].label[0] = static_cast<char>(keys_[i].ch - 'A' + 'a');
+}
+
+void Keyboard::open(const char* title, const char* initial, std::function<void(const char*)> onOk, bool text) {
+  textMode_ = text;
+  symbols_ = false;
+  maxLen_ = text ? kMaxText : kMaxLen;
   strlcpy(title_, title ? title : "", sizeof(title_));
-  strlcpy(text_, initial ? initial : "", sizeof(text_));
+  strlcpy(text_, initial ? initial : "", static_cast<size_t>(maxLen_) + 1);
   len_ = static_cast<int>(strlen(text_));
-  sel_ = kKeyCount - 1;  // OK
+  layout();
+  sel_ = keyCount_ - 1;  // OK
   onOk_ = std::move(onOk);
   open_ = true;
 }
@@ -43,20 +64,25 @@ void Keyboard::close() {
 }
 
 void Keyboard::press(int key, bool shift) {
-  if (key < 0 || key >= kKeyCount) return;
-  const char c = kKeys[key].ch;
+  if (key < 0 || key >= keyCount_) return;
+  const char c = keys_[key].ch;
   if (c == kCancel) {
     close();
   } else if (c == kOk) {
-    char t[kMaxLen + 1];
+    char t[kMaxText + 1];
     memcpy(t, text_, sizeof(t));
     std::function<void(const char*)> cb = std::move(onOk_);
     close();
     if (cb) cb(t);  // may reopen the keyboard
+  } else if (c == kPage) {
+    symbols_ = !symbols_;
+    layout();
+    sel_ = keyCount_ - 2;  // stay on the page key
   } else if (c == kDel) {
     if (len_ > 0) text_[--len_] = 0;
-  } else if (len_ < kMaxLen) {
-    text_[len_++] = shift && c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+  } else if (len_ < maxLen_) {
+    const bool lower = c >= 'A' && c <= 'Z' && (textMode_ ? !shift : shift);
+    text_[len_++] = lower ? static_cast<char>(c - 'A' + 'a') : c;
     text_[len_] = 0;
   }
 }
@@ -64,7 +90,7 @@ void Keyboard::press(int key, bool shift) {
 void Keyboard::onInput(const hw::InputEvent& ev) {
   if (!open_) return;
   switch (ev.type) {
-    case hw::InputType::EncTurn: sel_ = ((sel_ + ev.delta) % kKeyCount + kKeyCount) % kKeyCount; break;
+    case hw::InputType::EncTurn: sel_ = ((sel_ + ev.delta) % keyCount_ + keyCount_) % keyCount_; break;
     case hw::InputType::EncClick: press(sel_, ev.shift); break;
     case hw::InputType::EncLong: close(); break;
     default: break;
@@ -75,8 +101,8 @@ int Keyboard::keyAt(int x, int y) const {
   const int top = y0_ + kFieldH;
   if (y < top || x < kLeft) return -1;
   const int row = (y - top) / kKeyH, col = (x - kLeft) / kKeyW;
-  for (int i = 0; i < kKeyCount; ++i)
-    if (kKeys[i].row == row && col >= kKeys[i].col && col < kKeys[i].col + kKeys[i].w) return i;
+  for (int i = 0; i < keyCount_; ++i)
+    if (keys_[i].row == row && col >= keys_[i].col && col < keys_[i].col + keys_[i].w) return i;
   return -1;
 }
 
@@ -95,12 +121,15 @@ void Keyboard::draw(LGFX_Sprite& s, int y0) {
   s.setTextColor(kDim);
   s.drawString(title_, kLeft, y0 + (kFieldH - 4 - kCharH) / 2);
   const int tx = kLeft + (static_cast<int>(strlen(title_)) + 1) * kCharW;
+  // Long text: show the tail so the cursor stays visible.
+  const int fit = (kScreenW - kLeft - tx) / kCharW - 1;
+  const int skip = len_ > fit ? len_ - fit : 0;
   s.setTextColor(kText);
-  s.drawString(text_, tx, y0 + (kFieldH - 4 - kCharH) / 2);
-  s.fillRect(tx + len_ * kCharW, y0 + (kFieldH - 4 + kCharH) / 2, kCharW, 2, kEditCursor);
+  s.drawString(text_ + skip, tx, y0 + (kFieldH - 4 - kCharH) / 2);
+  s.fillRect(tx + (len_ - skip) * kCharW, y0 + (kFieldH - 4 + kCharH) / 2, kCharW, 2, kEditCursor);
 
-  for (int i = 0; i < kKeyCount; ++i) {
-    const Key& k = kKeys[i];
+  for (int i = 0; i < keyCount_; ++i) {
+    const Key& k = keys_[i];
     const int x = kLeft + k.col * kKeyW, y = y0 + kFieldH + k.row * kKeyH;
     const int w = k.w * kKeyW - kGap, h = kKeyH - kGap;
     const bool sel = i == sel_;

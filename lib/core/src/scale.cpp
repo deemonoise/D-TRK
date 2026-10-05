@@ -35,6 +35,8 @@ uint16_t scaleMask(ScaleType t) {
   return i < static_cast<uint8_t>(ScaleType::Count) ? kMasks[i] : kMasks[0];
 }
 
+int scaleDegrees(ScaleType t) { return __builtin_popcount(scaleMask(t)); }
+
 const char* scaleName(ScaleType t) {
   const auto i = static_cast<uint8_t>(t);
   return i < static_cast<uint8_t>(ScaleType::Count) ? kScaleNames[i] : kScaleNames[0];
@@ -61,6 +63,18 @@ int moveDegrees(int note, int degrees, uint8_t root, ScaleType t) {
     n = m;
   }
   return n;
+}
+
+int degreeNote(int button, uint8_t root, ScaleType t, int base) {
+  const uint16_t mask = t == ScaleType::Chromatic ? scaleMask(ScaleType::Major) : scaleMask(t);
+  int deg[12];
+  int k = 0;
+  for (int i = 0; i < 12; ++i)
+    if ((mask >> i) & 1) deg[k++] = i;
+  if (button < 0) button = 0;
+  int n = base + root + deg[button % k] + 12 * (button / k);
+  while (n > 127) n -= 12;
+  return n < 0 ? 0 : n;
 }
 
 int chordNotes(uint8_t note, uint8_t chord, uint8_t root, ScaleType t, uint8_t out[4]) {

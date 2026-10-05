@@ -4,6 +4,7 @@
 #include "euclid_dialog.h"
 #include "model.h"
 #include "screen.h"
+#include "transpose_dialog.h"
 
 namespace ui {
 
@@ -18,12 +19,14 @@ class GridScreen : public Screen {
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
+  // Track button N: false when App should handle it (Shift + N outside edit = mute).
+  bool trackKey(int n, bool shift);
 
  private:
   enum Field : uint8_t { kNote, kVel, kFx1, kVal1, kFx2, kVal2, kFields };
   // Context menu ids.
   enum MenuId : int {
-    kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTrUp1, kTrDn1, kTrUp12, kTrDn12,
+    kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kEuclid
   };
 
@@ -52,11 +55,16 @@ class GridScreen : public Screen {
   void undo();
   void editTurn(int delta, bool shift);
   void setNote(uint8_t note);
+  void previewNote(uint8_t note);
+  void enterDegree(int button, bool octaveUp);
   void writeStep(const mt::Step& st);
   void openMenu();
   void openEuclid();
+  void openTranspose();
+  void transpose(const mt::Sel& sel, int amount, bool degrees);
+  void selFollow();  // selection end follows the cursor
   void onMenu(int id);
-  void apply(const mt::Sel& sel, int id);  // clear / transpose under pushUndo + lock
+  void apply(const mt::Sel& sel, int id);  // clear / note off under pushUndo + lock
   mt::Sel trackSel() const;
   mt::Sel curSel() const;
   bool hit(int x, int y, int& step, int& tr, int& field) const;
@@ -86,6 +94,8 @@ class GridScreen : public Screen {
   EuclidDialog euclid_{app_};
   mt::EuclidParams euclidParams_[mt::kTracks];  // per track, RAM only
   bool euclidInit_[mt::kTracks] = {};
+  TransposeDialog transpose_{app_};
+  mt::FxSlot lastFx_[mt::kTracks][2] = {};  // last FX written per track and slot, offered on empty slots
 
   int menuPattern_ = -1;  // pattern the context menu was opened for
   bool selOn_ = false;

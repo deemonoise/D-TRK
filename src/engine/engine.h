@@ -7,8 +7,9 @@ namespace engine {
 // SendProgram: arg = track. ReleaseTies: after the UI changed heard pattern data under a held TIE.
 // ChainEdit: arg = (row << 8) | mt::ChainOp, after a write to Project.chain / chainLen / songMode.
 // Post it while still holding lockProject(): the engine handles it before planning on the new chain.
+// TrackOut: arg = track, after TrackCfg::out changed (post ReleaseTies first): ends its sounding notes.
 enum class Cmd : uint8_t {
-  StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, ChainEdit
+  StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, ChainEdit, TrackOut
 };
 
 struct Command {
@@ -34,6 +35,10 @@ void begin(mt::Project* p);
 // False when the command queue was full (the command is lost).
 bool post(Cmd c, uint16_t arg = 0);
 Status status();
+// Tracks that sent a NoteOn since the last call (bit = track), for the activity LEDs.
+uint8_t takeActivity();
+// Engine timer time, us (time stamps of synth events).
+uint64_t nowUs();
 
 // Hold while writing project data from the UI. Keep it short: the engine waits on it.
 void lockProject();

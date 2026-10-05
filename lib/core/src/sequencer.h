@@ -12,6 +12,14 @@ class MidiSink {
  public:
   virtual ~MidiSink() = default;
   virtual void send(const uint8_t* b, uint8_t len) = 0;
+  // Message for the internal synth (INT tracks), see Synth::event. t: when it should sound, us
+  // (the scheduled time, at or a little before the call; the time passed to the call otherwise).
+  virtual void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) {
+    (void)t;
+    (void)track;
+    (void)b;
+    (void)len;
+  }
 };
 
 constexpr uint64_t kNever = UINT64_MAX;
@@ -51,13 +59,15 @@ class Sequencer {
   void selectPattern(uint8_t idx);  // switch from the next step
   void setBpm(uint16_t bpm);
   // Program change of one track, sent now (nothing for kNoProgram).
-  void sendProgram(int track, MidiSink& out);
+  void sendProgram(uint64_t now, int track, MidiSink& out);
   // Replans the unheard steps from the (edited) pattern, then ends every held TIE now
   // (not before onT + kMinGateUs), e.g. after its pattern was cleared.
   void releaseTies(uint64_t now, MidiSink& out);
   // After a chain edit: Insert = a row inserted at `at`, Delete = row `at` removed,
   // Edit = entries or songMode changed in place.
   void chainEdited(uint64_t now, MidiSink& out, int at, ChainOp op);
+  // After TrackCfg::out of a track changed: ends its sounding notes on both outputs.
+  void trackOutChanged(uint64_t now, int track, MidiSink& out);
 
   uint64_t process(uint64_t now, MidiSink& out);
 
@@ -73,6 +83,12 @@ class Sequencer {
   // Chain index of the heard pattern; -1 outside song mode.
   int heardSongPos() const { return heardSong_; }
   void seed(uint32_t s) { rng_ = Rng(s); }
+  // Tracks whose NoteOns went out since the last call (bit = track).
+  uint8_t takeActivity() {
+    const uint8_t a = activity_;
+    activity_ = 0;
+    return a;
+  }
 
  private:
   enum class State : uint8_t { Stopped, Playing, Paused };
@@ -123,15 +139,21 @@ class Sequencer {
   void showStopped();
   void releaseTie(int track, uint64_t t);
   void releaseAllTies(uint64_t t);
-  void silence(MidiSink& out);
-  int pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, bool nudge = true);
-  bool push(uint64_t t, uint8_t s, uint8_t d1, uint8_t d2, uint32_t id, bool cont = false, uint8_t len = 3);
+  void silence(uint64_t now, MidiSink& out);
+  bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
+  bool expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex);
+  void pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note,
+                     bool nudge = true);
+  int pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool nudge = true);
+  bool push(uint64_t t, uint8_t s, uint8_t d1, uint8_t d2, uint32_t id, bool cont = false, uint8_t len = 3,
+            uint8_t track = kNoTrack);
   void dispatch(const SchedEvent& e, MidiSink& out);
   uint32_t newId();
 
   Project& p_;
   EventHeap heap_;
   Voices voices_;
+  VoicesN<kTracks> intVoices_;  // INT tracks: channel = track number
   Rng rng_;
   State state_ = State::Stopped;
   uint8_t cur_ = 0;
@@ -156,6 +178,7 @@ class Sequencer {
   uint8_t heardPat_ = 0;
   int heardSong_ = -1;
   uint32_t nextId_ = 1;
+  uint8_t activity_ = 0;
   Tie ties_[kTracks];
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };

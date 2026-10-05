@@ -44,7 +44,7 @@ void Sequencer::anchorAt(uint64_t now) {
 }
 
 void Sequencer::start(uint64_t now, MidiSink& out) {
-  if (state_ == State::Playing) silence(out);
+  if (state_ == State::Playing) silence(now, out);
   heap_.clear();
   if (songActive()) {
     songPos_ = 0;
@@ -56,8 +56,12 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   queued_ = -1;
   pos_ = 0;
   loop_ = 0;
-  for (const auto& t : p_.tracks) {
-    if (t.program != kNoProgram) {
+  for (int i = 0; i < kTracks; ++i) {
+    const TrackCfg& t = p_.tracks[i];
+    if (internal(i)) {
+      const uint8_t m = 0xFE;  // synth: reset the track's runtime state
+      out.synth(now, static_cast<uint8_t>(i), &m, 1);
+    } else if (t.program != kNoProgram) {
       const uint8_t m[2] = {static_cast<uint8_t>(0xC0 | (t.channel & 15)), static_cast<uint8_t>(t.program & 127)};
       out.send(m, 2);
     }
@@ -73,7 +77,7 @@ void Sequencer::pause(uint64_t now, MidiSink& out) {
   if (state_ != State::Playing) return;
   emitDue(now, out);  // what was due before the command was heard
   rewind(now);  // steps scheduled ahead but not yet heard are replayed on resume
-  silence(out);
+  silence(now, out);
   const uint8_t s = 0xFC;
   out.send(&s, 1);
   heardPos_ = pos_;
@@ -101,8 +105,7 @@ void Sequencer::resume(uint64_t now, MidiSink& out) {
 }
 
 void Sequencer::stop(uint64_t now, MidiSink& out) {
-  (void)now;
-  if (state_ == State::Playing) silence(out);
+  if (state_ == State::Playing) silence(now, out);
   const uint8_t s = 0xFC;
   out.send(&s, 1);
   state_ = State::Stopped;
@@ -166,9 +169,14 @@ void Sequencer::setBpm(uint16_t bpm) {
   if (state_ != State::Playing) bpm_ = p_.bpm;  // while playing, process() applies it
 }
 
-void Sequencer::sendProgram(int track, MidiSink& out) {
+void Sequencer::sendProgram(uint64_t now, int track, MidiSink& out) {
   if (track < 0 || track >= kTracks) return;
   const TrackCfg& t = p_.tracks[track];
+  if (internal(track)) {
+    const uint8_t m[2] = {0xC0, static_cast<uint8_t>(t.instr < kInstruments ? t.instr : 0)};
+    out.synth(now, static_cast<uint8_t>(track), m, 2);
+    return;
+  }
   if (t.program == kNoProgram) return;
   const uint8_t m[2] = {static_cast<uint8_t>(0xC0 | (t.channel & 15)), static_cast<uint8_t>(t.program & 127)};
   out.send(m, 2);
@@ -209,6 +217,29 @@ void Sequencer::chainEdited(uint64_t now, MidiSink& out, int at, ChainOp op) {
     hist_[i].song = static_cast<int8_t>(remap(hist_[i].song));
     hist_[i].prevSong = static_cast<int8_t>(remap(hist_[i].prevSong));
   }
+}
+
+// Notes still sounding on the old output would never get their NoteOff (dispatch routes by
+// the current output), so they end now. A MIDI channel may be shared with other tracks:
+// their notes on it end too.
+void Sequencer::trackOutChanged(uint64_t now, int track, MidiSink& out) {
+  if (track < 0 || track >= kTracks) return;
+  const uint8_t tr = static_cast<uint8_t>(track);
+  if (internal(track)) {
+    const uint8_t ch = p_.tracks[track].channel & 15;
+    voices_.releaseChannel(ch, [&](uint8_t note) {
+      const uint8_t m[3] = {static_cast<uint8_t>(0x80 | ch), note, 0};
+      out.send(m, 3);
+    });
+  } else {
+    intVoices_.releaseChannel(tr, [&](uint8_t note) {
+      const uint8_t m[3] = {static_cast<uint8_t>(0x80 | tr), note, 0};
+      out.synth(now, tr, m, 3);
+    });
+    const uint8_t m = 0xFF;
+    out.synth(now, tr, &m, 1);
+  }
+  ties_[track].on = false;
 }
 
 void Sequencer::applyBpm(uint64_t now) {
@@ -342,16 +373,18 @@ void Sequencer::scheduleStep(uint64_t now) {
     if (!s.hasNote()) {
       // OFF ends a tie; controls on OFF or on a step without a note still go out.
       if (s.note == kNoteOff) releaseTie(tr, t);
-      if (hasFx && p_.trackAudible(tr) && expandStep(s, p_.tracks[tr], ctx, rng_, ex)) {
-        pushControls(ex, t, earliest);
+      if (hasFx && p_.trackAudible(tr) && expand(s, tr, ctx, ex)) {
+        pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), false);
+        pushControls(ex, t, earliest, static_cast<uint8_t>(tr));
       }
       continue;
     }
-    if (!p_.trackAudible(tr) || !expandStep(s, p_.tracks[tr], ctx, rng_, ex)) {
+    if (!p_.trackAudible(tr) || !expand(s, tr, ctx, ex)) {
       releaseTie(tr, t + kTieOverlapUs);
       continue;
     }
-    int i = pushControls(ex, t, earliest);  // index of the first NoteOn
+    pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), true);
+    int i = pushControls(ex, t, earliest, static_cast<uint8_t>(tr));  // index of the first NoteOn
     uint64_t shift = 0;
     auto at = [&](const StepEvent& e) {
       const int64_t et = static_cast<int64_t>(t) + e.offsetUs;
@@ -367,14 +400,14 @@ void Sequencer::scheduleStep(uint64_t now) {
       // Same pitch: the held note goes on; this step's gate (or next tie) ends it.
       // If another track took the voice meanwhile, the continuation sounds it again.
       const uint64_t on = at(first);
-      push(on > tie.onT ? on : tie.onT, 0x90 | tie.ch, tie.note, first.vel, tie.id, true);
+      push(on > tie.onT ? on : tie.onT, 0x90 | tie.ch, tie.note, first.vel, tie.id, true, 3, tr);
       if (i + 1 == ex.count) {  // tied again: the next release must follow the continuation
         if (on > tie.onT) tie.onT = on;
         continue;
       }
       const uint64_t off = at(ex.ev[i + 1]);
       const uint64_t minOff = tie.onT + kMinGateUs;
-      push(off > minOff ? off : minOff, 0x80 | tie.ch, tie.note, 0, tie.id);
+      push(off > minOff ? off : minOff, 0x80 | tie.ch, tie.note, 0, tie.id, false, 3, tr);
       keep = true;
       tie.on = false;
       i += 2;
@@ -387,9 +420,9 @@ void Sequencer::scheduleStep(uint64_t now) {
       if (e.kind == EvKind::NoteOn) {
         id = newId();
         onT = et;
-        keep = push(et, 0x90 | e.ch, e.note, e.vel, id);
+        keep = push(et, 0x90 | e.ch, e.note, e.vel, id, false, 3, tr);
       } else if (keep) {
-        push(et, 0x80 | e.ch, e.note, 0, id);
+        push(et, 0x80 | e.ch, e.note, 0, id, false, 3, tr);
       }
     }
     if (ex.tie && keep) {
@@ -408,9 +441,24 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.first = minT_ == kNever ? t : minT_;
 }
 
+// INT tracks: tells the synth a step starts (see Synth: 0xF5 0xF0), with the controls' time.
+// Sent before every step with a note (it ends the previous step's fx) and before synth fx.
+void Sequencer::pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note,
+                              bool nudge) {
+  if (!internal(track) || ex.count == 0) return;
+  bool fx = false;
+  for (int i = 0; i < ex.count && !fx; ++i) fx = ex.ev[i].kind == EvKind::SynthFx;
+  if (!note && !fx) return;
+  int64_t et = static_cast<int64_t>(t) + (nudge ? ex.ev[0].offsetUs : 0);
+  if (et < earliest) et = earliest;
+  const uint8_t tps = static_cast<uint8_t>(ticks() > 127 ? 127 : ticks());
+  push(static_cast<uint64_t>(et), 0xF5, kSynthStep, static_cast<uint8_t>(tps | (note ? 0x80 : 0)), 0, false, 3,
+       track);
+}
+
 // Pushes the leading control events of an expanded step (never in the past) and
 // returns the index of the first note event.
-int Sequencer::pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, bool nudge) {
+int Sequencer::pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool nudge) {
   int i = 0;
   for (; i < ex.count; ++i) {
     const StepEvent& e = ex.ev[i];
@@ -419,11 +467,13 @@ int Sequencer::pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, b
       case EvKind::Cc: status = 0xB0; break;
       case EvKind::PitchBend: status = 0xE0; break;
       case EvKind::Program: status = 0xC0; len = 2; break;
+      case EvKind::SynthFx: status = 0xF5; break;  // no channel nibble
       default: return i;
     }
     int64_t et = static_cast<int64_t>(t) + (nudge ? e.offsetUs : 0);
     if (et < earliest) et = earliest;
-    push(static_cast<uint64_t>(et), status | e.ch, e.note, len == 3 ? e.vel : 0, 0, false, len);
+    if (e.kind != EvKind::SynthFx) status |= e.ch;
+    push(static_cast<uint64_t>(et), status, e.note, len == 3 ? e.vel : 0, 0, false, len, track);
   }
   return i;
 }
@@ -440,8 +490,9 @@ void Sequencer::skipStep(uint64_t now) {
     const Step& s = pat.steps[tr][pos_];
     if (s.hasNote() || s.note == kNoteOff) releaseTie(tr, t);
     const bool hasFx = s.fx[0].cmd != Fx::None || s.fx[1].cmd != Fx::None;
-    if (hasFx && p_.trackAudible(tr) && expandStep(s, p_.tracks[tr], ctx, rng_, ex_)) {
-      pushControls(ex_, now, static_cast<int64_t>(now), false);  // all at now, no nudge
+    if (hasFx && p_.trackAudible(tr) && expand(s, tr, ctx, ex_)) {
+      pushStepStart(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false, false);
+      pushControls(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false);  // all at now, no nudge
     }
   }
   stepTick_ += ticks();
@@ -472,7 +523,7 @@ void Sequencer::releaseTie(int track, uint64_t t) {
   Tie& tie = ties_[track];
   if (!tie.on) return;
   const uint64_t minT = tie.onT + kMinGateUs;
-  push(t > minT ? t : minT, 0x80 | tie.ch, tie.note, 0, tie.id);
+  push(t > minT ? t : minT, 0x80 | tie.ch, tie.note, 0, tie.id, false, 3, static_cast<uint8_t>(track));
   tie.on = false;
 }
 
@@ -480,16 +531,35 @@ void Sequencer::releaseAllTies(uint64_t t) {
   for (int tr = 0; tr < kTracks; ++tr) releaseTie(tr, t);
 }
 
-void Sequencer::silence(MidiSink& out) {
+void Sequencer::silence(uint64_t now, MidiSink& out) {
   heap_.clear();
   voices_.releaseAll([&](uint8_t ch, uint8_t note) {
     const uint8_t m[3] = {static_cast<uint8_t>(0x80 | ch), note, 0};
     out.send(m, 3);
   });
+  intVoices_.releaseAll([&](uint8_t ch, uint8_t note) {
+    const uint8_t m[3] = {static_cast<uint8_t>(0x80 | ch), note, 0};
+    out.synth(now, ch, m, 3);
+  });
+  for (int t = 0; t < kTracks; ++t) {
+    if (!internal(t)) continue;
+    const uint8_t m = 0xFF;
+    out.synth(now, static_cast<uint8_t>(t), &m, 1);
+  }
   for (auto& t : ties_) t.on = false;
 }
 
-bool Sequencer::push(uint64_t t, uint8_t s, uint8_t d1, uint8_t d2, uint32_t id, bool cont, uint8_t len) {
+// expandStep with the track's routing: on an INT track every event's channel is the track
+// number (the key of intVoices_ and of ties), CHN does not apply.
+bool Sequencer::expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex) {
+  if (!expandStep(s, p_.tracks[track], ctx, rng_, ex)) return false;
+  if (internal(track))
+    for (int i = 0; i < ex.count; ++i) ex.ev[i].ch = static_cast<uint8_t>(track);
+  return true;
+}
+
+bool Sequencer::push(uint64_t t, uint8_t s, uint8_t d1, uint8_t d2, uint32_t id, bool cont, uint8_t len,
+                     uint8_t track) {
   SchedEvent e{};
   e.t = t;
   e.id = id;
@@ -499,28 +569,51 @@ bool Sequencer::push(uint64_t t, uint8_t s, uint8_t d1, uint8_t d2, uint32_t id,
   e.b[2] = d2;
   e.len = len;
   e.cont = cont;
+  e.track = track;
   if (t < minT_) minT_ = t;
   // A full heap drops NoteOns and controls; NoteOffs have a reserve.
   return heap_.push(e);
 }
 
+// Routed by the track's current output: INT tracks go to out.synth() with their own
+// voice table, so an INT and a MIDI note on the same channel and pitch both sound.
 void Sequencer::dispatch(const SchedEvent& e, MidiSink& out) {
   const uint8_t kind = e.b[0] & 0xF0;
   const uint8_t ch = e.b[0] & 0x0F;
+  const bool toSynth = internal(e.track);
+  if (e.b[0] == 0xF5 && !toSynth) return;  // synth fx never reach MIDI
+  if (kind == 0xB0 && toSynth) return;     // CC is MIDI only
+  // INT voices are keyed by track (== the channel of INT events; an event planned before the
+  // track became INT still has its MIDI channel).
+  const uint8_t key = toSynth ? e.track : ch;
+  auto noteOn = [&](uint8_t n, uint32_t id) {
+    return toSynth ? intVoices_.noteOn(key, n, id) : voices_.noteOn(key, n, id);
+  };
+  auto noteOff = [&](uint8_t n, uint32_t id) {
+    return toSynth ? intVoices_.noteOff(key, n, id) : voices_.noteOff(key, n, id);
+  };
+  auto send = [&](const uint8_t* b, uint8_t len) {
+    if (toSynth) {
+      out.synth(e.t, e.track, b, len);  // the synth plays it at its time
+    } else {
+      out.send(b, len);
+    }
+  };
   if (kind == 0x90) {
     // A continuation stays silent while the held note still owns its voice.
-    if (e.cont && voices_.noteOff(ch, e.b[1], e.id)) {
-      voices_.noteOn(ch, e.b[1], e.id);
+    if (e.cont && noteOff(e.b[1], e.id)) {
+      noteOn(e.b[1], e.id);
       return;
     }
-    if (voices_.noteOn(ch, e.b[1], e.id)) {
+    if (noteOn(e.b[1], e.id)) {
       const uint8_t off[3] = {static_cast<uint8_t>(0x80 | ch), e.b[1], 0};
-      out.send(off, 3);
+      send(off, 3);
     }
+    if (e.track < kTracks) activity_ |= static_cast<uint8_t>(1u << e.track);
   } else if (kind == 0x80) {
-    if (!voices_.noteOff(ch, e.b[1], e.id)) return;
+    if (!noteOff(e.b[1], e.id)) return;
   }
-  out.send(e.b, e.len);
+  send(e.b, e.len);
 }
 
 }  // namespace mt

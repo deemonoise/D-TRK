@@ -1,0 +1,150 @@
+#pragma once
+#include <pgmspace.h>
+
+namespace net {
+
+// Single page served at "/": file lists, upload (drag & drop), rename, delete, firmware update;
+// samples also have subfolders (breadcrumb, new folder, delete an empty folder).
+// No external resources: works without internet access.
+static const char kWebPage[] PROGMEM = R"HTML(<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MIDI Tracker</title>
+<style>
+:root{--bg:#111;--fg:#eee;--dim:#888;--acc:#fe0;--box:#1d1d1d;--err:#f55}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:17px;margin:24px 0 8px;color:var(--acc)}
+p.note{color:var(--dim);margin:0 0 8px}
+.drop{border:2px dashed #444;border-radius:8px;padding:16px;text-align:center;color:var(--dim);cursor:pointer}
+.drop.over{border-color:var(--acc);color:var(--fg)}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+td{padding:6px 4px;border-bottom:1px solid #222;word-break:break-all}
+td.sz{color:var(--dim);white-space:nowrap;text-align:right;width:70px}
+td.act{white-space:nowrap;text-align:right;width:1%}
+a{color:var(--fg)}
+button{background:var(--box);color:var(--fg);border:1px solid #444;border-radius:6px;padding:4px 10px;margin-left:4px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+.st{min-height:1.4em;margin-top:8px;color:var(--dim)}.st.err{color:var(--err)}
+progress{width:100%;display:none;margin-top:8px}
+.crumb{margin:8px 0 0;display:flex;align-items:center;gap:4px;flex-wrap:wrap}.crumb a{color:var(--acc);cursor:pointer}
+.crumb button{margin-left:auto}td.dir a{color:var(--acc);cursor:pointer}
+</style></head><body><main>
+<h1>MIDI Tracker</h1>
+<p class="note">Файлы на карте microSD. Пока открыта эта страница, трекер в режиме Wi-Fi.</p>
+
+<section id="midi"><h2>MIDI (/midi)</h2>
+<p class="note">Только .mid, до 512 КБ. Импорт на трекере: FILE &rarr; Import MIDI.</p>
+<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".mid" multiple hidden></div>
+<progress max="100"></progress><div class="st"></div><table></table></section>
+
+<section id="projects"><h2>Проекты (/projects)</h2>
+<p class="note">.mtp и .bak, имя до 16 символов: латиница, цифры, - и _.</p>
+<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".mtp,.bak" multiple hidden></div>
+<progress max="100"></progress><div class="st"></div><table></table></section>
+
+<section id="samples"><h2>Сэмплы (/samples)</h2>
+<p class="note">Только .wav, до 4 МБ. Импорт в банк &mdash; на трекере: FILE &rarr; SAMPLES. Можно раскладывать по папкам (до 4 уровней).</p>
+<div class="crumb"><span></span><button>Новая папка</button></div>
+<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".wav" multiple hidden></div>
+<progress max="100"></progress><div class="st"></div><table></table></section>
+
+<section id="fw"><h2>Прошивка</h2>
+<p class="note">Файл .pio/build/wt32/firmware.bin. После загрузки трекер перезагрузится.</p>
+<div class="drop">Перетащите firmware.bin сюда или нажмите, чтобы выбрать<input type="file" accept=".bin" hidden></div>
+<progress max="100"></progress><div class="st"></div></section>
+</main>
+<script>
+const $=(s,e=document)=>e.querySelector(s);
+const kb=n=>n<1024?n+' Б':n<1048576?(n/1024).toFixed(n<10240?1:0)+' КБ':(n/1048576).toFixed(1)+' МБ';
+function status(sec,msg,err){const s=$('.st',sec);s.textContent=msg;s.className='st'+(err?' err':'');}
+function send(url,file,sec){return new Promise(res=>{
+  const x=new XMLHttpRequest(),f=new FormData(),pg=$('progress',sec);
+  f.append('file',file,file.name);x.open('POST',url);
+  pg.style.display='block';pg.value=0;
+  x.upload.onprogress=e=>{if(e.lengthComputable)pg.value=e.loaded*100/e.total;};
+  x.onload=()=>{pg.style.display='none';res({code:x.status,text:x.responseText});};
+  x.onerror=()=>{pg.style.display='none';res({code:0,text:'нет связи с трекером'});};
+  x.send(f);});}
+// Subfolder per section (only samples has them): "" or "a/b".
+const sub={midi:'',projects:'',samples:''};
+const dq=dir=>'dir='+dir+(sub[dir]?'&sub='+encodeURIComponent(sub[dir]):'');
+function go(dir,s){sub[dir]=s;list(dir);}
+function crumb(dir){
+  const c=$('.crumb span',$('#'+dir));if(!c)return;c.innerHTML='';
+  const parts=sub[dir]?sub[dir].split('/'):[];
+  const add=(txt,s,last)=>{const a=document.createElement(last?'span':'a');a.textContent=txt;
+    if(!last)a.onclick=()=>go(dir,s);c.appendChild(a);};
+  add('/'+dir,'',!parts.length);
+  parts.forEach((p,i)=>{c.appendChild(document.createTextNode(' / '));add(p,parts.slice(0,i+1).join('/'),i===parts.length-1);});
+}
+async function mkdir(dir){
+  const sec=$('#'+dir),n=prompt('Имя папки (латиница, цифры, пробел, . _ -)');if(!n)return;
+  const r=await fetch('/api/mkdir?'+dq(dir)+'&name='+encodeURIComponent(n),{method:'POST'});
+  status(sec,r.ok?'Папка создана: '+n:await r.text(),!r.ok);list(dir);
+}
+async function list(dir){
+  const sec=$('#'+dir),t=$('table',sec);crumb(dir);
+  let r;try{r=await fetch('/api/list?'+dq(dir));}catch(e){status(sec,'нет связи с трекером',1);return;}
+  if(!r.ok){
+    if(r.status===404&&sub[dir]){status(sec,await r.text(),1);go(dir,'');return;}  // folder gone: back to the top
+    status(sec,await r.text(),1);return;}
+  const files=(await r.json()).sort((a,b)=>(b.dir||0)-(a.dir||0)||a.name.localeCompare(b.name));t.innerHTML='';
+  if(sub[dir]){
+    const tr=document.createElement('tr');tr.innerHTML='<td class="dir"><a>..</a></td><td></td><td></td>';
+    $('a',tr).onclick=()=>go(dir,sub[dir].split('/').slice(0,-1).join('/'));t.appendChild(tr);}
+  if(!files.length){t.insertAdjacentHTML('beforeend','<tr><td class="sz" style="text-align:left">пусто</td></tr>');return;}
+  for(const f of files){
+    const tr=document.createElement('tr'),q=dq(dir)+'&name='+encodeURIComponent(f.name);
+    if(f.dir){
+      tr.innerHTML='<td class="dir"><a></a></td><td class="sz">папка</td><td class="act"><button>Удалить</button></td>';
+      const a=$('a',tr);a.textContent=f.name+'/';a.onclick=()=>go(dir,(sub[dir]?sub[dir]+'/':'')+f.name);
+      $('button',tr).onclick=async()=>{if(!confirm('Удалить пустую папку '+f.name+'?'))return;
+        const r=await fetch('/api/rmdir?'+q,{method:'POST'});
+        status(sec,r.ok?'Папка удалена: '+f.name:await r.text(),!r.ok);list(dir);};
+      t.appendChild(tr);continue;}
+    tr.innerHTML='<td><a></a></td><td class="sz"></td><td class="act"><button>Имя</button><button>Удалить</button></td>';
+    const a=$('a',tr);a.textContent=f.name;a.href='/api/file?'+q;a.download=f.name;
+    $('.sz',tr).textContent=kb(f.size);
+    const [bRen,bDel]=tr.querySelectorAll('button');
+    bRen.onclick=async()=>{const to=prompt('Новое имя',f.name);if(!to||to===f.name)return;
+      const r=await fetch('/api/rename?'+dq(dir)+'&from='+encodeURIComponent(f.name)+'&to='+encodeURIComponent(to),{method:'POST'});
+      status(sec,r.ok?'Переименован: '+to:await r.text(),!r.ok);list(dir);};
+    bDel.onclick=async()=>{if(!confirm('Удалить '+f.name+'?'))return;
+      const r=await fetch('/api/delete?'+q,{method:'POST'});
+      status(sec,r.ok?'Удалён: '+f.name:await r.text(),!r.ok);list(dir);};
+    t.appendChild(tr);}
+}
+async function upload(dir,files){
+  const sec=$('#'+dir);let ok=0;
+  for(const f of files){
+    status(sec,'Загрузка '+f.name+'...');
+    let r=await send('/api/upload?'+dq(dir)+'&overwrite=0',f,sec);
+    if(r.code===409&&confirm(f.name+' уже есть. Заменить?'))r=await send('/api/upload?'+dq(dir)+'&overwrite=1',f,sec);
+    if(r.code===200)ok++;else if(r.code!==409){status(sec,f.name+': '+r.text,1);await list(dir);return;}
+  }
+  status(sec,'Загружено файлов: '+ok);list(dir);
+}
+async function firmware(files){
+  const sec=$('#fw'),f=files[0];if(!f)return;
+  if(!/\.bin$/i.test(f.name)){status(sec,'нужен файл .bin',1);return;}
+  if(!confirm('Прошить '+f.name+' ('+kb(f.size)+')? Трекер перезагрузится.'))return;
+  status(sec,'Прошивка...');
+  const r=await send('/api/update',f,sec);
+  if(r.code!==200){status(sec,r.text,1);return;}
+  status(sec,'Готово, трекер перезагружается. Режим Wi-Fi после перезагрузки выключен.');
+}
+function drop(sec,fn){
+  const d=$('.drop',sec),i=$('input',d);
+  d.onclick=()=>i.click();i.onclick=e=>e.stopPropagation();
+  i.onchange=()=>{fn([...i.files]);i.value='';};
+  d.ondragover=e=>{e.preventDefault();d.classList.add('over');};
+  d.ondragleave=()=>d.classList.remove('over');
+  d.ondrop=e=>{e.preventDefault();d.classList.remove('over');fn([...e.dataTransfer.files]);};
+}
+for(const dir of ['midi','projects','samples']){drop($('#'+dir),fs=>upload(dir,fs));list(dir);}
+$('#samples .crumb button').onclick=()=>mkdir('samples');
+drop($('#fw'),firmware);
+</script></body></html>)HTML";
+
+}  // namespace net
