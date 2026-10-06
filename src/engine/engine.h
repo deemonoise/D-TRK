@@ -40,6 +40,8 @@ struct Status {
 void begin(mt::Project* p);
 // False when the command queue was full (the command is lost).
 bool post(Cmd c, uint16_t arg = 0);
+// As post, waiting up to 50 ms for room: for commands that must not be lost (fill / perf release).
+bool postWait(Cmd c, uint16_t arg = 0);
 Status status();
 // Tracks that sent a NoteOn since the last call (bit = track), for the activity LEDs.
 uint16_t takeActivity();

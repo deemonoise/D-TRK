@@ -143,22 +143,12 @@ void BankScreen::onMenu(int id) {
       break;
     case kSongOn: setSong(true); break;
     case kSongOff: setSong(false); break;
-    case kRowInsert: insertRow(row_, app_.editPattern()); break;
+    case kRowInsert: insertRow(row_, rowPat_); break;
     case kRowDelete: deleteRow(row_); break;
     case kRowDup:
-      if (row_ < chainLen()) {
-        const int src = row_;
-        insertRow(src + 1, p.chain[src]);
-        if (row_ == src + 1) {  // inserted: the copy takes the item's fields too
-          engine::lockProject();
-          p.chainTr[row_] = p.chainTr[src];
-          p.chainRep[row_] = p.chainRep[src];
-          p.chainScene[row_] = p.chainScene[src];
-          engine::unlockProject();
-        }
-      }
+      if (row_ < chainLen()) insertRow(row_ + 1, p.chain[row_], row_);  // the copy takes the item's fields
       break;
-    case kRowAppend: insertRow(chainLen(), app_.editPattern()); break;
+    case kRowAppend: insertRow(chainLen(), rowPat_); break;
     default: break;
   }
   app_.invalidate();
@@ -283,7 +273,9 @@ void BankScreen::showRow(int row) {
   if (top_ < 0) top_ = 0;
 }
 
-void BankScreen::insertRow(int at, uint8_t pat) {
+// copyFrom >= 0 (before at): the new item also takes that item's transpose, passes and scene, in
+// the same lock as the insert (the engine must never plan it with the defaults).
+void BankScreen::insertRow(int at, uint8_t pat, int copyFrom) {
   mt::Project& p = app_.project();
   const int n = chainLen();
   if (n >= mt::kChainMax) {
@@ -294,6 +286,11 @@ void BankScreen::insertRow(int at, uint8_t pat) {
   if (at > n) at = n;
   engine::lockProject();
   mt::chainInsert(p, at, pat);
+  if (copyFrom >= 0 && copyFrom < at) {
+    p.chainTr[at] = p.chainTr[copyFrom];
+    p.chainRep[at] = p.chainRep[copyFrom];
+    p.chainScene[at] = p.chainScene[copyFrom];
+  }
   postChainEdit(at, mt::ChainOp::Insert);
   engine::unlockProject();
   app_.markDirty();
@@ -445,7 +442,8 @@ void BankScreen::openRowMenu(int row) {
   const int n = chainLen();
   const bool valid = row >= 0 && row < n;
   const bool room = n < mt::kChainMax;
-  const unsigned cur = app_.editPattern() + 1u;
+  rowPat_ = app_.editPattern();  // what the labels name is what the items insert
+  const unsigned cur = rowPat_ + 1u;
   char ins[32], app[32], title[40];
   snprintf(ins, sizeof(ins), "Insert P%02u before", cur);
   snprintf(app, sizeof(app), "Append P%02u", cur);

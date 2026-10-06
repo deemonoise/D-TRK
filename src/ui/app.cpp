@@ -168,10 +168,9 @@ void App::onTouch(const TouchEvent& ev) {
   screen()->onTouch(ev);
 }
 
-void App::pushUndo() {
-  if (!undoBuf_) return;
+void App::pushUndo(uint8_t pat) {
+  if (!undoBuf_ || pat >= mt::kPatterns) return;
   // No lock: the engine never writes pattern data (only p_->bpm), so reading it is safe.
-  const uint8_t pat = editPattern();
   undo_.push(pat, p_->patterns[pat]);
 }
 
@@ -225,7 +224,9 @@ void App::trackKey(int n, bool shift) {
   toast(msg);
 }
 
-bool App::holdVolume() const { return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !busy_; }
+bool App::holdVolume() const {
+  return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) && !busy_;
+}
 
 // Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.
 void App::nudgeTrackVol(int track, int d) {
@@ -263,7 +264,7 @@ void App::fillDown() {
 void App::fillUp() {
   if (!fillHeld_) return;
   fillHeld_ = false;
-  engine::post(engine::Cmd::Fill, 0);
+  engine::postWait(engine::Cmd::Fill, 0);
   if (millis() - fillDownMs_ < hw::kLongPressMs) engine::post(engine::Cmd::TogglePlay);
 }
 
@@ -277,7 +278,8 @@ void App::updateLeds(uint32_t now) {
   hw::trackLeds(mt::trackLedMaskHalf(curTrack_, flash));
 }
 
-// Writes the volume to NVS once it has stayed put for a second (an encoder sweep = one write).
+// Writes the volume to NVS once it has stayed put for a second (an encoder sweep = one write) and
+// the transport is not playing.
 void App::saveVolumeIdle(uint32_t now) {
   if (p_->masterVol == savedVol_) {
     volChangedAt_ = 0;
@@ -289,7 +291,13 @@ void App::saveVolumeIdle(uint32_t now) {
     return;
   }
   if (now - volChangedAt_ < 1000) return;
-  storage::saveVolume(pendingVol_);
+  // An NVS write can erase a flash sector with the caches off: never while playing (the audio and
+  // the engine would stall), and with the audio task parked once stopped.
+  if (status_.playing) return;
+  {
+    audio::Paused parked;
+    storage::saveVolume(pendingVol_);
+  }
   savedVol_ = pendingVol_;
   volChangedAt_ = 0;
 }
@@ -330,10 +338,24 @@ bool App::renderProgress(uint32_t done, uint32_t total, void* app) {
   return true;
 }
 
-// An event read while the UI is busy: only the held-key state survives.
+// An event read while the UI is busy: only the held-key state survives, and releases still end
+// what their press started (fill, a punch-in effect, the hold-button volume).
 void App::dropInput(const hw::InputEvent& ev) {
-  if (ev.type == hw::InputType::ShiftDown) shift_ = true;
-  else if (ev.type == hw::InputType::ShiftUp) shift_ = false;
+  switch (ev.type) {
+    case hw::InputType::ShiftDown: shift_ = true; break;
+    case hw::InputType::ShiftUp: shift_ = false; break;
+    case hw::InputType::PlayRelease:
+      if (fillHeld_) {
+        fillHeld_ = false;
+        engine::postWait(engine::Cmd::Fill, 0);
+      }
+      break;
+    case hw::InputType::TrackRelease:
+      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      trackRelease(ev.delta);
+      break;
+    default: break;
+  }
 }
 
 void App::endProgress() {

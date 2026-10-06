@@ -126,6 +126,7 @@ class GridScreen : public Screen {
   bool rec_ = false;
   bool perf_ = false;
   uint32_t recLoop_ = UINT32_MAX;  // pass of the last REC undo snapshot
+  int recPat_ = -1;                // and its pattern
   int perfBtn_ = -1;   // button holding the punch-in effect
   int perfTrack_ = 0;  // its track
 

@@ -7,15 +7,16 @@ namespace ui {
 
 // Settings of App::curTrack(). MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
 // Name: click to edit, turn = character, Shift+turn = position.
-// MIXER view (Shift + click, Shift + tap on the TRACK tab, long press menu): 8 strips of the half
-// holding the cursor (as GRID's Overview) and the master strip MAIN. Strip: name, volume fader (INT),
-// delay / reverb send of its instrument (read only), M / S. Turn = volume of the selected strip
-// (Shift x10), Shift + turn = strip (0..7, MAIN), click = mute; touch: name selects, fader follows the
-// finger, M / S toggle.
+// MIXER view (the MIX tab, setMixer): 8 strips of the half holding the cursor (as GRID's Overview)
+// and the master strip MAIN. Strip: name, volume fader (INT), delay / reverb send of its instrument
+// (read only), M / S. Turn = volume of the selected strip, Shift + turn = strip (1-8, MAIN, 9-16),
+// click = mute; touch: name selects, fader follows the finger, M / S toggle. Coarse steps: hold the
+// track button and turn with Shift (x10).
 class TrackScreen : public Screen {
  public:
   explicit TrackScreen(App& app);
   void onEnter() override;
+  void onLeave() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
@@ -60,6 +61,9 @@ class TrackScreen : public Screen {
 
   App& app_;
   Param params_[kRows];
+  int editTrack_ = 0;       // the track the list shows (followTrack)
+  void followTrack();
+  int patLenPat_ = -1;      // the pattern of that run
   uint32_t patLenSeq_ = 0;  // App::editSeq() right after the last Pat len edit: one undo snapshot per run
   ParamList list_{kAreaY + kHeaderH};
   int y0_ = kAreaY;

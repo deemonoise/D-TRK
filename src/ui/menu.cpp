@@ -83,6 +83,9 @@ void Menu::onTouch(const TouchEvent& ev) {
       top_ -= rows;
       if (top_ > count_ - kVisible) top_ = count_ - kVisible;
       if (top_ < 0) top_ = 0;
+      // The selection stays on screen: a click must not run an item the user cannot see.
+      if (sel_ < top_) sel_ = top_;
+      if (sel_ >= top_ + kVisible) sel_ = top_ + kVisible - 1;
     }
     return;
   }

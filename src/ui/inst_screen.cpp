@@ -58,8 +58,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                 },
                 [this](int d) {
                   const int k = clampi(mt::instrTypePos(inst().type) + d, 0, static_cast<int>(mt::InstrType::Count) - 1);
-                  const mt::InstrType v = mt::instrTypeAt(k);
-                  if (v != inst().type) mt::instrSetType(inst(), v);
+                  setType(mt::instrTypeAt(k));
                 }};
     p[kVol] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u", inst().vol); },
                [this](int d) { inst().vol = static_cast<uint8_t>(clampi(inst().vol + d, 0, 127)); }};
@@ -414,6 +413,26 @@ void InstScreen::relabel() {
 }
 
 mt::Instrument& InstScreen::inst() { return app_.project().instruments[instr_]; }
+
+// Each encoder step applies the type, and a type change resets its own fields (KIT lanes, macros,
+// machine). Leaving a type keeps a copy: turning back to it restores them instead of the defaults.
+void InstScreen::setType(mt::InstrType v) {
+  mt::Instrument& m = inst();
+  if (v == m.type) return;
+  if (typeSnapInstr_ != instr_ || m.type == typeSnap_.type) {
+    typeSnap_ = m;
+    typeSnapInstr_ = instr_;
+  }
+  if (v != typeSnap_.type) {
+    mt::instrSetType(m, v);
+    return;
+  }
+  m.type = v;
+  m.machine = typeSnap_.machine;
+  memcpy(m.macro, typeSnap_.macro, sizeof(m.macro));
+  memcpy(m.kit, typeSnap_.kit, sizeof(m.kit));
+  m.lfoDest = typeSnap_.lfoDest;
+}
 const mt::Instrument& InstScreen::inst() const { return app_.project().instruments[instr_]; }
 
 Param* InstScreen::typeRows() {
@@ -523,6 +542,7 @@ void InstScreen::leaveEdit() {
 
 void InstScreen::onEnter() {
   leaveEdit();
+  typeSnapInstr_ = -1;
   instr_ = app_.project().tracks[app_.curTrack()].instr % mt::kInstruments;
   editor_.bind(instr_);
   syncParams();
@@ -534,6 +554,7 @@ void InstScreen::onLeave() {
 }
 
 void InstScreen::onProjectReplaced() {
+  typeSnapInstr_ = -1;
   // The instrument the browser would restore belongs to the old project.
   if (presets_.isOpen()) presets_.close(true);
   if (wt_.isOpen()) wt_.close(true, false);
@@ -560,6 +581,7 @@ void InstScreen::presetMenu() {
   enum : int { kLoad, kSave };
   const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
   app_.menu().open("PRESET", items, 2, [this](int id) {
+    typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
     presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
   });
 }
@@ -570,6 +592,8 @@ void InstScreen::changeInstr(int d) {
   editor_.bind(instr_);
   syncParams();
 }
+
+bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && onEditor(); }
 
 bool InstScreen::trackKey(int n, bool shift) {
   if (shift || presets_.isOpen() || !onEditor()) return false;

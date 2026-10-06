@@ -1,4 +1,5 @@
 #include "euclid_dialog.h"
+#include <algorithm>
 #include <esp_random.h>
 #include <stdio.h>
 #include <string.h>
@@ -111,7 +112,6 @@ void EuclidDialog::open(int pattern, int track, mt::EuclidParams* e) {
   track_ = clampi(track, 0, mt::kTracks - 1);
   e_ = e;
   clampParams();
-  app_.pushUndo();
   // No lock: the engine never writes pattern data.
   memcpy(saved_, app_.project().patterns[pattern_].steps[track_], sizeof(saved_));
   seqAtOpen_ = app_.editSeq();
@@ -140,6 +140,14 @@ void EuclidDialog::ok() {
   if (!open_) return;
   open_ = false;
   list_.setEdit(false);
+  // The undo snapshot is taken only now (a cancel must not cost the oldest entry of a full ring):
+  // the pattern as it was at open, with the track's old steps swapped in for the copy.
+  engine::lockProject();
+  mt::Step* steps = app_.project().patterns[pattern_].steps[track_];
+  std::swap_ranges(steps, steps + mt::kMaxSteps, saved_);
+  app_.pushUndo(static_cast<uint8_t>(pattern_));
+  std::swap_ranges(steps, steps + mt::kMaxSteps, saved_);
+  engine::unlockProject();
   app_.toast("EUCLID");
 }
 
@@ -154,7 +162,6 @@ void EuclidDialog::cancel() {
   if (app_.editSeq() == seqAtOpen_ + previews_) app_.rewindEditSeq(seqAtOpen_);
   else app_.markDirty();
   engine::post(engine::Cmd::ReleaseTies);
-  app_.dropUndo();
 }
 
 void EuclidDialog::reseed() {

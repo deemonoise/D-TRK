@@ -132,6 +132,14 @@ bool post(Cmd c, uint16_t arg) {
   return ok;
 }
 
+bool postWait(Cmd c, uint16_t arg) {
+  const Command cmd{c, arg};
+  xTaskNotifyGive(task);  // a full queue drains while we wait
+  const bool ok = xQueueSend(cmds, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
+  xTaskNotifyGive(task);
+  return ok;
+}
+
 Status status() {
   portENTER_CRITICAL(&statusMux);
   const Status s = st;

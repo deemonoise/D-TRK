@@ -24,6 +24,7 @@ class ProjScreen : public Screen {
   static constexpr uint32_t kBpmSettleMs = 300;
 
   mt::Pattern& pat();
+  void snapPattern();
   int bpm();  // local target while it is ahead of the engine, else p.bpm
   void editBpm(int delta);
 
@@ -32,6 +33,8 @@ class ProjScreen : public Screen {
   ParamList list_{kAreaY + kHeaderH};
   int bpmTarget_ = 120;
   uint32_t bpmPostMs_ = 0;
+  uint32_t patSeq_ = 0;  // App::editSeq() right after the last pattern-field edit (snapPattern)
+  int patIdx_ = -1;      // and its pattern
 };
 
 }  // namespace ui

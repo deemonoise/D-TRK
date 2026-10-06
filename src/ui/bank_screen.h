@@ -60,7 +60,8 @@ class BankScreen : public Screen {
   void chainInput(const hw::InputEvent& ev);
   void chainTouch(const TouchEvent& ev);
   void openRowMenu(int row);
-  void insertRow(int at, uint8_t pat);
+  void insertRow(int at, uint8_t pat, int copyFrom = -1);
+  uint8_t rowPat_ = 0;  // the pattern the row menu was opened with (its labels name it)
   void deleteRow(int row);
   void editRow(int delta);
   void fieldText(int row, int field, char* out, int n, bool& isDefault) const;

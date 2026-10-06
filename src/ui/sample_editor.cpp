@@ -63,11 +63,14 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
                   [this](int d) { inst().root = static_cast<uint8_t>(clampi(inst().root + d, 0, 127)); }};
   rows_[kStart] = {"Start", [this](char* o, int n) { permille(inst().start, o, n); },
                    [this](int d) {
-                     inst().start = fromPermille(clampi(toPermille(inst().start) + d, 0, toPermille(inst().end)));
+                     // Rounded to 0.1 %: the result is clamped raw too (never past the end marker).
+                     const uint16_t v = fromPermille(clampi(toPermille(inst().start) + d, 0, toPermille(inst().end)));
+                     inst().start = v < inst().end ? v : inst().end;
                    }};
   rows_[kEnd] = {"End", [this](char* o, int n) { permille(inst().end, o, n); },
                  [this](int d) {
-                   inst().end = fromPermille(clampi(toPermille(inst().end) + d, toPermille(inst().start), 1000));
+                   const uint16_t v = fromPermille(clampi(toPermille(inst().end) + d, toPermille(inst().start), 1000));
+                   inst().end = v > inst().start ? v : inst().start;
                  }};
   rows_[kLoop] = {"Loop", [this](char* o, int n) {
                     static const char* const kNames[] = {"OFF", "FWD", "PING"};

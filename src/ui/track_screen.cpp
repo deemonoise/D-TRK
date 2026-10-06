@@ -64,9 +64,11 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                         int nv = clampi(cur + d, 0, pt.length);
                         if (nv >= pt.length) nv = 0;
                         if (nv == v) return;
-                        if (app_.editSeq() != patLenSeq_) app_.pushUndo();  // whole-pattern snapshot
+                        // Whole-pattern snapshot, once per run of Pat len edits on one pattern.
+                        if (app_.editSeq() != patLenSeq_ || app_.editPattern() != patLenPat_) app_.pushUndo();
                         v = static_cast<uint8_t>(nv);
                         patLenSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
+                        patLenPat_ = app_.editPattern();
                       }};
   params_[kCcA] = {"CC A", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccA); },
                    [this](int d) { cfg().ccA = static_cast<uint8_t>(clampi(cfg().ccA + d, 0, 127)); }, midiOnly};
@@ -111,8 +113,18 @@ void TrackScreen::leaveEdit() {
   fixNames();
 }
 
+void TrackScreen::onLeave() { leaveEdit(); }
+
+// The track changed under an open edit (a track button, GRID): the edit belonged to the old one.
+void TrackScreen::followTrack() {
+  if (app_.curTrack() == editTrack_) return;
+  if (list_.editing()) leaveEdit();
+  editTrack_ = app_.curTrack();
+}
+
 void TrackScreen::onEnter() {
   leaveEdit();
+  editTrack_ = app_.curTrack();
   if (mixSel_ != kMaster) mixSel_ = app_.curTrack() % kStrips;
 }
 
@@ -132,6 +144,7 @@ void TrackScreen::setMixer(bool on) {
 }
 
 void TrackScreen::onInput(const hw::InputEvent& ev) {
+  followTrack();
   if (mixer_) {
     mixerInput(ev);
     return;
@@ -156,6 +169,7 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
 }
 
 void TrackScreen::onTouch(const TouchEvent& ev) {
+  followTrack();
   if (mixer_) {
     mixerTouch(ev);
     return;
@@ -178,6 +192,7 @@ void TrackScreen::onTouch(const TouchEvent& ev) {
 
 void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
+  followTrack();
   if (mixer_) {
     drawMixer(s, y0);
     return;
@@ -286,7 +301,7 @@ void TrackScreen::mixerInput(const hw::InputEvent& ev) {
         setMasterVol(app_.project().masterVol + ev.delta);
       } else {
         const int t = app_.curTrack();
-        setVol(t, app_.project().tracks[t].vol + ev.delta * (ev.shift ? 10 : 1));
+        setVol(t, app_.project().tracks[t].vol + ev.delta);  // Shift + turn picks the strip
       }
       break;
     case InputType::EncClick:

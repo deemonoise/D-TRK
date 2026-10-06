@@ -1,4 +1,5 @@
 #include "file_screen.h"
+#include "engine/engine.h"
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -663,9 +664,17 @@ void FileScreen::togglePreview() {
 }
 
 void FileScreen::stopPreview() {
-  if (!pvBuf_) return;
-  // Not acknowledged: the audio task may still read the buffer, so it is left allocated.
-  if (audio::previewStop()) heap_caps_free(pvBuf_);
+  if (!pvBuf_ && pvLeftN_ == 0) return;
+  if (audio::previewStop()) {
+    // Acknowledged: the audio task reads no preview buffer any more, the left-over ones included.
+    heap_caps_free(pvBuf_);
+    for (int i = 0; i < pvLeftN_; ++i) heap_caps_free(pvLeft_[i]);
+    pvLeftN_ = 0;
+  } else if (pvBuf_) {
+    // Not acknowledged: the audio task may still read it; freed after a later acknowledged stop.
+    if (pvLeftN_ == kPvLeft) --pvLeftN_;  // never more than a few: the oldest is given up
+    pvLeft_[pvLeftN_++] = pvBuf_;
+  }
   pvBuf_ = nullptr;
   pvSel_ = -1;
 }
@@ -720,7 +729,9 @@ void FileScreen::doImport(const char* name) {
     app_.toast(audio::bankResultText(r));
     return;
   }
+  engine::lockProject();  // the list and the instruments naming it are shared with the engine
   const int i = mt::projSampleSet(p, nm, out.crc, out.frames);
+  engine::unlockProject();
   if (i < 0) {
     app_.toast("BAD NAME");
     return;
@@ -745,7 +756,10 @@ void FileScreen::renameSample(const char* initial) {
       return;
     }
     if (strcmp(nm, p.samples[i].name) == 0) return;
-    if (!mt::projSampleRename(p, i, nm)) {
+    engine::lockProject();
+    const bool renamed = mt::projSampleRename(p, i, nm);  // also renames it in the instruments
+    engine::unlockProject();
+    if (!renamed) {
       app_.toast("NAME TAKEN");
       renameSample(text);
       return;
@@ -767,7 +781,9 @@ void FileScreen::doDelete(const char* name) {
   const int i = mt::projSampleFind(p, nm);
   if (i < 0) return;
   // Only the list entry: the data stays cached, the file goes with the next save.
+  engine::lockProject();
   mt::projSampleRemove(p, i);
+  engine::unlockProject();
   app_.markDirty();
   sampleMove(0);  // clamp to the shorter list
   char msg[32];

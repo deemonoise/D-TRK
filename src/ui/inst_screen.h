@@ -31,6 +31,8 @@ class InstScreen : public Screen {
   explicit InstScreen(App& app);
   void onEnter() override;
   void onLeave() override;
+  // The track buttons play slices (sample editor page): no hold-button volume then.
+  bool buttonsBusy() const;
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
@@ -83,6 +85,7 @@ class InstScreen : public Screen {
   static constexpr int kPrevX0 = 384, kPrevX1 = 472;
 
   mt::Instrument& inst();
+  void setType(mt::InstrType v);  // under the lock (a ParamList edit)
   const mt::Instrument& inst() const;
   void changeInstr(int d);
   void syncParams();  // rows of the current type
@@ -126,6 +129,8 @@ class InstScreen : public Screen {
   PresetBrowser presets_{app_};
   WtPicker wt_{app_};
   int instr_ = 0;
+  mt::Instrument typeSnap_;     // the instrument as it was in the type being left (setType)
+  int typeSnapInstr_ = -1;      // whose copy typeSnap_ is, -1 = none
   int y0_ = kAreaY;
   int namePos_ = 0;
   SampleEditor editor_{app_, kAreaY + kHeaderH + kPageBarH};

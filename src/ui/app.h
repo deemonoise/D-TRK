@@ -39,7 +39,8 @@ class App {
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
   mt::Clipboard* clipboard() { return clip_; }
-  void pushUndo();  // snapshot editPattern() before an edit
+  void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
+  void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
   bool doUndo();    // false when there is nothing to undo
   void dropUndo() {  // forget the last pushUndo() (edit cancelled)
     if (undoBuf_) undo_.drop();

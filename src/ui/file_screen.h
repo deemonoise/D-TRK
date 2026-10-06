@@ -117,6 +117,9 @@ class FileScreen : public Screen {
   char wavDir_[128] = "/samples";     // kept between imports
   char wavFile_[hw::kNameMax] = {0};  // WAV being imported
   int16_t* pvBuf_ = nullptr;          // previewed WAV, PSRAM
+  static constexpr int kPvLeft = 4;
+  int16_t* pvLeft_[kPvLeft] = {};     // buffers whose stop the audio task did not acknowledge yet
+  int pvLeftN_ = 0;
   int pvSel_ = -1;                    // listSel_ it belongs to
   const char* busyLabel_ = "";
   // cacheBytes() result for this bank generation / project edit.

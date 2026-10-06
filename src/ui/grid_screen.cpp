@@ -87,6 +87,7 @@ void GridScreen::onProjectReplaced() {
 
 // The Euclid dialog keeps editing the pattern it was opened for.
 void GridScreen::onPatternChange() {
+  recLoop_ = UINT32_MAX;  // REC hits on the new pattern get their own undo snapshot
   curStep_ = 0;
   top_ = 0;
   edit_ = false;
@@ -157,6 +158,7 @@ void GridScreen::toggleView() {
 
 void GridScreen::undo() {
   editPushed_ = false;  // the next edit takes a fresh snapshot
+  recLoop_ = UINT32_MAX;  // so do the next REC hits
   const bool ok = app_.doUndo();
   if (ok) engine::post(engine::Cmd::ReleaseTies);
   app_.toast(ok ? "UNDO" : "NOTHING TO UNDO");
@@ -242,7 +244,7 @@ void GridScreen::setPerf(bool on) {
 
 void GridScreen::perfRelease() {
   if (perfBtn_ < 0) return;
-  engine::post(engine::Cmd::PerfOff, static_cast<uint16_t>(perfTrack_));
+  engine::postWait(engine::Cmd::PerfOff, static_cast<uint16_t>(perfTrack_));
   perfBtn_ = -1;
 }
 
@@ -255,9 +257,10 @@ bool GridScreen::recordKey(int n, bool shift) {
   const mt::Pattern& pt = pat();
   const int tl = pt.trackLen[tr] && pt.trackLen[tr] < len() ? pt.trackLen[tr] : len();
   const int step = mt::recordStepFor(st.pos % tl, engine::stepPhase(st), tl);
-  if (st.loop != recLoop_) {  // one undo snapshot per pass
+  if (st.loop != recLoop_ || app_.editPattern() != recPat_) {  // one undo snapshot per pass and pattern
     app_.pushUndo();
     recLoop_ = st.loop;
+    recPat_ = app_.editPattern();
   }
   mt::Step s = pt.steps[tr][step];
   uint8_t sound = 0xFF;  // note to preview
@@ -692,7 +695,11 @@ void GridScreen::transpose(const mt::Sel& sel, int amount, bool degrees) {
 }
 
 void GridScreen::onMenu(int id) {
-  if (app_.editPattern() != menuPattern_) {  // heard pattern changed while the menu was open
+  // The heard pattern changed while the menu was open: edits of steps would hit the wrong one.
+  // View, follow, undo, REC / PERF and dropping the selection do not depend on it.
+  const bool anyPattern = id == kToggleView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
+                          id == kDropSel;
+  if (!anyPattern && app_.editPattern() != menuPattern_) {
     app_.toast("PATTERN CHANGED");
     return;
   }

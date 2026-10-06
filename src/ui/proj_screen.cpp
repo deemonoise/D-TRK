@@ -29,17 +29,27 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                      }};
   params_[kLength] = {"Length", [this](char* o, int n) { snprintf(o, n, "%u", pat().length); },
                       [this](int d) {
-                        pat().length = static_cast<uint8_t>(clampi(pat().length + d, mt::kMinSteps, mt::kMaxSteps));
+                        const int v = clampi(pat().length + d, mt::kMinSteps, mt::kMaxSteps);
+                        if (v == pat().length) return;
+                        snapPattern();
+                        pat().length = static_cast<uint8_t>(v);
                         pat().fitTrackLen();
                       }};
   params_[kRes] = {"Resolution",
                    [this](char* o, int n) { snprintf(o, n, "%s", resName(pat().res)); },
                    [this](int d) {
                      const int r = clampi(static_cast<int>(pat().res) + d, 0, static_cast<int>(mt::Resolution::Count) - 1);
+                     if (r == static_cast<int>(pat().res)) return;
+                     snapPattern();
                      pat().res = static_cast<mt::Resolution>(r);
                    }};
   params_[kSwing] = {"Swing", [this](char* o, int n) { snprintf(o, n, "%u%%", pat().swing); },
-                     [this](int d) { pat().swing = static_cast<uint8_t>(clampi(pat().swing + d, 50, 75)); }};
+                     [this](int d) {
+                       const int v = clampi(pat().swing + d, 50, 75);
+                       if (v == pat().swing) return;
+                       snapPattern();
+                       pat().swing = static_cast<uint8_t>(v);
+                     }};
   auto u7 = [this](uint8_t mt::Project::*f) {
     return [this, f](int d) { app_.project().*f = static_cast<uint8_t>(clampi(app_.project().*f + d, 0, 127)); };
   };
@@ -93,6 +103,14 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
 }
 
 mt::Pattern& ProjScreen::pat() { return app_.project().patterns[app_.editPattern()]; }
+
+// Length / Resolution / Swing are pattern data: an undo snapshot before the first of a run of
+// edits on one pattern (else a later undo of a step edit would silently revert them too).
+void ProjScreen::snapPattern() {
+  if (app_.editSeq() != patSeq_ || app_.editPattern() != patIdx_) app_.pushUndo();
+  patSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
+  patIdx_ = app_.editPattern();
+}
 
 int ProjScreen::bpm() {
   const int cur = app_.project().bpm;
