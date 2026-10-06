@@ -28,7 +28,9 @@ QueueHandle_t cmds;
 SemaphoreHandle_t projMutex;
 portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
 Status st{};
-std::atomic<uint8_t> activity{0};
+// Track bits (16); 32-bit so the atomic is a plain s32c1i CAS on the ESP32, no lock in the
+// engine task (xtensa gcc reports is_always_lock_free false even for 32 bits, so no static_assert).
+std::atomic<uint32_t> activity{0};
 
 bool IRAM_ATTR onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void*) {
   BaseType_t woken = pdFALSE;
@@ -69,7 +71,7 @@ void run(void*) {
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
     const uint64_t next = seq->process(nowUs(), midi);
-    const uint8_t act = seq->takeActivity();
+    const uint16_t act = seq->takeActivity();
     xSemaphoreGive(projMutex);
     if (act) activity.fetch_or(act, std::memory_order_relaxed);
     publish();
@@ -131,7 +133,7 @@ Status status() {
   return s;
 }
 
-uint8_t takeActivity() { return activity.exchange(0, std::memory_order_relaxed); }
+uint16_t takeActivity() { return static_cast<uint16_t>(activity.exchange(0, std::memory_order_relaxed)); }
 
 void lockProject() { xSemaphoreTake(projMutex, portMAX_DELAY); }
 void unlockProject() { xSemaphoreGive(projMutex); }

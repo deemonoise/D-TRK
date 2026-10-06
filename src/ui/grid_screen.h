@@ -4,13 +4,16 @@
 #include "euclid_dialog.h"
 #include "model.h"
 #include "screen.h"
+#include "track_leds.h"
 #include "transpose_dialog.h"
 
 namespace ui {
 
 class GridScreen : public Screen {
  public:
-  explicit GridScreen(App& app) : app_(app) {}
+  explicit GridScreen(App& app) : app_(app) {
+    for (uint8_t& n : lastNote_) n = 60;
+  }
   void onEnter() override;
   void onLeave() override;
   void onProjectReplaced() override;
@@ -23,7 +26,8 @@ class GridScreen : public Screen {
   bool trackKey(int n, bool shift);
 
  private:
-  enum Field : uint8_t { kNote, kVel, kFx1, kVal1, kFx2, kVal2, kFields };
+  // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
+  enum Field : uint8_t { kNote, kVel, kFx1, kFields = kFx1 + 2 * mt::kFxSlots };
   // Context menu ids.
   enum MenuId : int {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
@@ -34,9 +38,12 @@ class GridScreen : public Screen {
   static constexpr int kRowH = 16;
   static constexpr int kNumW = 32;
   static constexpr int kColW = 56;     // Overview track column
-  static constexpr int kDetW = 224;    // Detail track column
-  static constexpr int kFieldW = 36;   // Detail field pitch
-  static constexpr int kFieldX = 4;    // first field offset inside a Detail column
+  static constexpr int kOverviewTracks = mt::kTrackLeds;  // overview columns: one half of the tracks
+  static_assert(kNumW + kOverviewTracks * kColW <= kScreenW, "Overview columns must fit");
+  static_assert(mt::kTracks % kOverviewTracks == 0, "halves must tile the tracks");
+  static constexpr int kDetW = kScreenW - kNumW;  // Detail: the current track only
+  static constexpr int kFieldW = 32;   // Detail field pitch: kFields fill kDetW
+  static_assert(kFields * kFieldW <= kDetW, "Detail fields must fit");
   static constexpr int kKbH = 48;      // mini keyboard height
   static constexpr int kKeyW = 40;
   static constexpr uint32_t kFollowPauseMs = 2000;
@@ -45,6 +52,9 @@ class GridScreen : public Screen {
   int len() const;  // pattern length clamped to kMinSteps..kMaxSteps
   int cur();  // curStep_ clamped to the pattern length
   int track() const;
+  // The overview shows the half of the tracks holding the cursor; the half is not state.
+  int half() const { return track() / kOverviewTracks; }  // 0 = tracks 1-8, 1 = 9-16
+  int firstTrack() const { return half() * kOverviewTracks; }
   int rowsFor(int h) const;
   void cursorMoved();
   void moveStep(int d);
@@ -89,13 +99,14 @@ class GridScreen : public Screen {
   bool dragFrozen_ = false;    // follow off after a Drag until the next Play
   bool wasPlaying_ = false;
   uint32_t lastMoveMs_ = 0;
-  uint8_t lastNote_[mt::kTracks] = {60, 60, 60, 60, 60, 60, 60, 60};
+  uint8_t lastNote_[mt::kTracks];  // set to 60 in the constructor
 
   EuclidDialog euclid_{app_};
   mt::EuclidParams euclidParams_[mt::kTracks];  // per track, RAM only
   bool euclidInit_[mt::kTracks] = {};
   TransposeDialog transpose_{app_};
-  mt::FxSlot lastFx_[mt::kTracks][2] = {};  // last FX written per track and slot, offered on empty slots
+  mt::FxSlot lastFx_[mt::kTracks][mt::kFxSlots] = {};  // last FX written per track and slot, offered on empty slots
+  bool fxCycled_ = false;  // a command was turned on this cell: passing "..." does not offer lastFx_ again
 
   int menuPattern_ = -1;  // pattern the context menu was opened for
   bool selOn_ = false;

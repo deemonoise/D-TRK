@@ -1,6 +1,8 @@
 #include <unity.h>
 #include <string.h>
 #include "file_rules.h"
+#include "preset_paths.h"
+#include "wt_file.h"
 
 using namespace mt;
 
@@ -75,7 +77,7 @@ void test_midi_files() {
 
 void test_limits_and_rename() {
   TEST_ASSERT_EQUAL_UINT32(512 * 1024, webMaxBytes(WebDir::Midi));
-  TEST_ASSERT_EQUAL_UINT32(256 * 1024, webMaxBytes(WebDir::Projects));
+  TEST_ASSERT_EQUAL_UINT32(512 * 1024, webMaxBytes(WebDir::Projects));
   TEST_ASSERT_EQUAL_UINT32(0, webMaxBytes(WebDir::Invalid));
   TEST_ASSERT_TRUE(webRenameAllowed(WebDir::Projects, "a.mtp", "b.mtp"));
   TEST_ASSERT_FALSE(webRenameAllowed(WebDir::Projects, "a.mtp", "b.bak"));
@@ -140,7 +142,7 @@ void test_subpath() {
   TEST_ASSERT_TRUE(webSubValid(WebDir::Samples, "a/b/c/d"));          // depth 4
   TEST_ASSERT_FALSE(webSubValid(WebDir::Samples, "a/b/c/d/e"));       // depth 5
   TEST_ASSERT_FALSE(webSubValid(WebDir::Midi, "drums"));              // flat sections
-  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "drums"));
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Projects, "drums"));           // a project's sample folder
   TEST_ASSERT_FALSE(webSubValid(WebDir::Samples, ".."));
   TEST_ASSERT_FALSE(webSubValid(WebDir::Samples, "."));
   TEST_ASSERT_FALSE(webSubValid(WebDir::Samples, "a/../b"));
@@ -225,6 +227,47 @@ void test_path() {
   TEST_ASSERT_TRUE(webPath(p, sizeof(p), WebDir::Samples, sub, name));
 }
 
+void test_project_folders() {
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Projects, "song1"));
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Projects, "abcdefghijklmnop"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "abcdefghijklmnopq"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "song1/x"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "bad name"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, ".."));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "a.b"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Projects, "song1", "kick.wav"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Projects, "song1", "KICK.WAV"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1", "song1.mtp"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1", "my kick.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1", "abcdefghijklmnopq.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1", ".wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1", "../x.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "bad name", "kick.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "", "kick.wav"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Projects, "", "song1.mtp"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Samples, "drums", "Kick 01.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Samples, "../x", "Kick 01.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1", nullptr));
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Projects, "", "song1"));  // created by an upload
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Projects, "song1", "x"));
+  char p[kWebPathMax];
+  TEST_ASSERT_TRUE(webPath(p, sizeof(p), WebDir::Projects, "song1", "kick.wav"));
+  TEST_ASSERT_EQUAL_STRING("/projects/song1/kick.wav", p);
+}
+
+void test_project_folder_of() {
+  char b[17];
+  TEST_ASSERT_TRUE(projectFolderOf("song1.mtp", b));
+  TEST_ASSERT_EQUAL_STRING("song1", b);
+  TEST_ASSERT_TRUE(projectFolderOf("abcdefghijklmnop.bak", b));
+  TEST_ASSERT_EQUAL_STRING("abcdefghijklmnop", b);
+  TEST_ASSERT_FALSE(projectFolderOf("song1.wav", b));
+  TEST_ASSERT_FALSE(projectFolderOf("song1", b));
+  TEST_ASSERT_FALSE(projectFolderOf("my song.mtp", b));
+  TEST_ASSERT_FALSE(projectFolderOf(".mtp", b));
+  TEST_ASSERT_FALSE(projectFolderOf(nullptr, b));
+}
+
 void test_json_dir() {
   char buf[64];
   size_t len = 1;
@@ -237,6 +280,143 @@ void test_json_dir() {
   TEST_ASSERT_FALSE(jsonAppendDir(buf, sizeof(buf), len, "a-very-long-folder-name", false));
   TEST_ASSERT_EQUAL(before, len);
   TEST_ASSERT_EQUAL(before, strlen(buf));
+}
+
+void test_project_folder_web() {
+  // Listing: project folders at the top of /projects only; samples tree as mkdir allows.
+  TEST_ASSERT_TRUE(webDirListed(WebDir::Projects, "", "song1"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Projects, "", "bad name"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Projects, "song1", "sub"));
+  TEST_ASSERT_TRUE(webDirListed(WebDir::Samples, "", "Drums 1"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Samples, "a/b/c/d", "e"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Midi, "", "x"));
+  // Size: samples in a project folder use the WAV limit.
+  TEST_ASSERT_EQUAL_UINT32(kProjectMaxBytes, webMaxBytesIn(WebDir::Projects, ""));
+  TEST_ASSERT_EQUAL_UINT32(kProjWavMaxBytes, webMaxBytesIn(WebDir::Projects, "song1"));
+  TEST_ASSERT_TRUE(kProjWavMaxBytes > kWavMaxBytes);  // any bank sample, written back by Save
+  TEST_ASSERT_EQUAL_UINT32(kWavMaxBytes, webMaxBytesIn(WebDir::Samples, "drums"));
+  TEST_ASSERT_EQUAL_UINT32(0, webMaxBytesIn(WebDir::Projects, "bad name"));
+  // Rename inside a folder.
+  TEST_ASSERT_TRUE(webRenameAllowedIn(WebDir::Projects, "song1", "kick.wav", "kick2.WAV"));
+  TEST_ASSERT_FALSE(webRenameAllowedIn(WebDir::Projects, "song1", "kick.wav", "my kick.wav"));
+  TEST_ASSERT_FALSE(webRenameAllowedIn(WebDir::Projects, "song1", "a.mtp", "b.mtp"));
+  TEST_ASSERT_TRUE(webRenameAllowedIn(WebDir::Projects, "", "a.mtp", "b.mtp"));
+  TEST_ASSERT_FALSE(webRenameAllowedIn(WebDir::Projects, "", "a.mtp", "b.bak"));
+  TEST_ASSERT_TRUE(webRenameAllowedIn(WebDir::Samples, "drums", "Kick 01.wav", "Kick 02.wav"));
+  // The open project's sample folder.
+  TEST_ASSERT_TRUE(isOpenProjectFolder("song1", WebDir::Projects, "song1"));
+  TEST_ASSERT_TRUE(isOpenProjectFolder("song1", WebDir::Projects, "SONG1"));
+  TEST_ASSERT_FALSE(isOpenProjectFolder("song1", WebDir::Projects, ""));
+  TEST_ASSERT_FALSE(isOpenProjectFolder("song1", WebDir::Projects, "song12"));
+  TEST_ASSERT_FALSE(isOpenProjectFolder("", WebDir::Projects, ""));
+  TEST_ASSERT_FALSE(isOpenProjectFolder("song1", WebDir::Samples, "song1"));
+  TEST_ASSERT_FALSE(isOpenProjectFolder(nullptr, WebDir::Projects, "song1"));
+  // legacy.idx and other service files never show up in /projects.
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "", "legacy.idx"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "", "song1.tmp"));
+}
+
+void test_presets_web() {
+  TEST_ASSERT_TRUE(parseWebDir("presets") == WebDir::Presets);
+  TEST_ASSERT_EQUAL_STRING("/presets", webDirPath(WebDir::Presets));
+  TEST_ASSERT_EQUAL_INT(kPresetDepthMax + 1, webDepthMax(WebDir::Presets));
+  TEST_ASSERT_EQUAL_INT(kWebDepthMax, webDepthMax(WebDir::Samples));
+  TEST_ASSERT_EQUAL_INT(0, webDepthMax(WebDir::Midi));
+  // Type folder first, then up to kPresetDepthMax folders.
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, ""));
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, "CHIP"));
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c"));    // 1 + 4
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c/d"));  // 1 + 5
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "chip"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "BASS/x"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "FM/../CHIP"));
+  // .mti only, base as a project name, never at the top.
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Presets, "FM", "EPIANO_1.mti"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Presets, "FM/keys", "bell-2.MTI"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Presets, "", "bell.mti"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Presets, "FM", "bell.tmp"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Presets, "FM", "bell 2.mti"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Presets, "FM", "ABCDEFGHIJKLMNOPQ.mti"));  // 17
+  TEST_ASSERT_EQUAL_UINT32(1024u, webMaxBytesIn(WebDir::Presets, "CHIP"));
+  TEST_ASSERT_TRUE(webRenameAllowedIn(WebDir::Presets, "CHIP", "a.mti", "b.mti"));
+  // Folders: only type folders at the top.
+  TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Presets, "", "SAMPLE"));
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "", "bass"));
+  TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Presets, "SAMPLE", "Pads 2"));
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "SAMPLE/a/b/c/d", "e"));
+  TEST_ASSERT_TRUE(webDirListed(WebDir::Presets, "", "DRUM"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Presets, "", "misc"));
+  char p[kWebPathMax];
+  TEST_ASSERT_TRUE(webPath(p, sizeof(p), WebDir::Presets, "FM/keys", "bell.mti"));
+  TEST_ASSERT_EQUAL_STRING("/presets/FM/keys/bell.mti", p);
+}
+
+void test_wavetables_web() {
+  TEST_ASSERT_TRUE(parseWebDir("wavetables") == WebDir::Wavetables);
+  TEST_ASSERT_EQUAL_STRING("/wavetables", webDirPath(WebDir::Wavetables));
+  // .wav only, any case; other extensions and path tricks refused.
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Wavetables, "Basic Shapes.wav"));
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Wavetables, "PWM.WAV"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Wavetables, "song.mtp"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Wavetables, "a.mti"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Wavetables, "a.wt"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Wavetables, ".wav"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Wavetables, "../a.wav"));
+  TEST_ASSERT_TRUE(webRenameAllowed(WebDir::Wavetables, "a.wav", "b.WAV"));
+  TEST_ASSERT_FALSE(webRenameAllowed(WebDir::Wavetables, "a.wav", "a.mtp"));
+  // Size: any table the importer reads (kWtMaxSrcSamples frames of up to 2 ch x 24 bit) plus headers.
+  TEST_ASSERT_EQUAL_UINT32(kWtMaxBytes, webMaxBytes(WebDir::Wavetables));
+  TEST_ASSERT_EQUAL_UINT32(kWtMaxBytes, webMaxBytesIn(WebDir::Wavetables, "Serum/Analog"));
+  TEST_ASSERT_TRUE(kWtMaxBytes >= kWtMaxSrcSamples * 6u);
+  TEST_ASSERT_TRUE(kWtMaxBytes >= 1024u * 1024);
+  // Subfolders as in /samples (the tracker's picker goes 4 levels down).
+  TEST_ASSERT_EQUAL_INT(kWebDepthMax, webDepthMax(WebDir::Wavetables));
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Wavetables, "a/b/c/d"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Wavetables, "a/b/c/d/e"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Wavetables, "../x"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Wavetables, "", "a.wav"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Wavetables, "Serum", "Saw Sweep.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Wavetables, "Serum", "x.mid"));
+  TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Wavetables, "", "Serum"));
+  TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Wavetables, "a/b/c", "d"));
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Wavetables, "a/b/c/d", "e"));
+  TEST_ASSERT_TRUE(webDirListed(WebDir::Wavetables, "", "Serum"));
+  TEST_ASSERT_TRUE(webRenameAllowedIn(WebDir::Wavetables, "Serum", "a.wav", "b.wav"));
+  char p[kWebPathMax];
+  TEST_ASSERT_TRUE(webPath(p, sizeof(p), WebDir::Wavetables, "Serum", "a.wav"));
+  TEST_ASSERT_EQUAL_STRING("/wavetables/Serum/a.wav", p);
+  TEST_ASSERT_FALSE(isOpenProjectFolder("song1", WebDir::Wavetables, "song1"));
+}
+
+void test_project_wt_folder() {
+  // The wavetable sources of a project: /projects/<base>/wt, one level, exact name.
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Projects, "song1/wt"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "song1/WT"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "song1/wt/x"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "bad name/wt"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "wt/song1"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Projects, "song1/wt/"));
+  TEST_ASSERT_TRUE(webDirListed(WebDir::Projects, "song1", "wt"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Projects, "song1", "WT"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Projects, "song1", "x"));
+  TEST_ASSERT_FALSE(webDirListed(WebDir::Projects, "song1/wt", "wt"));
+  TEST_ASSERT_TRUE(webFileAllowedIn(WebDir::Projects, "song1/wt", "SAWSQR.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1/wt", "my table.wav"));
+  TEST_ASSERT_FALSE(webFileAllowedIn(WebDir::Projects, "song1/wt", "song1.mtp"));
+  TEST_ASSERT_EQUAL_UINT32(kProjWavMaxBytes, webMaxBytesIn(WebDir::Projects, "song1/wt"));
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Projects, "song1", "wt"));  // the tracker or an upload makes it
+  TEST_ASSERT_FALSE(isOpenProjectFolder("song1", WebDir::Projects, "song1/wt"));
+  char b[17];
+  TEST_ASSERT_TRUE(projectSubBase("song1/wt", b));
+  TEST_ASSERT_EQUAL_STRING("song1", b);
+  TEST_ASSERT_TRUE(projectSubBase("song1", b));
+  TEST_ASSERT_EQUAL_STRING("song1", b);
+  TEST_ASSERT_FALSE(projectSubBase("", b));
+  TEST_ASSERT_FALSE(projectSubBase("bad name/wt", b));
+  TEST_ASSERT_FALSE(projectSubBase(nullptr, b));
+  char p[kWebPathMax];
+  TEST_ASSERT_TRUE(webPath(p, sizeof(p), WebDir::Projects, "song1/wt", "SAWSQR.wav"));
+  TEST_ASSERT_EQUAL_STRING("/projects/song1/wt/SAWSQR.wav", p);
 }
 
 int main() {
@@ -253,5 +433,11 @@ int main() {
   RUN_TEST(test_mkdir);
   RUN_TEST(test_path);
   RUN_TEST(test_json_dir);
+  RUN_TEST(test_project_folders);
+  RUN_TEST(test_project_folder_of);
+  RUN_TEST(test_project_folder_web);
+  RUN_TEST(test_presets_web);
+  RUN_TEST(test_wavetables_web);
+  RUN_TEST(test_project_wt_folder);
   return UNITY_END();
 }

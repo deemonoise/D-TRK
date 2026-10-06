@@ -32,9 +32,9 @@ void test_make_sel_normalizes() {
 }
 
 void test_make_sel_clamps() {
-  Sel s = makeSel(9, 200, -1, -5);
+  Sel s = makeSel(99, 200, -1, -5);
   TEST_ASSERT_EQUAL(0, s.t0);
-  TEST_ASSERT_EQUAL(7, s.t1);
+  TEST_ASSERT_EQUAL(kTracks - 1, s.t1);
   TEST_ASSERT_EQUAL(0, s.s0);
   TEST_ASSERT_EQUAL(127, s.s1);
 }
@@ -66,6 +66,24 @@ void test_copy_paste_clipped() {
   TEST_ASSERT_EQUAL(4, nonEmpty);
 }
 
+void test_paste_clipped_at_track_16() {
+  static Pattern src;
+  src.clear();
+  fillMarked(src);
+  copySel(src, makeSel(0, 0, 2, 0), cb);  // 3 tracks x 1 step
+  TEST_ASSERT_EQUAL(3, cb.tracks);
+
+  pasteAt(pat, cb, 14, 0);
+  // Pasted: tracks 14-15; the third clipboard track falls off the end.
+  TEST_ASSERT_EQUAL(src.steps[0][0].note, pat.steps[14][0].note);
+  TEST_ASSERT_EQUAL(src.steps[1][0].note, pat.steps[15][0].note);
+  int nonEmpty = 0;
+  for (int t = 0; t < kTracks; ++t)
+    for (int s = 0; s < kMaxSteps; ++s)
+      if (!pat.steps[t][s].isEmpty()) ++nonEmpty;
+  TEST_ASSERT_EQUAL(2, nonEmpty);
+}
+
 void test_paste_empty_clipboard_noop() {
   pasteAt(pat, cb, 0, 0);
   TEST_ASSERT_TRUE(pat.isEmpty());
@@ -77,6 +95,24 @@ void test_clear_sel_only_selection() {
   for (int t = 0; t < kTracks; ++t)
     for (int s = 0; s < kMaxSteps; ++s) {
       bool inSel = t >= 1 && t <= 2 && s >= 2 && s <= 4;
+      TEST_ASSERT_EQUAL(inSel, pat.steps[t][s].isEmpty());
+    }
+}
+
+// A selection may straddle the two LED halves (tracks 0-7 / 8-15).
+void test_selection_spans_halves() {
+  Sel a = makeSel(5, 0, 10, 3);
+  Sel b = makeSel(10, 3, 5, 0);
+  TEST_ASSERT_EQUAL(5, a.t0);
+  TEST_ASSERT_EQUAL(10, a.t1);
+  TEST_ASSERT_EQUAL(5, b.t0);
+  TEST_ASSERT_EQUAL(10, b.t1);
+
+  fillMarked(pat);
+  clearSel(pat, a);
+  for (int t = 0; t < kTracks; ++t)
+    for (int s = 0; s < kMaxSteps; ++s) {
+      bool inSel = t >= 5 && t <= 10 && s <= 3;
       TEST_ASSERT_EQUAL(inSel, pat.steps[t][s].isEmpty());
     }
 }
@@ -133,19 +169,20 @@ void test_undo_overflow() {
   Undo::Entry* store = new Undo::Entry[Undo::kDepth];
   Undo u(store);
   static Pattern a, out;
-  for (int i = 0; i < 40; ++i) {
+  constexpr int kPushes = Undo::kDepth + 8;  // wraps: the first 8 are lost
+  for (int i = 0; i < kPushes; ++i) {
     a.clear();
     a.steps[0][0].note = static_cast<uint8_t>(i);
     u.push(static_cast<uint8_t>(i % kPatterns), a);
   }
   TEST_ASSERT_EQUAL(Undo::kDepth, u.size());
   uint8_t idx = 0;
-  for (int i = 39; i >= 8; --i) {
+  for (int i = kPushes - 1; i >= kPushes - Undo::kDepth; --i) {
     TEST_ASSERT_TRUE(u.pop(idx, out));
     TEST_ASSERT_EQUAL(i, out.steps[0][0].note);
     TEST_ASSERT_EQUAL(i % kPatterns, idx);
   }
-  TEST_ASSERT_FALSE(u.pop(idx, out));  // 33rd pop
+  TEST_ASSERT_FALSE(u.pop(idx, out));  // (kDepth + 1)th pop
   TEST_ASSERT_EQUAL(0, u.size());
   delete[] store;
 }
@@ -174,12 +211,13 @@ void test_undo_drop_after_wrap() {
   Undo::Entry* store = new Undo::Entry[Undo::kDepth];
   Undo u(store);
   static Pattern a, out;
-  for (int i = 0; i < 40; ++i) {  // wraps: 8..39 kept
+  constexpr int kPushes = Undo::kDepth + 8;  // wraps: 8..kPushes-1 kept
+  for (int i = 0; i < kPushes; ++i) {
     a.clear();
     a.steps[0][0].note = static_cast<uint8_t>(i);
     u.push(static_cast<uint8_t>(i % kPatterns), a);
   }
-  TEST_ASSERT_TRUE(u.drop());  // forgets 39
+  TEST_ASSERT_TRUE(u.drop());  // forgets the newest
   TEST_ASSERT_EQUAL(Undo::kDepth - 1, u.size());
   a.clear();
   a.steps[0][0].note = 100;
@@ -187,7 +225,7 @@ void test_undo_drop_after_wrap() {
   uint8_t idx = 0;
   TEST_ASSERT_TRUE(u.pop(idx, out));
   TEST_ASSERT_EQUAL(100, out.steps[0][0].note);
-  for (int i = 38; i >= 8; --i) {
+  for (int i = kPushes - 2; i >= kPushes - Undo::kDepth; --i) {
     TEST_ASSERT_TRUE(u.pop(idx, out));
     TEST_ASSERT_EQUAL(i, out.steps[0][0].note);
   }
@@ -200,8 +238,10 @@ int main(int, char**) {
   RUN_TEST(test_make_sel_normalizes);
   RUN_TEST(test_make_sel_clamps);
   RUN_TEST(test_copy_paste_clipped);
+  RUN_TEST(test_paste_clipped_at_track_16);
   RUN_TEST(test_paste_empty_clipboard_noop);
   RUN_TEST(test_clear_sel_only_selection);
+  RUN_TEST(test_selection_spans_halves);
   RUN_TEST(test_transpose_semitones);
   RUN_TEST(test_transpose_down_clamps_to_zero);
   RUN_TEST(test_transpose_degrees);

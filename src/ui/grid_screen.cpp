@@ -12,7 +12,9 @@ namespace {
 constexpr uint16_t kKeyWhite = 0xC618;
 constexpr uint16_t kKeyBlack = 0x18C3;
 
-const char* const kFieldNames[] = {"NOTE", "VEL", "FX1", "FX1 VAL", "FX2", "FX2 VAL"};
+const char* const kFieldNames[] = {"NOTE",    "VEL", "FX1", "FX1 VAL", "FX2", "FX2 VAL", "FX3",
+                                   "FX3 VAL", "FX4", "FX4 VAL", "FX5", "FX5 VAL", "FX6", "FX6 VAL"};
+static_assert(sizeof(kFieldNames) / sizeof(kFieldNames[0]) == 2 + 2 * mt::kFxSlots, "a name per Detail field");
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -101,6 +103,7 @@ void GridScreen::selFollow() {
 }
 
 void GridScreen::cursorMoved() {
+  fxCycled_ = false;
   selFollow();
   needVisible_ = true;
   lastMoveMs_ = millis();
@@ -128,6 +131,7 @@ void GridScreen::moveField(int d) {
 void GridScreen::setEdit(bool on) {
   if (on && !edit_) {
     editPushed_ = false;
+    fxCycled_ = false;
     app_.toast(kFieldNames[curField_]);
   }
   edit_ = on;
@@ -205,13 +209,14 @@ void GridScreen::editTurn(int delta, bool shift) {
       previewNote(st.note);
       return;
     case kVel: st.vel = static_cast<uint8_t>(clampi(st.vel + delta * (shift ? 10 : 1), 0, 127)); break;
-    default: {  // kFx1 / kVal1 / kFx2 / kVal2
+    default: {  // a command or its value
       const int slot = (curField_ - kFx1) / 2;
+      const bool isCmd = (curField_ - kFx1) % 2 == 0;
       mt::FxSlot& f = st.fx[slot];
       mt::FxSlot& last = lastFx_[tr][slot];
-      if (f.cmd == mt::Fx::None && last.cmd != mt::Fx::None) {
+      if (f.cmd == mt::Fx::None && last.cmd != mt::Fx::None && !fxCycled_) {
         f = last;  // empty slot: the first turn repeats the last FX with its value
-      } else if (curField_ == kFx1 || curField_ == kFx2) {
+      } else if (isCmd) {
         f.cmd = mt::fxNextCmd(f.cmd, delta);
         f.val = f.cmd == mt::Fx::None ? 0 : mt::fxDefault(f.cmd);
       } else {
@@ -220,6 +225,8 @@ void GridScreen::editTurn(int delta, bool shift) {
         f.val = mt::fxStep(f.cmd, f.val, delta * mult);
       }
       if (f.cmd != mt::Fx::None) last = f;
+      if (isCmd) fxCycled_ = true;
+      if (isCmd && f.cmd != mt::Fx::None) app_.toast(mt::fxLongName(f.cmd));
       break;
     }
   }
@@ -271,7 +278,7 @@ bool GridScreen::trackKey(int n, bool shift) {
     return true;
   }
   if (shift) return false;
-  app_.setCurTrack(n);
+  app_.setCurTrack(firstTrack() + n);  // button N = track N of the visible half
   cursorMoved();
   return true;
 }
@@ -284,14 +291,14 @@ bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
   step = top_ + row;
   if (step >= len()) return false;
   if (!detail_) {
-    tr = (x - kNumW) / kColW;
+    const int col = (x - kNumW) / kColW;
+    if (col >= kOverviewTracks) return false;
+    tr = firstTrack() + col;
     field = kNote;
-    return tr < mt::kTracks;
+    return true;
   }
-  const int col = (x - kNumW) / kDetW;
-  if (col > 1) return false;
-  tr = (track() & ~1) + col;
-  field = clampi((x - kNumW - col * kDetW - kFieldX) / kFieldW, 0, kFields - 1);
+  tr = track();
+  field = clampi((x - kNumW) / kFieldW, 0, kFields - 1);
   return true;
 }
 
@@ -331,8 +338,9 @@ void GridScreen::onTouch(const TouchEvent& ev) {
   // Track names: mute, Shift = solo.
   if (ev.y < y0_ + kNamesH) {
     if (ev.type != TouchType::Tap || ev.x < kNumW) return;
-    const int tr = detail_ ? (track() & ~1) + (ev.x - kNumW) / kDetW : (ev.x - kNumW) / kColW;
-    if (tr >= mt::kTracks || (detail_ && tr > (track() | 1))) return;
+    const int col = (ev.x - kNumW) / kColW;
+    if (!detail_ && col >= kOverviewTracks) return;
+    const int tr = detail_ ? track() : firstTrack() + col;
     mt::TrackCfg& t = app_.project().tracks[tr];
     engine::lockProject();
     if (app_.shift()) t.solo = !t.solo;
@@ -607,11 +615,14 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   const int n = len();
   char buf[12];
 
-  // Track names, coloured by mute/solo.
-  for (int tr = 0; tr < mt::kTracks; ++tr) {
+  // Header: the visible half over the step numbers, track names coloured by mute/solo.
+  s.setTextColor(kDim);
+  s.drawString(half() ? "9-16" : "1-8", 0, gridY - kNamesH);  // 4 chars fill kNumW
+  for (int col = 0; col < kOverviewTracks; ++col) {
+    const int tr = firstTrack() + col;
     const mt::TrackCfg& t = p.tracks[tr];
     s.setTextColor(t.solo ? kCursor : (p.trackAudible(tr) ? kText : kDim));
-    s.drawString(t.name, kNumW + tr * kColW + 4, gridY - kNamesH);
+    s.drawString(t.name, kNumW + col * kColW + 4, gridY - kNamesH);
   }
 
   for (int row = 0; row < rows_; ++row) {
@@ -625,9 +636,10 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
     snprintf(buf, sizeof(buf), "%3d", step + 1);
     s.drawString(buf, 2, y);
 
-    for (int tr = 0; tr < mt::kTracks; ++tr) {
+    for (int col = 0; col < kOverviewTracks; ++col) {
+      const int tr = firstTrack() + col;
       const mt::Step& c = pt.steps[tr][step];
-      const int x = kNumW + tr * kColW;
+      const int x = kNumW + col * kColW;
       if (selected(tr, step)) s.fillRect(x, y, kColW, kRowH, kSelBg);
       char nn[4];
       mt::noteName(c.note, nn);
@@ -637,7 +649,7 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
         const uint8_t vel = c.vel ? c.vel : p.tracks[tr].defVel;
         s.fillRect(x + 32, y + 12, (vel * 20) / 127, 2, kDim);
       }
-      if (c.fx[0].cmd != mt::Fx::None || c.fx[1].cmd != mt::Fx::None) {
+      if (c.hasFx()) {
         // Dim when every fx is a synth fx on a MIDI track (ignored there).
         bool live = false;
         for (const mt::FxSlot& f : c.fx)
@@ -654,16 +666,21 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   const engine::Status& st = app_.status();
   const mt::Pattern& pt = pat();
   const int n = len();
-  const int pair = track() & ~1;
-  char buf[12];
+  const int tr = track();
+  const mt::TrackCfg& t = p.tracks[tr];
+  const bool audible = p.trackAudible(tr);
+  const bool midi = !p.trackInternal(tr);
+  char buf[16];
 
-  for (int col = 0; col < 2; ++col) {
-    const int tr = pair + col;
-    const mt::TrackCfg& t = p.tracks[tr];
-    const int x0 = kNumW + col * kDetW;
-    s.setTextColor(t.solo ? kCursor : (p.trackAudible(tr) ? kText : kDim));
-    snprintf(buf, sizeof(buf), "%d %s", tr + 1, t.name);
-    s.drawString(buf, x0 + kFieldX + 6, gridY - kNamesH);
+  // Header: track number over the step numbers, its name over NOTE / VEL, slots over the commands.
+  s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
+  snprintf(buf, sizeof(buf), "T%d", tr + 1);
+  s.drawString(buf, 2, gridY - kNamesH);
+  s.drawString(t.name, kNumW + 1, gridY - kNamesH);  // 8 chars fit 2 fields
+  s.setTextColor(kDim);
+  for (int k = 0; k < mt::kFxSlots; ++k) {
+    snprintf(buf, sizeof(buf), "FX%d", k + 1);
+    s.drawString(buf, kNumW + (kFx1 + 2 * k) * kFieldW + 4, gridY - kNamesH);
   }
 
   for (int row = 0; row < rows_; ++row) {
@@ -677,26 +694,22 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
     snprintf(buf, sizeof(buf), "%3d", step + 1);
     s.drawString(buf, 2, y);
 
-    for (int col = 0; col < 2; ++col) {
-      const int tr = pair + col;
-      const int x0 = kNumW + col * kDetW;
-      const bool audible = p.trackAudible(tr);
-      const bool midi = !p.trackInternal(tr);
-      const mt::Step& c = pt.steps[tr][step];
-      if (selected(tr, step)) s.fillRect(x0, y, kDetW, kRowH, kSelBg);
-      for (int f = 0; f < kFields; ++f) {
-        char txt[5];
-        const bool has = fieldText(c, f, txt);
-        // Synth fx do nothing on a MIDI track.
-        const bool ignored = f >= kFx1 && midi && mt::fxSynthOnly(c.fx[(f - kFx1) / 2].cmd);
-        s.setTextColor(has && audible && !ignored ? kText : kDim);
-        s.drawString(txt, x0 + kFieldX + f * kFieldW + 6, y);
-      }
-      if (step == curStep_ && tr == track())
-        s.drawRect(x0 + kFieldX + curField_ * kFieldW, y, kFieldW, kRowH, edit_ ? kEditCursor : kCursor);
+    const mt::Step& c = pt.steps[tr][step];
+    if (selected(tr, step)) s.fillRect(kNumW, y, kDetW, kRowH, kSelBg);
+    for (int f = 0; f < kFields; ++f) {
+      char txt[5];
+      const bool has = fieldText(c, f, txt);
+      // Synth fx do nothing on a MIDI track.
+      const bool ignored = f >= kFx1 && midi && mt::fxSynthOnly(c.fx[(f - kFx1) / 2].cmd);
+      s.setTextColor(has && audible && !ignored ? kText : kDim);
+      s.drawString(txt, kNumW + f * kFieldW + 4, y);
     }
+    if (step == curStep_)
+      s.drawRect(kNumW + curField_ * kFieldW, y, kFieldW, kRowH, edit_ ? kEditCursor : kCursor);
   }
-  s.drawFastVLine(kNumW + kDetW, gridY - kNamesH, kNamesH + rows_ * kRowH, kDim);
+  // Separators before each fx pair.
+  const int h = kNamesH + rows_ * kRowH;
+  for (int k = 0; k < mt::kFxSlots; ++k) s.drawFastVLine(kNumW + (kFx1 + 2 * k) * kFieldW - 1, gridY - kNamesH, h, kDim);
 }
 
 void GridScreen::drawKeyboard(LGFX_Sprite& s, int y) {

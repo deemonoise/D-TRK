@@ -11,6 +11,7 @@ static const ExpandCtx ctx{kStepUs, 0, 0, ScaleType::Chromatic};
 
 void setUp() {
   track = TrackCfg();
+  track.out = TrackOut::Midi;
   track.channel = 2;
   track.defVel = 100;
   track.defGate = 50;
@@ -352,10 +353,176 @@ void test_fm_lock_fx_on_int_track() {
   TEST_ASSERT_EQUAL(99, out.ev[0].vel);
 }
 
+// ---- OFF ----
+
+static int countKind(const ExpandOut& o, EvKind k) {
+  int n = 0;
+  for (int i = 0; i < o.count; ++i) n += o.ev[i].kind == k;
+  return n;
+}
+
+void test_off_on_empty_step() {
+  Step s;
+  s.fx[3] = {Fx::OFF, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(0, out.count);
+  TEST_ASSERT_EQUAL(0, out.offUs);
+  s.fx[3].val = 12;  // half a 24-tick step
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(kStepUs / 2, out.offUs);
+  // Without OFF there is none.
+  TEST_ASSERT_TRUE(expandStep(note(60), track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(-1, out.offUs);
+}
+
+void test_off_uses_ticks_per_step() {
+  ExpandCtx c = ctx;
+  c.tps = 96;
+  Step s;
+  s.fx[0] = {Fx::OFF, 24};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(kStepUs / 4, out.offUs);
+}
+
+void test_off_shortens_gate() {
+  Step s = note(60);
+  s.fx[0] = {Fx::GAT, 200};  // 800 %
+  s.fx[1] = {Fx::OFF, 6};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(2, out.count);
+  TEST_ASSERT_EQUAL(kStepUs / 4, out.ev[1].offsetUs);
+  TEST_ASSERT_EQUAL(kStepUs / 4, out.offUs);
+}
+
+void test_off_zero_with_note_keeps_min_gate() {
+  Step s = note(60);
+  s.fx[0] = {Fx::OFF, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(2, out.count);
+  TEST_ASSERT_EQUAL(static_cast<int32_t>(kMinGateUs), out.ev[1].offsetUs);
+  TEST_ASSERT_EQUAL(static_cast<int32_t>(kMinGateUs), out.offUs);
+}
+
+void test_off_drops_later_ratchets_and_tie() {
+  Step s = note(60);
+  s.fx[0] = {Fx::RAT, 4};
+  s.fx[1] = {Fx::TIE, 0};
+  s.fx[5] = {Fx::OFF, 12};  // hits at 0 and 6 ticks play
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(2, countKind(out, EvKind::NoteOn));
+  TEST_ASSERT_EQUAL(2, countKind(out, EvKind::NoteOff));
+  TEST_ASSERT_FALSE(out.tie);
+  for (int i = 0; i < out.count; ++i) TEST_ASSERT_TRUE(out.ev[i].offsetUs <= out.offUs);
+}
+
+void test_off_follows_nudge() {
+  Step s = note(60);
+  s.fx[0] = {Fx::NDG, 20};  // +20 %
+  s.fx[1] = {Fx::OFF, 12};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(static_cast<int32_t>(kStepUs / 5 + kStepUs / 2), out.offUs);
+}
+
+// Drum track (KIT instrument): vel = lane mask, note = step velocity.
+static Instrument kit() { Instrument k; instrSetType(k, InstrType::Kit); return k; }  // notes 60..67
+static Step drumStep(uint8_t mask, uint8_t vel = 0) { Step s; s.note = vel; s.vel = mask; return s; }
+
+void test_drum_mask_to_lane_notes() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(drumStep(0b00000101), track, c, rng, out));
+  TEST_ASSERT_EQUAL(4, out.count);  // 2 lanes x (on, off); a lane without a sample still goes out (MIDI)
+  TEST_ASSERT_EQUAL(60, out.ev[0].note);
+  TEST_ASSERT_EQUAL(track.defVel, out.ev[0].vel);
+  TEST_ASSERT_EQUAL(2, out.ev[0].ch);
+  TEST_ASSERT_TRUE(out.ev[1].kind == EvKind::NoteOff);
+  TEST_ASSERT_EQUAL(60, out.ev[1].note);
+  TEST_ASSERT_EQUAL(62500, out.ev[1].offsetUs);
+  TEST_ASSERT_EQUAL(62, out.ev[2].note);
+  TEST_ASSERT_EQUAL(0, out.ev[2].offsetUs);
+  TEST_ASSERT_FALSE(out.tie);
+}
+
+void test_drum_velocity_and_accent() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  Step s = drumStep(0b00000101, 100);
+  s.fx[0] = {Fx::ACC, 0b00000001};  // lane 1 full, lane 3 at 60 %
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(100, out.ev[0].vel);
+  TEST_ASSERT_EQUAL(60, out.ev[2].vel);
+}
+
+void test_drum_ratchet_fits_and_tie_ignored() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  Step s = drumStep(0xFF);
+  s.fx[0] = {Fx::RAT, 8};
+  s.fx[1] = {Fx::TIE, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(128, out.count);
+  TEST_ASSERT_TRUE(out.count <= kMaxStepEvents);
+  TEST_ASSERT_EQUAL(128, countKind(out, EvKind::NoteOn) + countKind(out, EvKind::NoteOff));
+  TEST_ASSERT_FALSE(out.tie);
+  // Hits must not overlap: every NoteOff before the next ratchet's NoteOn.
+  TEST_ASSERT_TRUE(out.ev[1].offsetUs < out.ev[16].offsetUs);
+}
+
+void test_drum_empty_mask_is_note_step() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(drumStep(0), track, c, rng, out));
+  TEST_ASSERT_EQUAL(0, out.count);
+}
+
+void test_drum_off_cuts_notes() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  Step s = drumStep(0b00000011);
+  s.fx[0] = {Fx::GAT, 200};  // 800 %
+  s.fx[1] = {Fx::OFF, 6};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(4, out.count);
+  TEST_ASSERT_EQUAL(kStepUs / 4, out.offUs);
+  TEST_ASSERT_EQUAL(kStepUs / 4, out.ev[1].offsetUs);
+  TEST_ASSERT_EQUAL(kStepUs / 4, out.ev[3].offsetUs);
+}
+
+void test_acc_ignored_on_melodic_track() {
+  Step s = note(60);
+  s.fx[0] = {Fx::ACC, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(2, out.count);
+  TEST_ASSERT_EQUAL(100, out.ev[0].vel);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_empty_and_off_produce_nothing);
   RUN_TEST(test_plain_note);
+  RUN_TEST(test_off_on_empty_step);
+  RUN_TEST(test_off_uses_ticks_per_step);
+  RUN_TEST(test_off_shortens_gate);
+  RUN_TEST(test_off_zero_with_note_keeps_min_gate);
+  RUN_TEST(test_off_drops_later_ratchets_and_tie);
+  RUN_TEST(test_off_follows_nudge);
   RUN_TEST(test_step_velocity_overrides_default);
   RUN_TEST(test_chn_overrides_channel);
   RUN_TEST(test_ratchet_four);
@@ -383,5 +550,11 @@ int main() {
   RUN_TEST(test_synth_fx_on_int_track);
   RUN_TEST(test_synth_fx_ignored_on_midi_track);
   RUN_TEST(test_fm_lock_fx_on_int_track);
+  RUN_TEST(test_drum_mask_to_lane_notes);
+  RUN_TEST(test_drum_velocity_and_accent);
+  RUN_TEST(test_drum_ratchet_fits_and_tie_ignored);
+  RUN_TEST(test_drum_empty_mask_is_note_step);
+  RUN_TEST(test_drum_off_cuts_notes);
+  RUN_TEST(test_acc_ignored_on_melodic_track);
   return UNITY_END();
 }

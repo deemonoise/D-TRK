@@ -101,9 +101,22 @@ void test_gate_off_when_idle_stays_idle() {
   TEST_ASSERT_TRUE(e.idle());
 }
 
+// fade: Release over its own time, whatever the envelope's release is.
+void test_fade_uses_its_time() {
+  Env e;
+  e.set(0, 0, 1.f, 1000);
+  e.gate(true);
+  e.next();
+  e.fade(3);
+  TEST_ASSERT_EQUAL(static_cast<int>(Env::Stage::Release), static_cast<int>(e.stage()));
+  TEST_ASSERT_INT_WITHIN(1, 96, samplesIn(e, Env::Stage::Release));
+  TEST_ASSERT_TRUE(e.idle());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_idle_by_default);
+  RUN_TEST(test_fade_uses_its_time);
   RUN_TEST(test_adsr_timing);
   RUN_TEST(test_attack_is_monotonic);
   RUN_TEST(test_retrigger_from_release_no_jump);

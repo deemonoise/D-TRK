@@ -84,8 +84,8 @@ class Sequencer {
   int heardSongPos() const { return heardSong_; }
   void seed(uint32_t s) { rng_ = Rng(s); }
   // Tracks whose NoteOns went out since the last call (bit = track).
-  uint8_t takeActivity() {
-    const uint8_t a = activity_;
+  uint16_t takeActivity() {
+    const uint16_t a = activity_;
     activity_ = 0;
     return a;
   }
@@ -138,6 +138,7 @@ class Sequencer {
   void endOfPass();
   void showStopped();
   void releaseTie(int track, uint64_t t);
+  void pushOff(int track, uint64_t t);
   void releaseAllTies(uint64_t t);
   void silence(uint64_t now, MidiSink& out);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
@@ -178,7 +179,7 @@ class Sequencer {
   uint8_t heardPat_ = 0;
   int heardSong_ = -1;
   uint32_t nextId_ = 1;
-  uint8_t activity_ = 0;
+  uint16_t activity_ = 0;
   Tie ties_[kTracks];
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };

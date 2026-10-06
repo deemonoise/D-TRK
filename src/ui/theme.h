@@ -18,6 +18,7 @@ constexpr uint16_t kMenuBorder = kCursor;
 constexpr uint16_t kRed = 0xF800;
 constexpr uint16_t kGreen = 0x07E0;
 constexpr uint16_t kYellow = 0xFFE0;
+constexpr uint16_t kCyan = 0x07FF;
 
 constexpr int kScreenW = 480;
 constexpr int kScreenH = 320;

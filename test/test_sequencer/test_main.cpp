@@ -82,8 +82,15 @@ static std::vector<uint64_t> between(const std::vector<uint64_t>& v, uint64_t a,
   return out;
 }
 
+// Tests here check MIDI output: every track on MIDI (new projects default to INT).
+static Project* midiProject() {
+  Project* q = new Project();
+  for (TrackCfg& c : q->tracks) c.out = TrackOut::Midi;
+  return q;
+}
+
 void setUp() {
-  p = new Project();
+  p = midiProject();
   seq = new Sequencer(*p);
   seq->seed(1);
   sink = new FakeSink();
@@ -195,15 +202,39 @@ void test_muted_track_is_silent() {
   TEST_ASSERT_EQUAL(0, sink->times(0x90).size());
 }
 
+void test_drum_track_plays_lane_notes() {
+  // Track 0 on a KIT: the step's vel is a lane mask, lanes 0 and 2 -> notes 60 and 62.
+  instrSetType(p->instruments[p->tracks[0].instr], InstrType::Kit);
+  Step& s = p->patterns[0].steps[0][0];
+  s.note = 0;
+  s.vel = 0b00000101;
+  seq->start(0, *sink);
+  run(0, 200000);
+  const uint8_t on = static_cast<uint8_t>(0x90 | (p->tracks[0].channel & 0x0F));
+  TEST_ASSERT_EQUAL(1, sink->times(on, 60).size());
+  TEST_ASSERT_EQUAL(1, sink->times(on, 62).size());
+  TEST_ASSERT_EQUAL(0, sink->times(on, 61).size());
+  TEST_ASSERT_EQUAL(2, sink->times(on).size());
+}
+
 void test_activity_marks_sounding_tracks() {
   p->patterns[0].steps[2][0].note = 60;
   p->patterns[0].steps[5][0].note = 62;
   p->tracks[5].mute = true;
   seq->start(0, *sink);
-  TEST_ASSERT_EQUAL_HEX8(0, seq->takeActivity());
+  TEST_ASSERT_EQUAL_HEX16(0, seq->takeActivity());
   run(0, 1000);
-  TEST_ASSERT_EQUAL_HEX8(1 << 2, seq->takeActivity());
-  TEST_ASSERT_EQUAL_HEX8(0, seq->takeActivity());  // cleared by take
+  TEST_ASSERT_EQUAL_HEX16(1 << 2, seq->takeActivity());
+  TEST_ASSERT_EQUAL_HEX16(0, seq->takeActivity());  // cleared by take
+}
+
+void test_track_15_plays() {
+  p->patterns[0].steps[kTracks - 1][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 1000);
+  const uint8_t on = static_cast<uint8_t>(0x90 | (p->tracks[kTracks - 1].channel & 0x0F));
+  TEST_ASSERT_EQUAL(1, sink->times(on, 60).size());
+  TEST_ASSERT_EQUAL_HEX16(1u << (kTracks - 1), seq->takeActivity());
 }
 
 void test_tie_holds_until_next_note_with_overlap() {
@@ -955,7 +986,7 @@ static void fuzzReleaseTies(uint32_t seed) {
   delete sink;
   delete seq;
   delete p;
-  p = new Project();
+  p = midiProject();
   seq = new Sequencer(*p);
   seq->seed(seed);
   sink = new FakeSink();
@@ -1582,6 +1613,71 @@ void test_int_track_step_markers() {
   TEST_ASSERT_EQUAL(0, sink->synKind(0xB0).size());
 }
 
+// --- OFF (note column and FX) ---
+
+void test_int_off_note_releases_track() {
+  p->tracks[2].out = TrackOut::Int;
+  p->patterns[0].steps[2][0].note = 60;
+  p->patterns[0].steps[2][2].note = kNoteOff;
+  seq->start(0, *sink);
+  run(0, 3 * 125000 - 1);
+  auto rel = sink->synKind(0xFF);
+  TEST_ASSERT_EQUAL(1, rel.size());
+  TEST_ASSERT_EQUAL(2, rel[0].track);
+  TEST_ASSERT_EQUAL(1, rel[0].len);
+  TEST_ASSERT_EQUAL(250000, rel[0].t);
+}
+
+void test_midi_off_never_sends_reset() {
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][1].note = kNoteOff;
+  p->patterns[0].steps[0][2].fx[0] = {Fx::OFF, 0};
+  seq->start(0, *sink);
+  run(0, 3 * 125000 - 1);
+  for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(0xFF, r.b[0]);
+  TEST_ASSERT_EQUAL(0, sink->syn.size());
+}
+
+void test_int_fx_off_releases_track_after_ticks() {
+  p->tracks[1].out = TrackOut::Int;
+  p->patterns[0].steps[1][0].note = 60;
+  p->patterns[0].steps[1][1].fx[4] = {Fx::OFF, 12};  // empty step, half a step in
+  seq->start(0, *sink);
+  run(0, 2 * 125000 - 1);
+  auto rel = sink->synKind(0xFF);
+  TEST_ASSERT_EQUAL(1, rel.size());
+  TEST_ASSERT_EQUAL(1, rel[0].track);
+  TEST_ASSERT_EQUAL(125000 + 62500, rel[0].t);
+}
+
+void test_int_fx_off_on_note_step() {
+  p->tracks[1].out = TrackOut::Int;
+  Step& st = p->patterns[0].steps[1][0];
+  st.note = 60;
+  st.fx[0] = {Fx::GAT, 200};
+  st.fx[1] = {Fx::OFF, 6};
+  seq->start(0, *sink);
+  run(0, 125000 - 1);
+  auto off = sink->synKind(0x80);
+  TEST_ASSERT_EQUAL(1, off.size());
+  TEST_ASSERT_EQUAL(31250, off[0].t);
+  auto rel = sink->synKind(0xFF);
+  TEST_ASSERT_EQUAL(1, rel.size());
+  TEST_ASSERT_EQUAL(31250, rel[0].t);
+}
+
+void test_fx_off_releases_tie() {
+  Step& a = p->patterns[0].steps[0][0];
+  a.note = 60;
+  a.fx[0] = {Fx::TIE, 0};
+  p->patterns[0].steps[0][2].fx[0] = {Fx::OFF, 12};  // MIDI track: the tie ends there
+  seq->start(0, *sink);
+  run(0, 4 * 125000 - 1);
+  auto offs = sink->times(0x80, 60);
+  TEST_ASSERT_EQUAL(1, offs.size());
+  TEST_ASSERT_EQUAL(250000 + 62500, offs[0]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -1593,7 +1689,9 @@ int main() {
   RUN_TEST(test_resume_sends_song_position_and_continue);
   RUN_TEST(test_retrigger_ignores_stale_note_off);
   RUN_TEST(test_muted_track_is_silent);
+  RUN_TEST(test_drum_track_plays_lane_notes);
   RUN_TEST(test_activity_marks_sounding_tracks);
+  RUN_TEST(test_track_15_plays);
   RUN_TEST(test_tie_holds_until_next_note_with_overlap);
   RUN_TEST(test_set_bpm_while_playing);
   RUN_TEST(test_stop_rewinds);
@@ -1679,6 +1777,11 @@ int main() {
   RUN_TEST(test_track_out_change_releases_held_notes);
   RUN_TEST(test_int_track_synth_fx_before_note);
   RUN_TEST(test_midi_track_synth_fx_go_nowhere);
+  RUN_TEST(test_int_off_note_releases_track);
+  RUN_TEST(test_midi_off_never_sends_reset);
+  RUN_TEST(test_int_fx_off_releases_track_after_ticks);
+  RUN_TEST(test_int_fx_off_on_note_step);
+  RUN_TEST(test_fx_off_releases_tie);
   RUN_TEST(test_int_track_step_markers);
   return UNITY_END();
 }

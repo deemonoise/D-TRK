@@ -243,6 +243,137 @@ void test_short_smpl_before_data_skipped() {
   TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(f.size() - 4), w.dataOffset);
 }
 
+static uint32_t le32(const uint8_t* p) {
+  return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+void test_header_round_trip() {
+  const std::vector<int16_t> s = {5, -5, 1000, -32768, 32767, 0, 42};
+  std::vector<uint8_t> f(kWavHeaderBytes);
+  wavHeader(f.data(), 7, 22050, 36, 0xDEADBEEF);
+  const std::vector<uint8_t> d = pcm16(s);
+  f.insert(f.end(), d.begin(), d.end());
+  TEST_ASSERT_EQUAL_UINT32(104, kWavHeaderBytes);
+  TEST_ASSERT_EQUAL_UINT32(f.size() - 8, le32(f.data() + 4));         // RIFF size
+  TEST_ASSERT_EQUAL_UINT32(44100, le32(f.data() + 28));               // byte rate
+  TEST_ASSERT_EQUAL(2, f[32] | (f[33] << 8));                         // block align
+  TEST_ASSERT_EQUAL_MEMORY("smpl", f.data() + 36, 4);
+  TEST_ASSERT_EQUAL_UINT32(36, le32(f.data() + 40));
+  TEST_ASSERT_EQUAL_UINT32(1000000000u / 22050, le32(f.data() + 44 + 8));  // sample period, ns
+  TEST_ASSERT_EQUAL_UINT32(36, le32(f.data() + 44 + 12));                  // unity note
+  TEST_ASSERT_EQUAL_MEMORY("data", f.data() + kWavHeaderBytes - 8, 4);
+  TEST_ASSERT_EQUAL_UINT32(14, le32(f.data() + kWavHeaderBytes - 4));  // frames * 2
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(1, w.channels);
+  TEST_ASSERT_EQUAL(16, w.bits);
+  TEST_ASSERT_EQUAL_UINT32(22050, w.rate);
+  TEST_ASSERT_EQUAL_UINT32(7, w.frames());
+  TEST_ASSERT_EQUAL_UINT32(kWavHeaderBytes, w.dataOffset);
+  TEST_ASSERT_TRUE(w.hasRoot);
+  TEST_ASSERT_EQUAL(36, w.root);
+  TEST_ASSERT_TRUE(w.hasCrc);
+  TEST_ASSERT_EQUAL_HEX32(0xDEADBEEF, w.crc);
+  int16_t out[7];
+  wavToMono(f.data() + w.dataOffset, 7, w, out);
+  TEST_ASSERT_EQUAL_INT16_ARRAY(s.data(), out, 7);
+}
+
+static std::vector<uint8_t> mtcr(uint32_t crc, uint32_t frames) {
+  std::vector<uint8_t> body, c;
+  put32(body, crc);
+  put32(body, frames);
+  chunk(c, "mtcr", body);
+  return c;
+}
+
+void test_mtcr_frames_must_match() {
+  const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3}), mtcr(0x1234, 4));
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_FALSE(w.hasCrc);
+  TEST_ASSERT_EQUAL_UINT32(3, w.frames());
+}
+
+void test_mtcr_after_data() {
+  const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3}), {}, mtcr(0x1234, 3));
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_TRUE(w.hasCrc);
+  TEST_ASSERT_EQUAL_HEX32(0x1234, w.crc);
+}
+
+void test_no_mtcr() {
+  const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3}));
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_FALSE(w.hasCrc);
+}
+
+static std::vector<uint8_t> clm(const char* text) {
+  std::vector<uint8_t> v;
+  chunk(v, "clm ", std::vector<uint8_t>(text, text + strlen(text)));
+  return v;
+}
+
+static const char kSerumClm[] = "<!>2048 01000000 wavetable (www.xferrecords.com)";
+
+void test_clm_before_data() {
+  const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3}), clm(kSerumClm));
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL_UINT16(2048, w.clmFrame);
+  TEST_ASSERT_EQUAL_UINT32(3, w.frames());
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(f.size() - 6), w.dataOffset);
+}
+
+void test_clm_after_data() {
+  const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3}), {}, clm(kSerumClm));
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL_UINT16(2048, w.clmFrame);
+}
+
+void test_clm_then_mtcr_after_data() {
+  std::vector<uint8_t> after = clm(kSerumClm);
+  const std::vector<uint8_t> m = mtcr(0x1234, 3);
+  after.insert(after.end(), m.begin(), m.end());
+  const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3}), {}, after);
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL_UINT16(2048, w.clmFrame);
+  TEST_ASSERT_TRUE(w.hasCrc);
+  TEST_ASSERT_EQUAL_HEX32(0x1234, w.crc);
+}
+
+void test_no_clm() {
+  const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3}));
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL_UINT16(0, w.clmFrame);
+}
+
+void test_clm_garbage_ignored() {
+  const char* bad[] = {"abc", "<!>16 01000000", "<!>8192 01000000", "<!>"};
+  for (const char* t : bad) {
+    const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({7, 8}), clm(t));
+    VecSource src(f);
+    WavInfo w;
+    TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+    TEST_ASSERT_EQUAL_UINT16(0, w.clmFrame);
+    TEST_ASSERT_EQUAL_UINT32(2, w.frames());
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(f.size() - 4), w.dataOffset);
+  }
+}
+
 void test_downsampler_passthrough() {
   Downsampler d(22050);
   TEST_ASSERT_EQUAL_UINT32(22050, d.outRate());
@@ -298,6 +429,15 @@ int main() {
   RUN_TEST(test_truncated);
   RUN_TEST(test_smpl_root_after_data);
   RUN_TEST(test_short_smpl_before_data_skipped);
+  RUN_TEST(test_header_round_trip);
+  RUN_TEST(test_mtcr_frames_must_match);
+  RUN_TEST(test_mtcr_after_data);
+  RUN_TEST(test_no_mtcr);
+  RUN_TEST(test_clm_before_data);
+  RUN_TEST(test_clm_after_data);
+  RUN_TEST(test_clm_then_mtcr_after_data);
+  RUN_TEST(test_no_clm);
+  RUN_TEST(test_clm_garbage_ignored);
   RUN_TEST(test_downsampler_passthrough);
   RUN_TEST(test_downsampler_48k);
   return UNITY_END();

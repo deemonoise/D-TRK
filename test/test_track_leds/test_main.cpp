@@ -20,6 +20,16 @@ void test_flash_on_others_lights_them() {
   TEST_ASSERT_EQUAL_HEX8((1 << 3) | (1 << 0) | (1 << 7), trackLedMask(3, (1 << 0) | (1 << 7)));
 }
 
+// 16 tracks, 8 LEDs: the LEDs show the half (tracks 0-7 or 8-15) that holds the selected track.
+void test_half_mask_follows_selected() {
+  // selected 11 (half B, LED 3), track 9 flashing (LED 1), track 2 flashing (half A, hidden)
+  TEST_ASSERT_EQUAL_HEX8((1 << 3) | (1 << 1), trackLedMaskHalf(11, (1u << 9) | (1u << 2)));
+  // selected 2 (half A): track 9 hidden, track 2 flashing goes dark
+  TEST_ASSERT_EQUAL_HEX8(0, trackLedMaskHalf(2, (1u << 9) | (1u << 2)));
+  TEST_ASSERT_EQUAL_HEX8(1 << 7, trackLedMaskHalf(15, 0));
+  TEST_ASSERT_EQUAL_HEX8(0, trackLedMaskHalf(-1, 1u << 9));  // nothing selected: half A
+}
+
 // Default wiring: buttons P00-P07, LEDs P10-P17.
 constexpr uint8_t kBtn[8] = {0, 1, 2, 3, 4, 5, 6, 7};
 constexpr uint8_t kLed[8] = {8, 9, 10, 11, 12, 13, 14, 15};
@@ -56,6 +66,7 @@ int main(int, char**) {
   RUN_TEST(test_selected_lit_without_flash);
   RUN_TEST(test_flash_on_selected_goes_dark);
   RUN_TEST(test_flash_on_others_lights_them);
+  RUN_TEST(test_half_mask_follows_selected);
   RUN_TEST(test_port_word_default);
   RUN_TEST(test_port_word_skips_missing_led);
   RUN_TEST(test_pressed_default);

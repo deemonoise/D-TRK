@@ -1,12 +1,15 @@
 #include "inst_screen.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
 #include "audio/audio.h"
 #include "audio/bank.h"
-#include "note_name.h"
 #include "name_edit.h"
+#include "synth_drum_machines.h"
 #include "synth_fm_machines.h"
+#include "wt_builtin.h"
+#include "wt_mip.h"
 
 namespace ui {
 namespace {
@@ -26,30 +29,24 @@ void waveName(uint8_t w, char* o, int n) {
   else snprintf(o, n, "WT%d", w - kWt + 1);
 }
 
-// Region fractions (/0xFFFF) are edited in 0.1 % steps.
-int toPermille(uint16_t v) { return (v * 1000 + 0x7FFF) / 0xFFFF; }
-uint16_t fromPermille(int p) { return static_cast<uint16_t>((p * 0xFFFF + 500) / 1000); }
-void permille(uint16_t v, char* o, int n) {
-  const int p = toPermille(v);
-  snprintf(o, n, "%d.%d%%", p / 10, p % 10);
-}
-
 }  // namespace
 
 InstScreen::InstScreen(App& app) : app_(app) {
-  Param* const sets[] = {chip_, sample_, fm_};
+  Param* const sets[] = {chip_, sample_, fm_, drum_, syn_};
   for (Param* p : sets) {
     p[kName] = {"Name", [this](char* o, int n) { snprintf(o, n, "%s", inst().name); },
                 [this](int d) { editNameChar(inst().name, kNameLen, namePos_, d); }};
     p[kType] = {"Type",
                 [this](char* o, int n) {
-                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM"};
+                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT"};
+                  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::InstrType::Count), "type names");
                   const int t = static_cast<int>(inst().type);
-                  snprintf(o, n, "%s", kNames[t < 3 ? t : 0]);
+                  snprintf(o, n, "%s", kNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0]);
                 },
                 [this](int d) {
-                  const int v = clampi(static_cast<int>(inst().type) + d, 0, static_cast<int>(mt::InstrType::Count) - 1);
-                  inst().type = static_cast<mt::InstrType>(v);
+                  const int k = clampi(mt::instrTypePos(inst().type) + d, 0, static_cast<int>(mt::InstrType::Count) - 1);
+                  const mt::InstrType v = mt::instrTypeAt(k);
+                  if (v != inst().type) mt::instrSetType(inst(), v);
                 }};
     p[kVol] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u", inst().vol); },
                [this](int d) { inst().vol = static_cast<uint8_t>(clampi(inst().vol + d, 0, 127)); }};
@@ -74,6 +71,8 @@ InstScreen::InstScreen(App& app) : app_(app) {
                  },
                  [this](int d) { inst().glide = static_cast<uint8_t>(clampi(inst().glide + d, 0, 255)); },
                  [this] { return !inst().mono; }};
+    p[kSend] = {"Dly send", [this](char* o, int n) { snprintf(o, n, "%u", inst().send); },
+                [this](int d) { inst().send = static_cast<uint8_t>(clampi(inst().send + d, 0, 127)); }};
   }
   chip_[kWave] = {"Wave", [this](char* o, int n) { waveName(inst().wave, o, n); },
                   [this](int d) { inst().wave = static_cast<uint8_t>(clampi(inst().wave + d, 0, mt::kWaveCount - 1)); }};
@@ -86,53 +85,6 @@ InstScreen::InstScreen(App& app) : app_(app) {
   chip_[kPwmDepth] = {"PWM depth", [this](char* o, int n) { snprintf(o, n, "%u%%", inst().pwmDepth); },
                       [this](int d) { inst().pwmDepth = static_cast<uint8_t>(clampi(inst().pwmDepth + d, 0, 49)); },
                       notPulse};
-  sample_[kSample] = {"Sample",
-                      [this](char* o, int n) { snprintf(o, n, "%s", inst().sample[0] ? inst().sample : "---"); },
-                      [this](int d) {
-                        // Bank order, "---" (none) before the first; picking one takes its root and loop.
-                        mt::SampleBank& b = audio::bank();
-                        const int cnt = audio::bankMounted() ? b.count() : 0;
-                        const int i = clampi(bankIndex() + d, -1, cnt - 1);
-                        if (i < 0) {
-                          inst().sample[0] = 0;
-                          return;
-                        }
-                        const mt::BankEntry* e = b.entry(i);
-                        snprintf(inst().sample, sizeof(inst().sample), "%s", e->name);
-                        inst().root = e->root > 127 ? 127 : e->root;
-                        inst().loop = e->loop < static_cast<uint8_t>(mt::LoopMode::Count) ? e->loop : 0;
-                      },
-                      {}, [this] { return sampleMissing(); }};
-  sample_[kRoot] = {"Root", [this](char* o, int n) {
-                      char nn[4];
-                      mt::noteName(inst().root, nn);
-                      snprintf(o, n, "%s", nn);
-                    },
-                    [this](int d) { inst().root = static_cast<uint8_t>(clampi(inst().root + d, 0, 127)); }};
-  sample_[kStart] = {"Start", [this](char* o, int n) { permille(inst().start, o, n); },
-                     [this](int d) {
-                       inst().start = fromPermille(clampi(toPermille(inst().start) + d, 0, toPermille(inst().end)));
-                     }};
-  sample_[kEnd] = {"End", [this](char* o, int n) { permille(inst().end, o, n); },
-                   [this](int d) {
-                     inst().end = fromPermille(clampi(toPermille(inst().end) + d, toPermille(inst().start), 1000));
-                   }};
-  sample_[kLoop] = {"Loop", [this](char* o, int n) {
-                      static const char* const kNames[] = {"OFF", "FWD", "PING"};
-                      snprintf(o, n, "%s", kNames[inst().loop < 3 ? inst().loop : 0]);
-                    },
-                    [this](int d) {
-                      inst().loop = static_cast<uint8_t>(
-                          clampi(inst().loop + d, 0, static_cast<int>(mt::LoopMode::Count) - 1));
-                    }};
-  auto noLoop = [this] { return inst().loop == static_cast<uint8_t>(mt::LoopMode::Off); };
-  sample_[kLoopStart] = {"Loop start", [this](char* o, int n) { permille(inst().loopStart, o, n); },
-                         [this](int d) {
-                           inst().loopStart = fromPermille(clampi(toPermille(inst().loopStart) + d, 0, 1000));
-                         },
-                         noLoop};
-  sample_[kReverse] = {"Reverse", [this](char* o, int n) { snprintf(o, n, "%s", inst().reverse ? "ON" : "OFF"); },
-                       [this](int d) { inst().reverse = d > 0; }};
   auto isTone = [this] { return inst().machine == static_cast<uint8_t>(mt::FmMachine::Tone); };
   auto drum = [this] { return !mt::fmGated(inst().machine); };
   fm_[kAttack].dim = drum;
@@ -157,146 +109,253 @@ InstScreen::InstScreen(App& app) : app_(app) {
   auto macroNum = [this](int k) {
     return [this, k](char* o, int n) { snprintf(o, n, "%u", inst().macro[k]); };
   };
-  fm_[kMacDecay] = {"DECAY",
-                    [this](char* o, int n) {
-                      const unsigned ms = mt::fmDecayMs(inst().macro[mt::kMacDec]);
-                      if (ms < 1000) snprintf(o, n, "%u ms", ms);
-                      else snprintf(o, n, "%u.%u s", ms / 1000, ms % 1000 / 100);
-                    },
-                    macroEdit(mt::kMacDec)};
-  fm_[kMacColor] = {"COLOR", macroNum(mt::kMacCol), macroEdit(mt::kMacCol)};
-  fm_[kMacShape] = {"SHAPE",
-                    [this](char* o, int n) {
-                      const uint8_t v = inst().macro[mt::kMacShp];
-                      if (inst().machine == static_cast<uint8_t>(mt::FmMachine::Chord))
-                        snprintf(o, n, "%u %s", v, mt::fmChordName(v));
-                      else snprintf(o, n, "%u", v);
-                    },
-                    macroEdit(mt::kMacShp)};
-  fm_[kMacSweep] = {"SWEEP", macroNum(mt::kMacSwp), macroEdit(mt::kMacSwp)};
-  fm_[kMacContour] = {"CONTOUR", macroNum(mt::kMacCon), macroEdit(mt::kMacCon)};
-  auto noLfo = [this] { return inst().lfoDepth == 0; };
-  fm_[kLfoWave] = {"LFO wave",
-                   [this](char* o, int n) {
-                     static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND"};
-                     snprintf(o, n, "%s", kNames[inst().lfoWave % 5]);
-                   },
-                   [this](int d) {
-                     inst().lfoWave = static_cast<uint8_t>(
-                         clampi(inst().lfoWave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
-                   },
-                   noLfo};
-  fm_[kLfoRate] = {"LFO rate", [this](char* o, int n) { snprintf(o, n, "%.2f Hz", mt::lfoHz(inst().lfoRate)); },
-                   [this](int d) { inst().lfoRate = static_cast<uint8_t>(clampi(inst().lfoRate + d, 0, 127)); },
-                   noLfo};
-  fm_[kLfoDepth] = {"LFO depth", [this](char* o, int n) { snprintf(o, n, "%+d", inst().lfoDepth); },
-                    [this](int d) { inst().lfoDepth = static_cast<int8_t>(clampi(inst().lfoDepth + d, -64, 63)); }};
-  fm_[kLfoDest] = {"LFO dest",
-                   [this](char* o, int n) {
-                     static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE",
-                                                          "SWEEP", "CONTOUR", "VOL"};
-                     snprintf(o, n, "%s", kNames[inst().lfoDest % 7]);
-                   },
-                   [this](int d) {
-                     inst().lfoDest = static_cast<uint8_t>(
-                         clampi(inst().lfoDest + d, 0, static_cast<int>(mt::LfoDest::Count) - 1));
-                   },
-                   noLfo};
-  list_.setParams(chip_, kChipRows);
-  list_.setVisibleRows(kVisibleRows);
+  fm_[kMac0 + mt::kMacDec] = {"DECAY",
+                              [this](char* o, int n) {
+                                const unsigned ms = mt::fmDecayMs(inst().macro[mt::kMacDec]);
+                                if (ms < 1000) snprintf(o, n, "%u ms", ms);
+                                else snprintf(o, n, "%u.%u s", ms / 1000, ms % 1000 / 100);
+                              },
+                              macroEdit(mt::kMacDec)};
+  fm_[kMac0 + mt::kMacCol] = {"COLOR", macroNum(mt::kMacCol), macroEdit(mt::kMacCol)};
+  fm_[kMac0 + mt::kMacShp] = {"SHAPE",
+                              [this](char* o, int n) {
+                                const uint8_t v = inst().macro[mt::kMacShp];
+                                if (inst().machine == static_cast<uint8_t>(mt::FmMachine::Chord))
+                                  snprintf(o, n, "%u %s", v, mt::fmChordName(v));
+                                else snprintf(o, n, "%u", v);
+                              },
+                              macroEdit(mt::kMacShp)};
+  fm_[kMac0 + mt::kMacSwp] = {"SWEEP", macroNum(mt::kMacSwp), macroEdit(mt::kMacSwp)};
+  fm_[kMac0 + mt::kMacCon] = {"CONTOUR", macroNum(mt::kMacCon), macroEdit(mt::kMacCon)};
+  // DRUM: the machine shapes the whole sound; DECAY is a number (its range differs per machine).
+  auto always = [] { return true; };
+  for (int r : {kAttack, kDecay, kSustain, kRelease, kMode, kGlide}) drum_[r].dim = always;
+  drum_[kMachine] = {"Machine",
+                     [this](char* o, int n) { snprintf(o, n, "%s", mt::drumMachineName(inst().machine)); },
+                     [this](int d) {
+                       const int v = clampi(inst().machine + d, 0, static_cast<int>(mt::DrumMachine::Count) - 1);
+                       if (v != inst().machine) mt::drumSetMachine(inst(), static_cast<uint8_t>(v));
+                     }};
+  for (int k = 0; k < mt::kFmMacros; ++k)
+    drum_[kMac0 + k] = {"-", macroNum(k), macroEdit(k), [this, k] { return !*mt::drumMacroName(inst().machine, k); }};
+  // SYNTH: ADSR, mode and glide as CHIP. Oscillator k rows, then the shared ones.
+  for (int k = 0; k < 2; ++k) {
+    const int base = k ? kOsc2 : kOsc1;
+    const int shapeRow = k ? kShape2 : kShape1;
+    syn_[base] = {k ? "Osc2" : "Osc1",
+                  [this, k](char* o, int n) {
+                    static const char* const kNames[] = {"SAW", "SQR", "TRI", "WT"};
+                    snprintf(o, n, "%s", kNames[inst().synOsc[k] % 4]);
+                  },
+                  [this, k](int d) {
+                    mt::Instrument& m = inst();
+                    m.synOsc[k] = static_cast<uint8_t>(clampi(m.synOsc[k] + d, 0, static_cast<int>(mt::SynOsc::Count) - 1));
+                    // A wavetable osc without a table would be silent: start from the first built-in.
+                    if (m.synOsc[k] == static_cast<uint8_t>(mt::SynOsc::Wt) && !m.synWt[k][0])
+                      strlcpy(m.synWt[k], mt::wtBuiltinName(0), sizeof(m.synWt[k]));
+                  }};
+    auto notWt = [this, k] { return inst().synOsc[k] != static_cast<uint8_t>(mt::SynOsc::Wt); };
+    // No edit: a click / tap opens WtPicker (see onInput / onTouch).
+    syn_[base + 1] = {k ? "Table2" : "Table1",
+                      [this, k](char* o, int n) { snprintf(o, n, "%s", inst().synWt[k][0] ? inst().synWt[k] : "-"); },
+                      nullptr, notWt,
+                      [this, k, notWt] {
+                        if (notWt()) return false;
+                        const mt::WtSource* w = audio::wavetableSource();
+                        return !inst().synWt[k][0] || !w || !w->findWt(inst().synWt[k]);
+                      }};
+    syn_[shapeRow] = {k ? "Shape2" : "Shape1", macroNum(mt::kMacShp1 + k), macroEdit(mt::kMacShp1 + k),
+                      [this, k] {
+                        const uint8_t v = inst().synOsc[k];
+                        return v != static_cast<uint8_t>(mt::SynOsc::Square) && v != static_cast<uint8_t>(mt::SynOsc::Wt);
+                      }};
+  }
+  syn_[kSemi] = {"Semi2", [this](char* o, int n) { snprintf(o, n, "%+d", inst().synSemi); },
+                 [this](int d) { inst().synSemi = static_cast<int8_t>(clampi(inst().synSemi + d, -24, 24)); }};
+  syn_[kDetune] = {"Detune",
+                   [this](char* o, int n) { snprintf(o, n, "%+d ct", (inst().macro[mt::kMacDet] - 64) * 50 / 64); },
+                   macroEdit(mt::kMacDet)};
+  syn_[kSync] = {"Sync", [this](char* o, int n) { snprintf(o, n, "%s", inst().synSync ? "ON" : "OFF"); },
+                 [this](int d) { inst().synSync = d > 0; }};
+  syn_[kMix] = {"Mix", [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().macro[mt::kMacMix] * 100 + 63) / 127); },
+                macroEdit(mt::kMacMix)};
+  syn_[kSub] = {"Sub", [this](char* o, int n) { snprintf(o, n, "%u", inst().synSub); },
+                [this](int d) { inst().synSub = static_cast<uint8_t>(clampi(inst().synSub + d, 0, 127)); }};
+  syn_[kSubOct] = {"Sub oct", [this](char* o, int n) { snprintf(o, n, "%s", inst().synSubOct ? "-2" : "-1"); },
+                   [this](int d) { inst().synSubOct = d > 0 ? 1 : 0; }, [this] { return inst().synSub == 0; }};
+  syn_[kNoise] = {"Noise", [this](char* o, int n) { snprintf(o, n, "%u", inst().synNoise); },
+                  [this](int d) { inst().synNoise = static_cast<uint8_t>(clampi(inst().synNoise + d, 0, 127)); }};
+  syn_[kSenv] = {"Env>Shp", [this](char* o, int n) { snprintf(o, n, "%+d", inst().macro[mt::kMacSenv] - 64); },
+                 macroEdit(mt::kMacSenv)};
+  auto noSenv = [this] { return inst().macro[mt::kMacSenv] == 64; };
+  syn_[kEAtk] = {"Env atk", [this](char* o, int n) { envTime(inst().synEAtk, o, n); },
+                 [this](int d) { inst().synEAtk = static_cast<uint8_t>(clampi(inst().synEAtk + d, 0, 127)); }, noSenv};
+  syn_[kEDec] = {"Env dec",
+                 [this](char* o, int n) {
+                   if (inst().synEDec) envTime(inst().synEDec, o, n);
+                   else snprintf(o, n, "HOLD");
+                 },
+                 [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
+  initTail(chip_ + kChipRows, false);
+  initTail(sample_ + kCommon, false);
+  initTail(fm_ + kMacRows, true);
+  initTail(drum_ + kMacRows, true);
+  initTail(syn_ + kSynRows, true);
+  list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
+  list_.setVisibleRows(kListRows);
+  list_.setWrap(false);
   list_.setOnEdit([this] {
     app_.markDirty();
     syncParams();
   });
+  presets_.setOnClose([this] { afterPresets(); });
+  wt_.setOnClose([this] { app_.invalidate(); });
+}
+
+void InstScreen::initTail(Param* t, bool macros) {
+  auto off = [this] { return inst().fltMode == static_cast<uint8_t>(mt::FltMode::Off); };
+  auto noEnv = [this, off] { return off() || inst().fenv == 0; };
+  t[kFltMode] = {"Filter",
+                 [this](char* o, int n) {
+                   static const char* const kNames[] = {"OFF", "LP", "BP", "HP"};
+                   snprintf(o, n, "%s", kNames[inst().fltMode % 4]);
+                 },
+                 [this](int d) {
+                   inst().fltMode = static_cast<uint8_t>(
+                       clampi(inst().fltMode + d, 0, static_cast<int>(mt::FltMode::Count) - 1));
+                 }};
+  t[kCutoff] = {"Cutoff",
+                [this](char* o, int n) {
+                  const float hz = mt::cutoffHz(inst().cutoff);
+                  if (hz < 1000) snprintf(o, n, "%u Hz", static_cast<unsigned>(hz + 0.5f));
+                  else snprintf(o, n, "%.1f kHz", hz / 1000.f);
+                },
+                [this](int d) { inst().cutoff = static_cast<uint8_t>(clampi(inst().cutoff + d, 0, 127)); }, off};
+  t[kReso] = {"Reso", [this](char* o, int n) { snprintf(o, n, "%u", inst().reso); },
+              [this](int d) { inst().reso = static_cast<uint8_t>(clampi(inst().reso + d, 0, 127)); }, off};
+  t[kFEnv] = {"Flt env", [this](char* o, int n) { snprintf(o, n, "%+d", inst().fenv); },
+              [this](int d) { inst().fenv = static_cast<int8_t>(clampi(inst().fenv + d, -64, 63)); }, off};
+  t[kFAtk] = {"Flt attack", [this](char* o, int n) { envTime(inst().fAtk, o, n); },
+              [this](int d) { inst().fAtk = static_cast<uint8_t>(clampi(inst().fAtk + d, 0, 127)); }, noEnv};
+  t[kFDec] = {"Flt decay",
+              [this](char* o, int n) {
+                if (inst().fDec) envTime(inst().fDec, o, n);
+                else snprintf(o, n, "HOLD");
+              },
+              [this](int d) { inst().fDec = static_cast<uint8_t>(clampi(inst().fDec + d, 0, 127)); }, noEnv};
+  t[kKeytrack] = {"Key track",
+                  [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().keytrack * 100 + 63) / 127); },
+                  [this](int d) { inst().keytrack = static_cast<uint8_t>(clampi(inst().keytrack + d, 0, 127)); },
+                  off};
+  auto noLfo = [this] { return inst().lfoDepth == 0; };
+  t[kLfoWave] = {"LFO wave",
+                 [this](char* o, int n) {
+                   static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND"};
+                   snprintf(o, n, "%s", kNames[inst().lfoWave % 5]);
+                 },
+                 [this](int d) {
+                   inst().lfoWave = static_cast<uint8_t>(
+                       clampi(inst().lfoWave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
+                 },
+                 noLfo};
+  t[kLfoRate] = {"LFO rate", [this](char* o, int n) { snprintf(o, n, "%.2f Hz", mt::lfoHz(inst().lfoRate)); },
+                 [this](int d) { inst().lfoRate = static_cast<uint8_t>(clampi(inst().lfoRate + d, 0, 127)); },
+                 noLfo};
+  t[kLfoDepth] = {"LFO depth", [this](char* o, int n) { snprintf(o, n, "%+d", inst().lfoDepth); },
+                  [this](int d) { inst().lfoDepth = static_cast<int8_t>(clampi(inst().lfoDepth + d, -64, 63)); }};
+  // DRUM shows the generic macro names here, not the machine's; SYNTH its own.
+  t[kLfoDest] = {"LFO dest",
+                 [this](char* o, int n) {
+                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE",
+                                                        "SWEEP", "CONTOUR", "VOL",   "CUTOFF"};
+                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET", "SENV", "VOL", "CUTOFF"};
+                   const bool syn = inst().type == mt::InstrType::Synth;
+                   snprintf(o, n, "%s", (syn ? kSyn : kNames)[inst().lfoDest % 8]);
+                 },
+                 [this, macros](int d) { inst().lfoDest = mt::lfoDestStep(inst().lfoDest, d, macros); }, noLfo};
+}
+
+void InstScreen::relabel() {
+  if (shown_ != mt::InstrType::Drum) return;
+  for (int k = 0; k < mt::kFmMacros; ++k) {
+    const char* l = mt::drumMacroName(inst().machine, k);
+    drum_[kMac0 + k].label = *l ? l : "-";
+  }
 }
 
 mt::Instrument& InstScreen::inst() { return app_.project().instruments[instr_]; }
+const mt::Instrument& InstScreen::inst() const { return app_.project().instruments[instr_]; }
+
+Param* InstScreen::typeRows() {
+  switch (shown_) {
+    case mt::InstrType::Sample: return sample_;
+    case mt::InstrType::Fm: return fm_;
+    case mt::InstrType::Drum: return drum_;
+    case mt::InstrType::Synth: return syn_;
+    default: return chip_;
+  }
+}
+
+int InstScreen::typeCount() const {
+  switch (shown_) {
+    case mt::InstrType::Sample: return 0;  // SampleEditor
+    case mt::InstrType::Fm:
+    case mt::InstrType::Drum: return kMacRows - kCommon;
+    case mt::InstrType::Synth: return kSynRows - kCommon;
+    default: return kChipRows - kCommon;
+  }
+}
 
 void InstScreen::syncParams() {
   const mt::InstrType t = inst().type;
   if (t == shown_) return;
   shown_ = t;
-  switch (t) {
-    case mt::InstrType::Sample:
-      list_.setParams(sample_, kSampleRows);
-      list_.setVisibleRows(kSampleVisibleRows);
-      break;
-    case mt::InstrType::Fm:
-      list_.setParams(fm_, kFmRows);
-      list_.setVisibleRows(kVisibleRows);
-      break;
-    default:
-      list_.setParams(chip_, kChipRows);
-      list_.setVisibleRows(kVisibleRows);
-      break;
+  // Same page in the new type's rows; outside the type page the row and edit state stay (Type edit).
+  const int sel = list_.sel();
+  const bool ed = list_.editing();
+  showPage(physPage(), false);
+  if (page_ != kPgType && page_ != kPgType2) {
+    list_.setSel(sel);
+    list_.setEdit(ed);
   }
 }
 
-int InstScreen::bankIndex() {
-  if (!audio::bankMounted() || !inst().sample[0]) return -1;
-  return audio::bank().find(inst().sample);
+int InstScreen::physPage() const {
+  if (synth() || page_ < kPgType2) return page_;
+  return page_ == kPgType2 ? kPgType : page_ - 1;  // no MOD page: its rows are the type page's
 }
 
-bool InstScreen::sampleMissing() { return inst().sample[0] && bankIndex() < 0; }
+int InstScreen::logicalPage(int phys) const { return synth() || phys < kPgType2 ? phys : phys + 1; }
 
-void InstScreen::updateWave() {
-  const int i = bankIndex();
-  const mt::BankEntry* e = i >= 0 ? audio::bank().entry(i) : nullptr;
-  const int16_t* d = e ? audio::bank().data(i) : nullptr;
-  const uint32_t frames = d ? e->frames : 0;
-  const uint32_t gen = audio::bank().generation();
-  if (d == waveData_ && frames == waveFrames_ && gen == waveGen_) return;
-  waveData_ = d;
-  waveFrames_ = frames;
-  waveGen_ = gen;
-  if (!d || !frames) return;
-  // Long samples: at most kProbe evenly spaced frames per column (flash reads are not free).
-  constexpr uint32_t kProbe = 256;
-  for (int x = 0; x < kScreenW; ++x) {
-    const uint32_t a = static_cast<uint32_t>(static_cast<uint64_t>(frames) * x / kScreenW);
-    uint32_t b = static_cast<uint32_t>(static_cast<uint64_t>(frames) * (x + 1) / kScreenW);
-    if (b <= a) b = a + 1;
-    const uint32_t stride = (b - a) > kProbe ? (b - a) / kProbe : 1;
-    int lo = 32767, hi = -32768;
-    for (uint32_t k = a; k < b && k < frames; k += stride) {
-      const int v = d[k];
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
-    waveMin_[x] = static_cast<int8_t>(lo >> 8);
-    waveMax_[x] = static_cast<int8_t>(hi >> 8);
-  }
+int InstScreen::tableOsc() const {
+  if (!synth() || page_ != kPgType || list_.editing()) return -1;
+  const int r = kCommon + list_.sel();
+  return r == kTable1 ? 0 : (r == kTable2 ? 1 : -1);
 }
 
-void InstScreen::drawWave(LGFX_Sprite& s, int y) {
-  s.fillRect(0, y, kScreenW, kWaveH, kBeatBg);
-  updateWave();
-  if (!waveData_) {
-    const char* msg = inst().sample[0] ? "NOT IN BANK" : "NO SAMPLE";
-    s.setTextColor(inst().sample[0] ? kRed : kDim);
-    s.drawString(msg, (kScreenW - static_cast<int>(strlen(msg)) * kCharW) / 2, y + (kWaveH - kCharH) / 2);
+void InstScreen::showPage(int phys, bool last) {
+  const int n = pageCount();
+  page_ = logicalPage((phys % n + n) % n);
+  leaveEdit();
+  if (onEditor()) {
+    editor_.enter(last);
     return;
   }
-  const mt::Instrument& m = inst();
-  const int xs = static_cast<int>(static_cast<uint32_t>(m.start) * kScreenW / 0xFFFF);
-  int xe = static_cast<int>(static_cast<uint32_t>(m.end) * kScreenW / 0xFFFF);
-  if (xe > kScreenW - 1) xe = kScreenW - 1;
-  const int mid = y + kWaveH / 2;
-  constexpr int kHalf = kWaveH / 2 - 1;
-  for (int x = 0; x < kScreenW; ++x) {
-    const int y1 = mid - waveMax_[x] * kHalf / 128;
-    const int y2 = mid - waveMin_[x] * kHalf / 128;
-    s.drawFastVLine(x, y1, y2 - y1 + 1, x >= xs && x <= xe ? kText : kDim);
+  Param* const rows = typeRows();
+  const int tail = kCommon + typeCount();
+  int off = 0, count = kMainRows;
+  switch (page_) {
+    case kPgEnv: off = kMainRows, count = kCommon - kMainRows; break;
+    case kPgType: off = kCommon, count = synth() ? kSynOscRows : typeCount(); break;
+    case kPgType2: off = kSub, count = kSynRows - kSub; break;  // SYNTH only
+    case kPgFilt: off = tail, count = kFiltRows; break;
+    case kPgLfo: off = tail + kFiltRows, count = kTailRows - kFiltRows; break;
+    default: break;
   }
-  if (m.loop != static_cast<uint8_t>(mt::LoopMode::Off)) {
-    // Loop start is a fraction of start..end; reverse mirrors it (see Synth::startSample).
-    const int span = xe - xs;
-    int xl = xs + static_cast<int>(static_cast<uint32_t>(m.loopStart) * span / 0xFFFF);
-    if (m.reverse) xl = xe - (xl - xs);
-    s.drawFastVLine(xl, y, kWaveH, kYellow);
-  }
-  s.drawFastVLine(xs, y, kWaveH, kGreen);
-  s.drawFastVLine(xe, y, kWaveH, kRed);
+  list_.setParams(rows + off, count);
+  list_.setVisibleRows(kListRows);
+  list_.setWrap(false);
+  list_.setSel(last ? count - 1 : 0);
 }
 
 void InstScreen::fixNames() {
@@ -311,6 +370,7 @@ void InstScreen::fixNames() {
 
 void InstScreen::leaveEdit() {
   list_.setEdit(false);
+  editor_.leaveEdit();
   namePos_ = 0;
   fixNames();
 }
@@ -318,21 +378,76 @@ void InstScreen::leaveEdit() {
 void InstScreen::onEnter() {
   leaveEdit();
   instr_ = app_.project().tracks[app_.curTrack()].instr % mt::kInstruments;
+  editor_.bind(instr_);
   syncParams();
+}
+
+void InstScreen::onLeave() {
+  if (presets_.isOpen()) presets_.close(false);
+  if (wt_.isOpen()) wt_.close(false);
+}
+
+void InstScreen::onProjectReplaced() {
+  // The instrument the browser would restore belongs to the old project.
+  if (presets_.isOpen()) presets_.close(true);
+  if (wt_.isOpen()) wt_.close(true, false);
+  onEnter();
+}
+
+void InstScreen::afterPresets() {
+  editor_.bind(instr_);
+  syncParams();
+  fixNames();
+}
+
+void InstScreen::openTables(int osc) {
+  leaveEdit();
+  wt_.open(instr_, osc);
+}
+
+void InstScreen::presetMenu() {
+  leaveEdit();
+  enum : int { kLoad, kSave };
+  const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
+  app_.menu().open("PRESET", items, 2, [this](int id) {
+    presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
+  });
 }
 
 void InstScreen::changeInstr(int d) {
   leaveEdit();
   instr_ = ((instr_ + d) % mt::kInstruments + mt::kInstruments) % mt::kInstruments;
+  editor_.bind(instr_);
   syncParams();
 }
 
-void InstScreen::preview() { audio::preview(static_cast<uint8_t>(instr_), kPreviewNote); }
+bool InstScreen::trackKey(int n, bool shift) {
+  if (shift || presets_.isOpen() || !onEditor()) return false;
+  editor_.playSlice(n);
+  return true;
+}
+
+void InstScreen::preview() {
+  audio::preview(static_cast<uint8_t>(instr_), onEditor() ? editor_.previewNote() : kPreviewNote);
+}
 
 void InstScreen::onInput(const hw::InputEvent& ev) {
+  if (presets_.isOpen()) {
+    presets_.onInput(ev);
+    return;
+  }
+  if (wt_.isOpen()) {
+    wt_.onInput(ev);
+    return;
+  }
+  if (ev.type == hw::InputType::EncClick && tableOsc() >= 0) {
+    openTables(tableOsc());
+    return;
+  }
   const bool wasName = nameEdit();
   if (ev.type == hw::InputType::EncLong) {
-    preview();
+    if (ev.shift) presetMenu();
+    else preview();
     return;
   }
   if (ev.type == hw::InputType::EncTurn && ev.shift) {
@@ -340,7 +455,7 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
       namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
       return;
     }
-    if (!list_.editing()) {
+    if (!(onEditor() ? editor_.editing() : list_.editing())) {
       changeInstr(ev.delta);
       return;
     }
@@ -349,15 +464,33 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
     list_.edit(ev.delta);  // no x10 for characters
     return;
   }
-  list_.onInput(ev);
+  const int ov = onEditor() ? editor_.onInput(ev) : list_.onInput(ev);
+  if (ov) {
+    showPage(physPage() + ov, ov < 0);
+    return;
+  }
   if (wasName && !nameEdit()) leaveEdit();
 }
 
 void InstScreen::onTouch(const TouchEvent& ev) {
+  if (presets_.isOpen()) {
+    presets_.onTouch(ev);
+    return;
+  }
+  if (wt_.isOpen()) {
+    wt_.onTouch(ev);
+    return;
+  }
   if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
     if (ev.x < kLeftX1) changeInstr(-1);
     else if (ev.x >= kRightX0 && ev.x < kRightX1) changeInstr(1);
-    else if (ev.x >= kPrevX0) preview();
+    else if (ev.x >= kPresetX0 && ev.x < kPresetX1) presetMenu();
+    else if (ev.x >= kPrevX0 && ev.x < kPrevX1) preview();
+    return;
+  }
+  if (ev.y >= y0_ + kHeaderH && ev.y < y0_ + kHeaderH + kPageBarH && ev.type != TouchType::Drag &&
+      ev.type != TouchType::HDrag) {
+    if (ev.type == TouchType::Tap) showPage(ev.x / pageW(), false);
     return;
   }
   // Tap on a character of the name being edited moves the name cursor.
@@ -366,13 +499,106 @@ void InstScreen::onTouch(const TouchEvent& ev) {
     namePos_ = (ev.x - ParamList::kValueX) / kCharW;
     return;
   }
+  // Tap on a Table row (SYNTH OSC): the table picker.
+  if (ev.type == TouchType::Tap && synth() && page_ == kPgType) {
+    const int r = list_.rowAt(ev.y);
+    if (r >= 0 && (kCommon + r == kTable1 || kCommon + r == kTable2)) {
+      list_.setSel(r);
+      openTables(kCommon + r == kTable2 ? 1 : 0);
+      return;
+    }
+  }
   const bool wasName = nameEdit();
-  list_.onTouch(ev);
+  if (onEditor()) editor_.onTouch(ev);
+  else list_.onTouch(ev);
   if (wasName && !nameEdit()) leaveEdit();
+}
+
+void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
+  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "KIT"};
+  const int t = static_cast<int>(shown_);
+  const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};
+  const int ty = y + (kPageBarH - 4 - kCharH) / 2;
+  const int n = pageCount(), w = pageW(), cur = physPage();
+  for (int i = 0; i < n; ++i) {
+    const char* name = names[logicalPage(i)];
+    const bool on = i == cur;
+    s.fillRect(i * w + 1, y, w - 2, kPageBarH - 4, on ? kPlayBg : kBeatBg);
+    s.setTextColor(on ? kCursor : kDim);
+    s.drawString(name, i * w + (w - static_cast<int>(strlen(name)) * kCharW) / 2, ty);
+  }
+}
+
+void InstScreen::drawEnv(LGFX_Sprite& s, int y) {
+  // A, D, R widths ~ log2(1 + ms), the longest time (10 s) = a third of the room left by the plateau.
+  const float kMaxLog = log2f(10001.f);
+  constexpr int kRoom = (kEnvX1 - kEnvX0 - kEnvHold) / 3;
+  const mt::Instrument& m = inst();
+  auto w = [&](uint8_t v) { return static_cast<int>(log2f(1.f + mt::envTimeMs(v)) * kRoom / kMaxLog + 0.5f); };
+  const int top = y + kEnvY0, bot = y + kEnvY1;
+  const int sy = bot - m.sustain * (bot - top) / 127;
+  const Param& a = typeRows()[kAttack];
+  const uint16_t c = a.dim && a.dim() ? kDim : kText;
+  const int x1 = kEnvX0 + w(m.attack), x2 = x1 + w(m.decay), x3 = x2 + kEnvHold, x4 = x3 + w(m.release);
+  s.drawLine(kEnvX0, bot, x1, top, c);
+  s.drawLine(x1, top, x2, sy, c);
+  s.drawLine(x2, sy, x3, sy, c);
+  s.drawLine(x3, sy, x4, bot, c);
+}
+
+void InstScreen::drawOsc(LGFX_Sprite& s, int y) {
+  // Rows Osc1..Shape1 show osc 1, the rest osc 2.
+  const int k = kCommon + list_.sel() < kOsc2 ? 0 : 1;
+  const mt::Instrument& m = inst();
+  const int x0 = kWtX0, x1 = kWtX1, top = y + kWtY0, bot = y + kWtY1, mid = (top + bot) / 2;
+  const int pad = (bot - top) / 8;
+  const int hi = top + pad, lo = bot - pad;
+  s.drawFastHLine(x0, mid, x1 - x0, kBeatBg);
+  const uint8_t shape = m.macro[mt::kMacShp1 + k] > 127 ? 127 : m.macro[mt::kMacShp1 + k];
+  switch (static_cast<mt::SynOsc>(m.synOsc[k] % 4)) {
+    case mt::SynOsc::Wt: {
+      const mt::WtSource* w = audio::wavetableSource();
+      const int16_t* t = w && m.synWt[k][0] ? w->findWt(m.synWt[k]) : nullptr;
+      if (t) drawWtFrame(s, t, (shape * (mt::kWtFrames - 1) + 63) / 127, x0, top, x1, bot, kText);
+      else s.drawLine(x0, mid, x1, mid, kRed);  // missing: silent
+      break;
+    }
+    case mt::SynOsc::Square: {
+      // PW 0.5..0.95 over SHAPE (as the voice).
+      const int xp = x0 + static_cast<int>((x1 - x0) * (0.5f + 0.45f * shape / 127.f));
+      s.drawLine(x0, lo, x0, hi, kText);
+      s.drawLine(x0, hi, xp, hi, kText);
+      s.drawLine(xp, hi, xp, lo, kText);
+      s.drawLine(xp, lo, x1, lo, kText);
+      break;
+    }
+    case mt::SynOsc::Tri: {
+      const int q = (x1 - x0) / 4;
+      s.drawLine(x0, mid, x0 + q, hi, kText);
+      s.drawLine(x0 + q, hi, x1 - q, lo, kText);
+      s.drawLine(x1 - q, lo, x1, mid, kText);
+      break;
+    }
+    default:  // Saw
+      s.drawLine(x0, mid, (x0 + x1) / 2, hi, kText);
+      s.drawLine((x0 + x1) / 2, hi, (x0 + x1) / 2, lo, kText);
+      s.drawLine((x0 + x1) / 2, lo, x1, mid, kText);
+      break;
+  }
+  s.setTextColor(kDim);
+  s.drawString(k ? "OSC2" : "OSC1", x0, bot + 4);
 }
 
 void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
+  if (presets_.isOpen()) {
+    presets_.draw(s, y0);
+    return;
+  }
+  if (wt_.isOpen()) {
+    wt_.draw(s, y0);
+    return;
+  }
   char buf[24];
   const int cy = y0 + kHeaderH / 2;
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
@@ -383,16 +609,22 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   s.setTextColor(kText);
   const int mid = (kLeftX1 + kRightX0) / 2;
   s.drawString(buf, mid - static_cast<int>(strlen(buf)) * kCharW / 2, ty);
-  s.fillRect(kPrevX0, y0 + 2, kScreenW - kPrevX0 - 8, kHeaderH - 8, kPlayBg);
+  s.fillRect(kPresetX0, y0 + 2, kPresetX1 - kPresetX0, kHeaderH - 8, kPlayBg);
+  s.fillRect(kPrevX0, y0 + 2, kPrevX1 - kPrevX0, kHeaderH - 8, kPlayBg);
   s.setTextColor(kCursor);
-  s.drawString("PREVIEW", kPrevX0 + (kScreenW - kPrevX0 - 8 - 7 * kCharW) / 2, ty);
+  s.drawString("PRESET", kPresetX0 + (kPresetX1 - kPresetX0 - 6 * kCharW) / 2, ty);
+  s.drawString("PREVIEW", kPrevX0 + (kPrevX1 - kPrevX0 - 7 * kCharW) / 2, ty);
 
-  int ly = y0 + kHeaderH;
-  if (shown_ == mt::InstrType::Sample) {
-    drawWave(s, ly);
-    ly += kWaveH + kWaveGap;
+  drawPageBar(s, y0 + kHeaderH);
+  const int ly = y0 + kHeaderH + kPageBarH;
+  relabel();
+  if (onEditor()) {
+    editor_.draw(s, ly);
+  } else {
+    list_.draw(s, ly);
+    if (page_ == kPgEnv) drawEnv(s, ly);
+    else if (synth() && page_ == kPgType) drawOsc(s, ly);
   }
-  list_.draw(s, ly);
   if (nameEdit()) {
     const int uy = list_.rowY(kName) + (ParamList::kRowH + kCharH) / 2;
     s.fillRect(ParamList::kValueX + namePos_ * kCharW, uy, kCharW, 2, kEditCursor);

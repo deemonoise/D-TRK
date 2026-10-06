@@ -60,15 +60,16 @@ void WifiDialog::reload() {
   char nm[17];
   strlcpy(nm, app_.project().name, sizeof(nm));
   app_.showBusy("LOADING...");
-  const storage::Result r = storage::load(app_.project(), nm);
-  if (r != storage::Result::Ok) {
+  int missing = 0;
+  const storage::Result r = storage::load(app_.project(), nm, false, &missing, App::syncProgress, &app_);
+  if (r != storage::Result::Ok && r != storage::Result::SamplesNotSaved) {
     app_.toast(storage::resultText(r));
     return;
   }
   app_.projectReplaced();
   char msg[32];
   snprintf(msg, sizeof(msg), "LOADED %s", nm);
-  app_.toast(msg);
+  app_.loadedToast(msg, missing, r == storage::Result::SamplesNotSaved);
 }
 
 void WifiDialog::setState(St s) {
@@ -267,7 +268,7 @@ void WifiDialog::draw(LGFX_Sprite& s, int y0) {
       break;
     case St::Online:
       s.setTextColor(kCursor);
-      s.drawString("http://tracker.local", 16, y);
+      s.drawString("http://d-trk.local", 16, y);
       net::ip(buf, sizeof(buf));
       s.setTextColor(kText);
       if (buf[0]) {

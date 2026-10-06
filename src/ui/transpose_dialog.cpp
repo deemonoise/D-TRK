@@ -40,7 +40,7 @@ void TransposeDialog::clampAmount() {
 void TransposeDialog::open(const char* title, std::function<void(int, bool)> onOk) {
   strlcpy(title_, title ? title : "", sizeof(title_));
   onOk_ = std::move(onOk);
-  clampAmount();  // the scale may have changed since the last open
+  amount_ = 0;  // a shift of the notes, not a state: starting at the last amount hid that
   list_.setEdit(false);
   list_.setSel(kAmount);
   open_ = true;

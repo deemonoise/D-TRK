@@ -56,13 +56,37 @@ void parseSmpl(Reader& r, uint32_t size, WavInfo& w) {
   r.skip(size - sizeof(b) + (size & 1));
 }
 
-}  // namespace
+// "mtcr": crc u32, frames u32. Frames are checked against the data at the end.
+void parseMtcr(Reader& r, uint32_t size, WavInfo& w, uint32_t& crcFrames) {
+  uint8_t b[8];
+  if (size < sizeof(b)) {
+    r.skip(size + (size & 1));
+    return;
+  }
+  if (!r.read(b, sizeof(b))) return;
+  w.hasCrc = true;
+  w.crc = rd32(b);
+  crcFrames = rd32(b + 4);
+  r.skip(size - sizeof(b) + (size & 1));
+}
 
-WavErr wavParse(ByteSource& src, WavInfo& out) {
-  out = WavInfo{};
-  Reader r{src};
-  uint8_t h[12];
-  if (!r.read(h, 12) || memcmp(h, "RIFF", 4) != 0 || memcmp(h + 8, "WAVE", 4) != 0) return WavErr::NotWav;
+// Serum "clm ": text "<!>2048 01000000 wavetable (www.xferrecords.com)", the number is samples
+// per frame. Accepted in 32..4096, anything else leaves clmFrame at 0.
+void parseClm(Reader& r, uint32_t size, WavInfo& w) {
+  char b[16] = {0};
+  const uint32_t n = size < sizeof(b) ? size : sizeof(b);
+  if (!r.read(b, n)) return;
+  if (n > 3 && memcmp(b, "<!>", 3) == 0) {
+    uint32_t v = 0;
+    uint32_t i = 3;
+    for (; i < n && b[i] >= '0' && b[i] <= '9' && v <= 4096; ++i) v = v * 10 + (b[i] - '0');
+    if (i > 3 && v >= 32 && v <= 4096) w.clmFrame = static_cast<uint16_t>(v);
+  }
+  r.skip(size - n + (size & 1));
+}
+
+// Chunks after the RIFF header.
+WavErr parseChunks(Reader& r, WavInfo& out, uint32_t& crcFrames) {
   bool fmt = false, data = false;
   for (;;) {
     uint8_t c[8];
@@ -78,15 +102,76 @@ WavErr wavParse(ByteSource& src, WavInfo& out) {
       out.dataBytes = size - size % out.frameBytes();
       if (!r.skip(size)) return WavErr::Truncated;
       data = true;
-      // The pad byte and anything after the data are optional (only "smpl" is of interest).
+      // The pad byte and anything after the data are optional (smpl, mtcr, clm).
       if ((size & 1) && !r.skip(1)) return WavErr::Ok;
     } else if (memcmp(c, "smpl", 4) == 0) {
       parseSmpl(r, size, out);
       if (data) return WavErr::Ok;
+    } else if (memcmp(c, "clm ", 4) == 0) {
+      parseClm(r, size, out);
+    } else if (memcmp(c, "mtcr", 4) == 0) {
+      parseMtcr(r, size, out, crcFrames);
     } else if (!r.skip(size + (size & 1))) {
       return data ? WavErr::Ok : WavErr::Truncated;
     }
   }
+}
+
+void wr16(uint8_t*& p, uint32_t x) {
+  *p++ = x & 0xFF;
+  *p++ = (x >> 8) & 0xFF;
+}
+void wr32(uint8_t*& p, uint32_t x) {
+  wr16(p, x & 0xFFFF);
+  wr16(p, x >> 16);
+}
+void wrId(uint8_t*& p, const char* id) {
+  memcpy(p, id, 4);
+  p += 4;
+}
+
+}  // namespace
+
+WavErr wavParse(ByteSource& src, WavInfo& out) {
+  out = WavInfo{};
+  Reader r{src};
+  uint8_t h[12];
+  if (!r.read(h, 12) || memcmp(h, "RIFF", 4) != 0 || memcmp(h + 8, "WAVE", 4) != 0) return WavErr::NotWav;
+  uint32_t crcFrames = 0;
+  const WavErr e = parseChunks(r, out, crcFrames);
+  if (e != WavErr::Ok || crcFrames != out.frames()) {
+    out.hasCrc = false;
+    out.crc = 0;
+  }
+  return e;
+}
+
+void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc) {
+  uint8_t* p = out;
+  wrId(p, "RIFF");
+  wr32(p, kWavHeaderBytes - 8 + frames * 2);
+  wrId(p, "WAVE");
+  wrId(p, "fmt ");
+  wr32(p, 16);
+  wr16(p, 1);         // PCM
+  wr16(p, 1);         // mono
+  wr32(p, rate);
+  wr32(p, rate * 2);  // byte rate
+  wr16(p, 2);         // block align
+  wr16(p, 16);        // bits
+  wrId(p, "smpl");
+  wr32(p, 36);
+  memset(p, 0, 36);
+  uint8_t* period = p + 8;
+  wr32(period, rate ? 1000000000u / rate : 0);  // dwSamplePeriod, ns
+  p[12] = root;                                 // MIDIUnityNote
+  p += 36;
+  wrId(p, "mtcr");
+  wr32(p, 8);
+  wr32(p, crc);
+  wr32(p, frames);
+  wrId(p, "data");
+  wr32(p, frames * 2);
 }
 
 void wavToMono(const uint8_t* raw, uint32_t frames, const WavInfo& w, int16_t* out) {

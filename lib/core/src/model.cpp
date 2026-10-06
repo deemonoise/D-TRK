@@ -5,6 +5,10 @@
 
 namespace mt {
 
+namespace {
+constexpr float kRate = 32000.f;  // = kSynthRate (synth_osc.h)
+}
+
 void Pattern::clear() {
   length = kDefaultSteps;
   res = Resolution::Sixteenth;
@@ -18,6 +22,22 @@ bool Pattern::isEmpty() const {
     for (const auto& s : tr)
       if (!s.isEmpty()) return false;
   return true;
+}
+
+namespace {
+constexpr InstrType kTypeOrder[] = {InstrType::Fm, InstrType::Synth, InstrType::Drum, InstrType::Sample,
+                                    InstrType::Chip, InstrType::Kit};
+static_assert(sizeof(kTypeOrder) == static_cast<size_t>(InstrType::Count), "type order");
+}  // namespace
+
+InstrType instrTypeAt(int k) {
+  return k >= 0 && k < static_cast<int>(InstrType::Count) ? kTypeOrder[k] : InstrType::Fm;
+}
+
+int instrTypePos(InstrType t) {
+  for (int k = 0; k < static_cast<int>(InstrType::Count); ++k)
+    if (kTypeOrder[k] == t) return k;
+  return 0;
 }
 
 void Project::reset() {
@@ -34,10 +54,21 @@ void Project::reset() {
   }
   for (int i = 0; i < kInstruments; ++i) {
     instruments[i] = Instrument();
+    instrSetType(instruments[i], InstrType::Fm);
+    fmSetMachine(instruments[i], static_cast<uint8_t>(FmMachine::Tone));
     snprintf(instruments[i].name, sizeof(instruments[i].name), "INS%d", i + 1);
   }
   masterVol = 40;
   preview = true;
+  dlyTime = 3;
+  dlyFb = 50;
+  dlyTone = 90;
+  dlyLevel = 100;
+  for (ProjSample& s : samples) s = ProjSample{};
+  sampleCount = 0;
+  for (ProjWavetable& w : wavetables) w = ProjWavetable{};
+  wavetableCount = 0;
+  hasSampleList = false;
   for (auto& p : patterns) p.clear();
   memset(chain, 0, sizeof(chain));
   chainLen = 0;
@@ -79,6 +110,85 @@ void fmSetMachine(Instrument& m, uint8_t machine) {
   constexpr int kLast = static_cast<int>(FmMachine::Count) - 1;
   m.machine = static_cast<uint8_t>(machine > kLast ? kLast : machine);
   for (int k = 0; k < kFmMacros; ++k) m.macro[k] = kDefaults[m.machine][k];
+}
+
+float cutoffHz(float v) {
+  v = v < 0 ? 0 : (v > 127 ? 127 : v);
+  return 20.f * powf(700.f, v / 127.f);
+}
+
+float resoQ(float v) {
+  v = v < 0 ? 0 : (v > 127 ? 127 : v);
+  return 0.5f * powf(40.f, v / 127.f);
+}
+
+float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec) {
+  const uint32_t a = static_cast<uint32_t>(envTimeMs(fAtk) * kRate / 1000.f);
+  if (t < a) return static_cast<float>(t) / a;
+  const float d = envTimeMs(fDec) * kRate / 1000.f;
+  if (d <= 0) return 1.f;
+  return expf(-6.9077553f * (t - a) / d);  // ln(1000): -60 dB at d
+}
+
+void drumSetMachine(Instrument& m, uint8_t machine) {
+  // DECAY, COLOR, SHAPE, SWEEP, CONTOUR per machine (see synth_drum_machines.cpp).
+  static const uint8_t kDefaults[static_cast<int>(DrumMachine::Count)][kFmMacros] = {
+      {90, 20, 10, 40, 50},  // BD8
+      {55, 50, 70, 30, 64},  // SD8
+      {75, 20, 0, 40, 50},   // TOM8
+      {60, 64, 64, 40, 50},  // CP8
+      {40, 64, 30, 20, 0},   // RS8
+      {50, 64, 0, 10, 0},    // CL8
+      {70, 64, 64, 50, 0},   // CB8
+      {30, 64, 30, 64, 64},  // HH8: closed
+      {90, 64, 40, 64, 64},  // CY8
+      {75, 70, 40, 60, 40},  // BD9
+      {55, 64, 80, 30, 64},  // SD9
+      {70, 20, 10, 50, 50},  // TOM9
+      {60, 70, 64, 50, 50},  // CP9
+      {35, 64, 30, 20, 0},   // RS9
+      {30, 70, 50, 64, 64},  // HH9: closed
+      {95, 64, 50, 64, 64},  // CY9
+  };
+  constexpr int kLast = static_cast<int>(DrumMachine::Count) - 1;
+  m.machine = static_cast<uint8_t>(machine > kLast ? kLast : machine);
+  for (int k = 0; k < kFmMacros; ++k) m.macro[k] = kDefaults[m.machine][k];
+}
+
+void instrSetType(Instrument& m, InstrType t) {
+  if (t >= InstrType::Count) t = InstrType::Chip;
+  m.type = t;
+  if (t == InstrType::Fm) fmSetMachine(m, m.machine);
+  else if (t == InstrType::Drum) drumSetMachine(m, m.machine);
+  else if (t == InstrType::Synth) {
+    static const uint8_t kDef[kFmMacros] = {0, 0, 0, 64, 64};  // SHP1, SHP2, MIX, DET, SENV
+    memcpy(m.macro, kDef, kFmMacros);
+  } else if (t == InstrType::Kit) kitSetDefaults(m);
+  const bool macroDest = m.lfoDest >= static_cast<uint8_t>(LfoDest::Dec) &&
+                         m.lfoDest <= static_cast<uint8_t>(LfoDest::Con);
+  if ((t == InstrType::Chip || t == InstrType::Sample) && macroDest)
+    m.lfoDest = static_cast<uint8_t>(LfoDest::Pitch);
+}
+
+void kitSetDefaults(Instrument& m) {
+  for (int k = 0; k < kKitLanes; ++k) {
+    m.kit[k] = KitLane();
+    m.kit[k].note = static_cast<uint8_t>(60 + k);
+  }
+}
+
+uint8_t lfoDestStep(uint8_t dest, int d, bool macros) {
+  constexpr int kLast = static_cast<int>(LfoDest::Count) - 1;
+  constexpr int kMac0 = static_cast<int>(LfoDest::Dec), kMac1 = static_cast<int>(LfoDest::Con);
+  int v = dest > kLast ? 0 : dest;
+  const int step = d > 0 ? 1 : -1;
+  for (int i = 0; i < (d > 0 ? d : -d); ++i) {
+    int nv = v + step;
+    while (!macros && nv >= kMac0 && nv <= kMac1) nv += step;
+    if (nv < 0 || nv > kLast) break;
+    v = nv;
+  }
+  return static_cast<uint8_t>(v);
 }
 
 bool Project::anySolo() const {

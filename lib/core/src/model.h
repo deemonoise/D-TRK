@@ -3,7 +3,7 @@
 
 namespace mt {
 
-constexpr int kTracks = 8;
+constexpr int kTracks = 16;
 constexpr int kMaxSteps = 128;
 constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
@@ -19,23 +19,80 @@ constexpr uint8_t kNoProgram = 0xFF;
 constexpr int kInstruments = 16;
 constexpr int kWavetables = 16;
 constexpr int kSampleNameMax = 16;
+constexpr int kProjSamples = 128;  // = kBankEntries
+
+// A sample of the project: name seen by instruments, data identified by crc32 of the int16 data.
+struct ProjSample {
+  char name[kSampleNameMax + 1] = {0};
+  uint32_t crc = 0;
+  uint32_t frames = 0;
+};
+
+// A wavetable of the project: name seen by SYNTH instruments, data identified by crc32 of the
+// canonical 64 x 256 source (wtKey).
+constexpr int kProjWavetables = 32;
+struct ProjWavetable {
+  char name[kSampleNameMax + 1] = {0};
+  uint32_t crc = 0;
+};
 
 enum class TrackOut : uint8_t { Midi, Int, Count };
 // Wt1..Wt16 follow Metal: wave = Wave::Wt1 + n.
 enum class Wave : uint8_t { Pulse, Triangle, Saw, Noise, Metal, Wt1 };
 constexpr int kWaveCount = static_cast<int>(Wave::Wt1) + kWavetables;
 enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
-enum class InstrType : uint8_t { Chip, Sample, Fm, Count };
+// Stored in files: new values go before Count only.
+enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
+enum class ChopMode : uint8_t { Equal, Trans, Count };
+constexpr int kMaxSlices = 32;
+enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Count };
+// UI order of the types (FM, SYNTH, DRUM, SAMPLE, CHIP, KIT): position k -> type, type -> position.
+InstrType instrTypeAt(int k);
+int instrTypePos(InstrType t);
+constexpr int kKitLanes = 8;
+constexpr uint8_t kNoInstr = 0xFF;
+
+// A KIT lane. instr == kNoInstr: a mini sampler on the project sample `sample` (empty / missing =
+// silent), played at its own pitch (root = note) + pitch semitones, vol, decay (0 = whole sample, else
+// envTimeMs(decay) then silence). instr < kInstruments: the lane plays that instrument at `note`.
+// note is the lane's MIDI note: unique in the kit, sent on MIDI tracks. Stored in files (KITS).
+struct KitLane {
+  char sample[kSampleNameMax + 1] = {0};
+  uint8_t instr = kNoInstr;
+  uint8_t vol = 100;
+  int8_t pitch = 0;   // -24..24
+  uint8_t decay = 0;
+  uint8_t note = 60;
+};
+static_assert(sizeof(KitLane) == kSampleNameMax + 6, "KitLane layout (file format)");
 // FM machines (Model:Cycles style). Stored in files: new machines go before Count only.
 enum class FmMachine : uint8_t { Kick, Snare, Metal, Perc, Tone, Chord, Clap, Hat, Count };
 // FM macros: Instrument::macro index, fx DEC..CON = Fx::DCY + index.
 enum FmMacro : uint8_t { kMacDec, kMacCol, kMacShp, kMacSwp, kMacCon, kFmMacros };
+// SYNTH oscillator mode. Stored in files: new modes before Count only.
+enum class SynOsc : uint8_t { Saw, Square, Tri, Wt, Count };
+// SYNTH macros: same slots as FM / DRUM (fx DCY..CON, LFO Dec..Con).
+enum SynMacro : uint8_t { kMacShp1 = kMacDec, kMacShp2 = kMacCol, kMacMix = kMacShp, kMacDet = kMacSwp,
+                          kMacSenv = kMacCon };
+// DRUM machines (808 / 909 models). Stored in files: new machines go before Count only.
+enum class DrumMachine : uint8_t {
+  Bd8, Sd8, Tom8, Cp8, Rs8, Cl8, Cb8, Hh8, Cy8, Bd9, Sd9, Tom9, Cp9, Rs9, Hh9, Cy9, Count
+};
+// Instrument::machine of either type fits below this.
+constexpr int kMachineMax = 16;
+static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field");
+static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
+enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
+// Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay send.
+enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLocks };
+static_assert(kLocks <= 8, "lockMask is a uint8_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
-// Dec..Con = macro index + 1.
-enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Count };
+// Dec..Con = macro index + 1 (FM / DRUM only). Stored in files: new targets before Count only.
+enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Count };
 
 // Internal synth instrument. One-byte fields: the audio task reads them without a lock.
 constexpr uint8_t kMasterVolMax = 200;  // master volume %, above 100 = up to +6 dB
+constexpr uint8_t kDlyTimeMax = 16;     // delay time, sixteenths
 
 struct Instrument {
   char name[9] = {0};
@@ -56,13 +113,41 @@ struct Instrument {
   uint8_t loop = 0;                  // LoopMode
   uint16_t loopStart = 0;
   bool reverse = false;
-  // FM: machine and its macros (see fmSetMachine), LFO.
-  uint8_t machine = 0;                                // FmMachine
-  uint8_t macro[kFmMacros] = {85, 40, 32, 70, 50};    // DECAY..CONTOUR 0..127, Kick defaults
+  // Slices: start points, fractions of the whole sample (/0xFFFF), ascending. Slice i plays
+  // slices[i]..slices[i+1], the last one to end. Cleared when the sample changes.
+  uint8_t sliceMode = 0;      // SliceMode
+  uint8_t chopMode = 0;       // ChopMode, the CHOP button
+  uint8_t chopN = 8;          // EQUAL: 2..kMaxSlices
+  uint8_t chopThresh = 50;    // TRANS: 0..100, higher = more slices
+  uint8_t sliceCount = 0;     // 0..kMaxSlices
+  uint16_t slices[kMaxSlices] = {0};
+  // FM / DRUM: machine and its macros (see fmSetMachine, drumSetMachine), LFO.
+  uint8_t machine = 0;                                // FmMachine or DrumMachine, by type
+  uint8_t macro[kFmMacros] = {85, 40, 32, 70, 50};    // DECAY..CONTOUR 0..127 (FM / DRUM), Kick defaults
   uint8_t lfoWave = 0;   // LfoWave
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
   int8_t lfoDepth = 0;   // -64..63, 0 = off
   uint8_t lfoDest = 0;   // LfoDest
+  // Filter, every type: see cutoffHz, resoQ, filterEnv.
+  uint8_t fltMode = 0;          // FltMode
+  uint8_t cutoff = 127;         // 0..127
+  uint8_t reso = 0;             // 0..127
+  int8_t fenv = 0;              // -64..63: +-6 octaves at the envelope's peak
+  uint8_t fAtk = 0, fDec = 40;  // envTimeMs; fDec 0 = hold
+  uint8_t keytrack = 0;         // 0..127 = 0..100 %
+  uint8_t send = 0;             // delay send 0..127 (every type)
+  // SYNTH (see synth_syn.h): oscillators 1, 2 (SynOsc), their wavetables (project list name or a
+  // built-in "*NAME"), osc 2 semitones, hard sync, sub (level, 0 = -1 / 1 = -2 octaves), noise,
+  // env->SHAPE attack / decay (envTimeMs, decay 0 = hold). Macros: SHP1, SHP2, MIX, DET, SENV.
+  uint8_t synOsc[2] = {0, 0};
+  char synWt[2][kSampleNameMax + 1] = {{0}, {0}};
+  int8_t synSemi = 0;     // -24..24
+  bool synSync = false;
+  uint8_t synSub = 0;     // 0..127
+  uint8_t synSubOct = 0;  // 0..1
+  uint8_t synNoise = 0;   // 0..127
+  uint8_t synEAtk = 0, synEDec = 40;
+  KitLane kit[kKitLanes];  // KIT: the lanes (see kitSetDefaults)
 };
 
 // Envelope stage time: 0 -> 0 ms, 1..127 -> 1..10000 ms exponentially.
@@ -76,13 +161,36 @@ float lfoHz(uint8_t v);
 bool fmGated(uint8_t machine);
 // Sets the machine (clamped) and its default macros.
 void fmSetMachine(Instrument& m, uint8_t machine);
+// Filter cutoff 0..127 (fractional after locks / LFO) -> 20 Hz x 700^(v/127): 20 Hz .. 14 kHz.
+float cutoffHz(float v);
+// Resonance 0..127 -> Q 0.5 x 40^(v/127): 0.5 .. 20.
+float resoQ(float v);
+// Filter envelope t samples after the trigger: 0 -> 1 linearly over envTimeMs(fAtk), then down to
+// -60 dB over envTimeMs(fDec) (exponential); fDec 0 holds 1.
+float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec);
+// DRUM: sets the machine (clamped) and its default macros.
+void drumSetMachine(Instrument& m, uint8_t machine);
+// Changes the type. FM / DRUM: the machine (clamped) with its default macros (they mean other
+// things per type); SYNTH: its default macros; KIT: its default lanes. CHIP / SAMPLE: a macro LFO
+// target becomes PITCH.
+void instrSetType(Instrument& m, InstrType t);
+// KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
+void kitSetDefaults(Instrument& m);
+// LFO target d steps from dest (clamped at the ends); macros = false (CHIP / SAMPLE) skips DECAY..CONTOUR.
+uint8_t lfoDestStep(uint8_t dest, int d, bool macros);
 
 // Values are stored in project files: new commands go before Count only.
-// SLD..CON act on INT tracks only (synth fx, see fxSynthOnly). DCY..CON lock FM macros
+// SLD..SLC act on INT tracks only (synth fx, see fxSynthOnly). DCY..CON lock FM / DRUM / SYNTH macros
 // (Fx::DCY + FmMacro). DCY is shown as "DEC": Arduino's Print.h #defines DEC.
+// FLT, RES lock the filter cutoff / resonance (Fx::DCY + kLockFlt / kLockRes), every INT instrument.
+// SLC picks the slice of the next SAMPLE note-on (FX slice mode).
+// DLY locks the delay send (lock bit kLockDly), INT tracks only (see fxSynthOnly).
+// OFF: note off val ticks after the step start, MIDI and INT (on INT it releases every voice of the
+// track, samples too, see expandStep / Sequencer::pushOff).
+// ACC: drum tracks, lane mask: lanes in it play at the step velocity, the others at 60 % (fxDrumOnly).
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
-  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, Count
+  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, Count
 };
 
 // Synth message 0xF5 cmd val: cmd is an Fx (synth fx) or kSynthStep, a step start on the INT
@@ -94,23 +202,35 @@ struct FxSlot {
   uint8_t val = 0;
 };
 
+constexpr int kFxSlots = 6;
+
+// Melodic tracks: note = kNoteEmpty / kNoteOff / a MIDI note, vel = kVelDefault (track's) or 1..127.
+// Drum tracks (the track's instrument is a KIT, see Project::trackIsDrum), same layout:
+//   note: kNoteEmpty = empty, kNoteOff = note off (releases every lane), else 0..127 = the step's
+//         velocity for all its lanes (0 = the track's defVel); hasNote() still means note < 128.
+//   vel:  8-bit lane mask, bit k = lane k + 1 hits. A note step with mask 0 plays nothing (its fx
+//         still run). Melodic tracks' steps never carry bit 7 in vel.
 struct Step {
   uint8_t note = kNoteEmpty;
   uint8_t vel = kVelDefault;
-  FxSlot fx[2];
+  FxSlot fx[kFxSlots];
 
-  bool isEmpty() const {
-    return note == kNoteEmpty && vel == kVelDefault &&
-           fx[0].cmd == Fx::None && fx[1].cmd == Fx::None;
+  bool hasFx() const {
+    for (const FxSlot& f : fx)
+      if (f.cmd != Fx::None) return true;
+    return false;
   }
+  bool isEmpty() const { return note == kNoteEmpty && vel == kVelDefault && !hasFx(); }
   bool hasNote() const { return note < 128; }
+  // The first slot with f.
   const FxSlot* find(Fx f) const {
-    if (fx[0].cmd == f) return &fx[0];
-    if (fx[1].cmd == f) return &fx[1];
+    for (const FxSlot& s : fx)
+      if (s.cmd == f) return &s;
     return nullptr;
   }
 };
-static_assert(sizeof(Step) == 6, "Step must stay 6 bytes (file format)");
+// Files store a step as note, vel, then cmd / val per slot (older files: 2 slots, see readPatn).
+static_assert(sizeof(Step) == 2 + 2 * kFxSlots, "Step layout (file format)");
 
 enum class Resolution : uint8_t {
   Quarter, Eighth, Sixteenth, ThirtySecond, EighthTriplet, SixteenthTriplet, Count
@@ -159,7 +279,7 @@ struct TrackCfg {
   uint8_t program = kNoProgram;
   bool mute = false;
   bool solo = false;
-  TrackOut out = TrackOut::Midi;
+  TrackOut out = TrackOut::Int;  // files without TOUT load as MIDI (see loadProject)
   uint8_t instr = 0;  // 0..kInstruments-1, INT tracks
   uint8_t vol = 100;  // 0..127, INT tracks
 };
@@ -177,12 +297,32 @@ struct Project {
   Instrument instruments[kInstruments];
   uint8_t masterVol = 40;  // 0..kMasterVolMax %
   bool preview = true;     // GRID note entry sounds on INT tracks
+  // Send delay (INT tracks): time 1..kDlyTimeMax sixteenths, feedback / tone / return level 0..127.
+  uint8_t dlyTime = 3;
+  uint8_t dlyFb = 50;
+  uint8_t dlyTone = 90;
+  uint8_t dlyLevel = 100;
+  ProjSample samples[kProjSamples];
+  uint8_t sampleCount = 0;  // names unique ignoring case
+  ProjWavetable wavetables[kProjWavetables];
+  uint8_t wavetableCount = 0;  // names unique ignoring case
+  // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
+  // whose instrument sample names still have to be migrated (and after reset()).
+  bool hasSampleList = false;
 
   Project() { reset(); }
   void reset();
   bool anySolo() const;
   bool trackInternal(int t) const { return tracks[t].out == TrackOut::Int; }
   bool trackAudible(int t) const { return !tracks[t].mute && (!anySolo() || tracks[t].solo); }
+  // A drum track: its instrument is a KIT (steps hold lane masks, see Step). Any Out.
+  bool trackIsDrum(int t) const { return kitOf(t) != nullptr; }
+  // The KIT of track t, nullptr when its instrument is another type (or t out of range).
+  const Instrument* kitOf(int t) const {
+    if (t < 0 || t >= kTracks) return nullptr;
+    const Instrument& m = instruments[tracks[t].instr % kInstruments];
+    return m.type == InstrType::Kit ? &m : nullptr;
+  }
 };
 
 }  // namespace mt

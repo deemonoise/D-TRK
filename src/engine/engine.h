@@ -36,7 +36,7 @@ void begin(mt::Project* p);
 bool post(Cmd c, uint16_t arg = 0);
 Status status();
 // Tracks that sent a NoteOn since the last call (bit = track), for the activity LEDs.
-uint8_t takeActivity();
+uint16_t takeActivity();
 // Engine timer time, us (time stamps of synth events).
 uint64_t nowUs();
 

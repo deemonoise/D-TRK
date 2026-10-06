@@ -60,6 +60,11 @@ const int16_t* SampleBank::data(int i) const {
   return reinterpret_cast<const int16_t*>(m + e_[i].offset);
 }
 
+bool SampleBank::readData(int i, uint32_t frame, int16_t* d, uint32_t n) const {
+  if (i < 0 || i >= n_ || frame > e_[i].frames || n > e_[i].frames - frame) return false;
+  return f_.read(e_[i].offset + frame * 2, d, n * 2);
+}
+
 int SampleBank::byOffset(int* idx) const {
   for (int i = 0; i < n_; ++i) {
     int j = i;
@@ -161,6 +166,11 @@ bool SampleBank::firstFit(uint32_t from, uint32_t need, uint32_t& at) const {
     if (e.offset + span(e.frames) > at) at = e.offset + span(e.frames);
   }
   return at <= end() && end() - at >= need;
+}
+
+bool SampleBank::fits(uint32_t frames) const {
+  uint32_t at;
+  return frames > 0 && frames <= capacity() / 2 && n_ < kBankEntries && firstFit(kBankHeader, span(frames), at);
 }
 
 bool SampleBank::begin(const char* name, uint32_t frames, uint32_t rate, uint8_t root) {

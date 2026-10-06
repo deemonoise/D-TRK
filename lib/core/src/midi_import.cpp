@@ -152,8 +152,8 @@ ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, co
       ns.fx[slot++] = FxSlot{Fx::CHN, static_cast<uint8_t>(srcCh + 1)};
     const uint8_t g = nearestGate(sn.len, c.q);
     const int diff = static_cast<int>(gatePercent(g)) - static_cast<int>(gatePercent(tc.defGate));
-    if ((diff > 10 || diff < -10) && slot < 2) ns.fx[slot++] = FxSlot{Fx::GAT, g};
-    if (m.keepMicrotiming && slot < 2) {
+    if ((diff > 10 || diff < -10) && slot < kFxSlots) ns.fx[slot++] = FxSlot{Fx::GAT, g};
+    if (m.keepMicrotiming && slot < kFxSlots) {
       const int64_t stepAbs = static_cast<int64_t>(pl.pattern) * len + pl.step;
       int64_t ndg = roundDiv((rel * kPpqn - stepAbs * c.q) * 100, c.q);
       if (ndg > 50) ndg = 50;

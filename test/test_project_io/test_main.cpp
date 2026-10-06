@@ -2,6 +2,7 @@
 #include <string.h>
 #include <unity.h>
 #include <vector>
+#include "inst_codec.h"
 #include "project_io.h"
 #include "scale.h"
 
@@ -35,6 +36,7 @@ struct VecSource : ByteSource {
 
 // Large objects live in static storage.
 static Project a, b;
+constexpr int kOldTracks = 8;  // tracks of the 8-track firmware
 
 void setUp() {
   a.reset();
@@ -80,6 +82,7 @@ static void fillFull(Project& p) {
       st.vel = static_cast<uint8_t>(s % 128);
       st.fx[0] = {Fx::RAT, 3};
       st.fx[1] = {Fx::NDG, static_cast<uint8_t>(-20)};
+      st.fx[5] = {Fx::GAT, static_cast<uint8_t>(s + 1)};
     }
   // Non-default params with no notes: still written.
   p.patterns[15].length = 32;
@@ -92,6 +95,10 @@ static void fillFull(Project& p) {
   p.tracks[6].vol = 0;
   p.masterVol = 83;
   p.preview = false;
+  p.dlyTime = 16;
+  p.dlyFb = 127;
+  p.dlyTone = 0;
+  p.dlyLevel = 7;
   Instrument& i1 = p.instruments[1];
   strcpy(i1.name, "BASS_x1");
   i1.type = InstrType::Chip;
@@ -129,6 +136,19 @@ static void fillFull(Project& p) {
   i3.lfoRate = 127;
   i3.lfoDepth = -64;
   i3.lfoDest = static_cast<uint8_t>(LfoDest::Vol);
+  i3.fltMode = static_cast<uint8_t>(FltMode::Hp);
+  i3.cutoff = 20;
+  i3.reso = 110;
+  i3.fenv = -64;
+  i3.fAtk = 5;
+  i3.fDec = 0;
+  i3.keytrack = 64;
+  i3.send = 99;
+  Instrument& i7 = p.instruments[7];
+  i7.type = InstrType::Drum;
+  drumSetMachine(i7, static_cast<uint8_t>(DrumMachine::Hh9));
+  i7.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  i7.fenv = 63;
 }
 
 static void assertSame(const Project& x, const Project& y) {
@@ -158,6 +178,10 @@ static void assertSame(const Project& x, const Project& y) {
   }
   TEST_ASSERT_EQUAL(x.masterVol, y.masterVol);
   TEST_ASSERT_EQUAL(x.preview, y.preview);
+  TEST_ASSERT_EQUAL(x.dlyTime, y.dlyTime);
+  TEST_ASSERT_EQUAL(x.dlyFb, y.dlyFb);
+  TEST_ASSERT_EQUAL(x.dlyTone, y.dlyTone);
+  TEST_ASSERT_EQUAL(x.dlyLevel, y.dlyLevel);
   for (int i = 0; i < kInstruments; ++i) {
     const Instrument &m = x.instruments[i], &n = y.instruments[i];
     TEST_ASSERT_EQUAL_STRING(m.name, n.name);
@@ -188,6 +212,20 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(m.lfoRate, n.lfoRate);
     TEST_ASSERT_EQUAL(m.lfoDepth, n.lfoDepth);
     TEST_ASSERT_EQUAL(m.lfoDest, n.lfoDest);
+    TEST_ASSERT_EQUAL(m.fltMode, n.fltMode);
+    TEST_ASSERT_EQUAL(m.cutoff, n.cutoff);
+    TEST_ASSERT_EQUAL(m.reso, n.reso);
+    TEST_ASSERT_EQUAL(m.fenv, n.fenv);
+    TEST_ASSERT_EQUAL(m.fAtk, n.fAtk);
+    TEST_ASSERT_EQUAL(m.fDec, n.fDec);
+    TEST_ASSERT_EQUAL(m.keytrack, n.keytrack);
+    TEST_ASSERT_EQUAL(m.send, n.send);
+    TEST_ASSERT_EQUAL(m.sliceMode, n.sliceMode);
+    TEST_ASSERT_EQUAL(m.chopMode, n.chopMode);
+    TEST_ASSERT_EQUAL(m.chopN, n.chopN);
+    TEST_ASSERT_EQUAL(m.chopThresh, n.chopThresh);
+    TEST_ASSERT_EQUAL(m.sliceCount, n.sliceCount);
+    TEST_ASSERT_EQUAL_UINT16_ARRAY(m.slices, n.slices, kMaxSlices);
   }
   for (int i = 0; i < kPatterns; ++i) {
     const Pattern &p = x.patterns[i], &q = y.patterns[i];
@@ -228,12 +266,14 @@ void test_load_resets_target_first() {
 void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
-  TEST_ASSERT_TRUE(out.buf.size() < 1500);  // header, PROJ, TRKS, INST (16 x 48), FMIN (16 x 16), TOUT, AUDI
+  // PROJ, TRKS (16 x 16), INST, FMIN, FLTR, SLCE (16 x 72), TOUT (16 x 3), AUDI, SYNI (16 x 48), WTBL (empty),
+  // KITS (16 x 176)
+  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176);
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
-  // One pattern of 16 steps: 8 + 4 + 8 * 16 * 6 bytes.
-  TEST_ASSERT_EQUAL(out.buf.size() + 8 + 4 + 768, out2.buf.size());
+  // One pattern of 16 steps: 8 + 4 + 16 tracks * 16 * 14 bytes.
+  TEST_ASSERT_EQUAL(out.buf.size() + 8 + 4 + kTracks * 16 * sizeof(Step), out2.buf.size());
 }
 
 // Rebuilds a file with an extra chunk inserted after the header and a fresh CRC.
@@ -329,7 +369,7 @@ void test_garbage_values_clamped() {
   for (int i = 0; i < kChainMax; ++i) pr.push_back(99);
   putChunk(f, "PROJ", pr);
 
-  std::vector<uint8_t> tr = {8};
+  std::vector<uint8_t> tr = {static_cast<uint8_t>(kTracks)};
   for (int t = 0; t < kTracks; ++t) {
     for (int i = 0; i < 9; ++i) tr.push_back('Z');  // no terminator
     tr.push_back(40);   // channel
@@ -350,7 +390,7 @@ void test_garbage_values_clamped() {
     }
   putChunk(f, "PATN", pt);
   std::vector<uint8_t> bad = {40, 16, 2, 50};  // pattern index out of range: ignored
-  bad.resize(4 + 8 * 16 * 6, 0x24);
+  bad.resize(4 + kTracks * 16 * 6, 0x24);
   putChunk(f, "PATN", bad);
 
   const uint32_t c = crc32(f.data(), f.size());
@@ -388,6 +428,7 @@ void test_garbage_values_clamped() {
   TEST_ASSERT_TRUE(s0.vel <= 127);
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::None), static_cast<int>(s0.fx[0].cmd));
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::GAT), static_cast<int>(s0.fx[1].cmd));
+  for (int k = 2; k < kFxSlots; ++k) TEST_ASSERT_TRUE(s0.fx[k].cmd == Fx::None);  // old 6-byte steps: 2 slots
   TEST_ASSERT_TRUE(p3.steps[0][2].isEmpty());  // beyond the stored length
 }
 
@@ -409,12 +450,16 @@ static void finish(std::vector<uint8_t>& f) {
   f.insert(f.end(), tail, tail + 12);
 }
 
-static std::vector<uint8_t> patn(uint8_t idx, uint8_t len, int extraBytes = 0) {
+// A PATN body: `tracks` tracks of `stepBytes`-byte steps (6 = the 2-slot format, 14 = current).
+static std::vector<uint8_t> patn(uint8_t idx, uint8_t len, int extraBytes = 0, int tracks = kTracks,
+                                 int stepBytes = 6) {
   std::vector<uint8_t> p = {idx, len, static_cast<uint8_t>(Resolution::Eighth), 60};
-  for (int t = 0; t < kTracks; ++t)
+  for (int t = 0; t < tracks; ++t)
     for (int s = 0; s < len; ++s) {
-      const uint8_t st[] = {static_cast<uint8_t>((t + s) % 128), 100, 0, 0, 0, 0};
-      p.insert(p.end(), st, st + 6);
+      std::vector<uint8_t> st(stepBytes, 0);
+      st[0] = static_cast<uint8_t>((t + s) % 128);
+      st[1] = 100;
+      p.insert(p.end(), st.begin(), st.end());
     }
   if (extraBytes > 0) p.resize(p.size() + extraBytes, 0);
   if (extraBytes < 0) p.resize(p.size() + extraBytes);
@@ -461,6 +506,44 @@ void test_patn_size_mismatch() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// Header only with a length: an empty pattern of that length.
+void test_patn_header_only_len_nonzero() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "PATN", {2, 16, static_cast<uint8_t>(Resolution::Eighth), 50});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(16, b.patterns[2].length);
+  TEST_ASSERT_TRUE(b.patterns[2].isEmpty());
+}
+
+// Files from the 8-track firmware: tracks 1-8 load, 9-16 stay clear. Both step formats.
+void test_patn_eight_tracks_loads() {
+  for (int stepBytes : {6, 14}) {
+    std::vector<uint8_t> f = fileHeader();
+    putChunk(f, "PATN", patn(3, 16, 0, 8, stepBytes));
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+    const Pattern& pt = b.patterns[3];
+    TEST_ASSERT_EQUAL(16, pt.length);
+    TEST_ASSERT_EQUAL((7 + 15) % 128, pt.steps[7][15].note);
+    for (int t = 8; t < kTracks; ++t)
+      for (int s = 0; s < 16; ++s) TEST_ASSERT_TRUE(pt.steps[t][s].isEmpty());
+  }
+}
+
+void test_patn_sixteen_tracks_round_trip() {
+  a.patterns[5].length = 24;
+  a.patterns[5].steps[15][23].note = 71;
+  a.patterns[5].steps[8][0].fx[5] = {Fx::DLY, 99};
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(71, b.patterns[5].steps[15][23].note);
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::DLY), static_cast<int>(b.patterns[5].steps[8][0].fx[5].cmd));
+  TEST_ASSERT_EQUAL(99, b.patterns[5].steps[8][0].fx[5].val);
+}
+
 static std::vector<uint8_t> trks(uint8_t count, int stored) {
   std::vector<uint8_t> tr = {count};
   for (int t = 0; t < stored; ++t) {
@@ -487,12 +570,22 @@ void test_trks_count_not_eight() {
   }
   {
     std::vector<uint8_t> f = fileHeader();
-    putChunk(f, "TRKS", trks(10, 10));  // a future build with more tracks
+    putChunk(f, "TRKS", trks(10, 10));  // fewer tracks than the build: the rest keep defaults
     putChunk(f, "PATN", patn(0, 4));
     finish(f);
     TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
-    TEST_ASSERT_EQUAL_STRING("K7", b.tracks[7].name);
+    TEST_ASSERT_EQUAL_STRING("K9", b.tracks[9].name);
+    const TrackCfg& def = a.tracks[10];
+    TEST_ASSERT_EQUAL_STRING(def.name, b.tracks[10].name);
+    TEST_ASSERT_EQUAL_STRING(a.tracks[kTracks - 1].name, b.tracks[kTracks - 1].name);
     TEST_ASSERT_EQUAL(4, b.patterns[0].length);
+  }
+  {
+    std::vector<uint8_t> f = fileHeader();
+    putChunk(f, "TRKS", trks(kTracks + 2, kTracks + 2));  // a future build with more tracks: extra skipped
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+    TEST_ASSERT_EQUAL_STRING("K15", b.tracks[kTracks - 1].name);
   }
   {
     std::vector<uint8_t> f = fileHeader();
@@ -559,16 +652,20 @@ void test_audio_chunks_written() {
   TEST_ASSERT_TRUE(hasChunk(out.buf, "TOUT"));
   TEST_ASSERT_TRUE(hasChunk(out.buf, "AUDI"));
   TEST_ASSERT_TRUE(hasChunk(out.buf, "FMIN"));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "FLTR"));
 }
 
 void test_old_file_gets_audio_defaults() {
   fillFull(a);
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
-  const std::vector<uint8_t> f = withoutChunks(out.buf, {"INST", "TOUT", "AUDI", "FMIN"});
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"INST", "TOUT", "AUDI", "FMIN", "FLTR", "SMPL"});
   TEST_ASSERT_FALSE(hasChunk(f, "INST"));
+  TEST_ASSERT_FALSE(hasChunk(f, "SMPL"));
   b.masterVol = 3;
+  b.sampleCount = 2;
   b.instruments[1].vol = 5;
+  b.hasSampleList = true;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
   Project* def = new Project();
   for (int t = 0; t < kTracks; ++t) {
@@ -578,12 +675,40 @@ void test_old_file_gets_audio_defaults() {
   }
   TEST_ASSERT_EQUAL(40, b.masterVol);
   TEST_ASSERT_TRUE(b.preview);
+  TEST_ASSERT_EQUAL(def->dlyTime, b.dlyTime);
+  TEST_ASSERT_EQUAL(def->dlyLevel, b.dlyLevel);
+  TEST_ASSERT_EQUAL(0, b.instruments[3].send);
   TEST_ASSERT_EQUAL_STRING("INS2", b.instruments[1].name);
   TEST_ASSERT_EQUAL(def->instruments[1].vol, b.instruments[1].vol);
   TEST_ASSERT_EQUAL(def->instruments[3].machine, b.instruments[3].machine);
   TEST_ASSERT_EQUAL(def->instruments[3].lfoDepth, b.instruments[3].lfoDepth);
+  TEST_ASSERT_EQUAL(def->instruments[3].fltMode, b.instruments[3].fltMode);
+  TEST_ASSERT_EQUAL(def->instruments[3].cutoff, b.instruments[3].cutoff);
   TEST_ASSERT_EQUAL(a.patterns[5].steps[3][9].note, b.patterns[5].steps[3][9].note);
+  TEST_ASSERT_EQUAL(0, b.sampleCount);
+  TEST_ASSERT_FALSE(b.hasSampleList);  // old file: storage migrates its sample names
   delete def;
+}
+
+// An 8-track file with TOUT: its 8 tracks keep their outs, the new tracks 9-16 get the defaults
+// of a fresh project (Int, instr = track), not the all-MIDI preset for files older than TOUT.
+void test_old_file_tout_new_tracks_default_int() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TRKS", trks(kOldTracks, kOldTracks));
+  std::vector<uint8_t> to = {kOldTracks};
+  for (int t = 0; t < kOldTracks; ++t) {
+    const uint8_t rec[3] = {static_cast<uint8_t>(TrackOut::Midi), static_cast<uint8_t>(t), 100};
+    to.insert(to.end(), rec, rec + 3);
+  }
+  putChunk(f, "TOUT", to);
+  putChunk(f, "PATN", patn(0, 16, 0, kOldTracks));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  for (int t = 0; t < kTracks; ++t) {
+    const TrackOut want = t < kOldTracks ? TrackOut::Midi : TrackOut::Int;
+    TEST_ASSERT_EQUAL(static_cast<int>(want), static_cast<int>(b.tracks[t].out));
+    TEST_ASSERT_EQUAL(t, b.tracks[t].instr);
+  }
 }
 
 static std::vector<uint8_t> instRecord(const char* name) {
@@ -617,6 +742,8 @@ void test_audio_garbage_clamped() {
   }
   TEST_ASSERT_EQUAL(kMasterVolMax, b.masterVol);
   TEST_ASSERT_TRUE(b.preview);
+  TEST_ASSERT_EQUAL(3, b.dlyTime);  // a 2-byte AUDI keeps the delay defaults
+  TEST_ASSERT_EQUAL(100, b.dlyLevel);
   const Instrument& m = b.instruments[0];
   TEST_ASSERT_EQUAL(8, strlen(m.name));
   TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Chip), static_cast<int>(m.type));
@@ -699,9 +826,522 @@ void test_fmin_garbage_clamped() {
   TEST_ASSERT_EQUAL(0, m.lfoDest);
 }
 
+void test_samples_roundtrip() {
+  a.sampleCount = 2;
+  strcpy(a.samples[0].name, "kick");
+  a.samples[0].crc = 0xDEADBEEF;
+  a.samples[0].frames = 1234;
+  strcpy(a.samples[1].name, "snare_longname16");  // 16 chars, no terminator in the file
+  a.samples[1].crc = 1;
+  a.samples[1].frames = 7;
+  VecSink s;
+  TEST_ASSERT_TRUE(saveProject(a, s));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(s.buf)));
+  TEST_ASSERT_EQUAL(2, b.sampleCount);
+  TEST_ASSERT_EQUAL_STRING("kick", b.samples[0].name);
+  TEST_ASSERT_EQUAL_HEX32(0xDEADBEEF, b.samples[0].crc);
+  TEST_ASSERT_EQUAL_UINT32(1234, b.samples[0].frames);
+  TEST_ASSERT_EQUAL_STRING("snare_longname16", b.samples[1].name);
+  TEST_ASSERT_EQUAL_HEX32(1, b.samples[1].crc);
+  TEST_ASSERT_EQUAL_UINT32(7, b.samples[1].frames);
+}
+
+void test_samples_empty_list_written() {
+  VecSink s;
+  TEST_ASSERT_TRUE(saveProject(a, s));
+  TEST_ASSERT_TRUE(hasChunk(s.buf, "SMPL"));
+  b.sampleCount = 4;
+  b.hasSampleList = false;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(s.buf)));
+  TEST_ASSERT_EQUAL(0, b.sampleCount);
+  TEST_ASSERT_TRUE(b.hasSampleList);  // an empty list is still a list
+}
+
+void test_samples_dup_and_empty_skipped() {
+  a.sampleCount = 4;
+  strcpy(a.samples[0].name, "kick");
+  a.samples[0].crc = 10;
+  strcpy(a.samples[1].name, "KICK");  // same name ignoring case
+  a.samples[1].crc = 11;
+  // samples[2] has an empty name
+  strcpy(a.samples[3].name, "hat");
+  VecSink s;
+  TEST_ASSERT_TRUE(saveProject(a, s));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(s.buf)));
+  TEST_ASSERT_EQUAL(2, b.sampleCount);
+  TEST_ASSERT_EQUAL_STRING("kick", b.samples[0].name);
+  TEST_ASSERT_EQUAL_UINT32(10, b.samples[0].crc);  // the first one wins
+  TEST_ASSERT_EQUAL_STRING("hat", b.samples[1].name);
+}
+
+static std::vector<uint8_t> smplRecord(const char* name, uint32_t crc, uint32_t frames) {
+  std::vector<uint8_t> r(24, 0);
+  memcpy(r.data(), name, strlen(name) < 16 ? strlen(name) : 16);
+  for (int i = 0; i < 4; ++i) {
+    r[16 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    r[20 + i] = static_cast<uint8_t>(frames >> (8 * i));
+  }
+  return r;
+}
+
+void test_samples_count_over_max() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> sm = {kProjSamples + 2};
+  for (int i = 0; i < kProjSamples + 2; ++i) {
+    char nm[8];
+    snprintf(nm, sizeof(nm), "s%d", i);
+    const std::vector<uint8_t> r = smplRecord(nm, static_cast<uint32_t>(i), 100);
+    sm.insert(sm.end(), r.begin(), r.end());
+  }
+  putChunk(f, "SMPL", sm);
+  putChunk(f, "AUDI", {55, 0});  // still parsed after the oversized one
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(kProjSamples, b.sampleCount);
+  TEST_ASSERT_EQUAL_STRING("s127", b.samples[kProjSamples - 1].name);
+  TEST_ASSERT_EQUAL_UINT32(127, b.samples[kProjSamples - 1].crc);
+  TEST_ASSERT_EQUAL(55, b.masterVol);
+}
+
+static std::vector<uint8_t> smplChunk(const char* prefix, int n) {
+  std::vector<uint8_t> sm = {static_cast<uint8_t>(n)};
+  for (int i = 0; i < n; ++i) {
+    char nm[12];
+    snprintf(nm, sizeof(nm), "%s%d", prefix, i);
+    const std::vector<uint8_t> r = smplRecord(nm, static_cast<uint32_t>(i), 100);
+    sm.insert(sm.end(), r.begin(), r.end());
+  }
+  return sm;
+}
+
+void test_samples_two_chunks_last_wins() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SMPL", smplChunk("a", kProjSamples));
+  putChunk(f, "SMPL", smplChunk("b", kProjSamples));
+  putChunk(f, "AUDI", {55, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(kProjSamples, b.sampleCount);
+  TEST_ASSERT_EQUAL_STRING("b0", b.samples[0].name);
+  TEST_ASSERT_EQUAL_STRING("b127", b.samples[kProjSamples - 1].name);
+  TEST_ASSERT_EQUAL(55, b.masterVol);
+}
+
+void test_samples_chunk_too_small() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> sm = {2};
+  const std::vector<uint8_t> r = smplRecord("kick", 1, 1);
+  sm.insert(sm.end(), r.begin(), r.end());  // count says two
+  putChunk(f, "SMPL", sm);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+void test_samples_bad_names_skipped() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> sm = {3};
+  for (const char* nm : {"my kick", "a.b", "hat"}) {
+    const std::vector<uint8_t> r = smplRecord(nm, 1, 1);
+    sm.insert(sm.end(), r.begin(), r.end());
+  }
+  putChunk(f, "SMPL", sm);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(1, b.sampleCount);
+  TEST_ASSERT_EQUAL_STRING("hat", b.samples[0].name);
+}
+
+// ---- Filter chunk, DRUM, machine normalization ----
+
+void test_fltr_roundtrip() {
+  Instrument& m = a.instruments[5];
+  m.fltMode = static_cast<uint8_t>(FltMode::Bp);
+  m.cutoff = 33;
+  m.reso = 99;
+  m.fenv = -40;
+  m.fAtk = 7;
+  m.fDec = 88;
+  m.keytrack = 127;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  const Instrument& r = b.instruments[5];
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Bp), r.fltMode);
+  TEST_ASSERT_EQUAL(33, r.cutoff);
+  TEST_ASSERT_EQUAL(99, r.reso);
+  TEST_ASSERT_EQUAL(-40, r.fenv);
+  TEST_ASSERT_EQUAL(7, r.fAtk);
+  TEST_ASSERT_EQUAL(88, r.fDec);
+  TEST_ASSERT_EQUAL(127, r.keytrack);
+}
+
+void test_file_without_fltr() {
+  a.instruments[0].fltMode = static_cast<uint8_t>(FltMode::Lp);
+  a.instruments[0].cutoff = 10;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"FLTR"});
+  TEST_ASSERT_FALSE(hasChunk(f, "FLTR"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Off), b.instruments[0].fltMode);
+  TEST_ASSERT_EQUAL(127, b.instruments[0].cutoff);
+}
+
+void test_fltr_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> in = {1};
+  std::vector<uint8_t> r(8, 0xFF);
+  r[3] = 100;  // fenv
+  in.insert(in.end(), r.begin(), r.end());
+  putChunk(f, "FLTR", in);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const Instrument& m = b.instruments[0];
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Off), m.fltMode);
+  TEST_ASSERT_EQUAL(127, m.cutoff);
+  TEST_ASSERT_EQUAL(127, m.reso);
+  TEST_ASSERT_EQUAL(63, m.fenv);
+  TEST_ASSERT_EQUAL(127, m.fAtk);
+  TEST_ASSERT_EQUAL(127, m.fDec);
+  TEST_ASSERT_EQUAL(127, m.keytrack);
+  TEST_ASSERT_EQUAL(127, m.send);
+}
+
+void test_audi_delay_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 0, 200, 255, 128});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(1, b.dlyTime);
+  TEST_ASSERT_EQUAL(127, b.dlyFb);
+  TEST_ASSERT_EQUAL(127, b.dlyTone);
+  TEST_ASSERT_EQUAL(127, b.dlyLevel);
+  f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 40, 0, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(kDlyTimeMax, b.dlyTime);
+  TEST_ASSERT_EQUAL(0, b.dlyLevel);
+}
+
+void test_drum_type_roundtrip() {
+  Instrument& m = a.instruments[2];
+  m.type = InstrType::Drum;
+  drumSetMachine(m, static_cast<uint8_t>(DrumMachine::Cy9));
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_TRUE(b.instruments[2].type == InstrType::Drum);
+  TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Cy9), b.instruments[2].machine);
+}
+
+void test_fm_machine_out_of_range() {
+  Instrument& m = a.instruments[3];
+  m.type = InstrType::Fm;
+  m.machine = 12;  // a DRUM number on an FM instrument
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(0, b.instruments[3].machine);
+}
+
+void test_slices_roundtrip() {
+  a.reset();
+  Instrument& m = a.instruments[3];
+  m.type = InstrType::Sample;
+  m.sliceMode = static_cast<uint8_t>(SliceMode::Note);
+  m.chopMode = static_cast<uint8_t>(ChopMode::Trans);
+  m.chopN = 12;
+  m.chopThresh = 70;
+  m.sliceCount = 3;
+  m.slices[0] = 0x100;
+  m.slices[1] = 0x2000;
+  m.slices[2] = 0x9000;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SLCE"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  const Instrument& r = b.instruments[3];
+  TEST_ASSERT_EQUAL(static_cast<int>(SliceMode::Note), r.sliceMode);
+  TEST_ASSERT_EQUAL(static_cast<int>(ChopMode::Trans), r.chopMode);
+  TEST_ASSERT_EQUAL(12, r.chopN);
+  TEST_ASSERT_EQUAL(70, r.chopThresh);
+  TEST_ASSERT_EQUAL(3, r.sliceCount);
+  TEST_ASSERT_EQUAL_HEX16(0x100, r.slices[0]);
+  TEST_ASSERT_EQUAL_HEX16(0x2000, r.slices[1]);
+  TEST_ASSERT_EQUAL_HEX16(0x9000, r.slices[2]);
+  const Instrument& z = b.instruments[0];
+  TEST_ASSERT_EQUAL(0, z.sliceCount);
+  TEST_ASSERT_EQUAL(0, z.sliceMode);
+  TEST_ASSERT_EQUAL(8, z.chopN);
+  TEST_ASSERT_EQUAL(50, z.chopThresh);
+}
+
+static void putSliceRec(uint8_t* r, uint8_t count) {
+  memset(r, 0, kSliceRecSize);
+  r[4] = count;
+  const uint16_t pos[3] = {10, 5, 20};
+  for (int i = 0; i < 3; ++i) {
+    r[8 + 2 * i] = static_cast<uint8_t>(pos[i]);
+    r[9 + 2 * i] = static_cast<uint8_t>(pos[i] >> 8);
+  }
+}
+
+void test_slices_bad_order_truncated() {
+  uint8_t r[kSliceRecSize];
+  Instrument m;
+  putSliceRec(r, 3);
+  unpackSlices(r, m);
+  TEST_ASSERT_EQUAL(1, m.sliceCount);
+  TEST_ASSERT_EQUAL(10, m.slices[0]);
+  putSliceRec(r, 40);
+  r[0] = 9;    // sliceMode out of range
+  r[1] = 9;    // chopMode out of range
+  r[2] = 1;    // chopN below 2
+  r[3] = 200;  // chopThresh over 100
+  Instrument n;
+  unpackSlices(r, n);
+  TEST_ASSERT_EQUAL(1, n.sliceCount);
+  TEST_ASSERT_EQUAL(0, n.sliceMode);
+  TEST_ASSERT_EQUAL(0, n.chopMode);
+  TEST_ASSERT_EQUAL(2, n.chopN);
+  TEST_ASSERT_EQUAL(100, n.chopThresh);
+}
+
+void test_slices_count_clamped() {
+  uint8_t r[kSliceRecSize];
+  memset(r, 0, sizeof(r));
+  r[4] = 40;
+  for (int i = 0; i < kMaxSlices; ++i) {
+    const uint16_t v = static_cast<uint16_t>(100 + i * 1000);
+    r[8 + 2 * i] = static_cast<uint8_t>(v);
+    r[9 + 2 * i] = static_cast<uint8_t>(v >> 8);
+  }
+  Instrument m;
+  unpackSlices(r, m);
+  TEST_ASSERT_EQUAL(kMaxSlices, m.sliceCount);
+  TEST_ASSERT_EQUAL(100 + 31 * 1000, m.slices[31]);
+}
+
+
+// ---- SYNTH fields (SYNI) and the project wavetable list (WTBL) ----
+
+static void fillSyn(Instrument& m) {
+  m.type = InstrType::Synth;
+  m.synOsc[0] = static_cast<uint8_t>(SynOsc::Wt);
+  m.synOsc[1] = static_cast<uint8_t>(SynOsc::Square);
+  strcpy(m.synWt[0], "pad_table_name16");  // 16 chars, no terminator in the file
+  strcpy(m.synWt[1], "*SAWSQR");
+  m.synSemi = -12;
+  m.synSync = true;
+  m.synSub = 99;
+  m.synSubOct = 1;
+  m.synNoise = 17;
+  m.synEAtk = 5;
+  m.synEDec = 120;
+}
+
+void test_syn_roundtrip() {
+  fillSyn(a.instruments[4]);
+  a.wavetableCount = 2;
+  strcpy(a.wavetables[0].name, "pad");
+  a.wavetables[0].crc = 0xCAFEBABE;
+  strcpy(a.wavetables[1].name, "pad_table_name16");
+  a.wavetables[1].crc = 7;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SYNI"));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "WTBL"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  const Instrument &m = a.instruments[4], &r = b.instruments[4];
+  TEST_ASSERT_TRUE(r.type == InstrType::Synth);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(m.synOsc, r.synOsc, 2);
+  TEST_ASSERT_EQUAL_STRING(m.synWt[0], r.synWt[0]);
+  TEST_ASSERT_EQUAL_STRING(m.synWt[1], r.synWt[1]);
+  TEST_ASSERT_EQUAL(m.synSemi, r.synSemi);
+  TEST_ASSERT_EQUAL(m.synSync, r.synSync);
+  TEST_ASSERT_EQUAL(m.synSub, r.synSub);
+  TEST_ASSERT_EQUAL(m.synSubOct, r.synSubOct);
+  TEST_ASSERT_EQUAL(m.synNoise, r.synNoise);
+  TEST_ASSERT_EQUAL(m.synEAtk, r.synEAtk);
+  TEST_ASSERT_EQUAL(m.synEDec, r.synEDec);
+  TEST_ASSERT_EQUAL(2, b.wavetableCount);
+  TEST_ASSERT_EQUAL_STRING("pad", b.wavetables[0].name);
+  TEST_ASSERT_EQUAL_HEX32(0xCAFEBABE, b.wavetables[0].crc);
+  TEST_ASSERT_EQUAL_STRING("pad_table_name16", b.wavetables[1].name);
+  TEST_ASSERT_EQUAL_HEX32(7, b.wavetables[1].crc);
+}
+
+void test_file_without_syn_chunks() {
+  fillSyn(a.instruments[0]);
+  a.wavetableCount = 1;
+  strcpy(a.wavetables[0].name, "pad");
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"SYNI", "WTBL"});
+  TEST_ASSERT_FALSE(hasChunk(f, "SYNI"));
+  b.wavetableCount = 3;
+  b.instruments[0].synSub = 50;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const Instrument def;
+  const Instrument& r = b.instruments[0];
+  TEST_ASSERT_EQUAL(0, b.wavetableCount);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(def.synOsc, r.synOsc, 2);
+  TEST_ASSERT_EQUAL_STRING("", r.synWt[0]);
+  TEST_ASSERT_EQUAL(def.synSemi, r.synSemi);
+  TEST_ASSERT_EQUAL(def.synSub, r.synSub);
+  TEST_ASSERT_EQUAL(def.synEDec, r.synEDec);
+}
+
+void test_syni_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> in = {1};
+  std::vector<uint8_t> r(kSynRecSize, 0xFF);
+  r[0] = 9;    // osc 1
+  r[1] = 200;  // osc 2
+  r[34] = 100; // semi
+  in.insert(in.end(), r.begin(), r.end());
+  putChunk(f, "SYNI", in);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const Instrument& m = b.instruments[0];
+  TEST_ASSERT_EQUAL(0, m.synOsc[0]);
+  TEST_ASSERT_EQUAL(0, m.synOsc[1]);
+  TEST_ASSERT_EQUAL(16, static_cast<int>(strlen(m.synWt[0])));
+  TEST_ASSERT_EQUAL(16, static_cast<int>(strlen(m.synWt[1])));
+  TEST_ASSERT_EQUAL(24, m.synSemi);
+  TEST_ASSERT_TRUE(m.synSync);
+  TEST_ASSERT_EQUAL(127, m.synSub);
+  TEST_ASSERT_EQUAL(1, m.synSubOct);
+  TEST_ASSERT_EQUAL(127, m.synNoise);
+  TEST_ASSERT_EQUAL(127, m.synEAtk);
+  TEST_ASSERT_EQUAL(127, m.synEDec);
+  f = fileHeader();
+  in = {1};
+  r.assign(kSynRecSize, 0);
+  r[34] = static_cast<uint8_t>(-100);
+  r[35] = 5;
+  in.insert(in.end(), r.begin(), r.end());
+  putChunk(f, "SYNI", in);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(-24, b.instruments[0].synSemi);
+  TEST_ASSERT_TRUE(b.instruments[0].synSync);
+}
+
+static std::vector<uint8_t> wtblChunk(std::initializer_list<const char*> names) {
+  std::vector<uint8_t> c = {static_cast<uint8_t>(names.size())};
+  uint8_t crc = 1;
+  for (const char* nm : names) {
+    std::vector<uint8_t> r(20, 0);
+    memcpy(r.data(), nm, strlen(nm));
+    r[16] = crc++;
+    c.insert(c.end(), r.begin(), r.end());
+  }
+  return c;
+}
+
+void test_wtbl_dup_bad_and_repeat() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "WTBL", wtblChunk({"old"}));
+  putChunk(f, "WTBL", wtblChunk({"pad", "", "PAD", "*SAWSQR", "a.b", "lead"}));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(2, b.wavetableCount);  // the second chunk replaces the first
+  TEST_ASSERT_EQUAL_STRING("pad", b.wavetables[0].name);
+  TEST_ASSERT_EQUAL_HEX32(1, b.wavetables[0].crc);
+  TEST_ASSERT_EQUAL_STRING("lead", b.wavetables[1].name);
+  TEST_ASSERT_EQUAL_HEX32(6, b.wavetables[1].crc);
+}
+
+// ---- KITS ----
+
+void test_kits_round_trip_and_defaults() {
+  a.reset();
+  Instrument& k = a.instruments[2];
+  instrSetType(k, InstrType::Kit);
+  strcpy(k.kit[0].sample, "kick");
+  k.kit[0].vol = 90;
+  k.kit[0].pitch = -3;
+  k.kit[0].decay = 40;
+  k.kit[5].instr = 7;
+  k.kit[5].note = 100;
+  strcpy(k.kit[7].sample, "sixteen_chars_nm");  // 16 chars, no terminator in the file
+  a.instruments[0].kit[3].note = 63;             // lanes of a non-KIT instrument are stored too
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  const Instrument& r = b.instruments[2];
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Kit), static_cast<int>(r.type));
+  TEST_ASSERT_EQUAL_STRING("kick", r.kit[0].sample);
+  TEST_ASSERT_EQUAL(90, r.kit[0].vol);
+  TEST_ASSERT_EQUAL(-3, r.kit[0].pitch);
+  TEST_ASSERT_EQUAL(40, r.kit[0].decay);
+  TEST_ASSERT_EQUAL(kNoInstr, r.kit[0].instr);
+  TEST_ASSERT_EQUAL(60, r.kit[0].note);
+  TEST_ASSERT_EQUAL(7, r.kit[5].instr);
+  TEST_ASSERT_EQUAL(100, r.kit[5].note);
+  TEST_ASSERT_EQUAL_STRING("sixteen_chars_nm", r.kit[7].sample);
+  TEST_ASSERT_EQUAL(67, r.kit[7].note);  // kitSetDefaults: 60 + lane
+  TEST_ASSERT_EQUAL(63, b.instruments[0].kit[3].note);
+
+  // An older file without KITS: every instrument keeps Instrument() lanes (none of them is a KIT).
+  std::vector<uint8_t> f = fileHeader();
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(kNoInstr, b.instruments[0].kit[0].instr);
+  TEST_ASSERT_EQUAL(100, b.instruments[0].kit[0].vol);
+  TEST_ASSERT_EQUAL_STRING("", b.instruments[0].kit[0].sample);
+  TEST_ASSERT_EQUAL(60, b.instruments[0].kit[7].note);
+}
+
+void test_kits_garbage_clamped() {
+  std::vector<uint8_t> rec(16 * 176, 0);
+  rec[17] = 40;   // lane 0 instr -> kNoInstr
+  rec[18] = 200;  // vol -> 127
+  rec[19] = 100;  // pitch -> 24
+  rec[21] = 200;  // note -> 60
+  rec[22 + 19] = static_cast<uint8_t>(-100);  // lane 1 pitch -> -24
+  rec[22 + 21] = 200;                         // lane 1 note -> 61
+  std::vector<uint8_t> body = {16};
+  body.insert(body.end(), rec.begin(), rec.end());
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "KITS", body);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(kNoInstr, b.instruments[0].kit[0].instr);
+  TEST_ASSERT_EQUAL(127, b.instruments[0].kit[0].vol);
+  TEST_ASSERT_EQUAL(24, b.instruments[0].kit[0].pitch);
+  TEST_ASSERT_EQUAL(60, b.instruments[0].kit[0].note);
+  TEST_ASSERT_EQUAL(-24, b.instruments[0].kit[1].pitch);
+  TEST_ASSERT_EQUAL(61, b.instruments[0].kit[1].note);
+}
+
+void test_patn_vel_mask_only_on_drum_tracks() {
+  a.reset();
+  instrSetType(a.instruments[2], InstrType::Kit);
+  a.tracks[1].instr = 2;
+  a.patterns[0].steps[1][3].note = 100;
+  a.patterns[0].steps[1][3].vel = 0xA5;  // lane mask on the drum track
+  a.patterns[0].steps[0][3].note = 60;
+  a.patterns[0].steps[0][3].vel = 0xA5;  // garbage on a melodic track: masked to 0..127
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL_HEX8(0xA5, b.patterns[0].steps[1][3].vel);
+  TEST_ASSERT_EQUAL_HEX8(0x25, b.patterns[0].steps[0][3].vel);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
+  RUN_TEST(test_samples_bad_names_skipped);
   RUN_TEST(test_round_trip_full_project);
   RUN_TEST(test_load_resets_target_first);
   RUN_TEST(test_empty_patterns_not_written);
@@ -715,14 +1355,40 @@ int main() {
   RUN_TEST(test_patn_length_zero);
   RUN_TEST(test_patn_length_over_max);
   RUN_TEST(test_patn_size_mismatch);
+  RUN_TEST(test_patn_header_only_len_nonzero);
+  RUN_TEST(test_patn_eight_tracks_loads);
+  RUN_TEST(test_patn_sixteen_tracks_round_trip);
   RUN_TEST(test_trks_count_not_eight);
   RUN_TEST(test_unknown_chunk_huge_size);
   RUN_TEST(test_proj_chunk_larger_is_skipped);
   RUN_TEST(test_audio_chunks_written);
   RUN_TEST(test_old_file_gets_audio_defaults);
+  RUN_TEST(test_old_file_tout_new_tracks_default_int);
   RUN_TEST(test_audio_garbage_clamped);
   RUN_TEST(test_inst_count_over_max);
   RUN_TEST(test_audio_chunks_too_small);
   RUN_TEST(test_fmin_garbage_clamped);
+  RUN_TEST(test_samples_roundtrip);
+  RUN_TEST(test_samples_empty_list_written);
+  RUN_TEST(test_samples_dup_and_empty_skipped);
+  RUN_TEST(test_samples_count_over_max);
+  RUN_TEST(test_samples_chunk_too_small);
+  RUN_TEST(test_samples_two_chunks_last_wins);
+  RUN_TEST(test_fltr_roundtrip);
+  RUN_TEST(test_file_without_fltr);
+  RUN_TEST(test_fltr_garbage_clamped);
+  RUN_TEST(test_audi_delay_garbage_clamped);
+  RUN_TEST(test_drum_type_roundtrip);
+  RUN_TEST(test_fm_machine_out_of_range);
+  RUN_TEST(test_slices_roundtrip);
+  RUN_TEST(test_slices_bad_order_truncated);
+  RUN_TEST(test_slices_count_clamped);
+  RUN_TEST(test_syn_roundtrip);
+  RUN_TEST(test_file_without_syn_chunks);
+  RUN_TEST(test_syni_garbage_clamped);
+  RUN_TEST(test_wtbl_dup_bad_and_repeat);
+  RUN_TEST(test_kits_round_trip_and_defaults);
+  RUN_TEST(test_kits_garbage_clamped);
+  RUN_TEST(test_patn_vel_mask_only_on_drum_tracks);
   return UNITY_END();
 }

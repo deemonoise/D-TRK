@@ -5,7 +5,7 @@
 namespace hw {
 
 // microSD over SPI. UI task only; the engine never touches the card.
-bool sdBegin();  // (re)mounts, creates /projects, /midi and /samples
+bool sdBegin();  // (re)mounts, creates /projects, /midi, /samples, /wavetables and /presets/<TYPE>
 bool sdReady();
 fs::FS& sdFs();
 
@@ -40,6 +40,7 @@ class FileSource : public mt::ByteSource {
 bool sdNextEntry(fs::File& dir, String& name, bool& isDir);
 
 constexpr int kNameMax = 96;  // listed file / folder name, incl. terminator
+// The listings below keep the alphabetically first max names when a folder holds more.
 // Names in dir ending with ext (e.g. ".mtp"), extension stripped, sorted. Returns the count.
 // accept (optional) filters base names, e.g. storage::validName.
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max,

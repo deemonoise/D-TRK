@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "hot.h"
 #include "synth_osc.h"
 
 namespace mt {
@@ -29,11 +30,16 @@ class Env {
       }
     }
   }
+  // Release over ms, whatever the release time (choke).
+  void fade(uint16_t ms) {
+    rLen_ = samples(ms);
+    gate(false);
+  }
   void kill() {
     stage_ = Stage::Idle;
     level_ = 0;
   }
-  float next() {
+  MT_INLINE float next() {
     switch (stage_) {
       case Stage::Attack:
         level_ += aStep_;

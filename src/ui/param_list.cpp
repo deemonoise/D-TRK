@@ -20,13 +20,19 @@ void ParamList::ensureVisible() {
   if (top_ < 0) top_ = 0;
 }
 
-void ParamList::onInput(const hw::InputEvent& ev) {
+int ParamList::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
-  if (count_ == 0) return;
+  if (count_ == 0) return ev.type == InputType::EncTurn && !wrap_ && ev.delta ? (ev.delta < 0 ? -1 : 1) : 0;
   switch (ev.type) {
     case InputType::EncTurn:
       if (edit_) {
         edit(ev.delta * (ev.shift ? 10 : 1));
+      } else if (!wrap_ && (sel_ + ev.delta < 0 || sel_ + ev.delta >= count_)) {
+        // Overshoot: stop on the end row first; past it only from the end row itself.
+        const int end = ev.delta < 0 ? 0 : count_ - 1;
+        if (sel_ == end) return ev.delta < 0 ? -1 : 1;
+        sel_ = end;
+        ensureVisible();
       } else {
         sel_ = ((sel_ + ev.delta) % count_ + count_) % count_;
         ensureVisible();
@@ -38,6 +44,7 @@ void ParamList::onInput(const hw::InputEvent& ev) {
       break;
     default: break;
   }
+  return 0;
 }
 
 int ParamList::rowAt(int y) const {

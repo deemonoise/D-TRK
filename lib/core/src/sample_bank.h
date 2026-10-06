@@ -50,6 +50,8 @@ class SampleBank {
   bool write(const int16_t* d, uint32_t frames);
   bool commit();
   void abort() { adding_ = false; }
+  // True if begin would find room for frames now (table slot, size limit, a hole large enough).
+  bool fits(uint32_t frames) const;
   bool remove(int i);
   // New name for entry i (the entry is re-sorted). False on a bad name, one taken by another
   // entry (ignoring case) or a failed table save (then nothing changes).
@@ -65,6 +67,8 @@ class SampleBank {
   // Changes with every successful commit / remove / rename / moved sample (cache key for UI).
   uint32_t generation() const { return gen_; }
   const int16_t* data(int i) const;  // via mapped(), nullptr without a mapping
+  // n frames of entry i from frame on, through BankFlash::read. False past the end.
+  bool readData(int i, uint32_t frame, int16_t* d, uint32_t n) const;
 
  private:
   static uint32_t span(uint32_t frames) { return (frames * 2 + kBankAlign - 1) / kBankAlign * kBankAlign; }

@@ -44,6 +44,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   } else {
     spr_->setFont(font());
   }
+  Serial.printf("psram free %u KB\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
   // Master volume is a device setting: it overrides the project's and is kept in NVS.
   p_->masterVol = storage::loadVolume(p_->masterVol);
@@ -115,12 +116,17 @@ void App::onInput(const hw::InputEvent& ev) {
 
 void App::onTouch(const TouchEvent& ev) {
   dirty_ = true;
+  if (ev.type == TouchType::HDrag) {
+    const int y0 = ev.y0;
+    if (!menu_.isOpen() && y0 >= kAreaY && y0 < kTabY && screen()->wantsHDrag()) screen()->onTouch(ev);
+    return;
+  }
   if (menu_.isOpen()) {
     menu_.onTouch(ev);
     return;
   }
   if (ev.type == TouchType::Drag) {
-    const int y0 = touch_.startY();
+    const int y0 = ev.y0;
     if (y0 >= kAreaY && y0 < kTabY) screen()->onTouch(ev);  // ignore drags started on the bars
     return;
   }
@@ -178,32 +184,36 @@ bool App::doUndo() {
   return true;
 }
 
-// Grid takes selection and note entry; Shift + N mutes on every other screen too.
+// Button n (0-7) addresses track n of the half holding the cursor (1-8 or 9-16). Grid takes
+// selection and note entry, the sample editor plays slices (button index); Shift + N mutes on
+// every other screen too.
 void App::trackKey(int n, bool shift) {
-  if (n < 0 || n >= mt::kTracks) return;
+  if (n < 0 || n >= mt::kTrackLeds) return;
+  const int track = (curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + n;
   if (tab_ == Tab::Grid && grid_.trackKey(n, shift)) return;
+  if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
   if (!shift) {
-    setCurTrack(n);
+    setCurTrack(track);
     return;
   }
-  mt::TrackCfg& t = p_->tracks[n];
+  mt::TrackCfg& t = p_->tracks[track];
   engine::lockProject();
   t.mute = !t.mute;
   engine::unlockProject();
   markDirty();
   char msg[16];
-  snprintf(msg, sizeof(msg), "TRACK %d %s", n + 1, t.mute ? "MUTE" : "ON");
+  snprintf(msg, sizeof(msg), "TRACK %d %s", track + 1, t.mute ? "MUTE" : "ON");
   toast(msg);
 }
 
 void App::updateLeds(uint32_t now) {
-  const uint8_t act = engine::takeActivity();
-  uint8_t flash = 0;
+  const uint16_t act = engine::takeActivity();
+  uint16_t flash = 0;
   for (int i = 0; i < mt::kTracks; ++i) {
     if (act & (1u << i)) flashUntil_[i] = now + kFlashMs;
-    if (static_cast<int32_t>(flashUntil_[i] - now) > 0) flash |= static_cast<uint8_t>(1u << i);
+    if (static_cast<int32_t>(flashUntil_[i] - now) > 0) flash |= static_cast<uint16_t>(1u << i);
   }
-  hw::trackLeds(mt::trackLedMask(curTrack_, flash));
+  hw::trackLeds(mt::trackLedMaskHalf(curTrack_, flash));
 }
 
 // Writes the volume to NVS once it has stayed put for a second (an encoder sweep = one write).
@@ -223,6 +233,43 @@ void App::saveVolumeIdle(uint32_t now) {
   volChangedAt_ = 0;
 }
 
+void App::showProgress(const char* label, uint32_t done, uint32_t total) {
+  const int pct = total ? static_cast<int>(static_cast<uint64_t>(done < total ? done : total) * 100 / total) : 100;
+  const uint32_t now = millis();
+  const bool fresh = strncmp(label, progLabel_, sizeof(progLabel_) - 1) != 0;
+  if (!fresh && (pct == progPct_ || (now - progMs_ < 200 && pct < 100))) return;
+  strlcpy(progLabel_, label, sizeof(progLabel_));
+  progPct_ = pct;
+  progMs_ = now;
+  snprintf(progMsg_, sizeof(progMsg_), "%s %d%%", progLabel_, pct);
+  showBusy(progMsg_);
+}
+
+void App::syncProgress(const char* file, uint32_t done, uint32_t total, void* app) {
+  char label[32];
+  snprintf(label, sizeof(label), "SAMPLE %s", file);
+  static_cast<App*>(app)->showProgress(label, done, total);
+}
+
+void App::loadedToast(const char* what, int missing, bool folderFail) {
+  char parts[3][40];
+  int n = 0;
+  if (what && what[0]) strlcpy(parts[n++], what, sizeof(parts[0]));
+  if (missing > 0) snprintf(parts[n++], sizeof(parts[0]), "%d SAMPLES MISSING", missing);
+  if (folderFail) strlcpy(parts[n++], "SAMPLES NOT SAVED", sizeof(parts[0]));
+  for (int first = 0; first < n; ++first) {
+    char msg[128] = "";
+    for (int k = first; k < n; ++k) {
+      if (msg[0]) strlcat(msg, ", ", sizeof(msg));
+      strlcat(msg, parts[k], sizeof(msg));
+    }
+    if (strlen(msg) < sizeof(toast_) || first == n - 1) {
+      toast(msg);
+      return;
+    }
+  }
+}
+
 void App::toast(const char* msg) {
   strlcpy(toast_, msg, sizeof(toast_));
   toastUntil_ = millis() + kToastMs;
@@ -239,7 +286,7 @@ void App::showBusy(const char* msg) {
 
 void App::tick() {
   TouchEvent te;
-  if (touch_.poll(*lcd_, te)) onTouch(te);
+  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag())) onTouch(te);
 
   const engine::Status s = engine::status();
   if (!(s == status_)) {
@@ -272,8 +319,9 @@ void App::tick() {
   }
 }
 
-// Average audio load over the last window: total render time / total block duration. Red when a
-// block overran its period (an audible gap) or the average is >= 85 %, yellow >= 60 %. A window
+// Average audio load over the last window: total render time / total block duration. Red when
+// the audio stalled (an audible gap; held kCpuRedMs to be seen) or the average is >= 85 %, yellow
+// when a block overran its period (covered by the DMA queue) or the average is >= 60 %. A window
 // without blocks (audio parked) keeps the last value.
 void App::pollCpu(uint32_t now) {
   if (now - cpuAt_ < kCpuMs) return;
@@ -282,7 +330,9 @@ void App::pollCpu(uint32_t now) {
   if (!l.blocks) return;
   constexpr uint32_t kBlockUs = audio::kBlock * 1000000u / audio::kRate;
   const int pct = static_cast<int>(static_cast<uint64_t>(l.sumUs) * 100 / (static_cast<uint64_t>(l.blocks) * kBlockUs));
-  const uint16_t color = (l.peakUs > kBlockUs || pct >= 85) ? kRed : (pct >= 60 ? kYellow : kDim);
+  if (l.stalls) cpuRedUntil_ = now + kCpuRedMs;
+  const bool red = static_cast<int32_t>(cpuRedUntil_ - now) > 0 || pct >= 85;
+  const uint16_t color = red ? kRed : ((l.peakUs > kBlockUs || pct >= 60) ? kYellow : kDim);
   if (pct != cpu_ || color != cpuColor_) {
     cpu_ = pct;
     cpuColor_ = color;

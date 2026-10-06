@@ -67,7 +67,7 @@ class BankScreen : public Screen {
   int copyFrom_ = -1;  // waiting for the copy target
   bool blink_ = false;
   bool masksStale_ = true;
-  uint8_t masks_[mt::kPatterns] = {0};  // bit t = track t has data within the length
+  uint16_t masks_[mt::kPatterns] = {0};  // bit t = track t has data within the length
   int row_ = 0;       // selected chain row
   int top_ = 0;       // first visible chain row
   int dragAcc_ = 0;   // drag px not yet turned into rows / edits

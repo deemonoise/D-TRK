@@ -42,9 +42,25 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                       [this](int d) {
                         app_.project().masterVol = static_cast<uint8_t>(clampi(app_.project().masterVol + d, 0, mt::kMasterVolMax));
                       }};
+  auto u7 = [this](uint8_t mt::Project::*f) {
+    return [this, f](int d) { app_.project().*f = static_cast<uint8_t>(clampi(app_.project().*f + d, 0, 127)); };
+  };
+  auto num = [this](uint8_t mt::Project::*f) {
+    return [this, f](char* o, int n) { snprintf(o, n, "%u", app_.project().*f); };
+  };
+  auto noDelay = [this] { return app_.project().dlyLevel == 0; };
+  params_[kDlyTime] = {"Delay", [this](char* o, int n) { snprintf(o, n, "%u/16", app_.project().dlyTime); },
+                       [this](int d) {
+                         app_.project().dlyTime = static_cast<uint8_t>(clampi(app_.project().dlyTime + d, 1, mt::kDlyTimeMax));
+                       },
+                       noDelay};
+  params_[kDlyFb] = {"Feedback", num(&mt::Project::dlyFb), u7(&mt::Project::dlyFb), noDelay};
+  params_[kDlyTone] = {"Tone", num(&mt::Project::dlyTone), u7(&mt::Project::dlyTone), noDelay};
+  params_[kDlyLevel] = {"Dly level", num(&mt::Project::dlyLevel), u7(&mt::Project::dlyLevel)};
   params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
                        [this](int d) { app_.project().preview = d > 0; }};
   list_.setParams(params_, kRows);
+  list_.setVisibleRows(kListRows);
   list_.setOnEdit([this] { app_.markDirty(); });
 }
 

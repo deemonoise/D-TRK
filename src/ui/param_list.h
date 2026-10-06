@@ -18,6 +18,7 @@ struct Param {
 // Rows of "label  value". Turn = select, click = edit (value red), turn while editing = edit(delta),
 // Shift = x10. Tap = select, tap on the selected row = edit. Drag while editing = edit(-dy / 16).
 // With setVisibleRows() smaller than the row count the list scrolls (Drag while not editing).
+// setWrap(false): turning past an end returns -1 / +1 (pages) and keeps the selection.
 class ParamList {
  public:
   static constexpr int kRowH = 24;
@@ -45,6 +46,7 @@ class ParamList {
     if (sel_ < 0) sel_ = 0;
     ensureVisible();
   }
+  void setWrap(bool on) { wrap_ = on; }
   bool editing() const { return edit_; }
   void setEdit(bool on) {
     edit_ = on;
@@ -52,7 +54,8 @@ class ParamList {
   }
   // Called after every edit (dirty flag).
   void setOnEdit(std::function<void()> f) { onEdit_ = std::move(f); }
-  void onInput(const hw::InputEvent& ev);
+  // 0, or -1 / +1: a turn (wrap off, not editing) would leave before the first / past the last row.
+  int onInput(const hw::InputEvent& ev);
   void onTouch(const TouchEvent& ev);
   void edit(int delta);
   // Row under y, or -1.
@@ -71,6 +74,7 @@ class ParamList {
   int visible_ = 0;  // 0 = all
   int dragAcc_ = 0;  // drag px not yet turned into rows
   bool edit_ = false;
+  bool wrap_ = true;
   int y_;  // top of the first row, updated by draw()
   std::function<void()> onEdit_;
 };
