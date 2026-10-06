@@ -613,9 +613,9 @@ void test_ars_uses_arp_offsets_or_octave_on_midi() {
   s.fx[1] = {Fx::TIE, 0};
   ExpandOut out;
   TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
-  TEST_ASSERT_EQUAL(2, out.arp.n);  // root and an octave up
-  TEST_ASSERT_EQUAL(48, out.arp.notes[0]);
-  TEST_ASSERT_EQUAL(60, out.arp.notes[1]);
+  TEST_ASSERT_EQUAL(2, out.arp.count());  // root and an octave up
+  TEST_ASSERT_EQUAL(48, out.arp.note(0));
+  TEST_ASSERT_EQUAL(60, out.arp.note(1));
   TEST_ASSERT_EQUAL(3, out.arp.ch);
   TEST_ASSERT_EQUAL(gatePercent(50), out.arp.gate);
   TEST_ASSERT_FALSE(out.tie);  // an arp ignores TIE
@@ -625,6 +625,36 @@ void test_ars_uses_arp_offsets_or_octave_on_midi() {
   TEST_ASSERT_EQUAL(3, out.arp.n);
   TEST_ASSERT_EQUAL(52, out.arp.notes[1]);
   TEST_ASSERT_EQUAL(55, out.arp.notes[2]);
+}
+
+void test_ars_octaves() {
+  TrackCfg t;
+  t.out = TrackOut::Midi;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARS, 0x51};  // 2 octaves, DOWN, every step
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, out.arp.n);
+  TEST_ASSERT_EQUAL(2, out.arp.oct);
+  TEST_ASSERT_EQUAL(6, out.arp.count());
+  TEST_ASSERT_EQUAL(79, out.arp.note(5));  // G an octave up
+  TEST_ASSERT_EQUAL(79, out.ev[0].note);   // DOWN starts at the top of the range
+  // The root alone: its octaves, at least two.
+  s.fx[0] = {};
+  s.fx[1] = {Fx::ARS, 0x81};  // 3 octaves
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(1, out.arp.n);
+  TEST_ASSERT_EQUAL(3, out.arp.count());
+  TEST_ASSERT_EQUAL(84, out.arp.note(2));
+  s.fx[1] = {Fx::ARS, kArsDefault};
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(2, out.arp.count());
+  // Above 127: an octave down.
+  s.note = 120;
+  s.fx[1] = {Fx::ARS, 0xC1};
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(120, out.arp.note(1));
 }
 
 void test_ars_absent_without_fx() {
@@ -690,6 +720,7 @@ int main() {
   RUN_TEST(test_arp_00_chd_normal_chord);
   RUN_TEST(test_ars_chord_plays_first_note_and_hands_over_the_arp);
   RUN_TEST(test_ars_uses_arp_offsets_or_octave_on_midi);
+  RUN_TEST(test_ars_octaves);
   RUN_TEST(test_ars_absent_without_fx);
   RUN_TEST(test_arp_index_modes);
   return UNITY_END();

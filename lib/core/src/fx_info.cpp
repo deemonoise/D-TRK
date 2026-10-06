@@ -50,7 +50,7 @@ constexpr Info kInfo[] = {
     {"DRV", "DRIVE", 0, 127, 64, false},       // DRV: drive lock
     {"RVB", "REVERB SEND", 0, 127, 64, false}, // RVB: reverb send lock
     {"ARM", "ARP MODE", 0, 0, kArmDefault, false},  // ARM: own ordering (rate 1..8, then mode)
-    {"ARS", "STEP ARP", 0, 0, kArsDefault, false},  // ARS: as ARM (steps per note, then mode)
+    {"ARS", "STEP ARP", 0, 0, kArsDefault, false},  // ARS: steps per note, octaves, then mode
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -135,8 +135,13 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::ARP:
     case Fx::ACC: snprintf(out, 5, " %02X", v); return;
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
-    case Fx::ARM:
-    case Fx::ARS: snprintf(out, 5, " %c%d", "UDBR"[(v >> 4) & 3], armRate(v)); return;
+    case Fx::ARM: snprintf(out, 5, " %c%d", "UDBR"[(v >> 4) & 3], armRate(v)); return;
+    case Fx::ARS: {  // " U1"; with more than one octave the count follows: "U12"
+      const int oct = ((v >> 6) & 3) + 1;
+      if (oct == 1) snprintf(out, 5, " %c%d", "UDBR"[(v >> 4) & 3], armRate(v));
+      else snprintf(out, 5, "%c%d%d", "UDBR"[(v >> 4) & 3], armRate(v), oct);
+      return;
+    }
     case Fx::CND:
       if (v == 0) snprintf(out, 5, "FST");
       else if (v == kCndFill) snprintf(out, 5, "FIL");
@@ -153,7 +158,14 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
     i = i < 0 ? 0 : (i >= kCndCount ? kCndCount - 1 : i);
     return cndValue(i);
   }
-  if (f == Fx::ARM || f == Fx::ARS) {  // index mode * 8 + rate - 1: the rate first, then the mode
+  if (f == Fx::ARS) {  // the steps first, then the octaves, then the mode
+    constexpr int kPerMode = kArmRateMax * kArsOctMax;
+    int i = ((v >> 4) & 3) * kPerMode + ((v >> 6) & 3) * kArmRateMax + armRate(v) - 1 + delta;
+    i = i < 0 ? 0 : (i >= kArmModes * kPerMode ? kArmModes * kPerMode - 1 : i);
+    const int mode = i / kPerMode, oct = i % kPerMode / kArmRateMax, rate = i % kArmRateMax + 1;
+    return static_cast<uint8_t>(oct << 6 | mode << 4 | rate);
+  }
+  if (f == Fx::ARM) {  // index mode * 8 + rate - 1: the rate first, then the mode
     int i = ((v >> 4) & 3) * kArmRateMax + armRate(v) - 1 + delta;
     i = i < 0 ? 0 : (i >= kArmModes * kArmRateMax ? kArmModes * kArmRateMax - 1 : i);
     return static_cast<uint8_t>(((i / kArmRateMax) << 4) | (i % kArmRateMax + 1));

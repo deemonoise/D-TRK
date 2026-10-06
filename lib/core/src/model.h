@@ -204,11 +204,12 @@ enum class Fx : uint8_t {
 // DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.
 // ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
 // kArmDefault (UP, 3) is the plain ARP. INT tracks only.
-// ARS (step arp, the sequencer's): mode << 4 | steps per note (1..kArmRateMax), the ARM modes. The
-// step plays the first arp note, the next steps without a note play the next ones (real notes, MIDI
-// too) until a note step, OFF or a pattern change; notes = CHD chord, else ARP 0 x y, else root +
-// octave. Not on drum tracks; ARP / ARM do not reach the synth on its step.
-constexpr uint8_t kArmModes = 4, kArmRateMax = 8, kArmDefault = 0x03, kArsDefault = 0x01;
+// ARS (step arp, the sequencer's): (octaves - 1) << 6 | mode << 4 | steps per note (1..kArmRateMax),
+// the ARM modes, 1..kArsOctMax octaves. The step plays the first arp note, the next steps without a
+// note play the next ones (real notes, MIDI too) until a note step, OFF or a pattern change; notes =
+// CHD chord, else ARP 0 x y, else the root (at least 2 octaves then), repeated an octave up per
+// extra octave. Not on drum tracks; ARP / ARM do not reach the synth on its step.
+constexpr uint8_t kArmModes = 4, kArmRateMax = 8, kArmDefault = 0x03, kArsDefault = 0x01, kArsOctMax = 4;
 // CND values beyond FST (0) and A:B (b = 2..8): FIL plays only while fill is held, NFL only while it is
 // not. Their low nibble (< 2) is never an A:B value.
 constexpr uint8_t kCndFill = 0x01, kCndNoFill = 0x02;

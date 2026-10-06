@@ -1974,6 +1974,21 @@ void test_step_arp_continues_over_loop_and_stops_on_pattern_change() {
   TEST_ASSERT_EQUAL(1, seq->pattern());
 }
 
+void test_step_arp_updown_over_two_octaves() {
+  Step& s = p->patterns[0].steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::ARP, 0x47};      // 60 64 67
+  s.fx[1] = {Fx::ARS, 0x61};      // 2 octaves, UPDOWN, every step
+  p->patterns[0].length = 64;
+  p->patterns[0].steps[0][12].note = kNoteOff;
+  seq->start(0, *sink);
+  run(0, 125000 * 13);
+  const std::vector<int> on = notesOn(0x90);
+  const int want[] = {60, 64, 67, 72, 76, 79, 76, 72, 67, 64, 60, 64};
+  TEST_ASSERT_EQUAL(12, on.size());
+  for (int i = 0; i < 12; ++i) TEST_ASSERT_EQUAL(want[i], on[i]);
+}
+
 void test_step_arp_on_int_track_uses_track_voices() {
   p->tracks[0].out = TrackOut::Int;
   Step& s = p->patterns[0].steps[0][0];
@@ -2120,6 +2135,7 @@ int main() {
   RUN_TEST(test_step_arp_plays_on_following_steps);
   RUN_TEST(test_step_arp_every_two_steps_until_next_note);
   RUN_TEST(test_step_arp_continues_over_loop_and_stops_on_pattern_change);
+  RUN_TEST(test_step_arp_updown_over_two_octaves);
   RUN_TEST(test_step_arp_on_int_track_uses_track_voices);
   return UNITY_END();
 }

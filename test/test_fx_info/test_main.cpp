@@ -97,7 +97,14 @@ void test_step_arp_fx() {
   TEST_ASSERT_EQUAL_STRING(" U1", fmt(Fx::ARS, kArsDefault));
   TEST_ASSERT_EQUAL_STRING(" D4", fmt(Fx::ARS, 0x14));
   TEST_ASSERT_EQUAL_HEX8(0x02, fxStep(Fx::ARS, 0x01, 1));
-  TEST_ASSERT_EQUAL_HEX8(0x11, fxStep(Fx::ARS, 0x08, 1));
+  // Octaves: after the 8 step counts of a mode come 2, 3, 4 octaves, then the next mode.
+  TEST_ASSERT_EQUAL_HEX8(0x41, fxStep(Fx::ARS, 0x08, 1));
+  TEST_ASSERT_EQUAL_STRING("U12", fmt(Fx::ARS, 0x41));
+  TEST_ASSERT_EQUAL_STRING("D34", fmt(Fx::ARS, 0xD3));
+  TEST_ASSERT_EQUAL_HEX8(0x11, fxStep(Fx::ARS, 0xC8, 1));
+  TEST_ASSERT_EQUAL_HEX8(0xC8, fxStep(Fx::ARS, 0x11, -1));
+  TEST_ASSERT_EQUAL_HEX8(0xF8, fxStep(Fx::ARS, 0xF8, 5));  // R8, 4 octaves: the end
+  TEST_ASSERT_EQUAL_HEX8(0x13, fxStep(Fx::ARM, 0x08, 3));  // ARM keeps its order
   TEST_ASSERT_FALSE(fxSynthOnly(Fx::ARS));
   TEST_ASSERT_TRUE(fxSynthOnly(Fx::ARM));
 }

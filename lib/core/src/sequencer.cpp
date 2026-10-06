@@ -675,8 +675,10 @@ void Sequencer::arpStep(int track, uint64_t t, int64_t earliest, bool aud) {
   StepArp& a = arps_[track];
   if (!a.n || ++a.wait < a.div) return;
   a.wait = 0;
-  ++a.k;
-  const int idx = a.mode == 3 ? static_cast<int>(rng_.below(a.n)) : arpIndex(a.mode, a.k, a.n);
+  const int all = a.count();
+  const int cycle = a.mode == 2 && all > 1 ? 2 * all - 2 : all;  // UPDOWN: up and back
+  a.k = static_cast<uint8_t>((a.k + 1) % cycle);  // never wraps mid-cycle
+  const int idx = a.mode == 3 ? static_cast<int>(rng_.below(all)) : arpIndex(a.mode, a.k, all);
   if (!aud) return;
   // Gate: a share of the arp's step span, ending before the next arp note.
   const uint32_t span = stepUs() * a.div;
@@ -684,7 +686,7 @@ void Sequencer::arpStep(int track, uint64_t t, int64_t earliest, bool aud) {
   if (gate + kMinGateUs > span) gate = span > 2 * kMinGateUs ? span - kMinGateUs : kMinGateUs;
   if (gate < kMinGateUs) gate = kMinGateUs;
   const uint64_t on = atLeast(static_cast<int64_t>(t), earliest);
-  const uint8_t note = a.notes[idx];
+  const uint8_t note = a.note(idx);
   const uint32_t id = newId();
   if (push(on, 0x90 | a.ch, note, a.vel, id, false, 3, static_cast<uint8_t>(track)))
     push(on + gate, 0x80 | a.ch, note, 0, id, false, 3, static_cast<uint8_t>(track));

@@ -182,14 +182,17 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     a.n = 0;
     if (nNotes > 1) {
       for (int k = 0; k < nNotes; ++k) a.notes[a.n++] = notes[k];
-    } else {
-      const FxSlot* arp = s.find(Fx::ARP);
-      const int offs[3] = {0, arp && arp->val ? arp->val >> 4 : 12, arp && arp->val ? arp->val & 15 : -1};
+    } else if (const FxSlot* arp = s.find(Fx::ARP); arp && arp->val) {
+      const int offs[3] = {0, arp->val >> 4, arp->val & 15};
       for (int k = 0; k < 3; ++k) {
         const int n = root + offs[k];
-        if (offs[k] >= 0 && n <= 127) a.notes[a.n++] = static_cast<uint8_t>(n);
+        if (n <= 127) a.notes[a.n++] = static_cast<uint8_t>(n);
       }
+    } else {
+      a.notes[a.n++] = static_cast<uint8_t>(root);  // the root alone: its octaves
     }
+    a.oct = static_cast<uint8_t>(((ars->val >> 6) & 3) + 1);
+    if (a.n == 1 && a.oct < 2) a.oct = 2;
     a.mode = static_cast<uint8_t>((ars->val >> 4) & 3);
     a.div = static_cast<uint8_t>((ars->val & 15) < 1 ? 1 : ((ars->val & 15) > kArmRateMax ? kArmRateMax : (ars->val & 15)));
     a.vel = static_cast<uint8_t>(vel);
@@ -198,8 +201,9 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     if (const FxSlot* g = s.find(Fx::GAT)) a.gate = gatePercent(g->val);
     a.k = 0;
     a.wait = 0;
-    const int first = a.mode == 3 ? static_cast<int>(rng.below(a.n)) : arpIndex(a.mode, 0, a.n);
-    notes[0] = a.notes[first];
+    const int all = a.count();
+    const int first = a.mode == 3 ? static_cast<int>(rng.below(all)) : arpIndex(a.mode, 0, all);
+    notes[0] = a.note(first);
     nNotes = 1;
   }
 

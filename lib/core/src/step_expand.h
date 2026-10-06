@@ -23,14 +23,23 @@ constexpr uint32_t kMinGateUs = 1000;
 
 // ARS (step arp) started by a note step: the sequencer plays the next notes on the following steps.
 struct StepArp {
-  uint8_t n = 0;         // notes, 0 = no arp
+  uint8_t n = 0;         // notes of one octave, 0 = no arp
   uint8_t notes[4] = {};
+  uint8_t oct = 1;       // octaves: the notes again +12, +24 ... (count() notes in all)
   uint8_t mode = 0;      // ARM / ARS mode: 0 UP, 1 DOWN, 2 UPDOWN, 3 RANDOM
   uint8_t div = 1;       // steps per note
   uint8_t vel = 0, ch = 0;
   uint16_t gate = 100;   // % of div steps
   uint8_t k = 0;         // notes played (the step's own = 0)
   uint8_t wait = 0;      // steps since the last note
+
+  int count() const { return n * oct; }
+  // Note i of the whole range (0..count() - 1); above 127 an octave down.
+  uint8_t note(int i) const {
+    int v = notes[i % n] + 12 * (i / n);
+    while (v > 127) v -= 12;
+    return static_cast<uint8_t>(v);
+  }
 };
 
 // Note index k of an n-note arp in mode 0..2 (UP, DOWN from the top, UPDOWN with the ends once).
@@ -72,7 +81,7 @@ struct ExpandCtx {
 // defVel): one NoteOn per set lane per ratchet with the lane's note, 60 % velocity for lanes outside
 // ACC; TIE, CHD, NRN, STR and ARS are ignored. An empty mask is still a note step (returns true).
 // ARS on a melodic note step: the arp notes (CHD chord, else ARP 0 x y, else root and an octave up)
-// go to out.arp and the step plays the first one alone (no chord, TIE, STR; ARP / ARM are not sent).
+// with ARS's octaves go to out.arp and the step plays the first one alone (no chord, TIE, STR; ARP / ARM are not sent).
 bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, ExpandOut& out);
 
 }  // namespace mt
