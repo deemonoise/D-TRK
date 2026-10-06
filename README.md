@@ -200,6 +200,12 @@ P-lock: fx `DEC`, `COL`, `SHP`, `SWP`, `CON` (0–127) задают макрос
 
 Подробнее — [руководство](docs/manual.html#render).
 
+## Интерфейс
+
+- **Темы оформления**: PROJ → SYS → Theme, 17 готовых (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). Настройка устройства: хранится в памяти платы, проект не меняет.
+- **Страницы** в TRACK (MAIN / NOTE / MIDI) и PROJ (SONG / FX / COMP / SYS): тап по закладке или энкодер за край списка.
+- **PERF** показывает название эффекта при нажатии кнопки (PERF FILTER LOW и т. п.).
+
 ## Карта памяти
 
 **FAT32** со схемой разделов **MBR**. exFAT (стандарт для карт больше 32 ГБ) и GPT не читаются — на экране будет «NO SD CARD».

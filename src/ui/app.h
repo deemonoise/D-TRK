@@ -39,6 +39,9 @@ class App {
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
   mt::Clipboard* clipboard() { return clip_; }
+  // Colour theme (device setting): applied at once, saved to NVS once it stays put.
+  int theme() const { return theme_; }
+  void setTheme(int i);
   void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
   void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
   bool doUndo();    // false when there is nothing to undo
@@ -101,6 +104,7 @@ class App {
   void fillUp();
   void updateLeds(uint32_t now);
   void saveVolumeIdle(uint32_t now);
+  void saveThemeIdle(uint32_t now);
   void pollCpu(uint32_t now);
   void setBpmEdit(bool on);
   void draw();
@@ -147,6 +151,8 @@ class App {
   uint8_t savedVol_ = 0;     // master volume as stored in NVS
   uint8_t pendingVol_ = 0;   // changed value waiting to be saved
   uint32_t volChangedAt_ = 0;  // 0 = nothing pending
+  int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
+  uint32_t themeChangedAt_ = 0;     // 0 = nothing pending
   uint32_t editSeq_ = 0, savedSeq_ = 0;
   bool shift_ = false;
   bool fillHeld_ = false;   // Shift + Play held while playing: fill

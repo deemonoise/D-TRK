@@ -22,4 +22,19 @@ void saveVolume(uint8_t v) {
   p.end();
 }
 
+uint8_t loadTheme(uint8_t fallback) {
+  Preferences p;
+  if (!p.begin(kNs, true)) return fallback;
+  const uint8_t v = p.getUChar("theme", fallback);
+  p.end();
+  return v;
+}
+
+void saveTheme(uint8_t v) {
+  Preferences p;
+  if (!p.begin(kNs, false)) return;
+  p.putUChar("theme", v);
+  p.end();
+}
+
 }  // namespace storage

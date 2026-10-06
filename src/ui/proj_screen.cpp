@@ -97,9 +97,22 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        [this] { return app_.project().compAmt == 0 || app_.project().scTrack == 0; }};
   params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
                        [this](int d) { app_.project().preview = d > 0; }};
-  list_.setParams(params_, kRows);
+  params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
+                     [this](int d) { app_.setTheme(app_.theme() + d); }};
+  // The theme is a device setting: editing it does not touch the project.
+  list_.setOnEdit([this] {
+    if (kPageFirst[page_] + list_.sel() != kTheme) app_.markDirty();
+  });
+  showPage(kPgSong, false);
+}
+
+void ProjScreen::showPage(int page, bool last) {
+  page_ = (page % kPages + kPages) % kPages;
+  list_.setEdit(false);
+  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
   list_.setVisibleRows(kListRows);
-  list_.setOnEdit([this] { app_.markDirty(); });
+  list_.setWrap(false);
+  list_.setSel(last ? 1 << 30 : 0);  // setSel clamps to the last row
 }
 
 mt::Pattern& ProjScreen::pat() { return app_.project().patterns[app_.editPattern()]; }
@@ -129,9 +142,19 @@ void ProjScreen::onEnter() {
   bpmTarget_ = app_.project().bpm;
 }
 
-void ProjScreen::onInput(const hw::InputEvent& ev) { list_.onInput(ev); }
+// Turning past the last / first row goes on to the next / previous page.
+void ProjScreen::onInput(const hw::InputEvent& ev) {
+  if (const int ov = list_.onInput(ev)) showPage(page_ + ov, ov < 0);
+}
 
-void ProjScreen::onTouch(const TouchEvent& ev) { list_.onTouch(ev); }
+void ProjScreen::onTouch(const TouchEvent& ev) {
+  const int barY = kAreaY + kHeaderH;
+  if (ev.y >= barY && ev.y < barY + PageBar::kH) {
+    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), false);
+    return;
+  }
+  list_.onTouch(ev);
+}
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   char buf[24];
@@ -139,7 +162,9 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  list_.draw(s, y0 + kHeaderH);
+  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "SYS"};
+  PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
+  list_.draw(s, y0 + kHeaderH + PageBar::kH);
 }
 
 }  // namespace ui

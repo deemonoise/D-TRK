@@ -11,9 +11,6 @@
 namespace ui {
 namespace {
 
-constexpr uint16_t kKeyWhite = 0xC618;
-constexpr uint16_t kKeyBlack = 0x18C3;
-
 const char* const kFieldNames[] = {"NOTE",    "VEL", "FX1", "FX1 VAL", "FX2", "FX2 VAL", "FX3",
                                    "FX3 VAL", "FX4", "FX4 VAL", "FX5", "FX5 VAL", "FX6", "FX6 VAL"};
 static_assert(sizeof(kFieldNames) / sizeof(kFieldNames[0]) == 2 + 2 * mt::kFxSlots, "a name per Detail field");
@@ -390,6 +387,9 @@ bool GridScreen::trackKey(int n, bool shift) {
     perfBtn_ = n;
     perfTrack_ = track();
     engine::post(engine::Cmd::PerfOn, static_cast<uint16_t>(perfTrack_ | ((n + 1) << 8)));
+    char msg[32];
+    snprintf(msg, sizeof(msg), "PERF %s", mt::perfFxName(static_cast<mt::PerfFx>(n + 1)));
+    app_.toast(msg);
     return true;
   }
   if (edit_) {

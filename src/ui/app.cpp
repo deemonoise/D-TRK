@@ -49,6 +49,10 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   // Master volume is a device setting: it overrides the project's and is kept in NVS.
   p_->masterVol = storage::loadVolume(p_->masterVol);
   savedVol_ = p_->masterVol;
+  // So is the colour theme.
+  const int theme = storage::loadTheme(0);
+  theme_ = savedTheme_ = theme < themeCount() ? theme : 0;
+  applyTheme(theme_);
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -302,6 +306,27 @@ void App::saveVolumeIdle(uint32_t now) {
   volChangedAt_ = 0;
 }
 
+void App::setTheme(int i) {
+  i = i < 0 ? 0 : (i >= themeCount() ? themeCount() - 1 : i);
+  if (i == theme_) return;
+  theme_ = i;
+  applyTheme(i);
+  themeChangedAt_ = millis() | 1;
+  dirty_ = true;
+}
+
+// As the volume: written once the choice stays put for a second and the transport is stopped.
+void App::saveThemeIdle(uint32_t now) {
+  if (themeChangedAt_ == 0 || now - themeChangedAt_ < 1000 || status_.playing) return;
+  themeChangedAt_ = 0;
+  if (theme_ == savedTheme_) return;
+  {
+    audio::Paused parked;
+    storage::saveTheme(static_cast<uint8_t>(theme_));
+  }
+  savedTheme_ = theme_;
+}
+
 void App::showProgress(const char* label, uint32_t done, uint32_t total) {
   const int pct = total ? static_cast<int>(static_cast<uint64_t>(done < total ? done : total) * 100 / total) : 100;
   const uint32_t now = millis();
@@ -420,6 +445,7 @@ void App::tick() {
   const uint32_t now = millis();
   updateLeds(now);
   saveVolumeIdle(now);
+  saveThemeIdle(now);
   pollCpu(now);
   if (toast_[0] && static_cast<int32_t>(now - toastUntil_) >= 0) {
     toast_[0] = 0;

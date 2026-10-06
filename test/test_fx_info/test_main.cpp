@@ -262,6 +262,13 @@ void test_acc_lane_mask() {
   TEST_ASSERT_FALSE(fxSynthOnly(Fx::ACC));
 }
 
+void test_perf_names() {
+  TEST_ASSERT_EQUAL_STRING("RAT 2", perfFxName(PerfFx::Rat2));
+  TEST_ASSERT_EQUAL_STRING("MUTE", perfFxName(PerfFx::Mute));
+  TEST_ASSERT_EQUAL_STRING("", perfFxName(PerfFx::None));
+  TEST_ASSERT_EQUAL_STRING("", perfFxName(PerfFx::Count));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_long_names);
@@ -271,6 +278,7 @@ int main() {
   RUN_TEST(test_cnd_order);
   RUN_TEST(test_cmd_cycle);
   RUN_TEST(test_step_arp_fx);
+  RUN_TEST(test_perf_names);
   RUN_TEST(test_synth_fx_names_ranges);
   RUN_TEST(test_synth_only);
   RUN_TEST(test_fm_lock_fx);

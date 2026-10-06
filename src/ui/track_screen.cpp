@@ -90,9 +90,8 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                     [this](int d) { cfg().mute = d > 0; }};
   params_[kSolo] = {"Solo", [this](char* o, int n) { onOff(cfg().solo, o, n); },
                     [this](int d) { cfg().solo = d > 0; }};
-  list_.setParams(params_, kRows);
-  list_.setVisibleRows(kVisibleRows);
   list_.setOnEdit([this] { app_.markDirty(); });
+  showPage(kPgMain, false);
 }
 
 mt::TrackCfg& TrackScreen::cfg() { return app_.project().tracks[app_.curTrack()]; }
@@ -114,6 +113,15 @@ void TrackScreen::leaveEdit() {
 }
 
 void TrackScreen::onLeave() { leaveEdit(); }
+
+void TrackScreen::showPage(int page, bool last) {
+  leaveEdit();
+  page_ = (page % kPages + kPages) % kPages;
+  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
+  list_.setVisibleRows(kVisibleRows);
+  list_.setWrap(false);
+  list_.setSel(last ? 1 << 30 : 0);  // setSel clamps to the last row
+}
 
 // The track changed under an open edit (a track button, GRID): the edit belonged to the old one.
 void TrackScreen::followTrack() {
@@ -164,7 +172,10 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     list_.edit(ev.delta);  // no x10 for characters
     return;
   }
-  list_.onInput(ev);
+  if (const int ov = list_.onInput(ev)) {  // past the last / first row: the next / previous page
+    showPage(page_ + ov, ov < 0);
+    return;
+  }
   if (wasName && !nameEdit()) leaveEdit();
 }
 
@@ -177,6 +188,10 @@ void TrackScreen::onTouch(const TouchEvent& ev) {
   if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
     if (ev.x < kArrowW) changeTrack(-1);
     else if (ev.x >= kScreenW - kArrowW) changeTrack(1);
+    return;
+  }
+  if (ev.y >= y0_ + kHeaderH && ev.y < y0_ + kHeaderH + PageBar::kH) {
+    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), false);
     return;
   }
   // Tap on a character of the name being edited moves the name cursor.
@@ -207,7 +222,9 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   s.setTextColor(kText);
   s.drawString(buf, (kScreenW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
 
-  list_.draw(s, y0 + kHeaderH);
+  static const char* const kNames[kPages] = {"MAIN", "NOTE", "MIDI"};
+  PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
+  list_.draw(s, y0 + kHeaderH + PageBar::kH);
   if (nameEdit()) {
     const int uy = list_.rowY(kName) + (ParamList::kRowH + kCharH) / 2;
     s.fillRect(ParamList::kValueX + namePos_ * kCharW, uy, kCharW, 2, kEditCursor);

@@ -1,5 +1,6 @@
 #pragma once
 #include "model.h"
+#include "page_bar.h"
 #include "param_list.h"
 #include "screen.h"
 
@@ -25,8 +26,11 @@ class TrackScreen : public Screen {
   void setMixer(bool on);
 
  private:
-  enum Row : int { kName, kOut, kInstr, kVol, kChannel, kVel, kGate, kPatLen, kCcA, kCcB, kProgram, kMute, kSolo, kRows };
-  static constexpr int kVisibleRows = 10;  // (kAreaH - kHeaderH) / ParamList::kRowH
+  // Rows in page order: MAIN, NOTE, MIDI (contiguous runs, see kPageFirst).
+  enum Row : int { kName, kOut, kInstr, kVol, kMute, kSolo, kVel, kGate, kPatLen, kChannel, kCcA, kCcB, kProgram, kRows };
+  enum Page : int { kPgMain, kPgNote, kPgMidi, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kName, kVel, kChannel, kRows};
+  static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
   static constexpr int kHeaderH = 28;
   static constexpr int kArrowW = 96;  // header hit area on each side
   static constexpr int kNameLen = 8;
@@ -36,7 +40,9 @@ class TrackScreen : public Screen {
   void changeTrack(int d);
   void leaveEdit();
   void fixNames();  // empty name -> TRKn
-  bool nameEdit() const { return list_.editing() && list_.sel() == kName; }
+  bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
+  void showPage(int page, bool last);
+  int page_ = kPgMain;
   void editName(int delta);  // under lock
   // MIXER: 8 + 8 x 52 + 8 + 48 = 480.
   static constexpr int kStrips = 8, kStripW = 52, kStripX0 = 8;
@@ -65,7 +71,7 @@ class TrackScreen : public Screen {
   void followTrack();
   int patLenPat_ = -1;      // the pattern of that run
   uint32_t patLenSeq_ = 0;  // App::editSeq() right after the last Pat len edit: one undo snapshot per run
-  ParamList list_{kAreaY + kHeaderH};
+  ParamList list_{kAreaY + kHeaderH + PageBar::kH};
   int y0_ = kAreaY;
   int namePos_ = 0;
 };
