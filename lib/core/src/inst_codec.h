@@ -12,6 +12,7 @@ constexpr size_t kFmRecSize = 16;    // 14 bytes of fields (drive, rsend, velCut
 constexpr size_t kFltRecSize = 8;    // filter, delay send
 constexpr size_t kSliceRecSize = 8 + 2 * kMaxSlices;  // modes, count, 3 reserved, positions
 constexpr size_t kSynRecSize = 48;  // SYNTH: 41 bytes of fields + reserved
+constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, depth, dest, sync
 
 void packInst(const Instrument& m, uint8_t* b);
 void unpackInst(const uint8_t* b, Instrument& m);
@@ -23,6 +24,8 @@ void unpackFlt(const uint8_t* b, Instrument& m);
 // noise, env -> SHAPE attack / decay.
 void packSyn(const Instrument& m, uint8_t* b);
 void unpackSyn(const uint8_t* b, Instrument& m);
+void packLfo(const Instrument& m, uint8_t* b);
+void unpackLfo(const uint8_t* b, Instrument& m);
 // Count is cut to the longest strictly ascending prefix of the positions.
 void packSlices(const Instrument& m, uint8_t* b);
 void unpackSlices(const uint8_t* b, Instrument& m);

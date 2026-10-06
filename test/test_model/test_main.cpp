@@ -339,6 +339,24 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockFlt, static_cast<int>(Fx::FLT));  // lock order unchanged
 }
 
+void test_lfo_sync_and_refs() {
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 4.f, lfoSyncHz(4, 120));    // 1/8 at 120 BPM: 4 per second
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.5f, lfoSyncHz(8, 120));   // 1 bar
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 16.f, lfoSyncHz(0, 120));   // 1/32
+  TEST_ASSERT_EQUAL_STRING("1/16T", lfoSyncName(1));
+  TEST_ASSERT_EQUAL_STRING("8 BARS", lfoSyncName(99));
+  Instrument m;
+  lfoRef(m, 0).depth = 12;
+  lfoRef(m, 2).dest = static_cast<uint8_t>(LfoDest::Vol);
+  TEST_ASSERT_EQUAL(12, m.lfoDepth);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Vol), m.lfo[1].dest);
+  TEST_ASSERT_EQUAL(12, lfoAt(m, 0).depth);
+  // A macro target on any LFO becomes PITCH on CHIP / SAMPLE.
+  m.lfo[2].dest = static_cast<uint8_t>(LfoDest::Col);
+  instrSetType(m, InstrType::Chip);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfo[2].dest);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_step_is_14_bytes_and_empty_by_default);
@@ -370,5 +388,6 @@ int main() {
   RUN_TEST(test_sixteen_tracks_defaults);
   RUN_TEST(test_kit_defaults_and_drum_track);
   RUN_TEST(test_sound_fx_defaults);
+  RUN_TEST(test_lfo_sync_and_refs);
   return UNITY_END();
 }

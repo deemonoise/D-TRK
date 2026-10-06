@@ -16,6 +16,8 @@ bool savePreset(const Instrument& m, ByteSink& out) {
   p += kSliceRecSize;
   packSyn(m, b + p);
   p += kSynRecSize;
+  packLfo(m, b + p);
+  p += kLfoRecSize;
   const uint32_t c = crc32(b, p);
   b[p] = static_cast<uint8_t>(c);
   b[p + 1] = static_cast<uint8_t>(c >> 8);
@@ -29,7 +31,7 @@ LoadErr loadPreset(ByteSource& in, Instrument& out) {
   if (!in.read(b, 8)) return LoadErr::Truncated;
   if (memcmp(b, "MTI1", 4) != 0) return LoadErr::BadMagic;
   if (b[4] > kPresetVersion) return LoadErr::BadVersion;
-  const size_t size = b[4] >= 3 ? kPresetSize : (b[4] == 2 ? kPresetSizeV2 : kPresetSizeV1);
+  const size_t size = b[4] >= 5 ? kPresetSize : (b[4] >= 3 ? kPresetSizeV3 : (b[4] == 2 ? kPresetSizeV2 : kPresetSizeV1));
   if (!in.read(b + 8, size - 8)) return LoadErr::Truncated;
   const size_t p = size - 4;
   const uint32_t c = b[p] | (b[p + 1] << 8) | (b[p + 2] << 16) | (static_cast<uint32_t>(b[p + 3]) << 24);
@@ -40,7 +42,8 @@ LoadErr loadPreset(ByteSource& in, Instrument& out) {
   unpackFlt(b + 8 + kInstRecSize + kFmRecSize, m);
   const size_t slc = 8 + kInstRecSize + kFmRecSize + kFltRecSize;
   if (size >= kPresetSizeV2) unpackSlices(b + slc, m);
-  if (size >= kPresetSize) unpackSyn(b + slc + kSliceRecSize, m);
+  if (size >= kPresetSizeV3) unpackSyn(b + slc + kSliceRecSize, m);
+  if (size >= kPresetSize) unpackLfo(b + slc + kSliceRecSize + kSynRecSize, m);
   fixInstrument(m);
   out = m;
   return LoadErr::Ok;

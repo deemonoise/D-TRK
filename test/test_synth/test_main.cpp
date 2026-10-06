@@ -752,7 +752,7 @@ void test_fm_legato_from_chip_starts_fm_voice() {
   for (int k = 0; k < 100; ++k) s->render(buf);
   const float hz = lfoHz(f.lfoRate);
   const float fresh = hz * (Synth::kBlock - Synth::kControl) / kSynthRate;  // first update precedes the note
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase > fresh * 4);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] > fresh * 4);
   pgm(0, 0);
   noteOn(0, 0, 62);  // CHIP legato on the same voice
   s->render(buf);
@@ -761,7 +761,7 @@ void test_fm_legato_from_chip_starts_fm_voice() {
   noteOn(0, 0, 64);  // FM legato from a CHIP voice: a new FM note
   s->render(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
-  TEST_ASSERT_FLOAT_WITHIN(1e-4f, fresh, s->voice(s->trackVoice(0)).lfoPhase);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, fresh, s->voice(s->trackVoice(0)).lfoPhase[0]);
 }
 
 void test_fm_tone_after_drum_takes_its_own_env() {
@@ -804,7 +804,7 @@ void test_fm_lfo_random_starts_off_zero() {
   m.lfoDest = static_cast<uint8_t>(LfoDest::Pitch);
   noteOn(0, 0, 69);
   s->render(buf);
-  TEST_ASSERT_TRUE(fabsf(s->voice(s->trackVoice(0)).lfoRnd) > 0.05f);
+  TEST_ASSERT_TRUE(fabsf(s->voice(s->trackVoice(0)).lfoRnd[0]) > 0.05f);
   const int c = crossings(124);
   TEST_ASSERT_TRUE(abs(c - plain) > plain / 30);
 }
@@ -986,7 +986,7 @@ void test_lfo_restarts_on_mono_retrigger_after_release() {
   s->render(buf);
   noteOn(0, 0, 69);
   s->render(buf);
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase < 0.02f);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] < 0.02f);
 }
 
 void test_filter_env_long_attack_not_dropped() {

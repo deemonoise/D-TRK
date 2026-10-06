@@ -105,6 +105,29 @@ uint16_t fmDecayMs(uint8_t v) {
   return static_cast<uint16_t>(5.f * powf(800.f, v / 127.f) + 0.5f);
 }
 
+float lfoSyncHz(uint8_t div, uint16_t bpm) {
+  // Beats (quarters) per LFO cycle.
+  static const float kBeats[kLfoSyncSteps] = {0.125f, 1.f / 6, 0.25f, 1.f / 3, 0.5f, 2.f / 3, 1, 2, 4, 8, 16, 32};
+  return (bpm ? bpm : 120) / 60.f / kBeats[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
+}
+
+const char* lfoSyncName(uint8_t div) {
+  static const char* const kNames[kLfoSyncSteps] = {"1/32", "1/16T", "1/16", "1/8T", "1/8",  "1/4T",
+                                                    "1/4",  "1/2",   "1 BAR", "2 BARS", "4 BARS", "8 BARS"};
+  return kNames[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
+}
+
+LfoRef lfoRef(Instrument& m, int i) {
+  if (i <= 0 || i >= kLfos) return {m.lfoWave, m.lfoRate, m.lfoDepth, m.lfoDest, m.lfoSync};
+  LfoCfg& l = m.lfo[i - 1];
+  return {l.wave, l.rate, l.depth, l.dest, l.sync};
+}
+
+LfoCfg lfoAt(const Instrument& m, int i) {
+  if (i <= 0 || i >= kLfos) return {m.lfoWave, m.lfoRate, m.lfoDepth, m.lfoDest, m.lfoSync};
+  return m.lfo[i - 1];
+}
+
 float lfoHz(uint8_t v) {
   if (v > 127) v = 127;
   return 0.05f * powf(600.f, v / 127.f);
@@ -183,10 +206,11 @@ void instrSetType(Instrument& m, InstrType t) {
     static const uint8_t kDef[kFmMacros] = {0, 0, 0, 64, 64};  // SHP1, SHP2, MIX, DET, SENV
     memcpy(m.macro, kDef, kFmMacros);
   } else if (t == InstrType::Kit) kitSetDefaults(m);
-  const bool macroDest = m.lfoDest >= static_cast<uint8_t>(LfoDest::Dec) &&
-                         m.lfoDest <= static_cast<uint8_t>(LfoDest::Con);
-  if ((t == InstrType::Chip || t == InstrType::Sample) && macroDest)
-    m.lfoDest = static_cast<uint8_t>(LfoDest::Pitch);
+  for (int i = 0; i < kLfos; ++i) {
+    uint8_t& dest = lfoRef(m, i).dest;
+    const bool macroDest = dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con);
+    if ((t == InstrType::Chip || t == InstrType::Sample) && macroDest) dest = static_cast<uint8_t>(LfoDest::Pitch);
+  }
 }
 
 void kitSetDefaults(Instrument& m) {

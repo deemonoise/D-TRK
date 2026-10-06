@@ -67,8 +67,8 @@ struct Voice {
   uint8_t machine = 0;               // FmMachine / DrumMachine, latched at note-on: a sounding note keeps it
   uint16_t lockMask = 0;             // locked for this note: bit = LockBit (macros: FM / DRUM only)
   uint8_t lock[kLocks] = {0};
-  float lfoPhase = 0;                // 0..1
-  float lfoRnd = 0;                  // Random wave: value of the current cycle
+  float lfoPhase[kLfos] = {};        // 0..1, per LFO
+  float lfoRnd[kLfos] = {};          // Random wave: value of the current cycle
   FmVoice fmv;
   // fmMachine() cache: params for the key below, recomputed when a macro moves >= 0.5 or the
   // pitch >= 1 cent from it (Synth::controlFm). fpValid = false forces a recompute (note-on).

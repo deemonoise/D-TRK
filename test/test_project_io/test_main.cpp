@@ -307,7 +307,7 @@ void test_empty_patterns_not_written() {
   // PROJ, TRKS (16 x 16), INST, FMIN, FLTR, SLCE (16 x 72), TOUT (16 x 3), AUDI, SYNI (16 x 48), WTBL (empty),
   // KITS (16 x 176), CHN2 (empty), SCNS, GROV (16 + 16)
   TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16 + 7 +
-                                        8 + 32 + 1 + 8 + 8);  // + 7: AUDI sound fx bytes, + 1: DJ filter, PRFM
+                                        8 + 32 + 1 + 8 + 8 + 8 + 1 + 16 * 16);  // + 7: AUDI sound fx bytes, + 1: DJ filter, PRFM, LFOX
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));

@@ -95,6 +95,17 @@ enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
 // Dec..Con = macro index + 1 (FM / DRUM only). Stored in files: new targets before Count only.
 enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive, Count };
 
+// LFO 2..4 of an instrument (LFO 1 keeps its own fields: older files). depth 0 = off.
+constexpr int kLfos = 4;
+struct LfoCfg {
+  uint8_t wave = 0;   // LfoWave
+  uint8_t rate = 64;  // 0..127 (lfoHz), or a division index when sync (lfoSyncHz)
+  int8_t depth = 0;   // -64..63
+  uint8_t dest = 0;   // LfoDest
+  uint8_t sync = 0;   // 1 = rate is a tempo division
+};
+static_assert(sizeof(LfoCfg) == 5, "LfoCfg layout (file format)");
+
 // Internal synth instrument. One-byte fields: the audio task reads them without a lock.
 constexpr uint8_t kMasterVolMax = 200;  // master volume %, above 100 = up to +6 dB
 constexpr uint8_t kDlyTimeMax = 16;     // delay time, sixteenths
@@ -133,6 +144,7 @@ struct Instrument {
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
   int8_t lfoDepth = 0;   // -64..63, 0 = off
   uint8_t lfoDest = 0;   // LfoDest
+  uint8_t lfoSync = 0;   // LFO 1 synced to the tempo: lfoRate is a division (lfoSyncHz)
   // Filter, every type: see cutoffHz, resoQ, filterEnv.
   uint8_t fltMode = 0;          // FltMode
   uint8_t cutoff = 127;         // 0..127
@@ -156,6 +168,7 @@ struct Instrument {
   uint8_t synSubOct = 0;  // 0..1
   uint8_t synNoise = 0;   // 0..127
   uint8_t synEAtk = 0, synEDec = 40;
+  LfoCfg lfo[kLfos - 1];   // LFO 2..4 (LFO 1 is lfoWave .. lfoSync above; see lfoRef)
   KitLane kit[kKitLanes];  // KIT: the lanes (see kitSetDefaults)
 };
 
@@ -164,6 +177,21 @@ uint16_t envTimeMs(uint8_t v);
 // FM DECAY: 0..127 -> 5..4000 ms exponentially (time to -60 dB).
 uint16_t fmDecayMs(uint8_t v);
 // LFO rate: 0..127 -> 0.05..30 Hz exponentially.
+// Synced LFO rate: division index 0..kLfoSyncSteps-1 (1/32 .. 8 bars) at bpm -> Hz, and its name.
+constexpr int kLfoSyncSteps = 12;
+float lfoSyncHz(uint8_t div, uint16_t bpm);
+const char* lfoSyncName(uint8_t div);
+// LFO i (0..kLfos-1) of an instrument, by reference: LFO 1 is the instrument's own lfo* fields.
+struct LfoRef {
+  uint8_t& wave;
+  uint8_t& rate;
+  int8_t& depth;
+  uint8_t& dest;
+  uint8_t& sync;
+};
+struct Instrument;
+LfoRef lfoRef(Instrument& m, int i);
+LfoCfg lfoAt(const Instrument& m, int i);
 float lfoHz(uint8_t v);
 // TONE, CHORD: held while the note is, with the instrument's attack / sustain / release.
 // The other machines are one-shot drums. Out of range = Kick.

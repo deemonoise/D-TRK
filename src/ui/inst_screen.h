@@ -58,7 +58,8 @@ class InstScreen : public Screen {
                        kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
   static constexpr int kDrive = 0, kFltMode = 1, kCutoff = 2, kReso = 3, kFEnv = 4, kFAtk = 5, kFDec = 6,
-                       kKeytrack = 7, kLfoWave = 8, kLfoRate = 9, kLfoDepth = 10, kLfoDest = 11, kTailRows = 12;
+                       kKeytrack = 7, kLfoSel = 8, kLfoWave = 9, kLfoSync = 10, kLfoRate = 11, kLfoDepth = 12,
+                       kLfoDest = 13, kTailRows = 14;
   static constexpr int kFiltRows = 8;  // tail: FILT = [0, 8) (Drive first: it is before the filter), LFO
   // KIT: MAIN rows, then kLaneRows per lane.
   static constexpr int kKitMain = 4;  // Name, Type, Send, Rvb send
@@ -129,6 +130,7 @@ class InstScreen : public Screen {
   PresetBrowser presets_{app_};
   WtPicker wt_{app_};
   int instr_ = 0;
+  int lfoSel_ = 0;  // LFO page: which of the 4 LFOs the rows edit
   mt::Instrument typeSnap_;     // the instrument as it was in the type being left (setType)
   int typeSnapInstr_ = -1;      // whose copy typeSnap_ is, -1 = none
   int y0_ = kAreaY;

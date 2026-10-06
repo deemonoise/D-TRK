@@ -311,7 +311,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       scratch.release = kLaneRelease;
       scratch.mono = true;
       scratch.fltMode = 0;
-      scratch.lfoDepth = 0;
+      for (int i = 0; i < kLfos; ++i) lfoRef(scratch, i).depth = 0;
       scratch.send = k.send;
       scratch.rsend = k.rsend;
       mp = &scratch;
@@ -447,10 +447,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     v.pwmPhase = 0;
     v.vibPhase = 0;
   }
-  if (!fm && !overlap) {  // FM restarts its LFO below; DRUM never overlaps
-    v.lfoPhase = 0;
-    v.lfoRnd = rnd();
-  }
+  if (!fm && !overlap) resetLfos(v);  // FM restarts its LFOs below; DRUM never overlaps
   r.lastPitch = pitch;
   v.arpT = 0;
   v.vslLeft = 0;
@@ -477,8 +474,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       // A held machine after a drum starts afresh too: its level is 1 at once, ramping the
       // drum's operators into it would jump from the drum's decayed level.
       v.fmv.trigger(keepFm && (drum || !prevDrum));
-      v.lfoPhase = 0;
-      v.lfoRnd = rnd();
+      resetLfos(v);
     }
   }
   if (drumT) {
@@ -651,30 +647,36 @@ void Synth::control(Voice& v, int dt) {
   } else {
     v.vibPhase = 0;
   }
-  // LFO: PITCH, VOL, CUTOFF on every type; macro targets go to controlFm / controlDrum / controlSyn.
-  const float l = lfo(v, m, dt);
+  // LFOs 1..4: PITCH, VOL, CUTOFF, DRIVE on every type, summed; macro targets go to controlFm /
+  // controlDrum / controlSyn (lm: macro offsets).
   float lfoVol = 1, lfoCut = 0, lfoDrv = 0;
-  if (l != 0) {
-    const uint8_t dest = m.lfoDest < static_cast<uint8_t>(LfoDest::Count) ? m.lfoDest : 0;
+  float lm[kFmMacros] = {};
+  for (int i = 0; i < kLfos; ++i) {
+    const LfoCfg c = lfoAt(m, i);
+    const float l = lfo(v, c, i, dt);
+    if (l == 0) continue;
+    const uint8_t dest = c.dest < static_cast<uint8_t>(LfoDest::Count) ? c.dest : 0;
     if (dest == static_cast<uint8_t>(LfoDest::Pitch)) pitch += 12.f * l;
-    else if (dest == static_cast<uint8_t>(LfoDest::Vol)) lfoVol = clampf(1.f + l, 0.f, 2.f);
-    else if (dest == static_cast<uint8_t>(LfoDest::Cutoff)) lfoCut = 64.f * l;
-    else if (dest == static_cast<uint8_t>(LfoDest::Drive)) lfoDrv = 64.f * l;
+    else if (dest == static_cast<uint8_t>(LfoDest::Vol)) lfoVol *= clampf(1.f + l, 0.f, 2.f);
+    else if (dest == static_cast<uint8_t>(LfoDest::Cutoff)) lfoCut += 64.f * l;
+    else if (dest == static_cast<uint8_t>(LfoDest::Drive)) lfoDrv += 64.f * l;
+    else if (dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con))
+      lm[dest - 1] += 64.f * l;
   }
   const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : (m.drive > 127 ? 127 : m.drive);
   v.drive.set(static_cast<uint8_t>(clampf(drv + lfoDrv, 0.f, 127.f) + 0.5f));
   v.crush.set((v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : 0, (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : 0);
   controlFilter(v, m, pitch, lfoCut);
   if (v.fm) {
-    controlFm(v, m, pitch, dt, l, lfoVol);  // sets v.amp too
+    controlFm(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
     return;
   }
   if (v.drum) {
-    controlDrum(v, m, pitch, dt, l, lfoVol);  // sets v.amp too
+    controlDrum(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
     return;
   }
   if (v.syn) {
-    controlSyn(v, m, pitch, dt, l, lfoVol);  // sets v.amp too
+    controlSyn(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
     return;
   }
   if (v.sample) {
@@ -733,23 +735,33 @@ void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoC
   v.flt.set(static_cast<Svf::Mode>(mode - 1), 20.f * exp2f(oct), v.fltQ);
 }
 
-float Synth::lfo(Voice& v, const Instrument& m, int dt) {
-  if (!m.lfoDepth) return 0;
-  v.lfoPhase += lfoHz(m.lfoRate) * dt * (1.f / kSynthRate);
-  if (v.lfoPhase >= 1.f) {
-    v.lfoPhase -= static_cast<int>(v.lfoPhase);
-    v.lfoRnd = rnd();
+void Synth::resetLfos(Voice& v) {
+  for (int i = 0; i < kLfos; ++i) {
+    v.lfoPhase[i] = 0;
+    v.lfoRnd[i] = rnd();
   }
-  const float ph = v.lfoPhase;
+}
+
+// LFO i of a voice: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM), restarted at
+// note-on; -1..1 x depth / 64.
+float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
+  if (!c.depth) return 0;
+  const float hz = c.sync ? lfoSyncHz(c.rate, p_.bpm) : lfoHz(c.rate);
+  float& ph = v.lfoPhase[i];
+  ph += hz * dt * (1.f / kSynthRate);
+  if (ph >= 1.f) {
+    ph -= static_cast<int>(ph);
+    v.lfoRnd[i] = rnd();
+  }
   float w;
-  switch (static_cast<LfoWave>(m.lfoWave)) {
+  switch (static_cast<LfoWave>(c.wave)) {
     case LfoWave::Tri: w = 4.f * (ph < 0.5f ? 0.5f - ph : ph - 0.5f) - 1.f; break;
     case LfoWave::Saw: w = 2.f * ph - 1.f; break;
     case LfoWave::Square: w = ph < 0.5f ? 1.f : -1.f; break;
-    case LfoWave::Random: w = v.lfoRnd; break;
+    case LfoWave::Random: w = v.lfoRnd[i]; break;
     default: w = sinf(6.2831853f * ph); break;
   }
-  const int d = m.lfoDepth < -64 ? -64 : (m.lfoDepth > 63 ? 63 : m.lfoDepth);
+  const int d = c.depth < -64 ? -64 : (c.depth > 63 ? 63 : c.depth);
   return w * d * (1.f / 64.f);
 }
 
@@ -762,18 +774,17 @@ uint8_t Synth::velDecay(const Voice& v, const Instrument& m, uint8_t dec) {
   return static_cast<uint8_t>(d < 0 ? 0 : (d > 127 ? 127 : d));
 }
 
-void Synth::macros(const Voice& v, const Instrument& m, float l, float (&mac)[kFmMacros]) {
+void Synth::macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]) {
   for (int k = 0; k < kFmMacros; ++k) mac[k] = (v.lockMask & (1u << k)) ? v.lock[k] : m.macro[k];
   mac[kMacDec] = velDecay(v, m, static_cast<uint8_t>(mac[kMacDec] > 127 ? 127 : mac[kMacDec]));
-  const uint8_t dest = m.lfoDest < static_cast<uint8_t>(LfoDest::Count) ? m.lfoDest : 0;
-  if (l != 0 && dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con))
-    mac[dest - 1] = clampf(mac[dest - 1] + 64.f * l, 0.f, 127.f);
+  for (int k = 0; k < kFmMacros; ++k)
+    if (lm[k] != 0) mac[k] = clampf(mac[k] + lm[k], 0.f, 127.f);
 }
 
 // pitch includes the LFO's PITCH target, vol its VOL target; l moves the macro targets here.
-void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol) {
+void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
-  macros(v, m, l, mac);
+  macros(v, m, lm, mac);
   // fmMachine is pure and costly (tens of us): reuse the last params while the inputs stay
   // within half a macro step and a cent of the ones they were made from.
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
@@ -793,9 +804,9 @@ void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, float 
 }
 
 // As controlFm, with the same cache: drumMachine's powf calls cost microseconds each on the ESP32.
-void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol) {
+void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
-  macros(v, m, l, mac);
+  macros(v, m, lm, mac);
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
   for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
   if (stale) {
@@ -811,9 +822,9 @@ void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, floa
 }
 
 // SYNTH: macros SHP1, SHP2, MIX, DET, SENV (env -> SHAPE depth, bipolar around 64).
-void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol) {
+void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
-  macros(v, m, l, mac);
+  macros(v, m, lm, mac);
   v.senvT += static_cast<uint32_t>(dt);
   const float e = filterEnv(v.senvT, m.synEAtk, m.synEDec);  // 0..1, AD (decay 0 = hold)
   const float senv = (mac[kMacSenv] - 64.f) * (1.f / 64.f) * e;

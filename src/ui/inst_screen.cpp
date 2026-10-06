@@ -372,25 +372,50 @@ void InstScreen::initTail(Param* t, bool macros) {
                   [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().keytrack * 100 + 63) / 127); },
                   [this](int d) { inst().keytrack = static_cast<uint8_t>(clampi(inst().keytrack + d, 0, 127)); },
                   off};
-  auto noLfo = [this] { return inst().lfoDepth == 0; };
-  t[kLfoWave] = {"LFO wave",
-                 [this](char* o, int n) {
+  // LFO page: the selected LFO (1..4) of the instrument; the others keep running.
+  auto lfo = [this] { return mt::lfoRef(inst(), lfoSel_); };
+  auto noLfo = [lfo] { return lfo().depth == 0; };
+  t[kLfoSel] = {"LFO",
+                [this](char* o, int n) {
+                  int on = 0;
+                  for (int i = 0; i < mt::kLfos; ++i) on += mt::lfoAt(inst(), i).depth != 0;
+                  snprintf(o, n, "%d  (%d ON)", lfoSel_ + 1, on);
+                },
+                [this](int d) { lfoSel_ = clampi(lfoSel_ + d, 0, mt::kLfos - 1); }};
+  t[kLfoWave] = {"Wave",
+                 [lfo](char* o, int n) {
                    static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND"};
-                   snprintf(o, n, "%s", kNames[inst().lfoWave % 5]);
+                   snprintf(o, n, "%s", kNames[lfo().wave % 5]);
                  },
-                 [this](int d) {
-                   inst().lfoWave = static_cast<uint8_t>(
-                       clampi(inst().lfoWave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
+                 [lfo](int d) {
+                   lfo().wave = static_cast<uint8_t>(clampi(lfo().wave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
                  },
                  noLfo};
-  t[kLfoRate] = {"LFO rate", [this](char* o, int n) { snprintf(o, n, "%.2f Hz", mt::lfoHz(inst().lfoRate)); },
-                 [this](int d) { inst().lfoRate = static_cast<uint8_t>(clampi(inst().lfoRate + d, 0, 127)); },
+  t[kLfoSync] = {"Sync", [lfo](char* o, int n) { snprintf(o, n, "%s", lfo().sync ? "TEMPO" : "FREE"); },
+                 [lfo](int d) {
+                   const mt::LfoRef l = lfo();
+                   const uint8_t on = d > 0 ? 1 : 0;
+                   if (on == l.sync) return;
+                   l.sync = on;
+                   l.rate = on ? 6 : 64;  // 1/4, or about 1.6 Hz
+                 },
                  noLfo};
-  t[kLfoDepth] = {"LFO depth", [this](char* o, int n) { snprintf(o, n, "%+d", inst().lfoDepth); },
-                  [this](int d) { inst().lfoDepth = static_cast<int8_t>(clampi(inst().lfoDepth + d, -64, 63)); }};
+  t[kLfoRate] = {"Rate",
+                 [lfo](char* o, int n) {
+                   const mt::LfoRef l = lfo();
+                   if (l.sync) snprintf(o, n, "%s", mt::lfoSyncName(l.rate));
+                   else snprintf(o, n, "%.2f Hz", mt::lfoHz(l.rate));
+                 },
+                 [lfo](int d) {
+                   const mt::LfoRef l = lfo();
+                   l.rate = static_cast<uint8_t>(clampi(l.rate + d, 0, l.sync ? mt::kLfoSyncSteps - 1 : 127));
+                 },
+                 noLfo};
+  t[kLfoDepth] = {"Depth", [lfo](char* o, int n) { snprintf(o, n, "%+d", lfo().depth); },
+                  [lfo](int d) { lfo().depth = static_cast<int8_t>(clampi(lfo().depth + d, -64, 63)); }};
   // DRUM shows the generic macro names here, not the machine's; SYNTH its own.
-  t[kLfoDest] = {"LFO dest",
-                 [this](char* o, int n) {
+  t[kLfoDest] = {"Dest",
+                 [this, lfo](char* o, int n) {
                    static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP",
                                                         "CONTOUR", "VOL",  "CUTOFF", "DRIVE"};
                    static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET",
@@ -399,9 +424,9 @@ void InstScreen::initTail(Param* t, bool macros) {
                    static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN, "LFO dest names");
                    static_assert(sizeof(kSyn) / sizeof(kSyn[0]) == kN, "LFO dest names");
                    const bool syn = inst().type == mt::InstrType::Synth;
-                   snprintf(o, n, "%s", (syn ? kSyn : kNames)[inst().lfoDest % kN]);
+                   snprintf(o, n, "%s", (syn ? kSyn : kNames)[lfo().dest % kN]);
                  },
-                 [this, macros](int d) { inst().lfoDest = mt::lfoDestStep(inst().lfoDest, d, macros); }, noLfo};
+                 [lfo, macros](int d) { lfo().dest = mt::lfoDestStep(lfo().dest, d, macros); }, noLfo};
 }
 
 void InstScreen::relabel() {
@@ -432,6 +457,7 @@ void InstScreen::setType(mt::InstrType v) {
   memcpy(m.macro, typeSnap_.macro, sizeof(m.macro));
   memcpy(m.kit, typeSnap_.kit, sizeof(m.kit));
   m.lfoDest = typeSnap_.lfoDest;
+  for (int i = 0; i < mt::kLfos - 1; ++i) m.lfo[i].dest = typeSnap_.lfo[i].dest;
 }
 const mt::Instrument& InstScreen::inst() const { return app_.project().instruments[instr_]; }
 

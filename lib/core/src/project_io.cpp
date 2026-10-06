@@ -205,6 +205,12 @@ LoadErr readSyni(CrcSource& in, uint32_t size, Project& p) {
                      [&](int i, const uint8_t* b) { unpackSyn(b, p.instruments[i]); });
 }
 
+// LFOX: the LFO record of each instrument (LFO 1 sync, LFO 2..4); files without it: LFO 1 free, 2..4 off.
+LoadErr readLfox(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kLfoRecSize, kInstruments,
+                     [&](int i, const uint8_t* b) { unpackLfo(b, p.instruments[i]); });
+}
+
 LoadErr readKits(CrcSource& in, uint32_t size, Project& p) {
   return readRecords(in, size, kKitRecSize, kInstruments, [&](int i, const uint8_t* b) {
     for (int k = 0; k < kKitLanes; ++k, b += kKitLaneSize) {
@@ -475,6 +481,13 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  if (!o.chunk("LFOX", 1 + kInstruments * kLfoRecSize) || !o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kLfoRecSize];
+    packLfo(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
   if (!o.chunk("KITS", 1 + kInstruments * kKitRecSize) || !o.write(&count, 1)) return false;
   for (const Instrument& m : p.instruments)
     for (const KitLane& l : m.kit) {
@@ -646,6 +659,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
+    else if (memcmp(ch, "LFOX", 4) == 0) e = readLfox(in, size, out);
     else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, out);
