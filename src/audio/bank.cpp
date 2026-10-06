@@ -240,6 +240,11 @@ BankResult openWav(const char* path, fs::File& f, mt::WavInfo& w) {
     if (e != mt::WavErr::Ok) return wavErr(e);
   }
   if (w.frameBytes() > kRawBytes) return BankResult::Unsupported;
+  // A data chunk longer than the file (cut copy, a writer that never fixed the size): only what is
+  // there plays. Reading past the end would look like a card error.
+  const uint32_t size = static_cast<uint32_t>(f.size());
+  const uint32_t avail = size > w.dataOffset ? size - w.dataOffset : 0;
+  if (w.dataBytes > avail) w.dataBytes = avail - avail % w.frameBytes();
   if (w.frames() == 0) return BankResult::Truncated;
   return BankResult::Ok;
 }

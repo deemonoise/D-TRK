@@ -184,7 +184,7 @@ void handleList() {
       reply(404, "папка не найдена");
       return;
     }
-    hw::sdBegin();  // card pulled or changed: remount for the next request
+    hw::sdRecover();  // card pulled or changed: remount for the next request
     reply(503, "карта не читается (вынута?)");
     return;
   }
@@ -239,7 +239,7 @@ void uploadFail(int code, const char* msg) {
   strlcpy(up.err, msg, sizeof(up.err));
   if (up.f) up.f.close();
   hw::sdFs().remove(kTmp);
-  if (code == 507) hw::sdBegin();  // write errors usually mean the card was pulled: remount
+  if (code == 507) hw::sdRecover();  // write errors usually mean the card was pulled: remount
 }
 
 // Uploaded preset (kTmp) loads and its type matches the type folder at the top of sub. False after
@@ -516,7 +516,7 @@ void handleMkdir() {
     return;
   }
   if (!hw::sdFs().mkdir(path)) {
-    hw::sdBegin();
+    hw::sdRecover();
     reply(507, "ошибка записи на карту");
     return;
   }
@@ -549,7 +549,7 @@ void handleRmdir() {
     return;
   }
   if (!hw::sdFs().rmdir(path)) {
-    hw::sdBegin();
+    hw::sdRecover();
     reply(507, "ошибка записи на карту");
     return;
   }

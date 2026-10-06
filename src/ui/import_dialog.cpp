@@ -83,7 +83,7 @@ bool ImportDialog::readAndParse(const char* dir, const char* name) {
   app_.showBusy("READING...");
   fs::File f = hw::sdFs().open(path, FILE_READ);
   if (!f) {
-    hw::sdBegin();  // the card may have been pulled
+    hw::sdRecover();  // the card may have been pulled
     app_.toast(storage::resultText(storage::Result::ReadFail));
     return false;
   }
@@ -108,7 +108,7 @@ bool ImportDialog::readAndParse(const char* dir, const char* name) {
   f.close();
   if (got != size) {
     heap_caps_free(buf);
-    hw::sdBegin();
+    hw::sdRecover();
     app_.toast(storage::resultText(storage::Result::ReadFail));
     return false;
   }

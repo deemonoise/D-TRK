@@ -21,7 +21,7 @@ int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 // I/O errors may mean the card was pulled: remount so the screen shows the real state.
 void reprobe(storage::Result r) {
-  if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdBegin();
+  if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdRecover();
 }
 
 }  // namespace
@@ -654,7 +654,7 @@ void FileScreen::togglePreview() {
   uint32_t frames = 0, rate = 0;
   const audio::BankResult r = audio::loadWavPreview(path, kPreviewMs, &pvBuf_, &frames, &rate);
   if (r != audio::BankResult::Ok) {
-    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdBegin();
+    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app_.toast(audio::bankResultText(r));
     return;
   }
@@ -716,7 +716,7 @@ void FileScreen::doImport(const char* name) {
   audio::ImportOut out{};
   const audio::BankResult r = audio::importToCache(path, p, out, nullptr, progress, this);
   if (r != audio::BankResult::Ok) {
-    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdBegin();
+    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app_.toast(audio::bankResultText(r));
     return;
   }

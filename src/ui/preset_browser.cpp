@@ -20,7 +20,7 @@ int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 // I/O errors may mean the card was pulled: remount so the next listing shows the real state.
 void reprobe(storage::Result r) {
-  if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdBegin();
+  if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdRecover();
 }
 
 constexpr const char* kLoadBtns[3] = {"OK", "DEL", "CANCEL"};
