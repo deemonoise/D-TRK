@@ -6,6 +6,7 @@
 
 Руководство пользователя: [docs/manual.html](docs/manual.html) (открыть в браузере).
 Корпус для 3D-печати и схема питания от аккумулятора: [enclosure/](enclosure/README.md).
+Что сделано и что дальше: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Подключение
 
