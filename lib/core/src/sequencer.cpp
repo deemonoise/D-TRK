@@ -283,6 +283,13 @@ bool Sequencer::rewind(uint64_t now) {
   heap_.removeIf([&](const SchedEvent& e) { return static_cast<int32_t>(e.tag - h.serial) >= 0; });
   memcpy(ties_, h.ties, sizeof(ties_));
   memcpy(arps_, h.arps, sizeof(arps_));
+  // A perf Mute's or scene's release went with the undone steps: replanning must push it again.
+  perfMuted_ = h.perfMuted;
+  for (int i = 0; i <= k; ++i)
+    if (hist_[i].scene) {
+      for (int tr = 0; tr < kTracks; ++tr) p_.tracks[tr].mute = (h.mutes >> tr) & 1;
+      break;
+    }
   songPos_ = h.prevSong;  // a chain advance among the undone steps is decided again
   rep_ = h.prevRep;
   stepTick_ = h.tick;
@@ -328,7 +335,7 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   // After a stall, steps already followed by another due step are skipped
   // rather than played together.
   const uint32_t look = lookUs();
-  while (tickTime(stepTick_) <= now + look) {
+  while (stepTick_ < endTick_ && tickTime(stepTick_) <= now + look) {
     if (tickTime(stepTick_ + ticks()) <= now) {
       skipStep(now);
     } else {
@@ -370,6 +377,11 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.prevRep = rep_;
   memcpy(h.ties, ties_, sizeof(ties_));
   memcpy(h.arps, arps_, sizeof(arps_));
+  h.perfMuted = perfMuted_;
+  h.mutes = 0;
+  for (int i = 0; i < kTracks; ++i)
+    if (p_.tracks[i].mute) h.mutes |= static_cast<uint16_t>(1u << i);
+  sceneSet_ = false;
   tag_ = stepSerial_;
   minT_ = kNever;
 
@@ -429,8 +441,8 @@ void Sequencer::scheduleStep(uint64_t now) {
     uint32_t id = 0;
     uint64_t onT = 0;
     bool keep = false;  // the latest NoteOn made it into the heap
-    const StepEvent& first = ex.ev[i];
-    if (tie.on && tie.ch == first.ch && tie.note == first.note) {
+    const StepEvent& first = ex.ev[i];  // stale when the step has no NoteOn (empty KIT mask)
+    if (tie.on && i < ex.count && tie.ch == first.ch && tie.note == first.note) {
       // Same pitch: the held note goes on; this step's gate (or next tie) ends it.
       // If another track took the voice meanwhile, the continuation sounds it again.
       const uint64_t on = at(first);
@@ -474,6 +486,7 @@ void Sequencer::scheduleStep(uint64_t now) {
   stepTick_ += ticks();
   if (++pos_ >= pat.length) endOfPass();
   h.first = minT_ == kNever ? t : minT_;
+  h.scene = sceneSet_;
 }
 
 // INT tracks: tells the synth a step starts (see Synth: 0xF5 0xF0), with the controls' time.
@@ -526,18 +539,23 @@ void Sequencer::skipStep(uint64_t now) {
     adjustStep(s, tr);
     if (s.note == kNoteOff) pushOff(tr, t);
     else if (s.hasNote()) releaseTie(tr, t);
-    const bool hasFx = s.hasFx();
-    bool stopArp = s.hasNote() || s.note == kNoteOff;  // a missed note step ends the arp too
-    if (hasFx && audible(tr, t) && expand(s, tr, c, ex_)) {
+    const bool aud = audible(tr, t);
+    // The arp follows the step as scheduleStep would have played it (its notes are dropped).
+    StepArp& a = arps_[tr];
+    bool stopArp = s.note == kNoteOff || (s.hasNote() && !aud);
+    if ((s.hasFx() || s.hasNote()) && aud && expand(s, tr, c, ex_)) {
       pushStepStart(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false, false);
       pushControls(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false);  // all at now, no nudge
+      if (s.hasNote()) a = ex_.arp;
       if (ex_.offUs >= 0) {
         pushOff(tr, now);
         stopArp = true;
       }
+    } else if (s.hasNote() && aud) {
+      continue;  // CND / PRB failed: a running arp goes on
     }
-    if (stopArp) arps_[tr].n = 0;
-    else arpStep(tr, t, static_cast<int64_t>(now), false);  // counted, not played
+    if (stopArp) a.n = 0;
+    else if (!s.hasNote()) arpStep(tr, t, static_cast<int64_t>(now), false);  // counted, not played
   }
   stepTick_ += ticks();
   if (++pos_ >= pat.length) endOfPass();
@@ -647,6 +665,7 @@ void Sequencer::applyScene(int songPos, uint64_t t) {
     if (mute && !p_.tracks[tr].mute) pushOff(tr, t);
     p_.tracks[tr].mute = mute;
   }
+  sceneSet_ = true;
 }
 
 uint8_t Sequencer::phase256(uint64_t now) const { return stepPhase256(now, heardStepT_, stepUs()); }

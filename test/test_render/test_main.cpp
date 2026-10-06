@@ -154,6 +154,38 @@ void test_next_pass_never_sounds() {
   TEST_ASSERT_EQUAL(0, loudTail);
 }
 
+// Step 0 sounds in block 0, not one block late.
+void test_first_step_on_time() {
+  Project& p = *mkProj();
+  p.patterns[0].steps[0][0].note = 60;
+  RenderSpec s;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p, s);
+  OfflineRender r(p, synth, s);
+  TEST_ASSERT_EQUAL(0, firstLoudBlock(r));
+}
+
+// A negative NDG on step 0: the next pass's hit (before the body end) is never planned.
+void test_next_pass_negative_nudge_stays_out() {
+  Project& p = *mkProj();
+  p.patterns[0].steps[0][0].note = 60;
+  p.patterns[0].steps[0][0].fx[0] = {Fx::NDG, static_cast<uint8_t>(-40)};
+  RenderSpec s;
+  s.tailBlocks = 100;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p, s);
+  OfflineRender r(p, synth, s);
+  int16_t out[Synth::kBlock];
+  int n = 0, loudLate = 0;
+  while (r.renderBlock(out)) {
+    bool loud = false;
+    for (int16_t x : out) loud |= x > 50 || x < -50;
+    if (n >= 450) loudLate += loud;  // 1.8 s on: the next pass's nudged hit would be at 1.95 s
+    ++n;
+  }
+  TEST_ASSERT_EQUAL(0, loudLate);
+}
+
 void test_song_total_and_tail() {
   Project& p = *mkProj();
   p.patterns[1].length = 32;
@@ -254,6 +286,8 @@ int main() {
   RUN_TEST(test_pattern_spec_picks_pattern);
   RUN_TEST(test_mask_silences_other_track);
   RUN_TEST(test_next_pass_never_sounds);
+  RUN_TEST(test_first_step_on_time);
+  RUN_TEST(test_next_pass_negative_nudge_stays_out);
   RUN_TEST(test_song_total_and_tail);
   RUN_TEST(test_song_plays_chain_items);
   RUN_TEST(test_guard_restores_flags_and_mutes);

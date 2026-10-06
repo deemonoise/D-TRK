@@ -205,10 +205,12 @@ void test_not_wav() {
 
 void test_truncated() {
   std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3, 4}));
-  f.resize(f.size() - 3);  // cut inside the data
+  f.resize(f.size() - 3);  // cut inside the data: accepted, dataBytes as declared (callers clamp)
   VecSource src(f);
   WavInfo w;
-  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Truncated), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(8, w.dataBytes);
+  TEST_ASSERT_EQUAL(44, w.dataOffset);
   std::vector<uint8_t> g = wav(fmtBody(1, 1, 32000, 16), pcm16({1}));
   g.resize(30);  // cut inside "fmt "
   VecSource src2(g);

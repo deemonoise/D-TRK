@@ -10,7 +10,9 @@ constexpr uint32_t kRenderBlockUs = 1000000u * Synth::kBlock / kSynthRate;  // 4
 constexpr int16_t kSilence = 33;             // -60 dBFS
 constexpr float kNormPeak = 0.891f * 32767;  // -1 dBFS
 
-// One pass of pattern idx / the whole chain (with its passes) at the project's BPM, us.
+// Length of one pass of pattern idx / of the song (chain passes), in ticks and in us.
+uint64_t passTicks(const Project& p, int idx);
+uint64_t songTicks(const Project& p);
 uint64_t passUs(const Project& p, int idx);
 uint64_t songUs(const Project& p);
 // Scales so that `peak` lands at -1 dBFS; peak 0 leaves the buffer as is.

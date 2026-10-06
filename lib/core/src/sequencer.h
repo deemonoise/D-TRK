@@ -98,6 +98,8 @@ class Sequencer {
   void seed(uint32_t s) { rng_ = Rng(s); }
   // Tracks that may sound (bit = track), on top of mute / solo. Offline render; default all.
   void setTrackMask(uint16_t m) { mask_ = m; }
+  // Steps at or after this tick (counted from start()) are not planned. Offline render; default never.
+  void setEndTick(uint64_t t) { endTick_ = t; }
   // Fill held: CND FIL steps play, NFL steps do not.
   void setFill(bool on) { fill_ = on; }
   bool fill() const { return fill_; }
@@ -139,6 +141,9 @@ class Sequencer {
     uint8_t prevRep;        // rep_ before
     Tie ties[kTracks];
     StepArp arps[kTracks];
+    uint16_t perfMuted;   // perfMuted_ before: its first-muted-step release is undone with the step
+    uint16_t mutes;       // TrackCfg::mute bits before
+    bool scene;           // the step's pass end recalled a scene (mutes written)
   };
   static constexpr int kHist = 16;           // covers every scheduled but unheard step
   static constexpr uint16_t kLookTicks = 48;  // the largest nudge: -50 % of a quarter
@@ -218,7 +223,9 @@ class Sequencer {
   bool fill_ = false;
   PerfFx perf_[kTracks] = {};
   uint16_t perfMuted_ = 0;  // perf Mute already ended the track's notes
+  bool sceneSet_ = false;   // applyScene wrote the mutes while the current step was planned
   uint16_t mask_ = 0xFFFF;  // setTrackMask
+  uint64_t endTick_ = kNever;  // setEndTick
   uint64_t heardStepT_ = 0;  // start of the heard step
   uint8_t pos_ = 0;  // next step to schedule
   uint32_t loop_ = 0;

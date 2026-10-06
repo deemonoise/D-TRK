@@ -100,7 +100,9 @@ WavErr parseChunks(Reader& r, WavInfo& out, uint32_t& crcFrames) {
       if (!fmt) return WavErr::Unsupported;
       out.dataOffset = r.pos;
       out.dataBytes = size - size % out.frameBytes();
-      if (!r.skip(size)) return WavErr::Truncated;
+      // Data running past the end (a cut copy, a streaming writer that never fixed the size): what
+      // is there plays; the caller clamps dataBytes to the file.
+      if (!r.skip(size)) return WavErr::Ok;
       data = true;
       // The pad byte and anything after the data are optional (smpl, mtcr, clm).
       if ((size & 1) && !r.skip(1)) return WavErr::Ok;

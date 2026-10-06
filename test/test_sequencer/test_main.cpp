@@ -1989,6 +1989,20 @@ void test_step_arp_updown_over_two_octaves() {
   for (int i = 0; i < 12; ++i) TEST_ASSERT_EQUAL(want[i], on[i]);
 }
 
+// A stall skips the ARS step: the arp still runs on the steps after it, in step with the grid.
+void test_step_arp_survives_a_stall() {
+  Step& s = p->patterns[0].steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::ARS, kArsDefault};  // 60, 72 every step
+  seq->start(0, *sink);
+  sink->now = 1100000;  // steps 0..7 missed
+  run(1100000, 1400000);
+  const auto on72 = sink->times(0x90, 72);
+  TEST_ASSERT_EQUAL(2, on72.size());
+  TEST_ASSERT_EQUAL(1125000, on72[0]);  // steps 9 and 11: the odd arp notes
+  TEST_ASSERT_EQUAL(1375000, on72[1]);
+}
+
 void test_step_arp_on_int_track_uses_track_voices() {
   p->tracks[0].out = TrackOut::Int;
   Step& s = p->patterns[0].steps[0][0];
@@ -2009,6 +2023,22 @@ void test_step_arp_on_int_track_uses_track_voices() {
   for (const auto& r : sink->synKind(0xF5))
     if (r.b[1] == kSynthStep && r.t == 250000) noteStart = (r.b[2] & 0x80) != 0;
   TEST_ASSERT_TRUE(noteStart);
+}
+
+// A perf Mute's release is planned with the next step; a rewind (tempo change) replans it.
+void test_perf_mute_release_survives_rewind() {
+  Step& s = p->patterns[0].steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::TIE, 0};
+  seq->start(0, *sink);
+  run(0, 200000);
+  seq->perfOn(0, PerfFx::Mute);
+  run(200001, 260000);  // the step at 250 ms is planned with its release
+  p->bpm = 121;         // the next process rewinds and replans it
+  run(260001, 700000);
+  const auto off = sink->times(0x80, 60);
+  TEST_ASSERT_EQUAL(1, off.size());
+  TEST_ASSERT_TRUE(off[0] < 400000);
 }
 
 int main() {
@@ -2136,6 +2166,8 @@ int main() {
   RUN_TEST(test_step_arp_every_two_steps_until_next_note);
   RUN_TEST(test_step_arp_continues_over_loop_and_stops_on_pattern_change);
   RUN_TEST(test_step_arp_updown_over_two_octaves);
+  RUN_TEST(test_step_arp_survives_a_stall);
   RUN_TEST(test_step_arp_on_int_track_uses_track_voices);
+  RUN_TEST(test_perf_mute_release_survives_rewind);
   return UNITY_END();
 }

@@ -92,7 +92,7 @@ bool SampleBank::readCopy(int sector, uint32_t& seq) {
     e.root = p[28];
     e.loop = p[29];
     if (!e.name[0] || e.frames == 0 || e.offset % kBankAlign || e.offset < kBankHeader ||
-        e.offset > end() || span(e.frames) > end() - e.offset)
+        e.offset > end() || e.frames > (end() - e.offset) / 2 || span(e.frames) > end() - e.offset)
       return false;
   }
   n_ = count;

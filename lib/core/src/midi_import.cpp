@@ -140,8 +140,11 @@ ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, co
     pat.length = static_cast<uint8_t>(len);
     pat.res = m.quant;
     for (int t = 0; t < kTracks; ++t)
-      if (isTarget[t])
+      if (isTarget[t]) {
         for (Step& s : pat.steps[t]) s = Step();
+        pat.trackLen[t] = 0;  // the full pattern length: no imported step may fall past a loop
+      }
+    pat.fitTrackLen();
   }
   // Pass 2: write.
   for (uint32_t i = 0; i < n; ++i) {

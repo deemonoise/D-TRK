@@ -36,6 +36,7 @@ class Compressor {
       env_ += (key > env_ ? ca_ : cr_) * (key - env_);
       if (++hold_ >= kHold) {
         hold_ = 0;
+        if (env_ < 1e-20f) env_ = 0;  // silence: no denormal tail
         const float envDb = env_ > 1e-6f ? 6.02f * log2f(env_) : -120.f;
         const float over = envDb - thrDb_;
         gain_ = (over > 0 ? exp2f(-over * 0.75f / 6.02f) : 1.f) * makeup_;

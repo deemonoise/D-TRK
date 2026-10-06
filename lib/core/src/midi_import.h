@@ -34,8 +34,8 @@ struct ImportResult {
 };
 
 // Writes notes (sorted by tick, as parseSmf returns them) into p. Patterns
-// firstPattern..firstPattern+patternsWritten-1 get their target tracks cleared, length =
-// patternLen and res = quant; other tracks and patterns are untouched. Notes of unmapped
+// firstPattern..firstPattern+patternsWritten-1 get their target tracks cleared (and their track
+// length reset to the pattern's), length = patternLen and res = quant; other tracks and patterns are untouched. Notes of unmapped
 // sources or before the offset are ignored (not counted as dropped); a note less than half a
 // step before the offset rounds to step 0.
 // Pattern count covers the last placed note and, once any note is placed, the trailing silence

@@ -444,6 +444,18 @@ void test_plan_matches_import() {
   TEST_ASSERT_EQUAL(77, importPlan(I, N, nN, M, 77).bpm);
 }
 
+// A target track's own length is reset: notes past its old loop play.
+void test_resets_target_track_length() {
+  P.patterns[0].trackLen[0] = 8;
+  P.patterns[0].trackLen[1] = 12;
+  M.patternLen = 16;
+  add(24 * 10, 62);  // step 10, past the old loop of 8
+  run();
+  TEST_ASSERT_EQUAL(0, P.patterns[0].trackLen[0]);
+  TEST_ASSERT_EQUAL(12, P.patterns[0].trackLen[1]);  // not a target: kept (fits 16)
+  TEST_ASSERT_EQUAL(62, st(0, 0, 10).note);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_map_defaults);
@@ -466,6 +478,7 @@ int main() {
   RUN_TEST(test_mono_replacement_rewrites_fx);
   RUN_TEST(test_tempo);
   RUN_TEST(test_plan_matches_import);
+  RUN_TEST(test_resets_target_track_length);
   RUN_TEST(test_velocity_default_stored_as_zero);
   RUN_TEST(test_trailing_silence_patterns);
   RUN_TEST(test_first_pattern_out_of_range);

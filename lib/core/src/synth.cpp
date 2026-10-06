@@ -367,8 +367,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   const float pitch = (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
   bool legato;
   // SLD: the track's sounding voice glides to the note (like legato), else a new one from the last note.
-  int held = r.sld ? trackVoice(track) : -1;
-  if (kitLane && held < 0)  // the lane's sounding voice: choke
+  // A KIT lane never takes another lane's voice: only its own (same note) glides or chokes.
+  int held = r.sld && !kitLane ? trackVoice(track) : -1;
+  if (kitLane)  // the lane's sounding voice: choke
     for (int x = 0; x < kVoices; ++x)
       if (voices_[x].on && voices_[x].track == track && voices_[x].note == note) held = x;
   // A heavy (FM / DRUM) note gliding from a CHIP / SAMPLE voice adds a heavy voice: past the
@@ -898,9 +899,9 @@ void Synth::renderSample(Voice& v, float* out, int n) {
     if (mode == static_cast<uint8_t>(LoopMode::Forward)) {
       const int64_t span = hi - lo;
       if (step >= 0) {
-        while (pos >= hi) pos -= span;
+        if (pos >= hi) pos = lo + (pos - lo) % span;  // one step may cross a short loop many times
       } else {
-        while (pos < lo) pos += span;
+        if (pos < lo) pos = hi - 1 - (hi - 1 - pos) % span;
       }
     } else if (mode == static_cast<uint8_t>(LoopMode::PingPong)) {
       // Reflect around the edge frame: ..., 98, 99, 98, ... (the end frame is not repeated).

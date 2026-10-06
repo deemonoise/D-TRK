@@ -5,22 +5,32 @@
 
 namespace mt {
 
-uint64_t passUs(const Project& p, int idx) {
+namespace {
+uint64_t ticksToUs(const Project& p, uint64_t ticks) {
+  const uint16_t bpm = p.bpm < 20 ? 20 : (p.bpm > 300 ? 300 : p.bpm);  // as the sequencer clamps
+  return ticks * 625000ull / bpm;
+}
+}  // namespace
+
+uint64_t passTicks(const Project& p, int idx) {
   const Pattern& pt = p.patterns[idx >= 0 && idx < kPatterns ? idx : 0];
   const uint64_t len = pt.length < kMinSteps ? kMinSteps : (pt.length > kMaxSteps ? kMaxSteps : pt.length);
-  const uint16_t bpm = p.bpm < 20 ? 20 : (p.bpm > 300 ? 300 : p.bpm);  // as the sequencer clamps
-  return len * ticksPerStep(pt.res) * 625000ull / bpm;
+  return len * ticksPerStep(pt.res);
 }
 
-uint64_t songUs(const Project& p) {
-  uint64_t us = 0;
+uint64_t songTicks(const Project& p) {
+  uint64_t ticks = 0;
   const int n = p.chainLen > kChainMax ? kChainMax : p.chainLen;
   for (int i = 0; i < n; ++i) {
     const int rep = p.chainRep[i] < 1 ? 1 : (p.chainRep[i] > kChainRepMax ? kChainRepMax : p.chainRep[i]);
-    us += passUs(p, p.chain[i] < kPatterns ? p.chain[i] : kPatterns - 1) * rep;
+    ticks += passTicks(p, p.chain[i] < kPatterns ? p.chain[i] : kPatterns - 1) * rep;
   }
-  return us;
+  return ticks;
 }
+
+uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, idx)); }
+
+uint64_t songUs(const Project& p) { return ticksToUs(p, songTicks(p)); }
 
 void normalizePeak(int16_t* b, uint32_t n, int16_t peak) {
   if (peak <= 0) return;
@@ -63,7 +73,10 @@ OfflineRender::OfflineRender(Project& p, Synth& synth, const RenderSpec& spec)
   if (spec.mode == RenderSpec::Mode::Pattern) seq_.queuePattern(spec.pattern < kPatterns ? spec.pattern : 0);
   bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p) : passUs(p, spec.pattern);
   bodyBlocks_ = static_cast<uint32_t>((bodyUs_ + kRenderBlockUs - 1) / kRenderBlockUs);
+  // Steps of the next pass are never planned (a negative NDG would land inside the body).
+  seq_.setEndTick(spec.mode == RenderSpec::Mode::Song ? songTicks(p) : passTicks(p, spec.pattern));
   seq_.start(0, *this);
+  seq_.process(0, *this);  // step 0 planned at 0, not clamped to the first block's end
 }
 
 // Note-offs and releases: what ends sounding notes. Everything else of the next pass is dropped.
