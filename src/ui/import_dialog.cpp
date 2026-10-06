@@ -28,18 +28,6 @@ T* allocPsram(size_t n = 1) {
   return static_cast<T*>(heap_caps_malloc(sizeof(T) * n, MALLOC_CAP_SPIRAM));
 }
 
-// Temporary Project in PSRAM for the import (live is only touched by commit()).
-mt::Project* allocProject() {
-  void* m = allocPsram<mt::Project>();
-  return m ? new (m) mt::Project() : nullptr;
-}
-
-void freeProject(mt::Project* p) {
-  if (!p) return;
-  p->~Project();
-  heap_caps_free(p);
-}
-
 }  // namespace
 
 // Kept off the stack and out of internal RAM (SmfInfo alone is ~760 bytes).
@@ -50,18 +38,13 @@ struct ImportDialog::State {
   char labels[mt::kSmfMaxSources][24];
   char file[hw::kNameMax];
   bool cut = false;  // file truncated / too many notes
-  // Dry run shown in the confirmation and committed as is; freed by close() / the next dry run.
-  mt::Project* tmp = nullptr;
-  mt::ImportResult result{};
+  mt::ImportResult plan{};  // shown in the confirmation (no copy of the project: ~460 KB)
 };
 
 bool ImportDialog::open(const char* dir, const char* name) {
   close();
   void* m = allocPsram<State>();
-  notes_ = allocPsram<mt::SmfNote>(kNoteCap);
-  if (!m || !notes_) {
-    heap_caps_free(m);
-    close();
+  if (!m) {
     app_.toast(storage::resultText(storage::Result::NoMemory));
     return false;
   }
@@ -80,7 +63,6 @@ void ImportDialog::close() {
   list_.setParams(nullptr, 0);
   list_.setEdit(false);
   if (state_) {
-    freeProject(state_->tmp);
     state_->~State();
     heap_caps_free(state_);
     state_ = nullptr;
@@ -130,9 +112,18 @@ bool ImportDialog::readAndParse(const char* dir, const char* name) {
     app_.toast(storage::resultText(storage::Result::ReadFail));
     return false;
   }
-  const mt::SmfErr e = mt::parseSmf(buf, size, state_->info, notes_, kNoteCap);
+  // A note-on takes at least 3 file bytes (delta, key, velocity with running status): the
+  // buffer follows the file instead of always taking kNoteCap notes (~190 KB).
+  const uint32_t cap = size / 3 + 1 < kNoteCap ? static_cast<uint32_t>(size / 3 + 1) : kNoteCap;
+  notes_ = allocPsram<mt::SmfNote>(cap);
+  if (!notes_) {
+    heap_caps_free(buf);
+    app_.toast(storage::resultText(storage::Result::NoMemory));
+    return false;
+  }
+  const mt::SmfErr e = mt::parseSmf(buf, size, state_->info, notes_, cap);
   heap_caps_free(buf);  // notes and info are all the import needs
-  noteCount_ = state_->info.noteCount < kNoteCap ? state_->info.noteCount : kNoteCap;
+  noteCount_ = state_->info.noteCount < cap ? state_->info.noteCount : cap;
   switch (e) {
     case mt::SmfErr::Ok: break;
     case mt::SmfErr::Truncated:
@@ -228,22 +219,12 @@ void ImportDialog::action(int row) {
   else if (row == cancelRow_) close();
 }
 
-// Dry run into a copy of live; the confirmation names the exact patterns that will be
-// overwritten and commit() copies them from this result. No lock for the copy: the engine only
-// writes bpm.
+// Plans the import (pattern count, nothing written); the confirmation names the exact patterns
+// that commit() overwrites.
 void ImportDialog::confirm() {
-  freeProject(state_->tmp);
-  state_->tmp = allocProject();
-  if (!state_->tmp) {
-    app_.toast(storage::resultText(storage::Result::NoMemory));
-    return;
-  }
-  *state_->tmp = app_.project();
-  state_->result = mt::importSmf(state_->info, notes_, noteCount_, state_->map, *state_->tmp);
-  const int n = state_->result.patternsWritten;
+  state_->plan = mt::importPlan(state_->info, notes_, noteCount_, state_->map, app_.project().bpm);
+  const int n = state_->plan.patternsWritten;
   if (n == 0) {
-    freeProject(state_->tmp);
-    state_->tmp = nullptr;
     app_.toast("NOTHING TO IMPORT");
     return;
   }
@@ -260,22 +241,19 @@ void ImportDialog::confirm() {
 }
 
 void ImportDialog::commit() {
-  if (!state_ || !state_->tmp) return;
+  if (!state_ || state_->plan.patternsWritten == 0) return;
   app_.showBusy("IMPORTING...");
   if (!storage::stopEngine()) {
     app_.toast(storage::resultText(storage::Result::EngineBusy));
     return;
   }
-  const mt::ImportResult r = state_->result;
-  const bool setBpm = state_->map.useTempo && state_->info.firstTempoUsPerQ > 0;
-  // importSmf only writes patterns first..first+n-1 and bpm. The engine is stopped, so one
-  // lock around the whole copy is fine.
-  mt::Project& live = app_.project();
-  const int first = state_->map.firstPattern;
+  // Straight into live: importSmf only writes patterns first..first+n-1 (the planned ones: the
+  // tracks and kits it reads did not change since) and bpm. The engine is stopped, so one lock
+  // around the whole import is fine.
   engine::lockProject();
-  for (int i = first; i < first + r.patternsWritten && i < mt::kPatterns; ++i) live.patterns[i] = state_->tmp->patterns[i];
-  if (setBpm) live.bpm = r.bpm;
+  const mt::ImportResult r = mt::importSmf(state_->info, notes_, noteCount_, state_->map, app_.project());
   engine::unlockProject();
+  const bool setBpm = state_->map.useTempo && state_->info.firstTempoUsPerQ > 0;
   engine::post(engine::Cmd::ReleaseTies);  // ties may still hold notes of the old data
   if (setBpm) engine::post(engine::Cmd::SetBpm, r.bpm);  // engine-side tempo state
   close();

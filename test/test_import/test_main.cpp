@@ -424,6 +424,26 @@ void test_notes_to_kit_lanes() {
   TEST_ASSERT_EQUAL(1u, r.notesDropped);
 }
 
+// importPlan: the pattern count and tempo of importSmf, without touching the project.
+void test_plan_matches_import() {
+  M.firstPattern = 3;
+  M.patternLen = 8;
+  I.firstTempoUsPerQ = 600000;
+  add(0, 60);
+  add(24 * 10, 62);
+  const uint8_t before = P.patterns[3].length;
+  const ImportResult plan = importPlan(I, N, nN, M, P.bpm);
+  TEST_ASSERT_EQUAL(before, P.patterns[3].length);  // nothing written
+  TEST_ASSERT_EQUAL(120, P.bpm);
+  const ImportResult r = run();
+  TEST_ASSERT_EQUAL(r.patternsWritten, plan.patternsWritten);
+  TEST_ASSERT_EQUAL(2, plan.patternsWritten);
+  TEST_ASSERT_EQUAL(r.bpm, plan.bpm);
+  TEST_ASSERT_EQUAL(100, plan.bpm);
+  M.useTempo = false;
+  TEST_ASSERT_EQUAL(77, importPlan(I, N, nN, M, 77).bpm);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_map_defaults);
@@ -445,6 +465,7 @@ int main() {
   RUN_TEST(test_fx_priority);
   RUN_TEST(test_mono_replacement_rewrites_fx);
   RUN_TEST(test_tempo);
+  RUN_TEST(test_plan_matches_import);
   RUN_TEST(test_velocity_default_stored_as_zero);
   RUN_TEST(test_trailing_silence_patterns);
   RUN_TEST(test_first_pattern_out_of_range);

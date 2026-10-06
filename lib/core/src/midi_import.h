@@ -46,6 +46,9 @@ struct ImportResult {
 // absolute percentage points (e.g. defGate 50 % -> 40..60 % gets no GAT).
 ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, const ImportMap& m,
                        Project& p);
+// What importSmf would do to a project at `bpm`, writing nothing: patternsWritten and bpm are
+// exact, notesDropped stays 0 (known only after the write).
+ImportResult importPlan(const SmfInfo& info, const SmfNote* notes, uint32_t n, const ImportMap& m, uint16_t bpm);
 
 // Nearest GAT value (1..200, see gatePercent) for a note of `len` file ticks on a grid of
 // q / kPpqn ticks per step. Ties pick the lower value.

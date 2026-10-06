@@ -73,26 +73,26 @@ uint8_t nearestGate(uint32_t len, int64_t q) {
   return static_cast<uint8_t>(err(v + 1) < err(v) ? v + 1 : v);
 }
 
-ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, const ImportMap& m,
-                       Project& p) {
-  ImportResult r{0, p.bpm, 0};
-  if (m.useTempo && info.firstTempoUsPerQ > 0) {
-    uint32_t bpm = (60000000u + info.firstTempoUsPerQ / 2) / info.firstTempoUsPerQ;
-    if (bpm < 20) bpm = 20;
-    if (bpm > 300) bpm = 300;
-    p.bpm = static_cast<uint16_t>(bpm);
-    r.bpm = p.bpm;
-  }
-  if (info.ppq == 0) return r;
+namespace {
 
+// The tempo after the import (bpm when the file's is not used).
+uint16_t importBpm(const SmfInfo& info, const ImportMap& m, uint16_t bpm) {
+  if (!m.useTempo || info.firstTempoUsPerQ == 0) return bpm;
+  uint32_t b = (60000000u + info.firstTempoUsPerQ / 2) / info.firstTempoUsPerQ;
+  return static_cast<uint16_t>(b < 20 ? 20 : (b > 300 ? 300 : b));
+}
+
+Ctx makeCtx(const SmfInfo& info, const ImportMap& m) {
   int len = m.patternLen;
   if (len < kMinSteps) len = kMinSteps;
   if (len > kMaxSteps) len = kMaxSteps;
   const int first = m.firstPattern < kPatterns ? m.firstPattern : kPatterns;
-  const Ctx c{info, m, static_cast<int64_t>(info.ppq) * ticksPerStep(m.quant),
-              static_cast<int64_t>(m.offsetBars) * 4 * info.ppq, len, first, kPatterns - first};
+  return Ctx{info, m, static_cast<int64_t>(info.ppq) * ticksPerStep(m.quant),
+             static_cast<int64_t>(m.offsetBars) * 4 * info.ppq, len, first, kPatterns - first};
+}
 
-  // Pass 1: how many patterns the material needs.
+// Pass 1: how many patterns the material needs.
+int patternsNeeded(const Ctx& c, const SmfNote* notes, uint32_t n) {
   int needed = 0;
   for (uint32_t i = 0; i < n; ++i) {
     Placed pl;
@@ -102,13 +102,34 @@ ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, co
     if (pl.pattern < c.avail && pl.pattern + 1 > needed) needed = pl.pattern + 1;
   }
   // Trailing silence up to the end of the file (end rounded to the nearest step).
-  if (needed > 0 && static_cast<int64_t>(info.lastTick) > c.offset) {
-    const int64_t rel = static_cast<int64_t>(info.lastTick) - c.offset;
+  if (needed > 0 && static_cast<int64_t>(c.info.lastTick) > c.offset) {
+    const int64_t rel = static_cast<int64_t>(c.info.lastTick) - c.offset;
     const int64_t steps = floorDiv(2 * rel * kPpqn + c.q, 2 * c.q);
-    const int64_t pats = (steps + len - 1) / len;
+    const int64_t pats = (steps + c.len - 1) / c.len;
     const int clamped = pats > c.avail ? c.avail : static_cast<int>(pats);
     if (clamped > needed) needed = clamped;
   }
+  return needed;
+}
+
+}  // namespace
+
+ImportResult importPlan(const SmfInfo& info, const SmfNote* notes, uint32_t n, const ImportMap& m, uint16_t bpm) {
+  ImportResult r{0, importBpm(info, m, bpm), 0};
+  if (info.ppq == 0) return r;
+  r.patternsWritten = static_cast<uint8_t>(patternsNeeded(makeCtx(info, m), notes, n));
+  return r;
+}
+
+ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, const ImportMap& m,
+                       Project& p) {
+  p.bpm = importBpm(info, m, p.bpm);
+  ImportResult r{0, p.bpm, 0};
+  if (info.ppq == 0) return r;
+  const Ctx c = makeCtx(info, m);
+  const int len = c.len, first = c.first;
+  const int needed = patternsNeeded(c, notes, n);
+  r.patternsWritten = static_cast<uint8_t>(needed);
 
   bool isTarget[kTracks] = {false};
   for (int s = 0; s < info.sourceCount && s < kSmfMaxSources; ++s)
@@ -122,8 +143,6 @@ ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, co
       if (isTarget[t])
         for (Step& s : pat.steps[t]) s = Step();
   }
-  r.patternsWritten = static_cast<uint8_t>(needed);
-
   // Pass 2: write.
   for (uint32_t i = 0; i < n; ++i) {
     const SmfNote& sn = notes[i];
