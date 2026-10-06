@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "audio/audio.h"
 #include "name_edit.h"
 
 namespace ui {
@@ -267,9 +268,40 @@ bool TrackScreen::wantsRedraw(const engine::Status&) {
   if (!mixer_) return false;
   if (mixSel_ != kMaster && mixSel_ != app_.curTrack() % kStrips) mixSel_ = app_.curTrack() % kStrips;
   const uint32_t sig = mixSignature();
-  if (sig == mixSig_) return false;
+  // The scope: about 15 frames a second while the mixer is shown.
+  const uint32_t now = millis();
+  const bool scope = now - scopeMs_ >= 66;
+  if (sig == mixSig_ && !scope) return false;
   mixSig_ = sig;
   return true;
+}
+
+// Output scope under the strips: the last samples to the speaker, the peak meter and CLIP (held 1 s).
+void TrackScreen::drawScope(LGFX_Sprite& s, int y0) {
+  scopeMs_ = millis();
+  constexpr int kX = kStripX0, kW = kScreenW - 2 * kStripX0, kH = kScopeH;
+  const int y = y0 + kScopeY, mid = y + kH / 2;
+  s.fillRect(kX, y, kW, kH, kBeatBg);
+  s.drawFastHLine(kX, mid, kW - kMeterW - 4, kDim);
+  constexpr int kN = kW - kMeterW - 4;  // one sample per pixel
+  int16_t buf[kN];
+  audio::scopeRead(buf, kN);
+  int prev = mid;
+  for (int i = 0; i < kN; ++i) {
+    const int yy = mid - buf[i] * (kH / 2 - 1) / 32768;
+    if (i) s.drawLine(kX + i - 1, prev, kX + i, yy, kGreen);
+    prev = yy;
+  }
+  const int16_t pk = audio::scopePeak();
+  if (pk >= 32000) clipMs_ = scopeMs_ | 1;
+  meter_ = pk > meter_ ? pk : meter_ * 7 / 8;  // fast up, slow down
+  const int mx = kX + kW - kMeterW;
+  const int mh = meter_ * kH / 32768;
+  s.fillRect(mx, y + kH - mh, kMeterW, mh, meter_ > 29000 ? kYellow : kGreen);
+  if (clipMs_ && scopeMs_ - clipMs_ < 1000) {
+    s.setTextColor(kRed);
+    s.drawString("CLIP", mx - 4 * kCharW - 6, y + 2);
+  }
 }
 
 void TrackScreen::setVol(int track, int v) {
@@ -391,6 +423,7 @@ void TrackScreen::drawFader(LGFX_Sprite& s, int x, int y, int value, int max, ui
 }
 
 void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
+  drawScope(s, y0);
   const mt::Project& p = app_.project();
   char buf[12];
   for (int k = 0; k < kStrips; ++k) {

@@ -43,6 +43,11 @@
 namespace audio {
 namespace {
 
+// Scope ring: written by the audio task after every block, read by the UI.
+int16_t scope[kScopeLen];
+std::atomic<int> scopeAt{0};
+std::atomic<int> scopePk{0};
+
 static_assert(kBlock == mt::Synth::kBlock, "one synth block per DMA block");
 constexpr int kDmaBlocks = 3;  // DMA buffers: a block plays ~(kDmaBlocks - 1) blocks after it is written
 constexpr uint32_t kBlockUs = 1000000u * kBlock / kRate;  // 4000
@@ -512,6 +517,18 @@ void run(void*) {
     if (us > benchPeak.load(std::memory_order_relaxed)) benchPeak.store(us, std::memory_order_relaxed);
 #endif
     for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = mono[i];
+    {
+      int at = scopeAt.load(std::memory_order_relaxed);
+      int pk = scopePk.load(std::memory_order_relaxed);
+      for (int i = 0; i < kBlock; ++i) {
+        scope[at] = mono[i];
+        at = (at + 1) % kScopeLen;
+        const int a = mono[i] < 0 ? -mono[i] : mono[i];
+        if (a > pk) pk = a;
+      }
+      scopeAt.store(at, std::memory_order_relaxed);
+      scopePk.store(pk, std::memory_order_relaxed);
+    }
     size_t written = 0;
     const int64_t w0 = esp_timer_get_time();
     i2s_channel_write(tx, lr, sizeof(lr), &written, portMAX_DELAY);
@@ -646,6 +663,17 @@ void previewBuffer(const int16_t* d, uint32_t frames, uint32_t rate) {
 bool previewStop() { return sendPreview(nullptr, 0, 0); }
 
 bool previewPlaying() { return pvPlaying.load(std::memory_order_relaxed); }
+
+void scopeRead(int16_t* out, int n) {
+  if (n > kScopeLen) n = kScopeLen;
+  const int at = scopeAt.load(std::memory_order_relaxed);
+  for (int i = 0; i < n; ++i) out[i] = scope[(at - n + i + kScopeLen) % kScopeLen];
+}
+
+int16_t scopePeak() {
+  const int pk = scopePk.exchange(0, std::memory_order_relaxed);
+  return static_cast<int16_t>(pk > 32767 ? 32767 : pk);
+}
 
 Load takeLoad() {
   Load l;
