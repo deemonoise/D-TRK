@@ -6,6 +6,8 @@
 #include "esp_heap_caps.h"
 #include "hw/trackio.h"
 #include "storage/settings.h"
+#include "storage/storage.h"
+#include "hw/sdcard.h"
 #include "track_leds.h"
 
 namespace ui {
@@ -53,6 +55,8 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   const int theme = storage::loadTheme(0);
   theme_ = savedTheme_ = theme < themeCount() ? theme : 0;
   applyTheme(theme_);
+  const int asv = storage::loadSetting("autosave", 5);
+  autosaveMin_ = savedAutosaveMin_ = asv <= 60 ? asv : 5;
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -86,6 +90,7 @@ void App::setBpmEdit(bool on) {
 }
 
 void App::onInput(const hw::InputEvent& ev) {
+  lastInputMs_ = millis();
   using hw::InputType;
   shift_ = ev.shift;
   dirty_ = true;
@@ -138,6 +143,7 @@ void App::onInput(const hw::InputEvent& ev) {
 }
 
 void App::onTouch(const TouchEvent& ev) {
+  lastInputMs_ = millis();
   dirty_ = true;
   if (ev.type == TouchType::HDrag) {
     const int y0 = ev.y0;
@@ -311,20 +317,54 @@ void App::setTheme(int i) {
   if (i == theme_) return;
   theme_ = i;
   applyTheme(i);
-  themeChangedAt_ = millis() | 1;
+  settingsChangedAt_ = millis() | 1;
   dirty_ = true;
 }
 
-// As the volume: written once the choice stays put for a second and the transport is stopped.
-void App::saveThemeIdle(uint32_t now) {
-  if (themeChangedAt_ == 0 || now - themeChangedAt_ < 1000 || status_.playing) return;
-  themeChangedAt_ = 0;
-  if (theme_ == savedTheme_) return;
+void App::setAutosaveMin(int m) {
+  autosaveMin_ = m < 0 ? 0 : (m > 60 ? 60 : m);
+  autosaveDue_ = 0;  // the new interval counts from now
+  settingsChangedAt_ = millis() | 1;
+}
+
+// Device settings (theme, autosave): as the volume, written once they stay put for a second and the
+// transport is stopped.
+void App::saveSettingsIdle(uint32_t now) {
+  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
+  settingsChangedAt_ = 0;
+  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_) return;
   {
     audio::Paused parked;
-    storage::saveTheme(static_cast<uint8_t>(theme_));
+    if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
+    if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
   }
   savedTheme_ = theme_;
+  savedAutosaveMin_ = autosaveMin_;
+}
+
+// Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
+// stands (no project copy needed) and after 3 s without input (the write takes a moment).
+void App::autosaveIdle(uint32_t now) {
+  if (autosaveMin_ == 0 || !projectDirty() || editSeq_ == autosavedSeq_ || !hw::sdReady()) {
+    autosaveDue_ = 0;
+    return;
+  }
+  if (autosaveDue_ == 0) {
+    autosaveDue_ = (now + static_cast<uint32_t>(autosaveMin_) * 60000u) | 1;
+    return;
+  }
+  if (static_cast<int32_t>(now - autosaveDue_) < 0) return;
+  if (status_.playing || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000) return;
+  showBusy("AUTOSAVE...");
+  const storage::Result r = storage::autosave(*p_);
+  autosavedSeq_ = editSeq_;
+  autosaveDue_ = 0;
+  if (r != storage::Result::Ok) {
+    char msg[40];
+    snprintf(msg, sizeof(msg), "AUTOSAVE: %s", storage::resultText(r));
+    toast(msg);
+  }
+  dirty_ = true;
 }
 
 void App::showProgress(const char* label, uint32_t done, uint32_t total) {
@@ -445,7 +485,8 @@ void App::tick() {
   const uint32_t now = millis();
   updateLeds(now);
   saveVolumeIdle(now);
-  saveThemeIdle(now);
+  saveSettingsIdle(now);
+  autosaveIdle(now);
   pollCpu(now);
   if (toast_[0] && static_cast<int32_t>(now - toastUntil_) >= 0) {
     toast_[0] = 0;

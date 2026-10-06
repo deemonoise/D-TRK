@@ -42,6 +42,9 @@ class App {
   // Colour theme (device setting): applied at once, saved to NVS once it stays put.
   int theme() const { return theme_; }
   void setTheme(int i);
+  // Autosave interval in minutes, 0 = off (device setting, see autosaveIdle).
+  int autosaveMin() const { return autosaveMin_; }
+  void setAutosaveMin(int m);
   void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
   void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
   bool doUndo();    // false when there is nothing to undo
@@ -104,7 +107,8 @@ class App {
   void fillUp();
   void updateLeds(uint32_t now);
   void saveVolumeIdle(uint32_t now);
-  void saveThemeIdle(uint32_t now);
+  void saveSettingsIdle(uint32_t now);
+  void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
   void setBpmEdit(bool on);
   void draw();
@@ -152,7 +156,11 @@ class App {
   uint8_t pendingVol_ = 0;   // changed value waiting to be saved
   uint32_t volChangedAt_ = 0;  // 0 = nothing pending
   int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
-  uint32_t themeChangedAt_ = 0;     // 0 = nothing pending
+  int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)
+  uint32_t settingsChangedAt_ = 0;  // 0 = nothing pending
+  uint32_t autosaveDue_ = 0;        // when the next autosave is due, 0 = not counting
+  uint32_t autosavedSeq_ = 0;       // editSeq_ of the last autosave
+  uint32_t lastInputMs_ = 0;
   uint32_t editSeq_ = 0, savedSeq_ = 0;
   bool shift_ = false;
   bool fillHeld_ = false;   // Shift + Play held while playing: fill

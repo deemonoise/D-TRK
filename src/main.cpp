@@ -50,9 +50,13 @@ void setup() {
   // Engine not running yet: load straight into the live project.
   bool fromBak = false;
   storage::Result autoErr = storage::Result::Ok;
+  // Safe boot: Shift held at power-on skips the autoload (a project that crashes the device on load).
+  pinMode(pins::kShift, INPUT_PULLUP);
+  delay(5);
+  const bool safeBoot = digitalRead(pins::kShift) == LOW;
   const bool sd = hw::sdBegin();
   storage::logBoot();  // a crash / watchdog / brownout restart goes into /projects/crashlog.txt
-  const bool loaded = sd && storage::autoload(*project, &fromBak, &autoErr);
+  const bool loaded = sd && !safeBoot && storage::autoload(*project, &fromBak, &autoErr);
   if (!loaded) loadDemo(*project);
 
   lcd.init();
@@ -71,7 +75,9 @@ void setup() {
   const bool folderFail = loaded && storage::pullSamples(*project, &missing, ui::App::syncProgress, &app) ==
                                         storage::Result::SamplesNotSaved;
   // One toast: autoload error (nothing loaded), or backup / missing samples / folder not written.
-  if (autoErr != storage::Result::Ok) {
+  if (safeBoot) {
+    app.toast("SAFE BOOT: NOTHING LOADED");
+  } else if (autoErr != storage::Result::Ok) {
     char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
     app.toast(msg);

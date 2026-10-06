@@ -27,7 +27,7 @@ class FileScreen : public Screen {
  private:
   enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kRetry, kActions };
   enum MenuId : int {
-    kCancel, kDiscardLoad, kDiscardNew, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
+    kCancel, kDiscardLoad, kDiscardNew, kRestoreAuto, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
   };
   static constexpr int kSectionSel = kActions;  // PROJECTS focus on the header section switch
@@ -124,6 +124,8 @@ class FileScreen : public Screen {
   const char* busyLabel_ = "";
   // cacheBytes() result for this bank generation / project edit.
   uint32_t cacheBytes_ = 0, cacheGen_ = 0, cacheSeq_ = 0;
+  bool autoAvail_ = false;  // /projects/<name>.auto exists (checked on enter / after file actions)
+  void restoreAutosave();
   bool cacheValid_ = false;
 };
 

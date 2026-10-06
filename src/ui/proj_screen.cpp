@@ -100,6 +100,18 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        [this](int d) { app_.project().preview = d > 0; }};
   params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
                      [this](int d) { app_.setTheme(app_.theme() + d); }};
+  params_[kAutosave] = {"Autosave",
+                        [this](char* o, int n) {
+                          if (app_.autosaveMin()) snprintf(o, n, "%d MIN", app_.autosaveMin());
+                          else snprintf(o, n, "OFF");
+                        },
+                        [this](int d) {
+                          static const int kSteps[] = {0, 1, 2, 5, 10};
+                          int i = 0;
+                          while (i < 4 && kSteps[i] < app_.autosaveMin()) ++i;
+                          i = clampi(i + (d > 0 ? 1 : -1), 0, 4);
+                          app_.setAutosaveMin(kSteps[i]);
+                        }};
   // Read only: the firmware version and why the device last restarted (crash log: /projects/crashlog.txt).
   params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
   params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },

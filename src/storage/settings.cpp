@@ -22,6 +22,21 @@ void saveVolume(uint8_t v) {
   p.end();
 }
 
+uint8_t loadSetting(const char* key, uint8_t fallback) {
+  Preferences p;
+  if (!p.begin(kNs, true)) return fallback;
+  const uint8_t v = p.getUChar(key, fallback);
+  p.end();
+  return v;
+}
+
+void saveSetting(const char* key, uint8_t v) {
+  Preferences p;
+  if (!p.begin(kNs, false)) return;
+  p.putUChar(key, v);
+  p.end();
+}
+
 uint8_t loadTheme(uint8_t fallback) {
   Preferences p;
   if (!p.begin(kNs, true)) return fallback;

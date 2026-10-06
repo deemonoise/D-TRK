@@ -54,6 +54,13 @@ Result installProject(const char* tmpPath, const char* fileName);
 Result load(mt::Project& live, const char* name, bool fromBak = false, int* missing = nullptr,
             SyncProgress cb = nullptr, void* ctx = nullptr);
 
+// Autosave slot /projects/<live.name>.auto: the project file only (no sample folder, the .mtp and
+// .bak untouched), written through .atm. Transport stopped (live is read without a copy). save()
+// removes it; loadAutosave() brings it back under the same name (the caller marks the project dirty).
+Result autosave(const mt::Project& live);
+bool autosaveExists(const char* name);
+Result loadAutosave(mt::Project& live, int* missing = nullptr, SyncProgress cb = nullptr, void* ctx = nullptr);
+
 // Stops the engine, resets live and forgets /last.txt. EngineBusy: live untouched.
 Result newProject(mt::Project& live);
 

@@ -344,6 +344,7 @@ Result save(mt::Project& live, const char* name, SyncProgress cb, void* ctx) {
     return Result::WriteFail;
   }
   writeLast(nm);
+  if (fs.exists(Path(nm, ".auto").s)) fs.remove(Path(nm, ".auto").s);  // saved: the autosave is behind
 
   engine::lockProject();
   memcpy(live.name, nm, sizeof(nm));
@@ -548,11 +549,44 @@ Result installProject(const char* tmpPath, const char* fileName) {
   return Result::Ok;
 }
 
+namespace {
+Result loadExt(mt::Project& live, const char* name, const char* ext, int* missing, SyncProgress cb, void* ctx);
+}
+
 Result load(mt::Project& live, const char* name, bool fromBak, int* missing, SyncProgress cb, void* ctx) {
+  return loadExt(live, name, fromBak ? ".bak" : ".mtp", missing, cb, ctx);
+}
+
+Result autosave(const mt::Project& live) {
+  if (!hw::sdReady()) return Result::NoSd;
+  if (!validName(live.name)) return Result::BadFile;
+  const Path tmp(live.name, ".atm"), dst(live.name, ".auto");
+  const Result r = writeTmp(tmp.s, live);  // the engine is stopped: it changes nothing meanwhile
+  fs::FS& fs = hw::sdFs();
+  if (r != Result::Ok) {
+    fs.remove(tmp.s);
+    return r;
+  }
+  if (fs.exists(dst.s)) fs.remove(dst.s);
+  return fs.rename(tmp.s, dst.s) ? Result::Ok : Result::WriteFail;
+}
+
+bool autosaveExists(const char* name) {
+  return hw::sdReady() && validName(name) && hw::sdFs().exists(Path(name, ".auto").s);
+}
+
+Result loadAutosave(mt::Project& live, int* missing, SyncProgress cb, void* ctx) {
+  char nm[sizeof(live.name)];
+  strlcpy(nm, live.name, sizeof(nm));
+  return loadExt(live, nm, ".auto", missing, cb, ctx);
+}
+
+namespace {
+Result loadExt(mt::Project& live, const char* name, const char* ext, int* missing, SyncProgress cb, void* ctx) {
   if (missing) *missing = 0;
   if (!hw::sdReady()) return Result::NoSd;
   if (!validName(name)) return Result::BadFile;  // would load under a different name
-  const Path path(name, fromBak ? ".bak" : ".mtp");
+  const Path path(name, ext);
   if (!hw::sdFs().exists(path.s)) return Result::NotFound;
   mt::Project* tmp = allocProject();
   if (!tmp) return Result::NoMemory;
@@ -572,6 +606,7 @@ Result load(mt::Project& live, const char* name, bool fromBak, int* missing, Syn
   // The project is loaded either way; only a failed folder write is reported.
   return pullSamples(live, missing, cb, ctx) == Result::SamplesNotSaved ? Result::SamplesNotSaved : Result::Ok;
 }
+}  // namespace
 
 Result newProject(mt::Project& live) {
   if (!stopEngine()) return Result::EngineBusy;

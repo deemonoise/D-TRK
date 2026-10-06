@@ -15,6 +15,8 @@ namespace {
 
 constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
                                    "Import MIDI...", "Render WAV...", "Wi-Fi transfer...", "Retry"};
+// The last row: Retry without a card, Restore autosave with one (they never need the row together).
+constexpr const char* kRestoreLabel = "Restore autosave";
 
 constexpr uint32_t kPreviewMs = 8000;  // WAV preview length (32 kHz mono: 512 KB)
 
@@ -33,6 +35,7 @@ void FileScreen::onEnter() {
   render_.close();
   wifi_.close();
   closeList();
+  autoAvail_ = storage::autosaveExists(app_.project().name);
   if (!enabled(sel_)) moveSel(1);
   cacheValid_ = false;
   if (samples_) sampleMove(0);  // the bank may have changed
@@ -55,7 +58,7 @@ bool FileScreen::enabled(int a) const {
   const bool sd = hw::sdReady();
   switch (a) {
     case kSectionSel: return true;
-    case kRetry: return !sd;
+    case kRetry: return !sd || autoAvail_;
     default: return sd;
   }
 }
@@ -108,7 +111,14 @@ void FileScreen::run(int a) {
       }
       break;
     case kRetry:
+      if (hw::sdReady()) {  // Restore autosave
+        const MenuItem items[] = {{"Cancel", kCancel}, {"Restore", kRestoreAuto}};
+        app_.menu().open(app_.projectDirty() ? "RESTORE? CHANGES LOST" : "RESTORE AUTOSAVE?", items, 2,
+                         [this](int id) { onMenu(id); });
+        break;
+      }
       app_.toast(hw::sdBegin() ? "SD OK" : storage::resultText(storage::Result::NoSd));
+      autoAvail_ = storage::autosaveExists(app_.project().name);
       if (!enabled(sel_)) moveSel(1);
       break;
     default: break;
@@ -120,6 +130,7 @@ void FileScreen::onMenu(int id) {
     case kDiscardLoad: doLoad(false); break;
     case kLoadBak: doLoad(true); break;
     case kDiscardNew: doNew(); break;
+    case kRestoreAuto: restoreAutosave(); break;
     case kOverwrite: doSave(pending_); break;
     case kSaveWifi:
       doSave(app_.project().name);
@@ -194,6 +205,10 @@ void FileScreen::saveAs(const char* initial) {
 }
 
 void FileScreen::doSave(const char* name) {
+  struct Refresh {
+    FileScreen& f;
+    ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
+  } refresh{*this};
   char nm[17];
   strlcpy(nm, name, sizeof(nm));  // name may point into the project
   app_.showBusy("SAVING...");
@@ -325,8 +340,27 @@ void FileScreen::chooseFile(int idx) {
   }
 }
 
+void FileScreen::restoreAutosave() {
+  app_.showBusy("LOADING...");
+  int missing = 0;
+  const storage::Result r = storage::loadAutosave(app_.project(), &missing, App::syncProgress, &app_);
+  autoAvail_ = storage::autosaveExists(app_.project().name);
+  if (r != storage::Result::Ok && r != storage::Result::SamplesNotSaved) {
+    reprobe(r);
+    app_.toast(storage::resultText(r));
+    return;
+  }
+  app_.projectReplaced();
+  app_.markDirty();  // the autosave is not the saved project: Save keeps it
+  app_.loadedToast("AUTOSAVE RESTORED", missing, r == storage::Result::SamplesNotSaved);
+}
+
 // The clipboard is kept across Load / New on purpose: it copies patterns between projects.
 void FileScreen::doLoad(bool bak) {
+  struct Refresh {
+    FileScreen& f;
+    ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
+  } refresh{*this};
   app_.showBusy("LOADING...");
   int missing = 0;
   const storage::Result r = storage::load(app_.project(), pending_, bak, &missing, App::syncProgress, &app_);
@@ -352,6 +386,10 @@ void FileScreen::doLoad(bool bak) {
 }
 
 void FileScreen::doNew() {
+  struct Refresh {
+    FileScreen& f;
+    ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
+  } refresh{*this};
   const storage::Result r = storage::newProject(app_.project());
   if (r != storage::Result::Ok) {
     app_.toast(storage::resultText(r));
@@ -499,12 +537,12 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
     return;
   }
   for (int a = 0; a < kActions; ++a) {
-    if (a == kRetry && sd) break;
+    if (a == kRetry && sd && !autoAvail_) break;
     const int ry = top + a * kActionH;
     const bool sel = a == sel_;
     if (sel) s.fillRect(0, ry, kScreenW, kActionH - 2, kSelBg);
     s.setTextColor(!enabled(a) ? kDim : (sel ? kCursor : kText));
-    s.drawString(kLabels[a], 16, ry + (kActionH - 2 - kCharH) / 2);
+    s.drawString(a == kRetry && sd ? kRestoreLabel : kLabels[a], 16, ry + (kActionH - 2 - kCharH) / 2);
   }
 }
 
