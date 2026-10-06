@@ -25,4 +25,10 @@ void clearSel(Pattern& p, const Sel& s);
 void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t,
                   const bool* drumTracks = nullptr);
 
+// Chain rows: inserts pattern `pat` (transpose 0, 1 pass, no scene) at `at` (clamped to
+// 0..chainLen), false when the chain is full; deletes row `at` (nothing past the end). Both keep
+// chain / chainTr / chainRep / chainScene aligned; a freed row gets the defaults.
+bool chainInsert(Project& p, int at, uint8_t pat);
+void chainDelete(Project& p, int at);
+
 }  // namespace mt

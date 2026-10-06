@@ -16,7 +16,7 @@ class TrackScreen : public Screen {
   void draw(LGFX_Sprite& s, int y0, int h) override;
 
  private:
-  enum Row : int { kName, kOut, kInstr, kVol, kChannel, kVel, kGate, kCcA, kCcB, kProgram, kMute, kSolo, kRows };
+  enum Row : int { kName, kOut, kInstr, kVol, kChannel, kVel, kGate, kPatLen, kCcA, kCcB, kProgram, kMute, kSolo, kRows };
   static constexpr int kVisibleRows = 10;  // (kAreaH - kHeaderH) / ParamList::kRowH
   static constexpr int kHeaderH = 28;
   static constexpr int kArrowW = 96;  // header hit area on each side
@@ -32,6 +32,7 @@ class TrackScreen : public Screen {
 
   App& app_;
   Param params_[kRows];
+  uint32_t patLenSeq_ = 0;  // App::editSeq() right after the last Pat len edit: one undo snapshot per run
   ParamList list_{kAreaY + kHeaderH};
   int y0_ = kAreaY;
   int namePos_ = 0;

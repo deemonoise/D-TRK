@@ -24,6 +24,7 @@ class GridScreen : public Screen {
   bool wantsRedraw(const engine::Status& st) override;
   // Track button N: false when App should handle it (Shift + N outside edit = mute).
   bool trackKey(int n, bool shift);
+  void trackRelease(int n);  // PERF: the held effect ends
 
  private:
   // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
@@ -31,7 +32,8 @@ class GridScreen : public Screen {
   // Context menu ids.
   enum MenuId : int {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
-    kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kEuclid
+    kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kEuclid,
+    kRec, kPerf
   };
 
   static constexpr int kNamesH = 16;
@@ -68,6 +70,11 @@ class GridScreen : public Screen {
   void setNote(uint8_t note);
   void previewNote(uint8_t note);
   void enterDegree(int button, bool octaveUp);
+  uint8_t degreeNote(int button, bool octaveUp, int ref) const;  // scale degree in the octave of ref
+  void setRec(bool on);
+  void setPerf(bool on);
+  void perfRelease();
+  bool recordKey(int n, bool shift);  // REC while playing: button N into the heard step
   void writeStep(const mt::Step& st);
   void openMenu();
   void openEuclid();
@@ -91,6 +98,7 @@ class GridScreen : public Screen {
   // Lane mask as squares: one row of 8 (Overview column) or compact 2 x 4 (Detail NOTE field).
   void drawMask(LGFX_Sprite& s, int x, int y, uint8_t mask, bool audible, int cursorLane, bool compact);
   void drawPad(LGFX_Sprite& s, int y);
+  bool drawBadge(LGFX_Sprite& s, int y);
   bool selected(int tr, int step) const;
 
   App& app_;
@@ -110,6 +118,13 @@ class GridScreen : public Screen {
   uint32_t lastMoveMs_ = 0;
   uint8_t lastNote_[mt::kTracks];  // set to 60 in the constructor
   int lane_ = 0;  // drum track, NOTE field in edit: the lane under the encoder
+  // Live modes, exclusive with each other and with edit. REC: track buttons write into the heard
+  // step while playing (one undo snapshot per pass). PERF: a held button = punch-in effect.
+  bool rec_ = false;
+  bool perf_ = false;
+  uint32_t recLoop_ = UINT32_MAX;  // pass of the last REC undo snapshot
+  int perfBtn_ = -1;   // button holding the punch-in effect
+  int perfTrack_ = 0;  // its track
 
   EuclidDialog euclid_{app_};
   mt::EuclidParams euclidParams_[mt::kTracks];  // per track, RAM only

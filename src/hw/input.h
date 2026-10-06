@@ -3,11 +3,13 @@
 
 namespace hw {
 
-enum class InputType : uint8_t { EncTurn, EncClick, EncLong, PlayPress, ShiftDown, ShiftUp, TrackPress };
+enum class InputType : uint8_t {
+  EncTurn, EncClick, EncLong, PlayPress, ShiftDown, ShiftUp, TrackPress, PlayRelease, TrackRelease
+};
 
 struct InputEvent {
   InputType type;
-  int8_t delta;  // detents for EncTurn, track 0..7 for TrackPress
+  int8_t delta;  // detents for EncTurn, track 0..7 for TrackPress / TrackRelease
   bool shift;    // Shift held when the event happened
 };
 

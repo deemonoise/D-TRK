@@ -45,6 +45,15 @@ constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the 
 // the position on the same entry when rows are inserted or deleted before it. A
 // decision whose last step has been heard stays. Stopped in song mode, the sequencer
 // shows chain[0] (pattern() == chain[0], heardSongPos() == 0).
+//
+// A chain item plays chainRep passes before the next one (a repeat goes on like a loop: ties and
+// CND continue), transposes the notes of melodic tracks by chainTr while it plays (drum tracks, OFF
+// and empty steps untouched) and, when it starts, recalls its mute scene into TrackCfg::mute (an
+// empty scene is skipped). Pattern::trackLen makes a track loop on its own length inside the
+// pass; the pass counter follows the pattern length.
+//
+// Live: setFill() is the held fill (CND FIL / NFL), perfOn() a punch-in effect on a track until
+// perfOff() (or stop()). Both apply to steps planned from then on (at most the lookahead late).
 class Sequencer {
  public:
   explicit Sequencer(Project& p) : p_(p), bpm_(clampBpm(p.bpm)) {}
@@ -83,6 +92,18 @@ class Sequencer {
   // Chain index of the heard pattern; -1 outside song mode.
   int heardSongPos() const { return heardSong_; }
   void seed(uint32_t s) { rng_ = Rng(s); }
+  // Fill held: CND FIL steps play, NFL steps do not.
+  void setFill(bool on) { fill_ = on; }
+  bool fill() const { return fill_; }
+  void perfOn(int track, PerfFx fx);
+  void perfOff(int track);
+  PerfFx perf(int track) const { return track >= 0 && track < kTracks ? perf_[track] : PerfFx::None; }
+  // The fx a punch-in effect adds to a step (None for Mute, which silences the track).
+  static FxSlot perfSlot(PerfFx fx);
+  // Position inside the heard step at now, 0 at its start .. 255 (live recording).
+  uint8_t phase256(uint64_t now) const;
+  uint64_t heardStepTime() const { return heardStepT_; }
+  uint32_t stepDuration() const { return stepUs(); }
   // Tracks whose NoteOns went out since the last call (bit = track).
   uint16_t takeActivity() {
     const uint16_t a = activity_;
@@ -109,6 +130,7 @@ class Sequencer {
     uint8_t prevPos, prevPat;
     int8_t prevQueued;
     int8_t song, prevSong;  // songPos_ when played / before
+    uint8_t prevRep;        // rep_ before
     Tie ties[kTracks];
   };
   static constexpr int kHist = 16;           // covers every scheduled but unheard step
@@ -143,6 +165,26 @@ class Sequencer {
   void silence(uint64_t now, MidiSink& out);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
   bool expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex);
+  ExpandCtx ctx(uint32_t su) const {
+    ExpandCtx c{su, loop_, p_.scaleRoot, static_cast<ScaleType>(p_.scaleType), ticks()};
+    c.fill = fill_;
+    return c;
+  }
+  // The step of `track` at pass position pos: the track loops on its own length (polymeter).
+  static int stepIndex(const Pattern& pt, int track, int pos) {
+    const uint8_t n = pt.trackLen[track];
+    return n && n < pt.length ? pos % n : pos;
+  }
+  // The step as it plays: the chain transpose on a melodic track, the track's punch-in fx.
+  void adjustStep(Step& s, int track) const;
+  int chainTranspose() const { return songPos_ >= 0 && songPos_ < chainLen() ? p_.chainTr[songPos_] : 0; }
+  int chainRep(int i) const {
+    const uint8_t r = p_.chainRep[i];
+    return r < 1 ? 1 : (r > kChainRepMax ? kChainRepMax : r);
+  }
+  void applyScene(int songPos, uint64_t t);
+  // Plays this step: not muted / solo-excluded, no perf Mute (whose first muted step ends its notes).
+  bool audible(int track, uint64_t t);
   void pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note,
                      bool nudge = true);
   int pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool nudge = true);
@@ -160,6 +202,11 @@ class Sequencer {
   uint8_t cur_ = 0;
   int queued_ = -1;
   int songPos_ = -1;  // chain index of cur_, -1 outside song mode
+  uint8_t rep_ = 0;   // passes of the chain item done (song mode)
+  bool fill_ = false;
+  PerfFx perf_[kTracks] = {};
+  uint16_t perfMuted_ = 0;  // perf Mute already ended the track's notes
+  uint64_t heardStepT_ = 0;  // start of the heard step
   uint8_t pos_ = 0;  // next step to schedule
   uint32_t loop_ = 0;
   uint16_t bpm_;

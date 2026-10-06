@@ -87,7 +87,17 @@ void App::onInput(const hw::InputEvent& ev) {
   switch (ev.type) {
     case InputType::PlayPress:
       if (!menu_.isOpen() && !bpmEdit_ && screen()->onPlay()) return;
+      if (ev.shift && status_.playing && !transportLocked_) {
+        fillDown();
+        return;
+      }
       transport();
+      return;
+    case InputType::PlayRelease:
+      fillUp();
+      return;
+    case InputType::TrackRelease:
+      trackRelease(ev.delta);
       return;
     case InputType::ShiftDown: shift_ = true; return;
     case InputType::ShiftUp: shift_ = false; return;
@@ -204,6 +214,25 @@ void App::trackKey(int n, bool shift) {
   char msg[16];
   snprintf(msg, sizeof(msg), "TRACK %d %s", track + 1, t.mute ? "MUTE" : "ON");
   toast(msg);
+}
+
+void App::trackRelease(int n) {
+  if (n < 0 || n >= mt::kTrackLeds) return;
+  if (tab_ == Tab::Grid) grid_.trackRelease(n);
+}
+
+// Shift + Play while playing: fill while held; a short press is still Shift + Play (pause) on release.
+void App::fillDown() {
+  fillHeld_ = true;
+  fillDownMs_ = millis();
+  engine::post(engine::Cmd::Fill, 1);
+}
+
+void App::fillUp() {
+  if (!fillHeld_) return;
+  fillHeld_ = false;
+  engine::post(engine::Cmd::Fill, 0);
+  if (millis() - fillDownMs_ < hw::kLongPressMs) engine::post(engine::Cmd::TogglePlay);
 }
 
 void App::updateLeds(uint32_t now) {
@@ -396,8 +425,14 @@ void App::drawStatus() {
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
   spr_->drawString(buf, 200, 4);  // up to "128/128"
   spr_->drawString(status_.playing ? "PLAY" : (status_.paused ? "PAUSE" : "STOP"), 264, 4);
-  snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
-  spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+  if (status_.fill) {
+    spr_->setTextColor(kCursor);
+    spr_->drawString("FILL", 328, 4);
+    spr_->setTextColor(kText);
+  } else {
+    snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
+    spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+  }
   snprintf(buf, sizeof(buf), "CPU %3d%%", cpu_ > 999 ? 999 : cpu_);
   spr_->setTextColor(cpuColor_);
   spr_->drawString(buf, 416, 4);

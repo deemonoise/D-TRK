@@ -48,6 +48,26 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                    [this](int d) { cfg().defVel = static_cast<uint8_t>(clampi(cfg().defVel + d, 1, 127)); }};
   params_[kGate] = {"Def gate", [this](char* o, int n) { snprintf(o, n, "%u%%", mt::gatePercent(cfg().defGate)); },
                     [this](int d) { cfg().defGate = static_cast<uint8_t>(clampi(cfg().defGate + d, 1, 200)); }};
+  // The track's own length in the edited pattern (polymeter): OFF = the pattern length.
+  params_[kPatLen] = {"Pat len",
+                      [this](char* o, int n) {
+                        const mt::Pattern& pt = app_.project().patterns[app_.editPattern()];
+                        const uint8_t v = pt.trackLen[app_.curTrack()];
+                        if (v && v < pt.length) snprintf(o, n, "%u / %u", v, pt.length);
+                        else snprintf(o, n, "OFF");
+                      },
+                      [this](int d) {
+                        mt::Pattern& pt = app_.project().patterns[app_.editPattern()];
+                        uint8_t& v = pt.trackLen[app_.curTrack()];
+                        // OFF below 1; the pattern length itself is OFF too.
+                        const int cur = v && v < pt.length ? v : (d > 0 ? 0 : pt.length);
+                        int nv = clampi(cur + d, 0, pt.length);
+                        if (nv >= pt.length) nv = 0;
+                        if (nv == v) return;
+                        if (app_.editSeq() != patLenSeq_) app_.pushUndo();  // whole-pattern snapshot
+                        v = static_cast<uint8_t>(nv);
+                        patLenSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
+                      }};
   params_[kCcA] = {"CC A", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccA); },
                    [this](int d) { cfg().ccA = static_cast<uint8_t>(clampi(cfg().ccA + d, 0, 127)); }, midiOnly};
   params_[kCcB] = {"CC B", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccB); },

@@ -513,6 +513,28 @@ void test_acc_ignored_on_melodic_track() {
   TEST_ASSERT_EQUAL(100, out.ev[0].vel);
 }
 
+void test_cnd_fill_values() {
+  Step s;
+  s.note = 60;
+  s.fx[0] = {Fx::CND, kCndFill};
+  TrackCfg t;
+  Rng rng(1);
+  ExpandOut out;
+  ExpandCtx on = ctx;
+  on.fill = true;
+  ExpandCtx off = ctx;
+  off.fill = false;
+  TEST_ASSERT_TRUE(expandStep(s, t, on, rng, out));
+  TEST_ASSERT_FALSE(expandStep(s, t, off, rng, out));
+  s.fx[0].val = kCndNoFill;
+  TEST_ASSERT_FALSE(expandStep(s, t, on, rng, out));
+  TEST_ASSERT_TRUE(expandStep(s, t, off, rng, out));
+  s.fx[0].val = 0;  // FST still on the first pass only, fill or not
+  TEST_ASSERT_TRUE(expandStep(s, t, on, rng, out));
+  on.loop = 1;
+  TEST_ASSERT_FALSE(expandStep(s, t, on, rng, out));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_empty_and_off_produce_nothing);
@@ -556,5 +578,6 @@ int main() {
   RUN_TEST(test_drum_empty_mask_is_note_step);
   RUN_TEST(test_drum_off_cuts_notes);
   RUN_TEST(test_acc_ignored_on_melodic_track);
+  RUN_TEST(test_cnd_fill_values);
   return UNITY_END();
 }

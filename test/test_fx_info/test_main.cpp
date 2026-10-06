@@ -45,7 +45,24 @@ void test_cnd_order() {
   TEST_ASSERT_EQUAL(0x22, fxStep(Fx::CND, 0x12, 1));
   TEST_ASSERT_EQUAL(0x13, fxStep(Fx::CND, 0x22, 1));
   TEST_ASSERT_EQUAL(0, fxStep(Fx::CND, 0x12, -1));
-  TEST_ASSERT_EQUAL(0x88, fxStep(Fx::CND, 0x78, 100));
+  TEST_ASSERT_EQUAL(kCndNoFill, fxStep(Fx::CND, 0x78, 100));  // NFL is last
+}
+
+void test_cnd_order_has_fill() {
+  uint8_t v = 0x88;  // 8:8, the last A:B
+  v = fxStep(Fx::CND, v, 1);
+  TEST_ASSERT_EQUAL_HEX8(kCndFill, v);
+  v = fxStep(Fx::CND, v, 1);
+  TEST_ASSERT_EQUAL_HEX8(kCndNoFill, v);
+  v = fxStep(Fx::CND, v, 1);
+  TEST_ASSERT_EQUAL_HEX8(kCndNoFill, v);  // clamped
+  TEST_ASSERT_EQUAL_HEX8(kCndFill, fxStep(Fx::CND, kCndNoFill, -1));
+  TEST_ASSERT_EQUAL_HEX8(0x88, fxStep(Fx::CND, kCndFill, -1));
+  char out[5];
+  fxFormat(Fx::CND, kCndFill, out);
+  TEST_ASSERT_EQUAL_STRING("FIL", out);
+  fxFormat(Fx::CND, kCndNoFill, out);
+  TEST_ASSERT_EQUAL_STRING("NFL", out);
 }
 
 void test_cmd_cycle() {
@@ -201,5 +218,6 @@ int main() {
   RUN_TEST(test_slc_fx);
   RUN_TEST(test_dly_fx);
   RUN_TEST(test_acc_lane_mask);
+  RUN_TEST(test_cnd_order_has_fill);
   return UNITY_END();
 }

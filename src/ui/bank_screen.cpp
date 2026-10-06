@@ -136,6 +136,7 @@ void BankScreen::onMenu(int id) {
       snapshot(pat);
       engine::lockProject();
       p.patterns[pat].length = id == kLen16 ? 16 : (id == kLen32 ? 32 : 64);
+      p.patterns[pat].fitTrackLen();
       engine::unlockProject();
       releaseTiesIfHeard(pat);
       masksStale_ = true;
@@ -145,7 +146,17 @@ void BankScreen::onMenu(int id) {
     case kRowInsert: insertRow(row_, app_.editPattern()); break;
     case kRowDelete: deleteRow(row_); break;
     case kRowDup:
-      if (row_ < chainLen()) insertRow(row_ + 1, p.chain[row_]);
+      if (row_ < chainLen()) {
+        const int src = row_;
+        insertRow(src + 1, p.chain[src]);
+        if (row_ == src + 1) {  // inserted: the copy takes the item's fields too
+          engine::lockProject();
+          p.chainTr[row_] = p.chainTr[src];
+          p.chainRep[row_] = p.chainRep[src];
+          p.chainScene[row_] = p.chainScene[src];
+          engine::unlockProject();
+        }
+      }
       break;
     case kRowAppend: insertRow(chainLen(), app_.editPattern()); break;
     default: break;
@@ -282,9 +293,7 @@ void BankScreen::insertRow(int at, uint8_t pat) {
   if (at < 0) at = 0;
   if (at > n) at = n;
   engine::lockProject();
-  memmove(p.chain + at + 1, p.chain + at, n - at);
-  p.chain[at] = pat < mt::kPatterns ? pat : mt::kPatterns - 1;
-  p.chainLen = static_cast<uint8_t>(n + 1);
+  mt::chainInsert(p, at, pat);
   postChainEdit(at, mt::ChainOp::Insert);
   engine::unlockProject();
   app_.markDirty();
@@ -297,8 +306,7 @@ void BankScreen::deleteRow(int row) {
   const int n = chainLen();
   if (row < 0 || row >= n) return;
   engine::lockProject();
-  memmove(p.chain + row, p.chain + row + 1, n - row - 1);
-  p.chainLen = static_cast<uint8_t>(n - 1);
+  mt::chainDelete(p, row);
   postChainEdit(row, mt::ChainOp::Delete);
   engine::unlockProject();
   app_.markDirty();
@@ -306,17 +314,131 @@ void BankScreen::deleteRow(int row) {
   showRow(row_);
 }
 
+namespace {
+int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+}  // namespace
+
+// The row's field under edit: pattern, transpose (melodic tracks), passes, mute scene.
 void BankScreen::editRow(int delta) {
   mt::Project& p = app_.project();
   if (delta == 0 || row_ >= chainLen()) return;
-  int v = p.chain[row_] + delta;
-  v = v < 0 ? 0 : (v >= mt::kPatterns ? mt::kPatterns - 1 : v);
-  if (v == p.chain[row_]) return;
   engine::lockProject();
-  p.chain[row_] = static_cast<uint8_t>(v);
-  postChainEdit(row_, mt::ChainOp::Edit);
+  bool changed = true;
+  switch (rowField_) {
+    case kFTr: {
+      const int v = clampi(p.chainTr[row_] + delta, -mt::kChainTrMax, mt::kChainTrMax);
+      changed = v != p.chainTr[row_];
+      p.chainTr[row_] = static_cast<int8_t>(v);
+      break;
+    }
+    case kFRep: {
+      const int v = clampi(p.chainRep[row_] + delta, 1, mt::kChainRepMax);
+      changed = v != p.chainRep[row_];
+      p.chainRep[row_] = static_cast<uint8_t>(v);
+      break;
+    }
+    case kFScene: {
+      const int v = clampi(p.chainScene[row_] + delta, 0, mt::kScenes);
+      changed = v != p.chainScene[row_];
+      p.chainScene[row_] = static_cast<uint8_t>(v);
+      break;
+    }
+    default: {
+      const int v = clampi(p.chain[row_] + delta, 0, mt::kPatterns - 1);
+      changed = v != p.chain[row_];
+      p.chain[row_] = static_cast<uint8_t>(v);
+      break;
+    }
+  }
+  if (changed) postChainEdit(row_, mt::ChainOp::Edit);
   engine::unlockProject();
-  app_.markDirty();
+  if (changed) app_.markDirty();
+}
+
+void BankScreen::fieldText(int row, int field, char* out, int n, bool& isDefault) const {
+  const mt::Project& p = app_.project();
+  switch (field) {
+    case kFTr:
+      isDefault = p.chainTr[row] == 0;
+      snprintf(out, n, "%+d", p.chainTr[row]);
+      break;
+    case kFRep:
+      isDefault = p.chainRep[row] <= 1;
+      snprintf(out, n, "x%u", p.chainRep[row] < 1 ? 1u : p.chainRep[row]);
+      break;
+    case kFScene:
+      isDefault = p.chainScene[row] == 0;
+      if (isDefault) snprintf(out, n, "S-");
+      else snprintf(out, n, "S%u", p.chainScene[row]);
+      break;
+    default:
+      isDefault = false;
+      snprintf(out, n, "P%02u", (p.chain[row] < mt::kPatterns ? p.chain[row] : mt::kPatterns - 1) + 1u);
+      break;
+  }
+}
+
+// ---- scenes ----
+
+int BankScreen::sceneAt(int x, int y) const {
+  const int sy = y0_ + kHeadH + kRows * kRowH;
+  if (y < sy || y >= sy + kRowH || x < kSceneX0) return -1;
+  const int i = (x - kSceneX0) / kSceneW;
+  return i < mt::kScenes ? i : -1;
+}
+
+void BankScreen::sceneTouch(int i, const TouchEvent& ev) {
+  mt::Project& p = app_.project();
+  char msg[24];
+  if (ev.type == TouchType::LongPress) {  // store the current mutes
+    uint16_t m = 0;
+    for (int t = 0; t < mt::kTracks; ++t)
+      if (p.tracks[t].mute) m |= static_cast<uint16_t>(1u << t);
+    if (m == mt::kSceneEmpty) {
+      app_.toast("ALL MUTED: NOT STORED");
+      return;
+    }
+    engine::lockProject();
+    p.scenes[i] = m;
+    engine::unlockProject();
+    app_.markDirty();
+    snprintf(msg, sizeof(msg), "SCENE %d STORED", i + 1);
+  } else if (ev.type != TouchType::Tap) {
+    return;
+  } else if (app_.shift()) {
+    if (p.scenes[i] == mt::kSceneEmpty) return;
+    engine::lockProject();
+    p.scenes[i] = mt::kSceneEmpty;
+    engine::unlockProject();
+    app_.markDirty();
+    snprintf(msg, sizeof(msg), "SCENE %d CLEARED", i + 1);
+  } else if (p.scenes[i] == mt::kSceneEmpty) {
+    snprintf(msg, sizeof(msg), "SCENE %d EMPTY", i + 1);
+  } else {  // recall: the mutes change at once, sounding notes of muted tracks end at their gate
+    engine::lockProject();
+    for (int t = 0; t < mt::kTracks; ++t) p.tracks[t].mute = (p.scenes[i] >> t) & 1;
+    engine::unlockProject();
+    app_.markDirty();
+    snprintf(msg, sizeof(msg), "SCENE %d", i + 1);
+  }
+  app_.toast(msg);
+}
+
+void BankScreen::drawScenes(LGFX_Sprite& s, int y) {
+  const mt::Project& p = app_.project();
+  uint16_t cur = 0;  // the current mutes: a matching scene is framed
+  for (int t = 0; t < mt::kTracks; ++t)
+    if (p.tracks[t].mute) cur |= static_cast<uint16_t>(1u << t);
+  char buf[4];
+  for (int i = 0; i < mt::kScenes; ++i) {
+    const int x = kSceneX0 + i * kSceneW;
+    const bool stored = p.scenes[i] != mt::kSceneEmpty;
+    if (stored) s.fillRect(x, y + 2, kSceneW - 4, kRowH - 4, kBeatBg);
+    s.drawRect(x, y + 2, kSceneW - 4, kRowH - 4, stored && p.scenes[i] == cur ? kCursor : kDim);
+    snprintf(buf, sizeof(buf), "S%d", i + 1);
+    s.setTextColor(stored ? kText : kDim);
+    s.drawString(buf, x + (kSceneW - 4 - 2 * kCharW) / 2, y + 4);
+  }
 }
 
 void BankScreen::openRowMenu(int row) {
@@ -333,7 +455,9 @@ void BankScreen::openRowMenu(int row) {
   };
   if (valid) {
     row_ = row;
-    snprintf(title, sizeof(title), "SONG %02d: P%02u", row + 1, app_.project().chain[row] + 1u);
+    const mt::Project& p = app_.project();
+    snprintf(title, sizeof(title), "SONG %02d: P%02u %+d x%u S%u", row + 1, p.chain[row] + 1u, p.chainTr[row],
+             p.chainRep[row], p.chainScene[row]);
   } else {
     snprintf(title, sizeof(title), "SONG");
   }
@@ -347,7 +471,9 @@ void BankScreen::chainInput(const hw::InputEvent& ev) {
   const int n = chainLen();
   switch (ev.type) {
     case InputType::EncTurn:
-      if (rowEdit_) {
+      if (rowEdit_ && ev.shift) {
+        rowField_ = clampi(rowField_ + ev.delta, 0, kFCount - 1);
+      } else if (rowEdit_) {
         editRow(ev.delta);
       } else if (n > 0) {
         row_ = ((row_ + ev.delta) % n + n) % n;
@@ -357,6 +483,7 @@ void BankScreen::chainInput(const hw::InputEvent& ev) {
     case InputType::EncClick:
       if (n == 0) insertRow(0, app_.editPattern());
       else rowEdit_ = !rowEdit_;
+      if (rowEdit_) rowField_ = kFPat;
       break;
     case InputType::EncLong: openRowMenu(row_); break;
     default: break;
@@ -387,6 +514,12 @@ void BankScreen::chainTouch(const TouchEvent& ev) {
     else if (ev.x >= kOffX0 && ev.x < kOffX1) setSong(false);
     return;
   }
+  const int si = sceneAt(ev.x, ev.y);
+  if (si >= 0) {
+    sceneTouch(si, ev);
+    return;
+  }
+  if (ev.y >= y0_ + kHeadH + kRows * kRowH) return;
   const int r = top_ + (ev.y - y0_ - kHeadH) / kRowH;
   if (ev.type == TouchType::LongPress) {
     openRowMenu(r < n ? r : -1);
@@ -396,8 +529,16 @@ void BankScreen::chainTouch(const TouchEvent& ev) {
     rowEdit_ = false;
     return;
   }
+  // A tap on a field of the selected row edits that field; elsewhere it toggles row edit.
+  const int f = ev.x >= kFieldX0 && ev.x < kFieldX0 + kFCount * kFieldW ? (ev.x - kFieldX0) / kFieldW : -1;
   if (r == row_) {
-    rowEdit_ = !rowEdit_;
+    if (f >= 0 && (!rowEdit_ || f != rowField_)) {
+      rowField_ = f;
+      rowEdit_ = true;
+    } else {
+      rowEdit_ = !rowEdit_;
+      if (rowEdit_) rowField_ = kFPat;
+    }
   } else {
     row_ = r;
     rowEdit_ = false;
@@ -430,6 +571,7 @@ void BankScreen::drawChain(LGFX_Sprite& s, int y0) {
   s.drawFastHLine(0, y0 + kHeadH - 1, kScreenW, kDim);
 
   const int ly = y0 + kHeadH;
+  drawScenes(s, ly + kRows * kRowH);
   if (n == 0) {
     s.setTextColor(kDim);
     s.drawString("CHAIN EMPTY: THE CURRENT PATTERN LOOPS", 16, ly + 16);
@@ -448,12 +590,16 @@ void BankScreen::drawChain(LGFX_Sprite& s, int y0) {
     if (idx == heard) s.drawString(">", 4, y + 4);
     snprintf(buf, sizeof(buf), "%02d", idx + 1);
     s.drawString(buf, 16, y + 4);
-    s.setTextColor(idx == row_ && rowEdit_ ? kEditCursor : kText);
-    snprintf(buf, sizeof(buf), "P%02u", pat + 1u);
-    s.drawString(buf, 64, y + 4);
+    for (int f = 0; f < kFCount; ++f) {
+      bool def;
+      fieldText(idx, f, buf, sizeof(buf), def);
+      const bool editing = idx == row_ && rowEdit_ && f == rowField_;
+      s.setTextColor(editing ? kEditCursor : (def ? kDim : kText));
+      s.drawString(buf, kFieldX0 + f * kFieldW, y + 4);
+    }
     s.setTextColor(kDim);
-    snprintf(buf, sizeof(buf), "%3u STEPS  %s", pt.length, resName(pt.res));
-    s.drawString(buf, 144, y + 4);
+    snprintf(buf, sizeof(buf), "%3u %s", pt.length, resName(pt.res));
+    s.drawString(buf, kFieldX0 + kFCount * kFieldW + 16, y + 4);
   }
   if (n > kRows) {  // scroll bar
     const int h = kRows * kRowH;

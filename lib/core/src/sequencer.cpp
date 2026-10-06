@@ -1,5 +1,7 @@
 #include "sequencer.h"
 #include <string.h>
+#include "fx_info.h"
+#include "record.h"
 
 namespace mt {
 
@@ -43,6 +45,7 @@ void Sequencer::anchorAt(uint64_t now) {
   heardPos_ = pos_;
   heardPat_ = cur_;
   heardSong_ = songPos_;
+  heardStepT_ = now;
 }
 
 void Sequencer::start(uint64_t now, MidiSink& out) {
@@ -58,6 +61,9 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   queued_ = -1;
   pos_ = 0;
   loop_ = 0;
+  rep_ = 0;
+  perfMuted_ = 0;
+  if (songPos_ >= 0) applyScene(songPos_, now);
   for (int i = 0; i < kTracks; ++i) {
     const TrackCfg& t = p_.tracks[i];
     if (internal(i)) {
@@ -114,6 +120,9 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   pos_ = 0;
   heardPos_ = 0;
   loop_ = 0;
+  rep_ = 0;
+  for (PerfFx& f : perf_) f = PerfFx::None;
+  perfMuted_ = 0;
   showStopped();
 }
 
@@ -208,6 +217,8 @@ void Sequencer::chainEdited(uint64_t now, MidiSink& out, int at, ChainOp op) {
     }
   }
   if (op == ChainOp::Edit) return;
+  // The playing item deleted: the passes counted were its own, the next one starts at the pass end.
+  if (op == ChainOp::Delete && songPos_ == at) rep_ = kChainRepMax;
   auto remap = [&](int v) {
     if (v < 0) return v;
     if (op == ChainOp::Insert) return v >= at ? v + 1 : v;
@@ -271,6 +282,7 @@ bool Sequencer::rewind(uint64_t now) {
   heap_.removeIf([&](const SchedEvent& e) { return static_cast<int32_t>(e.tag - h.serial) >= 0; });
   memcpy(ties_, h.ties, sizeof(ties_));
   songPos_ = h.prevSong;  // a chain advance among the undone steps is decided again
+  rep_ = h.prevRep;
   stepTick_ = h.tick;
   stepSerial_ = h.serial;
   for (int i = k + 1; i < histN_; ++i) hist_[i - k - 1] = hist_[i];
@@ -329,6 +341,7 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
       heardPos_ = hist_[i].pos;
       heardPat_ = hist_[i].pat;
       heardSong_ = hist_[i].song;
+      heardStepT_ = hist_[i].t;
       break;
     }
   }
@@ -352,6 +365,7 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.prevPat = cur_;
   h.prevQueued = static_cast<int8_t>(queued_);
   h.prevSong = static_cast<int8_t>(songPos_);
+  h.prevRep = rep_;
   memcpy(h.ties, ties_, sizeof(ties_));
   tag_ = stepSerial_;
   minT_ = kNever;
@@ -367,22 +381,24 @@ void Sequencer::scheduleStep(uint64_t now) {
   // Nothing may land in the past; a shifted note keeps its gate.
   const int64_t earliest = static_cast<int64_t>(now > playStartT_ ? now : playStartT_);
 
-  const ExpandCtx ctx{su, loop_, p_.scaleRoot, static_cast<ScaleType>(p_.scaleType), ticks()};
+  const ExpandCtx c = ctx(su);
   ExpandOut& ex = ex_;
   for (int tr = 0; tr < kTracks; ++tr) {
-    const Step& s = pat.steps[tr][pos_];
+    Step s = pat.steps[tr][stepIndex(pat, tr, pos_)];
+    adjustStep(s, tr);
+    const bool aud = audible(tr, t);
     const bool hasFx = s.hasFx();
     if (!s.hasNote()) {
       // OFF ends a tie (and every INT voice); controls on OFF or on a step without a note still go out.
       if (s.note == kNoteOff) pushOff(tr, t);
-      if (hasFx && p_.trackAudible(tr) && expand(s, tr, ctx, ex)) {
+      if (hasFx && aud && expand(s, tr, c, ex)) {
         pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), false);
         pushControls(ex, t, earliest, static_cast<uint8_t>(tr));
         if (ex.offUs >= 0) pushOff(tr, atLeast(static_cast<int64_t>(t) + ex.offUs, earliest));
       }
       continue;
     }
-    if (!p_.trackAudible(tr) || !expand(s, tr, ctx, ex)) {
+    if (!aud || !expand(s, tr, c, ex)) {
       releaseTie(tr, t + kTieOverlapUs);
       continue;
     }
@@ -489,13 +505,14 @@ void Sequencer::skipStep(uint64_t now) {
   if (pos_ >= p_.patterns[cur_].length) endOfPass();
   const Pattern& pat = p_.patterns[cur_];
   const uint64_t t = tickTime(stepTick_);
-  const ExpandCtx ctx{stepUs(), loop_, p_.scaleRoot, static_cast<ScaleType>(p_.scaleType), ticks()};
+  const ExpandCtx c = ctx(stepUs());
   for (int tr = 0; tr < kTracks; ++tr) {
-    const Step& s = pat.steps[tr][pos_];
+    Step s = pat.steps[tr][stepIndex(pat, tr, pos_)];
+    adjustStep(s, tr);
     if (s.note == kNoteOff) pushOff(tr, t);
     else if (s.hasNote()) releaseTie(tr, t);
     const bool hasFx = s.hasFx();
-    if (hasFx && p_.trackAudible(tr) && expand(s, tr, ctx, ex_)) {
+    if (hasFx && audible(tr, t) && expand(s, tr, c, ex_)) {
       pushStepStart(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false, false);
       pushControls(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false);  // all at now, no nudge
       if (ex_.offUs >= 0) pushOff(tr, now);
@@ -510,11 +527,18 @@ void Sequencer::endOfPass() {
   ++loop_;
   int next = queued_;
   if (songActive()) {
-    songPos_ = songPos_ + 1 < chainLen() ? songPos_ + 1 : 0;
-    next = chainAt(songPos_);
-    if (next == cur_) next = -1;  // a repeated entry goes on like a loop (ties, CND)
+    if (songPos_ >= 0 && songPos_ < chainLen() && ++rep_ < chainRep(songPos_)) {
+      next = -1;  // another pass of the same item: ties and CND go on
+    } else {
+      rep_ = 0;
+      songPos_ = songPos_ + 1 < chainLen() ? songPos_ + 1 : 0;
+      next = chainAt(songPos_);
+      applyScene(songPos_, tickTime(stepTick_));
+      if (next == cur_) next = -1;  // a repeated entry goes on like a loop (ties, CND)
+    }
   } else {
     songPos_ = -1;
+    rep_ = 0;
   }
   queued_ = -1;
   if (next >= 0) {
@@ -524,6 +548,87 @@ void Sequencer::endOfPass() {
   }
   reanchor(stepTick_);  // keeps tick distances small
 }
+
+void Sequencer::adjustStep(Step& s, int track) const {
+  const int tr = chainTranspose();
+  if (tr && s.hasNote() && !p_.trackIsDrum(track)) {
+    const int n = s.note + tr;
+    s.note = static_cast<uint8_t>(n < 0 ? 0 : (n > 127 ? 127 : n));
+  }
+  const PerfFx pf = perf_[track];
+  if (pf == PerfFx::Fade && !internal(track)) {
+    // MIDI has no volume slide: the notes go out at half velocity (a drum step's velocity is note).
+    if (s.hasNote() && !p_.trackIsDrum(track)) {
+      const int v = (s.vel ? s.vel : p_.tracks[track].defVel) / 2;
+      s.vel = static_cast<uint8_t>(v < 1 ? 1 : v);
+    }
+    return;
+  }
+  const FxSlot f = perfSlot(pf);
+  if (f.cmd == Fx::None || (fxSynthOnly(f.cmd) && !internal(track))) return;
+  // The step's own fx stay; the same command or the first free slot takes it, else the last slot.
+  int slot = kFxSlots - 1;
+  for (int k = 0; k < kFxSlots; ++k)
+    if (s.fx[k].cmd == f.cmd) {
+      slot = k;
+      break;
+    }
+  if (s.fx[slot].cmd != f.cmd)
+    for (int k = 0; k < kFxSlots; ++k)
+      if (s.fx[k].cmd == Fx::None) {
+        slot = k;
+        break;
+      }
+  s.fx[slot] = f;
+}
+
+FxSlot Sequencer::perfSlot(PerfFx fx) {
+  switch (fx) {
+    case PerfFx::Rat2: return {Fx::RAT, 2};
+    case PerfFx::Rat4: return {Fx::RAT, 4};
+    case PerfFx::FltLow: return {Fx::FLT, 30};
+    case PerfFx::FltHigh: return {Fx::FLT, 120};
+    case PerfFx::DlyMax: return {Fx::DLY, 127};
+    case PerfFx::DecShort: return {Fx::DCY, 20};
+    case PerfFx::Fade: return {Fx::VSL, static_cast<uint8_t>(-16)};
+    default: return {Fx::None, 0};
+  }
+}
+
+void Sequencer::perfOn(int track, PerfFx fx) {
+  if (track < 0 || track >= kTracks || fx >= PerfFx::Count) return;
+  perf_[track] = fx;
+}
+
+void Sequencer::perfOff(int track) {
+  if (track >= 0 && track < kTracks) perf_[track] = PerfFx::None;
+}
+
+bool Sequencer::audible(int track, uint64_t t) {
+  const uint16_t bit = static_cast<uint16_t>(1u << track);
+  if (perf_[track] == PerfFx::Mute) {
+    if (!(perfMuted_ & bit)) pushOff(track, t);  // what still sounds ends with the first muted step
+    perfMuted_ |= bit;
+    return false;
+  }
+  perfMuted_ &= static_cast<uint16_t>(~bit);
+  return p_.trackAudible(track);
+}
+
+// The item's mute scene into the tracks; tracks it mutes go silent at t.
+void Sequencer::applyScene(int songPos, uint64_t t) {
+  if (songPos < 0 || songPos >= chainLen()) return;
+  const uint8_t sc = p_.chainScene[songPos];
+  if (sc == 0 || sc > kScenes || p_.scenes[sc - 1] == kSceneEmpty) return;
+  const uint16_t m = p_.scenes[sc - 1];
+  for (int tr = 0; tr < kTracks; ++tr) {
+    const bool mute = (m >> tr) & 1;
+    if (mute && !p_.tracks[tr].mute) pushOff(tr, t);
+    p_.tracks[tr].mute = mute;
+  }
+}
+
+uint8_t Sequencer::phase256(uint64_t now) const { return stepPhase256(now, heardStepT_, stepUs()); }
 
 void Sequencer::releaseTie(int track, uint64_t t) {
   Tie& tie = ties_[track];

@@ -1678,6 +1678,230 @@ void test_fx_off_releases_tie() {
   TEST_ASSERT_EQUAL(250000 + 62500, offs[0]);
 }
 
+// ---- Song: chain transpose / repeat / scene, polymeter ----
+
+void test_chain_transpose_melodic_not_drum() {
+  p->songMode = true;
+  p->chainLen = 1;
+  p->chain[0] = 0;
+  p->chainTr[0] = 5;
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  instrSetType(p->instruments[1], InstrType::Kit);  // track 1: a drum track (lanes 60..67)
+  p->tracks[1].instr = 1;
+  p->patterns[0].steps[1][0].note = 100;  // step velocity
+  p->patterns[0].steps[1][0].vel = 1;     // lane 1: note 60
+  seq->start(0, *sink);
+  run(0, 10000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 65).size());
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(1, sink->times(0x91, 60).size());  // the lane note is not transposed
+}
+
+void test_chain_transpose_clamps_and_skips_off() {
+  p->songMode = true;
+  p->chainLen = 1;
+  p->chainTr[0] = 24;
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 120;
+  p->patterns[0].steps[0][1].note = kNoteOff;
+  seq->start(0, *sink);
+  run(0, 300000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 127).size());
+  TEST_ASSERT_EQUAL(kNoteOff, p->patterns[0].steps[0][1].note);  // the pattern itself is untouched
+  TEST_ASSERT_EQUAL(120, p->patterns[0].steps[0][0].note);
+}
+
+void test_chain_repeat_advances_after_n_passes() {
+  p->songMode = true;
+  p->chainLen = 2;
+  p->chain[0] = 0;
+  p->chainRep[0] = 3;
+  p->chain[1] = 1;
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[1].length = 4;
+  p->patterns[1].steps[0][0].note = 62;
+  seq->start(0, *sink);
+  run(0, 1510000);  // 3 passes of P0, then P1 starts at 1 500 000
+  TEST_ASSERT_EQUAL(3, sink->times(0x90, 60).size());
+  auto on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(1500000, on62[0]);
+}
+
+// Raising the repeat count while the advance is planned but not heard re-decides it (rewind restores
+// the pass count).
+void test_chain_repeat_edit_before_advance_heard() {
+  p->songMode = true;
+  p->chainLen = 2;
+  p->chain[0] = 0;
+  p->chainRep[0] = 2;
+  p->chain[1] = 1;
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[1].length = 4;
+  p->patterns[1].steps[0][0].note = 62;
+  seq->start(0, *sink);
+  run(0, 800000);  // pass 2 playing; its last step (875 000) and the advance already planned
+  p->chainRep[0] = 3;
+  sink->now = 800000;
+  seq->chainEdited(800000, *sink, 0, ChainOp::Edit);
+  run(800000, 1510000);
+  TEST_ASSERT_EQUAL(3, sink->times(0x90, 60).size());
+  auto on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(1500000, on62[0]);
+}
+
+void test_chain_scene_sets_mutes() {
+  p->songMode = true;
+  p->chainLen = 2;
+  p->chain[0] = 0;
+  p->chainScene[0] = 2;
+  p->chain[1] = 0;
+  p->chainScene[1] = 0;  // no scene: mutes stay
+  p->scenes[1] = 1u << 3;  // scene 2 mutes track 4
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[3][0].note = 60;
+  p->patterns[0].steps[2][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 1010000);  // passes at 0, 500 000, 1 000 000
+  TEST_ASSERT_TRUE(p->tracks[3].mute);
+  TEST_ASSERT_EQUAL(0, sink->times(0x93, 60).size());
+  TEST_ASSERT_EQUAL(3, sink->times(0x92, 60).size());
+}
+
+void test_chain_empty_scene_ignored() {
+  p->songMode = true;
+  p->chainLen = 1;
+  p->chainScene[0] = 1;  // scene 1 is empty
+  p->tracks[2].mute = true;
+  seq->start(0, *sink);
+  run(0, 10000);
+  TEST_ASSERT_TRUE(p->tracks[2].mute);
+  TEST_ASSERT_FALSE(p->tracks[0].mute);
+}
+
+// Track 0 has length 3 inside a 16-step pattern: its step 0 plays at positions 0, 3, 6 ... 15.
+void test_track_length_polymeter() {
+  p->patterns[0].length = 16;
+  p->patterns[0].trackLen[0] = 3;
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[1][15].note = 62;  // the pattern still has 16 steps
+  seq->start(0, *sink);
+  run(0, 2010000);  // one pass = 2 000 000 us
+  auto on = sink->times(0x90, 60);
+  TEST_ASSERT_EQUAL(7, on.size());  // 0, 3, 6, 9, 12, 15, then the next pass's 0
+  TEST_ASSERT_EQUAL(375000, on[1]);
+  TEST_ASSERT_EQUAL(2000000, on[6]);
+  TEST_ASSERT_EQUAL(1, sink->times(0x91, 62).size());
+  TEST_ASSERT_EQUAL(2, seq->loopCount() + 1);  // the pass counter follows the pattern length
+}
+
+// ---- Live: fill, perf, phase ----
+
+void test_fill_gates_fil_steps() {
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][0].fx[0] = {Fx::CND, kCndFill};
+  p->patterns[0].steps[1][0].note = 62;
+  p->patterns[0].steps[1][0].fx[0] = {Fx::CND, kCndNoFill};
+  seq->start(0, *sink);
+  run(0, 260000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(1, sink->times(0x91, 62).size());
+  seq->setFill(true);  // the step at 500 000 is planned already (lookahead): the one at 1 000 000 fills
+  TEST_ASSERT_TRUE(seq->fill());
+  run(260001, 1010000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(1000000, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(2, sink->times(0x91, 62).size());
+}
+
+void test_perf_rat2_doubles_and_release_restores() {
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  seq->start(0, *sink);
+  seq->perfOn(0, PerfFx::Rat2);
+  run(0, 260000);
+  TEST_ASSERT_EQUAL(2, sink->times(0x90, 60).size());
+  seq->perfOff(0);
+  run(260001, 1010000);  // 500 000 was planned with it (lookahead), 1 000 000 without
+  TEST_ASSERT_EQUAL(5, sink->times(0x90, 60).size());
+}
+
+void test_perf_keeps_step_fx_and_replaces_same_cmd() {
+  Step s;
+  s.note = 60;
+  s.fx[0] = {Fx::RAT, 3};
+  for (int k = 1; k < kFxSlots; ++k) s.fx[k] = {Fx::PRB, 100};
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0] = s;
+  seq->perfOn(0, PerfFx::Rat4);
+  seq->start(0, *sink);
+  run(0, 120000);
+  TEST_ASSERT_EQUAL(4, sink->times(0x90, 60).size());  // RAT 4 took the RAT slot
+  TEST_ASSERT_EQUAL(3, p->patterns[0].steps[0][0].fx[0].val);
+}
+
+void test_perf_mute_silences_track() {
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[1][0].note = 62;
+  seq->perfOn(0, PerfFx::Mute);
+  seq->start(0, *sink);
+  run(0, 260000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(1, sink->times(0x91, 62).size());
+}
+
+void test_perf_synth_fx_skipped_on_midi_track() {
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  seq->perfOn(0, PerfFx::FltLow);
+  seq->start(0, *sink);
+  run(0, 10000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(0, sink->synKind(0xF5).size());
+}
+
+void test_perf_flt_on_int_track() {
+  p->tracks[0].out = TrackOut::Int;
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  seq->perfOn(0, PerfFx::FltLow);
+  seq->start(0, *sink);
+  run(0, 10000);
+  bool flt = false;
+  for (const SynRec& r : sink->synKind(0xF5)) flt |= r.b[1] == static_cast<uint8_t>(Fx::FLT) && r.b[2] == 30;
+  TEST_ASSERT_TRUE(flt);
+}
+
+void test_stop_clears_perf() {
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  seq->perfOn(0, PerfFx::Mute);
+  seq->start(0, *sink);
+  run(0, 10000);
+  seq->stop(10000, *sink);
+  seq->start(20000, *sink);
+  run(20000, 30000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
+}
+
+void test_phase256_within_step() {
+  p->patterns[0].length = 4;
+  seq->start(0, *sink);
+  run(0, 1000);
+  TEST_ASSERT_EQUAL(0, seq->phase256(0));
+  TEST_ASSERT_EQUAL(128, seq->phase256(62500));  // half a 16th at 120 BPM
+  TEST_ASSERT_EQUAL(255, seq->phase256(200000));
+  run(1001, 130000);
+  TEST_ASSERT_EQUAL(1, seq->playPos());
+  TEST_ASSERT_EQUAL(32, seq->phase256(140625));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -1783,5 +2007,20 @@ int main() {
   RUN_TEST(test_int_fx_off_on_note_step);
   RUN_TEST(test_fx_off_releases_tie);
   RUN_TEST(test_int_track_step_markers);
+  RUN_TEST(test_chain_transpose_melodic_not_drum);
+  RUN_TEST(test_chain_transpose_clamps_and_skips_off);
+  RUN_TEST(test_chain_repeat_advances_after_n_passes);
+  RUN_TEST(test_chain_repeat_edit_before_advance_heard);
+  RUN_TEST(test_chain_scene_sets_mutes);
+  RUN_TEST(test_chain_empty_scene_ignored);
+  RUN_TEST(test_track_length_polymeter);
+  RUN_TEST(test_fill_gates_fil_steps);
+  RUN_TEST(test_perf_rat2_doubles_and_release_restores);
+  RUN_TEST(test_perf_keeps_step_fx_and_replaces_same_cmd);
+  RUN_TEST(test_perf_mute_silences_track);
+  RUN_TEST(test_perf_synth_fx_skipped_on_midi_track);
+  RUN_TEST(test_perf_flt_on_int_track);
+  RUN_TEST(test_stop_clears_perf);
+  RUN_TEST(test_phase256_within_step);
   return UNITY_END();
 }

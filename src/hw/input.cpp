@@ -98,7 +98,9 @@ void task(void*) {
       emit(InputType::ShiftUp);
     }
 
-    if (playBtn.update() == 1) emit(InputType::PlayPress);
+    const int pl = playBtn.update();
+    if (pl == 1) emit(InputType::PlayPress);
+    else if (pl == -1) emit(InputType::PlayRelease);
 
     const int e = encBtn.update();
     const uint32_t now = millis();

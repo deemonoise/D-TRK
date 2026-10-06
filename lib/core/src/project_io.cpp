@@ -29,6 +29,7 @@ static_assert(kFltRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kSliceRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kSmplSize <= kMaxRec, "readRecords buffer");
 constexpr size_t kWtblSize = 20;  // name[16] u32 crc
+constexpr size_t kChn2Rec = 4;    // pattern, transpose, repeat, scene
 static_assert(kSynRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kWtblSize <= kMaxRec, "readRecords buffer");
 
@@ -92,8 +93,15 @@ class CrcSource {
   uint32_t crc_ = 0;
 };
 
+bool trackLenSet(const Pattern& p) {
+  for (uint8_t n : p.trackLen)
+    if (n) return true;
+  return false;
+}
+
 bool patternStored(const Pattern& p) {
-  return p.length != kDefaultSteps || p.res != Resolution::Sixteenth || p.swing != 50 || !p.isEmpty();
+  return p.length != kDefaultSteps || p.res != Resolution::Sixteenth || p.swing != 50 || !p.isEmpty() ||
+         trackLenSet(p);
 }
 
 uint8_t validNote(uint8_t n) { return (n < 128 || n == kNoteOff) ? n : kNoteEmpty; }
@@ -256,6 +264,42 @@ LoadErr readWtbl(CrcSource& in, uint32_t size, Project& p) {
   });
 }
 
+// CHN2: count, then per item pattern, transpose (int8), repeat, scene. Replaces PROJ's chain (still
+// written there for old firmware); files without it keep tr 0 / rep 1 / no scene.
+LoadErr readChn2(CrcSource& in, uint32_t size, Project& p) {
+  int n = 0;
+  const LoadErr e = readRecords(in, size, kChn2Rec, kChainMax, [&](int i, const uint8_t* b) {
+    p.chain[i] = clampu(b[0], 0, kPatterns - 1);
+    const int tr = static_cast<int8_t>(b[1]);
+    p.chainTr[i] = static_cast<int8_t>(tr < -kChainTrMax ? -kChainTrMax : (tr > kChainTrMax ? kChainTrMax : tr));
+    p.chainRep[i] = clampu(b[2], 1, kChainRepMax);
+    p.chainScene[i] = b[3] <= kScenes ? b[3] : 0;  // no such scene: none
+    n = i + 1;
+  });
+  if (e == LoadErr::Ok) p.chainLen = static_cast<uint8_t>(n);
+  return e;
+}
+
+// TLEN: pattern index + kTracks track lengths (0 = the pattern length), after its PATN.
+LoadErr readTlen(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t b[1 + kTracks];
+  if (size != sizeof(b)) return LoadErr::BadValue;
+  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  if (b[0] >= kPatterns) return LoadErr::Ok;
+  Pattern& pt = p.patterns[b[0]];
+  for (int t = 0; t < kTracks; ++t) pt.trackLen[t] = clampu(b[1 + t], 0, pt.length);
+  return LoadErr::Ok;
+}
+
+// SCNS: kScenes mute masks, LE uint16.
+LoadErr readScns(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t b[2 * kScenes];
+  if (size != sizeof(b)) return LoadErr::BadValue;
+  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  for (int i = 0; i < kScenes; ++i) p.scenes[i] = static_cast<uint16_t>(b[2 * i] | (b[2 * i + 1] << 8));
+  return LoadErr::Ok;
+}
+
 LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
   uint8_t h[kPatHeader];
   if (size < kPatHeader) return LoadErr::BadValue;
@@ -332,6 +376,17 @@ bool saveProject(const Project& p, ByteSink& out) {
   pr[22] = p.chainLen;
   memcpy(pr + 23, p.chain, kChainMax);
   if (!o.chunk("PROJ", kProjSize) || !o.write(pr, sizeof(pr))) return false;
+
+  uint8_t chainN = p.chainLen > kChainMax ? kChainMax : p.chainLen;
+  if (!o.chunk("CHN2", 1 + chainN * kChn2Rec) || !o.write(&chainN, 1)) return false;
+  for (int i = 0; i < chainN; ++i) {
+    const uint8_t b[kChn2Rec] = {p.chain[i], static_cast<uint8_t>(p.chainTr[i]), p.chainRep[i], p.chainScene[i]};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  uint8_t sc[2 * kScenes];
+  for (int i = 0; i < kScenes; ++i) wr16(sc + 2 * i, p.scenes[i]);
+  if (!o.chunk("SCNS", sizeof(sc)) || !o.write(sc, sizeof(sc))) return false;
 
   uint8_t count = kTracks;
   if (!o.chunk("TRKS", kTrksSize) || !o.write(&count, 1)) return false;
@@ -443,6 +498,11 @@ bool saveProject(const Project& p, ByteSink& out) {
         }
         if (!o.write(b, sizeof(b))) return false;
       }
+    if (trackLenSet(pt)) {
+      uint8_t tl[1 + kTracks] = {static_cast<uint8_t>(i)};
+      memcpy(tl + 1, pt.trackLen, kTracks);
+      if (!o.chunk("TLEN", sizeof(tl)) || !o.write(tl, sizeof(tl))) return false;
+    }
   }
 
   uint8_t c[12] = {'C', 'R', 'C', ' '};
@@ -471,6 +531,9 @@ LoadErr loadProject(ByteSource& src, Project& out) {
       if (!in.raw().read(v, 4)) return LoadErr::Truncated;
       if (rd32(v) != in.crc()) return LoadErr::BadCrc;
       for (Instrument& m : out.instruments) fixInstrument(m);
+      for (Pattern& pt : out.patterns)  // a PATN after its TLEN may have shortened the pattern
+        for (uint8_t& n : pt.trackLen)
+          if (n > pt.length) n = pt.length;
       // Drum tracks are known only now: their steps keep vel as a lane mask, the others' are 0..127.
       for (int t = 0; t < kTracks; ++t) {
         if (out.trackIsDrum(t)) continue;
@@ -494,6 +557,9 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
     else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
+    else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, out);
+    else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
+    else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;
   }

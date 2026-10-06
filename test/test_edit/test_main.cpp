@@ -255,6 +255,34 @@ void test_copy_paste_drum_step_byte_exact() {
   TEST_ASSERT_EQUAL_MEMORY(&src.steps[2][3], &pat.steps[4][5], sizeof(Step));
 }
 
+void test_chain_insert_delete_move_all_fields() {
+  static Project p;
+  p.reset();
+  p.chainLen = 2;
+  p.chain[0] = 1; p.chainTr[0] = 3; p.chainRep[0] = 2; p.chainScene[0] = 1;
+  p.chain[1] = 4; p.chainTr[1] = -2; p.chainRep[1] = 5; p.chainScene[1] = 2;
+  TEST_ASSERT_TRUE(chainInsert(p, 1, 9));
+  TEST_ASSERT_EQUAL(3, p.chainLen);
+  TEST_ASSERT_EQUAL(9, p.chain[1]);
+  TEST_ASSERT_EQUAL(0, p.chainTr[1]);
+  TEST_ASSERT_EQUAL(1, p.chainRep[1]);
+  TEST_ASSERT_EQUAL(0, p.chainScene[1]);
+  TEST_ASSERT_EQUAL(4, p.chain[2]);
+  TEST_ASSERT_EQUAL(-2, p.chainTr[2]);
+  TEST_ASSERT_EQUAL(5, p.chainRep[2]);
+  TEST_ASSERT_EQUAL(2, p.chainScene[2]);
+  chainDelete(p, 0);
+  TEST_ASSERT_EQUAL(2, p.chainLen);
+  TEST_ASSERT_EQUAL(9, p.chain[0]);
+  TEST_ASSERT_EQUAL(-2, p.chainTr[1]);
+  TEST_ASSERT_EQUAL(1, p.chainRep[2]);  // the freed row is reset
+  TEST_ASSERT_EQUAL(0, p.chain[2]);
+  chainDelete(p, 5);  // past the end: nothing
+  TEST_ASSERT_EQUAL(2, p.chainLen);
+  p.chainLen = kChainMax;
+  TEST_ASSERT_FALSE(chainInsert(p, 0, 1));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_make_sel_normalizes);
@@ -273,5 +301,6 @@ int main(int, char**) {
   RUN_TEST(test_undo_drop_after_wrap);
   RUN_TEST(test_transpose_skips_drum_tracks);
   RUN_TEST(test_copy_paste_drum_step_byte_exact);
+  RUN_TEST(test_chain_insert_delete_move_all_fields);
   return UNITY_END();
 }

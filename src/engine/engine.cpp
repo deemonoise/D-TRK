@@ -7,6 +7,7 @@
 #include "audio/audio.h"
 #include "esp_random.h"
 #include "hw/midi_uart.h"
+#include "record.h"
 #include "sequencer.h"
 
 namespace engine {
@@ -54,12 +55,17 @@ void handle(const Command& c) {
     case Cmd::ReleaseTies: seq->releaseTies(now, midi); break;
     case Cmd::TrackOut: seq->trackOutChanged(now, c.arg, midi); break;
     case Cmd::ChainEdit: seq->chainEdited(now, midi, c.arg >> 8, static_cast<mt::ChainOp>(c.arg & 0xFF)); break;
+    case Cmd::Fill: seq->setFill(c.arg != 0); break;
+    case Cmd::PerfOn: seq->perfOn(c.arg & 0xFF, static_cast<mt::PerfFx>(c.arg >> 8)); break;
+    case Cmd::PerfOff: seq->perfOff(c.arg); break;
   }
 }
 
 void publish() {
-  const Status s{seq->playing(), seq->paused(), seq->heardPattern(), static_cast<int8_t>(seq->pendingPattern()),
-                 seq->playPos(), seq->loopCount(), static_cast<int8_t>(seq->heardSongPos())};
+  const Status s{seq->playing(),       seq->paused(),       seq->heardPattern(),
+                 static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->loopCount(),
+                 static_cast<int8_t>(seq->heardSongPos()), seq->fill(),
+                 seq->heardStepTime(),  seq->stepDuration()};
   portENTER_CRITICAL(&statusMux);
   st = s;
   portEXIT_CRITICAL(&statusMux);
@@ -132,6 +138,8 @@ Status status() {
   portEXIT_CRITICAL(&statusMux);
   return s;
 }
+
+uint8_t stepPhase(const Status& s) { return mt::stepPhase256(nowUs(), s.stepT, s.stepUs); }
 
 uint16_t takeActivity() { return static_cast<uint16_t>(activity.exchange(0, std::memory_order_relaxed)); }
 

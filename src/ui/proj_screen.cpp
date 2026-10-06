@@ -29,6 +29,7 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
   params_[kLength] = {"Length", [this](char* o, int n) { snprintf(o, n, "%u", pat().length); },
                       [this](int d) {
                         pat().length = static_cast<uint8_t>(clampi(pat().length + d, mt::kMinSteps, mt::kMaxSteps));
+                        pat().fitTrackLen();
                       }};
   params_[kRes] = {"Resolution",
                    [this](char* o, int n) { snprintf(o, n, "%s", resName(pat().res)); },

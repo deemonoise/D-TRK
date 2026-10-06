@@ -55,9 +55,13 @@ const Info& info(Fx f) {
   return kInfo[i < static_cast<uint8_t>(Fx::Count) ? i : 0];
 }
 
-// CND values in encoder order: FST, then A:B for B = 2..8, A = 1..B.
+// CND values in encoder order: FST, then A:B for B = 2..8, A = 1..B, then FIL, NFL.
+constexpr int kCndFillIdx = 36;
+
 int cndIndex(uint8_t v) {
   if (v == 0) return 0;
+  if (v == kCndFill) return kCndFillIdx;
+  if (v == kCndNoFill) return kCndFillIdx + 1;
   const int a = v >> 4, b = v & 15;
   if (b < 2 || b > 8 || a < 1 || a > b) return 0;
   int idx = 1;
@@ -67,6 +71,8 @@ int cndIndex(uint8_t v) {
 
 uint8_t cndValue(int idx) {
   if (idx <= 0) return 0;
+  if (idx == kCndFillIdx) return kCndFill;
+  if (idx >= kCndFillIdx + 1) return kCndNoFill;
   int rest = idx - 1;
   for (int b = 2; b <= 8; ++b) {
     if (rest < b) return static_cast<uint8_t>(((rest + 1) << 4) | b);
@@ -75,7 +81,7 @@ uint8_t cndValue(int idx) {
   return 0x88;
 }
 
-constexpr int kCndCount = 36;
+constexpr int kCndCount = kCndFillIdx + 2;
 
 }  // namespace
 
@@ -98,6 +104,8 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
     case Fx::CND:
       if (v == 0) snprintf(out, 5, "FST");
+      else if (v == kCndFill) snprintf(out, 5, "FIL");
+      else if (v == kCndNoFill) snprintf(out, 5, "NFL");
       else snprintf(out, 5, "%d:%d", v >> 4, v & 15);
       return;
     default: snprintf(out, 5, "%3u", v); return;

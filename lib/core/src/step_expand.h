@@ -35,6 +35,7 @@ struct ExpandCtx {
   ScaleType scale;
   uint16_t tps = 24;  // ticks per step (OFF)
   const Instrument* kit = nullptr;  // the track's KIT: steps are lane masks (drum track)
+  bool fill = false;  // fill held: CND FIL steps play, NFL steps do not
 };
 
 // Expands one step of one track into events. Control events (CC, pitch bend,

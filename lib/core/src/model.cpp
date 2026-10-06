@@ -13,8 +13,14 @@ void Pattern::clear() {
   length = kDefaultSteps;
   res = Resolution::Sixteenth;
   swing = 50;
+  memset(trackLen, 0, sizeof(trackLen));
   for (auto& tr : steps)
     for (auto& s : tr) s = Step();
+}
+
+void Pattern::fitTrackLen() {
+  for (uint8_t& n : trackLen)
+    if (n > length) n = length;
 }
 
 bool Pattern::isEmpty() const {
@@ -72,7 +78,11 @@ void Project::reset() {
   for (auto& p : patterns) p.clear();
   memset(chain, 0, sizeof(chain));
   chainLen = 0;
+  memset(chainTr, 0, sizeof(chainTr));
+  memset(chainRep, 1, sizeof(chainRep));
+  memset(chainScene, 0, sizeof(chainScene));
   songMode = false;
+  for (uint16_t& sc : scenes) sc = kSceneEmpty;
 }
 
 uint16_t envTimeMs(uint8_t v) {

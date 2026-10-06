@@ -4,8 +4,10 @@
 namespace mt {
 
 namespace {
-bool cndPasses(uint8_t v, uint32_t loop) {
+bool cndPasses(uint8_t v, uint32_t loop, bool fill) {
   if (v == 0) return loop == 0;  // FST
+  if (v == kCndFill) return fill;
+  if (v == kCndNoFill) return !fill;
   const uint32_t a = v >> 4, b = v & 15;
   if (b == 0) return true;
   return loop % b == a - 1;
@@ -83,7 +85,7 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
   const uint32_t stepUs = c.stepUs;
 
   if (const FxSlot* f = s.find(Fx::CND)) {
-    if (!cndPasses(f->val, c.loop)) return false;
+    if (!cndPasses(f->val, c.loop, c.fill)) return false;
   }
   if (const FxSlot* p = s.find(Fx::PRB)) {
     if (rng.below(100) >= p->val) return false;

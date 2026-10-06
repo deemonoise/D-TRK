@@ -9,6 +9,10 @@ constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
 constexpr int kPatterns = 16;
 constexpr int kChainMax = 64;
+constexpr int kChainRepMax = 16;  // passes of a chain item
+constexpr int kChainTrMax = 24;   // chain item transpose, semitones
+constexpr int kScenes = 8;        // mute scenes
+constexpr uint16_t kSceneEmpty = 0xFFFF;  // a scene slot with nothing stored (all 16 muted is no use)
 constexpr int kPpqn = 96;
 
 constexpr uint8_t kNoteEmpty = 0xFF;
@@ -192,6 +196,13 @@ enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, Count
 };
+// CND values beyond FST (0) and A:B (b = 2..8): FIL plays only while fill is held, NFL only while it is
+// not. Their low nibble (< 2) is never an A:B value.
+constexpr uint8_t kCndFill = 0x01, kCndNoFill = 0x02;
+
+// Punch-in effects held on the track buttons (PERF mode), not saved: button N = value N. The
+// sequencer adds them to the steps of the track as they play (Sequencer::perfSlot).
+enum class PerfFx : uint8_t { None, Rat2, Rat4, FltLow, FltHigh, DlyMax, DecShort, Fade, Mute, Count };
 
 // Synth message 0xF5 cmd val: cmd is an Fx (synth fx) or kSynthStep, a step start on the INT
 // track with val = ticks per step | 0x80 if the step has a note (sent by the sequencer).
@@ -263,10 +274,12 @@ struct Pattern {
   uint8_t length = kDefaultSteps;
   Resolution res = Resolution::Sixteenth;
   uint8_t swing = 50;  // 50..75 %
+  uint8_t trackLen[kTracks] = {0};  // 0 = length, else 1..length: the track loops on its own (polymeter)
   Step steps[kTracks][kMaxSteps];
 
   void clear();
-  bool isEmpty() const;
+  bool isEmpty() const;  // steps only (trackLen ignored)
+  void fitTrackLen();    // after a length change: track lengths past it become the length
 };
 
 struct TrackCfg {
@@ -293,7 +306,14 @@ struct Project {
   Pattern patterns[kPatterns];
   uint8_t chain[kChainMax] = {0};
   uint8_t chainLen = 0;
+  // Per chain item: transpose of melodic tracks (semitones, -kChainTrMax..kChainTrMax), passes before
+  // advancing (1..kChainRepMax), mute scene recalled when the item starts (0 = none, 1..kScenes).
+  // Rows move together: chainInsert / chainDelete (edit_ops).
+  int8_t chainTr[kChainMax] = {0};
+  uint8_t chainRep[kChainMax] = {0};  // reset() sets 1
+  uint8_t chainScene[kChainMax] = {0};
   bool songMode = false;
+  uint16_t scenes[kScenes];  // bit t = track t muted; kSceneEmpty = nothing stored (reset())
   Instrument instruments[kInstruments];
   uint8_t masterVol = 40;  // 0..kMasterVolMax %
   bool preview = true;     // GRID note entry sounds on INT tracks

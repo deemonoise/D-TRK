@@ -159,6 +159,12 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL(x.songMode, y.songMode);
   TEST_ASSERT_EQUAL(x.chainLen, y.chainLen);
   TEST_ASSERT_EQUAL_MEMORY(x.chain, y.chain, kChainMax);
+  for (int i = 0; i < x.chainLen; ++i) {
+    TEST_ASSERT_EQUAL(x.chainTr[i], y.chainTr[i]);
+    TEST_ASSERT_EQUAL(x.chainRep[i], y.chainRep[i]);
+    TEST_ASSERT_EQUAL(x.chainScene[i], y.chainScene[i]);
+  }
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(x.scenes, y.scenes, kScenes);
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg &c = x.tracks[t], &d = y.tracks[t];
     TEST_ASSERT_EQUAL_STRING(c.name, d.name);
@@ -232,6 +238,7 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(p.length, q.length);
     TEST_ASSERT_EQUAL(static_cast<int>(p.res), static_cast<int>(q.res));
     TEST_ASSERT_EQUAL(p.swing, q.swing);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(p.trackLen, q.trackLen, kTracks);
     for (int t = 0; t < kTracks; ++t)
       TEST_ASSERT_EQUAL_MEMORY(p.steps[t], q.steps[t], sizeof(Step) * p.length);
   }
@@ -267,8 +274,8 @@ void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   // PROJ, TRKS (16 x 16), INST, FMIN, FLTR, SLCE (16 x 72), TOUT (16 x 3), AUDI, SYNI (16 x 48), WTBL (empty),
-  // KITS (16 x 176)
-  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176);
+  // KITS (16 x 176), CHN2 (empty), SCNS
+  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16);
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
@@ -1338,6 +1345,122 @@ void test_patn_vel_mask_only_on_drum_tracks() {
   TEST_ASSERT_EQUAL_HEX8(0x25, b.patterns[0].steps[0][3].vel);
 }
 
+// ---- Song + live chunks: CHN2, TLEN, SCNS ----
+
+void test_chn2_round_trip() {
+  a.reset();
+  a.chainLen = 3;
+  a.chain[0] = 2;
+  a.chainTr[0] = -5;
+  a.chainRep[0] = 4;
+  a.chainScene[0] = 3;
+  a.chain[2] = 7;
+  a.chainTr[2] = 12;
+  a.chainRep[2] = 1;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(3, b.chainLen);
+  TEST_ASSERT_EQUAL(2, b.chain[0]);
+  TEST_ASSERT_EQUAL(-5, b.chainTr[0]);
+  TEST_ASSERT_EQUAL(4, b.chainRep[0]);
+  TEST_ASSERT_EQUAL(3, b.chainScene[0]);
+  TEST_ASSERT_EQUAL(7, b.chain[2]);
+  TEST_ASSERT_EQUAL(12, b.chainTr[2]);
+  TEST_ASSERT_EQUAL(1, b.chainRep[1]);
+  TEST_ASSERT_EQUAL(0, b.chainScene[1]);
+}
+
+// A file without CHN2 (old firmware): chain from PROJ, tr 0, rep 1, scene 0.
+void test_chain_without_chn2_defaults() {
+  a.reset();
+  a.chainLen = 2;
+  a.chain[1] = 5;
+  a.chainTr[1] = 7;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"CHN2"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(2, b.chainLen);
+  TEST_ASSERT_EQUAL(5, b.chain[1]);
+  TEST_ASSERT_EQUAL(0, b.chainTr[1]);
+  TEST_ASSERT_EQUAL(1, b.chainRep[1]);
+  TEST_ASSERT_EQUAL(0, b.chainScene[1]);
+}
+
+void test_chn2_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "CHN2", {1, 200, 90, 0, 9});  // count 1: pattern 200, transpose +90, repeat 0, scene 9
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(1, b.chainLen);
+  TEST_ASSERT_EQUAL(kPatterns - 1, b.chain[0]);
+  TEST_ASSERT_EQUAL(kChainTrMax, b.chainTr[0]);
+  TEST_ASSERT_EQUAL(1, b.chainRep[0]);
+  TEST_ASSERT_EQUAL(0, b.chainScene[0]);
+  f = fileHeader();
+  putChunk(f, "CHN2", {1, 3, static_cast<uint8_t>(-90), 40, 8});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(-kChainTrMax, b.chainTr[0]);
+  TEST_ASSERT_EQUAL(kChainRepMax, b.chainRep[0]);
+  TEST_ASSERT_EQUAL(kScenes, b.chainScene[0]);
+}
+
+void test_tlen_round_trip_and_default() {
+  a.reset();
+  a.patterns[2].steps[0][0].note = 60;  // stored pattern
+  a.patterns[2].trackLen[5] = 3;
+  a.patterns[4].trackLen[15] = 7;       // stored only for its track length
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(3, b.patterns[2].trackLen[5]);
+  TEST_ASSERT_EQUAL(0, b.patterns[2].trackLen[4]);
+  TEST_ASSERT_EQUAL(7, b.patterns[4].trackLen[15]);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"TLEN"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.patterns[2].trackLen[5]);
+}
+
+void test_tlen_clamped_to_length() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "PATN", patn(1, 8));
+  std::vector<uint8_t> tl(1 + kTracks, 0);
+  tl[0] = 1;
+  tl[1] = 200;  // track 1: past the length 8
+  tl[2] = 5;
+  putChunk(f, "TLEN", tl);
+  tl[0] = 40;   // no such pattern: skipped
+  putChunk(f, "TLEN", tl);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(8, b.patterns[1].trackLen[0]);
+  TEST_ASSERT_EQUAL(5, b.patterns[1].trackLen[1]);
+  f = fileHeader();
+  putChunk(f, "TLEN", {1, 2, 3});  // wrong size
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+void test_scns_round_trip_and_default() {
+  a.reset();
+  a.scenes[0] = 0x0005;
+  a.scenes[7] = 0x8000;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL_HEX16(0x0005, b.scenes[0]);
+  TEST_ASSERT_EQUAL_HEX16(0x8000, b.scenes[7]);
+  TEST_ASSERT_EQUAL_HEX16(kSceneEmpty, b.scenes[3]);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"SCNS"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL_HEX16(kSceneEmpty, b.scenes[0]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -1390,5 +1513,11 @@ int main() {
   RUN_TEST(test_kits_round_trip_and_defaults);
   RUN_TEST(test_kits_garbage_clamped);
   RUN_TEST(test_patn_vel_mask_only_on_drum_tracks);
+  RUN_TEST(test_chn2_round_trip);
+  RUN_TEST(test_chain_without_chn2_defaults);
+  RUN_TEST(test_chn2_garbage_clamped);
+  RUN_TEST(test_tlen_round_trip_and_default);
+  RUN_TEST(test_tlen_clamped_to_length);
+  RUN_TEST(test_scns_round_trip_and_default);
   return UNITY_END();
 }

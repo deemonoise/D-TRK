@@ -88,6 +88,9 @@ class App {
   void onTouch(const TouchEvent& ev);
   void transport();
   void trackKey(int n, bool shift);
+  void trackRelease(int n);
+  void fillDown();
+  void fillUp();
   void updateLeds(uint32_t now);
   void saveVolumeIdle(uint32_t now);
   void pollCpu(uint32_t now);
@@ -138,6 +141,8 @@ class App {
   uint32_t volChangedAt_ = 0;  // 0 = nothing pending
   uint32_t editSeq_ = 0, savedSeq_ = 0;
   bool shift_ = false;
+  bool fillHeld_ = false;   // Shift + Play held while playing: fill
+  uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;
   bool dirty_ = true;
   uint32_t lastDraw_ = 0;

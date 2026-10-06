@@ -44,10 +44,10 @@ void freeProject(mt::Project* p) {
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
 static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() and project_io");
 static_assert(sizeof(mt::TrackCfg) == 20, "TrackCfg changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Pattern) == 3 + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
+static_assert(sizeof(mt::Pattern) == 3 + mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Instrument) == 358, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 469304, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 469768, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -59,6 +59,10 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.tracks, live.tracks, sizeof(out.tracks));
   memcpy(out.chain, live.chain, sizeof(out.chain));
   out.chainLen = live.chainLen;
+  memcpy(out.chainTr, live.chainTr, sizeof(out.chainTr));
+  memcpy(out.chainRep, live.chainRep, sizeof(out.chainRep));
+  memcpy(out.chainScene, live.chainScene, sizeof(out.chainScene));
+  memcpy(out.scenes, live.scenes, sizeof(out.scenes));
   out.songMode = live.songMode;
   memcpy(out.instruments, live.instruments, sizeof(out.instruments));
   out.masterVol = live.masterVol;

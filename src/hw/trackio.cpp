@@ -40,9 +40,11 @@ void task(void*) {
     uint8_t raw;
     if (readButtons(raw)) {
       if (raw == last && raw != state) {
-        const uint8_t down = raw & ~state;
-        for (int i = 0; i < 8; ++i)
+        const uint8_t down = raw & ~state, up = state & ~raw;
+        for (int i = 0; i < 8; ++i) {
           if (down & (1u << i)) inputPush(InputType::TrackPress, static_cast<int8_t>(i));
+          if (up & (1u << i)) inputPush(InputType::TrackRelease, static_cast<int8_t>(i));
+        }
         state = raw;
       }
       last = raw;
