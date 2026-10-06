@@ -11,6 +11,7 @@
 #include "hw/sdcard.h"
 #include "project_io.h"
 #include "sample_set.h"
+#include "templates.h"
 #include "wav.h"
 #include "wt_mip.h"
 
@@ -608,15 +609,67 @@ Result loadExt(mt::Project& live, const char* name, const char* ext, int* missin
 }
 }  // namespace
 
-Result newProject(mt::Project& live) {
+Result newProject(mt::Project& live, int tmpl) {
   if (!stopEngine()) return Result::EngineBusy;
   srcFolder[0] = 0;
   engine::lockProject();
-  live.reset();
+  mt::templateBuild(tmpl, live);
   engine::unlockProject();
   afterReplace(live);
   // Otherwise a reboot would autoload the project that was just closed.
   if (hw::sdReady() && hw::sdFs().exists(kLast)) hw::sdFs().remove(kLast);
+  return Result::Ok;
+}
+
+namespace {
+struct TemplatePath {
+  char s[48];
+  TemplatePath(const char* name, const char* ext) { snprintf(s, sizeof(s), "%s/%s%s", kTemplateDir, name, ext); }
+};
+}  // namespace
+
+Result saveTemplate(const mt::Project& live, const char* name) {
+  if (!hw::sdReady()) return Result::NoSd;
+  char nm[17];
+  if (!sanitize(name, nm)) return Result::BadFile;
+  fs::FS& fs = hw::sdFs();
+  if (!fs.exists(kTemplateDir) && !fs.mkdir(kTemplateDir)) return Result::WriteFail;
+  mt::Project* snap = allocProject();
+  if (!snap) return Result::NoMemory;
+  snapshot(live, *snap);
+  mt::templateStrip(*snap);
+  const TemplatePath tmp(nm, ".tmp"), dst(nm, ".mtp");
+  Result r = writeTmp(tmp.s, *snap);
+  freeProject(snap);
+  if (r == Result::Ok) {
+    if (fs.exists(dst.s)) fs.remove(dst.s);
+    if (!fs.rename(tmp.s, dst.s)) r = Result::WriteFail;
+  }
+  if (r != Result::Ok) fs.remove(tmp.s);
+  return r;
+}
+
+Result newFromTemplate(mt::Project& live, const char* name, int* missing) {
+  if (missing) *missing = 0;
+  if (!hw::sdReady()) return Result::NoSd;
+  const TemplatePath path(name, ".mtp");
+  if (!hw::sdFs().exists(path.s)) return Result::NotFound;
+  mt::Project* tmp = allocProject();
+  if (!tmp) return Result::NoMemory;
+  Result r = readFile(path.s, *tmp);
+  if (r == Result::Ok && !stopEngine()) r = Result::EngineBusy;
+  if (r == Result::Ok) {
+    mt::templateStrip(*tmp);  // also "untitled"
+    engine::lockProject();
+    live = *tmp;
+    engine::unlockProject();
+    afterReplace(live);
+    srcFolder[0] = 0;
+    if (hw::sdFs().exists(kLast)) hw::sdFs().remove(kLast);
+  }
+  freeProject(tmp);
+  if (r != Result::Ok) return r;
+  pullSamples(live, missing);  // what the cache lacks stays missing (no folder for "untitled")
   return Result::Ok;
 }
 

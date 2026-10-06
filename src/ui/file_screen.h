@@ -124,6 +124,14 @@ class FileScreen : public Screen {
   const char* busyLabel_ = "";
   // cacheBytes() result for this bank generation / project edit.
   uint32_t cacheBytes_ = 0, cacheGen_ = 0, cacheSeq_ = 0;
+  // New: template menu ids are the built-in index, kTplUser + k (userTplNames_[k]) or kTplSave.
+  static constexpr int kUserTpl = 8, kTplUser = 100, kTplSave = 200;
+  void openNewMenu();
+  void saveTemplateAs();
+  int newChoice_ = 0;
+  int userTpl_ = 0;
+  char userTplNames_[kUserTpl][17] = {};
+  char userTplLabels_[kUserTpl][20] = {};
   bool autoAvail_ = false;  // /projects/<name>.auto exists (checked on enter / after file actions)
   void restoreAutosave();
   bool cacheValid_ = false;

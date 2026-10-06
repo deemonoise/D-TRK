@@ -83,6 +83,7 @@ bool sdBegin() {
   if (!SD.exists("/samples")) SD.mkdir("/samples");
   if (!SD.exists("/wavetables")) SD.mkdir("/wavetables");
   if (!SD.exists("/presets")) SD.mkdir("/presets");
+  if (!SD.exists("/templates")) SD.mkdir("/templates");
   for (int t = 0; t < static_cast<int>(mt::InstrType::Count); ++t) {
     if (!mt::presetTypeHas(static_cast<mt::InstrType>(t))) continue;
     const char* root = mt::presetRoot(static_cast<mt::InstrType>(t));

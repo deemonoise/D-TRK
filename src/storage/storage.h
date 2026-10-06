@@ -61,8 +61,15 @@ Result autosave(const mt::Project& live);
 bool autosaveExists(const char* name);
 Result loadAutosave(mt::Project& live, int* missing = nullptr, SyncProgress cb = nullptr, void* ctx = nullptr);
 
-// Stops the engine, resets live and forgets /last.txt. EngineBusy: live untouched.
-Result newProject(mt::Project& live);
+// Stops the engine, resets live to built-in template tmpl (mt::templateBuild, 0 = EMPTY) and forgets
+// /last.txt. EngineBusy: live untouched.
+Result newProject(mt::Project& live, int tmpl = 0);
+
+// User templates: /templates/<name>.mtp, a project without notes (mt::templateStrip). New from one
+// starts "untitled" (its samples play when the sample cache still holds them).
+constexpr const char* kTemplateDir = "/templates";
+Result saveTemplate(const mt::Project& live, const char* name);
+Result newFromTemplate(mt::Project& live, const char* name, int* missing = nullptr);
 
 // Boot: loads /last.txt straight into p (engine not running yet). False = p left reset.
 // *fromBak = true when the .mtp was unreadable and the .bak was loaded instead.

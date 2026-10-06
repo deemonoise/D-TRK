@@ -8,6 +8,7 @@
 #include "audio/bank.h"
 #include "esp_heap_caps.h"
 #include "sample_set.h"
+#include "templates.h"
 #include "storage/storage.h"
 
 namespace ui {
@@ -91,13 +92,7 @@ void FileScreen::run(int a) {
     case kLoad: openList(false); break;
     case kImport: openList(true); break;
     case kRender: render_.open(); break;
-    case kNew:
-      if (app_.projectDirty()) {
-        const MenuItem items[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
-        app_.menu().open("DISCARD CHANGES?", items, 2, [this](int id) { onMenu(id); });
-      } else {
-        doNew();
-      }
+    case kNew: openNewMenu(); break;
       break;
     case kWifi:
       if (app_.projectDirty()) {
@@ -385,18 +380,71 @@ void FileScreen::doLoad(bool bak) {
   app_.toast(storage::resultText(r));
 }
 
+// New: the built-in templates, the user ones (/templates) and Save as template.
+void FileScreen::openNewMenu() {
+  MenuItem items[Menu::kMaxItems];
+  int n = 0;
+  for (int i = 0; i < mt::templateCount() && n < Menu::kMaxItems - 1; ++i) items[n++] = {mt::templateName(i), i};
+  userTpl_ = 0;
+  if (hw::sdReady()) {
+    char names[kUserTpl][hw::kNameMax];
+    const int found = hw::sdList(storage::kTemplateDir, ".mtp", names, kUserTpl, storage::validName);
+    for (int k = 0; k < found && n < Menu::kMaxItems - 1; ++k) {
+      strlcpy(userTplNames_[userTpl_], names[k], sizeof(userTplNames_[0]));
+      snprintf(userTplLabels_[userTpl_], sizeof(userTplLabels_[0]), "> %s", names[k]);
+      items[n++] = {userTplLabels_[userTpl_], kTplUser + userTpl_};
+      ++userTpl_;
+    }
+  }
+  items[n++] = {"Save as template...", kTplSave, hw::sdReady()};
+  app_.menu().open("NEW PROJECT", items, n, [this](int id) {
+    if (id == kTplSave) {
+      saveTemplateAs();
+      return;
+    }
+    newChoice_ = id;
+    if (app_.projectDirty()) {
+      const MenuItem confirm[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
+      app_.menu().open("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
+    } else {
+      doNew();
+    }
+  });
+}
+
+void FileScreen::saveTemplateAs() {
+  kb_.open("TEMPLATE NAME:", "", [this](const char* text) {
+    char nm[17];
+    if (!storage::sanitize(text, nm)) {
+      app_.toast("BAD NAME");
+      return;
+    }
+    app_.showBusy("SAVING...");
+    const storage::Result r = storage::saveTemplate(app_.project(), nm);
+    char msg[40];
+    snprintf(msg, sizeof(msg), r == storage::Result::Ok ? "TEMPLATE %s SAVED" : "%s", r == storage::Result::Ok ? nm : storage::resultText(r));
+    app_.toast(msg);
+  });
+}
+
 void FileScreen::doNew() {
   struct Refresh {
     FileScreen& f;
     ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
   } refresh{*this};
-  const storage::Result r = storage::newProject(app_.project());
+  int missing = 0;
+  const bool user = newChoice_ >= kTplUser && newChoice_ - kTplUser < userTpl_;
+  if (user) app_.showBusy("LOADING...");
+  const storage::Result r = user ? storage::newFromTemplate(app_.project(), userTplNames_[newChoice_ - kTplUser], &missing)
+                                 : storage::newProject(app_.project(), newChoice_ < kTplUser ? newChoice_ : 0);
   if (r != storage::Result::Ok) {
     app_.toast(storage::resultText(r));
     return;
   }
   app_.projectReplaced();
-  app_.toast("NEW PROJECT");
+  char msg[40];
+  snprintf(msg, sizeof(msg), "NEW: %s", user ? userTplNames_[newChoice_ - kTplUser] : mt::templateName(newChoice_));
+  app_.loadedToast(msg, missing, false);
 }
 
 void FileScreen::listScroll(int rows) {
