@@ -73,16 +73,16 @@ void GridScreen::onEnter() {
 
 void GridScreen::onLeave() {
   perfRelease();
-  euclid_.cancel();
+  fill_.cancel();
   transpose_.cancel();
 }
 
 void GridScreen::onProjectReplaced() {
-  euclid_.abandon();
+  fill_.abandon();
   transpose_.cancel();
 }
 
-// The Euclid dialog keeps editing the pattern it was opened for.
+// The Fill dialog keeps editing the pattern it was opened for.
 void GridScreen::onPatternChange() {
   recLoop_ = UINT32_MAX;  // REC hits on the new pattern get their own undo snapshot
   curStep_ = 0;
@@ -344,8 +344,8 @@ void GridScreen::editTurn(int delta, bool shift) {
 
 void GridScreen::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
-  if (euclid_.isOpen()) {
-    euclid_.onInput(ev);
+  if (fill_.isOpen()) {
+    fill_.onInput(ev);
     return;
   }
   if (transpose_.isOpen()) {
@@ -378,7 +378,7 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
 }
 
 bool GridScreen::trackKey(int n, bool shift) {
-  if (euclid_.isOpen() || transpose_.isOpen()) return true;
+  if (fill_.isOpen() || transpose_.isOpen()) return true;
   cur();
   const bool playing = app_.status().playing;
   if (rec_ && playing) return recordKey(n, shift);
@@ -428,8 +428,8 @@ bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
 }
 
 void GridScreen::onTouch(const TouchEvent& ev) {
-  if (euclid_.isOpen()) {
-    euclid_.onTouch(ev);
+  if (fill_.isOpen()) {
+    fill_.onTouch(ev);
     return;
   }
   if (transpose_.isOpen()) {
@@ -560,6 +560,7 @@ void GridScreen::openMenu() {
     add("Clear sel", kClearSel, true);
     add("Note OFF sel", kNoteOffSel, true);
     add("Transpose...", kTranspose, true);
+    add("Fill...", kFill, true);
   } else {
     snprintf(title, sizeof(title), "STEP %d  %s", cur() + 1, app_.project().tracks[track()].name);
     add("Copy step", kCopyStep, canCopy);
@@ -570,7 +571,7 @@ void GridScreen::openMenu() {
     add("Copy track", kCopyTrack, canCopy);
     add("Clear track", kClearTrack, true);
     add("Transpose track...", kTranspose, true);
-    add("Euclid...", kEuclid, true);
+    add("Fill...", kFill, true);
     add("Resample track", kResampleTrack, true);
     add("Resample pattern", kResamplePattern, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
@@ -586,23 +587,44 @@ void GridScreen::openMenu() {
   app_.menu().open(title, items, n, [this](int id) { onMenu(id); });
 }
 
-void GridScreen::openEuclid() {
+// The selection, else the current track up to its own length (polymeter). The column under the
+// cursor picks what is filled.
+void GridScreen::openFill() {
   const int tr = track();
-  mt::EuclidParams& e = euclidParams_[tr];
-  if (!euclidInit_[tr]) {  // first use: base = last note on the track, else the last entered note
-    euclidInit_[tr] = true;
-    e.baseNote = lastNote_[tr];
-    const mt::Step* steps = pat().steps[tr];
-    for (int i = len() - 1; i >= 0; --i)
-      if (steps[i].hasNote()) {
-        e.baseNote = steps[i].note;
-        break;
-      }
+  mt::Sel sel = selOn_ ? curSel() : trackSel();
+  if (!selOn_) {
+    const int tl = pat().trackLen[tr];
+    if (tl > 0 && tl - 1 < sel.s1) sel.s1 = static_cast<uint8_t>(tl - 1);
   }
-  if (!drum()) e.lane = -1;
-  else if (e.lane < 0) e.lane = 0;
+  mt::FillSpec& f = fillSpec_;
+  const mt::FillTarget was = f.target;
+  const uint8_t wasSlot = f.slot;
+  if (curField_ == kVel) {
+    f.target = mt::FillTarget::Vel;
+  } else if (curField_ >= kFx1) {
+    f.target = mt::FillTarget::Fx;
+    f.slot = static_cast<uint8_t>((curField_ - kFx1) / 2);
+  } else {
+    f.target = mt::FillTarget::Note;
+  }
+  if (!fillInit_ || f.target != was || (f.target == mt::FillTarget::Fx && f.slot != wasSlot)) {
+    fillInit_ = true;
+    if (f.target == mt::FillTarget::Note) {  // from the last note entered on the track
+      f.from = lastNote_[tr];
+      f.to = static_cast<uint8_t>(f.from + 12 > 127 ? 127 : f.from + 12);
+    } else if (f.target == mt::FillTarget::Vel) {
+      f.from = 100;
+      f.to = 127;
+    } else {  // the command in that slot under the cursor, else the last one written there
+      const mt::FxSlot& here = pat().steps[tr][cur()].fx[f.slot];
+      const mt::FxSlot& src = here.cmd != mt::Fx::None ? here : lastFx_[tr][f.slot];
+      f.cmd = src.cmd;
+      f.from = f.to = src.cmd == mt::Fx::None ? 0 : src.val;
+    }
+  }
+  if (drum()) f.lane = static_cast<uint8_t>(lane_);
   setEdit(false);
-  euclid_.open(app_.editPattern(), tr, &e);
+  if (!fill_.open(app_.editPattern(), sel, &f, drum())) app_.toast("NO MEMORY");
 }
 
 // Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
@@ -754,7 +776,7 @@ void GridScreen::onMenu(int id) {
       break;
     case kUndo: undo(); break;
     case kDropSel: selOn_ = false; break;
-    case kEuclid: openEuclid(); break;
+    case kFill: openFill(); break;
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
     case kRec:
@@ -773,8 +795,8 @@ void GridScreen::onMenu(int id) {
 // ---- drawing ----
 
 void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
-  if (euclid_.isOpen()) {
-    euclid_.draw(s, y0);
+  if (fill_.isOpen()) {
+    fill_.draw(s, y0);
     return;
   }
   if (transpose_.isOpen()) {

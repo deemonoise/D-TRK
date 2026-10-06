@@ -1,7 +1,7 @@
 #pragma once
 #include "edit_ops.h"
-#include "euclid.h"
-#include "euclid_dialog.h"
+#include "fill.h"
+#include "fill_dialog.h"
 #include "model.h"
 #include "screen.h"
 #include "track_leds.h"
@@ -34,7 +34,7 @@ class GridScreen : public Screen {
   // Context menu ids.
   enum MenuId : int {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
-    kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kEuclid,
+    kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
     kRec, kPerf, kResampleTrack, kResamplePattern
   };
 
@@ -79,7 +79,7 @@ class GridScreen : public Screen {
   bool recordKey(int n, bool shift);  // REC while playing: button N into the heard step
   void writeStep(const mt::Step& st);
   void openMenu();
-  void openEuclid();
+  void openFill();
   void resample(bool wholePattern);  // the pattern (current track / audible tracks) into a sample RSn
   void openTranspose();
   void transpose(const mt::Sel& sel, int amount, bool degrees);
@@ -130,9 +130,9 @@ class GridScreen : public Screen {
   int perfBtn_ = -1;   // button holding the punch-in effect
   int perfTrack_ = 0;  // its track
 
-  EuclidDialog euclid_{app_};
-  mt::EuclidParams euclidParams_[mt::kTracks];  // per track, RAM only
-  bool euclidInit_[mt::kTracks] = {};
+  FillDialog fill_{app_};
+  mt::FillSpec fillSpec_;  // RAM only, shared by the tracks
+  bool fillInit_ = false;  // values set from the cursor once
   TransposeDialog transpose_{app_};
   mt::FxSlot lastFx_[mt::kTracks][mt::kFxSlots] = {};  // last FX written per track and slot, offered on empty slots
   bool fxCycled_ = false;  // a command was turned on this cell: passing "..." does not offer lastFx_ again

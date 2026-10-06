@@ -38,6 +38,8 @@ class App {
 
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
+  // Pattern-sized scratch (undo() uses it only inside its call); nullptr without PSRAM.
+  mt::Pattern* undoScratch() { return undoBuf_ ? &undoBuf_[mt::Undo::kDepth].data : nullptr; }
   mt::Clipboard* clipboard() { return clip_; }
   // Colour theme (device setting): applied at once, saved to NVS once it stays put.
   int theme() const { return theme_; }
