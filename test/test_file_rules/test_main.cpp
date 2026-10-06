@@ -421,6 +421,12 @@ void test_project_wt_folder() {
   TEST_ASSERT_EQUAL_STRING("/projects/song1/wt/SAWSQR.wav", p);
 }
 
+void test_crash_log_listed_in_projects() {
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Projects, "crashlog.txt"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Projects, "other.txt"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Samples, "crashlog.txt"));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_dirs);
@@ -441,5 +447,6 @@ int main() {
   RUN_TEST(test_presets_web);
   RUN_TEST(test_wavetables_web);
   RUN_TEST(test_project_wt_folder);
+  RUN_TEST(test_crash_log_listed_in_projects);
   return UNITY_END();
 }

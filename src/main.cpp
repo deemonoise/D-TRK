@@ -9,6 +9,7 @@
 #include "hw/sdcard.h"
 #include "hw/trackio.h"
 #include "model.h"
+#include "storage/crashlog.h"
 #include "storage/storage.h"
 #include "ui/app.h"
 
@@ -49,7 +50,9 @@ void setup() {
   // Engine not running yet: load straight into the live project.
   bool fromBak = false;
   storage::Result autoErr = storage::Result::Ok;
-  const bool loaded = hw::sdBegin() && storage::autoload(*project, &fromBak, &autoErr);
+  const bool sd = hw::sdBegin();
+  storage::logBoot();  // a crash / watchdog / brownout restart goes into /projects/crashlog.txt
+  const bool loaded = sd && storage::autoload(*project, &fromBak, &autoErr);
   if (!loaded) loadDemo(*project);
 
   lcd.init();

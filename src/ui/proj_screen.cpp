@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "storage/crashlog.h"
 #include "names.h"
 #include "scale.h"
 
@@ -99,9 +100,13 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        [this](int d) { app_.project().preview = d > 0; }};
   params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
                      [this](int d) { app_.setTheme(app_.theme() + d); }};
-  // The theme is a device setting: editing it does not touch the project.
+  // Read only: the firmware version and why the device last restarted (crash log: /projects/crashlog.txt).
+  params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
+  params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
+                         [](int) {}};
+  // The theme and the read-only rows are not project data: editing them does not mark it dirty.
   list_.setOnEdit([this] {
-    if (kPageFirst[page_] + list_.sel() != kTheme) app_.markDirty();
+    if (kPageFirst[page_] + list_.sel() < kTheme) app_.markDirty();
   });
   showPage(kPgSong, false);
 }
