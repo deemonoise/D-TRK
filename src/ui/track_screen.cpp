@@ -123,30 +123,17 @@ void TrackScreen::changeTrack(int d) {
 
 void TrackScreen::editName(int delta) { editNameChar(cfg().name, kNameLen, namePos_, delta); }
 
-void TrackScreen::toggleMixer() {
+void TrackScreen::setMixer(bool on) {
+  if (on == mixer_) return;
   leaveEdit();
-  mixer_ = !mixer_;
+  mixer_ = on;
   mixSel_ = app_.curTrack() % kStrips;
   app_.invalidate();
-}
-
-void TrackScreen::openMenu() {
-  enum : int { kToggle };
-  const MenuItem items[] = {{mixer_ ? "Settings" : "Mixer", kToggle}};
-  app_.menu().open("TRACK", items, 1, [this](int) { toggleMixer(); });
 }
 
 void TrackScreen::onInput(const hw::InputEvent& ev) {
   if (mixer_) {
     mixerInput(ev);
-    return;
-  }
-  if (!list_.editing() && ev.type == hw::InputType::EncClick && ev.shift) {
-    toggleMixer();
-    return;
-  }
-  if (!list_.editing() && ev.type == hw::InputType::EncLong) {
-    openMenu();
     return;
   }
   const bool wasName = nameEdit();
@@ -171,10 +158,6 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
 void TrackScreen::onTouch(const TouchEvent& ev) {
   if (mixer_) {
     mixerTouch(ev);
-    return;
-  }
-  if (ev.type == TouchType::LongPress) {
-    openMenu();
     return;
   }
   if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
@@ -307,10 +290,8 @@ void TrackScreen::mixerInput(const hw::InputEvent& ev) {
       }
       break;
     case InputType::EncClick:
-      if (ev.shift) toggleMixer();
-      else if (mixSel_ != kMaster) toggleMuteSolo(app_.curTrack(), false);
+      if (mixSel_ != kMaster) toggleMuteSolo(app_.curTrack(), false);
       break;
-    case InputType::EncLong: openMenu(); break;
     default: break;
   }
 }
@@ -335,10 +316,6 @@ bool TrackScreen::hitStrip(int x, int y, int& strip, Part& part) const {
 }
 
 void TrackScreen::mixerTouch(const TouchEvent& ev) {
-  if (ev.type == TouchType::LongPress) {
-    openMenu();
-    return;
-  }
   if (ev.type == TouchType::HDrag) return;
   int strip;
   Part part;

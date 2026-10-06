@@ -17,7 +17,7 @@
 
 namespace ui {
 
-enum class Tab : uint8_t { Grid, Track, Bank, Inst, Proj, File, Count };
+enum class Tab : uint8_t { Grid, Track, Mix, Bank, Inst, Proj, File, Count };  // MIX: TRACK's mixer view
 
 class App {
  public:
@@ -120,7 +120,7 @@ class App {
   InstScreen inst_{*this};
   ProjScreen proj_{*this};
   FileScreen file_{*this};
-  Screen* screens_[static_cast<int>(Tab::Count)] = {&grid_, &track_, &bank_, &inst_, &proj_, &file_};
+  Screen* screens_[static_cast<int>(Tab::Count)] = {&grid_, &track_, &track_, &bank_, &inst_, &proj_, &file_};
   Tab tab_ = Tab::Grid;
 
   mt::Undo::Entry* undoBuf_ = nullptr;  // kDepth entries + 1 scratch

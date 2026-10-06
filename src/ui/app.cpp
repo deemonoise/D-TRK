@@ -63,6 +63,7 @@ void App::setTab(Tab t) {
   menu_.close();
   screen()->onLeave();
   tab_ = t;
+  if (t == Tab::Track || t == Tab::Mix) track_.setMixer(t == Tab::Mix);  // one screen, two views
   screen()->onEnter();
   dirty_ = true;
 }
@@ -159,8 +160,7 @@ void App::onTouch(const TouchEvent& ev) {
       int i = ev.x / kTabW;
       if (i < 0) i = 0;
       if (i >= static_cast<int>(Tab::Count)) i = static_cast<int>(Tab::Count) - 1;
-      if (shift_ && static_cast<Tab>(i) == Tab::Track && tab_ == Tab::Track) track_.toggleMixer();
-      else setTab(static_cast<Tab>(i));
+      setTab(static_cast<Tab>(i));
     }
     return;
   }
@@ -504,7 +504,7 @@ void App::drawStatus() {
 }
 
 void App::drawTabs() {
-  static const char* const kNames[] = {"GRID", "TRACK", "BANK", "INST", "PROJ", "FILE"};
+  static const char* const kNames[] = {"GRID", "TRACK", "MIX", "BANK", "INST", "PROJ", "FILE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(Tab::Count), "tab names");
   spr_->fillRect(0, kTabY, kScreenW, kTabH, kStatusBg);
   for (int i = 0; i < static_cast<int>(Tab::Count); ++i) {

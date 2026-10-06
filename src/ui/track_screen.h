@@ -20,7 +20,8 @@ class TrackScreen : public Screen {
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
-  void toggleMixer();
+  // MIX tab (true) or TRACK tab (false): the mixer view or the track settings.
+  void setMixer(bool on);
 
  private:
   enum Row : int { kName, kOut, kInstr, kVol, kChannel, kVel, kGate, kPatLen, kCcA, kCcB, kProgram, kMute, kSolo, kRows };
@@ -36,7 +37,6 @@ class TrackScreen : public Screen {
   void fixNames();  // empty name -> TRKn
   bool nameEdit() const { return list_.editing() && list_.sel() == kName; }
   void editName(int delta);  // under lock
-  void openMenu();
   // MIXER: 8 + 8 x 52 + 8 + 48 = 480.
   static constexpr int kStrips = 8, kStripW = 52, kStripX0 = 8;
   static constexpr int kMasterW = 48, kMasterX = kStripX0 + kStrips * kStripW + 8;  // 432
