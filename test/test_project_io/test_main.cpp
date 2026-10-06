@@ -4,6 +4,7 @@
 #include <vector>
 #include "inst_codec.h"
 #include "project_io.h"
+#include "sample_set.h"
 #include "scale.h"
 
 using namespace mt;
@@ -1506,6 +1507,28 @@ void test_audi_sound_fx_defaults_and_clamps() {
   TEST_ASSERT_EQUAL(127, b.scDepth);
 }
 
+// Sample / wavetable names of a file without loading it; a bad CRC is reported.
+void test_read_file_names() {
+  Project p;
+  projSampleSet(p, "KICK", 1, 100);
+  projSampleSet(p, "Snare2", 2, 200);
+  projWtSet(p, "PAD", 3);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(p, out));
+  static ProjectFileNames n;
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(readProjectFileNames(in, n)));
+  TEST_ASSERT_EQUAL(2, n.samples);
+  TEST_ASSERT_EQUAL(1, n.wavetables);
+  TEST_ASSERT_TRUE(n.has("kick", false));
+  TEST_ASSERT_TRUE(n.has("SNARE2", false));
+  TEST_ASSERT_FALSE(n.has("PAD", false));
+  TEST_ASSERT_TRUE(n.has("pad", true));
+  out.buf[20] ^= 0xFF;  // inside a chunk
+  VecSource bad(out.buf);
+  TEST_ASSERT_TRUE(readProjectFileNames(bad, n) != LoadErr::Ok);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -1565,5 +1588,6 @@ int main() {
   RUN_TEST(test_tlen_clamped_to_length);
   RUN_TEST(test_scns_round_trip_and_default);
   RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
+  RUN_TEST(test_read_file_names);
   return UNITY_END();
 }

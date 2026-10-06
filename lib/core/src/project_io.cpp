@@ -1,5 +1,6 @@
 #include "project_io.h"
 #include <string.h>
+#include <strings.h>
 #include "file_rules.h"
 #include "inst_codec.h"
 #include "sample_set.h"
@@ -526,6 +527,48 @@ bool saveProject(const Project& p, ByteSink& out) {
   wr32(c + 4, 4);
   wr32(c + 8, o.crc());
   return out.write(c, sizeof(c));
+}
+
+bool ProjectFileNames::has(const char* name, bool wt) const {
+  const int n = wt ? wavetables : samples;
+  for (int i = 0; i < n; ++i)
+    if (strcasecmp(wt ? wavetable[i] : sample[i], name) == 0) return true;
+  return false;
+}
+
+LoadErr readProjectFileNames(ByteSource& src, ProjectFileNames& out) {
+  out.samples = out.wavetables = 0;
+  CrcSource in(src);
+  uint8_t h[8];
+  if (!in.read(h, 8)) return LoadErr::Truncated;
+  if (memcmp(h, "MTRK", 4) != 0) return LoadErr::BadMagic;
+  for (;;) {
+    uint8_t ch[8];
+    if (!in.raw().read(ch, 8)) return LoadErr::Truncated;
+    const uint32_t size = rd32(ch + 4);
+    if (memcmp(ch, "CRC ", 4) == 0) {
+      uint8_t v[4];
+      if (size != 4 || !in.raw().read(v, 4)) return LoadErr::Truncated;
+      return rd32(v) == in.crc() ? LoadErr::Ok : LoadErr::BadCrc;
+    }
+    in.add(ch, 8);
+    LoadErr e;
+    const bool smpl = memcmp(ch, "SMPL", 4) == 0, wtbl = memcmp(ch, "WTBL", 4) == 0;
+    if (smpl || wtbl) {
+      int& n = smpl ? out.samples : out.wavetables;
+      n = 0;  // a repeated chunk replaces the list, as in loadProject
+      const int max = smpl ? kProjSamples : kProjWavetables;
+      e = readRecords(in, size, smpl ? kSmplSize : kWtblSize, max, [&](int, const uint8_t* b) {
+        char* nm = smpl ? out.sample[n] : out.wavetable[n];
+        memcpy(nm, b, kSampleNameMax);
+        nm[kSampleNameMax] = 0;
+        if (n < max && projectBaseValid(nm)) ++n;
+      });
+    } else {
+      e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
+    }
+    if (e != LoadErr::Ok) return e;
+  }
 }
 
 LoadErr loadProject(ByteSource& src, Project& out) {

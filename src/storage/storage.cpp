@@ -186,6 +186,23 @@ Result cleanFolder(const char* dir, Keep keep) {
   return r;
 }
 
+// The names the project's .bak lists (nullptr: no readable .bak). Their files stay in the folder:
+// falling back to the .bak (autoload or by hand) must find them.
+mt::ProjectFileNames* bakNames(const char* name) {
+  const Path bak(name, ".bak");
+  if (!hw::sdFs().exists(bak.s)) return nullptr;
+  fs::File f = hw::sdFs().open(bak.s, FILE_READ);
+  if (!f) return nullptr;
+  auto* n = new (std::nothrow) mt::ProjectFileNames();
+  if (!n) return nullptr;
+  hw::FileSource src(f);
+  if (mt::readProjectFileNames(src, *n) != mt::LoadErr::Ok) {
+    delete n;
+    return nullptr;
+  }
+  return n;
+}
+
 // Copies src to dst through dst.tmp (replaces dst at the end).
 bool copyFile(const char* src, const char* dst) {
   fs::FS& fs = hw::sdFs();
@@ -410,10 +427,12 @@ Result syncFolder(const mt::Project& live, const char* from, SyncProgress cb, vo
   }
   // A failed write may leave the only good copy of a listed sample under another name: clean up next time.
   if (r != Result::Ok) return r;
-  // Files of samples / wavetables no longer in the list, leftovers of interrupted writes.
-  r = cleanFolder(dir, [&](const char* base) { return mt::projSampleFind(live, base) >= 0; });
+  // Files of samples / wavetables in neither the list nor the .bak's, leftovers of interrupted writes.
+  mt::ProjectFileNames* bak = bakNames(live.name);
+  r = cleanFolder(dir, [&](const char* base) { return mt::projSampleFind(live, base) >= 0 || (bak && bak->has(base, false)); });
   if (r == Result::Ok && (hadWt || live.wavetableCount > 0))
-    r = cleanFolder(wtDir, [&](const char* base) { return mt::projWtFind(live, base) >= 0; });
+    r = cleanFolder(wtDir, [&](const char* base) { return mt::projWtFind(live, base) >= 0 || (bak && bak->has(base, true)); });
+  delete bak;
   return r;
 }
 

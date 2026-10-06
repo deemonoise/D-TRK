@@ -27,4 +27,15 @@ enum class LoadErr : uint8_t { Ok, BadMagic, BadVersion, Truncated, BadCrc, BadV
 // Resets out first. Values are clamped to valid ranges; unknown chunks are skipped.
 LoadErr loadProject(ByteSource& in, Project& out);
 
+// The sample (SMPL) and wavetable (WTBL) names of a project file, without loading it (~3 KB
+// instead of a whole Project). The CRC is checked like loadProject.
+struct ProjectFileNames {
+  char sample[kProjSamples][kSampleNameMax + 1];
+  int samples = 0;
+  char wavetable[kProjWavetables][kSampleNameMax + 1];
+  int wavetables = 0;
+  bool has(const char* name, bool wt) const;  // ignoring case
+};
+LoadErr readProjectFileNames(ByteSource& in, ProjectFileNames& out);
+
 }  // namespace mt
