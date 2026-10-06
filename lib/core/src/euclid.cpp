@@ -59,6 +59,29 @@ void applyEuclid(Pattern& p, int track, const EuclidParams& e, uint8_t root, Sca
   bool hit[kMaxSteps];
   euclid(e.hits, len, e.rotation, hit);
 
+  if (e.lane >= 0 && e.lane < kKitLanes) {
+    const uint8_t bit = static_cast<uint8_t>(1u << e.lane);
+    Step* tr = p.steps[track];
+    int k = 0;  // hit index
+    for (int s = 0; s < plen; ++s) {
+      Step& st = tr[s];
+      if (!e.merge && st.hasNote() && (st.vel & bit)) {
+        st.vel &= static_cast<uint8_t>(~bit);
+        // Nothing left but a default-velocity step: it goes.
+        if (!st.vel && st.note == 0 && !st.hasFx()) st = Step();
+      }
+      if (!hit[s % len]) continue;
+      const int hitIdx = k++;
+      if (!st.hasNote()) {
+        st.note = 0;
+        st.vel = 0;
+      }
+      st.vel |= bit;
+      if (e.accentEvery > 0 && hitIdx % e.accentEvery == 0 && st.note == 0) st.note = e.accentVel;
+    }
+    return;
+  }
+
   // Base note snapped to the nearest scale note at or below it (above if there is none below).
   const int want = e.baseNote > 127 ? 127 : e.baseNote;
   int base = want;

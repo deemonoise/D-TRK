@@ -122,6 +122,8 @@ class Synth {
   void startSample(Voice& v, const Instrument& m) const;
   static void renderSample(Voice& v, float* out, int n);
   uint8_t trackInstr(uint8_t track) const;
+  // The voice's instrument: a KIT sampler lane's scratch, else the project's.
+  const Instrument& instrOf(const Voice& v) const { return v.lane ? v.laneInst : p_.instruments[v.instr]; }
   uint8_t trackVol(uint8_t track) const;
 
   const Project& p_;

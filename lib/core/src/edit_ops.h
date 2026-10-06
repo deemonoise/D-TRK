@@ -21,6 +21,8 @@ void copySel(const Pattern& p, const Sel& s, Clipboard& cb);
 void pasteAt(Pattern& p, const Clipboard& cb, int track, int step);
 void clearSel(Pattern& p, const Sel& s);
 // Notes only (OFF and empty steps untouched). degrees=true moves by scale degrees.
-void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t);
+// drumTracks[t] (optional): track t is a drum track, left as is (its note is a velocity).
+void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t,
+                  const bool* drumTracks = nullptr);
 
 }  // namespace mt

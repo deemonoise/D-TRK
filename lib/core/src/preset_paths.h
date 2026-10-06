@@ -9,8 +9,10 @@ namespace mt {
 constexpr int kPresetDepthMax = 4;  // folders below the type's root
 constexpr int kPresetDirMax = 160;  // a browser's folder buffer, incl. terminator
 
-const char* presetTypeName(InstrType t);  // "CHIP", "SAMPLE", "FM", "DRUM", "SYNTH"
-const char* presetRoot(InstrType t);      // "/presets/CHIP" etc.
+// Types with presets: all but KIT (no folder, no browser page, not packed by inst_codec).
+bool presetTypeHas(InstrType t);
+const char* presetTypeName(InstrType t);  // "CHIP", "SAMPLE", "FM", "DRUM", "SYNTH" ("KIT")
+const char* presetRoot(InstrType t);      // "/presets/CHIP" etc. ("/presets/KIT", never created)
 // Folders below the type's root of dir: 0 for the root itself, -1 when dir is not inside
 // /presets/<TYPE> of a known type.
 int presetDepth(const char* dir);

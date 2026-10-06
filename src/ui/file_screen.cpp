@@ -568,14 +568,7 @@ bool FileScreen::playbackBusy() {
   return true;
 }
 
-int FileScreen::usedBy(const char* sample) const {
-  const mt::Project& p = app_.project();
-  for (int i = 0; i < mt::kInstruments; ++i) {
-    const mt::Instrument& in = p.instruments[i];
-    if (in.type == mt::InstrType::Sample && strcasecmp(in.sample, sample) == 0) return i;
-  }
-  return -1;
-}
+int FileScreen::usedBy(const char* sample) const { return mt::projSampleUser(app_.project(), sample); }
 
 void FileScreen::sampleRun(int row) {
   if (!sampleEnabled(row)) return;

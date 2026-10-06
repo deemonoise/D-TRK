@@ -15,6 +15,7 @@ class App;
 // step); Cancel, a long encoder press or leaving GRID restores the track and drops the undo step.
 // OK / CANCEL: header buttons (touch) and the last rows (encoder). Shift+click or the Reseed row =
 // new random seed. Edits the pattern captured at open(), even if the heard one changes.
+// Drum track (e->lane >= 0): a Lane row replaces Fill, Base note, Range, Velocity and the seed rows.
 class EuclidDialog {
  public:
   explicit EuclidDialog(App& app);
@@ -31,7 +32,7 @@ class EuclidDialog {
 
  private:
   enum Row : int {
-    kHits, kLength, kRotation, kFill, kBase, kRange, kVel, kAccEvery, kAccVel, kSeed, kReseed, kMode,
+    kHits, kLength, kRotation, kLane, kFill, kBase, kRange, kVel, kAccEvery, kAccVel, kSeed, kReseed, kMode,
     kOk, kCancel, kRows
   };
   static constexpr int kHeaderH = 28;
@@ -45,10 +46,16 @@ class EuclidDialog {
   void preview();
   void reseed();
   bool action(int row);  // OK / Cancel / Reseed row: runs it, true when handled
+  void buildRows();      // the rows of the current mode (melodic / drum lane) into shown_
+  int rowId(int listRow) const { return listRow >= 0 && listRow < shownCount_ ? shownIds_[listRow] : -1; }
+  int listRow(int id) const;
   void drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel);
 
   App& app_;
   Param params_[kRows];
+  Param shown_[kRows];  // rows of the current mode, as the list shows them
+  int shownIds_[kRows] = {};
+  int shownCount_ = 0;
   ParamList list_{kAreaY + kHeaderH};
   mt::Step saved_[mt::kMaxSteps];  // the track at open()
   mt::EuclidParams* e_ = nullptr;

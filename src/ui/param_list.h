@@ -35,6 +35,14 @@ class ParamList {
     dragAcc_ = 0;
     ensureVisible();
   }
+  // Swaps in a rebuilt row set of the same screen (rows shown / hidden): selection and scroll stay,
+  // clamped to the new count.
+  void replaceParams(const Param* params, int count) {
+    params_ = params;
+    count_ = count;
+    if (sel_ >= count_) sel_ = count_ > 0 ? count_ - 1 : 0;
+    ensureVisible();
+  }
   // Rows drawn at once; 0 = all.
   void setVisibleRows(int n) {
     visible_ = n;

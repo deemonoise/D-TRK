@@ -13,6 +13,7 @@ constexpr size_t kTopLen = 9;
 size_t rootLen(const char* dir) {
   if (strncmp(dir, kTop, kTopLen) != 0) return 0;
   for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
+    if (!presetTypeHas(static_cast<InstrType>(t))) continue;
     const char* r = presetRoot(static_cast<InstrType>(t));
     const size_t n = strlen(r);
     if (strncmp(dir, r, n) == 0 && (dir[n] == 0 || dir[n] == '/')) return n;
@@ -22,8 +23,11 @@ size_t rootLen(const char* dir) {
 
 }  // namespace
 
+bool presetTypeHas(InstrType t) { return t < InstrType::Count && t != InstrType::Kit; }
+
 const char* presetTypeName(InstrType t) {
   switch (t) {
+    case InstrType::Kit: return "KIT";
     case InstrType::Sample: return "SAMPLE";
     case InstrType::Fm: return "FM";
     case InstrType::Drum: return "DRUM";
@@ -38,6 +42,7 @@ const char* presetRoot(InstrType t) {
     case InstrType::Fm: return "/presets/FM";
     case InstrType::Drum: return "/presets/DRUM";
     case InstrType::Synth: return "/presets/SYNTH";
+    case InstrType::Kit: return "/presets/KIT";
     default: return "/presets/CHIP";
   }
 }

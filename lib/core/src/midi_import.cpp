@@ -136,23 +136,42 @@ ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, co
       continue;
     }
     Step& s = p.patterns[first + pl.pattern].steps[pl.track][pl.step];
-    if (s.hasNote()) {
-      ++r.notesDropped;
-      const bool replace = (m.mono == MonoMode::Highest && pl.note > s.note) ||
-                           (m.mono == MonoMode::Lowest && pl.note < s.note);
-      if (!replace) continue;
-    }
     const TrackCfg& tc = p.tracks[pl.track];
     Step ns;
-    ns.note = pl.note;
-    ns.vel = sn.vel == tc.defVel ? kVelDefault : sn.vel;
+    // Drum track: the note picks the lane with that note (none: dropped); notes on one step OR
+    // into its lane mask, the step velocity is the first note's.
+    const Instrument* kit = p.kitOf(pl.track);
+    if (kit) {
+      int lane = -1;
+      for (int l = 0; l < kKitLanes && lane < 0; ++l)
+        if (kit->kit[l].note == pl.note) lane = l;
+      if (lane < 0) {
+        ++r.notesDropped;
+        continue;
+      }
+      if (s.hasNote()) {
+        s.vel |= static_cast<uint8_t>(1u << lane);
+        continue;
+      }
+      ns.note = sn.vel == tc.defVel ? 0 : sn.vel;
+      ns.vel = static_cast<uint8_t>(1u << lane);
+    } else {
+      if (s.hasNote()) {
+        ++r.notesDropped;
+        const bool replace = (m.mono == MonoMode::Highest && pl.note > s.note) ||
+                             (m.mono == MonoMode::Lowest && pl.note < s.note);
+        if (!replace) continue;
+      }
+      ns.note = pl.note;
+      ns.vel = sn.vel == tc.defVel ? kVelDefault : sn.vel;
+    }
     int slot = 0;
     const uint8_t srcCh = info.src[sn.src].channel & 0x0F;
     if (m.useSourceChannel && srcCh != (tc.channel & 0x0F))
       ns.fx[slot++] = FxSlot{Fx::CHN, static_cast<uint8_t>(srcCh + 1)};
     const uint8_t g = nearestGate(sn.len, c.q);
     const int diff = static_cast<int>(gatePercent(g)) - static_cast<int>(gatePercent(tc.defGate));
-    if ((diff > 10 || diff < -10) && slot < kFxSlots) ns.fx[slot++] = FxSlot{Fx::GAT, g};
+    if (!kit && (diff > 10 || diff < -10) && slot < kFxSlots) ns.fx[slot++] = FxSlot{Fx::GAT, g};
     if (m.keepMicrotiming && slot < kFxSlots) {
       const int64_t stepAbs = static_cast<int64_t>(pl.pattern) * len + pl.step;
       int64_t ndg = roundDiv((rel * kPpqn - stepAbs * c.q) * 100, c.q);

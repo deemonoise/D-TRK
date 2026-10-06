@@ -18,7 +18,8 @@ constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceM
 struct Voice {
   bool on = false;          // allocated (until the envelope goes idle)
   uint8_t track = 0, note = 0;
-  uint8_t instr = 0;        // instrument index at note-on
+  uint8_t instr = 0;        // instrument index at note-on (a KIT sampler lane: the KIT's)
+  bool lane = false;        // KIT sampler lane: the instrument is laneInst, not Project::instruments[instr]
   bool sample = false;      // SAMPLE instrument (else CHIP)
   uint8_t gen = 0;          // TrackRt::gen at note-on (sample choke)
   uint32_t age = 0;         // allocation order, for stealing
@@ -84,6 +85,7 @@ struct Voice {
   bool fenvDone = false;             // the envelope has decayed to -60 dB: 0 until the next trigger
   float fltRes = -1, fltQ = 0.5f;    // resoQ(fltRes), cached
   Svf flt;
+  Instrument laneInst;  // KIT sampler lane: scratch SAMPLE instrument built at note-on (see lane)
 };
 
 // Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the
@@ -93,14 +95,15 @@ inline bool heavyLoad(const Voice& x) {
 }
 
 // Picks a voice for track and marks it allocated. Mono: the track's voice if any (legato), else a free one.
-// Poly: a free voice if the track has < kPolyPerTrack, else the track's oldest.
+// Poly: a free voice if the track has < polyMax, else the track's oldest.
 // No free voice: the globally oldest releasing voice, else the globally oldest.
 // heavy: the note is FM, DRUM or a wavetable SYNTH (synHeavy). With kFmVoiceMax heavy voices on
 // (heavyLoad), a pick that would add one more fades the oldest releasing heavy voice, else the
 // oldest heavy voice, over kStealMs (stolen) and takes a free voice; with none free it takes the
 // victim itself. A mono track's own heavy voice is reused as before; a mono track's CHIP / SAMPLE
 // voice is released.
+// polyMax: poly voices the track may hold (KIT lanes: kKitLanes).
 int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato,
-               bool heavy = false);
+               bool heavy = false, int polyMax = kPolyPerTrack);
 
 }  // namespace mt

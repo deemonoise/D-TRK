@@ -328,6 +328,7 @@ void test_presets_web() {
   TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c"));    // 1 + 4
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c/d"));  // 1 + 5
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "chip"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "KIT"));  // no KIT presets
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "BASS/x"));
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "FM/../CHIP"));
   // .mti only, base as a project name, never at the top.
@@ -342,6 +343,7 @@ void test_presets_web() {
   // Folders: only type folders at the top.
   TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Presets, "", "SAMPLE"));
   TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "", "bass"));
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "", "KIT"));
   TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Presets, "SAMPLE", "Pads 2"));
   TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "SAMPLE/a/b/c/d", "e"));
   TEST_ASSERT_TRUE(webDirListed(WebDir::Presets, "", "DRUM"));

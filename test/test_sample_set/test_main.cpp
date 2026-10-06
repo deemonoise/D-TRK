@@ -179,6 +179,22 @@ void test_rename_updates_kit_lanes() {
   TEST_ASSERT_EQUAL_STRING("snare", p.instruments[2].kit[4].sample);
 }
 
+void test_sample_user_counts_kit_lanes() {
+  static Project p;
+  p.reset();
+  TEST_ASSERT_EQUAL(-1, projSampleUser(p, "kick"));
+  instrSetType(p.instruments[2], InstrType::Kit);
+  strcpy(p.instruments[2].kit[5].sample, "KICK");
+  TEST_ASSERT_EQUAL(2, projSampleUser(p, "kick"));
+  p.instruments[2].kit[5].instr = 0;  // INST lane: its sample name is not played
+  TEST_ASSERT_EQUAL(-1, projSampleUser(p, "kick"));
+  instrSetType(p.instruments[1], InstrType::Sample);
+  strcpy(p.instruments[1].sample, "kick");
+  TEST_ASSERT_EQUAL(1, projSampleUser(p, "kick"));
+  instrSetType(p.instruments[1], InstrType::Chip);  // a leftover name on another type is not a user
+  TEST_ASSERT_EQUAL(-1, projSampleUser(p, "kick"));
+}
+
 void test_remove_shifts() {
   static Project p;
   p.reset();
@@ -738,6 +754,7 @@ int main() {
   RUN_TEST(test_set_full);
   RUN_TEST(test_rename_follows_instruments);
   RUN_TEST(test_rename_updates_kit_lanes);
+  RUN_TEST(test_sample_user_counts_kit_lanes);
   RUN_TEST(test_remove_shifts);
   RUN_TEST(test_bank_lookup);
   RUN_TEST(test_fits);

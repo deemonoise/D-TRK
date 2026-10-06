@@ -36,14 +36,17 @@ void clearSel(Pattern& p, const Sel& s) {
     for (int i = s.s0; i <= s.s1; ++i) p.steps[t][i] = Step();
 }
 
-void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType type) {
-  for (int t = s.t0; t <= s.t1; ++t)
+void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType type,
+                  const bool* drumTracks) {
+  for (int t = s.t0; t <= s.t1; ++t) {
+    if (drumTracks && drumTracks[t]) continue;
     for (int i = s.s0; i <= s.s1; ++i) {
       Step& st = p.steps[t][i];
       if (!st.hasNote()) continue;
       int n = degrees ? moveDegrees(st.note, amount, root, type) : clampi(st.note + amount, 0, 127);
       st.note = static_cast<uint8_t>(n);
     }
+  }
 }
 
 }  // namespace mt

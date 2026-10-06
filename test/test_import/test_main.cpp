@@ -408,6 +408,22 @@ void test_nearest_gate_matches_search() {
   TEST_ASSERT_EQUAL(gateRef(0xFFFFFFFFu, 96 * 24), nearestGate(0xFFFFFFFFu, 96 * 24));
 }
 
+void test_notes_to_kit_lanes() {
+  instrSetType(P.instruments[3], InstrType::Kit);  // lanes 60..67
+  P.tracks[0].instr = 3;
+  add(0, 60, 12, 90);
+  add(0, 62, 12, 50);
+  add(24, 40);  // no lane
+  add(48, 61, 12, P.tracks[0].defVel);
+  const ImportResult r = run();
+  TEST_ASSERT_EQUAL_HEX8(0b101, st(0, 0, 0).vel);
+  TEST_ASSERT_EQUAL(90, st(0, 0, 0).note);  // the first note's velocity
+  TEST_ASSERT_TRUE(st(0, 0, 1).isEmpty());
+  TEST_ASSERT_EQUAL_HEX8(0b10, st(0, 0, 2).vel);
+  TEST_ASSERT_EQUAL(0, st(0, 0, 2).note);   // the track's velocity
+  TEST_ASSERT_EQUAL(1u, r.notesDropped);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_map_defaults);
@@ -434,5 +450,6 @@ int main() {
   RUN_TEST(test_first_pattern_out_of_range);
   RUN_TEST(test_note_slightly_before_offset);
   RUN_TEST(test_nearest_gate_matches_search);
+  RUN_TEST(test_notes_to_kit_lanes);
   return UNITY_END();
 }

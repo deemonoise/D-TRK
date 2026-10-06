@@ -2,7 +2,8 @@
 
 namespace mt {
 
-int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato, bool heavy) {
+int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato, bool heavy,
+               int polyMax) {
   legato = false;
   int pick = -1;
   int trackCount = 0, trackOldest = -1, trackNewest = -1, freeIdx = -1, oldest = -1, oldestRel = -1;
@@ -30,7 +31,7 @@ int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCount
   if (mono && trackNewest >= 0) {
     pick = trackNewest;
     legato = true;
-  } else if (!mono && trackCount >= kPolyPerTrack) {
+  } else if (!mono && trackCount >= polyMax) {
     pick = trackOldest;
   } else if (freeIdx >= 0) {
     pick = freeIdx;

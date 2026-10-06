@@ -129,6 +129,7 @@ bool segValid(const char* s, size_t n) {
 // First segment of a /presets subpath (n chars at s): a type folder, as the tracker names it.
 bool presetTypeSeg(const char* s, size_t n) {
   for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
+    if (!presetTypeHas(static_cast<InstrType>(t))) continue;
     const char* name = presetTypeName(static_cast<InstrType>(t));
     if (strlen(name) == n && strncmp(s, name, n) == 0) return true;
   }

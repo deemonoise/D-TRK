@@ -46,6 +46,7 @@ class GridScreen : public Screen {
   static_assert(kFields * kFieldW <= kDetW, "Detail fields must fit");
   static constexpr int kKbH = 48;      // mini keyboard height
   static constexpr int kKeyW = 40;
+  static constexpr int kPadW = kScreenW / mt::kKitLanes;  // lane pad button (drum track)
   static constexpr uint32_t kFollowPauseMs = 2000;
 
   mt::Pattern& pat();
@@ -78,10 +79,18 @@ class GridScreen : public Screen {
   mt::Sel trackSel() const;
   mt::Sel curSel() const;
   bool hit(int x, int y, int& step, int& tr, int& field) const;
-  bool keyboardShown() const { return edit_ && curField_ == kNote; }
+  // Drum track: the track's instrument is a KIT, steps are lane masks.
+  bool drumAt(int tr) const;
+  bool drum() const { return drumAt(track()); }
+  bool keyboardShown() const { return edit_ && curField_ == kNote && !drum(); }
+  bool padShown() const { return edit_ && curField_ == kNote && drum(); }  // lane pad instead of the keyboard
+  void toggleLane(int lane);
   void drawOverview(LGFX_Sprite& s, int gridY);
   void drawDetail(LGFX_Sprite& s, int gridY);
   void drawKeyboard(LGFX_Sprite& s, int y);
+  // Lane mask as squares: one row of 8 (Overview column) or compact 2 x 4 (Detail NOTE field).
+  void drawMask(LGFX_Sprite& s, int x, int y, uint8_t mask, bool audible, int cursorLane, bool compact);
+  void drawPad(LGFX_Sprite& s, int y);
   bool selected(int tr, int step) const;
 
   App& app_;
@@ -100,6 +109,7 @@ class GridScreen : public Screen {
   bool wasPlaying_ = false;
   uint32_t lastMoveMs_ = 0;
   uint8_t lastNote_[mt::kTracks];  // set to 60 in the constructor
+  int lane_ = 0;  // drum track, NOTE field in edit: the lane under the encoder
 
   EuclidDialog euclid_{app_};
   mt::EuclidParams euclidParams_[mt::kTracks];  // per track, RAM only

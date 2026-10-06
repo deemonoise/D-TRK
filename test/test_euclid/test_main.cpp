@@ -318,6 +318,51 @@ void test_high_base_shifts_down_by_octaves() {
   TEST_ASSERT_EQUAL(120, P.steps[0][0].note);
 }
 
+void test_lane_writes_only_its_bit() {
+  resetP();
+  P.steps[0][0].note = 0;
+  P.steps[0][0].vel = 0b10;  // lane 2
+  P.steps[0][4].note = 90;   // lane 2 at step velocity 90
+  P.steps[0][4].vel = 0b10;
+  P.steps[0][5].note = 0;    // lane 1 only, not a hit: replace clears it
+  P.steps[0][5].vel = 0b01;
+  P.steps[0][6].note = 0;    // lane 2 only, not a hit: kept
+  P.steps[0][6].vel = 0b10;
+  EuclidParams e;
+  e.hits = 4;
+  e.length = 16;
+  e.lane = 0;
+  e.accentEvery = 2;
+  e.accentVel = 120;
+  applyEuclid(P, 0, e, 0, ScaleType::Chromatic);
+  TEST_ASSERT_EQUAL_HEX8(0b11, P.steps[0][0].vel);
+  TEST_ASSERT_EQUAL(120, P.steps[0][0].note);  // accent (hit 0) on a default-velocity step
+  TEST_ASSERT_EQUAL_HEX8(0b11, P.steps[0][4].vel);
+  TEST_ASSERT_EQUAL(90, P.steps[0][4].note);   // its own velocity kept
+  TEST_ASSERT_EQUAL_HEX8(0b01, P.steps[0][8].vel);
+  TEST_ASSERT_EQUAL(120, P.steps[0][8].note);  // hit 2: accent on a new step
+  TEST_ASSERT_EQUAL_HEX8(0b01, P.steps[0][12].vel);
+  TEST_ASSERT_EQUAL(0, P.steps[0][12].note);   // new step at the track's velocity
+  TEST_ASSERT_TRUE(P.steps[0][5].isEmpty());   // its only lane cleared: the step goes
+  TEST_ASSERT_EQUAL_HEX8(0b10, P.steps[0][6].vel);
+  TEST_ASSERT_TRUE(P.steps[0][1].isEmpty());
+}
+
+void test_lane_merge_keeps_other_hits_of_lane() {
+  resetP();
+  P.steps[0][2].note = 0;
+  P.steps[0][2].vel = 0b100;  // lane 3 off the euclid grid
+  EuclidParams e;
+  e.hits = 4;
+  e.length = 16;
+  e.lane = 2;
+  e.merge = true;
+  applyEuclid(P, 0, e, 0, ScaleType::Chromatic);
+  TEST_ASSERT_EQUAL_HEX8(0b100, P.steps[0][2].vel);
+  TEST_ASSERT_EQUAL_HEX8(0b100, P.steps[0][0].vel);
+  TEST_ASSERT_EQUAL_HEX8(0b100, P.steps[0][12].vel);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_references);
@@ -340,5 +385,7 @@ int main() {
   RUN_TEST(test_euclid_hits_above_steps);
   RUN_TEST(test_base_with_no_lower_scale_note_searches_up);
   RUN_TEST(test_high_base_shifts_down_by_octaves);
+  RUN_TEST(test_lane_writes_only_its_bit);
+  RUN_TEST(test_lane_merge_keeps_other_hits_of_lane);
   return UNITY_END();
 }

@@ -47,7 +47,7 @@ void PresetBrowser::open(Mode mode, int instr) {
   backup_ = inst();
   seqBefore_ = seqAfter_ = app_.editSeq();
   changed_ = false;
-  type_ = backup_.type < mt::InstrType::Count ? backup_.type : mt::InstrType::Chip;
+  type_ = mt::presetTypeHas(backup_.type) ? backup_.type : mt::InstrType::Chip;
   const char* last = lastDir_[static_cast<int>(type_)];
   strlcpy(dir_, last[0] && hw::sdReady() && hw::sdFs().exists(last) ? last : mt::presetRoot(type_), sizeof(dir_));
   inFactory_ = false;
@@ -348,7 +348,11 @@ void PresetBrowser::onMenu(int id) {
 void PresetBrowser::switchType(int d) {
   if (mode_ != Mode::Load) return;
   constexpr int kTypes = static_cast<int>(mt::InstrType::Count);
-  type_ = mt::instrTypeAt(((mt::instrTypePos(type_) + d) % kTypes + kTypes) % kTypes);
+  int pos = mt::instrTypePos(type_);
+  do {  // types without presets (KIT) are skipped
+    pos = ((pos + d) % kTypes + kTypes) % kTypes;
+  } while (!mt::presetTypeHas(mt::instrTypeAt(pos)));
+  type_ = mt::instrTypeAt(pos);
   const char* last = lastDir_[static_cast<int>(type_)];
   strlcpy(dir_, last[0] && hw::sdReady() && hw::sdFs().exists(last) ? last : mt::presetRoot(type_), sizeof(dir_));
   inFactory_ = false;

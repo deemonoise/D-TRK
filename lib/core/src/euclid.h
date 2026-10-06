@@ -22,9 +22,14 @@ struct EuclidParams {
   uint8_t accentEvery = 0;  // 0 = none; N = hit 0, N, 2N... (counted over the whole pattern)
   uint32_t seed = 1;
   bool merge = false;  // true: only write into empty steps; false: replace the track (within pattern length)
+  // Drum track: the lane written (its bit in Step::vel), -1 = melodic. Fill, base, range and seed
+  // are unused; merge keeps the lane's other hits, replace clears them first; other lanes stay.
+  int8_t lane = -1;
 };
 
-// Writes track `track` of p; notes follow the scale root/scale.
+// Writes track `track` of p; notes follow the scale root/scale. Drum track (e.lane >= 0): sets the
+// lane's bit on the hits (an empty step becomes a note step at the track's velocity, 0); an accent
+// sets the step velocity to accentVel where it is still the track's.
 void applyEuclid(Pattern& p, int track, const EuclidParams& e, uint8_t root, ScaleType scale);
 
 }  // namespace mt

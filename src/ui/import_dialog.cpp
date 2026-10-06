@@ -171,7 +171,7 @@ void ImportDialog::buildRows() {
                 const int t = state_->map.target[s];
                 char tr[6], lo[4], hi[4];
                 if (t < 0) snprintf(tr, sizeof(tr), "skip");
-                else snprintf(tr, sizeof(tr), "T%d", t + 1);
+                else snprintf(tr, sizeof(tr), "T%d%s", t + 1, app_.project().trackIsDrum(t) ? "*" : "");
                 mt::noteName(sc.lo, lo);
                 mt::noteName(sc.hi, hi);
                 snprintf(o, n, "%-4s %5u %s..%s", tr, sc.count, lo, hi);

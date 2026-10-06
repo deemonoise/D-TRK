@@ -1990,6 +1990,125 @@ void test_synth_macro_lock_on_empty_step_hits_sounding_voice() {
   TEST_ASSERT_EQUAL(90, v.lock[kMacMix]);
 }
 
+// ---- KIT: lanes ----
+
+static FakeBank* kitSetup(int track, int kitIdx) {
+  static FakeBank bank;
+  for (auto& x : bank.data) x = 8192;
+  s->setBank(&bank);
+  Instrument& k = p->instruments[kitIdx];
+  instrSetType(k, InstrType::Kit);
+  k.send = 50;
+  for (int l = 0; l < kKitLanes; ++l) strcpy(k.kit[l].sample, "kick");
+  k.kit[0].vol = 80;
+  k.kit[0].pitch = 5;
+  k.kit[0].decay = 30;
+  p->tracks[track].out = TrackOut::Int;
+  p->tracks[track].instr = static_cast<uint8_t>(kitIdx);
+  return &bank;
+}
+static int onlyVoice() {
+  int f = -1;
+  for (int v = 0; v < kVoices; ++v)
+    if (s->voice(v).on) f = v;
+  return f;
+}
+static int trackVoices(int track) {
+  int n = 0;
+  for (int v = 0; v < kVoices; ++v) n += s->voice(v).on && s->voice(v).track == track;
+  return n;
+}
+
+void test_kit_sampler_lane_builds_scratch_instrument() {
+  kitSetup(0, 0);
+  noteOn(0, 0, 60, 100);
+  s->render(buf);
+  const int v = onlyVoice();
+  TEST_ASSERT_TRUE(v >= 0);
+  const Voice& x = s->voice(v);
+  TEST_ASSERT_TRUE(x.lane);
+  TEST_ASSERT_TRUE(x.sample);
+  TEST_ASSERT_EQUAL(0, x.instr);
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Sample), static_cast<int>(x.laneInst.type));
+  TEST_ASSERT_EQUAL_STRING("kick", x.laneInst.sample);
+  TEST_ASSERT_EQUAL(60, x.laneInst.root);
+  TEST_ASSERT_EQUAL(5, x.laneInst.transpose);
+  TEST_ASSERT_EQUAL(80, x.laneInst.vol);
+  TEST_ASSERT_EQUAL(30, x.laneInst.decay);
+  TEST_ASSERT_EQUAL(0, x.laneInst.sustain);
+  TEST_ASSERT_EQUAL(50, x.laneInst.send);
+  TEST_ASSERT_EQUAL(0, x.laneInst.fltMode);
+  TEST_ASSERT_EQUAL(0, x.laneInst.sliceCount);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 65.f, x.pitch);  // lane note + pitch
+}
+
+void test_kit_decay_zero_is_one_shot() {
+  kitSetup(0, 0);
+  noteOn(0, 0, 61, 100);  // lane 2: decay 0
+  s->render(buf);
+  const Voice& x = s->voice(onlyVoice());
+  TEST_ASSERT_EQUAL(0, x.laneInst.decay);
+  TEST_ASSERT_EQUAL(127, x.laneInst.sustain);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 61.f, x.pitch);  // the sample at its own pitch
+}
+
+void test_kit_missing_sample_silent() {
+  kitSetup(0, 0);
+  strcpy(p->instruments[0].kit[0].sample, "nope");
+  noteOn(0, 0, 60, 100);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(-1, onlyVoice());
+  p->instruments[0].kit[1].sample[0] = 0;  // empty lane
+  noteOn(0, 0, 61, 100);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(-1, onlyVoice());
+}
+
+void test_kit_inst_lane_plays_instrument() {
+  kitSetup(0, 0);
+  p->instruments[0].kit[2].instr = 5;
+  noteOn(0, 0, 62, 100);
+  s->render(buf);
+  const Voice& x = s->voice(onlyVoice());
+  TEST_ASSERT_FALSE(x.lane);
+  TEST_ASSERT_FALSE(x.sample);
+  TEST_ASSERT_EQUAL(5, x.instr);
+  TEST_ASSERT_EQUAL(62, x.note);
+}
+
+void test_kit_in_kit_lane_silent() {
+  kitSetup(0, 0);
+  instrSetType(p->instruments[3], InstrType::Kit);
+  p->instruments[0].kit[2].instr = 3;
+  noteOn(0, 0, 62, 100);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(-1, onlyVoice());
+}
+
+void test_kit_eight_lanes_sound_and_rehit_chokes() {
+  kitSetup(0, 0);
+  for (int l = 0; l < kKitLanes; ++l) noteOn(0, 0, static_cast<uint8_t>(60 + l), 100);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(8, trackVoices(0));
+  int lane0 = -1;
+  for (int v = 0; v < kVoices; ++v)
+    if (s->voice(v).on && s->voice(v).note == 60) lane0 = v;
+  noteOn(0, 0, 60, 100);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(8, trackVoices(0));
+  int again = -1;
+  for (int v = 0; v < kVoices; ++v)
+    if (s->voice(v).on && s->voice(v).note == 60) again = v;
+  TEST_ASSERT_EQUAL(lane0, again);  // the lane's own voice, restarted
+}
+
+void test_kit_unknown_note_silent() {
+  kitSetup(0, 0);
+  noteOn(0, 0, 40, 100);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(-1, onlyVoice());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -2124,5 +2243,12 @@ int main() {
   RUN_TEST(test_synth_bl_voices_use_whole_pool);
   RUN_TEST(test_synth_macro_lock_applies);
   RUN_TEST(test_synth_macro_lock_on_empty_step_hits_sounding_voice);
+  RUN_TEST(test_kit_sampler_lane_builds_scratch_instrument);
+  RUN_TEST(test_kit_decay_zero_is_one_shot);
+  RUN_TEST(test_kit_missing_sample_silent);
+  RUN_TEST(test_kit_inst_lane_plays_instrument);
+  RUN_TEST(test_kit_in_kit_lane_silent);
+  RUN_TEST(test_kit_eight_lanes_sound_and_rehit_chokes);
+  RUN_TEST(test_kit_unknown_note_silent);
   return UNITY_END();
 }

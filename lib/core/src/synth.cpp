@@ -248,9 +248,47 @@ float Synth::rnd() {
   return static_cast<int32_t>(rng_) * (1.f / 2147483648.f);
 }
 
+// KIT sampler lane release: envTimeMs(32) ~ 10 ms.
+static constexpr uint8_t kLaneRelease = 32;
+
 void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
-  const uint8_t ii = trackInstr(track);
-  const Instrument& m = p_.instruments[ii];
+  uint8_t ii = trackInstr(track);
+  bool kitLane = false;  // a KIT lane: mono per lane (choke on the same note), poly across lanes
+  Instrument scratch;    // sampler lane: built from the lane, copied into the voice
+  const Instrument* mp = &p_.instruments[ii];
+  if (mp->type == InstrType::Kit) {
+    const Instrument& k = *mp;
+    int lane = -1;
+    for (int l = 0; l < kKitLanes && lane < 0; ++l)
+      if (k.kit[l].note == note) lane = l;
+    if (lane < 0) return;
+    const KitLane& ln = k.kit[lane];
+    kitLane = true;
+    if (ln.instr < kInstruments) {
+      if (p_.instruments[ln.instr].type == InstrType::Kit) return;  // no kit in a kit
+      ii = ln.instr;
+      mp = &p_.instruments[ii];
+    } else {
+      // Mini sampler: the lane's sample at its own pitch (root = lane note) + pitch, one-shot or decay.
+      // start 0, end 0xFFFF, loop Off, no slices, forward: Instrument() defaults.
+      scratch.type = InstrType::Sample;
+      for (int i = 0; i < kSampleNameMax; ++i) scratch.sample[i] = ln.sample[i];  // the UI may be editing it
+      scratch.sample[kSampleNameMax] = 0;
+      scratch.root = ln.note;
+      scratch.transpose = ln.pitch;
+      scratch.vol = ln.vol;
+      scratch.attack = 0;
+      scratch.decay = ln.decay;
+      scratch.sustain = ln.decay ? 0 : 127;
+      scratch.release = kLaneRelease;
+      scratch.mono = true;
+      scratch.fltMode = 0;
+      scratch.lfoDepth = 0;
+      scratch.send = k.send;
+      mp = &scratch;
+    }
+  }
+  const Instrument& m = *mp;
   const bool sample = m.type == InstrType::Sample;
   const int16_t* smp = nullptr;
   uint32_t frames = 0, rate = 0;
@@ -299,11 +337,15 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   const bool drum = drumT || (fm && !fmGated(machine));  // one-shot, choke
   const bool tone = fm && machine == static_cast<uint8_t>(FmMachine::Tone);
   // FM: only TONE may be poly; drums and CHORD take the track's voice. DRUM is always mono.
-  const bool mono = fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
+  // A KIT lane is mono through its own note (below), so the track is poly across lanes.
+  const bool mono = kitLane ? false : fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
   const float pitch = (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
   bool legato;
   // SLD: the track's sounding voice glides to the note (like legato), else a new one from the last note.
   int held = r.sld ? trackVoice(track) : -1;
+  if (kitLane && held < 0)  // the lane's sounding voice: choke
+    for (int x = 0; x < kVoices; ++x)
+      if (voices_[x].on && voices_[x].track == track && voices_[x].note == note) held = x;
   // A heavy (FM / DRUM) note gliding from a CHIP / SAMPLE voice adds a heavy voice: past the
   // limit allocVoice picks one (SLD then starts from the last note).
   if (held >= 0 && heavy && !heavyLoad(voices_[held])) {
@@ -313,7 +355,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   }
   // A SAMPLE note chokes the track's samples of earlier steps and its own retrigger (a chord
   // in one step stays). SLD instead continues the held voice.
-  if (sample && held < 0 && track < kTracks)
+  if (sample && !kitLane && held < 0 && track < kTracks)
     for (auto& x : voices_)
       if (x.on && x.track == track && x.sample && x.env.stage() != Env::Stage::Release &&
           (x.gen != r.gen || x.note == note))
@@ -324,7 +366,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     legato = true;
     voices_[vi].age = ++age_;
   } else {
-    vi = allocVoice(voices_, track, mono, age_, legato, heavy);
+    vi = allocVoice(voices_, track, mono, age_, legato, heavy, kitLane ? kKitLanes : kPolyPerTrack);
   }
   Voice& v = voices_[vi];
   v.stolen = false;  // SLD may take a fading voice back
@@ -335,11 +377,14 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // restarts the sample and gets no glide. SLD still slides from it.
   const bool wasReleasing = v.env.stage() == Env::Stage::Release || v.env.idle();
   // A drum always retriggers (choke), and so does a note following one.
-  const bool overlap = legato && !wasReleasing && !drum && !prevDrum;
+  // A KIT lane re-hit restarts its sound.
+  const bool overlap = legato && !wasReleasing && !drum && !prevDrum && !kitLane;
   // Legato on the same sample keeps playing from where it is.
   const bool restartSmp = sample && (!overlap || !v.sample || v.smp != smp || v.slice != slice);
   v.note = note;
   v.instr = ii;
+  v.lane = kitLane && mp == &scratch;
+  if (v.lane) v.laneInst = scratch;
   v.sample = sample;
   v.gen = r.gen;
   v.smp = smp;
@@ -493,7 +538,7 @@ void Synth::releaseTrack(uint8_t track) {
 }
 
 void Synth::control(Voice& v, int dt) {
-  const Instrument& m = p_.instruments[v.instr];
+  const Instrument& m = instrOf(v);
   const TrackRt& r = rt_[v.track];
   v.fenvT += static_cast<uint32_t>(dt);
   const uint8_t snd = (v.lockMask & (1 << kLockDly)) ? v.lock[kLockDly] : m.send;

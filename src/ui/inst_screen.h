@@ -23,6 +23,9 @@ namespace ui {
 // frame under SHAPE) on the right; MOD: Sub, Sub oct, Noise, Env>Shp (SENV), Env atk, Env dec. ADSR, mode
 // and glide as CHIP. A click / tap on a Table row opens WtPicker; a missing table is shown red.
 // Filter and LFO rows on every type, after the type's own (CHIP / SAMPLE: no macro LFO targets).
+// KIT: two pages, MAIN (Name, Type, Dly send) and LANES: per lane Src (SAMPLE / INST), then SAMPLE:
+// Sample, Volume, Pitch, Decay, Note; INST: Instr (red when it is a KIT), Note. The other mode's rows
+// are hidden. Lane notes stay unique: Note skips notes other lanes hold. No KIT presets.
 class InstScreen : public Screen {
  public:
   explicit InstScreen(App& app);
@@ -54,7 +57,13 @@ class InstScreen : public Screen {
   static constexpr int kFltMode = 0, kCutoff = 1, kReso = 2, kFEnv = 3, kFAtk = 4, kFDec = 5, kKeytrack = 6,
                        kLfoWave = 7, kLfoRate = 8, kLfoDepth = 9, kLfoDest = 10, kTailRows = 11;
   static constexpr int kFiltRows = 7;  // tail: FILT = [0, 7), LFO = [7, kTailRows)
-  // Logical pages; kPgType2 (SYNTH MOD) only on SYNTH, so the others have one page less.
+  // KIT: MAIN rows, then kLaneRows per lane.
+  static constexpr int kKitMain = 3;  // Name, Type, Send
+  static constexpr int kLaneSrc = 0, kLaneSample = 1, kLaneInstr = 2, kLaneVol = 3, kLanePitch = 4,
+                       kLaneDecay = 5, kLaneNote = 6, kLaneRows = 7;
+  static constexpr int kKitRows = kKitMain + mt::kKitLanes * kLaneRows;
+  // Logical pages; kPgType2 (SYNTH MOD) only on SYNTH, so the others have one page less. KIT: MAIN and
+  // kPgType (LANES) only.
   enum Page : int { kPgMain, kPgEnv, kPgType, kPgType2, kPgFilt, kPgLfo };
   static constexpr int kHeaderH = 28;
   static constexpr int kPageBarH = 24;
@@ -80,7 +89,10 @@ class InstScreen : public Screen {
   int typeCount() const;  // the type's own rows
   bool onEditor() const { return shown_ == mt::InstrType::Sample && page_ == kPgType; }
   bool synth() const { return shown_ == mt::InstrType::Synth; }
-  int pageCount() const { return synth() ? 6 : 5; }
+  bool kit() const { return shown_ == mt::InstrType::Kit; }
+  int pageCount() const { return kit() ? 2 : (synth() ? 6 : 5); }
+  void initKit();
+  void buildLanes(bool keep);  // LANES rows of the current lane modes into kitShown_; keep: scroll stays
   int pageW() const { return kScreenW / pageCount(); }
   int physPage() const;                // tab index of page_
   int logicalPage(int phys) const;     // Page of a tab index
@@ -105,6 +117,8 @@ class InstScreen : public Screen {
   Param fm_[kMacRows + kTailRows];
   Param drum_[kMacRows + kTailRows];
   Param syn_[kSynRows + kTailRows];
+  Param kit_[kKitRows];       // every KIT row
+  Param kitShown_[kKitRows];  // LANES page: the rows of each lane's mode
   mt::InstrType shown_ = mt::InstrType::Chip;
   ParamList list_{kAreaY + kHeaderH + kPageBarH};
   int page_ = kPgMain;

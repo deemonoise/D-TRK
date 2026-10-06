@@ -233,6 +233,28 @@ void test_undo_drop_after_wrap() {
   delete[] store;
 }
 
+void test_transpose_skips_drum_tracks() {
+  pat.steps[0][0].note = 60;
+  pat.steps[1][0].note = 100;
+  pat.steps[1][0].vel = 0xA5;
+  bool drum[kTracks] = {false, true};
+  transposeSel(pat, makeSel(0, 0, 1, 0), 12, false, 0, ScaleType::Chromatic, drum);
+  TEST_ASSERT_EQUAL(72, pat.steps[0][0].note);
+  TEST_ASSERT_EQUAL(100, pat.steps[1][0].note);
+  TEST_ASSERT_EQUAL_HEX8(0xA5, pat.steps[1][0].vel);
+}
+
+void test_copy_paste_drum_step_byte_exact() {
+  static Pattern src;
+  src.clear();
+  src.steps[2][3].note = 100;
+  src.steps[2][3].vel = 0xA5;
+  src.steps[2][3].fx[0] = {Fx::ACC, 0x81};
+  copySel(src, makeSel(2, 3, 2, 3), cb);
+  pasteAt(pat, cb, 4, 5);
+  TEST_ASSERT_EQUAL_MEMORY(&src.steps[2][3], &pat.steps[4][5], sizeof(Step));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_make_sel_normalizes);
@@ -249,5 +271,7 @@ int main(int, char**) {
   RUN_TEST(test_undo_overflow);
   RUN_TEST(test_undo_drop);
   RUN_TEST(test_undo_drop_after_wrap);
+  RUN_TEST(test_transpose_skips_drum_tracks);
+  RUN_TEST(test_copy_paste_drum_step_byte_exact);
   return UNITY_END();
 }

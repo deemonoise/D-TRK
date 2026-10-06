@@ -22,6 +22,9 @@ int projSampleSet(Project& p, const char* name, uint32_t crc, uint32_t frames);
 void projSampleRemove(Project& p, int i);
 // New name for entry i; instruments that used the old name follow. False: bad or taken name.
 bool projSampleRename(Project& p, int i, const char* name);
+// First instrument playing sample `name` (ignoring case): a SAMPLE instrument, or a KIT with a
+// sampler lane on it. -1 if none.
+int projSampleUser(const Project& p, const char* name);
 
 // Wavetables: bank entries named "w" + crc32 (8 lower-case hex) of the canonical source, frames
 // kWtTableSamples, rate 0; built-ins "*NAME" are never evicted or cleared.

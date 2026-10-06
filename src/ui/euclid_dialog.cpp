@@ -31,6 +31,8 @@ EuclidDialog::EuclidDialog(App& app) : app_(app) {
                           const int m = e_->length - 1;
                           e_->rotation = static_cast<int8_t>(clampi(e_->rotation + d, -m, m));
                         }};
+  params_[kLane] = {"Lane", [this](char* o, int n) { snprintf(o, n, "%d", e_->lane + 1); },
+                    [this](int d) { e_->lane = static_cast<int8_t>(clampi(e_->lane + d, 0, mt::kKitLanes - 1)); }};
   params_[kFill] = {"Fill", [this](char* o, int n) { snprintf(o, n, "%s", kFillNames[static_cast<int>(e_->fill)]); },
                     [this](int d) {
                       const int f = clampi(static_cast<int>(e_->fill) + d, 0, static_cast<int>(mt::EuclidFill::Count) - 1);
@@ -65,9 +67,27 @@ EuclidDialog::EuclidDialog(App& app) : app_(app) {
                     [this](int d) { e_->merge = d > 0; }};
   params_[kOk] = {"OK", nullptr, nullptr};
   params_[kCancel] = {"Cancel", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
-  list_.setParams(params_, kRows);
+  buildRows();
   list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
   list_.setOnEdit([this] { preview(); });
+}
+
+void EuclidDialog::buildRows() {
+  const bool lane = e_ && e_->lane >= 0;
+  shownCount_ = 0;
+  for (int id = 0; id < kRows; ++id) {
+    const bool melodicOnly = id == kFill || id == kBase || id == kRange || id == kVel || id == kSeed || id == kReseed;
+    if (id == kLane ? !lane : (melodicOnly && lane)) continue;
+    shownIds_[shownCount_] = id;
+    shown_[shownCount_++] = params_[id];
+  }
+  list_.setParams(shown_, shownCount_);
+}
+
+int EuclidDialog::listRow(int id) const {
+  for (int r = 0; r < shownCount_; ++r)
+    if (shownIds_[r] == id) return r;
+  return 0;
 }
 
 int EuclidDialog::patLen() const {
@@ -83,6 +103,7 @@ void EuclidDialog::clampParams() {
   e_->vel = clampu8(e_->vel, 1, 127);
   e_->accentVel = clampu8(e_->accentVel, 1, 127);
   e_->baseNote = clampu8(e_->baseNote, 0, 127);
+  if (e_->lane >= mt::kKitLanes) e_->lane = mt::kKitLanes - 1;
 }
 
 void EuclidDialog::open(int pattern, int track, mt::EuclidParams* e) {
@@ -95,8 +116,9 @@ void EuclidDialog::open(int pattern, int track, mt::EuclidParams* e) {
   memcpy(saved_, app_.project().patterns[pattern_].steps[track_], sizeof(saved_));
   seqAtOpen_ = app_.editSeq();
   previews_ = 0;
+  buildRows();
   list_.setEdit(false);
-  list_.setSel(kHits);
+  list_.setSel(listRow(kHits));
   open_ = true;
   preview();
 }
@@ -156,10 +178,10 @@ void EuclidDialog::onInput(const hw::InputEvent& ev) {
     case InputType::EncLong: cancel(); return;
     case InputType::EncClick:
       if (ev.shift) {
-        reseed();
+        if (e_->lane < 0) reseed();
         return;
       }
-      if (!list_.editing() && action(list_.sel())) return;
+      if (!list_.editing() && action(rowId(list_.sel()))) return;
       break;
     default: break;
   }
@@ -178,9 +200,10 @@ void EuclidDialog::onTouch(const TouchEvent& ev) {
   }
   if (ev.type == TouchType::Tap) {
     const int r = list_.rowAt(ev.y);
-    if (r == kOk || r == kCancel || r == kReseed) {
+    const int id = rowId(r);
+    if (id == kOk || id == kCancel || id == kReseed) {
       list_.setSel(r);
-      action(r);
+      action(id);
       return;
     }
   }
@@ -202,8 +225,8 @@ void EuclidDialog::draw(LGFX_Sprite& s, int y0) {
   snprintf(buf, sizeof(buf), "EUCLID T%d %s P%02d", track_ + 1, app_.project().tracks[track_].name, pattern_ + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  drawButton(s, kCancelX, y0 + kBtnY, kCancelW, "CANCEL", list_.sel() == kCancel);
-  drawButton(s, kOkX, y0 + kBtnY, kOkW, "OK", list_.sel() == kOk);
+  drawButton(s, kCancelX, y0 + kBtnY, kCancelW, "CANCEL", rowId(list_.sel()) == kCancel);
+  drawButton(s, kOkX, y0 + kBtnY, kOkW, "OK", rowId(list_.sel()) == kOk);
   list_.draw(s, y0 + kHeaderH);
 }
 
