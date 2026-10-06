@@ -15,10 +15,13 @@ bool cndPasses(uint8_t v, uint32_t loop, bool fill) {
 
 int spread(Rng& rng, uint8_t range) { return static_cast<int>(rng.below(2u * range + 1)) - range; }
 
-// Step velocity: `vel` (0 = the track default) with VRN, clamped to 1..127.
-int stepVelocity(const Step& s, uint8_t vel, const TrackCfg& t, Rng& rng) {
+// Step velocity: `vel` (0 = the track default) with VRN, the track's humanize (+-20 at 100) and the
+// groove accent, clamped to 1..127.
+int stepVelocity(const Step& s, uint8_t vel, const TrackCfg& t, const ExpandCtx& c, Rng& rng) {
   int v = vel ? vel : t.defVel;
   if (const FxSlot* f = s.find(Fx::VRN)) v += spread(rng, f->val);
+  if (t.humanize) v += spread(rng, static_cast<uint8_t>(t.humanize > 100 ? 20 : t.humanize / 5));
+  if (c.velPct != 100) v = v * c.velPct / 100;
   return v < 1 ? 1 : (v > 127 ? 127 : v);
 }
 
@@ -74,7 +77,7 @@ int32_t noteOffAt(int32_t on, uint32_t gateUs, const FxSlot* off, int32_t offUs)
 void expandDrum(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, uint8_t ch, int32_t nudge,
                 const FxSlot* off, ExpandOut& out) {
   const Instrument& k = *c.kit;
-  const int vel = stepVelocity(s, s.note, t, rng);
+  const int vel = stepVelocity(s, s.note, t, c, rng);
   uint8_t accent = 0xFF;
   if (const FxSlot* f = s.find(Fx::ACC)) accent = f->val;
   const Hits h = noteHits(s, t, c.stepUs);
@@ -135,6 +138,11 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     if (v > 50) v = 50;
     nudge = static_cast<int32_t>(static_cast<int64_t>(stepUs) * v / 100);
   }
+  // Humanize: the whole step up to +-10 % of a step off the grid (at 100).
+  if (t.humanize && s.hasNote()) {
+    const uint32_t r = stepUs / 10 * (t.humanize > 100 ? 100 : t.humanize) / 100;
+    nudge += static_cast<int32_t>(rng.below(2 * r + 1)) - static_cast<int32_t>(r);
+  }
 
   const FxSlot* off = s.find(Fx::OFF);
   if (off) {
@@ -189,7 +197,7 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     root = moveDegrees(root, spread(rng, f->val), c.scaleRoot, c.scale);
   }
 
-  const int vel = stepVelocity(s, s.vel, t, rng);
+  const int vel = stepVelocity(s, s.vel, t, c, rng);
 
   uint8_t notes[4] = {static_cast<uint8_t>(root), 0, 0, 0};
   int nNotes = 1;

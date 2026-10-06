@@ -1,6 +1,7 @@
 #include "sequencer.h"
 #include <string.h>
 #include "fx_info.h"
+#include "groove.h"
 #include "record.h"
 
 namespace mt {
@@ -392,14 +393,19 @@ void Sequencer::scheduleStep(uint64_t now) {
   Pattern& pat = p_.patterns[cur_];
   const uint32_t su = stepUs();
   uint64_t t = tickTime(stepTick_);
-  if (pos_ & 1) {
+  ExpandCtx c = ctx(su);
+  if (pat.groove) {  // the groove template replaces the swing: shift and accent per step of 16
+    const Groove& g = grooveAt(pat.groove);
+    const int64_t sh = static_cast<int64_t>(su) * g.shift[pos_ % 16] / 100;
+    t = static_cast<uint64_t>(static_cast<int64_t>(t) + sh);
+    c.velPct = g.vel[pos_ % 16];
+  } else if (pos_ & 1) {
     const uint8_t sw = pat.swing < 50 ? 50 : (pat.swing > 75 ? 75 : pat.swing);
     t += static_cast<uint64_t>(su) * (sw - 50) / 50;
   }
   // Nothing may land in the past; a shifted note keeps its gate.
   const int64_t earliest = static_cast<int64_t>(now > playStartT_ ? now : playStartT_);
 
-  const ExpandCtx c = ctx(su);
   ExpandOut& ex = ex_;
   for (int tr = 0; tr < kTracks; ++tr) {
     Step s = pat.steps[tr][stepIndex(pat, tr, pos_)];

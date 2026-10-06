@@ -73,6 +73,7 @@ struct ExpandCtx {
   bool fill = false;  // fill held: CND FIL steps play, NFL steps do not
   bool pre = false;   // CND PRE: the track's last condition passed
   bool nei = false;   // CND NEI: the left track's last condition passed
+  uint8_t velPct = 100;  // groove accent of the step: velocities x velPct / 100
 };
 
 // Expands one step of one track into events. Control events (CC, pitch bend,

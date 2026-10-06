@@ -295,6 +295,7 @@ struct Pattern {
   uint8_t length = kDefaultSteps;
   Resolution res = Resolution::Sixteenth;
   uint8_t swing = 50;  // 50..75 %
+  uint8_t groove = 0;  // groove template (grooveAt), 0 = OFF: swing applies
   uint8_t trackLen[kTracks] = {0};  // 0 = length, else 1..length: the track loops on its own (polymeter)
   Step steps[kTracks][kMaxSteps];
 
@@ -316,6 +317,7 @@ struct TrackCfg {
   TrackOut out = TrackOut::Int;  // files without TOUT load as MIDI (see loadProject)
   uint8_t instr = 0;  // 0..kInstruments-1, INT tracks
   uint8_t vol = 100;  // 0..127, INT tracks
+  uint8_t humanize = 0;  // 0..100: random timing (up to +-10 % of a step) and velocity (+-20) per step
 };
 
 struct Project {

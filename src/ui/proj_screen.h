@@ -18,7 +18,7 @@ class ProjScreen : public Screen {
 
  private:
   enum Row : int {
-    kBpm, kRoot, kScale, kLength, kRes, kSwing, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
+    kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
     kRvbSize, kRvbDamp, kRvbLevel, kCompAmt, kCompRel, kScTrack, kScDepth, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kRows
   };
   // Pages: contiguous runs of rows.

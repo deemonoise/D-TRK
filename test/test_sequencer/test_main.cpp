@@ -2062,6 +2062,47 @@ void test_cnd_pre_follows_previous_condition() {
   TEST_ASSERT_EQUAL(sink->times(0x90, 60)[1] + 125000, sink->times(0x90, 62)[1]);
 }
 
+// A groove replaces the swing: per-step shift (% of a step) and velocity accent.
+void test_groove_shifts_and_accents() {
+  p->patterns[0].length = 4;
+  p->patterns[0].swing = 75;  // ignored under a groove
+  p->patterns[0].groove = 5;  // SHUFFLE: odd steps +33 %, velocities 100 / 70 / 95 / 70
+  for (int i = 0; i < 4; ++i) {
+    p->patterns[0].steps[0][i].note = 60;
+    p->patterns[0].steps[0][i].vel = 100;
+  }
+  seq->start(0, *sink);
+  run(0, 499999);
+  const auto on = sink->times(0x90, 60);
+  TEST_ASSERT_EQUAL(4, on.size());
+  TEST_ASSERT_EQUAL(0, on[0]);
+  TEST_ASSERT_EQUAL(125000 + 125000 * 33 / 100, on[1]);
+  TEST_ASSERT_EQUAL(250000, on[2]);
+  std::vector<int> vel;
+  for (const auto& r : sink->log)
+    if (r.b[0] == 0x90) vel.push_back(r.b[2]);
+  TEST_ASSERT_EQUAL(100, vel[0]);
+  TEST_ASSERT_EQUAL(70, vel[1]);
+  TEST_ASSERT_EQUAL(95, vel[2]);
+}
+
+// Humanize moves a step at most 10 % of a step off the grid.
+void test_humanize_stays_within_range() {
+  p->tracks[0].humanize = 100;
+  for (int i = 0; i < 16; ++i) p->patterns[0].steps[0][i].note = 60;
+  seq->start(0, *sink);
+  run(0, 125000 * 16 - 12501);  // the next pass's step 0 may come up to 10 % early
+  const auto on = sink->times(0x90, 60);
+  TEST_ASSERT_EQUAL(16, on.size());
+  bool moved = false;
+  for (size_t i = 1; i < on.size(); ++i) {  // step 0 cannot go early (start)
+    const int64_t d = static_cast<int64_t>(on[i]) - static_cast<int64_t>(i * 125000);
+    TEST_ASSERT_TRUE(d >= -12500 && d <= 12500);
+    moved |= d != 0;
+  }
+  TEST_ASSERT_TRUE(moved);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -2191,5 +2232,7 @@ int main() {
   RUN_TEST(test_step_arp_on_int_track_uses_track_voices);
   RUN_TEST(test_perf_mute_release_survives_rewind);
   RUN_TEST(test_cnd_pre_follows_previous_condition);
+  RUN_TEST(test_groove_shifts_and_accents);
+  RUN_TEST(test_humanize_stays_within_range);
   return UNITY_END();
 }

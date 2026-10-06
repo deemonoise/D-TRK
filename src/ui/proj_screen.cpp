@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "groove.h"
 #include "storage/crashlog.h"
 #include "names.h"
 #include "scale.h"
@@ -50,7 +51,15 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        if (v == pat().swing) return;
                        snapPattern();
                        pat().swing = static_cast<uint8_t>(v);
-                     }};
+                     },
+                     [this] { return pat().groove != 0; }};
+  params_[kGroove] = {"Groove", [this](char* o, int n) { snprintf(o, n, "%s", mt::grooveAt(pat().groove).name); },
+                      [this](int d) {
+                        const int v = clampi(pat().groove + d, 0, mt::grooveCount() - 1);
+                        if (v == pat().groove) return;
+                        snapPattern();
+                        pat().groove = static_cast<uint8_t>(v);
+                      }};
   auto u7 = [this](uint8_t mt::Project::*f) {
     return [this, f](int d) { app_.project().*f = static_cast<uint8_t>(clampi(app_.project().*f + d, 0, 127)); };
   };

@@ -2,6 +2,7 @@
 #include <string.h>
 #include <strings.h>
 #include "file_rules.h"
+#include "groove.h"
 #include "inst_codec.h"
 #include "sample_set.h"
 #include "scale.h"
@@ -293,6 +294,18 @@ LoadErr readChn2(CrcSource& in, uint32_t size, Project& p) {
   return e;
 }
 
+// GROV: the patterns' groove (kPatterns bytes), then the tracks' humanize (kTracks bytes). Files
+// without it: groove OFF, no humanize.
+constexpr size_t kGrovSize = kPatterns + kTracks;
+LoadErr readGrov(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t b[kGrovSize];
+  if (size < kGrovSize) return LoadErr::BadValue;
+  if (!in.read(b, kGrovSize)) return LoadErr::Truncated;
+  for (int i = 0; i < kPatterns; ++i) p.patterns[i].groove = b[i] < grooveCount() ? b[i] : 0;
+  for (int t = 0; t < kTracks; ++t) p.tracks[t].humanize = clampu(b[kPatterns + t], 0, 100);
+  return in.skip(size - kGrovSize) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 // TLEN: pattern index + kTracks track lengths (0 = the pattern length), after its PATN.
 LoadErr readTlen(CrcSource& in, uint32_t size, Project& p) {
   uint8_t b[1 + kTracks];
@@ -522,6 +535,12 @@ bool saveProject(const Project& p, ByteSink& out) {
       if (!o.chunk("TLEN", sizeof(tl)) || !o.write(tl, sizeof(tl))) return false;
     }
   }
+  {
+    uint8_t g[kGrovSize];
+    for (int i = 0; i < kPatterns; ++i) g[i] = p.patterns[i].groove;
+    for (int t = 0; t < kTracks; ++t) g[kPatterns + t] = p.tracks[t].humanize;
+    if (!o.chunk("GROV", sizeof(g)) || !o.write(g, sizeof(g))) return false;
+  }
 
   uint8_t c[12] = {'C', 'R', 'C', ' '};
   wr32(c + 4, 4);
@@ -619,6 +638,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, out);
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
+    else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;

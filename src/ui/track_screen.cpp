@@ -70,6 +70,12 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                         patLenSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
                         patLenPat_ = app_.editPattern();
                       }};
+  params_[kHumanize] = {"Humanize",
+                        [this](char* o, int n) {
+                          if (cfg().humanize) snprintf(o, n, "%u", cfg().humanize);
+                          else snprintf(o, n, "OFF");
+                        },
+                        [this](int d) { cfg().humanize = static_cast<uint8_t>(clampi(cfg().humanize + d, 0, 100)); }};
   params_[kCcA] = {"CC A", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccA); },
                    [this](int d) { cfg().ccA = static_cast<uint8_t>(clampi(cfg().ccA + d, 0, 127)); }, midiOnly};
   params_[kCcB] = {"CC B", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccB); },

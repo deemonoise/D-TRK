@@ -76,6 +76,8 @@ static void fillFull(Project& p) {
   p5.length = 128;
   p5.res = Resolution::SixteenthTriplet;
   p5.swing = 75;
+  p5.groove = 3;
+  p.tracks[6].humanize = 40;
   for (int t = 0; t < kTracks; ++t)
     for (int s = 0; s < 128; s += 3) {
       Step& st = p5.steps[t][s];
@@ -179,6 +181,7 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL_UINT16_ARRAY(x.scenes, y.scenes, kScenes);
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg &c = x.tracks[t], &d = y.tracks[t];
+    TEST_ASSERT_EQUAL(c.humanize, d.humanize);
     TEST_ASSERT_EQUAL_STRING(c.name, d.name);
     TEST_ASSERT_EQUAL(c.channel, d.channel);
     TEST_ASSERT_EQUAL(c.defVel, d.defVel);
@@ -261,6 +264,7 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(p.length, q.length);
     TEST_ASSERT_EQUAL(static_cast<int>(p.res), static_cast<int>(q.res));
     TEST_ASSERT_EQUAL(p.swing, q.swing);
+    TEST_ASSERT_EQUAL(p.groove, q.groove);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(p.trackLen, q.trackLen, kTracks);
     for (int t = 0; t < kTracks; ++t)
       TEST_ASSERT_EQUAL_MEMORY(p.steps[t], q.steps[t], sizeof(Step) * p.length);
@@ -297,8 +301,9 @@ void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   // PROJ, TRKS (16 x 16), INST, FMIN, FLTR, SLCE (16 x 72), TOUT (16 x 3), AUDI, SYNI (16 x 48), WTBL (empty),
-  // KITS (16 x 176), CHN2 (empty), SCNS
-  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16 + 7);  // + 7: AUDI sound fx bytes
+  // KITS (16 x 176), CHN2 (empty), SCNS, GROV (16 + 16)
+  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16 + 7 +
+                                        8 + 32);  // + 7: AUDI sound fx bytes
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
