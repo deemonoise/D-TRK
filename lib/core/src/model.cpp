@@ -70,6 +70,13 @@ void Project::reset() {
   dlyFb = 50;
   dlyTone = 90;
   dlyLevel = 100;
+  rvbSize = 60;
+  rvbDamp = 70;
+  rvbLevel = 80;
+  compAmt = 0;
+  compRel = 50;
+  scTrack = 0;
+  scDepth = 64;
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};

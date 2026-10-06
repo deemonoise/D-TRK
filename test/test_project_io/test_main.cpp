@@ -99,6 +99,13 @@ static void fillFull(Project& p) {
   p.dlyFb = 127;
   p.dlyTone = 0;
   p.dlyLevel = 7;
+  p.rvbSize = 11;
+  p.rvbDamp = 22;
+  p.rvbLevel = 33;
+  p.compAmt = 44;
+  p.compRel = 55;
+  p.scTrack = 16;
+  p.scDepth = 66;
   Instrument& i1 = p.instruments[1];
   strcpy(i1.name, "BASS_x1");
   i1.type = InstrType::Chip;
@@ -149,6 +156,10 @@ static void fillFull(Project& p) {
   drumSetMachine(i7, static_cast<uint8_t>(DrumMachine::Hh9));
   i7.fltMode = static_cast<uint8_t>(FltMode::Lp);
   i7.fenv = 63;
+  i7.drive = 77;
+  i7.rsend = 12;
+  i7.velCut = -20;
+  i7.velMac = 33;
 }
 
 static void assertSame(const Project& x, const Project& y) {
@@ -188,6 +199,13 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL(x.dlyFb, y.dlyFb);
   TEST_ASSERT_EQUAL(x.dlyTone, y.dlyTone);
   TEST_ASSERT_EQUAL(x.dlyLevel, y.dlyLevel);
+  TEST_ASSERT_EQUAL(x.rvbSize, y.rvbSize);
+  TEST_ASSERT_EQUAL(x.rvbDamp, y.rvbDamp);
+  TEST_ASSERT_EQUAL(x.rvbLevel, y.rvbLevel);
+  TEST_ASSERT_EQUAL(x.compAmt, y.compAmt);
+  TEST_ASSERT_EQUAL(x.compRel, y.compRel);
+  TEST_ASSERT_EQUAL(x.scTrack, y.scTrack);
+  TEST_ASSERT_EQUAL(x.scDepth, y.scDepth);
   for (int i = 0; i < kInstruments; ++i) {
     const Instrument &m = x.instruments[i], &n = y.instruments[i];
     TEST_ASSERT_EQUAL_STRING(m.name, n.name);
@@ -226,6 +244,10 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(m.fDec, n.fDec);
     TEST_ASSERT_EQUAL(m.keytrack, n.keytrack);
     TEST_ASSERT_EQUAL(m.send, n.send);
+    TEST_ASSERT_EQUAL(m.drive, n.drive);
+    TEST_ASSERT_EQUAL(m.rsend, n.rsend);
+    TEST_ASSERT_EQUAL(m.velCut, n.velCut);
+    TEST_ASSERT_EQUAL(m.velMac, n.velMac);
     TEST_ASSERT_EQUAL(m.sliceMode, n.sliceMode);
     TEST_ASSERT_EQUAL(m.chopMode, n.chopMode);
     TEST_ASSERT_EQUAL(m.chopN, n.chopN);
@@ -275,7 +297,7 @@ void test_empty_patterns_not_written() {
   TEST_ASSERT_TRUE(saveProject(a, out));
   // PROJ, TRKS (16 x 16), INST, FMIN, FLTR, SLCE (16 x 72), TOUT (16 x 3), AUDI, SYNI (16 x 48), WTBL (empty),
   // KITS (16 x 176), CHN2 (empty), SCNS
-  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16);
+  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16 + 7);  // + 7: AUDI sound fx bytes
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
@@ -1461,6 +1483,29 @@ void test_scns_round_trip_and_default() {
   TEST_ASSERT_EQUAL_HEX16(kSceneEmpty, b.scenes[0]);
 }
 
+void test_audi_sound_fx_defaults_and_clamps() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30});  // a 6-byte (older) AUDI
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(30, b.dlyLevel);
+  TEST_ASSERT_EQUAL(60, b.rvbSize);
+  TEST_ASSERT_EQUAL(70, b.rvbDamp);
+  TEST_ASSERT_EQUAL(80, b.rvbLevel);
+  TEST_ASSERT_EQUAL(0, b.compAmt);
+  TEST_ASSERT_EQUAL(50, b.compRel);
+  TEST_ASSERT_EQUAL(0, b.scTrack);
+  TEST_ASSERT_EQUAL(64, b.scDepth);
+  f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30, 200, 200, 200, 200, 200, 17, 200});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(127, b.rvbSize);
+  TEST_ASSERT_EQUAL(127, b.compAmt);
+  TEST_ASSERT_EQUAL(0, b.scTrack);  // no such track: off
+  TEST_ASSERT_EQUAL(127, b.scDepth);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -1519,5 +1564,6 @@ int main() {
   RUN_TEST(test_tlen_round_trip_and_default);
   RUN_TEST(test_tlen_clamped_to_length);
   RUN_TEST(test_scns_round_trip_and_default);
+  RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
   return UNITY_END();
 }

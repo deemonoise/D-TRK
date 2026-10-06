@@ -33,6 +33,12 @@
 // *FORMANT mixed, LFO on SHP1, sub, LP filter) and plays a 2-note chord per track every 2 s: 16 voices.
 // With -DAUDIO_BENCH_SYN_N=8 one note per track (8 voices). Same Serial line. It overwrites
 // instruments 8..15 and every track's out / instrument, like the FM bench.
+// FX bench: -DAUDIO_BENCH_FX is the DRUM bench with drive 100 and reverb send 100 on every bench
+// instrument, reverb level 100, compressor 100 keyed by track 1. Compare in PROJ while it runs:
+// Rvb level 0 = no reverb, Comp OFF = no compressor (the status-bar CPU figure).
+#if defined(AUDIO_BENCH_FX) && !defined(AUDIO_BENCH_DRUM)
+#define AUDIO_BENCH_DRUM
+#endif
 
 namespace audio {
 namespace {
@@ -352,6 +358,15 @@ void benchDrumBegin() {
     const uint8_t on[3] = {0x90, static_cast<uint8_t>(48 + k * 5), 100};
     synth->event(0, mt::kPreviewTrack, on, 3);
   }
+#ifdef AUDIO_BENCH_FX
+  for (int i = kBenchChipInstr; i < mt::kInstruments; ++i) {
+    project->instruments[i].drive = 100;
+    project->instruments[i].rsend = 100;
+  }
+  project->rvbLevel = 100;
+  project->compAmt = 100;
+  project->scTrack = 1;
+#endif
   benchDrumHits();
 }
 
@@ -554,6 +569,11 @@ void begin(mt::Project* p) {
     synth->setDelayBuffer(line, kDelayLen);
   else
     Serial.println("audio: no PSRAM for the delay line");
+  // Reverb: 5934 floats (23 KB), PSRAM like the delay line; none = no reverb.
+  if (auto* rv = static_cast<float*>(heap_caps_malloc(mt::Reverb::kBufLen * sizeof(float), MALLOC_CAP_SPIRAM)))
+    synth->setReverbBuffer(rv, mt::Reverb::kBufLen);
+  else
+    Serial.println("audio: no PSRAM for the reverb");
 #ifdef AUDIO_BENCH
   benchBegin();
 #endif

@@ -15,7 +15,10 @@ class ProjScreen : public Screen {
   void draw(LGFX_Sprite& s, int y0, int h) override;
 
  private:
-  enum Row : int { kBpm, kRoot, kScale, kLength, kRes, kSwing, kVolume, kDlyTime, kDlyFb, kDlyTone, kDlyLevel, kPreview, kRows };
+  enum Row : int {
+    kBpm, kRoot, kScale, kLength, kRes, kSwing, kVolume, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
+    kRvbSize, kRvbDamp, kRvbLevel, kCompAmt, kCompRel, kScTrack, kScDepth, kPreview, kRows
+  };
   static constexpr int kHeaderH = 28;
   static constexpr int kListRows = 10;  // (kAreaH - kHeaderH) / ParamList::kRowH
   static constexpr uint32_t kBpmSettleMs = 300;

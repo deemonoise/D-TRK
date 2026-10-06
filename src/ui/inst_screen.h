@@ -42,8 +42,9 @@ class InstScreen : public Screen {
  private:
   // Rows of every type first, then the type's own. Plain ints: they are added across groups.
   static constexpr int kName = 0, kType = 1, kVol = 2, kTranspose = 3, kFine = 4, kMode = 5, kGlide = 6,
-                       kSend = 7, kAttack = 8, kDecay = 9, kSustain = 10, kRelease = 11, kCommon = 12;
-  static constexpr int kMainRows = 8;  // MAIN = [0, 8), ENV = [8, kCommon)
+                       kSend = 7, kRsend = 8, kAttack = 9, kDecay = 10, kSustain = 11, kRelease = 12,
+                       kVelCut = 13, kVelMac = 14, kCommon = 15;
+  static constexpr int kMainRows = 9;  // MAIN = [0, 9), ENV = [9, kCommon)
   static constexpr int kWave = kCommon, kDuty = kCommon + 1, kPwmRate = kCommon + 2, kPwmDepth = kCommon + 3,
                        kChipRows = kCommon + 4;
   static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM, DRUM
@@ -54,11 +55,11 @@ class InstScreen : public Screen {
   static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kSenv = kSub + 3,
                        kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
-  static constexpr int kFltMode = 0, kCutoff = 1, kReso = 2, kFEnv = 3, kFAtk = 4, kFDec = 5, kKeytrack = 6,
-                       kLfoWave = 7, kLfoRate = 8, kLfoDepth = 9, kLfoDest = 10, kTailRows = 11;
-  static constexpr int kFiltRows = 7;  // tail: FILT = [0, 7), LFO = [7, kTailRows)
+  static constexpr int kDrive = 0, kFltMode = 1, kCutoff = 2, kReso = 3, kFEnv = 4, kFAtk = 5, kFDec = 6,
+                       kKeytrack = 7, kLfoWave = 8, kLfoRate = 9, kLfoDepth = 10, kLfoDest = 11, kTailRows = 12;
+  static constexpr int kFiltRows = 8;  // tail: FILT = [0, 8) (Drive first: it is before the filter), LFO
   // KIT: MAIN rows, then kLaneRows per lane.
-  static constexpr int kKitMain = 3;  // Name, Type, Send
+  static constexpr int kKitMain = 4;  // Name, Type, Send, Rvb send
   static constexpr int kLaneSrc = 0, kLaneSample = 1, kLaneInstr = 2, kLaneVol = 3, kLanePitch = 4,
                        kLaneDecay = 5, kLaneNote = 6, kLaneRows = 7;
   static constexpr int kKitRows = kKitMain + mt::kKitLanes * kLaneRows;

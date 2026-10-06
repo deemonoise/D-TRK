@@ -213,7 +213,7 @@ a { color: var(--accent); }
 <ul>
   <li><b>NOTE.</b> На пустом шаге ставится последняя введённая на дорожке нота (сначала C-4). Дальше нота двигается по ступеням лада проекта, с Shift — на октаву. Энкодером нельзя очистить шаг или поставить OFF, для этого есть меню. На INT-дорожке каждая введённая нота (энкодер, мини-клавиатура, кнопки дорожек) сразу звучит инструментом дорожки, если в PROJ включён Preview.</li>
   <li><b>VEL.</b> 0–127, с Shift ×10. Значение 0 показано как <span class="m">...</span> и означает «громкость дорожки по умолчанию».</li>
-  <li><b>FX1…FX6.</b> Перебор команд: <span class="m">...</span>, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM, SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC (поворот назад с пустого слота сразу даёт ACC). Выбор команды ставит её значение по умолчанию и показывает её полное название в строке статуса (например, VIBRATO). На пустом слоте первый поворот ставит последний записанный на этой дорожке в этот слот fx с тем же значением — удобно повторять fx шаг за шагом; дальше повороты перебирают команды как обычно.</li>
+  <li><b>FX1…FX6.</b> Перебор команд: <span class="m">...</span>, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM, SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM (поворот назад с пустого слота сразу даёт ARM). Выбор команды ставит её значение по умолчанию и показывает её полное название в строке статуса (например, VIBRATO). На пустом слоте первый поворот ставит последний записанный на этой дорожке в этот слот fx с тем же значением — удобно повторять fx шаг за шагом; дальше повороты перебирают команды как обычно.</li>
   <li><b>FX VAL.</b> ±1, с Shift ×10. У CND с Shift шаг тот же. На пустом слоте первый поворот так же подставляет последний fx дорожки; если его ещё не было, значение не меняется.</li>
 </ul>
 <p>Одна сессия правки (от включения до выключения) — один шаг undo.</p>
@@ -313,7 +313,7 @@ a { color: var(--accent); }
   <tr><td class="code">PGM</td><td>0–127</td><td>оба</td><td>Program Change. На INT — инструмент дорожки: 0 = INS1 … 15 = INS16, больше 15 — INS16. Действует до конца игры, в TRACK → Instr не записывается.</td></tr>
   <tr><td class="code">SLD</td><td>1–255</td><td>INT</td><td>Глайд, время ≈ значение × 4 мс (4 мс … 1,02 с).</td></tr>
   <tr><td class="code">VIB</td><td>00–FF (xy)</td><td>INT</td><td>Вибрато: x — скорость (x × 0,5 Гц), y — глубина (до ±2 полутонов при F).</td></tr>
-  <tr><td class="code">ARP</td><td>00–FF (xy)</td><td>INT</td><td>Арпеджио: нота, +x, +y полутонов по кругу, три переключения на шаг.</td></tr>
+  <tr><td class="code">ARP</td><td>00–FF (xy)</td><td>INT</td><td>Арпеджио: нота, +x, +y полутонов по кругу, три переключения на шаг (порядок и скорость меняет ARM). С CHD в том же шаге арпеджирует ноты аккорда — см. ниже.</td></tr>
   <tr><td class="code">VSL</td><td>−64…+63</td><td>INT</td><td>Плавное изменение громкости за один шаг: ±64 — на всю шкалу.</td></tr>
   <tr><td class="code">OFS</td><td>0–255</td><td>INT</td><td>Старт сэмпла с доли значение/256 области Start–End. Только SAMPLE.</td></tr>
   <tr><td class="code">CUT</td><td>1–96</td><td>INT</td><td>Оборвать ноту через N тиков, без release. Тик — 1/96 четверти: шаг 1/16 = 24 тика.</td></tr>
@@ -327,11 +327,15 @@ a { color: var(--accent); }
   <tr><td class="code">SLC</td><td>0–31</td><td>INT</td><td>Слайс сэмпла для ноты шага: 0 — первый слайс, 31 — 32-й. Только SAMPLE с Slices = FX (см. <a href="#slices">слайсы</a>).</td></tr>
   <tr><td class="code">OFF</td><td>0–96</td><td>оба</td><td>Note off через N тиков от начала шага (с учётом NDG). Ноты этого шага снимаются не позже (удары RAT после этого момента не звучат, TIE отменяется; на шаге с нотой — не раньше чем через 1 мс), висящий TIE дорожки снимается. На INT-дорожке отпускаются все голоса дорожки, включая сэмплы и DRUM, — с обычным release (CUT — без release). На пустом шаге <span class="m">OFF 0</span> = OFF в колонке ноты.</td></tr>
   <tr><td class="code">DLY</td><td>0–127</td><td>INT</td><td>Посыл в <a href="#delay">delay</a> для ноты шага (заменяет Dly send инструмента), любой тип инструмента.</td></tr>
+  <tr><td class="code">DRV</td><td>0–127</td><td>INT</td><td>Drive (перегруз) для ноты шага, любой тип инструмента; на шаге без ноты — для звучащей ноты.</td></tr>
+  <tr><td class="code">RVB</td><td>0–127</td><td>INT</td><td>Посыл в <a href="#reverb">reverb</a> для ноты шага (заменяет Rvb send инструмента).</td></tr>
+  <tr><td class="code">ARM</td><td>U1…R8</td><td>INT</td><td>Режим ARP: буква — порядок (U вверх, D вниз от верхней, B вверх-вниз без повтора крайних, R случайно), цифра — нот на шаг (1–8). Поворот сначала меняет цифру, потом букву. По умолчанию U3 = обычный ARP. Без ARP ничего не делает; держится вместе с ARP до следующего шага с нотой.</td></tr>
   <tr><td class="code">ACC</td><td>00–FF</td><td>оба</td><td>Только <a href="#drumtrack">драм-дорожки</a>: маска лейнов с полной громкостью шага (бит 0 — лейн 1), остальные лейны шага звучат на 60 %. На других дорожках показан серым и не действует.</td></tr>
 </table></div>
 
 <h3 id="synthfx">Синт-fx на INT-дорожках</h3>
-<p>SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY действуют только на дорожках с Out = INT. На MIDI-дорожках они ничего не отправляют и показаны серым. Значения VIB и ARP — шестнадцатеричные: <span class="m">47</span> = x 4, y 7.</p>
+<p><b>ARP + CHD.</b> Если в шаге есть и ARP (не 00), и CHD, на INT-дорожке играет одна нота, а ARP перебирает ноты аккорда (в ладу проекта) вместо 0, x, y — в порядке и со скоростью ARM. На MIDI-дорожке аккорд звучит целиком, как раньше. ARP 00 с CHD — обычный аккорд.</p>
+<p>SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, RVB, ARM действуют только на дорожках с Out = INT. На MIDI-дорожках они ничего не отправляют и показаны серым. Значения VIB и ARP — шестнадцатеричные: <span class="m">47</span> = x 4, y 7.</p>
 <ul>
   <li><b>Шаг с нотой.</b> Fx относятся к ноте этого шага. Новый шаг с нотой сбрасывает VIB и ARP: чтобы вибрато или арпеджио продолжались, повторите fx.</li>
   <li><b>Шаг без ноты</b> (пустой или OFF). VSL, CUT и ARP действуют сразу на звучащие голоса дорожки, VIB меняет параметры звучащего вибрато. SLD ведёт звучащий голос к последней сыгранной ноте дорожки. VIB и ARP держатся до следующего шага с нотой.</li>
@@ -433,11 +437,11 @@ a { color: var(--accent); }
 <p>Страница запоминается при смене инструмента и при смене Type: например, с FILT одного инструмента вы попадаете на FILT другого.</p>
 <div class="tbl"><table>
   <tr><th>Страница</th><th>Строки</th></tr>
-  <tr><td>MAIN</td><td>Name, Type, Volume, Transpose, Fine, Mode, Glide, Dly send</td></tr>
-  <tr><td>ENV</td><td>Attack, Decay, Sustain, Release и график ADSR справа</td></tr>
+  <tr><td>MAIN</td><td>Name, Type, Volume, Transpose, Fine, Mode, Glide, Dly send, Rvb send</td></tr>
+  <tr><td>ENV</td><td>Attack, Decay, Sustain, Release, Vel&gt;Cut, Vel&gt;Dec и график ADSR справа</td></tr>
   <tr><td>OSC / SMPL / FM / DRUM</td><td>Параметры типа: <a href="#chip">CHIP</a> — Wave, Duty, PWM rate, PWM depth; <a href="#sample">SAMPLE</a> — редактор сэмпла; <a href="#fm">FM</a> и <a href="#drum">DRUM</a> — Machine и 5 макросов; <a href="#synth">SYNTH</a> — осцилляторы и таблицы</td></tr>
   <tr><td>MOD (только SYNTH)</td><td>Sub, Sub oct, Noise, Env&gt;Shp, Env atk, Env dec</td></tr>
-  <tr><td>FILT</td><td>Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — <a href="#filter">фильтр</a></td></tr>
+  <tr><td>FILT</td><td>Drive, Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — <a href="#filter">drive и фильтр</a></td></tr>
   <tr><td>LFO</td><td>LFO wave, LFO rate, LFO depth, LFO dest</td></tr>
 </table></div>
 <h3>MAIN и ENV</h3>
@@ -451,10 +455,15 @@ a { color: var(--accent); }
   <tr><td>Mode</td><td>POLY (до 4 голосов на дорожку) / MONO (один голос, легато)</td><td>POLY</td></tr>
   <tr><td>Glide</td><td>OFF, 4–1020 мс; только в MONO</td><td>OFF</td></tr>
   <tr><td>Dly send</td><td>0–127, все типы</td><td>0</td></tr>
+  <tr><td>Rvb send</td><td>0–127, все типы (у KIT — на весь кит)</td><td>0</td></tr>
+  <tr><td>Vel&gt;Cut (ENV)</td><td>−64…+63; серый без фильтра</td><td>0</td></tr>
+  <tr><td>Vel&gt;Dec (ENV)</td><td>−64…+63; FM, DRUM, SYNTH</td><td>0</td></tr>
   <tr><td>Attack / Decay / Release (ENV)</td><td>0 мс … 10 с (экспоненциальная шкала, 128 значений)</td><td>0 / 18 мс / 9 мс</td></tr>
   <tr><td>Sustain (ENV)</td><td>0–100%</td><td>79%</td></tr>
 </table></div>
 <p><b>Dly send</b> — сколько звука инструмента уходит в общий <a href="#delay">delay</a> (сам звук не тише). Для отдельных шагов — fx <a href="#synthfx">DLY</a>.</p>
+<p><b>Rvb send</b> — посыл в общий <a href="#reverb">reverb</a>, для шагов — fx RVB.</p>
+<p><b>Velocity.</b> Vel&gt;Cut сдвигает срез фильтра по громкости ноты: при +63 нота с громкостью 127 открыта на ≈ 6 октав выше, с 1 — на столько же ниже; громкость 64 ничего не меняет. Vel&gt;Dec так же сдвигает макрос DECAY (у SYNTH — первый макрос, SHP1) на ±63 шага. 0 — выключено.</p>
 <p><b>Glide</b> — портаменто между перекрывающимися нотами в MONO (легато). Для отдельных шагов есть fx <a href="#synthfx">SLD</a>.</p>
 <p><b>График ADSR</b> на странице ENV меняется вместе со значениями: ширина участков attack, decay и release — по логарифму времени, высота полки — Sustain. Если огибающая у типа не действует (FM-ударные, DRUM), график серый, как и строки.</p>
 <h3 id="chip">CHIP (страница OSC)</h3>
@@ -640,9 +649,10 @@ a { color: var(--accent); }
 </ul>
 <div class="note warn"><p>Импорт таблицы пишет во flash и работает только при остановленном воспроизведении («STOP PLAYBACK FIRST»). Выбор уже импортированной или вшитой таблицы работает и во время игры.</p></div>
 <h3 id="filter">Фильтр и LFO</h3>
-<p>Страницы FILT и LFO есть у всех типов. Фильтр — SVF 12 дБ/окт после всего голоса (у FM и DRUM — после их собственного звука).</p>
+<p>Страницы FILT и LFO есть у всех типов. Цепь голоса: звук → <b>Drive</b> → фильтр. Фильтр — SVF 12 дБ/окт после всего голоса (у FM и DRUM — после их собственного звука).</p>
 <div class="tbl"><table>
   <tr><th>Параметр</th><th>Значения</th><th>По умолчанию</th><th>Смысл</th></tr>
+  <tr><td>Drive</td><td>OFF, 1–127</td><td>OFF</td><td>Перегруз (tanh) перед фильтром: чем больше, тем плотнее и громче тихие участки. Лок — fx <span class="m">DRV</span>, цель LFO — DRIVE.</td></tr>
   <tr><td>Filter</td><td>OFF, LP, BP, HP</td><td>OFF</td><td>Режим. OFF — обход: звук как без фильтра, остальные строки фильтра серые.</td></tr>
   <tr><td>Cutoff</td><td>20 Гц … 14 кГц (128 значений, экспонента)</td><td>14 кГц</td><td>Частота среза. Лок — fx <span class="m">FLT</span>.</td></tr>
   <tr><td>Reso</td><td>0–127</td><td>0</td><td>Резонанс (Q 0,5–20). Высокий резонанс громкий — убавьте Volume. Лок — fx <span class="m">RES</span>.</td></tr>
@@ -653,7 +663,7 @@ a { color: var(--accent); }
   <tr><td>LFO wave</td><td>SINE, TRI, SAW, SQR, RND</td><td>SINE</td><td>Форма LFO; RND — случайное значение на каждый период.</td></tr>
   <tr><td>LFO rate</td><td>0,05–30 Гц</td><td>≈ 1,3 Гц</td><td>Скорость, экспоненциальная шкала; без синхронизации с темпом.</td></tr>
   <tr><td>LFO depth</td><td>−64…+63</td><td>0</td><td>Глубина, 0 — LFO выключен (тогда wave, rate и dest серые). Полная глубина: PITCH ±12 полутонов, VOL ±100%, CUTOFF ±64 шага Cutoff (≈ ±4,8 октавы), макрос ±64.</td></tr>
-  <tr><td>LFO dest</td><td>PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF</td><td>PITCH</td><td>Цель. DECAY…CONTOUR (макросы) — только у FM, DRUM и SYNTH (у SYNTH они называются SHP1, SHP2, MIX, DET, SENV), у CHIP и SAMPLE они пропускаются. CUTOFF действует при включённом фильтре.</td></tr>
+  <tr><td>LFO dest</td><td>PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE</td><td>PITCH</td><td>Цель. DECAY…CONTOUR (макросы) — только у FM, DRUM и SYNTH (у SYNTH они называются SHP1, SHP2, MIX, DET, SENV), у CHIP и SAMPLE они пропускаются. CUTOFF действует при включённом фильтре. DRIVE — ±64 шага Drive на полной глубине.</td></tr>
 </table></div>
 <ul>
   <li>Огибающая фильтра и фаза LFO перезапускаются на каждой новой ноте, кроме легато (MONO с перекрытием, FM CHORD): там огибающая продолжает идти, как у 303.</li>
@@ -732,8 +742,17 @@ a { color: var(--accent); }
   <tr><td>Feedback</td><td>0–127, по умолчанию 50</td><td>проект: сколько эха возвращается на повтор; 0 — одно эхо, 127 — длинный хвост (затухает всегда)</td></tr>
   <tr><td>Tone</td><td>0–127, по умолчанию 90</td><td>проект: яркость эха (ФНЧ 300 Гц … 16 кГц, 127 — без фильтра); каждый повтор темнее предыдущего</td></tr>
   <tr><td>Dly level</td><td>0–127, по умолчанию 100</td><td>проект: громкость эха; 0 — delay выключен (строки выше серые)</td></tr>
+  <tr><td>Reverb</td><td>0–127, по умолчанию 60</td><td>проект: размер <a href="#reverb">reverb</a> — длина хвоста</td></tr>
+  <tr><td>Rvb damp</td><td>0–127, по умолчанию 70</td><td>проект: затухание высоких в хвосте (больше — темнее)</td></tr>
+  <tr><td>Rvb level</td><td>0–127, по умолчанию 80</td><td>проект: громкость reverb; 0 — выключен</td></tr>
+  <tr><td>Comp</td><td>OFF, 1–127, по умолчанию OFF</td><td>проект: <a href="#comp">компрессор</a> на весь встроенный звук; больше — ниже порог (−6 … −30 дБ)</td></tr>
+  <tr><td>Comp rel</td><td>20 мс … 1 с, по умолчанию ≈ 90 мс</td><td>проект: восстановление компрессора</td></tr>
+  <tr><td>SC track</td><td>OFF, T1–T16, по умолчанию OFF</td><td>проект: дорожка-ключ sidechain: её звук давит весь микс</td></tr>
+  <tr><td>SC depth</td><td>0–127, по умолчанию 64</td><td>проект: сила sidechain</td></tr>
   <tr><td>Preview</td><td>ON / OFF, по умолчанию ON</td><td>проект: ввод ноты в GRID на INT-дорожке сразу звучит</td></tr>
 </table></div>
+<p id="reverb"><b>Reverb</b> — общий моно-ревербератор (4 гребёнчатых фильтра и 2 allpass, как Freeverb). Инструменты шлют в него параметром Rvb send, шаги — fx RVB. Эхо delay в reverb не идёт. Смена размера на ходу перескакивает.</p>
+<p id="comp"><b>Компрессор</b> стоит на сумме встроенного звука после delay и reverb, перед общей громкостью: 4:1, атака 1 мс, порог и подъём громкости (половина снижения порога, пополам) задаёт Comp. <b>Sidechain:</b> SC track = дорожка бочки, Comp 60–100, SC depth 100+ — при каждом ударе весь микс приседает («качает»), Comp rel задаёт, как быстро он возвращается. Ключ — встроенный звук этой дорожки (INT), сама она звучит как обычно. Comp OFF — компрессор не трогает звук.</p>
 <p id="delay"><b>Delay</b> — один общий моно-delay встроенного звука (на MIDI-выход не действует). Инструменты шлют в него звук параметром Dly send, отдельные шаги — fx DLY. Время синхронно с BPM: 1/16 при 120 BPM = 125 мс. Линия рассчитана на 4 с — 16/16 до 60 BPM; при более медленном темпе время упирается в 4 с. Смена времени или темпа на ходу перескакивает (возможен щелчок на хвосте). На стопе эхо доигрывает.</p>
 <p><b>Лады:</b> Chromatic, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor, Pentatonic major, Pentatonic minor, Blues. По умолчанию C Chromatic, то есть без ограничений.</p>
 <p><b>Как работает лад.</b> Ноты не фильтруются, лад задаёт ступени. По ступеням ходят: ввод ноты энкодером, Transpose в режиме SCALE, NRN, CHD и Euclid. Нота вне лада при первом движении сначала прижимается к ближайшей нижней ноте лада. Октавные сдвиги и мини-клавиатура лад не учитывают. Смена лада не переписывает уже введённые ноты.</p>

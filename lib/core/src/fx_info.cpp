@@ -47,6 +47,9 @@ constexpr Info kInfo[] = {
     {"OFF", "NOTE OFF", 0, 96, 0, false},    // OFF: ticks after the step start
     {"DLY", "DELAY SEND", 0, 127, 64, false},  // DLY: delay send lock
     {"ACC", "ACCENT", 0, 255, 0xFF, false},    // ACC: lane mask (hex), drum tracks
+    {"DRV", "DRIVE", 0, 127, 64, false},       // DRV: drive lock
+    {"RVB", "REVERB SEND", 0, 127, 64, false}, // RVB: reverb send lock
+    {"ARM", "ARP MODE", 0, 0, kArmDefault, false},  // ARM: own ordering (rate 1..8, then mode)
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -102,6 +105,11 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::ARP:
     case Fx::ACC: snprintf(out, 5, " %02X", v); return;
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
+    case Fx::ARM: {
+      const int rate = v & 15;
+      snprintf(out, 5, " %c%d", "UDBR"[(v >> 4) & 3], rate < 1 ? 1 : (rate > kArmRateMax ? kArmRateMax : rate));
+      return;
+    }
     case Fx::CND:
       if (v == 0) snprintf(out, 5, "FST");
       else if (v == kCndFill) snprintf(out, 5, "FIL");
@@ -118,6 +126,12 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
     i = i < 0 ? 0 : (i >= kCndCount ? kCndCount - 1 : i);
     return cndValue(i);
   }
+  if (f == Fx::ARM) {  // index mode * 8 + rate - 1: the rate first, then the mode
+    const int rate = (v & 15) < 1 ? 1 : ((v & 15) > kArmRateMax ? kArmRateMax : (v & 15));
+    int i = ((v >> 4) & 3) * kArmRateMax + rate - 1 + delta;
+    i = i < 0 ? 0 : (i >= kArmModes * kArmRateMax ? kArmModes * kArmRateMax - 1 : i);
+    return static_cast<uint8_t>(((i / kArmRateMax) << 4) | (i % kArmRateMax + 1));
+  }
   const Info& in = info(f);
   int cur = in.isSigned ? fxSigned(v) : v;
   cur += delta;
@@ -125,7 +139,7 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   return static_cast<uint8_t>(cur);
 }
 
-bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY; }
+bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f < Fx::Count); }
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
 

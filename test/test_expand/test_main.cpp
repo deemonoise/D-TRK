@@ -535,6 +535,50 @@ void test_cnd_fill_values() {
   TEST_ASSERT_FALSE(expandStep(s, t, on, rng, out));
 }
 
+// ---- ARP + CHD ----
+
+void test_arp_chd_int_emits_root_and_arpchord() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0x37};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(1, countKind(out, EvKind::NoteOn));
+  int arpChord = -1, firstOn = -1;
+  for (int i = 0; i < out.count; ++i) {
+    if (out.ev[i].kind == EvKind::SynthFx && out.ev[i].note == kSynthArpChord) arpChord = i;
+    if (out.ev[i].kind == EvKind::NoteOn && firstOn < 0) firstOn = i;
+  }
+  TEST_ASSERT_TRUE(arpChord >= 0 && arpChord < firstOn);  // before the note-on
+  TEST_ASSERT_EQUAL(kChordTriad, out.ev[arpChord].vel);
+  TEST_ASSERT_EQUAL(60, out.ev[firstOn].note);
+}
+
+void test_arp_chd_midi_full_chord() {
+  TrackCfg t;
+  t.out = TrackOut::Midi;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0x37};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, countKind(out, EvKind::NoteOn));
+  TEST_ASSERT_EQUAL(0, countKind(out, EvKind::SynthFx));
+}
+
+void test_arp_00_chd_normal_chord() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, countKind(out, EvKind::NoteOn));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_empty_and_off_produce_nothing);
@@ -579,5 +623,8 @@ int main() {
   RUN_TEST(test_drum_off_cuts_notes);
   RUN_TEST(test_acc_ignored_on_melodic_track);
   RUN_TEST(test_cnd_fill_values);
+  RUN_TEST(test_arp_chd_int_emits_root_and_arpchord);
+  RUN_TEST(test_arp_chd_midi_full_chord);
+  RUN_TEST(test_arp_00_chd_normal_chord);
   return UNITY_END();
 }

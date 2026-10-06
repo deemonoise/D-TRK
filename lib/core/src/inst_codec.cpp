@@ -48,6 +48,10 @@ void packFm(const Instrument& m, uint8_t* b) {
   b[7] = m.lfoRate;
   b[8] = static_cast<uint8_t>(m.lfoDepth);
   b[9] = m.lfoDest;
+  b[10] = m.drive;  // 10..13: once reserved (0), so older files read the defaults
+  b[11] = m.rsend;
+  b[12] = static_cast<uint8_t>(m.velCut);
+  b[13] = static_cast<uint8_t>(m.velMac);
 }
 
 void unpackFm(const uint8_t* b, Instrument& m) {
@@ -58,6 +62,10 @@ void unpackFm(const uint8_t* b, Instrument& m) {
   m.lfoRate = clampu(b[7], 0, 127);
   m.lfoDepth = clamps(static_cast<int8_t>(b[8]), -64, 63);
   m.lfoDest = b[9] < static_cast<int>(LfoDest::Count) ? b[9] : 0;
+  m.drive = clampu(b[10], 0, 127);
+  m.rsend = clampu(b[11], 0, 127);
+  m.velCut = clamps(static_cast<int8_t>(b[12]), -64, 63);
+  m.velMac = clamps(static_cast<int8_t>(b[13]), -64, 63);
 }
 
 void unpackInst(const uint8_t* b, Instrument& m) {

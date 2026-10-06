@@ -84,6 +84,15 @@ InstScreen::InstScreen(App& app) : app_(app) {
                  },
                  [this](int d) { inst().glide = static_cast<uint8_t>(clampi(inst().glide + d, 0, 255)); },
                  [this] { return !inst().mono; }};
+    p[kRsend] = {"Rvb send", [this](char* o, int n) { snprintf(o, n, "%u", inst().rsend); },
+                 [this](int d) { inst().rsend = static_cast<uint8_t>(clampi(inst().rsend + d, 0, 127)); }};
+    // Velocity: 64 changes nothing; full depth moves the cutoff +-6 octaves / DECAY +-63 at 127 / 0.
+    p[kVelCut] = {"Vel>Cut", [this](char* o, int n) { snprintf(o, n, "%+d", inst().velCut); },
+                  [this](int d) { inst().velCut = static_cast<int8_t>(clampi(inst().velCut + d, -64, 63)); },
+                  [this] { return inst().fltMode == static_cast<uint8_t>(mt::FltMode::Off); }};
+    p[kVelMac] = {"Vel>Dec", [this](char* o, int n) { snprintf(o, n, "%+d", inst().velMac); },
+                  [this](int d) { inst().velMac = static_cast<int8_t>(clampi(inst().velMac + d, -64, 63)); },
+                  [this] { return inst().type == mt::InstrType::Chip || inst().type == mt::InstrType::Sample; }};
     p[kSend] = {"Dly send", [this](char* o, int n) { snprintf(o, n, "%u", inst().send); },
                 [this](int d) { inst().send = static_cast<uint8_t>(clampi(inst().send + d, 0, 127)); }};
   }
@@ -230,6 +239,7 @@ void InstScreen::initKit() {
   kit_[0] = chip_[kName];
   kit_[1] = chip_[kType];
   kit_[2] = chip_[kSend];
+  kit_[3] = chip_[kRsend];
   static const char* const kSrcLabels[] = {"L1 Src", "L2 Src", "L3 Src", "L4 Src",
                                            "L5 Src", "L6 Src", "L7 Src", "L8 Src"};
   static_assert(sizeof(kSrcLabels) / sizeof(kSrcLabels[0]) == mt::kKitLanes, "a label per lane");
@@ -323,6 +333,12 @@ void InstScreen::buildLanes(bool keep) {
 }
 
 void InstScreen::initTail(Param* t, bool macros) {
+  t[kDrive] = {"Drive",
+               [this](char* o, int n) {
+                 if (inst().drive) snprintf(o, n, "%u", inst().drive);
+                 else snprintf(o, n, "OFF");
+               },
+               [this](int d) { inst().drive = static_cast<uint8_t>(clampi(inst().drive + d, 0, 127)); }};
   auto off = [this] { return inst().fltMode == static_cast<uint8_t>(mt::FltMode::Off); };
   auto noEnv = [this, off] { return off() || inst().fenv == 0; };
   t[kFltMode] = {"Filter",
@@ -376,11 +392,15 @@ void InstScreen::initTail(Param* t, bool macros) {
   // DRUM shows the generic macro names here, not the machine's; SYNTH its own.
   t[kLfoDest] = {"LFO dest",
                  [this](char* o, int n) {
-                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE",
-                                                        "SWEEP", "CONTOUR", "VOL",   "CUTOFF"};
-                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET", "SENV", "VOL", "CUTOFF"};
+                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP",
+                                                        "CONTOUR", "VOL",  "CUTOFF", "DRIVE"};
+                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET",
+                                                      "SENV",  "VOL",  "CUTOFF", "DRIVE"};
+                   constexpr int kN = static_cast<int>(mt::LfoDest::Count);
+                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN, "LFO dest names");
+                   static_assert(sizeof(kSyn) / sizeof(kSyn[0]) == kN, "LFO dest names");
                    const bool syn = inst().type == mt::InstrType::Synth;
-                   snprintf(o, n, "%s", (syn ? kSyn : kNames)[inst().lfoDest % 8]);
+                   snprintf(o, n, "%s", (syn ? kSyn : kNames)[inst().lfoDest % kN]);
                  },
                  [this, macros](int d) { inst().lfoDest = mt::lfoDestStep(inst().lfoDest, d, macros); }, noLfo};
 }

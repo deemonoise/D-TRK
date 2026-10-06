@@ -87,12 +87,13 @@ constexpr int kMachineMax = 16;
 static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
-// Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay send.
-enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLocks };
-static_assert(kLocks <= 8, "lockMask is a uint8_t");
+// Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
+// send, the drive, the reverb send.
+enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLocks };
+static_assert(kLocks <= 16, "lockMask is a uint16_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
 // Dec..Con = macro index + 1 (FM / DRUM only). Stored in files: new targets before Count only.
-enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Count };
+enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive, Count };
 
 // Internal synth instrument. One-byte fields: the audio task reads them without a lock.
 constexpr uint8_t kMasterVolMax = 200;  // master volume %, above 100 = up to +6 dB
@@ -140,6 +141,10 @@ struct Instrument {
   uint8_t fAtk = 0, fDec = 40;  // envTimeMs; fDec 0 = hold
   uint8_t keytrack = 0;         // 0..127 = 0..100 %
   uint8_t send = 0;             // delay send 0..127 (every type)
+  uint8_t drive = 0;            // tanh drive before the filter, 0..127 (0 = off), every type
+  uint8_t rsend = 0;            // reverb send 0..127 (every type)
+  int8_t velCut = 0;            // velocity -> cutoff, -64..63 (+-6 octaves at full depth and velocity)
+  int8_t velMac = 0;            // velocity -> DECAY macro, -64..63 (FM / DRUM / SYNTH)
   // SYNTH (see synth_syn.h): oscillators 1, 2 (SynOsc), their wavetables (project list name or a
   // built-in "*NAME"), osc 2 semitones, hard sync, sub (level, 0 = -1 / 1 = -2 octaves), noise,
   // env->SHAPE attack / decay (envTimeMs, decay 0 = hold). Macros: SHP1, SHP2, MIX, DET, SENV.
@@ -194,8 +199,12 @@ uint8_t lfoDestStep(uint8_t dest, int d, bool macros);
 // ACC: drum tracks, lane mask: lanes in it play at the step velocity, the others at 60 % (fxDrumOnly).
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
-  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, Count
+  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, Count
 };
+// DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.
+// ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
+// kArmDefault (UP, 3) is the plain ARP. INT tracks only.
+constexpr uint8_t kArmModes = 4, kArmRateMax = 8, kArmDefault = 0x03;
 // CND values beyond FST (0) and A:B (b = 2..8): FIL plays only while fill is held, NFL only while it is
 // not. Their low nibble (< 2) is never an A:B value.
 constexpr uint8_t kCndFill = 0x01, kCndNoFill = 0x02;
@@ -207,6 +216,8 @@ enum class PerfFx : uint8_t { None, Rat2, Rat4, FltLow, FltHigh, DlyMax, DecShor
 // Synth message 0xF5 cmd val: cmd is an Fx (synth fx) or kSynthStep, a step start on the INT
 // track with val = ticks per step | 0x80 if the step has a note (sent by the sequencer).
 constexpr uint8_t kSynthStep = 0xF0;
+// Synth message 0xF5 kSynthArpChord chord (a CHD value): the track's ARP cycles that chord's notes.
+constexpr uint8_t kSynthArpChord = 0xF1;
 
 struct FxSlot {
   Fx cmd = Fx::None;
@@ -322,6 +333,16 @@ struct Project {
   uint8_t dlyFb = 50;
   uint8_t dlyTone = 90;
   uint8_t dlyLevel = 100;
+  // Reverb (INT, send per instrument): size, damping, return level, 0..127.
+  uint8_t rvbSize = 60;
+  uint8_t rvbDamp = 70;
+  uint8_t rvbLevel = 80;
+  // Master compressor: amount 0..127 (0 = off), release 0..127; sidechain key = track scTrack (1..kTracks,
+  // 0 = none) at depth scDepth 0..127.
+  uint8_t compAmt = 0;
+  uint8_t compRel = 50;
+  uint8_t scTrack = 0;
+  uint8_t scDepth = 64;
   ProjSample samples[kProjSamples];
   uint8_t sampleCount = 0;  // names unique ignoring case
   ProjWavetable wavetables[kProjWavetables];

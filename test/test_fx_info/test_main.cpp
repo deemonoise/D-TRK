@@ -67,7 +67,7 @@ void test_cnd_order_has_fill() {
 
 void test_cmd_cycle() {
   TEST_ASSERT_TRUE(fxNextCmd(Fx::None, 1) == Fx::CHN);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::ACC);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::ARM);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::PGM, 1) == Fx::SLD);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::CUT, 1) == Fx::DCY);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::FLT);
@@ -75,7 +75,37 @@ void test_cmd_cycle() {
   TEST_ASSERT_TRUE(fxNextCmd(Fx::SLC, 1) == Fx::OFF);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::OFF, 1) == Fx::DLY);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::ACC);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::ACC, 1) == Fx::None);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ACC, 1) == Fx::DRV);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::RVB, 1) == Fx::ARM);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARM, 1) == Fx::None);
+}
+
+void test_new_sound_fx() {
+  TEST_ASSERT_EQUAL_STRING("DRV", fxName(Fx::DRV));
+  TEST_ASSERT_EQUAL_STRING("RVB", fxName(Fx::RVB));
+  TEST_ASSERT_EQUAL_STRING("ARM", fxName(Fx::ARM));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::DRV) && fxSynthOnly(Fx::RVB) && fxSynthOnly(Fx::ARM));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::ACC));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::DRV));
+  TEST_ASSERT_EQUAL(0x03, fxDefault(Fx::ARM));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::RVB, 120, 50));
+}
+
+void test_arm_format_and_step() {
+  char o[5];
+  fxFormat(Fx::ARM, 0x03, o);
+  TEST_ASSERT_EQUAL_STRING(" U3", o);
+  fxFormat(Fx::ARM, 0x14, o);
+  TEST_ASSERT_EQUAL_STRING(" D4", o);
+  fxFormat(Fx::ARM, 0x22, o);
+  TEST_ASSERT_EQUAL_STRING(" B2", o);
+  fxFormat(Fx::ARM, 0x38, o);
+  TEST_ASSERT_EQUAL_STRING(" R8", o);
+  TEST_ASSERT_EQUAL_HEX8(0x04, fxStep(Fx::ARM, 0x03, 1));   // rate first
+  TEST_ASSERT_EQUAL_HEX8(0x11, fxStep(Fx::ARM, 0x08, 1));   // rate 8 -> next mode, rate 1
+  TEST_ASSERT_EQUAL_HEX8(0x38, fxStep(Fx::ARM, 0x38, 1));   // clamps at R8
+  TEST_ASSERT_EQUAL_HEX8(0x01, fxStep(Fx::ARM, 0x01, -1));  // clamps at U1
+  TEST_ASSERT_EQUAL_HEX8(0x38, fxStep(Fx::ARM, 0x01, 100));
 }
 
 void test_filter_fx() {
@@ -219,5 +249,7 @@ int main() {
   RUN_TEST(test_dly_fx);
   RUN_TEST(test_acc_lane_mask);
   RUN_TEST(test_cnd_order_has_fill);
+  RUN_TEST(test_new_sound_fx);
+  RUN_TEST(test_arm_format_and_step);
   return UNITY_END();
 }

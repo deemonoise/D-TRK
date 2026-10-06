@@ -15,7 +15,10 @@ constexpr size_t kPatHeader = 4;
 constexpr uint32_t kOldStepBytes = 6;  // PATN before 6 fx slots: note, vel, 2 x (cmd, val)
 constexpr int kOldTracks = 8;          // PATN of the 8-track firmware
 constexpr size_t kToutSize = 3;
-constexpr size_t kAudiSize = 6;     // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel
+// masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
+// scTrack, scDepth.
+constexpr size_t kAudiSize = 13;
+constexpr size_t kAudiDlySize = 6;  // older files: up to dlyLevel
 constexpr size_t kAudiMinSize = 2;  // older files: masterVol, preview
 constexpr size_t kSmplSize = 24;  // name[16] u32 crc u32 frames
 constexpr size_t kKitLaneSize = sizeof(KitLane);         // 22: name[16], pad, instr, vol, pitch, decay, note
@@ -222,11 +225,20 @@ LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
   if (!in.read(b, n)) return LoadErr::Truncated;
   p.masterVol = clampu(b[0], 0, kMasterVolMax);
   p.preview = b[1] != 0;
-  if (n == kAudiSize) {
+  if (n >= kAudiDlySize) {
     p.dlyTime = clampu(b[2], 1, kDlyTimeMax);
     p.dlyFb = clampu(b[3], 0, 127);
     p.dlyTone = clampu(b[4], 0, 127);
     p.dlyLevel = clampu(b[5], 0, 127);
+  }
+  if (n >= kAudiSize) {
+    p.rvbSize = clampu(b[6], 0, 127);
+    p.rvbDamp = clampu(b[7], 0, 127);
+    p.rvbLevel = clampu(b[8], 0, 127);
+    p.compAmt = clampu(b[9], 0, 127);
+    p.compRel = clampu(b[10], 0, 127);
+    p.scTrack = b[11] <= kTracks ? b[11] : 0;
+    p.scDepth = clampu(b[12], 0, 127);
   }
   return in.skip(size - n) ? LoadErr::Ok : LoadErr::Truncated;
 }
@@ -458,8 +470,13 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
-  const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0), p.dlyTime,
-                                 p.dlyFb,     p.dlyTone,                             p.dlyLevel};
+  const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0),
+                                 p.dlyTime,   p.dlyFb,
+                                 p.dlyTone,   p.dlyLevel,
+                                 p.rvbSize,   p.rvbDamp,
+                                 p.rvbLevel,  p.compAmt,
+                                 p.compRel,   p.scTrack,
+                                 p.scDepth};
   if (!o.chunk("AUDI", kAudiSize) || !o.write(au, sizeof(au))) return false;
 
   // Always written, empty or not.

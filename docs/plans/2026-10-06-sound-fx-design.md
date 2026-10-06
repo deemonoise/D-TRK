@@ -115,6 +115,12 @@ Estimates above: drive ≤ 2 % (all 16 voices driven), reverb 3–5 %, compresso
 with a bench (`AUDIO_BENCH_FX`) that reads the status-bar CPU figure with and without reverb /
 compressor on the 16-voice DRUM bench; the executor writes the measured numbers here.
 
+Measured: **not yet** (2026-10-06, no device in that session). Build `pio run -e wt32-fxbench -t upload`
+(drive 100 + reverb send 100 on every bench instrument, reverb level 100, compressor 100 keyed by
+track 1), read the status-bar CPU after 10 s, then set PROJ -> Rvb level 0 and Comp OFF and read it
+again; fill in: DRUM bench baseline __ %, + drive + reverb __ %, + compressor __ %. Host-side, the
+unit tests show drive 0 / Rvb send 0 / Comp OFF are bit-exact bypasses.
+
 ## Tests (native)
 
 - Drive: table monotonic, `drive(x, 0) == x` bit-exact, drive 127 saturates (|y| ≤ 1, y(1) ≈ 1).

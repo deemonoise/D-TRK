@@ -159,6 +159,13 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
       notes[0] = static_cast<uint8_t>(root);
       nNotes = 1;
     }
+    // INT + ARP + CHD: the synth arpeggiates the chord from the root alone (kSynthArpChord, before the
+    // note-on). MIDI tracks have no ARP and keep the whole chord; ARP 00 is off: a plain chord.
+    const FxSlot* arp = s.find(Fx::ARP);
+    if (t.out == TrackOut::Int && arp && arp->val && nNotes > 1 && out.count < kMaxStepEvents) {
+      out.ev[out.count++] = {nudge, EvKind::SynthFx, ch, kSynthArpChord, f->val};
+      nNotes = 1;
+    }
   }
 
   uint32_t strum = 0;

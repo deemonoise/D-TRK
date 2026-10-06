@@ -1,7 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include "model.h"
+#include "synth_comp.h"
 #include "synth_delay.h"
+#include "synth_reverb.h"
 #include "synth_voice.h"
 
 namespace mt {
@@ -50,6 +52,8 @@ class Synth {
   void setWavetables(const WtSource* w) { wt_ = w; }
   // Delay line (len samples, owned by the caller), nullptr = no delay. Clears it.
   void setDelayBuffer(int16_t* buf, uint32_t len) { delay_.setBuffer(buf, len); }
+  // Reverb buffer (len floats >= Reverb::kBufLen, owned by the caller), nullptr = no reverb. Clears it.
+  void setReverbBuffer(float* buf, int len) { reverb_.setBuffer(buf, len); }
   // Queues a message for the next render(). offset: sample index inside that block, clamped to
   // 0..kBlock-1. False if dropped (bad track, empty or full queue; offs evict other messages).
   bool event(int offset, uint8_t track, const uint8_t* b, uint8_t len);
@@ -83,6 +87,10 @@ class Synth {
     uint8_t tps;       // ticks per step (kSynthStep)
     bool noteStep;     // the current step has a note: fx wait for its note-ons
     uint8_t vib, arp;  // xy, 0 = off; until a new step with a note
+    uint8_t arm;       // ARP mode (ARM), kArmDefault until set; reset with the ARP
+    uint8_t arpChord;  // kSynthArpChord: the CHD value the next note-on arpeggiates, kNoArpChord = none
+    uint8_t arpN;      // > 1: the ARP cycles arpNotes (semitones above the note) instead of 0, x, y
+    int8_t arpNotes[4];
     uint8_t cut;       // ticks, 0 = none; this step's note-ons
     bool vslSet;
     int8_t vsl;        // per step, this step's note-ons
@@ -92,7 +100,7 @@ class Synth {
     bool slcSet;
     uint8_t slc;       // SLC: slice of the next SAMPLE note-on
     float lastPitch;   // of the last note-on, < 0 = none (SLD)
-    uint8_t lockMask;  // LockBit: this step's note-ons
+    uint16_t lockMask;  // LockBit: this step's note-ons
     uint8_t lock[kLocks];
   };
   static constexpr uint8_t kNoInstr = mt::kNoInstr;
@@ -113,6 +121,7 @@ class Synth {
   void controlDrum(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol);
   void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol);
   static void macros(const Voice& v, const Instrument& m, float l, float (&mac)[kFmMacros]);
+  static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
   void controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut);
   float lfo(Voice& v, const Instrument& m, int dt);
   static bool oneShot(const Voice& v);
@@ -134,8 +143,14 @@ class Synth {
   TrackRt rt_[kSynthTracks];
   Ev ev_[kMaxEvents];
   int nEv_ = 0;
+  static constexpr uint8_t kNoArpChord = 0xFF;
+  void resetArp(TrackRt& r) const;
   float mix_[kBlock];
   float send_[kBlock];  // delay send bus
+  float rsend_[kBlock];  // reverb send bus
+  float sc_[kBlock];     // sidechain key: the voices of Project::scTrack
+  Reverb reverb_;
+  Compressor comp_;
   Delay delay_;
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
   uint32_t rng_ = 0x2545F491;  // LFO Random

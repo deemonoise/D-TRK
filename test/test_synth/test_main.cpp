@@ -1,6 +1,7 @@
 #include <math.h>
 #include <string.h>
 #include <unity.h>
+#include "scale.h"
 #include "slices.h"
 #include "synth.h"
 #include "synth_drum_machines.h"
@@ -2109,6 +2110,241 @@ void test_kit_unknown_note_silent() {
   TEST_ASSERT_EQUAL(-1, onlyVoice());
 }
 
+// ---- sound fx: drive, reverb, compressor, ARM, velocity ----
+
+static float noteRms(uint8_t note, uint8_t vel, int blocks) {
+  s->reset();
+  noteOn(0, 0, note, vel);
+  return rmsBlocks(blocks);
+}
+
+void test_drive_zero_is_bit_identical() {
+  noteOn(0, 0, 60);
+  int16_t ref[Synth::kBlock * 4];
+  for (int k = 0; k < 4; ++k) s->render(ref + k * Synth::kBlock);
+  s->reset();
+  p->instruments[0].drive = 0;
+  p->instruments[0].rsend = 0;
+  p->instruments[0].velCut = 63;  // no filter: nothing to move
+  noteOn(0, 0, 60);
+  int16_t got[Synth::kBlock * 4];
+  for (int k = 0; k < 4; ++k) s->render(got + k * Synth::kBlock);
+  TEST_ASSERT_EQUAL_MEMORY(ref, got, sizeof(ref));
+}
+
+void test_drive_changes_waveform() {
+  p->instruments[0].vol = 60;
+  const float clean = noteRms(60, 100, 20);
+  p->instruments[0].drive = 127;
+  const float driven = noteRms(60, 100, 20);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).drive.on());
+  TEST_ASSERT_TRUE(driven > clean * 1.3f);  // the saw squares up
+}
+
+void test_drv_lock_on_note_step() {
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::DRV, 127);
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).drive.on());
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(1)).drive.on());
+  stepStart(0, 0, 24, false);  // without a note: the sounding voice
+  fx(0, 0, Fx::DRV, 0);
+  s->render(buf);
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).drive.on());
+}
+
+void test_lfo_drive_dest() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Drive);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoDepth = 63;
+  m.lfoRate = 100;
+  noteOn(0, 0, 60);
+  bool on = false, off = false;
+  for (int k = 0; k < kBlocksPerSec; ++k) {
+    s->render(buf);
+    const bool d = s->voice(s->trackVoice(0)).drive.on();
+    on |= d;
+    off |= !d;
+  }
+  TEST_ASSERT_TRUE(on && off);
+}
+
+static float rvbBuf[Reverb::kBufLen];
+
+void test_rsend_zero_same_with_and_without_buffer() {
+  noteOn(0, 0, 60);
+  int16_t ref[Synth::kBlock * 8];
+  for (int k = 0; k < 8; ++k) s->render(ref + k * Synth::kBlock);
+  s->reset();
+  s->setReverbBuffer(rvbBuf, Reverb::kBufLen);
+  noteOn(0, 0, 60);
+  int16_t got[Synth::kBlock * 8];
+  for (int k = 0; k < 8; ++k) s->render(got + k * Synth::kBlock);
+  TEST_ASSERT_EQUAL_MEMORY(ref, got, sizeof(ref));
+}
+
+static int tailSamples(bool withBuffer) {
+  s->reset();
+  s->setReverbBuffer(withBuffer ? rvbBuf : nullptr, Reverb::kBufLen);
+  p->instruments[0].rsend = 127;
+  noteOn(0, 0, 60);
+  renderMs(40);
+  noteOff(0, 0, 60);  // release 0: the dry note stops at once
+  renderMs(20);
+  int nz = 0;
+  for (int k = 0; k < 75; ++k) {  // 300 ms
+    s->render(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) nz += buf[i] != 0;
+  }
+  return nz;
+}
+
+void test_rsend_makes_tail() {
+  TEST_ASSERT_TRUE(tailSamples(true) > 1000);
+  TEST_ASSERT_EQUAL(0, tailSamples(false));
+}
+
+void test_rvb_lock_on_note_step() {
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::RVB, 127);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, s->voice(s->trackVoice(0)).rsend);
+  stepStart(0, 0, 24, true);  // a new step drops the lock
+  noteOn(0, 0, 62);
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.f, s->voice(s->trackVoice(0)).rsend);
+}
+
+// Track 1 holds a quiet note, track 2 hits hard from block 40: output RMS during the hits.
+static float duckedRms(uint8_t scDepth) {
+  s->reset();
+  p->compAmt = 100;
+  p->scTrack = 2;
+  p->scDepth = scDepth;
+  p->instruments[0].vol = 30;
+  p->instruments[1].vol = 127;
+  noteOn(0, 0, 48);
+  for (int k = 0; k < 40; ++k) s->render(buf);
+  noteOn(0, 1, 36);
+  return rmsBlocks(10);
+}
+
+void test_comp_sidechain_track() {
+  const float plain = duckedRms(0);
+  const float ducked = duckedRms(127);
+  TEST_ASSERT_TRUE(ducked < plain * 0.7f);
+}
+
+void test_comp_off_is_bit_identical() {
+  p->scTrack = 1;
+  p->scDepth = 127;  // ignored with compAmt 0
+  noteOn(0, 0, 60);
+  int16_t got[Synth::kBlock * 4];
+  for (int k = 0; k < 4; ++k) s->render(got + k * Synth::kBlock);
+  s->reset();
+  p->scTrack = 0;
+  noteOn(0, 0, 60);
+  int16_t ref[Synth::kBlock * 4];
+  for (int k = 0; k < 4; ++k) s->render(ref + k * Synth::kBlock);
+  TEST_ASSERT_EQUAL_MEMORY(ref, got, sizeof(ref));
+}
+
+// ARP 0x47 (0, +4, +7), ARM `arm`: offsets at the middle of the 4 slots of one 120 ms step.
+static void arpOffsets(uint8_t arm, int (&got)[4], int chord = -1) {
+  s->reset();
+  p->bpm = 125;  // 24 ticks = 120 ms: 4 slots of 30 ms
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::ARP, 0x47);
+  fx(0, 0, Fx::ARM, arm);
+  if (chord >= 0) send(0, 0, 0xF5, kSynthArpChord, static_cast<uint8_t>(chord));
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 4; ++k) {
+    renderMs(k == 0 ? 16 : 32);  // 16, 48, 80, 112 ms (whole blocks)
+    got[k] = s->voice(s->trackVoice(0)).arpOff;
+  }
+}
+
+void test_arm_up_down_updown() {
+  int g[4];
+  arpOffsets(0x04, g);  // UP x4
+  TEST_ASSERT_EQUAL(0, g[0]);
+  TEST_ASSERT_EQUAL(4, g[1]);
+  TEST_ASSERT_EQUAL(7, g[2]);
+  TEST_ASSERT_EQUAL(0, g[3]);
+  arpOffsets(0x14, g);  // DOWN: from the top
+  TEST_ASSERT_EQUAL(7, g[0]);
+  TEST_ASSERT_EQUAL(4, g[1]);
+  TEST_ASSERT_EQUAL(0, g[2]);
+  TEST_ASSERT_EQUAL(7, g[3]);
+  arpOffsets(0x24, g);  // UPDOWN: the ends once
+  TEST_ASSERT_EQUAL(0, g[0]);
+  TEST_ASSERT_EQUAL(4, g[1]);
+  TEST_ASSERT_EQUAL(7, g[2]);
+  TEST_ASSERT_EQUAL(4, g[3]);
+}
+
+void test_arm_random_stays_in_set() {
+  int g[4];
+  for (int r = 0; r < 5; ++r) {
+    arpOffsets(0x34, g);
+    for (int x : g) TEST_ASSERT_TRUE(x == 0 || x == 4 || x == 7);
+  }
+}
+
+void test_arp_chord_cycles_chord_notes() {
+  int g[4];
+  p->scaleType = static_cast<uint8_t>(ScaleType::Minor);  // C minor: the triad of C is 0, 3, 7
+  arpOffsets(0x04, g, kChordTriad);
+  TEST_ASSERT_EQUAL(0, g[0]);
+  TEST_ASSERT_EQUAL(3, g[1]);
+  TEST_ASSERT_EQUAL(7, g[2]);
+  TEST_ASSERT_EQUAL(0, g[3]);
+  arpOffsets(0x04, g);  // a new step without the chord: back to 0, x, y
+  TEST_ASSERT_EQUAL(4, g[1]);
+}
+
+// RMS ratio of a velocity 127 note over a velocity 64 note (the same filtered saw).
+static float velRatio(int8_t velCut) {
+  Instrument& m = p->instruments[0];
+  m.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  m.cutoff = 50;
+  m.velCut = velCut;
+  m.vol = 60;
+  const float hi = noteRms(48, 127, 20);
+  const float lo = noteRms(48, 64, 20);
+  return hi / lo;
+}
+
+void test_velcut_opens_filter_with_velocity() {
+  const float plain = velRatio(0);  // the gain alone: ~127 / 64
+  TEST_ASSERT_FLOAT_WITHIN(0.15f, 127.f / 64.f, plain);
+  TEST_ASSERT_TRUE(velRatio(40) > plain * 1.3f);  // brighter at velocity 127 too
+}
+
+void test_velmac_shifts_decay() {
+  Instrument& m = p->instruments[0];
+  instrSetType(m, InstrType::Drum);
+  m.macro[kMacDec] = 40;
+  m.velMac = 0;
+  noteOn(0, 0, 60, 127);
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.6f, 40.f, s->voice(s->trackVoice(0)).fpMac[kMacDec]);
+  s->reset();
+  m.velMac = 63;
+  noteOn(0, 0, 60, 127);
+  s->render(buf);
+  // The DECAY the voice used went up by 63 x 63 / 64 = 62 macro units: its params cache key shows it.
+  TEST_ASSERT_FLOAT_WITHIN(0.6f, 40.f + 62.f, s->voice(s->trackVoice(0)).fpMac[kMacDec]);
+  s->reset();
+  noteOn(0, 0, 60, 1);  // velocity 1: down by 63 x 63 / 64, clamped at 0
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.6f, 0.f, s->voice(s->trackVoice(0)).fpMac[kMacDec]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -2250,5 +2486,19 @@ int main() {
   RUN_TEST(test_kit_in_kit_lane_silent);
   RUN_TEST(test_kit_eight_lanes_sound_and_rehit_chokes);
   RUN_TEST(test_kit_unknown_note_silent);
+  RUN_TEST(test_drive_zero_is_bit_identical);
+  RUN_TEST(test_drive_changes_waveform);
+  RUN_TEST(test_drv_lock_on_note_step);
+  RUN_TEST(test_lfo_drive_dest);
+  RUN_TEST(test_rsend_zero_same_with_and_without_buffer);
+  RUN_TEST(test_rsend_makes_tail);
+  RUN_TEST(test_rvb_lock_on_note_step);
+  RUN_TEST(test_comp_sidechain_track);
+  RUN_TEST(test_comp_off_is_bit_identical);
+  RUN_TEST(test_arm_up_down_updown);
+  RUN_TEST(test_arm_random_stays_in_set);
+  RUN_TEST(test_arp_chord_cycles_chord_notes);
+  RUN_TEST(test_velcut_opens_filter_with_velocity);
+  RUN_TEST(test_velmac_shifts_decay);
   return UNITY_END();
 }
