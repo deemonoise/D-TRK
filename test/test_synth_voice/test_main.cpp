@@ -63,9 +63,15 @@ void test_mono_ignores_other_tracks() {
   TEST_ASSERT_FALSE(legato);
 }
 
+// Every voice holding a note (an on voice with an idle env is a filter tail, reused first).
 static void fillPool() {
   for (int t = 0; t < 8; ++t)
-    for (int k = 0; k < 2; ++k) alloc(static_cast<uint8_t>(t));
+    for (int k = 0; k < 2; ++k) {
+      const int i = alloc(static_cast<uint8_t>(t));
+      v[i].env.set(0, 0, 1.f, 100);
+      v[i].env.gate(true);
+      v[i].env.next();
+    }
 }
 
 void test_full_pool_steals_oldest_releasing() {
@@ -109,7 +115,7 @@ static int allocFm(uint8_t track, bool mono = false) {
 }
 static int fmCount() {
   int n = 0;
-  for (const auto& x : v) n += x.on && x.fm;
+  for (const auto& x : v) n += heavyLoad(x);
   return n;
 }
 
@@ -131,7 +137,10 @@ void test_fm_limit_steals_oldest_fm_not_free_or_chip() {
   fillFm();
   const int oldestFm = byAge(3);
   const int got = allocFm(5);
-  TEST_ASSERT_EQUAL(oldestFm, got);
+  // The victim fades out (no hard cut) and the note takes a free voice.
+  TEST_ASSERT_NOT_EQUAL(oldestFm, got);
+  TEST_ASSERT_TRUE(v[oldestFm].stolen);
+  TEST_ASSERT_TRUE(v[oldestFm].env.stage() == Env::Stage::Release);
   TEST_ASSERT_EQUAL(5, v[got].track);
   TEST_ASSERT_EQUAL(kFmVoiceMax, fmCount());
   int chip = 0;
@@ -143,7 +152,8 @@ void test_fm_limit_prefers_released_fm() {
   fillFm();
   const int rel = byAge(6);
   v[rel].env.gate(false);
-  TEST_ASSERT_EQUAL(rel, allocFm(6));
+  TEST_ASSERT_NOT_EQUAL(rel, allocFm(6));
+  TEST_ASSERT_TRUE(v[rel].stolen);
   TEST_ASSERT_EQUAL(kFmVoiceMax, fmCount());
 }
 
@@ -181,6 +191,41 @@ void test_fm_limit_mono_from_chip_releases_chip_voice() {
   TEST_ASSERT_EQUAL(kFmVoiceMax, fmCount());
 }
 
+void test_heavy_limit_counts_drum_with_fm() {
+  // 4 FM + 4 DRUM voices fill kFmVoiceMax together: a 9th heavy note steals the oldest of them.
+  alloc(0);
+  for (int k = 0; k < kFmVoiceMax; ++k) {
+    const int i = allocFm(static_cast<uint8_t>(1 + k % 4));
+    if (k % 2 == 0) v[i].fm = false, v[i].drum = true;  // the oldest is DRUM
+  }
+  const int oldest = byAge(2);
+  allocFm(5);
+  TEST_ASSERT_TRUE(v[oldest].stolen);
+  TEST_ASSERT_EQUAL(kFmVoiceMax, fmCount());
+}
+
+void test_heavy_limit_no_free_voice_takes_victim() {
+  // CHIP voices fill the rest of the pool: with nothing free the victim itself is reused.
+  for (int k = 0; k < kVoices - kFmVoiceMax; ++k) alloc(static_cast<uint8_t>(8 + k));
+  for (int k = 0; k < kFmVoiceMax; ++k) allocFm(static_cast<uint8_t>(1 + k % 4));
+  const int oldest = byAge(kVoices - kFmVoiceMax + 1);
+  TEST_ASSERT_EQUAL(oldest, allocFm(5));
+  TEST_ASSERT_FALSE(v[oldest].stolen);
+}
+
+void test_heavy_limit_skips_stolen_and_tails() {
+  // A stolen (fading) voice and a filter tail (env idle) do not count against the limit.
+  fillFm();
+  allocFm(5);  // steals age 3
+  const int tail = byAge(4);
+  v[tail].env.kill();
+  const int got = allocFm(6);
+  TEST_ASSERT_TRUE(v[got].fm || !v[got].on || v[got].track == 6);
+  int stolen = 0;
+  for (const auto& x : v) stolen += x.on && x.stolen;
+  TEST_ASSERT_EQUAL(1, stolen);  // 7 counted + the tail freed a slot: nothing more stolen
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_alloc_marks_voice);
@@ -194,5 +239,8 @@ int main() {
   RUN_TEST(test_fm_limit_mono_retrigger_keeps_own_voice);
   RUN_TEST(test_fm_limit_below_max_takes_free_voice);
   RUN_TEST(test_fm_limit_mono_from_chip_releases_chip_voice);
+  RUN_TEST(test_heavy_limit_counts_drum_with_fm);
+  RUN_TEST(test_heavy_limit_no_free_voice_takes_victim);
+  RUN_TEST(test_heavy_limit_skips_stolen_and_tails);
   return UNITY_END();
 }

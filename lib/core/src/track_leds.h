@@ -3,11 +3,20 @@
 
 namespace mt {
 
+constexpr int kTrackLeds = 8;  // physical track buttons / LEDs
+
 // Track button LEDs, bit = on. A flashing track lights up; the selected track stays lit and
 // goes dark while it flashes. Muted tracks never flash (the sequencer does not play them).
 inline uint8_t trackLedMask(int selected, uint8_t flash) {
-  const uint8_t sel = selected >= 0 && selected < 8 ? static_cast<uint8_t>(1u << selected) : 0;
+  const uint8_t sel = selected >= 0 && selected < kTrackLeds ? static_cast<uint8_t>(1u << selected) : 0;
   return static_cast<uint8_t>((flash & ~sel) | (sel & ~flash));
+}
+
+// 16 tracks on 8 LEDs: the half (kTrackLeds tracks) holding the selected track; flash bit = track.
+inline uint8_t trackLedMaskHalf(int selected, uint16_t flash) {
+  const int half = selected >= 0 ? selected / kTrackLeds : 0;
+  const uint8_t f = static_cast<uint8_t>(flash >> (half * kTrackLeds));
+  return trackLedMask(selected >= 0 ? selected - half * kTrackLeds : -1, f);
 }
 
 // PCF8575 pin maps: entry = port bit (0-7 = P00-P07, 8-15 = P10-P17), kNoPin = not wired.

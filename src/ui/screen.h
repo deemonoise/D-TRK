@@ -24,6 +24,7 @@ class Screen {
   virtual bool onPlay() { return false; }
   // Absolute screen coordinates; only events inside the work area (or Drag) arrive here.
   virtual void onTouch(const TouchEvent& ev) = 0;
+  virtual bool wantsHDrag() const { return false; }  // HDrag events reach onTouch only if true
   virtual void draw(LGFX_Sprite& s, int y0, int h) = 0;
   // Every UI tick for the active screen (background work such as the Wi-Fi server).
   virtual void poll() {}

@@ -1,5 +1,8 @@
 #include "project_io.h"
 #include <string.h>
+#include "file_rules.h"
+#include "inst_codec.h"
+#include "sample_set.h"
 #include "scale.h"
 
 namespace mt {
@@ -9,11 +12,25 @@ constexpr size_t kProjSize = 17 + 2 + 4 + kChainMax;
 constexpr size_t kTrackSize = 9 + 6 + 1;
 constexpr size_t kTrksSize = 1 + kTracks * kTrackSize;
 constexpr size_t kPatHeader = 4;
-constexpr size_t kInstSize = 48;  // 47 bytes of fields + 1 reserved
+constexpr uint32_t kOldStepBytes = 6;  // PATN before 6 fx slots: note, vel, 2 x (cmd, val)
+constexpr int kOldTracks = 8;          // PATN of the 8-track firmware
 constexpr size_t kToutSize = 3;
-constexpr size_t kAudiSize = 2;
-constexpr size_t kFminSize = 16;  // 10 bytes of fields + reserved
-static_assert(kFminSize <= kInstSize, "readRecords buffer");
+constexpr size_t kAudiSize = 6;     // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel
+constexpr size_t kAudiMinSize = 2;  // older files: masterVol, preview
+constexpr size_t kSmplSize = 24;  // name[16] u32 crc u32 frames
+constexpr size_t kKitLaneSize = sizeof(KitLane);         // 22: name[16], pad, instr, vol, pitch, decay, note
+constexpr size_t kKitRecSize = kKitLanes * kKitLaneSize;  // 176: one KIT instrument
+constexpr size_t kMaxRecA = kSliceRecSize > kInstRecSize ? kSliceRecSize : kInstRecSize;
+constexpr size_t kMaxRec = kKitRecSize > kMaxRecA ? kKitRecSize : kMaxRecA;
+static_assert(kInstRecSize <= kMaxRec, "readRecords buffer");
+static_assert(kKitRecSize <= kMaxRec, "readRecords buffer");
+static_assert(kFmRecSize <= kMaxRec, "readRecords buffer");
+static_assert(kFltRecSize <= kMaxRec, "readRecords buffer");
+static_assert(kSliceRecSize <= kMaxRec, "readRecords buffer");
+static_assert(kSmplSize <= kMaxRec, "readRecords buffer");
+constexpr size_t kWtblSize = 20;  // name[16] u32 crc
+static_assert(kSynRecSize <= kMaxRec, "readRecords buffer");
+static_assert(kWtblSize <= kMaxRec, "readRecords buffer");
 
 uint32_t rd32(const uint8_t* b) {
   return b[0] | (b[1] << 8) | (b[2] << 16) | (static_cast<uint32_t>(b[3]) << 24);
@@ -26,81 +43,7 @@ void wr32(uint8_t* b, uint32_t v) {
   wr16(b, static_cast<uint16_t>(v));
   wr16(b + 2, static_cast<uint16_t>(v >> 16));
 }
-uint16_t rd16(const uint8_t* b) { return static_cast<uint16_t>(b[0] | (b[1] << 8)); }
 uint8_t clampu(int v, int lo, int hi) { return static_cast<uint8_t>(v < lo ? lo : (v > hi ? hi : v)); }
-int8_t clamps(int8_t v, int lo, int hi) { return static_cast<int8_t>(v < lo ? lo : (v > hi ? hi : v)); }
-
-void packInst(const Instrument& m, uint8_t* b) {
-  memset(b, 0, kInstSize);
-  memcpy(b, m.name, 8);
-  b[8] = static_cast<uint8_t>(m.type);
-  b[9] = m.vol;
-  b[10] = static_cast<uint8_t>(m.transpose);
-  b[11] = static_cast<uint8_t>(m.fine);
-  b[12] = m.attack;
-  b[13] = m.decay;
-  b[14] = m.sustain;
-  b[15] = m.release;
-  b[16] = m.mono ? 1 : 0;
-  b[17] = m.glide;
-  b[18] = m.wave;
-  b[19] = m.duty;
-  b[20] = m.pwmRate;
-  b[21] = m.pwmDepth;
-  memcpy(b + 22, m.sample, kSampleNameMax);
-  b[38] = m.root;
-  wr16(b + 39, m.start);
-  wr16(b + 41, m.end);
-  b[43] = m.loop;
-  wr16(b + 44, m.loopStart);
-  b[46] = m.reverse ? 1 : 0;
-}
-
-void packFm(const Instrument& m, uint8_t* b) {
-  memset(b, 0, kFminSize);
-  b[0] = m.machine;
-  memcpy(b + 1, m.macro, kFmMacros);
-  b[6] = m.lfoWave;
-  b[7] = m.lfoRate;
-  b[8] = static_cast<uint8_t>(m.lfoDepth);
-  b[9] = m.lfoDest;
-}
-
-void unpackFm(const uint8_t* b, Instrument& m) {
-  m.machine = b[0] < static_cast<int>(FmMachine::Count) ? b[0] : 0;
-  for (int k = 0; k < kFmMacros; ++k) m.macro[k] = clampu(b[1 + k], 0, 127);
-  m.lfoWave = b[6] < static_cast<int>(LfoWave::Count) ? b[6] : 0;
-  m.lfoRate = clampu(b[7], 0, 127);
-  m.lfoDepth = clamps(static_cast<int8_t>(b[8]), -64, 63);
-  m.lfoDest = b[9] < static_cast<int>(LfoDest::Count) ? b[9] : 0;
-}
-
-void unpackInst(const uint8_t* b, Instrument& m) {
-  memcpy(m.name, b, 8);
-  m.name[8] = 0;
-  m.type = b[8] < static_cast<int>(InstrType::Count) ? static_cast<InstrType>(b[8]) : InstrType::Chip;
-  m.vol = clampu(b[9], 0, 127);
-  m.transpose = clamps(static_cast<int8_t>(b[10]), -24, 24);
-  m.fine = clamps(static_cast<int8_t>(b[11]), -50, 50);
-  m.attack = clampu(b[12], 0, 127);
-  m.decay = clampu(b[13], 0, 127);
-  m.sustain = clampu(b[14], 0, 127);
-  m.release = clampu(b[15], 0, 127);
-  m.mono = b[16] != 0;
-  m.glide = b[17];
-  m.wave = b[18] < kWaveCount ? b[18] : 0;
-  m.duty = clampu(b[19], 1, 99);
-  m.pwmRate = clampu(b[20], 0, 127);
-  m.pwmDepth = clampu(b[21], 0, 49);
-  memcpy(m.sample, b + 22, kSampleNameMax);
-  m.sample[kSampleNameMax] = 0;
-  m.root = clampu(b[38], 0, 127);
-  m.start = rd16(b + 39);
-  m.end = rd16(b + 41);
-  m.loop = b[43] < static_cast<int>(LoopMode::Count) ? b[43] : 0;
-  m.loopStart = rd16(b + 44);
-  m.reverse = b[46] != 0;
-}
 
 class CrcSink {
  public:
@@ -204,7 +147,7 @@ LoadErr readRecords(CrcSource& in, uint32_t size, size_t recSize, int max, F&& f
   if (size < 1 + static_cast<uint32_t>(count) * recSize) return LoadErr::BadValue;
   const int n = count < max ? count : max;
   for (int i = 0; i < n; ++i) {
-    uint8_t b[kInstSize];  // the largest record
+    uint8_t b[kMaxRec];
     if (!in.read(b, recSize)) return LoadErr::Truncated;
     f(i, b);
   }
@@ -212,6 +155,9 @@ LoadErr readRecords(CrcSource& in, uint32_t size, size_t recSize, int max, F&& f
 }
 
 LoadErr readTout(CrcSource& in, uint32_t size, Project& p) {
+  // TOUT present: tracks it lacks are new (kOldTracks files) and get the fresh-project default,
+  // not the all-MIDI preset of loadProject() for files older than TOUT.
+  for (TrackCfg& c : p.tracks) c.out = TrackOut::Int;
   return readRecords(in, size, kToutSize, kTracks, [&](int t, const uint8_t* b) {
     TrackCfg& c = p.tracks[t];
     c.out = b[0] < static_cast<int>(TrackOut::Count) ? static_cast<TrackOut>(b[0]) : TrackOut::Midi;
@@ -221,22 +167,93 @@ LoadErr readTout(CrcSource& in, uint32_t size, Project& p) {
 }
 
 LoadErr readInst(CrcSource& in, uint32_t size, Project& p) {
-  return readRecords(in, size, kInstSize, kInstruments,
+  return readRecords(in, size, kInstRecSize, kInstruments,
                      [&](int i, const uint8_t* b) { unpackInst(b, p.instruments[i]); });
 }
 
 LoadErr readFmin(CrcSource& in, uint32_t size, Project& p) {
-  return readRecords(in, size, kFminSize, kInstruments,
+  return readRecords(in, size, kFmRecSize, kInstruments,
                      [&](int i, const uint8_t* b) { unpackFm(b, p.instruments[i]); });
 }
 
+LoadErr readFltr(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kFltRecSize, kInstruments,
+                     [&](int i, const uint8_t* b) { unpackFlt(b, p.instruments[i]); });
+}
+
+LoadErr readSlce(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kSliceRecSize, kInstruments,
+                     [&](int i, const uint8_t* b) { unpackSlices(b, p.instruments[i]); });
+}
+
+LoadErr readSyni(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kSynRecSize, kInstruments,
+                     [&](int i, const uint8_t* b) { unpackSyn(b, p.instruments[i]); });
+}
+
+LoadErr readKits(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, kKitRecSize, kInstruments, [&](int i, const uint8_t* b) {
+    for (int k = 0; k < kKitLanes; ++k, b += kKitLaneSize) {
+      KitLane& l = p.instruments[i].kit[k];
+      memcpy(l.sample, b, kSampleNameMax);
+      l.sample[kSampleNameMax] = 0;
+      l.instr = b[17] < kInstruments ? b[17] : kNoInstr;
+      l.vol = clampu(b[18], 0, 127);
+      const int pt = static_cast<int8_t>(b[19]);
+      l.pitch = static_cast<int8_t>(pt < -24 ? -24 : (pt > 24 ? 24 : pt));
+      l.decay = b[20];
+      l.note = b[21] < 128 ? b[21] : static_cast<uint8_t>(60 + k);
+    }
+  });
+}
+
 LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
-  if (size < kAudiSize) return LoadErr::BadValue;
+  if (size < kAudiMinSize) return LoadErr::BadValue;
   uint8_t b[kAudiSize];
-  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  const uint32_t n = size < kAudiSize ? size : kAudiSize;
+  if (!in.read(b, n)) return LoadErr::Truncated;
   p.masterVol = clampu(b[0], 0, kMasterVolMax);
   p.preview = b[1] != 0;
-  return in.skip(size - kAudiSize) ? LoadErr::Ok : LoadErr::Truncated;
+  if (n == kAudiSize) {
+    p.dlyTime = clampu(b[2], 1, kDlyTimeMax);
+    p.dlyFb = clampu(b[3], 0, 127);
+    p.dlyTone = clampu(b[4], 0, 127);
+    p.dlyLevel = clampu(b[5], 0, 127);
+  }
+  return in.skip(size - n) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// Empty and repeated (ignoring case) names are skipped. A repeated chunk replaces the list.
+LoadErr readSmpl(CrcSource& in, uint32_t size, Project& p) {
+  for (ProjSample& s : p.samples) s = ProjSample{};
+  p.sampleCount = 0;
+  p.hasSampleList = true;
+  return readRecords(in, size, kSmplSize, kProjSamples, [&](int, const uint8_t* b) {
+    char nm[kSampleNameMax + 1];
+    memcpy(nm, b, kSampleNameMax);
+    nm[kSampleNameMax] = 0;
+    if (p.sampleCount >= kProjSamples || !projectBaseValid(nm) || projSampleFind(p, nm) >= 0) return;
+    ProjSample& s = p.samples[p.sampleCount++];
+    memcpy(s.name, nm, sizeof(nm));
+    s.crc = rd32(b + 16);
+    s.frames = rd32(b + 20);
+  });
+}
+
+// Like SMPL: empty, invalid and repeated (ignoring case) names are skipped; a repeated chunk
+// replaces the list.
+LoadErr readWtbl(CrcSource& in, uint32_t size, Project& p) {
+  for (ProjWavetable& w : p.wavetables) w = ProjWavetable{};
+  p.wavetableCount = 0;
+  return readRecords(in, size, kWtblSize, kProjWavetables, [&](int, const uint8_t* b) {
+    char nm[kSampleNameMax + 1];
+    memcpy(nm, b, kSampleNameMax);
+    nm[kSampleNameMax] = 0;
+    if (p.wavetableCount >= kProjWavetables || !projectBaseValid(nm) || projWtFind(p, nm) >= 0) return;
+    ProjWavetable& w = p.wavetables[p.wavetableCount++];
+    memcpy(w.name, nm, sizeof(nm));
+    w.crc = rd32(b + 16);
+  });
 }
 
 LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
@@ -244,22 +261,37 @@ LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
   if (size < kPatHeader) return LoadErr::BadValue;
   if (!in.read(h, sizeof(h))) return LoadErr::Truncated;
   const int len = h[1];
-  if (size != kPatHeader + static_cast<uint32_t>(kTracks) * len * sizeof(Step)) return LoadErr::BadValue;
-  if (h[0] >= kPatterns) return in.skip(size - kPatHeader) ? LoadErr::Ok : LoadErr::Truncated;
+  // Track count and step size from the body size: kTracks or kOldTracks (files of the 8-track
+  // firmware) x 14-byte (6 slots) or 6-byte (2 slots, older) steps. The four products differ.
+  const uint32_t body = size - kPatHeader;
+  int tracks = 0;
+  uint32_t stepBytes = 0;
+  const auto match = [&](int tr, uint32_t sb) {
+    if (stepBytes || !len || body != static_cast<uint32_t>(tr) * len * sb) return;
+    tracks = tr;
+    stepBytes = sb;
+  };
+  match(kTracks, sizeof(Step));
+  match(kTracks, kOldStepBytes);
+  match(kOldTracks, sizeof(Step));
+  match(kOldTracks, kOldStepBytes);
+  if (!stepBytes && body != 0) return LoadErr::BadValue;
+  if (h[0] >= kPatterns) return in.skip(body) ? LoadErr::Ok : LoadErr::Truncated;
   Pattern& pt = p.patterns[h[0]];
   pt.clear();
   pt.length = clampu(len, kMinSteps, kMaxSteps);
   pt.res = h[2] < static_cast<int>(Resolution::Count) ? static_cast<Resolution>(h[2]) : Resolution::Sixteenth;
   pt.swing = h[3] < 50 || h[3] > 75 ? 50 : h[3];
-  for (int t = 0; t < kTracks; ++t)
+  const int slots = (static_cast<int>(stepBytes) - 2) / 2;
+  for (int t = 0; t < tracks; ++t)  // clear() above emptied the tracks a kOldTracks file lacks
     for (int s = 0; s < len; ++s) {
-      uint8_t b[6];
-      if (!in.read(b, 6)) return LoadErr::Truncated;
+      uint8_t b[sizeof(Step)];
+      if (!in.read(b, stepBytes)) return LoadErr::Truncated;
       if (s >= kMaxSteps) continue;
       Step& st = pt.steps[t][s];
       st.note = validNote(b[0]);
-      st.vel = clampu(b[1], 0, 127);
-      for (int k = 0; k < 2; ++k) {
+      st.vel = b[1];  // 0..127, or a lane mask on a drum track: masked in loadProject
+      for (int k = 0; k < slots; ++k) {
         const uint8_t cmd = b[2 + k * 2];
         st.fx[k].cmd = cmd < static_cast<int>(Fx::Count) ? static_cast<Fx>(cmd) : Fx::None;
         st.fx[k].val = st.fx[k].cmd == Fx::None ? 0 : b[3 + k * 2];
@@ -317,20 +349,52 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
-  if (!o.chunk("INST", 1 + kInstruments * kInstSize)) return false;
+  if (!o.chunk("INST", 1 + kInstruments * kInstRecSize)) return false;
   count = kInstruments;
   if (!o.write(&count, 1)) return false;
   for (const Instrument& m : p.instruments) {
-    uint8_t b[kInstSize];
+    uint8_t b[kInstRecSize];
     packInst(m, b);
     if (!o.write(b, sizeof(b))) return false;
   }
-  if (!o.chunk("FMIN", 1 + kInstruments * kFminSize) || !o.write(&count, 1)) return false;
+  if (!o.chunk("FMIN", 1 + kInstruments * kFmRecSize) || !o.write(&count, 1)) return false;
   for (const Instrument& m : p.instruments) {
-    uint8_t b[kFminSize];
+    uint8_t b[kFmRecSize];
     packFm(m, b);
     if (!o.write(b, sizeof(b))) return false;
   }
+  if (!o.chunk("FLTR", 1 + kInstruments * kFltRecSize) || !o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kFltRecSize];
+    packFlt(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+  if (!o.chunk("SLCE", 1 + kInstruments * kSliceRecSize) || !o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kSliceRecSize];
+    packSlices(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  if (!o.chunk("SYNI", 1 + kInstruments * kSynRecSize) || !o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kSynRecSize];
+    packSyn(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  if (!o.chunk("KITS", 1 + kInstruments * kKitRecSize) || !o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments)
+    for (const KitLane& l : m.kit) {
+      uint8_t b[kKitLaneSize] = {0};
+      memcpy(b, l.sample, strnlen(l.sample, kSampleNameMax));
+      b[17] = l.instr;
+      b[18] = l.vol;
+      b[19] = static_cast<uint8_t>(l.pitch);
+      b[20] = l.decay;
+      b[21] = l.note;
+      if (!o.write(b, sizeof(b))) return false;
+    }
 
   count = kTracks;
   if (!o.chunk("TOUT", 1 + kTracks * kToutSize) || !o.write(&count, 1)) return false;
@@ -339,8 +403,29 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
-  const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0)};
+  const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0), p.dlyTime,
+                                 p.dlyFb,     p.dlyTone,                             p.dlyLevel};
   if (!o.chunk("AUDI", kAudiSize) || !o.write(au, sizeof(au))) return false;
+
+  // Always written, empty or not.
+  count = p.sampleCount > kProjSamples ? kProjSamples : p.sampleCount;
+  if (!o.chunk("SMPL", 1 + count * kSmplSize) || !o.write(&count, 1)) return false;
+  for (int i = 0; i < count; ++i) {
+    uint8_t b[kSmplSize] = {0};
+    memcpy(b, p.samples[i].name, strnlen(p.samples[i].name, kSampleNameMax));
+    wr32(b + 16, p.samples[i].crc);
+    wr32(b + 20, p.samples[i].frames);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  count = p.wavetableCount > kProjWavetables ? kProjWavetables : p.wavetableCount;
+  if (!o.chunk("WTBL", 1 + count * kWtblSize) || !o.write(&count, 1)) return false;
+  for (int i = 0; i < count; ++i) {
+    uint8_t b[kWtblSize] = {0};
+    memcpy(b, p.wavetables[i].name, strnlen(p.wavetables[i].name, kSampleNameMax));
+    wr32(b + 16, p.wavetables[i].crc);
+    if (!o.write(b, sizeof(b))) return false;
+  }
 
   for (int i = 0; i < kPatterns; ++i) {
     const Pattern& pt = p.patterns[i];
@@ -351,9 +436,12 @@ bool saveProject(const Project& p, ByteSink& out) {
     for (int t = 0; t < kTracks; ++t)
       for (int s = 0; s < len; ++s) {
         const Step& st = pt.steps[t][s];
-        const uint8_t b[6] = {st.note, st.vel, static_cast<uint8_t>(st.fx[0].cmd), st.fx[0].val,
-                              static_cast<uint8_t>(st.fx[1].cmd), st.fx[1].val};
-        if (!o.write(b, 6)) return false;
+        uint8_t b[sizeof(Step)] = {st.note, st.vel};
+        for (int k = 0; k < kFxSlots; ++k) {
+          b[2 + k * 2] = static_cast<uint8_t>(st.fx[k].cmd);
+          b[3 + k * 2] = st.fx[k].val;
+        }
+        if (!o.write(b, sizeof(b))) return false;
       }
   }
 
@@ -365,6 +453,8 @@ bool saveProject(const Project& p, ByteSink& out) {
 
 LoadErr loadProject(ByteSource& src, Project& out) {
   out.reset();
+  // Files older than TOUT were MIDI-only.
+  for (TrackCfg& c : out.tracks) c.out = TrackOut::Midi;
   CrcSource in(src);
   uint8_t h[8];
   if (!in.read(h, 8)) return LoadErr::Truncated;
@@ -379,7 +469,15 @@ LoadErr loadProject(ByteSource& src, Project& out) {
       uint8_t v[4];
       if (size != 4) return LoadErr::BadValue;
       if (!in.raw().read(v, 4)) return LoadErr::Truncated;
-      return rd32(v) == in.crc() ? LoadErr::Ok : LoadErr::BadCrc;
+      if (rd32(v) != in.crc()) return LoadErr::BadCrc;
+      for (Instrument& m : out.instruments) fixInstrument(m);
+      // Drum tracks are known only now: their steps keep vel as a lane mask, the others' are 0..127.
+      for (int t = 0; t < kTracks; ++t) {
+        if (out.trackIsDrum(t)) continue;
+        for (Pattern& pt : out.patterns)
+          for (Step& st : pt.steps[t]) st.vel &= 0x7F;
+      }
+      return LoadErr::Ok;
     }
     in.add(ch, 8);
     LoadErr e;
@@ -388,8 +486,14 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "PATN", 4) == 0) e = readPatn(in, size, out);
     else if (memcmp(ch, "INST", 4) == 0) e = readInst(in, size, out);
     else if (memcmp(ch, "FMIN", 4) == 0) e = readFmin(in, size, out);
+    else if (memcmp(ch, "FLTR", 4) == 0) e = readFltr(in, size, out);
+    else if (memcmp(ch, "SLCE", 4) == 0) e = readSlce(in, size, out);
     else if (memcmp(ch, "TOUT", 4) == 0) e = readTout(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
+    else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
+    else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
+    else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
+    else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;
   }

@@ -5,26 +5,10 @@
 namespace mt {
 namespace {
 
-constexpr int kSineBits = 10;
-constexpr int kSineLen = 1 << kSineBits;
-float gSine[kSineLen + 1];  // one cycle + guard point; internal RAM (DRAM)
-struct SineInit {
-  SineInit() {
-    for (int i = 0; i <= kSineLen; ++i) gSine[i] = sinf(6.2831853f * i / kSineLen);
-  }
-} sineInit;
-
 constexpr float kInvTwoPi = 1.f / 6.2831853f;
 constexpr float kIncPerHz = 4294967296.f / kSynthRate;
 constexpr float kMaxInc = 0.45f * 4294967296.f;  // 0.45 x sample rate, < 2^31
 constexpr float kSamplesPerMs = kSynthRate / 1000.f;
-
-MT_INLINE float sine(uint32_t ph) {
-  const uint32_t i = ph >> (32 - kSineBits);
-  const float f = (ph & ((1u << (32 - kSineBits)) - 1)) * (1.f / (1u << (32 - kSineBits)));
-  const float a = gSine[i];
-  return a + (gSine[i + 1] - a) * f;
-}
 
 // Phase offset in cycles -> phase units, |c| < 2048.
 MT_INLINE uint32_t cycles(float c) {
@@ -50,12 +34,12 @@ MT_INLINE float opStep(OpRun& s, float mod) {
   if (s.mode == 0) return 0;
   float r;
   if (s.mode == 2) {
-    r = sine(s.ph + cycles(mod + s.fb * s.fbIn));
+    r = tableSine(s.ph + cycles(mod + s.fb * s.fbIn));
     s.fbIn = 0.5f * (r + s.last);
     s.last = r;
     s.fb += s.dFb;
   } else {
-    r = sine(s.ph + cycles(mod));
+    r = tableSine(s.ph + cycles(mod));
     s.prev = s.last;
     s.last = r;
   }

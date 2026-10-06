@@ -2,20 +2,25 @@
 #include <stdint.h>
 #include "model.h"
 #include "synth_env.h"
+#include "synth_drum.h"
+#include "synth_filter.h"
 #include "synth_fm.h"
 #include "synth_osc.h"
+#include "synth_syn.h"
 
 namespace mt {
 
 constexpr int kVoices = 16;
 constexpr int kPolyPerTrack = 4;
-constexpr int kFmVoiceMax = 8;  // FM voices sounding at once (CPU)
+constexpr int kFmVoiceMax = 8;  // heavy voices (FM, DRUM, wavetable SYNTH) sounding at once (CPU)
+constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceMax
 
 struct Voice {
   bool on = false;          // allocated (until the envelope goes idle)
   uint8_t track = 0, note = 0;
   uint8_t instr = 0;        // instrument index at note-on
   bool sample = false;      // SAMPLE instrument (else CHIP)
+  uint8_t gen = 0;          // TrackRt::gen at note-on (sample choke)
   uint32_t age = 0;         // allocation order, for stealing
   float pitch = 0;          // current note incl. transpose, fine and slide, fractional
   float target = 0;         // slide target
@@ -25,6 +30,7 @@ struct Voice {
   float inc = 0;            // CHIP: phase increment; SAMPLE: frames per output sample
   float duty = 0.5f;        // pulse width incl. PWM
   float amp = 0;            // gain * instrument vol * track vol
+  float send = 0;           // delay send 0..1: DLY lock or Instrument::send
   float pwmPhase = 0;       // PWM sweep LFO, 0..1
   uint8_t wave = 0;         // Wave
   // Synth fx state (Synth::control).
@@ -34,6 +40,7 @@ struct Voice {
   int32_t vslLeft = 0;      // samples
   int32_t cutLeft = -1;     // CUT: samples until the voice is killed, -1 = none
   uint8_t ofs = 0;          // OFS: sample start offset, /256 of start..end
+  int8_t slice = -1;        // played slice, -1 = the whole region
   // Sample resolved at note-on. Position and step are 32.32 fixed point frames.
   const int16_t* smp = nullptr;
   uint32_t smpLen = 0, smpRate = 0;
@@ -47,9 +54,9 @@ struct Voice {
   Env env;
   // FM instrument.
   bool fm = false;
-  uint8_t machine = 0;               // FmMachine, latched at note-on: a sounding note keeps it
-  uint8_t lockMask = 0;              // macros locked for this note: bit = FmMacro
-  uint8_t lock[kFmMacros] = {0};
+  uint8_t machine = 0;               // FmMachine / DrumMachine, latched at note-on: a sounding note keeps it
+  uint8_t lockMask = 0;              // locked for this note: bit = LockBit (macros: FM / DRUM only)
+  uint8_t lock[kLocks] = {0};
   float lfoPhase = 0;                // 0..1
   float lfoRnd = 0;                  // Random wave: value of the current cycle
   FmVoice fmv;
@@ -59,15 +66,41 @@ struct Voice {
   float fpPitch = 0;
   float fpMac[kFmMacros] = {0};
   FmParams fp;
+  // DRUM instrument (machine above holds its DrumMachine). drumMachine() cache: dp for the fp*
+  // key above, as fp for FM (Synth::controlDrum).
+  bool drum = false;
+  DrumVoice drv;
+  DrumParams dp;
+  // SYNTH instrument: tables resolved at note-on (a table changed mid-note applies to the next note).
+  bool syn = false;
+  bool synHeavy = false;  // SYNTH with a wavetable oscillator: counts against kFmVoiceMax
+  bool stolen = false;    // fading out (kStealMs) for a heavy note past kFmVoiceMax
+  uint32_t senvT = 0;                // samples since the env -> SHAPE trigger
+  const int16_t* synWt[2] = {nullptr, nullptr};
+  SynVoice sv;
+  // Filter, every type (Synth::controlFilter).
+  bool fltOn = false;
+  uint32_t fenvT = 0;                // samples since the filter envelope's trigger
+  bool fenvDone = false;             // the envelope has decayed to -60 dB: 0 until the next trigger
+  float fltRes = -1, fltQ = 0.5f;    // resoQ(fltRes), cached
+  Svf flt;
 };
+
+// Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the
+// filter and a stolen voice is on its way out.
+inline bool heavyLoad(const Voice& x) {
+  return x.on && (x.fm || x.drum || x.synHeavy) && !x.stolen && !x.env.idle();
+}
 
 // Picks a voice for track and marks it allocated. Mono: the track's voice if any (legato), else a free one.
 // Poly: a free voice if the track has < kPolyPerTrack, else the track's oldest.
 // No free voice: the globally oldest releasing voice, else the globally oldest.
-// fm: the note is FM. With kFmVoiceMax FM voices on, a pick that would add one more takes the
-// oldest releasing FM voice instead, else the oldest FM voice (a mono track's own FM voice is
-// reused as before; a mono track's CHIP / SAMPLE voice is released).
+// heavy: the note is FM, DRUM or a wavetable SYNTH (synHeavy). With kFmVoiceMax heavy voices on
+// (heavyLoad), a pick that would add one more fades the oldest releasing heavy voice, else the
+// oldest heavy voice, over kStealMs (stolen) and takes a free voice; with none free it takes the
+// victim itself. A mono track's own heavy voice is reused as before; a mono track's CHIP / SAMPLE
+// voice is released.
 int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato,
-               bool fm = false);
+               bool heavy = false);
 
 }  // namespace mt

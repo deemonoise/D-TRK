@@ -85,6 +85,21 @@ void test_apply_repeats_length_over_pattern() {
   TEST_ASSERT_TRUE(P.steps[1][0].isEmpty());
 }
 
+void test_euclid_track_15() {
+  resetP();
+  EuclidParams e = baseParams();
+  e.hits = 4;
+  e.length = 16;
+  applyEuclid(P, kTracks - 1, e, 0, ScaleType::Chromatic);
+  int notes = 0;
+  for (int i = 0; i < 16; ++i)
+    if (P.steps[kTracks - 1][i].hasNote()) ++notes;
+  TEST_ASSERT_EQUAL(4, notes);
+  TEST_ASSERT_TRUE(P.steps[kTracks - 1][0].hasNote());
+  // Track 14 untouched.
+  for (int i = 0; i < 16; ++i) TEST_ASSERT_TRUE(P.steps[kTracks - 2][i].isEmpty());
+}
+
 void test_apply_writes_only_within_pattern_length() {
   resetP();
   P.length = 8;
@@ -319,6 +334,7 @@ int main() {
   RUN_TEST(test_down_and_updown);
   RUN_TEST(test_random_is_deterministic_by_seed);
   RUN_TEST(test_accent_every);
+  RUN_TEST(test_euclid_track_15);
   RUN_TEST(test_rotation_applies);
   RUN_TEST(test_euclid_128_steps);
   RUN_TEST(test_euclid_hits_above_steps);

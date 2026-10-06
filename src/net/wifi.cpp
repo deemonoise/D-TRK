@@ -51,7 +51,7 @@ int scan(char (*ssids)[kSsidMax], int max) {
 
 void connect(const Creds& c) {
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname("tracker");
+  WiFi.setHostname("d-trk");
   WiFi.setSleep(false);  // modem sleep drops ARP replies: browsers get "address unreachable"
   WiFi.disconnect();
   WiFi.begin(c.ssid, c.pass);

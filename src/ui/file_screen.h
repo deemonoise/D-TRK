@@ -8,13 +8,14 @@
 namespace ui {
 
 // Two sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
-// transfer; Load shows /projects/*.mtp) and SAMPLES (the flash sample bank: import WAV from /samples and its subfolders,
-// delete, compact).
+// transfer; Load shows /projects/*.mtp) and SAMPLES (the project's samples: import WAV from /samples and its
+// subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries).
 class FileScreen : public Screen {
  public:
   explicit FileScreen(App& app) : app_(app), import_(app), wifi_(app) {}
   void onEnter() override;
   void onLeave() override;
+  void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
   bool onPlay() override;
   void onTouch(const TouchEvent& ev) override;
@@ -26,15 +27,15 @@ class FileScreen : public Screen {
   enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kWifi, kRetry, kActions };
   enum MenuId : int {
     kCancel, kDiscardLoad, kDiscardNew, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
-    kDeleteSample, kDeleteUsed
+    kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
   };
   static constexpr int kSectionSel = kActions;  // PROJECTS focus on the header section switch
-  // SAMPLES rows: Import, Compact, then the bank entries.
-  enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kFirstSample };
+  // SAMPLES rows: Import, Compact, Clear cache, then the project's samples.
+  enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kClearRow, kFirstSample };
   static constexpr int kHeaderH = 28;
   static constexpr int kActionH = 34;
   static constexpr int kRowH = 24;
-  static constexpr int kMaxFiles = 128;
+  static constexpr int kMaxFiles = 512;
   static constexpr int kWavDepthMax = 4;  // subfolders below /samples
   static constexpr int kListRows = (kAreaH - kHeaderH) / kRowH;  // incl. the Back row
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
@@ -77,12 +78,15 @@ class FileScreen : public Screen {
   void togglePreview();
   void stopPreview();
   void importAs(const char* initial);
-  void doImport(const char* name, bool replace = false);
+  void doImport(const char* name);
+  void renameSample(const char* initial);
   void doDelete(const char* name);
   void doCompact();
+  void doClear();
+  uint32_t cacheBytes();  // bank space of entries the project does not use
   bool playbackBusy();  // toasts STOP PLAYBACK FIRST
   int usedBy(const char* sample) const;  // first instrument playing it, or -1
-  static void progress(uint32_t done, uint32_t total, void* ctx);
+  static void progress(uint32_t done, uint32_t total, void* ctx);  // ctx = this, label busyLabel_
   void samplesInput(const hw::InputEvent& ev);
   void samplesTouch(const TouchEvent& ev);
   void drawSamples(LGFX_Sprite& s, int top);
@@ -104,7 +108,7 @@ class FileScreen : public Screen {
   char midiDir_[160] = "/midi";  // kept between imports
   char pending_[hw::kNameMax] = {0};  // target of a confirmation menu
   bool samples_ = false;              // SAMPLES section shown
-  int ssel_ = kImportRow;             // SampleRow or kFirstSample + bank index
+  int ssel_ = kImportRow;             // SampleRow or kFirstSample + project sample index
   int stop_ = 0;                      // first visible SAMPLES row
   bool wavList_ = false;              // names_ lists folders, then *.wav in wavDir_
   char wavDir_[128] = "/samples";     // kept between imports
@@ -112,9 +116,9 @@ class FileScreen : public Screen {
   int16_t* pvBuf_ = nullptr;          // previewed WAV, PSRAM
   int pvSel_ = -1;                    // listSel_ it belongs to
   const char* busyLabel_ = "";
-  char busyMsg_[32] = {0};
-  int lastPct_ = -1;
-  uint32_t lastBusyMs_ = 0;
+  // cacheBytes() result for this bank generation / project edit.
+  uint32_t cacheBytes_ = 0, cacheGen_ = 0, cacheSeq_ = 0;
+  bool cacheValid_ = false;
 };
 
 }  // namespace ui

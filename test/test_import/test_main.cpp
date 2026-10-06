@@ -246,6 +246,23 @@ void test_source_channel_chn() {
   TEST_ASSERT_NULL(st(0, 1, 0).find(Fx::CHN));
 }
 
+// 12 sources (channels 1-12) with an in-order map (what the import dialog builds by default)
+// fill tracks 0-11; the channel-12 note lands on track 11, which 8 tracks could not hold.
+void test_twelve_channels_to_twelve_tracks() {
+  I.sourceCount = 12;
+  for (int s = 0; s < 12; ++s) {
+    I.src[s].track = static_cast<uint8_t>(s + 1);
+    I.src[s].channel = static_cast<uint8_t>(s);
+    M.target[s] = static_cast<int8_t>(s);
+    add(0, static_cast<uint8_t>(48 + s), 12, 100, static_cast<uint8_t>(s));
+  }
+  ImportResult r = run();
+  TEST_ASSERT_EQUAL(0, r.notesDropped);
+  for (int t = 0; t < 12; ++t) TEST_ASSERT_EQUAL(48 + t, st(0, t, 0).note);
+  TEST_ASSERT_EQUAL(59, st(0, 11, 0).note);
+  TEST_ASSERT_TRUE(st(0, 12, 0).isEmpty());
+}
+
 void test_fx_priority() {
   M.useSourceChannel = true;
   M.keepMicrotiming = true;
@@ -408,6 +425,7 @@ int main() {
   RUN_TEST(test_microtiming_ndg);
   RUN_TEST(test_ndg_below_threshold);
   RUN_TEST(test_source_channel_chn);
+  RUN_TEST(test_twelve_channels_to_twelve_tracks);
   RUN_TEST(test_fx_priority);
   RUN_TEST(test_mono_replacement_rewrites_fx);
   RUN_TEST(test_tempo);

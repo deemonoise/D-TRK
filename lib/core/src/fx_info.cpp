@@ -7,38 +7,46 @@ namespace {
 
 struct Info {
   const char* name;
+  const char* longName;  // toast when the command is chosen, "" for None
   int16_t min, max, def;
   bool isSigned;
 };
 
 constexpr Info kInfo[] = {
-    {"...", 0, 0, 0, false},     // None
-    {"CHN", 1, 16, 1, false},    // CHN
-    {"RAT", 2, 8, 2, false},     // RAT
-    {"PRB", 0, 100, 50, false},  // PRB
-    {"GAT", 1, 200, 100, false}, // GAT (see gatePercent)
-    {"TIE", 0, 0, 0, false},     // TIE
-    {"NDG", -50, 50, 0, true},   // NDG
-    {"CHD", 0, kChordCount - 1, 0, false},
-    {"STR", 1, 50, 10, false},   // STR
-    {"CND", 0, 0, 0x12, false},  // CND: own ordering
-    {"VRN", 0, 64, 16, false},   // VRN
-    {"NRN", 1, 7, 1, false},     // NRN
-    {"CCA", 0, 127, 64, false},  // CCA
-    {"CCB", 0, 127, 64, false},  // CCB
-    {"PBN", -64, 63, 0, true},   // PBN
-    {"PGM", 0, 127, 0, false},   // PGM
-    {"SLD", 1, 255, 16, false},  // SLD: slide time x4 ms
-    {"VIB", 0, 255, 0x44, false},  // VIB: xy = speed, depth (hex)
-    {"ARP", 0, 255, 0x37, false},  // ARP: xy = +x, +y semitones (hex)
-    {"VSL", -64, 63, -8, true},  // VSL: volume change per step
-    {"OFS", 0, 255, 0, false},   // OFS: sample start, /256
-    {"CUT", 1, 96, 6, false},    // CUT: ticks
-    {"DEC", 0, 127, 64, false},  // DCY..CON: FM macro locks
-    {"COL", 0, 127, 64, false},
-    {"SHP", 0, 127, 64, false},
-    {"SWP", 0, 127, 64, false},
-    {"CON", 0, 127, 64, false},
+    {"...", "", 0, 0, 0, false},     // None
+    {"CHN", "MIDI CHANNEL", 1, 16, 1, false},    // CHN
+    {"RAT", "RETRIGGER", 2, 8, 2, false},     // RAT
+    {"PRB", "PROBABILITY", 0, 100, 50, false},  // PRB
+    {"GAT", "GATE LENGTH", 1, 200, 100, false}, // GAT (see gatePercent)
+    {"TIE", "TIE", 0, 0, 0, false},     // TIE
+    {"NDG", "NUDGE", -50, 50, 0, true},   // NDG
+    {"CHD", "CHORD", 0, kChordCount - 1, 0, false},
+    {"STR", "STRUM", 1, 50, 10, false},   // STR
+    {"CND", "CONDITION", 0, 0, 0x12, false},  // CND: own ordering
+    {"VRN", "VELOCITY RANDOM", 0, 64, 16, false},   // VRN
+    {"NRN", "NOTE RANDOM", 1, 7, 1, false},     // NRN
+    {"CCA", "CC A", 0, 127, 64, false},  // CCA
+    {"CCB", "CC B", 0, 127, 64, false},  // CCB
+    {"PBN", "PITCH BEND", -64, 63, 0, true},   // PBN
+    {"PGM", "PROGRAM CHANGE", 0, 127, 0, false},   // PGM
+    {"SLD", "SLIDE", 1, 255, 16, false},  // SLD: slide time x4 ms
+    {"VIB", "VIBRATO", 0, 255, 0x44, false},  // VIB: xy = speed, depth (hex)
+    {"ARP", "ARPEGGIO", 0, 255, 0x37, false},  // ARP: xy = +x, +y semitones (hex)
+    {"VSL", "VOLUME SLIDE", -64, 63, -8, true},  // VSL: volume change per step
+    {"OFS", "SAMPLE OFFSET", 0, 255, 0, false},   // OFS: sample start, /256
+    {"CUT", "NOTE CUT", 1, 96, 6, false},    // CUT: ticks
+    // DCY..CON: FM / DRUM / SYNTH macro locks (SYNTH: SHP1, SHP2, MIX, DET, SENV).
+    {"DEC", "MACRO DECAY / SHP1", 0, 127, 64, false},
+    {"COL", "MACRO COLOR / SHP2", 0, 127, 64, false},
+    {"SHP", "MACRO SHAPE / MIX", 0, 127, 64, false},
+    {"SWP", "MACRO SWEEP / DET", 0, 127, 64, false},
+    {"CON", "MACRO CONTOUR / SENV", 0, 127, 64, false},
+    {"FLT", "FILTER CUTOFF", 0, 127, 64, false},  // FLT: filter cutoff lock
+    {"RES", "FILTER RESONANCE", 0, 127, 0, false},   // RES: filter resonance lock
+    {"SLC", "SAMPLE SLICE", 0, kMaxSlices - 1, 0, false},  // SLC: slice of the next SAMPLE note-on (FX slice mode)
+    {"OFF", "NOTE OFF", 0, 96, 0, false},    // OFF: ticks after the step start
+    {"DLY", "DELAY SEND", 0, 127, 64, false},  // DLY: delay send lock
+    {"ACC", "ACCENT", 0, 255, 0xFF, false},    // ACC: lane mask (hex), drum tracks
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -71,6 +79,8 @@ constexpr int kCndCount = 36;
 
 }  // namespace
 
+const char* fxLongName(Fx f) { return info(f).longName; }
+
 const char* fxName(Fx f) { return info(f).name; }
 uint8_t fxDefault(Fx f) { return static_cast<uint8_t>(info(f).def); }
 
@@ -83,7 +93,8 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::PBN:
     case Fx::VSL: snprintf(out, 5, "%+3d", fxSigned(v)); return;
     case Fx::VIB:
-    case Fx::ARP: snprintf(out, 5, " %02X", v); return;
+    case Fx::ARP:
+    case Fx::ACC: snprintf(out, 5, " %02X", v); return;
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
     case Fx::CND:
       if (v == 0) snprintf(out, 5, "FST");
@@ -106,7 +117,9 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   return static_cast<uint8_t>(cur);
 }
 
-bool fxSynthOnly(Fx f) { return f >= Fx::SLD && f < Fx::Count; }
+bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY; }
+
+bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
 
 Fx fxNextCmd(Fx f, int delta) {
   const int n = static_cast<int>(Fx::Count);

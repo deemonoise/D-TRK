@@ -50,10 +50,57 @@ void test_cnd_order() {
 
 void test_cmd_cycle() {
   TEST_ASSERT_TRUE(fxNextCmd(Fx::None, 1) == Fx::CHN);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::CON);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::ACC);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::PGM, 1) == Fx::SLD);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::CUT, 1) == Fx::DCY);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::None);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::FLT);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::RES, 1) == Fx::SLC);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::SLC, 1) == Fx::OFF);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::OFF, 1) == Fx::DLY);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::ACC);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ACC, 1) == Fx::None);
+}
+
+void test_filter_fx() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockFlt, static_cast<int>(Fx::FLT));
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockRes, static_cast<int>(Fx::RES));
+  TEST_ASSERT_EQUAL_STRING("FLT", fxName(Fx::FLT));
+  TEST_ASSERT_EQUAL_STRING("RES", fxName(Fx::RES));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::FLT));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::RES));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::FLT));
+  TEST_ASSERT_EQUAL(0, fxDefault(Fx::RES));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::FLT, 120, 100));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::RES, 3, -10));
+  TEST_ASSERT_EQUAL_STRING(" 99", fmt(Fx::FLT, 99));
+}
+
+void test_dly_fx() {
+  TEST_ASSERT_EQUAL_STRING("DLY", fxName(Fx::DLY));
+  TEST_ASSERT_EQUAL_STRING("DELAY SEND", fxLongName(Fx::DLY));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::DLY));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::OFF));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::DLY));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::DLY, 120, 100));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::DLY, 3, -10));
+  TEST_ASSERT_EQUAL_STRING(" 99", fmt(Fx::DLY, 99));
+}
+
+void test_slc_fx() {
+  TEST_ASSERT_EQUAL_STRING("SLC", fxName(Fx::SLC));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::SLC));
+  TEST_ASSERT_EQUAL(0, fxDefault(Fx::SLC));
+  TEST_ASSERT_EQUAL(31, fxStep(Fx::SLC, 30, 5));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::SLC, 2, -5));
+  TEST_ASSERT_EQUAL_STRING(" 12", fmt(Fx::SLC, 12));
+  // OFF: ticks 0..96, MIDI too.
+  TEST_ASSERT_EQUAL_STRING("OFF", fxName(Fx::OFF));
+  TEST_ASSERT_EQUAL_STRING("NOTE OFF", fxLongName(Fx::OFF));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::OFF));
+  TEST_ASSERT_EQUAL(0, fxDefault(Fx::OFF));
+  TEST_ASSERT_EQUAL(96, fxStep(Fx::OFF, 90, 10));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::OFF, 3, -5));
+  TEST_ASSERT_EQUAL_STRING("  6", fmt(Fx::OFF, 6));
 }
 
 void test_fm_lock_fx() {
@@ -113,8 +160,35 @@ void test_synth_only() {
   TEST_ASSERT_FALSE(fxSynthOnly(Fx::Count));
 }
 
+void test_long_names() {
+  TEST_ASSERT_EQUAL_STRING("", fxLongName(Fx::None));
+  TEST_ASSERT_EQUAL_STRING("VIBRATO", fxLongName(Fx::VIB));
+  // DCY..CON: FM / DRUM macro and the SYNTH one.
+  TEST_ASSERT_EQUAL_STRING("MACRO DECAY / SHP1", fxLongName(Fx::DCY));
+  TEST_ASSERT_EQUAL_STRING("MACRO CONTOUR / SENV", fxLongName(Fx::CON));
+  for (int i = 1; i < static_cast<int>(Fx::Count); ++i) {
+    const size_t n = strlen(fxLongName(static_cast<Fx>(i)));
+    TEST_ASSERT_TRUE(n > 0 && n <= 24);
+  }
+}
+
+// ACC: drum tracks only, lane mask 0..255 shown as two hex digits (like VIB / ARP).
+void test_acc_lane_mask() {
+  TEST_ASSERT_EQUAL_STRING("ACC", fxName(Fx::ACC));
+  TEST_ASSERT_EQUAL_STRING("ACCENT", fxLongName(Fx::ACC));
+  TEST_ASSERT_EQUAL(0xFF, fxDefault(Fx::ACC));
+  TEST_ASSERT_EQUAL(0xFF, fxStep(Fx::ACC, 0xFE, 5));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::ACC, 1, -5));
+  TEST_ASSERT_EQUAL_STRING(" A5", fmt(Fx::ACC, 0xA5));
+  TEST_ASSERT_TRUE(fxDrumOnly(Fx::ACC));
+  TEST_ASSERT_FALSE(fxDrumOnly(Fx::DLY));
+  TEST_ASSERT_FALSE(fxDrumOnly(Fx::None));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::ACC));
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_long_names);
   RUN_TEST(test_names_and_defaults);
   RUN_TEST(test_format);
   RUN_TEST(test_step_clamps_and_signed);
@@ -123,5 +197,9 @@ int main() {
   RUN_TEST(test_synth_fx_names_ranges);
   RUN_TEST(test_synth_only);
   RUN_TEST(test_fm_lock_fx);
+  RUN_TEST(test_filter_fx);
+  RUN_TEST(test_slc_fx);
+  RUN_TEST(test_dly_fx);
+  RUN_TEST(test_acc_lane_mask);
   return UNITY_END();
 }

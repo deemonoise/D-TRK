@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "hot.h"
 #include "model.h"
 
 namespace mt {
@@ -7,6 +8,18 @@ namespace mt {
 constexpr int kSynthRate = 32000;
 constexpr int kWtLen = 32;
 extern const int8_t kWavetable[kWavetables][kWtLen];  // -127..127
+
+// One sine cycle + guard point, for phase-accumulator oscillators (FM, DRUM); internal RAM (DRAM).
+constexpr int kSineBits = 10;
+constexpr int kSineLen = 1 << kSineBits;
+extern float gSine[kSineLen + 1];
+// sin(2 pi x ph / 2^32), table with linear interpolation.
+MT_INLINE float tableSine(uint32_t ph) {
+  const uint32_t i = ph >> (32 - kSineBits);
+  const float f = (ph & ((1u << (32 - kSineBits)) - 1)) * (1.f / (1u << (32 - kSineBits)));
+  const float a = gSine[i];
+  return a + (gSine[i + 1] - a) * f;
+}
 
 // Frequency of a (fractional) MIDI note, Hz. 69 = 440.
 float noteHz(float note);

@@ -5,9 +5,10 @@
 namespace mt {
 
 // Ring of pattern snapshots; storage (kDepth entries) supplied by the caller (PSRAM on device).
+// kDepth (+1 scratch on device) x ~28 KB ≈ 260 KB of PSRAM; the live project itself is ≈ 460 KB.
 class Undo {
  public:
-  static constexpr int kDepth = 32;
+  static constexpr int kDepth = 8;
   struct Entry {
     uint8_t pattern;
     Pattern data;

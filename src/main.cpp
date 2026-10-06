@@ -16,14 +16,26 @@ static LGFX lcd;
 static mt::Project* project;
 static ui::App app;
 
-// Simple beat so Play produces something right after flashing.
+// Simple 808 beat so Play produces something right after flashing. DRUM machines play their own
+// pitch at C-4.
 static void loadDemo(mt::Project& p) {
+  static const mt::DrumMachine kKit[] = {mt::DrumMachine::Bd8, mt::DrumMachine::Sd8, mt::DrumMachine::Hh8};
+  for (int t = 0; t < 3; ++t) {
+    mt::instrSetType(p.instruments[t], mt::InstrType::Drum);
+    mt::drumSetMachine(p.instruments[t], static_cast<uint8_t>(kKit[t]));
+  }
   mt::Pattern& pat = p.patterns[0];
-  for (int i = 0; i < 16; i += 4) pat.steps[0][i].note = 36;
-  pat.steps[1][4].note = 38;
-  pat.steps[1][12].note = 38;
-  for (int i = 2; i < 16; i += 4) pat.steps[2][i].note = 42;
+  for (int i = 0; i < 16; i += 4) pat.steps[0][i].note = 60;
+  pat.steps[1][4].note = 60;
+  pat.steps[1][12].note = 60;
+  for (int i = 2; i < 16; i += 4) pat.steps[2][i].note = 60;
 }
+
+#ifdef WT_BENCH
+namespace audio {
+void wtBench();
+}
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -37,7 +49,8 @@ void setup() {
   // Engine not running yet: load straight into the live project.
   bool fromBak = false;
   storage::Result autoErr = storage::Result::Ok;
-  if (!hw::sdBegin() || !storage::autoload(*project, &fromBak, &autoErr)) loadDemo(*project);
+  const bool loaded = hw::sdBegin() && storage::autoload(*project, &fromBak, &autoErr);
+  if (!loaded) loadDemo(*project);
 
   lcd.init();
   lcd.setRotation(1);
@@ -50,12 +63,22 @@ void setup() {
   audio::begin(project);
   app.begin(&lcd, project);
   engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));  // song position display
-  if (fromBak) app.toast("LOADED BACKUP");
+  // Bank mounted by audio::begin, engine not playing: bring in the samples the cache lacks.
+  int missing = 0;
+  const bool folderFail = loaded && storage::pullSamples(*project, &missing, ui::App::syncProgress, &app) ==
+                                        storage::Result::SamplesNotSaved;
+  // One toast: autoload error (nothing loaded), or backup / missing samples / folder not written.
   if (autoErr != storage::Result::Ok) {
-    static char msg[40];
+    char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
     app.toast(msg);
+  } else if (fromBak || missing > 0 || folderFail) {
+    app.loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
+#ifdef WT_BENCH
+  audio::wtBench();
+  app.toast("WT BENCH: /midi/bench.mid");
+#endif
 }
 
 void loop() {

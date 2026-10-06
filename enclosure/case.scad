@@ -1,4 +1,4 @@
-// Корпус MIDI Tracker (WT32-SC01 Plus). Все размеры в мм.
+// Корпус D-TRK (WT32-SC01 Plus). Все размеры в мм.
 // Деталь: part = "top" | "bottom" | "clamp" | "assembly"
 // Рендер: openscad -o case_top.stl -D 'part="top"' case.scad
 // Вариант с 8 кнопками дорожек: -D 'trk=true'
@@ -58,7 +58,8 @@ ins_d     = 4.0;    // отверстие под гайку
 ins_depth = 6.0;
 post_r    = 3.5;
 screw_d   = 3.4;    // проход M3
-csk_d     = 6.4;    // потай M3 (90°)
+cb_d      = 6.2;    // цековка под голову M3 DIN 912 (⌀5,5 × 3)
+cb_h      = 3.2;    // голова заподлицо; винты крышки M3 × 10
 
 // Прижимные планки
 clamp_w   = 8;
@@ -69,7 +70,11 @@ clamp_dx  = 12;     // от края модуля по X до оси планк�
 // Корпус
 wall   = 2.0;
 top_t  = 2.5;
-lid_t  = 3.0;
+lid_t  = 3.0;       // дно нижней части
+tray_h = 4.5;       // высота стенок корыта (аккумулятор ниже на столько же)
+guide_t = 1.2;      // центрирующая губа по кромке корыта: толщина,
+guide_h = 1.5;      //   высота,
+guide_clr = 0.2;    //   зазор к внутренней стенке верха
 corner_r = 3.0;
 side_m = 1.0;       // зазор модуль — стенка по бокам
 ctrl_d = trk ? 72 : 32;   // глубина переднего отсека (органы управления)
@@ -98,8 +103,12 @@ lid_posts = [[wall + post_r, wall + post_r], [W - wall - post_r, wall + post_r],
 
 ip_zc = lid_t + ip_rail + ip_pcb + usbc_h/2;   // ось Type-C
 
-echo(str("Корпус: ", W, " x ", D, " x ", H, " мм"));
-echo(str("Под MX до крышки: ", H - mx_plate - lid_t, " мм"));
+// Нижняя часть строится вниз от z = lid_t (стык с верхом), верх не зависит от tray_h
+bot_z0 = lid_t - tray_h - lid_t;      // низ дна
+floor_z = lid_t - tray_h;             // верх дна
+
+echo(str("Корпус: ", W, " x ", D, " x ", H + tray_h, " мм"));
+echo(str("Под MX до дна: ", H - mx_plate - floor_z, " мм"));
 
 // центры MX: Shift, Play и (trk) 8 кнопок дорожек; кнопка 1 — левая в ряду ближе к экрану
 function trk_cx(c) = W/2 + (c - (trk_cols - 1)/2) * trk_pitch;
@@ -174,30 +183,59 @@ module fence(w, d, h, t = 1.2) {
     }
 }
 
+// губа: кольцо по внутренней стенке, без углов (там стойки верха) и без участка у IP5306;
+// clr — отступ наружной грани от стенки (над стыком guide_clr, в корыте 0 — губа стоит на стенке и дне)
+module guide(h, clr) {
+    cr = max(corner_r - wall, 0.5);
+    cw = wall + 2*post_r + 1;   // вырез угла
+    ti = wall + guide_clr + guide_t;
+    difference() {
+        translate([wall + clr, wall + clr, 0])
+            rbox(W - 2*wall - 2*clr, D - 2*wall - 2*clr, h, max(cr - clr, 0.3));
+        translate([ti, ti, -1]) rbox(W - 2*ti, D - 2*ti, h + 2, 0.3);
+        for (x = [0, W - cw], y = [0, D - cw]) translate([x, y, -1]) cube([cw, cw, h + 2]);
+        translate([ip_x - ip_w/2 - 1.5, D - wall - 5, -1]) cube([ip_w + 3, 6, h + 2]);
+    }
+}
+
 module bottom_lid() {
     difference() {
         union() {
-            rbox(W, D, lid_t, corner_r);
+            // корыто
+            difference() {
+                translate([0, 0, bot_z0]) rbox(W, D, lid_t + tray_h, corner_r);
+                translate([wall, wall, floor_z])
+                    rbox(W - 2*wall, D - 2*wall, tray_h + 1, max(corner_r - wall, 0.5));
+            }
+            // угловые стойки под винты крышки
+            for (p = lid_posts) translate([p[0], p[1], floor_z - 0.01]) {
+                cylinder(r = post_r, h = tray_h + 0.01);
+                translate([p[0] < W/2 ? -post_r - 0.5 : 0, p[1] < D/2 ? -post_r - 0.5 : 0, 0])
+                    cube([post_r + 0.5, post_r + 0.5, tray_h + 0.01]);
+            }
+            translate([0, 0, lid_t - 0.01]) guide(guide_h + 0.01, guide_clr);
+            translate([0, 0, floor_z - 0.01]) guide(tray_h + 0.01, 0);
             // бортик аккумулятора, под модулем у передней кромки
-            translate([(W - bat_w)/2 - bat_clr, mod_y0 + 2 - bat_clr, lid_t])
+            translate([(W - bat_w)/2 - bat_clr, mod_y0 + 2 - bat_clr, floor_z])
                 fence(bat_w + 2*bat_clr, bat_d + 2*bat_clr, 2);
-            // ложемент IP5306 у задней стенки
-            translate([ip_x - ip_w/2, D - wall - ip_d - 0.3, lid_t]) {
+            // ложемент IP5306 у задней стенки; подставки выше на tray_h — Type-C напротив отверстия в верхе
+            translate([ip_x - ip_w/2, D - wall - ip_d - 0.3, floor_z]) {
                 // подставки под края платы
-                for (dx = [0, ip_w - 1.5]) translate([dx, 0, 0]) cube([1.5, ip_d, ip_rail]);
+                for (dx = [0, ip_w - 1.5]) translate([dx, 0, 0]) cube([1.5, ip_d, ip_rail + tray_h]);
                 // боковые упоры и задний упор
                 difference() {
-                    translate([-0.3, 0, 0]) fence(ip_w + 0.6, ip_d + 0.3, ip_rail + ip_pcb + 0.6);
-                    translate([-2, ip_d - 1, -1]) cube([ip_w + 4, 5, 10]);   // открыто к стенке
+                    translate([-0.3, 0, 0]) fence(ip_w + 0.6, ip_d + 0.3, ip_rail + tray_h + ip_pcb + 0.6);
+                    translate([-2, ip_d - 1, -1]) cube([ip_w + 4, 5, 20]);   // открыто к стенке
                 }
             }
             // бортик PCF8575
-            if (trk) translate([(W - pcf_w)/2 - 0.3, pcf_y - pcf_d/2 - 0.3, lid_t])
+            if (trk) translate([(W - pcf_w)/2 - 0.3, pcf_y - pcf_d/2 - 0.3, floor_z])
                 fence(pcf_w + 0.6, pcf_d + 0.6, 1.5);
         }
-        for (p = lid_posts) translate([p[0], p[1], -1]) {
-            cylinder(d = screw_d, h = lid_t + 2);
-            translate([0, 0, 1 - 0.01]) cylinder(d1 = csk_d, d2 = 0, h = csk_d/2);
+        // винты M3 × 10, голова утоплена
+        for (p = lid_posts) translate([p[0], p[1], bot_z0 - 1]) {
+            cylinder(d = screw_d, h = lid_t + tray_h + 2);
+            cylinder(d = cb_d, h = cb_h + 1);
         }
     }
 }
@@ -220,14 +258,14 @@ module assembly() {
     for (x = clamp_xs) color("orange") translate([x, clamp_ys[0], clamp_zt - clamp_t]) clamp();
     // макеты
     color("black") translate([mod_x0 + mod_clr, mod_y0 + mod_clr, mod_zb]) cube([mod_w, mod_d, mod_h]);
-    color("silver") translate([(W - bat_w)/2, mod_y0 + 2, lid_t]) cube([bat_w, bat_d, bat_h]);
+    color("silver") translate([(W - bat_w)/2, mod_y0 + 2, floor_z]) cube([bat_w, bat_d, bat_h]);
     color("blue") translate([ip_x - ip_w/2, D - wall - ip_d, lid_t + ip_rail]) cube([ip_w, ip_d, ip_pcb]);
-    if (trk) color("green") translate([(W - pcf_w)/2, pcf_y - pcf_d/2, lid_t]) cube([pcf_w, pcf_d, 1.6]);
+    if (trk) color("green") translate([(W - pcf_w)/2, pcf_y - pcf_d/2, floor_z]) cube([pcf_w, pcf_d, 1.6]);
     // MX под панелью (корпус 14×14, 5 мм вниз + выводы)
     for (p = mx_pos) color("white") translate([p[0] - 7, p[1] - 7, H - mx_plate - 8.3]) cube([14, 14, 8.3]);
 }
 
 if (part == "top")         translate([0, D, H]) rotate([180, 0, 0]) top_shell();   // лицом на стол
-else if (part == "bottom") bottom_lid();
+else if (part == "bottom") translate([0, 0, -bot_z0]) bottom_lid();
 else if (part == "clamp")  clamp();
 else                       assembly();

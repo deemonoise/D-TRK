@@ -5,6 +5,7 @@
 #include <string.h>
 #include <strings.h>
 #include "pins.h"
+#include "preset_paths.h"
 
 namespace hw {
 namespace {
@@ -14,6 +15,26 @@ bool ready;
 
 int cmpName(const void* a, const void* b) {
   return strcasecmp(static_cast<const char*>(a), static_cast<const char*>(b));
+}
+
+// Adds name (len chars) to names[0..n): appended while there is room, otherwise it replaces the
+// alphabetically last entry if it sorts before it. So a full list holds the first max names in
+// sorted order, not the first max the directory happens to return. Returns the new count.
+int keepName(char (*names)[kNameMax], int n, int max, const char* name, size_t len) {
+  if (max <= 0) return n;
+  if (n < max) {
+    memcpy(names[n], name, len);
+    names[n][len] = 0;
+    return n + 1;
+  }
+  int last = 0;
+  for (int i = 1; i < n; ++i)
+    if (strcasecmp(names[i], names[last]) > 0) last = i;
+  char tmp[kNameMax];
+  memcpy(tmp, name, len);
+  tmp[len] = 0;
+  if (strcasecmp(tmp, names[last]) < 0) memcpy(names[last], tmp, len + 1);
+  return n;
 }
 
 }  // namespace
@@ -40,6 +61,12 @@ bool sdBegin() {
   if (!SD.exists("/projects")) SD.mkdir("/projects");
   if (!SD.exists("/midi")) SD.mkdir("/midi");
   if (!SD.exists("/samples")) SD.mkdir("/samples");
+  if (!SD.exists("/wavetables")) SD.mkdir("/wavetables");
+  if (!SD.exists("/presets")) SD.mkdir("/presets");
+  for (int t = 0; t < static_cast<int>(mt::InstrType::Count); ++t) {
+    const char* root = mt::presetRoot(static_cast<mt::InstrType>(t));
+    if (!SD.exists(root)) SD.mkdir(root);
+  }
   return true;
 }
 
@@ -115,16 +142,17 @@ int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, b
   int n = 0;
   String entry;
   bool isDir;
-  while (n < max && sdNextEntry(d, entry, isDir)) {
+  char base[kNameMax];
+  while (sdNextEntry(d, entry, isDir)) {
     if (isDir) continue;
     const char* name = entry.c_str();
     const size_t len = strlen(name);
     if (len <= extLen || len - extLen >= kNameMax || name[0] == '.') continue;
     if (strcasecmp(name + len - extLen, ext) != 0) continue;
-    memcpy(names[n], name, len - extLen);
-    names[n][len - extLen] = 0;
-    if (accept && !accept(names[n])) continue;
-    ++n;
+    memcpy(base, name, len - extLen);
+    base[len - extLen] = 0;
+    if (accept && !accept(base)) continue;
+    n = keepName(names, n, max, base, len - extLen);
   }
   qsort(names, n, kNameMax, cmpName);
   return n;
@@ -137,7 +165,7 @@ int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*n
   int n = 0;
   String entry;
   bool isDir;
-  while (n < max && sdNextEntry(d, entry, isDir)) {
+  while (sdNextEntry(d, entry, isDir)) {
     if (isDir) continue;
     const char* name = entry.c_str();
     const size_t len = strlen(name);
@@ -148,7 +176,7 @@ int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*n
       match = len > el && strcasecmp(name + len - el, exts[e]) == 0;
     }
     if (!match) continue;
-    memcpy(names[n++], name, len + 1);
+    n = keepName(names, n, max, name, len);
   }
   qsort(names, n, kNameMax, cmpName);
   return n;
@@ -161,13 +189,12 @@ int sdListDirs(const char* dir, char (*names)[kNameMax], int max) {
   int n = 0;
   String entry;
   bool isDir;
-  while (n < max && sdNextEntry(d, entry, isDir)) {
+  while (sdNextEntry(d, entry, isDir)) {
     if (!isDir) continue;
     const char* name = entry.c_str();
     const size_t len = strlen(name);
     if (len == 0 || len >= kNameMax || name[0] == '.') continue;
-    memcpy(names[n], name, len + 1);
-    ++n;
+    n = keepName(names, n, max, name, len);
   }
   qsort(names, n, kNameMax, cmpName);
   return n;

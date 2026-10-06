@@ -1,72 +1,119 @@
 #pragma once
 #include "model.h"
 #include "param_list.h"
+#include "preset_browser.h"
+#include "sample_editor.h"
 #include "screen.h"
+#include "wt_picker.h"
 
 namespace ui {
 
 // Instrument editor. Shift+turn (or a tap on the header arrows) = instrument -+1; entering the tab
 // selects the instrument of App::curTrack(). PREVIEW (tap, or a long press) plays C4 for 300 ms.
+// PRESET (tap, or Shift + long press): LOAD / SAVE menu, then the PresetBrowser over the list.
 // Name: click to edit, turn = character, Shift+turn = position.
-// SAMPLE: a waveform view above the list with start (green), end (red) and loop (yellow) markers.
-// FM: machine, macros (DECAY..CONTOUR), LFO; ADSR rows grey where the machine ignores them.
+// Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
+// ADSR graph), the type's own (OSC / SMPL / FM / DRUM; SYNTH: OSC and MOD), FILT, LFO. The page is
+// kept across instruments and type changes (SYNTH MOD -> the type page of the others).
+// SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows).
+// FM: machine, macros (DECAY..CONTOUR); ADSR rows grey where the machine ignores them.
+// DRUM: machine, macros named per machine (grey "-" where unused); ADSR, mode and glide grey.
+// SYNTH: six pages, MAIN / ENV / OSC / MOD / FILT / LFO. OSC: Osc1, Table1, Shape1 (SHP1), Osc2, Table2,
+// Shape2 (SHP2), Semi2, Detune (DET), Sync, Mix (MIX), with the selected oscillator's waveform (WT: the
+// frame under SHAPE) on the right; MOD: Sub, Sub oct, Noise, Env>Shp (SENV), Env atk, Env dec. ADSR, mode
+// and glide as CHIP. A click / tap on a Table row opens WtPicker; a missing table is shown red.
+// Filter and LFO rows on every type, after the type's own (CHIP / SAMPLE: no macro LFO targets).
 class InstScreen : public Screen {
  public:
   explicit InstScreen(App& app);
   void onEnter() override;
-  void onProjectReplaced() override { onEnter(); }
+  void onLeave() override;
+  void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && onEditor(); }
+  // Track button n: on the sample editor plays slices (see SampleEditor::playSlice). False = not taken.
+  bool trackKey(int n, bool shift);
 
  private:
-  // Rows of every type first, then the type's own.
-  enum Row : int {
-    kName, kType, kVol, kTranspose, kFine, kAttack, kDecay, kSustain, kRelease, kMode, kGlide, kCommon,
-    kWave = kCommon, kDuty, kPwmRate, kPwmDepth, kChipRows,
-    kSample = kCommon, kRoot, kStart, kEnd, kLoop, kLoopStart, kReverse, kSampleRows,
-    kMachine = kCommon, kMacDecay, kMacColor, kMacShape, kMacSweep, kMacContour,
-    kLfoWave, kLfoRate, kLfoDepth, kLfoDest, kFmRows
-  };
+  // Rows of every type first, then the type's own. Plain ints: they are added across groups.
+  static constexpr int kName = 0, kType = 1, kVol = 2, kTranspose = 3, kFine = 4, kMode = 5, kGlide = 6,
+                       kSend = 7, kAttack = 8, kDecay = 9, kSustain = 10, kRelease = 11, kCommon = 12;
+  static constexpr int kMainRows = 8;  // MAIN = [0, 8), ENV = [8, kCommon)
+  static constexpr int kWave = kCommon, kDuty = kCommon + 1, kPwmRate = kCommon + 2, kPwmDepth = kCommon + 3,
+                       kChipRows = kCommon + 4;
+  static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM, DRUM
+  // SYNTH: OSC page rows, then MOD page rows.
+  static constexpr int kOsc1 = kCommon, kTable1 = kCommon + 1, kShape1 = kCommon + 2, kOsc2 = kCommon + 3,
+                       kTable2 = kCommon + 4, kShape2 = kCommon + 5, kSemi = kCommon + 6, kDetune = kCommon + 7,
+                       kSync = kCommon + 8, kMix = kCommon + 9, kSynOscRows = 10;
+  static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kSenv = kSub + 3,
+                       kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
+  // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
+  static constexpr int kFltMode = 0, kCutoff = 1, kReso = 2, kFEnv = 3, kFAtk = 4, kFDec = 5, kKeytrack = 6,
+                       kLfoWave = 7, kLfoRate = 8, kLfoDepth = 9, kLfoDest = 10, kTailRows = 11;
+  static constexpr int kFiltRows = 7;  // tail: FILT = [0, 7), LFO = [7, kTailRows)
+  // Logical pages; kPgType2 (SYNTH MOD) only on SYNTH, so the others have one page less.
+  enum Page : int { kPgMain, kPgEnv, kPgType, kPgType2, kPgFilt, kPgLfo };
   static constexpr int kHeaderH = 28;
-  static constexpr int kVisibleRows = 10;  // (kAreaH - kHeaderH) / ParamList::kRowH
-  static constexpr int kWaveH = 60;        // SAMPLE waveform view, below the header
-  static constexpr int kWaveGap = 4;
-  static constexpr int kSampleVisibleRows = 7;  // (kAreaH - kHeaderH - kWaveH - kWaveGap) / kRowH
+  static constexpr int kPageBarH = 24;
+  static constexpr int kListRows = 9;  // (kAreaH - kHeaderH - kPageBarH) / ParamList::kRowH
+  // ENV page ADSR graph, right of the values; y from the list top.
+  static constexpr int kEnvX0 = 280, kEnvX1 = 470, kEnvY0 = 8, kEnvY1 = 112;
+  static constexpr int kEnvHold = 30;  // sustain plateau width
+  // OSC page (SYNTH) frame preview, right of the values (table names reach x 336); y from the list top.
+  static constexpr int kWtX0 = 336, kWtX1 = 456, kWtY0 = 8, kWtY1 = 112;
   static constexpr int kNameLen = 8;
   static constexpr int kPreviewNote = 60;
-  // Header hit areas: left arrow, right arrow, PREVIEW button.
-  static constexpr int kLeftX1 = 80;
-  static constexpr int kRightX0 = 288, kRightX1 = 360;
-  static constexpr int kPrevX0 = 368;
+  // Header hit areas: left arrow, right arrow, PRESET and PREVIEW buttons.
+  static constexpr int kLeftX1 = 56;
+  static constexpr int kRightX0 = 232, kRightX1 = 288;
+  static constexpr int kPresetX0 = 296, kPresetX1 = 376;
+  static constexpr int kPrevX0 = 384, kPrevX1 = 472;
 
   mt::Instrument& inst();
+  const mt::Instrument& inst() const;
   void changeInstr(int d);
   void syncParams();  // rows of the current type
+  Param* typeRows();  // row array of the current type
+  int typeCount() const;  // the type's own rows
+  bool onEditor() const { return shown_ == mt::InstrType::Sample && page_ == kPgType; }
+  bool synth() const { return shown_ == mt::InstrType::Synth; }
+  int pageCount() const { return synth() ? 6 : 5; }
+  int pageW() const { return kScreenW / pageCount(); }
+  int physPage() const;                // tab index of page_
+  int logicalPage(int phys) const;     // Page of a tab index
+  void showPage(int phys, bool last);  // tab index, wraps; last: select the page's last row
+  int tableOsc() const;                // SYNTH OSC page on a Table row: its oscillator, else -1
+  void drawPageBar(LGFX_Sprite& s, int y);
+  void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
+  void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC page: frame / waveform of the selected osc
+  void initTail(Param* t, bool macros);  // t = &rows[type's row count]; macros: FM / DRUM LFO targets
+  void relabel();                        // DRUM macro labels of the current machine
   void leaveEdit();
   void fixNames();  // empty name -> INSn
-  bool nameEdit() const { return list_.editing() && list_.sel() == kName; }
+  bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
   void preview();
-  int bankIndex();      // of inst().sample, -1 if absent or no bank
-  bool sampleMissing();  // a name that is not in the bank
-  void updateWave();    // min/max column cache of the current sample, only when it changed
-  void drawWave(LGFX_Sprite& s, int y);
+  void presetMenu();
+  void afterPresets();  // the browser closed: the type may have changed
+  void openTables(int osc);
 
   App& app_;
-  Param chip_[kChipRows];
-  Param sample_[kSampleRows];
-  Param fm_[kFmRows];
+  Param chip_[kChipRows + kTailRows];
+  Param sample_[kCommon + kTailRows];  // the type page is editor_
+  Param fm_[kMacRows + kTailRows];
+  Param drum_[kMacRows + kTailRows];
+  Param syn_[kSynRows + kTailRows];
   mt::InstrType shown_ = mt::InstrType::Chip;
-  ParamList list_{kAreaY + kHeaderH};
+  ParamList list_{kAreaY + kHeaderH + kPageBarH};
+  int page_ = kPgMain;
+  PresetBrowser presets_{app_};
+  WtPicker wt_{app_};
   int instr_ = 0;
   int y0_ = kAreaY;
   int namePos_ = 0;
-  // Waveform cache: per screen column min / max of the sample, scaled to int8.
-  int8_t waveMin_[kScreenW] = {0};
-  int8_t waveMax_[kScreenW] = {0};
-  const int16_t* waveData_ = nullptr;
-  uint32_t waveFrames_ = 0;
-  uint32_t waveGen_ = 0;  // SampleBank::generation(): same place and length may hold new data
+  SampleEditor editor_{app_, kAreaY + kHeaderH + kPageBarH};
 };
 
 }  // namespace ui

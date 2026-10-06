@@ -47,6 +47,13 @@ class App {
   void toast(const char* msg);
   // Draws msg over the current frame and pushes it right away: call before blocking SD I/O.
   void showBusy(const char* msg);
+  // showBusy("label NN%"), redrawn at most every 200 ms unless the label changes.
+  void showProgress(const char* label, uint32_t done, uint32_t total);
+  // storage::SyncProgress for sample sync / pull: "SAMPLE name NN%". ctx = App*.
+  static void syncProgress(const char* file, uint32_t done, uint32_t total, void* app);
+  // One toast after a load: what (e.g. "LOADED X", may be nullptr), missing samples, a failed sample
+  // folder write; leading parts are dropped when it gets too long.
+  void loadedToast(const char* what, int missing, bool folderFail);
 
   // Unsaved changes: every UI write to the project calls markDirty().
   void markDirty() {
@@ -71,6 +78,7 @@ class App {
   static constexpr uint32_t kToastMs = 1500;
   static constexpr uint32_t kFlashMs = 50;  // track LED flash per note
   static constexpr uint32_t kCpuMs = 500;   // status bar CPU: averaging window
+  static constexpr uint32_t kCpuRedMs = 2000;  // status bar CPU: red held after an audio stall
   static constexpr int kTabW = kScreenW / static_cast<int>(Tab::Count);
   // Status bar hit areas.
   static constexpr int kBpmX0 = 64, kBpmX1 = 176;
@@ -110,12 +118,17 @@ class App {
   mt::Clipboard* clip_ = nullptr;
 
   const char* busy_ = nullptr;  // only set inside showBusy()
+  char progLabel_[32] = {0};    // showProgress()
+  char progMsg_[40] = {0};
+  int progPct_ = -1;
+  uint32_t progMs_ = 0;
   char toast_[48] = {0};
   uint32_t toastUntil_ = 0;
   uint16_t lastBpm_ = 0;
   int cpu_ = 0;              // audio load shown in the status bar, % (window average)
   uint16_t cpuColor_ = kDim;  // its color: kDim / kYellow / kRed
   uint32_t cpuAt_ = 0;       // last load taken
+  uint32_t cpuRedUntil_ = 0;  // millis() until which the CPU readout stays red (audio stall)
   int bpmTarget_ = 120;  // local while editing: p_->bpm lags behind the engine queue
   bool bpmEdit_ = false;
   uint8_t curTrack_ = 0;

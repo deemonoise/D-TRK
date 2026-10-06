@@ -15,6 +15,8 @@
 #include "synth.h"
 #include "synth_fm.h"
 #include "synth_fm_machines.h"
+#include "synth_drum.h"
+#include "synth_drum_machines.h"
 
 // Bench: build with -DAUDIO_BENCH (add to build_flags of [env:wt32]) to replace the synth with
 // 16 fake sampler voices reading the sample partition; the render time goes to Serial once a second.
@@ -23,6 +25,14 @@
 // can be held (see benchFmBegin). Same Serial line. It overwrites instruments 15, 16 and the
 // tracks' out / instrument of the loaded project in RAM: there is no autosave, but do not SAVE
 // the project from a bench build.
+// DRUM bench: -DAUDIO_BENCH_DRUM puts a DRUM machine on every track (BD8, SD8, open HH8, CY9, CP8,
+// CB8, TOM9, HH9), all retriggered every 16th at 120 BPM, plus held CHIP saw voices through a
+// resonant LP filter with an envelope on the preview track (see benchDrumBegin). Same Serial line.
+// It overwrites instruments 7..15 and every track's out / instrument, like the FM bench.
+// SYNTH bench: -DAUDIO_BENCH_SYN puts a SYNTH on every track (two wavetable oscillators *SAWSQR /
+// *FORMANT mixed, LFO on SHP1, sub, LP filter) and plays a 2-note chord per track every 2 s: 16 voices.
+// With -DAUDIO_BENCH_SYN_N=8 one note per track (8 voices). Same Serial line. It overwrites
+// instruments 8..15 and every track's out / instrument, like the FM bench.
 
 namespace audio {
 namespace {
@@ -42,6 +52,7 @@ struct Ev {
   uint64_t t;
   uint8_t track, len;
   uint8_t b[3];
+  uint8_t hold = 0;  // preview note-on: length x100 ms, 0 = kPreviewUs
 };
 struct Ring {
   static constexpr uint32_t kSize = 256;  // power of two
@@ -149,7 +160,7 @@ void drain(Ring& q) {
       }
       previewOn = true;
       previewNote = e->b[1];
-      previewOffT = e->t + kPreviewUs;
+      previewOffT = e->t + (e->hold ? e->hold * 100000ull : kPreviewUs);
     }
     feed(e->track, e->b, e->len, off);
     q.pop();
@@ -175,7 +186,7 @@ void drain(Ring& q) {
   pvPlaying.store(oneshot.playing(), std::memory_order_relaxed);
 }
 
-#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM)
+#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN)
 std::atomic<uint32_t> renderUs{0};   // last block
 std::atomic<uint32_t> benchPeak{0};  // render peak since the last pollLog() print
 #endif
@@ -239,10 +250,11 @@ void renderBench(int16_t* out) {
 #ifdef AUDIO_BENCH_FM
 // Worst case per voice is HAT: 4 feedback operators + noise + SVF on everything (each algorithm
 // runs all 4 operators every sample, so TONE / CHORD cost 4 operators without noise / filter).
-// But drums (and CHORD) are mono on a track, and there are only 8 tracks, so 16 HATs cannot
-// exist; only POLY TONE reaches 4 voices per track. With 8 tracks the most HATs that still fill
-// the pool: 3 TONE tracks x 4 + 4 HAT tracks = 16 voices. HAT is one-shot (DECAY max = 4 s), so
-// benchFmTick() retriggers it every second (a choke on the same voice).
+// But heavy voices (FM, DRUM, wavetable SYNTH) are capped at kFmVoiceMax = 8 sounding at once,
+// whatever the track count, so 16 HATs cannot exist; drums (and CHORD) are mono on a track and
+// only POLY TONE reaches 4 voices per track. A load that fills the 16-voice pool with the heavy
+// cap saturated: 3 TONE tracks x 4 + 4 HAT tracks = 16 voices. HAT is one-shot (DECAY max = 4 s),
+// so benchFmTick() retriggers it every second (a choke on the same voice).
 constexpr int kBenchToneTracks = 3, kBenchHatTracks = 4;
 constexpr uint32_t kBenchHatEvery = 250;  // blocks, 1 s
 
@@ -291,12 +303,134 @@ void benchFmTick() {
 }
 #endif
 
+#ifdef AUDIO_BENCH_DRUM
+// Heaviest DRUM load the synth can hold: heavy voices are capped at kFmVoiceMax = 8, so 8 mono DRUM
+// tracks saturate it however many tracks the pattern has. The rest of the pool cannot be reached
+// from those tracks (a mono DRUM note takes its track's newest voice), so the CHIP voices sit on the
+// preview track: kPolyPerTrack POLY voices with the filter. Long decays keep every DRUM voice
+// sounding into the next 16th (choke).
+constexpr uint32_t kBenchDrumEvery = 31;  // blocks, ~124 ms: a 16th at 120 BPM
+constexpr uint8_t kBenchDrumInstr = 8;    // instruments 8..15: drums, 7: CHIP
+constexpr uint8_t kBenchChipInstr = 7;
+
+constexpr int kBenchTracks = mt::kInstruments - kBenchDrumInstr;  // one DRUM instrument per bench track
+
+void benchDrumHits() {
+  for (int t = 0; t < kBenchTracks; ++t) {
+    const uint8_t on[3] = {0x90, 60, 100};
+    synth->event(0, static_cast<uint8_t>(t), on, 3);
+  }
+}
+
+void benchDrumBegin() {
+  using mt::DrumMachine;
+  static const DrumMachine kMachines[kBenchTracks] = {DrumMachine::Bd8, DrumMachine::Sd8, DrumMachine::Hh8,
+                                                      DrumMachine::Cy9, DrumMachine::Cp8, DrumMachine::Cb8,
+                                                      DrumMachine::Tom9, DrumMachine::Hh9};
+  for (int t = 0; t < kBenchTracks; ++t) {
+    mt::Instrument& d = project->instruments[kBenchDrumInstr + t];
+    d = mt::Instrument();
+    mt::instrSetType(d, mt::InstrType::Drum);
+    mt::drumSetMachine(d, static_cast<uint8_t>(kMachines[t]));
+    d.macro[mt::kMacDec] = 110;  // longer than a 16th: HH8 open, the rest still ringing at the choke
+    project->tracks[t].out = mt::TrackOut::Int;
+    project->tracks[t].instr = static_cast<uint8_t>(kBenchDrumInstr + t);
+  }
+  mt::Instrument& chip = project->instruments[kBenchChipInstr];
+  chip = mt::Instrument();
+  chip.wave = static_cast<uint8_t>(mt::Wave::Saw);
+  chip.sustain = 127;
+  chip.mono = false;
+  chip.fltMode = static_cast<uint8_t>(mt::FltMode::Lp);
+  chip.cutoff = 60;
+  chip.reso = 100;
+  chip.fenv = 40;
+  chip.fDec = 0;  // the envelope holds: the cutoff stays modulated
+  const uint8_t pgm[2] = {0xC0, kBenchChipInstr};
+  synth->event(0, mt::kPreviewTrack, pgm, 2);
+  for (int k = 0; k < mt::kPolyPerTrack; ++k) {
+    const uint8_t on[3] = {0x90, static_cast<uint8_t>(48 + k * 5), 100};
+    synth->event(0, mt::kPreviewTrack, on, 3);
+  }
+  benchDrumHits();
+}
+
+// Audio task, before the block is rendered.
+void benchDrumTick() {
+  static uint32_t blocks;
+  if (++blocks % kBenchDrumEvery == 0) benchDrumHits();
+}
+#endif
+
+#ifdef AUDIO_BENCH_SYN
+#ifndef AUDIO_BENCH_SYN_N
+#define AUDIO_BENCH_SYN_N 16
+#endif
+static_assert(AUDIO_BENCH_SYN_N == 8 || AUDIO_BENCH_SYN_N == 16, "AUDIO_BENCH_SYN_N: 8 or 16 voices");
+constexpr int kBenchSynNotes = AUDIO_BENCH_SYN_N / mt::kTracks;  // per track: 1 or 2 (a chord)
+constexpr uint32_t kBenchSynEvery = 500;                          // blocks, 2 s
+constexpr uint8_t kBenchSynInstr = 8;                             // instruments 8..15
+
+// Releases the previous chord and plays the next one: the voices stay at AUDIO_BENCH_SYN_N
+// (release tails end well before the next chord, see benchSynBegin).
+void benchSynChords() {
+  static uint8_t shift;
+  for (int t = 0; t < mt::kTracks; ++t) {
+    for (int k = 0; k < kBenchSynNotes; ++k) {
+      const uint8_t note = static_cast<uint8_t>(40 + t * 5 + k * 7);
+      const uint8_t off[3] = {0x80, static_cast<uint8_t>(note + shift), 0};
+      const uint8_t on[3] = {0x90, static_cast<uint8_t>(note + (shift ^ 2)), 100};
+      synth->event(0, static_cast<uint8_t>(t), off, 3);
+      synth->event(0, static_cast<uint8_t>(t), on, 3);
+    }
+  }
+  shift ^= 2;  // a whole tone up and back: new notes, not retriggers of the same ones
+}
+
+void benchSynBegin() {
+  for (int t = 0; t < mt::kTracks; ++t) {
+    mt::Instrument& m = project->instruments[kBenchSynInstr + t];
+    m = mt::Instrument();
+    mt::instrSetType(m, mt::InstrType::Synth);
+    m.synOsc[0] = m.synOsc[1] = static_cast<uint8_t>(mt::SynOsc::Wt);
+    strlcpy(m.synWt[0], "*SAWSQR", sizeof(m.synWt[0]));
+    strlcpy(m.synWt[1], "*FORMANT", sizeof(m.synWt[1]));
+    m.macro[mt::kMacMix] = 64;
+    m.lfoWave = static_cast<uint8_t>(mt::LfoWave::Sine);
+    m.lfoDest = static_cast<uint8_t>(mt::LfoDest::Dec);  // SHP1
+    m.lfoDepth = 30;
+    m.lfoRate = 40;
+    m.synSub = 40;
+    m.fltMode = static_cast<uint8_t>(mt::FltMode::Lp);
+    m.cutoff = 90;
+    m.sustain = 127;
+    m.release = 10;  // short tails: the next chord starts on free voices
+    m.mono = false;  // POLY
+    project->tracks[t].out = mt::TrackOut::Int;
+    project->tracks[t].instr = static_cast<uint8_t>(kBenchSynInstr + t);
+  }
+  benchSynChords();
+}
+
+// Audio task, before the block is rendered.
+void benchSynTick() {
+  static uint32_t blocks;
+  if (++blocks % kBenchSynEvery == 0) benchSynChords();
+}
+#endif
+
 void render(int16_t* out) {
 #ifdef AUDIO_BENCH
   renderBench(out);
 #else
 #ifdef AUDIO_BENCH_FM
   benchFmTick();
+#endif
+#ifdef AUDIO_BENCH_DRUM
+  benchDrumTick();
+#endif
+#ifdef AUDIO_BENCH_SYN
+  benchSynTick();
 #endif
   renderSynth(out);
 #endif
@@ -331,6 +465,10 @@ void park() {
 std::atomic<uint32_t> cpuSum{0}, cpuBlocks{0}, cpuOver{0}, cpuPeakEv{0}, cpuPeakQuiet{0};
 #endif
 
+// Consecutive non-blocking I2S writes before the overload yield (~0.5 s of blocks).
+constexpr int kOverYieldBlocks = 125;
+int overBlocks = 0;
+
 void run(void*) {
   for (;;) {
     if (pauseReq.load(std::memory_order_acquire)) {
@@ -354,13 +492,24 @@ void run(void*) {
     loadSum.fetch_add(us, std::memory_order_relaxed);
     loadBlocks.fetch_add(1, std::memory_order_relaxed);
     if (us > loadPeak.load(std::memory_order_relaxed)) loadPeak.store(us, std::memory_order_relaxed);
-#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM)
+#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN)
     renderUs.store(us, std::memory_order_relaxed);
     if (us > benchPeak.load(std::memory_order_relaxed)) benchPeak.store(us, std::memory_order_relaxed);
 #endif
     for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = mono[i];
     size_t written = 0;
+    const int64_t w0 = esp_timer_get_time();
     i2s_channel_write(tx, lr, sizeof(lr), &written, portMAX_DELAY);
+    // Overload: with the DMA queue drained the write never blocks and this task (core 0, high
+    // priority) starves IDLE0 until the task watchdog resets the board. Yield a tick now and then.
+    if (esp_timer_get_time() - w0 < 50) {
+      if (++overBlocks >= kOverYieldBlocks) {
+        overBlocks = 0;
+        vTaskDelay(1);
+      }
+    } else {
+      overBlocks = 0;
+    }
   }
 }
 
@@ -395,13 +544,27 @@ void begin(mt::Project* p) {
   // Internal RAM: the synth state is touched on every sample.
   void* mem = heap_caps_malloc(sizeof(mt::Synth), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   synth = mem ? new (mem) mt::Synth(*p) : new mt::Synth(*p);
+  bankSetProject(p);
   bankBegin();
   synth->setBank(sampleSource());
+  synth->setWavetables(wavetableSource());
+  // Delay line in PSRAM: 4 s holds 16/16 down to 60 BPM. Read and written once per sample.
+  constexpr uint32_t kDelayLen = 4 * kRate;
+  if (auto* line = static_cast<int16_t*>(heap_caps_malloc(kDelayLen * sizeof(int16_t), MALLOC_CAP_SPIRAM)))
+    synth->setDelayBuffer(line, kDelayLen);
+  else
+    Serial.println("audio: no PSRAM for the delay line");
 #ifdef AUDIO_BENCH
   benchBegin();
 #endif
 #ifdef AUDIO_BENCH_FM
   benchFmBegin();
+#endif
+#ifdef AUDIO_BENCH_DRUM
+  benchDrumBegin();
+#endif
+#ifdef AUDIO_BENCH_SYN
+  benchSynBegin();
 #endif
   if (!initI2s()) {
     Serial.println("audio: I2S init failed");
@@ -426,6 +589,16 @@ void preview(uint8_t instr, uint8_t note) {
   const Ev pg{t, mt::kPreviewTrack, 2, {0xC0, static_cast<uint8_t>(instr & 15), 0}};
   const Ev on{t, mt::kPreviewTrack, 3, {0x90, static_cast<uint8_t>(note & 127), 100}};
   if (!uiQ.push(pg) || !uiQ.push(on)) lostEvents.fetch_add(1, std::memory_order_relaxed);
+}
+
+void previewSlice(uint8_t instr, uint8_t slice, uint8_t root, uint32_t holdMs) {
+  const uint64_t t = engine::nowUs();
+  const uint32_t h = holdMs / 100 + 1;
+  const Ev pg{t, mt::kPreviewTrack, 2, {0xC0, static_cast<uint8_t>(instr & 15), 0}};
+  const Ev slc{t, mt::kPreviewTrack, 3, {0xF5, static_cast<uint8_t>(mt::Fx::SLC), slice}};
+  const Ev on{t, mt::kPreviewTrack, 3, {0x90, static_cast<uint8_t>(root & 127), 100},
+              static_cast<uint8_t>(h > 255 ? 255 : h)};
+  if (!uiQ.push(pg) || !uiQ.push(slc) || !uiQ.push(on)) lostEvents.fetch_add(1, std::memory_order_relaxed);
 }
 
 namespace {
@@ -459,6 +632,10 @@ Load takeLoad() {
   l.blocks = loadBlocks.exchange(0, std::memory_order_relaxed);
   l.sumUs = loadSum.exchange(0, std::memory_order_relaxed);
   l.peakUs = loadPeak.exchange(0, std::memory_order_relaxed);
+  static uint32_t seenResyncs;
+  const uint32_t r = resyncs.load(std::memory_order_relaxed);
+  l.stalls = r - seenResyncs;
+  seenResyncs = r;
   return l;
 }
 
@@ -487,6 +664,40 @@ void microBench() {
     Serial.printf("micro m%d: per block machine %u us, control %u us, render %u us\n", m,
                   static_cast<unsigned>(tm / 100), static_cast<unsigned>(tc / 100), static_cast<unsigned>(tr / 100));
   }
+  // DRUM: one voice per machine, retriggered every 31 blocks (16ths at 120 BPM), long DECAY.
+  static mt::DrumVoice dv;
+  mt::DrumParams dp;
+  float dmac[mt::kFmMacros] = {110, 64, 64, 64, 64};
+  for (int m = 0; m < static_cast<int>(mt::DrumMachine::Count); ++m) {
+    int64_t tm = 0, tc = 0, tr = 0;
+    for (int b = 0; b < 100; ++b) {
+      if (b % 31 == 0) dv.trigger(b != 0);
+      for (int c = 0; c < kBlock / 32; ++c) {
+        int64_t t0 = esp_timer_get_time();
+        mt::drumMachine(m, dmac, 60, dp);
+        int64_t t1 = esp_timer_get_time();
+        dv.control(dp, 32);
+        int64_t t2 = esp_timer_get_time();
+        dv.render(buf + c * 32, 32, 1.f);
+        int64_t t3 = esp_timer_get_time();
+        tm += t1 - t0; tc += t2 - t1; tr += t3 - t2;
+      }
+    }
+    Serial.printf("micro drum %s: per block machine %u us, control %u us, render %u us\n", mt::drumMachineName(m),
+                  static_cast<unsigned>(tm / 100), static_cast<unsigned>(tc / 100), static_cast<unsigned>(tr / 100));
+  }
+  {
+    // Voice filter: set (tanf) once per 32 samples + process per sample.
+    mt::Svf f;
+    int64_t t0 = esp_timer_get_time();
+    for (int b = 0; b < 100; ++b)
+      for (int c = 0; c < kBlock / 32; ++c) {
+        f.set(mt::Svf::Mode::Lp, 500.f + c * 100.f + b, 4.f);
+        for (int i = 0; i < 32; ++i) buf[c * 32 + i] = f.process(buf[c * 32 + i]);
+      }
+    int64_t t1 = esp_timer_get_time();
+    Serial.printf("micro svf: per block %u us\n", static_cast<unsigned>((t1 - t0) / 100));
+  }
   volatile float acc = 0;
   int64_t t0 = esp_timer_get_time();
   for (int i = 0; i < 1000; ++i) acc += expf(-0.001f * i);
@@ -502,7 +713,7 @@ void microBench() {
 
 void pollLog() {
   const int64_t now = esp_timer_get_time();
-#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM)
+#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN)
   static int64_t lastBench;
   if (now - lastBench >= 1000000) {
     lastBench = now;

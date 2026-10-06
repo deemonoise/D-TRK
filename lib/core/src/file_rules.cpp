@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include "preset_paths.h"
 
 namespace mt {
 namespace {
@@ -29,6 +30,8 @@ WebDir parseWebDir(const char* s) {
   if (strcmp(s, "midi") == 0) return WebDir::Midi;
   if (strcmp(s, "projects") == 0) return WebDir::Projects;
   if (strcmp(s, "samples") == 0) return WebDir::Samples;
+  if (strcmp(s, "presets") == 0) return WebDir::Presets;
+  if (strcmp(s, "wavetables") == 0) return WebDir::Wavetables;
   return WebDir::Invalid;
 }
 
@@ -37,6 +40,8 @@ const char* webDirPath(WebDir d) {
     case WebDir::Midi: return "/midi";
     case WebDir::Projects: return "/projects";
     case WebDir::Samples: return "/samples";
+    case WebDir::Presets: return "/presets";
+    case WebDir::Wavetables: return "/wavetables";
     default: return "";
   }
 }
@@ -67,7 +72,15 @@ bool webFileAllowed(WebDir d, const char* name) {
       return projectBaseValid(b);
     }
     case WebDir::Midi: return strcasecmp(ext, ".mid") == 0 && base <= static_cast<size_t>(kMidiBaseMax);
-    case WebDir::Samples: return strcasecmp(ext, ".wav") == 0;
+    case WebDir::Samples:
+    case WebDir::Wavetables: return strcasecmp(ext, ".wav") == 0;
+    case WebDir::Presets: {
+      if (strcasecmp(ext, ".mti") != 0 || base > 16) return false;
+      char b[17];
+      memcpy(b, name, base);
+      b[base] = 0;
+      return projectBaseValid(b);
+    }
     default: return false;
   }
 }
@@ -77,6 +90,8 @@ uint32_t webMaxBytes(WebDir d) {
     case WebDir::Midi: return kMidiMaxBytes;
     case WebDir::Projects: return kProjectMaxBytes;
     case WebDir::Samples: return kWavMaxBytes;
+    case WebDir::Presets: return kPresetMaxBytes;
+    case WebDir::Wavetables: return kWtMaxBytes;
     default: return 0;
   }
 }
@@ -111,25 +126,109 @@ bool segValid(const char* s, size_t n) {
   return true;
 }
 
+// First segment of a /presets subpath (n chars at s): a type folder, as the tracker names it.
+bool presetTypeSeg(const char* s, size_t n) {
+  for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
+    const char* name = presetTypeName(static_cast<InstrType>(t));
+    if (strlen(name) == n && strncmp(s, name, n) == 0) return true;
+  }
+  return false;
+}
+
 }  // namespace
+
+int webDepthMax(WebDir d) {
+  switch (d) {
+    case WebDir::Samples:
+    case WebDir::Wavetables: return kWebDepthMax;
+    case WebDir::Presets: return kPresetDepthMax + 1;  // + the type folder
+    default: return 0;
+  }
+}
 
 bool webSubValid(WebDir d, const char* sub) {
   if (d == WebDir::Invalid || !sub) return false;
   if (!sub[0]) return true;
-  if (d != WebDir::Samples) return false;
+  if (d == WebDir::Projects) {
+    char base[17];
+    const char* slash = strchr(sub, '/');
+    const size_t n = slash ? static_cast<size_t>(slash - sub) : strlen(sub);
+    if (n > 16 || (slash && strcmp(slash, "/wt") != 0)) return false;  // <base> or <base>/wt
+    memcpy(base, sub, n);
+    base[n] = 0;
+    return projectBaseValid(base);
+  }
+  const int depthMax = webDepthMax(d);
+  if (depthMax == 0) return false;
   if (strlen(sub) > static_cast<size_t>(kWebSubMax)) return false;
   int depth = 0;
   for (const char* p = sub;;) {
     const char* slash = strchr(p, '/');
     const size_t n = slash ? static_cast<size_t>(slash - p) : strlen(p);
-    if (!segValid(p, n) || ++depth > kWebDepthMax) return false;
+    if (!segValid(p, n) || ++depth > depthMax) return false;
+    if (d == WebDir::Presets && depth == 1 && !presetTypeSeg(p, n)) return false;
     if (!slash) return true;
     p = slash + 1;
   }
 }
 
+bool webFileAllowedIn(WebDir d, const char* sub, const char* name) {
+  if (!sub || !name || !webSubValid(d, sub)) return false;
+  if (d == WebDir::Presets && !sub[0]) return false;  // the tracker looks inside type folders only
+  if (d != WebDir::Projects || !sub[0]) return webFileAllowed(d, name);
+  const char* ext = extOf(name);
+  const size_t base = static_cast<size_t>(ext - name);
+  if (strcasecmp(ext, ".wav") != 0 || base == 0 || base > 16) return false;
+  char b[17];
+  memcpy(b, name, base);
+  b[base] = 0;
+  return projectBaseValid(b);
+}
+
+uint32_t webMaxBytesIn(WebDir d, const char* sub) {
+  if (!sub || !webSubValid(d, sub)) return 0;
+  return d == WebDir::Projects && sub[0] ? kProjWavMaxBytes : webMaxBytes(d);
+}
+
+bool webRenameAllowedIn(WebDir d, const char* sub, const char* from, const char* to) {
+  return webFileAllowedIn(d, sub, from) && webFileAllowedIn(d, sub, to) && strcasecmp(extOf(from), extOf(to)) == 0;
+}
+
+bool webDirListed(WebDir d, const char* sub, const char* name) {
+  if (!sub || !name) return false;
+  if (d == WebDir::Projects) {
+    if (!sub[0]) return projectBaseValid(name);
+    return !strchr(sub, '/') && webSubValid(d, sub) && strcmp(name, "wt") == 0;
+  }
+  return webMkdirAllowed(d, sub, name);
+}
+
+bool isOpenProjectFolder(const char* project, WebDir d, const char* sub) {
+  return project && project[0] && sub && d == WebDir::Projects && strcasecmp(project, sub) == 0;
+}
+
+bool projectFolderOf(const char* file, char out[17]) {
+  out[0] = 0;
+  if (!file || !webFileAllowed(WebDir::Projects, file)) return false;
+  const size_t base = static_cast<size_t>(extOf(file) - file);  // <= 16: checked above
+  memcpy(out, file, base);
+  out[base] = 0;
+  return true;
+}
+
+bool projectSubBase(const char* sub, char out[17]) {
+  out[0] = 0;
+  if (!sub || !sub[0] || !webSubValid(WebDir::Projects, sub)) return false;
+  const char* slash = strchr(sub, '/');
+  const size_t n = slash ? static_cast<size_t>(slash - sub) : strlen(sub);  // <= 16: checked above
+  memcpy(out, sub, n);
+  out[n] = 0;
+  return true;
+}
+
 bool webMkdirAllowed(WebDir d, const char* sub, const char* name) {
-  if (d != WebDir::Samples || !name || !webSubValid(d, sub) || strchr(name, '/')) return false;
+  if ((d != WebDir::Samples && d != WebDir::Wavetables && d != WebDir::Presets) || !name || !webSubValid(d, sub) || strchr(name, '/'))
+    return false;
   char joined[kWebSubMax + 2];
   const int n = snprintf(joined, sizeof(joined), "%s%s%s", sub, sub[0] ? "/" : "", name);
   return n > 0 && n < static_cast<int>(sizeof(joined)) && webSubValid(d, joined);

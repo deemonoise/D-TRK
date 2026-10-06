@@ -33,7 +33,7 @@ bool BankScreen::wantsRedraw(const engine::Status& st) {
 void BankScreen::refreshMasks() {
   const mt::Project& p = app_.project();
   for (int i = 0; i < mt::kPatterns; ++i) {
-    uint8_t m = 0;
+    uint16_t m = 0;
     for (int t = 0; t < mt::kTracks; ++t) {
       const mt::Step* row = p.patterns[i].steps[t];
       const int len = p.patterns[i].length;
@@ -220,10 +220,13 @@ void BankScreen::drawTile(LGFX_Sprite& s, int idx, int x, int y, bool blinkOn) {
   s.setTextColor(kDim);
   s.drawString(resName(pt.res), x + 8, y + 24);
 
+  // Track dots in two rows: tracks 1-8 above 9-16 (the two button halves).
+  constexpr int kHalf = mt::kTracks / 2;
   for (int t = 0; t < mt::kTracks; ++t) {
-    const int dx = x + 8 + t * 12;
-    if (masks_[idx] & (1 << t)) s.fillRect(dx, y + 46, 8, 8, kCursor);
-    else s.drawRect(dx, y + 46, 8, 8, kDim);
+    const int dx = x + 8 + (t % kHalf) * 12;
+    const int dy = y + 44 + (t / kHalf) * 8;
+    if (masks_[idx] & (1 << t)) s.fillRect(dx, dy, 6, 6, kCursor);
+    else s.drawRect(dx, dy, 6, 6, kDim);
   }
 }
 

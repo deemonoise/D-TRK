@@ -11,7 +11,8 @@ class App;
 
 // Transpose amount over GRID, fills the work area. Scale mode: +-2 octaves in scale degrees,
 // Chromatic: +-24 semitones; Shift+turn = one octave. OK calls back with (amount, degrees);
-// Cancel or a long encoder press closes without changes. Amount and mode survive between opens.
+// Cancel or a long encoder press closes without changes. Amount starts at 0 on every open, the
+// mode is kept.
 class TransposeDialog {
  public:
   explicit TransposeDialog(App& app);

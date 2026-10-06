@@ -8,7 +8,7 @@ namespace mt {
 enum class MonoMode : uint8_t { Highest, Lowest, First };
 
 struct ImportMap {
-  int8_t target[kSmfMaxSources];     // source -> track 0..7 or -1 (default -1)
+  int8_t target[kSmfMaxSources];     // source -> track 0..kTracks-1 or -1 (default -1)
   int8_t transpose[kSmfMaxSources];  // semitones, +-24 (default 0)
   uint16_t offsetBars = 0;           // skip N bars (4/4)
   Resolution quant = Resolution::Sixteenth;

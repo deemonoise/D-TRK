@@ -11,6 +11,8 @@
 #include "esp_heap_caps.h"
 #include "file_rules.h"
 #include "hw/sdcard.h"
+#include "preset_io.h"
+#include "preset_paths.h"
 #include "storage/storage.h"
 #include "web_page.h"
 
@@ -74,12 +76,62 @@ void touch(const char* name, OpenFile what) {
 
 void reply(int code, const char* text) { srv->send(code, "text/plain; charset=utf-8", text); }
 
+bool openFolder(mt::WebDir d, const char* sub) { return mt::isOpenProjectFolder(project(), d, sub); }
+
+// "/projects/<base>" of a project file (.mtp / .bak), or false.
+bool projectFolderPath(const char* file, char* base, char* path, size_t cap) {
+  return mt::projectFolderOf(file, base) && mt::webPath(path, cap, mt::WebDir::Projects, base, "");
+}
+
+bool isFolder(const char* path) {
+  fs::File f = hw::sdFs().open(path);
+  const bool ok = f && f.isDirectory();
+  f.close();
+  return ok;
+}
+
+// Removes the files of a project folder and its "wt" folder (wavetable sources: files only), then the
+// folder. Other subfolders, deeper ones, and files whose path does not fit keep it in place. True when
+// the folder is gone. wtDepth: how many levels of "wt" folders may still be entered (1 for a project).
+bool removeFolder(const char* path, int wtDepth = 1) {
+  char child[mt::kWebPathMax];
+  int skip = 0;  // leading entries left in place (path too long, a folder not to enter)
+  for (;;) {
+    fs::File dir = hw::sdFs().open(path);
+    if (!dir || !dir.isDirectory()) return false;
+    String entry;
+    bool isDir, found = false, childDir = false;
+    int seen = 0;
+    while (hw::sdNextEntry(dir, entry, isDir)) {
+      if (seen++ < skip) continue;
+      const int n = snprintf(child, sizeof(child), "%s/%s", path, entry.c_str());
+      if (n > 0 && n < static_cast<int>(sizeof(child)) && (!isDir || (wtDepth > 0 && strcasecmp(entry.c_str(), "wt") == 0))) {
+        found = true;
+        childDir = isDir;
+        break;
+      }
+      ++skip;
+    }
+    dir.close();  // removing while the folder is open for reading is not safe on FAT
+    if (!found) break;
+    if (childDir ? !removeFolder(child, wtDepth - 1) : !hw::sdFs().remove(child)) return false;
+  }
+  return hw::sdFs().rmdir(path);
+}
+
+// "/projects/<base><ext>" exists.
+bool projectFileExists(const char* base, const char* ext) {
+  char name[24], p[mt::kWebPathMax];
+  snprintf(name, sizeof(name), "%s%s", base, ext);
+  return mt::webPath(p, sizeof(p), mt::WebDir::Projects, "", name) && hw::sdFs().exists(p);
+}
+
 // "sub/name" for the device log (sub is validated ASCII).
 void shownName(char* out, size_t cap, const char* sub, const char* name) {
   snprintf(out, cap, "%s%s%s", sub, sub[0] ? "/" : "", name);
 }
 
-// Common checks: card, section, subfolder (samples only), name. False after replying with an error.
+// Common checks: card, section, subfolder (samples, wavetables, presets, project folders and their wt), name. False after replying with an error.
 // path gets "<section>/<sub>/<name>" (or the folder itself when nameArg is null).
 bool checkArgs(mt::WebDir& d, String& sub, const char* nameArg, String& name, char* path, size_t cap) {
   if (!hw::sdReady()) {
@@ -98,7 +150,7 @@ bool checkArgs(mt::WebDir& d, String& sub, const char* nameArg, String& name, ch
     return false;
   }
   name = srv->arg(nameArg);
-  if (!mt::webFileAllowed(d, name.c_str())) {
+  if (!mt::webFileAllowedIn(d, sub.c_str(), name.c_str())) {
     reply(400, "недопустимое имя");
     return false;
   }
@@ -122,6 +174,12 @@ void handleList() {
   fs::File dir = hw::sdFs().open(path);
   if (!dir || !dir.isDirectory()) {
     heap_caps_free(buf);
+    char base[17];
+    if (d == mt::WebDir::Projects && mt::projectSubBase(sub.c_str(), base) &&
+        (projectFileExists(base, ".mtp") || projectFileExists(base, ".bak"))) {
+      srv->send(200, "application/json", "[]");  // no samples / tables yet: the first upload makes the folder
+      return;
+    }
     if (sub.length() && hw::sdFs().exists(mt::webDirPath(d))) {
       reply(404, "папка не найдена");
       return;
@@ -139,10 +197,10 @@ void handleList() {
   while (hw::sdNextEntry(dir, name, isDir)) {
     if (isDir) {
       // Only folders that can be opened again through sub (valid name, not too deep).
-      if (!mt::webMkdirAllowed(d, sub.c_str(), name.c_str())) continue;
+      if (!mt::webDirListed(d, sub.c_str(), name.c_str())) continue;
       if (!mt::jsonAppendDir(buf, kListCap - 1, len, name.c_str(), first)) break;
     } else {
-      if (!mt::webFileAllowed(d, name.c_str())) continue;
+      if (!mt::webFileAllowedIn(d, sub.c_str(), name.c_str())) continue;  // also hides legacy.idx
       char filePath[mt::kWebPathMax];
       if (!mt::webPath(filePath, sizeof(filePath), d, sub.c_str(), name.c_str())) continue;
       fs::File f = hw::sdFs().open(filePath);
@@ -184,6 +242,33 @@ void uploadFail(int code, const char* msg) {
   if (code == 507) hw::sdBegin();  // write errors usually mean the card was pulled: remount
 }
 
+// Uploaded preset (kTmp) loads and its type matches the type folder at the top of sub. False after
+// failing the upload.
+bool checkPreset(const char* sub) {
+  fs::File f = hw::sdFs().open(kTmp, FILE_READ);
+  if (!f) {
+    uploadFail(507, "не прочитать временный файл");
+    return false;
+  }
+  hw::FileSource src(f);
+  mt::Instrument m;
+  const mt::LoadErr e = mt::loadPreset(src, m);
+  f.close();
+  if (e != mt::LoadErr::Ok) {
+    uploadFail(400, "файл пресета повреждён");
+    return false;
+  }
+  const char* type = mt::presetTypeName(m.type);
+  const size_t n = strlen(type);
+  if (strncmp(sub, type, n) != 0 || (sub[n] && sub[n] != '/')) {  // sub starts with a type folder (webSubValid)
+    char msg[sizeof(up.err)];
+    snprintf(msg, sizeof(msg), "пресет типа %s: его место в /presets/%s", type, type);
+    uploadFail(400, msg);
+    return false;
+  }
+  return true;
+}
+
 void handleUploadChunk() {
   HTTPUpload& u = srv->upload();
   switch (u.status) {
@@ -196,19 +281,21 @@ void handleUploadChunk() {
       strlcpy(up.sub, srv->arg("sub").c_str(), sizeof(up.sub));
       if (!mt::webSubValid(up.dir, up.sub)) return uploadFail(400, "неверная папка");
       strlcpy(up.name, u.filename.c_str(), sizeof(up.name));
-      if (u.filename.length() > mt::kWebNameMax || !mt::webFileAllowed(up.dir, up.name))
+      if (u.filename.length() > mt::kWebNameMax || !mt::webFileAllowedIn(up.dir, up.sub, up.name))
         return uploadFail(400, up.dir == mt::WebDir::Midi      ? "недопустимое имя (нужен .mid, до 59 символов, латиница)"
-                               : up.dir == mt::WebDir::Samples ? "недопустимое имя (нужен .wav, до 59 символов, латиница)"
-                                                               : "недопустимое имя (.mtp/.bak, до 16 символов)");
+                               : up.dir == mt::WebDir::Samples || up.dir == mt::WebDir::Wavetables
+                                   ? "недопустимое имя (нужен .wav, до 59 символов, латиница)"
+                               : up.dir == mt::WebDir::Presets
+                                   ? (up.sub[0] ? "недопустимое имя (нужен .mti, до 16 символов: A-Z 0-9 - _)"
+                                                : "пресеты лежат в папках типов: FM, DRUM, SAMPLE, CHIP, SYNTH")
+                               : up.sub[0] ? "недопустимое имя (нужен .wav, до 16 символов: A-Z 0-9 - _)"
+                                           : "недопустимое имя (.mtp/.bak, до 16 символов)");
       char path[mt::kWebPathMax];
       if (!mt::webPath(path, sizeof(path), up.dir, up.sub, up.name)) return uploadFail(400, "слишком длинный путь");
-      if (up.sub[0]) {
+      if (up.sub[0] && up.dir != mt::WebDir::Projects) {  // a project folder is created at the end
         char dirPath[mt::kWebPathMax];
         mt::webPath(dirPath, sizeof(dirPath), up.dir, up.sub, "");
-        fs::File folder = hw::sdFs().open(dirPath);
-        const bool folderOk = folder && folder.isDirectory();
-        folder.close();
-        if (!folderOk) return uploadFail(404, "папка не найдена");
+        if (!isFolder(dirPath)) return uploadFail(404, "папка не найдена");
       }
       if (srv->arg("overwrite") != "1" && hw::sdFs().exists(path)) return uploadFail(409, "файл уже есть");
       hw::sdFs().remove(kTmp);
@@ -219,7 +306,7 @@ void handleUploadChunk() {
     }
     case UPLOAD_FILE_WRITE:
       if (up.code || !up.f) return;
-      if (u.totalSize + u.currentSize > mt::webMaxBytes(up.dir)) return uploadFail(413, "файл слишком большой");
+      if (u.totalSize + u.currentSize > mt::webMaxBytesIn(up.dir, up.sub)) return uploadFail(413, "файл слишком большой");
       if (up.f.write(u.buf, u.currentSize) != u.currentSize) return uploadFail(507, "карта заполнена или ошибка записи");
       break;
     case UPLOAD_FILE_END: {
@@ -227,7 +314,7 @@ void handleUploadChunk() {
       up.f.close();
       char path[mt::kWebPathMax];
       mt::webPath(path, sizeof(path), up.dir, up.sub, up.name);  // checked at the start
-      if (up.dir == mt::WebDir::Projects) {
+      if (up.dir == mt::WebDir::Projects && !up.sub[0]) {
         const storage::Result r = storage::installProject(kTmp, up.name);
         if (r != storage::Result::Ok) {
           char msg[48];
@@ -235,8 +322,35 @@ void handleUploadChunk() {
           return uploadFail(r == storage::Result::WriteFail ? 507 : 422, msg);
         }
       } else {
+        if (up.dir == mt::WebDir::Presets && !checkPreset(up.sub)) return;
+        // Sample or table of a project: its folder (and the wt folder) appear with the first one.
+        char dirs[2][mt::kWebPathMax];
+        bool made[2] = {false, false};
+        // Folders this upload made, newest first (empty: nothing landed there).
+        auto unmake = [&] {
+          for (int k = 1; k >= 0; --k)
+            if (made[k]) hw::sdFs().rmdir(dirs[k]);
+        };
+        if (up.dir == mt::WebDir::Projects) {
+          char base[17];
+          mt::projectSubBase(up.sub, base);  // checked at the start
+          mt::webPath(dirs[0], sizeof(dirs[0]), up.dir, base, "");
+          mt::webPath(dirs[1], sizeof(dirs[1]), up.dir, up.sub, "");
+          const int need = strcmp(base, up.sub) == 0 ? 1 : 2;
+          for (int i = 0; i < need; ++i) {
+            if (isFolder(dirs[i])) continue;
+            if (!hw::sdFs().mkdir(dirs[i])) {
+              unmake();
+              return uploadFail(507, "не создать папку проекта");
+            }
+            made[i] = true;
+          }
+        }
         if (hw::sdFs().exists(path) && !hw::sdFs().remove(path)) return uploadFail(507, "не удалось заменить файл");
-        if (!hw::sdFs().rename(kTmp, path)) return uploadFail(507, "не переименовать временный файл");
+        if (!hw::sdFs().rename(kTmp, path)) {
+          unmake();
+          return uploadFail(507, "не переименовать временный файл");
+        }
       }
       touch(up.name, OpenFile::Replaced);
       break;
@@ -262,13 +376,40 @@ void handleUploadDone() {
   up.started = false;
 }
 
+// After a project file rename: the sample folder follows <old>.mtp, or <old>.bak when there is no
+// <old>.mtp (a .bak beside its .mtp leaves the folder to the .mtp). The open project's folder stays:
+// the tracker saves into it under the open name. Returns a note for the page when the folder was
+// meant to move but did not, else nullptr.
+const char* renameFolder(const char* from, const char* to) {
+  const size_t n = strlen(from);
+  const bool bak = n > 4 && strcmp(from + n - 4, ".bak") == 0;
+  char oldBase[17], newBase[17], a[mt::kWebPathMax], b[mt::kWebPathMax];
+  if (!projectFolderPath(from, oldBase, a, sizeof(a)) || !projectFolderPath(to, newBase, b, sizeof(b))) return nullptr;
+  if (strcasecmp(oldBase, newBase) == 0 || !isFolder(a)) return nullptr;  // FAT: case-only change needs nothing
+  if (bak && projectFileExists(oldBase, ".mtp")) return nullptr;
+  if (openFolder(mt::WebDir::Projects, oldBase)) {
+    log("! %s/ kept (open project)", oldBase);
+    return "Переименован. Папка с сэмплами осталась под старым именем: проект открыт на трекере";
+  }
+  if (hw::sdFs().exists(b)) {
+    log("! %s/ kept: %s/ exists", oldBase, newBase);
+    return "Переименован. Папка с сэмплами осталась под старым именем: папка с новым именем уже есть";
+  }
+  if (!hw::sdFs().rename(a, b)) {
+    log("! %s/ > %s/ failed", oldBase, newBase);
+    return "Переименован. Папку с сэмплами переименовать не удалось";
+  }
+  log("~ %s/ > %s/", oldBase, newBase);
+  return nullptr;
+}
+
 void handleRename() {
   mt::WebDir d;
   String sub, from;
   char a[mt::kWebPathMax], b[mt::kWebPathMax];
   if (!checkArgs(d, sub, "from", from, a, sizeof(a))) return;
   const String to = srv->arg("to");
-  if (!mt::webRenameAllowed(d, from.c_str(), to.c_str())) {
+  if (!mt::webRenameAllowedIn(d, sub.c_str(), from.c_str(), to.c_str())) {
     reply(400, "недопустимое имя (расширение менять нельзя)");
     return;
   }
@@ -293,7 +434,23 @@ void handleRename() {
   char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
   shownName(shown, sizeof(shown), sub.c_str(), from.c_str());
   log("~ %s > %s", shown, to.c_str());
-  reply(200, "OK");
+  const char* note = d == mt::WebDir::Projects && !sub[0] ? renameFolder(from.c_str(), to.c_str()) : nullptr;
+  reply(200, note ? note : "OK");
+}
+
+// After a project file is deleted: once neither <base>.mtp nor <base>.bak is left, its sample folder
+// goes too. The open project's folder stays (the next save writes it again). Returns a note for the
+// page when the folder could not be removed, else nullptr.
+const char* dropFolder(const char* file) {
+  char base[17], dir[mt::kWebPathMax];
+  if (!projectFolderPath(file, base, dir, sizeof(dir)) || openFolder(mt::WebDir::Projects, base)) return nullptr;
+  if (projectFileExists(base, ".mtp") || projectFileExists(base, ".bak") || !isFolder(dir)) return nullptr;
+  if (removeFolder(dir)) {
+    log("x %s/", base);
+    return nullptr;
+  }
+  log("! %s/ not removed", base);
+  return "Удалён. Папку с сэмплами удалить не удалось";
 }
 
 void handleDelete() {
@@ -313,18 +470,33 @@ void handleDelete() {
   char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
   shownName(shown, sizeof(shown), sub.c_str(), name.c_str());
   log("x %s", shown);
-  reply(200, "OK");
+  const char* note = d == mt::WebDir::Projects && !sub[0] ? dropFolder(name.c_str()) : nullptr;
+  reply(200, note ? note : "OK");
 }
 
-// Folder name argument for mkdir / rmdir (samples only). False after replying with an error.
+// Why a folder name is not accepted in sub of d.
+const char* mkdirError(mt::WebDir d, const char* sub) {
+  switch (d) {
+    case mt::WebDir::Samples:
+    case mt::WebDir::Wavetables:
+      return "недопустимое имя папки (до 32 символов: латиница, цифры, пробел, . _ -; не глубже 4 уровней)";
+    case mt::WebDir::Presets:
+      return sub[0] ? "недопустимое имя папки (до 32 символов: латиница, цифры, пробел, . _ -; не глубже 4 уровней в папке типа)"
+                    : "в /presets только папки типов: FM, DRUM, SAMPLE, CHIP, SYNTH";
+    case mt::WebDir::Projects:
+      return "папка проекта (и её wt) появляется сама с первым файлом и удаляется вместе с проектом";
+    default: return "папки только в разделах сэмплов, таблиц и пресетов";
+  }
+}
+
+// Folder name argument for mkdir / rmdir (samples, wavetables and presets: project folders come and go with
+// the project). False after replying with an error.
 bool folderArgs(mt::WebDir& d, String& sub, String& name, char* path, size_t cap) {
   String unused;
   if (!checkArgs(d, sub, nullptr, unused, path, cap)) return false;
   name = srv->arg("name");
   if (!mt::webMkdirAllowed(d, sub.c_str(), name.c_str())) {
-    reply(400, d == mt::WebDir::Samples
-                   ? "недопустимое имя папки (до 32 символов: латиница, цифры, пробел, . _ -; не глубже 4 уровней)"
-                   : "папки только в разделе сэмплов");
+    reply(400, mkdirError(d, sub.c_str()));
     return false;
   }
   if (!mt::webPath(path, cap, d, sub.c_str(), name.c_str())) {
@@ -359,6 +531,10 @@ void handleRmdir() {
   String sub, name;
   char path[mt::kWebPathMax];
   if (!folderArgs(d, sub, name, path, sizeof(path))) return;
+  if (d == mt::WebDir::Presets && !sub.length()) {
+    reply(400, "папки типов не удаляются");
+    return;
+  }
   fs::File dir = hw::sdFs().open(path);
   if (!dir || !dir.isDirectory()) {
     reply(404, "папка не найдена");
@@ -439,7 +615,7 @@ void handleFwDone() {
 }
 
 void beginOta() {
-  ArduinoOTA.setHostname("tracker");  // also starts mDNS: http://tracker.local
+  ArduinoOTA.setHostname("d-trk");  // also starts mDNS: http://d-trk.local
   ArduinoOTA.onStart([] { busy("FIRMWARE..."); });
   ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
     static unsigned int lastPct = 101;
