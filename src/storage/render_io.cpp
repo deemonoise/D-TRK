@@ -60,9 +60,11 @@ struct Session {
 
 }  // namespace
 
-void renderPath(const mt::Project& p, const mt::RenderSpec& spec, char* out, int n) {
-  if (spec.mode == mt::RenderSpec::Mode::Song) snprintf(out, n, "%s/%s_SONG.wav", kRenderDir, p.name);
-  else snprintf(out, n, "%s/%s_P%02u.wav", kRenderDir, p.name, spec.pattern + 1u);
+void renderPath(const mt::Project& p, const mt::RenderSpec& spec, char* out, int n, int stem) {
+  char tr[8] = "";
+  if (stem >= 0) snprintf(tr, sizeof(tr), "_T%02d", stem + 1);
+  if (spec.mode == mt::RenderSpec::Mode::Song) snprintf(out, n, "%s/%s_SONG%s.wav", kRenderDir, p.name, tr);
+  else snprintf(out, n, "%s/%s_P%02u%s.wav", kRenderDir, p.name, spec.pattern + 1u, tr);
 }
 
 Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, RenderStats& st, RenderProgress cb,
