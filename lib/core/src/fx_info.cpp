@@ -204,8 +204,9 @@ bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY |
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
 
 const char* perfFxName(PerfFx f) {
-  static const char* const kNames[] = {"",          "RAT 2", "RAT 4", "FILTER LOW", "FILTER HIGH",
-                                       "DELAY MAX", "CRUSH", "FADE",  "MUTE"};
+  static const char* const kNames[] = {"",          "RAT 2",       "RAT 4",  "FILTER LOW", "FILTER HIGH", "DELAY MAX",
+                                       "CRUSH",     "FADE",        "MUTE",   "SHORT DECAY", "RAT 3",       "RAT 8",
+                                       "ROLL UP",   "REVERB MAX",  "DOWNSAMPLE", "DRIVE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(PerfFx::Count), "perf names");
   const int i = static_cast<int>(f);
   return i < static_cast<int>(PerfFx::Count) ? kNames[i] : "";

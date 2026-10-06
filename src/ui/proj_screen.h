@@ -6,7 +6,8 @@
 
 namespace ui {
 
-// Project settings on pages SONG, FX, COMP, SYS; length / resolution / swing apply to the heard
+// Project settings on pages SONG, FX, COMP, PERF (the effect of each track button in PERF mode),
+// SYS; length / resolution / swing apply to the heard
 // pattern. SYS also holds the device's colour theme (not saved in the project).
 class ProjScreen : public Screen {
  public:
@@ -19,11 +20,12 @@ class ProjScreen : public Screen {
  private:
   enum Row : int {
     kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
-    kRvbSize, kRvbDamp, kRvbLevel, kDjFilter, kCompAmt, kCompRel, kScTrack, kScDepth, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kRows
+    kRvbSize, kRvbDamp, kRvbLevel, kDjFilter, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1, kPerf8 = kPerf1 + 7, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kRows
   };
   // Pages: contiguous runs of rows.
-  enum Page : int { kPgSong, kPgFx, kPgComp, kPgSys, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kBpm, kDlyTime, kCompAmt, kPreview, kRows};
+  enum Page : int { kPgSong, kPgFx, kPgComp, kPgPerf, kPgSys, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kBpm, kDlyTime, kCompAmt, kPerf1, kPreview, kRows};
+  char perfLabels_[8][10] = {};  // "Button 1".. (Param labels must outlive the list)
   static constexpr int kHeaderH = 28;
   static constexpr int kListRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
   static constexpr uint32_t kBpmSettleMs = 300;

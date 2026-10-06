@@ -386,9 +386,10 @@ bool GridScreen::trackKey(int n, bool shift) {
     perfRelease();
     perfBtn_ = n;
     perfTrack_ = track();
-    engine::post(engine::Cmd::PerfOn, static_cast<uint16_t>(perfTrack_ | ((n + 1) << 8)));
+    const uint8_t fx = n < mt::kPerfButtons ? app_.project().perfMap[n] : 0;  // PROJ -> PERF
+    engine::post(engine::Cmd::PerfOn, static_cast<uint16_t>(perfTrack_ | (fx << 8)));
     char msg[32];
-    snprintf(msg, sizeof(msg), "PERF %s", mt::perfFxName(static_cast<mt::PerfFx>(n + 1)));
+    snprintf(msg, sizeof(msg), "PERF %s", fx ? mt::perfFxName(static_cast<mt::PerfFx>(fx)) : "---");
     app_.toast(msg);
     return true;
   }

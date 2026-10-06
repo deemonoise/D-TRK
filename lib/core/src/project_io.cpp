@@ -298,6 +298,15 @@ LoadErr readChn2(CrcSource& in, uint32_t size, Project& p) {
 
 // GROV: the patterns' groove (kPatterns bytes), then the tracks' humanize (kTracks bytes). Files
 // without it: groove OFF, no humanize.
+// PRFM: the PERF effect of each track button (PerfFx); files without it: the default 1..8.
+LoadErr readPrfm(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t b[kPerfButtons];
+  if (size < sizeof(b)) return LoadErr::BadValue;
+  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  for (int i = 0; i < kPerfButtons; ++i) p.perfMap[i] = b[i] < static_cast<uint8_t>(PerfFx::Count) ? b[i] : 0;
+  return in.skip(size - sizeof(b)) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 constexpr size_t kGrovSize = kPatterns + kTracks;
 LoadErr readGrov(CrcSource& in, uint32_t size, Project& p) {
   uint8_t b[kGrovSize];
@@ -543,6 +552,7 @@ bool saveProject(const Project& p, ByteSink& out) {
     for (int t = 0; t < kTracks; ++t) g[kPatterns + t] = p.tracks[t].humanize;
     if (!o.chunk("GROV", sizeof(g)) || !o.write(g, sizeof(g))) return false;
   }
+  if (!o.chunk("PRFM", kPerfButtons) || !o.write(p.perfMap, kPerfButtons)) return false;
 
   uint8_t c[12] = {'C', 'R', 'C', ' '};
   wr32(c + 4, 4);
@@ -641,6 +651,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, out);
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
     else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);
+    else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;

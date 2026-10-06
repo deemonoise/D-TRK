@@ -639,6 +639,13 @@ FxSlot Sequencer::perfSlot(PerfFx fx) {
     case PerfFx::DlyMax: return {Fx::DLY, 127};
     case PerfFx::Crush: return {Fx::BIT, 100};  // about 5 bits
     case PerfFx::Fade: return {Fx::VSL, static_cast<uint8_t>(-16)};
+    case PerfFx::DecShort: return {Fx::DCY, 20};
+    case PerfFx::Rat3: return {Fx::RAT, 3};
+    case PerfFx::Rat8: return {Fx::RAT, 8};
+    case PerfFx::RatUp: return {Fx::RAT, static_cast<uint8_t>(kRatUp << 4 | 8)};  // a roll building up
+    case PerfFx::RvbMax: return {Fx::RVB, 127};
+    case PerfFx::Srr: return {Fx::SRR, 90};
+    case PerfFx::Drive: return {Fx::DRV, 100};
     default: return {Fx::None, 0};
   }
 }

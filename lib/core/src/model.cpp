@@ -78,6 +78,7 @@ void Project::reset() {
   scTrack = 0;
   scDepth = 64;
   djFilter = 0;
+  for (int i = 0; i < kPerfButtons; ++i) perfMap[i] = static_cast<uint8_t>(i + 1);
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};

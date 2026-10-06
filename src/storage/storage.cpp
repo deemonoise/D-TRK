@@ -80,6 +80,7 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.scTrack = live.scTrack;
   out.scDepth = live.scDepth;
   out.djFilter = live.djFilter;
+  memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));

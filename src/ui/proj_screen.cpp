@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "fx_info.h"
 #include "groove.h"
 #include "storage/crashlog.h"
 #include "names.h"
@@ -114,6 +115,18 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                         [this](int d) {
                           app_.project().djFilter = static_cast<int8_t>(clampi(app_.project().djFilter + d, -64, 63));
                         }};
+  for (int b = 0; b < mt::kPerfButtons; ++b) {
+    snprintf(perfLabels_[b], sizeof(perfLabels_[b]), "Button %d", b + 1);
+    params_[kPerf1 + b] = {perfLabels_[b],
+                           [this, b](char* o, int n) {
+                             const uint8_t f = app_.project().perfMap[b];
+                             snprintf(o, n, "%s", f ? mt::perfFxName(static_cast<mt::PerfFx>(f)) : "---");
+                           },
+                           [this, b](int d) {
+                             constexpr int kLast = static_cast<int>(mt::PerfFx::Count) - 1;
+                             app_.project().perfMap[b] = static_cast<uint8_t>(clampi(app_.project().perfMap[b] + d, 0, kLast));
+                           }};
+  }
   params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
                        [this](int d) { app_.project().preview = d > 0; }};
   params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
@@ -197,7 +210,7 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "SYS"};
+  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF", "SYS"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
 }

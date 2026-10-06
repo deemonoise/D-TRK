@@ -78,6 +78,7 @@ static void fillFull(Project& p) {
   p5.swing = 75;
   p5.groove = 3;
   p.djFilter = -20;
+  p.perfMap[3] = static_cast<uint8_t>(PerfFx::RvbMax);
   p.tracks[6].humanize = 40;
   for (int t = 0; t < kTracks; ++t)
     for (int s = 0; s < 128; s += 3) {
@@ -179,6 +180,7 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(x.chainRep[i], y.chainRep[i]);
     TEST_ASSERT_EQUAL(x.chainScene[i], y.chainScene[i]);
   }
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(x.perfMap, y.perfMap, kPerfButtons);
   TEST_ASSERT_EQUAL(x.djFilter, y.djFilter);
   TEST_ASSERT_EQUAL_UINT16_ARRAY(x.scenes, y.scenes, kScenes);
   for (int t = 0; t < kTracks; ++t) {
@@ -305,7 +307,7 @@ void test_empty_patterns_not_written() {
   // PROJ, TRKS (16 x 16), INST, FMIN, FLTR, SLCE (16 x 72), TOUT (16 x 3), AUDI, SYNI (16 x 48), WTBL (empty),
   // KITS (16 x 176), CHN2 (empty), SCNS, GROV (16 + 16)
   TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16 + 7 +
-                                        8 + 32 + 1);  // + 7: AUDI sound fx bytes, + 1: DJ filter
+                                        8 + 32 + 1 + 8 + 8);  // + 7: AUDI sound fx bytes, + 1: DJ filter, PRFM
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));

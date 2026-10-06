@@ -221,9 +221,14 @@ constexpr uint8_t kRatUp = 1, kRatDown = 2;
 // NEI / !NEI: the same for the track on the left (track 1: always false). Shown PRE, !PR, NEI, !NE.
 constexpr uint8_t kCndPre = 0x03, kCndNotPre = 0x04, kCndNei = 0x05, kCndNotNei = 0x06;
 
-// Punch-in effects held on the track buttons (PERF mode), not saved: button N = value N. The
-// sequencer adds them to the steps of the track as they play (Sequencer::perfSlot).
-enum class PerfFx : uint8_t { None, Rat2, Rat4, FltLow, FltHigh, DlyMax, Crush, Fade, Mute, Count };
+// Punch-in effects held on the track buttons (PERF mode); Project::perfMap says which one each button
+// holds (saved: new values go before Count only). The sequencer adds them to the steps of the track
+// as they play (Sequencer::perfSlot).
+enum class PerfFx : uint8_t {
+  None, Rat2, Rat4, FltLow, FltHigh, DlyMax, Crush, Fade, Mute,
+  DecShort, Rat3, Rat8, RatUp, RvbMax, Srr, Drive, Count
+};
+constexpr int kPerfButtons = 8;
 
 // Synth message 0xF5 cmd val: cmd is an Fx (synth fx) or kSynthStep, a step start on the INT
 // track with val = ticks per step | 0x80 if the step has a note (sent by the sequencer).
@@ -360,6 +365,8 @@ struct Project {
   // Master DJ filter on the internal sound: -64..-1 low-pass (closing towards -64), 0 off, 1..63
   // high-pass (opening towards 63).
   int8_t djFilter = 0;
+  // PERF: the effect of track button 1..8 (PerfFx).
+  uint8_t perfMap[kPerfButtons] = {1, 2, 3, 4, 5, 6, 7, 8};
   ProjSample samples[kProjSamples];
   uint8_t sampleCount = 0;  // names unique ignoring case
   ProjWavetable wavetables[kProjWavetables];
