@@ -91,7 +91,15 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
   params_[kSolo] = {"Solo", [this](char* o, int n) { onOff(cfg().solo, o, n); },
                     [this](int d) { cfg().solo = d > 0; }};
   list_.setOnEdit([this] { app_.markDirty(); });
-  showPage(kPgMain, false);
+  setPageRows(kPgMain, false);  // no leaveEdit(): the App is a global, built before the project exists
+}
+
+void TrackScreen::setPageRows(int page, bool last) {
+  page_ = (page % kPages + kPages) % kPages;
+  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
+  list_.setVisibleRows(kVisibleRows);
+  list_.setWrap(false);
+  list_.setSel(last ? 1 << 30 : 0);  // setSel clamps to the last row
 }
 
 mt::TrackCfg& TrackScreen::cfg() { return app_.project().tracks[app_.curTrack()]; }
@@ -116,11 +124,7 @@ void TrackScreen::onLeave() { leaveEdit(); }
 
 void TrackScreen::showPage(int page, bool last) {
   leaveEdit();
-  page_ = (page % kPages + kPages) % kPages;
-  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
-  list_.setVisibleRows(kVisibleRows);
-  list_.setWrap(false);
-  list_.setSel(last ? 1 << 30 : 0);  // setSel clamps to the last row
+  setPageRows(page, last);
 }
 
 // The track changed under an open edit (a track button, GRID): the edit belonged to the old one.
