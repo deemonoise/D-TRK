@@ -512,9 +512,9 @@ void FileScreen::onTouch(const TouchEvent& ev) {
     wifi_.onTouch(ev);
     return;
   }
-  const int top = y0_ + kHeaderH;
-  if (!names_ && ev.type == TouchType::Tap && ev.y < top && ev.x >= kSwitchX - 8 && ev.x < kSwitchX + kSwitchW + 8) {
-    setSection(ev.x >= kSwitchX + 11 * kCharW);  // "PROJECTS | " is 11 chars
+  const int top = y0_ + kHeaderH + (names_ ? 0 : PageBar::kH);
+  if (!names_ && ev.y >= y0_ + kHeaderH && ev.y < top) {
+    if (ev.type == TouchType::Tap) setSection(PageBar::at(ev.x, 2) == 1);
     return;
   }
   if (samples_ && !names_) {
@@ -561,7 +561,7 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   const bool sd = hw::sdReady();
   drawHeader(s, y0);
-  const int top = y0 + kHeaderH;
+  const int top = y0 + kHeaderH + (names_ ? 0 : PageBar::kH);
   if (samples_ && !names_) {
     drawSamples(s, top);
     return;
@@ -613,15 +613,11 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
     s.drawString(buf, 16, ty);
   }
   if (!names_) {
-    // Section switch.
-    const bool focus = samples_ ? ssel_ == kSwitchRow : sel_ == kSectionSel;
-    if (focus) s.fillRect(kSwitchX - 4, y0 + 2, kSwitchW + 8, kHeaderH - 8, kSelBg);
-    s.setTextColor(samples_ ? kDim : (focus ? kCursor : kText));
-    s.drawString("PROJECTS", kSwitchX, ty);
-    s.setTextColor(kDim);
-    s.drawString("|", kSwitchX + 9 * kCharW, ty);
-    s.setTextColor(!samples_ ? kDim : (focus ? kCursor : kText));
-    s.drawString("SAMPLES", kSwitchX + 11 * kCharW, ty);
+    // Sections: a page bar; with the encoder focus on it, an outline (click = the other section).
+    static const char* const kNames[] = {"PROJECTS", "SAMPLES"};
+    const int by = y0 + kHeaderH;
+    PageBar::draw(s, by, kNames, 2, samples_ ? 1 : 0);
+    if (samples_ ? ssel_ == kSwitchRow : sel_ == kSectionSel) s.drawRect(0, by - 1, kScreenW, PageBar::kH - 2, kCursor);
   }
   s.setTextColor(sd ? kDim : kEditCursor);
   const char* sdText = sd ? "SD OK" : "NO SD CARD";
@@ -917,7 +913,7 @@ void FileScreen::samplesInput(const hw::InputEvent& ev) {
 }
 
 void FileScreen::samplesTouch(const TouchEvent& ev) {
-  const int rows = y0_ + kHeaderH + kInfoH;
+  const int rows = y0_ + kHeaderH + PageBar::kH + kInfoH;
   if (ev.type == TouchType::Drag) {
     dragAcc_ += ev.dy;
     const int n = dragAcc_ / kRowH;

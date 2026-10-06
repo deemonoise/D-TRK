@@ -3,6 +3,7 @@
 #include "import_dialog.h"
 #include "keyboard.h"
 #include "render_dialog.h"
+#include "page_bar.h"
 #include "screen.h"
 #include "wifi_dialog.h"
 
@@ -34,16 +35,16 @@ class FileScreen : public Screen {
   // SAMPLES rows: Import, Compact, Clear cache, then the project's samples.
   enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kClearRow, kFirstSample };
   static constexpr int kHeaderH = 28;
-  static constexpr int kActionH = 30;  // kActions rows fit under the header
+  static constexpr int kActionH = 27;  // kActions rows fit under the header and the page bar
   static constexpr int kRowH = 24;
   static constexpr int kMaxFiles = 512;
   static constexpr int kWavDepthMax = 4;  // subfolders below /samples
   static constexpr int kListRows = (kAreaH - kHeaderH) / kRowH;  // incl. the Back row
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
-  static constexpr int kSampleRows = (kAreaH - kHeaderH - kInfoH) / kRowH;
-  static_assert(kHeaderH + kActions * kActionH <= kAreaH, "FILE actions fit");
-  static constexpr int kSwitchX = 208;  // "PROJECTS | SAMPLES" in the header
-  static constexpr int kSwitchW = 18 * kCharW;
+  static constexpr int kSampleRows = (kAreaH - kHeaderH - PageBar::kH - kInfoH) / kRowH;
+  static_assert(kHeaderH + PageBar::kH + kActions * kActionH <= kAreaH, "FILE actions fit");
+  // PROJECTS / SAMPLES: the page bar under the header (also a focus position of the encoder:
+  // kSectionSel in PROJECTS, kSwitchRow in SAMPLES).
 
   bool enabled(int a) const;
   void moveSel(int delta);
