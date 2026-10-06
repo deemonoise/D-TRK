@@ -89,7 +89,7 @@ static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine fiel
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
 // send, the drive, the reverb send.
-enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLocks };
+enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLocks };
 static_assert(kLocks <= 16, "lockMask is a uint16_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
 // Dec..Con = macro index + 1 (FM / DRUM only). Stored in files: new targets before Count only.
@@ -199,8 +199,10 @@ uint8_t lfoDestStep(uint8_t dest, int d, bool macros);
 // ACC: drum tracks, lane mask: lanes in it play at the step velocity, the others at 60 % (fxDrumOnly).
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
-  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, Count
+  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR, Count
 };
+// BIT, SRR lock the voice's bit-depth / sample-rate reduction (kLockBit / kLockSrr, 0 = off; no
+// instrument setting), INT tracks only.
 // DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.
 // ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
 // kArmDefault (UP, 3) is the plain ARP. INT tracks only.
@@ -221,7 +223,7 @@ constexpr uint8_t kCndPre = 0x03, kCndNotPre = 0x04, kCndNei = 0x05, kCndNotNei 
 
 // Punch-in effects held on the track buttons (PERF mode), not saved: button N = value N. The
 // sequencer adds them to the steps of the track as they play (Sequencer::perfSlot).
-enum class PerfFx : uint8_t { None, Rat2, Rat4, FltLow, FltHigh, DlyMax, DecShort, Fade, Mute, Count };
+enum class PerfFx : uint8_t { None, Rat2, Rat4, FltLow, FltHigh, DlyMax, Crush, Fade, Mute, Count };
 
 // Synth message 0xF5 cmd val: cmd is an Fx (synth fx) or kSynthStep, a step start on the INT
 // track with val = ticks per step | 0x80 if the step has a note (sent by the sequencer).
@@ -355,6 +357,9 @@ struct Project {
   uint8_t compRel = 50;
   uint8_t scTrack = 0;
   uint8_t scDepth = 64;
+  // Master DJ filter on the internal sound: -64..-1 low-pass (closing towards -64), 0 off, 1..63
+  // high-pass (opening towards 63).
+  int8_t djFilter = 0;
   ProjSample samples[kProjSamples];
   uint8_t sampleCount = 0;  // names unique ignoring case
   ProjWavetable wavetables[kProjWavetables];

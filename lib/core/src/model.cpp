@@ -77,6 +77,7 @@ void Project::reset() {
   compRel = 50;
   scTrack = 0;
   scDepth = 64;
+  djFilter = 0;
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};

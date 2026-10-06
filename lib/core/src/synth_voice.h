@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "model.h"
 #include "synth_env.h"
+#include "synth_crush.h"
 #include "synth_drive.h"
 #include "synth_drum.h"
 #include "synth_filter.h"
@@ -36,6 +37,7 @@ struct Voice {
   float send = 0;           // delay send 0..1: DLY lock or Instrument::send
   float rsend = 0;          // reverb send 0..1: RVB lock or Instrument::rsend
   Drive drive;              // DRV lock or Instrument::drive, + LFO
+  Crush crush;              // BIT / SRR locks (0 = off)
   float pwmPhase = 0;       // PWM sweep LFO, 0..1
   uint8_t wave = 0;         // Wave
   // Synth fx state (Synth::control).

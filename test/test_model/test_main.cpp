@@ -335,7 +335,7 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(50, p.compRel);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(10, kLocks);
+  TEST_ASSERT_EQUAL(12, kLocks);  // + BIT, SRR
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockFlt, static_cast<int>(Fx::FLT));  // lock order unchanged
 }
 

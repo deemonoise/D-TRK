@@ -637,7 +637,7 @@ FxSlot Sequencer::perfSlot(PerfFx fx) {
     case PerfFx::FltLow: return {Fx::FLT, 30};
     case PerfFx::FltHigh: return {Fx::FLT, 120};
     case PerfFx::DlyMax: return {Fx::DLY, 127};
-    case PerfFx::DecShort: return {Fx::DCY, 20};
+    case PerfFx::Crush: return {Fx::BIT, 100};  // about 5 bits
     case PerfFx::Fade: return {Fx::VSL, static_cast<uint8_t>(-16)};
     default: return {Fx::None, 0};
   }

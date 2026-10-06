@@ -151,6 +151,8 @@ class Synth {
   float sc_[kBlock];     // sidechain key: the voices of Project::scTrack
   Reverb reverb_;
   Compressor comp_;
+  Svf dj_;  // master DJ filter
+  void djFilter(float* x, int n);
   Delay delay_;
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
   uint32_t rng_ = 0x2545F491;  // LFO Random

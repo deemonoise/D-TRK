@@ -18,8 +18,9 @@ constexpr uint32_t kOldStepBytes = 6;  // PATN before 6 fx slots: note, vel, 2 x
 constexpr int kOldTracks = 8;          // PATN of the 8-track firmware
 constexpr size_t kToutSize = 3;
 // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
-// scTrack, scDepth.
-constexpr size_t kAudiSize = 13;
+// scTrack, scDepth, djFilter + 64.
+constexpr size_t kAudiSize = 14;
+constexpr size_t kAudiFxSize = 13;  // older files: up to scDepth
 constexpr size_t kAudiDlySize = 6;  // older files: up to dlyLevel
 constexpr size_t kAudiMinSize = 2;  // older files: masterVol, preview
 constexpr size_t kSmplSize = 24;  // name[16] u32 crc u32 frames
@@ -233,7 +234,7 @@ LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
     p.dlyTone = clampu(b[4], 0, 127);
     p.dlyLevel = clampu(b[5], 0, 127);
   }
-  if (n >= kAudiSize) {
+  if (n >= kAudiFxSize) {
     p.rvbSize = clampu(b[6], 0, 127);
     p.rvbDamp = clampu(b[7], 0, 127);
     p.rvbLevel = clampu(b[8], 0, 127);
@@ -242,6 +243,7 @@ LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
     p.scTrack = b[11] <= kTracks ? b[11] : 0;
     p.scDepth = clampu(b[12], 0, 127);
   }
+  if (n >= kAudiSize) p.djFilter = static_cast<int8_t>(clampu(b[13], 0, 127) - 64);
   return in.skip(size - n) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
@@ -490,7 +492,7 @@ bool saveProject(const Project& p, ByteSink& out) {
                                  p.rvbSize,   p.rvbDamp,
                                  p.rvbLevel,  p.compAmt,
                                  p.compRel,   p.scTrack,
-                                 p.scDepth};
+                                 p.scDepth,   static_cast<uint8_t>(p.djFilter + 64)};
   if (!o.chunk("AUDI", kAudiSize) || !o.write(au, sizeof(au))) return false;
 
   // Always written, empty or not.

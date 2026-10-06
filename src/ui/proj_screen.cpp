@@ -105,6 +105,15 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        noComp};
   params_[kScDepth] = {"SC depth", num(&mt::Project::scDepth), u7(&mt::Project::scDepth),
                        [this] { return app_.project().compAmt == 0 || app_.project().scTrack == 0; }};
+  params_[kDjFilter] = {"DJ filter",
+                        [this](char* o, int n) {
+                          const int v = app_.project().djFilter;
+                          if (v == 0) snprintf(o, n, "OFF");
+                          else snprintf(o, n, "%s %d", v < 0 ? "LP" : "HP", v < 0 ? -v : v);
+                        },
+                        [this](int d) {
+                          app_.project().djFilter = static_cast<int8_t>(clampi(app_.project().djFilter + d, -64, 63));
+                        }};
   params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
                        [this](int d) { app_.project().preview = d > 0; }};
   params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },

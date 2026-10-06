@@ -51,6 +51,8 @@ constexpr Info kInfo[] = {
     {"RVB", "REVERB SEND", 0, 127, 64, false}, // RVB: reverb send lock
     {"ARM", "ARP MODE", 0, 0, kArmDefault, false},  // ARM: own ordering (rate 1..8, then mode)
     {"ARS", "STEP ARP", 0, 0, kArsDefault, false},  // ARS: steps per note, octaves, then mode
+    {"BIT", "BIT CRUSH", 0, 127, 64, false},        // BIT: bit-depth reduction lock, 0 = off
+    {"SRR", "SAMPLE RATE REDUCE", 0, 127, 64, false},  // SRR: sample-rate reduction lock, 0 = off
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -97,7 +99,7 @@ constexpr Fx kOrder[] = {
     Fx::RAT, Fx::NDG, Fx::GAT, Fx::TIE, Fx::OFF, Fx::CUT,
     Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN,
     Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
-    Fx::FLT, Fx::RES, Fx::DRV, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
+    Fx::FLT, Fx::RES, Fx::DRV, Fx::BIT, Fx::SRR, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
     Fx::OFS, Fx::SLC,
     Fx::DLY, Fx::RVB,
     Fx::CHN, Fx::CCA, Fx::CCB, Fx::PGM,
@@ -197,13 +199,13 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   return static_cast<uint8_t>(cur);
 }
 
-bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM); }
+bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR; }
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
 
 const char* perfFxName(PerfFx f) {
-  static const char* const kNames[] = {"",          "RAT 2",       "RAT 4",       "FILTER LOW", "FILTER HIGH",
-                                       "DELAY MAX", "SHORT DECAY", "FADE",        "MUTE"};
+  static const char* const kNames[] = {"",          "RAT 2", "RAT 4", "FILTER LOW", "FILTER HIGH",
+                                       "DELAY MAX", "CRUSH", "FADE",  "MUTE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(PerfFx::Count), "perf names");
   const int i = static_cast<int>(f);
   return i < static_cast<int>(PerfFx::Count) ? kNames[i] : "";

@@ -233,11 +233,15 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
     case Fx::RES:
     case Fx::DLY:
     case Fx::DRV:
-    case Fx::RVB: {
+    case Fx::RVB:
+    case Fx::BIT:
+    case Fx::SRR: {
       // Lock: this step's note-ons, or the track's sounding voices. Macros: FM / DRUM / SYNTH voices only.
       const int k = cmd == static_cast<uint8_t>(Fx::DLY)   ? kLockDly
                     : cmd == static_cast<uint8_t>(Fx::DRV) ? kLockDrv
                     : cmd == static_cast<uint8_t>(Fx::RVB) ? kLockRvb
+                    : cmd == static_cast<uint8_t>(Fx::BIT) ? kLockBit
+                    : cmd == static_cast<uint8_t>(Fx::SRR) ? kLockSrr
                                                            : cmd - static_cast<uint8_t>(Fx::DCY);
       const bool macro = k < kFmMacros;
       const uint8_t lv = val > 127 ? 127 : val;
@@ -513,7 +517,10 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     v.fenvT = 0;
     v.fenvDone = false;
   }
-  if (!legato) v.flt.reset();
+  if (!legato) {
+    v.flt.reset();
+    v.crush.reset();
+  }
   control(v, 0);
 }
 
@@ -656,6 +663,7 @@ void Synth::control(Voice& v, int dt) {
   }
   const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : (m.drive > 127 ? 127 : m.drive);
   v.drive.set(static_cast<uint8_t>(clampf(drv + lfoDrv, 0.f, 127.f) + 0.5f));
+  v.crush.set((v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : 0, (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : 0);
   controlFilter(v, m, pitch, lfoCut);
   if (v.fm) {
     controlFm(v, m, pitch, dt, l, lfoVol);  // sets v.amp too
@@ -841,7 +849,8 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
   // into out (bit-exact to the plain path).
   float flt[kControl];
   float* dst = out;
-  const bool driven = v.drive.on();
+  const bool crushed = v.crush.on();
+  const bool driven = v.drive.on() || crushed;  // the pre-filter stage: drive, then crush
   if (v.fltOn || driven) {
     for (int i = 0; i < n; ++i) flt[i] = 0;
     dst = flt;
@@ -868,8 +877,10 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
     const float inc = v.inc, duty = v.duty, amp = v.amp;
     for (int i = 0; i < n; ++i) dst[i] += v.osc.next(w, inc, duty) * v.env.next() * amp;
   }
-  if (driven)
+  if (v.drive.on())
     for (int i = 0; i < n; ++i) flt[i] = v.drive.process(flt[i]);
+  if (crushed)
+    for (int i = 0; i < n; ++i) flt[i] = v.crush.process(flt[i]);
   if (v.fltOn)
     for (int i = 0; i < n; ++i) out[i] += v.flt.process(flt[i]);
   else if (driven)
@@ -878,6 +889,20 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
 
 // Sample playback: 32.32 fixed point position, linear interpolation between frames. The loop
 // region [loopLo, loopHi) bounds the play direction's edge (for Off it is the whole region).
+// Master DJ filter (Project::djFilter): low-pass 20 kHz .. 100 Hz to the left, high-pass 20 Hz ..
+// 8 kHz to the right, a little resonance; the state is cleared while it is off.
+void Synth::djFilter(float* x, int n) {
+  const int v = p_.djFilter;
+  if (v == 0) {
+    dj_.reset();
+    return;
+  }
+  const float a = v < 0 ? -v / 64.f : v / 63.f;
+  const float hz = v < 0 ? 20000.f * powf(100.f / 20000.f, a) : 20.f * powf(8000.f / 20.f, a);
+  dj_.set(v < 0 ? Svf::Mode::Lp : Svf::Mode::Hp, hz, 0.9f);
+  for (int i = 0; i < n; ++i) x[i] = dj_.process(x[i]);
+}
+
 void Synth::renderSample(Voice& v, float* out, int n) {
   const int16_t* d = v.smp;
   const uint32_t last = v.smpLen - 1;
@@ -958,6 +983,7 @@ void Synth::render(int16_t* out) {
   ctlLeft_ = kControl;
   delay_.process(send_, mix_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, p_.dlyLevel);
   reverb_.process(rsend_, mix_, kBlock, p_.rvbSize, p_.rvbDamp, p_.rvbLevel);
+  djFilter(mix_, kBlock);
   comp_.process(mix_, scTrack >= 0 ? sc_ : nullptr, kBlock, p_.compAmt, p_.compRel, p_.scDepth);
   const uint8_t mv = p_.masterVol > kMasterVolMax ? kMasterVolMax : p_.masterVol;
   const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
