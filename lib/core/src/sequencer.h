@@ -52,6 +52,10 @@ constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the 
 // empty scene is skipped). Pattern::trackLen makes a track loop on its own length inside the
 // pass; the pass counter follows the pattern length.
 //
+// ARS (step arp): a note step with ARS plays its first arp note, every following step of the track
+// without a note plays the next one (every `div` steps) until a note step that plays, OFF (note or
+// fx), a muted note step or a pattern change; it goes on over a loop of the same pattern, like TIE.
+//
 // Live: setFill() is the held fill (CND FIL / NFL), perfOn() a punch-in effect on a track until
 // perfOff() (or stop()). Both apply to steps planned from then on (at most the lookahead late).
 class Sequencer {
@@ -134,6 +138,7 @@ class Sequencer {
     int8_t song, prevSong;  // songPos_ when played / before
     uint8_t prevRep;        // rep_ before
     Tie ties[kTracks];
+    StepArp arps[kTracks];
   };
   static constexpr int kHist = 16;           // covers every scheduled but unheard step
   static constexpr uint16_t kLookTicks = 48;  // the largest nudge: -50 % of a quarter
@@ -164,6 +169,11 @@ class Sequencer {
   void releaseTie(int track, uint64_t t);
   void pushOff(int track, uint64_t t);
   void releaseAllTies(uint64_t t);
+  // ARS: the next arp note of the track on a step without a note (sounds only if aud).
+  void arpStep(int track, uint64_t t, int64_t earliest, bool aud);
+  void stopArps() {
+    for (StepArp& a : arps_) a.n = 0;
+  }
   void silence(uint64_t now, MidiSink& out);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
   bool expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex);
@@ -231,6 +241,7 @@ class Sequencer {
   uint32_t nextId_ = 1;
   uint16_t activity_ = 0;
   Tie ties_[kTracks];
+  StepArp arps_[kTracks];  // running ARS per track (n = 0: none)
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };
 

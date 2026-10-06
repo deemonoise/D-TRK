@@ -50,6 +50,7 @@ constexpr Info kInfo[] = {
     {"DRV", "DRIVE", 0, 127, 64, false},       // DRV: drive lock
     {"RVB", "REVERB SEND", 0, 127, 64, false}, // RVB: reverb send lock
     {"ARM", "ARP MODE", 0, 0, kArmDefault, false},  // ARM: own ordering (rate 1..8, then mode)
+    {"ARS", "STEP ARP", 0, 0, kArsDefault, false},  // ARS: as ARM (steps per note, then mode)
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -86,6 +87,35 @@ uint8_t cndValue(int idx) {
 
 constexpr int kCndCount = kCndFillIdx + 2;
 
+// The order the encoder runs through the commands: related ones next to each other (notes and arp,
+// timing, chance, pitch and level, sound locks, sample, sends, MIDI only).
+constexpr Fx kOrder[] = {
+    Fx::None,
+    Fx::CHD, Fx::STR, Fx::ARP, Fx::ARM, Fx::ARS,
+    Fx::RAT, Fx::NDG, Fx::GAT, Fx::TIE, Fx::OFF, Fx::CUT,
+    Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN,
+    Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
+    Fx::FLT, Fx::RES, Fx::DRV, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
+    Fx::OFS, Fx::SLC,
+    Fx::DLY, Fx::RVB,
+    Fx::CHN, Fx::CCA, Fx::CCB, Fx::PGM,
+};
+constexpr int kOrderN = sizeof(kOrder) / sizeof(kOrder[0]);
+static_assert(kOrderN == static_cast<int>(Fx::Count), "kOrder must list every Fx once");
+
+constexpr bool orderComplete() {
+  for (int f = 0; f < kOrderN; ++f) {
+    int n = 0;
+    for (int i = 0; i < kOrderN; ++i) n += static_cast<int>(kOrder[i]) == f;
+    if (n != 1) return false;
+  }
+  return true;
+}
+static_assert(orderComplete(), "kOrder must list every Fx once");
+
+// ARM / ARS: mode << 4 | rate 1..kArmRateMax.
+int armRate(uint8_t v) { return (v & 15) < 1 ? 1 : ((v & 15) > kArmRateMax ? kArmRateMax : (v & 15)); }
+
 }  // namespace
 
 const char* fxLongName(Fx f) { return info(f).longName; }
@@ -105,11 +135,8 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::ARP:
     case Fx::ACC: snprintf(out, 5, " %02X", v); return;
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
-    case Fx::ARM: {
-      const int rate = v & 15;
-      snprintf(out, 5, " %c%d", "UDBR"[(v >> 4) & 3], rate < 1 ? 1 : (rate > kArmRateMax ? kArmRateMax : rate));
-      return;
-    }
+    case Fx::ARM:
+    case Fx::ARS: snprintf(out, 5, " %c%d", "UDBR"[(v >> 4) & 3], armRate(v)); return;
     case Fx::CND:
       if (v == 0) snprintf(out, 5, "FST");
       else if (v == kCndFill) snprintf(out, 5, "FIL");
@@ -126,9 +153,8 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
     i = i < 0 ? 0 : (i >= kCndCount ? kCndCount - 1 : i);
     return cndValue(i);
   }
-  if (f == Fx::ARM) {  // index mode * 8 + rate - 1: the rate first, then the mode
-    const int rate = (v & 15) < 1 ? 1 : ((v & 15) > kArmRateMax ? kArmRateMax : (v & 15));
-    int i = ((v >> 4) & 3) * kArmRateMax + rate - 1 + delta;
+  if (f == Fx::ARM || f == Fx::ARS) {  // index mode * 8 + rate - 1: the rate first, then the mode
+    int i = ((v >> 4) & 3) * kArmRateMax + armRate(v) - 1 + delta;
     i = i < 0 ? 0 : (i >= kArmModes * kArmRateMax ? kArmModes * kArmRateMax - 1 : i);
     return static_cast<uint8_t>(((i / kArmRateMax) << 4) | (i % kArmRateMax + 1));
   }
@@ -139,14 +165,15 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   return static_cast<uint8_t>(cur);
 }
 
-bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f < Fx::Count); }
+bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM); }
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
 
 Fx fxNextCmd(Fx f, int delta) {
-  const int n = static_cast<int>(Fx::Count);
-  const int i = ((static_cast<int>(f) + delta) % n + n) % n;
-  return static_cast<Fx>(i);
+  int at = 0;
+  for (int i = 0; i < kOrderN; ++i)
+    if (kOrder[i] == f) at = i;
+  return kOrder[((at + delta) % kOrderN + kOrderN) % kOrderN];
 }
 
 }  // namespace mt

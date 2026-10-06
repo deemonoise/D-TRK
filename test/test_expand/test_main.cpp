@@ -579,6 +579,68 @@ void test_arp_00_chd_normal_chord() {
   TEST_ASSERT_EQUAL(3, countKind(out, EvKind::NoteOn));
 }
 
+// ---- ARS (step arp) ----
+
+void test_ars_chord_plays_first_note_and_hands_over_the_arp() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0x37};
+  s.fx[2] = {Fx::ARS, 0x12};  // DOWN, every 2 steps
+  s.fx[3] = {Fx::ARM, 0x05};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(1, countKind(out, EvKind::NoteOn));
+  TEST_ASSERT_EQUAL(0, countKind(out, EvKind::SynthFx));  // no synth ARP / ARM / arp chord
+  TEST_ASSERT_EQUAL(3, out.arp.n);
+  TEST_ASSERT_EQUAL(60, out.arp.notes[0]);
+  TEST_ASSERT_EQUAL(64, out.arp.notes[1]);
+  TEST_ASSERT_EQUAL(67, out.arp.notes[2]);
+  TEST_ASSERT_EQUAL(1, out.arp.mode);
+  TEST_ASSERT_EQUAL(2, out.arp.div);
+  for (int i = 0; i < out.count; ++i)
+    if (out.ev[i].kind == EvKind::NoteOn) TEST_ASSERT_EQUAL(67, out.ev[i].note);  // DOWN: the top first
+}
+
+void test_ars_uses_arp_offsets_or_octave_on_midi() {
+  TrackCfg t;
+  t.out = TrackOut::Midi;
+  t.channel = 3;
+  t.defGate = 50;
+  Step s = note(48);
+  s.fx[0] = {Fx::ARS, kArsDefault};
+  s.fx[1] = {Fx::TIE, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(2, out.arp.n);  // root and an octave up
+  TEST_ASSERT_EQUAL(48, out.arp.notes[0]);
+  TEST_ASSERT_EQUAL(60, out.arp.notes[1]);
+  TEST_ASSERT_EQUAL(3, out.arp.ch);
+  TEST_ASSERT_EQUAL(gatePercent(50), out.arp.gate);
+  TEST_ASSERT_FALSE(out.tie);  // an arp ignores TIE
+  TEST_ASSERT_EQUAL(48, out.ev[0].note);
+  s.fx[1] = {Fx::ARP, 0x47};
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, out.arp.n);
+  TEST_ASSERT_EQUAL(52, out.arp.notes[1]);
+  TEST_ASSERT_EQUAL(55, out.arp.notes[2]);
+}
+
+void test_ars_absent_without_fx() {
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(note(60), track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(0, out.arp.n);
+}
+
+void test_arp_index_modes() {
+  const int up[] = {0, 1, 2, 0}, down[] = {2, 1, 0, 2}, ud[] = {0, 1, 2, 1, 0, 1};
+  for (int k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(up[k], arpIndex(0, k, 3));
+  for (int k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(down[k], arpIndex(1, k, 3));
+  for (int k = 0; k < 6; ++k) TEST_ASSERT_EQUAL(ud[k], arpIndex(2, k, 3));
+  TEST_ASSERT_EQUAL(0, arpIndex(2, 5, 1));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_empty_and_off_produce_nothing);
@@ -626,5 +688,9 @@ int main() {
   RUN_TEST(test_arp_chd_int_emits_root_and_arpchord);
   RUN_TEST(test_arp_chd_midi_full_chord);
   RUN_TEST(test_arp_00_chd_normal_chord);
+  RUN_TEST(test_ars_chord_plays_first_note_and_hands_over_the_arp);
+  RUN_TEST(test_ars_uses_arp_offsets_or_octave_on_midi);
+  RUN_TEST(test_ars_absent_without_fx);
+  RUN_TEST(test_arp_index_modes);
   return UNITY_END();
 }

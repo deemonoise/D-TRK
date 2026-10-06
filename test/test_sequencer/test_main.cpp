@@ -1913,6 +1913,89 @@ void test_track_mask_silences_others() {
   TEST_ASSERT_EQUAL(1, sink->times(0x93, 64).size());
 }
 
+// ---- ARS (step arp) ----
+
+static std::vector<int> notesOn(uint8_t status) {
+  std::vector<int> out;
+  for (const auto& r : sink->log)
+    if (r.b[0] == status) out.push_back(r.b[1]);
+  return out;
+}
+
+void test_step_arp_plays_on_following_steps() {
+  Step& s = p->patterns[0].steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARS, kArsDefault};
+  p->patterns[0].steps[0][5].note = kNoteOff;
+  seq->start(0, *sink);
+  run(0, 125000 * 7);
+  const std::vector<int> on = notesOn(0x90);
+  const int want[] = {60, 64, 67, 60, 64};  // steps 0..4, OFF at 5
+  TEST_ASSERT_EQUAL(5, on.size());
+  for (int i = 0; i < 5; ++i) TEST_ASSERT_EQUAL(want[i], on[i]);
+  TEST_ASSERT_EQUAL(125000, sink->times(0x90, 64)[0]);
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 67)[0]);
+  // Every arp note gets its NoteOff before the next one.
+  TEST_ASSERT_EQUAL(5, sink->times(0x80).size());
+  TEST_ASSERT_TRUE(sink->times(0x80, 64)[0] < 250000);
+}
+
+void test_step_arp_every_two_steps_until_next_note() {
+  Step& s = p->patterns[0].steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::ARS, 0x02};  // UP, every 2 steps: 60, 72
+  p->patterns[0].steps[0][6].note = 50;
+  seq->start(0, *sink);
+  run(0, 125000 * 9);
+  const std::vector<int> on = notesOn(0x90);
+  const int want[] = {60, 72, 60, 50};  // steps 0, 2, 4, then the note at 6 ends it
+  TEST_ASSERT_EQUAL(4, on.size());
+  for (int i = 0; i < 4; ++i) TEST_ASSERT_EQUAL(want[i], on[i]);
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 72)[0]);
+}
+
+void test_step_arp_continues_over_loop_and_stops_on_pattern_change() {
+  p->patterns[0].length = 4;
+  p->patterns[1].length = 4;
+  Step& s = p->patterns[0].steps[0][2];
+  s.note = 60;
+  s.fx[0] = {Fx::ARS, kArsDefault};
+  seq->start(0, *sink);
+  run(0, 125000 * 3 + 1000);  // steps 2, 3 (planned up to step 5)
+  TEST_ASSERT_EQUAL(2, notesOn(0x90).size());
+  seq->queuePattern(1);
+  run(125000 * 3 + 1001, 125000 * 14);
+  // Pass 2: steps 0, 1 go on with the arp, the note at 2 restarts it, 3; pattern 1 stops it.
+  const std::vector<int> on = notesOn(0x90);
+  const int want[] = {60, 72, 60, 72, 60, 72};
+  TEST_ASSERT_EQUAL(6, on.size());
+  for (int i = 0; i < 6; ++i) TEST_ASSERT_EQUAL(want[i], on[i]);
+  TEST_ASSERT_EQUAL(1, seq->pattern());
+}
+
+void test_step_arp_on_int_track_uses_track_voices() {
+  p->tracks[0].out = TrackOut::Int;
+  Step& s = p->patterns[0].steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::ARS, kArsDefault};
+  s.fx[1] = {Fx::ARP, 0x37};
+  p->patterns[0].steps[0][2].fx[0] = {Fx::FLT, 20};  // locks the arp note of its step
+  seq->start(0, *sink);
+  run(0, 125000 * 3 + 1000);
+  const auto on = sink->synKind(0x90);
+  TEST_ASSERT_EQUAL(4, on.size());
+  TEST_ASSERT_EQUAL(63, on[1].b[1]);
+  TEST_ASSERT_EQUAL(67, on[2].b[1]);
+  TEST_ASSERT_EQUAL(60, on[3].b[1]);
+  for (const auto& r : sink->synKind(0xF5))
+    TEST_ASSERT_TRUE(r.b[1] != static_cast<uint8_t>(Fx::ARP));  // the synth's ARP stays out
+  bool noteStart = false;  // step 2 starts as a note step
+  for (const auto& r : sink->synKind(0xF5))
+    if (r.b[1] == kSynthStep && r.t == 250000) noteStart = (r.b[2] & 0x80) != 0;
+  TEST_ASSERT_TRUE(noteStart);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -2034,5 +2117,9 @@ int main() {
   RUN_TEST(test_stop_clears_perf);
   RUN_TEST(test_phase256_within_step);
   RUN_TEST(test_track_mask_silences_others);
+  RUN_TEST(test_step_arp_plays_on_following_steps);
+  RUN_TEST(test_step_arp_every_two_steps_until_next_note);
+  RUN_TEST(test_step_arp_continues_over_loop_and_stops_on_pattern_change);
+  RUN_TEST(test_step_arp_on_int_track_uses_track_voices);
   return UNITY_END();
 }

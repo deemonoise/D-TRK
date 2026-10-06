@@ -82,6 +82,7 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
   out.count = 0;
   out.tie = false;
   out.offUs = -1;
+  out.arp.n = 0;
   const uint32_t stepUs = c.stepUs;
 
   if (const FxSlot* f = s.find(Fx::CND)) {
@@ -110,9 +111,17 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     out.offUs = nudge + static_cast<int32_t>(static_cast<uint64_t>(stepUs) * off->val / tps);
   }
 
+  // ARS: the sequencer arpeggiates, the synth's own ARP / ARM stay out.
+  const FxSlot* ars = c.kit ? nullptr : s.find(Fx::ARS);
+
   // Control events, in slot order, before any note.
   for (const FxSlot& f : s.fx) {
     switch (f.cmd) {
+      case Fx::ARP:
+      case Fx::ARM:
+        if (ars) break;
+        if (t.out == TrackOut::Int) out.ev[out.count++] = {nudge, EvKind::SynthFx, ch, static_cast<uint8_t>(f.cmd), f.val};
+        break;
       case Fx::CCA:
       case Fx::CCB:
         out.ev[out.count++] = {nudge, EvKind::Cc, ch, static_cast<uint8_t>((f.cmd == Fx::CCA ? t.ccA : t.ccB) & 127),
@@ -162,17 +171,43 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     // INT + ARP + CHD: the synth arpeggiates the chord from the root alone (kSynthArpChord, before the
     // note-on). MIDI tracks have no ARP and keep the whole chord; ARP 00 is off: a plain chord.
     const FxSlot* arp = s.find(Fx::ARP);
-    if (t.out == TrackOut::Int && arp && arp->val && nNotes > 1 && out.count < kMaxStepEvents) {
+    if (!ars && t.out == TrackOut::Int && arp && arp->val && nNotes > 1 && out.count < kMaxStepEvents) {
       out.ev[out.count++] = {nudge, EvKind::SynthFx, ch, kSynthArpChord, f->val};
       nNotes = 1;
     }
+  }
+
+  if (ars) {
+    StepArp& a = out.arp;
+    a.n = 0;
+    if (nNotes > 1) {
+      for (int k = 0; k < nNotes; ++k) a.notes[a.n++] = notes[k];
+    } else {
+      const FxSlot* arp = s.find(Fx::ARP);
+      const int offs[3] = {0, arp && arp->val ? arp->val >> 4 : 12, arp && arp->val ? arp->val & 15 : -1};
+      for (int k = 0; k < 3; ++k) {
+        const int n = root + offs[k];
+        if (offs[k] >= 0 && n <= 127) a.notes[a.n++] = static_cast<uint8_t>(n);
+      }
+    }
+    a.mode = static_cast<uint8_t>((ars->val >> 4) & 3);
+    a.div = static_cast<uint8_t>((ars->val & 15) < 1 ? 1 : ((ars->val & 15) > kArmRateMax ? kArmRateMax : (ars->val & 15)));
+    a.vel = static_cast<uint8_t>(vel);
+    a.ch = ch;
+    a.gate = gatePercent(t.defGate);
+    if (const FxSlot* g = s.find(Fx::GAT)) a.gate = gatePercent(g->val);
+    a.k = 0;
+    a.wait = 0;
+    const int first = a.mode == 3 ? static_cast<int>(rng.below(a.n)) : arpIndex(a.mode, 0, a.n);
+    notes[0] = a.notes[first];
+    nNotes = 1;
   }
 
   uint32_t strum = 0;
   if (const FxSlot* f = s.find(Fx::STR)) strum = static_cast<uint32_t>(static_cast<uint64_t>(stepUs) * f->val / 100);
 
   const Hits h = noteHits(s, t, stepUs);
-  out.tie = !off && nNotes == 1 && s.find(Fx::TIE) != nullptr;  // a chord ignores TIE
+  out.tie = !off && !ars && nNotes == 1 && s.find(Fx::TIE) != nullptr;  // a chord or an arp ignores TIE
 
   for (int i = 0; i < h.rat; ++i) {
     for (int k = 0; k < nNotes && out.count < kMaxStepEvents - 1; ++k) {

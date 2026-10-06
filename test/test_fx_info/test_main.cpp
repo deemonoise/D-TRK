@@ -66,18 +66,40 @@ void test_cnd_order_has_fill() {
 }
 
 void test_cmd_cycle() {
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, 1) == Fx::CHN);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::ARM);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::PGM, 1) == Fx::SLD);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CUT, 1) == Fx::DCY);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::FLT);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::RES, 1) == Fx::SLC);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::SLC, 1) == Fx::OFF);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::OFF, 1) == Fx::DLY);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::ACC);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::ACC, 1) == Fx::DRV);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::RVB, 1) == Fx::ARM);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARM, 1) == Fx::None);
+  // Grouped order: notes and arp, timing, chance, pitch / level, sound locks, sample, sends, MIDI.
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, 1) == Fx::CHD);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::PGM);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::PGM, 1) == Fx::None);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARP, 1) == Fx::ARM);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARM, 1) == Fx::ARS);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARS, 1) == Fx::RAT);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::FLT, 1) == Fx::RES);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::RVB);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHN, -1) == Fx::RVB);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHD, -3) == Fx::CCB);
+  // Every command once per round.
+  bool seen[static_cast<int>(Fx::Count)] = {};
+  Fx f = Fx::None;
+  for (int i = 0; i < static_cast<int>(Fx::Count); ++i) {
+    TEST_ASSERT_FALSE(seen[static_cast<int>(f)]);
+    seen[static_cast<int>(f)] = true;
+    TEST_ASSERT_TRUE(fxNextCmd(fxNextCmd(f, 1), -1) == f);
+    f = fxNextCmd(f, 1);
+  }
+  TEST_ASSERT_TRUE(f == Fx::None);
+}
+
+// ARS: step arp, the ARM encoding (steps per note, then mode), MIDI and INT.
+void test_step_arp_fx() {
+  TEST_ASSERT_EQUAL_STRING("ARS", fxName(Fx::ARS));
+  TEST_ASSERT_EQUAL_STRING("STEP ARP", fxLongName(Fx::ARS));
+  TEST_ASSERT_EQUAL_HEX8(kArsDefault, fxDefault(Fx::ARS));
+  TEST_ASSERT_EQUAL_STRING(" U1", fmt(Fx::ARS, kArsDefault));
+  TEST_ASSERT_EQUAL_STRING(" D4", fmt(Fx::ARS, 0x14));
+  TEST_ASSERT_EQUAL_HEX8(0x02, fxStep(Fx::ARS, 0x01, 1));
+  TEST_ASSERT_EQUAL_HEX8(0x11, fxStep(Fx::ARS, 0x08, 1));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::ARS));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::ARM));
 }
 
 void test_new_sound_fx() {
@@ -241,6 +263,7 @@ int main() {
   RUN_TEST(test_step_clamps_and_signed);
   RUN_TEST(test_cnd_order);
   RUN_TEST(test_cmd_cycle);
+  RUN_TEST(test_step_arp_fx);
   RUN_TEST(test_synth_fx_names_ranges);
   RUN_TEST(test_synth_only);
   RUN_TEST(test_fm_lock_fx);
