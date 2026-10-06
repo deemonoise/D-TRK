@@ -671,6 +671,51 @@ void test_arp_index_modes() {
   TEST_ASSERT_EQUAL(0, arpIndex(2, 5, 1));
 }
 
+// PRE / NEI read the context; CND A:B and PRB report their result for the next ones.
+void test_cnd_pre_nei_and_result() {
+  ExpandOut out;
+  Step s = note(60);
+  s.fx[0] = {Fx::CND, kCndPre};
+  ExpandCtx c = ctx;
+  c.pre = false;
+  TEST_ASSERT_FALSE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(-1, out.cond);  // PRE itself is not a result
+  c.pre = true;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  s.fx[0] = {Fx::CND, kCndNotNei};
+  c.nei = true;
+  TEST_ASSERT_FALSE(expandStep(s, track, c, rng, out));
+  s.fx[0] = {Fx::CND, 0x12};  // 1:2, loop 0 passes
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(1, out.cond);
+  c.loop = 1;
+  TEST_ASSERT_FALSE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(0, out.cond);
+  s.fx[0] = {Fx::PRB, 0};
+  TEST_ASSERT_FALSE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(0, out.cond);
+  TEST_ASSERT_TRUE(expandStep(note(60), track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(-1, out.cond);
+}
+
+void test_rat_velocity_ramp() {
+  ExpandOut out;
+  Step s = note(60);
+  s.vel = 100;
+  s.fx[0] = {Fx::RAT, 0x14};  // 4 hits rising
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  const int up[] = {25, 50, 75, 100};
+  int k = 0;
+  for (int i = 0; i < out.count; ++i)
+    if (out.ev[i].kind == EvKind::NoteOn) TEST_ASSERT_EQUAL(up[k++], out.ev[i].vel);
+  TEST_ASSERT_EQUAL(4, k);
+  s.fx[0] = {Fx::RAT, 0x24};  // falling
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  k = 0;
+  for (int i = 0; i < out.count; ++i)
+    if (out.ev[i].kind == EvKind::NoteOn) TEST_ASSERT_EQUAL(up[3 - k++], out.ev[i].vel);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_empty_and_off_produce_nothing);
@@ -723,5 +768,7 @@ int main() {
   RUN_TEST(test_ars_octaves);
   RUN_TEST(test_ars_absent_without_fx);
   RUN_TEST(test_arp_index_modes);
+  RUN_TEST(test_cnd_pre_nei_and_result);
+  RUN_TEST(test_rat_velocity_ramp);
   return UNITY_END();
 }

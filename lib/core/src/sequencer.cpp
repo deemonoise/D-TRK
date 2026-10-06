@@ -63,6 +63,7 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   loop_ = 0;
   rep_ = 0;
   perfMuted_ = 0;
+  condBits_ = 0;
   if (songPos_ >= 0) applyScene(songPos_, now);
   for (int i = 0; i < kTracks; ++i) {
     const TrackCfg& t = p_.tracks[i];
@@ -285,6 +286,7 @@ bool Sequencer::rewind(uint64_t now) {
   memcpy(arps_, h.arps, sizeof(arps_));
   // A perf Mute's or scene's release went with the undone steps: replanning must push it again.
   perfMuted_ = h.perfMuted;
+  condBits_ = h.condBits;
   for (int i = 0; i <= k; ++i)
     if (hist_[i].scene) {
       for (int tr = 0; tr < kTracks; ++tr) p_.tracks[tr].mute = (h.mutes >> tr) & 1;
@@ -378,6 +380,7 @@ void Sequencer::scheduleStep(uint64_t now) {
   memcpy(h.ties, ties_, sizeof(ties_));
   memcpy(h.arps, arps_, sizeof(arps_));
   h.perfMuted = perfMuted_;
+  h.condBits = condBits_;
   h.mutes = 0;
   for (int i = 0; i < kTracks; ++i)
     if (p_.tracks[i].mute) h.mutes |= static_cast<uint16_t>(1u << i);
@@ -736,7 +739,14 @@ void Sequencer::silence(uint64_t now, MidiSink& out) {
 bool Sequencer::expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex) {
   ExpandCtx c = ctx;
   c.kit = p_.kitOf(track);
-  if (!expandStep(s, p_.tracks[track], c, rng_, ex)) return false;
+  c.pre = (condBits_ >> track) & 1;
+  c.nei = track > 0 && ((condBits_ >> (track - 1)) & 1);
+  const bool played = expandStep(s, p_.tracks[track], c, rng_, ex);
+  if (ex.cond >= 0) {  // the track's last condition result, for PRE / NEI
+    const uint16_t bit = static_cast<uint16_t>(1u << track);
+    condBits_ = ex.cond ? static_cast<uint16_t>(condBits_ | bit) : static_cast<uint16_t>(condBits_ & ~bit);
+  }
+  if (!played) return false;
   if (internal(track)) {
     for (int i = 0; i < ex.count; ++i) ex.ev[i].ch = static_cast<uint8_t>(track);
     ex.arp.ch = static_cast<uint8_t>(track);

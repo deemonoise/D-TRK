@@ -2041,6 +2041,27 @@ void test_perf_mute_release_survives_rewind() {
   TEST_ASSERT_TRUE(off[0] < 400000);
 }
 
+// 1:2 on step 0 and PRE on step 1: step 1 plays in the passes where step 0 played; NEI on track 2
+// follows track 1.
+void test_cnd_pre_follows_previous_condition() {
+  p->patterns[0].length = 4;
+  Step& a = p->patterns[0].steps[0][0];
+  a.note = 60;
+  a.fx[0] = {Fx::CND, 0x12};
+  Step& b = p->patterns[0].steps[0][1];
+  b.note = 62;
+  b.fx[0] = {Fx::CND, kCndPre};
+  Step& n = p->patterns[0].steps[1][2];
+  n.note = 64;
+  n.fx[0] = {Fx::CND, kCndNei};
+  seq->start(0, *sink);
+  run(0, 125000 * 16 - 1);  // 4 passes
+  TEST_ASSERT_EQUAL(2, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(2, sink->times(0x90, 62).size());
+  TEST_ASSERT_EQUAL(2, sink->times(0x91, 64).size());  // track 2 = MIDI channel 2
+  TEST_ASSERT_EQUAL(sink->times(0x90, 60)[1] + 125000, sink->times(0x90, 62)[1]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -2169,5 +2190,6 @@ int main() {
   RUN_TEST(test_step_arp_survives_a_stall);
   RUN_TEST(test_step_arp_on_int_track_uses_track_voices);
   RUN_TEST(test_perf_mute_release_survives_rewind);
+  RUN_TEST(test_cnd_pre_follows_previous_condition);
   return UNITY_END();
 }

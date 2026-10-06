@@ -142,6 +142,7 @@ class Sequencer {
     Tie ties[kTracks];
     StepArp arps[kTracks];
     uint16_t perfMuted;   // perfMuted_ before: its first-muted-step release is undone with the step
+    uint16_t condBits;    // condBits_ before
     uint16_t mutes;       // TrackCfg::mute bits before
     bool scene;           // the step's pass end recalled a scene (mutes written)
   };
@@ -223,7 +224,8 @@ class Sequencer {
   bool fill_ = false;
   PerfFx perf_[kTracks] = {};
   uint16_t perfMuted_ = 0;  // perf Mute already ended the track's notes
-  bool sceneSet_ = false;   // applyScene wrote the mutes while the current step was planned
+  bool sceneSet_ = false;
+  uint16_t condBits_ = 0;   // per track: the last CND / PRB result (CND PRE / NEI)   // applyScene wrote the mutes while the current step was planned
   uint16_t mask_ = 0xFFFF;  // setTrackMask
   uint64_t endTick_ = kNever;  // setEndTick
   uint64_t heardStepT_ = 0;  // start of the heard step

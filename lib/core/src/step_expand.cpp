@@ -25,14 +25,29 @@ int stepVelocity(const Step& s, uint8_t vel, const TrackCfg& t, Rng& rng) {
 // Ratchet timing of a note step: RAT hits, sub-step and gate length (GAT or the track default).
 struct Hits {
   int rat;
+  int ramp;  // 0 even, kRatUp, kRatDown
   uint32_t sub;
   uint32_t gateUs;
 };
 
+// Velocity of ratchet hit i: the step velocity, or a ramp to (kRatUp) / from (kRatDown) it.
+int hitVel(int vel, int i, const Hits& h) {
+  if (h.ramp == 0 || h.rat < 2) return vel;
+  const int k = h.ramp == kRatUp ? i + 1 : h.rat - i;
+  const int v = vel * k / h.rat;
+  return v < 1 ? 1 : v;
+}
+
 Hits noteHits(const Step& s, const TrackCfg& t, uint32_t stepUs) {
   Hits h;
   h.rat = 1;
-  if (const FxSlot* r = s.find(Fx::RAT)) h.rat = r->val < 2 ? 2 : (r->val > 8 ? 8 : r->val);
+  h.ramp = 0;
+  if (const FxSlot* r = s.find(Fx::RAT)) {
+    const int n = r->val & 15;
+    h.rat = n < 2 ? 2 : (n > 8 ? 8 : n);
+    h.ramp = (r->val >> 4) & 3;
+    if (h.ramp > kRatDown) h.ramp = 0;
+  }
   uint32_t gatePct = gatePercent(t.defGate);
   if (const FxSlot* g = s.find(Fx::GAT)) gatePct = gatePercent(g->val);
   h.sub = stepUs / h.rat;
@@ -69,6 +84,7 @@ void expandDrum(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     for (int l = 0; l < kKitLanes && out.count < kMaxStepEvents - 1; ++l) {
       if (!(s.vel & (1u << l))) continue;
       int v = (accent & (1u << l)) ? vel : vel * 3 / 5;
+      v = hitVel(v, i, h);
       if (v < 1) v = 1;
       const uint8_t n = k.kit[l].note;
       out.ev[out.count++] = {on, EvKind::NoteOn, ch, n, static_cast<uint8_t>(v)};
@@ -83,13 +99,28 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
   out.tie = false;
   out.offUs = -1;
   out.arp.n = 0;
+  out.cond = -1;
   const uint32_t stepUs = c.stepUs;
 
+  // Conditions; PRE / NEI read the last result of the others (out.cond, kept by the sequencer).
   if (const FxSlot* f = s.find(Fx::CND)) {
-    if (!cndPasses(f->val, c.loop, c.fill)) return false;
+    bool pass;
+    switch (f->val) {
+      case kCndPre: pass = c.pre; break;
+      case kCndNotPre: pass = !c.pre; break;
+      case kCndNei: pass = c.nei; break;
+      case kCndNotNei: pass = !c.nei; break;
+      default:
+        pass = cndPasses(f->val, c.loop, c.fill);
+        out.cond = pass ? 1 : 0;
+        break;
+    }
+    if (!pass) return false;
   }
   if (const FxSlot* p = s.find(Fx::PRB)) {
-    if (rng.below(100) >= p->val) return false;
+    const bool pass = rng.below(100) < p->val;
+    out.cond = pass ? 1 : 0;
+    if (!pass) return false;
   }
 
   uint8_t ch = t.channel & 0x0F;
@@ -217,7 +248,7 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     for (int k = 0; k < nNotes && out.count < kMaxStepEvents - 1; ++k) {
       const int32_t on = nudge + static_cast<int32_t>(h.sub * i + strum * k);
       if (off && on >= out.offUs) continue;  // after OFF: silent
-      out.ev[out.count++] = {on, EvKind::NoteOn, ch, notes[k], static_cast<uint8_t>(vel)};
+      out.ev[out.count++] = {on, EvKind::NoteOn, ch, notes[k], static_cast<uint8_t>(hitVel(vel, i, h))};
       const bool last = i == h.rat - 1;
       if (!(last && out.tie))
         out.ev[out.count++] = {noteOffAt(on, h.gateUs, off, out.offUs), EvKind::NoteOff, ch, notes[k], 0};

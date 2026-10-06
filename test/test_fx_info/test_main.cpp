@@ -33,7 +33,8 @@ void test_format() {
 }
 
 void test_step_clamps_and_signed() {
-  TEST_ASSERT_EQUAL(8, fxStep(Fx::RAT, 7, 5));
+  TEST_ASSERT_EQUAL(0x15, fxStep(Fx::RAT, 7, 5));  // past 8: the rising ramp (5^)
+  TEST_ASSERT_EQUAL(8, fxStep(Fx::RAT, 7, 1));
   TEST_ASSERT_EQUAL(2, fxStep(Fx::RAT, 3, -9));
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(-50), fxStep(Fx::NDG, 0, -80));
   TEST_ASSERT_EQUAL(50, fxStep(Fx::NDG, static_cast<uint8_t>(-1), 100));
@@ -45,7 +46,7 @@ void test_cnd_order() {
   TEST_ASSERT_EQUAL(0x22, fxStep(Fx::CND, 0x12, 1));
   TEST_ASSERT_EQUAL(0x13, fxStep(Fx::CND, 0x22, 1));
   TEST_ASSERT_EQUAL(0, fxStep(Fx::CND, 0x12, -1));
-  TEST_ASSERT_EQUAL(kCndNoFill, fxStep(Fx::CND, 0x78, 100));  // NFL is last
+  TEST_ASSERT_EQUAL(kCndNotNei, fxStep(Fx::CND, 0x78, 100));  // !NEI is last
 }
 
 void test_cnd_order_has_fill() {
@@ -55,7 +56,7 @@ void test_cnd_order_has_fill() {
   v = fxStep(Fx::CND, v, 1);
   TEST_ASSERT_EQUAL_HEX8(kCndNoFill, v);
   v = fxStep(Fx::CND, v, 1);
-  TEST_ASSERT_EQUAL_HEX8(kCndNoFill, v);  // clamped
+  TEST_ASSERT_EQUAL_HEX8(kCndPre, v);  // then PRE .. !NEI
   TEST_ASSERT_EQUAL_HEX8(kCndFill, fxStep(Fx::CND, kCndNoFill, -1));
   TEST_ASSERT_EQUAL_HEX8(0x88, fxStep(Fx::CND, kCndFill, -1));
   char out[5];
@@ -269,6 +270,27 @@ void test_perf_names() {
   TEST_ASSERT_EQUAL_STRING("", perfFxName(PerfFx::Count));
 }
 
+void test_cnd_pre_nei() {
+  TEST_ASSERT_EQUAL_STRING("PRE", fmt(Fx::CND, kCndPre));
+  TEST_ASSERT_EQUAL_STRING("!PR", fmt(Fx::CND, kCndNotPre));
+  TEST_ASSERT_EQUAL_STRING("NEI", fmt(Fx::CND, kCndNei));
+  TEST_ASSERT_EQUAL_STRING("!NE", fmt(Fx::CND, kCndNotNei));
+  TEST_ASSERT_EQUAL_HEX8(kCndPre, fxStep(Fx::CND, kCndNoFill, 1));
+  TEST_ASSERT_EQUAL_HEX8(kCndNotNei, fxStep(Fx::CND, kCndNei, 1));
+  TEST_ASSERT_EQUAL_HEX8(kCndNotNei, fxStep(Fx::CND, kCndNotNei, 5));  // the end
+  TEST_ASSERT_EQUAL_HEX8(kCndNoFill, fxStep(Fx::CND, kCndPre, -1));
+}
+
+void test_rat_ramp() {
+  TEST_ASSERT_EQUAL_STRING("  4", fmt(Fx::RAT, 4));
+  TEST_ASSERT_EQUAL_STRING(" 4^", fmt(Fx::RAT, 0x14));
+  TEST_ASSERT_EQUAL_STRING(" 4v", fmt(Fx::RAT, 0x24));
+  TEST_ASSERT_EQUAL_HEX8(0x12, fxStep(Fx::RAT, 8, 1));     // after 8: 2 rising
+  TEST_ASSERT_EQUAL_HEX8(0x22, fxStep(Fx::RAT, 0x18, 1));  // then falling
+  TEST_ASSERT_EQUAL_HEX8(0x28, fxStep(Fx::RAT, 0x28, 3));  // the end
+  TEST_ASSERT_EQUAL_HEX8(2, fxStep(Fx::RAT, 2, -1));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_long_names);
@@ -279,6 +301,8 @@ int main() {
   RUN_TEST(test_cmd_cycle);
   RUN_TEST(test_step_arp_fx);
   RUN_TEST(test_perf_names);
+  RUN_TEST(test_cnd_pre_nei);
+  RUN_TEST(test_rat_ramp);
   RUN_TEST(test_synth_fx_names_ranges);
   RUN_TEST(test_synth_only);
   RUN_TEST(test_fm_lock_fx);

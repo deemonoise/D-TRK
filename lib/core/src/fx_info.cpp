@@ -59,13 +59,13 @@ const Info& info(Fx f) {
   return kInfo[i < static_cast<uint8_t>(Fx::Count) ? i : 0];
 }
 
-// CND values in encoder order: FST, then A:B for B = 2..8, A = 1..B, then FIL, NFL.
+// CND values in encoder order: FST, then A:B for B = 2..8, A = 1..B, then FIL, NFL, PRE, !PRE, NEI,
+// !NEI (kCndFill.. kCndNotNei are 1..6 in a row).
 constexpr int kCndFillIdx = 36;
 
 int cndIndex(uint8_t v) {
   if (v == 0) return 0;
-  if (v == kCndFill) return kCndFillIdx;
-  if (v == kCndNoFill) return kCndFillIdx + 1;
+  if (v >= kCndFill && v <= kCndNotNei) return kCndFillIdx + v - kCndFill;
   const int a = v >> 4, b = v & 15;
   if (b < 2 || b > 8 || a < 1 || a > b) return 0;
   int idx = 1;
@@ -75,8 +75,10 @@ int cndIndex(uint8_t v) {
 
 uint8_t cndValue(int idx) {
   if (idx <= 0) return 0;
-  if (idx == kCndFillIdx) return kCndFill;
-  if (idx >= kCndFillIdx + 1) return kCndNoFill;
+  if (idx >= kCndFillIdx) {
+    const int v = idx - kCndFillIdx + kCndFill;
+    return static_cast<uint8_t>(v > kCndNotNei ? kCndNotNei : v);
+  }
   int rest = idx - 1;
   for (int b = 2; b <= 8; ++b) {
     if (rest < b) return static_cast<uint8_t>(((rest + 1) << 4) | b);
@@ -85,7 +87,7 @@ uint8_t cndValue(int idx) {
   return 0x88;
 }
 
-constexpr int kCndCount = kCndFillIdx + 2;
+constexpr int kCndCount = kCndFillIdx + (kCndNotNei - kCndFill + 1);
 
 // The order the encoder runs through the commands: related ones next to each other (notes and arp,
 // timing, chance, pitch and level, sound locks, sample, sends, MIDI only).
@@ -135,6 +137,12 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::ARP:
     case Fx::ACC: snprintf(out, 5, " %02X", v); return;
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
+    case Fx::RAT: {  // "  4", ramp up " 4^", down " 4v"
+      const int n = v & 15, ramp = (v >> 4) & 3;
+      if (ramp == kRatUp || ramp == kRatDown) snprintf(out, 5, " %d%c", n < 2 ? 2 : (n > 8 ? 8 : n), ramp == kRatUp ? '^' : 'v');
+      else snprintf(out, 5, "%3u", n < 2 ? 2 : (n > 8 ? 8 : n));
+      return;
+    }
     case Fx::ARM: snprintf(out, 5, " %c%d", "UDBR"[(v >> 4) & 3], armRate(v)); return;
     case Fx::ARS: {  // " U1"; with more than one octave the count follows: "U12"
       const int oct = ((v >> 6) & 3) + 1;
@@ -146,6 +154,10 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
       if (v == 0) snprintf(out, 5, "FST");
       else if (v == kCndFill) snprintf(out, 5, "FIL");
       else if (v == kCndNoFill) snprintf(out, 5, "NFL");
+      else if (v == kCndPre) snprintf(out, 5, "PRE");
+      else if (v == kCndNotPre) snprintf(out, 5, "!PR");
+      else if (v == kCndNei) snprintf(out, 5, "NEI");
+      else if (v == kCndNotNei) snprintf(out, 5, "!NE");
       else snprintf(out, 5, "%d:%d", v >> 4, v & 15);
       return;
     default: snprintf(out, 5, "%3u", v); return;
@@ -157,6 +169,14 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
     int i = cndIndex(v) + delta;
     i = i < 0 ? 0 : (i >= kCndCount ? kCndCount - 1 : i);
     return cndValue(i);
+  }
+  if (f == Fx::RAT) {  // hits 2..8, then the same with the ramp up, then down
+    int n = v & 15, ramp = (v >> 4) & 3;
+    n = n < 2 ? 2 : (n > 8 ? 8 : n);
+    if (ramp > kRatDown) ramp = 0;
+    int i = ramp * 7 + n - 2 + delta;
+    i = i < 0 ? 0 : (i > 20 ? 20 : i);
+    return static_cast<uint8_t>((i / 7) << 4 | (i % 7 + 2));
   }
   if (f == Fx::ARS) {  // the steps first, then the octaves, then the mode
     constexpr int kPerMode = kArmRateMax * kArsOctMax;

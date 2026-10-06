@@ -59,6 +59,7 @@ struct ExpandOut {
   bool tie = false;  // last NoteOn has no NoteOff: the engine releases it later
   int32_t offUs = -1;  // OFF: when the track goes silent, relative to the step start; -1 = no OFF
   StepArp arp;         // ARS on a melodic note step: n > 0, the step plays only notes[first]
+  int8_t cond = -1;    // a CND (not PRE / NEI) or PRB was evaluated: 1 passed, 0 failed; -1 none
   StepEvent ev[kMaxStepEvents];
 };
 
@@ -70,6 +71,8 @@ struct ExpandCtx {
   uint16_t tps = 24;  // ticks per step (OFF)
   const Instrument* kit = nullptr;  // the track's KIT: steps are lane masks (drum track)
   bool fill = false;  // fill held: CND FIL steps play, NFL steps do not
+  bool pre = false;   // CND PRE: the track's last condition passed
+  bool nei = false;   // CND NEI: the left track's last condition passed
 };
 
 // Expands one step of one track into events. Control events (CC, pitch bend,

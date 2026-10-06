@@ -213,6 +213,11 @@ constexpr uint8_t kArmModes = 4, kArmRateMax = 8, kArmDefault = 0x03, kArsDefaul
 // CND values beyond FST (0) and A:B (b = 2..8): FIL plays only while fill is held, NFL only while it is
 // not. Their low nibble (< 2) is never an A:B value.
 constexpr uint8_t kCndFill = 0x01, kCndNoFill = 0x02;
+// RAT: ramp << 4 | hits (2..8); ramp 0 = even, kRatUp = velocity rising to the step's, kRatDown = falling.
+constexpr uint8_t kRatUp = 1, kRatDown = 2;
+// PRE / !PRE: the last condition evaluated on this track (CND or PRB, not PRE / NEI) passed / failed;
+// NEI / !NEI: the same for the track on the left (track 1: always false). Shown PRE, !PR, NEI, !NE.
+constexpr uint8_t kCndPre = 0x03, kCndNotPre = 0x04, kCndNei = 0x05, kCndNotNei = 0x06;
 
 // Punch-in effects held on the track buttons (PERF mode), not saved: button N = value N. The
 // sequencer adds them to the steps of the track as they play (Sequencer::perfSlot).
