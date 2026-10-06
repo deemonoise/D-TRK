@@ -40,10 +40,6 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                    }};
   params_[kSwing] = {"Swing", [this](char* o, int n) { snprintf(o, n, "%u%%", pat().swing); },
                      [this](int d) { pat().swing = static_cast<uint8_t>(clampi(pat().swing + d, 50, 75)); }};
-  params_[kVolume] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u%%", app_.project().masterVol); },
-                      [this](int d) {
-                        app_.project().masterVol = static_cast<uint8_t>(clampi(app_.project().masterVol + d, 0, mt::kMasterVolMax));
-                      }};
   auto u7 = [this](uint8_t mt::Project::*f) {
     return [this, f](int d) { app_.project().*f = static_cast<uint8_t>(clampi(app_.project().*f + d, 0, 127)); };
   };

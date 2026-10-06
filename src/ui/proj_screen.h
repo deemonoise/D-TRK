@@ -16,7 +16,7 @@ class ProjScreen : public Screen {
 
  private:
   enum Row : int {
-    kBpm, kRoot, kScale, kLength, kRes, kSwing, kVolume, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
+    kBpm, kRoot, kScale, kLength, kRes, kSwing, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
     kRvbSize, kRvbDamp, kRvbLevel, kCompAmt, kCompRel, kScTrack, kScDepth, kPreview, kRows
   };
   static constexpr int kHeaderH = 28;

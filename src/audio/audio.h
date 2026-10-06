@@ -3,6 +3,7 @@
 
 namespace mt {
 struct Project;
+class Synth;
 }
 
 namespace audio {
@@ -43,5 +44,18 @@ uint32_t samplesSize();
 // silent, so nothing reads mapped flash meanwhile. False: the task did not park in time.
 bool pauseForFlash();
 void resumeAfterFlash();
+// Audio task parked (silent, synth reset, queues flushed) for the object's lifetime; ok = parked.
+// While parked the synth may be driven from the UI task (offline render) and the bank written.
+struct Paused {
+  bool ok;
+  Paused() : ok(pauseForFlash()) {}
+  ~Paused() {
+    if (ok) resumeAfterFlash();
+  }
+  Paused(const Paused&) = delete;
+  Paused& operator=(const Paused&) = delete;
+};
+// The live synth, for an offline render while Paused (reset it before and after).
+mt::Synth* liveSynth();
 
 }  // namespace audio

@@ -612,7 +612,7 @@ bool Sequencer::audible(int track, uint64_t t) {
     return false;
   }
   perfMuted_ &= static_cast<uint16_t>(~bit);
-  return p_.trackAudible(track);
+  return p_.trackAudible(track) && (mask_ & bit);
 }
 
 // The item's mute scene into the tracks; tracks it mutes go silent at t.

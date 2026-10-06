@@ -97,11 +97,19 @@ void App::onInput(const hw::InputEvent& ev) {
       fillUp();
       return;
     case InputType::TrackRelease:
+      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
       trackRelease(ev.delta);
       return;
+    case InputType::EncTurn:
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed
+        nudgeTrackVol((curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + heldTrackBtn_, ev.delta * (ev.shift ? 10 : 1));
+        return;
+      }
+      break;
     case InputType::ShiftDown: shift_ = true; return;
     case InputType::ShiftUp: shift_ = false; return;
     case InputType::TrackPress:
+      heldTrackBtn_ = ev.delta;
       if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
       return;
     default: break;
@@ -151,7 +159,8 @@ void App::onTouch(const TouchEvent& ev) {
       int i = ev.x / kTabW;
       if (i < 0) i = 0;
       if (i >= static_cast<int>(Tab::Count)) i = static_cast<int>(Tab::Count) - 1;
-      setTab(static_cast<Tab>(i));
+      if (shift_ && static_cast<Tab>(i) == Tab::Track && tab_ == Tab::Track) track_.toggleMixer();
+      else setTab(static_cast<Tab>(i));
     }
     return;
   }
@@ -213,6 +222,29 @@ void App::trackKey(int n, bool shift) {
   markDirty();
   char msg[16];
   snprintf(msg, sizeof(msg), "TRACK %d %s", track + 1, t.mute ? "MUTE" : "ON");
+  toast(msg);
+}
+
+bool App::holdVolume() const { return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !busy_; }
+
+// Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.
+void App::nudgeTrackVol(int track, int d) {
+  mt::TrackCfg& t = p_->tracks[track];
+  char msg[24];
+  if (t.out != mt::TrackOut::Int) {
+    snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
+    toast(msg);
+    return;
+  }
+  int v = t.vol + d;
+  v = v < 0 ? 0 : (v > 127 ? 127 : v);
+  if (v != t.vol) {
+    engine::lockProject();
+    t.vol = static_cast<uint8_t>(v);
+    engine::unlockProject();
+    markDirty();
+  }
+  snprintf(msg, sizeof(msg), "TRK%d VOL %d", track + 1, v);
   toast(msg);
 }
 
@@ -278,6 +310,39 @@ void App::syncProgress(const char* file, uint32_t done, uint32_t total, void* ap
   char label[32];
   snprintf(label, sizeof(label), "SAMPLE %s", file);
   static_cast<App*>(app)->showProgress(label, done, total);
+}
+
+bool App::renderProgress(uint32_t done, uint32_t total, void* app) {
+  App& a = *static_cast<App*>(app);
+  a.showProgress("RENDER", done, total);
+  // Renders run for up to a minute on this task: let the idle task (watchdog) run now and then.
+  static uint32_t lastYield = 0;
+  if (millis() - lastYield >= 100) {
+    lastYield = millis();
+    vTaskDelay(1);
+  }
+  // The UI task is busy here: read the input queue for a cancel, drop the rest.
+  hw::InputEvent ev;
+  while (hw::inputPoll(ev, 0)) {
+    a.dropInput(ev);
+    if (ev.type == hw::InputType::EncLong || ev.type == hw::InputType::PlayPress) return false;
+  }
+  return true;
+}
+
+// An event read while the UI is busy: only the held-key state survives.
+void App::dropInput(const hw::InputEvent& ev) {
+  if (ev.type == hw::InputType::ShiftDown) shift_ = true;
+  else if (ev.type == hw::InputType::ShiftUp) shift_ = false;
+}
+
+void App::endProgress() {
+  heldTrackBtn_ = -1;  // its release may have been dropped with the queued input
+  progLabel_[0] = 0;
+  progPct_ = -1;
+  hw::InputEvent ev;
+  while (hw::inputPoll(ev, 0)) dropInput(ev);
+  dirty_ = true;
 }
 
 void App::loadedToast(const char* what, int missing, bool folderFail) {

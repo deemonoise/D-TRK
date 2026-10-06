@@ -261,6 +261,12 @@ const char* resultText(Result r) {
     case Result::BadFile: return "BAD FILE";
     case Result::EngineBusy: return "ENGINE BUSY";
     case Result::SamplesNotSaved: return "SAMPLES NOT SAVED";
+    case Result::AudioBusy: return "AUDIO BUSY";
+    case Result::DiskFull: return "DISK FULL";
+    case Result::Cancelled: return "CANCELLED";
+    case Result::Capped: return "SAMPLE CAP";
+    case Result::BankFull: return "BANK FULL";
+    case Result::NoBank: return "NO SAMPLE BANK";
   }
   return "?";
 }

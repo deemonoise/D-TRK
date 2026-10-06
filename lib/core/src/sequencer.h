@@ -92,6 +92,8 @@ class Sequencer {
   // Chain index of the heard pattern; -1 outside song mode.
   int heardSongPos() const { return heardSong_; }
   void seed(uint32_t s) { rng_ = Rng(s); }
+  // Tracks that may sound (bit = track), on top of mute / solo. Offline render; default all.
+  void setTrackMask(uint16_t m) { mask_ = m; }
   // Fill held: CND FIL steps play, NFL steps do not.
   void setFill(bool on) { fill_ = on; }
   bool fill() const { return fill_; }
@@ -206,6 +208,7 @@ class Sequencer {
   bool fill_ = false;
   PerfFx perf_[kTracks] = {};
   uint16_t perfMuted_ = 0;  // perf Mute already ended the track's notes
+  uint16_t mask_ = 0xFFFF;  // setTrackMask
   uint64_t heardStepT_ = 0;  // start of the heard step
   uint8_t pos_ = 0;  // next step to schedule
   uint32_t loop_ = 0;

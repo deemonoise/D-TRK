@@ -407,6 +407,8 @@ const char* bankResultText(BankResult r) {
   return "?";
 }
 
+BankResult finishImport(const mt::Project& p, uint32_t crc, ImportOut& out);
+
 BankResult importToCache(const char* path, const mt::Project& p, ImportOut& out, const uint32_t* knownCrc,
                          BankProgressFn cb, void* ctx) {
   if (!mounted) return BankResult::NoBank;
@@ -445,11 +447,18 @@ BankResult importToCache(const char* path, const mt::Project& p, ImportOut& out,
     theBank.abort();
     return r;
   }
+  out.root = w.root;
+  return finishImport(p, crc.crc, out);
+}
+
+// The committed kImportName entry becomes the entry of its data key (an existing one with the same
+// data is kept instead). out.crc / out.frames set on success.
+BankResult finishImport(const mt::Project& p, uint32_t crc, ImportOut& out) {
   const int i = theBank.find(kImportName);
   if (i < 0) return BankResult::WriteFail;
   const uint32_t got = theBank.entry(i)->frames;
   char k[mt::kSampleNameMax + 1];
-  mt::sampleKey(crc.crc, k);
+  mt::sampleKey(crc, k);
   int dup = theBank.find(k);
   if (dup >= 0 && theBank.entry(dup)->frames != got) {
     // Same crc, other length (practically never): the old entry goes unless the project uses it.
@@ -467,10 +476,43 @@ BankResult importToCache(const char* path, const mt::Project& p, ImportOut& out,
     theBank.remove(theBank.find(kImportName));
     return BankResult::WriteFail;
   }
-  out.crc = crc.crc;
+  out.crc = crc;
   out.frames = got;
-  out.root = w.root;
   return BankResult::Ok;
+}
+
+BankResult cacheWrite(const mt::Project& p, uint32_t frames, FrameFill fill, void* ctx, ImportOut& out,
+                      BankProgressFn cb, void* cbCtx) {
+  if (!mounted) return BankResult::NoBank;
+  if (!engineIdle()) return BankResult::Busy;
+  if (frames == 0) return BankResult::Unsupported;
+  // Internal RAM block: the bank writes from it.
+  constexpr uint32_t kPiece = kRawBytes / 2;
+  int16_t* buf = static_cast<int16_t*>(heap_caps_malloc(kRawBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if (!buf) return BankResult::NoMemory;
+  BankResult r = BankResult::Ok;
+  uint32_t crc = 0;
+  if (const int old = theBank.find(kImportName); old >= 0 && !theBank.remove(old)) r = BankResult::WriteFail;
+  if (r == BankResult::Ok && !mt::bankMakeRoom(theBank, p, frames)) r = BankResult::Full;
+  if (r == BankResult::Ok && !theBank.begin(kImportName, frames, mt::kWavMaxRate, 60)) r = BankResult::Full;
+  for (uint32_t done = 0; r == BankResult::Ok && done < frames;) {
+    const uint32_t n = frames - done < kPiece ? frames - done : kPiece;
+    if (!fill(buf, done, n, ctx)) r = BankResult::ReadFail;  // cancelled
+    else if (!theBank.write(buf, n)) r = BankResult::WriteFail;
+    crc = mt::sampleCrc(buf, n, crc);
+    done += n;
+    if (cb) cb(done, frames, cbCtx);
+  }
+  heap_caps_free(buf);
+  if (r == BankResult::Ok && !theBank.commit()) r = BankResult::WriteFail;
+  if (r != BankResult::Ok) {
+    theBank.abort();
+  } else {
+    out.root = 60;
+    r = finishImport(p, crc, out);
+  }
+  flash.remap();  // as FlashWork does: the caller's pause covers the writes
+  return r;
 }
 
 BankResult importWtToCache(const char* path, const mt::Project& p, uint32_t& crc, const uint32_t* knownCrc,
@@ -550,8 +592,6 @@ BankResult importWtToCache(const char* path, const mt::Project& p, uint32_t& crc
 namespace {
 
 // Fills buf with n frames of the data from frame at on; false = ReadFail.
-using FrameFill = bool (*)(int16_t* buf, uint32_t at, uint32_t n, void* ctx);
-
 // Writes a mono 16-bit WAV (header with root and "mtcr" crc, frames from fill) to path via path.tmp.
 BankResult writeWav(const char* path, uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc, FrameFill fill,
                     void* fillCtx) {

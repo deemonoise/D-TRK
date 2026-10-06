@@ -12,7 +12,8 @@
 namespace ui {
 namespace {
 
-constexpr const char* kLabels[] = {"Save", "Save As...", "Load...", "New", "Import MIDI...", "Wi-Fi transfer...", "Retry"};
+constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
+                                   "Import MIDI...", "Render WAV...", "Wi-Fi transfer...", "Retry"};
 
 constexpr uint32_t kPreviewMs = 8000;  // WAV preview length (32 kHz mono: 512 KB)
 
@@ -28,6 +29,7 @@ void reprobe(storage::Result r) {
 void FileScreen::onEnter() {
   kb_.close();
   import_.close();
+  render_.close();
   wifi_.close();
   closeList();
   if (!enabled(sel_)) moveSel(1);
@@ -43,6 +45,7 @@ void FileScreen::onProjectReplaced() {
 void FileScreen::onLeave() {
   kb_.close();
   import_.close();  // frees the file / note buffers
+  render_.close();
   wifi_.close();    // leaving the tab ends Wi-Fi mode
   closeList();
 }
@@ -83,6 +86,7 @@ void FileScreen::run(int a) {
     }
     case kLoad: openList(false); break;
     case kImport: openList(true); break;
+    case kRender: render_.open(); break;
     case kNew:
       if (app_.projectDirty()) {
         const MenuItem items[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
@@ -371,6 +375,10 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
     import_.onInput(ev);
     return;
   }
+  if (render_.isOpen()) {
+    render_.onInput(ev);
+    return;
+  }
   if (wifi_.isOpen()) {
     wifi_.onInput(ev);
     return;
@@ -407,6 +415,10 @@ void FileScreen::onTouch(const TouchEvent& ev) {
   }
   if (import_.isOpen()) {
     import_.onTouch(ev);
+    return;
+  }
+  if (render_.isOpen()) {
+    render_.onTouch(ev);
     return;
   }
   if (wifi_.isOpen()) {
@@ -450,6 +462,10 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   if (import_.isOpen()) {
     import_.draw(s, y0);
+    return;
+  }
+  if (render_.isOpen()) {
+    render_.draw(s, y0);
     return;
   }
   if (wifi_.isOpen()) {

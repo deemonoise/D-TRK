@@ -51,6 +51,11 @@ class App {
   void showProgress(const char* label, uint32_t done, uint32_t total);
   // storage::SyncProgress for sample sync / pull: "SAMPLE name NN%". ctx = App*.
   static void syncProgress(const char* file, uint32_t done, uint32_t total, void* app);
+  // storage::RenderProgress: "RENDER NN%"; false (cancel) on a long encoder press or Play. ctx = App*.
+  static bool renderProgress(uint32_t done, uint32_t total, void* app);
+  // After a long operation: drops the input it queued meanwhile and the progress label.
+  void endProgress();
+  void dropInput(const hw::InputEvent& ev);
   // One toast after a load: what (e.g. "LOADED X", may be nullptr), missing samples, a failed sample
   // folder write; leading parts are dropped when it gets too long.
   void loadedToast(const char* what, int missing, bool folderFail);
@@ -90,6 +95,8 @@ class App {
   void trackKey(int n, bool shift);
   void trackRelease(int n);
   void fillDown();
+  bool holdVolume() const;           // hold a track button + turn = its volume, here and now
+  void nudgeTrackVol(int track, int d);
   void fillUp();
   void updateLeds(uint32_t now);
   void saveVolumeIdle(uint32_t now);
@@ -142,6 +149,7 @@ class App {
   uint32_t editSeq_ = 0, savedSeq_ = 0;
   bool shift_ = false;
   bool fillHeld_ = false;   // Shift + Play held while playing: fill
+  int8_t heldTrackBtn_ = -1;  // track button held (0..7 of the visible half), -1 = none
   uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;
   bool dirty_ = true;

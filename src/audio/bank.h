@@ -40,6 +40,13 @@ struct ImportOut {
 };
 BankResult importToCache(const char* path, const mt::Project& p, ImportOut& out, const uint32_t* knownCrc = nullptr,
                          BankProgressFn cb = nullptr, void* ctx = nullptr);
+// Writes frames of generated data (fill: consecutive pieces, at = frames done so far) into the cache
+// under its data key, making room by evicting entries p does not use; rate 32 kHz, root 60. The
+// audio task must be parked by the caller (audio::Paused): fill may drive the live synth. Busy while
+// the engine plays.
+using FrameFill = bool (*)(int16_t* buf, uint32_t at, uint32_t n, void* ctx);
+BankResult cacheWrite(const mt::Project& p, uint32_t frames, FrameFill fill, void* ctx, ImportOut& out,
+                      BankProgressFn cb = nullptr, void* cbCtx = nullptr);
 // Writes bank entry i as a mono 16-bit WAV with root and "mtcr" crc to path (via path.tmp).
 // Works while the engine plays (reads mapped flash only).
 BankResult exportWav(int i, const char* path);

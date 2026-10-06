@@ -5,7 +5,7 @@
 namespace storage {
 
 enum class Result : uint8_t { Ok, NoSd, NoMemory, NotFound, WriteFail, ReadFail, BadCrc, BadVersion, BadFile, EngineBusy,
-                            SamplesNotSaved };
+                            SamplesNotSaved, AudioBusy, DiskFull, Cancelled, Capped, BankFull, NoBank };
 
 const char* resultText(Result r);  // short, upper case, for toasts
 

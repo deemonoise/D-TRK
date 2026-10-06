@@ -779,6 +779,8 @@ void pollLog() {
                 static_cast<unsigned>(late), static_cast<unsigned>(resync));
 }
 
+mt::Synth* liveSynth() { return synth; }
+
 bool pauseForFlash() {
   if (!task) return true;  // no audio task: nothing reads the bank
   const uint32_t g = pauseGen.fetch_add(1, std::memory_order_acq_rel) + 1;

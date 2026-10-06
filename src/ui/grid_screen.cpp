@@ -6,6 +6,7 @@
 #include "note_name.h"
 #include "record.h"
 #include "scale.h"
+#include "storage/render_io.h"
 
 namespace ui {
 namespace {
@@ -566,6 +567,8 @@ void GridScreen::openMenu() {
     add("Clear track", kClearTrack, true);
     add("Transpose track...", kTranspose, true);
     add("Euclid...", kEuclid, true);
+    add("Resample track", kResampleTrack, true);
+    add("Resample pattern", kResamplePattern, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf_ ? "Perf: ON" : "Perf: OFF", kPerf, true);
   }
@@ -596,6 +599,39 @@ void GridScreen::openEuclid() {
   else if (e.lane < 0) e.lane = 0;
   setEdit(false);
   euclid_.open(app_.editPattern(), tr, &e);
+}
+
+// Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
+// project's samples, normalized to -1 dBFS with the silent end cut: RS1, RS2, ...
+void GridScreen::resample(bool wholePattern) {
+  const engine::Status& st = app_.status();
+  if (st.playing || st.paused) {
+    app_.toast("STOP FIRST");
+    return;
+  }
+  mt::Project& p = app_.project();
+  mt::RenderSpec s;
+  s.pattern = app_.editPattern();
+  s.tracksMask = 0;
+  for (int t = 0; t < mt::kTracks; ++t)
+    if (wholePattern ? p.trackAudible(t) : t == track()) s.tracksMask |= static_cast<uint16_t>(1u << t);
+  if (!wholePattern && !p.trackInternal(track())) {
+    app_.toast("MIDI TRACK");
+    return;
+  }
+  char name[mt::kSampleNameMax + 1];
+  storage::RenderStats rs;
+  const storage::Result r = storage::resample(p, s, name, rs, App::renderProgress, &app_);
+  app_.endProgress();
+  if (r != storage::Result::Ok && r != storage::Result::Capped) {
+    app_.toast(storage::resultText(r));
+    return;
+  }
+  app_.markDirty();
+  char msg[40];
+  snprintf(msg, sizeof(msg), "%s %lu.%lus%s", name, static_cast<unsigned long>(rs.frames / 32000),
+           static_cast<unsigned long>(rs.frames % 32000 / 3200), r == storage::Result::Capped ? "  60 S CAP" : "");
+  app_.toast(msg);
 }
 
 void GridScreen::apply(const mt::Sel& sel, int id) {
@@ -711,6 +747,8 @@ void GridScreen::onMenu(int id) {
     case kUndo: undo(); break;
     case kDropSel: selOn_ = false; break;
     case kEuclid: openEuclid(); break;
+    case kResampleTrack: resample(false); break;
+    case kResamplePattern: resample(true); break;
     case kRec:
       setRec(!rec_);
       app_.toast(rec_ ? "REC: BUTTONS WRITE WHILE PLAYING" : "REC OFF");

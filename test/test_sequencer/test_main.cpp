@@ -1902,6 +1902,17 @@ void test_phase256_within_step() {
   TEST_ASSERT_EQUAL(32, seq->phase256(140625));
 }
 
+void test_track_mask_silences_others() {
+  p->patterns[0].length = 4;
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[3][0].note = 64;
+  seq->setTrackMask(1u << 3);
+  seq->start(0, *sink);
+  run(0, 10000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(1, sink->times(0x93, 64).size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -2022,5 +2033,6 @@ int main() {
   RUN_TEST(test_perf_flt_on_int_track);
   RUN_TEST(test_stop_clears_perf);
   RUN_TEST(test_phase256_within_step);
+  RUN_TEST(test_track_mask_silences_others);
   return UNITY_END();
 }

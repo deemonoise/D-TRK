@@ -2,6 +2,7 @@
 #include "hw/sdcard.h"
 #include "import_dialog.h"
 #include "keyboard.h"
+#include "render_dialog.h"
 #include "screen.h"
 #include "wifi_dialog.h"
 
@@ -12,7 +13,7 @@ namespace ui {
 // subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries).
 class FileScreen : public Screen {
  public:
-  explicit FileScreen(App& app) : app_(app), import_(app), wifi_(app) {}
+  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app) {}
   void onEnter() override;
   void onLeave() override;
   void onProjectReplaced() override;
@@ -24,7 +25,7 @@ class FileScreen : public Screen {
   bool wantsRedraw(const engine::Status&) override { return wifi_.wantsRedraw(); }
 
  private:
-  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kWifi, kRetry, kActions };
+  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kRetry, kActions };
   enum MenuId : int {
     kCancel, kDiscardLoad, kDiscardNew, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
@@ -33,13 +34,14 @@ class FileScreen : public Screen {
   // SAMPLES rows: Import, Compact, Clear cache, then the project's samples.
   enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kClearRow, kFirstSample };
   static constexpr int kHeaderH = 28;
-  static constexpr int kActionH = 34;
+  static constexpr int kActionH = 30;  // kActions rows fit under the header
   static constexpr int kRowH = 24;
   static constexpr int kMaxFiles = 512;
   static constexpr int kWavDepthMax = 4;  // subfolders below /samples
   static constexpr int kListRows = (kAreaH - kHeaderH) / kRowH;  // incl. the Back row
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
   static constexpr int kSampleRows = (kAreaH - kHeaderH - kInfoH) / kRowH;
+  static_assert(kHeaderH + kActions * kActionH <= kAreaH, "FILE actions fit");
   static constexpr int kSwitchX = 208;  // "PROJECTS | SAMPLES" in the header
   static constexpr int kSwitchW = 18 * kCharW;
 
@@ -94,6 +96,7 @@ class FileScreen : public Screen {
   App& app_;
   Keyboard kb_;
   ImportDialog import_;
+  RenderDialog render_;
   WifiDialog wifi_;
   int sel_ = kSave;
   int y0_ = kAreaY;

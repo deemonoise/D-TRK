@@ -25,6 +25,8 @@ class GridScreen : public Screen {
   // Track button N: false when App should handle it (Shift + N outside edit = mute).
   bool trackKey(int n, bool shift);
   void trackRelease(int n);  // PERF: the held effect ends
+  // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
+  bool buttonsBusy() const { return edit_ || rec_ || perf_; }
 
  private:
   // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
@@ -33,7 +35,7 @@ class GridScreen : public Screen {
   enum MenuId : int {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kEuclid,
-    kRec, kPerf
+    kRec, kPerf, kResampleTrack, kResamplePattern
   };
 
   static constexpr int kNamesH = 16;
@@ -78,6 +80,7 @@ class GridScreen : public Screen {
   void writeStep(const mt::Step& st);
   void openMenu();
   void openEuclid();
+  void resample(bool wholePattern);  // the pattern (current track / audible tracks) into a sample RSn
   void openTranspose();
   void transpose(const mt::Sel& sel, int amount, bool degrees);
   void selFollow();  // selection end follows the cursor
