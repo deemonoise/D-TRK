@@ -41,8 +41,8 @@ class TrackScreen : public Screen {
   void leaveEdit();
   void fixNames();  // empty name -> TRKn
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
-  void showPage(int page, bool last);
-  void setPageRows(int page, bool last);  // the list only: safe in the constructor
+  void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
+  void setPageRows(int page, bool bar);  // the list only: safe in the constructor
   int page_ = kPgMain;
   void editName(int delta);  // under lock
   // MIXER: 8 + 8 x 52 + 8 + 48 = 480.

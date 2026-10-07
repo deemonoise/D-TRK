@@ -102,7 +102,7 @@ class InstScreen : public Screen {
   int pageW() const { return kScreenW / pageCount(); }
   int physPage() const;                // tab index of page_
   int logicalPage(int phys) const;     // Page of a tab index
-  void showPage(int phys, bool last);  // tab index, wraps; last: select the page's last row
+  void showPage(int phys, bool bar);  // tab index, wraps; bar: the page bar keeps the cursor, else the first row
   int tableOsc() const;                // SYNTH OSC page on a Table row: its oscillator, else -1
   void drawPageBar(LGFX_Sprite& s, int y);
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top

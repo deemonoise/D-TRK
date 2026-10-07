@@ -13,6 +13,10 @@ void ParamList::edit(int delta) {
 }
 
 void ParamList::ensureVisible() {
+  if (sel_ < 0) {  // the page bar: the list from its top
+    top_ = 0;
+    return;
+  }
   const int n = shown();
   if (sel_ < top_) top_ = sel_;
   if (sel_ >= top_ + n) top_ = sel_ - n + 1;
@@ -22,23 +26,23 @@ void ParamList::ensureVisible() {
 
 int ParamList::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
-  if (count_ == 0) return ev.type == InputType::EncTurn && !wrap_ && ev.delta ? (ev.delta < 0 ? -1 : 1) : 0;
   switch (ev.type) {
-    case InputType::EncTurn:
+    case InputType::EncTurn: {
       if (edit_) {
         edit(ev.delta * (ev.shift ? 10 : 1));
-      } else if (!wrap_ && (sel_ + ev.delta < 0 || sel_ + ev.delta >= count_)) {
-        // Overshoot: stop on the end row first; past it only from the end row itself.
-        const int end = ev.delta < 0 ? 0 : count_ - 1;
-        if (sel_ == end) return ev.delta < 0 ? -1 : 1;
-        sel_ = end;
-        ensureVisible();
-      } else {
-        sel_ = ((sel_ + ev.delta) % count_ + count_) % count_;
-        ensureVisible();
+        break;
       }
+      // Round and round: the rows, and the page bar before the first one.
+      const int first = bar_ ? -1 : 0;
+      const int n = count_ - first;
+      if (n <= 0) break;
+      sel_ = ((sel_ - first + ev.delta) % n + n) % n + first;
+      ensureVisible();
       break;
+    }
     case InputType::EncClick:
+      if (bar_ && sel_ < 0) return ev.shift ? -1 : 1;
+      if (count_ == 0) break;
       ensureVisible();  // never edit a row scrolled out of sight
       edit_ = !edit_;
       break;

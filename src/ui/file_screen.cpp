@@ -617,7 +617,7 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
     static const char* const kNames[] = {"PROJECTS", "SAMPLES"};
     const int by = y0 + kHeaderH;
     PageBar::draw(s, by, kNames, 2, samples_ ? 1 : 0);
-    if (samples_ ? ssel_ == kSwitchRow : sel_ == kSectionSel) s.drawRect(0, by - 1, kScreenW, PageBar::kH - 2, kCursor);
+    if (samples_ ? ssel_ == kSwitchRow : sel_ == kSectionSel) PageBar::drawFocus(s, by);
   }
   s.setTextColor(sd ? kDim : kEditCursor);
   const char* sdText = sd ? "SD OK" : "NO SD CARD";

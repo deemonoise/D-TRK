@@ -111,7 +111,7 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
                     }};
   list_.setParams(rows_, kRows);
   list_.setVisibleRows(kListRows);
-  list_.setWrap(false);
+  list_.setPageBar(true);
   list_.setOnEdit([this] { app_.markDirty(); });
 }
 
@@ -153,10 +153,11 @@ void SampleEditor::bind(int instr) {
   sync();
 }
 
-void SampleEditor::enter(bool last) {
+void SampleEditor::enter(bool bar) {
   sync();
   list_.setEdit(false);
-  list_.setSel(last ? kRows - 1 : 0);
+  if (bar) list_.selectBar();
+  else list_.setSel(0);
 }
 
 // --- markers ---

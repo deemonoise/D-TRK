@@ -18,7 +18,9 @@ struct Param {
 // Rows of "label  value". Turn = select, click = edit (value red), turn while editing = edit(delta),
 // Shift = x10. Tap = select, tap on the selected row = edit. Drag while editing = edit(-dy / 16).
 // With setVisibleRows() smaller than the row count the list scrolls (Drag while not editing).
-// setWrap(false): turning past an end returns -1 / +1 (pages) and keeps the selection.
+// setPageBar(true): the screen's page bar is a position above the first row (sel() == -1, drawn by
+// the screen, see barSelected()); turning cycles through it and the rows. A click on it returns +1
+// (next page), Shift+click -1 (previous page); the screen switches and keeps the bar selected.
 class ParamList {
  public:
   static constexpr int kRowH = 24;
@@ -31,6 +33,7 @@ class ParamList {
     params_ = params;
     count_ = count;
     if (sel_ >= count_) sel_ = 0;
+    if (sel_ < 0 && !bar_) sel_ = 0;
     top_ = 0;
     dragAcc_ = 0;
     ensureVisible();
@@ -40,7 +43,7 @@ class ParamList {
   void replaceParams(const Param* params, int count) {
     params_ = params;
     count_ = count;
-    if (sel_ >= count_) sel_ = count_ > 0 ? count_ - 1 : 0;
+    if (sel_ >= count_) sel_ = count_ > 0 ? count_ - 1 : (bar_ ? -1 : 0);
     ensureVisible();
   }
   // Rows drawn at once; 0 = all.
@@ -54,7 +57,18 @@ class ParamList {
     if (sel_ < 0) sel_ = 0;
     ensureVisible();
   }
-  void setWrap(bool on) { wrap_ = on; }
+  void setPageBar(bool on) {
+    bar_ = on;
+    if (!on && sel_ < 0) sel_ = 0;
+  }
+  // The page bar position (setPageBar mode): no row selected, not editing.
+  void selectBar() {
+    if (!bar_) return;
+    sel_ = -1;
+    edit_ = false;
+    top_ = 0;
+  }
+  bool barSelected() const { return bar_ && sel_ < 0; }
   bool editing() const { return edit_; }
   void setEdit(bool on) {
     edit_ = on;
@@ -62,7 +76,7 @@ class ParamList {
   }
   // Called after every edit (dirty flag).
   void setOnEdit(std::function<void()> f) { onEdit_ = std::move(f); }
-  // 0, or -1 / +1: a turn (wrap off, not editing) would leave before the first / past the last row.
+  // 0, or -1 / +1: a click (Shift+click) on the page bar, the previous / next page.
   int onInput(const hw::InputEvent& ev);
   void onTouch(const TouchEvent& ev);
   void edit(int delta);
@@ -82,7 +96,7 @@ class ParamList {
   int visible_ = 0;  // 0 = all
   int dragAcc_ = 0;  // drag px not yet turned into rows
   bool edit_ = false;
-  bool wrap_ = true;
+  bool bar_ = false;  // setPageBar: position -1 is the screen's page bar
   int y_;  // top of the first row, updated by draw()
   std::function<void()> onEdit_;
 };

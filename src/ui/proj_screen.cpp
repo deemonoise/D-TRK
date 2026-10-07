@@ -179,13 +179,14 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
   showPage(kPgSong, false);
 }
 
-void ProjScreen::showPage(int page, bool last) {
+void ProjScreen::showPage(int page, bool bar) {
   page_ = (page % kPages + kPages) % kPages;
   list_.setEdit(false);
+  list_.setPageBar(true);
   list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
   list_.setVisibleRows(kListRows);
-  list_.setWrap(false);
-  list_.setSel(last ? 1 << 30 : 0);  // setSel clamps to the last row
+  if (bar) list_.selectBar();
+  else list_.setSel(0);
 }
 
 mt::Pattern& ProjScreen::pat() { return app_.project().patterns[app_.editPattern()]; }
@@ -215,19 +216,19 @@ void ProjScreen::onEnter() {
   bpmTarget_ = app_.project().bpm;
 }
 
-// Turning past the last / first row goes on to the next / previous page.
+// Click (Shift+click) on the page bar: the next (previous) page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
   if (ev.type == hw::InputType::EncClick && !list_.editing() && onProfileRow()) {
     toggleProfile();
     return;
   }
-  if (const int ov = list_.onInput(ev)) showPage(page_ + ov, ov < 0);
+  if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
 }
 
 void ProjScreen::onTouch(const TouchEvent& ev) {
   const int barY = kAreaY + kHeaderH;
   if (ev.y >= barY && ev.y < barY + PageBar::kH) {
-    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), false);
+    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
     return;
   }
   if (ev.type == TouchType::Tap && kPageFirst[page_] + list_.rowAt(ev.y) == kCpuProf && list_.rowAt(ev.y) >= 0) {
@@ -288,6 +289,7 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
   static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF", "SYS"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
+  if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
 }
 

@@ -23,6 +23,8 @@ struct PageBar {
       s.drawString(names[i], i * w + (w - static_cast<int>(strlen(names[i])) * kCharW) / 2, ty);
     }
   }
+  // The encoder cursor on the bar (click = next page, Shift+click = previous).
+  static void drawFocus(LGFX_Sprite& s, int y, int h = kH) { s.drawRect(0, y - 1, kScreenW, h - 2, kCursor); }
 };
 
 }  // namespace ui

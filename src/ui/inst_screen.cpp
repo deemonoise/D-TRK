@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "page_bar.h"
 #include "audio/audio.h"
 #include "audio/bank.h"
 #include "name_edit.h"
@@ -225,7 +226,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   initKit();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
-  list_.setWrap(false);
+  list_.setPageBar(true);
   list_.setOnEdit([this] {
     app_.markDirty();
     syncParams();
@@ -519,8 +520,9 @@ void InstScreen::syncParams() {
   // Same page in the new type's rows; outside the type page the row and edit state stay (Type edit).
   const int sel = list_.sel();
   const bool ed = list_.editing();
-  showPage(physPage(), false);
-  if (page_ != kPgType && page_ != kPgType2) {
+  const bool bar = onEditor() ? editor_.barSelected() : list_.barSelected();
+  showPage(physPage(), bar);
+  if (page_ != kPgType && page_ != kPgType2 && !bar) {
     list_.setSel(sel);
     list_.setEdit(ed);
   }
@@ -543,20 +545,20 @@ int InstScreen::tableOsc() const {
   return r == kTable1 ? 0 : (r == kTable2 ? 1 : -1);
 }
 
-void InstScreen::showPage(int phys, bool last) {
+void InstScreen::showPage(int phys, bool bar) {
   const int n = pageCount();
   page_ = logicalPage((phys % n + n) % n);
   leaveEdit();
   if (onEditor()) {
-    editor_.enter(last);
+    editor_.enter(bar);
     return;
   }
   if (kit()) {
     if (page_ == kPgMain) list_.setParams(kit_, kKitMain);
     else buildLanes(false);
     list_.setVisibleRows(kListRows);
-    list_.setWrap(false);
-    list_.setSel(last ? 1 << 30 : 0);  // setSel clamps to the last row
+    if (bar) list_.selectBar();
+    else list_.setSel(0);
     return;
   }
   Param* const rows = typeRows();
@@ -572,8 +574,8 @@ void InstScreen::showPage(int phys, bool last) {
   }
   list_.setParams(rows + off, count);
   list_.setVisibleRows(kListRows);
-  list_.setWrap(false);
-  list_.setSel(last ? count - 1 : 0);
+  if (bar) list_.selectBar();
+  else list_.setSel(0);
 }
 
 void InstScreen::fixNames() {
@@ -693,7 +695,7 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
   }
   const int ov = onEditor() ? editor_.onInput(ev) : list_.onInput(ev);
   if (ov) {
-    showPage(physPage() + ov, ov < 0);
+    showPage(physPage() + ov, true);  // click (Shift+click) on the page bar
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();
@@ -717,7 +719,7 @@ void InstScreen::onTouch(const TouchEvent& ev) {
   }
   if (ev.y >= y0_ + kHeaderH && ev.y < y0_ + kHeaderH + kPageBarH && ev.type != TouchType::Drag &&
       ev.type != TouchType::HDrag) {
-    if (ev.type == TouchType::Tap) showPage(ev.x / pageW(), false);
+    if (ev.type == TouchType::Tap) showPage(ev.x / pageW(), true);
     return;
   }
   // Tap on a character of the name being edited moves the name cursor.
@@ -755,6 +757,7 @@ void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
     s.setTextColor(on ? kCursor : kDim);
     s.drawString(name, i * w + (w - static_cast<int>(strlen(name)) * kCharW) / 2, ty);
   }
+  if (onEditor() ? editor_.barSelected() : list_.barSelected()) PageBar::drawFocus(s, y, kPageBarH);
 }
 
 void InstScreen::drawEnv(LGFX_Sprite& s, int y) {

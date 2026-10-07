@@ -100,12 +100,13 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
   setPageRows(kPgMain, false);  // no leaveEdit(): the App is a global, built before the project exists
 }
 
-void TrackScreen::setPageRows(int page, bool last) {
+void TrackScreen::setPageRows(int page, bool bar) {
   page_ = (page % kPages + kPages) % kPages;
+  list_.setPageBar(true);
   list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
   list_.setVisibleRows(kVisibleRows);
-  list_.setWrap(false);
-  list_.setSel(last ? 1 << 30 : 0);  // setSel clamps to the last row
+  if (bar) list_.selectBar();
+  else list_.setSel(0);
 }
 
 mt::TrackCfg& TrackScreen::cfg() { return app_.project().tracks[app_.curTrack()]; }
@@ -128,9 +129,9 @@ void TrackScreen::leaveEdit() {
 
 void TrackScreen::onLeave() { leaveEdit(); }
 
-void TrackScreen::showPage(int page, bool last) {
+void TrackScreen::showPage(int page, bool bar) {
   leaveEdit();
-  setPageRows(page, last);
+  setPageRows(page, bar);
 }
 
 // The track changed under an open edit (a track button, GRID): the edit belonged to the old one.
@@ -182,8 +183,8 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     list_.edit(ev.delta);  // no x10 for characters
     return;
   }
-  if (const int ov = list_.onInput(ev)) {  // past the last / first row: the next / previous page
-    showPage(page_ + ov, ov < 0);
+  if (const int ov = list_.onInput(ev)) {  // click (Shift+click) on the page bar: the next (previous) page
+    showPage(page_ + ov, true);
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();
@@ -201,7 +202,7 @@ void TrackScreen::onTouch(const TouchEvent& ev) {
     return;
   }
   if (ev.y >= y0_ + kHeaderH && ev.y < y0_ + kHeaderH + PageBar::kH) {
-    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), false);
+    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
     return;
   }
   // Tap on a character of the name being edited moves the name cursor.
@@ -234,6 +235,7 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
 
   static const char* const kNames[kPages] = {"MAIN", "NOTE", "MIDI"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
+  if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
   if (nameEdit()) {
     const int uy = list_.rowY(kName) + (ParamList::kRowH + kCharH) / 2;
