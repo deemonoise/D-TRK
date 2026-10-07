@@ -34,7 +34,7 @@ PLA/PETG, стенки 3 периметра, заполнение 20–30 %.
 После правки — пересобрать STL:
 
 ```
-OS=/Applications/OpenSCAD-2021.01.app/Contents/MacOS/OpenSCAD
+OS=openscad   # OpenSCAD 2021.01 или новее; полный путь, если его нет в PATH
 $OS -o stl/case_top.stl    -D 'part="top"'    case.scad
 $OS -o stl/case_bottom.stl -D 'part="bottom"' case.scad
 $OS -o stl/clamp.stl       -D 'part="clamp"'  case.scad
@@ -107,6 +107,8 @@ IP5306 GND               ───────────── GND платы
 Type-C самой платы (прошивка) и слот microSD доступны только со снятой крышкой. Не прошивать с замкнутым тумблером: два источника 5 В на одной линии.
 
 ## Сборка
+
+English: [README.md](README.md)
 
 1. Вплавить гайки паяльником: 4 в угловые стойки, 4 в стойки планок (все в верхней части).
 2. Вставить модуль экраном вниз в карман верхней части, до упора в бортик.
