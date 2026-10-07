@@ -571,7 +571,9 @@ bool reverbInternal() { return reverbInt; }
 
 namespace {
 constexpr size_t kRvBytes = mt::Reverb::kBufLen * sizeof(float);
-constexpr size_t kRvKeepFree = 40 * 1024;  // internal RAM left for Wi-Fi and the SD card
+// Internal RAM left free with the reverb in it: the SD card and short work buffers (a few KB each).
+// Wi-Fi needs far more, but the Wi-Fi dialog moves the reverb to PSRAM first.
+constexpr size_t kRvKeepFree = 24 * 1024;
 
 // Swaps the reverb onto a new zeroed buffer with the audio task parked (the tail is lost).
 bool moveReverb(uint32_t caps) {
@@ -642,7 +644,7 @@ void begin(mt::Project* p) {
     Serial.println("audio: no PSRAM for the delay line");
   // Reverb: 5934 floats (23 KB), read and written every sample: internal RAM when there is room,
   // else PSRAM (slower through the cache); none = no reverb.
-  // Keeps a margin of internal RAM for Wi-Fi and the SD card.
+  // Keeps kRvKeepFree of internal RAM free.
   float* rvMem = nullptr;
   if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) >= kRvBytes + kRvKeepFree)
     rvMem = static_cast<float*>(heap_caps_malloc(kRvBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));

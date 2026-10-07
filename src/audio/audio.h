@@ -18,7 +18,7 @@ void begin(mt::Project* p);
 bool synthInternal();
 bool reverbInternal();  // the reverb buffer in internal RAM (else PSRAM)
 // Wi-Fi needs the internal RAM: the reverb buffer moves to PSRAM while it runs and back after
-// (when there is room). Transport stopped; the reverb tail is lost.
+// (when 24 KB stay free). Transport stopped; the reverb tail is lost.
 void reverbToPsram();
 void reverbToInternal();
 
