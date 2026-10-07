@@ -9,7 +9,9 @@
 #include "esp_heap_caps.h"
 #include "fx_info.h"
 #include "groove.h"
+#include "hw/sdcard.h"
 #include "storage/crashlog.h"
+#include "synth.h"
 #include "names.h"
 #include "scale.h"
 
@@ -158,6 +160,16 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                           snprintf(o, n, "%s, %uK FREE", s && q ? "INTERNAL" : (s ? "SEQ IN PSRAM" : (q ? "SYNTH IN PSRAM" : "PSRAM")), kb);
                         },
                         [](int) {}};
+  // Click: start; play a while (on the screen to measure), click again: the time per stage of the
+  // audio render goes to /projects/cpuprof.txt.
+  params_[kCpuProf] = {"CPU profile",
+                       [this](char* o, int n) {
+                         if (audio::profileRunning())
+                           snprintf(o, n, "RUNNING %lus, CLICK", static_cast<unsigned long>((millis() - profStartMs_) / 1000));
+                         else
+                           snprintf(o, n, "CLICK TO START");
+                       },
+                       [](int) {}};
   // The theme and the read-only rows are not project data: editing them does not mark it dirty.
   list_.setOnEdit([this] {
     if (kPageFirst[page_] + list_.sel() < kTheme) app_.markDirty();
@@ -203,6 +215,10 @@ void ProjScreen::onEnter() {
 
 // Turning past the last / first row goes on to the next / previous page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
+  if (ev.type == hw::InputType::EncClick && !list_.editing() && onProfileRow()) {
+    toggleProfile();
+    return;
+  }
   if (const int ov = list_.onInput(ev)) showPage(page_ + ov, ov < 0);
 }
 
@@ -212,7 +228,54 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
     if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), false);
     return;
   }
+  if (ev.type == TouchType::Tap && kPageFirst[page_] + list_.rowAt(ev.y) == kCpuProf && list_.rowAt(ev.y) >= 0) {
+    list_.setSel(list_.rowAt(ev.y));
+    toggleProfile();
+    return;
+  }
   list_.onTouch(ev);
+}
+
+void ProjScreen::toggleProfile() {
+  app_.invalidate();
+  if (!audio::profileRunning()) {
+    audio::profileStart();
+    profStartMs_ = millis();
+    app_.toast("PROFILE: PLAY, THEN CLICK AGAIN");
+    return;
+  }
+  audio::Profile pr;
+  const uint32_t secs = (millis() - profStartMs_) / 1000;
+  if (!audio::profileStop(pr)) {
+    app_.toast("PROFILE: NOTHING RENDERED");
+    return;
+  }
+  float total = 0;
+  int top = 0;
+  for (int i = 0; i < audio::kProfStages; ++i) {
+    total += pr.us[i];
+    if (pr.us[i] > pr.us[top]) top = i;
+  }
+  constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
+  char line[96];
+  bool saved = false;
+  if (hw::sdReady()) {
+    fs::File f = hw::sdFs().open("/projects/cpuprof.txt", FILE_APPEND);
+    if (f) {
+      snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
+               static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
+      f.print(line);
+      for (int i = 0; i < audio::kProfStages; ++i) {
+        snprintf(line, sizeof(line), "  %-8s %7.1f us  %5.1f %%\n", mt::Synth::profName(i), pr.us[i], pr.us[i] * 100 / kBlockUs);
+        f.print(line);
+      }
+      f.close();
+      saved = true;
+    }
+  }
+  snprintf(line, sizeof(line), "%s %.0f%%, TOP %s %.0f%%", saved ? "SAVED" : "NO SD", total * 100 / kBlockUs,
+           mt::Synth::profName(top), pr.us[top] * 100 / kBlockUs);
+  app_.toast(line);
 }
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {

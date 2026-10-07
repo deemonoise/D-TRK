@@ -20,7 +20,7 @@ class ProjScreen : public Screen {
  private:
   enum Row : int {
     kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
-    kRvbSize, kRvbDamp, kRvbLevel, kDjFilter, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1, kPerf8 = kPerf1 + 7, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kAudioRam, kRows
+    kRvbSize, kRvbDamp, kRvbLevel, kDjFilter, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1, kPerf8 = kPerf1 + 7, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kAudioRam, kCpuProf, kRows
   };
   // Pages: contiguous runs of rows.
   enum Page : int { kPgSong, kPgFx, kPgComp, kPgPerf, kPgSys, kPages };
@@ -33,6 +33,9 @@ class ProjScreen : public Screen {
   mt::Pattern& pat();
   void snapPattern();
   void showPage(int page, bool last);
+  bool onProfileRow() const { return kPageFirst[page_] + list_.sel() == kCpuProf; }
+  void toggleProfile();  // start, or stop and append the result to /projects/cpuprof.txt
+  uint32_t profStartMs_ = 0;
   int bpm();  // local target while it is ahead of the engine, else p.bpm
   void editBpm(int delta);
 

@@ -9,6 +9,7 @@
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
+#include "esp_cpu.h"
 #include "freertos/semphr.h"
 #include "esp_timer.h"
 #include "hw/pins.h"
@@ -181,9 +182,11 @@ void drain(Ring& q) {
 }
 
 [[maybe_unused]] void renderSynth(int16_t* out) {
+  const uint32_t q0 = synth->profNow();
   advanceClock();
   drain(engineQ);
   drain(uiQ);
+  if (synth->profiling()) synth->addProfile(mt::Synth::kProfQueue, synth->profNow() - q0);
   synth->render(out);
   takePreviewRequest();
   if (oneshot.playing()) {
@@ -561,6 +564,31 @@ void reserve() {
 }
 
 bool synthInternal() { return synth && esp_ptr_internal(synth); }
+
+static_assert(kProfStages == mt::Synth::kProfStages, "profile stages");
+
+static uint32_t cycles() { return esp_cpu_get_cycle_count(); }
+
+void profileStart() {
+  if (!synth) return;
+  uint32_t sink[kProfStages], blocks;
+  synth->takeProfile(sink, blocks);  // clear (a block in flight may land either side)
+  synth->setProfiler(cycles);
+}
+
+bool profileRunning() { return synth && synth->profiling(); }
+
+bool profileStop(Profile& out) {
+  if (!synth) return false;
+  synth->setProfiler(nullptr);
+  vTaskDelay(pdMS_TO_TICKS(10));  // let a block that read the clock finish
+  uint32_t c[kProfStages];
+  synth->takeProfile(c, out.blocks);
+  if (!out.blocks) return false;
+  const float perUs = 1.f / (static_cast<float>(getCpuFrequencyMhz()) * out.blocks);
+  for (int i = 0; i < kProfStages; ++i) out.us[i] = c[i] * perUs;
+  return true;
+}
 
 void begin(mt::Project* p) {
   project = p;

@@ -956,6 +956,15 @@ void Synth::renderSample(Voice& v, float* out, int n) {
 }
 
 void Synth::render(int16_t* out) {
+  // Profiling: t = the cycle counter at the last mark; mark(stage) books the time since.
+  uint32_t (*const clk)() = clock_;
+  uint32_t t = clk ? clk() : 0;
+  auto mark = [&](int stage) {
+    if (!clk) return;
+    const uint32_t now = clk();
+    prof_[stage] += now - t;
+    t = now;
+  };
   for (auto& x : mix_) x = 0;
   for (auto& x : send_) x = 0;
   for (auto& x : rsend_) x = 0;
@@ -963,11 +972,14 @@ void Synth::render(int16_t* out) {
   const int scTrack = p_.scTrack >= 1 && p_.scTrack <= kTracks ? p_.scTrack - 1 : -1;
   int e = 0;
   for (int pos = 0; pos < kBlock;) {
+    mark(kProfMaster);
     if (pos % kControl == 0)
       for (auto& v : voices_)
         if (v.on && !v.env.idle()) control(v, kControl);  // a ringing filter tail keeps its cutoff
+    mark(kProfControl);
     ctlLeft_ = kControl - pos % kControl;
     while (e < nEv_ && ev_[e].off <= pos) apply(ev_[e++]);
+    mark(kProfEvents);
     int end = (pos / kControl + 1) * kControl;
     if (e < nEv_ && ev_[e].off < end) end = ev_[e].off;
     for (auto& v : voices_) {
@@ -985,6 +997,7 @@ void Synth::render(int16_t* out) {
       } else {
         renderVoice(v, mix_ + pos, end - pos);
       }
+      if (clk) mark(v.fm ? kProfFm : v.drum ? kProfDrum : v.syn ? kProfSyn : v.sample ? kProfSample : kProfChip);
       // Freed once the note has ended and its filter has rung out: cutting a resonant filter
       // mid-ring clicks.
       if (v.env.idle() && !(v.fltOn && v.flt.ringing())) v.on = false;
@@ -993,13 +1006,33 @@ void Synth::render(int16_t* out) {
   }
   nEv_ = 0;
   ctlLeft_ = kControl;
+  mark(kProfMaster);
   delay_.process(send_, mix_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, p_.dlyLevel);
+  mark(kProfDelay);
   reverb_.process(rsend_, mix_, kBlock, p_.rvbSize, p_.rvbDamp, p_.rvbLevel);
+  mark(kProfReverb);
   djFilter(mix_, kBlock);
   comp_.process(mix_, scTrack >= 0 ? sc_ : nullptr, kBlock, p_.compAmt, p_.compRel, p_.scDepth);
   const uint8_t mv = p_.masterVol > kMasterVolMax ? kMasterVolMax : p_.masterVol;
   const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
   for (int i = 0; i < kBlock; ++i) out[i] = static_cast<int16_t>(softClip(mix_[i] * g) * 32767.f);
+  mark(kProfMaster);
+  if (clk) ++profBlocks_;
+}
+
+const char* Synth::profName(int stage) {
+  static const char* const kNames[kProfStages] = {"queue",  "events", "control", "chip",   "sample", "fm",
+                                                  "drum",   "synth",  "delay",   "reverb", "master"};
+  return stage >= 0 && stage < kProfStages ? kNames[stage] : "";
+}
+
+void Synth::takeProfile(uint32_t out[kProfStages], uint32_t& blocks) {
+  for (int i = 0; i < kProfStages; ++i) {
+    out[i] = prof_[i];
+    prof_[i] = 0;
+  }
+  blocks = profBlocks_;
+  profBlocks_ = 0;
 }
 
 int Synth::activeVoices() const {

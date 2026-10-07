@@ -816,6 +816,7 @@ a { color: var(--accent); }
   <tr><td>Firmware</td><td>коммит сборки</td><td>только показ: версия прошивки («+» — собрана с локальными правками)</td></tr>
   <tr><td>Last reset</td><td>POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT…</td><td>только показ: причина последней перезагрузки (сбои пишутся в crashlog.txt)</td></tr>
   <tr><td>Audio RAM</td><td>INTERNAL / SYNTH IN PSRAM / SEQ IN PSRAM, свободно K</td><td>только показ: синтезатор и секвенсор должны быть во внутренней памяти, в PSRAM звук заметно дороже по CPU</td></tr>
+  <tr><td>CPU profile</td><td>CLICK TO START / RUNNING</td><td>диагностика: клик — старт, клик ещё раз — время звука по частям (очередь, события, управление голосами, голоса по типам, delay, reverb, мастер) дописывается в /projects/cpuprof.txt</td></tr>
 </table></div>
 <p id="themes"><b>Темы.</b> Меняются сразу при повороте; выбор — настройка устройства, как громкость MAIN: запоминается в памяти платы через секунду (когда транспорт стоит), проект и файл не меняются. Темы: CLASSIC (исходная), AMBER и PHOSPHOR (монохромные терминалы), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (по мотивам известных палитр редакторов), GAMEBOY, C64 (ретро), SYNTHWAVE, OCEAN, CONTRAST (максимальный контраст) и PAPER (светлая).</p>
 <p id="reverb"><b>Reverb</b> — общий моно-ревербератор (4 гребёнчатых фильтра и 2 allpass, как Freeverb). Инструменты шлют в него параметром Rvb send, шаги — fx RVB. Эхо delay в reverb не идёт. Смена размера на ходу перескакивает.</p>

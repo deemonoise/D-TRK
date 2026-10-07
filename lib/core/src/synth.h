@@ -65,6 +65,20 @@ class Synth {
   void render(int16_t* out);
 
   int activeVoices() const;
+
+  // Profiling (PROJ -> SYS -> CPU profile): cycles spent per stage, summed until takeProfile().
+  // clock = a cycle counter; nullptr (the default) = off, no cost.
+  enum ProfStage : uint8_t {
+    kProfQueue, kProfEvents, kProfControl, kProfChip, kProfSample, kProfFm, kProfDrum, kProfSyn,
+    kProfDelay, kProfReverb, kProfMaster, kProfStages
+  };
+  static const char* profName(int stage);
+  void setProfiler(uint32_t (*clock)()) { clock_ = clock; }
+  bool profiling() const { return clock_ != nullptr; }
+  void addProfile(int stage, uint32_t cycles) { prof_[stage] += cycles; }
+  // Copies the sums (and the blocks rendered) and clears them.
+  void takeProfile(uint32_t out[kProfStages], uint32_t& blocks);
+  uint32_t profNow() const { return clock_ ? clock_() : 0; }
   // Newest allocated voice of the track, or -1.
   int trackVoice(uint8_t track) const;
   int voiceInstr(int v) const { return voices_[v].instr; }
@@ -155,6 +169,9 @@ class Synth {
   Svf dj_;  // master DJ filter
   void djFilter(float* x, int n);
   Delay delay_;
+  uint32_t (*clock_)() = nullptr;
+  uint32_t prof_[kProfStages] = {};
+  uint32_t profBlocks_ = 0;
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
   uint32_t rng_ = 0x2545F491;  // LFO Random
   bool fmCache_ = true;
