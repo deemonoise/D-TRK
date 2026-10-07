@@ -17,7 +17,8 @@ Read-only on the image. Usage:
                diskutil unmountDisk /dev/disk4
                sudo dd if=/dev/rdisk4 of=sd.img bs=4m
        Linux:  sudo dd if=/dev/sdX of=sd.img bs=4M status=progress
-  2. python3 sd_recover.py sd.img recovered [GB]
+  2. python3 sd_recover.py sd.img recovered [GB] [--projects]
+     --projects: projects only, no WAV files (faster).
      GB: scan only the first GB gigabytes. FAT fills a card from the start, so on a card that
      was far from full the files are near the beginning: e.g. 8 for a card with a few GB used.
      The whole card is read once; Ctrl+C stops the scan early and keeps what was found.
@@ -77,10 +78,10 @@ class Image:
         return data[off - start:off - start + n]
 
 
-def scan(img, limit):
+def scan(img, limit, wav=True):
     """Sector-aligned offsets of "MTRK" and "RIFF" in the first limit bytes, in one pass.
     Ctrl+C ends the scan early; what was found so far is still recovered."""
-    hits = {b"MTRK": [], b"RIFF": []}
+    hits = {b"MTRK": [], b"RIFF": []} if wav else {b"MTRK": []}
     pos, t0 = 0, time.time()
     try:
         while pos < limit:
@@ -98,11 +99,11 @@ def scan(img, limit):
             rate = done / max(time.time() - t0, 1e-3)
             sys.stderr.write("\r  %d / %d MB, %.0f MB/s, %d min left, found %d projects / %d wav headers   " % (
                 done >> 20, limit >> 20, rate / 2**20, (limit - done) / rate / 60, len(hits[b"MTRK"]),
-                len(hits[b"RIFF"])))
+                len(hits.get(b"RIFF", []))))
     except KeyboardInterrupt:
         sys.stderr.write("\n  stopped at %d MB" % (pos >> 20))
     sys.stderr.write("\n")
-    return hits[b"MTRK"], hits[b"RIFF"]
+    return hits[b"MTRK"], hits.get(b"RIFF", [])
 
 
 def parse_mtp(img, off):
@@ -171,12 +172,14 @@ def parse_wav(img, off):
 
 
 def main():
-    if len(sys.argv) not in (3, 4):
+    args = [a for a in sys.argv[1:] if a != "--projects"]
+    wav = "--projects" not in sys.argv
+    if len(args) not in (2, 3):
         sys.exit(__doc__)
-    img, out = Image(sys.argv[1]), sys.argv[2]
-    limit = min(img.size, int(float(sys.argv[3]) * 2**30)) if len(sys.argv) == 4 else img.size
-    print("Image: %s, %.1f GB, scanning the first %.1f GB" % (sys.argv[1], img.size / 2**30, limit / 2**30))
-    mtrk, riff = scan(img, limit)
+    img, out = Image(args[0]), args[1]
+    limit = min(img.size, int(float(args[2]) * 2**30)) if len(args) == 3 else img.size
+    print("Image: %s, %.1f GB, scanning the first %.1f GB" % (args[0], img.size / 2**30, limit / 2**30))
+    mtrk, riff = scan(img, limit, wav)
 
     print("Projects:")
     projects, seen, bad = [], set(), 0
@@ -206,6 +209,8 @@ def main():
     if not projects:
         print("  none found")
 
+    if not wav:
+        return
     print("Samples:")
     found, other = set(), 0
     for off in riff:
