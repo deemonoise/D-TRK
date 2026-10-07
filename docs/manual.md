@@ -1010,8 +1010,6 @@ FILE → **Wi-Fi transfer…** connects the tracker to your home network and ope
 
 At the top of the page are tabs: **Projects**, **Samples**, **MIDI**, **Wavetables**, **Presets**, **Firmware**; one section is shown at a time. The file list scrolls in its own pane, with a name filter and the file count above it. The selected tab stays in the address (`#samples`), so you can bookmark it.
 
-The page itself is in Russian. Its tabs read Проекты (Projects), Сэмплы (Samples), MIDI, Таблицы (Wavetables), Пресеты (Presets), Прошивка (Firmware); the folder button is "Новая папка" (New folder).
-
 1.  If there are unsaved changes, a menu appears: **Cancel**, **Save & continue** (only for a project with a name), **Continue w/o saving**. The reason: after a firmware update the tracker reboots.
 2.  Playback stops, and <kbd>Play</kbd> does not work in this mode (toast "WI-FI MODE").
 3.  The first time: a list of networks, then the password on the on-screen keyboard. **\#+=** switches to the symbols page with space, **ABC** goes back. Letters are lowercase; <kbd>Shift</kbd> gives uppercase. The network and password are stored in flash after a successful connection.

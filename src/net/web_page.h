@@ -12,7 +12,7 @@ namespace net {
 // folder button).
 // No external resources: works without internet access.
 static const char kWebPage[] PROGMEM = R"HTML(<!doctype html>
-<html lang="ru"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>D-TRK</title>
 <style>
@@ -51,58 +51,58 @@ progress{width:100%;display:none;margin-top:8px}
 </style></head><body>
 <header><div class="bar">
 <h1>D-TRK</h1>
-<p>Файлы на карте microSD. Пока открыта эта страница, трекер в режиме Wi-Fi.</p>
-<nav><button data-t="projects">Проекты</button><button data-t="samples">Сэмплы</button><button data-t="midi">MIDI</button><button data-t="wavetables">Таблицы</button><button data-t="presets">Пресеты</button><button data-t="fw">Прошивка</button></nav>
+<p>Files on the microSD card. While this page is open the tracker is in Wi-Fi mode.</p>
+<nav><button data-t="projects">Projects</button><button data-t="samples">Samples</button><button data-t="midi">MIDI</button><button data-t="wavetables">Wavetables</button><button data-t="presets">Presets</button><button data-t="fw">Firmware</button></nav>
 </div></header>
 <main>
 
 <section id="midi"><h2>MIDI (/midi)</h2>
-<p class="note">Только .mid, до 512 КБ. Импорт на трекере: FILE &rarr; Import MIDI.</p>
-<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".mid" multiple hidden></div>
+<p class="note">Only .mid, up to 512 KB. Import on the tracker: FILE &rarr; Import MIDI.</p>
+<div class="drop">Drop files here or click to choose<input type="file" accept=".mid" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>
-<div class="tools"><input type="search" placeholder="Фильтр по имени"><span class="cnt"></span></div>
+<div class="tools"><input type="search" placeholder="Filter by name"><span class="cnt"></span></div>
 <div class="list"><table></table></div></section>
 
-<section id="projects"><h2>Проекты (/projects)</h2>
-<p class="note">Здесь же crashlog.txt — журнал перезагрузок трекера после сбоев, и cpuprof.txt — замеры CPU profile. .mtp и .bak, имя до 16 символов: латиница, цифры, - и _. В папке с именем проекта &mdash; его сэмплы (.wav до 10 МБ, имя до 16 символов), в её подпапке wt &mdash; волновые таблицы проекта: трекер пишет их при сохранении и подтягивает при загрузке проекта. Чтобы перенести проект, скопируйте .mtp и его папку целиком.</p>
+<section id="projects"><h2>Projects (/projects)</h2>
+<p class="note">.mtp and .bak, name up to 16 characters: A-Z, digits, - and _. Also crashlog.txt (the restarts after a crash) and cpuprof.txt (CPU profile results). The folder named after a project holds its samples (.wav up to 10 MB, name up to 16 characters), its wt subfolder the project's wavetables: the tracker writes them on save and loads them with the project. To move a project, copy the .mtp and its whole folder.</p>
 <div class="crumb"><span></span></div>
-<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".mtp,.bak" multiple hidden></div>
+<div class="drop">Drop files here or click to choose<input type="file" accept=".mtp,.bak" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>
-<div class="tools"><input type="search" placeholder="Фильтр по имени"><span class="cnt"></span></div>
+<div class="tools"><input type="search" placeholder="Filter by name"><span class="cnt"></span></div>
 <div class="list"><table></table></div></section>
 
-<section id="samples"><h2>Сэмплы (/samples)</h2>
-<p class="note">Только .wav, до 4 МБ. Импорт в банк &mdash; на трекере: FILE &rarr; SAMPLES. Можно раскладывать по папкам (до 4 уровней).</p>
-<div class="crumb"><span></span><button>Новая папка</button></div>
-<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".wav" multiple hidden></div>
+<section id="samples"><h2>Samples (/samples)</h2>
+<p class="note">Only .wav, up to 4 MB. Import into the bank on the tracker: FILE &rarr; SAMPLES. Folders allowed (up to 4 levels).</p>
+<div class="crumb"><span></span><button>New folder</button></div>
+<div class="drop">Drop files here or click to choose<input type="file" accept=".wav" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>
-<div class="tools"><input type="search" placeholder="Фильтр по имени"><span class="cnt"></span></div>
+<div class="tools"><input type="search" placeholder="Filter by name"><span class="cnt"></span></div>
 <div class="list"><table></table></div></section>
 
-<section id="wavetables"><h2>Волновые таблицы (/wavetables)</h2>
-<p class="note">Только .wav (PCM 8/16/24 бит; кадры по 2048 точек, как у Serum, по 256 или по чанку clm), до 3 МБ. Импорт &mdash; на трекере: INST SYNTH &rarr; таблица &rarr; IMPORT. Можно раскладывать по папкам (до 4 уровней).</p>
-<div class="crumb"><span></span><button>Новая папка</button></div>
-<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".wav" multiple hidden></div>
+<section id="wavetables"><h2>Wavetables (/wavetables)</h2>
+<p class="note">Only .wav (PCM 8/16/24 bit; frames of 2048 points as in Serum, of 256, or by the clm chunk), up to 3 MB. Import on the tracker: INST SYNTH &rarr; table &rarr; IMPORT. Folders allowed (up to 4 levels).</p>
+<div class="crumb"><span></span><button>New folder</button></div>
+<div class="drop">Drop files here or click to choose<input type="file" accept=".wav" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>
-<div class="tools"><input type="search" placeholder="Фильтр по имени"><span class="cnt"></span></div>
+<div class="tools"><input type="search" placeholder="Filter by name"><span class="cnt"></span></div>
 <div class="list"><table></table></div></section>
 
-<section id="presets"><h2>Пресеты (/presets)</h2>
-<p class="note">Только .mti, до 1 КБ, имя до 16 символов: латиница, цифры, - и _. Пресет лежит в папке своего типа (FM, DRUM, SAMPLE, CHIP, SYNTH), внутри можно раскладывать по папкам (до 4 уровней). На трекере: INST &rarr; пресеты.</p>
-<div class="crumb"><span></span><button>Новая папка</button></div>
-<div class="drop">Перетащите файлы сюда или нажмите, чтобы выбрать<input type="file" accept=".mti" multiple hidden></div>
+<section id="presets"><h2>Presets (/presets)</h2>
+<p class="note">Only .mti, up to 1 KB, name up to 16 characters: A-Z, digits, - and _. A preset sits in the folder of its type (FM, DRUM, SAMPLE, CHIP, SYNTH); inside, folders are allowed (up to 4 levels). On the tracker: INST &rarr; presets.</p>
+<div class="crumb"><span></span><button>New folder</button></div>
+<div class="drop">Drop files here or click to choose<input type="file" accept=".mti" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>
-<div class="tools"><input type="search" placeholder="Фильтр по имени"><span class="cnt"></span></div>
+<div class="tools"><input type="search" placeholder="Filter by name"><span class="cnt"></span></div>
 <div class="list"><table></table></div></section>
 
-<section id="fw"><h2>Прошивка</h2>
-<p class="note">Файл .pio/build/wt32/firmware.bin. После загрузки трекер перезагрузится.</p>
-<div class="drop">Перетащите firmware.bin сюда или нажмите, чтобы выбрать<input type="file" accept=".bin" hidden></div>
+<section id="fw"><h2>Firmware</h2>
+<p class="note">The file .pio/build/wt32/firmware.bin. The tracker restarts after the update.</p>
+<div class="drop">Drop firmware.bin here or click to choose<input type="file" accept=".bin" hidden></div>
 <progress max="100"></progress><div class="st"></div></section>
 </main>
 <script>
 const $=(s,e=document)=>e.querySelector(s);
-const kb=n=>n<1024?n+' Б':n<1048576?(n/1024).toFixed(n<10240?1:0)+' КБ':(n/1048576).toFixed(1)+' МБ';
+const kb=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(n<10240?1:0)+' KB':(n/1048576).toFixed(1)+' MB';
 function status(sec,msg,err){const s=$('.st',sec);s.textContent=msg;s.className='st'+(err?' err':'');}
 function send(url,file,sec){return new Promise(res=>{
   const x=new XMLHttpRequest(),f=new FormData(),pg=$('progress',sec);
@@ -110,7 +110,7 @@ function send(url,file,sec){return new Promise(res=>{
   pg.style.display='block';pg.value=0;
   x.upload.onprogress=e=>{if(e.lengthComputable)pg.value=e.loaded*100/e.total;};
   x.onload=()=>{pg.style.display='none';res({code:x.status,text:x.responseText});};
-  x.onerror=()=>{pg.style.display='none';res({code:0,text:'нет связи с трекером'});};
+  x.onerror=()=>{pg.style.display='none';res({code:0,text:'no connection to the tracker'});};
   x.send(f);});}
 // Subfolder per section: samples / wavetables / presets "" or "a/b", projects "", a project folder or its wt.
 const sub={midi:'',projects:'',samples:'',wavetables:'',presets:''};
@@ -137,13 +137,13 @@ function crumb(dir){
   parts.forEach((p,i)=>{c.appendChild(document.createTextNode(' / '));add(p,parts.slice(0,i+1).join('/'),i===parts.length-1);});
 }
 async function mkdir(dir){
-  const sec=$('#'+dir),n=prompt('Имя папки (латиница, цифры, пробел, . _ -)');if(!n)return;
+  const sec=$('#'+dir),n=prompt('Folder name (A-Z, digits, space, . _ -)');if(!n)return;
   const r=await fetch('/api/mkdir?'+dq(dir)+'&name='+encodeURIComponent(n),{method:'POST'});
-  status(sec,r.ok?'Папка создана: '+n:await r.text(),!r.ok);list(dir);
+  status(sec,r.ok?'Folder created: '+n:await r.text(),!r.ok);list(dir);
 }
 async function list(dir){
   const sec=$('#'+dir),t=$('table',sec);crumb(dir);
-  let r;try{r=await fetch('/api/list?'+dq(dir));}catch(e){status(sec,'нет связи с трекером',1);return;}
+  let r;try{r=await fetch('/api/list?'+dq(dir));}catch(e){status(sec,'no connection to the tracker',1);return;}
   if(!r.ok){
     if(r.status===404&&sub[dir]){status(sec,await r.text(),1);go(dir,'');return;}  // folder gone: back to the top
     status(sec,await r.text(),1);return;}
@@ -155,30 +155,30 @@ async function list(dir){
   if(sub[dir]){
     const tr=document.createElement('tr');tr.innerHTML='<td class="dir"><a>..</a></td><td></td><td></td>';
     $('a',tr).onclick=()=>go(dir,sub[dir].split('/').slice(0,-1).join('/'));t.appendChild(tr);}
-  $('.cnt',sec).textContent=files.filter(f=>!f.virt).length+' шт.';
-  if(!files.length){t.insertAdjacentHTML('beforeend','<tr><td class="sz" style="text-align:left">пусто</td></tr>');return;}
+  $('.cnt',sec).textContent=files.filter(f=>!f.virt).length+' files';
+  if(!files.length){t.insertAdjacentHTML('beforeend','<tr><td class="sz" style="text-align:left">empty</td></tr>');return;}
   for(const f of files){
     const tr=document.createElement('tr'),q=dq(dir)+'&name='+encodeURIComponent(f.name);
     if(f.dir){
       // Project folders: made and removed by the tracker; preset type folders: the tracker needs them.
       const own=dir!=='projects',fixed=dir==='presets'&&!sub[dir],del=own&&!fixed;
-      tr.innerHTML='<td class="dir"><a></a></td><td class="sz">'+(own?'папка':sub[dir]?'таблицы':'сэмплы')+'</td><td class="act">'+(del?'<button>Удалить</button>':'')+'</td>';
+      tr.innerHTML='<td class="dir"><a></a></td><td class="sz">'+(own?'folder':sub[dir]?'wavetables':'samples')+'</td><td class="act">'+(del?'<button>Delete</button>':'')+'</td>';
       const a=$('a',tr);a.textContent=f.name+'/';a.onclick=()=>go(dir,(sub[dir]?sub[dir]+'/':'')+f.name);
-      if(del)$('button',tr).onclick=async()=>{if(!confirm('Удалить пустую папку '+f.name+'?'))return;
+      if(del)$('button',tr).onclick=async()=>{if(!confirm('Delete the empty folder '+f.name+'?'))return;
         const r=await fetch('/api/rmdir?'+q,{method:'POST'});
-        status(sec,r.ok?'Папка удалена: '+f.name:await r.text(),!r.ok);list(dir);};
+        status(sec,r.ok?'Folder deleted: '+f.name:await r.text(),!r.ok);list(dir);};
       t.appendChild(tr);continue;}
-    tr.innerHTML='<td><a></a></td><td class="sz"></td><td class="act"><button>Имя</button><button>Удалить</button></td>';
+    tr.innerHTML='<td><a></a></td><td class="sz"></td><td class="act"><button>Rename</button><button>Delete</button></td>';
     const a=$('a',tr);a.textContent=f.name;a.href='/api/file?'+q;a.download=f.name;
     $('.sz',tr).textContent=kb(f.size);
     const [bRen,bDel]=tr.querySelectorAll('button');
-    bRen.onclick=async()=>{const to=prompt('Новое имя',f.name);if(!to||to===f.name)return;
+    bRen.onclick=async()=>{const to=prompt('New name',f.name);if(!to||to===f.name)return;
       const r=await fetch('/api/rename?'+dq(dir)+'&from='+encodeURIComponent(f.name)+'&to='+encodeURIComponent(to),{method:'POST'});
-      const txt=await r.text();status(sec,r.ok&&txt==='OK'?'Переименован: '+to:txt,!r.ok);list(dir);};
+      const txt=await r.text();status(sec,r.ok&&txt==='OK'?'Renamed: '+to:txt,!r.ok);list(dir);};
     bDel.onclick=async()=>{
-      if(!confirm('Удалить '+f.name+(top&&lastOf(f.name)?' и папку '+pbase(f.name)+'/ с сэмплами':'')+'?'))return;
+      if(!confirm('Delete '+f.name+(top&&lastOf(f.name)?' and the folder '+pbase(f.name)+'/ with its samples':'')+'?'))return;
       const r=await fetch('/api/delete?'+q,{method:'POST'});
-      const txt=await r.text();status(sec,r.ok&&txt==='OK'?'Удалён: '+f.name:txt,!r.ok);list(dir);};
+      const txt=await r.text();status(sec,r.ok&&txt==='OK'?'Deleted: '+f.name:txt,!r.ok);list(dir);};
     t.appendChild(tr);}
   filter(dir);
 }
@@ -191,21 +191,21 @@ function filter(dir){
 async function upload(dir,files){
   const sec=$('#'+dir),q=dq(dir);let ok=0;  // folder at the start: navigation meanwhile does not move the batch
   for(const f of files){
-    status(sec,'Загрузка '+f.name+'...');
+    status(sec,'Uploading '+f.name+'...');
     let r=await send('/api/upload?'+q+'&overwrite=0',f,sec);
-    if(r.code===409&&confirm(f.name+' уже есть. Заменить?'))r=await send('/api/upload?'+q+'&overwrite=1',f,sec);
+    if(r.code===409&&confirm(f.name+' already exists. Replace it?'))r=await send('/api/upload?'+q+'&overwrite=1',f,sec);
     if(r.code===200)ok++;else if(r.code!==409){status(sec,f.name+': '+r.text,1);await list(dir);return;}
   }
-  status(sec,'Загружено файлов: '+ok);list(dir);
+  status(sec,'Files uploaded: '+ok);list(dir);
 }
 async function firmware(files){
   const sec=$('#fw'),f=files[0];if(!f)return;
-  if(!/\.bin$/i.test(f.name)){status(sec,'нужен файл .bin',1);return;}
-  if(!confirm('Прошить '+f.name+' ('+kb(f.size)+')? Трекер перезагрузится.'))return;
-  status(sec,'Прошивка...');
+  if(!/\.bin$/i.test(f.name)){status(sec,'a .bin file is needed',1);return;}
+  if(!confirm('Flash '+f.name+' ('+kb(f.size)+')? The tracker will restart.'))return;
+  status(sec,'Flashing...');
   const r=await send('/api/update',f,sec);
   if(r.code!==200){status(sec,r.text,1);return;}
-  status(sec,'Готово, трекер перезагружается. Режим Wi-Fi после перезагрузки выключен.');
+  status(sec,'Done, the tracker is restarting. Wi-Fi mode is off after the restart.');
 }
 function drop(sec,fn){
   const d=$('.drop',sec),i=$('input',d);
