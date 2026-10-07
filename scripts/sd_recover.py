@@ -17,7 +17,10 @@ Read-only on the image. Usage:
                diskutil unmountDisk /dev/disk4
                sudo dd if=/dev/rdisk4 of=sd.img bs=4m
        Linux:  sudo dd if=/dev/sdX of=sd.img bs=4M status=progress
-  2. python3 sd_recover.py sd.img recovered
+  2. python3 sd_recover.py sd.img recovered [GB]
+     GB: scan only the first GB gigabytes. FAT fills a card from the start, so on a card that
+     was far from full the files are near the beginning: e.g. 8 for a card with a few GB used.
+     The whole card is read once; Ctrl+C stops the scan early and keeps what was found.
   3. Copy recovered/projects/* to /projects on a working card.
 
 Several versions of a project may be found (older saves, .bak, .auto): they are written as
@@ -27,6 +30,7 @@ Files that were stored in pieces (fragmented) fail the checksum and are reported
 import os
 import struct
 import sys
+import time
 import zlib
 
 SECTOR = 512
@@ -73,19 +77,32 @@ class Image:
         return data[off - start:off - start + n]
 
 
-def scan(img, magic):
-    """Sector-aligned offsets where magic starts."""
-    pos = 0
-    while pos < img.size:
-        buf = img.read(pos, WINDOW + SECTOR)
-        i = buf.find(magic)
-        while 0 <= i < WINDOW:
-            if (pos + i) % SECTOR == 0:
-                yield pos + i
-            i = buf.find(magic, i + 1)
-        pos += WINDOW
-        sys.stderr.write("\r  %s: %d / %d MB" % (magic.decode(), min(pos, img.size) >> 20, img.size >> 20))
+def scan(img, limit):
+    """Sector-aligned offsets of "MTRK" and "RIFF" in the first limit bytes, in one pass.
+    Ctrl+C ends the scan early; what was found so far is still recovered."""
+    hits = {b"MTRK": [], b"RIFF": []}
+    pos, t0 = 0, time.time()
+    try:
+        while pos < limit:
+            buf = img.read(pos, WINDOW + SECTOR)
+            if not buf:
+                break
+            for magic, out in hits.items():
+                i = buf.find(magic)
+                while 0 <= i < WINDOW:
+                    if (pos + i) % SECTOR == 0:
+                        out.append(pos + i)
+                    i = buf.find(magic, i + 1)
+            pos += WINDOW
+            done = min(pos, limit)
+            rate = done / max(time.time() - t0, 1e-3)
+            sys.stderr.write("\r  %d / %d MB, %.0f MB/s, %d min left, found %d projects / %d wav headers   " % (
+                done >> 20, limit >> 20, rate / 2**20, (limit - done) / rate / 60, len(hits[b"MTRK"]),
+                len(hits[b"RIFF"])))
+    except KeyboardInterrupt:
+        sys.stderr.write("\n  stopped at %d MB" % (pos >> 20))
     sys.stderr.write("\n")
+    return hits[b"MTRK"], hits[b"RIFF"]
 
 
 def parse_mtp(img, off):
@@ -154,14 +171,16 @@ def parse_wav(img, off):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
     img, out = Image(sys.argv[1]), sys.argv[2]
-    print("Image: %s, %.1f GB" % (sys.argv[1], img.size / 2**30))
+    limit = min(img.size, int(float(sys.argv[3]) * 2**30)) if len(sys.argv) == 4 else img.size
+    print("Image: %s, %.1f GB, scanning the first %.1f GB" % (sys.argv[1], img.size / 2**30, limit / 2**30))
+    mtrk, riff = scan(img, limit)
 
     print("Projects:")
     projects, seen, bad = [], set(), 0
-    for off in scan(img, b"MTRK"):
+    for off in mtrk:
         r = parse_mtp(img, off)
         if r == "badcrc":
             bad += 1
@@ -189,7 +208,7 @@ def main():
 
     print("Samples:")
     found, other = set(), 0
-    for off in scan(img, b"RIFF"):
+    for off in riff:
         r = parse_wav(img, off)
         if not r:
             continue
