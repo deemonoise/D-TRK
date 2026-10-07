@@ -831,7 +831,7 @@ Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 | Firmware | build commit | display only: firmware version ("+" means built with local changes) |
 | Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot (crashes are logged to crashlog.txt) |
 | Audio RAM | INTERNAL / SYNTH IN PSRAM / SEQ IN PSRAM, RVB INT / PSRAM, free K | display only: the synth and sequencer should be in internal memory; in PSRAM, audio costs noticeably more CPU. The reverb buffer goes into internal memory if 24 KB remain free after it; while Wi-Fi is on it moves to PSRAM |
-| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the audio time broken down by part (queue, events, voice management, voices by type, delay, reverb, master) is appended to /projects/cpuprof.txt |
+| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the audio time broken down by part (queue, events, voice management, voices by type, delay, reverb, master) is appended to /diag/cpuprof.txt |
 
 <a id="themes"></a>
 
@@ -952,7 +952,7 @@ Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and
 - **Reliability:** saving writes a temporary file, verifies it, and renames the previous version to `.bak`. If the file is corrupted, Load offers **Load backup**. A `.bak` has no sample folder of its own: it takes samples from the same project folder, so a sample removed from the project after that version may turn up MISSING if it has already been evicted from flash.
 - **Autosave:** unsaved changes are written every N minutes (PROJ → SYS → Autosave: OFF, 1, 2, 5, 10 min, default 5) to `/projects/name.auto` (the project file only), while the transport is stopped and nothing has been pressed for 3 s (toast "AUTOSAVE…"). Save deletes it. After a crash or power-off: FILE → Restore autosave.
 - **Safe boot:** hold <kbd>Shift</kbd> at power-on and the project is not loaded automatically (toast "SAFE BOOT"). Use it for a project that crashes the tracker on load.
-- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/projects/crashlog.txt`; it is visible and downloadable on the [Wi-Fi](#wifi) page. The firmware version and the reason for the last reboot are in PROJ → SYS.
+- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt`; it is visible and downloadable on the [Wi-Fi](#wifi) page (Diag tab). The firmware version and the reason for the last reboot are in PROJ → SYS.
 - **Autoload:** at power-on, the last saved or loaded project is loaded. If it is corrupted, the `.bak` is used (toast "LOADED BACKUP"). If that fails too, the demo loads with the toast "AUTOLOAD: …". New disables autoload until the next save.
 - Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 32 instruments, Preview, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard and Fill parameters.
 - **Compatibility:** the file now holds 16 tracks per pattern. Projects from older versions (8 tracks) open as usual, with tracks 9–16 empty. A file written by this firmware cannot be opened by older firmware: it will report a corrupted file (not a "newer version"). To go back to older firmware, keep a copy of the `.mtp` / `.bak` saved by it.
@@ -965,7 +965,7 @@ Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and
 | `/projects/name/wt/*.wav` | project [wavetables](#wavetables) (written by Save) |
 | `/projects/legacy.idx` | internal: samples carried over from old projects |
 | `/projects/name.auto` | autosave |
-| `/projects/crashlog.txt` | log of reboots after crashes |
+| `/diag/crashlog.txt`, `/diag/cpuprof.txt` | log of reboots after crashes, CPU profile results (older firmware kept them in `/projects`: moved at start-up) |
 | `/templates/*.mtp` | your own project templates (FILE → New) |
 | `/last.txt` | name of the project to autoload |
 | `/midi/*.mid` | files for import (subfolders allowed) |
@@ -1023,7 +1023,7 @@ Import, Rename and Delete change the project (a `*` appears); save it so the cha
 
 FILE → **Wi-Fi transfer…** connects the tracker to your home network and opens a web page. The tracker has no access point of its own: the computer or phone must be on the same network.
 
-At the top of the page are tabs: **Projects**, **Samples**, **MIDI**, **Wavetables**, **Presets**, **Firmware**; one section is shown at a time. The file list scrolls in its own pane, with a name filter and the file count above it. The selected tab stays in the address (`#samples`), so you can bookmark it.
+At the top of the page are tabs: **Projects**, **Samples**, **MIDI**, **Wavetables**, **Presets**, **Diag**, **Firmware**; one section is shown at a time. The file list scrolls in its own pane, with a name filter and the file count above it. The selected tab stays in the address (`#samples`), so you can bookmark it.
 
 1.  If there are unsaved changes, a menu appears: **Cancel**, **Save & continue** (only for a project with a name), **Continue w/o saving**. The reason: after a firmware update the tracker reboots.
 2.  Playback stops, and <kbd>Play</kbd> does not work in this mode (toast "WI-FI MODE").
@@ -1031,7 +1031,7 @@ At the top of the page are tabs: **Projects**, **Samples**, **MIDI**, **Wavetabl
 4.  The screen shows the address `http://d-trk.local` and the IP (if `.local` does not open, e.g. on Android, use the IP).
 5.  **EXIT** (or a long press of the encoder, or switching to another tab) turns Wi-Fi off. **NETWORK** chooses another network. **RETRY** retries the connection after an error.
 
-The page has five sections: **MIDI** (`/midi`), **Projects** (`/projects`, with the projects' sample and wavetable folders), **Samples** (`/samples`, the import library), **Wavetables** (`/wavetables`) and **Presets** (`/presets`). Drag files with the mouse into the drop zone or pick them with the button; the list lets you download (click the name), rename and delete. If a file already exists, the page asks whether to replace it. A log of recent actions is shown on the tracker's screen.
+The page has six file sections: **MIDI** (`/midi`), **Projects** (`/projects`, with the projects' sample and wavetable folders), **Samples** (`/samples`, the import library), **Wavetables** (`/wavetables`) and **Presets** (`/presets`), plus **Diag** (`/diag`: the tracker's logs crashlog.txt and cpuprof.txt, download and delete only). Drag files with the mouse into the drop zone or pick them with the button; the list lets you download (click the name), rename and delete. If a file already exists, the page asks whether to replace it. A log of recent actions is shown on the tracker's screen.
 
 - **MIDI:** `.mid` only, up to 512 KB, name up to 59 characters, Latin characters only (Cyrillic is not displayed on screen).
 - **Samples:** `.wav` only, up to 4 MB, name up to 59 characters, Latin characters only. The file goes into the library on the card; FILE → SAMPLES → Import WAV… on the tracker adds it to the project.

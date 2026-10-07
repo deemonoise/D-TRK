@@ -148,7 +148,7 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                           i = clampi(i + (d > 0 ? 1 : -1), 0, 4);
                           app_.setAutosaveMin(kSteps[i]);
                         }};
-  // Read only: the firmware version and why the device last restarted (crash log: /projects/crashlog.txt).
+  // Read only: the firmware version and why the device last restarted (crash log: /diag/crashlog.txt).
   params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
   params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
                          [](int) {}};
@@ -163,7 +163,7 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                         },
                         [](int) {}};
   // Click: start; play a while (on the screen to measure), click again: the time per stage of the
-  // audio render goes to /projects/cpuprof.txt.
+  // audio render goes to /diag/cpuprof.txt.
   params_[kCpuProf] = {"CPU profile",
                        [this](char* o, int n) {
                          if (audio::profileRunning())

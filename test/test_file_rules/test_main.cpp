@@ -422,8 +422,15 @@ void test_project_wt_folder() {
 }
 
 void test_crash_log_listed_in_projects() {
-  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Projects, "crashlog.txt"));
-  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Projects, "cpuprof.txt"));
+  // The logs live in /diag: download and delete, no rename, no subfolders.
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Projects, "crashlog.txt"));
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Diag, "crashlog.txt"));
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Diag, "cpuprof.txt"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Diag, "song.mtp"));
+  TEST_ASSERT_FALSE(webRenameAllowedIn(WebDir::Diag, "", "cpuprof.txt", "x.txt"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Diag, "a"));
+  TEST_ASSERT_TRUE(parseWebDir("diag") == WebDir::Diag);
+  TEST_ASSERT_EQUAL_STRING("/diag", webDirPath(WebDir::Diag));
   TEST_ASSERT_FALSE(webFileAllowed(WebDir::Projects, "other.txt"));
   TEST_ASSERT_FALSE(webFileAllowed(WebDir::Samples, "crashlog.txt"));
 }

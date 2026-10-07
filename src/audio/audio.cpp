@@ -47,7 +47,7 @@
 // rest CHIP saw voices through a resonant LP filter with an envelope; drive and reverb on all,
 // reverb 100, compressor on. The CPU guard (Synth::setLoad) sheds what does not fit.
 // Each step lasts 10 s; the last 8 s are measured (with the CPU profile), printed to Serial and
-// appended to /projects/cpuprof.txt with the profile. Then the bench stops (all notes off).
+// appended to /diag/cpuprof.txt with the profile. Then the bench stops (all notes off).
 // It overwrites instruments 16..28 and every track's out / instrument, like the FM bench.
 #if defined(AUDIO_BENCH_FX) && !defined(AUDIO_BENCH_DRUM)
 #define AUDIO_BENCH_DRUM
@@ -1017,7 +1017,7 @@ void pollLog() {
   }
 #endif
 #ifdef AUDIO_BENCH_POOL
-  // Each step's measured part is profiled and goes to /projects/cpuprof.txt.
+  // Each step's measured part is profiled and goes to /diag/cpuprof.txt.
   static uint32_t poolPrinted, poolStarted;
   const uint32_t mseq = poolMeasureSeq.load(std::memory_order_acquire);
   if (mseq != poolStarted) {

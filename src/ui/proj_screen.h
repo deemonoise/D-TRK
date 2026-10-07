@@ -34,7 +34,7 @@ class ProjScreen : public Screen {
   void snapPattern();
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
   bool onProfileRow() const { return kPageFirst[page_] + list_.sel() == kCpuProf; }
-  void toggleProfile();  // start, or stop and append the result to /projects/cpuprof.txt
+  void toggleProfile();  // start, or stop and append the result to /diag/cpuprof.txt
   uint32_t profStartMs_ = 0;
   int bpm();  // local target while it is ahead of the engine, else p.bpm
   void editBpm(int delta);

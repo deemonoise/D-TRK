@@ -18,7 +18,9 @@
 namespace storage {
 namespace {
 
-constexpr const char* kPath = "/projects/crashlog.txt";
+// Logs live in their own folder: a restart in the middle of writing one cannot touch /projects.
+constexpr const char* kPath = "/diag/crashlog.txt";
+constexpr const char* kProfPath = "/diag/cpuprof.txt";
 constexpr size_t kMaxBytes = 16 * 1024;  // older lines go: the file is started again
 
 bool crashed(esp_reset_reason_t r) {
@@ -46,9 +48,14 @@ const char* lastResetText() {
 }
 
 void logBoot() {
-  const esp_reset_reason_t r = esp_reset_reason();
-  if (!crashed(r) || !hw::sdReady()) return;
+  if (!hw::sdReady()) return;
   fs::FS& fs = hw::sdFs();
+  // Older firmware kept the logs in /projects: move them over once.
+  static const char* const kOld[2][2] = {{"/projects/crashlog.txt", kPath}, {"/projects/cpuprof.txt", kProfPath}};
+  for (const auto& o : kOld)
+    if (fs.exists(o[0]) && !fs.exists(o[1])) fs.rename(o[0], o[1]);
+  const esp_reset_reason_t r = esp_reset_reason();
+  if (!crashed(r)) return;
   {
     fs::File old = fs.open(kPath, FILE_READ);
     const bool big = old && old.size() > kMaxBytes;
@@ -81,7 +88,7 @@ void logBoot() {
 
 bool appendCpuProfile(const char* head, const audio::Profile& pr) {
   if (!hw::sdReady()) return false;
-  fs::File f = hw::sdFs().open("/projects/cpuprof.txt", FILE_APPEND);
+  fs::File f = hw::sdFs().open(kProfPath, FILE_APPEND);
   if (!f) return false;
   constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
   f.print(head);

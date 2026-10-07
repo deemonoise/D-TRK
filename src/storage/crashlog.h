@@ -10,12 +10,12 @@ const char* firmwareRev();
 const char* lastResetText();
 
 // At boot, after the card is mounted: a restart by a crash, watchdog or brownout appends a line to
-// /projects/crashlog.txt (reason, firmware, and the crashed task, PC and backtrace from the core
+// /diag/crashlog.txt (reason, firmware, and the crashed task, PC and backtrace from the core
 // dump when there is one; the dump is then erased). Readable on the Wi-Fi page. Decode addresses
 // with: xtensa-esp32s3-elf-addr2line -pfiaC -e .pio/build/wt32/firmware.elf <addresses>
 void logBoot();
 
-// Appends a CPU profile to /projects/cpuprof.txt: the line head (newline included), then the
+// Appends a CPU profile to /diag/cpuprof.txt: the line head (newline included), then the
 // time of every stage. False without a card.
 bool appendCpuProfile(const char* head, const audio::Profile& pr);
 

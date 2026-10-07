@@ -4,7 +4,7 @@
 namespace net {
 
 // Single page served at "/": one section at a time behind a tab bar (projects, samples, MIDI,
-// wavetables, presets, firmware; the tab is kept in the URL hash), file lists scrolling in their own
+// wavetables, presets, diagnostics, firmware; the tab is kept in the URL hash), file lists scrolling in their own
 // box with a name filter, upload (drag & drop), rename, delete, firmware update;
 // samples, wavetables and presets also have subfolders (breadcrumb, new folder, delete an empty folder;
 // presets sit in type folders FM / DRUM / SAMPLE / CHIP / SYNTH); projects have one level of project
@@ -52,7 +52,7 @@ progress{width:100%;display:none;margin-top:8px}
 <header><div class="bar">
 <h1>D-TRK</h1>
 <p>Files on the microSD card. While this page is open the tracker is in Wi-Fi mode.</p>
-<nav><button data-t="projects">Projects</button><button data-t="samples">Samples</button><button data-t="midi">MIDI</button><button data-t="wavetables">Wavetables</button><button data-t="presets">Presets</button><button data-t="fw">Firmware</button></nav>
+<nav><button data-t="projects">Projects</button><button data-t="samples">Samples</button><button data-t="midi">MIDI</button><button data-t="wavetables">Wavetables</button><button data-t="presets">Presets</button><button data-t="diag">Diag</button><button data-t="fw">Firmware</button></nav>
 </div></header>
 <main>
 
@@ -64,7 +64,7 @@ progress{width:100%;display:none;margin-top:8px}
 <div class="list"><table></table></div></section>
 
 <section id="projects"><h2>Projects (/projects)</h2>
-<p class="note">.mtp and .bak, name up to 16 characters: A-Z, digits, - and _. Also crashlog.txt (the restarts after a crash) and cpuprof.txt (CPU profile results). The folder named after a project holds its samples (.wav up to 10 MB, name up to 16 characters), its wt subfolder the project's wavetables: the tracker writes them on save and loads them with the project. To move a project, copy the .mtp and its whole folder.</p>
+<p class="note">.mtp and .bak, name up to 16 characters: A-Z, digits, - and _. The folder named after a project holds its samples (.wav up to 10 MB, name up to 16 characters), its wt subfolder the project's wavetables: the tracker writes them on save and loads them with the project. To move a project, copy the .mtp and its whole folder.</p>
 <div class="crumb"><span></span></div>
 <div class="drop">Drop files here or click to choose<input type="file" accept=".mtp,.bak" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>
@@ -95,6 +95,12 @@ progress{width:100%;display:none;margin-top:8px}
 <div class="tools"><input type="search" placeholder="Filter by name"><span class="cnt"></span></div>
 <div class="list"><table></table></div></section>
 
+<section id="diag"><h2>Diagnostics (/diag)</h2>
+<p class="note">Logs written by the tracker: crashlog.txt (the restarts after a crash, with a backtrace) and cpuprof.txt (PROJ &rarr; SYS &rarr; CPU profile results). Download or delete only.</p>
+<div class="st"></div>
+<div class="tools"><input type="search" placeholder="Filter by name"><span class="cnt"></span></div>
+<div class="list"><table></table></div></section>
+
 <section id="fw"><h2>Firmware</h2>
 <p class="note">The file .pio/build/wt32/firmware.bin. The tracker restarts after the update.</p>
 <div class="drop">Drop firmware.bin here or click to choose<input type="file" accept=".bin" hidden></div>
@@ -113,7 +119,7 @@ function send(url,file,sec){return new Promise(res=>{
   x.onerror=()=>{pg.style.display='none';res({code:0,text:'no connection to the tracker'});};
   x.send(f);});}
 // Subfolder per section: samples / wavetables / presets "" or "a/b", projects "", a project folder or its wt.
-const sub={midi:'',projects:'',samples:'',wavetables:'',presets:''};
+const sub={midi:'',projects:'',samples:'',wavetables:'',presets:'',diag:''};
 const dq=(dir,s=sub[dir])=>'dir='+dir+(s?'&sub='+encodeURIComponent(s):'');
 // Projects top: base name of a project file, "" for anything else.
 const pbase=n=>{const m=/^(.+)\.(mtp|bak)$/.exec(n);return m?m[1]:'';};
@@ -168,10 +174,11 @@ async function list(dir){
         const r=await fetch('/api/rmdir?'+q,{method:'POST'});
         status(sec,r.ok?'Folder deleted: '+f.name:await r.text(),!r.ok);list(dir);};
       t.appendChild(tr);continue;}
-    tr.innerHTML='<td><a></a></td><td class="sz"></td><td class="act"><button>Rename</button><button>Delete</button></td>';
+    const ro=dir==='diag';  // logs: no rename
+    tr.innerHTML='<td><a></a></td><td class="sz"></td><td class="act">'+(ro?'':'<button>Rename</button>')+'<button>Delete</button></td>';
     const a=$('a',tr);a.textContent=f.name;a.href='/api/file?'+q;a.download=f.name;
     $('.sz',tr).textContent=kb(f.size);
-    const [bRen,bDel]=tr.querySelectorAll('button');
+    const bs=tr.querySelectorAll('button'),bRen=ro?{}:bs[0],bDel=bs[bs.length-1];
     bRen.onclick=async()=>{const to=prompt('New name',f.name);if(!to||to===f.name)return;
       const r=await fetch('/api/rename?'+dq(dir)+'&from='+encodeURIComponent(f.name)+'&to='+encodeURIComponent(to),{method:'POST'});
       const txt=await r.text();status(sec,r.ok&&txt==='OK'?'Renamed: '+to:txt,!r.ok);list(dir);};
@@ -215,8 +222,8 @@ function drop(sec,fn){
   d.ondragleave=()=>d.classList.remove('over');
   d.ondrop=e=>{e.preventDefault();d.classList.remove('over');fn([...e.dataTransfer.files]);};
 }
-const dirs=['midi','projects','samples','wavetables','presets'];
-for(const dir of dirs){drop($('#'+dir),fs=>upload(dir,fs));$('#'+dir+' .tools input').oninput=()=>filter(dir);}
+const dirs=['midi','projects','samples','wavetables','presets','diag'];
+for(const dir of dirs){if(dir!=='diag')drop($('#'+dir),fs=>upload(dir,fs));$('#'+dir+' .tools input').oninput=()=>filter(dir);}
 for(const dir of ['samples','wavetables','presets'])$('#'+dir+' .crumb button').onclick=()=>mkdir(dir);
 drop($('#fw'),firmware);
 // One section at a time; its list loads when it is first shown (then on every visit, fresh).

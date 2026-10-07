@@ -278,6 +278,7 @@ void handleUploadChunk() {
       if (!hw::sdReady()) return uploadFail(503, "no SD card");
       up.dir = mt::parseWebDir(srv->arg("dir").c_str());
       if (up.dir == mt::WebDir::Invalid || srv->arg("sub").length() > mt::kWebSubMax) return uploadFail(400, "invalid folder");
+      if (up.dir == mt::WebDir::Diag) return uploadFail(403, "the logs are written by the tracker");
       strlcpy(up.sub, srv->arg("sub").c_str(), sizeof(up.sub));
       if (!mt::webSubValid(up.dir, up.sub)) return uploadFail(400, "invalid folder");
       strlcpy(up.name, u.filename.c_str(), sizeof(up.name));

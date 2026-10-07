@@ -59,7 +59,7 @@ void setup() {
   delay(5);
   const bool safeBoot = digitalRead(pins::kShift) == LOW;
   const bool sd = hw::sdBegin();
-  storage::logBoot();  // a crash / watchdog / brownout restart goes into /projects/crashlog.txt
+  storage::logBoot();  // a crash / watchdog / brownout restart goes into /diag/crashlog.txt
   const bool loaded = sd && !safeBoot && storage::autoload(*project, &fromBak, &autoErr);
   if (!loaded) loadDemo(*project);
 
