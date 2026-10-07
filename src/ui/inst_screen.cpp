@@ -3,9 +3,12 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "page_bar.h"
 #include "audio/audio.h"
 #include "audio/bank.h"
 #include "name_edit.h"
+#include "note_name.h"
+#include "sample_set.h"
 #include "synth_drum_machines.h"
 #include "synth_fm_machines.h"
 #include "wt_builtin.h"
@@ -20,6 +23,17 @@ void envTime(uint8_t v, char* o, int n) {
   const unsigned ms = mt::envTimeMs(v);
   if (ms < 1000) snprintf(o, n, "%u ms", ms);
   else snprintf(o, n, "%u.%u s", ms / 1000, ms % 1000 / 100);
+}
+
+// Lane note n, or the next one in direction dir that no other lane of the kit holds (unique lane
+// notes); the lane's own note if there is none in 0..127.
+uint8_t freeNoteFrom(const mt::Instrument& k, int lane, int n, int dir = 1) {
+  for (; n >= 0 && n <= 127; n += dir) {
+    bool taken = false;
+    for (int l = 0; l < mt::kKitLanes && !taken; ++l) taken = l != lane && k.kit[l].note == n;
+    if (!taken) return static_cast<uint8_t>(n);
+  }
+  return k.kit[lane].note;
 }
 
 void waveName(uint8_t w, char* o, int n) {
@@ -45,8 +59,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                 },
                 [this](int d) {
                   const int k = clampi(mt::instrTypePos(inst().type) + d, 0, static_cast<int>(mt::InstrType::Count) - 1);
-                  const mt::InstrType v = mt::instrTypeAt(k);
-                  if (v != inst().type) mt::instrSetType(inst(), v);
+                  setType(mt::instrTypeAt(k));
                 }};
     p[kVol] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u", inst().vol); },
                [this](int d) { inst().vol = static_cast<uint8_t>(clampi(inst().vol + d, 0, 127)); }};
@@ -71,6 +84,15 @@ InstScreen::InstScreen(App& app) : app_(app) {
                  },
                  [this](int d) { inst().glide = static_cast<uint8_t>(clampi(inst().glide + d, 0, 255)); },
                  [this] { return !inst().mono; }};
+    p[kRsend] = {"Rvb send", [this](char* o, int n) { snprintf(o, n, "%u", inst().rsend); },
+                 [this](int d) { inst().rsend = static_cast<uint8_t>(clampi(inst().rsend + d, 0, 127)); }};
+    // Velocity: 64 changes nothing; full depth moves the cutoff +-6 octaves / DECAY +-63 at 127 / 0.
+    p[kVelCut] = {"Vel>Cut", [this](char* o, int n) { snprintf(o, n, "%+d", inst().velCut); },
+                  [this](int d) { inst().velCut = static_cast<int8_t>(clampi(inst().velCut + d, -64, 63)); },
+                  [this] { return inst().fltMode == static_cast<uint8_t>(mt::FltMode::Off); }};
+    p[kVelMac] = {"Vel>Dec", [this](char* o, int n) { snprintf(o, n, "%+d", inst().velMac); },
+                  [this](int d) { inst().velMac = static_cast<int8_t>(clampi(inst().velMac + d, -64, 63)); },
+                  [this] { return inst().type == mt::InstrType::Chip || inst().type == mt::InstrType::Sample; }};
     p[kSend] = {"Dly send", [this](char* o, int n) { snprintf(o, n, "%u", inst().send); },
                 [this](int d) { inst().send = static_cast<uint8_t>(clampi(inst().send + d, 0, 127)); }};
   }
@@ -201,9 +223,10 @@ InstScreen::InstScreen(App& app) : app_(app) {
   initTail(fm_ + kMacRows, true);
   initTail(drum_ + kMacRows, true);
   initTail(syn_ + kSynRows, true);
+  initKit();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
-  list_.setWrap(false);
+  list_.setPageBar(true);
   list_.setOnEdit([this] {
     app_.markDirty();
     syncParams();
@@ -212,7 +235,124 @@ InstScreen::InstScreen(App& app) : app_(app) {
   wt_.setOnClose([this] { app_.invalidate(); });
 }
 
+void InstScreen::initKit() {
+  kit_[0] = chip_[kName];
+  kit_[1] = chip_[kType];
+  kit_[2] = chip_[kSend];
+  kit_[3] = chip_[kRsend];
+  static const char* const kSrcLabels[] = {"L1 Src", "L2 Src", "L3 Src", "L4 Src",
+                                           "L5 Src", "L6 Src", "L7 Src", "L8 Src"};
+  static_assert(sizeof(kSrcLabels) / sizeof(kSrcLabels[0]) == mt::kKitLanes, "a label per lane");
+  for (int l = 0; l < mt::kKitLanes; ++l) {
+    Param* r = kit_ + kKitMain + l * kLaneRows;
+    auto lane = [this, l]() -> mt::KitLane& { return inst().kit[l]; };
+    // Src: SAMPLE (its own sampler) / INST (one of the instruments). SAMPLE drops the instrument.
+    r[kLaneSrc] = {kSrcLabels[l],
+                   [lane](char* o, int n) { snprintf(o, n, "%s", lane().instr < mt::kInstruments ? "INST" : "SAMPLE"); },
+                   [lane](int d) {
+                     mt::KitLane& ln = lane();
+                     if (d > 0) {
+                       if (ln.instr >= mt::kInstruments) ln.instr = 0;
+                     } else {
+                       ln.instr = mt::kNoInstr;
+                     }
+                   }};
+    // Sample: project list order, "---" (none) before the first; red when missing from the bank.
+    r[kLaneSample] = {"  Sample",
+                      [lane](char* o, int n) { snprintf(o, n, "%s", lane().sample[0] ? lane().sample : "---"); },
+                      [this, lane](int d) {
+                        const mt::Project& p = app_.project();
+                        mt::KitLane& ln = lane();
+                        const int cur = mt::projSampleFind(p, ln.sample);
+                        const int i = clampi(cur + d, -1, p.sampleCount - 1);
+                        if (i == cur) return;
+                        if (i < 0) ln.sample[0] = 0;
+                        else snprintf(ln.sample, sizeof(ln.sample), "%s", p.samples[i].name);
+                      },
+                      {},
+                      [this, lane] {
+                        const mt::KitLane& ln = lane();
+                        if (!ln.sample[0] || !audio::bankMounted()) return false;
+                        const mt::Project& p = app_.project();
+                        return mt::projSampleBank(p, audio::bank(), mt::projSampleFind(p, ln.sample)) < 0;
+                      }};
+    // Instr: INS1..16; a SAMPLE instrument moves the lane note to its root (the sample keeps its pitch).
+    r[kLaneInstr] = {"  Instr",
+                     [this, lane](char* o, int n) {
+                       const uint8_t i = lane().instr < mt::kInstruments ? lane().instr : 0;
+                       snprintf(o, n, "INS%u %s", i + 1u, app_.project().instruments[i].name);
+                     },
+                     [this, l, lane](int d) {
+                       mt::KitLane& ln = lane();
+                       ln.instr = static_cast<uint8_t>(clampi(ln.instr + d, 0, mt::kInstruments - 1));
+                       const mt::Instrument& m = app_.project().instruments[ln.instr];
+                       if (m.type == mt::InstrType::Sample) ln.note = freeNoteFrom(inst(), l, m.root);
+                     },
+                     {},
+                     [this, lane] {
+                       const uint8_t i = lane().instr;
+                       return i < mt::kInstruments && app_.project().instruments[i].type == mt::InstrType::Kit;
+                     }};
+    r[kLaneVol] = {"  Volume", [lane](char* o, int n) { snprintf(o, n, "%u", lane().vol); },
+                   [lane](int d) { lane().vol = static_cast<uint8_t>(clampi(lane().vol + d, 0, 127)); }};
+    r[kLanePitch] = {"  Pitch", [lane](char* o, int n) { snprintf(o, n, "%+d", lane().pitch); },
+                     [lane](int d) { lane().pitch = static_cast<int8_t>(clampi(lane().pitch + d, -24, 24)); }};
+    r[kLaneDecay] = {"  Decay",
+                     [lane](char* o, int n) {
+                       if (lane().decay) envTime(lane().decay, o, n);
+                       else snprintf(o, n, "FULL");
+                     },
+                     [lane](int d) { lane().decay = static_cast<uint8_t>(clampi(lane().decay + d, 0, 127)); }};
+    // Note: sent on MIDI tracks and the pitch a sampler lane plays its sample at; skips other lanes' notes.
+    r[kLaneNote] = {"  Note",
+                    [lane](char* o, int n) {
+                      char nn[4];
+                      mt::noteName(lane().note, nn);
+                      snprintf(o, n, "%s", nn);
+                    },
+                    [this, l, lane](int d) {
+                      const int dir = d > 0 ? 1 : -1;
+                      lane().note = freeNoteFrom(inst(), l, lane().note + d, dir);
+                    }};
+  }
+}
+
+void InstScreen::buildLanes(bool keep) {
+  int n = 0;
+  for (int l = 0; l < mt::kKitLanes; ++l) {
+    const Param* r = kit_ + kKitMain + l * kLaneRows;
+    const bool instMode = inst().kit[l].instr < mt::kInstruments;
+    for (int k = 0; k < kLaneRows; ++k) {
+      const bool sampleOnly = k == kLaneSample || k == kLaneVol || k == kLanePitch || k == kLaneDecay;
+      if ((instMode && sampleOnly) || (!instMode && k == kLaneInstr)) continue;
+      kitShown_[n++] = r[k];
+    }
+  }
+  if (keep) list_.replaceParams(kitShown_, n);
+  else list_.setParams(kitShown_, n);
+}
+
 void InstScreen::initTail(Param* t, bool macros) {
+  t[kDrive] = {"Drive",
+               [this](char* o, int n) {
+                 if (inst().drive) snprintf(o, n, "%u", inst().drive);
+                 else snprintf(o, n, "OFF");
+               },
+               [this](int d) { inst().drive = static_cast<uint8_t>(clampi(inst().drive + d, 0, 127)); }};
+  // Lo-fi after the drive (fx BIT / SRR lock them per step).
+  t[kBit] = {"Bit crush",
+             [this](char* o, int n) {
+               const int b = inst().crushBits;
+               if (b) snprintf(o, n, "%d  (%d BIT)", b, 16 - (b * 14 + 63) / 127);
+               else snprintf(o, n, "OFF");
+             },
+             [this](int d) { inst().crushBits = static_cast<uint8_t>(clampi(inst().crushBits + d, 0, 127)); }};
+  t[kSrr] = {"Downsample",
+             [this](char* o, int n) {
+               if (inst().crushRate) snprintf(o, n, "%u", inst().crushRate);
+               else snprintf(o, n, "OFF");
+             },
+             [this](int d) { inst().crushRate = static_cast<uint8_t>(clampi(inst().crushRate + d, 0, 127)); }};
   auto off = [this] { return inst().fltMode == static_cast<uint8_t>(mt::FltMode::Off); };
   auto noEnv = [this, off] { return off() || inst().fenv == 0; };
   t[kFltMode] = {"Filter",
@@ -247,32 +387,74 @@ void InstScreen::initTail(Param* t, bool macros) {
                   [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().keytrack * 100 + 63) / 127); },
                   [this](int d) { inst().keytrack = static_cast<uint8_t>(clampi(inst().keytrack + d, 0, 127)); },
                   off};
-  auto noLfo = [this] { return inst().lfoDepth == 0; };
-  t[kLfoWave] = {"LFO wave",
-                 [this](char* o, int n) {
+  // LFO page: the selected LFO (1..4) of the instrument; the others keep running. Rows read a copy
+  // (lfoAt) and write through lfoRef: GCC 14 (xtensa) miscompiled a read through the reference
+  // struct in the Dest row into a load from address 0 (PANIC on any non-SYNTH instrument).
+  auto cfg = [this] { return mt::lfoAt(inst(), lfoSel_); };
+  auto lfo = [this] { return mt::lfoRef(inst(), lfoSel_); };
+  auto noLfo = [cfg] { return cfg().depth == 0; };
+  t[kLfoSel] = {"LFO",
+                [this](char* o, int n) {
+                  int on = 0;
+                  for (int i = 0; i < mt::kLfos; ++i) on += mt::lfoAt(inst(), i).depth != 0;
+                  snprintf(o, n, "%d  (%d ON)", lfoSel_ + 1, on);
+                },
+                [this](int d) { lfoSel_ = clampi(lfoSel_ + d, 0, mt::kLfos - 1); }};
+  t[kLfoWave] = {"Wave",
+                 [cfg](char* o, int n) {
                    static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND"};
-                   snprintf(o, n, "%s", kNames[inst().lfoWave % 5]);
+                   snprintf(o, n, "%s", kNames[cfg().wave % 5]);
                  },
-                 [this](int d) {
-                   inst().lfoWave = static_cast<uint8_t>(
-                       clampi(inst().lfoWave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
+                 [cfg, lfo](int d) {
+                   const uint8_t w = static_cast<uint8_t>(clampi(cfg().wave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
+                   lfo().wave = w;
                  },
                  noLfo};
-  t[kLfoRate] = {"LFO rate", [this](char* o, int n) { snprintf(o, n, "%.2f Hz", mt::lfoHz(inst().lfoRate)); },
-                 [this](int d) { inst().lfoRate = static_cast<uint8_t>(clampi(inst().lfoRate + d, 0, 127)); },
+  t[kLfoSync] = {"Sync", [cfg](char* o, int n) { snprintf(o, n, "%s", cfg().sync ? "TEMPO" : "FREE"); },
+                 [cfg, lfo](int d) {
+                   const uint8_t on = d > 0 ? 1 : 0;
+                   if (on == cfg().sync) return;
+                   const mt::LfoRef l = lfo();
+                   l.sync = on;
+                   l.rate = on ? 6 : 64;  // 1/4, or about 1.6 Hz
+                 },
                  noLfo};
-  t[kLfoDepth] = {"LFO depth", [this](char* o, int n) { snprintf(o, n, "%+d", inst().lfoDepth); },
-                  [this](int d) { inst().lfoDepth = static_cast<int8_t>(clampi(inst().lfoDepth + d, -64, 63)); }};
+  t[kLfoRate] = {"Rate",
+                 [cfg](char* o, int n) {
+                   const mt::LfoCfg l = cfg();
+                   if (l.sync) snprintf(o, n, "%s", mt::lfoSyncName(l.rate));
+                   else snprintf(o, n, "%.2f Hz", mt::lfoHz(l.rate));
+                 },
+                 [cfg, lfo](int d) {
+                   const mt::LfoCfg l = cfg();
+                   const uint8_t r = static_cast<uint8_t>(clampi(l.rate + d, 0, l.sync ? mt::kLfoSyncSteps - 1 : 127));
+                   lfo().rate = r;
+                 },
+                 noLfo};
+  t[kLfoDepth] = {"Depth", [cfg](char* o, int n) { snprintf(o, n, "%+d", cfg().depth); },
+                  [cfg, lfo](int d) {
+                    const int8_t v = static_cast<int8_t>(clampi(cfg().depth + d, -64, 63));
+                    lfo().depth = v;
+                  }};
   // DRUM shows the generic macro names here, not the machine's; SYNTH its own.
-  t[kLfoDest] = {"LFO dest",
-                 [this](char* o, int n) {
-                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE",
-                                                        "SWEEP", "CONTOUR", "VOL",   "CUTOFF"};
-                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET", "SENV", "VOL", "CUTOFF"};
+  t[kLfoDest] = {"Dest",
+                 [this, cfg](char* o, int n) {
+                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP",
+                                                        "CONTOUR", "VOL",  "CUTOFF", "DRIVE"};
+                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET",
+                                                      "SENV",  "VOL",  "CUTOFF", "DRIVE"};
+                   constexpr int kN = static_cast<int>(mt::LfoDest::Count);
+                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN, "LFO dest names");
+                   static_assert(sizeof(kSyn) / sizeof(kSyn[0]) == kN, "LFO dest names");
+                   const int dest = cfg().dest % kN;
                    const bool syn = inst().type == mt::InstrType::Synth;
-                   snprintf(o, n, "%s", (syn ? kSyn : kNames)[inst().lfoDest % 8]);
+                   snprintf(o, n, "%s", syn ? kSyn[dest] : kNames[dest]);
                  },
-                 [this, macros](int d) { inst().lfoDest = mt::lfoDestStep(inst().lfoDest, d, macros); }, noLfo};
+                 [cfg, lfo, macros](int d) {
+                   const uint8_t v = mt::lfoDestStep(cfg().dest, d, macros);
+                   lfo().dest = v;
+                 },
+                 noLfo};
 }
 
 void InstScreen::relabel() {
@@ -284,6 +466,27 @@ void InstScreen::relabel() {
 }
 
 mt::Instrument& InstScreen::inst() { return app_.project().instruments[instr_]; }
+
+// Each encoder step applies the type, and a type change resets its own fields (KIT lanes, macros,
+// machine). Leaving a type keeps a copy: turning back to it restores them instead of the defaults.
+void InstScreen::setType(mt::InstrType v) {
+  mt::Instrument& m = inst();
+  if (v == m.type) return;
+  if (typeSnapInstr_ != instr_ || m.type == typeSnap_.type) {
+    typeSnap_ = m;
+    typeSnapInstr_ = instr_;
+  }
+  if (v != typeSnap_.type) {
+    mt::instrSetType(m, v);
+    return;
+  }
+  m.type = v;
+  m.machine = typeSnap_.machine;
+  memcpy(m.macro, typeSnap_.macro, sizeof(m.macro));
+  memcpy(m.kit, typeSnap_.kit, sizeof(m.kit));
+  m.lfoDest = typeSnap_.lfoDest;
+  for (int i = 0; i < mt::kLfos - 1; ++i) m.lfo[i].dest = typeSnap_.lfo[i].dest;
+}
 const mt::Instrument& InstScreen::inst() const { return app_.project().instruments[instr_]; }
 
 Param* InstScreen::typeRows() {
@@ -308,24 +511,33 @@ int InstScreen::typeCount() const {
 
 void InstScreen::syncParams() {
   const mt::InstrType t = inst().type;
-  if (t == shown_) return;
+  if (t == shown_) {
+    // KIT lanes: a Src change or another KIT shows other rows.
+    if (kit() && page_ == kPgType) buildLanes(true);
+    return;
+  }
   shown_ = t;
   // Same page in the new type's rows; outside the type page the row and edit state stay (Type edit).
   const int sel = list_.sel();
   const bool ed = list_.editing();
-  showPage(physPage(), false);
-  if (page_ != kPgType && page_ != kPgType2) {
+  const bool bar = onEditor() ? editor_.barSelected() : list_.barSelected();
+  showPage(physPage(), bar);
+  if (page_ != kPgType && page_ != kPgType2 && !bar) {
     list_.setSel(sel);
     list_.setEdit(ed);
   }
 }
 
 int InstScreen::physPage() const {
+  if (kit()) return page_ == kPgMain ? 0 : 1;
   if (synth() || page_ < kPgType2) return page_;
   return page_ == kPgType2 ? kPgType : page_ - 1;  // no MOD page: its rows are the type page's
 }
 
-int InstScreen::logicalPage(int phys) const { return synth() || phys < kPgType2 ? phys : phys + 1; }
+int InstScreen::logicalPage(int phys) const {
+  if (kit()) return phys ? kPgType : kPgMain;
+  return synth() || phys < kPgType2 ? phys : phys + 1;
+}
 
 int InstScreen::tableOsc() const {
   if (!synth() || page_ != kPgType || list_.editing()) return -1;
@@ -333,12 +545,20 @@ int InstScreen::tableOsc() const {
   return r == kTable1 ? 0 : (r == kTable2 ? 1 : -1);
 }
 
-void InstScreen::showPage(int phys, bool last) {
+void InstScreen::showPage(int phys, bool bar) {
   const int n = pageCount();
   page_ = logicalPage((phys % n + n) % n);
   leaveEdit();
   if (onEditor()) {
-    editor_.enter(last);
+    editor_.enter(bar);
+    return;
+  }
+  if (kit()) {
+    if (page_ == kPgMain) list_.setParams(kit_, kKitMain);
+    else buildLanes(false);
+    list_.setVisibleRows(kListRows);
+    if (bar) list_.selectBar();
+    else list_.setSel(0);
     return;
   }
   Param* const rows = typeRows();
@@ -354,8 +574,8 @@ void InstScreen::showPage(int phys, bool last) {
   }
   list_.setParams(rows + off, count);
   list_.setVisibleRows(kListRows);
-  list_.setWrap(false);
-  list_.setSel(last ? count - 1 : 0);
+  if (bar) list_.selectBar();
+  else list_.setSel(0);
 }
 
 void InstScreen::fixNames() {
@@ -377,6 +597,7 @@ void InstScreen::leaveEdit() {
 
 void InstScreen::onEnter() {
   leaveEdit();
+  typeSnapInstr_ = -1;
   instr_ = app_.project().tracks[app_.curTrack()].instr % mt::kInstruments;
   editor_.bind(instr_);
   syncParams();
@@ -388,6 +609,7 @@ void InstScreen::onLeave() {
 }
 
 void InstScreen::onProjectReplaced() {
+  typeSnapInstr_ = -1;
   // The instrument the browser would restore belongs to the old project.
   if (presets_.isOpen()) presets_.close(true);
   if (wt_.isOpen()) wt_.close(true, false);
@@ -407,9 +629,14 @@ void InstScreen::openTables(int osc) {
 
 void InstScreen::presetMenu() {
   leaveEdit();
+  if (inst().type == mt::InstrType::Kit) {
+    app_.toast("NO KIT PRESETS");
+    return;
+  }
   enum : int { kLoad, kSave };
   const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
   app_.menu().open("PRESET", items, 2, [this](int id) {
+    typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
     presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
   });
 }
@@ -420,6 +647,8 @@ void InstScreen::changeInstr(int d) {
   editor_.bind(instr_);
   syncParams();
 }
+
+bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && onEditor(); }
 
 bool InstScreen::trackKey(int n, bool shift) {
   if (shift || presets_.isOpen() || !onEditor()) return false;
@@ -466,7 +695,7 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
   }
   const int ov = onEditor() ? editor_.onInput(ev) : list_.onInput(ev);
   if (ov) {
-    showPage(physPage() + ov, ov < 0);
+    showPage(physPage() + ov, true);  // click (Shift+click) on the page bar
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();
@@ -490,7 +719,7 @@ void InstScreen::onTouch(const TouchEvent& ev) {
   }
   if (ev.y >= y0_ + kHeaderH && ev.y < y0_ + kHeaderH + kPageBarH && ev.type != TouchType::Drag &&
       ev.type != TouchType::HDrag) {
-    if (ev.type == TouchType::Tap) showPage(ev.x / pageW(), false);
+    if (ev.type == TouchType::Tap) showPage(ev.x / pageW(), true);
     return;
   }
   // Tap on a character of the name being edited moves the name cursor.
@@ -515,7 +744,8 @@ void InstScreen::onTouch(const TouchEvent& ev) {
 }
 
 void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
-  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "KIT"};
+  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES"};
+  static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
   const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};
   const int ty = y + (kPageBarH - 4 - kCharH) / 2;
@@ -527,6 +757,7 @@ void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
     s.setTextColor(on ? kCursor : kDim);
     s.drawString(name, i * w + (w - static_cast<int>(strlen(name)) * kCharW) / 2, ty);
   }
+  if (onEditor() ? editor_.barSelected() : list_.barSelected()) PageBar::drawFocus(s, y, kPageBarH);
 }
 
 void InstScreen::drawEnv(LGFX_Sprite& s, int y) {

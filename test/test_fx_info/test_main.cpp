@@ -33,7 +33,8 @@ void test_format() {
 }
 
 void test_step_clamps_and_signed() {
-  TEST_ASSERT_EQUAL(8, fxStep(Fx::RAT, 7, 5));
+  TEST_ASSERT_EQUAL(0x15, fxStep(Fx::RAT, 7, 5));  // past 8: the rising ramp (5^)
+  TEST_ASSERT_EQUAL(8, fxStep(Fx::RAT, 7, 1));
   TEST_ASSERT_EQUAL(2, fxStep(Fx::RAT, 3, -9));
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(-50), fxStep(Fx::NDG, 0, -80));
   TEST_ASSERT_EQUAL(50, fxStep(Fx::NDG, static_cast<uint8_t>(-1), 100));
@@ -45,20 +46,96 @@ void test_cnd_order() {
   TEST_ASSERT_EQUAL(0x22, fxStep(Fx::CND, 0x12, 1));
   TEST_ASSERT_EQUAL(0x13, fxStep(Fx::CND, 0x22, 1));
   TEST_ASSERT_EQUAL(0, fxStep(Fx::CND, 0x12, -1));
-  TEST_ASSERT_EQUAL(0x88, fxStep(Fx::CND, 0x78, 100));
+  TEST_ASSERT_EQUAL(kCndNotNei, fxStep(Fx::CND, 0x78, 100));  // !NEI is last
+}
+
+void test_cnd_order_has_fill() {
+  uint8_t v = 0x88;  // 8:8, the last A:B
+  v = fxStep(Fx::CND, v, 1);
+  TEST_ASSERT_EQUAL_HEX8(kCndFill, v);
+  v = fxStep(Fx::CND, v, 1);
+  TEST_ASSERT_EQUAL_HEX8(kCndNoFill, v);
+  v = fxStep(Fx::CND, v, 1);
+  TEST_ASSERT_EQUAL_HEX8(kCndPre, v);  // then PRE .. !NEI
+  TEST_ASSERT_EQUAL_HEX8(kCndFill, fxStep(Fx::CND, kCndNoFill, -1));
+  TEST_ASSERT_EQUAL_HEX8(0x88, fxStep(Fx::CND, kCndFill, -1));
+  char out[5];
+  fxFormat(Fx::CND, kCndFill, out);
+  TEST_ASSERT_EQUAL_STRING("FIL", out);
+  fxFormat(Fx::CND, kCndNoFill, out);
+  TEST_ASSERT_EQUAL_STRING("NFL", out);
 }
 
 void test_cmd_cycle() {
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, 1) == Fx::CHN);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::ACC);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::PGM, 1) == Fx::SLD);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CUT, 1) == Fx::DCY);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::FLT);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::RES, 1) == Fx::SLC);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::SLC, 1) == Fx::OFF);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::OFF, 1) == Fx::DLY);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::ACC);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::ACC, 1) == Fx::None);
+  // Grouped order: notes and arp, timing, chance, pitch / level, sound locks, sample, sends, MIDI.
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, 1) == Fx::CHD);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::None, -1) == Fx::PGM);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::PGM, 1) == Fx::None);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARP, 1) == Fx::ARM);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARM, 1) == Fx::ARS);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ARS, 1) == Fx::RAT);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::FLT, 1) == Fx::RES);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::RVB);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHN, -1) == Fx::RVB);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHD, -3) == Fx::CCB);
+  // Every command once per round.
+  bool seen[static_cast<int>(Fx::Count)] = {};
+  Fx f = Fx::None;
+  for (int i = 0; i < static_cast<int>(Fx::Count); ++i) {
+    TEST_ASSERT_FALSE(seen[static_cast<int>(f)]);
+    seen[static_cast<int>(f)] = true;
+    TEST_ASSERT_TRUE(fxNextCmd(fxNextCmd(f, 1), -1) == f);
+    f = fxNextCmd(f, 1);
+  }
+  TEST_ASSERT_TRUE(f == Fx::None);
+}
+
+// ARS: step arp, the ARM encoding (steps per note, then mode), MIDI and INT.
+void test_step_arp_fx() {
+  TEST_ASSERT_EQUAL_STRING("ARS", fxName(Fx::ARS));
+  TEST_ASSERT_EQUAL_STRING("STEP ARP", fxLongName(Fx::ARS));
+  TEST_ASSERT_EQUAL_HEX8(kArsDefault, fxDefault(Fx::ARS));
+  TEST_ASSERT_EQUAL_STRING(" U1", fmt(Fx::ARS, kArsDefault));
+  TEST_ASSERT_EQUAL_STRING(" D4", fmt(Fx::ARS, 0x14));
+  TEST_ASSERT_EQUAL_HEX8(0x02, fxStep(Fx::ARS, 0x01, 1));
+  // Octaves: after the 8 step counts of a mode come 2, 3, 4 octaves, then the next mode.
+  TEST_ASSERT_EQUAL_HEX8(0x41, fxStep(Fx::ARS, 0x08, 1));
+  TEST_ASSERT_EQUAL_STRING("U12", fmt(Fx::ARS, 0x41));
+  TEST_ASSERT_EQUAL_STRING("D34", fmt(Fx::ARS, 0xD3));
+  TEST_ASSERT_EQUAL_HEX8(0x11, fxStep(Fx::ARS, 0xC8, 1));
+  TEST_ASSERT_EQUAL_HEX8(0xC8, fxStep(Fx::ARS, 0x11, -1));
+  TEST_ASSERT_EQUAL_HEX8(0xF8, fxStep(Fx::ARS, 0xF8, 5));  // R8, 4 octaves: the end
+  TEST_ASSERT_EQUAL_HEX8(0x13, fxStep(Fx::ARM, 0x08, 3));  // ARM keeps its order
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::ARS));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::ARM));
+}
+
+void test_new_sound_fx() {
+  TEST_ASSERT_EQUAL_STRING("DRV", fxName(Fx::DRV));
+  TEST_ASSERT_EQUAL_STRING("RVB", fxName(Fx::RVB));
+  TEST_ASSERT_EQUAL_STRING("ARM", fxName(Fx::ARM));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::DRV) && fxSynthOnly(Fx::RVB) && fxSynthOnly(Fx::ARM));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::ACC));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::DRV));
+  TEST_ASSERT_EQUAL(0x03, fxDefault(Fx::ARM));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::RVB, 120, 50));
+}
+
+void test_arm_format_and_step() {
+  char o[5];
+  fxFormat(Fx::ARM, 0x03, o);
+  TEST_ASSERT_EQUAL_STRING(" U3", o);
+  fxFormat(Fx::ARM, 0x14, o);
+  TEST_ASSERT_EQUAL_STRING(" D4", o);
+  fxFormat(Fx::ARM, 0x22, o);
+  TEST_ASSERT_EQUAL_STRING(" B2", o);
+  fxFormat(Fx::ARM, 0x38, o);
+  TEST_ASSERT_EQUAL_STRING(" R8", o);
+  TEST_ASSERT_EQUAL_HEX8(0x04, fxStep(Fx::ARM, 0x03, 1));   // rate first
+  TEST_ASSERT_EQUAL_HEX8(0x11, fxStep(Fx::ARM, 0x08, 1));   // rate 8 -> next mode, rate 1
+  TEST_ASSERT_EQUAL_HEX8(0x38, fxStep(Fx::ARM, 0x38, 1));   // clamps at R8
+  TEST_ASSERT_EQUAL_HEX8(0x01, fxStep(Fx::ARM, 0x01, -1));  // clamps at U1
+  TEST_ASSERT_EQUAL_HEX8(0x38, fxStep(Fx::ARM, 0x01, 100));
 }
 
 void test_filter_fx() {
@@ -186,6 +263,34 @@ void test_acc_lane_mask() {
   TEST_ASSERT_FALSE(fxSynthOnly(Fx::ACC));
 }
 
+void test_perf_names() {
+  TEST_ASSERT_EQUAL_STRING("RAT 2", perfFxName(PerfFx::Rat2));
+  TEST_ASSERT_EQUAL_STRING("MUTE", perfFxName(PerfFx::Mute));
+  TEST_ASSERT_EQUAL_STRING("", perfFxName(PerfFx::None));
+  TEST_ASSERT_EQUAL_STRING("", perfFxName(PerfFx::Count));
+}
+
+void test_cnd_pre_nei() {
+  TEST_ASSERT_EQUAL_STRING("PRE", fmt(Fx::CND, kCndPre));
+  TEST_ASSERT_EQUAL_STRING("!PR", fmt(Fx::CND, kCndNotPre));
+  TEST_ASSERT_EQUAL_STRING("NEI", fmt(Fx::CND, kCndNei));
+  TEST_ASSERT_EQUAL_STRING("!NE", fmt(Fx::CND, kCndNotNei));
+  TEST_ASSERT_EQUAL_HEX8(kCndPre, fxStep(Fx::CND, kCndNoFill, 1));
+  TEST_ASSERT_EQUAL_HEX8(kCndNotNei, fxStep(Fx::CND, kCndNei, 1));
+  TEST_ASSERT_EQUAL_HEX8(kCndNotNei, fxStep(Fx::CND, kCndNotNei, 5));  // the end
+  TEST_ASSERT_EQUAL_HEX8(kCndNoFill, fxStep(Fx::CND, kCndPre, -1));
+}
+
+void test_rat_ramp() {
+  TEST_ASSERT_EQUAL_STRING("  4", fmt(Fx::RAT, 4));
+  TEST_ASSERT_EQUAL_STRING(" 4^", fmt(Fx::RAT, 0x14));
+  TEST_ASSERT_EQUAL_STRING(" 4v", fmt(Fx::RAT, 0x24));
+  TEST_ASSERT_EQUAL_HEX8(0x12, fxStep(Fx::RAT, 8, 1));     // after 8: 2 rising
+  TEST_ASSERT_EQUAL_HEX8(0x22, fxStep(Fx::RAT, 0x18, 1));  // then falling
+  TEST_ASSERT_EQUAL_HEX8(0x28, fxStep(Fx::RAT, 0x28, 3));  // the end
+  TEST_ASSERT_EQUAL_HEX8(2, fxStep(Fx::RAT, 2, -1));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_long_names);
@@ -194,6 +299,10 @@ int main() {
   RUN_TEST(test_step_clamps_and_signed);
   RUN_TEST(test_cnd_order);
   RUN_TEST(test_cmd_cycle);
+  RUN_TEST(test_step_arp_fx);
+  RUN_TEST(test_perf_names);
+  RUN_TEST(test_cnd_pre_nei);
+  RUN_TEST(test_rat_ramp);
   RUN_TEST(test_synth_fx_names_ranges);
   RUN_TEST(test_synth_only);
   RUN_TEST(test_fm_lock_fx);
@@ -201,5 +310,8 @@ int main() {
   RUN_TEST(test_slc_fx);
   RUN_TEST(test_dly_fx);
   RUN_TEST(test_acc_lane_mask);
+  RUN_TEST(test_cnd_order_has_fill);
+  RUN_TEST(test_new_sound_fx);
+  RUN_TEST(test_arm_format_and_step);
   return UNITY_END();
 }

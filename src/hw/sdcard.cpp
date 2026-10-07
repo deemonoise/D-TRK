@@ -39,21 +39,41 @@ int keepName(char (*names)[kNameMax], int n, int max, const char* name, size_t l
 
 }  // namespace
 
+namespace {
+
+// Card back to idle after an aborted transfer: CS high and 80+ clocks at a slow rate (the SD
+// SPI-mode wake-up), on a freshly set up bus.
+void resetBus() {
+  spi->end();
+  spi->begin(pins::kSdClk, pins::kSdMiso, pins::kSdMosi, pins::kSdCs);
+  pinMode(pins::kSdCs, OUTPUT);
+  digitalWrite(pins::kSdCs, HIGH);
+  spi->beginTransaction(SPISettings(400000, MSBFIRST, SPI_MODE0));
+  for (int i = 0; i < 16; ++i) spi->transfer(0xFF);
+  spi->endTransaction();
+}
+
+bool mount() {
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    if (attempt > 0) {
+      resetBus();
+      delay(50);
+    }
+    if (SD.begin(pins::kSdCs, *spi, attempt == 0 ? 20000000 : 4000000) && SD.cardType() != CARD_NONE) return true;
+    SD.end();
+  }
+  return false;
+}
+
+}  // namespace
+
 bool sdBegin() {
   if (!spi) {
     spi = new SPIClass(FSPI);
     spi->begin(pins::kSdClk, pins::kSdMiso, pins::kSdMosi, pins::kSdCs);
   }
-  if (ready) SD.end();
-  ready = SD.begin(pins::kSdCs, *spi, 20000000);
-  if (!ready) {
-    SD.end();
-    ready = SD.begin(pins::kSdCs, *spi, 4000000);
-  }
-  if (ready && SD.cardType() == CARD_NONE) {
-    SD.end();
-    ready = false;
-  }
+  SD.end();  // also after a failed mount: nothing may stay registered
+  ready = mount();
   if (!ready) {
     Serial.println("sd: no card");
     return false;
@@ -63,7 +83,10 @@ bool sdBegin() {
   if (!SD.exists("/samples")) SD.mkdir("/samples");
   if (!SD.exists("/wavetables")) SD.mkdir("/wavetables");
   if (!SD.exists("/presets")) SD.mkdir("/presets");
+  if (!SD.exists("/templates")) SD.mkdir("/templates");
+  if (!SD.exists("/diag")) SD.mkdir("/diag");
   for (int t = 0; t < static_cast<int>(mt::InstrType::Count); ++t) {
+    if (!mt::presetTypeHas(static_cast<mt::InstrType>(t))) continue;
     const char* root = mt::presetRoot(static_cast<mt::InstrType>(t));
     if (!SD.exists(root)) SD.mkdir(root);
   }
@@ -71,6 +94,11 @@ bool sdBegin() {
 }
 
 bool sdReady() { return ready; }
+
+bool sdRecover() {
+  if (ready && SD.exists("/projects")) return true;  // the card answers: a file problem, keep the mount
+  return sdBegin();
+}
 
 fs::FS& sdFs() { return SD; }
 

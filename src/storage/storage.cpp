@@ -11,6 +11,8 @@
 #include "hw/sdcard.h"
 #include "project_io.h"
 #include "sample_set.h"
+#include "demos.h"
+#include "templates.h"
 #include "wav.h"
 #include "wt_mip.h"
 
@@ -43,11 +45,11 @@ void freeProject(mt::Project* p) {
 // If one of these fires, a field was added/removed: update snapshot() below and
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
 static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() and project_io");
-static_assert(sizeof(mt::TrackCfg) == 20, "TrackCfg changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Pattern) == 3 + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
+static_assert(sizeof(mt::TrackCfg) == 21, "TrackCfg changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Pattern) == 4 + mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Instrument) == 358, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 469304, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Instrument) == 380, "Instrument changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 476248, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -59,6 +61,10 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.tracks, live.tracks, sizeof(out.tracks));
   memcpy(out.chain, live.chain, sizeof(out.chain));
   out.chainLen = live.chainLen;
+  memcpy(out.chainTr, live.chainTr, sizeof(out.chainTr));
+  memcpy(out.chainRep, live.chainRep, sizeof(out.chainRep));
+  memcpy(out.chainScene, live.chainScene, sizeof(out.chainScene));
+  memcpy(out.scenes, live.scenes, sizeof(out.scenes));
   out.songMode = live.songMode;
   memcpy(out.instruments, live.instruments, sizeof(out.instruments));
   out.masterVol = live.masterVol;
@@ -67,6 +73,15 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.dlyFb = live.dlyFb;
   out.dlyTone = live.dlyTone;
   out.dlyLevel = live.dlyLevel;
+  out.rvbSize = live.rvbSize;
+  out.rvbDamp = live.rvbDamp;
+  out.rvbLevel = live.rvbLevel;
+  out.compAmt = live.compAmt;
+  out.compRel = live.compRel;
+  out.scTrack = live.scTrack;
+  out.scDepth = live.scDepth;
+  out.djFilter = live.djFilter;
+  memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));
@@ -175,6 +190,23 @@ Result cleanFolder(const char* dir, Keep keep) {
   return r;
 }
 
+// The names the project's .bak lists (nullptr: no readable .bak). Their files stay in the folder:
+// falling back to the .bak (autoload or by hand) must find them.
+mt::ProjectFileNames* bakNames(const char* name) {
+  const Path bak(name, ".bak");
+  if (!hw::sdFs().exists(bak.s)) return nullptr;
+  fs::File f = hw::sdFs().open(bak.s, FILE_READ);
+  if (!f) return nullptr;
+  auto* n = new (std::nothrow) mt::ProjectFileNames();
+  if (!n) return nullptr;
+  hw::FileSource src(f);
+  if (mt::readProjectFileNames(src, *n) != mt::LoadErr::Ok) {
+    delete n;
+    return nullptr;
+  }
+  return n;
+}
+
 // Copies src to dst through dst.tmp (replaces dst at the end).
 bool copyFile(const char* src, const char* dst) {
   fs::FS& fs = hw::sdFs();
@@ -250,6 +282,12 @@ const char* resultText(Result r) {
     case Result::BadFile: return "BAD FILE";
     case Result::EngineBusy: return "ENGINE BUSY";
     case Result::SamplesNotSaved: return "SAMPLES NOT SAVED";
+    case Result::AudioBusy: return "AUDIO BUSY";
+    case Result::DiskFull: return "DISK FULL";
+    case Result::Cancelled: return "CANCELLED";
+    case Result::Capped: return "SAMPLE CAP";
+    case Result::BankFull: return "BANK FULL";
+    case Result::NoBank: return "NO SAMPLE BANK";
   }
   return "?";
 }
@@ -310,6 +348,7 @@ Result save(mt::Project& live, const char* name, SyncProgress cb, void* ctx) {
     return Result::WriteFail;
   }
   writeLast(nm);
+  if (fs.exists(Path(nm, ".auto").s)) fs.remove(Path(nm, ".auto").s);  // saved: the autosave is behind
 
   engine::lockProject();
   memcpy(live.name, nm, sizeof(nm));
@@ -393,10 +432,12 @@ Result syncFolder(const mt::Project& live, const char* from, SyncProgress cb, vo
   }
   // A failed write may leave the only good copy of a listed sample under another name: clean up next time.
   if (r != Result::Ok) return r;
-  // Files of samples / wavetables no longer in the list, leftovers of interrupted writes.
-  r = cleanFolder(dir, [&](const char* base) { return mt::projSampleFind(live, base) >= 0; });
+  // Files of samples / wavetables in neither the list nor the .bak's, leftovers of interrupted writes.
+  mt::ProjectFileNames* bak = bakNames(live.name);
+  r = cleanFolder(dir, [&](const char* base) { return mt::projSampleFind(live, base) >= 0 || (bak && bak->has(base, false)); });
   if (r == Result::Ok && (hadWt || live.wavetableCount > 0))
-    r = cleanFolder(wtDir, [&](const char* base) { return mt::projWtFind(live, base) >= 0; });
+    r = cleanFolder(wtDir, [&](const char* base) { return mt::projWtFind(live, base) >= 0 || (bak && bak->has(base, true)); });
+  delete bak;
   return r;
 }
 
@@ -512,11 +553,44 @@ Result installProject(const char* tmpPath, const char* fileName) {
   return Result::Ok;
 }
 
+namespace {
+Result loadExt(mt::Project& live, const char* name, const char* ext, int* missing, SyncProgress cb, void* ctx);
+}
+
 Result load(mt::Project& live, const char* name, bool fromBak, int* missing, SyncProgress cb, void* ctx) {
+  return loadExt(live, name, fromBak ? ".bak" : ".mtp", missing, cb, ctx);
+}
+
+Result autosave(const mt::Project& live) {
+  if (!hw::sdReady()) return Result::NoSd;
+  if (!validName(live.name)) return Result::BadFile;
+  const Path tmp(live.name, ".atm"), dst(live.name, ".auto");
+  const Result r = writeTmp(tmp.s, live);  // the engine is stopped: it changes nothing meanwhile
+  fs::FS& fs = hw::sdFs();
+  if (r != Result::Ok) {
+    fs.remove(tmp.s);
+    return r;
+  }
+  if (fs.exists(dst.s)) fs.remove(dst.s);
+  return fs.rename(tmp.s, dst.s) ? Result::Ok : Result::WriteFail;
+}
+
+bool autosaveExists(const char* name) {
+  return hw::sdReady() && validName(name) && hw::sdFs().exists(Path(name, ".auto").s);
+}
+
+Result loadAutosave(mt::Project& live, int* missing, SyncProgress cb, void* ctx) {
+  char nm[sizeof(live.name)];
+  strlcpy(nm, live.name, sizeof(nm));
+  return loadExt(live, nm, ".auto", missing, cb, ctx);
+}
+
+namespace {
+Result loadExt(mt::Project& live, const char* name, const char* ext, int* missing, SyncProgress cb, void* ctx) {
   if (missing) *missing = 0;
   if (!hw::sdReady()) return Result::NoSd;
   if (!validName(name)) return Result::BadFile;  // would load under a different name
-  const Path path(name, fromBak ? ".bak" : ".mtp");
+  const Path path(name, ext);
   if (!hw::sdFs().exists(path.s)) return Result::NotFound;
   mt::Project* tmp = allocProject();
   if (!tmp) return Result::NoMemory;
@@ -536,16 +610,75 @@ Result load(mt::Project& live, const char* name, bool fromBak, int* missing, Syn
   // The project is loaded either way; only a failed folder write is reported.
   return pullSamples(live, missing, cb, ctx) == Result::SamplesNotSaved ? Result::SamplesNotSaved : Result::Ok;
 }
+}  // namespace
 
-Result newProject(mt::Project& live) {
+namespace {
+Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
   if (!stopEngine()) return Result::EngineBusy;
   srcFolder[0] = 0;
   engine::lockProject();
-  live.reset();
+  build(i, live);
   engine::unlockProject();
   afterReplace(live);
   // Otherwise a reboot would autoload the project that was just closed.
   if (hw::sdReady() && hw::sdFs().exists(kLast)) hw::sdFs().remove(kLast);
+  return Result::Ok;
+}
+}  // namespace
+
+Result newProject(mt::Project& live, int tmpl) { return newBuilt(live, mt::templateBuild, tmpl); }
+
+Result newDemo(mt::Project& live, int i) { return newBuilt(live, mt::demoBuild, i); }
+
+namespace {
+struct TemplatePath {
+  char s[48];
+  TemplatePath(const char* name, const char* ext) { snprintf(s, sizeof(s), "%s/%s%s", kTemplateDir, name, ext); }
+};
+}  // namespace
+
+Result saveTemplate(const mt::Project& live, const char* name) {
+  if (!hw::sdReady()) return Result::NoSd;
+  char nm[17];
+  if (!sanitize(name, nm)) return Result::BadFile;
+  fs::FS& fs = hw::sdFs();
+  if (!fs.exists(kTemplateDir) && !fs.mkdir(kTemplateDir)) return Result::WriteFail;
+  mt::Project* snap = allocProject();
+  if (!snap) return Result::NoMemory;
+  snapshot(live, *snap);
+  mt::templateStrip(*snap);
+  const TemplatePath tmp(nm, ".tmp"), dst(nm, ".mtp");
+  Result r = writeTmp(tmp.s, *snap);
+  freeProject(snap);
+  if (r == Result::Ok) {
+    if (fs.exists(dst.s)) fs.remove(dst.s);
+    if (!fs.rename(tmp.s, dst.s)) r = Result::WriteFail;
+  }
+  if (r != Result::Ok) fs.remove(tmp.s);
+  return r;
+}
+
+Result newFromTemplate(mt::Project& live, const char* name, int* missing) {
+  if (missing) *missing = 0;
+  if (!hw::sdReady()) return Result::NoSd;
+  const TemplatePath path(name, ".mtp");
+  if (!hw::sdFs().exists(path.s)) return Result::NotFound;
+  mt::Project* tmp = allocProject();
+  if (!tmp) return Result::NoMemory;
+  Result r = readFile(path.s, *tmp);
+  if (r == Result::Ok && !stopEngine()) r = Result::EngineBusy;
+  if (r == Result::Ok) {
+    mt::templateStrip(*tmp);  // also "untitled"
+    engine::lockProject();
+    live = *tmp;
+    engine::unlockProject();
+    afterReplace(live);
+    srcFolder[0] = 0;
+    if (hw::sdFs().exists(kLast)) hw::sdFs().remove(kLast);
+  }
+  freeProject(tmp);
+  if (r != Result::Ok) return r;
+  pullSamples(live, missing);  // what the cache lacks stays missing (no folder for "untitled")
   return Result::Ok;
 }
 

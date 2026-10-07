@@ -9,6 +9,7 @@
 #include "hw/sdcard.h"
 #include "hw/trackio.h"
 #include "model.h"
+#include "storage/crashlog.h"
 #include "storage/storage.h"
 #include "ui/app.h"
 
@@ -39,6 +40,10 @@ void wtBench();
 
 void setup() {
   Serial.begin(115200);
+  // Before anything else: the synth and the sequencer need large blocks of internal RAM (in PSRAM
+  // the audio costs far more); the SD card, the screen and Wi-Fi fragment it later.
+  audio::reserve();
+  engine::reserve();
   void* mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_SPIRAM);
   if (!mem) mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_8BIT);
   if (!mem) {
@@ -49,7 +54,13 @@ void setup() {
   // Engine not running yet: load straight into the live project.
   bool fromBak = false;
   storage::Result autoErr = storage::Result::Ok;
-  const bool loaded = hw::sdBegin() && storage::autoload(*project, &fromBak, &autoErr);
+  // Safe boot: Shift held at power-on skips the autoload (a project that crashes the device on load).
+  pinMode(pins::kShift, INPUT_PULLUP);
+  delay(5);
+  const bool safeBoot = digitalRead(pins::kShift) == LOW;
+  const bool sd = hw::sdBegin();
+  storage::logBoot();  // a crash / watchdog / brownout restart goes into /diag/crashlog.txt
+  const bool loaded = sd && !safeBoot && storage::autoload(*project, &fromBak, &autoErr);
   if (!loaded) loadDemo(*project);
 
   lcd.init();
@@ -68,7 +79,9 @@ void setup() {
   const bool folderFail = loaded && storage::pullSamples(*project, &missing, ui::App::syncProgress, &app) ==
                                         storage::Result::SamplesNotSaved;
   // One toast: autoload error (nothing loaded), or backup / missing samples / folder not written.
-  if (autoErr != storage::Result::Ok) {
+  if (safeBoot) {
+    app.toast("SAFE BOOT: NOTHING LOADED");
+  } else if (autoErr != storage::Result::Ok) {
     char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
     app.toast(msg);

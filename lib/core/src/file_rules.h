@@ -7,10 +7,11 @@ namespace mt {
 
 // Rules for the Wi-Fi file page: which folders and names are reachable, size limits, JSON listing.
 
-enum class WebDir : uint8_t { Invalid, Midi, Projects, Samples, Presets, Wavetables };
+enum class WebDir : uint8_t { Invalid, Midi, Projects, Samples, Presets, Wavetables, Diag };
 
-WebDir parseWebDir(const char* s);  // "midi" / "projects" / "samples" / "presets" / "wavetables"
-// "/midi", "/projects", "/samples", "/presets", "/wavetables", "" for Invalid
+WebDir parseWebDir(const char* s);  // "midi" / "projects" / "samples" / "presets" / "wavetables" / "diag"
+// "/midi", "/projects", "/samples", "/presets", "/wavetables", "/diag", "" for Invalid.
+// Diag (the device's logs, crashlog.cpp): .txt, download and delete only (no upload, no rename).
 const char* webDirPath(WebDir d);
 
 constexpr int kWebNameMax = 63;    // whole file name incl. extension

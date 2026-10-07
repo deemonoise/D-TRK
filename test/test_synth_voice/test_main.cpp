@@ -65,7 +65,7 @@ void test_mono_ignores_other_tracks() {
 
 // Every voice holding a note (an on voice with an idle env is a filter tail, reused first).
 static void fillPool() {
-  for (int t = 0; t < 8; ++t)
+  for (int t = 0; t < kVoices / 2; ++t)
     for (int k = 0; k < 2; ++k) {
       const int i = alloc(static_cast<uint8_t>(t));
       v[i].env.set(0, 0, 1.f, 100);
@@ -226,6 +226,17 @@ void test_heavy_limit_skips_stolen_and_tails() {
   TEST_ASSERT_EQUAL(1, stolen);  // 7 counted + the tail freed a slot: nothing more stolen
 }
 
+void test_poly_max_eight() {
+  int got[8];
+  for (int k = 0; k < 8; ++k) {
+    bool l;
+    got[k] = allocVoice(v, 0, false, age, l, false, 8);
+    for (int j = 0; j < k; ++j) TEST_ASSERT_NOT_EQUAL(got[j], got[k]);
+  }
+  bool l;
+  TEST_ASSERT_EQUAL(got[0], allocVoice(v, 0, false, age, l, false, 8));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_alloc_marks_voice);
@@ -242,5 +253,6 @@ int main() {
   RUN_TEST(test_heavy_limit_counts_drum_with_fm);
   RUN_TEST(test_heavy_limit_no_free_voice_takes_victim);
   RUN_TEST(test_heavy_limit_skips_stolen_and_tails);
+  RUN_TEST(test_poly_max_eight);
   return UNITY_END();
 }

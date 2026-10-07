@@ -30,7 +30,7 @@ struct ChipOsc {
   uint32_t lfsr = 0x7FFF;
   float noiseVal = 1;
   // Next sample, -1..1. duty 0..1 for Pulse; inc = hz / kSynthRate.
-  float next(Wave w, float inc, float duty) {
+  MT_INLINE float next(Wave w, float inc, float duty) {
     float v;
     switch (w) {
       case Wave::Pulse: v = phase < duty ? 1.f : -1.f; break;

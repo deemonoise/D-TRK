@@ -34,8 +34,8 @@ struct ImportResult {
 };
 
 // Writes notes (sorted by tick, as parseSmf returns them) into p. Patterns
-// firstPattern..firstPattern+patternsWritten-1 get their target tracks cleared, length =
-// patternLen and res = quant; other tracks and patterns are untouched. Notes of unmapped
+// firstPattern..firstPattern+patternsWritten-1 get their target tracks cleared (and their track
+// length reset to the pattern's), length = patternLen and res = quant; other tracks and patterns are untouched. Notes of unmapped
 // sources or before the offset are ignored (not counted as dropped); a note less than half a
 // step before the offset rounds to step 0.
 // Pattern count covers the last placed note and, once any note is placed, the trailing silence
@@ -46,6 +46,9 @@ struct ImportResult {
 // absolute percentage points (e.g. defGate 50 % -> 40..60 % gets no GAT).
 ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, const ImportMap& m,
                        Project& p);
+// What importSmf would do to a project at `bpm`, writing nothing: patternsWritten and bpm are
+// exact, notesDropped stays 0 (known only after the write).
+ImportResult importPlan(const SmfInfo& info, const SmfNote* notes, uint32_t n, const ImportMap& m, uint16_t bpm);
 
 // Nearest GAT value (1..200, see gatePercent) for a note of `len` file ticks on a grid of
 // q / kPpqn ticks per step. Ties pick the lower value.

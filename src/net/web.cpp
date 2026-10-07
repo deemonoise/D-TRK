@@ -37,7 +37,7 @@ struct Upload {
   fs::File f;
   bool started;
   int code;  // 0 while fine
-  char err[112];  // UTF-8: Cyrillic takes 2 bytes per letter
+  char err[112];
 } up;
 
 struct Fw {
@@ -135,27 +135,27 @@ void shownName(char* out, size_t cap, const char* sub, const char* name) {
 // path gets "<section>/<sub>/<name>" (or the folder itself when nameArg is null).
 bool checkArgs(mt::WebDir& d, String& sub, const char* nameArg, String& name, char* path, size_t cap) {
   if (!hw::sdReady()) {
-    reply(503, "нет карты");
+    reply(503, "no SD card");
     return false;
   }
   d = mt::parseWebDir(srv->arg("dir").c_str());
   sub = srv->arg("sub");
   if (d == mt::WebDir::Invalid || !mt::webSubValid(d, sub.c_str())) {
-    reply(400, "неверная папка");
+    reply(400, "invalid folder");
     return false;
   }
   if (!nameArg) {
     if (mt::webPath(path, cap, d, sub.c_str(), "")) return true;
-    reply(400, "неверная папка");
+    reply(400, "invalid folder");
     return false;
   }
   name = srv->arg(nameArg);
   if (!mt::webFileAllowedIn(d, sub.c_str(), name.c_str())) {
-    reply(400, "недопустимое имя");
+    reply(400, "invalid name");
     return false;
   }
   if (!mt::webPath(path, cap, d, sub.c_str(), name.c_str())) {
-    reply(400, "слишком длинный путь");
+    reply(400, "path too long");
     return false;
   }
   return true;
@@ -168,7 +168,7 @@ void handleList() {
   if (!checkArgs(d, sub, nullptr, unused, path, sizeof(path))) return;
   char* buf = static_cast<char*>(heap_caps_malloc(kListCap, MALLOC_CAP_SPIRAM));
   if (!buf) {
-    reply(500, "нет памяти");
+    reply(500, "out of memory");
     return;
   }
   fs::File dir = hw::sdFs().open(path);
@@ -181,11 +181,11 @@ void handleList() {
       return;
     }
     if (sub.length() && hw::sdFs().exists(mt::webDirPath(d))) {
-      reply(404, "папка не найдена");
+      reply(404, "folder not found");
       return;
     }
-    hw::sdBegin();  // card pulled or changed: remount for the next request
-    reply(503, "карта не читается (вынута?)");
+    hw::sdRecover();  // card pulled or changed: remount for the next request
+    reply(503, "card not readable (removed?)");
     return;
   }
   size_t len = 1;
@@ -224,7 +224,7 @@ void handleFile() {
   if (!checkArgs(d, sub, "name", name, path, sizeof(path))) return;
   fs::File f = hw::sdFs().open(path, FILE_READ);
   if (!f) {
-    reply(404, "файл не найден");
+    reply(404, "file not found");
     return;
   }
   srv->sendHeader("Content-Disposition", String("attachment; filename=\"") + name + "\"");
@@ -239,7 +239,7 @@ void uploadFail(int code, const char* msg) {
   strlcpy(up.err, msg, sizeof(up.err));
   if (up.f) up.f.close();
   hw::sdFs().remove(kTmp);
-  if (code == 507) hw::sdBegin();  // write errors usually mean the card was pulled: remount
+  if (code == 507) hw::sdRecover();  // write errors usually mean the card was pulled: remount
 }
 
 // Uploaded preset (kTmp) loads and its type matches the type folder at the top of sub. False after
@@ -247,7 +247,7 @@ void uploadFail(int code, const char* msg) {
 bool checkPreset(const char* sub) {
   fs::File f = hw::sdFs().open(kTmp, FILE_READ);
   if (!f) {
-    uploadFail(507, "не прочитать временный файл");
+    uploadFail(507, "cannot read the temporary file");
     return false;
   }
   hw::FileSource src(f);
@@ -255,14 +255,14 @@ bool checkPreset(const char* sub) {
   const mt::LoadErr e = mt::loadPreset(src, m);
   f.close();
   if (e != mt::LoadErr::Ok) {
-    uploadFail(400, "файл пресета повреждён");
+    uploadFail(400, "preset file is damaged");
     return false;
   }
   const char* type = mt::presetTypeName(m.type);
   const size_t n = strlen(type);
   if (strncmp(sub, type, n) != 0 || (sub[n] && sub[n] != '/')) {  // sub starts with a type folder (webSubValid)
     char msg[sizeof(up.err)];
-    snprintf(msg, sizeof(msg), "пресет типа %s: его место в /presets/%s", type, type);
+    snprintf(msg, sizeof(msg), "a %s preset: it belongs in /presets/%s", type, type);
     uploadFail(400, msg);
     return false;
   }
@@ -275,39 +275,40 @@ void handleUploadChunk() {
     case UPLOAD_FILE_START: {
       up = Upload{};
       up.started = true;
-      if (!hw::sdReady()) return uploadFail(503, "нет карты");
+      if (!hw::sdReady()) return uploadFail(503, "no SD card");
       up.dir = mt::parseWebDir(srv->arg("dir").c_str());
-      if (up.dir == mt::WebDir::Invalid || srv->arg("sub").length() > mt::kWebSubMax) return uploadFail(400, "неверная папка");
+      if (up.dir == mt::WebDir::Invalid || srv->arg("sub").length() > mt::kWebSubMax) return uploadFail(400, "invalid folder");
+      if (up.dir == mt::WebDir::Diag) return uploadFail(403, "the logs are written by the tracker");
       strlcpy(up.sub, srv->arg("sub").c_str(), sizeof(up.sub));
-      if (!mt::webSubValid(up.dir, up.sub)) return uploadFail(400, "неверная папка");
+      if (!mt::webSubValid(up.dir, up.sub)) return uploadFail(400, "invalid folder");
       strlcpy(up.name, u.filename.c_str(), sizeof(up.name));
       if (u.filename.length() > mt::kWebNameMax || !mt::webFileAllowedIn(up.dir, up.sub, up.name))
-        return uploadFail(400, up.dir == mt::WebDir::Midi      ? "недопустимое имя (нужен .mid, до 59 символов, латиница)"
+        return uploadFail(400, up.dir == mt::WebDir::Midi      ? "invalid name (.mid, up to 59 characters, Latin)"
                                : up.dir == mt::WebDir::Samples || up.dir == mt::WebDir::Wavetables
-                                   ? "недопустимое имя (нужен .wav, до 59 символов, латиница)"
+                                   ? "invalid name (.wav, up to 59 characters, Latin)"
                                : up.dir == mt::WebDir::Presets
-                                   ? (up.sub[0] ? "недопустимое имя (нужен .mti, до 16 символов: A-Z 0-9 - _)"
-                                                : "пресеты лежат в папках типов: FM, DRUM, SAMPLE, CHIP, SYNTH")
-                               : up.sub[0] ? "недопустимое имя (нужен .wav, до 16 символов: A-Z 0-9 - _)"
-                                           : "недопустимое имя (.mtp/.bak, до 16 символов)");
+                                   ? (up.sub[0] ? "invalid name (.mti, up to 16 characters: A-Z 0-9 - _)"
+                                                : "presets go in the type folders: FM, DRUM, SAMPLE, CHIP, SYNTH")
+                               : up.sub[0] ? "invalid name (.wav, up to 16 characters: A-Z 0-9 - _)"
+                                           : "invalid name (.mtp/.bak, up to 16 characters)");
       char path[mt::kWebPathMax];
-      if (!mt::webPath(path, sizeof(path), up.dir, up.sub, up.name)) return uploadFail(400, "слишком длинный путь");
+      if (!mt::webPath(path, sizeof(path), up.dir, up.sub, up.name)) return uploadFail(400, "path too long");
       if (up.sub[0] && up.dir != mt::WebDir::Projects) {  // a project folder is created at the end
         char dirPath[mt::kWebPathMax];
         mt::webPath(dirPath, sizeof(dirPath), up.dir, up.sub, "");
-        if (!isFolder(dirPath)) return uploadFail(404, "папка не найдена");
+        if (!isFolder(dirPath)) return uploadFail(404, "folder not found");
       }
-      if (srv->arg("overwrite") != "1" && hw::sdFs().exists(path)) return uploadFail(409, "файл уже есть");
+      if (srv->arg("overwrite") != "1" && hw::sdFs().exists(path)) return uploadFail(409, "file already exists");
       hw::sdFs().remove(kTmp);
       up.f = hw::sdFs().open(kTmp, FILE_WRITE);
-      if (!up.f) return uploadFail(507, "не открыть временный файл на карте");
+      if (!up.f) return uploadFail(507, "cannot open a temporary file on the card");
       busy("UPLOAD...");
       break;
     }
     case UPLOAD_FILE_WRITE:
       if (up.code || !up.f) return;
-      if (u.totalSize + u.currentSize > mt::webMaxBytesIn(up.dir, up.sub)) return uploadFail(413, "файл слишком большой");
-      if (up.f.write(u.buf, u.currentSize) != u.currentSize) return uploadFail(507, "карта заполнена или ошибка записи");
+      if (u.totalSize + u.currentSize > mt::webMaxBytesIn(up.dir, up.sub)) return uploadFail(413, "file too large");
+      if (up.f.write(u.buf, u.currentSize) != u.currentSize) return uploadFail(507, "card full or write error");
       break;
     case UPLOAD_FILE_END: {
       if (up.code || !up.f) return;
@@ -318,7 +319,7 @@ void handleUploadChunk() {
         const storage::Result r = storage::installProject(kTmp, up.name);
         if (r != storage::Result::Ok) {
           char msg[48];
-          snprintf(msg, sizeof(msg), "проект не принят: %s", storage::resultText(r));
+          snprintf(msg, sizeof(msg), "project rejected: %s", storage::resultText(r));
           return uploadFail(r == storage::Result::WriteFail ? 507 : 422, msg);
         }
       } else {
@@ -341,27 +342,27 @@ void handleUploadChunk() {
             if (isFolder(dirs[i])) continue;
             if (!hw::sdFs().mkdir(dirs[i])) {
               unmake();
-              return uploadFail(507, "не создать папку проекта");
+              return uploadFail(507, "cannot create the project folder");
             }
             made[i] = true;
           }
         }
-        if (hw::sdFs().exists(path) && !hw::sdFs().remove(path)) return uploadFail(507, "не удалось заменить файл");
+        if (hw::sdFs().exists(path) && !hw::sdFs().remove(path)) return uploadFail(507, "cannot replace the file");
         if (!hw::sdFs().rename(kTmp, path)) {
           unmake();
-          return uploadFail(507, "не переименовать временный файл");
+          return uploadFail(507, "cannot rename the temporary file");
         }
       }
       touch(up.name, OpenFile::Replaced);
       break;
     }
-    case UPLOAD_FILE_ABORTED: uploadFail(400, "загрузка прервана"); break;
+    case UPLOAD_FILE_ABORTED: uploadFail(400, "upload aborted"); break;
   }
 }
 
 void handleUploadDone() {
   if (!up.started) {
-    reply(400, "нет файла");
+    reply(400, "no file");
     return;
   }
   char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
@@ -389,15 +390,15 @@ const char* renameFolder(const char* from, const char* to) {
   if (bak && projectFileExists(oldBase, ".mtp")) return nullptr;
   if (openFolder(mt::WebDir::Projects, oldBase)) {
     log("! %s/ kept (open project)", oldBase);
-    return "Переименован. Папка с сэмплами осталась под старым именем: проект открыт на трекере";
+    return "Renamed. The samples folder keeps the old name: the project is open on the tracker";
   }
   if (hw::sdFs().exists(b)) {
     log("! %s/ kept: %s/ exists", oldBase, newBase);
-    return "Переименован. Папка с сэмплами осталась под старым именем: папка с новым именем уже есть";
+    return "Renamed. The samples folder keeps the old name: a folder with the new name exists";
   }
   if (!hw::sdFs().rename(a, b)) {
     log("! %s/ > %s/ failed", oldBase, newBase);
-    return "Переименован. Папку с сэмплами переименовать не удалось";
+    return "Renamed. The samples folder could not be renamed";
   }
   log("~ %s/ > %s/", oldBase, newBase);
   return nullptr;
@@ -410,23 +411,23 @@ void handleRename() {
   if (!checkArgs(d, sub, "from", from, a, sizeof(a))) return;
   const String to = srv->arg("to");
   if (!mt::webRenameAllowedIn(d, sub.c_str(), from.c_str(), to.c_str())) {
-    reply(400, "недопустимое имя (расширение менять нельзя)");
+    reply(400, "invalid name (the extension cannot change)");
     return;
   }
   if (!mt::webPath(b, sizeof(b), d, sub.c_str(), to.c_str())) {
-    reply(400, "слишком длинный путь");
+    reply(400, "path too long");
     return;
   }
   if (!hw::sdFs().exists(a)) {
-    reply(404, "файл не найден");
+    reply(404, "file not found");
     return;
   }
   if (strcasecmp(from.c_str(), to.c_str()) != 0 && hw::sdFs().exists(b)) {
-    reply(409, "файл с таким именем уже есть");
+    reply(409, "a file with this name exists");
     return;
   }
   if (!hw::sdFs().rename(a, b)) {
-    reply(507, "ошибка записи на карту");
+    reply(507, "card write error");
     return;
   }
   touch(from.c_str(), OpenFile::Removed);
@@ -450,7 +451,7 @@ const char* dropFolder(const char* file) {
     return nullptr;
   }
   log("! %s/ not removed", base);
-  return "Удалён. Папку с сэмплами удалить не удалось";
+  return "Deleted. The samples folder could not be deleted";
 }
 
 void handleDelete() {
@@ -459,11 +460,11 @@ void handleDelete() {
   char path[mt::kWebPathMax];
   if (!checkArgs(d, sub, "name", name, path, sizeof(path))) return;
   if (!hw::sdFs().exists(path)) {
-    reply(404, "файл не найден");
+    reply(404, "file not found");
     return;
   }
   if (!hw::sdFs().remove(path)) {
-    reply(507, "ошибка записи на карту");
+    reply(507, "card write error");
     return;
   }
   touch(name.c_str(), OpenFile::Removed);
@@ -479,13 +480,13 @@ const char* mkdirError(mt::WebDir d, const char* sub) {
   switch (d) {
     case mt::WebDir::Samples:
     case mt::WebDir::Wavetables:
-      return "недопустимое имя папки (до 32 символов: латиница, цифры, пробел, . _ -; не глубже 4 уровней)";
+      return "invalid folder name (up to 32 characters: A-Z, digits, space, . _ -; at most 4 levels)";
     case mt::WebDir::Presets:
-      return sub[0] ? "недопустимое имя папки (до 32 символов: латиница, цифры, пробел, . _ -; не глубже 4 уровней в папке типа)"
-                    : "в /presets только папки типов: FM, DRUM, SAMPLE, CHIP, SYNTH";
+      return sub[0] ? "invalid folder name (up to 32 characters: A-Z, digits, space, . _ -; at most 4 levels in a type folder)"
+                    : "/presets holds only the type folders: FM, DRUM, SAMPLE, CHIP, SYNTH";
     case mt::WebDir::Projects:
-      return "папка проекта (и её wt) появляется сама с первым файлом и удаляется вместе с проектом";
-    default: return "папки только в разделах сэмплов, таблиц и пресетов";
+      return "a project folder (and its wt) appears with its first file and goes with the project";
+    default: return "folders only in samples, wavetables and presets";
   }
 }
 
@@ -500,7 +501,7 @@ bool folderArgs(mt::WebDir& d, String& sub, String& name, char* path, size_t cap
     return false;
   }
   if (!mt::webPath(path, cap, d, sub.c_str(), name.c_str())) {
-    reply(400, "слишком длинный путь");
+    reply(400, "path too long");
     return false;
   }
   return true;
@@ -512,12 +513,12 @@ void handleMkdir() {
   char path[mt::kWebPathMax];
   if (!folderArgs(d, sub, name, path, sizeof(path))) return;
   if (hw::sdFs().exists(path)) {
-    reply(409, "такое имя уже есть");
+    reply(409, "this name already exists");
     return;
   }
   if (!hw::sdFs().mkdir(path)) {
-    hw::sdBegin();
-    reply(507, "ошибка записи на карту");
+    hw::sdRecover();
+    reply(507, "card write error");
     return;
   }
   char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
@@ -532,12 +533,12 @@ void handleRmdir() {
   char path[mt::kWebPathMax];
   if (!folderArgs(d, sub, name, path, sizeof(path))) return;
   if (d == mt::WebDir::Presets && !sub.length()) {
-    reply(400, "папки типов не удаляются");
+    reply(400, "type folders cannot be deleted");
     return;
   }
   fs::File dir = hw::sdFs().open(path);
   if (!dir || !dir.isDirectory()) {
-    reply(404, "папка не найдена");
+    reply(404, "folder not found");
     return;
   }
   String entry;
@@ -545,12 +546,12 @@ void handleRmdir() {
   const bool empty = !hw::sdNextEntry(dir, entry, isDir);  // hidden files count too: rmdir needs a really empty folder
   dir.close();
   if (!empty) {
-    reply(409, "папка не пуста: сначала удалите файлы и папки в ней");
+    reply(409, "folder not empty: delete its files and folders first");
     return;
   }
   if (!hw::sdFs().rmdir(path)) {
-    hw::sdBegin();
-    reply(507, "ошибка записи на карту");
+    hw::sdRecover();
+    reply(507, "card write error");
     return;
   }
   char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
@@ -572,7 +573,7 @@ void handleFwChunk() {
     case UPLOAD_FILE_START:
       fw = Fw{};
       fw.started = true;
-      if (!mt::webFirmwareName(u.filename.c_str())) return fwFail(400, "нужен файл .bin");
+      if (!mt::webFirmwareName(u.filename.c_str())) return fwFail(400, "a .bin file is needed");
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) return fwFail(500, Update.errorString());
       busy("FIRMWARE 0 KB");
       break;
@@ -592,13 +593,13 @@ void handleFwChunk() {
       if (fw.code) return;
       if (!Update.end(true)) fwFail(500, Update.errorString());  // checks the image
       break;
-    case UPLOAD_FILE_ABORTED: fwFail(400, "загрузка прервана"); break;
+    case UPLOAD_FILE_ABORTED: fwFail(400, "upload aborted"); break;
   }
 }
 
 void handleFwDone() {
   if (!fw.started) {
-    reply(400, "нет файла");
+    reply(400, "no file");
     return;
   }
   fw.started = false;
@@ -654,7 +655,7 @@ bool webBegin(const WebHooks& h) {
   srv->on("/api/mkdir", HTTP_POST, handleMkdir);
   srv->on("/api/rmdir", HTTP_POST, handleRmdir);
   srv->on("/api/update", HTTP_POST, handleFwDone, handleFwChunk);
-  srv->onNotFound([] { reply(404, "нет такой страницы"); });
+  srv->onNotFound([] { reply(404, "no such page"); });
   srv->begin();
   beginOta();
   return true;

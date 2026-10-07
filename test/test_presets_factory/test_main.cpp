@@ -34,10 +34,10 @@ void setUp() {}
 void tearDown() {}
 
 void test_counts() {
-  TEST_ASSERT_TRUE(factoryCount(InstrType::Chip) >= 10);
-  TEST_ASSERT_TRUE(factoryCount(InstrType::Fm) >= 10);
-  TEST_ASSERT_TRUE(factoryCount(InstrType::Drum) >= 10);
-  TEST_ASSERT_EQUAL(10, factoryCount(InstrType::Synth));
+  TEST_ASSERT_TRUE(factoryCount(InstrType::Chip) >= 30);
+  TEST_ASSERT_TRUE(factoryCount(InstrType::Fm) >= 30);
+  TEST_ASSERT_TRUE(factoryCount(InstrType::Drum) >= 30);
+  TEST_ASSERT_TRUE(factoryCount(InstrType::Synth) >= 30);
   TEST_ASSERT_EQUAL(0, factoryCount(InstrType::Sample));
 }
 

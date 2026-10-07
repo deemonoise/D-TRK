@@ -9,7 +9,8 @@ constexpr uint32_t kWavMaxRate = 32000;  // bank rate limit: higher rates are do
 struct WavInfo {
   uint16_t channels = 0, bits = 0;
   uint32_t rate = 0;
-  uint32_t dataOffset = 0, dataBytes = 0;  // "data" payload, bytes from the file start
+  uint32_t dataOffset = 0, dataBytes = 0;  // "data" payload, bytes from the file start; dataBytes is
+                                           // as declared and may run past a cut file's end
   bool hasRoot = false;                    // "smpl" chunk present
   uint8_t root = 60;                       // smpl MIDIUnityNote, 60 without one
   bool hasCrc = false;                     // "mtcr" chunk present and its frames match frames()

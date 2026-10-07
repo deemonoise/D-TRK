@@ -6,6 +6,8 @@
 #include "esp_heap_caps.h"
 #include "hw/trackio.h"
 #include "storage/settings.h"
+#include "storage/storage.h"
+#include "hw/sdcard.h"
 #include "track_leds.h"
 
 namespace ui {
@@ -49,6 +51,12 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   // Master volume is a device setting: it overrides the project's and is kept in NVS.
   p_->masterVol = storage::loadVolume(p_->masterVol);
   savedVol_ = p_->masterVol;
+  // So is the colour theme.
+  const int theme = storage::loadTheme(0);
+  theme_ = savedTheme_ = theme < themeCount() ? theme : 0;
+  applyTheme(theme_);
+  const int asv = storage::loadSetting("autosave", 5);
+  autosaveMin_ = savedAutosaveMin_ = asv <= 60 ? asv : 5;
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -63,6 +71,7 @@ void App::setTab(Tab t) {
   menu_.close();
   screen()->onLeave();
   tab_ = t;
+  if (t == Tab::Track || t == Tab::Mix) track_.setMixer(t == Tab::Mix);  // one screen, two views
   screen()->onEnter();
   dirty_ = true;
 }
@@ -81,17 +90,36 @@ void App::setBpmEdit(bool on) {
 }
 
 void App::onInput(const hw::InputEvent& ev) {
+  lastInputMs_ = millis();
   using hw::InputType;
   shift_ = ev.shift;
   dirty_ = true;
   switch (ev.type) {
     case InputType::PlayPress:
       if (!menu_.isOpen() && !bpmEdit_ && screen()->onPlay()) return;
+      if (ev.shift && status_.playing && !transportLocked_) {
+        fillDown();
+        return;
+      }
       transport();
       return;
+    case InputType::PlayRelease:
+      fillUp();
+      return;
+    case InputType::TrackRelease:
+      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      trackRelease(ev.delta);
+      return;
+    case InputType::EncTurn:
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed
+        nudgeTrackVol((curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + heldTrackBtn_, ev.delta * (ev.shift ? 10 : 1));
+        return;
+      }
+      break;
     case InputType::ShiftDown: shift_ = true; return;
     case InputType::ShiftUp: shift_ = false; return;
     case InputType::TrackPress:
+      heldTrackBtn_ = ev.delta;
       if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
       return;
     default: break;
@@ -115,6 +143,7 @@ void App::onInput(const hw::InputEvent& ev) {
 }
 
 void App::onTouch(const TouchEvent& ev) {
+  lastInputMs_ = millis();
   dirty_ = true;
   if (ev.type == TouchType::HDrag) {
     const int y0 = ev.y0;
@@ -149,10 +178,9 @@ void App::onTouch(const TouchEvent& ev) {
   screen()->onTouch(ev);
 }
 
-void App::pushUndo() {
-  if (!undoBuf_) return;
+void App::pushUndo(uint8_t pat) {
+  if (!undoBuf_ || pat >= mt::kPatterns) return;
   // No lock: the engine never writes pattern data (only p_->bpm), so reading it is safe.
-  const uint8_t pat = editPattern();
   undo_.push(pat, p_->patterns[pat]);
 }
 
@@ -206,6 +234,50 @@ void App::trackKey(int n, bool shift) {
   toast(msg);
 }
 
+bool App::holdVolume() const {
+  return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) && !busy_;
+}
+
+// Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.
+void App::nudgeTrackVol(int track, int d) {
+  mt::TrackCfg& t = p_->tracks[track];
+  char msg[24];
+  if (t.out != mt::TrackOut::Int) {
+    snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
+    toast(msg);
+    return;
+  }
+  int v = t.vol + d;
+  v = v < 0 ? 0 : (v > 127 ? 127 : v);
+  if (v != t.vol) {
+    engine::lockProject();
+    t.vol = static_cast<uint8_t>(v);
+    engine::unlockProject();
+    markDirty();
+  }
+  snprintf(msg, sizeof(msg), "TRK%d VOL %d", track + 1, v);
+  toast(msg);
+}
+
+void App::trackRelease(int n) {
+  if (n < 0 || n >= mt::kTrackLeds) return;
+  if (tab_ == Tab::Grid) grid_.trackRelease(n);
+}
+
+// Shift + Play while playing: fill while held; a short press is still Shift + Play (pause) on release.
+void App::fillDown() {
+  fillHeld_ = true;
+  fillDownMs_ = millis();
+  engine::post(engine::Cmd::Fill, 1);
+}
+
+void App::fillUp() {
+  if (!fillHeld_) return;
+  fillHeld_ = false;
+  engine::postWait(engine::Cmd::Fill, 0);
+  if (millis() - fillDownMs_ < hw::kLongPressMs) engine::post(engine::Cmd::TogglePlay);
+}
+
 void App::updateLeds(uint32_t now) {
   const uint16_t act = engine::takeActivity();
   uint16_t flash = 0;
@@ -216,7 +288,8 @@ void App::updateLeds(uint32_t now) {
   hw::trackLeds(mt::trackLedMaskHalf(curTrack_, flash));
 }
 
-// Writes the volume to NVS once it has stayed put for a second (an encoder sweep = one write).
+// Writes the volume to NVS once it has stayed put for a second (an encoder sweep = one write) and
+// the transport is not playing.
 void App::saveVolumeIdle(uint32_t now) {
   if (p_->masterVol == savedVol_) {
     volChangedAt_ = 0;
@@ -228,9 +301,70 @@ void App::saveVolumeIdle(uint32_t now) {
     return;
   }
   if (now - volChangedAt_ < 1000) return;
-  storage::saveVolume(pendingVol_);
+  // An NVS write can erase a flash sector with the caches off: never while playing (the audio and
+  // the engine would stall), and with the audio task parked once stopped.
+  if (status_.playing) return;
+  {
+    audio::Paused parked;
+    storage::saveVolume(pendingVol_);
+  }
   savedVol_ = pendingVol_;
   volChangedAt_ = 0;
+}
+
+void App::setTheme(int i) {
+  i = i < 0 ? 0 : (i >= themeCount() ? themeCount() - 1 : i);
+  if (i == theme_) return;
+  theme_ = i;
+  applyTheme(i);
+  settingsChangedAt_ = millis() | 1;
+  dirty_ = true;
+}
+
+void App::setAutosaveMin(int m) {
+  autosaveMin_ = m < 0 ? 0 : (m > 60 ? 60 : m);
+  autosaveDue_ = 0;  // the new interval counts from now
+  settingsChangedAt_ = millis() | 1;
+}
+
+// Device settings (theme, autosave): as the volume, written once they stay put for a second and the
+// transport is stopped.
+void App::saveSettingsIdle(uint32_t now) {
+  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
+  settingsChangedAt_ = 0;
+  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_) return;
+  {
+    audio::Paused parked;
+    if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
+    if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
+  }
+  savedTheme_ = theme_;
+  savedAutosaveMin_ = autosaveMin_;
+}
+
+// Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
+// stands (no project copy needed) and after 3 s without input (the write takes a moment).
+void App::autosaveIdle(uint32_t now) {
+  if (autosaveMin_ == 0 || !projectDirty() || editSeq_ == autosavedSeq_ || !hw::sdReady()) {
+    autosaveDue_ = 0;
+    return;
+  }
+  if (autosaveDue_ == 0) {
+    autosaveDue_ = (now + static_cast<uint32_t>(autosaveMin_) * 60000u) | 1;
+    return;
+  }
+  if (static_cast<int32_t>(now - autosaveDue_) < 0) return;
+  if (status_.playing || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000) return;
+  showBusy("AUTOSAVE...");
+  const storage::Result r = storage::autosave(*p_);
+  autosavedSeq_ = editSeq_;
+  autosaveDue_ = 0;
+  if (r != storage::Result::Ok) {
+    char msg[40];
+    snprintf(msg, sizeof(msg), "AUTOSAVE: %s", storage::resultText(r));
+    toast(msg);
+  }
+  dirty_ = true;
 }
 
 void App::showProgress(const char* label, uint32_t done, uint32_t total) {
@@ -249,6 +383,53 @@ void App::syncProgress(const char* file, uint32_t done, uint32_t total, void* ap
   char label[32];
   snprintf(label, sizeof(label), "SAMPLE %s", file);
   static_cast<App*>(app)->showProgress(label, done, total);
+}
+
+bool App::renderProgress(uint32_t done, uint32_t total, void* app) {
+  App& a = *static_cast<App*>(app);
+  a.showProgress("RENDER", done, total);
+  // Renders run for up to a minute on this task: let the idle task (watchdog) run now and then.
+  static uint32_t lastYield = 0;
+  if (millis() - lastYield >= 100) {
+    lastYield = millis();
+    vTaskDelay(1);
+  }
+  // The UI task is busy here: read the input queue for a cancel, drop the rest.
+  hw::InputEvent ev;
+  while (hw::inputPoll(ev, 0)) {
+    a.dropInput(ev);
+    if (ev.type == hw::InputType::EncLong || ev.type == hw::InputType::PlayPress) return false;
+  }
+  return true;
+}
+
+// An event read while the UI is busy: only the held-key state survives, and releases still end
+// what their press started (fill, a punch-in effect, the hold-button volume).
+void App::dropInput(const hw::InputEvent& ev) {
+  switch (ev.type) {
+    case hw::InputType::ShiftDown: shift_ = true; break;
+    case hw::InputType::ShiftUp: shift_ = false; break;
+    case hw::InputType::PlayRelease:
+      if (fillHeld_) {
+        fillHeld_ = false;
+        engine::postWait(engine::Cmd::Fill, 0);
+      }
+      break;
+    case hw::InputType::TrackRelease:
+      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      trackRelease(ev.delta);
+      break;
+    default: break;
+  }
+}
+
+void App::endProgress() {
+  heldTrackBtn_ = -1;  // its release may have been dropped with the queued input
+  progLabel_[0] = 0;
+  progPct_ = -1;
+  hw::InputEvent ev;
+  while (hw::inputPoll(ev, 0)) dropInput(ev);
+  dirty_ = true;
 }
 
 void App::loadedToast(const char* what, int missing, bool folderFail) {
@@ -304,6 +485,8 @@ void App::tick() {
   const uint32_t now = millis();
   updateLeds(now);
   saveVolumeIdle(now);
+  saveSettingsIdle(now);
+  autosaveIdle(now);
   pollCpu(now);
   if (toast_[0] && static_cast<int32_t>(now - toastUntil_) >= 0) {
     toast_[0] = 0;
@@ -396,15 +579,21 @@ void App::drawStatus() {
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
   spr_->drawString(buf, 200, 4);  // up to "128/128"
   spr_->drawString(status_.playing ? "PLAY" : (status_.paused ? "PAUSE" : "STOP"), 264, 4);
-  snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
-  spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+  if (status_.fill) {
+    spr_->setTextColor(kCursor);
+    spr_->drawString("FILL", 328, 4);
+    spr_->setTextColor(kText);
+  } else {
+    snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
+    spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+  }
   snprintf(buf, sizeof(buf), "CPU %3d%%", cpu_ > 999 ? 999 : cpu_);
   spr_->setTextColor(cpuColor_);
   spr_->drawString(buf, 416, 4);
 }
 
 void App::drawTabs() {
-  static const char* const kNames[] = {"GRID", "TRACK", "BANK", "INST", "PROJ", "FILE"};
+  static const char* const kNames[] = {"GRID", "TRACK", "MIX", "BANK", "INST", "PROJ", "FILE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(Tab::Count), "tab names");
   spr_->fillRect(0, kTabY, kScreenW, kTabH, kStatusBg);
   for (int i = 0; i < static_cast<int>(Tab::Count); ++i) {

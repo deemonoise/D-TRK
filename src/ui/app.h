@@ -17,7 +17,7 @@
 
 namespace ui {
 
-enum class Tab : uint8_t { Grid, Track, Bank, Inst, Proj, File, Count };
+enum class Tab : uint8_t { Grid, Track, Mix, Bank, Inst, Proj, File, Count };  // MIX: TRACK's mixer view
 
 class App {
  public:
@@ -38,8 +38,17 @@ class App {
 
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
+  // Pattern-sized scratch (undo() uses it only inside its call); nullptr without PSRAM.
+  mt::Pattern* undoScratch() { return undoBuf_ ? &undoBuf_[mt::Undo::kDepth].data : nullptr; }
   mt::Clipboard* clipboard() { return clip_; }
-  void pushUndo();  // snapshot editPattern() before an edit
+  // Colour theme (device setting): applied at once, saved to NVS once it stays put.
+  int theme() const { return theme_; }
+  void setTheme(int i);
+  // Autosave interval in minutes, 0 = off (device setting, see autosaveIdle).
+  int autosaveMin() const { return autosaveMin_; }
+  void setAutosaveMin(int m);
+  void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
+  void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
   bool doUndo();    // false when there is nothing to undo
   void dropUndo() {  // forget the last pushUndo() (edit cancelled)
     if (undoBuf_) undo_.drop();
@@ -51,6 +60,11 @@ class App {
   void showProgress(const char* label, uint32_t done, uint32_t total);
   // storage::SyncProgress for sample sync / pull: "SAMPLE name NN%". ctx = App*.
   static void syncProgress(const char* file, uint32_t done, uint32_t total, void* app);
+  // storage::RenderProgress: "RENDER NN%"; false (cancel) on a long encoder press or Play. ctx = App*.
+  static bool renderProgress(uint32_t done, uint32_t total, void* app);
+  // After a long operation: drops the input it queued meanwhile and the progress label.
+  void endProgress();
+  void dropInput(const hw::InputEvent& ev);
   // One toast after a load: what (e.g. "LOADED X", may be nullptr), missing samples, a failed sample
   // folder write; leading parts are dropped when it gets too long.
   void loadedToast(const char* what, int missing, bool folderFail);
@@ -88,8 +102,15 @@ class App {
   void onTouch(const TouchEvent& ev);
   void transport();
   void trackKey(int n, bool shift);
+  void trackRelease(int n);
+  void fillDown();
+  bool holdVolume() const;           // hold a track button + turn = its volume, here and now
+  void nudgeTrackVol(int track, int d);
+  void fillUp();
   void updateLeds(uint32_t now);
   void saveVolumeIdle(uint32_t now);
+  void saveSettingsIdle(uint32_t now);
+  void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
   void setBpmEdit(bool on);
   void draw();
@@ -110,7 +131,7 @@ class App {
   InstScreen inst_{*this};
   ProjScreen proj_{*this};
   FileScreen file_{*this};
-  Screen* screens_[static_cast<int>(Tab::Count)] = {&grid_, &track_, &bank_, &inst_, &proj_, &file_};
+  Screen* screens_[static_cast<int>(Tab::Count)] = {&grid_, &track_, &track_, &bank_, &inst_, &proj_, &file_};
   Tab tab_ = Tab::Grid;
 
   mt::Undo::Entry* undoBuf_ = nullptr;  // kDepth entries + 1 scratch
@@ -136,8 +157,17 @@ class App {
   uint8_t savedVol_ = 0;     // master volume as stored in NVS
   uint8_t pendingVol_ = 0;   // changed value waiting to be saved
   uint32_t volChangedAt_ = 0;  // 0 = nothing pending
+  int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
+  int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)
+  uint32_t settingsChangedAt_ = 0;  // 0 = nothing pending
+  uint32_t autosaveDue_ = 0;        // when the next autosave is due, 0 = not counting
+  uint32_t autosavedSeq_ = 0;       // editSeq_ of the last autosave
+  uint32_t lastInputMs_ = 0;
   uint32_t editSeq_ = 0, savedSeq_ = 0;
   bool shift_ = false;
+  bool fillHeld_ = false;   // Shift + Play held while playing: fill
+  int8_t heldTrackBtn_ = -1;  // track button held (0..7 of the visible half), -1 = none
+  uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;
   bool dirty_ = true;
   uint32_t lastDraw_ = 0;

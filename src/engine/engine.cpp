@@ -4,9 +4,11 @@
 #include <new>
 #include "driver/gptimer.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "audio/audio.h"
 #include "esp_random.h"
 #include "hw/midi_uart.h"
+#include "record.h"
 #include "sequencer.h"
 
 namespace engine {
@@ -21,6 +23,7 @@ struct Router : mt::MidiSink {
 };
 
 mt::Sequencer* seq;
+void* seqMem = nullptr;  // reserve()
 Router midi;
 gptimer_handle_t timer;
 TaskHandle_t task;
@@ -54,12 +57,17 @@ void handle(const Command& c) {
     case Cmd::ReleaseTies: seq->releaseTies(now, midi); break;
     case Cmd::TrackOut: seq->trackOutChanged(now, c.arg, midi); break;
     case Cmd::ChainEdit: seq->chainEdited(now, midi, c.arg >> 8, static_cast<mt::ChainOp>(c.arg & 0xFF)); break;
+    case Cmd::Fill: seq->setFill(c.arg != 0); break;
+    case Cmd::PerfOn: seq->perfOn(c.arg & 0xFF, static_cast<mt::PerfFx>(c.arg >> 8)); break;
+    case Cmd::PerfOff: seq->perfOff(c.arg); break;
   }
 }
 
 void publish() {
-  const Status s{seq->playing(), seq->paused(), seq->heardPattern(), static_cast<int8_t>(seq->pendingPattern()),
-                 seq->playPos(), seq->loopCount(), static_cast<int8_t>(seq->heardSongPos())};
+  const Status s{seq->playing(),       seq->paused(),       seq->heardPattern(),
+                 static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->loopCount(),
+                 static_cast<int8_t>(seq->heardSongPos()), seq->fill(),
+                 seq->heardStepTime(),  seq->stepDuration()};
   portENTER_CRITICAL(&statusMux);
   st = s;
   portEXIT_CRITICAL(&statusMux);
@@ -96,10 +104,16 @@ uint64_t nowUs() {
   return v;
 }
 
+void reserve() {
+  if (!seqMem) seqMem = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+bool seqInternal() { return seq && esp_ptr_internal(seq); }
+
 void begin(mt::Project* p) {
-  // ~34 KB: keep it out of PSRAM, the engine touches it on every event.
-  void* mem = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  seq = mem ? new (mem) mt::Sequencer(*p) : new mt::Sequencer(*p);
+  // ~50 KB: keep it out of PSRAM, the engine touches it on every event. reserve() took it at boot.
+  reserve();
+  seq = seqMem ? new (seqMem) mt::Sequencer(*p) : new mt::Sequencer(*p);
   seq->seed(esp_random());
   midi.uart.begin();
   cmds = xQueueCreate(16, sizeof(Command));
@@ -126,12 +140,22 @@ bool post(Cmd c, uint16_t arg) {
   return ok;
 }
 
+bool postWait(Cmd c, uint16_t arg) {
+  const Command cmd{c, arg};
+  xTaskNotifyGive(task);  // a full queue drains while we wait
+  const bool ok = xQueueSend(cmds, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
+  xTaskNotifyGive(task);
+  return ok;
+}
+
 Status status() {
   portENTER_CRITICAL(&statusMux);
   const Status s = st;
   portEXIT_CRITICAL(&statusMux);
   return s;
 }
+
+uint8_t stepPhase(const Status& s) { return mt::stepPhase256(nowUs(), s.stepT, s.stepUs); }
 
 uint16_t takeActivity() { return static_cast<uint16_t>(activity.exchange(0, std::memory_order_relaxed)); }
 

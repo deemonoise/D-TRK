@@ -233,6 +233,56 @@ void test_undo_drop_after_wrap() {
   delete[] store;
 }
 
+void test_transpose_skips_drum_tracks() {
+  pat.steps[0][0].note = 60;
+  pat.steps[1][0].note = 100;
+  pat.steps[1][0].vel = 0xA5;
+  bool drum[kTracks] = {false, true};
+  transposeSel(pat, makeSel(0, 0, 1, 0), 12, false, 0, ScaleType::Chromatic, drum);
+  TEST_ASSERT_EQUAL(72, pat.steps[0][0].note);
+  TEST_ASSERT_EQUAL(100, pat.steps[1][0].note);
+  TEST_ASSERT_EQUAL_HEX8(0xA5, pat.steps[1][0].vel);
+}
+
+void test_copy_paste_drum_step_byte_exact() {
+  static Pattern src;
+  src.clear();
+  src.steps[2][3].note = 100;
+  src.steps[2][3].vel = 0xA5;
+  src.steps[2][3].fx[0] = {Fx::ACC, 0x81};
+  copySel(src, makeSel(2, 3, 2, 3), cb);
+  pasteAt(pat, cb, 4, 5);
+  TEST_ASSERT_EQUAL_MEMORY(&src.steps[2][3], &pat.steps[4][5], sizeof(Step));
+}
+
+void test_chain_insert_delete_move_all_fields() {
+  static Project p;
+  p.reset();
+  p.chainLen = 2;
+  p.chain[0] = 1; p.chainTr[0] = 3; p.chainRep[0] = 2; p.chainScene[0] = 1;
+  p.chain[1] = 4; p.chainTr[1] = -2; p.chainRep[1] = 5; p.chainScene[1] = 2;
+  TEST_ASSERT_TRUE(chainInsert(p, 1, 9));
+  TEST_ASSERT_EQUAL(3, p.chainLen);
+  TEST_ASSERT_EQUAL(9, p.chain[1]);
+  TEST_ASSERT_EQUAL(0, p.chainTr[1]);
+  TEST_ASSERT_EQUAL(1, p.chainRep[1]);
+  TEST_ASSERT_EQUAL(0, p.chainScene[1]);
+  TEST_ASSERT_EQUAL(4, p.chain[2]);
+  TEST_ASSERT_EQUAL(-2, p.chainTr[2]);
+  TEST_ASSERT_EQUAL(5, p.chainRep[2]);
+  TEST_ASSERT_EQUAL(2, p.chainScene[2]);
+  chainDelete(p, 0);
+  TEST_ASSERT_EQUAL(2, p.chainLen);
+  TEST_ASSERT_EQUAL(9, p.chain[0]);
+  TEST_ASSERT_EQUAL(-2, p.chainTr[1]);
+  TEST_ASSERT_EQUAL(1, p.chainRep[2]);  // the freed row is reset
+  TEST_ASSERT_EQUAL(0, p.chain[2]);
+  chainDelete(p, 5);  // past the end: nothing
+  TEST_ASSERT_EQUAL(2, p.chainLen);
+  p.chainLen = kChainMax;
+  TEST_ASSERT_FALSE(chainInsert(p, 0, 1));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_make_sel_normalizes);
@@ -249,5 +299,8 @@ int main(int, char**) {
   RUN_TEST(test_undo_overflow);
   RUN_TEST(test_undo_drop);
   RUN_TEST(test_undo_drop_after_wrap);
+  RUN_TEST(test_transpose_skips_drum_tracks);
+  RUN_TEST(test_copy_paste_drum_step_byte_exact);
+  RUN_TEST(test_chain_insert_delete_move_all_fields);
   return UNITY_END();
 }

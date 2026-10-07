@@ -44,6 +44,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   for (int k = 0; k < kFmMacros; ++k) SAME(macro[k]);
   SAME(lfoWave); SAME(lfoRate); SAME(lfoDepth); SAME(lfoDest);
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack); SAME(send);
+  SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate);
   SAME(sliceMode); SAME(chopMode); SAME(chopN); SAME(chopThresh); SAME(sliceCount);
   for (int k = 0; k < kMaxSlices; ++k) SAME(slices[k]);
   for (int k = 0; k < 2; ++k) {
@@ -69,6 +70,12 @@ static Instrument sample() {
   m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
   m.lfoDepth = -20;
   m.send = 77;
+  m.drive = 77;
+  m.rsend = 12;
+  m.velCut = -20;
+  m.velMac = 33;
+  m.crushBits = 90;
+  m.crushRate = 40;
   return m;
 }
 
@@ -77,7 +84,8 @@ void test_roundtrip() {
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(204, kPresetSize);
+  TEST_ASSERT_EQUAL(220, kPresetSize);
+  TEST_ASSERT_EQUAL(204, kPresetSizeV3);
   TEST_ASSERT_EQUAL(156, kPresetSizeV2);
   TEST_ASSERT_EQUAL(84, kPresetSizeV1);
   VecSource in(out.buf);
@@ -187,7 +195,7 @@ void test_v2_roundtrip_slices() {
   memcpy(a.slices, pos, sizeof(pos));
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
-  TEST_ASSERT_EQUAL(3, out.buf[4]);
+  TEST_ASSERT_EQUAL(kPresetVersion, out.buf[4]);
   VecSource in(out.buf);
   Instrument b;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
@@ -270,7 +278,7 @@ void test_v3_roundtrip_synth() {
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(3, out.buf[4]);
+  TEST_ASSERT_EQUAL(kPresetVersion, out.buf[4]);
   TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Synth), out.buf[5]);
   VecSource in(out.buf);
   Instrument b;
@@ -315,6 +323,65 @@ void test_apply_synth_copies_tables() {
   TEST_ASSERT_EQUAL(-12, dst.synSemi);
 }
 
+void test_v3_file_loads_with_sound_fx_defaults() {
+  Instrument a = sample();
+  a.drive = a.rsend = 0;  // a version 3 file has zeros in those bytes
+  a.velCut = a.velMac = 0;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  std::vector<uint8_t> v = out.buf;
+  TEST_ASSERT_EQUAL(kPresetVersion, v[4]);
+  v.erase(v.begin() + (kPresetSizeV3 - 4), v.begin() + (kPresetSize - 4));  // a v3 file has no LFO record
+  v[4] = 3;
+  const size_t p = v.size() - 4;
+  const uint32_t c = crc32(v.data(), p);
+  for (int i = 0; i < 4; ++i) v[p + i] = static_cast<uint8_t>(c >> (8 * i));
+  VecSource in(v);
+  Instrument b = sample();
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "v3");
+  v[4] = kPresetVersion + 1;  // newer than this firmware
+  expectUntouched(v, LoadErr::BadVersion);
+}
+
+void test_sound_fx_fields_clamped() {
+  Instrument a = sample();
+  uint8_t r[kFmRecSize];
+  packFm(a, r);
+  r[10] = 200;
+  r[11] = 255;
+  r[12] = static_cast<uint8_t>(-100);
+  r[13] = 100;
+  Instrument b;
+  unpackFm(r, b);
+  TEST_ASSERT_EQUAL(127, b.drive);
+  TEST_ASSERT_EQUAL(127, b.rsend);
+  TEST_ASSERT_EQUAL(-64, b.velCut);
+  TEST_ASSERT_EQUAL(63, b.velMac);
+}
+
+// LFO 2..4 and the sync flags survive a preset.
+void test_lfos_roundtrip() {
+  Instrument a = sample();
+  a.lfoSync = 1;
+  a.lfoRate = 6;
+  a.lfo[0] = {2, 40, -30, static_cast<uint8_t>(LfoDest::Cutoff), 0};
+  a.lfo[2] = {4, 9, 20, static_cast<uint8_t>(LfoDest::Vol), 1};
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(1, b.lfoSync);
+  TEST_ASSERT_EQUAL(6, b.lfoRate);
+  TEST_ASSERT_EQUAL(40, b.lfo[0].rate);
+  TEST_ASSERT_EQUAL(-30, b.lfo[0].depth);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Cutoff), b.lfo[0].dest);
+  TEST_ASSERT_EQUAL(1, b.lfo[2].sync);
+  TEST_ASSERT_EQUAL(9, b.lfo[2].rate);
+  TEST_ASSERT_EQUAL(0, b.lfo[1].depth);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -329,5 +396,8 @@ int main() {
   RUN_TEST(test_v3_roundtrip_synth);
   RUN_TEST(test_v2_file_loads_synth_defaults);
   RUN_TEST(test_apply_synth_copies_tables);
+  RUN_TEST(test_v3_file_loads_with_sound_fx_defaults);
+  RUN_TEST(test_sound_fx_fields_clamped);
+  RUN_TEST(test_lfos_roundtrip);
   return UNITY_END();
 }

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 deemonoise
+// SPDX-License-Identifier: CERN-OHL-S-2.0
+// Source location: https://github.com/deemonoise/D-TRK
 // Кноб энкодера EC11 (D-вал) с накаткой. Все размеры в мм.
 // Снизу выборка под гайку и резьбовую втулку — низ кноба висит над панелью на `gap`.
 // Рендер: openscad -o stl/knob.stl knob.scad   (печать верхом на стол, без поддержек)

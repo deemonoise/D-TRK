@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "audio/audio.h"
 #include "esp_heap_caps.h"
 #include "net/web.h"
 #include "storage/storage.h"
@@ -19,8 +20,16 @@ bool WifiDialog::open() {
     return false;
   }
   app_.lockTransport(true);
+  audio::reverbToPsram();  // Wi-Fi needs the internal RAM
   open_ = true;
   logCount_ = 0;
+  {
+    char line[40];  // diagnostics: Wi-Fi fails without enough internal RAM
+    snprintf(line, sizeof(line), "RAM %uK FREE, LARGEST %uK",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
+    addLog(line);
+  }
   sel_ = kExit;
   saveCreds_ = false;
   if (net::loadCreds(creds_)) {
@@ -41,6 +50,7 @@ void WifiDialog::close() {
   const bool served = net::webRunning();
   net::webEnd();
   net::off();
+  audio::reverbToInternal();
   app_.lockTransport(false);
   open_ = false;
   if (!served) return;

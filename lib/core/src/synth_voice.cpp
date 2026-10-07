@@ -2,17 +2,19 @@
 
 namespace mt {
 
-int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato, bool heavy) {
+int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato, bool heavy,
+               int polyMax, int cap) {
   legato = false;
   int pick = -1;
   int trackCount = 0, trackOldest = -1, trackNewest = -1, freeIdx = -1, oldest = -1, oldestRel = -1;
-  int hvCount = 0, hvOldest = -1, hvOldestRel = -1;
+  int hvCount = 0, hvOldest = -1, hvOldestRel = -1, live = 0;
   for (int i = 0; i < kVoices; ++i) {
     const Voice& x = v[i];
     if (!x.on) {
       if (freeIdx < 0) freeIdx = i;
       continue;
     }
+    live += !x.stolen;
     if (x.track == track) {
       ++trackCount;
       if (trackOldest < 0 || x.age < v[trackOldest].age) trackOldest = i;
@@ -27,10 +29,11 @@ int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCount
       if (rel && (hvOldestRel < 0 || x.age < v[hvOldestRel].age)) hvOldestRel = i;
     }
   }
+  if (live >= cap) freeIdx = -1;  // the CPU guard: the pool is full at cap
   if (mono && trackNewest >= 0) {
     pick = trackNewest;
     legato = true;
-  } else if (!mono && trackCount >= kPolyPerTrack) {
+  } else if (!mono && trackCount >= polyMax) {
     pick = trackOldest;
   } else if (freeIdx >= 0) {
     pick = freeIdx;

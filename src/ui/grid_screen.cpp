@@ -4,13 +4,12 @@
 #include "audio/audio.h"
 #include "fx_info.h"
 #include "note_name.h"
+#include "record.h"
 #include "scale.h"
+#include "storage/render_io.h"
 
 namespace ui {
 namespace {
-
-constexpr uint16_t kKeyWhite = 0xC618;
-constexpr uint16_t kKeyBlack = 0x18C3;
 
 const char* const kFieldNames[] = {"NOTE",    "VEL", "FX1", "FX1 VAL", "FX2", "FX2 VAL", "FX3",
                                    "FX3 VAL", "FX4", "FX4 VAL", "FX5", "FX5 VAL", "FX6", "FX6 VAL"};
@@ -60,7 +59,11 @@ int GridScreen::cur() {
 
 int GridScreen::track() const { return app_.curTrack(); }
 
-int GridScreen::rowsFor(int h) const { return (h - kNamesH - (keyboardShown() ? kKbH : 0)) / kRowH; }
+bool GridScreen::drumAt(int tr) const { return app_.project().trackIsDrum(tr); }
+
+int GridScreen::rowsFor(int h) const {
+  return (h - kNamesH - (keyboardShown() || padShown() ? kKbH : 0)) / kRowH;
+}
 
 void GridScreen::onEnter() {
   setEdit(false);
@@ -69,17 +72,19 @@ void GridScreen::onEnter() {
 }
 
 void GridScreen::onLeave() {
-  euclid_.cancel();
+  perfRelease();
+  fill_.cancel();
   transpose_.cancel();
 }
 
 void GridScreen::onProjectReplaced() {
-  euclid_.abandon();
+  fill_.abandon();
   transpose_.cancel();
 }
 
-// The Euclid dialog keeps editing the pattern it was opened for.
+// The Fill dialog keeps editing the pattern it was opened for.
 void GridScreen::onPatternChange() {
+  recLoop_ = UINT32_MAX;  // REC hits on the new pattern get their own undo snapshot
   curStep_ = 0;
   top_ = 0;
   edit_ = false;
@@ -129,6 +134,10 @@ void GridScreen::moveField(int d) {
 }
 
 void GridScreen::setEdit(bool on) {
+  if (on) {  // edit is exclusive with the live modes
+    setRec(false);
+    setPerf(false);
+  }
   if (on && !edit_) {
     editPushed_ = false;
     fxCycled_ = false;
@@ -146,6 +155,7 @@ void GridScreen::toggleView() {
 
 void GridScreen::undo() {
   editPushed_ = false;  // the next edit takes a fresh snapshot
+  recLoop_ = UINT32_MAX;  // so do the next REC hits
   const bool ok = app_.doUndo();
   if (ok) engine::post(engine::Cmd::ReleaseTies);
   app_.toast(ok ? "UNDO" : "NOTHING TO UNDO");
@@ -181,22 +191,119 @@ void GridScreen::previewNote(uint8_t note) {
   audio::preview(t.instr < mt::kInstruments ? t.instr : 0, note);
 }
 
+// Drum track: flips the lane's bit; an empty (or OFF) step becomes a note step at the track's velocity.
+// A mask that becomes 0 stays a note step (Clear step removes it).
+void GridScreen::toggleLane(int lane) {
+  mt::Step st = pat().steps[track()][cur()];
+  if (!st.hasNote()) {
+    st.note = 0;
+    st.vel = 0;
+  }
+  st.vel ^= static_cast<uint8_t>(1u << lane);
+  lane_ = lane;
+  writeStep(st);
+  if (st.vel & (1u << lane))
+    if (const mt::Instrument* k = app_.project().kitOf(track())) previewNote(k->kit[lane].note);
+}
+
+uint8_t GridScreen::degreeNote(int button, bool octaveUp, int ref) const {
+  const mt::Project& p = app_.project();
+  const int base = ref / 12 * 12 + (octaveUp ? 12 : 0);
+  return static_cast<uint8_t>(mt::degreeNote(button, p.scaleRoot, static_cast<mt::ScaleType>(p.scaleType), base));
+}
+
 // Octave from the note under the cursor, else the track's last note (60 at start).
 void GridScreen::enterDegree(int button, bool octaveUp) {
   const int tr = track();
   const mt::Step& st = pat().steps[tr][cur()];
-  const int ref = st.hasNote() ? st.note : lastNote_[tr];
-  const mt::Project& p = app_.project();
-  const int base = ref / 12 * 12 + (octaveUp ? 12 : 0);
-  setNote(static_cast<uint8_t>(
-      mt::degreeNote(button, p.scaleRoot, static_cast<mt::ScaleType>(p.scaleType), base)));
+  setNote(degreeNote(button, octaveUp, st.hasNote() ? st.note : lastNote_[tr]));
   moveStep(1);
+}
+
+void GridScreen::setRec(bool on) {
+  if (on) {
+    setPerf(false);
+    edit_ = false;
+    recLoop_ = UINT32_MAX;
+  }
+  rec_ = on;
+}
+
+void GridScreen::setPerf(bool on) {
+  if (on) {
+    rec_ = false;
+    edit_ = false;
+  } else {
+    perfRelease();
+  }
+  perf_ = on;
+}
+
+void GridScreen::perfRelease() {
+  if (perfBtn_ < 0) return;
+  engine::postWait(engine::Cmd::PerfOff, static_cast<uint16_t>(perfTrack_));
+  perfBtn_ = -1;
+}
+
+// REC: the note lands on the heard step of the track (its own length), or the next one past its
+// half. Melodic: button N = scale degree in the octave of the track's last note, Shift + N clears
+// the step's note. Drum track: button N sets lane N, Shift + N clears it.
+bool GridScreen::recordKey(int n, bool shift) {
+  const engine::Status& st = app_.status();
+  const int tr = track();
+  const mt::Pattern& pt = pat();
+  const int tl = pt.trackLen[tr] && pt.trackLen[tr] < len() ? pt.trackLen[tr] : len();
+  const int step = mt::recordStepFor(st.pos % tl, engine::stepPhase(st), tl);
+  if (st.loop != recLoop_ || app_.editPattern() != recPat_) {  // one undo snapshot per pass and pattern
+    app_.pushUndo();
+    recLoop_ = st.loop;
+    recPat_ = app_.editPattern();
+  }
+  mt::Step s = pt.steps[tr][step];
+  uint8_t sound = 0xFF;  // note to preview
+  if (drum()) {
+    const uint8_t bit = static_cast<uint8_t>(1u << n);
+    if (shift) {
+      if (s.hasNote()) s.vel &= static_cast<uint8_t>(~bit);
+    } else {
+      if (!s.hasNote()) {
+        s.note = 0;
+        s.vel = 0;
+      }
+      s.vel |= bit;
+      if (const mt::Instrument* k = app_.project().kitOf(tr)) sound = k->kit[n].note;
+    }
+  } else if (shift) {
+    s.note = mt::kNoteEmpty;
+    s.vel = mt::kVelDefault;
+  } else {
+    s.note = degreeNote(n, false, lastNote_[tr]);
+    lastNote_[tr] = s.note;
+    sound = s.note;
+  }
+  engine::lockProject();
+  pat().steps[tr][step] = s;
+  engine::unlockProject();
+  app_.markDirty();
+  if (sound <= 127) previewNote(sound);
+  return true;
 }
 
 void GridScreen::editTurn(int delta, bool shift) {
   const int tr = track();
   mt::Step st = pat().steps[tr][cur()];
   const mt::Project& p = app_.project();
+  if (drum() && curField_ == kNote) {  // turn: lane cursor; Shift + turn: toggle the lane
+    if (shift) toggleLane(lane_);
+    else lane_ = clampi(lane_ + delta, 0, mt::kKitLanes - 1);
+    return;
+  }
+  if (drum() && curField_ == kVel) {  // the step velocity lives in note
+    if (!st.hasNote()) return;
+    st.note = static_cast<uint8_t>(clampi((st.note ? st.note : p.tracks[tr].defVel) + delta * (shift ? 10 : 1), 1, 127));
+    writeStep(st);
+    return;
+  }
   switch (curField_) {
     case kNote:
       if (st.note == mt::kNoteOff) st.note = 60;
@@ -237,8 +344,8 @@ void GridScreen::editTurn(int delta, bool shift) {
 
 void GridScreen::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
-  if (euclid_.isOpen()) {
-    euclid_.onInput(ev);
+  if (fill_.isOpen()) {
+    fill_.onInput(ev);
     return;
   }
   if (transpose_.isOpen()) {
@@ -271,16 +378,34 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
 }
 
 bool GridScreen::trackKey(int n, bool shift) {
-  if (euclid_.isOpen() || transpose_.isOpen()) return true;
+  if (fill_.isOpen() || transpose_.isOpen()) return true;
   cur();
+  const bool playing = app_.status().playing;
+  if (rec_ && playing) return recordKey(n, shift);
+  if (perf_ && playing && !shift) {  // last pressed wins; Shift + N still mutes
+    perfRelease();
+    perfBtn_ = n;
+    perfTrack_ = track();
+    const uint8_t fx = n < mt::kPerfButtons ? app_.project().perfMap[n] : 0;  // PROJ -> PERF
+    engine::post(engine::Cmd::PerfOn, static_cast<uint16_t>(perfTrack_ | (fx << 8)));
+    char msg[32];
+    snprintf(msg, sizeof(msg), "PERF %s", fx ? mt::perfFxName(static_cast<mt::PerfFx>(fx)) : "---");
+    app_.toast(msg);
+    return true;
+  }
   if (edit_) {
-    enterDegree(n, shift);
+    if (drum()) toggleLane(n);  // lanes 1-8; the cursor stays
+    else enterDegree(n, shift);
     return true;
   }
   if (shift) return false;
   app_.setCurTrack(firstTrack() + n);  // button N = track N of the visible half
   cursorMoved();
   return true;
+}
+
+void GridScreen::trackRelease(int n) {
+  if (n == perfBtn_) perfRelease();
 }
 
 bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
@@ -303,8 +428,8 @@ bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
 }
 
 void GridScreen::onTouch(const TouchEvent& ev) {
-  if (euclid_.isOpen()) {
-    euclid_.onTouch(ev);
+  if (fill_.isOpen()) {
+    fill_.onTouch(ev);
     return;
   }
   if (transpose_.isOpen()) {
@@ -325,6 +450,12 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     return;
   }
 
+  // Lane pad.
+  if (padShown() && ev.y >= y0_ + h_ - kKbH) {
+    if (ev.type == TouchType::Tap) toggleLane(clampi(ev.x / kPadW, 0, mt::kKitLanes - 1));
+    return;
+  }
+
   // Mini keyboard.
   if (keyboardShown() && ev.y >= y0_ + h_ - kKbH) {
     if (ev.type != TouchType::Tap) return;
@@ -335,12 +466,17 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     return;
   }
 
-  // Track names: mute, Shift = solo.
+  // Track names: mute, Shift = solo. REC: picks the track to record into (the buttons are notes).
   if (ev.y < y0_ + kNamesH) {
     if (ev.type != TouchType::Tap || ev.x < kNumW) return;
     const int col = (ev.x - kNumW) / kColW;
     if (!detail_ && col >= kOverviewTracks) return;
     const int tr = detail_ ? track() : firstTrack() + col;
+    if (rec_ && !app_.shift()) {
+      app_.setCurTrack(tr);
+      cursorMoved();
+      return;
+    }
     mt::TrackCfg& t = app_.project().tracks[tr];
     engine::lockProject();
     if (app_.shift()) t.solo = !t.solo;
@@ -424,6 +560,7 @@ void GridScreen::openMenu() {
     add("Clear sel", kClearSel, true);
     add("Note OFF sel", kNoteOffSel, true);
     add("Transpose...", kTranspose, true);
+    add("Fill...", kFill, true);
   } else {
     snprintf(title, sizeof(title), "STEP %d  %s", cur() + 1, app_.project().tracks[track()].name);
     add("Copy step", kCopyStep, canCopy);
@@ -434,7 +571,11 @@ void GridScreen::openMenu() {
     add("Copy track", kCopyTrack, canCopy);
     add("Clear track", kClearTrack, true);
     add("Transpose track...", kTranspose, true);
-    add("Euclid...", kEuclid, true);
+    add("Fill...", kFill, true);
+    add("Resample track", kResampleTrack, true);
+    add("Resample pattern", kResamplePattern, true);
+    add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
+    add(perf_ ? "Perf: ON" : "Perf: OFF", kPerf, true);
   }
   if (!selOn_) {
     add(detail_ ? "Overview" : "Detail view", kToggleView, true);
@@ -446,21 +587,77 @@ void GridScreen::openMenu() {
   app_.menu().open(title, items, n, [this](int id) { onMenu(id); });
 }
 
-void GridScreen::openEuclid() {
+// The selection, else the current track up to its own length (polymeter). The column under the
+// cursor picks what is filled.
+void GridScreen::openFill() {
   const int tr = track();
-  mt::EuclidParams& e = euclidParams_[tr];
-  if (!euclidInit_[tr]) {  // first use: base = last note on the track, else the last entered note
-    euclidInit_[tr] = true;
-    e.baseNote = lastNote_[tr];
-    const mt::Step* steps = pat().steps[tr];
-    for (int i = len() - 1; i >= 0; --i)
-      if (steps[i].hasNote()) {
-        e.baseNote = steps[i].note;
-        break;
-      }
+  mt::Sel sel = selOn_ ? curSel() : trackSel();
+  if (!selOn_) {
+    const int tl = pat().trackLen[tr];
+    if (tl > 0 && tl - 1 < sel.s1) sel.s1 = static_cast<uint8_t>(tl - 1);
   }
+  mt::FillSpec& f = fillSpec_;
+  const mt::FillTarget was = f.target;
+  const uint8_t wasSlot = f.slot;
+  if (curField_ == kVel) {
+    f.target = mt::FillTarget::Vel;
+  } else if (curField_ >= kFx1) {
+    f.target = mt::FillTarget::Fx;
+    f.slot = static_cast<uint8_t>((curField_ - kFx1) / 2);
+  } else {
+    f.target = mt::FillTarget::Note;
+  }
+  if (!fillInit_ || f.target != was || (f.target == mt::FillTarget::Fx && f.slot != wasSlot)) {
+    fillInit_ = true;
+    if (f.target == mt::FillTarget::Note) {  // from the last note entered on the track
+      f.from = lastNote_[tr];
+      f.to = static_cast<uint8_t>(f.from + 12 > 127 ? 127 : f.from + 12);
+    } else if (f.target == mt::FillTarget::Vel) {
+      f.from = 100;
+      f.to = 127;
+    } else {  // the command in that slot under the cursor, else the last one written there
+      const mt::FxSlot& here = pat().steps[tr][cur()].fx[f.slot];
+      const mt::FxSlot& src = here.cmd != mt::Fx::None ? here : lastFx_[tr][f.slot];
+      f.cmd = src.cmd;
+      f.from = f.to = src.cmd == mt::Fx::None ? 0 : src.val;
+    }
+  }
+  if (drum()) f.lane = static_cast<uint8_t>(lane_);
   setEdit(false);
-  euclid_.open(app_.editPattern(), tr, &e);
+  if (!fill_.open(app_.editPattern(), sel, &f, drum())) app_.toast("NO MEMORY");
+}
+
+// Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
+// project's samples, normalized to -1 dBFS with the silent end cut: RS1, RS2, ...
+void GridScreen::resample(bool wholePattern) {
+  const engine::Status& st = app_.status();
+  if (st.playing || st.paused) {
+    app_.toast("STOP FIRST");
+    return;
+  }
+  mt::Project& p = app_.project();
+  mt::RenderSpec s;
+  s.pattern = app_.editPattern();
+  s.tracksMask = 0;
+  for (int t = 0; t < mt::kTracks; ++t)
+    if (wholePattern ? p.trackAudible(t) : t == track()) s.tracksMask |= static_cast<uint16_t>(1u << t);
+  if (!wholePattern && !p.trackInternal(track())) {
+    app_.toast("MIDI TRACK");
+    return;
+  }
+  char name[mt::kSampleNameMax + 1];
+  storage::RenderStats rs;
+  const storage::Result r = storage::resample(p, s, name, rs, App::renderProgress, &app_);
+  app_.endProgress();
+  if (r != storage::Result::Ok && r != storage::Result::Capped) {
+    app_.toast(storage::resultText(r));
+    return;
+  }
+  app_.markDirty();
+  char msg[40];
+  snprintf(msg, sizeof(msg), "%s %lu.%lus%s", name, static_cast<unsigned long>(rs.frames / 32000),
+           static_cast<unsigned long>(rs.frames % 32000 / 3200), r == storage::Result::Capped ? "  60 S CAP" : "");
+  app_.toast(msg);
 }
 
 void GridScreen::apply(const mt::Sel& sel, int id) {
@@ -501,9 +698,19 @@ void GridScreen::openTranspose() {
 
 void GridScreen::transpose(const mt::Sel& sel, int amount, bool degrees) {
   const mt::Project& p = app_.project();
+  bool drumTr[mt::kTracks];
+  bool any = false;  // a melodic track in the selection
+  for (int t = 0; t < mt::kTracks; ++t) {
+    drumTr[t] = drumAt(t);
+    if (t >= sel.t0 && t <= sel.t1 && !drumTr[t]) any = true;
+  }
+  if (!any) {
+    app_.toast("DRUM TRACK");
+    return;
+  }
   app_.pushUndo();
   engine::lockProject();
-  mt::transposeSel(pat(), sel, amount, degrees, p.scaleRoot, static_cast<mt::ScaleType>(p.scaleType));
+  mt::transposeSel(pat(), sel, amount, degrees, p.scaleRoot, static_cast<mt::ScaleType>(p.scaleType), drumTr);
   engine::unlockProject();
   app_.markDirty();
   engine::post(engine::Cmd::ReleaseTies);
@@ -511,7 +718,11 @@ void GridScreen::transpose(const mt::Sel& sel, int amount, bool degrees) {
 }
 
 void GridScreen::onMenu(int id) {
-  if (app_.editPattern() != menuPattern_) {  // heard pattern changed while the menu was open
+  // The heard pattern changed while the menu was open: edits of steps would hit the wrong one.
+  // View, follow, undo, REC / PERF and dropping the selection do not depend on it.
+  const bool anyPattern = id == kToggleView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
+                          id == kDropSel;
+  if (!anyPattern && app_.editPattern() != menuPattern_) {
     app_.toast("PATTERN CHANGED");
     return;
   }
@@ -565,7 +776,17 @@ void GridScreen::onMenu(int id) {
       break;
     case kUndo: undo(); break;
     case kDropSel: selOn_ = false; break;
-    case kEuclid: openEuclid(); break;
+    case kFill: openFill(); break;
+    case kResampleTrack: resample(false); break;
+    case kResamplePattern: resample(true); break;
+    case kRec:
+      setRec(!rec_);
+      app_.toast(rec_ ? "REC: BUTTONS WRITE WHILE PLAYING" : "REC OFF");
+      break;
+    case kPerf:
+      setPerf(!perf_);
+      app_.toast(perf_ ? "PERF: HOLD A BUTTON" : "PERF OFF");
+      break;
     default: break;
   }
   app_.invalidate();
@@ -574,8 +795,8 @@ void GridScreen::onMenu(int id) {
 // ---- drawing ----
 
 void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
-  if (euclid_.isOpen()) {
-    euclid_.draw(s, y0);
+  if (fill_.isOpen()) {
+    fill_.draw(s, y0);
     return;
   }
   if (transpose_.isOpen()) {
@@ -605,7 +826,8 @@ void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
   const int gridY = y0 + kNamesH;
   if (detail_) drawDetail(s, gridY);
   else drawOverview(s, gridY);
-  if (keyboardShown()) drawKeyboard(s, y0 + h - kKbH);
+  if (padShown()) drawPad(s, y0 + h - kKbH);
+  else if (keyboardShown()) drawKeyboard(s, y0 + h - kKbH);
 }
 
 void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
@@ -616,8 +838,10 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   char buf[12];
 
   // Header: the visible half over the step numbers, track names coloured by mute/solo.
-  s.setTextColor(kDim);
-  s.drawString(half() ? "9-16" : "1-8", 0, gridY - kNamesH);  // 4 chars fill kNumW
+  if (!drawBadge(s, gridY - kNamesH)) {
+    s.setTextColor(kDim);
+    s.drawString(half() ? "9-16" : "1-8", 0, gridY - kNamesH);  // 4 chars fill kNumW
+  }
   for (int col = 0; col < kOverviewTracks; ++col) {
     const int tr = firstTrack() + col;
     const mt::TrackCfg& t = p.tracks[tr];
@@ -641,20 +865,31 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
       const mt::Step& c = pt.steps[tr][step];
       const int x = kNumW + col * kColW;
       if (selected(tr, step)) s.fillRect(x, y, kColW, kRowH, kSelBg);
-      char nn[4];
-      mt::noteName(c.note, nn);
-      s.setTextColor(c.hasNote() && p.trackAudible(tr) ? kText : kDim);
-      s.drawString(nn, x + 4, y);
-      if (c.hasNote()) {
+      // Past the track's own length: never played, drawn grey; a line marks where it loops.
+      const uint8_t tl = pt.trackLen[tr];
+      const bool past = tl && tl < n && step >= tl;
+      if (tl && tl < n && step == tl) s.drawFastHLine(x, y, kColW, kCursor);
+      const bool lit = p.trackAudible(tr) && !past;
+      const bool drumTr = drumAt(tr);
+      if (drumTr && c.hasNote()) {
+        drawMask(s, x, y, c.vel, lit, -1, false);
+      } else {
+        char nn[4];
+        mt::noteName(c.note, nn);
+        s.setTextColor(c.hasNote() && lit ? kText : kDim);
+        s.drawString(nn, x + 4, y);
+      }
+      if (c.hasNote() && !drumTr) {
         const uint8_t vel = c.vel ? c.vel : p.tracks[tr].defVel;
         s.fillRect(x + 32, y + 12, (vel * 20) / 127, 2, kDim);
       }
       if (c.hasFx()) {
-        // Dim when every fx is a synth fx on a MIDI track (ignored there).
+        // Dim when every fx is ignored: a synth fx on a MIDI track, a drum fx off a drum track.
         bool live = false;
         for (const mt::FxSlot& f : c.fx)
-          live |= f.cmd != mt::Fx::None && (p.trackInternal(tr) || !mt::fxSynthOnly(f.cmd));
-        s.fillRect(x + 48, y + 6, 3, 3, live ? kCursor : kDim);
+          live |= f.cmd != mt::Fx::None && (p.trackInternal(tr) || !mt::fxSynthOnly(f.cmd)) &&
+                  (drumTr || !mt::fxDrumOnly(f.cmd));
+        s.fillRect(x + 48, drumTr ? y + 1 : y + 6, 3, 3, live ? kCursor : kDim);
       }
       if (step == curStep_ && tr == track()) s.drawRect(x, y, kColW, kRowH, edit_ ? kEditCursor : kCursor);
     }
@@ -670,12 +905,16 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   const mt::TrackCfg& t = p.tracks[tr];
   const bool audible = p.trackAudible(tr);
   const bool midi = !p.trackInternal(tr);
+  const bool drumTr = drumAt(tr);
   char buf[16];
 
   // Header: track number over the step numbers, its name over NOTE / VEL, slots over the commands.
   s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
-  snprintf(buf, sizeof(buf), "T%d", tr + 1);
-  s.drawString(buf, 2, gridY - kNamesH);
+  if (!drawBadge(s, gridY - kNamesH)) {
+    snprintf(buf, sizeof(buf), "T%d", tr + 1);
+    s.drawString(buf, 2, gridY - kNamesH);
+  }
+  s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
   s.drawString(t.name, kNumW + 1, gridY - kNamesH);  // 8 chars fit 2 fields
   s.setTextColor(kDim);
   for (int k = 0; k < mt::kFxSlots; ++k) {
@@ -696,12 +935,28 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
 
     const mt::Step& c = pt.steps[tr][step];
     if (selected(tr, step)) s.fillRect(kNumW, y, kDetW, kRowH, kSelBg);
+    const uint8_t tl = pt.trackLen[tr];
+    const bool past = tl && tl < n && step >= tl;  // past the track's own length
+    if (tl && tl < n && step == tl) s.drawFastHLine(kNumW, y, kDetW, kCursor);
     for (int f = 0; f < kFields; ++f) {
+      const bool laneCur = edit_ && step == curStep_ && curField_ == kNote;  // the lane cursor, even on an empty step
+      if (drumTr && f == kNote && (c.hasNote() || laneCur)) {
+        drawMask(s, kNumW, y, c.hasNote() ? c.vel : 0, audible && !past, laneCur ? lane_ : -1, true);
+        continue;
+      }
       char txt[5];
-      const bool has = fieldText(c, f, txt);
-      // Synth fx do nothing on a MIDI track.
-      const bool ignored = f >= kFx1 && midi && mt::fxSynthOnly(c.fx[(f - kFx1) / 2].cmd);
-      s.setTextColor(has && audible && !ignored ? kText : kDim);
+      bool has;
+      if (drumTr && f == kVel) {  // the step velocity, held in note
+        has = c.hasNote() && c.note;
+        if (has) snprintf(txt, sizeof(txt), "%3u", c.note);
+        else snprintf(txt, sizeof(txt), "...");
+      } else {
+        has = fieldText(c, f, txt);
+      }
+      // Synth fx do nothing on a MIDI track, drum fx off a drum track.
+      const mt::Fx cmd = f >= kFx1 ? c.fx[(f - kFx1) / 2].cmd : mt::Fx::None;
+      const bool ignored = f >= kFx1 && ((midi && mt::fxSynthOnly(cmd)) || (!drumTr && mt::fxDrumOnly(cmd)));
+      s.setTextColor(has && audible && !ignored && !past ? kText : kDim);
       s.drawString(txt, kNumW + f * kFieldW + 4, y);
     }
     if (step == curStep_)
@@ -710,6 +965,49 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   // Separators before each fx pair.
   const int h = kNamesH + rows_ * kRowH;
   for (int k = 0; k < mt::kFxSlots; ++k) s.drawFastVLine(kNumW + (kFx1 + 2 * k) * kFieldW - 1, gridY - kNamesH, h, kDim);
+}
+
+// REC (red) / PERF (yellow) over the step numbers instead of the header text; false when neither.
+bool GridScreen::drawBadge(LGFX_Sprite& s, int y) {
+  if (!rec_ && !perf_) return false;
+  s.setTextColor(rec_ ? kRed : kYellow);
+  s.drawString(rec_ ? "REC" : "PERF", 0, y);
+  return true;
+}
+
+// 5 px squares at a 6 / 7 px pitch: filled = the lane hits; cursorLane >= 0 frames that lane.
+void GridScreen::drawMask(LGFX_Sprite& s, int x, int y, uint8_t mask, bool audible, int cursorLane, bool compact) {
+  for (int l = 0; l < mt::kKitLanes; ++l) {
+    const int sx = compact ? x + 4 + (l % 4) * 6 : x + 2 + l * 6;
+    const int sy = compact ? y + 2 + (l / 4) * 7 : y + 5;
+    if (mask & (1u << l)) s.fillRect(sx, sy, 5, 5, audible ? kText : kDim);
+    else s.drawRect(sx, sy, 5, 5, kDim);
+    if (l == cursorLane) s.drawRect(sx - 1, sy - 1, 7, 7, kEditCursor);
+  }
+}
+
+// Lane pad: a button per lane, lit when the step has it, named after its sample or instrument.
+void GridScreen::drawPad(LGFX_Sprite& s, int y) {
+  const mt::Project& p = app_.project();
+  const mt::Instrument* k = p.kitOf(track());
+  const mt::Step& c = pat().steps[track()][curStep_];
+  s.fillRect(0, y, kScreenW, kKbH, kBg);
+  for (int l = 0; l < mt::kKitLanes; ++l) {
+    const int x = l * kPadW;
+    const bool on = c.hasNote() && (c.vel & (1u << l));
+    s.fillRect(x + 1, y + 1, kPadW - 2, kKbH - 2, on ? kPlayBg : kBeatBg);
+    if (l == lane_) s.drawRect(x, y, kPadW, kKbH, kEditCursor);
+    char nm[8] = "-";
+    if (k) {
+      const mt::KitLane& ln = k->kit[l];
+      if (ln.instr < mt::kInstruments) snprintf(nm, sizeof(nm), "%.4s", p.instruments[ln.instr].name);
+      else if (ln.sample[0]) snprintf(nm, sizeof(nm), "%.4s", ln.sample);
+    }
+    s.setTextColor(on ? kText : kDim);
+    s.drawString(nm, x + 4, y + 4);
+    snprintf(nm, sizeof(nm), "%d", l + 1);
+    s.drawString(nm, x + 4, y + kKbH - 18);
+  }
 }
 
 void GridScreen::drawKeyboard(LGFX_Sprite& s, int y) {

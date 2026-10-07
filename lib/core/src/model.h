@@ -9,6 +9,10 @@ constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
 constexpr int kPatterns = 16;
 constexpr int kChainMax = 64;
+constexpr int kChainRepMax = 16;  // passes of a chain item
+constexpr int kChainTrMax = 24;   // chain item transpose, semitones
+constexpr int kScenes = 8;        // mute scenes
+constexpr uint16_t kSceneEmpty = 0xFFFF;  // a scene slot with nothing stored (all 16 muted is no use)
 constexpr int kPpqn = 96;
 
 constexpr uint8_t kNoteEmpty = 0xFF;
@@ -16,7 +20,7 @@ constexpr uint8_t kNoteOff = 0xFE;
 constexpr uint8_t kVelDefault = 0;
 constexpr uint8_t kNoProgram = 0xFF;
 
-constexpr int kInstruments = 16;
+constexpr int kInstruments = 32;
 constexpr int kWavetables = 16;
 constexpr int kSampleNameMax = 16;
 constexpr int kProjSamples = 128;  // = kBankEntries
@@ -83,12 +87,24 @@ constexpr int kMachineMax = 16;
 static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
-// Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay send.
-enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLocks };
-static_assert(kLocks <= 8, "lockMask is a uint8_t");
+// Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
+// send, the drive, the reverb send.
+enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLocks };
+static_assert(kLocks <= 16, "lockMask is a uint16_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
 // Dec..Con = macro index + 1 (FM / DRUM only). Stored in files: new targets before Count only.
-enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Count };
+enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive, Count };
+
+// LFO 2..4 of an instrument (LFO 1 keeps its own fields: older files). depth 0 = off.
+constexpr int kLfos = 4;
+struct LfoCfg {
+  uint8_t wave = 0;   // LfoWave
+  uint8_t rate = 64;  // 0..127 (lfoHz), or a division index when sync (lfoSyncHz)
+  int8_t depth = 0;   // -64..63
+  uint8_t dest = 0;   // LfoDest
+  uint8_t sync = 0;   // 1 = rate is a tempo division
+};
+static_assert(sizeof(LfoCfg) == 5, "LfoCfg layout (file format)");
 
 // Internal synth instrument. One-byte fields: the audio task reads them without a lock.
 constexpr uint8_t kMasterVolMax = 200;  // master volume %, above 100 = up to +6 dB
@@ -128,6 +144,7 @@ struct Instrument {
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
   int8_t lfoDepth = 0;   // -64..63, 0 = off
   uint8_t lfoDest = 0;   // LfoDest
+  uint8_t lfoSync = 0;   // LFO 1 synced to the tempo: lfoRate is a division (lfoSyncHz)
   // Filter, every type: see cutoffHz, resoQ, filterEnv.
   uint8_t fltMode = 0;          // FltMode
   uint8_t cutoff = 127;         // 0..127
@@ -136,6 +153,12 @@ struct Instrument {
   uint8_t fAtk = 0, fDec = 40;  // envTimeMs; fDec 0 = hold
   uint8_t keytrack = 0;         // 0..127 = 0..100 %
   uint8_t send = 0;             // delay send 0..127 (every type)
+  uint8_t drive = 0;            // tanh drive before the filter, 0..127 (0 = off), every type
+  uint8_t crushBits = 0;        // bit crush after the drive, 0 = off .. 127 = 2 bits (fx BIT locks it)
+  uint8_t crushRate = 0;        // sample-rate reduction, 0 = off .. 127 (fx SRR locks it)
+  uint8_t rsend = 0;            // reverb send 0..127 (every type)
+  int8_t velCut = 0;            // velocity -> cutoff, -64..63 (+-6 octaves at full depth and velocity)
+  int8_t velMac = 0;            // velocity -> DECAY macro, -64..63 (FM / DRUM / SYNTH)
   // SYNTH (see synth_syn.h): oscillators 1, 2 (SynOsc), their wavetables (project list name or a
   // built-in "*NAME"), osc 2 semitones, hard sync, sub (level, 0 = -1 / 1 = -2 octaves), noise,
   // env->SHAPE attack / decay (envTimeMs, decay 0 = hold). Macros: SHP1, SHP2, MIX, DET, SENV.
@@ -147,6 +170,7 @@ struct Instrument {
   uint8_t synSubOct = 0;  // 0..1
   uint8_t synNoise = 0;   // 0..127
   uint8_t synEAtk = 0, synEDec = 40;
+  LfoCfg lfo[kLfos - 1];   // LFO 2..4 (LFO 1 is lfoWave .. lfoSync above; see lfoRef)
   KitLane kit[kKitLanes];  // KIT: the lanes (see kitSetDefaults)
 };
 
@@ -155,6 +179,24 @@ uint16_t envTimeMs(uint8_t v);
 // FM DECAY: 0..127 -> 5..4000 ms exponentially (time to -60 dB).
 uint16_t fmDecayMs(uint8_t v);
 // LFO rate: 0..127 -> 0.05..30 Hz exponentially.
+// Synced LFO rate: division index 0..kLfoSyncSteps-1 (1/32 .. 8 bars) at bpm -> Hz, and its name.
+constexpr int kLfoSyncSteps = 12;
+float lfoSyncHz(uint8_t div, uint16_t bpm);
+const char* lfoSyncName(uint8_t div);
+// LFO i (0..kLfos-1) of an instrument, by reference: LFO 1 is the instrument's own lfo* fields.
+struct LfoRef {
+  uint8_t& wave;
+  uint8_t& rate;
+  int8_t& depth;
+  uint8_t& dest;
+  uint8_t& sync;
+};
+struct Instrument;
+LfoRef lfoRef(Instrument& m, int i);
+inline LfoCfg lfoAt(const Instrument& m, int i) {
+  if (i <= 0 || i >= kLfos) return {m.lfoWave, m.lfoRate, m.lfoDepth, m.lfoDest, m.lfoSync};
+  return m.lfo[i - 1];
+}
 float lfoHz(uint8_t v);
 // TONE, CHORD: held while the note is, with the instrument's attack / sustain / release.
 // The other machines are one-shot drums. Out of range = Kick.
@@ -190,12 +232,42 @@ uint8_t lfoDestStep(uint8_t dest, int d, bool macros);
 // ACC: drum tracks, lane mask: lanes in it play at the step velocity, the others at 60 % (fxDrumOnly).
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
-  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, Count
+  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR, Count
 };
+// BIT, SRR lock the voice's bit-depth / sample-rate reduction (kLockBit / kLockSrr, 0 = off; no
+// instrument setting), INT tracks only.
+// DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.
+// ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
+// kArmDefault (UP, 3) is the plain ARP. INT tracks only.
+// ARS (step arp, the sequencer's): (octaves - 1) << 6 | mode << 4 | steps per note (1..kArmRateMax),
+// the ARM modes, 1..kArsOctMax octaves. The step plays the first arp note, the next steps without a
+// note play the next ones (real notes, MIDI too) until a note step, OFF or a pattern change; notes =
+// CHD chord, else ARP 0 x y, else the root (at least 2 octaves then), repeated an octave up per
+// extra octave. Not on drum tracks; ARP / ARM do not reach the synth on its step.
+constexpr uint8_t kArmModes = 4, kArmRateMax = 8, kArmDefault = 0x03, kArsDefault = 0x01, kArsOctMax = 4;
+// CND values beyond FST (0) and A:B (b = 2..8): FIL plays only while fill is held, NFL only while it is
+// not. Their low nibble (< 2) is never an A:B value.
+constexpr uint8_t kCndFill = 0x01, kCndNoFill = 0x02;
+// RAT: ramp << 4 | hits (2..8); ramp 0 = even, kRatUp = velocity rising to the step's, kRatDown = falling.
+constexpr uint8_t kRatUp = 1, kRatDown = 2;
+// PRE / !PRE: the last condition evaluated on this track (CND or PRB, not PRE / NEI) passed / failed;
+// NEI / !NEI: the same for the track on the left (track 1: always false). Shown PRE, !PR, NEI, !NE.
+constexpr uint8_t kCndPre = 0x03, kCndNotPre = 0x04, kCndNei = 0x05, kCndNotNei = 0x06;
+
+// Punch-in effects held on the track buttons (PERF mode); Project::perfMap says which one each button
+// holds (saved: new values go before Count only). The sequencer adds them to the steps of the track
+// as they play (Sequencer::perfSlot).
+enum class PerfFx : uint8_t {
+  None, Rat2, Rat4, FltLow, FltHigh, DlyMax, Crush, Fade, Mute,
+  DecShort, Rat3, Rat8, RatUp, RvbMax, Srr, Drive, Count
+};
+constexpr int kPerfButtons = 8;
 
 // Synth message 0xF5 cmd val: cmd is an Fx (synth fx) or kSynthStep, a step start on the INT
 // track with val = ticks per step | 0x80 if the step has a note (sent by the sequencer).
 constexpr uint8_t kSynthStep = 0xF0;
+// Synth message 0xF5 kSynthArpChord chord (a CHD value): the track's ARP cycles that chord's notes.
+constexpr uint8_t kSynthArpChord = 0xF1;
 
 struct FxSlot {
   Fx cmd = Fx::None;
@@ -263,10 +335,13 @@ struct Pattern {
   uint8_t length = kDefaultSteps;
   Resolution res = Resolution::Sixteenth;
   uint8_t swing = 50;  // 50..75 %
+  uint8_t groove = 0;  // groove template (grooveAt), 0 = OFF: swing applies
+  uint8_t trackLen[kTracks] = {0};  // 0 = length, else 1..length: the track loops on its own (polymeter)
   Step steps[kTracks][kMaxSteps];
 
   void clear();
-  bool isEmpty() const;
+  bool isEmpty() const;  // steps only (trackLen ignored)
+  void fitTrackLen();    // after a length change: track lengths past it become the length
 };
 
 struct TrackCfg {
@@ -282,6 +357,7 @@ struct TrackCfg {
   TrackOut out = TrackOut::Int;  // files without TOUT load as MIDI (see loadProject)
   uint8_t instr = 0;  // 0..kInstruments-1, INT tracks
   uint8_t vol = 100;  // 0..127, INT tracks
+  uint8_t humanize = 0;  // 0..100: random timing (up to +-10 % of a step) and velocity (+-20) per step
 };
 
 struct Project {
@@ -293,7 +369,14 @@ struct Project {
   Pattern patterns[kPatterns];
   uint8_t chain[kChainMax] = {0};
   uint8_t chainLen = 0;
+  // Per chain item: transpose of melodic tracks (semitones, -kChainTrMax..kChainTrMax), passes before
+  // advancing (1..kChainRepMax), mute scene recalled when the item starts (0 = none, 1..kScenes).
+  // Rows move together: chainInsert / chainDelete (edit_ops).
+  int8_t chainTr[kChainMax] = {0};
+  uint8_t chainRep[kChainMax] = {0};  // reset() sets 1
+  uint8_t chainScene[kChainMax] = {0};
   bool songMode = false;
+  uint16_t scenes[kScenes];  // bit t = track t muted; kSceneEmpty = nothing stored (reset())
   Instrument instruments[kInstruments];
   uint8_t masterVol = 40;  // 0..kMasterVolMax %
   bool preview = true;     // GRID note entry sounds on INT tracks
@@ -302,6 +385,21 @@ struct Project {
   uint8_t dlyFb = 50;
   uint8_t dlyTone = 90;
   uint8_t dlyLevel = 100;
+  // Reverb (INT, send per instrument): size, damping, return level, 0..127.
+  uint8_t rvbSize = 60;
+  uint8_t rvbDamp = 70;
+  uint8_t rvbLevel = 80;
+  // Master compressor: amount 0..127 (0 = off), release 0..127; sidechain key = track scTrack (1..kTracks,
+  // 0 = none) at depth scDepth 0..127.
+  uint8_t compAmt = 0;
+  uint8_t compRel = 50;
+  uint8_t scTrack = 0;
+  uint8_t scDepth = 64;
+  // Master DJ filter on the internal sound: -64..-1 low-pass (closing towards -64), 0 off, 1..63
+  // high-pass (opening towards 63).
+  int8_t djFilter = 0;
+  // PERF: the effect of track button 1..8 (PerfFx).
+  uint8_t perfMap[kPerfButtons] = {1, 2, 3, 4, 5, 6, 7, 8};
   ProjSample samples[kProjSamples];
   uint8_t sampleCount = 0;  // names unique ignoring case
   ProjWavetable wavetables[kProjWavetables];

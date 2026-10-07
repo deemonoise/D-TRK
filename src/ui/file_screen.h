@@ -2,6 +2,8 @@
 #include "hw/sdcard.h"
 #include "import_dialog.h"
 #include "keyboard.h"
+#include "render_dialog.h"
+#include "page_bar.h"
 #include "screen.h"
 #include "wifi_dialog.h"
 
@@ -12,7 +14,7 @@ namespace ui {
 // subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries).
 class FileScreen : public Screen {
  public:
-  explicit FileScreen(App& app) : app_(app), import_(app), wifi_(app) {}
+  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app) {}
   void onEnter() override;
   void onLeave() override;
   void onProjectReplaced() override;
@@ -24,24 +26,25 @@ class FileScreen : public Screen {
   bool wantsRedraw(const engine::Status&) override { return wifi_.wantsRedraw(); }
 
  private:
-  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kWifi, kRetry, kActions };
+  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kRetry, kActions };
   enum MenuId : int {
-    kCancel, kDiscardLoad, kDiscardNew, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
+    kCancel, kDiscardLoad, kDiscardNew, kRestoreAuto, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
   };
   static constexpr int kSectionSel = kActions;  // PROJECTS focus on the header section switch
   // SAMPLES rows: Import, Compact, Clear cache, then the project's samples.
   enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kClearRow, kFirstSample };
   static constexpr int kHeaderH = 28;
-  static constexpr int kActionH = 34;
+  static constexpr int kActionH = 27;  // kActions rows fit under the header and the page bar
   static constexpr int kRowH = 24;
   static constexpr int kMaxFiles = 512;
   static constexpr int kWavDepthMax = 4;  // subfolders below /samples
   static constexpr int kListRows = (kAreaH - kHeaderH) / kRowH;  // incl. the Back row
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
-  static constexpr int kSampleRows = (kAreaH - kHeaderH - kInfoH) / kRowH;
-  static constexpr int kSwitchX = 208;  // "PROJECTS | SAMPLES" in the header
-  static constexpr int kSwitchW = 18 * kCharW;
+  static constexpr int kSampleRows = (kAreaH - kHeaderH - PageBar::kH - kInfoH) / kRowH;
+  static_assert(kHeaderH + PageBar::kH + kActions * kActionH <= kAreaH, "FILE actions fit");
+  // PROJECTS / SAMPLES: the page bar under the header (also a focus position of the encoder:
+  // kSectionSel in PROJECTS, kSwitchRow in SAMPLES).
 
   bool enabled(int a) const;
   void moveSel(int delta);
@@ -94,6 +97,7 @@ class FileScreen : public Screen {
   App& app_;
   Keyboard kb_;
   ImportDialog import_;
+  RenderDialog render_;
   WifiDialog wifi_;
   int sel_ = kSave;
   int y0_ = kAreaY;
@@ -114,10 +118,25 @@ class FileScreen : public Screen {
   char wavDir_[128] = "/samples";     // kept between imports
   char wavFile_[hw::kNameMax] = {0};  // WAV being imported
   int16_t* pvBuf_ = nullptr;          // previewed WAV, PSRAM
+  static constexpr int kPvLeft = 4;
+  int16_t* pvLeft_[kPvLeft] = {};     // buffers whose stop the audio task did not acknowledge yet
+  int pvLeftN_ = 0;
   int pvSel_ = -1;                    // listSel_ it belongs to
   const char* busyLabel_ = "";
   // cacheBytes() result for this bank generation / project edit.
   uint32_t cacheBytes_ = 0, cacheGen_ = 0, cacheSeq_ = 0;
+  // New: template menu ids are the built-in index, kTplUser + k (userTplNames_[k]), kTplSave,
+  // kTplDemos (the demo songs menu) or kTplDemo + i (demo song i).
+  static constexpr int kUserTpl = 8, kTplUser = 100, kTplSave = 200, kTplDemos = 300, kTplDemo = 400;
+  void openNewMenu();
+  void onNewChoice(int id);  // a New menu id (see kTplUser ..)
+  void saveTemplateAs();
+  int newChoice_ = 0;
+  int userTpl_ = 0;
+  char userTplNames_[kUserTpl][17] = {};
+  char userTplLabels_[kUserTpl][20] = {};
+  bool autoAvail_ = false;  // /projects/<name>.auto exists (checked on enter / after file actions)
+  void restoreAutosave();
   bool cacheValid_ = false;
 };
 

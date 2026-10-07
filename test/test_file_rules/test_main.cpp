@@ -328,6 +328,7 @@ void test_presets_web() {
   TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c"));    // 1 + 4
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c/d"));  // 1 + 5
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "chip"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "KIT"));  // no KIT presets
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "BASS/x"));
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "FM/../CHIP"));
   // .mti only, base as a project name, never at the top.
@@ -342,6 +343,7 @@ void test_presets_web() {
   // Folders: only type folders at the top.
   TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Presets, "", "SAMPLE"));
   TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "", "bass"));
+  TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "", "KIT"));
   TEST_ASSERT_TRUE(webMkdirAllowed(WebDir::Presets, "SAMPLE", "Pads 2"));
   TEST_ASSERT_FALSE(webMkdirAllowed(WebDir::Presets, "SAMPLE/a/b/c/d", "e"));
   TEST_ASSERT_TRUE(webDirListed(WebDir::Presets, "", "DRUM"));
@@ -419,6 +421,20 @@ void test_project_wt_folder() {
   TEST_ASSERT_EQUAL_STRING("/projects/song1/wt/SAWSQR.wav", p);
 }
 
+void test_crash_log_listed_in_projects() {
+  // The logs live in /diag: download and delete, no rename, no subfolders.
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Projects, "crashlog.txt"));
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Diag, "crashlog.txt"));
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Diag, "cpuprof.txt"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Diag, "song.mtp"));
+  TEST_ASSERT_FALSE(webRenameAllowedIn(WebDir::Diag, "", "cpuprof.txt", "x.txt"));
+  TEST_ASSERT_FALSE(webSubValid(WebDir::Diag, "a"));
+  TEST_ASSERT_TRUE(parseWebDir("diag") == WebDir::Diag);
+  TEST_ASSERT_EQUAL_STRING("/diag", webDirPath(WebDir::Diag));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Projects, "other.txt"));
+  TEST_ASSERT_FALSE(webFileAllowed(WebDir::Samples, "crashlog.txt"));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_dirs);
@@ -439,5 +455,6 @@ int main() {
   RUN_TEST(test_presets_web);
   RUN_TEST(test_wavetables_web);
   RUN_TEST(test_project_wt_folder);
+  RUN_TEST(test_crash_log_listed_in_projects);
   return UNITY_END();
 }

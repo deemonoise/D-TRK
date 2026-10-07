@@ -125,6 +125,30 @@ void test_voice_mix_and_silence() {
   for (float x : buf) TEST_ASSERT_EQUAL_FLOAT(0.f, x);
 }
 
+// Above the sample rate (high note + transpose + osc semitones) the BL oscillators stay bounded.
+void test_voice_bounded_above_sample_rate() {
+  const uint8_t modes[] = {static_cast<uint8_t>(SynOsc::Saw), static_cast<uint8_t>(SynOsc::Square),
+                           static_cast<uint8_t>(SynOsc::Tri)};
+  for (uint8_t m : modes) {
+    SynVoice v;
+    SynParams p;
+    p.mode[0] = p.mode[1] = m;
+    p.hz[0] = p.hz[1] = 50000;
+    p.mix = 64;
+    p.subOct = 2;
+    v.trigger();
+    float buf[32];
+    float peak = 0;
+    for (int k = 0; k < 1000; ++k) {  // 1 s
+      v.control(p, 32);
+      memset(buf, 0, sizeof(buf));
+      v.render(buf, 32, 1.f);
+      for (float x : buf) peak = fmaxf(peak, fabsf(x));
+    }
+    TEST_ASSERT_TRUE(peak < 80.f);  // a 220 Hz saw at this gain peaks near 64 (kSynGain 1)
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_bl_saw_alias_below_naive);
@@ -135,5 +159,6 @@ int main() {
   RUN_TEST(test_wt_reads_level_and_frame);
   RUN_TEST(test_wt_level_choice);
   RUN_TEST(test_voice_mix_and_silence);
+  RUN_TEST(test_voice_bounded_above_sample_rate);
   return UNITY_END();
 }

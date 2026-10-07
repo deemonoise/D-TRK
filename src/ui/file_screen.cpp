@@ -1,4 +1,5 @@
 #include "file_screen.h"
+#include "engine/engine.h"
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -7,12 +8,17 @@
 #include "audio/bank.h"
 #include "esp_heap_caps.h"
 #include "sample_set.h"
+#include "demos.h"
+#include "templates.h"
 #include "storage/storage.h"
 
 namespace ui {
 namespace {
 
-constexpr const char* kLabels[] = {"Save", "Save As...", "Load...", "New", "Import MIDI...", "Wi-Fi transfer...", "Retry"};
+constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
+                                   "Import MIDI...", "Render WAV...", "Wi-Fi transfer...", "Retry"};
+// The last row: Retry without a card, Restore autosave with one (they never need the row together).
+constexpr const char* kRestoreLabel = "Restore autosave";
 
 constexpr uint32_t kPreviewMs = 8000;  // WAV preview length (32 kHz mono: 512 KB)
 
@@ -20,7 +26,7 @@ int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 // I/O errors may mean the card was pulled: remount so the screen shows the real state.
 void reprobe(storage::Result r) {
-  if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdBegin();
+  if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdRecover();
 }
 
 }  // namespace
@@ -28,8 +34,10 @@ void reprobe(storage::Result r) {
 void FileScreen::onEnter() {
   kb_.close();
   import_.close();
+  render_.close();
   wifi_.close();
   closeList();
+  autoAvail_ = storage::autosaveExists(app_.project().name);
   if (!enabled(sel_)) moveSel(1);
   cacheValid_ = false;
   if (samples_) sampleMove(0);  // the bank may have changed
@@ -43,6 +51,7 @@ void FileScreen::onProjectReplaced() {
 void FileScreen::onLeave() {
   kb_.close();
   import_.close();  // frees the file / note buffers
+  render_.close();
   wifi_.close();    // leaving the tab ends Wi-Fi mode
   closeList();
 }
@@ -51,7 +60,7 @@ bool FileScreen::enabled(int a) const {
   const bool sd = hw::sdReady();
   switch (a) {
     case kSectionSel: return true;
-    case kRetry: return !sd;
+    case kRetry: return !sd || autoAvail_;
     default: return sd;
   }
 }
@@ -83,13 +92,8 @@ void FileScreen::run(int a) {
     }
     case kLoad: openList(false); break;
     case kImport: openList(true); break;
-    case kNew:
-      if (app_.projectDirty()) {
-        const MenuItem items[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
-        app_.menu().open("DISCARD CHANGES?", items, 2, [this](int id) { onMenu(id); });
-      } else {
-        doNew();
-      }
+    case kRender: render_.open(); break;
+    case kNew: openNewMenu(); break;
       break;
     case kWifi:
       if (app_.projectDirty()) {
@@ -103,7 +107,14 @@ void FileScreen::run(int a) {
       }
       break;
     case kRetry:
+      if (hw::sdReady()) {  // Restore autosave
+        const MenuItem items[] = {{"Cancel", kCancel}, {"Restore", kRestoreAuto}};
+        app_.menu().open(app_.projectDirty() ? "RESTORE? CHANGES LOST" : "RESTORE AUTOSAVE?", items, 2,
+                         [this](int id) { onMenu(id); });
+        break;
+      }
       app_.toast(hw::sdBegin() ? "SD OK" : storage::resultText(storage::Result::NoSd));
+      autoAvail_ = storage::autosaveExists(app_.project().name);
       if (!enabled(sel_)) moveSel(1);
       break;
     default: break;
@@ -115,6 +126,7 @@ void FileScreen::onMenu(int id) {
     case kDiscardLoad: doLoad(false); break;
     case kLoadBak: doLoad(true); break;
     case kDiscardNew: doNew(); break;
+    case kRestoreAuto: restoreAutosave(); break;
     case kOverwrite: doSave(pending_); break;
     case kSaveWifi:
       doSave(app_.project().name);
@@ -189,6 +201,10 @@ void FileScreen::saveAs(const char* initial) {
 }
 
 void FileScreen::doSave(const char* name) {
+  struct Refresh {
+    FileScreen& f;
+    ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
+  } refresh{*this};
   char nm[17];
   strlcpy(nm, name, sizeof(nm));  // name may point into the project
   app_.showBusy("SAVING...");
@@ -320,8 +336,27 @@ void FileScreen::chooseFile(int idx) {
   }
 }
 
+void FileScreen::restoreAutosave() {
+  app_.showBusy("LOADING...");
+  int missing = 0;
+  const storage::Result r = storage::loadAutosave(app_.project(), &missing, App::syncProgress, &app_);
+  autoAvail_ = storage::autosaveExists(app_.project().name);
+  if (r != storage::Result::Ok && r != storage::Result::SamplesNotSaved) {
+    reprobe(r);
+    app_.toast(storage::resultText(r));
+    return;
+  }
+  app_.projectReplaced();
+  app_.markDirty();  // the autosave is not the saved project: Save keeps it
+  app_.loadedToast("AUTOSAVE RESTORED", missing, r == storage::Result::SamplesNotSaved);
+}
+
 // The clipboard is kept across Load / New on purpose: it copies patterns between projects.
 void FileScreen::doLoad(bool bak) {
+  struct Refresh {
+    FileScreen& f;
+    ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
+  } refresh{*this};
   app_.showBusy("LOADING...");
   int missing = 0;
   const storage::Result r = storage::load(app_.project(), pending_, bak, &missing, App::syncProgress, &app_);
@@ -346,14 +381,86 @@ void FileScreen::doLoad(bool bak) {
   app_.toast(storage::resultText(r));
 }
 
+// New: the built-in templates, the user ones (/templates), the demo songs and Save as template.
+void FileScreen::openNewMenu() {
+  MenuItem items[Menu::kMaxItems];
+  int n = 0;
+  for (int i = 0; i < mt::templateCount() && n < Menu::kMaxItems - 1; ++i) items[n++] = {mt::templateName(i), i};
+  userTpl_ = 0;
+  if (hw::sdReady()) {
+    char names[kUserTpl][hw::kNameMax];
+    const int found = hw::sdList(storage::kTemplateDir, ".mtp", names, kUserTpl, storage::validName);
+    for (int k = 0; k < found && n < Menu::kMaxItems - 1; ++k) {
+      strlcpy(userTplNames_[userTpl_], names[k], sizeof(userTplNames_[0]));
+      snprintf(userTplLabels_[userTpl_], sizeof(userTplLabels_[0]), "> %s", names[k]);
+      items[n++] = {userTplLabels_[userTpl_], kTplUser + userTpl_};
+      ++userTpl_;
+    }
+  }
+  items[n++] = {"Demo songs...", kTplDemos};
+  items[n++] = {"Save as template...", kTplSave, hw::sdReady()};
+  app_.menu().open("NEW PROJECT", items, n, [this](int id) { onNewChoice(id); });
+}
+
+void FileScreen::onNewChoice(int id) {
+  if (id == kTplSave) {
+    saveTemplateAs();
+    return;
+  }
+  if (id == kTplDemos) {
+    MenuItem demos[Menu::kMaxItems];
+    int n = 0;
+    for (int i = 0; i < mt::demoCount() && n < Menu::kMaxItems; ++i) demos[n++] = {mt::demoName(i), kTplDemo + i};
+    app_.menu().open("DEMO SONGS", demos, n, [this](int d) { onNewChoice(d); });
+    return;
+  }
+  newChoice_ = id;
+  if (app_.projectDirty()) {
+    const MenuItem confirm[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
+    app_.menu().open("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
+  } else {
+    doNew();
+  }
+}
+
+void FileScreen::saveTemplateAs() {
+  kb_.open("TEMPLATE NAME:", "", [this](const char* text) {
+    char nm[17];
+    if (!storage::sanitize(text, nm)) {
+      app_.toast("BAD NAME");
+      return;
+    }
+    app_.showBusy("SAVING...");
+    const storage::Result r = storage::saveTemplate(app_.project(), nm);
+    char msg[40];
+    snprintf(msg, sizeof(msg), r == storage::Result::Ok ? "TEMPLATE %s SAVED" : "%s", r == storage::Result::Ok ? nm : storage::resultText(r));
+    app_.toast(msg);
+  });
+}
+
 void FileScreen::doNew() {
-  const storage::Result r = storage::newProject(app_.project());
+  struct Refresh {
+    FileScreen& f;
+    ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
+  } refresh{*this};
+  int missing = 0;
+  const bool user = newChoice_ >= kTplUser && newChoice_ - kTplUser < userTpl_;
+  const bool demo = newChoice_ >= kTplDemo && newChoice_ - kTplDemo < mt::demoCount();
+  if (user) app_.showBusy("LOADING...");
+  const storage::Result r = user   ? storage::newFromTemplate(app_.project(), userTplNames_[newChoice_ - kTplUser], &missing)
+                            : demo ? storage::newDemo(app_.project(), newChoice_ - kTplDemo)
+                                   : storage::newProject(app_.project(), newChoice_ < kTplUser ? newChoice_ : 0);
   if (r != storage::Result::Ok) {
     app_.toast(storage::resultText(r));
     return;
   }
   app_.projectReplaced();
-  app_.toast("NEW PROJECT");
+  char msg[40];
+  snprintf(msg, sizeof(msg), "NEW: %s",
+           user   ? userTplNames_[newChoice_ - kTplUser]
+           : demo ? mt::demoName(newChoice_ - kTplDemo)
+                  : mt::templateName(newChoice_));
+  app_.loadedToast(msg, missing, false);
 }
 
 void FileScreen::listScroll(int rows) {
@@ -369,6 +476,10 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
   }
   if (import_.isOpen()) {
     import_.onInput(ev);
+    return;
+  }
+  if (render_.isOpen()) {
+    render_.onInput(ev);
     return;
   }
   if (wifi_.isOpen()) {
@@ -409,13 +520,17 @@ void FileScreen::onTouch(const TouchEvent& ev) {
     import_.onTouch(ev);
     return;
   }
+  if (render_.isOpen()) {
+    render_.onTouch(ev);
+    return;
+  }
   if (wifi_.isOpen()) {
     wifi_.onTouch(ev);
     return;
   }
-  const int top = y0_ + kHeaderH;
-  if (!names_ && ev.type == TouchType::Tap && ev.y < top && ev.x >= kSwitchX - 8 && ev.x < kSwitchX + kSwitchW + 8) {
-    setSection(ev.x >= kSwitchX + 11 * kCharW);  // "PROJECTS | " is 11 chars
+  const int top = y0_ + kHeaderH + (names_ ? 0 : PageBar::kH);
+  if (!names_ && ev.y >= y0_ + kHeaderH && ev.y < top) {
+    if (ev.type == TouchType::Tap) setSection(PageBar::at(ev.x, 2) == 1);
     return;
   }
   if (samples_ && !names_) {
@@ -452,13 +567,17 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
     import_.draw(s, y0);
     return;
   }
+  if (render_.isOpen()) {
+    render_.draw(s, y0);
+    return;
+  }
   if (wifi_.isOpen()) {
     wifi_.draw(s, y0);
     return;
   }
   const bool sd = hw::sdReady();
   drawHeader(s, y0);
-  const int top = y0 + kHeaderH;
+  const int top = y0 + kHeaderH + (names_ ? 0 : PageBar::kH);
   if (samples_ && !names_) {
     drawSamples(s, top);
     return;
@@ -482,12 +601,12 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
     return;
   }
   for (int a = 0; a < kActions; ++a) {
-    if (a == kRetry && sd) break;
+    if (a == kRetry && sd && !autoAvail_) break;
     const int ry = top + a * kActionH;
     const bool sel = a == sel_;
     if (sel) s.fillRect(0, ry, kScreenW, kActionH - 2, kSelBg);
     s.setTextColor(!enabled(a) ? kDim : (sel ? kCursor : kText));
-    s.drawString(kLabels[a], 16, ry + (kActionH - 2 - kCharH) / 2);
+    s.drawString(a == kRetry && sd ? kRestoreLabel : kLabels[a], 16, ry + (kActionH - 2 - kCharH) / 2);
   }
 }
 
@@ -510,15 +629,11 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
     s.drawString(buf, 16, ty);
   }
   if (!names_) {
-    // Section switch.
-    const bool focus = samples_ ? ssel_ == kSwitchRow : sel_ == kSectionSel;
-    if (focus) s.fillRect(kSwitchX - 4, y0 + 2, kSwitchW + 8, kHeaderH - 8, kSelBg);
-    s.setTextColor(samples_ ? kDim : (focus ? kCursor : kText));
-    s.drawString("PROJECTS", kSwitchX, ty);
-    s.setTextColor(kDim);
-    s.drawString("|", kSwitchX + 9 * kCharW, ty);
-    s.setTextColor(!samples_ ? kDim : (focus ? kCursor : kText));
-    s.drawString("SAMPLES", kSwitchX + 11 * kCharW, ty);
+    // Sections: a page bar; with the encoder focus on it, an outline (click = the other section).
+    static const char* const kNames[] = {"PROJECTS", "SAMPLES"};
+    const int by = y0 + kHeaderH;
+    PageBar::draw(s, by, kNames, 2, samples_ ? 1 : 0);
+    if (samples_ ? ssel_ == kSwitchRow : sel_ == kSectionSel) PageBar::drawFocus(s, by);
   }
   s.setTextColor(sd ? kDim : kEditCursor);
   const char* sdText = sd ? "SD OK" : "NO SD CARD";
@@ -568,14 +683,7 @@ bool FileScreen::playbackBusy() {
   return true;
 }
 
-int FileScreen::usedBy(const char* sample) const {
-  const mt::Project& p = app_.project();
-  for (int i = 0; i < mt::kInstruments; ++i) {
-    const mt::Instrument& in = p.instruments[i];
-    if (in.type == mt::InstrType::Sample && strcasecmp(in.sample, sample) == 0) return i;
-  }
-  return -1;
-}
+int FileScreen::usedBy(const char* sample) const { return mt::projSampleUser(app_.project(), sample); }
 
 void FileScreen::sampleRun(int row) {
   if (!sampleEnabled(row)) return;
@@ -645,7 +753,7 @@ void FileScreen::togglePreview() {
   uint32_t frames = 0, rate = 0;
   const audio::BankResult r = audio::loadWavPreview(path, kPreviewMs, &pvBuf_, &frames, &rate);
   if (r != audio::BankResult::Ok) {
-    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdBegin();
+    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app_.toast(audio::bankResultText(r));
     return;
   }
@@ -654,9 +762,17 @@ void FileScreen::togglePreview() {
 }
 
 void FileScreen::stopPreview() {
-  if (!pvBuf_) return;
-  // Not acknowledged: the audio task may still read the buffer, so it is left allocated.
-  if (audio::previewStop()) heap_caps_free(pvBuf_);
+  if (!pvBuf_ && pvLeftN_ == 0) return;
+  if (audio::previewStop()) {
+    // Acknowledged: the audio task reads no preview buffer any more, the left-over ones included.
+    heap_caps_free(pvBuf_);
+    for (int i = 0; i < pvLeftN_; ++i) heap_caps_free(pvLeft_[i]);
+    pvLeftN_ = 0;
+  } else if (pvBuf_) {
+    // Not acknowledged: the audio task may still read it; freed after a later acknowledged stop.
+    if (pvLeftN_ == kPvLeft) --pvLeftN_;  // never more than a few: the oldest is given up
+    pvLeft_[pvLeftN_++] = pvBuf_;
+  }
   pvBuf_ = nullptr;
   pvSel_ = -1;
 }
@@ -707,11 +823,13 @@ void FileScreen::doImport(const char* name) {
   audio::ImportOut out{};
   const audio::BankResult r = audio::importToCache(path, p, out, nullptr, progress, this);
   if (r != audio::BankResult::Ok) {
-    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdBegin();
+    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app_.toast(audio::bankResultText(r));
     return;
   }
+  engine::lockProject();  // the list and the instruments naming it are shared with the engine
   const int i = mt::projSampleSet(p, nm, out.crc, out.frames);
+  engine::unlockProject();
   if (i < 0) {
     app_.toast("BAD NAME");
     return;
@@ -736,7 +854,10 @@ void FileScreen::renameSample(const char* initial) {
       return;
     }
     if (strcmp(nm, p.samples[i].name) == 0) return;
-    if (!mt::projSampleRename(p, i, nm)) {
+    engine::lockProject();
+    const bool renamed = mt::projSampleRename(p, i, nm);  // also renames it in the instruments
+    engine::unlockProject();
+    if (!renamed) {
       app_.toast("NAME TAKEN");
       renameSample(text);
       return;
@@ -758,7 +879,9 @@ void FileScreen::doDelete(const char* name) {
   const int i = mt::projSampleFind(p, nm);
   if (i < 0) return;
   // Only the list entry: the data stays cached, the file goes with the next save.
+  engine::lockProject();
   mt::projSampleRemove(p, i);
+  engine::unlockProject();
   app_.markDirty();
   sampleMove(0);  // clamp to the shorter list
   char msg[32];
@@ -806,7 +929,7 @@ void FileScreen::samplesInput(const hw::InputEvent& ev) {
 }
 
 void FileScreen::samplesTouch(const TouchEvent& ev) {
-  const int rows = y0_ + kHeaderH + kInfoH;
+  const int rows = y0_ + kHeaderH + PageBar::kH + kInfoH;
   if (ev.type == TouchType::Drag) {
     dragAcc_ += ev.dy;
     const int n = dragAcc_ / kRowH;

@@ -48,6 +48,12 @@ void packFm(const Instrument& m, uint8_t* b) {
   b[7] = m.lfoRate;
   b[8] = static_cast<uint8_t>(m.lfoDepth);
   b[9] = m.lfoDest;
+  b[10] = m.drive;  // 10..13: once reserved (0), so older files read the defaults
+  b[11] = m.rsend;
+  b[12] = static_cast<uint8_t>(m.velCut);
+  b[13] = static_cast<uint8_t>(m.velMac);
+  b[14] = m.crushBits;  // 14, 15: once reserved (0 = off)
+  b[15] = m.crushRate;
 }
 
 void unpackFm(const uint8_t* b, Instrument& m) {
@@ -58,6 +64,12 @@ void unpackFm(const uint8_t* b, Instrument& m) {
   m.lfoRate = clampu(b[7], 0, 127);
   m.lfoDepth = clamps(static_cast<int8_t>(b[8]), -64, 63);
   m.lfoDest = b[9] < static_cast<int>(LfoDest::Count) ? b[9] : 0;
+  m.drive = clampu(b[10], 0, 127);
+  m.rsend = clampu(b[11], 0, 127);
+  m.velCut = clamps(static_cast<int8_t>(b[12]), -64, 63);
+  m.velMac = clamps(static_cast<int8_t>(b[13]), -64, 63);
+  m.crushBits = clampu(b[14], 0, 127);
+  m.crushRate = clampu(b[15], 0, 127);
 }
 
 void unpackInst(const uint8_t* b, Instrument& m) {
@@ -135,6 +147,35 @@ void unpackSlices(const uint8_t* b, Instrument& m) {
   }
   for (int i = n; i < kMaxSlices; ++i) m.slices[i] = 0;
   m.sliceCount = static_cast<uint8_t>(n);
+}
+
+void packLfo(const Instrument& m, uint8_t* b) {
+  b[0] = m.lfoSync ? 1 : 0;
+  for (int i = 0; i < kLfos - 1; ++i) {
+    const LfoCfg& l = m.lfo[i];
+    uint8_t* r = b + 1 + i * 5;
+    r[0] = l.wave;
+    r[1] = l.rate;
+    r[2] = static_cast<uint8_t>(l.depth);
+    r[3] = l.dest;
+    r[4] = l.sync ? 1 : 0;
+  }
+}
+
+void unpackLfo(const uint8_t* b, Instrument& m) {
+  m.lfoSync = b[0] ? 1 : 0;
+  if (m.lfoSync && m.lfoRate >= kLfoSyncSteps) m.lfoRate = kLfoSyncSteps - 1;
+  for (int i = 0; i < kLfos - 1; ++i) {
+    LfoCfg& l = m.lfo[i];
+    const uint8_t* r = b + 1 + i * 5;
+    l.wave = r[0] < static_cast<uint8_t>(LfoWave::Count) ? r[0] : 0;
+    l.sync = r[4] ? 1 : 0;
+    l.rate = r[1] > 127 ? 127 : r[1];
+    if (l.sync && l.rate >= kLfoSyncSteps) l.rate = kLfoSyncSteps - 1;
+    const int d = static_cast<int8_t>(r[2]);
+    l.depth = static_cast<int8_t>(d < -64 ? -64 : (d > 63 ? 63 : d));
+    l.dest = r[3] < static_cast<uint8_t>(LfoDest::Count) ? r[3] : 0;
+  }
 }
 
 void packSyn(const Instrument& m, uint8_t* b) {

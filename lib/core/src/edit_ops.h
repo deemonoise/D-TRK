@@ -21,6 +21,14 @@ void copySel(const Pattern& p, const Sel& s, Clipboard& cb);
 void pasteAt(Pattern& p, const Clipboard& cb, int track, int step);
 void clearSel(Pattern& p, const Sel& s);
 // Notes only (OFF and empty steps untouched). degrees=true moves by scale degrees.
-void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t);
+// drumTracks[t] (optional): track t is a drum track, left as is (its note is a velocity).
+void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t,
+                  const bool* drumTracks = nullptr);
+
+// Chain rows: inserts pattern `pat` (transpose 0, 1 pass, no scene) at `at` (clamped to
+// 0..chainLen), false when the chain is full; deletes row `at` (nothing past the end). Both keep
+// chain / chainTr / chainRep / chainScene aligned; a freed row gets the defaults.
+bool chainInsert(Project& p, int at, uint8_t pat);
+void chainDelete(Project& p, int at);
 
 }  // namespace mt

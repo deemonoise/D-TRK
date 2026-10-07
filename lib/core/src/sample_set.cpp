@@ -154,6 +154,17 @@ bool projSampleRename(Project& p, int i, const char* name) {
   return true;
 }
 
+int projSampleUser(const Project& p, const char* name) {
+  for (int i = 0; i < kInstruments; ++i) {
+    const Instrument& in = p.instruments[i];
+    if (in.type == InstrType::Sample && strcasecmp(in.sample, name) == 0) return i;
+    if (in.type == InstrType::Kit)
+      for (const KitLane& l : in.kit)
+        if (l.instr >= kInstruments && strcasecmp(l.sample, name) == 0) return i;
+  }
+  return -1;
+}
+
 int projSampleBank(const Project& p, const SampleBank& b, int i) {
   if (i < 0 || i >= p.sampleCount) return -1;
   char k[kSampleNameMax + 1];

@@ -513,6 +513,209 @@ void test_acc_ignored_on_melodic_track() {
   TEST_ASSERT_EQUAL(100, out.ev[0].vel);
 }
 
+void test_cnd_fill_values() {
+  Step s;
+  s.note = 60;
+  s.fx[0] = {Fx::CND, kCndFill};
+  TrackCfg t;
+  Rng rng(1);
+  ExpandOut out;
+  ExpandCtx on = ctx;
+  on.fill = true;
+  ExpandCtx off = ctx;
+  off.fill = false;
+  TEST_ASSERT_TRUE(expandStep(s, t, on, rng, out));
+  TEST_ASSERT_FALSE(expandStep(s, t, off, rng, out));
+  s.fx[0].val = kCndNoFill;
+  TEST_ASSERT_FALSE(expandStep(s, t, on, rng, out));
+  TEST_ASSERT_TRUE(expandStep(s, t, off, rng, out));
+  s.fx[0].val = 0;  // FST still on the first pass only, fill or not
+  TEST_ASSERT_TRUE(expandStep(s, t, on, rng, out));
+  on.loop = 1;
+  TEST_ASSERT_FALSE(expandStep(s, t, on, rng, out));
+}
+
+// ---- ARP + CHD ----
+
+void test_arp_chd_int_emits_root_and_arpchord() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0x37};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(1, countKind(out, EvKind::NoteOn));
+  int arpChord = -1, firstOn = -1;
+  for (int i = 0; i < out.count; ++i) {
+    if (out.ev[i].kind == EvKind::SynthFx && out.ev[i].note == kSynthArpChord) arpChord = i;
+    if (out.ev[i].kind == EvKind::NoteOn && firstOn < 0) firstOn = i;
+  }
+  TEST_ASSERT_TRUE(arpChord >= 0 && arpChord < firstOn);  // before the note-on
+  TEST_ASSERT_EQUAL(kChordTriad, out.ev[arpChord].vel);
+  TEST_ASSERT_EQUAL(60, out.ev[firstOn].note);
+}
+
+void test_arp_chd_midi_full_chord() {
+  TrackCfg t;
+  t.out = TrackOut::Midi;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0x37};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, countKind(out, EvKind::NoteOn));
+  TEST_ASSERT_EQUAL(0, countKind(out, EvKind::SynthFx));
+}
+
+void test_arp_00_chd_normal_chord() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, countKind(out, EvKind::NoteOn));
+}
+
+// ---- ARS (step arp) ----
+
+void test_ars_chord_plays_first_note_and_hands_over_the_arp() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARP, 0x37};
+  s.fx[2] = {Fx::ARS, 0x12};  // DOWN, every 2 steps
+  s.fx[3] = {Fx::ARM, 0x05};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(1, countKind(out, EvKind::NoteOn));
+  TEST_ASSERT_EQUAL(0, countKind(out, EvKind::SynthFx));  // no synth ARP / ARM / arp chord
+  TEST_ASSERT_EQUAL(3, out.arp.n);
+  TEST_ASSERT_EQUAL(60, out.arp.notes[0]);
+  TEST_ASSERT_EQUAL(64, out.arp.notes[1]);
+  TEST_ASSERT_EQUAL(67, out.arp.notes[2]);
+  TEST_ASSERT_EQUAL(1, out.arp.mode);
+  TEST_ASSERT_EQUAL(2, out.arp.div);
+  for (int i = 0; i < out.count; ++i)
+    if (out.ev[i].kind == EvKind::NoteOn) TEST_ASSERT_EQUAL(67, out.ev[i].note);  // DOWN: the top first
+}
+
+void test_ars_uses_arp_offsets_or_octave_on_midi() {
+  TrackCfg t;
+  t.out = TrackOut::Midi;
+  t.channel = 3;
+  t.defGate = 50;
+  Step s = note(48);
+  s.fx[0] = {Fx::ARS, kArsDefault};
+  s.fx[1] = {Fx::TIE, 0};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(2, out.arp.count());  // root and an octave up
+  TEST_ASSERT_EQUAL(48, out.arp.note(0));
+  TEST_ASSERT_EQUAL(60, out.arp.note(1));
+  TEST_ASSERT_EQUAL(3, out.arp.ch);
+  TEST_ASSERT_EQUAL(gatePercent(50), out.arp.gate);
+  TEST_ASSERT_FALSE(out.tie);  // an arp ignores TIE
+  TEST_ASSERT_EQUAL(48, out.ev[0].note);
+  s.fx[1] = {Fx::ARP, 0x47};
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, out.arp.n);
+  TEST_ASSERT_EQUAL(52, out.arp.notes[1]);
+  TEST_ASSERT_EQUAL(55, out.arp.notes[2]);
+}
+
+void test_ars_octaves() {
+  TrackCfg t;
+  t.out = TrackOut::Midi;
+  Step s = note(60);
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARS, 0x51};  // 2 octaves, DOWN, every step
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(3, out.arp.n);
+  TEST_ASSERT_EQUAL(2, out.arp.oct);
+  TEST_ASSERT_EQUAL(6, out.arp.count());
+  TEST_ASSERT_EQUAL(79, out.arp.note(5));  // G an octave up
+  TEST_ASSERT_EQUAL(79, out.ev[0].note);   // DOWN starts at the top of the range
+  // The root alone: its octaves, at least two.
+  s.fx[0] = {};
+  s.fx[1] = {Fx::ARS, 0x81};  // 3 octaves
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(1, out.arp.n);
+  TEST_ASSERT_EQUAL(3, out.arp.count());
+  TEST_ASSERT_EQUAL(84, out.arp.note(2));
+  s.fx[1] = {Fx::ARS, kArsDefault};
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(2, out.arp.count());
+  // Above 127: an octave down.
+  s.note = 120;
+  s.fx[1] = {Fx::ARS, 0xC1};
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(120, out.arp.note(1));
+}
+
+void test_ars_absent_without_fx() {
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(note(60), track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(0, out.arp.n);
+}
+
+void test_arp_index_modes() {
+  const int up[] = {0, 1, 2, 0}, down[] = {2, 1, 0, 2}, ud[] = {0, 1, 2, 1, 0, 1};
+  for (int k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(up[k], arpIndex(0, k, 3));
+  for (int k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(down[k], arpIndex(1, k, 3));
+  for (int k = 0; k < 6; ++k) TEST_ASSERT_EQUAL(ud[k], arpIndex(2, k, 3));
+  TEST_ASSERT_EQUAL(0, arpIndex(2, 5, 1));
+}
+
+// PRE / NEI read the context; CND A:B and PRB report their result for the next ones.
+void test_cnd_pre_nei_and_result() {
+  ExpandOut out;
+  Step s = note(60);
+  s.fx[0] = {Fx::CND, kCndPre};
+  ExpandCtx c = ctx;
+  c.pre = false;
+  TEST_ASSERT_FALSE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(-1, out.cond);  // PRE itself is not a result
+  c.pre = true;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  s.fx[0] = {Fx::CND, kCndNotNei};
+  c.nei = true;
+  TEST_ASSERT_FALSE(expandStep(s, track, c, rng, out));
+  s.fx[0] = {Fx::CND, 0x12};  // 1:2, loop 0 passes
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(1, out.cond);
+  c.loop = 1;
+  TEST_ASSERT_FALSE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(0, out.cond);
+  s.fx[0] = {Fx::PRB, 0};
+  TEST_ASSERT_FALSE(expandStep(s, track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(0, out.cond);
+  TEST_ASSERT_TRUE(expandStep(note(60), track, ctx, rng, out));
+  TEST_ASSERT_EQUAL(-1, out.cond);
+}
+
+void test_rat_velocity_ramp() {
+  ExpandOut out;
+  Step s = note(60);
+  s.vel = 100;
+  s.fx[0] = {Fx::RAT, 0x14};  // 4 hits rising
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  const int up[] = {25, 50, 75, 100};
+  int k = 0;
+  for (int i = 0; i < out.count; ++i)
+    if (out.ev[i].kind == EvKind::NoteOn) TEST_ASSERT_EQUAL(up[k++], out.ev[i].vel);
+  TEST_ASSERT_EQUAL(4, k);
+  s.fx[0] = {Fx::RAT, 0x24};  // falling
+  TEST_ASSERT_TRUE(expandStep(s, track, ctx, rng, out));
+  k = 0;
+  for (int i = 0; i < out.count; ++i)
+    if (out.ev[i].kind == EvKind::NoteOn) TEST_ASSERT_EQUAL(up[3 - k++], out.ev[i].vel);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_empty_and_off_produce_nothing);
@@ -556,5 +759,16 @@ int main() {
   RUN_TEST(test_drum_empty_mask_is_note_step);
   RUN_TEST(test_drum_off_cuts_notes);
   RUN_TEST(test_acc_ignored_on_melodic_track);
+  RUN_TEST(test_cnd_fill_values);
+  RUN_TEST(test_arp_chd_int_emits_root_and_arpchord);
+  RUN_TEST(test_arp_chd_midi_full_chord);
+  RUN_TEST(test_arp_00_chd_normal_chord);
+  RUN_TEST(test_ars_chord_plays_first_note_and_hands_over_the_arp);
+  RUN_TEST(test_ars_uses_arp_offsets_or_octave_on_midi);
+  RUN_TEST(test_ars_octaves);
+  RUN_TEST(test_ars_absent_without_fx);
+  RUN_TEST(test_arp_index_modes);
+  RUN_TEST(test_cnd_pre_nei_and_result);
+  RUN_TEST(test_rat_velocity_ramp);
   return UNITY_END();
 }

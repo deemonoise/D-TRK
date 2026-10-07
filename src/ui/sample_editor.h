@@ -26,7 +26,8 @@ class SampleEditor {
 
   explicit SampleEditor(App& app, int y = kAreaY + 52);
   void bind(int instr);         // instrument index; resets zoom when the sample data changes
-  void enter(bool last);        // page shown: selection on the first / last row
+  void enter(bool bar);         // page shown: the cursor on the page bar, else the first row
+  bool barSelected() const { return list_.barSelected(); }
   int onInput(const hw::InputEvent& ev);  // -1 / +1: turned past the first / last row
   void onTouch(const TouchEvent& ev);
   void draw(LGFX_Sprite& s, int y);

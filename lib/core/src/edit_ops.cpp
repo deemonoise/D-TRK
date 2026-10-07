@@ -1,4 +1,5 @@
 #include "edit_ops.h"
+#include <string.h>
 
 namespace mt {
 
@@ -36,14 +37,49 @@ void clearSel(Pattern& p, const Sel& s) {
     for (int i = s.s0; i <= s.s1; ++i) p.steps[t][i] = Step();
 }
 
-void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType type) {
-  for (int t = s.t0; t <= s.t1; ++t)
+void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType type,
+                  const bool* drumTracks) {
+  for (int t = s.t0; t <= s.t1; ++t) {
+    if (drumTracks && drumTracks[t]) continue;
     for (int i = s.s0; i <= s.s1; ++i) {
       Step& st = p.steps[t][i];
       if (!st.hasNote()) continue;
       int n = degrees ? moveDegrees(st.note, amount, root, type) : clampi(st.note + amount, 0, 127);
       st.note = static_cast<uint8_t>(n);
     }
+  }
+}
+
+bool chainInsert(Project& p, int at, uint8_t pat) {
+  const int n = p.chainLen;
+  if (n >= kChainMax) return false;
+  at = clampi(at, 0, n);
+  const size_t k = static_cast<size_t>(n - at);
+  memmove(p.chain + at + 1, p.chain + at, k);
+  memmove(p.chainTr + at + 1, p.chainTr + at, k);
+  memmove(p.chainRep + at + 1, p.chainRep + at, k);
+  memmove(p.chainScene + at + 1, p.chainScene + at, k);
+  p.chain[at] = pat < kPatterns ? pat : kPatterns - 1;
+  p.chainTr[at] = 0;
+  p.chainRep[at] = 1;
+  p.chainScene[at] = 0;
+  p.chainLen = static_cast<uint8_t>(n + 1);
+  return true;
+}
+
+void chainDelete(Project& p, int at) {
+  const int n = p.chainLen;
+  if (at < 0 || at >= n) return;
+  const size_t k = static_cast<size_t>(n - at - 1);
+  memmove(p.chain + at, p.chain + at + 1, k);
+  memmove(p.chainTr + at, p.chainTr + at + 1, k);
+  memmove(p.chainRep + at, p.chainRep + at + 1, k);
+  memmove(p.chainScene + at, p.chainScene + at + 1, k);
+  p.chain[n - 1] = 0;
+  p.chainTr[n - 1] = 0;
+  p.chainRep[n - 1] = 1;
+  p.chainScene[n - 1] = 0;
+  p.chainLen = static_cast<uint8_t>(n - 1);
 }
 
 }  // namespace mt

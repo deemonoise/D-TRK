@@ -73,7 +73,7 @@ bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSa
   uint32_t crc = 0;
   const audio::BankResult r = audio::importWtToCache(path, p, crc, nullptr, importProgress, &app);
   if (r != audio::BankResult::Ok) {
-    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdBegin();
+    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app.toast(audio::bankResultText(r));
     return false;
   }

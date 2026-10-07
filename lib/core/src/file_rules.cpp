@@ -32,6 +32,7 @@ WebDir parseWebDir(const char* s) {
   if (strcmp(s, "samples") == 0) return WebDir::Samples;
   if (strcmp(s, "presets") == 0) return WebDir::Presets;
   if (strcmp(s, "wavetables") == 0) return WebDir::Wavetables;
+  if (strcmp(s, "diag") == 0) return WebDir::Diag;
   return WebDir::Invalid;
 }
 
@@ -42,6 +43,7 @@ const char* webDirPath(WebDir d) {
     case WebDir::Samples: return "/samples";
     case WebDir::Presets: return "/presets";
     case WebDir::Wavetables: return "/wavetables";
+    case WebDir::Diag: return "/diag";
     default: return "";
   }
 }
@@ -74,6 +76,7 @@ bool webFileAllowed(WebDir d, const char* name) {
     case WebDir::Midi: return strcasecmp(ext, ".mid") == 0 && base <= static_cast<size_t>(kMidiBaseMax);
     case WebDir::Samples:
     case WebDir::Wavetables: return strcasecmp(ext, ".wav") == 0;
+    case WebDir::Diag: return strcasecmp(ext, ".txt") == 0;
     case WebDir::Presets: {
       if (strcasecmp(ext, ".mti") != 0 || base > 16) return false;
       char b[17];
@@ -97,7 +100,7 @@ uint32_t webMaxBytes(WebDir d) {
 }
 
 bool webRenameAllowed(WebDir d, const char* from, const char* to) {
-  return webFileAllowed(d, from) && webFileAllowed(d, to) && strcasecmp(extOf(from), extOf(to)) == 0;
+  return d != WebDir::Diag && webFileAllowed(d, from) && webFileAllowed(d, to) && strcasecmp(extOf(from), extOf(to)) == 0;
 }
 
 bool isOpenProjectFile(const char* project, const char* file) {
@@ -129,6 +132,7 @@ bool segValid(const char* s, size_t n) {
 // First segment of a /presets subpath (n chars at s): a type folder, as the tracker names it.
 bool presetTypeSeg(const char* s, size_t n) {
   for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
+    if (!presetTypeHas(static_cast<InstrType>(t))) continue;
     const char* name = presetTypeName(static_cast<InstrType>(t));
     if (strlen(name) == n && strncmp(s, name, n) == 0) return true;
   }
@@ -191,7 +195,7 @@ uint32_t webMaxBytesIn(WebDir d, const char* sub) {
 }
 
 bool webRenameAllowedIn(WebDir d, const char* sub, const char* from, const char* to) {
-  return webFileAllowedIn(d, sub, from) && webFileAllowedIn(d, sub, to) && strcasecmp(extOf(from), extOf(to)) == 0;
+  return d != WebDir::Diag && webFileAllowedIn(d, sub, from) && webFileAllowedIn(d, sub, to) && strcasecmp(extOf(from), extOf(to)) == 0;
 }
 
 bool webDirListed(WebDir d, const char* sub, const char* name) {

@@ -5,7 +5,7 @@
 namespace storage {
 
 enum class Result : uint8_t { Ok, NoSd, NoMemory, NotFound, WriteFail, ReadFail, BadCrc, BadVersion, BadFile, EngineBusy,
-                            SamplesNotSaved };
+                            SamplesNotSaved, AudioBusy, DiskFull, Cancelled, Capped, BankFull, NoBank };
 
 const char* resultText(Result r);  // short, upper case, for toasts
 
@@ -54,8 +54,24 @@ Result installProject(const char* tmpPath, const char* fileName);
 Result load(mt::Project& live, const char* name, bool fromBak = false, int* missing = nullptr,
             SyncProgress cb = nullptr, void* ctx = nullptr);
 
-// Stops the engine, resets live and forgets /last.txt. EngineBusy: live untouched.
-Result newProject(mt::Project& live);
+// Autosave slot /projects/<live.name>.auto: the project file only (no sample folder, the .mtp and
+// .bak untouched), written through .atm. Transport stopped (live is read without a copy). save()
+// removes it; loadAutosave() brings it back under the same name (the caller marks the project dirty).
+Result autosave(const mt::Project& live);
+bool autosaveExists(const char* name);
+Result loadAutosave(mt::Project& live, int* missing = nullptr, SyncProgress cb = nullptr, void* ctx = nullptr);
+
+// Stops the engine, resets live to built-in template tmpl (mt::templateBuild, 0 = EMPTY) and forgets
+// /last.txt. EngineBusy: live untouched.
+Result newProject(mt::Project& live, int tmpl = 0);
+// The same with built-in demo song i (mt::demoBuild): named after the demo, so Save writes it.
+Result newDemo(mt::Project& live, int i);
+
+// User templates: /templates/<name>.mtp, a project without notes (mt::templateStrip). New from one
+// starts "untitled" (its samples play when the sample cache still holds them).
+constexpr const char* kTemplateDir = "/templates";
+Result saveTemplate(const mt::Project& live, const char* name);
+Result newFromTemplate(mt::Project& live, const char* name, int* missing = nullptr);
 
 // Boot: loads /last.txt straight into p (engine not running yet). False = p left reset.
 // *fromBak = true when the .mtp was unreadable and the .bak was loaded instead.

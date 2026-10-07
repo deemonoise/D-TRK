@@ -1,8 +1,17 @@
 #include "proj_screen.h"
 #include <Arduino.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "audio/audio.h"
+#include "engine/engine.h"
+#include "esp_heap_caps.h"
+#include "fx_info.h"
+#include "groove.h"
+#include "hw/sdcard.h"
+#include "storage/crashlog.h"
+#include "synth.h"
 #include "names.h"
 #include "scale.h"
 
@@ -28,19 +37,34 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                      }};
   params_[kLength] = {"Length", [this](char* o, int n) { snprintf(o, n, "%u", pat().length); },
                       [this](int d) {
-                        pat().length = static_cast<uint8_t>(clampi(pat().length + d, mt::kMinSteps, mt::kMaxSteps));
+                        const int v = clampi(pat().length + d, mt::kMinSteps, mt::kMaxSteps);
+                        if (v == pat().length) return;
+                        snapPattern();
+                        pat().length = static_cast<uint8_t>(v);
+                        pat().fitTrackLen();
                       }};
   params_[kRes] = {"Resolution",
                    [this](char* o, int n) { snprintf(o, n, "%s", resName(pat().res)); },
                    [this](int d) {
                      const int r = clampi(static_cast<int>(pat().res) + d, 0, static_cast<int>(mt::Resolution::Count) - 1);
+                     if (r == static_cast<int>(pat().res)) return;
+                     snapPattern();
                      pat().res = static_cast<mt::Resolution>(r);
                    }};
   params_[kSwing] = {"Swing", [this](char* o, int n) { snprintf(o, n, "%u%%", pat().swing); },
-                     [this](int d) { pat().swing = static_cast<uint8_t>(clampi(pat().swing + d, 50, 75)); }};
-  params_[kVolume] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u%%", app_.project().masterVol); },
+                     [this](int d) {
+                       const int v = clampi(pat().swing + d, 50, 75);
+                       if (v == pat().swing) return;
+                       snapPattern();
+                       pat().swing = static_cast<uint8_t>(v);
+                     },
+                     [this] { return pat().groove != 0; }};
+  params_[kGroove] = {"Groove", [this](char* o, int n) { snprintf(o, n, "%s", mt::grooveAt(pat().groove).name); },
                       [this](int d) {
-                        app_.project().masterVol = static_cast<uint8_t>(clampi(app_.project().masterVol + d, 0, mt::kMasterVolMax));
+                        const int v = clampi(pat().groove + d, 0, mt::grooveCount() - 1);
+                        if (v == pat().groove) return;
+                        snapPattern();
+                        pat().groove = static_cast<uint8_t>(v);
                       }};
   auto u7 = [this](uint8_t mt::Project::*f) {
     return [this, f](int d) { app_.project().*f = static_cast<uint8_t>(clampi(app_.project().*f + d, 0, 127)); };
@@ -57,14 +81,123 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
   params_[kDlyFb] = {"Feedback", num(&mt::Project::dlyFb), u7(&mt::Project::dlyFb), noDelay};
   params_[kDlyTone] = {"Tone", num(&mt::Project::dlyTone), u7(&mt::Project::dlyTone), noDelay};
   params_[kDlyLevel] = {"Dly level", num(&mt::Project::dlyLevel), u7(&mt::Project::dlyLevel)};
+  auto noReverb = [this] { return app_.project().rvbLevel == 0; };
+  params_[kRvbSize] = {"Reverb", num(&mt::Project::rvbSize), u7(&mt::Project::rvbSize), noReverb};
+  params_[kRvbDamp] = {"Rvb damp", num(&mt::Project::rvbDamp), u7(&mt::Project::rvbDamp), noReverb};
+  params_[kRvbLevel] = {"Rvb level", num(&mt::Project::rvbLevel), u7(&mt::Project::rvbLevel)};
+  // Master compressor: Comp 0 = off; SC track ducks the mix to that track (e.g. the kick).
+  auto noComp = [this] { return app_.project().compAmt == 0; };
+  params_[kCompAmt] = {"Comp",
+                       [this](char* o, int n) {
+                         if (app_.project().compAmt) snprintf(o, n, "%u", app_.project().compAmt);
+                         else snprintf(o, n, "OFF");
+                       },
+                       u7(&mt::Project::compAmt)};
+  params_[kCompRel] = {"Comp rel",
+                       [this](char* o, int n) {
+                         const float ms = 20.f * powf(50.f, (app_.project().compRel > 127 ? 127 : app_.project().compRel) / 127.f);
+                         snprintf(o, n, "%u ms", static_cast<unsigned>(ms + 0.5f));
+                       },
+                       u7(&mt::Project::compRel), noComp};
+  params_[kScTrack] = {"SC track",
+                       [this](char* o, int n) {
+                         const uint8_t t = app_.project().scTrack;
+                         if (t >= 1 && t <= mt::kTracks) snprintf(o, n, "T%u %s", t, app_.project().tracks[t - 1].name);
+                         else snprintf(o, n, "OFF");
+                       },
+                       [this](int d) {
+                         app_.project().scTrack = static_cast<uint8_t>(clampi(app_.project().scTrack + d, 0, mt::kTracks));
+                       },
+                       noComp};
+  params_[kScDepth] = {"SC depth", num(&mt::Project::scDepth), u7(&mt::Project::scDepth),
+                       [this] { return app_.project().compAmt == 0 || app_.project().scTrack == 0; }};
+  params_[kDjFilter] = {"DJ filter",
+                        [this](char* o, int n) {
+                          const int v = app_.project().djFilter;
+                          if (v == 0) snprintf(o, n, "OFF");
+                          else snprintf(o, n, "%s %d", v < 0 ? "LP" : "HP", v < 0 ? -v : v);
+                        },
+                        [this](int d) {
+                          app_.project().djFilter = static_cast<int8_t>(clampi(app_.project().djFilter + d, -64, 63));
+                        }};
+  for (int b = 0; b < mt::kPerfButtons; ++b) {
+    snprintf(perfLabels_[b], sizeof(perfLabels_[b]), "Button %d", b + 1);
+    params_[kPerf1 + b] = {perfLabels_[b],
+                           [this, b](char* o, int n) {
+                             const uint8_t f = app_.project().perfMap[b];
+                             snprintf(o, n, "%s", f ? mt::perfFxName(static_cast<mt::PerfFx>(f)) : "---");
+                           },
+                           [this, b](int d) {
+                             constexpr int kLast = static_cast<int>(mt::PerfFx::Count) - 1;
+                             app_.project().perfMap[b] = static_cast<uint8_t>(clampi(app_.project().perfMap[b] + d, 0, kLast));
+                           }};
+  }
   params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
                        [this](int d) { app_.project().preview = d > 0; }};
-  list_.setParams(params_, kRows);
+  params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
+                     [this](int d) { app_.setTheme(app_.theme() + d); }};
+  params_[kAutosave] = {"Autosave",
+                        [this](char* o, int n) {
+                          if (app_.autosaveMin()) snprintf(o, n, "%d MIN", app_.autosaveMin());
+                          else snprintf(o, n, "OFF");
+                        },
+                        [this](int d) {
+                          static const int kSteps[] = {0, 1, 2, 5, 10};
+                          int i = 0;
+                          while (i < 4 && kSteps[i] < app_.autosaveMin()) ++i;
+                          i = clampi(i + (d > 0 ? 1 : -1), 0, 4);
+                          app_.setAutosaveMin(kSteps[i]);
+                        }};
+  // Read only: the firmware version and why the device last restarted (crash log: /diag/crashlog.txt).
+  params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
+  params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
+                         [](int) {}};
+  // Where the synth and the sequencer live (PSRAM = the audio costs more) and the free internal RAM.
+  params_[kAudioRam] = {"Audio RAM",
+                        [](char* o, int n) {
+                          const bool s = audio::synthInternal(), q = engine::seqInternal();
+                          const unsigned kb = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+                          snprintf(o, n, "%s, RVB %s, %uK FREE",
+                                   s && q ? "INTERNAL" : (s ? "SEQ IN PSRAM" : (q ? "SYNTH IN PSRAM" : "PSRAM")),
+                                   audio::reverbInternal() ? "INT" : "PSRAM", kb);
+                        },
+                        [](int) {}};
+  // Click: start; play a while (on the screen to measure), click again: the time per stage of the
+  // audio render goes to /diag/cpuprof.txt.
+  params_[kCpuProf] = {"CPU profile",
+                       [this](char* o, int n) {
+                         if (audio::profileRunning())
+                           snprintf(o, n, "RUNNING %lus, CLICK", static_cast<unsigned long>((millis() - profStartMs_) / 1000));
+                         else
+                           snprintf(o, n, "CLICK TO START");
+                       },
+                       [](int) {}};
+  // The theme and the read-only rows are not project data: editing them does not mark it dirty.
+  list_.setOnEdit([this] {
+    if (kPageFirst[page_] + list_.sel() < kTheme) app_.markDirty();
+  });
+  showPage(kPgSong, false);
+}
+
+void ProjScreen::showPage(int page, bool bar) {
+  page_ = (page % kPages + kPages) % kPages;
+  list_.setEdit(false);
+  list_.setPageBar(true);
+  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
   list_.setVisibleRows(kListRows);
-  list_.setOnEdit([this] { app_.markDirty(); });
+  if (bar) list_.selectBar();
+  else list_.setSel(0);
 }
 
 mt::Pattern& ProjScreen::pat() { return app_.project().patterns[app_.editPattern()]; }
+
+// Length / Resolution / Swing are pattern data: an undo snapshot before the first of a run of
+// edits on one pattern (else a later undo of a step edit would silently revert them too).
+void ProjScreen::snapPattern() {
+  if (app_.editSeq() != patSeq_ || app_.editPattern() != patIdx_) app_.pushUndo();
+  patSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
+  patIdx_ = app_.editPattern();
+}
 
 int ProjScreen::bpm() {
   const int cur = app_.project().bpm;
@@ -83,9 +216,58 @@ void ProjScreen::onEnter() {
   bpmTarget_ = app_.project().bpm;
 }
 
-void ProjScreen::onInput(const hw::InputEvent& ev) { list_.onInput(ev); }
+// Click (Shift+click) on the page bar: the next (previous) page.
+void ProjScreen::onInput(const hw::InputEvent& ev) {
+  if (ev.type == hw::InputType::EncClick && !list_.editing() && onProfileRow()) {
+    toggleProfile();
+    return;
+  }
+  if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
+}
 
-void ProjScreen::onTouch(const TouchEvent& ev) { list_.onTouch(ev); }
+void ProjScreen::onTouch(const TouchEvent& ev) {
+  const int barY = kAreaY + kHeaderH;
+  if (ev.y >= barY && ev.y < barY + PageBar::kH) {
+    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
+    return;
+  }
+  if (ev.type == TouchType::Tap && kPageFirst[page_] + list_.rowAt(ev.y) == kCpuProf && list_.rowAt(ev.y) >= 0) {
+    list_.setSel(list_.rowAt(ev.y));
+    toggleProfile();
+    return;
+  }
+  list_.onTouch(ev);
+}
+
+void ProjScreen::toggleProfile() {
+  app_.invalidate();
+  if (!audio::profileRunning()) {
+    audio::profileStart();
+    profStartMs_ = millis();
+    app_.toast("PROFILE: PLAY, THEN CLICK AGAIN");
+    return;
+  }
+  audio::Profile pr;
+  const uint32_t secs = (millis() - profStartMs_) / 1000;
+  if (!audio::profileStop(pr)) {
+    app_.toast("PROFILE: NOTHING RENDERED");
+    return;
+  }
+  float total = 0;
+  int top = 0;
+  for (int i = 0; i < audio::kProfStages; ++i) {
+    total += pr.us[i];
+    if (pr.us[i] > pr.us[top]) top = i;
+  }
+  constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
+  char line[96];
+  snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
+           static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
+  const bool saved = storage::appendCpuProfile(line, pr);
+  snprintf(line, sizeof(line), "%s %.0f%%, TOP %s %.0f%%", saved ? "SAVED" : "NO SD", total * 100 / kBlockUs,
+           mt::Synth::profName(top), pr.us[top] * 100 / kBlockUs);
+  app_.toast(line);
+}
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   char buf[24];
@@ -93,7 +275,10 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  list_.draw(s, y0 + kHeaderH);
+  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF", "SYS"};
+  PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
+  if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
+  list_.draw(s, y0 + kHeaderH + PageBar::kH);
 }
 
 }  // namespace ui

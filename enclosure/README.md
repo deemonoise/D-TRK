@@ -1,118 +1,124 @@
-# Корпус D-TRK
+# D-TRK enclosure
 
-Параметрическая модель для 3D-печати: [case.scad](case.scad) (OpenSCAD 2021.01). Готовые STL — в [stl/](stl/).
+Русская версия: [README_ru.md](README_ru.md)
 
-Габарит ~98,4 × 105,4 × 31 мм. Сверху — модуль WT32-SC01 Plus целиком (стекло с рамкой), под ним Shift, Play (MX) и энкодер EC11. Сзади — Type-C зарядки (IP5306), mini jack MIDI OUT, тумблер питания.
+Parametric model for 3D printing: [case.scad](case.scad) (OpenSCAD 2021.01). Ready-made STLs are in [stl/](stl/).
 
-| Файл | Кол-во | Как печатать |
+Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (glass with bezel), with Shift, Play (MX) and the EC11 encoder below it. At the back: the charging Type-C (IP5306), the MIDI OUT mini jack and the power switch.
+
+| File | Qty | How to print |
 |---|---|---|
-| `stl/case_top.stl` | 1 | лицом на стол, без поддержек |
-| `stl/case_bottom.stl` | 1 | дном на стол, без поддержек |
-| `stl/clamp.stl` | 2 | плашмя |
-| `stl/knob.stl` или `stl/knob8.stl` (корпус с кнопками дорожек) | 1 | верхом на стол, без поддержек ([knob.scad](knob.scad)) |
+| `stl/case_top.stl` | 1 | face down on the bed, no supports |
+| `stl/case_bottom.stl` | 1 | bottom down on the bed, no supports |
+| `stl/clamp.stl` | 2 | flat |
+| `stl/knob.stl` or `stl/knob8.stl` (case with track buttons) | 1 | top down on the bed, no supports ([knob.scad](knob.scad)) |
 
-**Вариант с 8 кнопками дорожек** (Shift, Play, энкодер под экраном, под ними 2 ряда × 4 MX, расширитель PCF8575; см. [план](../docs/plans/future-track-buttons.md)): габарит 98,4 × 145,4 × 31 мм, вместо `case_*` печатать `stl/case8_top.stl` и `stl/case8_bottom.stl`, планки те же. Светодиоды 3 мм ставятся в штатные окна свичей MX (нужны прозрачные колпачки или колпачки с окном), корпус под них не меняется. Схема — в [README](../README.md#кнопки-дорожек-необязательно).
+**Version with 8 track buttons** (Shift, Play and the encoder under the screen, 2 rows × 4 MX below them, PCF8575 expander; see the [plan](../docs/plans/future-track-buttons.md)): overall size 98.4 × 145.4 × 31 mm; print `stl/case8_top.stl` and `stl/case8_bottom.stl` instead of `case_*`, the clamps are the same. The 3 mm LEDs go into the standard windows of the MX switches (you need clear keycaps or keycaps with a window); the case does not change for them. Wiring is in the [README](../README.md#track-buttons-optional).
 
-PLA/PETG, стенки 3 периметра, заполнение 20–30 %.
+PLA/PETG, 3 wall perimeters, 20–30 % infill.
 
-Нижняя часть — корыто глубиной 4,5 мм (`tray_h`) с дном 3 мм: аккумулятор лежит на 4,5 мм ниже стыка с верхом, зазор до модуля 6 мм. По кромке — центрирующая губа 1,2 × 1,5 мм (`guide_t`, `guide_h`, зазор `guide_clr` = 0,2), заходит внутрь верха. Если туго — уменьшить `guide_t` или увеличить `guide_clr`. Верх от `tray_h` не зависит: менять глубину корыта можно без перепечатки верха.
+The bottom part is a tray 4.5 mm deep (`tray_h`) with a 3 mm floor: the battery sits 4.5 mm below the joint with the top, with 6 mm clearance to the module. Along the edge runs a 1.2 × 1.5 mm centring lip (`guide_t`, `guide_h`, clearance `guide_clr` = 0.2) that fits inside the top. If the fit is tight, reduce `guide_t` or increase `guide_clr`. The top does not depend on `tray_h`: you can change the tray depth without reprinting the top.
 
-## Замерить перед печатью
+## Measure before printing
 
-Все размеры — переменные в начале `case.scad`. Штангенциркулем проверить:
+All dimensions are variables at the start of `case.scad`. Check with calipers:
 
-| Что | Переменные | По умолчанию |
+| What | Variables | Default |
 |---|---|---|
-| Модуль: ширина, глубина, толщина | `mod_w`, `mod_d`, `mod_h` | 92 × 60 × 10,8 |
-| Бортик над рамкой: нахлёст и толщина | `lip`, `lip_t` | 1,0 и 1,2 |
-| Аккумулятор 103450 | `bat_w`, `bat_d`, `bat_h` | 50 × 34 × 10 |
-| IP5306: плата (вдоль стенки × вглубь), толщина, гнездо Type-C | `ip_w`, `ip_d`, `ip_pcb`, `usbc_w`, `usbc_h` | 20 × 26 × 1,2, 9,2 × 3,4 |
-| Резьба jack и тумблера | `jack_d`, `sw_d` | 6,3 (M6) |
+| Module: width, depth, thickness | `mod_w`, `mod_d`, `mod_h` | 92 × 60 × 10.8 |
+| Lip over the bezel: overlap and thickness | `lip`, `lip_t` | 1.0 and 1.2 |
+| 103450 battery | `bat_w`, `bat_d`, `bat_h` | 50 × 34 × 10 |
+| IP5306: board (along the wall × inwards), thickness, Type-C jack | `ip_w`, `ip_d`, `ip_pcb`, `usbc_w`, `usbc_h` | 20 × 26 × 1.2, 9.2 × 3.4 |
+| Jack and switch thread | `jack_d`, `sw_d` | 6.3 (M6) |
 
-`lip` — насколько бортик заходит на рамку модуля. Увеличить, если рамка шире и окно открывает лишнее; уменьшить, если бортик наезжает на активную область экрана.
+`lip` is how far the lip overlaps the module's bezel. Increase it if the bezel is wider and the window shows too much; decrease it if the lip covers the active area of the screen.
 
-После правки — пересобрать STL:
+After editing, rebuild the STLs:
 
 ```
-OS=/Applications/OpenSCAD-2021.01.app/Contents/MacOS/OpenSCAD
+OS=openscad   # OpenSCAD 2021.01 or newer; give the full path if it is not on PATH
 $OS -o stl/case_top.stl    -D 'part="top"'    case.scad
 $OS -o stl/case_bottom.stl -D 'part="bottom"' case.scad
 $OS -o stl/clamp.stl       -D 'part="clamp"'  case.scad
 ```
 
-Вариант с кнопками дорожек — добавить `-D trk=true` и писать в `stl/case8_*.stl`. Модуль PCF8575 замерить: `pcf_w`, `pcf_d` (по умолчанию 32 × 20).
+For the track-button version, add `-D trk=true` and write to `stl/case8_*.stl`. Measure the PCF8575 module: `pcf_w`, `pcf_d` (default 32 × 20).
 
-`part="assembly"` (по умолчанию) — сборка с макетами компонентов для проверки в OpenSCAD.
+`part="assembly"` (the default) is an assembly with component mock-ups for checking in OpenSCAD.
 
-Самая критичная деталь — верх: сначала напечатать `case_top.stl` и примерить модуль, потом остальное.
+The most critical part is the top: print `case_top.stl` first and test-fit the module, then the rest.
 
-## Кноб энкодера
+## Encoder knob
 
-[knob.scad](knob.scad): ⌀30 × 18 мм, верх плоский, алмазная накатка (две встречные винтовые канавки, шаг ~2,6 мм — 36 шт. на ⌀30, 30° к оси), посадка на D-вал. Снизу выборка под гайку и резьбовую втулку, поэтому кноб висит над панелью на 1 мм (при нажатии на кнопку энкодера — 0,5 мм). Вал заходит в кноб на 12,5 мм.
+[knob.scad](knob.scad): ⌀30 × 18 mm, flat top, diamond knurling (two opposing helical grooves, pitch ~2.6 mm — 36 of them on ⌀30, 30° to the axis), fits a D-shaft. The underside is recessed for the nut and threaded bushing, so the knob floats 1 mm above the panel (0.5 mm with the encoder button pressed). The shaft goes 12.5 mm into the knob.
 
-Корпус с кнопками дорожек: энкодер стоит в сетке MX (шаг 19), ⌀30 наезжает на колпачок под ним. Для него `knob8.stl` — ⌀17 × 18 мм, 21 канавка: до колпачка 18 мм остаётся 1,5 мм, до окна экрана и правой стенки — больше 10 мм. Стенка вокруг гайки ~1,4 мм (без канавки 2,2), печатать с 3–4 периметрами.
+Case with track buttons: the encoder sits on the MX grid (19 mm pitch), and a ⌀30 knob would overlap the keycap below it. For this case use `knob8.stl` — ⌀17 × 18 mm, 21 grooves: 1.5 mm clearance to the 18 mm keycap, more than 10 mm to the screen window and the right wall. The wall around the nut is ~1.4 mm (2.2 without a groove); print with 3–4 perimeters.
 
-Замерить энкодер:
+Measure the encoder:
 
-| Что | Переменная | По умолчанию |
+| What | Variable | Default |
 |---|---|---|
-| Вал от опорной плоскости корпуса энкодера до конца | `shaft_l` | 20 |
-| ⌀ вала и размер по лыске | `shaft_d`, `shaft_dd` | 6 и 4,5 |
-| Длина лыски | `flat_l` | 10 |
-| Втулка: ⌀ и высота | `bush_d`, `bush_l` | 7 и 7 |
-| Гайка: под ключ и высота, шайба | `nut_af`, `nut_h`, `washer_t` | 10, 2, 0,5 |
-| Ход кнопки | `push` | 0,5 |
+| Shaft from the encoder body's seating plane to the tip | `shaft_l` | 20 |
+| Shaft ⌀ and size across the flat | `shaft_d`, `shaft_dd` | 6 and 4.5 |
+| Flat length | `flat_l` | 10 |
+| Bushing: ⌀ and height | `bush_d`, `bush_l` | 7 and 7 |
+| Nut: across flats and height, washer | `nut_af`, `nut_h`, `washer_t` | 10, 2, 0.5 |
+| Button travel | `push` | 0.5 |
 
-От `shaft_l` зависит высота кноба. Туго садится на вал — увеличить `shaft_clr` (0,15), болтается — уменьшить. `part="view"` — кноб на панели с макетом энкодера.
+The knob height depends on `shaft_l`. If it is tight on the shaft, increase `shaft_clr` (0.15); if it wobbles, decrease it. `part="view"` shows the knob on the panel with an encoder mock-up.
 
 ```
 $OS -o stl/knob.stl knob.scad
 $OS -o stl/knob8.stl -D knob_d=17 knob.scad
 ```
 
-## Крепёж и материалы
+## Hardware and materials
 
-- Вплавляемые гайки M3 (длина 5–6 мм, внешний ⌀ ~4,5) — 8 шт.
-- Винты M3 × 10 DIN 912 (цилиндрическая голова под шестигранник) — 4 шт. (нижняя часть, головы утоплены заподлицо).
-- Винты M3 × 6 — 4 шт. (прижимные планки).
-- Пористый двусторонний скотч ~1 мм — под планки и под аккумулятор.
-- Mini jack панельный PJ-392 (TRS 3,5 мм, гайка M6).
-- Тумблер MTS-102 (гайка M6).
-- Модуль зарядки/повербанка на IP5306 с Type-C и USB-A (USB-A выпаять).
-- Аккумулятор LiPo 103450 (~2000 мАч).
-- 2 переключателя MX (вариант с кнопками дорожек — 10), энкодер EC11 с кнопкой, колпачки.
-- Вариант с кнопками дорожек: модуль PCF8575, 8 светодиодов 3 мм, 8 резисторов 330 Ом.
+- M3 heat-set inserts (5–6 mm long, outer ⌀ ~4.5) — 8 pcs.
+- M3 × 10 DIN 912 screws (socket head cap) — 4 pcs. (bottom part, heads sunk flush).
+- M3 × 6 screws — 4 pcs. (clamps).
+- ~1 mm foam double-sided tape — under the clamps and the battery.
+- PJ-392 panel-mount mini jack (TRS 3.5 mm, M6 nut).
+- MTS-102 toggle switch (M6 nut).
+- IP5306 charger/power-bank module with Type-C and USB-A (desolder the USB-A).
+- LiPo 103450 battery (~2000 mAh).
+- 2 MX switches (10 for the track-button version), EC11 encoder with push button, keycaps.
+- Track-button version: PCF8575 module, 8 × 3 mm LEDs, 8 × 330 Ω resistors.
 
-## Питание
+## Power
 
-Модуль IP5306 сам заряжает LiPo от Type-C и выдаёт стабильные 5 В. Гнездо USB-A выпаять (иначе не влезет по высоте), провода выхода паять на его площадки VBUS и GND.
+The IP5306 module charges the LiPo from Type-C by itself and puts out a stable 5 V. Desolder the USB-A socket (otherwise it won't fit height-wise) and solder the output wires to its VBUS and GND pads.
 
 ```
 LiPo + ── IP5306 B+ (BAT+)
 LiPo − ── IP5306 B− (BAT−)
-IP5306 VOUT (VBUS USB-A) ── тумблер ── 5V платы
-IP5306 GND               ───────────── GND платы
+IP5306 VOUT (VBUS USB-A) ── switch ── board 5V
+IP5306 GND               ───────────── board GND
 ```
 
-Тумблер стоит на выходе, а не на аккумуляторе: так зарядка работает и при выключенном устройстве.
+The switch is on the output, not on the battery: this way charging works even with the device switched off.
 
-Особенности IP5306:
-- Выход включается сам, когда появляется нагрузка (замкнули тумблер). Если не включился — коротко нажать кнопку модуля или замкнуть её площадки (KEY) на GND. Если кнопки нет, а автостарт капризничает — перенести тумблер в цепь аккумулятора, но тогда заряжать только во включённом положении.
-- При токе меньше ~50 мА выход отключается через ~30 с. Плата берёт ~175 мА, это не мешает.
-- Во время зарядки выход работает (питание идёт от Type-C). В момент подключения или отключения зарядки выход может кратко пропасть — плата перезагрузится. Подключать зарядку лучше на выключенном устройстве или после сохранения.
-- Светодиоды уровня заряда — на плате внутри корпуса, снаружи не видны.
+IP5306 quirks:
+- The output turns on by itself when a load appears (the switch is closed). If it does not, briefly press the module's button or short its pads (KEY) to GND. If there is no button and auto-start is unreliable, move the switch into the battery line, but then charge only with the switch on.
+- Below ~50 mA the output shuts off after ~30 s. The board draws ~175 mA, so this is not a problem.
+- The output stays on while charging (power comes from Type-C). At the moment charging is connected or disconnected the output may drop briefly and the board will reboot. Connect the charger with the device off, or after saving.
+- The charge-level LEDs are on the board inside the case and are not visible from outside.
 
-Аккумулятор напрямую на 3.3V или 5V платы не подключать.
+Do not connect the battery directly to the board's 3.3V or 5V.
 
-Type-C самой платы (прошивка) и слот microSD доступны только со снятой крышкой. Не прошивать с замкнутым тумблером: два источника 5 В на одной линии.
+The board's own Type-C (flashing) and the microSD slot are accessible only with the lid off. Do not flash with the switch closed: two 5 V sources on the same line.
 
-## Сборка
+## Assembly
 
-1. Вплавить гайки паяльником: 4 в угловые стойки, 4 в стойки планок (все в верхней части).
-2. Вставить модуль экраном вниз в карман верхней части, до упора в бортик.
-3. Наклеить скотч на планки, прикрутить планки винтами M3 поперёк коротких краёв модуля.
-4. Защёлкнуть MX-переключатели в панель сверху. Энкодер — снизу, закрепить гайкой сверху.
-5. Jack и тумблер — в отверстия задней стенки, затянуть гайками. Тумблер повернуть длинной стороной корпуса (7,9 мм) вертикально.
-6. В нижнюю часть: IP5306 в ложемент гнездом Type-C к задней стенке, аккумулятор на скотч в бортик под модулем.
-7. Распаять питание (см. выше), органы управления и MIDI OUT — по таблице в [корневом README](../README.md#подключение).
-8. Проверить ~5 В на выходе IP5306 до подключения к плате, затем закрыть нижнюю часть 4 винтами M3 × 10.
+1. Melt the inserts in with a soldering iron: 4 into the corner posts, 4 into the clamp posts (all in the top part).
+2. Insert the module screen-down into the pocket of the top part, until it rests against the lip.
+3. Stick tape onto the clamps and screw the clamps with M3 screws across the module's short edges.
+4. Snap the MX switches into the panel from above. The encoder goes in from below, secured with its nut from above.
+5. Fit the jack and the switch into the back-wall holes and tighten their nuts. Turn the switch so the long side of its body (7.9 mm) is vertical.
+6. In the bottom part: the IP5306 into its cradle with the Type-C jack towards the back wall, the battery on tape against the ridge under the module.
+7. Solder the power (see above); the controls and MIDI OUT per the table in the [root README](../README.md#wiring).
+8. Check for ~5 V at the IP5306 output before connecting it to the board, then close the bottom part with 4 M3 × 10 screws.
+
+## License
+
+The enclosure (OpenSCAD sources and STL): © 2026 deemonoise, [CERN-OHL-S v2](LICENSE).

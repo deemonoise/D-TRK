@@ -1,7 +1,9 @@
 #include "synth.h"
+#include "hot.h"
 #include "slices.h"
 #include "synth_drum_machines.h"
 #include "synth_fm_machines.h"
+#include "scale.h"
 #include <math.h>
 #include <string.h>
 
@@ -43,14 +45,52 @@ int eventOffset(uint64_t t, uint64_t blockT) {
   return off < static_cast<uint64_t>(Synth::kBlock) ? static_cast<int>(off) : -1;
 }
 
-Synth::Synth(const Project& p) : p_(p) { reset(); }
+Synth::Synth(const Project& p) : p_(p) {
+  Drive::init();  // the tanh table, outside the audio path
+  reset();
+}
 
 void Synth::reset() {
   for (auto& v : voices_) v = Voice();
   age_ = 0;
   nEv_ = 0;
+  load_ = 0;
+  cap_ = kVoices;
+  capUp_ = 0;
   delay_.clear();
+  reverb_.clear();
+  comp_.reset();
   for (int t = 0; t < kSynthTracks; ++t) startTrack(static_cast<uint8_t>(t));
+}
+
+MT_HOT void Synth::setLoad(float load) {
+  load_ += (load - load_) * 0.25f;
+  if (load_ <= kLoadHigh && load <= kLoadPanic) {
+    if (load_ < kLoadLow && cap_ < kVoices && ++capUp_ >= kCapUpBlocks) {
+      ++cap_;
+      capUp_ = 0;
+    }
+    return;
+  }
+  capUp_ = 0;
+  // Shed one voice per block while over: releasing ones first, the oldest of each. A note that
+  // has ended (a filter tail) costs only the filter and cannot be faded without a click.
+  int live = 0, victim = -1;
+  bool victimRel = false;
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& x = voices_[i];
+    if (!x.on || x.stolen || x.env.idle()) continue;
+    ++live;
+    const bool rel = x.env.stage() == Env::Stage::Release;
+    if (victim < 0 || (rel && !victimRel) || (rel == victimRel && x.age < voices_[victim].age)) {
+      victim = i;
+      victimRel = rel;
+    }
+  }
+  if (live <= kMinVoices || victim < 0) return;
+  voices_[victim].env.fade(kStealMs);
+  voices_[victim].stolen = true;
+  cap_ = live - 1;
 }
 
 void Synth::startTrack(uint8_t track) {
@@ -62,6 +102,7 @@ void Synth::startTrack(uint8_t track) {
   r.noteStep = true;
   r.gen = 0;
   r.vib = r.arp = r.cut = r.sld = r.ofs = r.slc = 0;
+  resetArp(r);
   r.vslSet = r.ofsSet = r.slcSet = false;
   r.vsl = 0;
   r.lastPitch = -1;
@@ -101,7 +142,7 @@ uint8_t Synth::trackInstr(uint8_t track) const {
   return i < kInstruments ? i : 0;
 }
 
-uint8_t Synth::trackVol(uint8_t track) const {
+MT_HOT uint8_t Synth::trackVol(uint8_t track) const {
   const uint8_t v = track < kTracks ? p_.tracks[track].vol : kPreviewVol;
   return v > 127 ? 127 : v;
 }
@@ -151,6 +192,12 @@ void Synth::slideTo(Voice& v, float target, uint8_t sld) const {
   v.slideStep = (target - v.pitch) / (sld * 4.f * (kSynthRate / 1000.f));
 }
 
+void Synth::resetArp(TrackRt& r) const {
+  r.arm = kArmDefault;
+  r.arpChord = kNoArpChord;
+  r.arpN = 0;
+}
+
 void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
   TrackRt& r = rt_[track];
   if (cmd == kSynthStep) {
@@ -158,11 +205,16 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
     r.noteStep = (val & 0x80) != 0;
     if (r.noteStep) {
       r.vib = r.arp = 0;
+      resetArp(r);
       ++r.gen;
     }
     r.cut = r.sld = 0;
     r.vslSet = r.ofsSet = r.slcSet = false;
     r.lockMask = 0;
+    return;
+  }
+  if (cmd == kSynthArpChord) {  // the step's note-on arpeggiates this chord (intervals from its note)
+    r.arpChord = val;
     return;
   }
   // On a step without a note, fx act on the track's sounding voices now.
@@ -178,6 +230,7 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
       }
       break;
     case Fx::VIB: r.vib = val; break;
+    case Fx::ARM: r.arm = val; break;
     case Fx::ARP:
       r.arp = val;
       if (now)
@@ -212,20 +265,29 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
     case Fx::CON:
     case Fx::FLT:
     case Fx::RES:
-    case Fx::DLY: {
+    case Fx::DLY:
+    case Fx::DRV:
+    case Fx::RVB:
+    case Fx::BIT:
+    case Fx::SRR: {
       // Lock: this step's note-ons, or the track's sounding voices. Macros: FM / DRUM / SYNTH voices only.
-      const int k = cmd == static_cast<uint8_t>(Fx::DLY) ? kLockDly : cmd - static_cast<uint8_t>(Fx::DCY);
+      const int k = cmd == static_cast<uint8_t>(Fx::DLY)   ? kLockDly
+                    : cmd == static_cast<uint8_t>(Fx::DRV) ? kLockDrv
+                    : cmd == static_cast<uint8_t>(Fx::RVB) ? kLockRvb
+                    : cmd == static_cast<uint8_t>(Fx::BIT) ? kLockBit
+                    : cmd == static_cast<uint8_t>(Fx::SRR) ? kLockSrr
+                                                           : cmd - static_cast<uint8_t>(Fx::DCY);
       const bool macro = k < kFmMacros;
       const uint8_t lv = val > 127 ? 127 : val;
       if (now) {
         for (auto& x : voices_)
           if (x.on && x.track == track && (!macro || x.fm || x.drum || x.syn)) {
             x.lock[k] = lv;
-            x.lockMask |= 1 << k;
+            x.lockMask |= static_cast<uint16_t>(1u << k);
           }
       } else {
         r.lock[k] = lv;
-        r.lockMask |= 1 << k;
+        r.lockMask |= static_cast<uint16_t>(1u << k);
       }
       break;
     }
@@ -248,9 +310,62 @@ float Synth::rnd() {
   return static_cast<int32_t>(rng_) * (1.f / 2147483648.f);
 }
 
+// KIT sampler lane release: envTimeMs(32) ~ 10 ms.
+static constexpr uint8_t kLaneRelease = 32;
+
+// KIT sampler lane: the lane's sample at its own pitch (root = lane note) + pitch, one-shot or
+// decay. out holds Instrument() defaults in every other field: start 0, end 0xFFFF, loop Off, no
+// slices, forward.
+static void buildLane(Instrument& out, const Instrument& k, const KitLane& ln) {
+  out.type = InstrType::Sample;
+  for (int i = 0; i < kSampleNameMax; ++i) out.sample[i] = ln.sample[i];  // the UI may be editing it
+  out.sample[kSampleNameMax] = 0;
+  out.root = ln.note;
+  out.transpose = ln.pitch;
+  out.vol = ln.vol;
+  out.attack = 0;
+  out.decay = ln.decay;
+  out.sustain = ln.decay ? 0 : 127;
+  out.release = kLaneRelease;
+  out.mono = true;
+  out.fltMode = 0;
+  for (int i = 0; i < kLfos; ++i) lfoRef(out, i).depth = 0;
+  out.send = k.send;
+  out.rsend = k.rsend;
+}
+
+const Instrument& Synth::instrOf(const Voice& v) const {
+  const Instrument& m = p_.instruments[v.instr];
+  if (!v.lane) return m;
+  buildLane(laneScratch_, m, m.kit[v.laneIdx]);
+  return laneScratch_;
+}
+
 void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
-  const uint8_t ii = trackInstr(track);
-  const Instrument& m = p_.instruments[ii];
+  uint8_t ii = trackInstr(track);
+  bool kitLane = false;  // a KIT lane: mono per lane (choke on the same note), poly across lanes
+  int laneIdx = 0;
+  Instrument scratch;    // sampler lane: built from the lane (instrOf rebuilds it while the voice plays)
+  const Instrument* mp = &p_.instruments[ii];
+  if (mp->type == InstrType::Kit) {
+    const Instrument& k = *mp;
+    int lane = -1;
+    for (int l = 0; l < kKitLanes && lane < 0; ++l)
+      if (k.kit[l].note == note) lane = l;
+    if (lane < 0) return;
+    const KitLane& ln = k.kit[lane];
+    kitLane = true;
+    laneIdx = lane;
+    if (ln.instr < kInstruments) {
+      if (p_.instruments[ln.instr].type == InstrType::Kit) return;  // no kit in a kit
+      ii = ln.instr;
+      mp = &p_.instruments[ii];
+    } else {
+      buildLane(scratch, k, ln);  // mini sampler
+      mp = &scratch;
+    }
+  }
+  const Instrument& m = *mp;
   const bool sample = m.type == InstrType::Sample;
   const int16_t* smp = nullptr;
   uint32_t frames = 0, rate = 0;
@@ -299,11 +414,16 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   const bool drum = drumT || (fm && !fmGated(machine));  // one-shot, choke
   const bool tone = fm && machine == static_cast<uint8_t>(FmMachine::Tone);
   // FM: only TONE may be poly; drums and CHORD take the track's voice. DRUM is always mono.
-  const bool mono = fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
+  // A KIT lane is mono through its own note (below), so the track is poly across lanes.
+  const bool mono = kitLane ? false : fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
   const float pitch = (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
   bool legato;
   // SLD: the track's sounding voice glides to the note (like legato), else a new one from the last note.
-  int held = r.sld ? trackVoice(track) : -1;
+  // A KIT lane never takes another lane's voice: only its own (same note) glides or chokes.
+  int held = r.sld && !kitLane ? trackVoice(track) : -1;
+  if (kitLane)  // the lane's sounding voice: choke
+    for (int x = 0; x < kVoices; ++x)
+      if (voices_[x].on && voices_[x].track == track && voices_[x].note == note) held = x;
   // A heavy (FM / DRUM) note gliding from a CHIP / SAMPLE voice adds a heavy voice: past the
   // limit allocVoice picks one (SLD then starts from the last note).
   if (held >= 0 && heavy && !heavyLoad(voices_[held])) {
@@ -313,7 +433,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   }
   // A SAMPLE note chokes the track's samples of earlier steps and its own retrigger (a chord
   // in one step stays). SLD instead continues the held voice.
-  if (sample && held < 0 && track < kTracks)
+  if (sample && !kitLane && held < 0 && track < kTracks)
     for (auto& x : voices_)
       if (x.on && x.track == track && x.sample && x.env.stage() != Env::Stage::Release &&
           (x.gen != r.gen || x.note == note))
@@ -324,7 +444,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     legato = true;
     voices_[vi].age = ++age_;
   } else {
-    vi = allocVoice(voices_, track, mono, age_, legato, heavy);
+    vi = allocVoice(voices_, track, mono, age_, legato, heavy, kitLane ? kKitLanes : kPolyPerTrack, cap_);
   }
   Voice& v = voices_[vi];
   v.stolen = false;  // SLD may take a fading voice back
@@ -335,11 +455,14 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // restarts the sample and gets no glide. SLD still slides from it.
   const bool wasReleasing = v.env.stage() == Env::Stage::Release || v.env.idle();
   // A drum always retriggers (choke), and so does a note following one.
-  const bool overlap = legato && !wasReleasing && !drum && !prevDrum;
+  // A KIT lane re-hit restarts its sound.
+  const bool overlap = legato && !wasReleasing && !drum && !prevDrum && !kitLane;
   // Legato on the same sample keeps playing from where it is.
   const bool restartSmp = sample && (!overlap || !v.sample || v.smp != smp || v.slice != slice);
   v.note = note;
   v.instr = ii;
+  v.lane = kitLane && mp == &scratch;
+  v.laneIdx = static_cast<uint8_t>(laneIdx);
   v.sample = sample;
   v.gen = r.gen;
   v.smp = smp;
@@ -347,6 +470,15 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   v.smpLen = frames;
   v.smpRate = rate;
   v.gain = vel * (1.f / 127.f);
+  v.vel = vel;
+  v.arpK = UINT32_MAX;
+  if (r.arpChord != kNoArpChord) {  // ARP + CHD: the chord's notes above this one
+    uint8_t notes[4];
+    const int n = chordNotes(note, r.arpChord, p_.scaleRoot, static_cast<ScaleType>(p_.scaleType), notes);
+    r.arpN = static_cast<uint8_t>(n < 0 ? 0 : (n > 4 ? 4 : n));
+    for (int i = 0; i < r.arpN; ++i) r.arpNotes[i] = static_cast<int8_t>(notes[i] - note);
+    r.arpChord = kNoArpChord;
+  }
   v.target = pitch;
   if (r.sld) {
     if (!legato) v.pitch = r.lastPitch >= 0 ? r.lastPitch : pitch;
@@ -363,10 +495,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     v.pwmPhase = 0;
     v.vibPhase = 0;
   }
-  if (!fm && !overlap) {  // FM restarts its LFO below; DRUM never overlaps
-    v.lfoPhase = 0;
-    v.lfoRnd = rnd();
-  }
+  if (!fm && !overlap) resetLfos(v);  // FM restarts its LFOs below; DRUM never overlaps
   r.lastPitch = pitch;
   v.arpT = 0;
   v.vslLeft = 0;
@@ -387,19 +516,19 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   constexpr uint8_t kMacroBits = (1 << kFmMacros) - 1;
   v.lockMask = (heavy || synT) ? r.lockMask : (r.lockMask & ~kMacroBits);
   for (int k = 0; k < kLocks; ++k) v.lock[k] = r.lock[k];
+  if (fm || drumT || synT) v.useEngine(fm ? EngineKind::Fm : drumT ? EngineKind::Drum : EngineKind::Syn);
   if (fm) {
     v.fpValid = false;
     if (!overlap || !keepFm) {  // legato from a CHIP / SAMPLE voice starts the FM voice afresh
       // A held machine after a drum starts afresh too: its level is 1 at once, ramping the
       // drum's operators into it would jump from the drum's decayed level.
-      v.fmv.trigger(keepFm && (drum || !prevDrum));
-      v.lfoPhase = 0;
-      v.lfoRnd = rnd();
+      v.fmv().trigger(keepFm && (drum || !prevDrum));
+      resetLfos(v);
     }
   }
   if (drumT) {
     v.fpValid = false;
-    v.drv.trigger(wasDrum);
+    v.drv().trigger(wasDrum);
   }
   if (synT) {
     // The UI may be editing the names: copy them first. Only WT oscillators look a table up.
@@ -411,7 +540,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       v.synWt[k] = (wt_ && wtMode && name[0]) ? wt_->findWt(name) : nullptr;
     }
     if (!overlap) {  // legato keeps the phases and the env -> SHAPE running, as the filter env
-      v.sv.trigger();
+      v.sv().trigger();
       v.senvT = 0;
     }
   }
@@ -423,7 +552,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       // release only fades an all-off (stop, output change).
       v.env.set(0, 0, 1.f, kDrumReleaseMs);
     } else {
-      const uint8_t dec = (v.lockMask & (1 << kMacDec)) ? v.lock[kMacDec] : m.macro[kMacDec];
+      const uint8_t dec = velDecay(v, m, (v.lockMask & (1u << kMacDec)) ? v.lock[kMacDec] : m.macro[kMacDec]);
       v.env.set(envTimeMs(m.attack), fm ? fmDecayMs(dec) : envTimeMs(m.decay), sus * (1.f / 127.f),
                 envTimeMs(m.release));
     }
@@ -433,7 +562,10 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     v.fenvT = 0;
     v.fenvDone = false;
   }
-  if (!legato) v.flt.reset();
+  if (!legato) {
+    v.flt.reset();
+    v.crush.reset();
+  }
   control(v, 0);
 }
 
@@ -492,12 +624,14 @@ void Synth::releaseTrack(uint8_t track) {
     if (v.on && v.track == track) v.env.gate(false);
 }
 
-void Synth::control(Voice& v, int dt) {
-  const Instrument& m = p_.instruments[v.instr];
+MT_HOT void Synth::control(Voice& v, int dt) {
+  const Instrument& m = instrOf(v);
   const TrackRt& r = rt_[v.track];
   v.fenvT += static_cast<uint32_t>(dt);
-  const uint8_t snd = (v.lockMask & (1 << kLockDly)) ? v.lock[kLockDly] : m.send;
+  const uint8_t snd = (v.lockMask & (1u << kLockDly)) ? v.lock[kLockDly] : m.send;
   v.send = (snd > 127 ? 127 : snd) * (1.f / 127.f);
+  const uint8_t rs = (v.lockMask & (1u << kLockRvb)) ? v.lock[kLockRvb] : m.rsend;
+  v.rsend = (rs > 127 ? 127 : rs) * (1.f / 127.f);
   if (v.slideStep != 0) {
     v.pitch += v.slideStep * dt;
     if ((v.slideStep > 0 && v.pitch >= v.target) || (v.slideStep < 0 && v.pitch <= v.target)) {
@@ -518,12 +652,40 @@ void Synth::control(Voice& v, int dt) {
     }
   }
   float pitch = v.pitch + r.bend;
+  v.arpOff = 0;
   if (r.arp) {
-    // note, +x, +y: three switches per step.
+    // Notes 0, +x, +y (or the ARP + CHD chord), `rate` switches per step in the ARM order; the
+    // default ARM (UP, 3) is the plain ARP: a third of a step each.
+    int8_t offs[4] = {0, static_cast<int8_t>(r.arp >> 4), static_cast<int8_t>(r.arp & 15), 0};
+    int n = 3;
+    if (r.arpN > 1) {
+      n = r.arpN;
+      for (int i = 0; i < n; ++i) offs[i] = r.arpNotes[i];
+    }
+    const int rate = (r.arm & 15) < 1 ? 1 : ((r.arm & 15) > kArmRateMax ? kArmRateMax : (r.arm & 15));
     v.arpT += static_cast<uint32_t>(dt);
-    const uint32_t third = static_cast<uint32_t>(stepSamples(v.track) / 3.f);
-    const uint32_t k = third ? (v.arpT / third) % 3 : 0;
-    pitch += k == 0 ? 0 : (k == 1 ? (r.arp >> 4) : (r.arp & 15));
+    const uint32_t slot = static_cast<uint32_t>(stepSamples(v.track) / static_cast<float>(rate));
+    const uint32_t k = slot ? v.arpT / slot : 0;
+    switch ((r.arm >> 4) & 3) {
+      case 1: v.arpIdx = static_cast<uint8_t>(n - 1 - static_cast<int>(k % n)); break;  // DOWN
+      case 2: {  // UPDOWN, the ends once: 0 1 2 1 0 1 ...
+        const int cyc = n > 1 ? 2 * n - 2 : 1;
+        const int q = static_cast<int>(k % cyc);
+        v.arpIdx = static_cast<uint8_t>(q < n ? q : cyc - q);
+        break;
+      }
+      case 3:  // RANDOM: one pick per slot
+        if (k != v.arpK) {
+          const int i = static_cast<int>((rnd() * 0.5f + 0.5f) * n);
+          v.arpIdx = static_cast<uint8_t>(i < 0 ? 0 : (i >= n ? n - 1 : i));
+        }
+        break;
+      default: v.arpIdx = static_cast<uint8_t>(k % n); break;  // UP
+    }
+    v.arpK = k;
+    if (v.arpIdx >= n) v.arpIdx = 0;
+    v.arpOff = offs[v.arpIdx];
+    pitch += v.arpOff;
   }
   const uint8_t vx = r.vib >> 4, vy = r.vib & 15;
   if (vx && vy) {
@@ -534,37 +696,53 @@ void Synth::control(Voice& v, int dt) {
   } else {
     v.vibPhase = 0;
   }
-  // LFO: PITCH, VOL, CUTOFF on every type; macro targets go to controlFm / controlDrum / controlSyn.
-  const float l = lfo(v, m, dt);
-  float lfoVol = 1, lfoCut = 0;
-  if (l != 0) {
-    const uint8_t dest = m.lfoDest < static_cast<uint8_t>(LfoDest::Count) ? m.lfoDest : 0;
+  // LFOs 1..4: PITCH, VOL, CUTOFF, DRIVE on every type, summed; macro targets go to controlFm /
+  // controlDrum / controlSyn (lm: macro offsets).
+  float lfoVol = 1, lfoCut = 0, lfoDrv = 0;
+  float lm[kFmMacros] = {};
+  for (int i = 0; i < kLfos; ++i) {
+    const LfoCfg c = lfoAt(m, i);
+    const float l = lfo(v, c, i, dt);
+    if (l == 0) continue;
+    const uint8_t dest = c.dest < static_cast<uint8_t>(LfoDest::Count) ? c.dest : 0;
     if (dest == static_cast<uint8_t>(LfoDest::Pitch)) pitch += 12.f * l;
-    else if (dest == static_cast<uint8_t>(LfoDest::Vol)) lfoVol = clampf(1.f + l, 0.f, 2.f);
-    else if (dest == static_cast<uint8_t>(LfoDest::Cutoff)) lfoCut = 64.f * l;
+    else if (dest == static_cast<uint8_t>(LfoDest::Vol)) lfoVol *= clampf(1.f + l, 0.f, 2.f);
+    else if (dest == static_cast<uint8_t>(LfoDest::Cutoff)) lfoCut += 64.f * l;
+    else if (dest == static_cast<uint8_t>(LfoDest::Drive)) lfoDrv += 64.f * l;
+    else if (dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con))
+      lm[dest - 1] += 64.f * l;
   }
+  const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : (m.drive > 127 ? 127 : m.drive);
+  v.drive.set(static_cast<uint8_t>(clampf(drv + lfoDrv, 0.f, 127.f) + 0.5f));
+  v.crush.set((v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : m.crushBits,
+              (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : m.crushRate);
   controlFilter(v, m, pitch, lfoCut);
   if (v.fm) {
-    controlFm(v, m, pitch, dt, l, lfoVol);  // sets v.amp too
+    controlFm(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
     return;
   }
   if (v.drum) {
-    controlDrum(v, m, pitch, dt, l, lfoVol);  // sets v.amp too
+    controlDrum(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
     return;
   }
   if (v.syn) {
-    controlSyn(v, m, pitch, dt, l, lfoVol);  // sets v.amp too
+    controlSyn(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
     return;
   }
   if (v.sample) {
     // Frames per output sample; the root note plays at the sample's own rate.
     const uint8_t root = m.root > 127 ? 127 : m.root;
-    float inc = v.smpRate * (1.f / kSynthRate) * exp2f((pitch - root) * (1.f / 12.f));
+    const float semis = pitch - root;
+    if (semis != v.smpKey) {
+      v.smpKey = semis;
+      v.smpVal = exp2f(semis * (1.f / 12.f));
+    }
+    float inc = v.smpRate * (1.f / kSynthRate) * v.smpVal;
     inc = clampf(inc, 0.f, 256.f);
     v.inc = inc;
     v.step = static_cast<int64_t>(inc * 4294967296.f);
   } else {
-    v.inc = noteHz(pitch) * (1.f / kSynthRate);
+    v.inc = cachedHz(v, 0, pitch) * (1.f / kSynthRate);
     // Noise: the LFSR steps 93x the note frequency (NES-like rates, kHz), so METAL's 93-step
     // period sounds at the played pitch and NOISE is a hiss that darkens with lower notes.
     const uint8_t w = m.wave < kWaveCount ? m.wave : 0;
@@ -586,14 +764,14 @@ void Synth::control(Voice& v, int dt) {
 }
 
 // Filter at control rate: off costs nothing per sample (renderVoice skips it).
-void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut) {
+MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut) {
   const uint8_t mode = m.fltMode < static_cast<uint8_t>(FltMode::Count) ? m.fltMode : 0;
   const bool was = v.fltOn;
   v.fltOn = mode != static_cast<uint8_t>(FltMode::Off);
   if (!v.fltOn) return;
   if (!was) v.flt.reset();  // turned on mid-note (UI, legato from an unfiltered instrument): no stale state
-  const float cut = (v.lockMask & (1 << kLockFlt)) ? v.lock[kLockFlt] : (m.cutoff > 127 ? 127 : m.cutoff);
-  const float res = (v.lockMask & (1 << kLockRes)) ? v.lock[kLockRes] : (m.reso > 127 ? 127 : m.reso);
+  const float cut = (v.lockMask & (1u << kLockFlt)) ? v.lock[kLockFlt] : (m.cutoff > 127 ? 127 : m.cutoff);
+  const float res = (v.lockMask & (1u << kLockRes)) ? v.lock[kLockRes] : (m.reso > 127 ? 127 : m.reso);
   if (res != v.fltRes) {
     v.fltRes = res;
     v.fltQ = resoQ(res);
@@ -607,48 +785,79 @@ void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoC
     oct += clampf(m.fenv, -64, 63) * (6.f / 64.f) * e;
   }
   oct += (m.keytrack > 127 ? 127 : m.keytrack) * (1.f / 127.f) * (pitch - 60.f) * (1.f / 12.f);
-  v.flt.set(static_cast<Svf::Mode>(mode - 1), 20.f * exp2f(oct), v.fltQ);
+  // Velocity: +-6 octaves at full depth from velocity 64 (no change) to 0 / 127.
+  if (m.velCut) oct += clampf(m.velCut, -64, 63) * (1.f / 64.f) * ((static_cast<int>(v.vel) - 64) * (1.f / 64.f)) * 6.f;
+  if (oct != v.octKey) {
+    v.octKey = oct;
+    v.octHz = 20.f * exp2f(oct);
+  }
+  v.flt.set(static_cast<Svf::Mode>(mode - 1), v.octHz, v.fltQ);
 }
 
-float Synth::lfo(Voice& v, const Instrument& m, int dt) {
-  if (!m.lfoDepth) return 0;
-  v.lfoPhase += lfoHz(m.lfoRate) * dt * (1.f / kSynthRate);
-  if (v.lfoPhase >= 1.f) {
-    v.lfoPhase -= static_cast<int>(v.lfoPhase);
-    v.lfoRnd = rnd();
+MT_HOT float Synth::cachedHz(Voice& v, int k, float note) {
+  if (note != v.hzKey[k]) {
+    v.hzKey[k] = note;
+    v.hzVal[k] = noteHz(note);
   }
-  const float ph = v.lfoPhase;
+  return v.hzVal[k];
+}
+
+void Synth::resetLfos(Voice& v) {
+  for (int i = 0; i < kLfos; ++i) {
+    v.lfoPhase[i] = 0;
+    v.lfoRnd[i] = rnd();
+  }
+}
+
+// LFO i of a voice: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM), restarted at
+// note-on; -1..1 x depth / 64.
+MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
+  if (!c.depth) return 0;
+  const float hz = c.sync ? lfoSyncHz(c.rate, p_.bpm) : lfoHz(c.rate);
+  float& ph = v.lfoPhase[i];
+  ph += hz * dt * (1.f / kSynthRate);
+  if (ph >= 1.f) {
+    ph -= static_cast<int>(ph);
+    v.lfoRnd[i] = rnd();
+  }
   float w;
-  switch (static_cast<LfoWave>(m.lfoWave)) {
+  switch (static_cast<LfoWave>(c.wave)) {
     case LfoWave::Tri: w = 4.f * (ph < 0.5f ? 0.5f - ph : ph - 0.5f) - 1.f; break;
     case LfoWave::Saw: w = 2.f * ph - 1.f; break;
     case LfoWave::Square: w = ph < 0.5f ? 1.f : -1.f; break;
-    case LfoWave::Random: w = v.lfoRnd; break;
+    case LfoWave::Random: w = v.lfoRnd[i]; break;
     default: w = sinf(6.2831853f * ph); break;
   }
-  const int d = m.lfoDepth < -64 ? -64 : (m.lfoDepth > 63 ? 63 : m.lfoDepth);
+  const int d = c.depth < -64 ? -64 : (c.depth > 63 ? 63 : c.depth);
   return w * d * (1.f / 64.f);
 }
 
 // Macros of an FM / DRUM / SYNTH voice: locks over the instrument's, then the LFO's macro target (l:
 // control()'s LFO value).
-void Synth::macros(const Voice& v, const Instrument& m, float l, float (&mac)[kFmMacros]) {
-  for (int k = 0; k < kFmMacros; ++k) mac[k] = (v.lockMask & (1 << k)) ? v.lock[k] : m.macro[k];
-  const uint8_t dest = m.lfoDest < static_cast<uint8_t>(LfoDest::Count) ? m.lfoDest : 0;
-  if (l != 0 && dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con))
-    mac[dest - 1] = clampf(mac[dest - 1] + 64.f * l, 0.f, 127.f);
+// Velocity -> DECAY macro (macro 0: SHP1 on SYNTH): velMac x (vel - 64) / 64 macro units.
+MT_HOT uint8_t Synth::velDecay(const Voice& v, const Instrument& m, uint8_t dec) {
+  if (!m.velMac) return dec;
+  const int d = dec + clampf(m.velMac, -64, 63) * (static_cast<int>(v.vel) - 64) / 64;
+  return static_cast<uint8_t>(d < 0 ? 0 : (d > 127 ? 127 : d));
+}
+
+MT_HOT void Synth::macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]) {
+  for (int k = 0; k < kFmMacros; ++k) mac[k] = (v.lockMask & (1u << k)) ? v.lock[k] : m.macro[k];
+  mac[kMacDec] = velDecay(v, m, static_cast<uint8_t>(mac[kMacDec] > 127 ? 127 : mac[kMacDec]));
+  for (int k = 0; k < kFmMacros; ++k)
+    if (lm[k] != 0) mac[k] = clampf(mac[k] + lm[k], 0.f, 127.f);
 }
 
 // pitch includes the LFO's PITCH target, vol its VOL target; l moves the macro targets here.
-void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol) {
+MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
-  macros(v, m, l, mac);
+  macros(v, m, lm, mac);
   // fmMachine is pure and costly (tens of us): reuse the last params while the inputs stay
   // within half a macro step and a cent of the ones they were made from.
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
   for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
   if (stale) {
-    fmMachine(v.machine, mac, pitch, v.fp);
+    fmMachine(v.machine, mac, pitch, v.fp());
     ++fmCalls_;
     v.fpValid = true;
     v.fpPitch = pitch;
@@ -656,36 +865,37 @@ void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, float 
   }
   // Ramp to the next control update: a full period from render(), the rest of it mid-segment
   // (note-on, bend), so a choke ramp ends exactly where the next update starts.
-  v.fmv.control(v.fp, dt ? dt : ctlLeft_);
+  v.fmv().control(v.fp(), dt ? dt : ctlLeft_);
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));
 }
 
 // As controlFm, with the same cache: drumMachine's powf calls cost microseconds each on the ESP32.
-void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol) {
+MT_HOT void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
-  macros(v, m, l, mac);
+  macros(v, m, lm, mac);
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
   for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
   if (stale) {
-    drumMachine(v.machine, mac, pitch, v.dp);
+    drumMachine(v.machine, mac, pitch, v.dp());
     ++drumCalls_;
     v.fpValid = true;
     v.fpPitch = pitch;
     for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
   }
-  v.drv.control(v.dp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
+  v.drv().control(v.dp(), dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));
 }
 
 // SYNTH: macros SHP1, SHP2, MIX, DET, SENV (env -> SHAPE depth, bipolar around 64).
-void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, float l, float vol) {
+MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
-  macros(v, m, l, mac);
+  macros(v, m, lm, mac);
   v.senvT += static_cast<uint32_t>(dt);
-  const float e = filterEnv(v.senvT, m.synEAtk, m.synEDec);  // 0..1, AD (decay 0 = hold)
-  const float senv = (mac[kMacSenv] - 64.f) * (1.f / 64.f) * e;
+  // env -> SHAPE: nothing to compute at the neutral 64.
+  const float senvAmt = (mac[kMacSenv] - 64.f) * (1.f / 64.f);
+  const float senv = senvAmt != 0 ? senvAmt * filterEnv(v.senvT, m.synEAtk, m.synEDec) : 0.f;  // AD, decay 0 = hold
   SynParams sp;
   for (int k = 0; k < 2; ++k) {
     sp.mode[k] = m.synOsc[k] < static_cast<uint8_t>(SynOsc::Count) ? m.synOsc[k] : 0;
@@ -693,14 +903,14 @@ void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, float
     sp.shape[k] = clampf(mac[kMacShp1 + k] * (1.f / 127.f) + senv, 0.f, 1.f);
   }
   const float det = (mac[kMacDet] - 64.f) * (50.f / 64.f) * 0.01f;  // +-50 cents, in semitones
-  sp.hz[0] = noteHz(pitch);
-  sp.hz[1] = noteHz(pitch + clampf(m.synSemi, -24, 24) + det);
+  sp.hz[0] = cachedHz(v, 0, pitch);
+  sp.hz[1] = cachedHz(v, 1, pitch + clampf(m.synSemi, -24, 24) + det);
   sp.mix = mac[kMacMix] * (1.f / 127.f);
   sp.sync = m.synSync;
   sp.sub = (m.synSub > 127 ? 127 : m.synSub) * (1.f / 127.f);
   sp.subOct = m.synSubOct ? 2 : 1;
   sp.noise = (m.synNoise > 127 ? 127 : m.synNoise) * (1.f / 127.f);
-  v.sv.control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
+  v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));
 }
@@ -710,45 +920,87 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
   // an unfiltered one straight into out.
   if (v.env.idle()) {
     // The note has ended: only the filter rings out (render() frees the voice when it is quiet).
-    if (v.fltOn)
-      for (int i = 0; i < n; ++i) out[i] += v.flt.process(0.f);
+    if (v.fltOn) v.flt.processAdd(nullptr, out, n);
     return;
   }
+  // Driven or filtered: the engine renders into flt, then drive -> filter -> out. Neither: straight
+  // into out (bit-exact to the plain path).
   float flt[kControl];
-  float* dst = out;
-  if (v.fltOn) {
+  float* __restrict dst = out;
+  const bool crushed = v.crush.on();
+  const bool driven = v.drive.on() || crushed;  // the pre-filter stage: drive, then crush
+  if (v.fltOn || driven) {
     for (int i = 0; i < n; ++i) flt[i] = 0;
     dst = flt;
   }
-  if (v.fm) {
+  // Env and oscillator state are copied to locals for the loops: through v every dst store would
+  // force a reload (dst may alias the voice as far as the compiler knows).
+  if (v.fm || v.drum || v.syn) {
     float tmp[kControl] = {0};
-    v.fmv.render(tmp, n, v.amp);
-    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
-    if (v.fmv.done()) v.env.kill();
-  } else if (v.drum) {
-    // The gate env scales the choke tail too: it is 1 through a choke, and an all-off fades both.
-    float tmp[kControl] = {0};
-    v.drv.render(tmp, n, v.amp);
-    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
-    if (v.drv.done()) v.env.kill();
-  } else if (v.syn) {
-    float tmp[kControl] = {0};
-    v.sv.render(tmp, n, v.amp);
-    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
+    if (v.fm) v.fmv().render(tmp, n, v.amp);
+    else if (v.drum) v.drv().render(tmp, n, v.amp);  // the gate env scales a choke tail too
+    else v.sv().render(tmp, n, v.amp);
+    Env env = v.env;
+    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * env.next();
+    v.env = env;
+    if ((v.fm && v.fmv().done()) || (v.drum && v.drv().done())) v.env.kill();
   } else if (v.sample) {
     renderSample(v, dst, n);
   } else {
-    const Wave w = static_cast<Wave>(v.wave);
-    const float inc = v.inc, duty = v.duty, amp = v.amp;
-    for (int i = 0; i < n; ++i) dst[i] += v.osc.next(w, inc, duty) * v.env.next() * amp;
+    renderChip(v, dst, n);
   }
+  if (v.drive.on()) v.drive.processBlock(flt, n);
+  if (crushed) v.crush.processBlock(flt, n);
   if (v.fltOn)
-    for (int i = 0; i < n; ++i) out[i] += v.flt.process(flt[i]);
+    v.flt.processAdd(flt, out, n);
+  else if (driven)
+    for (int i = 0; i < n; ++i) out[i] += flt[i];
+}
+
+// CHIP: one loop per wave (no per-sample switch), state in locals.
+template <Wave W>
+MT_HOT static void chipLoop(ChipOsc& o, Env& e, float* __restrict dst, int n, float inc, float duty, float amp) {
+  ChipOsc osc = o;
+  Env env = e;
+  for (int i = 0; i < n; ++i) dst[i] += osc.next(W, inc, duty) * env.next() * amp;
+  o = osc;
+  e = env;
+}
+
+MT_HOT void Synth::renderChip(Voice& v, float* out, int n) {
+  const float inc = v.inc, duty = v.duty, amp = v.amp;
+  switch (static_cast<Wave>(v.wave)) {
+    case Wave::Pulse: chipLoop<Wave::Pulse>(v.osc, v.env, out, n, inc, duty, amp); break;
+    case Wave::Triangle: chipLoop<Wave::Triangle>(v.osc, v.env, out, n, inc, duty, amp); break;
+    case Wave::Saw: chipLoop<Wave::Saw>(v.osc, v.env, out, n, inc, duty, amp); break;
+    default: {
+      const Wave w = static_cast<Wave>(v.wave);  // noise, metal, wavetables: the generic loop
+      ChipOsc osc = v.osc;
+      Env env = v.env;
+      for (int i = 0; i < n; ++i) out[i] += osc.next(w, inc, duty) * env.next() * amp;
+      v.osc = osc;
+      v.env = env;
+    }
+  }
 }
 
 // Sample playback: 32.32 fixed point position, linear interpolation between frames. The loop
 // region [loopLo, loopHi) bounds the play direction's edge (for Off it is the whole region).
-void Synth::renderSample(Voice& v, float* out, int n) {
+// Master DJ filter (Project::djFilter): low-pass 20 kHz .. 100 Hz to the left, high-pass 20 Hz ..
+// 8 kHz to the right, a little resonance; the state is cleared while it is off.
+void Synth::djFilter(float* x, int n) {
+  const int v = p_.djFilter;
+  if (v == 0) {
+    dj_.reset();
+    return;
+  }
+  const float a = v < 0 ? -v / 64.f : v / 63.f;
+  const float hz = v < 0 ? 20000.f * powf(100.f / 20000.f, a) : 20.f * powf(8000.f / 20.f, a);
+  dj_.set(v < 0 ? Svf::Mode::Lp : Svf::Mode::Hp, hz, 0.9f);
+  for (int i = 0; i < n; ++i) x[i] = dj_.process(x[i]);
+}
+
+MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   const int16_t* d = v.smp;
   const uint32_t last = v.smpLen - 1;
   const int64_t lo = static_cast<int64_t>(v.loopLo) << 32, hi = static_cast<int64_t>(v.loopHi) << 32;
@@ -757,21 +1009,22 @@ void Synth::renderSample(Voice& v, float* out, int n) {
   const uint8_t mode = v.loopMode;
   int64_t pos = v.pos;
   int64_t step = v.dir > 0 ? v.step : -v.step;
+  Env env = v.env;  // in registers: an out store would force a reload through v
   for (int i = 0; i < n; ++i) {
     const uint32_t idx = static_cast<uint32_t>(pos >> 32);
     const int32_t a = d[idx];
     const int32_t b = d[idx < last ? idx + 1 : last];
     const float s = a + (b - a) * (static_cast<uint32_t>(pos) * 2.3283064e-10f);
-    out[i] += s * v.env.next() * amp;
+    out[i] += s * env.next() * amp;
     pos += step;
     if (step >= 0 ? pos < hi : pos >= lo) continue;
     // Crossed the edge in the play direction (rare).
     if (mode == static_cast<uint8_t>(LoopMode::Forward)) {
       const int64_t span = hi - lo;
       if (step >= 0) {
-        while (pos >= hi) pos -= span;
+        if (pos >= hi) pos = lo + (pos - lo) % span;  // one step may cross a short loop many times
       } else {
-        while (pos < lo) pos += span;
+        if (pos < lo) pos = hi - 1 - (hi - 1 - pos) % span;
       }
     } else if (mode == static_cast<uint8_t>(LoopMode::PingPong)) {
       // Reflect around the edge frame: ..., 98, 99, 98, ... (the end frame is not repeated).
@@ -780,38 +1033,77 @@ void Synth::renderSample(Voice& v, float* out, int n) {
       if (pos < lo) pos = lo;
       if (pos >= hi) pos = hi - 1;
     } else {
-      v.env.kill();
+      env.kill();
       break;
     }
   }
+  v.env = env;
   v.pos = pos;
   v.dir = step >= 0 ? 1 : -1;
 }
 
-void Synth::render(int16_t* out) {
+MT_HOT void Synth::render(int16_t* out) {
+  // Profiling: t = the cycle counter at the last mark; mark(stage) books the time since.
+  uint32_t (*const clk)() = clock_;
+  uint32_t t = clk ? clk() : 0;
+  auto mark = [&](int stage) __attribute__((always_inline)) {
+    if (!clk) return;
+    const uint32_t now = clk();
+    prof_[stage] += now - t;
+    t = now;
+  };
   for (auto& x : mix_) x = 0;
   for (auto& x : send_) x = 0;
+  for (auto& x : rsend_) x = 0;
+  for (auto& x : sc_) x = 0;
+  const int scTrack = p_.scTrack >= 1 && p_.scTrack <= kTracks ? p_.scTrack - 1 : -1;
   int e = 0;
   for (int pos = 0; pos < kBlock;) {
+    mark(kProfMaster);
     if (pos % kControl == 0)
       for (auto& v : voices_)
         if (v.on && !v.env.idle()) control(v, kControl);  // a ringing filter tail keeps its cutoff
+    mark(kProfControl);
     ctlLeft_ = kControl - pos % kControl;
     while (e < nEv_ && ev_[e].off <= pos) apply(ev_[e++]);
+    mark(kProfEvents);
     int end = (pos / kControl + 1) * kControl;
     if (e < nEv_ && ev_[e].off < end) end = ev_[e].off;
     for (auto& v : voices_) {
       if (!v.on) continue;
-      if (v.send > 0) {
-        float tmp[kControl] = {0};
-        renderVoice(v, tmp, end - pos);
-        for (int i = 0; i < end - pos; ++i) {
+      const bool sc = v.track == scTrack;
+      const int n = end - pos;
+      const bool sends = v.send > 0 || v.rsend > 0 || sc;
+      if (!sends && !meters_) {
+        renderVoice(v, mix_ + pos, n);
+        if (v.env.idle() && !(v.fltOn && v.flt.ringing())) v.on = false;
+        if (clk) mark(v.fm ? kProfFm : v.drum ? kProfDrum : v.syn ? kProfSyn : v.sample ? kProfSample : kProfChip);
+        continue;
+      }
+      // Through tmp: the sends, and the peak for the track's level meter (MIX). A voice adds into the
+      // mix once, so mix + (0 + x) is bit-exact to rendering straight into the mix.
+      float tmp[kControl] = {0};
+      renderVoice(v, tmp, n);
+      float pk = trackPeak_[v.track < kSynthTracks ? v.track : 0];
+      if (sends) {
+        const float vs = v.send, vr = v.rsend;  // locals: the stores below may alias v
+        for (int i = 0; i < n; ++i) {
           mix_[pos + i] += tmp[i];
-          send_[pos + i] += tmp[i] * v.send;
+          send_[pos + i] += tmp[i] * vs;
+          rsend_[pos + i] += tmp[i] * vr;
+          if (sc) sc_[pos + i] += tmp[i];
+          const float a = fabsf(tmp[i]);
+          if (a > pk) pk = a;
         }
       } else {
-        renderVoice(v, mix_ + pos, end - pos);
+        for (int i = 0; i < n; ++i) {
+          mix_[pos + i] += tmp[i];
+          const float a = fabsf(tmp[i]);
+          if (a > pk) pk = a;
+        }
       }
+      trackPeak_[v.track < kSynthTracks ? v.track : 0] = pk;
+      if (clk) mark(v.fm ? kProfFm : v.drum ? kProfDrum : v.syn ? kProfSyn : v.sample ? kProfSample : kProfChip);
       // Freed once the note has ended and its filter has rung out: cutting a resonant filter
       // mid-ring clicks.
       if (v.env.idle() && !(v.fltOn && v.flt.ringing())) v.on = false;
@@ -820,10 +1112,41 @@ void Synth::render(int16_t* out) {
   }
   nEv_ = 0;
   ctlLeft_ = kControl;
+  mark(kProfMaster);
   delay_.process(send_, mix_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, p_.dlyLevel);
+  mark(kProfDelay);
+  reverb_.process(rsend_, mix_, kBlock, p_.rvbSize, p_.rvbDamp, p_.rvbLevel);
+  mark(kProfReverb);
+  djFilter(mix_, kBlock);
+  comp_.process(mix_, scTrack >= 0 ? sc_ : nullptr, kBlock, p_.compAmt, p_.compRel, p_.scDepth);
   const uint8_t mv = p_.masterVol > kMasterVolMax ? kMasterVolMax : p_.masterVol;
   const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
   for (int i = 0; i < kBlock; ++i) out[i] = static_cast<int16_t>(softClip(mix_[i] * g) * 32767.f);
+  mark(kProfMaster);
+  if (clk) ++profBlocks_;
+}
+
+void Synth::takeTrackPeaks(float out[kTracks]) {
+  const float g = 0.25f;  // the master gain at MAIN 100 % (render())
+  for (int t = 0; t < kTracks; ++t) {
+    out[t] = trackPeak_[t] * g;
+    trackPeak_[t] = 0;
+  }
+}
+
+const char* Synth::profName(int stage) {
+  static const char* const kNames[kProfStages] = {"queue",  "events", "control", "chip",   "sample", "fm",
+                                                  "drum",   "synth",  "delay",   "reverb", "master"};
+  return stage >= 0 && stage < kProfStages ? kNames[stage] : "";
+}
+
+void Synth::takeProfile(uint32_t out[kProfStages], uint32_t& blocks) {
+  for (int i = 0; i < kProfStages; ++i) {
+    out[i] = prof_[i];
+    prof_[i] = 0;
+  }
+  blocks = profBlocks_;
+  profBlocks_ = 0;
 }
 
 int Synth::activeVoices() const {

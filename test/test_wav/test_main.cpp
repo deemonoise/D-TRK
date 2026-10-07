@@ -205,10 +205,12 @@ void test_not_wav() {
 
 void test_truncated() {
   std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 16), pcm16({1, 2, 3, 4}));
-  f.resize(f.size() - 3);  // cut inside the data
+  f.resize(f.size() - 3);  // cut inside the data: accepted, dataBytes as declared (callers clamp)
   VecSource src(f);
   WavInfo w;
-  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Truncated), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(8, w.dataBytes);
+  TEST_ASSERT_EQUAL(44, w.dataOffset);
   std::vector<uint8_t> g = wav(fmtBody(1, 1, 32000, 16), pcm16({1}));
   g.resize(30);  // cut inside "fmt "
   VecSource src2(g);
@@ -414,6 +416,24 @@ void test_downsampler_48k() {
   TEST_ASSERT_INT_WITHIN(600, 16000, peak);
 }
 
+void test_header_parses_back() {
+  std::vector<uint8_t> f(kWavHeaderBytes);
+  wavHeader(f.data(), 1000, 32000, 60, 0xDEADBEEF);
+  for (int i = 0; i < 1000; ++i) {
+    f.push_back(static_cast<uint8_t>(i));
+    f.push_back(static_cast<uint8_t>(i >> 8));
+  }
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(1000, w.frames());
+  TEST_ASSERT_EQUAL(32000, w.rate);
+  TEST_ASSERT_EQUAL(60, w.root);
+  TEST_ASSERT_TRUE(w.hasCrc);
+  TEST_ASSERT_EQUAL_HEX32(0xDEADBEEF, w.crc);
+  TEST_ASSERT_EQUAL(kWavHeaderBytes, w.dataOffset);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_mono16);
@@ -440,5 +460,6 @@ int main() {
   RUN_TEST(test_clm_garbage_ignored);
   RUN_TEST(test_downsampler_passthrough);
   RUN_TEST(test_downsampler_48k);
+  RUN_TEST(test_header_parses_back);
   return UNITY_END();
 }

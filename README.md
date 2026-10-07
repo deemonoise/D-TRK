@@ -1,223 +1,277 @@
 # D-TRK
 
-16-дорожечный трекер со встроенным синтезатором на **WT32-SC01 Plus** (ESP32-S3, экран 480×320 с тачем).
-16 паттернов, song mode, Euclid-генератор, сохранение на microSD, импорт MIDI-файлов.
-Встроенный звук: FM, драм-машины 808 / 909, синтезатор SYNTH (пила / квадрат / треугольник и wavetable), сэмплер и chiptune на встроенный усилитель платы — каждая дорожка играет во внутренний синт или во внешний MIDI.
+A 16-track tracker with a built-in synthesizer on the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen).
+16 patterns, song mode, Fill (every Nth / Euclid / random) for notes, volume and FX, saving to microSD, MIDI file import.
+Built-in sound: FM, 808 / 909 drum machines, the SYNTH synthesizer (saw / square / triangle and wavetable), a sampler and chiptune, played through the board's built-in amplifier — each track plays either the internal synth or external MIDI.
 
-Руководство пользователя: [docs/manual.html](docs/manual.html) (открыть в браузере).
-Корпус для 3D-печати и схема питания от аккумулятора: [enclosure/](enclosure/README.md).
+User manual: [docs/manual.md](docs/manual.md). Русская версия: [README_ru.md](README_ru.md).
+3D-printable enclosure and battery power circuit: [enclosure/](enclosure/README.md).
 
-## Подключение
+## Wiring
 
-Встроенные дисплей, тач и слот microSD уже разведены на плате. Подключать нужно только органы управления и MIDI-выход — на разъём расширения платы (Extended IO); кнопки дорожек — на разъём Debug. Полная схема пайки (питание, MIDI, кнопки, наушники) — [docs/wiring.html](docs/wiring.html).
+The built-in display, touch panel and microSD slot are already routed on the board. You only need to connect the controls and the MIDI output — to the board's expansion connector (Extended IO); the track buttons go to the Debug connector. Full soldering diagram (power, MIDI, buttons, headphones): [docs/wiring.md](docs/wiring.md).
 
-| GPIO | Что подключить | Как |
+| GPIO | What to connect | How |
 |---|---|---|
-| 10 | MIDI OUT | через резистор 10 Ом на Tip TRS-гнезда (см. схему ниже) |
-| 11 | Энкодер, вывод A | второй конец — общий вывод энкодера на GND |
-| 12 | Энкодер, вывод B | |
-| 13 | Кнопка энкодера | кнопка между GPIO и GND |
-| 14 | Кнопка **Play** | кнопка между GPIO и GND |
-| 21 | Кнопка **Shift** | кнопка между GPIO и GND |
-| 43 / 44 | Кнопки дорожек: SDA / SCL модуля PCF8575 | разъём Debug (TXD0 / RXD0), необязательно, см. ниже |
-| 3.3V | MIDI OUT | через резистор 33 Ом на Ring TRS-гнезда |
-| GND | Общий | общий вывод энкодера, вторые выводы кнопок, Sleeve TRS-гнезда |
+| 10 | MIDI OUT | through a 10 Ω resistor to the Tip of the TRS jack (see diagram below) |
+| 11 | Encoder, pin A | the other end — the encoder's common pin to GND |
+| 12 | Encoder, pin B | |
+| 13 | Encoder button | button between GPIO and GND |
+| 14 | **Play** button | button between GPIO and GND |
+| 21 | **Shift** button | button between GPIO and GND |
+| 43 / 44 | Track buttons: SDA / SCL of the PCF8575 module | Debug connector (TXD0 / RXD0), optional, see below |
+| 3.3V | MIDI OUT | through a 33 Ω resistor to the Ring of the TRS jack |
+| GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack |
 
-Входы настроены с внутренней подтяжкой к 3,3 В (`INPUT_PULLUP`), внешние резисторы не нужны. Кнопки замыкают вывод на GND.
+The inputs use the internal pull-up to 3.3 V (`INPUT_PULLUP`), so no external resistors are needed. The buttons short the pin to GND.
 
-### Энкодер
+### Encoder
 
-Обычный механический EC11 с кнопкой (4 импульса на щелчок). Средний вывод из тройки A–C–B — на GND, крайние — на GPIO 11 и 12. Если при вращении значение идёт в обратную сторону, поменяйте местами A и B.
+A regular mechanical EC11 with a push button (4 pulses per detent). The middle pin of the A–C–B row goes to GND, the outer ones to GPIO 11 and 12. If the value moves the wrong way when turning, swap A and B.
 
-Желательно поставить конденсаторы 10 нФ с A и B на GND — уменьшат дребезг. В прошивке есть аппаратный фильтр PCNT и программный дебаунс кнопок 5 мс.
+It is a good idea to add 10 nF capacitors from A and B to GND — they reduce contact bounce. The firmware has the PCNT hardware filter and a 5 ms software debounce for the buttons.
 
-### Кнопки дорожек (необязательно)
+### Track buttons (optional)
 
-8 кнопок MX и 8 светодиодов 3 мм в окнах свичей, через расширитель PCF8575 на I2C (порт 0; порт 1 занят тачем). Дорожек 16, кнопки работают с видимой половиной (1–8 или 9–16, см. ниже). Если модуль не ответил при старте, прошивка работает без него.
+8 MX buttons and 8 3 mm LEDs in the switch windows, via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware runs without it.
 
-| PCF8575 | Подключение |
+| PCF8575 | Connection |
 |---|---|
-| SDA / SCL | GPIO 43 / 44 (TXD0 / RXD0 разъёма Debug) |
-| VCC / GND | 3,3 В / GND (с того же разъёма) |
-| INT | не подключать |
-| A0–A2 | любые: прошивка ищет модуль на 0x20–0x27 |
-| P00–P07 | кнопки 1–8, второй вывод на GND |
-| P10–P17 | катоды LED 1–8 |
+| SDA / SCL | GPIO 43 / 44 (TXD0 / RXD0 of the Debug connector) |
+| VCC / GND | 3.3 V / GND (from the same connector) |
+| INT | leave unconnected |
+| A0–A2 | any: the firmware looks for the module at 0x20–0x27 |
+| P00–P07 | buttons 1–8, other pin to GND |
+| P10–P17 | LED 1–8 cathodes |
 
-Раскладка задаётся в `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`): если вывод испорчен, кнопку можно перенести на вывод неустановленного LED (номер 8–15 = P10–P17), а этот LED пометить `0xFF`.
+The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`): if a pin is damaged, a button can be moved to the pin of an unfitted LED (number 8–15 = P10–P17), and that LED marked as `0xFF`.
 
 ```
-+3.3V ──[330 Ω]──|>|── P1x     (LED горит, когда P1x = 0)
++3.3V ──[330 Ω]──|>|── P1x     (LED is lit when P1x = 0)
 ```
 
-- 330 Ом — для красных/жёлтых/зелёных LED (≈ 4 мА). Белым и синим при 3,3 В не хватает запаса: 47–68 Ом, яркость будет плавать от экземпляра.
-- PCF8575 тянет вывод вниз (до 25 мА), вверх — только слабой подтяжкой, поэтому LED включаются только по катоду, как на схеме.
-- Подтяжки SDA/SCL 4,7 кОм к 3,3 В обычно стоят на модуле — проверить.
-- INT не нужен: прошивка опрашивает модуль каждые 5 мс. Найденный адрес печатается в USB-лог (`trackio: PCF8575 at 0x..`).
-- Если площадки A0–A2 никуда не замкнуты и на модуле нет резисторов к GND, адрес висит в воздухе и может «гулять» — тогда замкнуть площадки на GND.
-- GPIO 43/44 свободны, потому что лог и прошивка идут через родной USB (`ARDUINO_USB_CDC_ON_BOOT=1`). При старте загрузчик ESP32 печатает в TXD0 (GPIO 43) — модулю это не мешает.
-- Кнопки и светодиоды работают с видимой половиной дорожек — 1–8 или 9–16; половину выбирает курсор (ушёл за 8-ю дорожку — показывается вторая половина, в шапке GRID — `1-8` / `9-16`). Кнопка N — выбрать дорожку N этой половины, Shift + N — mute той же дорожки (toast показывает настоящий номер, 1–16), в правке GRID — ввод ступеней лада. LED N — та же дорожка: горит у выбранной, вспыхивает при нотах; активность другой половины не показывается. Подробно — в [руководстве](docs/manual.html#trackkeys).
+- 330 Ω — for red/yellow/green LEDs (≈ 4 mA). White and blue ones don't have enough headroom at 3.3 V: use 47–68 Ω, and brightness will vary from unit to unit.
+- The PCF8575 pulls a pin down (up to 25 mA) but up only with a weak pull-up, so the LEDs are switched only on the cathode, as in the diagram.
+- 4.7 kΩ SDA/SCL pull-ups to 3.3 V are usually already on the module — check.
+- INT is not needed: the firmware polls the module every 5 ms. The detected address is printed to the USB log (`trackio: PCF8575 at 0x..`).
+- If the A0–A2 pads are not bridged anywhere and the module has no resistors to GND, the address floats and may "wander" — in that case bridge the pads to GND.
+- GPIO 43/44 are free because the log and flashing go through the native USB (`ARDUINO_USB_CDC_ON_BOOT=1`). At startup the ESP32 bootloader prints to TXD0 (GPIO 43) — this does not bother the module.
+- The buttons and LEDs work on the visible half of the tracks — 1–8 or 9–16; the half is chosen by the cursor (move past track 8 and the second half is shown; the GRID header shows `1-8` / `9-16`). Button N selects track N of that half, Shift + N mutes the same track (the toast shows the real number, 1–16), and in GRID edit mode the buttons enter scale degrees. LED N is the same track: lit for the selected one, flashes on notes; activity in the other half is not shown. Details in the [manual](docs/manual.md#trackkeys).
 
-### MIDI OUT (TRS тип A, 3,3 В)
+### MIDI OUT (TRS type A, 3.3 V)
 
 ```
 +3.3V  ──[33 Ω]── Ring   (MIDI DIN pin 4)
 GPIO10 ──[10 Ω]── Tip    (MIDI DIN pin 5)
-GND    ────────── Sleeve (MIDI DIN pin 2, экран)
+GND    ────────── Sleeve (MIDI DIN pin 2, shield)
 ```
 
-- Распиновка TRS **тип A** (стандарт MMA): Tip = pin 5, Ring = pin 4. Для устройств типа B (некоторые Arturia, Novation) нужен переходник A→B или поменять Tip и Ring местами.
-- Для 5-контактного DIN-гнезда: те же резисторы на pin 4 и pin 5, GND на pin 2.
-- UART без инверсии, 31250 бод. Опционально можно поставить буфер 74HC14 (два инвертора последовательно) между GPIO10 и резистором 10 Ом.
-- MIDI-входа нет: устройство всегда ведущее, отправляет clock, Start/Stop/Continue.
+- TRS **type A** pinout (MMA standard): Tip = pin 5, Ring = pin 4. Type B devices (some Arturia, Novation) need an A→B adapter, or swap Tip and Ring.
+- For a 5-pin DIN jack: the same resistors on pin 4 and pin 5, GND on pin 2.
+- Non-inverted UART, 31250 baud. Optionally, a 74HC14 buffer (two inverters in series) can be placed between GPIO10 and the 10 Ω resistor.
+- There is no MIDI input: the device is always the master and sends clock, Start/Stop/Continue.
 
-### Встроенная периферия (для справки)
+### Built-in peripherals (for reference)
 
-| Узел | Пины |
+| Block | Pins |
 |---|---|
 | microSD (SPI) | CS 41, MOSI 40, CLK 39, MISO 38 |
-| Тач FT6336U (I2C) | SDA 6, SCL 5, INT 7, RST 4 (общий с LCD) |
-| Дисплей ST7796 | шина 8080, 8 бит (внутренняя разводка платы) |
+| FT6336U touch (I2C) | SDA 6, SCL 5, INT 7, RST 4 (shared with LCD) |
+| ST7796 display | 8080 bus, 8-bit (internal board routing) |
 
-GPIO 1, 2, 42 идут на встроенный приёмопередатчик RS485, на разъём выведены только линии A/B. GPIO 35, 36, 37 — I2S на встроенный усилитель NS4168 (встроенный звук, см. ниже). GPIO 43/44 (разъём Debug) заняты кнопками дорожек.
+GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 are I2S to the built-in NS4168 amplifier (built-in sound, see below). GPIO 43/44 (Debug connector) are used by the track buttons.
 
-## Звук
+## Sound
 
-Встроенный синтезатор: 16 инструментов (FM — 8 машин; DRUM — 16 машин в духе TR-808 / TR-909; SYNTH — 2 осциллятора BL saw / square / tri или wavetable, sub, noise, sync; SAMPLE — сэмплы проекта, играют из flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetable; см. ниже), у каждого — фильтр и LFO, 16 голосов, 32 кГц, моно. Дорожка переключается в TRACK → Out: INT (по умолчанию в новом проекте) или MIDI. Звук идёт на встроенный усилитель NS4168 — разъём **SPK** на плате, пайка не нужна. Громкость по умолчанию 40 % (PROJ → Volume, 0–200 %; выше 100 % — до +6 дБ, пики громких аккордов мягко подрезаются); это настройка устройства — хранится в памяти платы и переживает выключение.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to the built-in NS4168 amplifier — the **SPK** connector on the board, no soldering needed. Default volume is 40 % (MIX tab → MAIN, 0–200 %; above 100 % — up to +6 dB, peaks of loud chords are softly clipped); this is a device setting — it is stored in the board's memory and survives power-off.
 
-> **ВНИМАНИЕ: выход SPK мостовой (BTL).** Оба вывода разъёма под сигналом, **ни один из них не земля**.
-> - Динамик (4–8 Ом) — прямо на два вывода SPK.
-> - Наушники — только через **изолированное** гнездо (корпус гнезда не касается корпуса прибора и GND), с резисторами **100–220 Ом последовательно**. Начинать с минимальной громкости.
-> - **Никогда** не соединять выводы SPK с GND платы, с землёй других устройств и с линейными входами (микшер, звуковая карта, усилитель, рекордер) — это короткое замыкание выхода усилителя и риск сжечь его или подключённое устройство. Для линейного выхода нужен отдельный ЦАП (см. [планы](docs/plans/future-audio.md)).
+> **WARNING: the SPK output is bridged (BTL).** Both pins of the connector carry signal, **neither of them is ground**.
+> - Speaker (4–8 Ω) — directly across the two SPK pins.
+> - Headphones — only through an **isolated** jack (the jack body does not touch the device enclosure or GND), with **100–220 Ω resistors in series**. Start at minimum volume.
+> - **Never** connect the SPK pins to the board's GND, to the ground of other devices, or to line inputs (mixer, audio interface, amplifier, recorder) — this shorts the amplifier output and risks burning it or the connected device. A line output needs a separate DAC (see [plans](docs/plans/future-audio.md)).
 
-### Гнездо для наушников (необязательно)
+### Headphone jack (optional)
 
-Стерео-гнездо 3,5 мм (TRS), моно-сигнал на оба уха. Подключается к разъёму SPK параллельно динамику или вместо него.
-
-```
-SPK+ ──[150 Ω]──┬── Tip    (левый)
-SPK+ ──[150 Ω]──┴── Ring   (правый)      каждое ухо — через свой резистор
-SPK− ────────────── Sleeve (общий)       НЕ GND! гнездо изолировано
-```
-
-Динамик и наушники звучат вместе. Чтобы отключать динамик, поставить в его провод выключатель:
+A 3.5 mm stereo jack (TRS), mono signal to both ears. Connects to the SPK connector in parallel with the speaker or instead of it.
 
 ```
-SPK+ ──[выкл.]── Динамик (+)
-SPK− ─────────── Динамик (−)
+SPK+ ──[150 Ω]──┬── Tip    (left)
+SPK+ ──[150 Ω]──┴── Ring   (right)       each ear through its own resistor
+SPK− ────────────── Sleeve (common)      NOT GND! jack is isolated
 ```
 
-- Резисторы 100–220 Ом, 0,25 Вт, по одному на Tip и Ring. Меньше 100 Ом — громко и большой ток через наушники; больше — тише. 150 Ом — середина.
-- Sleeve идёт на **SPK−**, а не на GND. Гнездо — в пластиковом корпусе или в пластиковой стенке (печатный корпус подходит), его контакты не касаются GND, корпуса MIDI-гнезда, USB и других разъёмов.
-- В это гнездо — **только наушники**. Кабель от него в микшер, звуковую карту или колонки с питанием соединит SPK− с их землёй: это замыкание выхода усилителя.
-- Перед первым включением — громкость PROJ → Volume на минимум, наушники не на ушах, затем поднимать.
-- Встроенный размыкающий контакт гнезда для отключения динамика не подходит: у обычных гнёзд он соединён с Tip, а Tip идёт через резистор. Нужен отдельный выключатель или гнездо с изолированной парой переключающих контактов.
+Speaker and headphones play together. To be able to switch the speaker off, put a switch in its wire:
 
-Внутренний звук отстаёт от MIDI-дорожек примерно на 14 мс (постоянно, без джиттера). Нагрузку синтезатора показывает `CPU NN%` в правом углу статус-бара (среднее за 0,5 с; жёлтый от 60% или если за окно хоть один блок считался дольше 4 мс — его покрывает очередь DMA; красный от 85% или 2 с после срыва звука — опустевшего DMA, слышимого щелчка).
+```
+SPK+ ──[switch]── Speaker (+)
+SPK− ──────────── Speaker (−)
+```
 
-### Сэмплы
+- 100–220 Ω, 0.25 W resistors, one each on Tip and Ring. Below 100 Ω — loud, with high current through the headphones; higher — quieter. 150 Ω is the middle ground.
+- Sleeve goes to **SPK−**, not to GND. The jack sits in a plastic body or a plastic panel (the printed enclosure works); its contacts do not touch GND, the MIDI jack body, USB or other connectors.
+- This jack is for **headphones only**. A cable from it to a mixer, audio interface or powered speakers would connect SPK− to their ground: that shorts the amplifier output.
+- Before first power-up — MAIN volume (MIX tab) at minimum, headphones off your ears, then bring it up.
+- The jack's built-in break contact is not suitable for disconnecting the speaker: on ordinary jacks it is connected to Tip, and Tip goes through a resistor. You need a separate switch or a jack with an isolated pair of switching contacts.
 
-- Сэмплы принадлежат проекту: у каждого проекта свой список (до **128**), инструмент (INST → Sample) выбирает только из него. На карте проект — это `/projects/NAME.mtp` и папка `/projects/NAME/` с его сэмплами (`<сэмпл>.wav`, моно, 16 бит). Папку пишет Save: недостающие и изменённые WAV записываются, файлы удалённых из проекта сэмплов удаляются. Не удалось записать папку — «SAMPLES NOT SAVED», проект остаётся несохранённым (`*`), следующий Save допишет.
-- Перенос проекта на другую карту или трекер — скопировать `.mtp` и его папку (картридером или по Wi-Fi). Load и автозагрузка подтягивают во flash сэмплы, которых там нет, из папки проекта (с прогрессом); не нашлось файла или он изменён — сэмпл помечается `MISSING` (молчит), toast «N SAMPLES MISSING».
-- Flash (раздел `samples`, ~9,9 МБ, ≈ 2,5 мин моно при 32 кГц, до 128 записей) — кэш, из которого сэмплы играют. Одинаковые данные в разных проектах хранятся один раз. Когда места нет, импорт и загрузка сами вытесняют сэмплы других проектов (сначала большие) и уплотняют flash; иначе «BANK FULL». Кэш не зависит от карты, обычная перепрошивка (USB или OTA) его не трогает. Раздел появился с новой таблицей разделов — после обновления со старой версии прошить **один раз по USB** (см. [Сборка и прошивка](#сборка-и-прошивка)), иначе FILE → SAMPLES покажет «NO SAMPLE BANK».
-- FILE → SAMPLES: строка `FREE n / m KB  CACHE k KB` (CACHE — место под сэмплы других проектов), **Import WAV…**, **Compact** (уплотнить flash), **Clear cache** (удалить из flash всё, чего нет в текущем проекте), затем сэмплы проекта: имя, длина, размер, красное `MISSING`. Клик по сэмплу — **Rename** (меняет имя и в инструментах; сэмпл MISSING переименовать нельзя) или **Delete** (убрать из проекта; файл удалит следующий Save).
-- `/samples` на карте (создаётся сама) — библиотека для импорта, можно с подпапками до 4 уровней. Import WAV…: сначала папки (`name/`, клик — войти, `< Up (..)` — наверх), затем `.wav`; скрытые файлы (macOS `._*`) не показываются. Play на файле — прослушать (первые 8 с, повторный Play — стоп; транспорт в этом списке кнопкой Play не запускается). Импортированный сэмпл попадает в папку проекта при сохранении.
-- WAV: PCM **8 / 16 / 24 бит**, моно или стерео (стерео сводится в моно), любая частота: выше 32 кГц понижается до 32 кГц, ниже хранится как есть. **Float и 32 бит не поддерживаются** («UNSUPPORTED WAV»).
-- Import, Rename, Delete, Compact и Clear cache — только при остановленном воспроизведении (запись во flash останавливает звук).
-- Старые проекты (когда сэмплы были общими): при загрузке список строится из инструментов, сэмплы берутся из flash по старым именам. Сохраните такой проект один раз — появится его папка.
-- `.wav` можно залить по Wi-Fi в `/samples` (и в подпапки, до 4 МБ) или прямо в папку проекта (до 10 МБ).
+The internal sound lags behind MIDI tracks by about 14 ms (constant, no jitter). Synthesizer load is shown by `CPU NN%` in the right corner of the status bar (average over 0.5 s; yellow from 60% or if at least one block in the window took longer than 4 ms to compute — this is covered by the DMA queue; red from 85% or for 2 s after an audio dropout — an emptied DMA queue, an audible click).
+
+### Samples
+
+- Samples belong to the project: each project has its own list (up to **128**), and an instrument (INST → Sample) chooses only from it. On the card, a project is `/projects/NAME.mtp` plus the folder `/projects/NAME/` with its samples (`<sample>.wav`, mono, 16-bit). The folder is written by Save: missing and changed WAVs are written, files of samples removed from the project are deleted. If the folder could not be written — "SAMPLES NOT SAVED", the project stays unsaved (`*`), and the next Save completes it.
+- To move a project to another card or tracker, copy the `.mtp` and its folder (with a card reader or over Wi-Fi). Load and autoload pull samples that are not in flash from the project folder (with progress); if a file is not found or has changed, the sample is marked `MISSING` (silent), toast "N SAMPLES MISSING".
+- Flash (the `samples` partition, ~9.9 MB, ≈ 2.5 min mono at 32 kHz, up to 128 entries) is the cache the samples play from. Identical data in different projects is stored once. When space runs out, import and loading evict other projects' samples on their own (largest first) and compact the flash; otherwise "BANK FULL". The cache does not depend on the card, and a normal reflash (USB or OTA) does not touch it. The partition came with a new partition table — after updating from an old version, flash **once over USB** (see [Build and flash](#build-and-flash)), otherwise FILE → SAMPLES shows "NO SAMPLE BANK".
+- FILE → SAMPLES: the line `FREE n / m KB  CACHE k KB` (CACHE — space taken by other projects' samples), **Import WAV…**, **Compact** (compact the flash), **Clear cache** (remove from flash everything not in the current project), then the project's samples: name, length, size, red `MISSING`. Click a sample — **Rename** (also renames it in instruments; a MISSING sample cannot be renamed) or **Delete** (remove from the project; the next Save deletes the file).
+- `/samples` on the card (created automatically) is the import library, subfolders allowed up to 4 levels. Import WAV…: folders first (`name/`, click to enter, `< Up (..)` to go up), then `.wav` files; hidden files (macOS `._*`) are not shown. Play on a file previews it (first 8 s, Play again stops; in this list the Play button does not start the transport). An imported sample goes into the project folder on save.
+- WAV: PCM **8 / 16 / 24-bit**, mono or stereo (stereo is mixed down to mono), any sample rate: above 32 kHz it is downsampled to 32 kHz, lower rates are stored as is. **Float and 32-bit are not supported** ("UNSUPPORTED WAV").
+- Import, Rename, Delete, Compact and Clear cache work only with playback stopped (writing to flash stops the sound).
+- Old projects (from when samples were shared): on load the list is built from the instruments, and samples are taken from flash by their old names. Save such a project once and its folder will appear.
+- `.wav` files can be uploaded over Wi-Fi to `/samples` (and subfolders, up to 4 MB) or straight into the project folder (up to 10 MB).
 
 ### FM
 
-**FM** — 8 машин в стиле Model:Cycles: KICK, SNARE, METAL, PERC, TONE, CHORD, CLAP, HAT. Вместо операторов — 5 макросов: DECAY (длина), COLOR (яркость / индекс), SHAPE (вариант тембра; у CHORD — тип аккорда), SWEEP и CONTOUR (огибающая питча или индекса). Ударные играют one-shot (длина ноты и ADSR не важны, новая нота обрывает предыдущую), TONE и CHORD держат ноту (attack / sustain / release из ADSR). TONE может быть POLY, остальные машины моно на дорожке.
+**FM** — 8 machines in the style of the Model:Cycles: KICK, SNARE, METAL, PERC, TONE, CHORD, CLAP, HAT. Instead of operators there are 5 macros: DECAY (length), COLOR (brightness / index), SHAPE (timbre variant; for CHORD — chord type), SWEEP and CONTOUR (pitch or index envelope). Percussion plays one-shot (note length and ADSR don't matter, a new note cuts off the previous one); TONE and CHORD hold the note (attack / sustain / release from the ADSR). TONE can be POLY; the other machines are mono per track.
 
-P-lock: fx `DEC`, `COL`, `SHP`, `SWP`, `CON` (0–127) задают макрос для ноты своего шага; на шаге без ноты — для звучащей ноты до следующей. Работают у FM, DRUM и SYNTH.
+P-lock: fx `DEC`, `COL`, `SHP`, `SWP`, `CON` (0–127) set a macro for the note on their step; on a step without a note — for the playing note until the next one. They work on FM, DRUM and SYNTH.
+
+### KIT (drum track)
+
+The **KIT** instrument type has 8 lanes: each is either its own mini-sampler (a project sample, Volume, Pitch, Decay) or a reference to any of the 32 instruments. A track with a KIT becomes a drum track: in GRID, instead of notes there are 8 squares per step; in edit mode, a pad of 8 buttons (and track buttons 1–8) toggles the lanes. Each lane is mono with choke; lanes sound together. On a MIDI track, the lanes are sent as their own notes (the lane's Note) — for an external drum machine. Fx `ACC` is a mask of lanes at full volume, the rest at 60 %. Fill (NOTE) writes to the selected lane. More in the [manual](docs/manual.md#drumtrack).
 
 ### DRUM (808 / 909)
 
-**DRUM** — 16 «аналоговых» машин: BD8, SD8, TOM8, CP8, RS8, CL8, CB8, HH8, CY8 (808) и BD9, SD9, TOM9, CP9, RS9, HH9, CY9 (909). Те же 5 слотов макросов и локи `DEC…CON`, но имена у каждой машины свои (TONE, SNAPPY, DRIVE, N.DEC, HP…); пустой слот — серый «-». DECAY есть у всех. Все машины one-shot и моно на дорожке: новая нота обрывает предыдущую (choke), note-off не важен; Attack, Decay, Sustain, Release, Mode, Glide серые. Нота C4 — базовая высота машины. Закрытый / открытый хэт — короткий и длинный DECAY. Тембры — приближение к оригиналам (хэты и тарелки 909 там сэмплы, здесь — синтез). FM, DRUM и SYNTH с WT-осциллятором вместе — не больше 8 голосов одновременно (лишний забирает самый старый).
+**DRUM** — 16 "analog" machines: BD8, SD8, TOM8, CP8, RS8, CL8, CB8, HH8, CY8 (808) and BD9, SD9, TOM9, CP9, RS9, HH9, CY9 (909). The same 5 macro slots and `DEC…CON` locks, but each machine names them differently (TONE, SNAPPY, DRIVE, N.DEC, HP…); an empty slot is a grey "-". Every machine has DECAY. All machines are one-shot and mono per track: a new note cuts off the previous one (choke), note-off doesn't matter; Attack, Decay, Sustain, Release, Mode, Glide are greyed out. Note C4 is the machine's base pitch. Closed / open hat — short and long DECAY. The timbres approximate the originals (the 909 hats and cymbals are samples there, synthesis here). FM, DRUM and SYNTH with a WT oscillator together — no more than 8 voices at once (an extra one steals the oldest).
 
-### SYNTH (осцилляторы и wavetable)
+### SYNTH (oscillators and wavetable)
 
-**SYNTH** — «аналоговый» синтезатор: 2 осциллятора, у каждого режим **SAW**, **SQR**, **TRI** (без алиасинга, PolyBLEP) или **WT** (волновая таблица 64 кадра × 256 точек с мипмапами, позиция кадра — SHAPE), плюс sub (квадрат на −1 / −2 октавы от осц. 1), белый шум, hard sync осц. 2 от осц. 1, семитоны осц. 2 (±24) и своя AD-огибающая на SHAPE (Env>Shp ±). Огибающая громкости — ADSR, Mode POLY / MONO и Glide как у CHIP. Страницы INST: MAIN / ENV / **OSC** / **MOD** / FILT / LFO.
+**SYNTH** — an "analog" synthesizer: 2 oscillators, each in **SAW**, **SQR**, **TRI** mode (alias-free, PolyBLEP) or **WT** (a wavetable of 64 frames × 256 points with mipmaps, frame position = SHAPE), plus sub (a square −1 / −2 octaves below osc 1), white noise, hard sync of osc 2 to osc 1, osc 2 semitones (±24) and its own AD envelope on SHAPE (Env>Shp ±). The volume envelope is ADSR; Mode POLY / MONO and Glide work as on CHIP. INST pages: MAIN / ENV / **OSC** / **MOD** / FILT / LFO.
 
-- 5 макросов на тех же слотах, что у FM / DRUM: **SHP1** (PW квадрата или кадр WT осц. 1), **SHP2** (то же для осц. 2), **MIX** (осц. 1 ↔ осц. 2), **DET** (detune осц. 2, ±50 центов), **SENV** (глубина env→SHAPE). Локи — fx `DEC`, `COL`, `SHP`, `SWP`, `CON` соответственно; LFO dest — SHP1…SENV.
-- Таблицы: 8 вшитых (`*SAWSQR`, `*PWM`, `*SINSAW`, `*TRISQR`, `*FORMANT`, `*ORGAN`, `*SYNC`, `*BELL`) — строятся во flash-банк при первом старте, работают без карты. Свои — **IMPORT…** в выборе таблицы (тап / клик по строке Table) из `/wavetables` на карте (с подпапками до 4 уровней): WaveEdit (кадры по 256 точек, до 64) и Serum / Vital (кадры по 2048 или чанк `clm`; больше 64 кадров — берутся равномерно). Одна таблица во flash — 96 КБ, в проекте до 32 таблиц. Занятое имя с другими данными получает суффикс `-2`, `-3`…
-- Таблицы проекта Save пишет в `/projects/NAME/wt/<имя>.wav`, Load подтягивает недостающие во flash оттуда. Нет таблицы ни во flash, ни в папке — имя в INST красное, осциллятор молчит.
-- Импорт — только при остановленном воспроизведении («STOP PLAYBACK FIRST»). 10 заводских пресетов (BASS, LEAD, PAD, KEYS) на вшитых таблицах; свои — в `/presets/SYNTH/`.
+- 5 macros on the same slots as FM / DRUM: **SHP1** (square PW or WT frame of osc 1), **SHP2** (the same for osc 2), **MIX** (osc 1 ↔ osc 2), **DET** (osc 2 detune, ±50 cents), **SENV** (env→SHAPE depth). Locks are fx `DEC`, `COL`, `SHP`, `SWP`, `CON` respectively; LFO dest — SHP1…SENV.
+- Wavetables: 8 built-in (`*SAWSQR`, `*PWM`, `*SINSAW`, `*TRISQR`, `*FORMANT`, `*ORGAN`, `*SYNC`, `*BELL`) — built into the flash bank on first start, work without a card. Your own — **IMPORT…** in the wavetable chooser (tap / click the Table row) from `/wavetables` on the card (with subfolders up to 4 levels): WaveEdit (256-point frames, up to 64) and Serum / Vital (2048-point frames or a `clm` chunk; with more than 64 frames, they are taken evenly). One wavetable takes 96 KB of flash; up to 32 wavetables per project. A name already in use with different data gets a `-2`, `-3`… suffix.
+- Save writes the project's wavetables to `/projects/NAME/wt/<name>.wav`, and Load pulls missing ones into flash from there. If a wavetable is neither in flash nor in the folder, its name in INST is red and the oscillator is silent.
+- Import works only with playback stopped ("STOP PLAYBACK FIRST"). 37 factory presets (BASS, LEAD, PAD, KEYS, PLUCK, FX) on the built-in wavetables; your own go in `/presets/SYNTH/`.
 
-### Фильтр и LFO
+### Filter and LFO
 
-У всех типов в конце списка INST:
+All types have these at the end of the INST list:
 
-- **Filter** OFF / LP / BP / HP (SVF, 12 дБ/окт), **Cutoff** 20 Гц…14 кГц, **Reso** 0–127, **Flt env** ±6 октав со своими **Flt attack** / **Flt decay** (HOLD — держать), **Key track** 0–100 % (от C4). Фильтр стоит после всего голоса; OFF — обход, старые проекты звучат как раньше.
-- **LFO** wave / rate / depth / dest — теперь на всех типах. Цели PITCH, VOL, CUTOFF — везде; DECAY…CONTOUR — только FM, DRUM и SYNTH (у SYNTH — SHP1…SENV).
-- P-lock фильтра: fx `FLT` (cutoff) и `RES` (резонанс), 0–127, на любом INT-инструменте с включённым фильтром; на шаге без ноты — для звучащих голосов дорожки до следующей ноты.
+- **Filter** OFF / LP / BP / HP (SVF, 12 dB/oct), **Cutoff** 20 Hz…14 kHz, **Reso** 0–127, **Flt env** ±6 octaves with its own **Flt attack** / **Flt decay** (HOLD — hold), **Key track** 0–100 % (from C4). The filter comes after the whole voice; OFF is a bypass, so old projects sound as before.
+- **LFO** wave / rate / depth / dest — now on all types. Targets PITCH, VOL, CUTOFF — everywhere; DECAY…CONTOUR — only FM, DRUM and SYNTH (on SYNTH — SHP1…SENV).
+- Filter p-locks: fx `FLT` (cutoff) and `RES` (resonance), 0–127, on any INT instrument with the filter enabled; on a step without a note — for the track's playing voices until the next note.
 
-### Пресеты
+### Drive, reverb, compressor
 
-Кнопка **PRESET** в шапке INST (или Shift + долгое нажатие энкодера) → **Load** / **Save**.
+- **Drive** (INST → FILT, first row): tanh overdrive before the filter, lock `DRV`, LFO target `DRIVE`.
+- **Reverb**: the instrument's Rvb send (lock `RVB`), size / decay / level in PROJ. 23 KB buffer in PSRAM.
+- **Compressor** on all built-in sound (PROJ → Comp, Comp rel) with **sidechain** from a track (SC track, SC depth): set SC track to the kick and the mix "pumps".
+- **ARP**: fx `ARM` sets the order (up, down, up-down, random) and the number of notes per step (1–8); ARP + CHD on the same step arpeggiates the chord.
+- **4 LFOs** per instrument (INST → LFO), each free-running or synced to tempo (1/32 … 8 bars).
+- **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; **DJ filter** on the master (PROJ → FX).
+- Pattern **groove** (PROJ → SONG → Groove: MPC 54–66, SHUFFLE, PUSH, LAID BACK, DRUNK, BOOM BAP, HOUSE) and track **Humanize** (TRACK → NOTE); conditions `CND PRE / NEI`, volume ramp up/down on `RAT` (`4^`, `4v`).
+- **Step arp** `ARS` (INT and MIDI): the CHD notes (or ARP 0/x/y, or the note itself) across a range of 1–4 octaves play as separate notes on the track's following empty steps — every step or every N; until the next note, OFF or a pattern change. The fx list in GRID is grouped: notes and arp, timing, randomness, pitch and volume, sound, sample, sends, MIDI.
+- **Velocity**: Vel>Cut (filter cutoff) and Vel>Dec (DECAY macro) in INST → ENV.
 
-- **Load:** список типа инструмента (стрелки в шапке или Shift + поворот — другой тип). В корне — `[FACTORY]` (42 заводских: 10 CHIP, 10 FM, 12 DRUM, 10 SYNTH, по категориям), затем свои папки и файлы. Выбранный пресет сразу ставится в инструмент и играет C4. **OK** — оставить, **CANCEL** (или долгое нажатие) — вернуть как было, **DEL** — удалить свой пресет.
-- **Save:** **SAVE** — имя на клавиатуре (есть такой — спросит про перезапись), **+DIR** — новая папка, клик по файлу — записать поверх. Имя файла становится и именем инструмента.
-- На карте: `/presets/CHIP|SAMPLE|FM|DRUM|SYNTH/…/NAME.mti` (204 байта, формат v3; старые v1 / v2 читаются), до 4 уровней папок внутри типа. SAMPLE-пресет ставит свой сэмпл, только если он есть в проекте, иначе сэмпл и Root остаются прежними. SYNTH-пресет хранит имена таблиц: таблицы нет в проекте — она импортируется из `/wavetables/<имя>.wav` (при остановленном воспроизведении), иначе имя красное.
+Everything is off by default: old projects and presets sound as before. Presets with the new fields are version 4; old firmware cannot open them.
 
-Подробно (вкладка INST, браузер пресетов, таблица машин DRUM, SYNTH и таблицы, fx SLD/VIB/ARP/VSL/OFS/CUT, DEC/COL/SHP/SWP/CON, FLT/RES) — в [руководстве](docs/manual.html#sound).
+### Presets
 
-## Карта памяти
+The **PRESET** button in the INST header (or Shift + long press of the encoder) → **Load** / **Save**.
 
-**FAT32** со схемой разделов **MBR**. exFAT (стандарт для карт больше 32 ГБ) и GPT не читаются — на экране будет «NO SD CARD».
+- **Load:** a list for the instrument type (arrows in the header or Shift + turn — another type). At the root — `[FACTORY]` (145 factory presets: 33 CHIP, 37 FM, 38 DRUM, 37 SYNTH, by category; up to 63 rows are visible in one category or folder), then your own folders and files. The selected preset is applied to the instrument immediately and plays C4. **OK** — keep it, **CANCEL** (or a long press) — revert, **DEL** — delete your own preset.
+- **Save:** **SAVE** — name on the keyboard (if it already exists, asks whether to overwrite), **+DIR** — new folder, click a file — overwrite it. The file name also becomes the instrument name.
+- On the card: `/presets/CHIP|SAMPLE|FM|DRUM|SYNTH/…/NAME.mti` (204 bytes, format v3; old v1 / v2 are readable), up to 4 folder levels inside a type. A SAMPLE preset applies its sample only if it is in the project; otherwise the sample and Root stay as they were. A SYNTH preset stores wavetable names: if a wavetable is not in the project, it is imported from `/wavetables/<name>.wav` (with playback stopped); otherwise the name is red.
 
-На macOS (стирает карту целиком; `diskN` взять из `diskutil list external`):
+Details (INST tab, preset browser, DRUM machine table, SYNTH and wavetables, fx SLD/VIB/ARP/VSL/OFS/CUT, DEC/COL/SHP/SWP/CON, FLT/RES) are in the [manual](docs/manual.md#sound).
 
-```
-diskutil eraseDisk FAT32 MIDI MBRFormat /dev/diskN
-```
+## Song and live performance
 
-Папки `/projects`, `/midi`, `/samples`, `/wavetables` и `/presets` (с подпапками `FM`, `DRUM`, `SAMPLE`, `CHIP`, `SYNTH`) прошивка создаст сама. MIDI-файлы для импорта кладите в `/midi`, WAV для импорта в проекты — в `/samples`, волновые таблицы для SYNTH — в `/wavetables`. Сэмплы проекта лежат в `/projects/NAME/`, его таблицы — в `/projects/NAME/wt/` (пишет трекер при сохранении), пресеты инструментов — в `/presets/<ТИП>/`.
+- **Song mode** (BANK): each chain entry has a pattern, a transposition of melodic tracks (±24), a number of passes (x1–x16) and a mute scene (S1–S8) that is applied when the entry starts. The chain row reads `P05 +3 x2 S1`; Shift + turn in row edit mode selects the field.
+- **Mute scenes**: 8 tiles under the chain — tap recalls, long tap stores the current mutes, Shift + tap clears.
+- **Per-track length** (TRACK → Pat len): the track loops its first N steps within the pattern (polymeter); in GRID the steps beyond are grey, and the boundary is marked with a line.
+- **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press is pause, as before.
+- **REC** (GRID menu): while playing, the track buttons write scale degrees into the playing step of the current track (on a drum track — lanes); Shift + N erases.
+- **PERF** (GRID menu): an effect while the button is held — 1 RAT 2, 2 RAT 4, 3 filter closed, 4 open, 5 delay, 6 short DECAY, 7 fade, 8 mute.
+
+More in the [manual](docs/manual.md#song).
+
+## Mixer and render
+
+- **MIX** is a separate tab at the bottom, next to TRACK: 8 strips for the half of the tracks under the cursor (volume fader, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
+- Track volume from any screen: hold its button and turn the encoder (Shift ×10); not in GRID edit mode, REC or PERF.
+- **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, mono 16-bit 32 kHz, with delay / reverb / compressor and a 2 s tail. The file can be downloaded over Wi-Fi or imported back as a sample.
+- **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s.
+- Render and resampling work only when stopped, roughly in real time; cancel with a long press of the encoder or Play.
+
+More in the [manual](docs/manual.md#render).
+
+## Interface
+
+- **Themes**: PROJ → SYS → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
+- **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or use the encoder on the page tabs and click (Shift+click — back); the list wraps around.
+- **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
+- **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in PROJ → SYS.
+- **Wi-Fi page**: tabs per section, scrollable lists with a filter.
+- **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.
+
+## SD card
+
+**FAT32** with an **MBR** partition scheme. exFAT (the standard for cards over 32 GB) and GPT are not readable — the screen will show "NO SD CARD".
+
+Format it with any tool that offers FAT32 with an MBR partition table (for cards over 32 GB the system formatter often offers only exFAT: use a third-party FAT32 formatter). Formatting erases the card.
+
+The firmware creates the folders `/projects`, `/midi`, `/samples`, `/wavetables` and `/presets` (with subfolders `FM`, `DRUM`, `SAMPLE`, `CHIP`, `SYNTH`) itself. Put MIDI files for import in `/midi`, WAVs for importing into projects in `/samples`, wavetables for SYNTH in `/wavetables`. A project's samples live in `/projects/NAME/`, its wavetables in `/projects/NAME/wt/` (written by the tracker on save), instrument presets in `/presets/<TYPE>/`.
 
 ## Wi-Fi
 
-FILE → **Wi-Fi transfer…**: трекер подключается к домашней сети (сеть и пароль вводятся на экране и хранятся во flash) и открывает страницу `http://d-trk.local` (или по IP с экрана). На странице:
+FILE → **Wi-Fi transfer…**: the tracker joins your home network (network and password are entered on screen and stored in flash) and serves the page `http://d-trk.local` (or by the IP shown on screen). On the page:
 
-- MIDI (`/midi`, только `.mid`, до 512 КБ), проекты (`/projects`, `.mtp`/`.bak`) и сэмплы (`/samples`, только `.wav`, до 4 МБ): залить, скачать, переименовать, удалить; сэмплы из `/samples` затем импортируются в проект на трекере (FILE → SAMPLES);
-- в разделе проектов — у каждого проекта строка `имя/` («сэмплы») с его WAV (до 10 МБ, имя до 16 символов): войти, залить, скачать, переименовать, удалить. Перенос проекта — залить `.mtp`, открыть его «сэмплы» и залить WAV; если папки ещё нет, её создаст первый WAV. Переименование `.mtp` переносит папку, удаление проекта (и `.mtp`, и `.bak`) удаляет её — кроме проекта, открытого на трекере: его папка остаётся (файлы в ней менять можно, следующий Save перепишет их из flash);
-- волновые таблицы (`/wavetables`, только `.wav`, до ~3 МБ, подпапки как у сэмплов): импортируются в проект на трекере (INST → SYNTH → Table → IMPORT…). Таблицы проекта — в папке проекта, подпапка `wt/` («таблицы»);
-- в разделе сэмплов — подпапки: навигация по «хлебным крошкам», «Новая папка», удаление пустой папки; имя папки до 32 символов (латиница, цифры, пробел, `.` `_` `-`, не с точки), не глубже 4 уровней. в MIDI подпапок нет;
-- пресеты (`/presets`, только `.mti`, до 1 КБ, имя до 16 символов): в корне — папки типов CHIP, SAMPLE, FM, DRUM, SYNTH (их не удалить), файлы — только внутри них, свои подпапки — до 4 уровней. Залитый пресет проверяется (CRC, версия) и должен лежать в папке своего типа, иначе не принимается;
-- обновление прошивки файлом `.pio/build/wt32/firmware.bin`.
+- MIDI (`/midi`, `.mid` only, up to 512 KB), projects (`/projects`, `.mtp`/`.bak`) and samples (`/samples`, `.wav` only, up to 4 MB): upload, download, rename, delete; samples from `/samples` are then imported into a project on the tracker (FILE → SAMPLES);
+- in the projects section, each project has a `name/` row (marked "samples") with its WAVs (up to 10 MB, name up to 16 characters): enter, upload, download, rename, delete. To move a project, upload the `.mtp`, open its "samples" row and upload the WAVs; if the folder does not exist yet, the first WAV creates it. Renaming a `.mtp` moves the folder, deleting a project (both `.mtp` and `.bak`) deletes it — except for the project open on the tracker: its folder stays (files in it can be changed; the next Save rewrites them from flash);
+- wavetables (`/wavetables`, `.wav` only, up to ~3 MB, subfolders as for samples): imported into a project on the tracker (INST → SYNTH → Table → IMPORT…). The project's wavetables are in the project folder, subfolder `wt/` (marked "wavetables");
+- in the samples section — subfolders: breadcrumb navigation, "New folder", deleting an empty folder; folder name up to 32 characters (Latin letters, digits, space, `.` `_` `-`, not starting with a dot), no deeper than 4 levels. MIDI has no subfolders;
+- presets (`/presets`, `.mti` only, up to 1 KB, name up to 16 characters): at the root — type folders CHIP, SAMPLE, FM, DRUM, SYNTH (cannot be deleted), files only inside them, your own subfolders up to 4 levels. An uploaded preset is checked (CRC, version) and must be in the folder of its type, otherwise it is rejected;
+- firmware update with the file `.pio/build/wt32/firmware.bin`.
 
-Пока режим открыт, воспроизведение остановлено. Выход — EXIT, долгое нажатие энкодера или другая вкладка; Wi-Fi выключается.
+While this mode is open, playback is stopped. Exit with EXIT, a long press of the encoder or another tab; Wi-Fi is turned off.
 
-Страница не открывается в Chrome на macOS (`ERR_ADDRESS_UNREACHABLE`, `ERR_CONNECTION_TIMED_OUT`), а в Safari работает — разрешить Chrome доступ: Системные настройки → Конфиденциальность и безопасность → Локальная сеть, затем перезапустить Chrome. Мешать может и VPN-клиент с системным прокси.
 
-**Безопасность:** пароля на странице нет. Пока режим открыт, любой в той же сети может менять файлы на карте и прошить трекер. Не включать в чужих и публичных сетях.
+**Security:** the page has no password. While the mode is open, anyone on the same network can change files on the card and flash the tracker. Do not enable it on other people's or public networks.
 
-Подробнее — [руководство](docs/manual.html#wifi).
+More in the [manual](docs/manual.md#wifi).
 
-## Сборка и прошивка
+## Build and flash
 
-Нужен [PlatformIO](https://platformio.org/).
+You need [PlatformIO](https://platformio.org/).
 
 ```
-pio run -e wt32 -t upload     # собрать и прошить по USB
-pio run -e wt32-ota -t upload # по Wi-Fi: на трекере открыт FILE → Wi-Fi transfer
-pio test -e native            # тесты ядра на компьютере
+pio run -e wt32 -t upload     # build and flash over USB
+pio run -e wt32-ota -t upload # over Wi-Fi: FILE → Wi-Fi transfer open on the tracker
+pio test -e native            # core tests on the computer
 ```
 
-Таблица разделов своя (`partitions.csv`): два слота прошивки по 3 МБ и раздел `samples` (~9,9 МБ) под flash-кэш сэмплов. После перехода на неё прошить один раз по USB (`pio run -e wt32 -t upload`): OTA таблицу разделов не меняет. Настройки Wi-Fi (NVS) сохраняются — `nvs` и `otadata` на прежних адресах.
+The partition table is custom (`partitions.csv`): two 3 MB firmware slots and a `samples` partition (~9.9 MB) for the sample flash cache. After switching to it, flash once over USB (`pio run -e wt32 -t upload`): OTA does not change the partition table. Wi-Fi settings (NVS) are kept — `nvs` and `otadata` are at the same addresses.
 
-## Структура
+## Structure
 
-| Папка | Содержимое |
+| Folder | Contents |
 |---|---|
-| `lib/core` | ядро без железа: модель, секвенсор, fx, лады, Euclid, формат файла, парсер MIDI, синтезатор (CHIP, SAMPLE, FM, DRUM, фильтр), парсер WAV, банк сэмплов, список сэмплов проекта, пресеты |
-| `src/engine` | задача секвенсора на ядре 0 (таймер, MIDI-выход) |
-| `src/audio` | встроенный звук: I2S на усилитель NS4168, аудио-задача, банк сэмплов во flash, импорт WAV |
-| `src/hw` | ввод (энкодер, кнопки), MIDI UART, SD, конфигурация дисплея |
-| `src/ui` | экраны интерфейса |
-| `src/storage` | сохранение и загрузка проектов и пресетов |
-| `src/net` | Wi-Fi, веб-страница передачи файлов, OTA |
-| `test` | Unity-тесты ядра |
-| `docs` | руководство и планы разработки |
-| `enclosure` | корпус: модель OpenSCAD и STL |
+| `lib/core` | hardware-independent core: model, sequencer, fx, scales, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, filter), WAV parser, sample bank, project sample list, presets |
+| `src/engine` | sequencer task on core 0 (timer, MIDI output) |
+| `src/audio` | built-in sound: I2S to the NS4168 amplifier, audio task, sample bank in flash, WAV import |
+| `src/hw` | input (encoder, buttons), MIDI UART, SD, display configuration |
+| `src/ui` | UI screens |
+| `src/storage` | saving and loading projects and presets |
+| `src/net` | Wi-Fi, file transfer web page, OTA |
+| `test` | Unity tests of the core |
+| `docs` | manual and development plans |
+| `enclosure` | enclosure: OpenSCAD model and STL |
+
+## License
+
+Copyright © 2026 deemonoise.
+
+- **Firmware, tests, scripts and documentation** — [GNU GPL v3](LICENSE) (GPL-3.0-only). You may use, change and share them, sell devices with them included, as long as the source of the firmware you ship (with your changes) is published under the same license.
+- **Hardware** — the enclosure ([enclosure/](enclosure/): OpenSCAD sources and STL) and the wiring diagrams ([docs/img](docs/img)) — [CERN-OHL-S v2](enclosure/LICENSE) (CERN-OHL-S-2.0): products made from them must make their modified design sources available under the same license.
+
+The name **D-TRK** and its logo are not covered by these licenses: a modified firmware or a device built from this project may say it is based on D-TRK, but must not be called or sold as D-TRK without permission.
+
+Full texts: [LICENSES/](LICENSES/). Third-party libraries (ESP-IDF, Arduino-ESP32, LovyanGFX, Unity) keep their own licenses.

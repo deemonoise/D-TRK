@@ -44,7 +44,7 @@ class ImportDialog {
 
   App& app_;
   State* state_ = nullptr;        // PSRAM
-  mt::SmfNote* notes_ = nullptr;  // PSRAM, kNoteCap
+  mt::SmfNote* notes_ = nullptr;  // PSRAM, up to kNoteCap (sized from the file)
   uint32_t noteCount_ = 0;
   int importRow_ = -1, cancelRow_ = -1;
   ParamList list_{kAreaY + kHeaderH};

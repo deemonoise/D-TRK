@@ -16,6 +16,10 @@ void test_roots() {
   TEST_ASSERT_EQUAL_STRING("/presets/SYNTH", presetRoot(InstrType::Synth));
   TEST_ASSERT_EQUAL_STRING("SAMPLE", presetTypeName(InstrType::Sample));
   TEST_ASSERT_EQUAL_STRING("SYNTH", presetTypeName(InstrType::Synth));
+  TEST_ASSERT_EQUAL_STRING("KIT", presetTypeName(InstrType::Kit));
+  TEST_ASSERT_FALSE(presetTypeHas(InstrType::Kit));
+  TEST_ASSERT_TRUE(presetTypeHas(InstrType::Synth));
+  TEST_ASSERT_EQUAL(-1, presetDepth("/presets/KIT"));  // no KIT presets
 }
 
 void test_depth() {

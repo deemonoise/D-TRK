@@ -36,10 +36,14 @@ Debounce shiftBtn{pins::kShift};
 uint32_t encDownAt = 0;
 bool longSent = false;
 
+// Releases must not be lost (a dropped one leaves fill / a punch-in effect on): they wait for room.
 void emit(InputType t, int8_t d = 0) {
   InputEvent e{t, d, shiftHeld};
-  xQueueSend(queue, &e, 0);
+  const bool release = t == InputType::PlayRelease || t == InputType::TrackRelease || t == InputType::ShiftUp;
+  xQueueSend(queue, &e, release ? pdMS_TO_TICKS(100) : 0);
 }
+
+constexpr UBaseType_t kKeyRoom = 6;  // queue slots kept for buttons: turns wait in the counter
 
 void setupEncoder() {
   pcnt_unit_config_t ucfg = {};
@@ -77,16 +81,18 @@ int readDetents() {
   pcnt_unit_get_count(unit, &c);
   const int d = (c - encAcc) / 4;
   encAcc += d * 4;
-  if (c == encAcc && (encAcc > 800 || encAcc < -800)) {
+  if (encAcc > 800 || encAcc < -800) {  // well before the +-1000 limit: restart at 0, keep the remainder
     pcnt_unit_clear_count(unit);
-    encAcc = 0;
+    encAcc = -(c - encAcc);
   }
   return d;
 }
 
 void task(void*) {
   for (;;) {
-    const int d = readDetents();
+    // While the UI is busy the turns stay in the counter (one larger turn later) instead of
+    // filling the queue the button events need.
+    const int d = uxQueueSpacesAvailable(queue) > kKeyRoom ? readDetents() : 0;
     if (d) emit(InputType::EncTurn, static_cast<int8_t>(d > 127 ? 127 : (d < -127 ? -127 : d)));
 
     const int s = shiftBtn.update();
@@ -98,7 +104,9 @@ void task(void*) {
       emit(InputType::ShiftUp);
     }
 
-    if (playBtn.update() == 1) emit(InputType::PlayPress);
+    const int pl = playBtn.update();
+    if (pl == 1) emit(InputType::PlayPress);
+    else if (pl == -1) emit(InputType::PlayRelease);
 
     const int e = encBtn.update();
     const uint32_t now = millis();
