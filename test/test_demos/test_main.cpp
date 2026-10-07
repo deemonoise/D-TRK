@@ -62,7 +62,7 @@ static bool usesTrack(const Project& pr, int t) {
 }
 
 void test_names_are_project_file_names() {
-  TEST_ASSERT_EQUAL(9, demoCount());
+  TEST_ASSERT_EQUAL(8, demoCount());
   for (int i = 0; i < demoCount(); ++i) {
     demoBuild(i, p);
     TEST_ASSERT_EQUAL_STRING(demoName(i), p.name);

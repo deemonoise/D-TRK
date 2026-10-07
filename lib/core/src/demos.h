@@ -3,7 +3,7 @@
 
 namespace mt {
 
-// Built-in demo songs for FILE -> New -> Demo songs (nine): whole projects (instruments from the factory
+// Built-in demo songs for FILE -> New -> Demo songs (eight): whole projects (instruments from the factory
 // presets, patterns with notes, a song chain, mixer and sends) built in code, no samples.
 int demoCount();
 const char* demoName(int i);        // the project name, e.g. "DEMO-TRANCE"

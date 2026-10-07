@@ -922,12 +922,11 @@ A chain of up to 64 entries. An entry is a pattern, a transposition, a number of
 | Wi-Fi transfer… | Files to and from the card over Wi-Fi, firmware update. See [below](#wifi). |
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
-**Demo songs** (FILE → New → Demo songs…) — nine finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
+**Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
 
 | Demo | Tempo, key | What to look at |
 |---|---|---|
 | DEMO-TRANCE | 138, A minor | supersaw hook, pads and bass pumped by the sidechain (key: the KICK track), ARS arpeggio on CHD chords, a breakdown with FLT locks opening the lead and a riser held by TIE, snare rolls with RAT ramps |
-| DEMO-DNB | 174, D minor | two-step 909 breaks with ghost snares, a reese bass with a tempo-synced filter LFO plus a sub, both held by TIE, liquid FM e-piano with delay, 7th-chord pads |
 | DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (chain transpose) |
 | DEMO-ACID | 128, A minor | a 303-style line with SLD slides, accents and a FLT lock on every step, the filter opening section by section; a 12-step polymeter section (track length), hats on probability (PRB), RES and DLY locks in the break |
 | DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, a low-passed master (DJ filter) |

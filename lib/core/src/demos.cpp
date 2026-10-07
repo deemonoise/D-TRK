@@ -300,109 +300,6 @@ void buildTrance(Project& p) {
   song(p, kSong, 6);
 }
 
-// ---- DNB: 174 BPM, D minor, Dm7 Bbmaj7 Gm7 Am7. Two-step breaks, reese + sub, liquid keys ----
-
-void buildDnb(Project& p) {
-  name(p, "DEMO-DNB");
-  p.masterVol = 120;  // the mix peaks around -3 dBFS
-  p.bpm = 174;
-  p.scaleRoot = 2;
-  p.scaleType = static_cast<uint8_t>(ScaleType::Minor);
-  enum { kDrums, kReese, kSub, kPad, kKeys };
-  static const Drum kKit[] = {{InstrType::Drum, "BD909 H"}, {InstrType::Drum, "SD909 T"}, {InstrType::Drum, "CH909"},
-                              {InstrType::Drum, "OH909"}, {InstrType::Fm, "RIDE"}};
-  enum { kBd, kSd, kCh, kOh, kRide };
-  kit(p, 0, "BREAKS", 16, kKit, 5);
-  Instrument& reese = ins(p, 1, InstrType::Synth, "REESE");
-  reese.lfoWave = static_cast<uint8_t>(LfoWave::Sine);  // a slow filter wobble, two per bar
-  reese.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
-  reese.lfoSync = 1;
-  reese.lfoRate = 7;  // 1/2
-  reese.lfoDepth = 22;
-  ins(p, 2, InstrType::Synth, "SUBBASS");
-  ins(p, 3, InstrType::Synth, "WARM PAD").rsend = 100;
-  Instrument& keys = ins(p, 4, InstrType::Fm, "E.PIANO");
-  keys.send = 60;
-  keys.rsend = 70;
-  track(p, kDrums, "BREAKS", 0, 110);
-  track(p, kReese, "REESE", 1, 95);
-  track(p, kSub, "SUB", 2, 100);
-  track(p, kPad, "PAD", 3, 75);
-  track(p, kKeys, "KEYS", 4, 80, 100);
-  p.dlyTime = 3;
-  p.dlyFb = 45;
-  p.rvbSize = 95;
-  p.rvbLevel = 90;
-  p.compAmt = 50;
-  p.compRel = 40;
-
-  static const uint8_t kPadRoot[4] = {62, 58, 55, 57};  // D4 Bb3 G3 A3, 7th chords in D minor
-  // Reese (an octave down in the preset) and sub: two notes per bar, held with TIE.
-  static const uint8_t kReeseNotes[4][2] = {{50, 48}, {46, 45}, {43, 46}, {45, 48}};
-  static const uint8_t kKeysNotes[4][4] = {{69, 72, 77, 76}, {74, 77, 69, 72}, {70, 74, 77, 79}, {76, 72, 69, 67}};
-  static const uint8_t kKeysAt[4] = {0, 3, 6, 10};
-  auto pad = [](Pattern& pt) {
-    for (int b = 0; b < 4; ++b) {
-      chord(pt, kPad, b * 16, kPadRoot[b], kChordSeventh, kGat800);
-      chord(pt, kPad, b * 16 + 8, kPadRoot[b], kChordSeventh, kGat800);
-    }
-  };
-  auto keys2 = [](Pattern& pt) {
-    for (int b = 0; b < 4; ++b)
-      for (int k = 0; k < 4; ++k) note(pt, kKeys, b * 16 + kKeysAt[k], kKeysNotes[b][k], k == 0 ? 110 : 85);
-  };
-  auto bass = [](Pattern& pt) {
-    for (int b = 0; b < 4; ++b)
-      for (int k = 0; k < 2; ++k) {
-        const int s = b * 16 + k * 11;
-        note(pt, kReese, s, kReeseNotes[b][k]);
-        fx(pt, kReese, s, Fx::TIE, 0);
-        note(pt, kSub, s, static_cast<uint8_t>(kReeseNotes[b][k] - 12));
-        fx(pt, kSub, s, Fx::TIE, 0);
-      }
-  };
-  auto breakA = [](Pattern& pt) {
-    hits(pt, kDrums, kBd, "x.........x.....");
-    hits(pt, kDrums, kSd, "....x.......x...");
-    hits(pt, kDrums, kCh, "x.x.x.x.x.x.x.x.");
-  };
-  auto breakB = [](Pattern& pt) {
-    hits(pt, kDrums, kBd, "x.x.......x.....x.........x..x..");
-    hits(pt, kDrums, kSd, "....x..o....x..o");
-    hits(pt, kDrums, kCh, "x.xxx.x.x.xxx.x.");
-    hits(pt, kDrums, kOh, ".............x..", 48, 64);
-    fx(pt, kDrums, 63, Fx::RAT, 0x02);
-  };
-
-  Pattern& intro = pat(p, 0, 64);
-  pad(intro);
-  keys2(intro);
-  hits(intro, kDrums, kRide, "x.x.x.x.x.x.x.x.", 32, 64);
-
-  Pattern& a = pat(p, 1, 64);
-  breakA(a);
-  pad(a);
-  bass(a);
-
-  Pattern& b = pat(p, 2, 64);
-  breakB(b);
-  pad(b);
-  bass(b);
-  keys2(b);
-
-  Pattern& brk = pat(p, 3, 64);
-  pad(brk);
-  keys2(brk);
-  hits(brk, kDrums, kRide, "x.x.x.x.x.x.x.x.", 0, 48);
-  roll(brk, kDrums, kSd, 48, 64, 1, 30, 120);
-  fx(brk, kDrums, 62, Fx::RAT, 0x13);
-  fx(brk, kDrums, 63, Fx::RAT, 0x14);
-
-  static const Item kSong[] = {{0, 2, 0, 0}, {1, 2, 0, 0}, {2, 4, 0, 0}, {3, 1, 0, 0},
-                               {1, 2, 0, 0}, {2, 4, 0, 0}, {0, 1, 0, 0}};
-  song(p, kSong, 7);
-}
-
 // ---- CHIPTUNE: 150 BPM, C major, C Am F G; a bridge on F G Em Am; the last chorus a tone up ----
 
 void buildChip(Project& p) {
@@ -1106,7 +1003,7 @@ struct Entry {
   void (*build)(Project&);
 };
 constexpr Entry kDemos[] = {
-    {"DEMO-TRANCE", buildTrance}, {"DEMO-DNB", buildDnb}, {"DEMO-CHIPTUNE", buildChip},
+    {"DEMO-TRANCE", buildTrance}, {"DEMO-CHIPTUNE", buildChip},
     {"DEMO-ACID", buildAcid},     {"DEMO-LOFI", buildLofi},  {"DEMO-SYNTHWAVE", buildSynthwave},
     {"DEMO-DUBTECHNO", buildDubTechno}, {"DEMO-IDM", buildIdm}, {"DEMO-HOUSE", buildHouse},
 };
