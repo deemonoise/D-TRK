@@ -5,6 +5,7 @@
 #include "project_io.h"
 #include "render.h"
 #include "synth.h"
+#include "wt_builtin.h"
 
 using namespace mt;
 
@@ -38,6 +39,21 @@ struct VecSource : ByteSource {
   }
 };
 
+// Built-in wavetables, built on first use (the firmware's bank serves the same ones).
+struct BuiltinWt : WtSource {
+  mutable std::vector<int16_t> t[kWtBuiltins];
+  const int16_t* findWt(const char* name) const override {
+    const int i = wtBuiltinFind(name);
+    if (i < 0) return nullptr;
+    if (t[i].empty()) {
+      t[i].resize(kWtTableSamples);
+      WtBuiltinSrc src(i);
+      wtBuild(src, t[i].data());
+    }
+    return t[i].data();
+  }
+};
+
 static bool usesTrack(const Project& pr, int t) {
   for (const Pattern& pt : pr.patterns)
     for (int s = 0; s < pt.length; ++s)
@@ -46,7 +62,7 @@ static bool usesTrack(const Project& pr, int t) {
 }
 
 void test_names_are_project_file_names() {
-  TEST_ASSERT_EQUAL(5, demoCount());
+  TEST_ASSERT_EQUAL(9, demoCount());
   for (int i = 0; i < demoCount(); ++i) {
     demoBuild(i, p);
     TEST_ASSERT_EQUAL_STRING(demoName(i), p.name);
@@ -118,11 +134,13 @@ void test_save_load_round_trip() {
 void test_songs_render_clean() {
   static int16_t line[2 * kSynthRate];
   static float rv[Reverb::kBufLen];
+  static BuiltinWt wt;
   for (int i = 0; i < demoCount(); ++i) {
     demoBuild(i, p);
     Synth* synth = new Synth(p);
     synth->setDelayBuffer(line, sizeof(line) / 2);
     synth->setReverbBuffer(rv, Reverb::kBufLen);
+    synth->setWavetables(&wt);
     RenderSpec spec;
     spec.mode = RenderSpec::Mode::Song;
     OfflineRender::Guard g(p, spec);

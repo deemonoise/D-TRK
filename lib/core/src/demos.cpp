@@ -1,5 +1,6 @@
 #include "demos.h"
 #include <string.h>
+#include <initializer_list>
 #include "presets_factory.h"
 #include "scale.h"
 
@@ -698,13 +699,416 @@ void buildLofi(Project& p) {
   song(p, kSong, 6);
 }
 
+// ---- SYNTHWAVE: 108 BPM, E minor, Em C G D. Pumping 16th bass, gated-reverb clap, sync pluck
+// arpeggio, a wavetable lead with vibrato, tom fills ----
+
+void buildSynthwave(Project& p) {
+  name(p, "DEMO-SYNTHWAVE");
+  p.masterVol = 150;
+  p.bpm = 108;
+  p.scaleRoot = 4;
+  p.scaleType = static_cast<uint8_t>(ScaleType::Minor);
+  enum { kKick, kDrums, kBass, kPad, kArp, kLead };
+  static const Drum kKickKit[] = {{InstrType::Drum, "BD909"}};
+  static const Drum kDrumKit[] = {{InstrType::Drum, "CLAP VRB"}, {InstrType::Drum, "CH808"},
+                                  {InstrType::Drum, "TOM808"}, {InstrType::Drum, "TOM808 L"}};
+  enum { kClap, kCh, kTomH, kTomL };
+  kit(p, 0, "KICK", 16, kKickKit, 1);
+  kit(p, 1, "DRUMS", 17, kDrumKit, 4);
+  ins(p, 2, InstrType::Synth, "MOOGISH");
+  ins(p, 3, InstrType::Synth, "PWMSTR").rsend = 90;
+  ins(p, 4, InstrType::Synth, "SYNCPLK").send = 60;
+  Instrument& lead = ins(p, 5, InstrType::Synth, "WT LEAD");
+  lead.send = 50;
+  lead.rsend = 70;
+  track(p, kKick, "KICK", 0, 127);
+  p.instruments[0].kit[0].vol = 127;
+  track(p, kDrums, "DRUMS", 1, 95);
+  track(p, kBass, "BASS", 2, 100, 45);
+  track(p, kPad, "PAD", 3, 36);
+  track(p, kArp, "ARP", 4, 62);
+  track(p, kLead, "LEAD", 5, 85, gat(300));
+  p.dlyTime = 3;
+  p.dlyFb = 50;
+  p.rvbSize = 110;
+  p.rvbLevel = 90;
+  p.compAmt = 45;
+  p.scTrack = kKick + 1;
+  p.scDepth = 70;
+
+  static const uint8_t kRoot[4] = {52, 48, 55, 50};  // E3 C3 G3 D3: Em C G D in E minor
+  auto pad = [](Pattern& pt) {
+    for (int b = 0; b < 4; ++b) {
+      chord(pt, kPad, b * 16, kRoot[b], kChordTriad, kGat800);
+      chord(pt, kPad, b * 16 + 8, kRoot[b], kChordTriad, kGat800);
+    }
+  };
+  auto bass = [](Pattern& pt) {  // MOOGISH is an octave down: driving 16ths, accents on the 8ths
+    for (int b = 0; b < 4; ++b)
+      for (int k = 0; k < 16; ++k) note(pt, kBass, b * 16 + k, kRoot[b], k % 2 ? 72 : 110);
+  };
+  auto arp = [](Pattern& pt, int fromBar) {
+    for (int b = fromBar; b < 4; ++b) {
+      note(pt, kArp, b * 16, static_cast<uint8_t>(kRoot[b] + 12));
+      fx(pt, kArp, b * 16, Fx::CHD, kChordTriad);
+      fx(pt, kArp, b * 16, Fx::ARS, kArs2Up);
+    }
+  };
+  auto drums = [](Pattern& pt) {
+    hits(pt, kKick, 0, "x...x...x...x...");
+    hits(pt, kDrums, kClap, "....x.......x...");
+    hits(pt, kDrums, kCh, "x.x.x.x.x.x.x.x.", 0, 56);
+  };
+  auto fill = [](Pattern& pt) {  // toms down the last two beats
+    roll(pt, kDrums, kTomH, 56, 60, 2, 90, 110);
+    roll(pt, kDrums, kTomL, 60, 64, 2, 110, 127);
+  };
+  auto melody = [](Pattern& pt) {
+    notes(pt, kLead, 0,
+          "B4 . . . . . G4 . A4 . B4 . . . E5 . "
+          "D5 . . . C5 . . . B4 . . . G4 . . . "
+          "B4 . . . . . D5 . E5 . D5 . . . B4 . "
+          "A4 . . . . . . . F#4 . . . A4 . . .");
+    for (int b = 0; b < 4; ++b) fx(pt, kLead, b * 16, Fx::VIB, 0x35);
+  };
+
+  Pattern& intro = pat(p, 0, 64);
+  pad(intro);
+  arp(intro, 1);
+  hits(intro, kKick, 0, "x...x...x...x...", 32, 64);
+  fill(intro);
+
+  Pattern& verse = pat(p, 1, 64);
+  drums(verse);
+  fill(verse);
+  bass(verse);
+  pad(verse);
+  arp(verse, 0);
+
+  Pattern& chorus = pat(p, 2, 64);
+  drums(chorus);
+  fill(chorus);
+  bass(chorus);
+  pad(chorus);
+  arp(chorus, 0);
+  melody(chorus);
+
+  Pattern& brk = pat(p, 3, 64);
+  pad(brk);
+  arp(brk, 0);
+  melody(brk);
+  fill(brk);
+
+  Pattern& outro = pat(p, 4, 64);
+  pad(outro);
+  arp(outro, 0);
+  hits(outro, kKick, 0, "x...x...x...x...", 0, 32);
+
+  static const Item kSong[] = {{0, 1, 0, 0}, {1, 2, 0, 0}, {2, 2, 0, 0}, {3, 1, 0, 0}, {2, 2, 0, 0}, {4, 1, 0, 0}};
+  song(p, kSong, 6);
+}
+
+// ---- DUB TECHNO: 120 BPM, C minor. One FM minor-9 chord stab through a long dark delay and a big
+// reverb, its filter swept by a 4-bar LFO and FLT locks, delay / reverb throws, a drone pad ----
+
+void buildDubTechno(Project& p) {
+  name(p, "DEMO-DUBTECHNO");
+  p.masterVol = 110;
+  p.bpm = 120;
+  p.scaleType = static_cast<uint8_t>(ScaleType::Minor);
+  enum { kDrums, kStab, kBass, kPad };
+  static const Drum kKit[] = {{InstrType::Drum, "BD909 S"}, {InstrType::Drum, "RS909"}, {InstrType::Drum, "CH909"},
+                              {InstrType::Drum, "OH909"}};
+  enum { kBd, kRs, kCh, kOh };
+  kit(p, 0, "DUB KIT", 16, kKit, 4);
+  Instrument& stab = ins(p, 1, InstrType::Fm, "CHRD MI9");
+  stab.send = 100;
+  stab.rsend = 90;
+  stab.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  stab.cutoff = 82;
+  stab.reso = 35;
+  stab.lfoWave = static_cast<uint8_t>(LfoWave::Sine);
+  stab.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  stab.lfoSync = 1;
+  stab.lfoRate = 10;  // 4 bars
+  stab.lfoDepth = 24;
+  ins(p, 2, InstrType::Synth, "SUBBASS");
+  ins(p, 3, InstrType::Synth, "DARK PAD").rsend = 110;
+  track(p, kDrums, "DRUMS", 0, 112);
+  track(p, kStab, "STAB", 1, 95, 30);
+  track(p, kBass, "BASS", 2, 105, gat(200));
+  track(p, kPad, "DRONE", 3, 55);
+  p.dlyTime = 3;
+  p.dlyFb = 100;
+  p.dlyTone = 45;
+  p.dlyLevel = 110;
+  p.rvbSize = 120;
+  p.rvbDamp = 90;
+  p.rvbLevel = 95;
+  p.compAmt = 30;
+
+  static const uint8_t kCut[4] = {70, 88, 62, 96};  // the stabs' brightness, bar by bar
+  // Stabs on 3 and 10 of each bar: C (Cm9), or F (Fm9) in bars 3-4 of the B section.
+  auto stabs = [](Pattern& pt, bool alt) {
+    for (int b = 0; b < 4; ++b) {
+      const uint8_t n = alt && b >= 2 ? 53 : 60;
+      for (int at : {3, 10}) {
+        note(pt, kStab, b * 16 + at, n);
+        fx(pt, kStab, b * 16 + at, Fx::FLT, kCut[b]);
+      }
+    }
+  };
+  auto drums = [](Pattern& pt) {
+    hits(pt, kDrums, kBd, "x...x...x...x...");
+    hits(pt, kDrums, kCh, "..x...x...x...x.");
+    hits(pt, kDrums, kOh, "......x.......x.", 32, 64);
+    hits(pt, kDrums, kRs, "...x.....x....x.");
+    for (int s = 2; s < 64; s += 8) fx(pt, kDrums, s, Fx::PRB, 75);
+  };
+  auto bass = [](Pattern& pt, bool alt) {
+    for (int b = 0; b < 4; ++b) {
+      const uint8_t n = alt && b >= 2 ? 41 : 36;  // F2 / C2
+      note(pt, kBass, b * 16, n);
+      note(pt, kBass, b * 16 + 10, n, 80);
+    }
+  };
+  auto drone = [](Pattern& pt) {
+    note(pt, kPad, 0, 60);
+    fx(pt, kPad, 0, Fx::TIE, 0);
+  };
+  auto throws = [](Pattern& pt) {  // the last stab of the pattern into the delay and the reverb
+    fx(pt, kStab, 58, Fx::DLY, 127);
+    fx(pt, kStab, 58, Fx::RVB, 127);
+  };
+
+  Pattern& intro = pat(p, 0, 64);
+  stabs(intro, false);
+  drone(intro);
+  hits(intro, kDrums, kCh, "..x...x...x...x.", 32, 64);
+
+  Pattern& a = pat(p, 1, 64);
+  drums(a);
+  stabs(a, false);
+  bass(a, false);
+  drone(a);
+
+  Pattern& b = pat(p, 2, 64);
+  drums(b);
+  stabs(b, true);
+  bass(b, true);
+  drone(b);
+  throws(b);
+
+  Pattern& brk = pat(p, 3, 64);
+  stabs(brk, false);
+  for (int s = 0; s < 64; ++s)
+    if (brk.steps[kStab][s].hasNote()) fx(brk, kStab, s, Fx::DLY, 127);
+  drone(brk);
+  hits(brk, kDrums, kRs, "...x.....x....x.");
+
+  static const Item kSong[] = {{0, 2, 0, 0}, {1, 3, 0, 0}, {2, 4, 0, 0}, {3, 2, 0, 0}, {1, 3, 0, 0}, {0, 1, 0, 0}};
+  song(p, kSong, 6);
+}
+
+// ---- IDM: 110 BPM, D dorian. Every part on its own track length (16, 7, 5, 13, 9, 11, 6 steps)
+// inside 64-step patterns, so the parts drift against each other; conditions (CND A:B, PRE, NEI),
+// probability and random notes (NRN) keep it from repeating ----
+
+void buildIdm(Project& p) {
+  name(p, "DEMO-IDM");
+  p.masterVol = 100;
+  p.bpm = 110;
+  p.scaleRoot = 2;
+  p.scaleType = static_cast<uint8_t>(ScaleType::Dorian);
+  enum { kKick, kClick, kHat, kMetal, kBass, kBell, kPad, kGlitch };
+  static const Drum kKick1[] = {{InstrType::Drum, "BD808 S"}};
+  static const Drum kClick1[] = {{InstrType::Drum, "RS808"}};
+  static const Drum kHat1[] = {{InstrType::Drum, "CH808"}};
+  static const Drum kMetal1[] = {{InstrType::Drum, "METAL HT"}};
+  kit(p, 0, "KICK", 16, kKick1, 1);
+  kit(p, 1, "CLICK", 17, kClick1, 1);
+  kit(p, 2, "HAT", 18, kHat1, 1);
+  kit(p, 3, "METAL", 19, kMetal1, 1);
+  ins(p, 4, InstrType::Synth, "PLUCKBAS");
+  ins(p, 5, InstrType::Fm, "DX BELL").send = 60;
+  ins(p, 6, InstrType::Synth, "WARM PAD").rsend = 100;
+  ins(p, 7, InstrType::Chip, "BLIP").send = 50;
+  track(p, kKick, "KICK", 0, 120);
+  track(p, kClick, "CLICK", 1, 90);
+  track(p, kHat, "HAT", 2, 115);
+  track(p, kMetal, "METAL", 3, 110);
+  track(p, kBass, "BASS", 4, 100, 60);
+  track(p, kBell, "BELL", 5, 58);
+  track(p, kPad, "PAD", 6, 62);
+  track(p, kGlitch, "GLITCH", 7, 55);
+  p.tracks[kHat].humanize = 20;
+  p.dlyTime = 5;  // 5/16 against the 4/4
+  p.dlyFb = 55;
+  p.rvbSize = 100;
+  p.rvbLevel = 80;
+  p.compAmt = 35;
+
+  static const uint8_t kLen[8] = {0, 7, 5, 13, 9, 11, 0, 6};
+  auto lens = [](Pattern& pt) {
+    for (int t = 0; t < 8; ++t) pt.trackLen[t] = kLen[t];
+  };
+  auto drums = [](Pattern& pt) {
+    hits(pt, kKick, 0, "x......x..x.....");
+    hits(pt, kClick, 0, "x..x...", 0, 7);
+    hits(pt, kHat, 0, "x.xx.", 0, 5);
+    fx(pt, kHat, 2, Fx::CND, 0x12);         // 1:2
+    fx(pt, kHat, 3, Fx::CND, kCndPre);      // with the step before
+    hits(pt, kMetal, 0, "x.......x....", 0, 13);
+    fx(pt, kMetal, 8, Fx::CND, kCndNei);    // when the hats' condition passed
+  };
+  auto bass = [](Pattern& pt) {  // PLUCKBAS is an octave down
+    notes(pt, kBass, 0, "D3 . . A2 . D3 . F3 .");
+    fx(pt, kBass, 7, Fx::PRB, 60);
+  };
+  auto bell = [](Pattern& pt) {
+    notes(pt, kBell, 0, "A5 . . E5 . D5 . . C5 . .");
+    fx(pt, kBell, 3, Fx::NRN, 2);
+    fx(pt, kBell, 8, Fx::NRN, 3);
+    fx(pt, kBell, 5, Fx::PRB, 70);
+  };
+  auto pad = [](Pattern& pt, bool alt) {
+    chord(pt, kPad, 0, 62, kChordAdd9, kGat800);
+    chord(pt, kPad, 16, 62, kChordAdd9, kGat800);
+    chord(pt, kPad, 32, alt ? 60 : 57, kChordAdd9, kGat800);
+    chord(pt, kPad, 48, alt ? 60 : 57, kChordAdd9, kGat800);
+  };
+  auto glitch = [](Pattern& pt) {
+    notes(pt, kGlitch, 0, "C6 . . G5 . .");
+    fx(pt, kGlitch, 0, Fx::RAT, 0x23);  // 3 hits falling
+    fx(pt, kGlitch, 3, Fx::NRN, 4);
+    fx(pt, kGlitch, 3, Fx::CND, 0x13);  // 1:3
+  };
+
+  Pattern& intro = pat(p, 0, 64);
+  lens(intro);
+  pad(intro, false);
+  bell(intro);
+  hits(intro, kHat, 0, "x.xx.", 0, 5);
+
+  Pattern& a = pat(p, 1, 64);
+  lens(a);
+  drums(a);
+  bass(a);
+  bell(a);
+  pad(a, false);
+
+  Pattern& b = pat(p, 2, 64);
+  lens(b);
+  drums(b);
+  bass(b);
+  bell(b);
+  pad(b, true);
+  glitch(b);
+
+  Pattern& brk = pat(p, 3, 64);
+  lens(brk);
+  pad(brk, true);
+  bell(brk);
+  glitch(brk);
+  hits(brk, kClick, 0, "x..x...", 0, 7);
+
+  static const Item kSong[] = {{0, 1, 0, 0}, {1, 3, 0, 0}, {2, 3, 0, 0}, {3, 1, 0, 0}, {1, 2, 0, 0}, {0, 1, 0, 0}};
+  song(p, kSong, 6);
+}
+
+// ---- HOUSE: 124 BPM, F minor, Fm7 Bbm7. Swung 909 groove, an offbeat FM bass, chord stabs,
+// congas, a choir breakdown with a clap roll; the PERF buttons set up for playing it live ----
+
+void buildHouse(Project& p) {
+  name(p, "DEMO-HOUSE");
+  p.masterVol = 100;
+  p.bpm = 124;
+  p.scaleRoot = 5;
+  p.scaleType = static_cast<uint8_t>(ScaleType::Minor);
+  enum { kDrums, kBass, kStab, kPad, kPerc };
+  static const Drum kKit[] = {{InstrType::Drum, "BD909"}, {InstrType::Drum, "CP909"}, {InstrType::Drum, "CH909"},
+                              {InstrType::Drum, "OH909"}, {InstrType::Drum, "RS909"}};
+  enum { kBd, kCp, kCh, kOh, kRs };
+  kit(p, 0, "909", 16, kKit, 5);
+  ins(p, 1, InstrType::Fm, "DX BASS");
+  ins(p, 2, InstrType::Synth, "STAB").send = 45;
+  ins(p, 3, InstrType::Synth, "CHOIR").rsend = 100;
+  ins(p, 4, InstrType::Fm, "CONGA");
+  track(p, kDrums, "909", 0, 118);
+  track(p, kBass, "BASS", 1, 100, 40);
+  track(p, kStab, "STAB", 2, 78, 35);
+  track(p, kPad, "CHOIR", 3, 70);
+  track(p, kPerc, "CONGA", 4, 72);
+  p.tracks[kDrums].humanize = 15;
+  p.tracks[kPerc].humanize = 25;
+  p.dlyTime = 3;
+  p.dlyFb = 45;
+  p.rvbSize = 85;
+  p.rvbLevel = 75;
+  p.compAmt = 40;
+  // PERF: filter down / up, delay and reverb throws, rolls, short decays, mute.
+  static const PerfFx kPerf[kPerfButtons] = {PerfFx::FltLow, PerfFx::FltHigh, PerfFx::DlyMax,  PerfFx::RvbMax,
+                                             PerfFx::Rat4,   PerfFx::RatUp,   PerfFx::DecShort, PerfFx::Mute};
+  for (int i = 0; i < kPerfButtons; ++i) p.perfMap[i] = static_cast<uint8_t>(kPerf[i]);
+
+  static const uint8_t kRoot[4] = {53, 53, 58, 58};  // F3 F3 Bb3 Bb3: Fm7, Bbm7
+  auto drums = [](Pattern& pt, bool clap) {
+    hits(pt, kDrums, kBd, "x...x...x...x...");
+    hits(pt, kDrums, kOh, "..x...x...x...x.");
+    hits(pt, kDrums, kCh, "xx.xxx.xxx.xxx.x");
+    if (clap) hits(pt, kDrums, kCp, "....x.......x...");
+  };
+  auto bass = [](Pattern& pt) {  // DX BASS is an octave down; offbeats, the fifth on the last
+    for (int b = 0; b < 4; ++b)
+      for (int q = 0; q < 4; ++q)
+        note(pt, kBass, b * 16 + q * 4 + 2, static_cast<uint8_t>(kRoot[b] + (q == 3 ? 7 : 0)), q == 0 ? 115 : 0);
+  };
+  auto stabs = [](Pattern& pt) {
+    for (int b = 0; b < 4; ++b)
+      for (int at : {3, 6, 11}) chord(pt, kStab, b * 16 + at, static_cast<uint8_t>(kRoot[b] + 12), kChordSeventh, 35);
+  };
+  auto congas = [](Pattern& pt, int at) {
+    notes(pt, kPerc, at, ". . . G4 . . . C4 . . G4 . . C4 . G4");
+    fx(pt, kPerc, at + 13, Fx::PRB, 70);
+    fx(pt, kPerc, at + 15, Fx::PRB, 50);
+  };
+
+  Pattern& intro = pat(p, 0, 16, 56);
+  drums(intro, false);
+
+  Pattern& groove = pat(p, 1, 64, 56);
+  drums(groove, true);
+  hits(groove, kDrums, kRs, "......x.......x.");
+  bass(groove);
+  for (int at = 0; at < 64; at += 16) congas(groove, at);
+
+  Pattern& full = pat(p, 2, 64, 56);
+  drums(full, true);
+  hits(full, kDrums, kRs, "......x.......x.");
+  bass(full);
+  stabs(full);
+
+  Pattern& brk = pat(p, 3, 64, 56);
+  for (int b = 0; b < 4; b += 2) chord(brk, kPad, b * 16, kRoot[b], kChordSeventh, kGat800);
+  chord(brk, kPad, 8, kRoot[0], kChordSeventh, kGat800);
+  chord(brk, kPad, 40, kRoot[2], kChordSeventh, kGat800);
+  stabs(brk);
+  for (int s = 0; s < 64; ++s)
+    if (brk.steps[kStab][s].hasNote()) fx(brk, kStab, s, Fx::FLT, static_cast<uint8_t>(40 + s));
+  roll(brk, kDrums, kCp, 48, 64, 1, 30, 120);
+
+  static const Item kSong[] = {{0, 4, 0, 0}, {1, 2, 0, 0}, {2, 4, 0, 0}, {3, 1, 0, 0}, {2, 4, 0, 0}, {1, 1, 0, 0}};
+  song(p, kSong, 6);
+}
+
 struct Entry {
   const char* name;
   void (*build)(Project&);
 };
 constexpr Entry kDemos[] = {
     {"DEMO-TRANCE", buildTrance}, {"DEMO-DNB", buildDnb}, {"DEMO-CHIPTUNE", buildChip},
-    {"DEMO-ACID", buildAcid},     {"DEMO-LOFI", buildLofi},
+    {"DEMO-ACID", buildAcid},     {"DEMO-LOFI", buildLofi},  {"DEMO-SYNTHWAVE", buildSynthwave},
+    {"DEMO-DUBTECHNO", buildDubTechno}, {"DEMO-IDM", buildIdm}, {"DEMO-HOUSE", buildHouse},
 };
 constexpr int kCount = sizeof(kDemos) / sizeof(kDemos[0]);
 

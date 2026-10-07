@@ -922,7 +922,7 @@ A chain of up to 64 entries. An entry is a pattern, a transposition, a number of
 | Wi-Fi transfer… | Files to and from the card over Wi-Fi, firmware update. See [below](#wifi). |
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
-**Demo songs** (FILE → New → Demo songs…) — five finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
+**Demo songs** (FILE → New → Demo songs…) — nine finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
 
 | Demo | Tempo, key | What to look at |
 |---|---|---|
@@ -931,6 +931,10 @@ A chain of up to 64 entries. An entry is a pattern, a transposition, a number of
 | DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (chain transpose) |
 | DEMO-ACID | 128, A minor | a 303-style line with SLD slides, accents and a FLT lock on every step, the filter opening section by section; a 12-step polymeter section (track length), hats on probability (PRB), RES and DLY locks in the break |
 | DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, a low-passed master (DJ filter) |
+| DEMO-SYNTHWAVE | 108, E minor | driving 16th bass pumped by the sidechain, a gated-reverb clap, a sync-pluck ARS arpeggio, a wavetable lead with VIB, tom fills |
+| DEMO-DUBTECHNO | 120, C minor | one FM CHORD (minor 9) stab through a long dark delay and a big reverb, its filter swept by a 4-bar synced LFO and FLT locks, DLY / RVB throws, a drone held by TIE |
+| DEMO-IDM | 110, D dorian | every part on its own track length (7, 5, 13, 9, 11, 6 steps against 16): the parts drift; CND 1:2 / 1:3, PRE and NEI conditions, PRB and NRN random notes, a 5/16 delay |
+| DEMO-HOUSE | 124, F minor | swung 909 with humanize, an offbeat FM bass, 7th-chord stabs, congas on probability, a choir breakdown with a clap roll; PERF buttons set for live play (filter down / up, delay and reverb throws, rolls, short decay, mute) |
 
 A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the card, and from there it is an ordinary project to take apart and change.
 
