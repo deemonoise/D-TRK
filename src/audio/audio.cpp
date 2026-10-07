@@ -47,7 +47,8 @@
 // a resonant LP filter with an envelope, drive and reverb on all, reverb 100, compressor on.
 // Each step lasts 10 s; the last 8 s are measured (with the CPU profile) and printed to Serial:
 //   pool bench <rev>: heavy 10 + light 22, voices 32: avg 2100 us (52%), peak 2600 us / 4000 us
-// The first two rounds also go to /projects/cpuprof.txt, each line followed by its profile.
+// Two rounds go to /projects/cpuprof.txt, each line followed by its profile; then the bench stops
+// (all notes off), leaving the CPU to Wi-Fi.
 // It overwrites instruments 16..28 and every track's out / instrument, like the FM bench.
 #if defined(AUDIO_BENCH_FX) && !defined(AUDIO_BENCH_DRUM)
 #define AUDIO_BENCH_DRUM
@@ -474,8 +475,10 @@ static_assert((mt::kTracks - mt::kFmVoiceMax + 1) * mt::kPolyPerTrack >= mt::kVo
 constexpr uint32_t kPoolHitEvery = 31;    // blocks, ~124 ms: a 16th at 120 BPM
 constexpr uint32_t kPoolStepBlocks = 2500;  // 10 s
 constexpr uint32_t kPoolSkipBlocks = 500;   // settling, not measured
+constexpr uint32_t kPoolSteps = 6;          // two rounds of 8 / 10 / 12, then quiet
 
 int poolHeavy = kPoolHeavyMin;
+uint32_t poolStepsDone;
 uint32_t poolBlocks, poolSum, poolN, poolPeak;
 std::atomic<uint32_t> poolSeq{0}, poolResHeavy{0}, poolResAvg{0}, poolResPeak{0}, poolResVoices{0};
 std::atomic<uint32_t> poolMeasureSeq{0};  // a step's measured part began: pollLog starts the profile
@@ -552,6 +555,7 @@ void benchPoolBegin() {
 
 // Audio task, before the block is rendered: renderUs holds the previous block.
 void benchPoolTick() {
+  if (poolStepsDone >= kPoolSteps) return;
   ++poolBlocks;
   if (poolBlocks == kPoolSkipBlocks) poolMeasureSeq.fetch_add(1, std::memory_order_release);
   if (poolBlocks > kPoolSkipBlocks) {
@@ -569,6 +573,7 @@ void benchPoolTick() {
   poolSeq.fetch_add(1, std::memory_order_release);
   poolBlocks = poolSum = poolN = poolPeak = 0;
   poolLight([](int track, uint8_t note) { poolNote(track, 0x80, note); });
+  if (++poolStepsDone >= kPoolSteps) return;  // quiet: the drums decay on their own
   poolHeavy = poolHeavy + 2 > mt::kFmVoiceMax ? kPoolHeavyMin : poolHeavy + 2;
   poolStep();
 }
@@ -996,8 +1001,7 @@ void pollLog() {
   }
 #endif
 #ifdef AUDIO_BENCH_POOL
-  // Each step's measured part is profiled; the first kPoolLogSteps go to /projects/cpuprof.txt.
-  constexpr uint32_t kPoolLogSteps = 6;  // two rounds of 8 / 10 / 12
+  // Each step's measured part is profiled and goes to /projects/cpuprof.txt.
   static uint32_t poolPrinted, poolStarted;
   const uint32_t mseq = poolMeasureSeq.load(std::memory_order_acquire);
   if (mseq != poolStarted) {
@@ -1018,7 +1022,8 @@ void pollLog() {
              static_cast<unsigned>(poolResVoices.load(std::memory_order_relaxed)), avg, avg / 40,
              static_cast<unsigned>(poolResPeak.load(std::memory_order_relaxed)));
     Serial.print(line);
-    if (prof && seq <= kPoolLogSteps) storage::appendCpuProfile(line, pr);
+    if (prof) storage::appendCpuProfile(line, pr);
+    if (seq >= kPoolSteps) Serial.println("pool bench: done, quiet");
   }
 #endif
 #ifdef AUDIO_CPU_LOG
