@@ -4,6 +4,7 @@
 #include <new>
 #include "driver/gptimer.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "audio/audio.h"
 #include "esp_random.h"
 #include "hw/midi_uart.h"
@@ -22,6 +23,7 @@ struct Router : mt::MidiSink {
 };
 
 mt::Sequencer* seq;
+void* seqMem = nullptr;  // reserve()
 Router midi;
 gptimer_handle_t timer;
 TaskHandle_t task;
@@ -102,10 +104,16 @@ uint64_t nowUs() {
   return v;
 }
 
+void reserve() {
+  if (!seqMem) seqMem = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+bool seqInternal() { return seq && esp_ptr_internal(seq); }
+
 void begin(mt::Project* p) {
-  // ~34 KB: keep it out of PSRAM, the engine touches it on every event.
-  void* mem = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  seq = mem ? new (mem) mt::Sequencer(*p) : new mt::Sequencer(*p);
+  // ~50 KB: keep it out of PSRAM, the engine touches it on every event. reserve() took it at boot.
+  reserve();
+  seq = seqMem ? new (seqMem) mt::Sequencer(*p) : new mt::Sequencer(*p);
   seq->seed(esp_random());
   midi.uart.begin();
   cmds = xQueueCreate(16, sizeof(Command));

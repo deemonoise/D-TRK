@@ -40,6 +40,10 @@ void wtBench();
 
 void setup() {
   Serial.begin(115200);
+  // Before anything else: the synth and the sequencer need large blocks of internal RAM (in PSRAM
+  // the audio costs far more); the SD card, the screen and Wi-Fi fragment it later.
+  audio::reserve();
+  engine::reserve();
   void* mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_SPIRAM);
   if (!mem) mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_8BIT);
   if (!mem) {

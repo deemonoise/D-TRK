@@ -37,7 +37,10 @@ struct Status {
   }
 };
 
+// First thing at boot: takes the sequencer's internal RAM before anything else can fragment it.
+void reserve();
 void begin(mt::Project* p);
+bool seqInternal();  // the sequencer ended up in internal RAM
 // False when the command queue was full (the command is lost).
 bool post(Cmd c, uint16_t arg = 0);
 // As post, waiting up to 50 ms for room: for commands that must not be lost (fill / perf release).

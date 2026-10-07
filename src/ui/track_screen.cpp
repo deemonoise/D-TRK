@@ -264,13 +264,14 @@ uint32_t TrackScreen::mixSignature() const {
   return h;
 }
 
-bool TrackScreen::wantsRedraw(const engine::Status&) {
+bool TrackScreen::wantsRedraw(const engine::Status& st) {
   if (!mixer_) return false;
   if (mixSel_ != kMaster && mixSel_ != app_.curTrack() % kStrips) mixSel_ = app_.curTrack() % kStrips;
   const uint32_t sig = mixSignature();
-  // The scope: about 15 frames a second while the mixer is shown.
+  // The scope: 10 frames a second while something plays, 2 when stopped (a reverb tail, a preview).
+  // A full frame also costs the audio core: the screen buffer shares PSRAM and its cache.
   const uint32_t now = millis();
-  const bool scope = now - scopeMs_ >= 66;
+  const bool scope = now - scopeMs_ >= (st.playing || audio::previewPlaying() ? 100u : 500u);
   if (sig == mixSig_ && !scope) return false;
   mixSig_ = sig;
   return true;

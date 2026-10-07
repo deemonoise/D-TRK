@@ -11,7 +11,11 @@ namespace audio {
 constexpr int kRate = 32000;
 constexpr int kBlock = 128;  // samples, 4 ms
 
+// First thing at boot: takes the synth's internal RAM before anything else can fragment it.
+void reserve();
 void begin(mt::Project* p);
+// The synth state ended up in internal RAM (false: PSRAM, every sample costs more).
+bool synthInternal();
 // Event for an INT track, stamped with its scheduled engine::nowUs() time (at or before now). Called from the engine task only
 // (lock-free single-producer queue); a full queue drops the event.
 void post(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len);

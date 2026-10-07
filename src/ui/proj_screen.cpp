@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "audio/audio.h"
+#include "engine/engine.h"
+#include "esp_heap_caps.h"
 #include "fx_info.h"
 #include "groove.h"
 #include "storage/crashlog.h"
@@ -147,6 +150,14 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
   params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
   params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
                          [](int) {}};
+  // Where the synth and the sequencer live (PSRAM = the audio costs more) and the free internal RAM.
+  params_[kAudioRam] = {"Audio RAM",
+                        [](char* o, int n) {
+                          const bool s = audio::synthInternal(), q = engine::seqInternal();
+                          const unsigned kb = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+                          snprintf(o, n, "%s, %uK FREE", s && q ? "INTERNAL" : (s ? "SEQ IN PSRAM" : (q ? "SYNTH IN PSRAM" : "PSRAM")), kb);
+                        },
+                        [](int) {}};
   // The theme and the read-only rows are not project data: editing them does not mark it dirty.
   list_.setOnEdit([this] {
     if (kPageFirst[page_] + list_.sel() < kTheme) app_.markDirty();

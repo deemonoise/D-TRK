@@ -8,6 +8,7 @@
 #include "driver/i2s_std.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "freertos/semphr.h"
 #include "esp_timer.h"
 #include "hw/pins.h"
@@ -101,6 +102,7 @@ std::atomic<uint32_t> resumeGen{0};  // last request resumed or withdrawn (UI)
 SemaphoreHandle_t pausedSem, resumeSem;
 
 mt::Synth* synth;
+void* synthMem = nullptr;  // reserve()
 Ring engineQ;  // engine task -> audio task
 Ring uiQ;      // UI task (preview) -> audio task
 uint64_t blockT;  // start of the block being rendered, engine time
@@ -571,11 +573,18 @@ bool initI2s() {
 
 }  // namespace
 
+void reserve() {
+  if (!synthMem) synthMem = heap_caps_malloc(sizeof(mt::Synth), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+bool synthInternal() { return synth && esp_ptr_internal(synth); }
+
 void begin(mt::Project* p) {
   project = p;
-  // Internal RAM: the synth state is touched on every sample.
-  void* mem = heap_caps_malloc(sizeof(mt::Synth), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  synth = mem ? new (mem) mt::Synth(*p) : new mt::Synth(*p);
+  // Internal RAM: the synth state is touched on every sample. reserve() took it at boot.
+  reserve();
+  if (!synthMem) Serial.println("audio: no internal RAM for the synth, PSRAM (slower)");
+  synth = synthMem ? new (synthMem) mt::Synth(*p) : new mt::Synth(*p);
   bankSetProject(p);
   bankBegin();
   synth->setBank(sampleSource());
