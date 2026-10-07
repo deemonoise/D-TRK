@@ -1,0 +1,45 @@
+<svg aria-label="Светодиод: длинная ножка — анод, к резистору и 3,3 В; короткая ножка со стороны среза — катод, к выводу P1x." height="200" role="img" viewBox="0 0 420 200" width="420" xmlns="http://www.w3.org/2000/svg"><style>svg {
+  --bg: #f3f4f1; --panel: #ffffff; --ink: #1d2226; --dim: #5d666d; --line: #c9cfd2;
+  --v33: #c8382f; --gnd: #1d2226; --sda: #1f6fc2; --scl: #a87a00; --int: #8445c4;
+  --btn: #237a48; --led: #d0661a; --ledfill: #f2c39c; --key: #e6e9e7;
+  --spkp: #8445c4; --spkn: #0f7f86;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { svg {
+  --bg: #15191c; --panel: #1d2327; --ink: #e4e8ea; --dim: #97a1a8; --line: #39434a;
+  --v33: #ff6a5e; --gnd: #e4e8ea; --sda: #5aa5f0; --scl: #e0b33a; --int: #b98af0;
+  --btn: #4cc184; --led: #ff9a4d; --ledfill: #5b3a22; --key: #2a3237; --spkp: #b98af0; --spkn: #4fc3c9; color-scheme: dark } }
+svg { color: var(--ink); --display: "Arial Narrow", Arial, sans-serif; --body: Arial, sans-serif; --mono: Menlo, Consolas, monospace; }
+.blk { fill: var(--panel); stroke: currentColor; stroke-width: 1.5; }
+.pad { fill: var(--panel); stroke: currentColor; stroke-width: 1.3; }
+.bt { font: 600 15px var(--display); fill: currentColor; }
+.sub { font: 400 11.5px var(--body); fill: var(--dim); }
+.pin { font: 500 12px var(--mono); fill: currentColor; }
+.lbl { font: 500 12px var(--body); fill: currentColor; }
+.w { stroke-width: 2; stroke-linecap: round; fill: none; }
+.v33 { stroke: var(--v33); } .gnd { stroke: var(--gnd); } .sda { stroke: var(--sda); }
+.scl { stroke: var(--scl); } .int { stroke: var(--int); } .btn { stroke: var(--btn); } .led { stroke: var(--led); }
+.dot.v33 { fill: var(--v33); stroke: none; } .dot.gnd { fill: var(--gnd); stroke: none; }
+.sw { fill: var(--panel); stroke: var(--btn); stroke-width: 1.8; }
+.ledf { fill: var(--led); stroke: var(--led); stroke-width: 1.5; stroke-linejoin: round; }
+.res { fill: var(--panel); stroke: var(--v33); stroke-width: 1.8; }
+.scr { fill: var(--key); stroke: var(--line); }
+.key { fill: var(--key); stroke: var(--line); stroke-width: 1.2; }
+.key.trk { stroke: var(--btn); stroke-width: 1.8; }
+.kn { font: 600 18px var(--display); fill: currentColor; }
+.kl { font: 500 11.5px var(--body); fill: var(--dim); }
+.ledbody { fill: var(--ledfill); stroke: var(--led); stroke-width: 1.8; }
+.ledflat { stroke: var(--ink); stroke-width: 2.5; }
+.ledrim { fill: var(--ledfill); stroke: var(--led); stroke-width: 1.5; }
+.leg { stroke: var(--dim); stroke-width: 3; stroke-linecap: round; }
+.pwr, .pwrr { stroke: var(--v33); } .pwrt { fill: var(--v33); }
+.sig, .sigr { stroke: var(--sda); } .sigt { fill: var(--sda); }
+.sw.pwrs { stroke: var(--v33); }
+.dot.pwr { fill: var(--v33); stroke: none; }
+.spkp { stroke: var(--spkp); } .spkn { stroke: var(--spkn); }
+.spkpt { fill: var(--spkp); } .spknt { fill: var(--spkn); }
+.dot.spkp { fill: var(--spkp); stroke: none; } .dot.spkn { fill: var(--spkn); stroke: none; }
+.res.spkp { stroke: var(--spkp); }
+.sw.spkps { stroke: var(--spkp); }</style><path class="ledbody" d="M150,30 a30,30 0 0 1 60,0 v62 h-60 z"></path><line class="w ledflat" x1="150" x2="150" y1="92" y2="30"></line><rect class="ledrim" height="8" width="74" x="143" y="92"></rect><line class="leg" x1="165" x2="165" y1="100" y2="160"></line><line class="leg" x1="195" x2="195" y1="100" y2="185"></line><text class="lbl" text-anchor="end" x="138" y="52">срез на ободке</text><text class="lbl" text-anchor="end" x="160" y="152">катод −, короткая</text><text class="sub" text-anchor="end" x="160" y="168">→ P1x</text><text class="lbl" x="205" y="170">анод +, длинная</text><text class="sub" x="205" y="186">→ резистор → 3,3 В</text></svg>
