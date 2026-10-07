@@ -106,7 +106,8 @@ struct SynParams {
   float noise = 0;                      // 0..1
 };
 
-constexpr float kSynGain = 0.5f;
+// Output level: matches CHIP / FM at the same settings (was 0.5, about 6 dB quieter).
+constexpr float kSynGain = 1.0f;
 
 class SynVoice {
  public:

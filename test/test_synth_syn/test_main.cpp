@@ -145,7 +145,7 @@ void test_voice_bounded_above_sample_rate() {
       v.render(buf, 32, 1.f);
       for (float x : buf) peak = fmaxf(peak, fabsf(x));
     }
-    TEST_ASSERT_TRUE(peak < 40.f);  // a 220 Hz saw at this gain peaks near 32
+    TEST_ASSERT_TRUE(peak < 80.f);  // a 220 Hz saw at this gain peaks near 64 (kSynGain 1)
   }
 }
 
