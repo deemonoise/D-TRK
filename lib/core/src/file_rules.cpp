@@ -65,6 +65,7 @@ bool webFileAllowed(WebDir d, const char* name) {
   switch (d) {
     case WebDir::Projects: {
       if (strcmp(name, "crashlog.txt") == 0) return true;  // the device's restart log (crashlog.cpp)
+      if (strcmp(name, "cpuprof.txt") == 0) return true;   // PROJ -> SYS -> CPU profile
       if (strcmp(ext, ".mtp") != 0 && strcmp(ext, ".bak") != 0) return false;
       char b[17];
       if (base > 16) return false;

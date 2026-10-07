@@ -423,6 +423,7 @@ void test_project_wt_folder() {
 
 void test_crash_log_listed_in_projects() {
   TEST_ASSERT_TRUE(webFileAllowed(WebDir::Projects, "crashlog.txt"));
+  TEST_ASSERT_TRUE(webFileAllowed(WebDir::Projects, "cpuprof.txt"));
   TEST_ASSERT_FALSE(webFileAllowed(WebDir::Projects, "other.txt"));
   TEST_ASSERT_FALSE(webFileAllowed(WebDir::Samples, "crashlog.txt"));
 }
