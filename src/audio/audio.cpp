@@ -100,6 +100,7 @@ SemaphoreHandle_t pausedSem, resumeSem;
 mt::Synth* synth;
 void* synthMem = nullptr;  // reserve()
 bool reverbInt = false;    // the reverb buffer is in internal RAM
+float* reverbBuf = nullptr;  // the reverb buffer (internal or PSRAM)
 Ring engineQ;  // engine task -> audio task
 Ring uiQ;      // UI task (preview) -> audio task
 uint64_t blockT;  // start of the block being rendered, engine time
@@ -568,6 +569,36 @@ bool synthInternal() { return synth && esp_ptr_internal(synth); }
 
 bool reverbInternal() { return reverbInt; }
 
+namespace {
+constexpr size_t kRvBytes = mt::Reverb::kBufLen * sizeof(float);
+constexpr size_t kRvKeepFree = 40 * 1024;  // internal RAM left for Wi-Fi and the SD card
+
+// Swaps the reverb onto a new zeroed buffer with the audio task parked (the tail is lost).
+bool moveReverb(uint32_t caps) {
+  auto* nb = static_cast<float*>(heap_caps_malloc(kRvBytes, caps));
+  if (!nb) return false;
+  memset(nb, 0, kRvBytes);
+  {
+    Paused parked;
+    synth->setReverbBuffer(nb, mt::Reverb::kBufLen);
+  }
+  heap_caps_free(reverbBuf);
+  reverbBuf = nb;
+  reverbInt = esp_ptr_internal(nb);
+  return true;
+}
+}  // namespace
+
+void reverbToPsram() {
+  if (synth && reverbInt) moveReverb(MALLOC_CAP_SPIRAM);
+}
+
+void reverbToInternal() {
+  if (!synth || reverbInt || !reverbBuf) return;
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kRvBytes + kRvKeepFree) return;
+  moveReverb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
 static_assert(kProfStages == mt::Synth::kProfStages, "profile stages");
 
 static uint32_t cycles() { return esp_cpu_get_cycle_count(); }
@@ -612,12 +643,12 @@ void begin(mt::Project* p) {
   // Reverb: 5934 floats (23 KB), read and written every sample: internal RAM when there is room,
   // else PSRAM (slower through the cache); none = no reverb.
   // Keeps a margin of internal RAM for Wi-Fi and the SD card.
-  constexpr size_t kRvBytes = mt::Reverb::kBufLen * sizeof(float), kKeepFree = 40 * 1024;
   float* rvMem = nullptr;
-  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) >= kRvBytes + kKeepFree)
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) >= kRvBytes + kRvKeepFree)
     rvMem = static_cast<float*>(heap_caps_malloc(kRvBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   if (!rvMem) rvMem = static_cast<float*>(heap_caps_malloc(kRvBytes, MALLOC_CAP_SPIRAM));
   reverbInt = rvMem && esp_ptr_internal(rvMem);
+  reverbBuf = rvMem;
   if (auto* rv = rvMem)
     synth->setReverbBuffer(rv, mt::Reverb::kBufLen);
   else

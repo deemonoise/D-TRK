@@ -17,6 +17,10 @@ void begin(mt::Project* p);
 // The synth state ended up in internal RAM (false: PSRAM, every sample costs more).
 bool synthInternal();
 bool reverbInternal();  // the reverb buffer in internal RAM (else PSRAM)
+// Wi-Fi needs the internal RAM: the reverb buffer moves to PSRAM while it runs and back after
+// (when there is room). Transport stopped; the reverb tail is lost.
+void reverbToPsram();
+void reverbToInternal();
 
 // CPU profile (PROJ -> SYS): the render time per stage (mt::Synth::ProfStage) while running.
 constexpr int kProfStages = 11;
