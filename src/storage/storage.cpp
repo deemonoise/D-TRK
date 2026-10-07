@@ -11,6 +11,7 @@
 #include "hw/sdcard.h"
 #include "project_io.h"
 #include "sample_set.h"
+#include "demos.h"
 #include "templates.h"
 #include "wav.h"
 #include "wt_mip.h"
@@ -611,17 +612,23 @@ Result loadExt(mt::Project& live, const char* name, const char* ext, int* missin
 }
 }  // namespace
 
-Result newProject(mt::Project& live, int tmpl) {
+namespace {
+Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
   if (!stopEngine()) return Result::EngineBusy;
   srcFolder[0] = 0;
   engine::lockProject();
-  mt::templateBuild(tmpl, live);
+  build(i, live);
   engine::unlockProject();
   afterReplace(live);
   // Otherwise a reboot would autoload the project that was just closed.
   if (hw::sdReady() && hw::sdFs().exists(kLast)) hw::sdFs().remove(kLast);
   return Result::Ok;
 }
+}  // namespace
+
+Result newProject(mt::Project& live, int tmpl) { return newBuilt(live, mt::templateBuild, tmpl); }
+
+Result newDemo(mt::Project& live, int i) { return newBuilt(live, mt::demoBuild, i); }
 
 namespace {
 struct TemplatePath {

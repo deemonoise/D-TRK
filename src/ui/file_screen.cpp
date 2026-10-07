@@ -8,6 +8,7 @@
 #include "audio/bank.h"
 #include "esp_heap_caps.h"
 #include "sample_set.h"
+#include "demos.h"
 #include "templates.h"
 #include "storage/storage.h"
 
@@ -380,7 +381,7 @@ void FileScreen::doLoad(bool bak) {
   app_.toast(storage::resultText(r));
 }
 
-// New: the built-in templates, the user ones (/templates) and Save as template.
+// New: the built-in templates, the user ones (/templates), the demo songs and Save as template.
 void FileScreen::openNewMenu() {
   MenuItem items[Menu::kMaxItems];
   int n = 0;
@@ -396,20 +397,30 @@ void FileScreen::openNewMenu() {
       ++userTpl_;
     }
   }
+  items[n++] = {"Demo songs...", kTplDemos};
   items[n++] = {"Save as template...", kTplSave, hw::sdReady()};
-  app_.menu().open("NEW PROJECT", items, n, [this](int id) {
-    if (id == kTplSave) {
-      saveTemplateAs();
-      return;
-    }
-    newChoice_ = id;
-    if (app_.projectDirty()) {
-      const MenuItem confirm[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
-      app_.menu().open("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
-    } else {
-      doNew();
-    }
-  });
+  app_.menu().open("NEW PROJECT", items, n, [this](int id) { onNewChoice(id); });
+}
+
+void FileScreen::onNewChoice(int id) {
+  if (id == kTplSave) {
+    saveTemplateAs();
+    return;
+  }
+  if (id == kTplDemos) {
+    MenuItem demos[Menu::kMaxItems];
+    int n = 0;
+    for (int i = 0; i < mt::demoCount() && n < Menu::kMaxItems; ++i) demos[n++] = {mt::demoName(i), kTplDemo + i};
+    app_.menu().open("DEMO SONGS", demos, n, [this](int d) { onNewChoice(d); });
+    return;
+  }
+  newChoice_ = id;
+  if (app_.projectDirty()) {
+    const MenuItem confirm[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
+    app_.menu().open("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
+  } else {
+    doNew();
+  }
 }
 
 void FileScreen::saveTemplateAs() {
@@ -434,16 +445,21 @@ void FileScreen::doNew() {
   } refresh{*this};
   int missing = 0;
   const bool user = newChoice_ >= kTplUser && newChoice_ - kTplUser < userTpl_;
+  const bool demo = newChoice_ >= kTplDemo && newChoice_ - kTplDemo < mt::demoCount();
   if (user) app_.showBusy("LOADING...");
-  const storage::Result r = user ? storage::newFromTemplate(app_.project(), userTplNames_[newChoice_ - kTplUser], &missing)
-                                 : storage::newProject(app_.project(), newChoice_ < kTplUser ? newChoice_ : 0);
+  const storage::Result r = user   ? storage::newFromTemplate(app_.project(), userTplNames_[newChoice_ - kTplUser], &missing)
+                            : demo ? storage::newDemo(app_.project(), newChoice_ - kTplDemo)
+                                   : storage::newProject(app_.project(), newChoice_ < kTplUser ? newChoice_ : 0);
   if (r != storage::Result::Ok) {
     app_.toast(storage::resultText(r));
     return;
   }
   app_.projectReplaced();
   char msg[40];
-  snprintf(msg, sizeof(msg), "NEW: %s", user ? userTplNames_[newChoice_ - kTplUser] : mt::templateName(newChoice_));
+  snprintf(msg, sizeof(msg), "NEW: %s",
+           user   ? userTplNames_[newChoice_ - kTplUser]
+           : demo ? mt::demoName(newChoice_ - kTplDemo)
+                  : mt::templateName(newChoice_));
   app_.loadedToast(msg, missing, false);
 }
 

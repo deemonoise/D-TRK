@@ -125,9 +125,11 @@ class FileScreen : public Screen {
   const char* busyLabel_ = "";
   // cacheBytes() result for this bank generation / project edit.
   uint32_t cacheBytes_ = 0, cacheGen_ = 0, cacheSeq_ = 0;
-  // New: template menu ids are the built-in index, kTplUser + k (userTplNames_[k]) or kTplSave.
-  static constexpr int kUserTpl = 8, kTplUser = 100, kTplSave = 200;
+  // New: template menu ids are the built-in index, kTplUser + k (userTplNames_[k]), kTplSave,
+  // kTplDemos (the demo songs menu) or kTplDemo + i (demo song i).
+  static constexpr int kUserTpl = 8, kTplUser = 100, kTplSave = 200, kTplDemos = 300, kTplDemo = 400;
   void openNewMenu();
+  void onNewChoice(int id);  // a New menu id (see kTplUser ..)
   void saveTemplateAs();
   int newChoice_ = 0;
   int userTpl_ = 0;

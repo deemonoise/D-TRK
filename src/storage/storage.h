@@ -64,6 +64,8 @@ Result loadAutosave(mt::Project& live, int* missing = nullptr, SyncProgress cb =
 // Stops the engine, resets live to built-in template tmpl (mt::templateBuild, 0 = EMPTY) and forgets
 // /last.txt. EngineBusy: live untouched.
 Result newProject(mt::Project& live, int tmpl = 0);
+// The same with built-in demo song i (mt::demoBuild): named after the demo, so Save writes it.
+Result newDemo(mt::Project& live, int i);
 
 // User templates: /templates/<name>.mtp, a project without notes (mt::templateStrip). New from one
 // starts "untitled" (its samples play when the sample cache still holds them).
