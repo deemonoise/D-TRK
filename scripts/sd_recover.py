@@ -35,13 +35,33 @@ MAX_MTP = 4 << 20
 MAX_WAV = 64 << 20
 
 
+def device_size(f):
+    """Size of a disk device in bytes (a raw device reports 0 to seek), 0 if unknown."""
+    try:
+        import fcntl
+    except ImportError:
+        return 0
+    try:  # macOS: DKIOCGETBLOCKSIZE, DKIOCGETBLOCKCOUNT
+        bs = struct.unpack("<I", fcntl.ioctl(f.fileno(), 0x40046418, b"\0" * 4))[0]
+        n = struct.unpack("<Q", fcntl.ioctl(f.fileno(), 0x40086419, b"\0" * 8))[0]
+        return bs * n
+    except OSError:
+        pass
+    try:  # Linux: BLKGETSIZE64
+        return struct.unpack("<Q", fcntl.ioctl(f.fileno(), 0x80081272, b"\0" * 8))[0]
+    except OSError:
+        return 0
+
+
 class Image:
     """Sector-aligned reads (raw devices need them), from a file or a device."""
 
     def __init__(self, path):
         self.f = open(path, "rb", buffering=0)
         self.f.seek(0, os.SEEK_END)
-        self.size = self.f.tell()
+        self.size = self.f.tell() or device_size(self.f)
+        if not self.size:
+            sys.exit("Cannot tell the size of %s" % path)
 
     def read(self, off, n):
         if off >= self.size:
