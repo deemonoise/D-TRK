@@ -1,4 +1,5 @@
 #pragma once
+#include "audio/audio.h"
 
 namespace storage {
 
@@ -13,5 +14,9 @@ const char* lastResetText();
 // dump when there is one; the dump is then erased). Readable on the Wi-Fi page. Decode addresses
 // with: xtensa-esp32s3-elf-addr2line -pfiaC -e .pio/build/wt32/firmware.elf <addresses>
 void logBoot();
+
+// Appends a CPU profile to /projects/cpuprof.txt: the line head (newline included), then the
+// time of every stage. False without a card.
+bool appendCpuProfile(const char* head, const audio::Profile& pr);
 
 }  // namespace storage

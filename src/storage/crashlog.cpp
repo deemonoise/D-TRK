@@ -5,6 +5,7 @@
 #include <string.h>
 #include "hw/sdcard.h"
 #include "sdkconfig.h"
+#include "synth.h"
 #if defined(CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH) && __has_include(<esp_core_dump.h>)
 #include <esp_core_dump.h>
 #define DTRK_COREDUMP 1
@@ -76,6 +77,21 @@ void logBoot() {
   }
 #endif
   f.close();
+}
+
+bool appendCpuProfile(const char* head, const audio::Profile& pr) {
+  if (!hw::sdReady()) return false;
+  fs::File f = hw::sdFs().open("/projects/cpuprof.txt", FILE_APPEND);
+  if (!f) return false;
+  constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
+  f.print(head);
+  char line[64];
+  for (int i = 0; i < audio::kProfStages; ++i) {
+    snprintf(line, sizeof(line), "  %-8s %7.1f us  %5.1f %%\n", mt::Synth::profName(i), pr.us[i], pr.us[i] * 100 / kBlockUs);
+    f.print(line);
+  }
+  f.close();
+  return true;
 }
 
 }  // namespace storage

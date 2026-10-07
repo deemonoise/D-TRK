@@ -12,6 +12,9 @@
 #include "esp_cpu.h"
 #include "freertos/semphr.h"
 #include "esp_timer.h"
+#ifdef AUDIO_BENCH_POOL
+#include "storage/crashlog.h"
+#endif
 #include "hw/pins.h"
 #include "oneshot.h"
 #include "synth.h"
@@ -42,8 +45,9 @@
 // wt32-pool32) fills the whole N-voice pool and steps the heavy share: 8, 10, .. H heavy voices
 // (DRUM and FM HAT on alternate tracks, retriggered every 16th), the rest CHIP saw voices through
 // a resonant LP filter with an envelope, drive and reverb on all, reverb 100, compressor on.
-// Each step lasts 10 s; the last 8 s are measured and printed to Serial:
-//   pool bench: heavy 10 + light 22, voices 32: avg 2100 us (52%), peak 2600 us / 4000 us
+// Each step lasts 10 s; the last 8 s are measured (with the CPU profile) and printed to Serial:
+//   pool bench <rev>: heavy 10 + light 22, voices 32: avg 2100 us (52%), peak 2600 us / 4000 us
+// The first two rounds also go to /projects/cpuprof.txt, each line followed by its profile.
 // It overwrites instruments 16..28 and every track's out / instrument, like the FM bench.
 #if defined(AUDIO_BENCH_FX) && !defined(AUDIO_BENCH_DRUM)
 #define AUDIO_BENCH_DRUM
@@ -474,6 +478,7 @@ constexpr uint32_t kPoolSkipBlocks = 500;   // settling, not measured
 int poolHeavy = kPoolHeavyMin;
 uint32_t poolBlocks, poolSum, poolN, poolPeak;
 std::atomic<uint32_t> poolSeq{0}, poolResHeavy{0}, poolResAvg{0}, poolResPeak{0}, poolResVoices{0};
+std::atomic<uint32_t> poolMeasureSeq{0};  // a step's measured part began: pollLog starts the profile
 
 void poolNote(int track, uint8_t status, uint8_t note) {
   const uint8_t b[3] = {status, note, 100};
@@ -548,6 +553,7 @@ void benchPoolBegin() {
 // Audio task, before the block is rendered: renderUs holds the previous block.
 void benchPoolTick() {
   ++poolBlocks;
+  if (poolBlocks == kPoolSkipBlocks) poolMeasureSeq.fetch_add(1, std::memory_order_release);
   if (poolBlocks > kPoolSkipBlocks) {
     const uint32_t us = renderUs.load(std::memory_order_relaxed);
     poolSum += us;
@@ -990,15 +996,29 @@ void pollLog() {
   }
 #endif
 #ifdef AUDIO_BENCH_POOL
-  static uint32_t poolPrinted;
+  // Each step's measured part is profiled; the first kPoolLogSteps go to /projects/cpuprof.txt.
+  constexpr uint32_t kPoolLogSteps = 6;  // two rounds of 8 / 10 / 12
+  static uint32_t poolPrinted, poolStarted;
+  const uint32_t mseq = poolMeasureSeq.load(std::memory_order_acquire);
+  if (mseq != poolStarted) {
+    poolStarted = mseq;
+    if (!profileRunning()) profileStart();
+  }
   const uint32_t seq = poolSeq.load(std::memory_order_acquire);
   if (seq != poolPrinted) {
     poolPrinted = seq;
+    Profile pr;
+    const bool prof = profileRunning() && profileStop(pr);
     const unsigned h = poolResHeavy.load(std::memory_order_relaxed);
     const unsigned avg = poolResAvg.load(std::memory_order_relaxed);
-    Serial.printf("pool bench: heavy %u + light %u, voices %u: avg %u us (%u%%), peak %u us / 4000 us\n", h,
-                  static_cast<unsigned>(mt::kVoices) - h, static_cast<unsigned>(poolResVoices.load(std::memory_order_relaxed)),
-                  avg, avg / 40, static_cast<unsigned>(poolResPeak.load(std::memory_order_relaxed)));
+    char line[160];
+    snprintf(line, sizeof(line),
+             "pool bench %s: heavy %u + light %u, voices %u: avg %u us (%u%%), peak %u us / 4000 us\n",
+             storage::firmwareRev(), h, static_cast<unsigned>(mt::kVoices) - h,
+             static_cast<unsigned>(poolResVoices.load(std::memory_order_relaxed)), avg, avg / 40,
+             static_cast<unsigned>(poolResPeak.load(std::memory_order_relaxed)));
+    Serial.print(line);
+    if (prof && seq <= kPoolLogSteps) storage::appendCpuProfile(line, pr);
   }
 #endif
 #ifdef AUDIO_CPU_LOG

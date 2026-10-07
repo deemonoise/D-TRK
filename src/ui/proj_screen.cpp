@@ -261,21 +261,9 @@ void ProjScreen::toggleProfile() {
   }
   constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
   char line[96];
-  bool saved = false;
-  if (hw::sdReady()) {
-    fs::File f = hw::sdFs().open("/projects/cpuprof.txt", FILE_APPEND);
-    if (f) {
-      snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
-               static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
-      f.print(line);
-      for (int i = 0; i < audio::kProfStages; ++i) {
-        snprintf(line, sizeof(line), "  %-8s %7.1f us  %5.1f %%\n", mt::Synth::profName(i), pr.us[i], pr.us[i] * 100 / kBlockUs);
-        f.print(line);
-      }
-      f.close();
-      saved = true;
-    }
-  }
+  snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
+           static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
+  const bool saved = storage::appendCpuProfile(line, pr);
   snprintf(line, sizeof(line), "%s %.0f%%, TOP %s %.0f%%", saved ? "SAVED" : "NO SD", total * 100 / kBlockUs,
            mt::Synth::profName(top), pr.us[top] * 100 / kBlockUs);
   app_.toast(line);
