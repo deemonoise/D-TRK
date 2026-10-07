@@ -683,12 +683,17 @@ void Synth::control(Voice& v, int dt) {
   if (v.sample) {
     // Frames per output sample; the root note plays at the sample's own rate.
     const uint8_t root = m.root > 127 ? 127 : m.root;
-    float inc = v.smpRate * (1.f / kSynthRate) * exp2f((pitch - root) * (1.f / 12.f));
+    const float semis = pitch - root;
+    if (semis != v.smpKey) {
+      v.smpKey = semis;
+      v.smpVal = exp2f(semis * (1.f / 12.f));
+    }
+    float inc = v.smpRate * (1.f / kSynthRate) * v.smpVal;
     inc = clampf(inc, 0.f, 256.f);
     v.inc = inc;
     v.step = static_cast<int64_t>(inc * 4294967296.f);
   } else {
-    v.inc = noteHz(pitch) * (1.f / kSynthRate);
+    v.inc = cachedHz(v, 0, pitch) * (1.f / kSynthRate);
     // Noise: the LFSR steps 93x the note frequency (NES-like rates, kHz), so METAL's 93-step
     // period sounds at the played pitch and NOISE is a hiss that darkens with lower notes.
     const uint8_t w = m.wave < kWaveCount ? m.wave : 0;
@@ -733,7 +738,19 @@ void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoC
   oct += (m.keytrack > 127 ? 127 : m.keytrack) * (1.f / 127.f) * (pitch - 60.f) * (1.f / 12.f);
   // Velocity: +-6 octaves at full depth from velocity 64 (no change) to 0 / 127.
   if (m.velCut) oct += clampf(m.velCut, -64, 63) * (1.f / 64.f) * ((static_cast<int>(v.vel) - 64) * (1.f / 64.f)) * 6.f;
-  v.flt.set(static_cast<Svf::Mode>(mode - 1), 20.f * exp2f(oct), v.fltQ);
+  if (oct != v.octKey) {
+    v.octKey = oct;
+    v.octHz = 20.f * exp2f(oct);
+  }
+  v.flt.set(static_cast<Svf::Mode>(mode - 1), v.octHz, v.fltQ);
+}
+
+float Synth::cachedHz(Voice& v, int k, float note) {
+  if (note != v.hzKey[k]) {
+    v.hzKey[k] = note;
+    v.hzVal[k] = noteHz(note);
+  }
+  return v.hzVal[k];
 }
 
 void Synth::resetLfos(Voice& v) {
@@ -827,8 +844,9 @@ void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   v.senvT += static_cast<uint32_t>(dt);
-  const float e = filterEnv(v.senvT, m.synEAtk, m.synEDec);  // 0..1, AD (decay 0 = hold)
-  const float senv = (mac[kMacSenv] - 64.f) * (1.f / 64.f) * e;
+  // env -> SHAPE: nothing to compute at the neutral 64.
+  const float senvAmt = (mac[kMacSenv] - 64.f) * (1.f / 64.f);
+  const float senv = senvAmt != 0 ? senvAmt * filterEnv(v.senvT, m.synEAtk, m.synEDec) : 0.f;  // AD, decay 0 = hold
   SynParams sp;
   for (int k = 0; k < 2; ++k) {
     sp.mode[k] = m.synOsc[k] < static_cast<uint8_t>(SynOsc::Count) ? m.synOsc[k] : 0;
@@ -836,8 +854,8 @@ void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const
     sp.shape[k] = clampf(mac[kMacShp1 + k] * (1.f / 127.f) + senv, 0.f, 1.f);
   }
   const float det = (mac[kMacDet] - 64.f) * (50.f / 64.f) * 0.01f;  // +-50 cents, in semitones
-  sp.hz[0] = noteHz(pitch);
-  sp.hz[1] = noteHz(pitch + clampf(m.synSemi, -24, 24) + det);
+  sp.hz[0] = cachedHz(v, 0, pitch);
+  sp.hz[1] = cachedHz(v, 1, pitch + clampf(m.synSemi, -24, 24) + det);
   sp.mix = mac[kMacMix] * (1.f / 127.f);
   sp.sync = m.synSync;
   sp.sub = (m.synSub > 127 ? 127 : m.synSub) * (1.f / 127.f);

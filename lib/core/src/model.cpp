@@ -94,10 +94,16 @@ void Project::reset() {
   for (uint16_t& sc : scenes) sc = kSceneEmpty;
 }
 
+// Tables built on first use: powf is costly on the ESP32 and these run per voice at control rate.
+// A race on the first use only writes the same values twice.
 uint16_t envTimeMs(uint8_t v) {
-  if (v == 0) return 0;
-  if (v > 127) v = 127;
-  return static_cast<uint16_t>(lroundf(powf(10000.f, v / 127.f)));
+  static uint16_t table[128];
+  static bool ready = false;
+  if (!ready) {
+    for (int i = 1; i < 128; ++i) table[i] = static_cast<uint16_t>(lroundf(powf(10000.f, i / 127.f)));
+    ready = true;
+  }
+  return table[v > 127 ? 127 : v];
 }
 
 uint16_t fmDecayMs(uint8_t v) {
@@ -123,14 +129,14 @@ LfoRef lfoRef(Instrument& m, int i) {
   return {l.wave, l.rate, l.depth, l.dest, l.sync};
 }
 
-LfoCfg lfoAt(const Instrument& m, int i) {
-  if (i <= 0 || i >= kLfos) return {m.lfoWave, m.lfoRate, m.lfoDepth, m.lfoDest, m.lfoSync};
-  return m.lfo[i - 1];
-}
-
 float lfoHz(uint8_t v) {
-  if (v > 127) v = 127;
-  return 0.05f * powf(600.f, v / 127.f);
+  static float table[128];
+  static bool ready = false;
+  if (!ready) {
+    for (int i = 0; i < 128; ++i) table[i] = 0.05f * powf(600.f, i / 127.f);
+    ready = true;
+  }
+  return table[v > 127 ? 127 : v];
 }
 
 bool fmGated(uint8_t machine) {

@@ -193,7 +193,10 @@ struct LfoRef {
 };
 struct Instrument;
 LfoRef lfoRef(Instrument& m, int i);
-LfoCfg lfoAt(const Instrument& m, int i);
+inline LfoCfg lfoAt(const Instrument& m, int i) {
+  if (i <= 0 || i >= kLfos) return {m.lfoWave, m.lfoRate, m.lfoDepth, m.lfoDest, m.lfoSync};
+  return m.lfo[i - 1];
+}
 float lfoHz(uint8_t v);
 // TONE, CHORD: held while the note is, with the instrument's attack / sustain / release.
 // The other machines are one-shot drums. Out of range = Kick.

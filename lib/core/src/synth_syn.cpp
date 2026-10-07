@@ -9,7 +9,13 @@ float wtLevelPos(float hz) {
 }
 
 void WtOsc::setLevel(float hz) {
-  const int k = static_cast<int>(wtLevelPos(hz));
+  // floor(wtLevelPos(hz)) without log2f (control rate, every SYNTH voice): halvings are exact.
+  float x = hz * kWtHarm / 8000.f;
+  int k = 0;
+  while (k < kWtLevels - 1 && x >= 2.f) {
+    x *= 0.5f;
+    ++k;
+  }
   off = wtLevelOff(k);
   lb = 0;
   while ((1 << lb) < wtLevelLen(k)) ++lb;

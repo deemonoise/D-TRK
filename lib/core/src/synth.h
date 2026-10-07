@@ -139,6 +139,7 @@ class Synth {
   void controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut);
   float lfo(Voice& v, const LfoCfg& c, int i, int dt);
   void resetLfos(Voice& v);
+  static float cachedHz(Voice& v, int k, float note);  // noteHz, reused while note stays
   static bool oneShot(const Voice& v);
   static uint8_t machineOf(const Instrument& m);
   float rnd();

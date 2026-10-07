@@ -38,6 +38,11 @@ struct Voice {
   float rsend = 0;          // reverb send 0..1: RVB lock or Instrument::rsend
   Drive drive;              // DRV lock or Instrument::drive, + LFO
   Crush crush;              // BIT / SRR locks (0 = off)
+  // Control-rate math caches (exp2f is costly on the ESP32): the input of the last call and its
+  // result. The functions are pure, so a reused voice keeps valid entries.
+  float hzKey[2] = {-1e9f, -1e9f}, hzVal[2] = {0, 0};  // noteHz: CHIP / SYNTH osc 1, SYNTH osc 2
+  float smpKey = -1e9f, smpVal = 0;                   // SAMPLE: exp2f(semitones / 12)
+  float octKey = -1e9f, octHz = 0;                    // filter: 20 * exp2f(octaves)
   float pwmPhase = 0;       // PWM sweep LFO, 0..1
   uint8_t wave = 0;         // Wave
   // Synth fx state (Synth::control).
