@@ -118,3 +118,7 @@ The board's own Type-C (flashing) and the microSD slot are accessible only with 
 6. In the bottom part: the IP5306 into its cradle with the Type-C jack towards the back wall, the battery on tape against the ridge under the module.
 7. Solder the power (see above); the controls and MIDI OUT per the table in the [root README](../README.md#wiring).
 8. Check for ~5 V at the IP5306 output before connecting it to the board, then close the bottom part with 4 M3 × 10 screws.
+
+## License
+
+The enclosure (OpenSCAD sources and STL): © 2026 deemonoise, [CERN-OHL-S v2](LICENSE).

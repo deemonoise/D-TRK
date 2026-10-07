@@ -264,3 +264,12 @@ The partition table is custom (`partitions.csv`): two 3 MB firmware slots and a 
 | `test` | Unity tests of the core |
 | `docs` | manual and development plans |
 | `enclosure` | enclosure: OpenSCAD model and STL |
+
+## License
+
+Copyright © 2026 deemonoise.
+
+- **Firmware, tests, scripts and documentation** — [GNU GPL v3](LICENSE) (GPL-3.0-only). You may use, change and share them, sell devices with them included, as long as the source of the firmware you ship (with your changes) is published under the same license.
+- **Hardware** — the enclosure ([enclosure/](enclosure/): OpenSCAD sources and STL) and the wiring diagrams ([docs/img](docs/img)) — [CERN-OHL-S v2](enclosure/LICENSE) (CERN-OHL-S-2.0): products made from them must make their modified design sources available under the same license.
+
+Full texts: [LICENSES/](LICENSES/). Third-party libraries (ESP-IDF, Arduino-ESP32, LovyanGFX, Unity) keep their own licenses.

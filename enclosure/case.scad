@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 deemonoise
+// SPDX-License-Identifier: CERN-OHL-S-2.0
+// Source location: https://github.com/deemonoise/D-TRK
 // Корпус D-TRK (WT32-SC01 Plus). Все размеры в мм.
 // Деталь: part = "top" | "bottom" | "clamp" | "assembly"
 // Рендер: openscad -o case_top.stl -D 'part="top"' case.scad
