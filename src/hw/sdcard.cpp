@@ -1,5 +1,6 @@
 #include "sdcard.h"
 #include <SD.h>
+#include <driver/gpio.h>
 #include <SPI.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,14 +42,30 @@ int keepName(char (*names)[kNameMax], int n, int max, const char* name, size_t l
 
 namespace {
 
-// Card back to idle after an aborted transfer: CS high and 80+ clocks at a slow rate (the SD
-// SPI-mode wake-up), on a freshly set up bus.
+// The card drives MISO only while selected; between transfers the line would float without
+// a pull-up (none is known to be fitted on the board), and noise there reads as a response.
+void pullMiso() { gpio_pullup_en(static_cast<gpio_num_t>(pins::kSdMiso)); }
+
+// Card back to idle after an aborted transfer, on a freshly set up bus at a slow rate. CS high
+// alone does not end a multi-block read (CMD18) the card was stuck in: selected, it gets
+// clocks to finish the block it is sending, then CMD12 (STOP_TRANSMISSION) and time to leave
+// busy. Then CS high and 80+ clocks, the SD SPI-mode wake-up before CMD0.
 void resetBus() {
   spi->end();
   spi->begin(pins::kSdClk, pins::kSdMiso, pins::kSdMosi, pins::kSdCs);
+  pullMiso();
   pinMode(pins::kSdCs, OUTPUT);
-  digitalWrite(pins::kSdCs, HIGH);
   spi->beginTransaction(SPISettings(400000, MSBFIRST, SPI_MODE0));
+  digitalWrite(pins::kSdCs, LOW);
+  for (int i = 0; i < 520; ++i) spi->transfer(0xFF);  // a 512-byte block, its token and CRC
+  static const uint8_t kCmd12[6] = {0x4C, 0, 0, 0, 0, 0x61};
+  for (uint8_t b : kCmd12) spi->transfer(b);
+  spi->transfer(0xFF);  // stuff byte after CMD12
+  for (int i = 0; i < 16 && (spi->transfer(0xFF) & 0x80); ++i) {
+  }
+  for (int i = 0; i < 4096 && spi->transfer(0xFF) != 0xFF; ++i) {  // busy: up to ~80 ms here
+  }
+  digitalWrite(pins::kSdCs, HIGH);
   for (int i = 0; i < 16; ++i) spi->transfer(0xFF);
   spi->endTransaction();
 }
@@ -59,7 +76,7 @@ bool mount() {
       resetBus();
       delay(50);
     }
-    if (SD.begin(pins::kSdCs, *spi, attempt == 0 ? 20000000 : 4000000) && SD.cardType() != CARD_NONE) return true;
+    if (SD.begin(pins::kSdCs, *spi, attempt == 0 ? 10000000 : 4000000) && SD.cardType() != CARD_NONE) return true;
     SD.end();
   }
   return false;
@@ -71,6 +88,7 @@ bool sdBegin() {
   if (!spi) {
     spi = new SPIClass(FSPI);
     spi->begin(pins::kSdClk, pins::kSdMiso, pins::kSdMosi, pins::kSdCs);
+    pullMiso();
   }
   SD.end();  // also after a failed mount: nothing may stay registered
   ready = mount();
