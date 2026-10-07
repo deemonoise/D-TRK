@@ -57,10 +57,11 @@ class InstScreen : public Screen {
   static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kSenv = kSub + 3,
                        kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
-  static constexpr int kDrive = 0, kFltMode = 1, kCutoff = 2, kReso = 3, kFEnv = 4, kFAtk = 5, kFDec = 6,
-                       kKeytrack = 7, kLfoSel = 8, kLfoWave = 9, kLfoSync = 10, kLfoRate = 11, kLfoDepth = 12,
-                       kLfoDest = 13, kTailRows = 14;
-  static constexpr int kFiltRows = 8;  // tail: FILT = [0, 8) (Drive first: it is before the filter), LFO
+  static constexpr int kDrive = 0, kBit = 1, kSrr = 2, kFltMode = 3, kCutoff = 4, kReso = 5, kFEnv = 6, kFAtk = 7,
+                       kFDec = 8, kKeytrack = 9, kLfoSel = 10, kLfoWave = 11, kLfoSync = 12, kLfoRate = 13,
+                       kLfoDepth = 14, kLfoDest = 15, kTailRows = 16;
+  // tail: FILT = [0, 10) (Drive, Bit crush, Downsample first: they are before the filter), LFO
+  static constexpr int kFiltRows = 10;
   // KIT: MAIN rows, then kLaneRows per lane.
   static constexpr int kKitMain = 4;  // Name, Type, Send, Rvb send
   static constexpr int kLaneSrc = 0, kLaneSample = 1, kLaneInstr = 2, kLaneVol = 3, kLanePitch = 4,

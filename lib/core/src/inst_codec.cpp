@@ -52,6 +52,8 @@ void packFm(const Instrument& m, uint8_t* b) {
   b[11] = m.rsend;
   b[12] = static_cast<uint8_t>(m.velCut);
   b[13] = static_cast<uint8_t>(m.velMac);
+  b[14] = m.crushBits;  // 14, 15: once reserved (0 = off)
+  b[15] = m.crushRate;
 }
 
 void unpackFm(const uint8_t* b, Instrument& m) {
@@ -66,6 +68,8 @@ void unpackFm(const uint8_t* b, Instrument& m) {
   m.rsend = clampu(b[11], 0, 127);
   m.velCut = clamps(static_cast<int8_t>(b[12]), -64, 63);
   m.velMac = clamps(static_cast<int8_t>(b[13]), -64, 63);
+  m.crushBits = clampu(b[14], 0, 127);
+  m.crushRate = clampu(b[15], 0, 127);
 }
 
 void unpackInst(const uint8_t* b, Instrument& m) {

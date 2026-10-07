@@ -165,6 +165,8 @@ static void fillFull(Project& p) {
   i7.rsend = 12;
   i7.velCut = -20;
   i7.velMac = 33;
+  i7.crushBits = 101;
+  i7.crushRate = 7;
 }
 
 static void assertSame(const Project& x, const Project& y) {
@@ -256,6 +258,8 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(m.rsend, n.rsend);
     TEST_ASSERT_EQUAL(m.velCut, n.velCut);
     TEST_ASSERT_EQUAL(m.velMac, n.velMac);
+    TEST_ASSERT_EQUAL(m.crushBits, n.crushBits);
+    TEST_ASSERT_EQUAL(m.crushRate, n.crushRate);
     TEST_ASSERT_EQUAL(m.sliceMode, n.sliceMode);
     TEST_ASSERT_EQUAL(m.chopMode, n.chopMode);
     TEST_ASSERT_EQUAL(m.chopN, n.chopN);

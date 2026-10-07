@@ -154,6 +154,8 @@ struct Instrument {
   uint8_t keytrack = 0;         // 0..127 = 0..100 %
   uint8_t send = 0;             // delay send 0..127 (every type)
   uint8_t drive = 0;            // tanh drive before the filter, 0..127 (0 = off), every type
+  uint8_t crushBits = 0;        // bit crush after the drive, 0 = off .. 127 = 2 bits (fx BIT locks it)
+  uint8_t crushRate = 0;        // sample-rate reduction, 0 = off .. 127 (fx SRR locks it)
   uint8_t rsend = 0;            // reverb send 0..127 (every type)
   int8_t velCut = 0;            // velocity -> cutoff, -64..63 (+-6 octaves at full depth and velocity)
   int8_t velMac = 0;            // velocity -> DECAY macro, -64..63 (FM / DRUM / SYNTH)

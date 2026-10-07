@@ -44,7 +44,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   for (int k = 0; k < kFmMacros; ++k) SAME(macro[k]);
   SAME(lfoWave); SAME(lfoRate); SAME(lfoDepth); SAME(lfoDest);
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack); SAME(send);
-  SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac);
+  SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate);
   SAME(sliceMode); SAME(chopMode); SAME(chopN); SAME(chopThresh); SAME(sliceCount);
   for (int k = 0; k < kMaxSlices; ++k) SAME(slices[k]);
   for (int k = 0; k < 2; ++k) {
@@ -74,6 +74,8 @@ static Instrument sample() {
   m.rsend = 12;
   m.velCut = -20;
   m.velMac = 33;
+  m.crushBits = 90;
+  m.crushRate = 40;
   return m;
 }
 

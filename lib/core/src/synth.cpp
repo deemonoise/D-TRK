@@ -665,7 +665,8 @@ void Synth::control(Voice& v, int dt) {
   }
   const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : (m.drive > 127 ? 127 : m.drive);
   v.drive.set(static_cast<uint8_t>(clampf(drv + lfoDrv, 0.f, 127.f) + 0.5f));
-  v.crush.set((v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : 0, (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : 0);
+  v.crush.set((v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : m.crushBits,
+              (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : m.crushRate);
   controlFilter(v, m, pitch, lfoCut);
   if (v.fm) {
     controlFm(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too

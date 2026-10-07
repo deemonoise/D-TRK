@@ -334,8 +334,8 @@ a { color: var(--accent); }
   <tr><td class="code">FLT</td><td>0–127</td><td>INT</td><td>Cutoff <a href="#filter">фильтра</a> для ноты шага, любой тип инструмента.</td></tr>
   <tr><td class="code">RES</td><td>0–127</td><td>INT</td><td>Reso фильтра для ноты шага, любой тип инструмента.</td></tr>
   <tr><td class="code">DRV</td><td>0–127</td><td>INT</td><td>Drive (перегруз) для ноты шага, любой тип инструмента; на шаге без ноты — для звучащей ноты.</td></tr>
-  <tr><td class="code">BIT</td><td>0–127</td><td>INT</td><td>Bitcrusher для ноты шага: разрядность от 16 бит (0 — выключен) до 2 бит (127). После Drive, перед фильтром.</td></tr>
-  <tr><td class="code">SRR</td><td>0–127</td><td>INT</td><td>Понижение частоты дискретизации для ноты шага: 0 — выключено, 127 — каждый отсчёт держится ≈ 64 отсчёта (грубый «цифровой» звук). Вместе с BIT — классический lo-fi.</td></tr>
+  <tr><td class="code">BIT</td><td>0–127</td><td>INT</td><td>Bitcrusher для ноты шага: разрядность от 16 бит (0 — выключен) до 2 бит (127). После Drive, перед фильтром. Постоянное значение — INST → FILT → Bit crush; лок шага его заменяет.</td></tr>
+  <tr><td class="code">SRR</td><td>0–127</td><td>INT</td><td>Понижение частоты дискретизации для ноты шага: 0 — выключено, 127 — каждый отсчёт держится ≈ 64 отсчёта (грубый «цифровой» звук). Вместе с BIT — классический lo-fi. Постоянное значение — INST → FILT → Downsample.</td></tr>
   <tr><td class="code">DEC</td><td>0–127</td><td>INT</td><td>FM, DRUM, SYNTH: макрос DECAY для ноты шага (у DRUM — слот машины с тем же номером, у SYNTH — SHP1).</td></tr>
   <tr><td class="code">COL</td><td>0–127</td><td>INT</td><td>FM, DRUM, SYNTH: макрос COLOR для ноты шага (у DRUM — слот машины с тем же номером, у SYNTH — SHP2).</td></tr>
   <tr><td class="code">SHP</td><td>0–127</td><td>INT</td><td>FM, DRUM, SYNTH: макрос SHAPE для ноты шага (у DRUM — слот машины с тем же номером, у SYNTH — MIX).</td></tr>
@@ -490,7 +490,7 @@ a { color: var(--accent); }
   <tr><td>ENV</td><td>Attack, Decay, Sustain, Release, Vel&gt;Cut, Vel&gt;Dec и график ADSR справа</td></tr>
   <tr><td>OSC / SMPL / FM / DRUM</td><td>Параметры типа: <a href="#chip">CHIP</a> — Wave, Duty, PWM rate, PWM depth; <a href="#sample">SAMPLE</a> — редактор сэмпла; <a href="#fm">FM</a> и <a href="#drum">DRUM</a> — Machine и 5 макросов; <a href="#synth">SYNTH</a> — осцилляторы и таблицы</td></tr>
   <tr><td>MOD (только SYNTH)</td><td>Sub, Sub oct, Noise, Env&gt;Shp, Env atk, Env dec</td></tr>
-  <tr><td>FILT</td><td>Drive, Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — <a href="#filter">drive и фильтр</a></td></tr>
+  <tr><td>FILT</td><td>Drive, Bit crush, Downsample, Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — <a href="#filter">drive, lo-fi и фильтр</a></td></tr>
   <tr><td>LFO</td><td>LFO (1–4), Wave, Sync, Rate, Depth, Dest</td></tr>
 </table></div>
 <h3>MAIN и ENV</h3>
@@ -698,10 +698,12 @@ a { color: var(--accent); }
 </ul>
 <div class="note warn"><p>Импорт таблицы пишет во flash и работает только при остановленном воспроизведении («STOP PLAYBACK FIRST»). Выбор уже импортированной или вшитой таблицы работает и во время игры.</p></div>
 <h3 id="filter">Фильтр и LFO</h3>
-<p>Страницы FILT и LFO есть у всех типов. Цепь голоса: звук → <b>Drive</b> → фильтр. Фильтр — SVF 12 дБ/окт после всего голоса (у FM и DRUM — после их собственного звука).</p>
+<p>Страницы FILT и LFO есть у всех типов. Цепь голоса: звук → <b>Drive</b> → <b>Bit crush</b> → <b>Downsample</b> → фильтр. Фильтр — SVF 12 дБ/окт после всего голоса (у FM и DRUM — после их собственного звука).</p>
 <div class="tbl"><table>
   <tr><th>Параметр</th><th>Значения</th><th>По умолчанию</th><th>Смысл</th></tr>
   <tr><td>Drive</td><td>OFF, 1–127</td><td>OFF</td><td>Перегруз (tanh) перед фильтром: чем больше, тем плотнее и громче тихие участки. Лок — fx <span class="m">DRV</span>, цель LFO — DRIVE.</td></tr>
+  <tr><td>Bit crush</td><td>OFF, 1–127</td><td>OFF</td><td>Понижение разрядности: от 16 бит (1) до 2 бит (127), в скобках — сколько бит осталось. Лок на шаге — fx <span class="m">BIT</span>.</td></tr>
+  <tr><td>Downsample</td><td>OFF, 1–127</td><td>OFF</td><td>Понижение частоты дискретизации: каждый сэмпл держится до ~64 сэмплов на 127, звук становится «цифровым» и звенящим. Лок на шаге — fx <span class="m">SRR</span>.</td></tr>
   <tr><td>Filter</td><td>OFF, LP, BP, HP</td><td>OFF</td><td>Режим. OFF — обход: звук как без фильтра, остальные строки фильтра серые.</td></tr>
   <tr><td>Cutoff</td><td>20 Гц … 14 кГц (128 значений, экспонента)</td><td>14 кГц</td><td>Частота среза. Лок — fx <span class="m">FLT</span>.</td></tr>
   <tr><td>Reso</td><td>0–127</td><td>0</td><td>Резонанс (Q 0,5–20). Высокий резонанс громкий — убавьте Volume. Лок — fx <span class="m">RES</span>.</td></tr>
