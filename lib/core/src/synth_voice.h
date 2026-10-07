@@ -16,7 +16,7 @@ namespace mt {
 
 // Voice pool and heavy-voice cap; a build may override them (the pool bench, see audio.cpp).
 #ifndef MT_VOICES
-#define MT_VOICES 16
+#define MT_VOICES 24
 #endif
 #ifndef MT_HEAVY_MAX
 #define MT_HEAVY_MAX 8
@@ -161,7 +161,9 @@ inline bool heavyLoad(const Voice& x) {
 // victim itself. A mono track's own heavy voice is reused as before; a mono track's CHIP / SAMPLE
 // voice is released.
 // polyMax: poly voices the track may hold (KIT lanes: kKitLanes).
+// cap: voices that may sound (CPU guard, Synth::setLoad); with cap voices on (stolen ones not
+// counted) there is no free voice.
 int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato,
-               bool heavy = false, int polyMax = kPolyPerTrack);
+               bool heavy = false, int polyMax = kPolyPerTrack, int cap = kVoices);
 
 }  // namespace mt

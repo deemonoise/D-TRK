@@ -24,6 +24,12 @@ struct Crush {
     phase_ = 1.f;
     held_ = 0;
   }
+  // x[i] = process(x[i]) over a block.
+  MT_HOT MT_INLINE void processBlock(float* __restrict x, int n) {
+    Crush c = *this;  // the state in registers
+    for (int i = 0; i < n; ++i) x[i] = c.process(x[i]);
+    *this = c;
+  }
   MT_HOT MT_INLINE float process(float x) {
     if (rate_) {
       phase_ += inc_;

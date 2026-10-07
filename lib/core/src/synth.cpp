@@ -54,10 +54,43 @@ void Synth::reset() {
   for (auto& v : voices_) v = Voice();
   age_ = 0;
   nEv_ = 0;
+  load_ = 0;
+  cap_ = kVoices;
+  capUp_ = 0;
   delay_.clear();
   reverb_.clear();
   comp_.reset();
   for (int t = 0; t < kSynthTracks; ++t) startTrack(static_cast<uint8_t>(t));
+}
+
+MT_HOT void Synth::setLoad(float load) {
+  load_ += (load - load_) * 0.25f;
+  if (load_ <= kLoadHigh && load <= kLoadPanic) {
+    if (load_ < kLoadLow && cap_ < kVoices && ++capUp_ >= kCapUpBlocks) {
+      ++cap_;
+      capUp_ = 0;
+    }
+    return;
+  }
+  capUp_ = 0;
+  // Shed one voice per block while over: releasing ones first, the oldest of each. A note that
+  // has ended (a filter tail) costs only the filter and cannot be faded without a click.
+  int live = 0, victim = -1;
+  bool victimRel = false;
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& x = voices_[i];
+    if (!x.on || x.stolen || x.env.idle()) continue;
+    ++live;
+    const bool rel = x.env.stage() == Env::Stage::Release;
+    if (victim < 0 || (rel && !victimRel) || (rel == victimRel && x.age < voices_[victim].age)) {
+      victim = i;
+      victimRel = rel;
+    }
+  }
+  if (live <= kMinVoices || victim < 0) return;
+  voices_[victim].env.fade(kStealMs);
+  voices_[victim].stolen = true;
+  cap_ = live - 1;
 }
 
 void Synth::startTrack(uint8_t track) {
@@ -411,7 +444,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     legato = true;
     voices_[vi].age = ++age_;
   } else {
-    vi = allocVoice(voices_, track, mono, age_, legato, heavy, kitLane ? kKitLanes : kPolyPerTrack);
+    vi = allocVoice(voices_, track, mono, age_, legato, heavy, kitLane ? kKitLanes : kPolyPerTrack, cap_);
   }
   Voice& v = voices_[vi];
   v.stolen = false;  // SLD may take a fading voice back
@@ -887,50 +920,68 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
   // an unfiltered one straight into out.
   if (v.env.idle()) {
     // The note has ended: only the filter rings out (render() frees the voice when it is quiet).
-    if (v.fltOn)
-      for (int i = 0; i < n; ++i) out[i] += v.flt.process(0.f);
+    if (v.fltOn) v.flt.processAdd(nullptr, out, n);
     return;
   }
   // Driven or filtered: the engine renders into flt, then drive -> filter -> out. Neither: straight
   // into out (bit-exact to the plain path).
   float flt[kControl];
-  float* dst = out;
+  float* __restrict dst = out;
   const bool crushed = v.crush.on();
   const bool driven = v.drive.on() || crushed;  // the pre-filter stage: drive, then crush
   if (v.fltOn || driven) {
     for (int i = 0; i < n; ++i) flt[i] = 0;
     dst = flt;
   }
-  if (v.fm) {
+  // Env and oscillator state are copied to locals for the loops: through v every dst store would
+  // force a reload (dst may alias the voice as far as the compiler knows).
+  if (v.fm || v.drum || v.syn) {
     float tmp[kControl] = {0};
-    v.fmv().render(tmp, n, v.amp);
-    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
-    if (v.fmv().done()) v.env.kill();
-  } else if (v.drum) {
-    // The gate env scales the choke tail too: it is 1 through a choke, and an all-off fades both.
-    float tmp[kControl] = {0};
-    v.drv().render(tmp, n, v.amp);
-    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
-    if (v.drv().done()) v.env.kill();
-  } else if (v.syn) {
-    float tmp[kControl] = {0};
-    v.sv().render(tmp, n, v.amp);
-    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
+    if (v.fm) v.fmv().render(tmp, n, v.amp);
+    else if (v.drum) v.drv().render(tmp, n, v.amp);  // the gate env scales a choke tail too
+    else v.sv().render(tmp, n, v.amp);
+    Env env = v.env;
+    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * env.next();
+    v.env = env;
+    if ((v.fm && v.fmv().done()) || (v.drum && v.drv().done())) v.env.kill();
   } else if (v.sample) {
     renderSample(v, dst, n);
   } else {
-    const Wave w = static_cast<Wave>(v.wave);
-    const float inc = v.inc, duty = v.duty, amp = v.amp;
-    for (int i = 0; i < n; ++i) dst[i] += v.osc.next(w, inc, duty) * v.env.next() * amp;
+    renderChip(v, dst, n);
   }
-  if (v.drive.on())
-    for (int i = 0; i < n; ++i) flt[i] = v.drive.process(flt[i]);
-  if (crushed)
-    for (int i = 0; i < n; ++i) flt[i] = v.crush.process(flt[i]);
+  if (v.drive.on()) v.drive.processBlock(flt, n);
+  if (crushed) v.crush.processBlock(flt, n);
   if (v.fltOn)
-    for (int i = 0; i < n; ++i) out[i] += v.flt.process(flt[i]);
+    v.flt.processAdd(flt, out, n);
   else if (driven)
     for (int i = 0; i < n; ++i) out[i] += flt[i];
+}
+
+// CHIP: one loop per wave (no per-sample switch), state in locals.
+template <Wave W>
+MT_HOT static void chipLoop(ChipOsc& o, Env& e, float* __restrict dst, int n, float inc, float duty, float amp) {
+  ChipOsc osc = o;
+  Env env = e;
+  for (int i = 0; i < n; ++i) dst[i] += osc.next(W, inc, duty) * env.next() * amp;
+  o = osc;
+  e = env;
+}
+
+MT_HOT void Synth::renderChip(Voice& v, float* out, int n) {
+  const float inc = v.inc, duty = v.duty, amp = v.amp;
+  switch (static_cast<Wave>(v.wave)) {
+    case Wave::Pulse: chipLoop<Wave::Pulse>(v.osc, v.env, out, n, inc, duty, amp); break;
+    case Wave::Triangle: chipLoop<Wave::Triangle>(v.osc, v.env, out, n, inc, duty, amp); break;
+    case Wave::Saw: chipLoop<Wave::Saw>(v.osc, v.env, out, n, inc, duty, amp); break;
+    default: {
+      const Wave w = static_cast<Wave>(v.wave);  // noise, metal, wavetables: the generic loop
+      ChipOsc osc = v.osc;
+      Env env = v.env;
+      for (int i = 0; i < n; ++i) out[i] += osc.next(w, inc, duty) * env.next() * amp;
+      v.osc = osc;
+      v.env = env;
+    }
+  }
 }
 
 // Sample playback: 32.32 fixed point position, linear interpolation between frames. The loop
@@ -958,12 +1009,13 @@ MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   const uint8_t mode = v.loopMode;
   int64_t pos = v.pos;
   int64_t step = v.dir > 0 ? v.step : -v.step;
+  Env env = v.env;  // in registers: an out store would force a reload through v
   for (int i = 0; i < n; ++i) {
     const uint32_t idx = static_cast<uint32_t>(pos >> 32);
     const int32_t a = d[idx];
     const int32_t b = d[idx < last ? idx + 1 : last];
     const float s = a + (b - a) * (static_cast<uint32_t>(pos) * 2.3283064e-10f);
-    out[i] += s * v.env.next() * amp;
+    out[i] += s * env.next() * amp;
     pos += step;
     if (step >= 0 ? pos < hi : pos >= lo) continue;
     // Crossed the edge in the play direction (rare).
@@ -981,10 +1033,11 @@ MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
       if (pos < lo) pos = lo;
       if (pos >= hi) pos = hi - 1;
     } else {
-      v.env.kill();
+      env.kill();
       break;
     }
   }
+  v.env = env;
   v.pos = pos;
   v.dir = step >= 0 ? 1 : -1;
 }
@@ -993,7 +1046,7 @@ MT_HOT void Synth::render(int16_t* out) {
   // Profiling: t = the cycle counter at the last mark; mark(stage) books the time since.
   uint32_t (*const clk)() = clock_;
   uint32_t t = clk ? clk() : 0;
-  auto mark = [&](int stage) {
+  auto mark = [&](int stage) __attribute__((always_inline)) {
     if (!clk) return;
     const uint32_t now = clk();
     prof_[stage] += now - t;
@@ -1033,10 +1086,11 @@ MT_HOT void Synth::render(int16_t* out) {
       renderVoice(v, tmp, n);
       float pk = trackPeak_[v.track < kSynthTracks ? v.track : 0];
       if (sends) {
+        const float vs = v.send, vr = v.rsend;  // locals: the stores below may alias v
         for (int i = 0; i < n; ++i) {
           mix_[pos + i] += tmp[i];
-          send_[pos + i] += tmp[i] * v.send;
-          rsend_[pos + i] += tmp[i] * v.rsend;
+          send_[pos + i] += tmp[i] * vs;
+          rsend_[pos + i] += tmp[i] * vr;
           if (sc) sc_[pos + i] += tmp[i];
           const float a = fabsf(tmp[i]);
           if (a > pk) pk = a;

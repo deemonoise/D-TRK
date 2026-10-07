@@ -29,9 +29,27 @@ struct Svf {
   }
   void reset() { ic1_ = ic2_ = 0; }
   // Still ringing with no input: state above -80 dB of full scale (Synth keeps the voice for it).
-  bool ringing() const {
+  MT_INLINE bool ringing() const {
     constexpr float kOff = 1e-4f;
     return ic1_ > kOff || ic1_ < -kOff || ic2_ > kOff || ic2_ < -kOff;
+  }
+  // out[i] += process(in[i]), in = nullptr for silence (a ringing tail). The state stays in
+  // registers over the block (process() reloads it through this after every out store).
+  MT_HOT MT_INLINE void processAdd(const float* __restrict in, float* __restrict out, int n) {
+    float ic1 = ic1_, ic2 = ic2_;
+    const float a1 = a1_, a2 = a2_, a3 = a3_, k = k_;
+    const Mode m = mode_;
+    for (int i = 0; i < n; ++i) {
+      const float v0 = in ? in[i] : 0.f;
+      const float v3 = v0 - ic2;
+      const float v1 = a1 * ic1 + a2 * v3;
+      const float v2 = ic2 + a2 * ic1 + a3 * v3;
+      ic1 = 2.f * v1 - ic1;
+      ic2 = 2.f * v2 - ic2;
+      out[i] += m == Mode::Lp ? v2 : m == Mode::Bp ? v1 : v0 - k * v1 - v2;
+    }
+    ic1_ = ic1;
+    ic2_ = ic2;
   }
   MT_HOT MT_INLINE float process(float v0) {
     const float v3 = v0 - ic2_;

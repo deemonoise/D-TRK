@@ -27,6 +27,20 @@ class Drive {
     const float* t = table();
     return (t[i] + (t[i + 1] - t[i]) * f) * norm_;
   }
+  // x[i] = process(x[i]) over a block, drive on.
+  void processBlock(float* __restrict x, int n) const {
+    const float* __restrict t = table();
+    const float g = g_, norm = norm_;
+    for (int i = 0; i < n; ++i) {
+      float u = x[i] * g;
+      u = u < -8.f ? -8.f : (u > 8.f ? 8.f : u);
+      const float p = (u + 8.f) * 16.f;
+      int k = static_cast<int>(p);
+      if (k > kTab - 2) k = kTab - 2;
+      const float f = p - k;
+      x[i] = (t[k] + (t[k + 1] - t[k]) * f) * norm;
+    }
+  }
   // Builds the table (257 tanhf, once): call outside the audio path to keep the first block clean.
   static void init() { table(); }
 

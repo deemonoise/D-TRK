@@ -65,7 +65,7 @@ void test_mono_ignores_other_tracks() {
 
 // Every voice holding a note (an on voice with an idle env is a filter tail, reused first).
 static void fillPool() {
-  for (int t = 0; t < 8; ++t)
+  for (int t = 0; t < kVoices / 2; ++t)
     for (int k = 0; k < 2; ++k) {
       const int i = alloc(static_cast<uint8_t>(t));
       v[i].env.set(0, 0, 1.f, 100);

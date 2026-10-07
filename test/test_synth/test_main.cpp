@@ -175,6 +175,99 @@ void test_instrument_volume_scales_output() {
   TEST_ASSERT_TRUE(quiet * 3 < loud);
 }
 
+// ---- CPU guard (Synth::setLoad) ----
+
+// Every track holds 2 sustained CHIP notes: the pool is full.
+static void fillVoices() {
+  for (auto& m : p->instruments) {
+    m.sustain = 127;
+    m.release = 100;
+    m.mono = false;
+  }
+  for (int t = 0; t < kTracks; ++t) {
+    noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(40 + t));
+    noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(70 + t));
+  }
+  s->render(buf);
+}
+static int liveVoices() {
+  int n = 0;
+  for (int i = 0; i < kVoices; ++i) n += s->voice(i).on && !s->voice(i).stolen;
+  return n;
+}
+
+void test_guard_sheds_one_voice_per_block_down_to_min() {
+  fillVoices();
+  const int full = liveVoices();
+  TEST_ASSERT_EQUAL(kVoices < 2 * kTracks ? kVoices : 2 * kTracks, full);
+  s->setLoad(0.5f);
+  TEST_ASSERT_EQUAL(full, liveVoices());  // under the limit: nothing happens
+  s->setLoad(1.2f);  // one block over budget
+  TEST_ASSERT_EQUAL(full - 1, liveVoices());
+  TEST_ASSERT_EQUAL(full - 1, s->voiceCap());
+  for (int k = 0; k < 100; ++k) {
+    s->setLoad(1.2f);
+    s->render(buf);
+  }
+  TEST_ASSERT_EQUAL(Synth::kMinVoices, liveVoices());
+  TEST_ASSERT_TRUE(s->activeVoices() <= Synth::kMinVoices + 1);  // the faded ones are freed
+}
+
+void test_guard_sheds_releasing_first_then_oldest() {
+  fillVoices();
+  noteOff(0, 5, 75);  // a releasing voice
+  s->render(buf);
+  s->setLoad(1.2f);
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& v = s->voice(i);
+    if (v.stolen) TEST_ASSERT_TRUE(v.track == 5 && v.note == 75);
+  }
+  int oldest = -1;  // next: the oldest sounding one
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& v = s->voice(i);
+    if (v.on && !v.stolen && (oldest < 0 || v.age < s->voice(oldest).age)) oldest = i;
+  }
+  s->setLoad(1.2f);
+  TEST_ASSERT_TRUE(s->voice(oldest).stolen);
+  int stolen = 0;
+  for (int i = 0; i < kVoices; ++i) stolen += s->voice(i).stolen;
+  TEST_ASSERT_EQUAL(2, stolen);
+}
+
+void test_guard_cap_limits_new_notes_and_recovers() {
+  fillVoices();
+  for (int k = 0; k < 6; ++k) s->setLoad(1.2f);
+  const int cap = s->voiceCap();
+  for (int k = 0; k < 4; ++k) s->render(buf);  // the fades end
+  for (int t = 0; t < kTracks; ++t) noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(90 + t));
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->activeVoices() <= cap);
+  // Between the marks the cap holds (once the smoothed load has come down below the high mark).
+  for (int k = 0; k < 20; ++k) s->setLoad(0.7f);
+  const int held = s->voiceCap();
+  TEST_ASSERT_TRUE(held <= cap);
+  for (int k = 0; k < 200; ++k) s->setLoad(0.7f);
+  TEST_ASSERT_EQUAL(held, s->voiceCap());
+  // Light load: one voice back every kCapUpBlocks, up to the whole pool.
+  for (int k = 0; k < Synth::kCapUpBlocks * (kVoices + 4); ++k) s->setLoad(0.2f);
+  TEST_ASSERT_EQUAL(kVoices, s->voiceCap());
+}
+
+void test_guard_smoothed_load_sheds_without_a_spike() {
+  fillVoices();
+  const int full = liveVoices();
+  for (int k = 0; k < 20; ++k) s->setLoad(0.9f);  // never over 1.0, but above kLoadHigh
+  TEST_ASSERT_TRUE(liveVoices() < full);
+}
+
+void test_guard_reset_restores_pool() {
+  fillVoices();
+  for (int k = 0; k < 6; ++k) s->setLoad(1.2f);
+  TEST_ASSERT_TRUE(s->voiceCap() < kVoices);
+  s->reset();
+  TEST_ASSERT_EQUAL(kVoices, s->voiceCap());
+}
+
 void test_sixteen_voices_soft_clip() {
   for (auto& m : p->instruments) {
     m.wave = static_cast<uint8_t>(Wave::Pulse);
@@ -194,7 +287,7 @@ void test_sixteen_voices_soft_clip() {
       ++total;
     }
   }
-  TEST_ASSERT_EQUAL(16, s->activeVoices());
+  TEST_ASSERT_EQUAL(kVoices < 2 * kTracks ? kVoices : 2 * kTracks, s->activeVoices());
   TEST_ASSERT_TRUE(peak > 30000);
   TEST_ASSERT_TRUE(full < total);
 }
@@ -2386,6 +2479,11 @@ int main() {
   RUN_TEST(test_track_volume_zero_is_silent);
   RUN_TEST(test_master_volume_zero_is_silent);
   RUN_TEST(test_instrument_volume_scales_output);
+  RUN_TEST(test_guard_sheds_one_voice_per_block_down_to_min);
+  RUN_TEST(test_guard_sheds_releasing_first_then_oldest);
+  RUN_TEST(test_guard_cap_limits_new_notes_and_recovers);
+  RUN_TEST(test_guard_smoothed_load_sheds_without_a_spike);
+  RUN_TEST(test_guard_reset_restores_pool);
   RUN_TEST(test_sixteen_voices_soft_clip);
   RUN_TEST(test_program_change_selects_instrument);
   RUN_TEST(test_default_instrument_from_track_cfg);

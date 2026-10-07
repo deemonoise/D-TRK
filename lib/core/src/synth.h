@@ -66,6 +66,16 @@ class Synth {
 
   int activeVoices() const;
 
+  // CPU guard: load = the last block's render time / the block's duration, after every block.
+  // Above kLoadHigh (smoothed) or kLoadPanic (that block) the oldest voice, releasing first, fades
+  // out (kStealMs) and the pool shrinks to the voices left; below kLoadLow it grows back by one
+  // every kCapUpBlocks, up to kVoices. Not called (tests, offline render): the whole pool.
+  static constexpr float kLoadHigh = 0.80f, kLoadPanic = 1.0f, kLoadLow = 0.65f;
+  static constexpr int kCapUpBlocks = 25;  // 100 ms
+  static constexpr int kMinVoices = 4;     // never shed below
+  void setLoad(float load);
+  int voiceCap() const { return cap_; }
+
   // Level meters (MIX): the peak of each pattern track's voices since the last call, before the
   // master gain (1.0 = full scale at MAIN 100 %), then cleared. Read without a lock: a block may land
   // on either side of the reset.
@@ -157,6 +167,7 @@ class Synth {
   void renderVoice(Voice& v, float* out, int n);
   void startSample(Voice& v, const Instrument& m) const;
   static void renderSample(Voice& v, float* out, int n);
+  static void renderChip(Voice& v, float* out, int n);
   uint8_t trackInstr(uint8_t track) const;
   // The voice's instrument: a KIT sampler lane's, built into laneScratch_ (valid until the next
   // call), else the project's.
@@ -168,6 +179,9 @@ class Synth {
   const WtSource* wt_ = nullptr;
   mutable Instrument laneScratch_;  // instrOf: KIT sampler lane
   Voice voices_[kVoices];
+  float load_ = 0;  // smoothed render load (setLoad)
+  int cap_ = kVoices;
+  int capUp_ = 0;
   uint32_t age_ = 0;
   TrackRt rt_[kSynthTracks];
   Ev ev_[kMaxEvents];

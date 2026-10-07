@@ -42,13 +42,12 @@
 // instrument, reverb level 100, compressor 100 keyed by track 1. Compare in PROJ while it runs:
 // Rvb level 0 = no reverb, Comp OFF = no compressor (the status-bar CPU figure).
 // Pool bench: -DAUDIO_BENCH_POOL with -DMT_VOICES=N -DMT_HEAVY_MAX=H (envs wt32-pool24 /
-// wt32-pool32) fills the whole N-voice pool and steps the heavy share: 8, 10, .. H heavy voices
-// (DRUM and FM HAT on alternate tracks, retriggered every 16th), the rest CHIP saw voices through
-// a resonant LP filter with an envelope, drive and reverb on all, reverb 100, compressor on.
-// Each step lasts 10 s; the last 8 s are measured (with the CPU profile) and printed to Serial:
-//   pool bench <rev>: heavy 10 + light 22, voices 32: avg 2100 us (52%), peak 2600 us / 4000 us
-// Two rounds go to /projects/cpuprof.txt, each line followed by its profile; then the bench stops
-// (all notes off), leaving the CPU to Wi-Fi.
+// wt32-pool32): first 16 CHIP voices alone (their cost per voice), then the whole N-voice pool
+// with 8, 10, H heavy voices (DRUM and FM HAT on alternate tracks, retriggered every 16th), the
+// rest CHIP saw voices through a resonant LP filter with an envelope; drive and reverb on all,
+// reverb 100, compressor on. The CPU guard (Synth::setLoad) sheds what does not fit.
+// Each step lasts 10 s; the last 8 s are measured (with the CPU profile), printed to Serial and
+// appended to /projects/cpuprof.txt with the profile. Then the bench stops (all notes off).
 // It overwrites instruments 16..28 and every track's out / instrument, like the FM bench.
 #if defined(AUDIO_BENCH_FX) && !defined(AUDIO_BENCH_DRUM)
 #define AUDIO_BENCH_DRUM
@@ -464,8 +463,7 @@ void benchSynTick() {
 #endif
 
 #ifdef AUDIO_BENCH_POOL
-constexpr int kPoolHeavyMin = 8;
-static_assert(mt::kFmVoiceMax >= kPoolHeavyMin && mt::kFmVoiceMax <= 12, "pool bench: heavy tracks 1..12");
+static_assert(mt::kFmVoiceMax >= 8 && mt::kFmVoiceMax <= 12, "pool bench: heavy tracks 1..12");
 constexpr int kPoolHeavyInstr = 16;  // instruments 16..27: heavy, 28: CHIP
 constexpr int kPoolChipInstr = kPoolHeavyInstr + 12;
 static_assert(kPoolChipInstr < mt::kInstruments, "pool bench layout");
@@ -475,12 +473,21 @@ static_assert((mt::kTracks - mt::kFmVoiceMax + 1) * mt::kPolyPerTrack >= mt::kVo
 constexpr uint32_t kPoolHitEvery = 31;    // blocks, ~124 ms: a 16th at 120 BPM
 constexpr uint32_t kPoolStepBlocks = 2500;  // 10 s
 constexpr uint32_t kPoolSkipBlocks = 500;   // settling, not measured
-constexpr uint32_t kPoolSteps = 6;          // two rounds of 8 / 10 / 12, then quiet
+// Steps: CHIP alone (16 voices, the per-voice cost), then the whole pool with 8, 10, 12 heavy.
+struct PoolStep {
+  int heavy, light;
+};
+constexpr PoolStep kPoolSteps[] = {{0, 16},
+                                   {8, mt::kVoices - 8},
+                                   {mt::kFmVoiceMax >= 10 ? 10 : 8, mt::kVoices - (mt::kFmVoiceMax >= 10 ? 10 : 8)},
+                                   {mt::kFmVoiceMax, mt::kVoices - mt::kFmVoiceMax}};
+constexpr uint32_t kPoolStepCount = sizeof(kPoolSteps) / sizeof(kPoolSteps[0]);
 
-int poolHeavy = kPoolHeavyMin;
 uint32_t poolStepsDone;
-uint32_t poolBlocks, poolSum, poolN, poolPeak;
-std::atomic<uint32_t> poolSeq{0}, poolResHeavy{0}, poolResAvg{0}, poolResPeak{0}, poolResVoices{0};
+int poolHeavy = kPoolSteps[0].heavy, poolLightN = kPoolSteps[0].light;
+uint32_t poolBlocks, poolSum, poolN, poolPeak, poolVoiceSum, poolCapMin;
+std::atomic<uint32_t> poolSeq{0}, poolResHeavy{0}, poolResLight{0}, poolResAvg{0}, poolResPeak{0},
+    poolResVoices{0}, poolResCap{0};
 std::atomic<uint32_t> poolMeasureSeq{0};  // a step's measured part began: pollLog starts the profile
 
 void poolNote(int track, uint8_t status, uint8_t note) {
@@ -495,7 +502,7 @@ void poolHits() {
 // Light notes of the step: kPolyPerTrack per track from poolHeavy up, then the preview track.
 template <typename F>
 void poolLight(F f) {
-  int left = mt::kVoices - poolHeavy;
+  int left = poolLightN;
   for (int t = poolHeavy; t <= mt::kTracks && left > 0; ++t) {
     const int track = t < mt::kTracks ? t : mt::kPreviewTrack;
     for (int k = 0; k < mt::kPolyPerTrack && left > 0; ++k, --left)
@@ -555,26 +562,34 @@ void benchPoolBegin() {
 
 // Audio task, before the block is rendered: renderUs holds the previous block.
 void benchPoolTick() {
-  if (poolStepsDone >= kPoolSteps) return;
+  if (poolStepsDone >= kPoolStepCount) return;
   ++poolBlocks;
-  if (poolBlocks == kPoolSkipBlocks) poolMeasureSeq.fetch_add(1, std::memory_order_release);
+  if (poolBlocks == kPoolSkipBlocks) {
+    poolMeasureSeq.fetch_add(1, std::memory_order_release);
+    poolCapMin = mt::kVoices;
+  }
   if (poolBlocks > kPoolSkipBlocks) {
     const uint32_t us = renderUs.load(std::memory_order_relaxed);
     poolSum += us;
     ++poolN;
     if (us > poolPeak) poolPeak = us;
+    poolVoiceSum += synth->activeVoices();
+    if (static_cast<uint32_t>(synth->voiceCap()) < poolCapMin) poolCapMin = synth->voiceCap();
   }
   if (poolBlocks % kPoolHitEvery == 0) poolHits();
   if (poolBlocks < kPoolStepBlocks) return;
   poolResHeavy.store(poolHeavy, std::memory_order_relaxed);
+  poolResLight.store(poolLightN, std::memory_order_relaxed);
   poolResAvg.store(poolN ? poolSum / poolN : 0, std::memory_order_relaxed);
   poolResPeak.store(poolPeak, std::memory_order_relaxed);
-  poolResVoices.store(synth->activeVoices(), std::memory_order_relaxed);
+  poolResVoices.store(poolN ? (poolVoiceSum + poolN / 2) / poolN : 0, std::memory_order_relaxed);
+  poolResCap.store(poolCapMin, std::memory_order_relaxed);
   poolSeq.fetch_add(1, std::memory_order_release);
-  poolBlocks = poolSum = poolN = poolPeak = 0;
+  poolBlocks = poolSum = poolN = poolPeak = poolVoiceSum = 0;
   poolLight([](int track, uint8_t note) { poolNote(track, 0x80, note); });
-  if (++poolStepsDone >= kPoolSteps) return;  // quiet: the drums decay on their own
-  poolHeavy = poolHeavy + 2 > mt::kFmVoiceMax ? kPoolHeavyMin : poolHeavy + 2;
+  if (++poolStepsDone >= kPoolStepCount) return;  // quiet: the drums decay on their own
+  poolHeavy = kPoolSteps[poolStepsDone].heavy;
+  poolLightN = kPoolSteps[poolStepsDone].light;
   poolStep();
 }
 #endif
@@ -651,6 +666,7 @@ void run(void*) {
     std::atomic<uint32_t>& pk = blockEvents ? cpuPeakEv : cpuPeakQuiet;
     if (us > pk.load(std::memory_order_relaxed)) pk.store(us, std::memory_order_relaxed);
 #endif
+    if (synth) synth->setLoad(us * (1.f / kBlockUs));  // CPU guard
     // Single writer: a reset by the UI between load and store at worst keeps this block's time.
     loadSum.fetch_add(us, std::memory_order_relaxed);
     loadBlocks.fetch_add(1, std::memory_order_relaxed);
@@ -1013,17 +1029,19 @@ void pollLog() {
     poolPrinted = seq;
     Profile pr;
     const bool prof = profileRunning() && profileStop(pr);
-    const unsigned h = poolResHeavy.load(std::memory_order_relaxed);
     const unsigned avg = poolResAvg.load(std::memory_order_relaxed);
-    char line[160];
+    char line[200];
     snprintf(line, sizeof(line),
-             "pool bench %s: heavy %u + light %u, voices %u: avg %u us (%u%%), peak %u us / 4000 us\n",
-             storage::firmwareRev(), h, static_cast<unsigned>(mt::kVoices) - h,
-             static_cast<unsigned>(poolResVoices.load(std::memory_order_relaxed)), avg, avg / 40,
+             "pool bench %s, pool %d: heavy %u + light %u, sounding %u (guard cap min %u): avg %u us (%u%%), "
+             "peak %u us / 4000 us\n",
+             storage::firmwareRev(), mt::kVoices, static_cast<unsigned>(poolResHeavy.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(poolResLight.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(poolResVoices.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(poolResCap.load(std::memory_order_relaxed)), avg, avg / 40,
              static_cast<unsigned>(poolResPeak.load(std::memory_order_relaxed)));
     Serial.print(line);
     if (prof) storage::appendCpuProfile(line, pr);
-    if (seq >= kPoolSteps) Serial.println("pool bench: done, quiet");
+    if (seq >= kPoolStepCount) Serial.println("pool bench: done, quiet");
   }
 #endif
 #ifdef AUDIO_CPU_LOG
