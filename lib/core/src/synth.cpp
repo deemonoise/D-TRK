@@ -1057,6 +1057,9 @@ MT_HOT void Synth::render(int16_t* out) {
   for (auto& x : rsend_) x = 0;
   for (auto& x : sc_) x = 0;
   const int scTrack = p_.scTrack >= 1 && p_.scTrack <= kTracks ? p_.scTrack - 1 : -1;
+  // Sidechain ducking: the key track goes around the compressor (into sc_ only, added back after it),
+  // so it ducks the rest of the mix without squashing itself.
+  const bool keyAround = scTrack >= 0 && p_.compAmt > 0 && p_.scDepth > 0;
   int e = 0;
   for (int pos = 0; pos < kBlock;) {
     mark(kProfMaster);
@@ -1087,11 +1090,12 @@ MT_HOT void Synth::render(int16_t* out) {
       float pk = trackPeak_[v.track < kSynthTracks ? v.track : 0];
       if (sends) {
         const float vs = v.send, vr = v.rsend;  // locals: the stores below may alias v
+        float* const dry = sc && keyAround ? sc_ : mix_;
         for (int i = 0; i < n; ++i) {
-          mix_[pos + i] += tmp[i];
+          dry[pos + i] += tmp[i];
           send_[pos + i] += tmp[i] * vs;
           rsend_[pos + i] += tmp[i] * vr;
-          if (sc) sc_[pos + i] += tmp[i];
+          if (sc && !keyAround) sc_[pos + i] += tmp[i];
           const float a = fabsf(tmp[i]);
           if (a > pk) pk = a;
         }
@@ -1117,8 +1121,10 @@ MT_HOT void Synth::render(int16_t* out) {
   mark(kProfDelay);
   reverb_.process(rsend_, mix_, kBlock, p_.rvbSize, p_.rvbDamp, p_.rvbLevel);
   mark(kProfReverb);
-  djFilter(mix_, kBlock);
   comp_.process(mix_, scTrack >= 0 ? sc_ : nullptr, kBlock, p_.compAmt, p_.compRel, p_.scDepth);
+  if (keyAround)
+    for (int i = 0; i < kBlock; ++i) mix_[i] += sc_[i];
+  djFilter(mix_, kBlock);  // after the key track is back: the filter sweeps the whole mix
   const uint8_t mv = p_.masterVol > kMasterVolMax ? kMasterVolMax : p_.masterVol;
   const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
   for (int i = 0; i < kBlock; ++i) out[i] = static_cast<int16_t>(softClip(mix_[i] * g) * 32767.f);

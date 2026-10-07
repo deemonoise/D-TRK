@@ -2333,24 +2333,53 @@ void test_rvb_lock_on_note_step() {
   TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.f, s->voice(s->trackVoice(0)).rsend);
 }
 
-// Track 1 holds a quiet note, track 2 hits hard from block 40: output RMS during the hits.
-static float duckedRms(uint8_t scDepth) {
+// Track 1 holds a quiet note, track 2 hits hard from block 40: 10 blocks of output during the hits,
+// with either track muted (instrument volume 0).
+static void sidechainRun(bool pad, bool kick, int16_t (&out)[Synth::kBlock * 10]) {
   s->reset();
   p->compAmt = 100;
   p->scTrack = 2;
-  p->scDepth = scDepth;
-  p->instruments[0].vol = 30;
-  p->instruments[1].vol = 127;
+  p->scDepth = 127;
+  p->instruments[0].vol = pad ? 30 : 0;
+  p->instruments[1].vol = kick ? 127 : 0;
   noteOn(0, 0, 48);
   for (int k = 0; k < 40; ++k) s->render(buf);
+  noteOn(0, 1, 36);
+  for (int k = 0; k < 10; ++k) s->render(out + k * Synth::kBlock);
+}
+
+// The pad under the kick (output minus the kick alone) is ducked against the pad alone.
+void test_comp_sidechain_track() {
+  static int16_t both[Synth::kBlock * 10], kick[Synth::kBlock * 10], pad[Synth::kBlock * 10];
+  sidechainRun(true, true, both);
+  sidechainRun(false, true, kick);
+  sidechainRun(true, false, pad);
+  double ducked = 0, plain = 0;
+  for (int i = 0; i < Synth::kBlock * 10; ++i) {
+    const double d = both[i] - kick[i];
+    ducked += d * d;
+    plain += double(pad[i]) * pad[i];
+  }
+  TEST_ASSERT_TRUE(plain > 0);
+  TEST_ASSERT_TRUE(sqrt(ducked) < sqrt(plain) * 0.7);
+}
+
+// The key track itself goes around the compressor: a lone loud note on the SC track sounds the
+// same with the compressor on as off (only the other tracks duck).
+static float keyTrackRms(uint8_t compAmt) {
+  s->reset();
+  p->compAmt = compAmt;
+  p->scTrack = 2;
+  p->scDepth = 127;
+  p->instruments[1].vol = 127;
   noteOn(0, 1, 36);
   return rmsBlocks(10);
 }
 
-void test_comp_sidechain_track() {
-  const float plain = duckedRms(0);
-  const float ducked = duckedRms(127);
-  TEST_ASSERT_TRUE(ducked < plain * 0.7f);
+void test_comp_sidechain_key_track_not_squashed() {
+  const float dry = keyTrackRms(0);
+  const float comp = keyTrackRms(100);
+  TEST_ASSERT_FLOAT_WITHIN(dry * 0.05f, dry, comp);
 }
 
 void test_comp_off_is_bit_identical() {
@@ -2614,6 +2643,7 @@ int main() {
   RUN_TEST(test_rsend_makes_tail);
   RUN_TEST(test_rvb_lock_on_note_step);
   RUN_TEST(test_comp_sidechain_track);
+  RUN_TEST(test_comp_sidechain_key_track_not_squashed);
   RUN_TEST(test_comp_off_is_bit_identical);
   RUN_TEST(test_arm_up_down_updown);
   RUN_TEST(test_arm_random_stays_in_set);

@@ -191,7 +191,7 @@ class Synth {
   float mix_[kBlock];
   float send_[kBlock];  // delay send bus
   float rsend_[kBlock];  // reverb send bus
-  float sc_[kBlock];     // sidechain key: the voices of Project::scTrack
+  float sc_[kBlock];     // sidechain key: the voices of Project::scTrack (bypass the compressor)
   Reverb reverb_;
   Compressor comp_;
   Svf dj_;  // master DJ filter

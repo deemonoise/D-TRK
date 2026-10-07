@@ -390,7 +390,7 @@ struct Project {
   uint8_t rvbDamp = 70;
   uint8_t rvbLevel = 80;
   // Master compressor: amount 0..127 (0 = off), release 0..127; sidechain key = track scTrack (1..kTracks,
-  // 0 = none) at depth scDepth 0..127.
+  // 0 = none) at depth scDepth 0..127. The key track itself bypasses the compressor (only the rest ducks).
   uint8_t compAmt = 0;
   uint8_t compRel = 50;
   uint8_t scTrack = 0;
