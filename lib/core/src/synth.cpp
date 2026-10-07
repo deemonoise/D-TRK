@@ -1004,18 +1004,29 @@ MT_HOT void Synth::render(int16_t* out) {
     for (auto& v : voices_) {
       if (!v.on) continue;
       const bool sc = v.track == scTrack;
+      // Every voice renders into tmp: its peak feeds the track's level meter. A voice adds into the
+      // mix once, so mix + (0 + x) is bit-exact to rendering straight into the mix.
+      float tmp[kControl] = {0};
+      const int n = end - pos;
+      renderVoice(v, tmp, n);
+      float pk = trackPeak_[v.track < kSynthTracks ? v.track : 0];
       if (v.send > 0 || v.rsend > 0 || sc) {
-        float tmp[kControl] = {0};
-        renderVoice(v, tmp, end - pos);
-        for (int i = 0; i < end - pos; ++i) {
+        for (int i = 0; i < n; ++i) {
           mix_[pos + i] += tmp[i];
           send_[pos + i] += tmp[i] * v.send;
           rsend_[pos + i] += tmp[i] * v.rsend;
           if (sc) sc_[pos + i] += tmp[i];
+          const float a = fabsf(tmp[i]);
+          if (a > pk) pk = a;
         }
       } else {
-        renderVoice(v, mix_ + pos, end - pos);
+        for (int i = 0; i < n; ++i) {
+          mix_[pos + i] += tmp[i];
+          const float a = fabsf(tmp[i]);
+          if (a > pk) pk = a;
+        }
       }
+      trackPeak_[v.track < kSynthTracks ? v.track : 0] = pk;
       if (clk) mark(v.fm ? kProfFm : v.drum ? kProfDrum : v.syn ? kProfSyn : v.sample ? kProfSample : kProfChip);
       // Freed once the note has ended and its filter has rung out: cutting a resonant filter
       // mid-ring clicks.
@@ -1037,6 +1048,14 @@ MT_HOT void Synth::render(int16_t* out) {
   for (int i = 0; i < kBlock; ++i) out[i] = static_cast<int16_t>(softClip(mix_[i] * g) * 32767.f);
   mark(kProfMaster);
   if (clk) ++profBlocks_;
+}
+
+void Synth::takeTrackPeaks(float out[kTracks]) {
+  const float g = 0.25f;  // the master gain at MAIN 100 % (render())
+  for (int t = 0; t < kTracks; ++t) {
+    out[t] = trackPeak_[t] * g;
+    trackPeak_[t] = 0;
+  }
 }
 
 const char* Synth::profName(int stage) {

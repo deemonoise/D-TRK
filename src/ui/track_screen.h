@@ -58,6 +58,11 @@ class TrackScreen : public Screen {
   uint32_t scopeMs_ = 0, clipMs_ = 0;
   int meter_ = 0;
   float scopeGain_ = 1;  // auto gain, follows the waveform's peak
+  // Track level meters beside the faders: -48..0 dB as 0..1, fast up, falling ~1.2 per second.
+  static constexpr int kMeterBarW = 5;
+  void updateMeters();
+  float level_[mt::kTracks] = {};
+  uint32_t clipAt_[mt::kTracks] = {};  // millis() | 1 of the last full-scale peak, held 1 s
   enum class Part : uint8_t { Name, Fader, Mute, Solo };
   int firstTrack() const;
   void mixerInput(const hw::InputEvent& ev);

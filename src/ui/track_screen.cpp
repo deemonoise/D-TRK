@@ -1,4 +1,5 @@
 #include "track_screen.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
@@ -402,9 +403,24 @@ void TrackScreen::drawScope(LGFX_Sprite& s, int y0) {
   }
 }
 
+void TrackScreen::updateMeters() {
+  float pk[mt::kTracks];
+  audio::trackPeaks(pk);
+  const uint32_t now = millis();
+  for (int t = 0; t < mt::kTracks; ++t) {
+    const float db = pk[t] > 1e-6f ? 20.f * log10f(pk[t]) : -120.f;
+    float v = (db + 48.f) * (1.f / 48.f);
+    v = v < 0 ? 0 : (v > 1 ? 1 : v);
+    level_[t] = v > level_[t] ? v : (level_[t] - 0.06f > v ? level_[t] - 0.06f : v);
+    if (pk[t] >= 0.99f) clipAt_[t] = now | 1;
+  }
+}
+
 void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
   const mt::Project& p = app_.project();
   char buf[12];
+  updateMeters();
+  const uint32_t now = millis();
   for (int k = 0; k < kStrips; ++k) {
     const int tr = firstTrack() + k;
     const mt::TrackCfg& t = p.tracks[tr];
@@ -417,6 +433,16 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     const int fx = x + (kStripW - 2 - kFaderW) / 2, fy = y0 + kFaderY;
     if (internal) drawFader(s, fx, fy, t.vol, 127, audible ? kText : kDim);
     else s.drawRect(fx, fy, kFaderW, kFaderH, kDim);
+    if (internal) {  // level meter: green, yellow above -6 dB, red for a second after full scale
+      const int mx = fx + kFaderW + 3;
+      s.fillRect(mx, fy, kMeterBarW, kFaderH, kBeatBg);
+      const int mh = static_cast<int>(level_[tr] * kFaderH + 0.5f);
+      const int yel = static_cast<int>(kFaderH * 42.f / 48.f);  // -6 dB
+      const bool clip = clipAt_[tr] && now - clipAt_[tr] < 1000;
+      if (mh > 0) s.fillRect(mx, fy + kFaderH - (mh < yel ? mh : yel), kMeterBarW, mh < yel ? mh : yel, kGreen);
+      if (mh > yel) s.fillRect(mx, fy + kFaderH - mh, kMeterBarW, mh - yel, kYellow);
+      if (clip) s.fillRect(mx, fy, kMeterBarW, 3, kRed);
+    }
     if (internal) snprintf(buf, sizeof(buf), "%3u", t.vol);
     else snprintf(buf, sizeof(buf), "MIDI");
     s.setTextColor(internal ? kText : kDim);

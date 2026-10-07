@@ -756,6 +756,12 @@ int16_t scopePeak() {
   return static_cast<int16_t>(pk > 32767 ? 32767 : pk);
 }
 
+void trackPeaks(float out[16]) {
+  static_assert(mt::kTracks == 16, "trackPeaks");
+  if (synth) synth->takeTrackPeaks(out);
+  else for (int t = 0; t < mt::kTracks; ++t) out[t] = 0;
+}
+
 Load takeLoad() {
   Load l;
   l.blocks = loadBlocks.exchange(0, std::memory_order_relaxed);

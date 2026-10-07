@@ -89,6 +89,20 @@ void test_silent_without_events() {
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
+void test_track_peaks() {
+  float pk[kTracks];
+  s->takeTrackPeaks(pk);
+  noteOn(0, 2, 60);
+  s->render(buf);
+  s->takeTrackPeaks(pk);
+  for (int t = 0; t < kTracks; ++t) {
+    if (t == 2) TEST_ASSERT_TRUE(pk[t] > 0.01f && pk[t] <= 1.f);
+    else TEST_ASSERT_EQUAL_FLOAT(0.f, pk[t]);
+  }
+  s->takeTrackPeaks(pk);  // cleared by the read
+  TEST_ASSERT_EQUAL_FLOAT(0.f, pk[2]);
+}
+
 void test_note_on_lands_on_its_sample() {
   noteOn(64, 0, 60);
   s->render(buf);
@@ -2358,6 +2372,7 @@ int main() {
   RUN_TEST(test_event_offset);
   RUN_TEST(test_silent_without_events);
   RUN_TEST(test_note_on_lands_on_its_sample);
+  RUN_TEST(test_track_peaks);
   RUN_TEST(test_events_sorted_by_offset);
   RUN_TEST(test_note_off_frees_voice_after_release);
   RUN_TEST(test_velocity_zero_is_note_off);

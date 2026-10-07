@@ -66,6 +66,11 @@ class Synth {
 
   int activeVoices() const;
 
+  // Level meters (MIX): the peak of each pattern track's voices since the last call, before the
+  // master gain (1.0 = full scale at MAIN 100 %), then cleared. Read without a lock: a block may land
+  // on either side of the reset.
+  void takeTrackPeaks(float out[kTracks]);
+
   // Profiling (PROJ -> SYS -> CPU profile): cycles spent per stage, summed until takeProfile().
   // clock = a cycle counter; nullptr (the default) = off, no cost.
   enum ProfStage : uint8_t {
@@ -170,6 +175,7 @@ class Synth {
   Svf dj_;  // master DJ filter
   void djFilter(float* x, int n);
   Delay delay_;
+  float trackPeak_[kSynthTracks] = {};
   uint32_t (*clock_)() = nullptr;
   uint32_t prof_[kProfStages] = {};
   uint32_t profBlocks_ = 0;
