@@ -41,7 +41,7 @@ float DrumVoice::K::get(float t) {
   return k;
 }
 
-void DrumVoice::Flt::set(Svf::Mode m, float h, float qq) {
+MT_HOT void DrumVoice::Flt::set(Svf::Mode m, float h, float qq) {
   if (m == mode && h == hz && qq == q) return;
   mode = m;
   hz = h;
@@ -66,7 +66,7 @@ void DrumVoice::trigger(bool keepTail) {
   nf_.svf.reset();
 }
 
-void DrumVoice::control(const DrumParams& p, int span) {
+MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
   if (span < 1) span = 1;
   if (fresh_) {
     // Bursts are latched at the trigger: their count and length don't follow later updates.

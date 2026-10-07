@@ -1,4 +1,5 @@
 #include "model.h"
+#include "hot.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -96,7 +97,7 @@ void Project::reset() {
 
 // Tables built on first use: powf is costly on the ESP32 and these run per voice at control rate.
 // A race on the first use only writes the same values twice.
-uint16_t envTimeMs(uint8_t v) {
+MT_HOT uint16_t envTimeMs(uint8_t v) {
   static uint16_t table[128];
   static bool ready = false;
   if (!ready) {
@@ -129,7 +130,7 @@ LfoRef lfoRef(Instrument& m, int i) {
   return {l.wave, l.rate, l.depth, l.dest, l.sync};
 }
 
-float lfoHz(uint8_t v) {
+MT_HOT float lfoHz(uint8_t v) {
   static float table[128];
   static bool ready = false;
   if (!ready) {
@@ -170,7 +171,7 @@ float resoQ(float v) {
   return 0.5f * powf(40.f, v / 127.f);
 }
 
-float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec) {
+MT_HOT float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec) {
   const uint32_t a = static_cast<uint32_t>(envTimeMs(fAtk) * kRate / 1000.f);
   if (t < a) return static_cast<float>(t) / a;
   const float d = envTimeMs(fDec) * kRate / 1000.f;

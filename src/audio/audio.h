@@ -16,6 +16,7 @@ void reserve();
 void begin(mt::Project* p);
 // The synth state ended up in internal RAM (false: PSRAM, every sample costs more).
 bool synthInternal();
+bool reverbInternal();  // the reverb buffer in internal RAM (else PSRAM)
 
 // CPU profile (PROJ -> SYS): the render time per stage (mt::Synth::ProfStage) while running.
 constexpr int kProfStages = 11;

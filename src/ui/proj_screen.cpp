@@ -157,7 +157,9 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                         [](char* o, int n) {
                           const bool s = audio::synthInternal(), q = engine::seqInternal();
                           const unsigned kb = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
-                          snprintf(o, n, "%s, %uK FREE", s && q ? "INTERNAL" : (s ? "SEQ IN PSRAM" : (q ? "SYNTH IN PSRAM" : "PSRAM")), kb);
+                          snprintf(o, n, "%s, RVB %s, %uK FREE",
+                                   s && q ? "INTERNAL" : (s ? "SEQ IN PSRAM" : (q ? "SYNTH IN PSRAM" : "PSRAM")),
+                                   audio::reverbInternal() ? "INT" : "PSRAM", kb);
                         },
                         [](int) {}};
   // Click: start; play a while (on the screen to measure), click again: the time per stage of the

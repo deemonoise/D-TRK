@@ -1,4 +1,5 @@
 #include "synth.h"
+#include "hot.h"
 #include "slices.h"
 #include "synth_drum_machines.h"
 #include "synth_fm_machines.h"
@@ -108,7 +109,7 @@ uint8_t Synth::trackInstr(uint8_t track) const {
   return i < kInstruments ? i : 0;
 }
 
-uint8_t Synth::trackVol(uint8_t track) const {
+MT_HOT uint8_t Synth::trackVol(uint8_t track) const {
   const uint8_t v = track < kTracks ? p_.tracks[track].vol : kPreviewVol;
   return v > 127 ? 127 : v;
 }
@@ -575,7 +576,7 @@ void Synth::releaseTrack(uint8_t track) {
     if (v.on && v.track == track) v.env.gate(false);
 }
 
-void Synth::control(Voice& v, int dt) {
+MT_HOT void Synth::control(Voice& v, int dt) {
   const Instrument& m = instrOf(v);
   const TrackRt& r = rt_[v.track];
   v.fenvT += static_cast<uint32_t>(dt);
@@ -715,7 +716,7 @@ void Synth::control(Voice& v, int dt) {
 }
 
 // Filter at control rate: off costs nothing per sample (renderVoice skips it).
-void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut) {
+MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut) {
   const uint8_t mode = m.fltMode < static_cast<uint8_t>(FltMode::Count) ? m.fltMode : 0;
   const bool was = v.fltOn;
   v.fltOn = mode != static_cast<uint8_t>(FltMode::Off);
@@ -745,7 +746,7 @@ void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoC
   v.flt.set(static_cast<Svf::Mode>(mode - 1), v.octHz, v.fltQ);
 }
 
-float Synth::cachedHz(Voice& v, int k, float note) {
+MT_HOT float Synth::cachedHz(Voice& v, int k, float note) {
   if (note != v.hzKey[k]) {
     v.hzKey[k] = note;
     v.hzVal[k] = noteHz(note);
@@ -762,7 +763,7 @@ void Synth::resetLfos(Voice& v) {
 
 // LFO i of a voice: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM), restarted at
 // note-on; -1..1 x depth / 64.
-float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
+MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
   if (!c.depth) return 0;
   const float hz = c.sync ? lfoSyncHz(c.rate, p_.bpm) : lfoHz(c.rate);
   float& ph = v.lfoPhase[i];
@@ -786,13 +787,13 @@ float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
 // Macros of an FM / DRUM / SYNTH voice: locks over the instrument's, then the LFO's macro target (l:
 // control()'s LFO value).
 // Velocity -> DECAY macro (macro 0: SHP1 on SYNTH): velMac x (vel - 64) / 64 macro units.
-uint8_t Synth::velDecay(const Voice& v, const Instrument& m, uint8_t dec) {
+MT_HOT uint8_t Synth::velDecay(const Voice& v, const Instrument& m, uint8_t dec) {
   if (!m.velMac) return dec;
   const int d = dec + clampf(m.velMac, -64, 63) * (static_cast<int>(v.vel) - 64) / 64;
   return static_cast<uint8_t>(d < 0 ? 0 : (d > 127 ? 127 : d));
 }
 
-void Synth::macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]) {
+MT_HOT void Synth::macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]) {
   for (int k = 0; k < kFmMacros; ++k) mac[k] = (v.lockMask & (1u << k)) ? v.lock[k] : m.macro[k];
   mac[kMacDec] = velDecay(v, m, static_cast<uint8_t>(mac[kMacDec] > 127 ? 127 : mac[kMacDec]));
   for (int k = 0; k < kFmMacros; ++k)
@@ -800,7 +801,7 @@ void Synth::macros(const Voice& v, const Instrument& m, const float* lm, float (
 }
 
 // pitch includes the LFO's PITCH target, vol its VOL target; l moves the macro targets here.
-void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
+MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   // fmMachine is pure and costly (tens of us): reuse the last params while the inputs stay
@@ -822,7 +823,7 @@ void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const 
 }
 
 // As controlFm, with the same cache: drumMachine's powf calls cost microseconds each on the ESP32.
-void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
+MT_HOT void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
@@ -840,7 +841,7 @@ void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, cons
 }
 
 // SYNTH: macros SHP1, SHP2, MIX, DET, SENV (env -> SHAPE depth, bipolar around 64).
-void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
+MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   v.senvT += static_cast<uint32_t>(dt);
@@ -933,7 +934,7 @@ void Synth::djFilter(float* x, int n) {
   for (int i = 0; i < n; ++i) x[i] = dj_.process(x[i]);
 }
 
-void Synth::renderSample(Voice& v, float* out, int n) {
+MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   const int16_t* d = v.smp;
   const uint32_t last = v.smpLen - 1;
   const int64_t lo = static_cast<int64_t>(v.loopLo) << 32, hi = static_cast<int64_t>(v.loopHi) << 32;
@@ -973,7 +974,7 @@ void Synth::renderSample(Voice& v, float* out, int n) {
   v.dir = step >= 0 ? 1 : -1;
 }
 
-void Synth::render(int16_t* out) {
+MT_HOT void Synth::render(int16_t* out) {
   // Profiling: t = the cycle counter at the last mark; mark(stage) books the time since.
   uint32_t (*const clk)() = clock_;
   uint32_t t = clk ? clk() : 0;

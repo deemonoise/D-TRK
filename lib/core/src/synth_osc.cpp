@@ -1,4 +1,5 @@
 #include "synth_osc.h"
+#include "hot.h"
 #include <math.h>
 
 namespace mt {
@@ -12,6 +13,6 @@ struct SineInit {
 } sineInit;
 }  // namespace
 
-float noteHz(float note) { return 440.f * exp2f((note - 69.f) * (1.f / 12.f)); }
+MT_HOT float noteHz(float note) { return 440.f * exp2f((note - 69.f) * (1.f / 12.f)); }
 
 }  // namespace mt

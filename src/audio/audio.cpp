@@ -99,6 +99,7 @@ SemaphoreHandle_t pausedSem, resumeSem;
 
 mt::Synth* synth;
 void* synthMem = nullptr;  // reserve()
+bool reverbInt = false;    // the reverb buffer is in internal RAM
 Ring engineQ;  // engine task -> audio task
 Ring uiQ;      // UI task (preview) -> audio task
 uint64_t blockT;  // start of the block being rendered, engine time
@@ -565,6 +566,8 @@ void reserve() {
 
 bool synthInternal() { return synth && esp_ptr_internal(synth); }
 
+bool reverbInternal() { return reverbInt; }
+
 static_assert(kProfStages == mt::Synth::kProfStages, "profile stages");
 
 static uint32_t cycles() { return esp_cpu_get_cycle_count(); }
@@ -606,8 +609,16 @@ void begin(mt::Project* p) {
     synth->setDelayBuffer(line, kDelayLen);
   else
     Serial.println("audio: no PSRAM for the delay line");
-  // Reverb: 5934 floats (23 KB), PSRAM like the delay line; none = no reverb.
-  if (auto* rv = static_cast<float*>(heap_caps_malloc(mt::Reverb::kBufLen * sizeof(float), MALLOC_CAP_SPIRAM)))
+  // Reverb: 5934 floats (23 KB), read and written every sample: internal RAM when there is room,
+  // else PSRAM (slower through the cache); none = no reverb.
+  // Keeps a margin of internal RAM for Wi-Fi and the SD card.
+  constexpr size_t kRvBytes = mt::Reverb::kBufLen * sizeof(float), kKeepFree = 40 * 1024;
+  float* rvMem = nullptr;
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) >= kRvBytes + kKeepFree)
+    rvMem = static_cast<float*>(heap_caps_malloc(kRvBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if (!rvMem) rvMem = static_cast<float*>(heap_caps_malloc(kRvBytes, MALLOC_CAP_SPIRAM));
+  reverbInt = rvMem && esp_ptr_internal(rvMem);
+  if (auto* rv = rvMem)
     synth->setReverbBuffer(rv, mt::Reverb::kBufLen);
   else
     Serial.println("audio: no PSRAM for the reverb");

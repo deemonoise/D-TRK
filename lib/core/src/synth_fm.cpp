@@ -146,7 +146,7 @@ void FmVoice::ampPair(const FmParams& p, uint32_t t0, int span, float& a0, float
   a1 = at(tb);
 }
 
-void FmVoice::control(const FmParams& p, int span) {
+MT_HOT void FmVoice::control(const FmParams& p, int span) {
   alg_ = p.alg;
   oneShot_ = p.oneShot;
   const float inv = span > 0 ? 1.f / span : 0;

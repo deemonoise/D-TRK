@@ -1,4 +1,5 @@
 #include "synth_syn.h"
+#include "hot.h"
 #include <math.h>
 
 namespace mt {
@@ -8,7 +9,7 @@ float wtLevelPos(float hz) {
   return x < 0 ? 0 : (x > kWtLevels - 1 ? kWtLevels - 1 : x);
 }
 
-void WtOsc::setLevel(float hz) {
+MT_HOT void WtOsc::setLevel(float hz) {
   // floor(wtLevelPos(hz)) without log2f (control rate, every SYNTH voice): halvings are exact.
   float x = hz * kWtHarm / 8000.f;
   int k = 0;
@@ -28,7 +29,7 @@ void SynVoice::trigger() {
   snap_ = true;
 }
 
-void SynVoice::control(const SynParams& p, int n) {
+MT_HOT void SynVoice::control(const SynParams& p, int n) {
   p_ = p;
   for (int k = 0; k < 2; ++k)
     if (p.mode[k] == static_cast<uint8_t>(SynOsc::Wt)) wt_[k].setLevel(p.hz[k]);
