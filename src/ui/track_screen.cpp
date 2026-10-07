@@ -129,7 +129,10 @@ void TrackScreen::leaveEdit() {
   fixNames();
 }
 
-void TrackScreen::onLeave() { leaveEdit(); }
+void TrackScreen::onLeave() {
+  leaveEdit();
+  audio::setMeters(false);  // the level meters cost render time: only while MIX is shown
+}
 
 void TrackScreen::showPage(int page, bool bar) {
   leaveEdit();
@@ -146,6 +149,7 @@ void TrackScreen::followTrack() {
 void TrackScreen::onEnter() {
   leaveEdit();
   editTrack_ = app_.curTrack();
+  audio::setMeters(mixer_);
 }
 
 void TrackScreen::changeTrack(int d) {
@@ -159,6 +163,7 @@ void TrackScreen::setMixer(bool on) {
   if (on == mixer_) return;
   leaveEdit();
   mixer_ = on;
+  audio::setMeters(on);
   app_.invalidate();
 }
 

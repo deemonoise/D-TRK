@@ -62,6 +62,7 @@ void scopeRead(int16_t* out, int n);
 int16_t scopePeak();
 // Level meters (MIX): each pattern track's peak since the last call (1.0 = full scale at MAIN 100 %).
 void trackPeaks(float out[16]);
+void setMeters(bool on);  // MIX shown: measure them (costs ~1-2 % of the render)
 
 // Prints the audio task's counters (lost / late events, bench) now and then. UI task: the audio
 // task itself never prints (USB CDC writes may block it).

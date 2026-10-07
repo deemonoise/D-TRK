@@ -70,6 +70,9 @@ class Synth {
   // master gain (1.0 = full scale at MAIN 100 %), then cleared. Read without a lock: a block may land
   // on either side of the reset.
   void takeTrackPeaks(float out[kTracks]);
+  // Meters on (MIX shown): the voices go through their segment buffer to measure the peaks; off,
+  // a voice without sends renders straight into the mix (a little cheaper). Peaks stay 0 when off.
+  void setMeters(bool on) { meters_ = on; }
 
   // Profiling (PROJ -> SYS -> CPU profile): cycles spent per stage, summed until takeProfile().
   // clock = a cycle counter; nullptr (the default) = off, no cost.
@@ -176,6 +179,7 @@ class Synth {
   void djFilter(float* x, int n);
   Delay delay_;
   float trackPeak_[kSynthTracks] = {};
+  bool meters_ = false;
   uint32_t (*clock_)() = nullptr;
   uint32_t prof_[kProfStages] = {};
   uint32_t profBlocks_ = 0;

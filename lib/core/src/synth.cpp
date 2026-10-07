@@ -1004,13 +1004,20 @@ MT_HOT void Synth::render(int16_t* out) {
     for (auto& v : voices_) {
       if (!v.on) continue;
       const bool sc = v.track == scTrack;
-      // Every voice renders into tmp: its peak feeds the track's level meter. A voice adds into the
+      const int n = end - pos;
+      const bool sends = v.send > 0 || v.rsend > 0 || sc;
+      if (!sends && !meters_) {
+        renderVoice(v, mix_ + pos, n);
+        if (v.env.idle() && !(v.fltOn && v.flt.ringing())) v.on = false;
+        if (clk) mark(v.fm ? kProfFm : v.drum ? kProfDrum : v.syn ? kProfSyn : v.sample ? kProfSample : kProfChip);
+        continue;
+      }
+      // Through tmp: the sends, and the peak for the track's level meter (MIX). A voice adds into the
       // mix once, so mix + (0 + x) is bit-exact to rendering straight into the mix.
       float tmp[kControl] = {0};
-      const int n = end - pos;
       renderVoice(v, tmp, n);
       float pk = trackPeak_[v.track < kSynthTracks ? v.track : 0];
-      if (v.send > 0 || v.rsend > 0 || sc) {
+      if (sends) {
         for (int i = 0; i < n; ++i) {
           mix_[pos + i] += tmp[i];
           send_[pos + i] += tmp[i] * v.send;

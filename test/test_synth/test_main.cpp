@@ -91,6 +91,7 @@ void test_silent_without_events() {
 
 void test_track_peaks() {
   float pk[kTracks];
+  s->setMeters(true);
   s->takeTrackPeaks(pk);
   noteOn(0, 2, 60);
   s->render(buf);
@@ -100,6 +101,10 @@ void test_track_peaks() {
     else TEST_ASSERT_EQUAL_FLOAT(0.f, pk[t]);
   }
   s->takeTrackPeaks(pk);  // cleared by the read
+  TEST_ASSERT_EQUAL_FLOAT(0.f, pk[2]);
+  s->setMeters(false);  // off: no peaks for a voice without sends
+  s->render(buf);
+  s->takeTrackPeaks(pk);
   TEST_ASSERT_EQUAL_FLOAT(0.f, pk[2]);
 }
 

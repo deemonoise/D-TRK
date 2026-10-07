@@ -762,6 +762,10 @@ void trackPeaks(float out[16]) {
   else for (int t = 0; t < mt::kTracks; ++t) out[t] = 0;
 }
 
+void setMeters(bool on) {
+  if (synth) synth->setMeters(on);
+}
+
 Load takeLoad() {
   Load l;
   l.blocks = loadBlocks.exchange(0, std::memory_order_relaxed);
