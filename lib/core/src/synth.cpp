@@ -280,10 +280,39 @@ float Synth::rnd() {
 // KIT sampler lane release: envTimeMs(32) ~ 10 ms.
 static constexpr uint8_t kLaneRelease = 32;
 
+// KIT sampler lane: the lane's sample at its own pitch (root = lane note) + pitch, one-shot or
+// decay. out holds Instrument() defaults in every other field: start 0, end 0xFFFF, loop Off, no
+// slices, forward.
+static void buildLane(Instrument& out, const Instrument& k, const KitLane& ln) {
+  out.type = InstrType::Sample;
+  for (int i = 0; i < kSampleNameMax; ++i) out.sample[i] = ln.sample[i];  // the UI may be editing it
+  out.sample[kSampleNameMax] = 0;
+  out.root = ln.note;
+  out.transpose = ln.pitch;
+  out.vol = ln.vol;
+  out.attack = 0;
+  out.decay = ln.decay;
+  out.sustain = ln.decay ? 0 : 127;
+  out.release = kLaneRelease;
+  out.mono = true;
+  out.fltMode = 0;
+  for (int i = 0; i < kLfos; ++i) lfoRef(out, i).depth = 0;
+  out.send = k.send;
+  out.rsend = k.rsend;
+}
+
+const Instrument& Synth::instrOf(const Voice& v) const {
+  const Instrument& m = p_.instruments[v.instr];
+  if (!v.lane) return m;
+  buildLane(laneScratch_, m, m.kit[v.laneIdx]);
+  return laneScratch_;
+}
+
 void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   uint8_t ii = trackInstr(track);
   bool kitLane = false;  // a KIT lane: mono per lane (choke on the same note), poly across lanes
-  Instrument scratch;    // sampler lane: built from the lane, copied into the voice
+  int laneIdx = 0;
+  Instrument scratch;    // sampler lane: built from the lane (instrOf rebuilds it while the voice plays)
   const Instrument* mp = &p_.instruments[ii];
   if (mp->type == InstrType::Kit) {
     const Instrument& k = *mp;
@@ -293,28 +322,13 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     if (lane < 0) return;
     const KitLane& ln = k.kit[lane];
     kitLane = true;
+    laneIdx = lane;
     if (ln.instr < kInstruments) {
       if (p_.instruments[ln.instr].type == InstrType::Kit) return;  // no kit in a kit
       ii = ln.instr;
       mp = &p_.instruments[ii];
     } else {
-      // Mini sampler: the lane's sample at its own pitch (root = lane note) + pitch, one-shot or decay.
-      // start 0, end 0xFFFF, loop Off, no slices, forward: Instrument() defaults.
-      scratch.type = InstrType::Sample;
-      for (int i = 0; i < kSampleNameMax; ++i) scratch.sample[i] = ln.sample[i];  // the UI may be editing it
-      scratch.sample[kSampleNameMax] = 0;
-      scratch.root = ln.note;
-      scratch.transpose = ln.pitch;
-      scratch.vol = ln.vol;
-      scratch.attack = 0;
-      scratch.decay = ln.decay;
-      scratch.sustain = ln.decay ? 0 : 127;
-      scratch.release = kLaneRelease;
-      scratch.mono = true;
-      scratch.fltMode = 0;
-      for (int i = 0; i < kLfos; ++i) lfoRef(scratch, i).depth = 0;
-      scratch.send = k.send;
-      scratch.rsend = k.rsend;
+      buildLane(scratch, k, ln);  // mini sampler
       mp = &scratch;
     }
   }
@@ -415,7 +429,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   v.note = note;
   v.instr = ii;
   v.lane = kitLane && mp == &scratch;
-  if (v.lane) v.laneInst = scratch;
+  v.laneIdx = static_cast<uint8_t>(laneIdx);
   v.sample = sample;
   v.gen = r.gen;
   v.smp = smp;
@@ -469,18 +483,19 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   constexpr uint8_t kMacroBits = (1 << kFmMacros) - 1;
   v.lockMask = (heavy || synT) ? r.lockMask : (r.lockMask & ~kMacroBits);
   for (int k = 0; k < kLocks; ++k) v.lock[k] = r.lock[k];
+  if (fm || drumT || synT) v.useEngine(fm ? EngineKind::Fm : drumT ? EngineKind::Drum : EngineKind::Syn);
   if (fm) {
     v.fpValid = false;
     if (!overlap || !keepFm) {  // legato from a CHIP / SAMPLE voice starts the FM voice afresh
       // A held machine after a drum starts afresh too: its level is 1 at once, ramping the
       // drum's operators into it would jump from the drum's decayed level.
-      v.fmv.trigger(keepFm && (drum || !prevDrum));
+      v.fmv().trigger(keepFm && (drum || !prevDrum));
       resetLfos(v);
     }
   }
   if (drumT) {
     v.fpValid = false;
-    v.drv.trigger(wasDrum);
+    v.drv().trigger(wasDrum);
   }
   if (synT) {
     // The UI may be editing the names: copy them first. Only WT oscillators look a table up.
@@ -492,7 +507,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       v.synWt[k] = (wt_ && wtMode && name[0]) ? wt_->findWt(name) : nullptr;
     }
     if (!overlap) {  // legato keeps the phases and the env -> SHAPE running, as the filter env
-      v.sv.trigger();
+      v.sv().trigger();
       v.senvT = 0;
     }
   }
@@ -809,7 +824,7 @@ MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt,
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
   for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
   if (stale) {
-    fmMachine(v.machine, mac, pitch, v.fp);
+    fmMachine(v.machine, mac, pitch, v.fp());
     ++fmCalls_;
     v.fpValid = true;
     v.fpPitch = pitch;
@@ -817,7 +832,7 @@ MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt,
   }
   // Ramp to the next control update: a full period from render(), the rest of it mid-segment
   // (note-on, bend), so a choke ramp ends exactly where the next update starts.
-  v.fmv.control(v.fp, dt ? dt : ctlLeft_);
+  v.fmv().control(v.fp(), dt ? dt : ctlLeft_);
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));
 }
@@ -829,13 +844,13 @@ MT_HOT void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int d
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
   for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
   if (stale) {
-    drumMachine(v.machine, mac, pitch, v.dp);
+    drumMachine(v.machine, mac, pitch, v.dp());
     ++drumCalls_;
     v.fpValid = true;
     v.fpPitch = pitch;
     for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
   }
-  v.drv.control(v.dp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
+  v.drv().control(v.dp(), dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));
 }
@@ -862,7 +877,7 @@ MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt
   sp.sub = (m.synSub > 127 ? 127 : m.synSub) * (1.f / 127.f);
   sp.subOct = m.synSubOct ? 2 : 1;
   sp.noise = (m.synNoise > 127 ? 127 : m.synNoise) * (1.f / 127.f);
-  v.sv.control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
+  v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));
 }
@@ -888,18 +903,18 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
   }
   if (v.fm) {
     float tmp[kControl] = {0};
-    v.fmv.render(tmp, n, v.amp);
+    v.fmv().render(tmp, n, v.amp);
     for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
-    if (v.fmv.done()) v.env.kill();
+    if (v.fmv().done()) v.env.kill();
   } else if (v.drum) {
     // The gate env scales the choke tail too: it is 1 through a choke, and an all-off fades both.
     float tmp[kControl] = {0};
-    v.drv.render(tmp, n, v.amp);
+    v.drv().render(tmp, n, v.amp);
     for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
-    if (v.drv.done()) v.env.kill();
+    if (v.drv().done()) v.env.kill();
   } else if (v.syn) {
     float tmp[kControl] = {0};
-    v.sv.render(tmp, n, v.amp);
+    v.sv().render(tmp, n, v.amp);
     for (int i = 0; i < n; ++i) dst[i] += tmp[i] * v.env.next();
   } else if (v.sample) {
     renderSample(v, dst, n);

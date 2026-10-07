@@ -97,6 +97,9 @@ class Synth {
   uint32_t fmMachineCalls() const { return fmCalls_; }
   uint32_t drumMachineCalls() const { return drumCalls_; }
 
+  // Voice i's instrument as it plays (a KIT sampler lane: the SAMPLE instrument built from the lane).
+  const Instrument& voiceInstrument(int i) const { return instrOf(voices_[i]); }
+
  private:
   struct Ev {
     uint8_t off, track, len;
@@ -155,13 +158,15 @@ class Synth {
   void startSample(Voice& v, const Instrument& m) const;
   static void renderSample(Voice& v, float* out, int n);
   uint8_t trackInstr(uint8_t track) const;
-  // The voice's instrument: a KIT sampler lane's scratch, else the project's.
-  const Instrument& instrOf(const Voice& v) const { return v.lane ? v.laneInst : p_.instruments[v.instr]; }
+  // The voice's instrument: a KIT sampler lane's, built into laneScratch_ (valid until the next
+  // call), else the project's.
+  const Instrument& instrOf(const Voice& v) const;
   uint8_t trackVol(uint8_t track) const;
 
   const Project& p_;
   const SampleSource* bank_ = nullptr;
   const WtSource* wt_ = nullptr;
+  mutable Instrument laneScratch_;  // instrOf: KIT sampler lane
   Voice voices_[kVoices];
   uint32_t age_ = 0;
   TrackRt rt_[kSynthTracks];

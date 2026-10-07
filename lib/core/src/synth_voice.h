@@ -1,5 +1,7 @@
 #pragma once
 #include <stdint.h>
+#include <new>
+#include <type_traits>
 #include "model.h"
 #include "synth_env.h"
 #include "synth_crush.h"
@@ -17,11 +19,35 @@ constexpr int kPolyPerTrack = 4;
 constexpr int kFmVoiceMax = 8;  // heavy voices (FM, DRUM, wavetable SYNTH) sounding at once (CPU)
 constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceMax
 
+// The engine state of a voice. FM, DRUM and SYNTH never sound on one voice at once, so they share
+// memory (Voice::eng); Voice::engKind says which one it holds. A note of another engine type
+// constructs its engine afresh; a note of the same type keeps it, also across CHIP / SAMPLE notes
+// in between, as when the three were separate members.
+enum class EngineKind : uint8_t { Fm, Drum, Syn };
+struct FmEngine {
+  FmVoice fmv;
+  FmParams fp;
+};
+struct DrumEngine {
+  DrumVoice drv;
+  DrumParams dp;
+};
+union VoiceEngine {
+  FmEngine fm;
+  DrumEngine drum;
+  SynVoice syn;
+  VoiceEngine() : fm() {}
+};
+static_assert(std::is_trivially_copyable<FmEngine>::value && std::is_trivially_copyable<DrumEngine>::value &&
+                  std::is_trivially_copyable<SynVoice>::value,
+              "Voice is copied as a whole (v = Voice())");
+
 struct Voice {
   bool on = false;          // allocated (until the envelope goes idle)
   uint8_t track = 0, note = 0;
   uint8_t instr = 0;        // instrument index at note-on (a KIT sampler lane: the KIT's)
-  bool lane = false;        // KIT sampler lane: the instrument is laneInst, not Project::instruments[instr]
+  bool lane = false;        // KIT sampler lane: a SAMPLE instrument built from the KIT's lane
+  uint8_t laneIdx = 0;      //   laneIdx (Synth::instrOf), not Project::instruments[instr]
   bool sample = false;      // SAMPLE instrument (else CHIP)
   uint8_t gen = 0;          // TrackRt::gen at note-on (sample choke)
   uint32_t age = 0;         // allocation order, for stealing
@@ -74,32 +100,43 @@ struct Voice {
   uint8_t lock[kLocks] = {0};
   float lfoPhase[kLfos] = {};        // 0..1, per LFO
   float lfoRnd[kLfos] = {};          // Random wave: value of the current cycle
-  FmVoice fmv;
   // fmMachine() cache: params for the key below, recomputed when a macro moves >= 0.5 or the
   // pitch >= 1 cent from it (Synth::controlFm). fpValid = false forces a recompute (note-on).
   bool fpValid = false;
   float fpPitch = 0;
   float fpMac[kFmMacros] = {0};
-  FmParams fp;
   // DRUM instrument (machine above holds its DrumMachine). drumMachine() cache: dp for the fp*
   // key above, as fp for FM (Synth::controlDrum).
   bool drum = false;
-  DrumVoice drv;
-  DrumParams dp;
   // SYNTH instrument: tables resolved at note-on (a table changed mid-note applies to the next note).
   bool syn = false;
   bool synHeavy = false;  // SYNTH with a wavetable oscillator: counts against kFmVoiceMax
   bool stolen = false;    // fading out (kStealMs) for a heavy note past kFmVoiceMax
   uint32_t senvT = 0;                // samples since the env -> SHAPE trigger
   const int16_t* synWt[2] = {nullptr, nullptr};
-  SynVoice sv;
+  // FM / DRUM / SYNTH engine, see VoiceEngine.
+  EngineKind engKind = EngineKind::Fm;
+  VoiceEngine eng;
+  FmVoice& fmv() { return eng.fm.fmv; }
+  FmParams& fp() { return eng.fm.fp; }
+  DrumVoice& drv() { return eng.drum.drv; }
+  DrumParams& dp() { return eng.drum.dp; }
+  const DrumParams& dp() const { return eng.drum.dp; }
+  SynVoice& sv() { return eng.syn; }
+  // Makes the engine of kind k current: constructed afresh when another one is held.
+  void useEngine(EngineKind k) {
+    if (k == engKind) return;
+    if (k == EngineKind::Fm) new (&eng.fm) FmEngine();
+    else if (k == EngineKind::Drum) new (&eng.drum) DrumEngine();
+    else new (&eng.syn) SynVoice();
+    engKind = k;
+  }
   // Filter, every type (Synth::controlFilter).
   bool fltOn = false;
   uint32_t fenvT = 0;                // samples since the filter envelope's trigger
   bool fenvDone = false;             // the envelope has decayed to -60 dB: 0 until the next trigger
   float fltRes = -1, fltQ = 0.5f;    // resoQ(fltRes), cached
   Svf flt;
-  Instrument laneInst;  // KIT sampler lane: scratch SAMPLE instrument built at note-on (see lane)
 };
 
 // Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the

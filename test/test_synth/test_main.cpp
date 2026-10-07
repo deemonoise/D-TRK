@@ -1567,7 +1567,7 @@ void test_drum_cache_matches_recompute() {
     for (int k = 0; k < kFmMacros; ++k) mac[k] = m.macro[k];
     DrumParams want;
     drumMachine(static_cast<uint8_t>(mc), mac, 62, want);
-    const DrumParams& got = s->voice(s->trackVoice(0)).dp;
+    const DrumParams& got = s->voice(s->trackVoice(0)).dp();
     TEST_ASSERT_EQUAL_FLOAT(want.toneHz[0], got.toneHz[0]);
     TEST_ASSERT_EQUAL_FLOAT(want.toneMs, got.toneMs);
     TEST_ASSERT_EQUAL_FLOAT(want.metalMs, got.metalMs);
@@ -1583,11 +1583,11 @@ void test_drum_cache_follows_lock() {
   p->instruments[0].macro[kMacDec] = 120;
   noteOn(0, 0, 60);
   s->render(buf);
-  const float before = s->voice(s->trackVoice(0)).dp.metalMs;
+  const float before = s->voice(s->trackVoice(0)).dp().metalMs;
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::DCY, 20);  // lock on the sounding voice
   s->render(buf);
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).dp.metalMs < before * 0.5f);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).dp().metalMs < before * 0.5f);
 }
 
 void test_heavy_voice_limit_counts_drum() {
@@ -2046,19 +2046,20 @@ void test_kit_sampler_lane_builds_scratch_instrument() {
   const int v = onlyVoice();
   TEST_ASSERT_TRUE(v >= 0);
   const Voice& x = s->voice(v);
+  const Instrument& li = s->voiceInstrument(v);
   TEST_ASSERT_TRUE(x.lane);
   TEST_ASSERT_TRUE(x.sample);
   TEST_ASSERT_EQUAL(0, x.instr);
-  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Sample), static_cast<int>(x.laneInst.type));
-  TEST_ASSERT_EQUAL_STRING("kick", x.laneInst.sample);
-  TEST_ASSERT_EQUAL(60, x.laneInst.root);
-  TEST_ASSERT_EQUAL(5, x.laneInst.transpose);
-  TEST_ASSERT_EQUAL(80, x.laneInst.vol);
-  TEST_ASSERT_EQUAL(30, x.laneInst.decay);
-  TEST_ASSERT_EQUAL(0, x.laneInst.sustain);
-  TEST_ASSERT_EQUAL(50, x.laneInst.send);
-  TEST_ASSERT_EQUAL(0, x.laneInst.fltMode);
-  TEST_ASSERT_EQUAL(0, x.laneInst.sliceCount);
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Sample), static_cast<int>(li.type));
+  TEST_ASSERT_EQUAL_STRING("kick", li.sample);
+  TEST_ASSERT_EQUAL(60, li.root);
+  TEST_ASSERT_EQUAL(5, li.transpose);
+  TEST_ASSERT_EQUAL(80, li.vol);
+  TEST_ASSERT_EQUAL(30, li.decay);
+  TEST_ASSERT_EQUAL(0, li.sustain);
+  TEST_ASSERT_EQUAL(50, li.send);
+  TEST_ASSERT_EQUAL(0, li.fltMode);
+  TEST_ASSERT_EQUAL(0, li.sliceCount);
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 65.f, x.pitch);  // lane note + pitch
 }
 
@@ -2067,8 +2068,9 @@ void test_kit_decay_zero_is_one_shot() {
   noteOn(0, 0, 61, 100);  // lane 2: decay 0
   s->render(buf);
   const Voice& x = s->voice(onlyVoice());
-  TEST_ASSERT_EQUAL(0, x.laneInst.decay);
-  TEST_ASSERT_EQUAL(127, x.laneInst.sustain);
+  const Instrument& li = s->voiceInstrument(onlyVoice());
+  TEST_ASSERT_EQUAL(0, li.decay);
+  TEST_ASSERT_EQUAL(127, li.sustain);
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 61.f, x.pitch);  // the sample at its own pitch
 }
 
