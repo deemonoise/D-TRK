@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "audio/audio.h"
 #include "name_edit.h"
 
 namespace ui {
@@ -144,7 +145,6 @@ void TrackScreen::followTrack() {
 void TrackScreen::onEnter() {
   leaveEdit();
   editTrack_ = app_.curTrack();
-  if (mixSel_ != kMaster) mixSel_ = app_.curTrack() % kStrips;
 }
 
 void TrackScreen::changeTrack(int d) {
@@ -158,7 +158,6 @@ void TrackScreen::setMixer(bool on) {
   if (on == mixer_) return;
   leaveEdit();
   mixer_ = on;
-  mixSel_ = app_.curTrack() % kStrips;
   app_.invalidate();
 }
 
@@ -247,14 +246,13 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
 
 int TrackScreen::firstTrack() const { return app_.curTrack() / kStrips * kStrips; }
 
-// Mutes, solos, the half's volumes, the selection and the master: the mixer redraws when they change
-// (from here, the track buttons or another screen), not with the play position.
+// Mutes, solos, the half's volumes and the master: the mixer redraws when they change (from here, the
+// track buttons or another screen); the scope adds its own frames.
 uint32_t TrackScreen::mixSignature() const {
   const mt::Project& p = app_.project();
   uint32_t h = 2166136261u;
   auto mix = [&](uint32_t v) { h = (h ^ v) * 16777619u; };
   mix(static_cast<uint32_t>(app_.curTrack()));
-  mix(static_cast<uint32_t>(mixSel_));
   mix(p.masterVol);
   for (int t = 0; t < mt::kTracks; ++t) mix(p.tracks[t].mute | p.tracks[t].solo << 1 | static_cast<uint32_t>(p.tracks[t].out) << 2);
   for (int k = 0; k < kStrips; ++k) {
@@ -267,9 +265,9 @@ uint32_t TrackScreen::mixSignature() const {
 
 bool TrackScreen::wantsRedraw(const engine::Status&) {
   if (!mixer_) return false;
-  if (mixSel_ != kMaster && mixSel_ != app_.curTrack() % kStrips) mixSel_ = app_.curTrack() % kStrips;
   const uint32_t sig = mixSignature();
-  if (sig == mixSig_) return false;
+  const bool scope = millis() - scopeMs_ >= kScopeMs;
+  if (sig == mixSig_ && !scope) return false;
   mixSig_ = sig;
   return true;
 }
@@ -304,40 +302,13 @@ void TrackScreen::toggleMuteSolo(int track, bool solo) {
 }
 
 void TrackScreen::mixerInput(const hw::InputEvent& ev) {
-  using hw::InputType;
-  switch (ev.type) {
-    case InputType::EncTurn:
-      if (ev.shift) {
-        // One line: strips 1-8, MAIN, strips 9-16; the cursor follows the strips (and the half).
-        const int step = ev.delta > 0 ? 1 : -1;
-        for (int n = ev.delta > 0 ? ev.delta : -ev.delta; n > 0; --n) {
-          const int cur = app_.curTrack();
-          if (mixSel_ == kMaster) {  // MAIN sits between tracks 8 and 9
-            const int t = step > 0 ? kStrips : kStrips - 1;
-            app_.setCurTrack(t);
-            mixSel_ = t % kStrips;
-          } else if ((step > 0 && cur == kStrips - 1) || (step < 0 && cur == kStrips)) {
-            app_.setCurTrack(kStrips - 1);  // shown with strips 1-8
-            mixSel_ = kMaster;
-          } else {
-            const int t = cur + step;
-            if (t < 0 || t >= mt::kTracks) break;
-            app_.setCurTrack(t);
-            mixSel_ = t % kStrips;
-          }
-        }
-      } else if (mixSel_ == kMaster) {
-        setMasterVol(app_.project().masterVol + ev.delta);
-      } else {
-        const int t = app_.curTrack();
-        setVol(t, app_.project().tracks[t].vol + ev.delta);  // Shift + turn picks the strip
-      }
-      break;
-    case InputType::EncClick:
-      if (mixSel_ != kMaster) toggleMuteSolo(app_.curTrack(), false);
-      break;
-    default: break;
+  if (ev.type != hw::InputType::EncTurn) return;
+  if (ev.shift) {  // A / B: the same strip in the other half
+    app_.setCurTrack((app_.curTrack() + kStrips) % mt::kTracks);
+    app_.invalidate();
+    return;
   }
+  setMasterVol(app_.project().masterVol + ev.delta);
 }
 
 bool TrackScreen::hitStrip(int x, int y, int& strip, Part& part) const {
@@ -370,7 +341,6 @@ void TrackScreen::mixerTouch(const TouchEvent& ev) {
   const int fy = y0_ + kFaderY;
   const int pos = clampi(ev.y - fy, 0, kFaderH);  // 0 = top
   if (strip == kMaster) {
-    mixSel_ = kMaster;
     if (part == Part::Fader) setMasterVol(mt::kMasterVolMax - pos * mt::kMasterVolMax / kFaderH);
     app_.invalidate();
     return;
@@ -380,8 +350,6 @@ void TrackScreen::mixerTouch(const TouchEvent& ev) {
     toggleMuteSolo(tr, part == Part::Solo);
     return;
   }
-  app_.setCurTrack(tr);
-  mixSel_ = strip;
   if (part == Part::Fader) setVol(tr, 127 - pos * 127 / kFaderH);
   app_.invalidate();
 }
@@ -390,6 +358,48 @@ void TrackScreen::drawFader(LGFX_Sprite& s, int x, int y, int value, int max, ui
   s.drawRect(x, y, kFaderW, kFaderH, kDim);
   const int h = clampi(value, 0, max) * (kFaderH - 2) / max;
   if (h > 0) s.fillRect(x + 1, y + kFaderH - 1 - h, kFaderW - 2, h, fill);
+}
+
+// Output scope under the strips: the last samples to the speaker, scaled to the recent peak (quiet
+// material still fills the box; the meter shows the real level), the peak meter and CLIP (held 1 s).
+void TrackScreen::drawScope(LGFX_Sprite& s, int y0) {
+  scopeMs_ = millis();
+  constexpr int kX = kStripX0, kW = kScreenW - 2 * kStripX0, kH = kScopeH;
+  constexpr int kN = kW - kMeterW - 4;  // one sample per pixel
+  const int y = y0 + kScopeY, mid = y + kH / 2;
+  s.fillRect(kX, y, kW, kH, kBeatBg);
+  s.drawFastHLine(kX, mid, kN, kDim);
+  int16_t buf[kN];
+  audio::scopeRead(buf, kN);
+  int pk = 0;
+  for (int i = 0; i < kN; ++i) pk = buf[i] < 0 ? (-buf[i] > pk ? -buf[i] : pk) : (buf[i] > pk ? buf[i] : pk);
+  // Auto gain: the frame's peak fills ~90 % of the half height; fast down (louder), slow up, at most
+  // x32 (-30 dB), so silence stays a line instead of magnified noise.
+  const float want = pk > 0 ? 0.9f * 32768.f / pk : 32.f;
+  const float target = want > 32.f ? 32.f : (want < 1.f ? 1.f : want);
+  scopeGain_ = target < scopeGain_ ? target : scopeGain_ + (target - scopeGain_) * 0.1f;
+  const float k = scopeGain_ * (kH / 2 - 1) / 32768.f;
+  int prev = mid;
+  for (int i = 0; i < kN; ++i) {
+    int yy = mid - static_cast<int>(buf[i] * k);
+    yy = clampi(yy, y, y + kH - 1);
+    if (i) s.drawLine(kX + i - 1, prev, kX + i, yy, kGreen);
+    prev = yy;
+  }
+  const int16_t peak = audio::scopePeak();
+  if (peak >= 32000) clipMs_ = scopeMs_ | 1;
+  meter_ = peak > meter_ ? peak : meter_ * 7 / 8;  // fast up, slow down
+  const int mx = kX + kW - kMeterW;
+  const int mh = meter_ * kH / 32768;
+  s.fillRect(mx, y + kH - mh, kMeterW, mh, meter_ > 29000 ? kYellow : kGreen);
+  s.setTextColor(kDim);
+  char gain[8];
+  snprintf(gain, sizeof(gain), "x%d", static_cast<int>(scopeGain_ + 0.5f));
+  s.drawString(gain, kX + 4, y + 2);
+  if (clipMs_ && scopeMs_ - clipMs_ < 1000) {
+    s.setTextColor(kRed);
+    s.drawString("CLIP", mx - 4 * kCharW - 6, y + 2);
+  }
 }
 
 void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
@@ -401,7 +411,6 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     const bool internal = t.out == mt::TrackOut::Int;
     const bool audible = p.trackAudible(tr);
     const int x = kStripX0 + k * kStripW;
-    if (mixSel_ == k) s.drawRect(x, y0 + 1, kStripW - 2, kAreaH - 2, kCursor);
     snprintf(buf, sizeof(buf), "%.6s", t.name);  // 6 x 8 px fit the strip
     s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
     s.drawString(buf, x + 2, y0 + kNameY);
@@ -419,27 +428,31 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     s.drawString(buf, x + 6, y0 + kSendY);
     if (internal) snprintf(buf, sizeof(buf), "R%3u", in.rsend);
     else snprintf(buf, sizeof(buf), "R --");
-    s.drawString(buf, x + 6, y0 + kSendY + 18);
+    s.drawString(buf, x + 6, y0 + kSendY + kSendDy);
     const int by = y0 + kBtnY;
     s.fillRect(x + 3, by, kBtnW, kBtnH, t.mute ? kRed : kBeatBg);
     s.fillRect(x + 3 + kBtnW + 2, by, kBtnW, kBtnH, t.solo ? kCursor : kBeatBg);
     s.setTextColor(t.mute ? kText : kDim);
-    s.drawString("M", x + 3 + (kBtnW - kCharW) / 2, by + 1);
+    s.drawString("M", x + 3 + (kBtnW - kCharW) / 2, by + (kBtnH - kCharH) / 2);
     s.setTextColor(t.solo ? kBg : kDim);
-    s.drawString("S", x + 3 + kBtnW + 2 + (kBtnW - kCharW) / 2, by + 1);
+    s.drawString("S", x + 3 + kBtnW + 2 + (kBtnW - kCharW) / 2, by + (kBtnH - kCharH) / 2);
   }
   // Master: masterVol 0..200 %; above 100 % the fill turns yellow (the soft clip works harder).
-  s.drawFastVLine(kMasterX - 4, y0, kAreaH, kDim);
-  if (mixSel_ == kMaster) s.drawRect(kMasterX, y0 + 1, kMasterW, kAreaH - 2, kCursor);
+  s.drawFastVLine(kMasterX - 4, y0, kScopeY - 4, kDim);
   s.setTextColor(kText);
   s.drawString("MAIN", kMasterX + (kMasterW - 4 * kCharW) / 2, y0 + kNameY);
   const int mv = p.masterVol;
   drawFader(s, kMasterX + (kMasterW - kFaderW) / 2, y0 + kFaderY, mv, mt::kMasterVolMax, mv > 100 ? kCursor : kText);
   snprintf(buf, sizeof(buf), "%u%%", mv);
   s.drawString(buf, kMasterX + (kMasterW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + kValY);
+  // The half shown: A = tracks 1-8, B = 9-16 (Shift + turn).
+  s.setTextColor(kCursor);
+  const char* half = firstTrack() ? "B" : "A";
+  s.drawString(half, kMasterX + (kMasterW - kCharW) / 2, y0 + kSendY);
   s.setTextColor(kDim);
   snprintf(buf, sizeof(buf), "%d-%d", firstTrack() + 1, firstTrack() + kStrips);
-  s.drawString(buf, kMasterX + (kMasterW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + kBtnY);
+  s.drawString(buf, kMasterX + (kMasterW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + kSendY + kSendDy);
+  drawScope(s, y0);
 }
 
 }  // namespace ui

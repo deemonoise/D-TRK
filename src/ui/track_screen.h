@@ -8,11 +8,11 @@ namespace ui {
 
 // Settings of App::curTrack(). MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
 // Name: click to edit, turn = character, Shift+turn = position.
-// MIXER view (the MIX tab, setMixer): 8 strips of the half holding the cursor (as GRID's Overview)
-// and the master strip MAIN. Strip: name, volume fader (INT), delay / reverb send of its instrument
-// (read only), M / S. Turn = volume of the selected strip, Shift + turn = strip (1-8, MAIN, 9-16),
-// click = mute; touch: name selects, fader follows the finger, M / S toggle. Coarse steps: hold the
-// track button and turn with Shift (x10).
+// MIXER view (the MIX tab, setMixer): 8 strips of the half holding the cursor (A = 1-8, B = 9-16, as
+// GRID's Overview), the master strip MAIN and the output scope below. Strip: name, volume fader
+// (INT), delay / reverb send of its instrument (read only), M / S. Turn = master volume, Shift + turn
+// = the other half; a track button held + turn = that track's volume, Shift + track button = mute
+// (App, every screen). Touch: the fader follows the finger, M / S toggle (solo only here).
 class TrackScreen : public Screen {
  public:
   explicit TrackScreen(App& app);
@@ -48,9 +48,16 @@ class TrackScreen : public Screen {
   // MIXER: 8 + 8 x 52 + 8 + 48 = 480.
   static constexpr int kStrips = 8, kStripW = 52, kStripX0 = 8;
   static constexpr int kMasterW = 48, kMasterX = kStripX0 + kStrips * kStripW + 8;  // 432
-  static constexpr int kMaster = kStrips;  // mixSel_ of the master strip
-  static constexpr int kNameY = 4, kFaderY = 24, kFaderH = 120, kFaderW = 12, kValY = 148;
-  static constexpr int kSendY = 168, kBtnY = 208, kBtnW = 22, kBtnH = 18;
+  static constexpr int kMaster = kStrips;  // hitStrip: the master strip
+  static constexpr int kNameY = 2, kFaderY = 16, kFaderH = 64, kFaderW = 12, kValY = 84;
+  static constexpr int kSendY = 100, kSendDy = 16, kBtnY = 134, kBtnW = 22, kBtnH = 16;
+  // Scope under the strips: the waveform (auto gain) and a peak meter with CLIP.
+  static constexpr int kScopeY = kBtnY + kBtnH + 6, kScopeH = kAreaH - kScopeY - 4, kMeterW = 10;
+  static constexpr uint32_t kScopeMs = 50;  // ~20 frames a second while the MIX tab is shown
+  void drawScope(LGFX_Sprite& s, int y0);
+  uint32_t scopeMs_ = 0, clipMs_ = 0;
+  int meter_ = 0;
+  float scopeGain_ = 1;  // auto gain, follows the waveform's peak
   enum class Part : uint8_t { Name, Fader, Mute, Solo };
   int firstTrack() const;
   void mixerInput(const hw::InputEvent& ev);
@@ -63,7 +70,6 @@ class TrackScreen : public Screen {
   void toggleMuteSolo(int track, bool solo);
   uint32_t mixSignature() const;
   bool mixer_ = false;
-  int mixSel_ = 0;  // 0..7 = strip of the half (follows curTrack), kMaster
   uint32_t mixSig_ = 0;
 
   App& app_;
