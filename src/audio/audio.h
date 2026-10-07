@@ -39,11 +39,6 @@ struct Load {
 };
 Load takeLoad();
 
-// Output scope (MIX tab): the last n (<= kScopeLen) samples sent to the speaker, oldest first, and
-// the peak since the last call (0..32767; clip = 32767). Read without a lock: a frame may tear.
-constexpr int kScopeLen = 512;
-void scopeRead(int16_t* out, int n);
-int16_t scopePeak();
 // Prints the audio task's counters (lost / late events, bench) now and then. UI task: the audio
 // task itself never prints (USB CDC writes may block it).
 void pollLog();

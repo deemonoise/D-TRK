@@ -210,7 +210,6 @@ P-lock: fx `DEC`, `COL`, `SHP`, `SWP`, `CON` (0–127) задают макрос
 - **PERF**: эффект каждой кнопки настраивается в PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE), при нажатии — тост с названием.
 - **Шаблоны проекта** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 и свои из `/templates`, Save as template), **автосохранение** в `/projects/<имя>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **безопасный старт** (Shift при включении — без автозагрузки), **журнал сбоев** `/projects/crashlog.txt` и версия прошивки в PROJ → SYS.
 - **Wi-Fi-страница**: вкладки по разделам, прокручиваемые списки с фильтром.
-- **MIX**: осциллограф и индикатор уровня/клипа внизу.
 
 ## Карта памяти
 

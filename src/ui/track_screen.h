@@ -51,10 +51,6 @@ class TrackScreen : public Screen {
   static constexpr int kMaster = kStrips;  // mixSel_ of the master strip
   static constexpr int kNameY = 4, kFaderY = 24, kFaderH = 120, kFaderW = 12, kValY = 148;
   static constexpr int kSendY = 168, kBtnY = 208, kBtnW = 22, kBtnH = 18;
-  static constexpr int kScopeY = kBtnY + kBtnH + 6, kScopeH = kAreaH - kScopeY - 4, kMeterW = 10;
-  void drawScope(LGFX_Sprite& s, int y0);
-  uint32_t scopeMs_ = 0, clipMs_ = 0;
-  int meter_ = 0;
   enum class Part : uint8_t { Name, Fader, Mute, Solo };
   int firstTrack() const;
   void mixerInput(const hw::InputEvent& ev);
