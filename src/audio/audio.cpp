@@ -331,7 +331,8 @@ constexpr uint32_t kBenchDrumEvery = 31;  // blocks, ~124 ms: a 16th at 120 BPM
 constexpr uint8_t kBenchDrumInstr = 8;    // instruments 8..15: drums, 7: CHIP
 constexpr uint8_t kBenchChipInstr = 7;
 
-constexpr int kBenchTracks = mt::kInstruments - kBenchDrumInstr;  // one DRUM instrument per bench track
+constexpr int kBenchTracks = 8;  // one DRUM instrument per bench track: instruments 8..15, tracks 1..8
+static_assert(kBenchDrumInstr + kBenchTracks <= mt::kInstruments && kBenchTracks <= mt::kTracks, "bench layout");
 
 void benchDrumHits() {
   for (int t = 0; t < kBenchTracks; ++t) {
@@ -371,7 +372,7 @@ void benchDrumBegin() {
     synth->event(0, mt::kPreviewTrack, on, 3);
   }
 #ifdef AUDIO_BENCH_FX
-  for (int i = kBenchChipInstr; i < mt::kInstruments; ++i) {
+  for (int i = kBenchChipInstr; i < kBenchDrumInstr + kBenchTracks; ++i) {
     project->instruments[i].drive = 100;
     project->instruments[i].rsend = 100;
   }

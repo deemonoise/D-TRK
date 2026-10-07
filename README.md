@@ -83,7 +83,7 @@ GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the
 
 ## Sound
 
-Built-in synthesizer: 16 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to the built-in NS4168 amplifier — the **SPK** connector on the board, no soldering needed. Default volume is 40 % (MIX tab → MAIN, 0–200 %; above 100 % — up to +6 dB, peaks of loud chords are softly clipped); this is a device setting — it is stored in the board's memory and survives power-off.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to the built-in NS4168 amplifier — the **SPK** connector on the board, no soldering needed. Default volume is 40 % (MIX tab → MAIN, 0–200 %; above 100 % — up to +6 dB, peaks of loud chords are softly clipped); this is a device setting — it is stored in the board's memory and survives power-off.
 
 > **WARNING: the SPK output is bridged (BTL).** Both pins of the connector carry signal, **neither of them is ground**.
 > - Speaker (4–8 Ω) — directly across the two SPK pins.
@@ -135,7 +135,7 @@ P-lock: fx `DEC`, `COL`, `SHP`, `SWP`, `CON` (0–127) set a macro for the note 
 
 ### KIT (drum track)
 
-The **KIT** instrument type has 8 lanes: each is either its own mini-sampler (a project sample, Volume, Pitch, Decay) or a reference to any of the 16 instruments. A track with a KIT becomes a drum track: in GRID, instead of notes there are 8 squares per step; in edit mode, a pad of 8 buttons (and track buttons 1–8) toggles the lanes. Each lane is mono with choke; lanes sound together. On a MIDI track, the lanes are sent as their own notes (the lane's Note) — for an external drum machine. Fx `ACC` is a mask of lanes at full volume, the rest at 60 %. Fill (NOTE) writes to the selected lane. More in the [manual](docs/manual.md#drumtrack).
+The **KIT** instrument type has 8 lanes: each is either its own mini-sampler (a project sample, Volume, Pitch, Decay) or a reference to any of the 32 instruments. A track with a KIT becomes a drum track: in GRID, instead of notes there are 8 squares per step; in edit mode, a pad of 8 buttons (and track buttons 1–8) toggles the lanes. Each lane is mono with choke; lanes sound together. On a MIDI track, the lanes are sent as their own notes (the lane's Note) — for an external drum machine. Fx `ACC` is a mask of lanes at full volume, the rest at 60 %. Fill (NOTE) writes to the selected lane. More in the [manual](docs/manual.md#drumtrack).
 
 ### DRUM (808 / 909)
 

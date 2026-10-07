@@ -20,7 +20,7 @@ constexpr uint8_t kNoteOff = 0xFE;
 constexpr uint8_t kVelDefault = 0;
 constexpr uint8_t kNoProgram = 0xFF;
 
-constexpr int kInstruments = 16;
+constexpr int kInstruments = 32;
 constexpr int kWavetables = 16;
 constexpr int kSampleNameMax = 16;
 constexpr int kProjSamples = 128;  // = kBankEntries

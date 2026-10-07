@@ -308,10 +308,10 @@ void test_load_resets_target_first() {
 void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
-  // PROJ, TRKS (16 x 16), INST, FMIN, FLTR, SLCE (16 x 72), TOUT (16 x 3), AUDI, SYNI (16 x 48), WTBL (empty),
-  // KITS (16 x 176), CHN2 (empty), SCNS, GROV (16 + 16)
-  TEST_ASSERT_TRUE(out.buf.size() < 1660 + 8 + 1 + 16 * 72 + 8 + 1 + 16 * 48 + 8 + 1 + 8 + 1 + 16 * 176 + 8 + 1 + 8 + 16 + 7 +
-                                        8 + 32 + 1 + 8 + 8 + 8 + 1 + 16 * 16);  // + 7: AUDI sound fx bytes, + 1: DJ filter, PRFM, LFOX
+  // Everything but patterns: project, track and audio chunks (< 2 KB) plus the instrument records
+  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LFOX 16, KITS 176 = 384 bytes each). One written
+  // empty pattern would add ~28 KB, so the bound proves none is.
+  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 400);
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));

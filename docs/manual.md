@@ -290,7 +290,7 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `CHN` | 1–16 | MIDI | MIDI channel for this step: notes, CC, PB, PGM. |
 | `CCA` | 0–127 | MIDI | CC with the track's "CC A" number (default 74). |
 | `CCB` | 0–127 | MIDI | CC with the track's "CC B" number (default 71). |
-| `PGM` | 0–127 | both | Program Change. On INT — the track's instrument: 0 = INS1 … 15 = INS16, above 15 — INS16. Lasts until playback ends; not written to TRACK → Instr. |
+| `PGM` | 0–127 | both | Program Change. On INT — the track's instrument: 0 = INS1 … 31 = INS32, above 31 — INS32. Lasts until playback ends; not written to TRACK → Instr. |
 
 <a id="ars"></a>
 
@@ -429,7 +429,7 @@ A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight st
 
 ## INST: instruments
 
-16 instruments per project, INS1–INS16. The instrument for a track is chosen in TRACK → Instr (with Out = INT) or with fx PGM. When you enter the tab, the current track's instrument opens.
+32 instruments per project, INS1–INS32 (projects saved before 32 open with INS17–INS32 at their defaults). The instrument for a track is chosen in TRACK → Instr (with Out = INT) or with fx PGM. When you enter the tab, the current track's instrument opens.
 
 Parameters are spread over 5 pages (6 for SYNTH). Below the header are the page tabs: **MAIN**, **ENV**, the type page (**OSC** for CHIP, **SMPL** for SAMPLE, **FM**, **DRUM**; SYNTH has two — **OSC** and **MOD**), **FILT**, **LFO**. The current page is highlighted.
 
@@ -459,7 +459,7 @@ The page is remembered when you switch instruments and when you change Type: for
 
 | Parameter | Values | Default |
 |---|---|---|
-| Name | up to 8 characters, edited like a track name; empty becomes INSn | INS1…INS16 |
+| Name | up to 8 characters, edited like a track name; empty becomes INSn | INS1…INS32 |
 | Type | FM / SYNTH / DRUM / SAMPLE / CHIP / KIT | FM |
 | Volume | 0–127 | 100 |
 | Transpose | −24…+24 semitones | 0 |
@@ -741,7 +741,7 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 | Volume | 0–127 | SAMPLE: lane volume. |
 | Pitch | −24…+24 | SAMPLE: offset in semitones from the sample's original pitch. |
 | Decay | FULL, 1 ms … 10 s | SAMPLE: FULL — the sample plays to the end, otherwise it fades out over this time. |
-| Instr | INS1…INS16 | INST: the lane's instrument (with its own parameters, macros, filter). A KIT inside a KIT is silent and shown in red. Selecting a SAMPLE instrument sets the lane's Note to its Root. |
+| Instr | INS1…INS32 | INST: the lane's instrument (with its own parameters, macros, filter). A KIT inside a KIT is silent and shown in red. Selecting a SAMPLE instrument sets the lane's Note to its Root. |
 | Note | 0–127 | The lane's note: sent to MIDI on a MIDI track, and used by the lane to play its INST instrument. Lanes in a kit have different notes — turning skips taken ones. Default C-4…G-4. |
 
 - Each lane is mono: a repeated hit cuts off its own previous one (choke); different lanes sound at the same time — up to 8 voices per track.
@@ -939,7 +939,7 @@ Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and
 - **Safe boot:** hold <kbd>Shift</kbd> at power-on and the project is not loaded automatically (toast "SAFE BOOT"). Use it for a project that crashes the tracker on load.
 - **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/projects/crashlog.txt`; it is visible and downloadable on the [Wi-Fi](#wifi) page. The firmware version and the reason for the last reboot are in PROJ → SYS.
 - **Autoload:** at power-on, the last saved or loaded project is loaded. If it is corrupted, the `.bak` is used (toast "LOADED BACKUP"). If that fails too, the demo loads with the toast "AUTOLOAD: …". New disables autoload until the next save.
-- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 16 instruments, Preview, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard and Fill parameters.
+- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 32 instruments, Preview, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard and Fill parameters.
 - **Compatibility:** the file now holds 16 tracks per pattern. Projects from older versions (8 tracks) open as usual, with tracks 9–16 empty. A file written by this firmware cannot be opened by older firmware: it will report a corrupted file (not a "newer version"). To go back to older firmware, keep a copy of the `.mtp` / `.bak` saved by it.
 
 | Path | Contents |
@@ -1113,11 +1113,11 @@ Resistors of 100–220 Ω, one per ear. Only headphones go into this jack, not a
 | Files in a list | 128 |
 | Project / track / instrument name | 16 / 8 / 8 characters |
 | MIDI import | 512 KB, 16,384 notes, 32 sources |
-| Instruments / voices | 16 / 16 (POLY: up to 4 per track) |
+| Instruments / voices | 32 / 16 (POLY: up to 4 per track) |
 | Samples | 128 per project, name up to 16 characters; flash cache ~9.9 MB (≈ 2.5 min at 32 kHz), 128 entries |
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048, via Wi-Fi up to ~3 MB |
 | Presets | `.mti` file 204 bytes (v2: 156, v1: 84; via Wi-Fi up to 1 KB), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
 | WAV via Wi-Fi | 4 MB to `/samples`, 10 MB to a project folder (name up to 16 characters) |
 | Long press | 0.5 s |
 
-**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS16 are FM TONE; master volume 40%, Preview ON.
+**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 40%, Preview ON.

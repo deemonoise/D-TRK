@@ -48,7 +48,7 @@ static_assert(sizeof(mt::TrackCfg) == 21, "TrackCfg changed: update snapshot() a
 static_assert(sizeof(mt::Pattern) == 4 + mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Instrument) == 380, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 470168, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 476248, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
