@@ -38,8 +38,19 @@
 // FX bench: -DAUDIO_BENCH_FX is the DRUM bench with drive 100 and reverb send 100 on every bench
 // instrument, reverb level 100, compressor 100 keyed by track 1. Compare in PROJ while it runs:
 // Rvb level 0 = no reverb, Comp OFF = no compressor (the status-bar CPU figure).
+// Pool bench: -DAUDIO_BENCH_POOL with -DMT_VOICES=N -DMT_HEAVY_MAX=H (envs wt32-pool24 /
+// wt32-pool32) fills the whole N-voice pool and steps the heavy share: 8, 10, .. H heavy voices
+// (DRUM and FM HAT on alternate tracks, retriggered every 16th), the rest CHIP saw voices through
+// a resonant LP filter with an envelope, drive and reverb on all, reverb 100, compressor on.
+// Each step lasts 10 s; the last 8 s are measured and printed to Serial:
+//   pool bench: heavy 10 + light 22, voices 32: avg 2100 us (52%), peak 2600 us / 4000 us
+// It overwrites instruments 16..28 and every track's out / instrument, like the FM bench.
 #if defined(AUDIO_BENCH_FX) && !defined(AUDIO_BENCH_DRUM)
 #define AUDIO_BENCH_DRUM
+#endif
+#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN) || \
+    defined(AUDIO_BENCH_POOL)
+#define AUDIO_BENCH_ANY
 #endif
 
 namespace audio {
@@ -204,7 +215,7 @@ void drain(Ring& q) {
   pvPlaying.store(oneshot.playing(), std::memory_order_relaxed);
 }
 
-#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN)
+#ifdef AUDIO_BENCH_ANY
 std::atomic<uint32_t> renderUs{0};   // last block
 std::atomic<uint32_t> benchPeak{0};  // render peak since the last pollLog() print
 #endif
@@ -447,6 +458,116 @@ void benchSynTick() {
 }
 #endif
 
+#ifdef AUDIO_BENCH_POOL
+constexpr int kPoolHeavyMin = 8;
+static_assert(mt::kFmVoiceMax >= kPoolHeavyMin && mt::kFmVoiceMax <= 12, "pool bench: heavy tracks 1..12");
+constexpr int kPoolHeavyInstr = 16;  // instruments 16..27: heavy, 28: CHIP
+constexpr int kPoolChipInstr = kPoolHeavyInstr + 12;
+static_assert(kPoolChipInstr < mt::kInstruments, "pool bench layout");
+// The light voices of the biggest heavy step fit on the tracks left and the preview track.
+static_assert((mt::kTracks - mt::kFmVoiceMax + 1) * mt::kPolyPerTrack >= mt::kVoices - mt::kFmVoiceMax,
+              "pool bench: light voices");
+constexpr uint32_t kPoolHitEvery = 31;    // blocks, ~124 ms: a 16th at 120 BPM
+constexpr uint32_t kPoolStepBlocks = 2500;  // 10 s
+constexpr uint32_t kPoolSkipBlocks = 500;   // settling, not measured
+
+int poolHeavy = kPoolHeavyMin;
+uint32_t poolBlocks, poolSum, poolN, poolPeak;
+std::atomic<uint32_t> poolSeq{0}, poolResHeavy{0}, poolResAvg{0}, poolResPeak{0}, poolResVoices{0};
+
+void poolNote(int track, uint8_t status, uint8_t note) {
+  const uint8_t b[3] = {status, note, 100};
+  synth->event(0, static_cast<uint8_t>(track), b, 3);
+}
+
+void poolHits() {
+  for (int t = 0; t < poolHeavy; ++t) poolNote(t, 0x90, 60);
+}
+
+// Light notes of the step: kPolyPerTrack per track from poolHeavy up, then the preview track.
+template <typename F>
+void poolLight(F f) {
+  int left = mt::kVoices - poolHeavy;
+  for (int t = poolHeavy; t <= mt::kTracks && left > 0; ++t) {
+    const int track = t < mt::kTracks ? t : mt::kPreviewTrack;
+    for (int k = 0; k < mt::kPolyPerTrack && left > 0; ++k, --left)
+      f(track, static_cast<uint8_t>(48 + (t % 4) * 3 + k * 5));
+  }
+}
+
+void poolStep() {
+  for (int t = 0; t < mt::kTracks; ++t) {
+    project->tracks[t].out = mt::TrackOut::Int;
+    project->tracks[t].instr = static_cast<uint8_t>(t < poolHeavy ? kPoolHeavyInstr + t : kPoolChipInstr);
+  }
+  poolLight([](int track, uint8_t note) { poolNote(track, 0x90, note); });
+  poolHits();
+}
+
+void benchPoolBegin() {
+  using mt::DrumMachine;
+  static const DrumMachine kMachines[6] = {DrumMachine::Bd8, DrumMachine::Sd8, DrumMachine::Hh8,
+                                           DrumMachine::Cy9, DrumMachine::Cp8, DrumMachine::Tom9};
+  for (int i = 0; i < 12; ++i) {
+    mt::Instrument& m = project->instruments[kPoolHeavyInstr + i];
+    m = mt::Instrument();
+    if (i % 2 == 0) {
+      mt::instrSetType(m, mt::InstrType::Drum);
+      mt::drumSetMachine(m, static_cast<uint8_t>(kMachines[i / 2]));
+      m.macro[mt::kMacDec] = 110;  // still ringing at the choke
+    } else {
+      mt::instrSetType(m, mt::InstrType::Fm);
+      mt::fmSetMachine(m, static_cast<uint8_t>(mt::FmMachine::Hat));
+      m.macro[mt::kMacDec] = 127;
+      m.macro[mt::kMacCon] = 127;
+      m.macro[mt::kMacShp] = 64;
+    }
+  }
+  mt::Instrument& chip = project->instruments[kPoolChipInstr];
+  chip = mt::Instrument();
+  chip.wave = static_cast<uint8_t>(mt::Wave::Saw);
+  chip.sustain = 127;
+  chip.mono = false;
+  chip.fltMode = static_cast<uint8_t>(mt::FltMode::Lp);
+  chip.cutoff = 60;
+  chip.reso = 100;
+  chip.fenv = 40;
+  chip.fDec = 0;
+  for (int i = kPoolHeavyInstr; i <= kPoolChipInstr; ++i) {
+    project->instruments[i].drive = 100;
+    project->instruments[i].rsend = 100;
+  }
+  project->rvbLevel = 100;
+  project->compAmt = 100;
+  project->scTrack = 1;
+  const uint8_t pgm[2] = {0xC0, kPoolChipInstr};
+  synth->event(0, mt::kPreviewTrack, pgm, 2);
+  poolStep();
+}
+
+// Audio task, before the block is rendered: renderUs holds the previous block.
+void benchPoolTick() {
+  ++poolBlocks;
+  if (poolBlocks > kPoolSkipBlocks) {
+    const uint32_t us = renderUs.load(std::memory_order_relaxed);
+    poolSum += us;
+    ++poolN;
+    if (us > poolPeak) poolPeak = us;
+  }
+  if (poolBlocks % kPoolHitEvery == 0) poolHits();
+  if (poolBlocks < kPoolStepBlocks) return;
+  poolResHeavy.store(poolHeavy, std::memory_order_relaxed);
+  poolResAvg.store(poolN ? poolSum / poolN : 0, std::memory_order_relaxed);
+  poolResPeak.store(poolPeak, std::memory_order_relaxed);
+  poolResVoices.store(synth->activeVoices(), std::memory_order_relaxed);
+  poolSeq.fetch_add(1, std::memory_order_release);
+  poolBlocks = poolSum = poolN = poolPeak = 0;
+  poolLight([](int track, uint8_t note) { poolNote(track, 0x80, note); });
+  poolHeavy = poolHeavy + 2 > mt::kFmVoiceMax ? kPoolHeavyMin : poolHeavy + 2;
+  poolStep();
+}
+#endif
+
 void render(int16_t* out) {
 #ifdef AUDIO_BENCH
   renderBench(out);
@@ -459,6 +580,9 @@ void render(int16_t* out) {
 #endif
 #ifdef AUDIO_BENCH_SYN
   benchSynTick();
+#endif
+#ifdef AUDIO_BENCH_POOL
+  benchPoolTick();
 #endif
   renderSynth(out);
 #endif
@@ -520,7 +644,7 @@ void run(void*) {
     loadSum.fetch_add(us, std::memory_order_relaxed);
     loadBlocks.fetch_add(1, std::memory_order_relaxed);
     if (us > loadPeak.load(std::memory_order_relaxed)) loadPeak.store(us, std::memory_order_relaxed);
-#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN)
+#ifdef AUDIO_BENCH_ANY
     renderUs.store(us, std::memory_order_relaxed);
     if (us > benchPeak.load(std::memory_order_relaxed)) benchPeak.store(us, std::memory_order_relaxed);
 #endif
@@ -684,6 +808,9 @@ void begin(mt::Project* p) {
 #endif
 #ifdef AUDIO_BENCH_SYN
   benchSynBegin();
+#endif
+#ifdef AUDIO_BENCH_POOL
+  benchPoolBegin();
 #endif
   if (!initI2s()) {
     Serial.println("audio: I2S init failed");
@@ -853,13 +980,25 @@ void microBench() {
 
 void pollLog() {
   const int64_t now = esp_timer_get_time();
-#if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN)
+#ifdef AUDIO_BENCH_ANY
   static int64_t lastBench;
   if (now - lastBench >= 1000000) {
     lastBench = now;
     Serial.printf("audio bench: render %u us (peak %u) / 4000 us\n",
                   static_cast<unsigned>(renderUs.load(std::memory_order_relaxed)),
                   static_cast<unsigned>(benchPeak.exchange(0, std::memory_order_relaxed)));
+  }
+#endif
+#ifdef AUDIO_BENCH_POOL
+  static uint32_t poolPrinted;
+  const uint32_t seq = poolSeq.load(std::memory_order_acquire);
+  if (seq != poolPrinted) {
+    poolPrinted = seq;
+    const unsigned h = poolResHeavy.load(std::memory_order_relaxed);
+    const unsigned avg = poolResAvg.load(std::memory_order_relaxed);
+    Serial.printf("pool bench: heavy %u + light %u, voices %u: avg %u us (%u%%), peak %u us / 4000 us\n", h,
+                  static_cast<unsigned>(mt::kVoices) - h, static_cast<unsigned>(poolResVoices.load(std::memory_order_relaxed)),
+                  avg, avg / 40, static_cast<unsigned>(poolResPeak.load(std::memory_order_relaxed)));
   }
 #endif
 #ifdef AUDIO_CPU_LOG

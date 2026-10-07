@@ -14,9 +14,16 @@
 
 namespace mt {
 
-constexpr int kVoices = 16;
+// Voice pool and heavy-voice cap; a build may override them (the pool bench, see audio.cpp).
+#ifndef MT_VOICES
+#define MT_VOICES 16
+#endif
+#ifndef MT_HEAVY_MAX
+#define MT_HEAVY_MAX 8
+#endif
+constexpr int kVoices = MT_VOICES;
 constexpr int kPolyPerTrack = 4;
-constexpr int kFmVoiceMax = 8;  // heavy voices (FM, DRUM, wavetable SYNTH) sounding at once (CPU)
+constexpr int kFmVoiceMax = MT_HEAVY_MAX;  // heavy voices (FM, DRUM, wavetable SYNTH) sounding at once (CPU)
 constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceMax
 
 // The engine state of a voice. FM, DRUM and SYNTH never sound on one voice at once, so they share
