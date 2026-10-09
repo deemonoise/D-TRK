@@ -746,21 +746,20 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 
 - Each lane is mono: a repeated hit cuts off its own previous one (choke); different lanes sound at the same time — up to 8 voices per track.
 - PREVIEW plays a lane with note C-4 (the first one by default).
-- KIT has no presets ("NO KIT PRESETS"); there is no KIT type in the preset browser.
+- KIT has factory presets only: **PRESET** opens Load straight away, `[FACTORY]` → KIT. A factory kit fills the lanes and writes its drums (factory DRUM / FM / CHIP presets) into **INS25…INS32**, or INS17…INS24 when the kit itself is in INS25…INS32; lane k plays note C-4 + k. Whatever was in those slots is overwritten on OK (CANCEL brings them back). Your own KIT presets cannot be saved yet.
 - Renaming a sample in FILE → SAMPLES also updates the lanes; Delete leaves the name in the lane (the lane is silent, like MISSING) and asks for confirmation if the sample is used in a lane.
 
 <a id="presets"></a>
 
 ### Presets
 
-The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu, then a preset browser that fills the whole tab. A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
+The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu (on a KIT — Load right away), then a preset browser that fills the whole tab. A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
 
-**Browser header:** the type (with arrows in Load), the path inside the type folder, and three buttons. At the root of a type there is a `[FACTORY]` row (Load only), then your own folders (`name/`), then files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, sorted into categories; they cannot be changed or deleted.
+**Browser header:** the path and three buttons (Save: the type, then the path inside the type folder). Load always opens at the top: a `[FACTORY]` row, then a folder per type (FM, SYNTH, DRUM, SAMPLE, CHIP) with your own folders (`name/`) and files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, by type (including KIT) and category; they cannot be changed or deleted. A preset of another type changes the instrument's type. Save opens in the folder of the instrument's type.
 
 | Input | Load | Save |
 |---|---|---|
 | Turn | Row; the preset under the cursor is applied to the instrument at once and plays C-4 (audition, marked `>`). | Row. |
-| <kbd>Shift</kbd>+turn, tap on the arrows | Another type (FM, SYNTH, DRUM, SAMPLE, CHIP). Defaults to the instrument's type. | — |
 | Tap on a preset | Audition (same as turning). | Write over it (asks Overwrite). |
 | Click on a preset | Take it and close. | Write over it (asks Overwrite). |
 | Click / tap on a folder | Enter; `..` goes up. | |
@@ -772,7 +771,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 - A **SAMPLE preset** stores the sample name. If that sample is in the project, it is applied together with the preset's Root and slices; otherwise the instrument's sample, Root and slices stay as they were. The Slices, Chop and Chop N / Sens modes are always taken from the preset. There are no factory SAMPLE presets.
 - A **SYNTH preset** stores the oscillator wavetable names: built-in tables are always available, a project table is matched by name, and a missing one is imported from `/wavetables` (see [wavetables](#wavetables)). Factory SYNTH presets use only built-in tables.
 - **Format:** presets are saved in v3 format, including slices and SYNTH parameters; older presets (v1, v2) load as before.
-- **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP"). The last opened folder of each type is remembered until power-off.
+- **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP").
 - Without a card, Load shows only `[FACTORY]` and Save does not open ("NO SD CARD").
 
 | Type | Category | Factory presets |
@@ -791,6 +790,10 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 | SYNTH | LEAD | LEAD, SYNCLD |
 | SYNTH | PAD | PAD, PWMSTR, WTSWEEP |
 | SYNTH | KEYS | PLUCK, BELL |
+| KIT | DRUM | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT |
+| KIT | FM | FM KIT, FM PUNCH, FM PERC |
+| KIT | CHIP | CHIP KIT |
+| KIT | MIX | HYBRID, DUB KIT |
 
 <a id="proj"></a>
 

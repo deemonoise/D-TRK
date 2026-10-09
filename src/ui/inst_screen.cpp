@@ -632,8 +632,9 @@ void InstScreen::openTables(int osc) {
 
 void InstScreen::presetMenu() {
   leaveEdit();
-  if (inst().type == mt::InstrType::Kit) {
-    app_.toast("NO KIT PRESETS");
+  if (inst().type == mt::InstrType::Kit) {  // factory kits only: no Save
+    typeSnapInstr_ = -1;
+    presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
   enum : int { kLoad, kSave };

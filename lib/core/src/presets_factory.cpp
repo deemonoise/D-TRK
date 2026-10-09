@@ -1,5 +1,6 @@
 #include "presets_factory.h"
 #include <stdio.h>
+#include <string.h>
 
 namespace mt {
 namespace {
@@ -45,7 +46,54 @@ void lfoN(I& m, int i, LfoWave w, LfoDest d, uint8_t rate, int8_t depth) {  // L
 }
 void fx(I& m, uint8_t send, uint8_t rsend) { m.send = send; m.rsend = rsend; }
 
+// KIT lanes: kick, snare, closed / open hat, clap, then the extras.
+constexpr InstrType kD = InstrType::Drum, kF = InstrType::Fm, kC = InstrType::Chip;
+constexpr FactoryDrum k808[] = {{kD, "BD808", 115}, {kD, "SD808", 100}, {kD, "CH808", 85}, {kD, "OH808", 80},
+                                {kD, "CP808", 95},  {kD, "TOM808", 95}, {kD, "RS808", 90}, {kD, "CB808", 80}};
+constexpr FactoryDrum k808Deep[] = {{kD, "BD808 L", 120}, {kD, "SD808 S", 100}, {kD, "CH808", 85},
+                                    {kD, "OH808", 80},    {kD, "CP808", 95},    {kD, "TOM808 L", 95},
+                                    {kD, "CY808", 75},    {kD, "CL808", 90}};
+constexpr FactoryDrum k909[] = {{kD, "BD909", 115}, {kD, "SD909", 100}, {kD, "CH909", 85}, {kD, "OH909", 80},
+                                {kD, "CP909", 95},  {kD, "TOM909", 95}, {kD, "RS909", 90}, {kD, "CY909", 75}};
+constexpr FactoryDrum k909Hard[] = {{kD, "BD909 H", 120}, {kD, "SD909 T", 105}, {kD, "CH909", 90},
+                                    {kD, "OH909", 85},    {kD, "CP909", 100},   {kD, "TOM909 H", 95},
+                                    {kD, "RS909", 90},    {kD, "CY909", 80}};
+constexpr FactoryDrum kLofi[] = {{kD, "BD DUSTY", 115}, {kD, "SD DUSTY", 100}, {kD, "HH DUSTY", 85},
+                                 {kD, "CP DUSTY", 95},  {kD, "RIM BIT", 90}};
+constexpr FactoryDrum kHard[] = {{kD, "BD DIST", 115}, {kD, "SD NOISE", 105}, {kD, "HH HARSH", 85},
+                                 {kD, "CLAP VRB", 95}, {kD, "METAL HT", 85},  {kD, "BD RUMBL", 110}};
+constexpr FactoryDrum kFmKit[] = {{kF, "KICK", 115}, {kF, "SNARE", 100}, {kF, "HAT C", 85}, {kF, "HAT O", 80},
+                                  {kF, "CLAP", 95},  {kF, "TOM", 95},    {kF, "COWBELL", 80}, {kF, "RIDE", 75}};
+constexpr FactoryDrum kFmPunch[] = {{kF, "KICK PNC", 120}, {kF, "SNR FAT", 105}, {kF, "HAT C", 85},
+                                    {kF, "HAT O", 80},     {kF, "CLAP BIG", 100}, {kF, "CONGA", 90},
+                                    {kF, "RIDE", 75},      {kF, "ZAP", 85}};
+constexpr FactoryDrum kFmPerc[] = {{kF, "KICK SUB", 115}, {kF, "SNR TGHT", 100}, {kF, "WOODBLK", 90},
+                                   {kF, "CONGA", 95},     {kF, "TOM", 95},      {kF, "COWBELL", 85},
+                                   {kF, "ZAP", 85},       {kF, "GONG", 75}};
+constexpr FactoryDrum kChip[] = {{kC, "CHIPKICK", 115}, {kC, "NOIS SN", 100}, {kC, "NOIS HH", 85},
+                                 {kC, "NOIS OH", 80},   {kC, "METALBL", 85},  {kC, "BLIP", 90}};
+constexpr FactoryDrum kHybrid[] = {{kD, "BD909", 115}, {kD, "SD808", 100}, {kF, "HAT C", 85},  {kD, "OH909", 80},
+                                   {kF, "CLAP", 95},   {kD, "CB808", 80},  {kF, "CONGA", 90}, {kD, "RIM BIT", 90}};
+constexpr FactoryDrum kDub[] = {{kD, "BD909 S", 115}, {kD, "RS909", 95}, {kD, "CH909", 85},    {kD, "OH808", 80},
+                                {kD, "CP808", 90},    {kD, "TOM808 L", 95}, {kD, "CY909", 75}, {kD, "CB808", 80}};
+void kitFill(I&) {}
+#define KIT(cat, name, d) {InstrType::Kit, cat, name, kitFill, d, sizeof(d) / sizeof(d[0])}
+
 constexpr FactoryPreset kAll[] = {
+    // ================= KIT =================
+    KIT("DRUM", "808 KIT", k808),
+    KIT("DRUM", "808 DEEP", k808Deep),
+    KIT("DRUM", "909 KIT", k909),
+    KIT("DRUM", "909 HARD", k909Hard),
+    KIT("DRUM", "LOFI KIT", kLofi),
+    KIT("DRUM", "HARD KIT", kHard),
+    KIT("FM", "FM KIT", kFmKit),
+    KIT("FM", "FM PUNCH", kFmPunch),
+    KIT("FM", "FM PERC", kFmPerc),
+    KIT("CHIP", "CHIP KIT", kChip),
+    KIT("MIX", "HYBRID", kHybrid),
+    KIT("MIX", "DUB KIT", kDub),
+
     // ================= CHIP =================
     {InstrType::Chip, "LEAD", "SQ LEAD", [](I& m) {
        m.wave = W(Wave::Pulse); m.duty = 25; m.decay = 60; m.sustain = 100; m.release = 50;
@@ -391,7 +439,31 @@ void factoryBuild(InstrType t, int i, Instrument& out) {
   out = Instrument();
   out.type = p.type;
   snprintf(out.name, sizeof(out.name), "%s", p.name);
+  if (p.type == InstrType::Kit) kitSetDefaults(out);
+  for (int k = 0; k < p.drumCount && k < kKitLanes; ++k) out.kit[k].vol = p.drums[k].vol;
   p.fill(out);
+}
+
+int factoryKitBlock(int kitSlot) {
+  return kitSlot >= kInstruments - kKitLanes ? kInstruments - 2 * kKitLanes : kInstruments - kKitLanes;
+}
+
+void factoryBuildKit(int i, Project& p, int kitSlot) {
+  Instrument& kit = p.instruments[kitSlot];
+  factoryBuild(InstrType::Kit, i, kit);
+  const FactoryPreset& f = factoryPreset(InstrType::Kit, i);
+  const int first = factoryKitBlock(kitSlot);
+  for (int k = 0; k < f.drumCount && k < kKitLanes; ++k) {
+    Instrument& d = p.instruments[first + k];
+    const FactoryDrum& dr = f.drums[k];
+    for (int j = 0; j < factoryCount(dr.type); ++j)
+      if (strcmp(factoryPreset(dr.type, j).name, dr.name) == 0) {
+        factoryBuild(dr.type, j, d);
+        d.transpose = static_cast<int8_t>(d.transpose - k);
+        kit.kit[k].instr = static_cast<uint8_t>(first + k);
+        break;
+      }
+  }
 }
 
 }  // namespace mt
