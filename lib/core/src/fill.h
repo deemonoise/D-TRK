@@ -31,6 +31,7 @@ struct FillSpec {
   FillMode mode = FillMode::Overwrite;
   uint8_t lane = 0;                             // drum track, Note: the lane set on the hits
   uint32_t seed = 1;
+  bool arp = false;                             // FILL dialog shows the arp generator (ArpSpec) instead
 };
 
 // Hit mask of the spec over n positions (n <= kMaxSteps). Random draws from rng state `seed`.

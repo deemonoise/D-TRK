@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the board's speaker, or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
+A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid and an arpeggio generator, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the board's speaker, or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -10,7 +10,7 @@ A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank o
 3. [Screen and status bar](#screen)
 4. [GRID: pattern editor](#grid)
 5. [Effects (fx)](#fx)
-6. [Fill and Euclid](#euclid)
+6. [Fill, Euclid and arp](#euclid)
 7. [TRACK: track settings](#track)
 8. [INST: instruments](#inst)
 9. [PROJ: project and pattern](#proj)
@@ -355,9 +355,9 @@ CND first, then PRB. If any condition fails, the whole step is silent, including
 
 <a id="euclid"></a>
 
-## Fill and Euclid
+## Fill, Euclid and arp
 
-Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog.
+Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog. The first row, **Type**, switches the dialog between filling (`FILL`) and the [arpeggio generator](#arp) (`ARP`).
 
 | Row | Values | Meaning |
 |-----|--------|---------|
@@ -379,6 +379,106 @@ Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX
 - Settings are remembered until power-off; they are not saved to a file.
 
 The list works the same as in PROJ: turn — row, click — edit, turn in edit mode — value. A tap selects a row, a second tap edits, dragging in edit mode changes the value.
+
+<a id="arp"></a>
+
+### Arp (Type: ARP)
+
+The first row of the Fill dialog is **Type**: `FILL` (filling, see above) or `ARP`, an arpeggio generator in the spirit of the Access Virus. It does not play live: it writes the arpeggio as notes and fx onto one track (**Dest**). A rhythm pattern (factory or your own) runs over the "held" notes: the chord from the Root and Chord rows, or the notes of the selection. The step range is the same as Fill's: the selection or, without one, the track under the cursor for its length. Preview, **OK** (one undo step, toast `ARP`) and **CANCEL** work as in Fill. The header shows where it writes and where it reads: `ARP T4 1-16`, with Source SELECTION `ARP T4 1-16 < T1-3`.
+
+| Row | Values | Default | Meaning |
+|-----|--------|---------|---------|
+| Type | FILL, ARP | FILL | Filling or arp. Each has its own set of rows and its own settings. |
+| Source | CHORD, SELECTION | CHORD | Where the notes come from: the chord from Root + Chord, or the notes of the selected tracks (see below). |
+| Root | any note | the track's last entered note | CHORD: the chord's bottom note. The default is taken on the first open. CHORD only. |
+| Chord | tri 7th su2 su4 6th ad9 pwr oct | tri | CHORD: the chord, as in [CHD](#fx), built on the project's scale degrees. CHORD only. |
+| Dest | T1–T16 and the track name | the first track of the selection | The track written. It may lie inside or outside the selection. A drum track turns the row red and nothing is written. |
+| Mode | UP, DOWN, UP/DN, DN/UP, PLAYED, RANDOM, CONVERGE, DIVERGE, PEDAL, CHORD | UP | Note order, see below. |
+| Octaves | 1–4 | 1 | How many octaves: the notes repeat an octave up, one octave after another (above 127 dropped). |
+| Pattern | factory, then your own | 16THS | The rhythm pattern. Your own (from `/presets/ARP`) follow the factory ones, alphabetically. |
+| Rate | ×1–×4 | ×1 | Track steps per arp step: ×2 runs the arp in eighths on a 1/16 track. The steps in between are left empty. |
+| Rotate | 0…pattern length − 1 | 0 | The pattern step to start from. |
+| Gate | 5–100 % | 50 % | Length of a normal note. Short (`s`) is half, long (`l`) is 100 %. All × Rate. |
+| Swing | 0–100 % | 0 % | NDG = Swing / 2 on the odd arp steps (100 % shifts them by half a step). |
+| Vel Lo | 1–127 | 60 | Velocity of ghost notes (`o`). |
+| Vel Hi | 1–127 | 120 | Velocity of accents (`X`). A normal note gets the middle between Lo and Hi. |
+| Slide | SLD value | 16 | SLD time on slide notes (`~`). |
+| Roll | 0–100 % | 0 % | Share of notes with a random RAT 2–4 (slide notes are left alone). |
+| Ghost PRB | OFF, 0–99 % | OFF | PRB on ghost notes: they don't play every pass. OFF (100 %) writes no PRB. |
+| Mutate | 0–100 % | 0 % | Pattern variations: hits dropped and added, accents and pitches changed. Depends on Seed. |
+| Seed / Reseed | — | — | Variant of the random parts (RANDOM, Roll, Mutate); the rows show only when one of them is on. Reseed (or <kbd>Shift</kbd>+click) picks a new random one. |
+| Capture | SAVE DEST AS PATTERN | — | Save Dest's rhythm as your own pattern, see below. |
+
+**Modes.** The notes are sorted bottom to top (except PLAYED); Octaves adds copies of them in the octaves above.
+
+| Mode | Order |
+|------|-------|
+| UP | Bottom to top. |
+| DOWN | Top to bottom. |
+| UP/DN | Up, then down; the end notes are not repeated. |
+| DN/UP | Down, then up; the end notes are not repeated. |
+| PLAYED | As the notes were taken: a CHORD chord from its bottom note; SELECTION track by track from the top, each with its step note, then the notes of its CHD. |
+| RANDOM | A random note on every hit (from Seed). |
+| CONVERGE | From the edges to the middle: bottom, top, second from the bottom, second from the top… |
+| DIVERGE | From the middle to the edges (CONVERGE backwards). |
+| PEDAL | The bottom note every other hit, the others in turn: 1-2-1-3-1-4… |
+| CHORD | The whole chord on every hit: the bottom note + CHD (the Chord row; with SELECTION, tri). |
+
+The note cycle runs on continuously: the pattern repeats over the range, and the note cycle restarts neither on a pattern repeat nor on a chord change.
+
+**SELECTION.** The notes of all selected tracks together with their CHD form the held chord. A step with notes on at least one of the tracks replaces the whole chord, which then holds until the next such step. An OFF with no notes on that step releases the chord: the arp is silent until new notes. The source is read from step 1 of the pattern, not from the start of the range: a chord set before the selected steps already sounds on the first of them. The source is taken as it was when the dialog opened, so Dest may lie inside the selection too: the arp is written over the chord it is built from. Drum tracks in the selection are not a source.
+
+**What is written to Dest.** On every step of the range the note and velocity are replaced, and the arp's own fx GAT, TIE, SLD, NDG, RAT, PRB, CHD, ARS and ARP are cleared; other locks (FLT, DLY…) stay. Then on every hit:
+
+- **Note and velocity:** Vel Lo / the middle / Vel Hi by accent.
+- **Length:** always GAT. A normal note is Gate %, a short one half of it, a long one 100 %; all × Rate.
+- **Tie (`-`):** TIE on the previous note and OFF on the first rest after it. A tie that runs to the end of the range becomes a long GAT to the range's end instead of TIE (up to 800 %); otherwise the note would hang past the range.
+- **Slide (`~`):** SLD (the Slide row) on the note, and the previous note's GAT is stretched into the next one so the voice glides legato. After a rest SLD is written too: the synth takes the note from the last pitch. A slide on the first note of the range is not written.
+- **Swing:** NDG on the odd arp steps. **Ghost PRB:** PRB on ghost notes. **Roll:** RAT 2–4. **CHORD mode:** CHD.
+- No free fx slot: that fx is skipped.
+
+**Pattern format.** A pattern is a line of tokens separated by spaces (or commas), one token per step, up to 32 steps (the rest are ignored). The first character is the step type, followed without a space by note modifiers in any order:
+
+| Token | Meaning |
+|-------|---------|
+| `x` | note |
+| `X` | accented note (Vel Hi) |
+| `o` | ghost note (Vel Lo, Ghost PRB) |
+| `.` | rest |
+| `-` | tie: the previous note holds |
+| `s` | after a note: short (half of Gate) |
+| `l` | after a note: long (100 %) |
+| `~` | after a note: slide into it from the previous one |
+| `r` | after a note: repeat the previous note (the cycle does not move) |
+| `p` | after a note: the lowest held note, a "pedal" (the cycle does not move) |
+| `^` / `v` | after a note: an octave up / down |
+
+Example: `X x~ x . X x~ X x`: 8 steps, an accent, a slide note, a note, a rest, and again. Unknown tokens are skipped.
+
+**Capture** saves Dest's rhythm as your own pattern: a name from the keyboard (up to 16 characters: A–Z, 0–9, `-`, `_`), file `/presets/ARP/NAME.arp`. It takes Dest's range as it was before the dialog opened (your own line, not the preview), at most 32 steps. A note becomes `x` / `X` / `o` (velocity split into three levels within the range's spread; with a spread under 6 or the track velocity, a normal note), GAT under 35 % `s`, from 90 % `l`, SLD `~`, empty steps after a TIE note `-`, everything else `.`; the same pitch as the previous note becomes `r`, the range's lowest note `p`. The first note is always a plain one (NEXT); octaves are not captured. GAT is captured as written, so capture a line written at Rate ×1: the arp's GAT at Rate ×2–×4 is multiplied by Rate and captures as long notes. After saving, the pattern is selected in Pattern right away (toast `SAVED`). No notes in the range: `NO NOTES`; no valid characters in the name: `BAD NAME`; the write failed (no card etc.): a toast with the error. `.arp` is plain text in the format above, so it can be edited on a computer (card reader). A broken file shows an error toast when selected and plays the first factory pattern. The Pattern list holds up to 32 of your own patterns.
+
+**Factory patterns** (42), by style:
+
+| Style | Patterns |
+|-------|----------|
+| BASIC | 16THS, 8THS, TRIPLET, DOTTED, QUARTERS, OFFBEAT, ACCENT 4 |
+| TR (trance) | TR GATE, TR OFFBT, TR ROLL, TR PEDAL, TR UPLIFT, TR 332, TR CHUG |
+| PSY (psytrance) | PSY GALOP, PSY TRIPL |
+| TE (techno) | TE STAB, TE HYPNO3, TE MINIMAL, TE RUMBLE, TE ROLLER |
+| HO (house) | HO OFFBT, HO ORGAN, HO PIANO, HO SHUFFLE |
+| DNB | DNB ROLL, DNB STAB, DNB AMEN, DNB REESE, DNB 2STEP |
+| ACID | ACID 1, ACID 2, ACID 3 |
+| EL (electro) | EL FUNK, EL ROBOT |
+| BR (breaks) | BR BREAK |
+| SW (synthwave) | SW 8THS, SW DRIVE |
+| DUB | DUB STAB, DUB ECHO |
+| CHIP | CHIP OCT, CHIP RUN |
+
+TRIPLET, PSY TRIPL and TE HYPNO3 are 12 steps long (over 16 steps they make a polyrhythm), the rest 16.
+
+- Dest is a [drum track](#drumtrack): nothing is written, the Dest row is red.
+- Slides (SLD) sound only on INT tracks; on a MIDI track SLD is written but does nothing (grey).
+- Like Fill's, the arp settings are remembered until power-off; your own patterns live on the card.
 
 <a id="track"></a>
 
@@ -976,6 +1076,7 @@ Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and
 | `/samples/*.wav` | WAV library for importing into projects (subfolders allowed) |
 | `/wavetables/*.wav` | wavetable library for SYNTH (subfolders allowed) |
 | `/presets/TYPE/…/name.mti` | [instrument presets](#presets): folders CHIP, SAMPLE, FM, DRUM, SYNTH, each with up to 4 levels of your own folders |
+| `/presets/ARP/name.arp` | your own [arp](#arp) patterns (Capture), text |
 
 The `/projects`, `/midi`, `/samples`, `/wavetables` and `/presets` folders (with the type folders) are created automatically.
 
@@ -1138,6 +1239,7 @@ Resistors of 100–220 Ω, one per ear. Only headphones go into this jack, not a
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048, via Wi-Fi up to ~3 MB |
 | Presets | `.mti` file 204 bytes (v2: 156, v1: 84; via Wi-Fi up to 1 KB), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
 | WAV via Wi-Fi | 4 MB to `/samples`, 10 MB to a project folder (name up to 16 characters) |
+| Arp patterns | up to 32 steps; 42 factory, up to 32 of your own listed, name up to 16 characters |
 | Long press | 0.5 s |
 
 **Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 100%, Preview ON.

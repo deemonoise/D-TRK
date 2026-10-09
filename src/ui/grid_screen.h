@@ -144,6 +144,8 @@ class GridScreen : public Screen {
   FillDialog fill_{app_};
   mt::FillSpec fillSpec_;  // RAM only, shared by the tracks
   bool fillInit_ = false;  // values set from the cursor once
+  mt::ArpSpec arpSpec_;    // RAM only, FILL's arp page
+  bool arpInit_ = false;   // root set from the track once
   TransposeDialog transpose_{app_};
   mt::FxSlot lastFx_[mt::kTracks][mt::kFxSlots] = {};  // last FX written per track and slot, offered on empty slots
   bool fxCycled_ = false;  // a command was turned on this cell: passing "..." does not offer lastFx_ again

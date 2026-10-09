@@ -670,8 +670,13 @@ void GridScreen::openFill() {
     }
   }
   if (drum()) f.lane = static_cast<uint8_t>(lane_);
+  if (!arpInit_) {
+    arpInit_ = true;
+    arpSpec_.root = lastNote_[tr];
+  }
+  arpSpec_.dest = sel.t0;  // default: the first track of the selection
   setEdit(false);
-  if (!fill_.open(app_.editPattern(), sel, &f, drum())) app_.toast("NO MEMORY");
+  if (!fill_.open(app_.editPattern(), sel, &f, &arpSpec_, drum())) app_.toast("NO MEMORY");
 }
 
 // Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
