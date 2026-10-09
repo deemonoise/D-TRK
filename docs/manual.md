@@ -553,7 +553,7 @@ The page is remembered when you switch instruments and when you change Type: for
 | OSC / SMPL / FM / DRUM | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) and [DRUM](#drum) — Machine and 5 macros; [SYNTH](#synth) — oscillators and tables |
 | MOD (SYNTH only) | Sub, Sub oct, Noise, Env\>Shp, Env atk, Env dec |
 | FILT | Drive, Bit crush, Downsample, Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — [drive, lo-fi and filter](#filter) |
-| LFO | LFO (1–4), Wave, Sync, Rate, Depth, Dest |
+| LFO | LFO (1–4), Wave, Sync, Retrig, Rate, Depth, Dest |
 
 ### MAIN and ENV
 
@@ -681,7 +681,7 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 - **Drums** (KICK, SNARE, METAL, PERC, CLAP, HAT): Attack, Sustain, Release are gray; length is set by DECAY. Always mono per track: a new note restarts the voice without a click (choke) — open and closed hats on the same track cut each other off.
 - **TONE and CHORD:** Attack, Sustain, Release come from the shared parameters; Decay is always gray for FM — DECAY replaces it. Mode and Glide work only for TONE; CHORD is mono, the whole chord in one voice.
 - **The note** sets the machine's pitch relative to C-4; Transpose and Fine work as for CHIP. PREVIEW plays note C-4.
-- The LFO phase resets on every new note except legato: TONE in MONO and CHORD (always mono, overlapping notes play legato).
+- The LFO phase (with Retrig ON) resets on every new note except legato: TONE in MONO and CHORD (always mono, overlapping notes play legato).
 
 <a id="drum"></a>
 
@@ -820,11 +820,12 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 | LFO | 1–4 | 1 | Which of the instrument's four LFOs the rows below edit; the number in brackets is how many are on. All four run at once; their effects on the same destination add up (VOL — multiplies). |
 | Wave | SINE, TRI, SAW, SQR, RND | SINE | LFO shape; RND — a random value each period. |
 | Sync | FREE / TEMPO | FREE | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
+| Retrig | ON / OFF | ON | ON — the LFO phase restarts on every new note (except legato). OFF — one phase per instrument, shared by all its voices and all tracks playing it: a note lands in the running phase. With FREE the LFO runs continuously; with TEMPO it restarts when playback starts, so a 1 BAR LFO always begins at the start of the bar and every run sounds the same. RND with OFF gives one shared value per period. |
 | Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in FREE — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
-| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64. |
+| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64. |
 | Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); for CHIP and SAMPLE they are skipped. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. |
 
-- The filter envelope and LFO phase restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303.
+- The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303.
 - Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz.
 - Old projects load with Filter OFF and sound as before.
 

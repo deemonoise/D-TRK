@@ -48,6 +48,8 @@ int eventOffset(uint64_t t, uint64_t blockT) {
 Synth::Synth(const Project& p) : p_(p) {
   Drive::init();  // the tanh table, outside the audio path
   reset();
+  for (auto& r : instLfoRnd_)
+    for (float& x : r) x = rnd();
 }
 
 void Synth::reset() {
@@ -150,6 +152,9 @@ MT_HOT uint8_t Synth::trackVol(uint8_t track) const {
 void Synth::apply(const Ev& e) {
   const uint8_t k = e.b[0] & 0xF0;
   if (e.b[0] == 0xFE) startTrack(e.track);
+  else if (e.b[0] == 0xFA) transportStart();
+  else if (e.b[0] == 0xFC) paused_ = true;
+  else if (e.b[0] == 0xFB) paused_ = false;
   else if (e.b[0] == 0xFF) releaseTrack(e.track);
   else if (e.b[0] == 0xF5) {
     if (e.len >= 3) fx(e.track, e.b[1], e.b[2]);
@@ -809,27 +814,78 @@ void Synth::resetLfos(Voice& v) {
   }
 }
 
-// LFO i of a voice: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM), restarted at
-// note-on; -1..1 x depth / 64.
+// LFO rate: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM).
+MT_HOT float Synth::lfoRateHz(const LfoCfg& c) const {
+  return lfoTempo(c.sync) ? lfoSyncHz(c.rate, p_.bpm) : lfoHz(c.rate);
+}
+
+namespace {
+// LFO wave at phase ph (0..1), -1..1; rnd: the Random wave's value of this cycle.
+MT_HOT float lfoShape(uint8_t wave, float ph, float rnd) {
+  switch (static_cast<LfoWave>(wave)) {
+    case LfoWave::Tri: return 4.f * (ph < 0.5f ? 0.5f - ph : ph - 0.5f) - 1.f;
+    case LfoWave::Saw: return 2.f * ph - 1.f;
+    case LfoWave::Square: return ph < 0.5f ? 1.f : -1.f;
+    case LfoWave::Random: return rnd;
+    default: return sinf(6.2831853f * ph);
+  }
+}
+}  // namespace
+
+// LFO i of a voice, restarted at note-on; with Retrig OFF the instrument's shared phase
+// (advanceInstLfos) instead. -1..1 x depth / 64.
 MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
   if (!c.depth) return 0;
-  const float hz = c.sync ? lfoSyncHz(c.rate, p_.bpm) : lfoHz(c.rate);
-  float& ph = v.lfoPhase[i];
-  ph += hz * dt * (1.f / kSynthRate);
-  if (ph >= 1.f) {
-    ph -= static_cast<int>(ph);
-    v.lfoRnd[i] = rnd();
-  }
   float w;
-  switch (static_cast<LfoWave>(c.wave)) {
-    case LfoWave::Tri: w = 4.f * (ph < 0.5f ? 0.5f - ph : ph - 0.5f) - 1.f; break;
-    case LfoWave::Saw: w = 2.f * ph - 1.f; break;
-    case LfoWave::Square: w = ph < 0.5f ? 1.f : -1.f; break;
-    case LfoWave::Random: w = v.lfoRnd[i]; break;
-    default: w = sinf(6.2831853f * ph); break;
+  if (lfoFree(c.sync)) {
+    w = lfoShape(c.wave, instLfoPhase_[v.instr][i], instLfoRnd_[v.instr][i]);
+  } else {
+    float& ph = v.lfoPhase[i];
+    ph += lfoRateHz(c) * dt * (1.f / kSynthRate);
+    if (ph >= 1.f) {
+      ph -= static_cast<int>(ph);
+      v.lfoRnd[i] = rnd();
+    }
+    w = lfoShape(c.wave, ph, v.lfoRnd[i]);
   }
   const int d = c.depth < -64 ? -64 : (c.depth > 63 ? 63 : c.depth);
   return w * d * (1.f / 64.f);
+}
+
+float Synth::lfoPhase(int v, int i) const {
+  const Voice& x = voices_[v];
+  return lfoFree(lfoAt(instrOf(x), i).sync) ? instLfoPhase_[x.instr][i] : x.lfoPhase[i];
+}
+
+// Retrig OFF LFOs of every instrument, playing or not (FREE keeps running, TEMPO stays on the
+// transport's grid and holds while it is paused), once per control update.
+MT_HOT void Synth::advanceInstLfos() {
+  constexpr float kPerHz = static_cast<float>(kControl) / kSynthRate;
+  for (int m = 0; m < kInstruments; ++m) {
+    const Instrument& x = p_.instruments[m];
+    for (int i = 0; i < kLfos; ++i) {
+      const uint8_t sync = i ? x.lfo[i - 1].sync : x.lfoSync;
+      if (!lfoFree(sync) || (paused_ && lfoTempo(sync))) continue;
+      const LfoCfg c = lfoAt(x, i);
+      float& ph = instLfoPhase_[m][i];
+      ph += lfoRateHz(c) * kPerHz;
+      if (ph >= 1.f) {
+        ph -= static_cast<int>(ph);
+        instLfoRnd_[m][i] = rnd();
+      }
+    }
+  }
+}
+
+// 0xFA: TEMPO LFOs with Retrig OFF restart with the transport (FREE ones keep running).
+void Synth::transportStart() {
+  paused_ = false;
+  for (int m = 0; m < kInstruments; ++m)
+    for (int i = 0; i < kLfos; ++i)
+      if (const uint8_t sync = lfoAt(p_.instruments[m], i).sync; lfoTempo(sync) && lfoFree(sync)) {
+        instLfoPhase_[m][i] = 0;
+        instLfoRnd_[m][i] = rnd();
+      }
 }
 
 // Macros of an FM / DRUM / SYNTH voice: locks over the instrument's, then the LFO's macro target (l:
@@ -1063,9 +1119,11 @@ MT_HOT void Synth::render(int16_t* out) {
   int e = 0;
   for (int pos = 0; pos < kBlock;) {
     mark(kProfMaster);
-    if (pos % kControl == 0)
+    if (pos % kControl == 0) {
+      advanceInstLfos();
       for (auto& v : voices_)
         if (v.on && !v.env.idle()) control(v, kControl);  // a ringing filter tail keeps its cutoff
+    }
     mark(kProfControl);
     ctlLeft_ = kControl - pos % kControl;
     while (e < nEv_ && ev_[e].off <= pos) apply(ev_[e++]);

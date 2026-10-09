@@ -319,7 +319,7 @@ constexpr FactoryPreset kAll[] = {
     {InstrType::Synth, "BASS", "WOBBLE", [](I& m) {  // LFO on the cutoff, tempo synced 1/8
        sy(m, SynOsc::Saw, nullptr, SynOsc::Square, nullptr); m.macro[kMacMix] = 50; m.transpose = -12;
        lp(m, 55, 70, 0, 40); m.mono = true; m.vol = 75;
-       lfo1(m, LfoWave::Sine, LfoDest::Cutoff, 4, 40); m.lfoSync = 1; }},
+       lfo1(m, LfoWave::Sine, LfoDest::Cutoff, 4, 40); m.lfoSync = kLfoTempo; }},
     {InstrType::Synth, "BASS", "FM GROWL", [](I& m) {  // sync sweep + drive
        sy(m, SynOsc::Saw, nullptr, SynOsc::Saw, nullptr); m.synSync = true; m.synSemi = 12; m.macro[kMacMix] = 80;
        m.transpose = -12; m.macro[kMacSenv] = 100; m.synEDec = 55; m.drive = 45; lp(m, 80, 30, 0, 40); m.mono = true; m.vol = 30; }},

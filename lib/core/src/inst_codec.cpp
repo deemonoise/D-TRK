@@ -150,7 +150,7 @@ void unpackSlices(const uint8_t* b, Instrument& m) {
 }
 
 void packLfo(const Instrument& m, uint8_t* b) {
-  b[0] = m.lfoSync ? 1 : 0;
+  b[0] = m.lfoSync & 3;
   for (int i = 0; i < kLfos - 1; ++i) {
     const LfoCfg& l = m.lfo[i];
     uint8_t* r = b + 1 + i * 5;
@@ -158,20 +158,20 @@ void packLfo(const Instrument& m, uint8_t* b) {
     r[1] = l.rate;
     r[2] = static_cast<uint8_t>(l.depth);
     r[3] = l.dest;
-    r[4] = l.sync ? 1 : 0;
+    r[4] = l.sync & 3;
   }
 }
 
 void unpackLfo(const uint8_t* b, Instrument& m) {
-  m.lfoSync = b[0] ? 1 : 0;
-  if (m.lfoSync && m.lfoRate >= kLfoSyncSteps) m.lfoRate = kLfoSyncSteps - 1;
+  m.lfoSync = b[0] & 3;
+  if (lfoTempo(m.lfoSync) && m.lfoRate >= kLfoSyncSteps) m.lfoRate = kLfoSyncSteps - 1;
   for (int i = 0; i < kLfos - 1; ++i) {
     LfoCfg& l = m.lfo[i];
     const uint8_t* r = b + 1 + i * 5;
     l.wave = r[0] < static_cast<uint8_t>(LfoWave::Count) ? r[0] : 0;
-    l.sync = r[4] ? 1 : 0;
+    l.sync = r[4] & 3;
     l.rate = r[1] > 127 ? 127 : r[1];
-    if (l.sync && l.rate >= kLfoSyncSteps) l.rate = kLfoSyncSteps - 1;
+    if (lfoTempo(l.sync) && l.rate >= kLfoSyncSteps) l.rate = kLfoSyncSteps - 1;
     const int d = static_cast<int8_t>(r[2]);
     l.depth = static_cast<int8_t>(d < -64 ? -64 : (d > 63 ? 63 : d));
     l.dest = r[3] < static_cast<uint8_t>(LfoDest::Count) ? r[3] : 0;

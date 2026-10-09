@@ -1101,6 +1101,104 @@ void test_lfo_restarts_on_mono_retrigger_after_release() {
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] < 0.02f);
 }
 
+// Retrig OFF: one phase per instrument, running without notes; a note on another track joins it.
+void test_lfo_retrig_off_shares_phase() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoRate = 60;  // ~1 Hz
+  m.lfoDepth = 10;
+  m.lfoSync = kLfoFree;
+  p->tracks[1].instr = 0;
+  for (int k = 0; k < 20; ++k) s->render(buf);  // no voice yet
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 30; ++k) s->render(buf);
+  noteOn(0, 1, 64);
+  s->render(buf);
+  const float inc = lfoHz(m.lfoRate) * Synth::kControl / kSynthRate;  // per control update
+  const float want = 51 * (Synth::kBlock / Synth::kControl) * inc;
+  const int a = s->trackVoice(0), b = s->trackVoice(1);
+  TEST_ASSERT_TRUE(a >= 0 && b >= 0 && a != b);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, want, s->lfoPhase(a, 0));
+  TEST_ASSERT_EQUAL_FLOAT(s->lfoPhase(a, 0), s->lfoPhase(b, 0));
+}
+
+// Retrig ON (the default): the later note starts its LFO at phase 0.
+void test_lfo_retrig_on_restarts_per_note() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoRate = 60;
+  m.lfoDepth = 10;
+  p->tracks[1].instr = 0;
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 30; ++k) s->render(buf);
+  noteOn(0, 1, 64);
+  s->render(buf);
+  const float inc = lfoHz(m.lfoRate) * Synth::kControl / kSynthRate;
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 3 * inc, s->lfoPhase(s->trackVoice(1), 0));  // updates after the note
+  TEST_ASSERT_TRUE(s->lfoPhase(s->trackVoice(0), 0) > 0.1f);
+}
+
+// Transport start (0xFA): TEMPO + Retrig OFF back to phase 0, FREE + Retrig OFF keeps running.
+void test_lfo_transport_start_resets_tempo_retrig_off() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoRate = 8;  // 1 bar
+  m.lfoDepth = 10;
+  m.lfoSync = kLfoTempo | kLfoFree;
+  m.lfo[0] = {0, 60, 10, static_cast<uint8_t>(LfoDest::Vol), kLfoFree};
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 40; ++k) s->render(buf);
+  const int v = s->trackVoice(0);
+  const float freeBefore = s->lfoPhase(v, 1);
+  TEST_ASSERT_TRUE(s->lfoPhase(v, 0) > 0.05f);
+  send(0, 3, 0xFA, 0, 0, 1);  // any track
+  s->render(buf);
+  const float tempoInc = lfoSyncHz(m.lfoRate, p->bpm) * Synth::kControl / kSynthRate;
+  const float freeInc = lfoHz(m.lfo[0].rate) * Synth::kControl / kSynthRate;
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 3 * tempoInc, s->lfoPhase(v, 0));  // updates after the event
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, freeBefore + 4 * freeInc, s->lfoPhase(v, 1));
+}
+
+// Transport pause (0xFC) holds TEMPO + Retrig OFF on the bar grid, FREE + Retrig OFF runs on;
+// resume (0xFB) moves it on from where it stopped.
+void test_lfo_transport_pause_holds_tempo_retrig_off() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoRate = 8;  // 1 bar
+  m.lfoDepth = 10;
+  m.lfoSync = kLfoTempo | kLfoFree;
+  m.lfo[0] = {0, 60, 10, static_cast<uint8_t>(LfoDest::Vol), kLfoFree};
+  noteOn(0, 0, 60);
+  send(0, 0, 0xFA, 0, 0, 1);
+  s->render(buf);
+  send(0, 0, 0xFC, 0, 0, 1);
+  s->render(buf);
+  const int v = s->trackVoice(0);
+  const float tempo = s->lfoPhase(v, 0), freeP = s->lfoPhase(v, 1);
+  for (int k = 0; k < 20; ++k) s->render(buf);
+  TEST_ASSERT_EQUAL_FLOAT(tempo, s->lfoPhase(v, 0));
+  TEST_ASSERT_TRUE(s->lfoPhase(v, 1) > freeP + 0.05f);
+  send(0, 0, 0xFB, 0, 0, 1);
+  s->render(buf);
+  const float tempoInc = lfoSyncHz(m.lfoRate, p->bpm) * Synth::kControl / kSynthRate;
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, tempo + 3 * tempoInc, s->lfoPhase(v, 0));  // updates after the event
+}
+
+// reset() (audio park during flash writes) leaves the shared LFO phases where they are.
+void test_lfo_reset_keeps_retrig_off_phase() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoRate = 60;
+  m.lfoDepth = 10;
+  m.lfoSync = kLfoFree;
+  for (int k = 0; k < 30; ++k) s->render(buf);
+  s->reset();
+  noteOn(0, 0, 60);
+  s->render(buf);
+  const float inc = lfoHz(m.lfoRate) * Synth::kControl / kSynthRate;
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 31 * 4 * inc, s->lfoPhase(s->trackVoice(0), 0));
+}
+
 void test_filter_env_long_attack_not_dropped() {
   Instrument& m = p->instruments[0];
   m.fltMode = static_cast<uint8_t>(FltMode::Lp);
@@ -2588,6 +2686,11 @@ int main() {
   RUN_TEST(test_lfo_macro_dest_ignored_on_chip);
   RUN_TEST(test_filter_turned_on_mid_note_starts_clean);
   RUN_TEST(test_lfo_restarts_on_mono_retrigger_after_release);
+  RUN_TEST(test_lfo_retrig_off_shares_phase);
+  RUN_TEST(test_lfo_retrig_on_restarts_per_note);
+  RUN_TEST(test_lfo_transport_start_resets_tempo_retrig_off);
+  RUN_TEST(test_lfo_transport_pause_holds_tempo_retrig_off);
+  RUN_TEST(test_lfo_reset_keeps_retrig_off_phase);
   RUN_TEST(test_filter_env_long_attack_not_dropped);
   RUN_TEST(test_filter_env_tail_dropped);
   RUN_TEST(test_drum_sounds_and_ends);

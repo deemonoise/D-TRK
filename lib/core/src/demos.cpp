@@ -726,7 +726,7 @@ void buildDubTechno(Project& p) {
   stab.reso = 35;
   stab.lfoWave = static_cast<uint8_t>(LfoWave::Sine);
   stab.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
-  stab.lfoSync = 1;
+  stab.lfoSync = kLfoTempo;
   stab.lfoRate = 10;  // 4 bars
   stab.lfoDepth = 24;
   ins(p, 2, InstrType::Synth, "SUBBASS");

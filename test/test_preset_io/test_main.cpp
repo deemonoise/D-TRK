@@ -382,6 +382,43 @@ void test_lfos_roundtrip() {
   TEST_ASSERT_EQUAL(0, b.lfo[1].depth);
 }
 
+// The sync byte: bit 0 TEMPO, bit 1 Retrig OFF; both bits round-trip, other bits are dropped.
+void test_lfo_sync_bits() {
+  for (uint8_t s = 0; s < 4; ++s) {
+    Instrument a;
+    a.lfoSync = s;
+    for (int i = 0; i < kLfos - 1; ++i) a.lfo[i].sync = s;
+    uint8_t r[kLfoRecSize];
+    packLfo(a, r);
+    Instrument b;
+    unpackLfo(r, b);
+    TEST_ASSERT_EQUAL(s, b.lfoSync);
+    for (int i = 0; i < kLfos - 1; ++i) TEST_ASSERT_EQUAL(s, b.lfo[i].sync);
+    TEST_ASSERT_EQUAL(s & 1, lfoTempo(b.lfoSync));
+    TEST_ASSERT_EQUAL((s >> 1) & 1, lfoFree(b.lfoSync));
+  }
+  // Old values 0 / 1 read as before; a free-running LFO keeps its rate, a TEMPO one is clamped.
+  uint8_t r[kLfoRecSize] = {0};
+  r[0] = 1;
+  r[1 + 1] = 100;  // LFO 2 rate
+  r[1 + 4] = 0;    // LFO 2 free
+  r[6 + 1] = 100;  // LFO 3 rate
+  r[6 + 4] = 1;    // LFO 3 TEMPO
+  r[11 + 4] = 0xF6;  // LFO 4: junk high bits dropped -> 2 (FREE, Retrig OFF)
+  r[11 + 1] = 100;
+  Instrument b;
+  b.lfoRate = 100;
+  unpackLfo(r, b);
+  TEST_ASSERT_EQUAL(1, b.lfoSync);
+  TEST_ASSERT_EQUAL(kLfoSyncSteps - 1, b.lfoRate);
+  TEST_ASSERT_EQUAL(0, b.lfo[0].sync);
+  TEST_ASSERT_EQUAL(100, b.lfo[0].rate);
+  TEST_ASSERT_EQUAL(1, b.lfo[1].sync);
+  TEST_ASSERT_EQUAL(kLfoSyncSteps - 1, b.lfo[1].rate);
+  TEST_ASSERT_EQUAL(kLfoFree, b.lfo[2].sync);
+  TEST_ASSERT_EQUAL(100, b.lfo[2].rate);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -399,5 +436,6 @@ int main() {
   RUN_TEST(test_v3_file_loads_with_sound_fx_defaults);
   RUN_TEST(test_sound_fx_fields_clamped);
   RUN_TEST(test_lfos_roundtrip);
+  RUN_TEST(test_lfo_sync_bits);
   return UNITY_END();
 }

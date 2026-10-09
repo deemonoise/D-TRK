@@ -27,7 +27,8 @@ struct WtSource {
 // Hardware-free synth for INT tracks. Messages are MIDI-like, channel nibble ignored:
 // 0x90 note vel (vel 0 = off), 0x80 note, 0xE0 lsb msb (bend, +-2 semitones), 0xC0 prog (instrument),
 // 0xF5 cmd val (synth fx: cmd = Fx SLD..SLC, or kSynthStep), 0xFE (start: reset the track's runtime
-// state), 0xFF (all off: release every voice of the track).
+// state), 0xFF (all off: release every voice of the track), 0xFA / 0xFC / 0xFB (transport start /
+// pause / resume, any track: TEMPO LFOs with Retrig OFF back to phase 0 / hold / run on).
 //
 // Synth fx follow the step model of the sequencer: 0xF5 kSynthStep (ticks per step | 0x80 if the step
 // has a note) opens a step, then come the step's fx, then its notes. On a step with a note the fx apply
@@ -109,6 +110,8 @@ class Synth {
 
   // Voice i's instrument as it plays (a KIT sampler lane: the SAMPLE instrument built from the lane).
   const Instrument& voiceInstrument(int i) const { return instrOf(voices_[i]); }
+  // Phase (0..1) LFO i of voice v reads: its own, or with Retrig OFF (lfoFree) its instrument's.
+  float lfoPhase(int v, int i) const;
 
  private:
   struct Ev {
@@ -159,7 +162,10 @@ class Synth {
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
   void controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut);
   float lfo(Voice& v, const LfoCfg& c, int i, int dt);
+  float lfoRateHz(const LfoCfg& c) const;
   void resetLfos(Voice& v);
+  void advanceInstLfos();
+  void transportStart();
   static float cachedHz(Voice& v, int k, float note);  // noteHz, reused while note stays
   static bool oneShot(const Voice& v);
   static uint8_t machineOf(const Instrument& m);
@@ -204,6 +210,12 @@ class Synth {
   uint32_t profBlocks_ = 0;
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
   uint32_t rng_ = 0x2545F491;  // LFO Random
+  // Retrig OFF LFOs (lfoFree): one phase (and Random value) per instrument, shared by its voices;
+  // advanceInstLfos moves them once per control update, before the voices read them. Kept by reset()
+  // (audio park mid-play): only 0xFA restarts the TEMPO ones.
+  float instLfoPhase_[kInstruments][kLfos] = {};
+  float instLfoRnd_[kInstruments][kLfos] = {};
+  bool paused_ = false;  // transport paused (0xFC .. 0xFB / 0xFA): TEMPO ones hold
   bool fmCache_ = true;
   uint32_t fmCalls_ = 0;
   uint32_t drumCalls_ = 0;

@@ -97,12 +97,17 @@ enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Driv
 
 // LFO 2..4 of an instrument (LFO 1 keeps its own fields: older files). depth 0 = off.
 constexpr int kLfos = 4;
+// LFO sync byte (LfoCfg::sync, Instrument::lfoSync): bit 0 TEMPO (rate is a division, lfoSyncHz),
+// bit 1 Retrig OFF (one phase per instrument, not restarted by notes; see Synth).
+constexpr uint8_t kLfoTempo = 1, kLfoFree = 2;
+inline bool lfoTempo(uint8_t s) { return s & kLfoTempo; }
+inline bool lfoFree(uint8_t s) { return s & kLfoFree; }
 struct LfoCfg {
   uint8_t wave = 0;   // LfoWave
-  uint8_t rate = 64;  // 0..127 (lfoHz), or a division index when sync (lfoSyncHz)
+  uint8_t rate = 64;  // 0..127 (lfoHz), or a division index when TEMPO (lfoSyncHz)
   int8_t depth = 0;   // -64..63
   uint8_t dest = 0;   // LfoDest
-  uint8_t sync = 0;   // 1 = rate is a tempo division
+  uint8_t sync = 0;   // kLfoTempo | kLfoFree bits
 };
 static_assert(sizeof(LfoCfg) == 5, "LfoCfg layout (file format)");
 
@@ -144,7 +149,7 @@ struct Instrument {
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
   int8_t lfoDepth = 0;   // -64..63, 0 = off
   uint8_t lfoDest = 0;   // LfoDest
-  uint8_t lfoSync = 0;   // LFO 1 synced to the tempo: lfoRate is a division (lfoSyncHz)
+  uint8_t lfoSync = 0;   // LFO 1 kLfoTempo | kLfoFree bits (TEMPO: lfoRate is a division)
   // Filter, every type: see cutoffHz, resoQ, filterEnv.
   uint8_t fltMode = 0;          // FltMode
   uint8_t cutoff = 127;         // 0..127
