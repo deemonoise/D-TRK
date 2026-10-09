@@ -389,6 +389,8 @@ const int16_t* sampleData(int index, uint32_t& frames, uint32_t& rate, uint32_t&
   return d;
 }
 
+void reset() { answered = false; }
+
 mt::BankResult writable() {
   if (!mounted) return BankResult::NoBank;
   return working ? BankResult::Busy : BankResult::Ok;

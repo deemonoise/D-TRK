@@ -221,7 +221,8 @@ class Synth {
   uint32_t prof_[kProfStages] = {};
   uint32_t profBlocks_ = 0;
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
-  uint32_t rng_ = 0x2545F491;  // LFO Random
+  static constexpr uint32_t kRngSeed = 0x2545F491;
+  uint32_t rng_ = kRngSeed;  // LFO Random
   bool fmCache_ = true;
   uint32_t fmCalls_ = 0;
   uint32_t drumCalls_ = 0;

@@ -37,6 +37,9 @@ mt::BankResult writable();
 mt::BankResult writeFrames(uint32_t frames, uint32_t rate, mt::FrameFill fill, void* ctx, mt::ImportOut& out,
                            mt::BankProgress keep, void* keepCtx);
 
+// The ESP (re)started: its seqs start over, so the last reply is no longer one to repeat.
+void reset();
+
 // The running job's next piece (about kStepBytes of card I/O), then its reply when it ends.
 void step();
 

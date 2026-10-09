@@ -78,6 +78,8 @@ void onHello(Reader& r) {
   card::reset();  // and with it the files it had open
   preview::stop();
   render::reset();  // a render it was feeding is over
+  bank::reset();
+  fw::reset();
   if (h.modelSize && h.modelSize != sizeof(mt::SynthModel))
     log("model size mismatch: esp %lu, synth %u", static_cast<unsigned long>(h.modelSize), sizeof(mt::SynthModel));
   sendHello();

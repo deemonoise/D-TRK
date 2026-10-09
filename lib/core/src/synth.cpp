@@ -57,6 +57,8 @@ void Synth::reset() {
   load_ = 0;
   cap_ = kVoices;
   capUp_ = 0;
+  rng_ = kRngSeed;  // a render repeats exactly
+  drumResetNoise();
   delay_.clear();
   reverb_.clear();
   comp_.reset();

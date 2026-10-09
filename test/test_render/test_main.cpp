@@ -339,6 +339,27 @@ void test_demo_render_unchanged_by_split() {
   TEST_ASSERT_EQUAL_HEX32(0xABF36BA1u, h);
 }
 
+// The synth boards render on one synth, reset between renders: drum noise and LFO Random included,
+// the second render of a demo is the first one again.
+void test_demo_rendered_twice_on_one_synth_identical() {
+  static Project p;
+  demoBuild(0, p);
+  RenderSpec s;
+  s.tailBlocks = 20;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p, s);
+  uint32_t h[2];
+  for (uint32_t& v : h) {
+    synth.reset();
+    OfflineRender r(p, synth, s);
+    int16_t out[Synth::kBlock], outR[Synth::kBlock];
+    v = 2166136261u;
+    while (r.renderBlock(out, outR))
+      for (int i = 0; i < Synth::kBlock; ++i) v = (v ^ static_cast<uint16_t>(out[i] ^ outR[i] << 1)) * 16777619u;
+  }
+  TEST_ASSERT_EQUAL_HEX32(h[0], h[1]);
+}
+
 // The Teensy's path: OfflineSequence's events through BlockRender == OfflineRender. (Not on a demo:
 // drum noise seeds are process-global, so two drum renders in one process differ.)
 static void fillSeqProj(Project& p) {
@@ -529,6 +550,7 @@ int main() {
   RUN_TEST(test_peak_and_clips);
   RUN_TEST(test_centred_project_renders_l_equals_r);
   RUN_TEST(test_demo_render_unchanged_by_split);
+  RUN_TEST(test_demo_rendered_twice_on_one_synth_identical);
   RUN_TEST(test_sequence_plus_synth_matches_render);
   RUN_TEST(test_link_render_matches);
   RUN_TEST(test_link_render_splits_dense_block);

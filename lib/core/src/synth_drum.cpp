@@ -33,6 +33,8 @@ float snap(float e) { return e < kZero && e > -kZero ? 0 : e; }
 
 }  // namespace
 
+void drumResetNoise() { gSeed = 0; }
+
 float DrumVoice::K::get(float t) {
   if (t != ms) {
     ms = t;

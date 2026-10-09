@@ -242,6 +242,8 @@ int handle(Msg t, uint8_t s, const uint8_t* p, int n, uint8_t* o) {
   return w.ok() ? w.size() : 0;
 }
 
+void reset() { haveLast = false; }
+
 void step() {
   if (!movePending) return;
   link::flushOut();

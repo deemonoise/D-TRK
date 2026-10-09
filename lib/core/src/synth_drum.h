@@ -87,4 +87,7 @@ class DrumVoice {
   bool fresh_ = false;                     // triggered, first control() not yet run
 };
 
+// The noise seeds of the next triggers back to the boot ones (Synth::reset: a render repeats exactly).
+void drumResetNoise();
+
 }  // namespace mt

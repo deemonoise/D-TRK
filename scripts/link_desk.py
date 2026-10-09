@@ -8,6 +8,13 @@ Hello, Time every 50 ms, EvBatch. Log frames from the Teensy are printed as they
   python3 -I scripts/link_desk.py notes          # C-major arpeggio on track 0
   python3 -I scripts/link_desk.py status [secs]
   python3 -I scripts/link_desk.py fs [dir]       # card: list dir, write / read / remove a test file
+  python3 -I scripts/link_desk.py bank [X.wav] [--wt] [--clear]  # bank state, sample info / peaks; import; BankClear
+  python3 -I scripts/link_desk.py card ls|mkdir|put|get|rm|rmdir ...  # card files (put LOCAL REMOTE, get REMOTE LOCAL)
+  python3 -I scripts/link_desk.py model IMG id:off:len ...  # StateSet chunks of a SynthModel image
+  python3 -I scripts/link_desk.py pnote INSTR [NOTE MS]      # PreviewNote
+  python3 -I scripts/link_desk.py preview X.wav [--stop S]   # PreviewFile from the card, PreviewStop after S s
+  python3 -I scripts/link_desk.py render OUT.wav FRAMES [--normalize] [--trim] [--abort-after K]
+                                                 # RenderStart / RenderBlocks (u16 len + payload each) / RenderEnd
   python3 -I scripts/link_desk.py update X.hex   # .hex onto the card, FwFromFile: the board reflashes itself
   python3 -I scripts/link_desk.py selftest       # codec only, no board
 
@@ -176,6 +183,26 @@ class Link:
             if t == MSG[name] and s == seq:
                 return struct.unpack("<h", p[:2])[0], p[2:]
         return -10, b""
+
+    def call(self, name, payload=b"", timeout=2.0, progress=None):
+        """Any request -> the payload of its reply (same type and seq) or None; Progress frames for it
+        go to progress(done, total) and extend the wait."""
+        seq = self.send(name, payload)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            try:
+                t, s, p = self.frames.get(timeout=end - time.monotonic())
+            except queue.Empty:
+                break
+            if s != seq:
+                continue
+            if t == MSG["Progress"]:
+                end = time.monotonic() + timeout
+                if progress:
+                    progress(*struct.unpack("<II", p[1:9]))
+            elif t == MSG[name]:
+                return p
+        return None
 
     def _rx(self):
         buf = bytearray()
@@ -437,6 +464,175 @@ def cmd_bank(link, args):
     print("bank %s: %d entries, %d KB free of %d KB, %d KB unused, gen %d, built-ins %02x" %
           (b["result"], b["count"], b["free"] // 1024, b["capacity"] // 1024, b["unused"] // 1024, b["gen"],
            b["builtins"]))
+    if b["rates"]:
+        print("project samples' rates:", b["rates"])
+    for i in range(len(b["rates"])):
+        p = link.call("SampleInfo", bytes([i]))
+        res, cached, frames, rate, root, loop = struct.unpack("<BBIIBB", p[:12])
+        line = "  sample %d: %s cached %d, %d frames at %d Hz, root %d, loop %d" % (
+            i, BANK_RESULT[res], cached, frames, rate, root, loop)
+        if cached:  # the whole sample on 32 columns
+            p = link.call("WavePeaks", struct.pack("<BIIHB", i, 0, frames, 32, 32))
+            n = p[1]
+            mn, mx = struct.unpack("<%db" % n, p[2:2 + n]), struct.unpack("<%db" % n, p[2 + n:2 + 2 * n])
+            line += ", peaks %s, min %d max %d" % (BANK_RESULT[p[0]], min(mn), max(mx))
+        print(line)
+    if args.clear:
+        p = link.call("BankClear", bytes([0]), 10.0)
+        print("clear: %s, %d removed" % (BANK_RESULT[p[0]], p[1]) if p else "clear: no reply")
+        p = link.call("BankIndex")
+        print("bank now %d entries, %d KB free" % (p[1], struct.unpack("<I", p[6:10])[0] // 1024))
+
+
+def fs_list(link, path):
+    names, start = [], 0
+    while True:
+        err, body = link.request("FsList", struct.pack("<HB", start, 32) + fs_str(path))
+        fs_check(err, "list " + path)
+        more, entries = parse_list(body)
+        names += entries
+        start += len(entries)
+        if not more or not entries:
+            return names
+
+
+def fs_put(link, data, path):
+    err, body = link.request("FsOpen", bytes([1]) + fs_str(path))
+    fs_check(err, "open " + path)
+    h = body[0]
+    for at in range(0, len(data), FS_CHUNK):
+        fs_check(link.request("FsWrite", struct.pack("<BI", h, at) + data[at:at + FS_CHUNK])[0], "write " + path)
+    fs_check(link.request("FsClose", bytes([h]))[0], "close " + path)
+
+
+def fs_get(link, path):
+    err, body = link.request("FsOpen", bytes([0]) + fs_str(path))
+    fs_check(err, "open " + path)
+    h, size = body[0], struct.unpack("<I", body[2:6])[0]
+    data = b""
+    while len(data) < size:
+        err, body = link.request("FsRead", struct.pack("<BIH", h, len(data), FS_CHUNK))
+        fs_check(err, "read " + path)
+        if not body:
+            break
+        data += body
+    fs_check(link.request("FsClose", bytes([h]))[0], "close " + path)
+    return data
+
+
+def cmd_card(link, args):
+    """Card files: ls DIR, mkdir DIR, put LOCAL REMOTE, get REMOTE LOCAL, rm PATH, rmdir DIR (with its files)."""
+    cmd_hello(link, args)
+    op, a = args.op, args.args
+    if op == "ls":
+        for is_dir, size, name in fs_list(link, a[0] if a else "/"):
+            print("  %-40s %s" % (name + ("/" if is_dir else ""), "" if is_dir else size))
+    elif op == "mkdir":
+        fs_check(link.request("FsMkdir", fs_str(a[0]))[0], "mkdir " + a[0])
+    elif op == "put":
+        data = open(a[0], "rb").read()
+        t0 = time.monotonic()
+        fs_put(link, data, a[1])
+        print("%s: %d B in %.1f s" % (a[1], len(data), time.monotonic() - t0))
+    elif op == "get":
+        t0 = time.monotonic()
+        data = fs_get(link, a[0])
+        open(a[1], "wb").write(data)
+        print("%s: %d B in %.1f s" % (a[0], len(data), time.monotonic() - t0))
+    elif op == "rm":
+        fs_check(link.request("FsRemove", fs_str(a[0]))[0], "remove " + a[0])
+    elif op == "rmdir":
+        fs_check(link.request("FsRmdir", fs_str(a[0]), 10.0)[0], "rmdir " + a[0])
+    else:
+        sys.exit("card: ls / mkdir / put / get / rm / rmdir")
+
+
+def cmd_model(link, args):
+    """Chunks of a SynthModel image (the board's layout, e.g. dumped by a host build of lib/core) via
+    StateSet, each acked."""
+    cmd_hello(link, args)
+    img = open(args.image, "rb").read()
+    for spec in args.chunks:  # id:offset:len
+        cid, off, n = (int(v) for v in spec.split(":"))
+        for at in range(0, n, 480):
+            piece = img[off + at:off + min(n, at + 480)]
+            link.send("StateSet", struct.pack("<HHHH", cid, n, at, len(piece)) + piece)
+        end, got = time.monotonic() + 2, None
+        while time.monotonic() < end and got is None:
+            try:
+                t, _, p = link.frames.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if t in (MSG["Ack"], MSG["Nack"]) and struct.unpack("<H", p[:2])[0] == cid:
+                got = "ack" if t == MSG["Ack"] else "nack %d" % struct.unpack("<h", p[2:4])[0]
+        print("chunk %d (%d B): %s" % (cid, n, got or "no reply"))
+
+
+def cmd_pnote(link, args):
+    """PreviewNote: instrument instr plays note for ms on the preview track."""
+    cmd_hello(link, args)
+    time.sleep(0.2)
+    link.send("PreviewNote", struct.pack("<BBI", args.instr, args.note, args.ms))
+    time.sleep(args.ms / 1000 + 0.5)
+
+
+def cmd_preview(link, args):
+    """PreviewFile of a WAV on the card, PreviewStop after --stop secs (else it plays out)."""
+    cmd_hello(link, args)
+    t0 = time.monotonic()
+    p = link.call("PreviewFile", fs_str(args.path), 3.0)
+    if not p:
+        sys.exit("PreviewFile: no reply")
+    res, frames, rate = struct.unpack("<BII", p[:9])
+    print("PreviewFile: %s, %d frames at %d Hz (%.2f s), reply in %.0f ms" %
+          (BANK_RESULT[res], frames, rate, frames / rate if rate else 0, (time.monotonic() - t0) * 1000), flush=True)
+    if args.stop:
+        time.sleep(args.stop)
+        link.send("PreviewStop")
+        print("PreviewStop at %.2f s" % (time.monotonic() - t0), flush=True)
+        time.sleep(1.0)
+    else:
+        time.sleep((frames / rate if rate else 0) + 1.0)
+
+
+RENDER_RESULT = ["Ok", "NoSd", "OpenFail", "WriteFail", "ReadFail", "Busy", "NoRender", "BadOrder", "Bank"]
+
+
+def parse_render(p):
+    res, bank, blocks, frames, peak, clips, crc = struct.unpack("<BBIIHII", p[:20])
+    return dict(result=RENDER_RESULT[res] if res < len(RENDER_RESULT) else res, bank=BANK_RESULT[bank],
+                blocks=blocks, frames=frames, peak=peak, clips=clips, crc=crc)
+
+
+def cmd_render(link, args):
+    """A render on the board as render_io.cpp drives it: RenderStart (file target path), the RenderBlocks
+    payloads of FRAMES (u16 length + payload each, e.g. RenderPacker output of a host build), RenderEnd;
+    --abort-after K ends it with an abort after K frames."""
+    cmd_hello(link, args)
+    raw, frames = open(args.frames, "rb").read(), []
+    while raw:
+        n = struct.unpack("<H", raw[:2])[0]
+        frames.append(raw[2:2 + n])
+        raw = raw[2 + n:]
+    t0 = time.monotonic()
+    p = link.call("RenderStart", bytes([0]) + fs_str(args.path), 5.0)
+    r = parse_render(p) if p else None
+    print("RenderStart:", r, flush=True)
+    if not r or r["result"] != "Ok":
+        sys.exit(1)
+    for k, f in enumerate(frames):
+        if args.abort_after is not None and k == args.abort_after:
+            break
+        p = link.call("RenderBlocks", f, 5.0)
+        r = parse_render(p) if p else None
+        if not r or r["result"] != "Ok":
+            sys.exit("RenderBlocks %d: %s" % (k, r))
+    t1 = time.monotonic()
+    print("%d frames, %d blocks in %.1f s" % (k + 1, r["blocks"], t1 - t0), flush=True)
+    abort = args.abort_after is not None
+    p = link.call("RenderEnd", bytes([1 if abort else 0, 1 if args.normalize else 0, 1 if args.trim else 0]), 5.0)
+    print("RenderEnd%s: %s in %.1f s" % (" (abort)" if abort else "", parse_render(p) if p else "no reply",
+                                         time.monotonic() - t1))
 
 
 def cmd_selftest(args):
@@ -472,6 +668,26 @@ def main():
     bk = sub.add_parser("bank")
     bk.add_argument("path", nargs="?", help="a WAV on the board's card to import first")
     bk.add_argument("--wt", action="store_true", help="import it as a wavetable")
+    bk.add_argument("--clear", action="store_true", help="BankClear: drop the entries the model does not use")
+    cd = sub.add_parser("card")
+    cd.add_argument("op", choices=["ls", "mkdir", "put", "get", "rm", "rmdir"])
+    cd.add_argument("args", nargs="*")
+    md = sub.add_parser("model")
+    md.add_argument("image")
+    md.add_argument("chunks", nargs="+", help="id:offset:len")
+    pn = sub.add_parser("pnote")
+    pn.add_argument("instr", type=int)
+    pn.add_argument("note", type=int, nargs="?", default=60)
+    pn.add_argument("ms", type=int, nargs="?", default=1000)
+    pv = sub.add_parser("preview")
+    pv.add_argument("path")
+    pv.add_argument("--stop", type=float)
+    rd = sub.add_parser("render")
+    rd.add_argument("path")
+    rd.add_argument("frames")
+    rd.add_argument("--abort-after", type=int)
+    rd.add_argument("--normalize", action="store_true")
+    rd.add_argument("--trim", action="store_true")
     up = sub.add_parser("update")
     up.add_argument("hex")
     up.add_argument("--force", action="store_true")
@@ -481,7 +697,8 @@ def main():
     if args.cmd == "selftest":
         return cmd_selftest(args)
     link = Link(args.port or find_port())
-    {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank, "update": cmd_update}[args.cmd](link, args)
+    {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank, "update": cmd_update,
+     "card": cmd_card, "model": cmd_model, "pnote": cmd_pnote, "preview": cmd_preview, "render": cmd_render}[args.cmd](link, args)
     link.alive = False
 
 
