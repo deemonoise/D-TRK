@@ -14,6 +14,7 @@ constexpr uint8_t kFirstAddr = 0x20, kLastAddr = 0x27;
 
 uint8_t addr = kFirstAddr;
 std::atomic<uint8_t> ledWant{0};
+std::atomic<uint16_t> portIn{0xFFFF};  // last read port word, low = pressed
 
 bool writePort(uint8_t leds) {
   const uint16_t w = mt::trackPortWord(leds, pins::kTrackLedBit);
@@ -27,7 +28,9 @@ bool readButtons(uint8_t& pressed) {
   if (Wire.requestFrom(addr, static_cast<uint8_t>(2)) != 2) return false;
   const uint8_t lo = Wire.read();
   const uint8_t hi = Wire.read();
-  pressed = mt::trackPressed(static_cast<uint16_t>(lo | hi << 8), pins::kTrackBtnBit);
+  const uint16_t port = static_cast<uint16_t>(lo | hi << 8);
+  portIn.store(port, std::memory_order_relaxed);
+  pressed = mt::trackPressed(port, pins::kTrackBtnBit);
   return true;
 }
 
@@ -66,8 +69,14 @@ bool trackioBegin() {
     return false;
   }
   Serial.printf("trackio: PCF8575 at 0x%02X\n", addr);
+  uint8_t pressed;
+  readButtons(pressed);  // port state for the safe-boot check before the task runs
   xTaskCreatePinnedToCore(task, "trackio", 3072, nullptr, 4, nullptr, 1);
   return true;
+}
+
+bool expanderDown(uint8_t bit) {
+  return bit < 16 && !(portIn.load(std::memory_order_relaxed) & (1u << bit));
 }
 
 void trackLeds(uint8_t mask) { ledWant.store(mask, std::memory_order_relaxed); }

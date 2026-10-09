@@ -9,21 +9,21 @@ User manual: [docs/manual.md](docs/manual.md). Русская версия: [REA
 
 ## Wiring
 
-The built-in display, touch panel and microSD slot are already routed on the board. You only need to connect the controls and the MIDI output — to the board's expansion connector (Extended IO); the track buttons go to the Debug connector. Full soldering diagram (power, MIDI, buttons, headphones): [docs/wiring.md](docs/wiring.md).
+The built-in display, touch panel and microSD slot are already routed on the board. The encoder, the MIDI output and the DAC go to the board's expansion connector (Extended IO); the PCF8575 expander with all the buttons goes to the Debug connector. Full soldering diagram (power, MIDI, buttons, DAC, headphones): [docs/wiring.md](docs/wiring.md).
 
 | GPIO | What to connect | How |
 |---|---|---|
 | 10 | MIDI OUT | through a 10 Ω resistor to the Tip of the TRS jack (see diagram below) |
 | 11 | Encoder, pin A | the other end — the encoder's common pin to GND |
 | 12 | Encoder, pin B | |
-| 13 | Encoder button | button between GPIO and GND |
-| 14 | **Play** button | button between GPIO and GND |
-| 21 | **Shift** button | button between GPIO and GND |
-| 43 / 44 | Track buttons: SDA / SCL of the PCF8575 module | Debug connector (TXD0 / RXD0), optional, see below |
+| 13 | DAC BCK | PCM5102A module, see [Sound](#sound) |
+| 14 | DAC LCK (LRCK, WS) | |
+| 21 | DAC DIN | |
+| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, track buttons | Debug connector (TXD0 / RXD0), **required**, see below |
 | 3.3V | MIDI OUT | through a 33 Ω resistor to the Ring of the TRS jack |
-| GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack |
+| GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack, DAC GND |
 
-The inputs use the internal pull-up to 3.3 V (`INPUT_PULLUP`), so no external resistors are needed. The buttons short the pin to GND.
+Encoder A and B use the internal pull-up to 3.3 V (`INPUT_PULLUP`), so no external resistors are needed. All buttons are on the PCF8575 expander, whose pins have their own weak pull-ups; a button shorts its pin to GND.
 
 ### Encoder
 
@@ -31,9 +31,9 @@ A regular mechanical EC11 with a push button (4 pulses per detent). The middle p
 
 It is a good idea to add 10 nF capacitors from A and B to GND — they reduce contact bounce. The firmware has the PCNT hardware filter and a 5 ms software debounce for the buttons.
 
-### Track buttons (optional)
+### Buttons on the PCF8575 (required)
 
-8 MX buttons and 8 3 mm LEDs in the switch windows, via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware runs without it.
+The encoder button, Play, Shift and 8 MX track buttons with 8 3 mm LEDs in the switch windows are connected via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the track buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work: the encoder button, Play, Shift and the track buttons do nothing.
 
 | PCF8575 | Connection |
 |---|---|
@@ -41,10 +41,16 @@ It is a good idea to add 10 nF capacitors from A and B to GND — they reduce co
 | VCC / GND | 3.3 V / GND (from the same connector) |
 | INT | leave unconnected |
 | A0–A2 | any: the firmware looks for the module at 0x20–0x27 |
-| P00–P07 | buttons 1–8, other pin to GND |
-| P10–P17 | LED 1–8 cathodes |
+| P00–P07 | track buttons 1–8, other pin to GND |
+| P13 | encoder button (the shaft button), other pin to GND |
+| P14 | **Play** button, other pin to GND |
+| P15 | **Shift** button, other pin to GND |
+| P16 / P17 | buttons **A** / **B** (under Shift / Play), other pin to GND; reserved, the firmware does not use them yet |
+| P10–P17 | LED 1–8 cathodes, except P13–P17 (taken by the buttons above) |
 
-The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`): if a pin is damaged, a button can be moved to the pin of an unfitted LED (number 8–15 = P10–P17), and that LED marked as `0xFF`.
+The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`): if a pin is damaged, a button can be moved to the pin of an unfitted LED (number 8–15 = P10–P17), and that LED marked as `0xFF`. Since P13–P17 now carry the encoder button, Play, Shift, A and B, LEDs 4–8 need other free pins or stay unfitted (`0xFF`). On the author's unit P00 and P10 read low, so button 1 lives on P12, no LEDs are fitted, and P11 is free.
+
+Safe boot (hold Shift at power-on) works as before: the firmware reads Shift from the expander before the autoload.
 
 ```
 +3.3V ──[330 Ω]──|>|── P1x     (LED is lit when P1x = 0)
@@ -79,39 +85,49 @@ GND    ────────── Sleeve (MIDI DIN pin 2, shield)
 | FT6336U touch (I2C) | SDA 6, SCL 5, INT 7, RST 4 (shared with LCD) |
 | ST7796 display | 8080 bus, 8-bit (internal board routing) |
 
-GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 are I2S to the built-in NS4168 amplifier (built-in sound, see below). GPIO 43/44 (Debug connector) are used by the track buttons.
+GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound goes to an external DAC on GPIO 13/14/21 (see below). GPIO 43/44 (Debug connector) are used by the PCF8575.
 
 ## Sound
 
-Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to the built-in NS4168 amplifier — the **SPK** connector on the board, no soldering needed. Default volume is 40 % (MIX tab → MAIN, 0–200 %; above 100 % — up to +6 dB, peaks of loud chords are softly clipped); this is a device setting — it is stored in the board's memory and survives power-off.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Default volume is 40 % (MIX tab → MAIN, 0–200 %; above 100 % — up to +6 dB, peaks of loud chords are softly clipped); this is a device setting — it is stored in the board's memory and survives power-off.
 
-> **WARNING: the SPK output is bridged (BTL).** Both pins of the connector carry signal, **neither of them is ground**.
-> - Speaker (4–8 Ω) — directly across the two SPK pins.
-> - Headphones — only through an **isolated** jack (the jack body does not touch the device enclosure or GND), with **100–220 Ω resistors in series**. Start at minimum volume.
-> - **Never** connect the SPK pins to the board's GND, to the ground of other devices, or to line inputs (mixer, audio interface, amplifier, recorder) — this shorts the amplifier output and risks burning it or the connected device. A line output needs a separate DAC (see [plans](docs/plans/future-audio.md)).
+### DAC (PCM5102A)
 
-### Headphone jack (optional)
+A common module (purple GY-PCM5102, black "PCM5102 audio DAC v2" and similar), on the expansion connector.
 
-A 3.5 mm stereo jack (TRS), mono signal to both ears. Connects to the SPK connector in parallel with the speaker or instead of it.
+| DAC module | Connect to | Notes |
+|---|---|---|
+| VIN | 3.3 V or 5 V | the module has its own LDO |
+| GND | GND | star point of the audio ground, see below |
+| BCK | GPIO 13 | bit clock |
+| LCK (LRCK, WS) | GPIO 14 | word clock |
+| DIN | GPIO 21 | data |
+| SCK (MCLK) | GND | no MCLK: the DAC's PLL derives the clock from BCK |
+| FMT | L (GND) | I2S format |
+| FLT | L (GND) | normal-latency filter |
+| DEMP | L (GND) | de-emphasis off |
+| XSMT | H (3.3 V) | unmuted; at L the output is muted |
+
+On many modules FMT, FLT, DEMP and XSMT are solder jumpers (H / L pads) on the back, and SCK has its own pad or header pin — check the silkscreen of your module.
+
+The firmware sends 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs), the same mono signal on L and R. The L / R outputs are a line level: 2.1 Vrms at full scale, centred on ground (no DC offset). Unlike the old SPK output, this can go to a mixer, audio interface, powered speakers or a recorder — from the DAC's L / R (before the amplifier) or from the amplifier's headphone output.
+
+### Headphone amplifier (MAX97220)
 
 ```
-SPK+ ──[150 Ω]──┬── Tip    (left)
-SPK+ ──[150 Ω]──┴── Ring   (right)       each ear through its own resistor
-SPK− ────────────── Sleeve (common)      NOT GND! jack is isolated
+DAC L   ── IN L+        OUT L ── Tip    (left)
+DAC GND ── IN L−        OUT R ── Ring   (right)
+DAC R   ── IN R+        GND   ── Sleeve (common, GND is fine here)
+DAC GND ── IN R−
+board 5V (or 3.3V) ── VCC     GND ── GND     SHDN ── VCC
 ```
 
-Speaker and headphones play together. To be able to switch the speaker off, put a switch in its wire:
-
-```
-SPK+ ──[switch]── Speaker (+)
-SPK− ──────────── Speaker (−)
-```
-
-- 100–220 Ω, 0.25 W resistors, one each on Tip and Ring. Below 100 Ω — loud, with high current through the headphones; higher — quieter. 150 Ω is the middle ground.
-- Sleeve goes to **SPK−**, not to GND. The jack sits in a plastic body or a plastic panel (the printed enclosure works); its contacts do not touch GND, the MIDI jack body, USB or other connectors.
-- This jack is for **headphones only**. A cable from it to a mixer, audio interface or powered speakers would connect SPK− to their ground: that shorts the amplifier output.
+- The inputs are differential: each channel's "+" goes to the DAC output, its "−" to the DAC's GND (AGND). Pin names on the module's silkscreen may differ — check them.
+- DirectDrive: the outputs are ground-referenced and need no coupling capacitors; the jack's Sleeve goes to GND as usual.
+- Power: 5 V from the board's 5V pin (the IP5306 output after the switch) or 3.3 V. SHDN, if broken out, goes to VCC (amplifier running).
+- The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower MAIN (MIX tab) or add a divider / potentiometer between the DAC and the amplifier inputs.
+- Ground: keep audio ground wires short and use a star point at the DAC's GND: the DAC, amplifier and headphone jack grounds meet there, and one wire goes from it to the board's GND. This keeps the IP5306 boost converter's whine out of the headphones.
 - Before first power-up — MAIN volume (MIX tab) at minimum, headphones off your ears, then bring it up.
-- The jack's built-in break contact is not suitable for disconnecting the speaker: on ordinary jacks it is connected to Tip, and Tip goes through a resistor. You need a separate switch or a jack with an isolated pair of switching contacts.
 
 The internal sound lags behind MIDI tracks by about 14 ms (constant, no jitter). Synthesizer load is shown by `CPU NN%` in the right corner of the status bar (average over 0.5 s; yellow from 60% or if at least one block in the window took longer than 4 ms to compute — this is covered by the DMA queue; red from 85% or for 2 s after an audio dropout — an emptied DMA queue, an audible click).
 
@@ -164,7 +180,7 @@ All types have these at the end of the INST list:
 - **Reverb**: the instrument's Rvb send (lock `RVB`), size / decay / level in PROJ. 23 KB buffer in PSRAM.
 - **Compressor** on all built-in sound (PROJ → Comp, Comp rel) with **sidechain** from a track (SC track, SC depth): set SC track to the kick and the mix "pumps".
 - **ARP**: fx `ARM` sets the order (up, down, up-down, random) and the number of notes per step (1–8); ARP + CHD on the same step arpeggiates the chord.
-- **4 LFOs** per instrument (INST → LFO), each free-running or synced to tempo (1/32 … 8 bars).
+- **4 LFOs** per instrument (INST → LFO), each in Hz or synced to tempo (1/32 … 8 bars), restarted per note or free-running per track from the playback start (bar-locked with TEMPO); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
 - **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; **DJ filter** on the master (PROJ → FX).
 - Pattern **groove** (PROJ → SONG → Groove: MPC 54–66, SHUFFLE, PUSH, LAID BACK, DRUNK, BOOM BAP, HOUSE) and track **Humanize** (TRACK → NOTE); conditions `CND PRE / NEI`, volume ramp up/down on `RAT` (`4^`, `4v`).
 - **Step arp** `ARS` (INT and MIDI): the CHD notes (or ARP 0/x/y, or the note itself) across a range of 1–4 octaves play as separate notes on the track's following empty steps — every step or every N; until the next note, OFF or a pattern change. The fx list in GRID is grouped: notes and arp, timing, randomness, pitch and volume, sound, sample, sends, MIDI.
@@ -256,7 +272,7 @@ The partition table is custom (`partitions.csv`): two 3 MB firmware slots and a 
 |---|---|
 | `lib/core` | hardware-independent core: model, sequencer, fx, scales, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, filter), WAV parser, sample bank, project sample list, presets |
 | `src/engine` | sequencer task on core 0 (timer, MIDI output) |
-| `src/audio` | built-in sound: I2S to the NS4168 amplifier, audio task, sample bank in flash, WAV import |
+| `src/audio` | built-in sound: I2S to the external PCM5102A DAC, audio task, sample bank in flash, WAV import |
 | `src/hw` | input (encoder, buttons), MIDI UART, SD, display configuration |
 | `src/ui` | UI screens |
 | `src/storage` | saving and loading projects and presets |

@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the board's speaker, or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
+A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -56,7 +56,7 @@ Play works on any screen, even over an open menu.
 
 In GRID the buttons also record notes live (REC) and hold effects (PERF) — see [REC and PERF](#live).
 
-An optional block of 8 buttons, each with an LED. There are 16 tracks, so the buttons work on the **visible half** — 1–8 or 9–16, the same one [Overview](#grid) shows. The half is not a mode: the cursor selects it. Move past track 8 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a track button) and the buttons and LEDs switch to 9–16; move back and they return to 1–8. The GRID header shows which half is active: `1-8` or `9-16` on the left above the step numbers.
+A block of 8 buttons, each with an LED, on the PCF8575 expander (the same module carries the encoder button, Play and Shift). There are 16 tracks, so the buttons work on the **visible half** — 1–8 or 9–16, the same one [Overview](#grid) shows. The half is not a mode: the cursor selects it. Move past track 8 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a track button) and the buttons and LEDs switch to 9–16; move back and they return to 1–8. The GRID header shows which half is active: `1-8` or `9-16` on the left above the step numbers.
 
 | Action | What it does |
 |--------|--------------|
@@ -76,13 +76,11 @@ The LEDs show the same half as the buttons: LED N is track N of half 1–8 or 9�
 |------|----------|
 | `10` | MIDI TX (UART, 31250 baud) |
 | `11 / 12` | Encoder A / B (EC11) |
-| `13` | Encoder button |
-| `14` | Play |
-| `21` | Shift |
-| `43 / 44` | Track buttons: PCF8575 SDA / SCL, Debug connector (TXD0 / RXD0; optional, schematic in the README) |
+| `13 / 14 / 21` | PCM5102A DAC: BCK / LCK / DIN |
+| `43 / 44` | PCF8575 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
 | `41 / 40 / 39 / 38` | microSD: CS / MOSI / CLK / MISO (built-in slot) |
 
-The buttons short the pin to GND; the internal pull-up is enabled. MIDI OUT is TRS type A, 3.3 V:
+All buttons are on the PCF8575: track buttons on P00–P07, encoder button on P13, Play on P14, Shift on P15; each shorts its pin to GND. Without the expander the encoder button, Play and Shift do not work. Encoder A / B use the board's internal pull-ups. MIDI OUT is TRS type A, 3.3 V:
 
 - +3.3 V → 33 Ω → Ring (DIN pin 4)
 - GPIO10 → 10 Ω → Tip (DIN pin 5)
@@ -275,6 +273,12 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `DRV` | 0–127 | INT | Drive (overdrive) for the step's note, any instrument type; on a step without a note, for the sounding note. |
 | `BIT` | 0–127 | INT | Bitcrusher for the step's note: bit depth from 16 bits (0 — off) down to 2 bits (127). After Drive, before the filter. The constant value is INST → FILT → Bit crush; the step lock replaces it. |
 | `SRR` | 0–127 | INT | Sample-rate reduction for the step's note: 0 — off, 127 — each sample is held for ≈ 64 samples (a rough "digital" sound). Together with BIT — classic lo-fi. The constant value is INST → FILT → Downsample. |
+| `LFO` | 1–4 | INT | Which LFO of the instrument this step's `LFD`…`LFR` act on; without it — LFO 1. Slot order doesn't matter. |
+| `LFD` | −64…+63 | INT | Depth lock of the selected LFO (turns the LFO on even if the instrument's Depth is 0). |
+| `LFS` | 0–127 | INT | Rate lock of the selected LFO: in HZ — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS). |
+| `LFW` | SIN, TRI, SAW, SQR, RND | INT | Wave lock of the selected LFO. |
+| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV | INT | Dest lock of the selected LFO (macros — FM, DRUM, SYNTH only). |
+| `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): a FREE LFO — the track's phase, a NOTE LFO — the step's notes or the sounding notes. |
 | `DEC` | 0–127 | INT | FM, DRUM, SYNTH: the DECAY macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP1). |
 | `COL` | 0–127 | INT | FM, DRUM, SYNTH: the COLOR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP2). |
 | `SHP` | 0–127 | INT | FM, DRUM, SYNTH: the SHAPE macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — MIX). |
@@ -324,6 +328,7 @@ SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, 
 - **SLC** works only on SAMPLE with Slices = FX and only at the start of a note, like OFS: the first note-on of the step plays the chosen slice at the note's pitch (with a chord or RAT, the other notes play the whole region). Without SLC, or if the number is not less than the number of slices, the whole Start–End region plays. On a step without a note SLC does nothing.
 - **DEC, COL, SHP, SWP, CON** (macro p-locks) work only on [FM](#fm), [DRUM](#drum) and [SYNTH](#synth); they are ignored on CHIP and SAMPLE. On a step with a note, the value replaces the instrument's macro for that note; on a step without a note, for the track's sounding note until the next note. The next step doesn't inherit the lock. For TONE and CHORD the envelope decay is fixed at the start of the note: DEC on a step without a note (and LFO on DECAY) doesn't change the length of a note already sounding.
 - **FLT, RES** (filter p-locks) work on all types, but only when Filter is not OFF. The value replaces the instrument's Cutoff or Reso: on a step with a note — for that note; on a step without a note — for the track's sounding voices until the next note. The filter envelope, Key track and LFO CUTOFF are added to the lock value.
+- **LFD, LFS, LFW, LFT** (LFO p-locks) work like FLT: on a step with a note — for that note; on a step without a note — for the track's sounding voices until the next note. One LFO per step can be locked — the one picked by `LFO`.
 - **DLY** (delay send p-lock) works the same way: on a step with a note — the send of that step's notes; on a step without a note — the send of the track's sounding voices until the next note. Handy for echo "throws" on individual hits: instrument Dly send at 0, `DLY 127` on the steps you want.
 
 Other fx on INT: RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI; PBN and PGM — see the table; CHN, CCA, CCB are ignored.
@@ -422,7 +427,7 @@ A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight st
 - **MAIN** — the overall volume of the built-in sound, 0–200%, default 40% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). This is a device setting: it is stored in the board's memory one second after a change, and loading a project does not change it.
 - **Encoder:** turn — **MAIN** volume; <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX; there is no strip selection.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
-- **Scope** across the full width at the bottom: the last ≈ 14 ms of the speaker output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
+- **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
 - Track volume without going to MIX: hold its button and turn the encoder (see [track buttons](#trackkeys)).
 
 <a id="inst"></a>
@@ -453,7 +458,7 @@ The page is remembered when you switch instruments and when you change Type: for
 | OSC / SMPL / FM / DRUM | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) and [DRUM](#drum) — Machine and 5 macros; [SYNTH](#synth) — oscillators and tables |
 | MOD (SYNTH only) | Sub, Sub oct, Noise, Env\>Shp, Env atk, Env dec |
 | FILT | Drive, Bit crush, Downsample, Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — [drive, lo-fi and filter](#filter) |
-| LFO | LFO (1–4), Wave, Sync, Rate, Depth, Dest |
+| LFO | LFO (1–4), Wave, Sync, Trig, Rate, Depth, Dest |
 
 ### MAIN and ENV
 
@@ -719,12 +724,14 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 | Key track | 0–100% | 0% | Cutoff follows the note from C-4: 100% — one octave per octave. |
 | LFO | 1–4 | 1 | Which of the instrument's four LFOs the rows below edit; the number in brackets is how many are on. All four run at once; their effects on the same destination add up (VOL — multiplies). |
 | Wave | SINE, TRI, SAW, SQR, RND | SINE | LFO shape; RND — a random value each period. |
-| Sync | FREE / TEMPO | FREE | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
-| Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in FREE — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
+| Sync | HZ / TEMPO | HZ | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
+| Trig | NOTE / FREE | NOTE | NOTE — each note has its own phase, restarted on a new note (except legato). FREE — one phase per track, notes don't restart it; it starts from zero when playback starts. FREE + TEMPO — the LFO is locked to the bar. |
+| Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in HZ — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
 | Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64. |
 | Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); for CHIP and SAMPLE they are skipped. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. |
 
-- The filter envelope and LFO phase restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303.
+- The filter envelope and the phase of a NOTE LFO restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303. A FREE LFO runs continuously, also after Stop.
+- LFOs can be controlled from steps: fx `LFO`, `LFD`, `LFS`, `LFW`, `LFT`, `LFR` (see the [fx table](#fx)).
 - Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz.
 - Old projects load with Filter OFF and sound as before.
 
@@ -1096,15 +1103,14 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 
 The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 16 voices shared by all tracks, 32 kHz, mono. A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
 
-> **The SPK output is bridged (BTL): neither of the two pins is ground.** Connect a 4–8 Ω speaker directly to the two SPK pins. Headphones only through an isolated jack (not touching the case or GND) and 100–220 Ω series resistors, starting at low volume. Never connect the SPK pins to the board's GND, to ground, or to the inputs of other devices (mixer, audio interface, amplifier): that shorts the amplifier output.
+Sound goes to an external PCM5102A DAC on GPIO 13 / 14 / 21 (BCK / LCK / DIN) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. The signal is mono, the same on L and R.
 
-3.5 mm headphone jack (optional, mono to both ears):
+- DAC settings: SCK to GND (no MCLK), FMT, FLT, DEMP = L, XSMT = H.
+- The DAC's L / R are a line output (2.1 Vrms full scale, centred on ground): they can go to a mixer, audio interface or powered speakers — straight from the DAC or from the amplifier's headphone output.
+- MAX97220: each channel's input is differential — "+" to the DAC's L / R, "−" to the DAC's GND; its outputs are ground-referenced, the jack's Sleeve goes to GND. Power 5 V or 3.3 V, SHDN to VCC.
+- The DAC's full scale is more than the amplifier can deliver: if it clips, lower MAIN or add a divider before the amplifier. Start at low volume.
 
-- SPK+ → 150 Ω → Tip (left)
-- SPK+ → 150 Ω → Ring (right)
-- SPK− → Sleeve (common; **not GND**, the jack is isolated)
-
-Resistors of 100–220 Ω, one per ear. Only headphones go into this jack, not a cable to a mixer or speakers. The speaker keeps playing as well; to disconnect it, use a switch in its wire. More details in the README, "Sound" section.
+Full wiring, settings and grounding notes — README, "Sound" section, and [wiring.md](wiring.md).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 40%), with soft limiting.
 - **Voices:** a shared pool of 24. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 8 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A ninth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track.

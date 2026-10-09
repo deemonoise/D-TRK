@@ -1,21 +1,49 @@
 
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, Play and Shift, eight track buttons with LEDs, and a headphone jack. The display, touch and microSD are already routed on the board.
+Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift and eight track buttons with LEDs, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
 ## Schematic
 
-![Overview: LiPo through IP5306 and the power switch feeds the board 5 V; GPIO10 through 10 Ω to the MIDI jack Tip, 3.3 V through 33 Ω to Ring; encoder on GPIO 11, 12, 13; Play on 14, Shift on 21; PCF8575 on GPIO 43 and 44 of the Debug connector, with eight buttons and eight LEDs.](img/wiring-1.svg)
+```
+LiPo 103450 + / − ──── IP5306 B+ / B−          (IP5306 Type-C — charging)
+IP5306 VOUT ──[switch]── board 5V              (VOUT/GND — pads of the desoldered USB-A)
+IP5306 GND ──────────── board GND              (common ground)
 
-- red — power (5 V from the IP5306, 3.3 V from the board)
-- black (white in dark mode) — GND
-- blue — signal to a GPIO
-- green — button
-- orange — LED cathode
+WT32-SC01 Plus, expansion connector (Extended IO)
+  IO10 ──[10 Ω]──── MIDI Tip     (DIN 5)
+  3V3  ──[33 Ω]──── MIDI Ring    (DIN 4)
+  GND  ──────────── MIDI Sleeve  (DIN 2, shield)
+  IO11 ──────────── encoder A
+  IO12 ──────────── encoder B         encoder C (middle) ── GND
+  IO13 ──────────── DAC BCK
+  IO14 ──────────── DAC LCK
+  IO21 ──────────── DAC DIN
 
-*Every ground symbol is a wire to the board's common GND; every "3.3 V" flag goes to the board's 3V3 pin. All board inputs use internal pull-ups, so the buttons and encoder need no external resistors. The PCF8575 block with the track buttons is optional: the firmware works without it.*
+WT32-SC01 Plus, Debug connector
+  IO43 TXD0 ─────── PCF SDA
+  IO44 RXD0 ─────── PCF SCL
+  3V3 ───────────── PCF VCC, 3.3 V rail for the LED resistors
+  GND ───────────── PCF GND
+
+PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
+  P00 … P07 ── track button 1 … 8 ── GND
+  P13 ──────── encoder shaft button ── GND
+  P14 ──────── Play ── GND
+  P15 ──────── Shift ── GND
+  P1x ──────── LED cathode;  LED anode ──[R]── 3.3 V
+
+PCM5102A                                 MAX97220
+  VIN ── 3.3 V or 5 V                      VCC ── board 5V (or 3.3V);  SHDN ── VCC
+  GND ── star point ── board GND           GND ── star point
+  SCK, FMT, FLT, DEMP ── GND (L)           IN L+ ── DAC L;   IN L− ── DAC GND
+  XSMT ── 3.3 V (H)                        IN R+ ── DAC R;   IN R− ── DAC GND
+  L / R ── line out, to the amplifier      OUT L / OUT R / GND ── jack Tip / Ring / Sleeve
+```
+
+*Every "GND" is a wire to the board's common GND; every "3.3 V" goes to the board's 3V3 pin. Encoder A and B use the board's internal pull-ups, and the PCF8575 pins have their own weak pull-ups, so the buttons and encoder need no external resistors. The PCF8575 is required: without it the encoder button, Play, Shift and the track buttons do not work.*
 
 ## Connection table
 
@@ -29,24 +57,35 @@ Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encode
 | `board IO10`                      | `10 Ω → Tip`                        | MIDI DIN pin 5                                              |
 | `board 3V3`                       | `33 Ω → Ring`                       | MIDI DIN pin 4                                              |
 | `board GND`                       | `Sleeve`                            | MIDI DIN pin 2, shield                                      |
-| **EC11 encoder and buttons** |                                     |                                                             |
+| **EC11 encoder** |                                     |                                                             |
 | `board IO11 / IO12`               | `encoder A / B`                     | outer pins of the group of three; turns the wrong way — swap them |
 | `board GND`                       | `encoder C`                         | middle pin of the group of three                            |
-| `board IO13`                      | `shaft button`                      | the shaft button's other pin goes to GND                    |
-| `board IO14`                      | `Play button`                       | other pin to GND                                            |
-| `board IO21`                      | `Shift button`                      | other pin to GND                                            |
-| **Headphones (optional)** |                                     |                                                             |
-| `SPK+ connector`                  | `150 Ω → Tip`                       | left ear                                                    |
-| `SPK+ connector`                  | `150 Ω → Ring`                      | right ear, its own resistor                                 |
-| `SPK− connector`                  | `Sleeve`                            | **not GND**: the jack is isolated                           |
-| `SPK+ / SPK− connector`           | `speaker + (through a switch) / −`  | 4–8 Ω speaker, switch optional                              |
-| **Track buttons (optional)** |                                     |                                                             |
+| **PCM5102A DAC** |                                     |                                                             |
+| `board IO13 / IO14 / IO21`        | `DAC BCK / LCK / DIN`               | LCK is also labelled LRCK or WS                             |
+| `board 3V3 or 5V`                 | `DAC VIN`                           | the module has its own LDO                                  |
+| `board GND`                       | `DAC GND`                           | star point of the audio ground                              |
+| `GND`                             | `DAC SCK, FMT, FLT, DEMP`           | L: no MCLK (PLL from BCK), I2S, normal latency, de-emphasis off |
+| `3.3 V`                           | `DAC XSMT`                          | H: unmuted                                                  |
+| **MAX97220 headphone amplifier** |                                     |                                                             |
+| `DAC L / R`                       | `amp IN L+ / IN R+`                 | names on the silkscreen may differ                          |
+| `DAC GND`                         | `amp IN L− / IN R−`                 | differential inputs: "−" to the DAC's ground                |
+| `board 5V (or 3V3)`               | `amp VCC`                           | 5V = IP5306 output after the switch                         |
+| `DAC GND`                         | `amp GND`                           | to the star point                                           |
+| `amp VCC`                         | `amp SHDN`                          | if broken out: VCC = running                                |
+| `amp OUT L / OUT R / GND`         | `jack Tip / Ring / Sleeve`          | DirectDrive: no output capacitors, Sleeve to GND is normal  |
+| **PCF8575 and buttons (required)** |                                     |                                                             |
 | `board 3V3`                       | `PCF VCC + 3.3 V rail`              | the rail feeds all 8 LED resistors                          |
 | `board GND`                       | `PCF GND`                           | do not solder A0, A1, A2: the firmware finds the address 0x20–0x27 itself |
 | `Debug TXD0 (IO43) / RXD0 (IO44)` | `PCF SDA / SCL`                     | Debug connector; 3V3 and GND can be taken from it too       |
 | `—`                               | `PCF INT`                           | leave unconnected: the module is polled every 5 ms          |
-| `PCF P00 … P07`                   | `button 1 … 8`                      | the button's other pin goes to GND                          |
-| `PCF P10 … P17`                   | `LED 1 … 8 cathode`                 | anode through its own resistor to 3.3 V                     |
+| `PCF P00 … P07`                   | `track button 1 … 8`                | the button's other pin goes to GND                          |
+| `PCF P13`                         | `encoder shaft button`              | other pin to GND                                            |
+| `PCF P14`                         | `Play button`                       | other pin to GND                                            |
+| `PCF P15`                         | `Shift button`                      | other pin to GND                                            |
+| `PCF P16 / P17`                   | `button A / B`                      | other pin to GND; reserved, not used by the firmware yet    |
+| `PCF P10 … P17`                   | `LED 1 … 8 cathode`                 | anode through its own resistor to 3.3 V; P13–P17 are taken by the buttons, so LEDs 4–8 need other pins (`kTrackLedBit`) |
+
+The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, no LEDs are fitted, and P11 is free.
 
 10 nF capacitors from the encoder's A and B pins to GND are recommended for less bounce. They are not required: the firmware has a filter.
 
@@ -62,21 +101,33 @@ Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encode
 - TRS pinout **type A**: Tip = pin 5, Ring = pin 4. For type B devices (some Arturia, Novation) use an A→B adapter or swap the Tip and Ring wires.
 - For a 5-pin DIN: the same resistors on pin 5 and pin 4, GND on pin 2.
 
-## Headphones
+## DAC and headphones
 
-![Headphones: SPK+ through two 150 Ω resistors to Tip and Ring of the 3.5 mm jack, SPK− to Sleeve. The speaker is connected in parallel, its plus through a switch. Sleeve is not connected to GND.](img/wiring-2.svg)
+```
+board IO13 ─── DAC BCK
+board IO14 ─── DAC LCK
+board IO21 ─── DAC DIN
 
-- purple — SPK+
-- teal — SPK− (not ground)
+DAC L ──────── amp IN L+          amp OUT L ── Tip    (left)
+DAC R ──────── amp IN R+          amp OUT R ── Ring   (right)
+DAC GND ─┬──── amp IN L−          amp GND ──── Sleeve
+         ├──── amp IN R−
+         ├──── amp GND
+         └──── board GND          (star point at the DAC's GND)
 
-*The built-in NS4168 amplifier is brought out to the board's SPK connector, so no soldering to GPIOs is needed. The signal is mono, the same in both ears. The switch in the speaker wire is optional: without it the speaker and headphones play together.*
+DAC SCK, FMT, FLT, DEMP ── GND     DAC XSMT ── 3.3 V     DAC VIN ── 3.3 V or 5 V
+amp VCC, amp SHDN ── board 5V (or 3V3)
+```
 
-**The SPK output is bridged: neither of its two pins is ground.** The jack's Sleeve goes to SPK−, never to the board's GND. The jack must not touch GND, the MIDI jack body or USB. Plug only headphones into this jack: a cable to a mixer, audio interface or powered speakers would tie SPK− to their ground and short the amplifier output.
+*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is mono, the same on L and R: 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs).*
 
-- Resistors 100–220 Ω, 0.25 W, one each on Tip and Ring. Below 100 Ω it is loud with high current through the headphones; above that it gets quieter. 150 Ω is the middle ground.
-- Mount the jack in a plastic enclosure or a plastic wall: the printed case works.
-- The jack's built-in switching contact is no good for cutting the speaker: on ordinary jacks it is tied to Tip, and Tip goes through a resistor. You need a separate switch.
-- Power up the first time with PROJ → Volume at minimum and without wearing the headphones.
+- **DAC settings.** SCK to GND (no MCLK: the PLL takes the clock from BCK), FMT = L (I2S), FLT = L (normal latency), DEMP = L (de-emphasis off), XSMT = H (unmuted). On the purple GY-PCM5102 modules these are solder pads on the back — check your module's silkscreen.
+- **Line out.** The DAC's L / R give 2.1 Vrms at full scale, centred on ground. Unlike the old SPK output, they can go to a mixer, audio interface or powered speakers — from the DAC before the amplifier, or from the amplifier's headphone output.
+- **Amplifier inputs** are differential: L+ / R+ to the DAC's L / R, L− / R− to the DAC's GND (AGND). Pin names on the module's silkscreen may differ.
+- **DirectDrive outputs** are ground-referenced, without coupling capacitors: the headphone jack's Sleeve goes to GND, and the jack may touch the case.
+- **Level.** 2.1 Vrms from the DAC is more than the MAX97220 can deliver: if it clips or is too loud, lower MAIN (MIX tab) or add a divider / potentiometer between the DAC and the amplifier.
+- **Ground.** Short audio ground wires and one star point at the DAC's GND: the DAC, amplifier and jack grounds meet there, and a single wire runs to the board's GND. Otherwise the IP5306 boost converter may whine in the headphones.
+- Power up the first time with MAIN (MIX tab) at minimum and without wearing the headphones.
 
 ## Which track button is which
 
@@ -103,9 +154,9 @@ With white and blue LEDs at 3.3 V the voltage headroom is only 0.2–0.4 V, and 
 ## Before powering up
 
 1.  Continuity check: the board's 5V and GND are not shorted; the switch in the "off" position breaks VOUT.
-2.  If the headphone jack is fitted: Sleeve has no continuity with the board's GND; Tip and Ring read through 150 Ω to SPK+.
+2.  DAC: XSMT reads 3.3 V; SCK, FMT, FLT, DEMP read GND; GPIO 13, 14, 21 are not shorted to each other, to GND or to 3.3 V. Amplifier: IN L− and IN R− ring to the DAC's GND, SHDN (if broken out) to VCC.
 3.  A0, A1, A2 on the module can be left alone. If the module is found only sometimes (the address "floats"), bridge all three pads to GND.
 4.  Check whether the module has pull-up resistors on SDA and SCL (usually 4.7–10 kΩ to VCC). If not, add 4.7 kΩ from each line to 3.3 V.
 5.  Power the module only from 3.3 V, not 5 V: otherwise 5 V reaches the board's GPIOs.
 6.  Check that TXD0 and RXD0 are not shorted to each other or to GND. Do not touch GPIO 1, 2, 42: they are used by the built-in RS485.
-7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power; `trackio: PCF8575 at 0x..` means it was found.
+7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play and Shift do not work either); `trackio: PCF8575 at 0x..` means it was found.

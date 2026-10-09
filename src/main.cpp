@@ -55,9 +55,9 @@ void setup() {
   bool fromBak = false;
   storage::Result autoErr = storage::Result::Ok;
   // Safe boot: Shift held at power-on skips the autoload (a project that crashes the device on load).
-  pinMode(pins::kShift, INPUT_PULLUP);
-  delay(5);
-  const bool safeBoot = digitalRead(pins::kShift) == LOW;
+  // Shift is on the expander: trackioBegin reads the port before returning.
+  hw::trackioBegin();
+  const bool safeBoot = hw::expanderDown(pins::kShiftBit);
   const bool sd = hw::sdBegin();
   storage::logBoot();  // a crash / watchdog / brownout restart goes into /diag/crashlog.txt
   const bool loaded = sd && !safeBoot && storage::autoload(*project, &fromBak, &autoErr);
@@ -69,7 +69,6 @@ void setup() {
   digitalWrite(pins::kLcdBacklight, HIGH);
 
   hw::inputBegin();
-  hw::trackioBegin();
   engine::begin(project);
   audio::begin(project);
   app.begin(&lcd, project);

@@ -724,6 +724,8 @@ bool initI2s() {
               .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
           },
   };
+  // 16-bit samples in 32-bit slots: BCK = 64 fs, which the PCM5102A PLL locks to without MCLK.
+  sc.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
   if (i2s_channel_init_std_mode(tx, &sc) != ESP_OK) return false;
   return i2s_channel_enable(tx) == ESP_OK;
 }

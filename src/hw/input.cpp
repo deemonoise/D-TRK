@@ -2,6 +2,7 @@
 #include "driver/gpio.h"
 #include "driver/pulse_cnt.h"
 #include "pins.h"
+#include "trackio.h"
 
 namespace hw {
 namespace {
@@ -11,14 +12,15 @@ pcnt_unit_handle_t unit;
 int encAcc = 0;
 bool shiftHeld = false;
 
-// Integrating debouncer: state flips after 5 equal 1 ms samples.
+// Integrating debouncer on an expander pin: state flips after 5 equal 1 ms samples
+// (the expander is polled every 5 ms, so a change counts once it holds for one poll).
 struct Debounce {
-  uint8_t pin;
+  uint8_t bit;
   bool state = false;
   uint8_t cnt = 0;
   // +1 on press, -1 on release, 0 otherwise.
   int update() {
-    const bool raw = digitalRead(pin) == LOW;
+    const bool raw = expanderDown(bit);
     if (raw == state) {
       cnt = 0;
       return 0;
@@ -30,9 +32,9 @@ struct Debounce {
   }
 };
 
-Debounce encBtn{pins::kEncSw};
-Debounce playBtn{pins::kPlay};
-Debounce shiftBtn{pins::kShift};
+Debounce encBtn{pins::kEncSwBit};
+Debounce playBtn{pins::kPlayBit};
+Debounce shiftBtn{pins::kShiftBit};
 uint32_t encDownAt = 0;
 bool longSent = false;
 
@@ -127,9 +129,6 @@ void task(void*) {
 }  // namespace
 
 void inputBegin() {
-  pinMode(pins::kEncSw, INPUT_PULLUP);
-  pinMode(pins::kPlay, INPUT_PULLUP);
-  pinMode(pins::kShift, INPUT_PULLUP);
   queue = xQueueCreate(32, sizeof(InputEvent));
   setupEncoder();
   xTaskCreatePinnedToCore(task, "input", 3072, nullptr, 5, nullptr, 1);

@@ -5,9 +5,6 @@ namespace pins {
 constexpr int kMidiTx = 10;
 constexpr int kEncA = 11;
 constexpr int kEncB = 12;
-constexpr int kEncSw = 13;
-constexpr int kPlay = 14;
-constexpr int kShift = 21;
 // microSD on its own SPI host (the LCD uses the 8080 bus).
 constexpr int kSdCs = 41;
 constexpr int kSdMosi = 40;
@@ -26,9 +23,16 @@ constexpr int kXScl = 44;
 // This unit: P00 and P10 read low, button 1 lives on P12; no LEDs fitted.
 constexpr uint8_t kTrackBtnBit[8] = {10, 1, 2, 3, 4, 5, 6, 7};
 constexpr uint8_t kTrackLedBit[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-// Onboard NS4168 class-D amp (SPK connector), I2S per the Wireless-Tag datasheet.
-// Bridge output: neither SPK pin is ground.
-constexpr int kI2sBclk = 36;
-constexpr int kI2sWs = 35;
-constexpr int kI2sDout = 37;
+// Encoder button, Play and Shift on the expander (to GND), freeing GPIO 13/14/21 for the DAC.
+constexpr uint8_t kEncSwBit = 11;  // P13
+constexpr uint8_t kPlayBit = 12;   // P14
+constexpr uint8_t kShiftBit = 13;  // P15
+// Buttons A and B (under Shift / Play), not used by the firmware yet.
+constexpr uint8_t kBtnABit = 14;   // P16
+constexpr uint8_t kBtnBBit = 15;   // P17
+// External PCM5102A DAC (SCK to GND: clock from BCK by its PLL) on the extended IO header.
+// The onboard NS4168 (GPIO 35/36/37, SPK connector) is not used.
+constexpr int kI2sBclk = 13;
+constexpr int kI2sWs = 14;
+constexpr int kI2sDout = 21;
 }  // namespace pins
