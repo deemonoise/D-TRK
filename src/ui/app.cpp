@@ -48,15 +48,15 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   }
   Serial.printf("psram free %u KB\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
-  // Master volume is a device setting: it overrides the project's and is kept in NVS.
-  p_->masterVol = storage::loadVolume(p_->masterVol);
-  savedVol_ = p_->masterVol;
-  // So is the colour theme.
+  // Device settings in NVS: the colour theme, the autosave interval, the phones level.
   const int theme = storage::loadTheme(0);
   theme_ = savedTheme_ = theme < themeCount() ? theme : 0;
   applyTheme(theme_);
   const int asv = storage::loadSetting("autosave", 5);
   autosaveMin_ = savedAutosaveMin_ = asv <= 60 ? asv : 5;
+  const int ph = storage::loadSetting("phones", 100);
+  phones_ = savedPhones_ = ph <= 100 ? ph : 100;
+  audio::setPhones(static_cast<uint8_t>(phones_));
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -85,7 +85,7 @@ void App::transport() {
 }
 
 void App::setBpmEdit(bool on) {
-  if (on && !bpmEdit_) bpmTarget_ = p_->bpm;
+  if (on && !bpmEdit_) bpmTarget_ = bpmOrig_ = p_->bpm;
   bpmEdit_ = on;
 }
 
@@ -135,6 +135,11 @@ void App::onInput(const hw::InputEvent& ev) {
       engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
       markDirty();
     } else {
+      if (ev.type == InputType::EncClick && ev.shift && bpmTarget_ != bpmOrig_) {
+        bpmTarget_ = bpmOrig_;
+        engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
+        toast("CANCEL");
+      }
       setBpmEdit(false);
     }
     return;
@@ -189,8 +194,6 @@ void App::projectReplaced() {
   markSaved();
   setBpmEdit(false);
   lastBpm_ = p_->bpm;
-  p_->masterVol = savedVol_;  // the device volume, not the file's
-  volChangedAt_ = 0;
   // Let the sequencer re-read songMode/chain (shows S01 while stopped).
   engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));
   for (Screen* sc : screens_)
@@ -288,30 +291,6 @@ void App::updateLeds(uint32_t now) {
   hw::trackLeds(mt::trackLedMaskHalf(curTrack_, flash));
 }
 
-// Writes the volume to NVS once it has stayed put for a second (an encoder sweep = one write) and
-// the transport is not playing.
-void App::saveVolumeIdle(uint32_t now) {
-  if (p_->masterVol == savedVol_) {
-    volChangedAt_ = 0;
-    return;
-  }
-  if (volChangedAt_ == 0 || p_->masterVol != pendingVol_) {
-    pendingVol_ = p_->masterVol;
-    volChangedAt_ = now | 1;
-    return;
-  }
-  if (now - volChangedAt_ < 1000) return;
-  // An NVS write can erase a flash sector with the caches off: never while playing (the audio and
-  // the engine would stall), and with the audio task parked once stopped.
-  if (status_.playing) return;
-  {
-    audio::Paused parked;
-    storage::saveVolume(pendingVol_);
-  }
-  savedVol_ = pendingVol_;
-  volChangedAt_ = 0;
-}
-
 void App::setTheme(int i) {
   i = i < 0 ? 0 : (i >= themeCount() ? themeCount() - 1 : i);
   if (i == theme_) return;
@@ -327,19 +306,30 @@ void App::setAutosaveMin(int m) {
   settingsChangedAt_ = millis() | 1;
 }
 
-// Device settings (theme, autosave): as the volume, written once they stay put for a second and the
-// transport is stopped.
+void App::setPhones(int v) {
+  v = v < 0 ? 0 : (v > 100 ? 100 : v);
+  if (v == phones_) return;
+  phones_ = v;
+  audio::setPhones(static_cast<uint8_t>(v));
+  settingsChangedAt_ = millis() | 1;
+}
+
+// Device settings (theme, autosave, phones): written once they stay put for a second (an encoder
+// sweep = one write) and the transport is stopped. An NVS write can erase a flash sector with the
+// caches off: never while playing, and with the audio task parked.
 void App::saveSettingsIdle(uint32_t now) {
   if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
   settingsChangedAt_ = 0;
-  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_) return;
+  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_) return;
   {
     audio::Paused parked;
     if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
     if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
+    if (phones_ != savedPhones_) storage::saveSetting("phones", static_cast<uint8_t>(phones_));
   }
   savedTheme_ = theme_;
   savedAutosaveMin_ = autosaveMin_;
+  savedPhones_ = phones_;
 }
 
 // Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
@@ -484,7 +474,6 @@ void App::tick() {
   }
   const uint32_t now = millis();
   updateLeds(now);
-  saveVolumeIdle(now);
   saveSettingsIdle(now);
   autosaveIdle(now);
   pollCpu(now);

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: CERN-OHL-S-2.0
 // Source location: https://github.com/deemonoise/D-TRK
 // Корпус D-TRK (WT32-SC01 Plus). Все размеры в мм.
-// Деталь: part = "top" | "bottom" | "clamp" | "assembly"
+// Деталь: part = "top" | "bottom" | "clamp" | "clamp2" | "assembly"
 // Рендер: openscad -o case_top.stl -D 'part="top"' case.scad
 // Вариант с 8 кнопками дорожек: -D 'trk=true'
 
@@ -77,6 +77,14 @@ clamp_w   = 8;
 clamp_t   = 3;
 foam_t    = 1.0;    // пористый скотч между планкой и модулем
 clamp_dx  = 12;     // от края модуля по X до оси планки
+// Бобышки на задней стороне модуля (клэмпы v2)
+boss_x0 = 10.34;   // центр от левого края модуля, смотря на экран (правый, смотря на плату)
+boss_x1 = 6.52;    // центр от правого края, смотря на экран
+boss_y  = 4.3;     // центр от длинных краёв
+boss_d  = 6.0;     // наружный диаметр (не замерен)
+boss_hole = 2.5;   // отверстие (не замерено)
+boss_flip = false; // true — модуль развёрнут на 180° в плоскости экрана
+pin_d = 2.0; pin_h = 1.5;   // штырёк лапки в отверстие бобышки
 
 // Корпус
 wall   = 2.0;
@@ -108,6 +116,9 @@ mod_zb = H - lip_t - mod_h;           // низ модуля
 clamp_zt = mod_zb - foam_t;           // верх планки = низ стоек планок
 clamp_xs = [mod_x0 + clamp_dx, mod_x1 - clamp_dx];
 clamp_ys = [mod_y0 - post_r - 1, mod_y1 + post_r + 1];
+boss_xs = [mod_x0 + mod_clr + (boss_flip ? boss_x1 : boss_x0),
+           mod_x1 - mod_clr - (boss_flip ? boss_x0 : boss_x1)];
+boss_ys = [mod_y0 + mod_clr + boss_y, mod_y1 - mod_clr - boss_y];
 
 lid_posts = [[wall + post_r, wall + post_r], [W - wall - post_r, wall + post_r],
              [wall + post_r, D - wall - post_r], [W - wall - post_r, D - wall - post_r]];
@@ -274,11 +285,32 @@ module clamp() {
     }
 }
 
+// ---------- Лапка v2: винт на стойке, площадка со штырьком на бобышке ----------
+// (dx, dy) — смещение центра бобышки от винта
+module clamp2(dx, dy) {
+    difference() {
+        union() {
+            hull() {
+                cylinder(r = post_r, h = clamp_t);
+                translate([dx, dy, 0]) cylinder(d = boss_d, h = clamp_t);
+            }
+            translate([dx, dy, clamp_t - 0.01]) {
+                cylinder(d = boss_d, h = foam_t + 0.01);
+                cylinder(d = pin_d, h = foam_t + pin_h + 0.01);
+            }
+        }
+        translate([0, 0, -1]) cylinder(d = screw_d, h = clamp_t + 2);
+    }
+}
+function clamp2_off(i, j) = [boss_xs[i] - clamp_xs[i], boss_ys[j] - clamp_ys[j]];
+
 // ---------- Сборка ----------
 module assembly() {
     color("gray", 0.6) top_shell();
     color("dimgray") bottom_lid();
-    for (x = clamp_xs) color("orange") translate([x, clamp_ys[0], clamp_zt - clamp_t]) clamp();
+    for (i = [0, 1], j = [0, 1]) color("orange")
+        translate([clamp_xs[i], clamp_ys[j], clamp_zt - clamp_t])
+            clamp2(clamp2_off(i, j)[0], clamp2_off(i, j)[1]);
     // макеты
     color("black") translate([mod_x0 + mod_clr, mod_y0 + mod_clr, mod_zb]) cube([mod_w, mod_d, mod_h]);
     color("silver") translate([(W - bat_w)/2, mod_y0 + 2, floor_z]) cube([bat_w, bat_d, bat_h]);
@@ -296,4 +328,6 @@ module assembly() {
 if (part == "top")         translate([0, D, H]) rotate([180, 0, 0]) top_shell();   // лицом на стол
 else if (part == "bottom") translate([0, 0, -bot_z0]) bottom_lid();
 else if (part == "clamp")  clamp();
+else if (part == "clamp2") for (i = [0, 1], j = [0, 1])
+                               translate([i*25, j*30, 0]) clamp2(clamp2_off(i, j)[0], clamp2_off(i, j)[1]);
 else                       assembly();

@@ -424,7 +424,7 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
 
 - **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. On a MIDI track the fader is empty and `MIDI` is shown instead of the value.
-- **MAIN** — the overall volume of the built-in sound, 0–200%, default 40% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). This is a device setting: it is stored in the board's memory one second after a change, and loading a project does not change it.
+- **MAIN** — the overall volume of the built-in sound, 0–200%, default 40% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: PROJ → SYS → Phones.
 - **Encoder:** turn — **MAIN** volume; <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX; there is no strip selection.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
 - **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
@@ -803,7 +803,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 ## PROJ: project and pattern
 
-Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects), **SYS** (Preview, theme, autosave, version). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and click (<kbd>Shift</kbd>+click goes back).
+Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects), **SYS** (Phones, Preview, theme, autosave, version). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and click (<kbd>Shift</kbd>+click goes back).
 
 | Parameter | Values | Scope |
 |---|---|---|
@@ -832,6 +832,7 @@ Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 | **PERF** | | |
 | Button 1 … Button 8 | [PERF](#live) effects or --- | project: what track button N holds in PERF mode |
 | **SYS** | | |
+| Phones | 0–100%, default 100% | device: live output level (headphones / speaker), attenuation only; not in Render WAV, the project's master is MIX → MAIN. Stored in the board's memory one second after a change |
 | Preview | ON / OFF, default ON | project: entering a note in GRID on an INT track sounds it immediately |
 | Theme | 17 themes, default CLASSIC | device: interface colors (see below) |
 | Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |

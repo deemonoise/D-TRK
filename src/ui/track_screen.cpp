@@ -99,6 +99,14 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
   params_[kSolo] = {"Solo", [this](char* o, int n) { onOff(cfg().solo, o, n); },
                     [this](int d) { cfg().solo = d > 0; }};
   list_.setOnEdit([this] { app_.markDirty(); });
+  // Cancel: the name is copied back (several characters may have changed); the other rows step
+  // back through their edit(), which also sends what they send (program, output).
+  list_.setEditScope([this]() -> void* { return nameEdit() ? cfg().name : nullptr; }, sizeof(mt::TrackCfg::name));
+  list_.setOnCancel([this] {
+    namePos_ = 0;
+    fixNames();
+    app_.toast("CANCEL");
+  });
   setPageRows(kPgMain, false);  // no leaveEdit(): the App is a global, built before the project exists
 }
 
@@ -295,7 +303,7 @@ void TrackScreen::setMasterVol(int v) {
   engine::lockProject();
   app_.project().masterVol = static_cast<uint8_t>(v);
   engine::unlockProject();
-  app_.invalidate();
+  app_.markDirty();
 }
 
 void TrackScreen::toggleMuteSolo(int track, bool solo) {

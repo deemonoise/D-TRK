@@ -231,6 +231,9 @@ InstScreen::InstScreen(App& app) : app_(app) {
     app_.markDirty();
     syncParams();
   });
+  // Shift+click while editing puts the whole instrument back (a type change resets other fields).
+  list_.setEditScope([this]() -> void* { return &inst(); }, sizeof(mt::Instrument));
+  list_.setOnCancel([this] { app_.toast("CANCEL"); });
   presets_.setOnClose([this] { afterPresets(); });
   wt_.setOnClose([this] { app_.invalidate(); });
 }
@@ -615,14 +618,14 @@ void InstScreen::onEnter() {
 
 void InstScreen::onLeave() {
   if (presets_.isOpen()) presets_.close(false);
-  if (wt_.isOpen()) wt_.close(false);
+  if (wt_.isOpen()) wt_.close();
 }
 
 void InstScreen::onProjectReplaced() {
   typeSnapInstr_ = -1;
-  // The instrument the browser would restore belongs to the old project.
+  // The instrument the browsers would restore / set belongs to the old project.
   if (presets_.isOpen()) presets_.close(true);
-  if (wt_.isOpen()) wt_.close(true, false);
+  if (wt_.isOpen()) wt_.close();
   onEnter();
 }
 

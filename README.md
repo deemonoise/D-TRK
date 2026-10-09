@@ -89,7 +89,7 @@ GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the
 
 ## Sound
 
-Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Default volume is 40 % (MIX tab → MAIN, 0–200 %; above 100 % — up to +6 dB, peaks of loud chords are softly clipped); this is a device setting — it is stored in the board's memory and survives power-off.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
 
 ### DAC (PCM5102A)
 
@@ -125,9 +125,9 @@ board 5V (or 3.3V) ── VCC     GND ── GND     SHDN ── VCC
 - The inputs are differential: each channel's "+" goes to the DAC output, its "−" to the DAC's GND (AGND). Pin names on the module's silkscreen may differ — check them.
 - DirectDrive: the outputs are ground-referenced and need no coupling capacitors; the jack's Sleeve goes to GND as usual.
 - Power: 5 V from the board's 5V pin (the IP5306 output after the switch) or 3.3 V. SHDN, if broken out, goes to VCC (amplifier running).
-- The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower MAIN (MIX tab) or add a divider / potentiometer between the DAC and the amplifier inputs.
+- The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower Phones (PROJ → SYS) or add a divider / potentiometer between the DAC and the amplifier inputs.
 - Ground: keep audio ground wires short and use a star point at the DAC's GND: the DAC, amplifier and headphone jack grounds meet there, and one wire goes from it to the board's GND. This keeps the IP5306 boost converter's whine out of the headphones.
-- Before first power-up — MAIN volume (MIX tab) at minimum, headphones off your ears, then bring it up.
+- Before first power-up — Phones (PROJ → SYS) at minimum, headphones off your ears, then bring it up.
 
 The internal sound lags behind MIDI tracks by about 14 ms (constant, no jitter). Synthesizer load is shown by `CPU NN%` in the right corner of the status bar (average over 0.5 s; yellow from 60% or if at least one block in the window took longer than 4 ms to compute — this is covered by the DMA queue; red from 85% or for 2 s after an audio dropout — an emptied DMA queue, an audible click).
 

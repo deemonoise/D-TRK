@@ -35,8 +35,10 @@ class GridScreen : public Screen {
   enum MenuId : int {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
-    kRec, kPerf, kResampleTrack, kResamplePattern
+    kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep,
+    kEditStepVal = 100  // + N: the Edit step submenu
   };
+  static constexpr int kEditStepMax = 16;
 
   static constexpr int kNamesH = 16;
   static constexpr int kRowH = 16;
@@ -66,6 +68,9 @@ class GridScreen : public Screen {
   void moveTrack(int d);
   void moveField(int d);
   void setEdit(bool on);
+  void snapCell();    // edit: the cell under the cursor as it is now, for cancelCell()
+  void cancelCell();  // Shift+click in edit: the cell back as it was, edit off
+  void openEditStepMenu();
   void toggleView();
   void undo();
   void editTurn(int delta, bool shift);
@@ -114,6 +119,12 @@ class GridScreen : public Screen {
   bool detail_ = false;
   bool edit_ = false;
   bool editPushed_ = false;    // undo snapshot taken in this edit session
+  // Edit: the cell under the cursor when edit began or the cursor arrived, and whether a step was
+  // written before that (then cancelCell() keeps the undo snapshot).
+  mt::Step cellOrig_{};
+  int cellPat_ = -1, cellTr_ = 0, cellStep_ = 0;
+  bool cellOthers_ = false;
+  int editStep_ = 1;  // steps the cursor moves after a note from a track button (0 = stays)
   bool needVisible_ = true;    // scroll to the cursor on the next draw
   bool follow_ = true;
   bool dragFrozen_ = false;    // follow off after a Drag until the next Play

@@ -16,7 +16,8 @@ struct Param {
 };
 
 // Rows of "label  value". Turn = select, click = edit (value red), turn while editing = edit(delta),
-// Shift = x10. Tap = select, tap on the selected row = edit. Drag while editing = edit(-dy / 16).
+// Shift = x10, Shift+click while editing = cancel (the value as it was when the edit began: the
+// setEditScope() bytes copied back, else edit(+-1) until the value text matches again). Tap = select, tap on the selected row = edit. Drag while editing = edit(-dy / 16).
 // With setVisibleRows() smaller than the row count the list scrolls (Drag while not editing).
 // setPageBar(true): the screen's page bar is a position above the first row (sel() == -1, drawn by
 // the screen, see barSelected()); turning cycles through it and the rows. A click on it returns +1
@@ -74,8 +75,18 @@ class ParamList {
     edit_ = on;
     dragAcc_ = 0;
   }
-  // Called after every edit (dirty flag).
+  // Called after every edit (dirty flag), also after a cancel.
   void setOnEdit(std::function<void()> f) { onEdit_ = std::move(f); }
+  // Bytes an edit of these rows may change (e.g. the instrument): copied when an edit begins and
+  // back on cancel, under engine::lockProject(). region() is asked at both times.
+  void setEditScope(std::function<void*()> region, size_t size) {
+    scope_ = std::move(region);
+    scopeSize_ = size;
+  }
+  // Called after a cancel (e.g. a toast).
+  void setOnCancel(std::function<void()> f) { onCancel_ = std::move(f); }
+  // Restores the value the edit began with and leaves edit; false when not editing.
+  bool cancelEdit();
   // 0, or -1 / +1: a click (Shift+click) on the page bar, the previous / next page.
   int onInput(const hw::InputEvent& ev);
   void onTouch(const TouchEvent& ev);
@@ -88,6 +99,7 @@ class ParamList {
  private:
   int shown() const { return visible_ > 0 && visible_ < count_ ? visible_ : count_; }
   void ensureVisible();
+  void beginEdit();  // remembers the value for cancelEdit()
 
   const Param* params_ = nullptr;
   int count_ = 0;
@@ -99,6 +111,14 @@ class ParamList {
   bool bar_ = false;  // setPageBar: position -1 is the screen's page bar
   int y_;  // top of the first row, updated by draw()
   std::function<void()> onEdit_;
+  std::function<void()> onCancel_;
+  std::function<void*()> scope_;
+  size_t scopeSize_ = 0;
+  uint8_t* snap_ = nullptr;  // scopeSize_ bytes, allocated on first use
+  bool snapOk_ = false;      // snap_ holds the scope of the current edit
+  int origRow_ = -1;
+  char orig_[32] = {0};      // value text when the edit began
+  int net_ = 0;              // sum of the edit deltas since
 };
 
 }  // namespace ui

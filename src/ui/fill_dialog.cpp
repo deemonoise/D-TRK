@@ -302,7 +302,7 @@ void FillDialog::onInput(const hw::InputEvent& ev) {
   switch (ev.type) {
     case InputType::EncLong: cancel(); return;
     case InputType::EncClick:
-      if (ev.shift) {
+      if (ev.shift && !list_.editing()) {  // while editing: ParamList cancels the edit
         reseed();
         return;
       }

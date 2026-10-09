@@ -71,7 +71,7 @@ class TrackScreen : public Screen {
   void drawFader(LGFX_Sprite& s, int x, int y, int value, int max, uint16_t fill);
   bool hitStrip(int x, int y, int& strip, Part& part) const;
   void setVol(int track, int v);
-  void setMasterVol(int v);  // device setting: App saves it to NVS, the project is not marked dirty
+  void setMasterVol(int v);  // project data: saved with it, in Render WAV
   void toggleMuteSolo(int track, bool solo);
   uint32_t mixSignature() const;
   bool mixer_ = false;
