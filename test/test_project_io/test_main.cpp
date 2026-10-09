@@ -716,7 +716,7 @@ void test_old_file_gets_audio_defaults() {
     TEST_ASSERT_EQUAL(t, b.tracks[t].instr);
     TEST_ASSERT_EQUAL(100, b.tracks[t].vol);
   }
-  TEST_ASSERT_EQUAL(40, b.masterVol);
+  TEST_ASSERT_EQUAL(100, b.masterVol);
   TEST_ASSERT_TRUE(b.preview);
   TEST_ASSERT_EQUAL(def->dlyTime, b.dlyTime);
   TEST_ASSERT_EQUAL(def->dlyLevel, b.dlyLevel);

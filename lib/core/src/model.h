@@ -378,8 +378,8 @@ struct Project {
   bool songMode = false;
   uint16_t scenes[kScenes];  // bit t = track t muted; kSceneEmpty = nothing stored (reset())
   Instrument instruments[kInstruments];
-  uint8_t masterVol = 40;  // 0..kMasterVolMax %
-  bool preview = true;     // GRID note entry sounds on INT tracks
+  uint8_t masterVol = 100;  // 0..kMasterVolMax %
+  bool preview = true;      // GRID note entry sounds on INT tracks
   // Send delay (INT tracks): time 1..kDlyTimeMax sixteenths, feedback / tone / return level 0..127.
   uint8_t dlyTime = 3;
   uint8_t dlyFb = 50;

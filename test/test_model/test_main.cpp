@@ -90,7 +90,7 @@ void test_reset_audio_defaults() {
   TEST_ASSERT_EQUAL(static_cast<int>(TrackOut::Int), static_cast<int>(p->tracks[3].out));
   TEST_ASSERT_EQUAL(3, p->tracks[3].instr);  // track N defaults to instrument N
   TEST_ASSERT_EQUAL(100, p->tracks[3].vol);
-  TEST_ASSERT_EQUAL(40, p->masterVol);
+  TEST_ASSERT_EQUAL(100, p->masterVol);
   TEST_ASSERT_TRUE(p->preview);
   TEST_ASSERT_EQUAL(3, p->dlyTime);
   TEST_ASSERT_EQUAL(50, p->dlyFb);
@@ -112,7 +112,7 @@ void test_reset_audio_defaults() {
   TEST_ASSERT_EQUAL(3, p->dlyTime);
   TEST_ASSERT_EQUAL(100, p->dlyLevel);
   TEST_ASSERT_EQUAL(100, p->instruments[2].vol);
-  TEST_ASSERT_EQUAL(40, p->masterVol);
+  TEST_ASSERT_EQUAL(100, p->masterVol);
   TEST_ASSERT_TRUE(p->trackInternal(3));
   delete p;
 }

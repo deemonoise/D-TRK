@@ -65,7 +65,7 @@ void Project::reset() {
     fmSetMachine(instruments[i], static_cast<uint8_t>(FmMachine::Tone));
     snprintf(instruments[i].name, sizeof(instruments[i].name), "INS%d", i + 1);
   }
-  masterVol = 40;
+  masterVol = 100;
   preview = true;
   dlyTime = 3;
   dlyFb = 50;
