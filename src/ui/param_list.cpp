@@ -1,5 +1,7 @@
 #include "param_list.h"
+#include <string.h>
 #include "engine/engine.h"
+#include "esp_heap_caps.h"
 #include "theme.h"
 
 namespace ui {
@@ -9,7 +11,57 @@ void ParamList::edit(int delta) {
   engine::lockProject();
   params_[sel_].edit(delta);
   engine::unlockProject();
+  net_ += delta;
   if (onEdit_) onEdit_();
+}
+
+void ParamList::beginEdit() {
+  origRow_ = sel_;
+  net_ = 0;
+  orig_[0] = 0;
+  if (sel_ >= 0 && sel_ < count_ && params_[sel_].format) params_[sel_].format(orig_, sizeof(orig_));
+  snapOk_ = false;
+  if (!scope_ || scopeSize_ == 0) return;
+  if (!snap_) {
+    snap_ = static_cast<uint8_t*>(heap_caps_malloc(scopeSize_, MALLOC_CAP_SPIRAM));
+    if (!snap_) snap_ = static_cast<uint8_t*>(malloc(scopeSize_));
+  }
+  const void* src = scope_();
+  if (snap_ && src) {
+    memcpy(snap_, src, scopeSize_);  // the UI is the only writer: no lock needed to read
+    snapOk_ = true;
+  }
+}
+
+bool ParamList::cancelEdit() {
+  if (!edit_) return false;
+  void* dst = snapOk_ ? scope_() : nullptr;  // asked while still editing, as in beginEdit()
+  edit_ = false;
+  dragAcc_ = 0;
+  if (snapOk_) {
+    if (dst) {
+      engine::lockProject();
+      memcpy(dst, snap_, scopeSize_);
+      engine::unlockProject();
+    }
+  } else if (origRow_ == sel_ && sel_ >= 0 && sel_ < count_ && params_[sel_].format && net_ != 0) {
+    // Step back until the value reads as before (clamped edits do not sum up exactly).
+    const int dir = net_ > 0 ? -1 : 1;
+    char cur[32];
+    for (int i = 0; i < 1024; ++i) {
+      cur[0] = 0;
+      params_[sel_].format(cur, sizeof(cur));
+      if (strcmp(cur, orig_) == 0) break;
+      engine::lockProject();
+      params_[sel_].edit(dir);
+      engine::unlockProject();
+    }
+  }
+  snapOk_ = false;
+  net_ = 0;
+  if (onEdit_) onEdit_();
+  if (onCancel_) onCancel_();
+  return true;
 }
 
 void ParamList::ensureVisible() {
@@ -43,8 +95,13 @@ int ParamList::onInput(const hw::InputEvent& ev) {
     case InputType::EncClick:
       if (bar_ && sel_ < 0) return ev.shift ? -1 : 1;
       if (count_ == 0) break;
+      if (edit_ && ev.shift) {
+        cancelEdit();
+        break;
+      }
       ensureVisible();  // never edit a row scrolled out of sight
       edit_ = !edit_;
+      if (edit_) beginEdit();
       break;
     default: break;
   }
@@ -80,6 +137,7 @@ void ParamList::onTouch(const TouchEvent& ev) {
   if (r < 0) return;
   if (r == sel_) {
     edit_ = !edit_;
+    if (edit_) beginEdit();
   } else {
     sel_ = r;
     edit_ = false;

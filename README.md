@@ -83,7 +83,7 @@ GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the
 
 ## Sound
 
-Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to the built-in NS4168 amplifier — the **SPK** connector on the board, no soldering needed. Default volume is 40 % (MIX tab → MAIN, 0–200 %; above 100 % — up to +6 dB, peaks of loud chords are softly clipped); this is a device setting — it is stored in the board's memory and survives power-off.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to the built-in NS4168 amplifier — the **SPK** connector on the board, no soldering needed. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device (headphones / speaker): PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
 
 > **WARNING: the SPK output is bridged (BTL).** Both pins of the connector carry signal, **neither of them is ground**.
 > - Speaker (4–8 Ω) — directly across the two SPK pins.
@@ -110,7 +110,7 @@ SPK− ──────────── Speaker (−)
 - 100–220 Ω, 0.25 W resistors, one each on Tip and Ring. Below 100 Ω — loud, with high current through the headphones; higher — quieter. 150 Ω is the middle ground.
 - Sleeve goes to **SPK−**, not to GND. The jack sits in a plastic body or a plastic panel (the printed enclosure works); its contacts do not touch GND, the MIDI jack body, USB or other connectors.
 - This jack is for **headphones only**. A cable from it to a mixer, audio interface or powered speakers would connect SPK− to their ground: that shorts the amplifier output.
-- Before first power-up — MAIN volume (MIX tab) at minimum, headphones off your ears, then bring it up.
+- Before first power-up — Phones (PROJ → SYS) at minimum, headphones off your ears, then bring it up.
 - The jack's built-in break contact is not suitable for disconnecting the speaker: on ordinary jacks it is connected to Tip, and Tip goes through a resistor. You need a separate switch or a jack with an isolated pair of switching contacts.
 
 The internal sound lags behind MIDI tracks by about 14 ms (constant, no jitter). Synthesizer load is shown by `CPU NN%` in the right corner of the status bar (average over 0.5 s; yellow from 60% or if at least one block in the window took longer than 4 ms to compute — this is covered by the DMA queue; red from 85% or for 2 s after an audio dropout — an emptied DMA queue, an audible click).

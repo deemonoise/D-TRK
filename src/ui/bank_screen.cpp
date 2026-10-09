@@ -316,6 +316,38 @@ int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 }  // namespace
 
 // The row's field under edit: pattern, transpose (melodic tracks), passes, mute scene.
+void BankScreen::snapRow() {
+  const mt::Project& p = app_.project();
+  if (row_ >= chainLen()) {
+    origRow_ = -1;
+    return;
+  }
+  origRow_ = row_;
+  origPat_ = p.chain[row_];
+  origTr_ = p.chainTr[row_];
+  origRep_ = p.chainRep[row_];
+  origScene_ = p.chainScene[row_];
+}
+
+void BankScreen::cancelRow() {
+  rowEdit_ = false;
+  mt::Project& p = app_.project();
+  if (origRow_ < 0 || origRow_ >= chainLen()) return;
+  const int r = origRow_;
+  origRow_ = -1;
+  if (p.chain[r] == origPat_ && p.chainTr[r] == origTr_ && p.chainRep[r] == origRep_ && p.chainScene[r] == origScene_)
+    return;
+  engine::lockProject();
+  p.chain[r] = origPat_;
+  p.chainTr[r] = origTr_;
+  p.chainRep[r] = origRep_;
+  p.chainScene[r] = origScene_;
+  postChainEdit(r, mt::ChainOp::Edit);
+  engine::unlockProject();
+  app_.markDirty();
+  app_.toast("CANCEL");
+}
+
 void BankScreen::editRow(int delta) {
   mt::Project& p = app_.project();
   if (delta == 0 || row_ >= chainLen()) return;
@@ -479,9 +511,16 @@ void BankScreen::chainInput(const hw::InputEvent& ev) {
       }
       break;
     case InputType::EncClick:
+      if (rowEdit_ && ev.shift) {
+        cancelRow();
+        break;
+      }
       if (n == 0) insertRow(0, app_.editPattern());
       else rowEdit_ = !rowEdit_;
-      if (rowEdit_) rowField_ = kFPat;
+      if (rowEdit_) {
+        rowField_ = kFPat;
+        snapRow();
+      }
       break;
     case InputType::EncLong: openRowMenu(row_); break;
     default: break;
@@ -531,11 +570,15 @@ void BankScreen::chainTouch(const TouchEvent& ev) {
   const int f = ev.x >= kFieldX0 && ev.x < kFieldX0 + kFCount * kFieldW ? (ev.x - kFieldX0) / kFieldW : -1;
   if (r == row_) {
     if (f >= 0 && (!rowEdit_ || f != rowField_)) {
+      if (!rowEdit_) snapRow();
       rowField_ = f;
       rowEdit_ = true;
     } else {
       rowEdit_ = !rowEdit_;
-      if (rowEdit_) rowField_ = kFPat;
+      if (rowEdit_) {
+        rowField_ = kFPat;
+        snapRow();
+      }
     }
   } else {
     row_ = r;

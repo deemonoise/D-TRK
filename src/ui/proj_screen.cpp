@@ -132,6 +132,9 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                              app_.project().perfMap[b] = static_cast<uint8_t>(clampi(app_.project().perfMap[b] + d, 0, kLast));
                            }};
   }
+  // Live output level (device setting); the project's master is MAIN on TRACK / MIX.
+  params_[kPhones] = {"Phones", [this](char* o, int n) { snprintf(o, n, "%d%%", app_.phones()); },
+                      [this](int d) { app_.setPhones(app_.phones() + d); }};
   params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
                        [this](int d) { app_.project().preview = d > 0; }};
   params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
@@ -172,10 +175,12 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                            snprintf(o, n, "CLICK TO START");
                        },
                        [](int) {}};
-  // The theme and the read-only rows are not project data: editing them does not mark it dirty.
+  // Phones, the theme and the read-only rows are not project data: editing them does not mark it dirty.
   list_.setOnEdit([this] {
-    if (kPageFirst[page_] + list_.sel() < kTheme) app_.markDirty();
+    const int r = kPageFirst[page_] + list_.sel();
+    if (r != kPhones && r < kTheme) app_.markDirty();
   });
+  list_.setOnCancel([this] { app_.toast("CANCEL"); });
   showPage(kPgSong, false);
 }
 

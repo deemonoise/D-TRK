@@ -47,6 +47,9 @@ class App {
   // Autosave interval in minutes, 0 = off (device setting, see autosaveIdle).
   int autosaveMin() const { return autosaveMin_; }
   void setAutosaveMin(int m);
+  // Phones: live output level 0..100 % (device setting; the project's master is masterVol).
+  int phones() const { return phones_; }
+  void setPhones(int v);
   void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
   void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
   bool doUndo();    // false when there is nothing to undo
@@ -108,7 +111,6 @@ class App {
   void nudgeTrackVol(int track, int d);
   void fillUp();
   void updateLeds(uint32_t now);
-  void saveVolumeIdle(uint32_t now);
   void saveSettingsIdle(uint32_t now);
   void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
@@ -152,13 +154,12 @@ class App {
   uint32_t cpuRedUntil_ = 0;  // millis() until which the CPU readout stays red (audio stall)
   int bpmTarget_ = 120;  // local while editing: p_->bpm lags behind the engine queue
   bool bpmEdit_ = false;
+  int bpmOrig_ = 120;  // BPM when the edit began (Shift+click puts it back)
   uint8_t curTrack_ = 0;
   uint32_t flashUntil_[mt::kTracks] = {};
-  uint8_t savedVol_ = 0;     // master volume as stored in NVS
-  uint8_t pendingVol_ = 0;   // changed value waiting to be saved
-  uint32_t volChangedAt_ = 0;  // 0 = nothing pending
   int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
   int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)
+  int phones_ = 100, savedPhones_ = 100;  // phones level, % (device setting)
   uint32_t settingsChangedAt_ = 0;  // 0 = nothing pending
   uint32_t autosaveDue_ = 0;        // when the next autosave is due, 0 = not counting
   uint32_t autosavedSeq_ = 0;       // editSeq_ of the last autosave

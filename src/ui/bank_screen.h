@@ -86,6 +86,12 @@ class BankScreen : public Screen {
   int lastSongPos_ = -1;
   bool rowEdit_ = false;
   int rowField_ = kFPat;  // field edited in row edit
+  // The row as it was when row edit began (Shift+click puts it back).
+  int origRow_ = -1;
+  uint8_t origPat_ = 0, origRep_ = 1, origScene_ = 0;
+  int8_t origTr_ = 0;
+  void snapRow();
+  void cancelRow();
 };
 
 }  // namespace ui

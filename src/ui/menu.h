@@ -16,7 +16,7 @@ struct MenuItem {
 // Tap on an item = choose, tap outside = close. Labels and title are copied.
 class Menu {
  public:
-  static constexpr int kMaxItems = 16;
+  static constexpr int kMaxItems = 20;
   static constexpr int kVisible = 12;
   static constexpr int kW = 240;
   static constexpr int kRowH = 20;

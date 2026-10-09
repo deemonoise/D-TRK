@@ -113,6 +113,8 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
   list_.setVisibleRows(kListRows);
   list_.setPageBar(true);
   list_.setOnEdit([this] { app_.markDirty(); });
+  list_.setEditScope([this]() -> void* { return &inst(); }, sizeof(mt::Instrument));
+  list_.setOnCancel([this] { app_.toast("CANCEL"); });
 }
 
 mt::Instrument& SampleEditor::inst() { return app_.project().instruments[instr_ < 0 ? 0 : instr_]; }

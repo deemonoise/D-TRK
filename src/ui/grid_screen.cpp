@@ -1,5 +1,6 @@
 #include "grid_screen.h"
 #include <stdio.h>
+#include <string.h>
 #include "app.h"
 #include "audio/audio.h"
 #include "fx_info.h"
@@ -109,6 +110,7 @@ void GridScreen::selFollow() {
 
 void GridScreen::cursorMoved() {
   fxCycled_ = false;
+  if (edit_) snapCell();
   selFollow();
   needVisible_ = true;
   lastMoveMs_ = millis();
@@ -144,7 +146,34 @@ void GridScreen::setEdit(bool on) {
     app_.toast(kFieldNames[curField_]);
   }
   edit_ = on;
+  if (on) snapCell();
   needVisible_ = true;  // the keyboard changes the row count
+}
+
+void GridScreen::snapCell() {
+  cellOthers_ = editPushed_;
+  cellPat_ = app_.editPattern();
+  cellTr_ = track();
+  cellStep_ = cur();
+  cellOrig_ = pat().steps[cellTr_][cellStep_];
+}
+
+void GridScreen::cancelCell() {
+  setEdit(false);
+  if (cellPat_ < 0 || cellPat_ >= mt::kPatterns) return;
+  mt::Step& st = app_.project().patterns[cellPat_].steps[cellTr_][cellStep_];
+  if (memcmp(&st, &cellOrig_, sizeof(st)) != 0) {
+    engine::lockProject();
+    st = cellOrig_;
+    engine::unlockProject();
+    engine::post(engine::Cmd::ReleaseTies);  // a held TIE may have lost its step
+    // Only this cell was written in the edit: its snapshot is not an undo step any more.
+    if (editPushed_ && !cellOthers_) app_.dropUndo();
+    else app_.markDirty();
+  }
+  editPushed_ = false;
+  cellPat_ = -1;
+  app_.toast("CANCEL");
 }
 
 void GridScreen::toggleView() {
@@ -217,7 +246,7 @@ void GridScreen::enterDegree(int button, bool octaveUp) {
   const int tr = track();
   const mt::Step& st = pat().steps[tr][cur()];
   setNote(degreeNote(button, octaveUp, st.hasNote() ? st.note : lastNote_[tr]));
-  moveStep(1);
+  if (editStep_) moveStep(editStep_);
 }
 
 void GridScreen::setRec(bool on) {
@@ -361,7 +390,8 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
       else moveTrack(ev.delta);
       break;
     case InputType::EncClick:
-      if (ev.shift) toggleView();
+      if (ev.shift && edit_) cancelCell();
+      else if (ev.shift) toggleView();
       else if (selOn_) selOn_ = false;  // click ends a selection instead of entering edit
       else setEdit(!edit_);
       break;
@@ -552,6 +582,7 @@ void GridScreen::openMenu() {
   int n = 0;
   auto add = [&](const char* label, int id, bool en) { items[n++] = MenuItem{label, id, en}; };
   char title[28];
+  char stepLabel[20];
   if (selOn_) {
     const mt::Sel s = curSel();
     snprintf(title, sizeof(title), "SEL T%d-%d  %d-%d", s.t0 + 1, s.t1 + 1, s.s0 + 1, s.s1 + 1);
@@ -562,29 +593,45 @@ void GridScreen::openMenu() {
     add("Transpose...", kTranspose, true);
     add("Fill...", kFill, true);
   } else {
+    // Most used first (the first 12 show without scrolling); slow / rare ones at the end.
     snprintf(title, sizeof(title), "STEP %d  %s", cur() + 1, app_.project().tracks[track()].name);
+    snprintf(stepLabel, sizeof(stepLabel), "Edit step: %d", editStep_);
+    add(stepLabel, kEditStep, true);
     add("Copy step", kCopyStep, canCopy);
     add("Paste", kPaste, canPaste);
     add("Clear step", kClearStep, true);
     add("Note OFF", kNoteOff, true);
+    add("Undo", kUndo, canUndo);
     add("Select", kSelect, true);
     add("Copy track", kCopyTrack, canCopy);
     add("Clear track", kClearTrack, true);
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
-    add("Resample track", kResampleTrack, true);
-    add("Resample pattern", kResamplePattern, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf_ ? "Perf: ON" : "Perf: OFF", kPerf, true);
-  }
-  if (!selOn_) {
     add(detail_ ? "Overview" : "Detail view", kToggleView, true);
     add(follow_ ? "Follow: ON" : "Follow: OFF", kToggleFollow, true);
+    add("Resample track", kResampleTrack, true);
+    add("Resample pattern", kResamplePattern, true);
   }
-  add("Undo", kUndo, canUndo);
-  if (selOn_) add("Clear selection", kDropSel, true);
+  if (selOn_) {
+    add("Undo", kUndo, canUndo);
+    add("Clear selection", kDropSel, true);
+  }
   menuPattern_ = app_.editPattern();
   app_.menu().open(title, items, n, [this](int id) { onMenu(id); });
+}
+
+// 0..kEditStepMax: how far the cursor moves after a note entered with a track button.
+void GridScreen::openEditStepMenu() {
+  static_assert(kEditStepMax + 1 <= Menu::kMaxItems, "Edit step values fit the menu");
+  MenuItem items[kEditStepMax + 1];
+  char labels[kEditStepMax + 1][12];
+  for (int v = 0; v <= kEditStepMax; ++v) {
+    snprintf(labels[v], sizeof(labels[v]), "%s%d%s", v == editStep_ ? "> " : "  ", v, v == 0 ? " (stay)" : "");
+    items[v] = MenuItem{labels[v], kEditStepVal + v, true};
+  }
+  app_.menu().open("EDIT STEP", items, kEditStepMax + 1, [this](int id) { onMenu(id); });
 }
 
 // The selection, else the current track up to its own length (polymeter). The column under the
@@ -720,6 +767,17 @@ void GridScreen::transpose(const mt::Sel& sel, int amount, bool degrees) {
 void GridScreen::onMenu(int id) {
   // The heard pattern changed while the menu was open: edits of steps would hit the wrong one.
   // View, follow, undo, REC / PERF and dropping the selection do not depend on it.
+  if (id == kEditStep) {
+    openEditStepMenu();
+    return;
+  }
+  if (id >= kEditStepVal && id <= kEditStepVal + kEditStepMax) {
+    editStep_ = id - kEditStepVal;
+    char msg[20];
+    snprintf(msg, sizeof(msg), "EDIT STEP %d", editStep_);
+    app_.toast(msg);
+    return;
+  }
   const bool anyPattern = id == kToggleView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
                           id == kDropSel;
   if (!anyPattern && app_.editPattern() != menuPattern_) {
@@ -839,8 +897,14 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
 
   // Header: the visible half over the step numbers, track names coloured by mute/solo.
   if (!drawBadge(s, gridY - kNamesH)) {
-    s.setTextColor(kDim);
-    s.drawString(half() ? "9-16" : "1-8", 0, gridY - kNamesH);  // 4 chars fill kNumW
+    if (edit_) {
+      snprintf(buf, sizeof(buf), "ST%d", editStep_);  // Edit step while editing
+      s.setTextColor(kEditCursor);
+    } else {
+      snprintf(buf, sizeof(buf), "%s", half() ? "9-16" : "1-8");
+      s.setTextColor(kDim);
+    }
+    s.drawString(buf, 0, gridY - kNamesH);  // 4 chars fill kNumW
   }
   for (int col = 0; col < kOverviewTracks; ++col) {
     const int tr = firstTrack() + col;
@@ -911,7 +975,12 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   // Header: track number over the step numbers, its name over NOTE / VEL, slots over the commands.
   s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
   if (!drawBadge(s, gridY - kNamesH)) {
-    snprintf(buf, sizeof(buf), "T%d", tr + 1);
+    if (edit_) {
+      snprintf(buf, sizeof(buf), "ST%d", editStep_);  // Edit step while editing
+      s.setTextColor(kEditCursor);
+    } else {
+      snprintf(buf, sizeof(buf), "T%d", tr + 1);
+    }
     s.drawString(buf, 2, gridY - kNamesH);
   }
   s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));

@@ -64,6 +64,7 @@ namespace {
 int16_t scope[kScopeLen];
 std::atomic<int> scopeAt{0};
 std::atomic<int> scopePk{0};
+std::atomic<int32_t> phonesQ15{32768};  // phones gain, Q15 (32768 = 100 %)
 
 static_assert(kBlock == mt::Synth::kBlock, "one synth block per DMA block");
 constexpr int kDmaBlocks = 3;  // DMA buffers: a block plays ~(kDmaBlocks - 1) blocks after it is written
@@ -675,7 +676,6 @@ void run(void*) {
     renderUs.store(us, std::memory_order_relaxed);
     if (us > benchPeak.load(std::memory_order_relaxed)) benchPeak.store(us, std::memory_order_relaxed);
 #endif
-    for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = mono[i];
     {
       int at = scopeAt.load(std::memory_order_relaxed);
       int pk = scopePk.load(std::memory_order_relaxed);
@@ -687,6 +687,10 @@ void run(void*) {
       }
       scopeAt.store(at, std::memory_order_relaxed);
       scopePk.store(pk, std::memory_order_relaxed);
+    }
+    {  // after the scope: it shows the mix, the phones level only the headphones
+      const int32_t g = phonesQ15.load(std::memory_order_relaxed);
+      for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = static_cast<int16_t>((mono[i] * g) >> 15);
     }
     size_t written = 0;
     const int64_t w0 = esp_timer_get_time();
@@ -915,6 +919,11 @@ void trackPeaks(float out[16]) {
   static_assert(mt::kTracks == 16, "trackPeaks");
   if (synth) synth->takeTrackPeaks(out);
   else for (int t = 0; t < mt::kTracks; ++t) out[t] = 0;
+}
+
+void setPhones(uint8_t pct) {
+  const int32_t v = pct > 100 ? 100 : pct;
+  phonesQ15.store(v * v * 32768 / 10000, std::memory_order_relaxed);
 }
 
 void setMeters(bool on) {
