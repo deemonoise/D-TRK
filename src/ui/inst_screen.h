@@ -107,8 +107,8 @@ class InstScreen : public Screen {
   void drawPageBar(LGFX_Sprite& s, int y);
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
   void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC page: frame / waveform of the selected osc
-  void initTail(Param* t, bool macros);  // t = &rows[type's row count]; macros: FM / DRUM LFO targets
-  void relabel();                        // DRUM macro labels of the current machine
+  void initTail(Param* t);  // t = &rows[type's row count]
+  void relabel();           // DRUM macro labels of the current machine
   void leaveEdit();
   void fixNames();  // empty name -> INSn
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }

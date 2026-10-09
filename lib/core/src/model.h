@@ -92,11 +92,19 @@ enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLocks };
 static_assert(kLocks <= 16, "lockMask is a uint16_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
-// Dec..Con = macro index + 1 (FM / DRUM only). Stored in files: new targets before Count only.
-enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive, Count };
+// Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2: SYNTH (osc 2);
+// RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Stored in files:
+// new targets before Count only.
+enum class LfoDest : uint8_t {
+  Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive,
+  Reso, Fenv, Dly, Rvb, Bit, Srr, Fine, Duty, Sub, Noise, Semi2,
+  Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4,
+  Count
+};
 
 // LFO 2..4 of an instrument (LFO 1 keeps its own fields: older files). depth 0 = off.
 constexpr int kLfos = 4;
+static_assert(static_cast<int>(LfoDest::Rtrg1) - static_cast<int>(LfoDest::Rate1) == 2 * kLfos, "LFO targets");
 // LFO sync byte (LfoCfg::sync, Instrument::lfoSync): bit 0 TEMPO (rate is a division, lfoSyncHz),
 // bit 1 Retrig OFF (one phase per instrument, not restarted by notes; see Synth).
 constexpr uint8_t kLfoTempo = 1, kLfoFree = 2;
@@ -218,13 +226,18 @@ float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec);
 // DRUM: sets the machine (clamped) and its default macros.
 void drumSetMachine(Instrument& m, uint8_t machine);
 // Changes the type. FM / DRUM: the machine (clamped) with its default macros (they mean other
-// things per type); SYNTH: its default macros; KIT: its default lanes. CHIP / SAMPLE: a macro LFO
-// target becomes PITCH.
+// things per type); SYNTH: its default macros; KIT: its default lanes. A LFO target the type lacks
+// (lfoDestValid) becomes PITCH.
 void instrSetType(Instrument& m, InstrType t);
 // KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
 void kitSetDefaults(Instrument& m);
-// LFO target d steps from dest (clamped at the ends); macros = false (CHIP / SAMPLE) skips DECAY..CONTOUR.
-uint8_t lfoDestStep(uint8_t dest, int d, bool macros);
+// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
+bool lfoDestValid(uint8_t dest, InstrType t);
+// LFO target d steps from dest over the targets valid for t (clamped at the ends); self (0..kLfos-1,
+// -1 = none): that LFO's RTRG is skipped.
+uint8_t lfoDestStep(uint8_t dest, int d, InstrType t, int self = -1);
+// Display name of the target: SYNTH names its macros SHP1..SENV; out of range = PITCH.
+const char* lfoDestName(uint8_t dest, InstrType t);
 
 // Values are stored in project files: new commands go before Count only.
 // SLD..SLC act on INT tracks only (synth fx, see fxSynthOnly). DCY..CON lock FM / DRUM / SYNTH macros

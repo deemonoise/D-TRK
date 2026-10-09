@@ -218,11 +218,11 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    else snprintf(o, n, "HOLD");
                  },
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
-  initTail(chip_ + kChipRows, false);
-  initTail(sample_ + kCommon, false);
-  initTail(fm_ + kMacRows, true);
-  initTail(drum_ + kMacRows, true);
-  initTail(syn_ + kSynRows, true);
+  initTail(chip_ + kChipRows);
+  initTail(sample_ + kCommon);
+  initTail(fm_ + kMacRows);
+  initTail(drum_ + kMacRows);
+  initTail(syn_ + kSynRows);
   initKit();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
@@ -335,7 +335,7 @@ void InstScreen::buildLanes(bool keep) {
   else list_.setParams(kitShown_, n);
 }
 
-void InstScreen::initTail(Param* t, bool macros) {
+void InstScreen::initTail(Param* t) {
   t[kDrive] = {"Drive",
                [this](char* o, int n) {
                  if (inst().drive) snprintf(o, n, "%u", inst().drive);
@@ -450,20 +450,9 @@ void InstScreen::initTail(Param* t, bool macros) {
                   }};
   // DRUM shows the generic macro names here, not the machine's; SYNTH its own.
   t[kLfoDest] = {"Dest",
-                 [this, cfg](char* o, int n) {
-                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP",
-                                                        "CONTOUR", "VOL",  "CUTOFF", "DRIVE"};
-                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET",
-                                                      "SENV",  "VOL",  "CUTOFF", "DRIVE"};
-                   constexpr int kN = static_cast<int>(mt::LfoDest::Count);
-                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN, "LFO dest names");
-                   static_assert(sizeof(kSyn) / sizeof(kSyn[0]) == kN, "LFO dest names");
-                   const int dest = cfg().dest % kN;
-                   const bool syn = inst().type == mt::InstrType::Synth;
-                   snprintf(o, n, "%s", syn ? kSyn[dest] : kNames[dest]);
-                 },
-                 [cfg, lfo, macros](int d) {
-                   const uint8_t v = mt::lfoDestStep(cfg().dest, d, macros);
+                 [this, cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoDestName(cfg().dest, inst().type)); },
+                 [this, cfg, lfo](int d) {
+                   const uint8_t v = mt::lfoDestStep(cfg().dest, d, inst().type, lfoSel_);
                    lfo().dest = v;
                  },
                  noLfo};

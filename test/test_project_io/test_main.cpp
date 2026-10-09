@@ -1019,6 +1019,24 @@ void test_fltr_roundtrip() {
   TEST_ASSERT_EQUAL(127, r.keytrack);
 }
 
+// The new LFO targets (LFO-to-LFO, SEMI2) survive a project save / load.
+void test_lfo_dests_roundtrip() {
+  Instrument& m = a.instruments[6];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Depth2);
+  m.lfo[0].dest = static_cast<uint8_t>(LfoDest::Rate1);
+  m.lfo[1].dest = static_cast<uint8_t>(LfoDest::Semi2);
+  m.lfo[2].dest = static_cast<uint8_t>(LfoDest::Rtrg4);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  const Instrument& r = b.instruments[6];
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Depth2), r.lfoDest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Rate1), r.lfo[0].dest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Semi2), r.lfo[1].dest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Rtrg4), r.lfo[2].dest);
+}
+
 void test_file_without_fltr() {
   a.instruments[0].fltMode = static_cast<uint8_t>(FltMode::Lp);
   a.instruments[0].cutoff = 10;
@@ -1579,6 +1597,7 @@ int main() {
   RUN_TEST(test_samples_chunk_too_small);
   RUN_TEST(test_samples_two_chunks_last_wins);
   RUN_TEST(test_fltr_roundtrip);
+  RUN_TEST(test_lfo_dests_roundtrip);
   RUN_TEST(test_file_without_fltr);
   RUN_TEST(test_fltr_garbage_clamped);
   RUN_TEST(test_audi_delay_garbage_clamped);

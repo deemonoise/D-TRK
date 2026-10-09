@@ -25,6 +25,41 @@ constexpr float kFmCacheCents = 0.01f;  // semitones
 
 float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+constexpr int kLfoDests = static_cast<int>(LfoDest::Count);
+constexpr int ld(LfoDest d) { return static_cast<int>(d); }
+// 0..127 parameter + LFO offset, rounded and clamped.
+MT_HOT inline uint8_t u7(float x) { return static_cast<uint8_t>(clampf(x, 0.f, 127.f) + 0.5f); }
+
+MT_HOT int lfoDepth(int8_t d) { return d < -64 ? -64 : (d > 63 ? 63 : d); }
+
+// Bit i: LFO i has Retrig OFF (the instrument's shared phase).
+MT_HOT uint8_t sharedLfos(const Instrument& m) {
+  uint8_t r = lfoFree(m.lfoSync) ? 1 : 0;
+  for (int i = 1; i < kLfos; ++i)
+    if (lfoFree(m.lfo[i - 1].sync)) r |= static_cast<uint8_t>(1u << i);
+  return r;
+}
+
+// LFO -> LFO mods of m's LFOs. Sources: LFOs in srcMask with depth != 0 and a RateJ / DepthJ / RtrgJ
+// target; out = their last outputs, wraps = bit i if source i wrapped. RATE sums 4 octaves per unit,
+// DEPTH sums into 1 + l (clamped 0..2), RTRG on itself is ignored.
+MT_HOT LfoMods lfoMods(const Instrument& m, const float* out, uint8_t wraps, uint8_t srcMask) {
+  constexpr int kRate = ld(LfoDest::Rate1), kDepth = ld(LfoDest::Depth1), kRtrg = ld(LfoDest::Rtrg1);
+  LfoMods r;
+  for (int i = 0; i < kLfos; ++i) {
+    if (!(srcMask & (1u << i))) continue;
+    const LfoCfg c = lfoAt(m, i);
+    if (!c.depth || c.dest < kRate) continue;
+    const int d = c.dest;
+    if (d < kRate + kLfos) r.oct[d - kRate] += 4.f * out[i];
+    else if (d >= kDepth && d < kDepth + kLfos) r.depth[d - kDepth] += out[i];
+    else if (d >= kRtrg && d < kRtrg + kLfos && d - kRtrg != i && (wraps & (1u << i)))
+      r.rtrg |= static_cast<uint8_t>(1u << (d - kRtrg));
+  }
+  for (float& x : r.depth) x = clampf(x, 0.f, 2.f);
+  return r;
+}
+
 bool isOff(const uint8_t* b, uint8_t len) {
   const uint8_t k = b[0] & 0xF0;
   return k == 0x80 || (k == 0x90 && len >= 3 && b[2] == 0) || b[0] == 0xFF || b[0] == 0xFE;
@@ -633,10 +668,6 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   const Instrument& m = instrOf(v);
   const TrackRt& r = rt_[v.track];
   v.fenvT += static_cast<uint32_t>(dt);
-  const uint8_t snd = (v.lockMask & (1u << kLockDly)) ? v.lock[kLockDly] : m.send;
-  v.send = (snd > 127 ? 127 : snd) * (1.f / 127.f);
-  const uint8_t rs = (v.lockMask & (1u << kLockRvb)) ? v.lock[kLockRvb] : m.rsend;
-  v.rsend = (rs > 127 ? 127 : rs) * (1.f / 127.f);
   if (v.slideStep != 0) {
     v.pitch += v.slideStep * dt;
     if ((v.slideStep > 0 && v.pitch >= v.target) || (v.slideStep < 0 && v.pitch <= v.target)) {
@@ -701,27 +732,38 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   } else {
     v.vibPhase = 0;
   }
-  // LFOs 1..4: PITCH, VOL, CUTOFF, DRIVE on every type, summed; macro targets go to controlFm /
-  // controlDrum / controlSyn (lm: macro offsets).
-  float lfoVol = 1, lfoCut = 0, lfoDrv = 0;
-  float lm[kFmMacros] = {};
+  // LFOs 1..4 summed per target (la: -1..1 x depth / 64 each; VOL multiplies). Macro targets go to
+  // controlFm / controlDrum / controlSyn (lm: macro offsets), SUB / NOISE / SEMI2 to controlSyn.
+  // Targets invalid for the type are summed and never read, so are L1..L4 RATE / DEPTH / RTRG: they
+  // act through mods, LFO -> LFO from the last update's outputs and wraps (shared LFOs' wraps: advanceInstLfos). A
+  // dt = 0 update (note-on, fx) neither restarts nor consumes the wraps.
+  const uint8_t shared = sharedLfos(m);
+  const uint8_t wraps = dt ? static_cast<uint8_t>((v.lfoWrap & ~shared) | (instLfoWrap_[v.instr] & shared)) : 0;
+  const LfoMods mods = lfoMods(m, v.lfoOut, wraps, 0xF);
+  if (dt) v.lfoWrap = 0;  // collected anew by this update's advances
+  float la[kLfoDests] = {};
+  float lfoVol = 1;
   for (int i = 0; i < kLfos; ++i) {
     const LfoCfg c = lfoAt(m, i);
-    const float l = lfo(v, c, i, dt);
+    const float l = lfo(v, c, i, dt, mods);
     if (l == 0) continue;
-    const uint8_t dest = c.dest < static_cast<uint8_t>(LfoDest::Count) ? c.dest : 0;
-    if (dest == static_cast<uint8_t>(LfoDest::Pitch)) pitch += 12.f * l;
-    else if (dest == static_cast<uint8_t>(LfoDest::Vol)) lfoVol *= clampf(1.f + l, 0.f, 2.f);
-    else if (dest == static_cast<uint8_t>(LfoDest::Cutoff)) lfoCut += 64.f * l;
-    else if (dest == static_cast<uint8_t>(LfoDest::Drive)) lfoDrv += 64.f * l;
-    else if (dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con))
-      lm[dest - 1] += 64.f * l;
+    const int dest = c.dest < kLfoDests ? c.dest : 0;
+    if (dest == ld(LfoDest::Vol)) lfoVol *= clampf(1.f + l, 0.f, 2.f);
+    else la[dest] += l;
   }
-  const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : (m.drive > 127 ? 127 : m.drive);
-  v.drive.set(static_cast<uint8_t>(clampf(drv + lfoDrv, 0.f, 127.f) + 0.5f));
-  v.crush.set((v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : m.crushBits,
-              (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : m.crushRate);
-  controlFilter(v, m, pitch, lfoCut);
+  pitch += 12.f * la[ld(LfoDest::Pitch)] + la[ld(LfoDest::Fine)];
+  float lm[kFmMacros];
+  for (int k = 0; k < kFmMacros; ++k) lm[k] = 64.f * la[ld(LfoDest::Dec) + k];
+  const uint8_t snd = (v.lockMask & (1u << kLockDly)) ? v.lock[kLockDly] : m.send;
+  v.send = u7(snd + 64.f * la[ld(LfoDest::Dly)]) * (1.f / 127.f);
+  const uint8_t rs = (v.lockMask & (1u << kLockRvb)) ? v.lock[kLockRvb] : m.rsend;
+  v.rsend = u7(rs + 64.f * la[ld(LfoDest::Rvb)]) * (1.f / 127.f);
+  const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : m.drive;
+  v.drive.set(u7(drv + 64.f * la[ld(LfoDest::Drive)]));
+  const uint8_t bits = (v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : m.crushBits;
+  const uint8_t srr = (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : m.crushRate;
+  v.crush.set(u7(bits + 64.f * la[ld(LfoDest::Bit)]), u7(srr + 64.f * la[ld(LfoDest::Srr)]));
+  controlFilter(v, m, pitch, la);
   if (v.fm) {
     controlFm(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
     return;
@@ -731,7 +773,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
     return;
   }
   if (v.syn) {
-    controlSyn(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
+    controlSyn(v, m, pitch, dt, lm, lfoVol, la);  // sets v.amp too
     return;
   }
   if (v.sample) {
@@ -763,31 +805,34 @@ MT_HOT void Synth::control(Voice& v, int dt) {
     const float tri = 4.f * (v.pwmPhase < 0.5f ? 0.5f - v.pwmPhase : v.pwmPhase - 0.5f) - 1.f;
     duty = clampf(duty + tri * m.pwmDepth * 0.01f, 0.01f, 0.99f);
   }
+  if (la[ld(LfoDest::Duty)] != 0) duty = clampf(duty + 0.49f * la[ld(LfoDest::Duty)], 0.01f, 0.99f);
   v.duty = duty;
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * lfoVol * (1.f / (127.f * 127.f));
 }
 
 // Filter at control rate: off costs nothing per sample (renderVoice skips it).
-MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut) {
+MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, const float* la) {
   const uint8_t mode = m.fltMode < static_cast<uint8_t>(FltMode::Count) ? m.fltMode : 0;
   const bool was = v.fltOn;
   v.fltOn = mode != static_cast<uint8_t>(FltMode::Off);
   if (!v.fltOn) return;
   if (!was) v.flt.reset();  // turned on mid-note (UI, legato from an unfiltered instrument): no stale state
   const float cut = (v.lockMask & (1u << kLockFlt)) ? v.lock[kLockFlt] : (m.cutoff > 127 ? 127 : m.cutoff);
-  const float res = (v.lockMask & (1u << kLockRes)) ? v.lock[kLockRes] : (m.reso > 127 ? 127 : m.reso);
+  float res = (v.lockMask & (1u << kLockRes)) ? v.lock[kLockRes] : (m.reso > 127 ? 127 : m.reso);
+  if (la[ld(LfoDest::Reso)] != 0) res = clampf(res + 64.f * la[ld(LfoDest::Reso)], 0.f, 127.f);
   if (res != v.fltRes) {
     v.fltRes = res;
     v.fltQ = resoQ(res);
   }
   // Octaves above 20 Hz (as cutoffHz): cutoff, envelope, key tracking (from C4).
-  float oct = clampf(cut + lfoCut, 0.f, 127.f) * (9.451211f / 127.f);  // log2(700)
-  if (m.fenv && !v.fenvDone) {
+  float oct = clampf(cut + 64.f * la[ld(LfoDest::Cutoff)], 0.f, 127.f) * (9.451211f / 127.f);  // log2(700)
+  const float fenv = clampf(m.fenv + 64.f * la[ld(LfoDest::Fenv)], -64.f, 63.f);
+  if (fenv != 0 && !v.fenvDone) {
     const float e = filterEnv(v.fenvT, m.fAtk, m.fDec);
     // The -60 dB tail moves the cutoff < 0.01 octave: drop it (not the start of a slow attack).
     if (e < 1e-3f && v.fenvT > envTimeMs(m.fAtk) * (kSynthRate / 1000.f)) v.fenvDone = true;
-    oct += clampf(m.fenv, -64, 63) * (6.f / 64.f) * e;
+    oct += fenv * (6.f / 64.f) * e;
   }
   oct += (m.keytrack > 127 ? 127 : m.keytrack) * (1.f / 127.f) * (pitch - 60.f) * (1.f / 12.f);
   // Velocity: +-6 octaves at full depth from velocity 64 (no change) to 0 / 127.
@@ -811,7 +856,9 @@ void Synth::resetLfos(Voice& v) {
   for (int i = 0; i < kLfos; ++i) {
     v.lfoPhase[i] = 0;
     v.lfoRnd[i] = rnd();
+    v.lfoOut[i] = 0;
   }
+  v.lfoWrap = 0;
 }
 
 // LFO rate: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM).
@@ -833,23 +880,30 @@ MT_HOT float lfoShape(uint8_t wave, float ph, float rnd) {
 }  // namespace
 
 // LFO i of a voice, restarted at note-on; with Retrig OFF the instrument's shared phase
-// (advanceInstLfos) instead. -1..1 x depth / 64.
-MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
-  if (!c.depth) return 0;
+// (advanceInstLfos) instead. mods: LFO -> LFO (RATE / RTRG of a per-voice LFO, DEPTH of either).
+// -1..1 x depth / 64, kept in v.lfoOut as a source for the next update.
+MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods) {
+  if (!c.depth) return v.lfoOut[i] = 0;
   float w;
   if (lfoFree(c.sync)) {
     w = lfoShape(c.wave, instLfoPhase_[v.instr][i], instLfoRnd_[v.instr][i]);
   } else {
     float& ph = v.lfoPhase[i];
-    ph += lfoRateHz(c) * dt * (1.f / kSynthRate);
+    if (mods.rtrg & (1u << i)) {
+      ph = 0;
+      v.lfoRnd[i] = rnd();
+    }
+    float hz = lfoRateHz(c);
+    if (mods.oct[i] != 0) hz *= exp2f(mods.oct[i]);
+    ph += hz * dt * (1.f / kSynthRate);
     if (ph >= 1.f) {
       ph -= static_cast<int>(ph);
       v.lfoRnd[i] = rnd();
+      v.lfoWrap |= static_cast<uint8_t>(1u << i);
     }
     w = lfoShape(c.wave, ph, v.lfoRnd[i]);
   }
-  const int d = c.depth < -64 ? -64 : (c.depth > 63 ? 63 : c.depth);
-  return w * d * (1.f / 64.f);
+  return v.lfoOut[i] = w * lfoDepth(c.depth) * (1.f / 64.f) * mods.depth[i];
 }
 
 float Synth::lfoPhase(int v, int i) const {
@@ -858,22 +912,48 @@ float Synth::lfoPhase(int v, int i) const {
 }
 
 // Retrig OFF LFOs of every instrument, playing or not (FREE keeps running, TEMPO stays on the
-// transport's grid and holds while it is paused), once per control update.
+// transport's grid and holds while it is paused), once per control update. LFO -> LFO: RATE / RTRG /
+// DEPTH only from the instrument's shared LFOs, from their last outputs and wraps (instLfoOut_ /
+// instLfoWrap_, the sources of the voices' targets too).
 MT_HOT void Synth::advanceInstLfos() {
   constexpr float kPerHz = static_cast<float>(kControl) / kSynthRate;
   for (int m = 0; m < kInstruments; ++m) {
     const Instrument& x = p_.instruments[m];
+    const uint8_t shared = sharedLfos(x);
+    if (!shared) {
+      instLfoWrap_[m] = 0;
+      for (float& o : instLfoOut_[m]) o = 0;  // no stale source when one is set to Retrig OFF again
+      continue;
+    }
+    const LfoMods mods = lfoMods(x, instLfoOut_[m], instLfoWrap_[m], shared);
+    uint8_t wrap = 0;
     for (int i = 0; i < kLfos; ++i) {
-      const uint8_t sync = i ? x.lfo[i - 1].sync : x.lfoSync;
-      if (!lfoFree(sync) || (paused_ && lfoTempo(sync))) continue;
+      if (!(shared & (1u << i))) {
+        instLfoOut_[m][i] = 0;
+        continue;
+      }
       const LfoCfg c = lfoAt(x, i);
       float& ph = instLfoPhase_[m][i];
-      ph += lfoRateHz(c) * kPerHz;
-      if (ph >= 1.f) {
-        ph -= static_cast<int>(ph);
-        instLfoRnd_[m][i] = rnd();
+      if (!(paused_ && lfoTempo(c.sync))) {  // a paused TEMPO one holds (its output too)
+        if (mods.rtrg & (1u << i)) {
+          ph = 0;
+          instLfoRnd_[m][i] = rnd();
+        }
+        float hz = lfoRateHz(c);
+        if (mods.oct[i] != 0) hz *= exp2f(mods.oct[i]);
+        ph += hz * kPerHz;
+        if (ph >= 1.f) {
+          ph -= static_cast<int>(ph);
+          instLfoRnd_[m][i] = rnd();
+          wrap |= static_cast<uint8_t>(1u << i);
+        }
       }
+      // Read only as an LFO -> LFO source: the wave (sinf) only for an L1..L4 target.
+      instLfoOut_[m][i] = c.depth && c.dest >= ld(LfoDest::Rate1)
+                              ? lfoShape(c.wave, ph, instLfoRnd_[m][i]) * lfoDepth(c.depth) * (1.f / 64.f) * mods.depth[i]
+                              : 0;
     }
+    instLfoWrap_[m] = wrap;
   }
 }
 
@@ -885,6 +965,7 @@ void Synth::transportStart() {
       if (const uint8_t sync = lfoAt(p_.instruments[m], i).sync; lfoTempo(sync) && lfoFree(sync)) {
         instLfoPhase_[m][i] = 0;
         instLfoRnd_[m][i] = rnd();
+        instLfoOut_[m][i] = 0;  // no LFO -> LFO from the old run (a restart is not a wrap)
       }
 }
 
@@ -944,8 +1025,10 @@ MT_HOT void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int d
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));
 }
 
-// SYNTH: macros SHP1, SHP2, MIX, DET, SENV (env -> SHAPE depth, bipolar around 64).
-MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
+// SYNTH: macros SHP1, SHP2, MIX, DET, SENV (env -> SHAPE depth, bipolar around 64); la: control()'s LFO
+// sums (SUB, NOISE, SEMI2 here).
+MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
+                              const float* la) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   v.senvT += static_cast<uint32_t>(dt);
@@ -960,12 +1043,12 @@ MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt
   }
   const float det = (mac[kMacDet] - 64.f) * (50.f / 64.f) * 0.01f;  // +-50 cents, in semitones
   sp.hz[0] = cachedHz(v, 0, pitch);
-  sp.hz[1] = cachedHz(v, 1, pitch + clampf(m.synSemi, -24, 24) + det);
+  sp.hz[1] = cachedHz(v, 1, pitch + clampf(m.synSemi, -24, 24) + 24.f * la[ld(LfoDest::Semi2)] + det);
   sp.mix = mac[kMacMix] * (1.f / 127.f);
   sp.sync = m.synSync;
-  sp.sub = (m.synSub > 127 ? 127 : m.synSub) * (1.f / 127.f);
+  sp.sub = u7(m.synSub + 64.f * la[ld(LfoDest::Sub)]) * (1.f / 127.f);
   sp.subOct = m.synSubOct ? 2 : 1;
-  sp.noise = (m.synNoise > 127 ? 127 : m.synNoise) * (1.f / 127.f);
+  sp.noise = u7(m.synNoise + 64.f * la[ld(LfoDest::Noise)]) * (1.f / 127.f);
   v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * trackVol(v.track) * vol * (1.f / (127.f * 127.f));

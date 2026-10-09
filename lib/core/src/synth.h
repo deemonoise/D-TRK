@@ -24,6 +24,15 @@ struct WtSource {
   virtual const int16_t* findWt(const char* name) const = 0;
 };
 
+// LFO -> LFO modulation of an instrument's LFOs for one control update, per target j: rate octaves,
+// depth factor (0..2) and a restart (bit j).
+struct LfoMods {
+  float oct[kLfos] = {};
+  float depth[kLfos] = {1, 1, 1, 1};
+  uint8_t rtrg = 0;
+};
+static_assert(kLfos == 4, "LfoMods::depth initializer");
+
 // Hardware-free synth for INT tracks. Messages are MIDI-like, channel nibble ignored:
 // 0x90 note vel (vel 0 = off), 0x80 note, 0xE0 lsb msb (bend, +-2 semitones), 0xC0 prog (instrument),
 // 0xF5 cmd val (synth fx: cmd = Fx SLD..SLC, or kSynthStep), 0xFE (start: reset the track's runtime
@@ -157,11 +166,11 @@ class Synth {
   void control(Voice& v, int dt);
   void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
-  void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
+  void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
   static void macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]);
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
-  void controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut);
-  float lfo(Voice& v, const LfoCfg& c, int i, int dt);
+  void controlFilter(Voice& v, const Instrument& m, float pitch, const float* la);  // la: control()'s LFO sums
+  float lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods);
   float lfoRateHz(const LfoCfg& c) const;
   void resetLfos(Voice& v);
   void advanceInstLfos();
@@ -215,6 +224,10 @@ class Synth {
   // (audio park mid-play): only 0xFA restarts the TEMPO ones.
   float instLfoPhase_[kInstruments][kLfos] = {};
   float instLfoRnd_[kInstruments][kLfos] = {};
+  // Their last outputs (x depth / 64 x DEPTH from shared LFOs) and wraps (bit i): LFO -> LFO sources
+  // for the shared LFOs' RATE / RTRG (advanceInstLfos) and for the voices' targets (control).
+  float instLfoOut_[kInstruments][kLfos] = {};
+  uint8_t instLfoWrap_[kInstruments] = {};
   bool paused_ = false;  // transport paused (0xFC .. 0xFB / 0xFA): TEMPO ones hold
   bool fmCache_ = true;
   uint32_t fmCalls_ = 0;

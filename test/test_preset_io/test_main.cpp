@@ -365,7 +365,9 @@ void test_lfos_roundtrip() {
   Instrument a = sample();
   a.lfoSync = 1;
   a.lfoRate = 6;
+  a.lfoDest = static_cast<uint8_t>(LfoDest::Rtrg4);
   a.lfo[0] = {2, 40, -30, static_cast<uint8_t>(LfoDest::Cutoff), 0};
+  a.lfo[1] = {0, 30, 40, static_cast<uint8_t>(LfoDest::Semi2), 0};
   a.lfo[2] = {4, 9, 20, static_cast<uint8_t>(LfoDest::Vol), 1};
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
@@ -379,7 +381,33 @@ void test_lfos_roundtrip() {
   TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Cutoff), b.lfo[0].dest);
   TEST_ASSERT_EQUAL(1, b.lfo[2].sync);
   TEST_ASSERT_EQUAL(9, b.lfo[2].rate);
-  TEST_ASSERT_EQUAL(0, b.lfo[1].depth);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Rtrg4), b.lfoDest);
+  TEST_ASSERT_EQUAL(30, b.lfo[1].rate);
+  TEST_ASSERT_EQUAL(40, b.lfo[1].depth);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Semi2), b.lfo[1].dest);
+}
+
+// A dest byte past the last target (newer firmware / junk) loads as PITCH (0), for LFO 1..4.
+void test_lfo_dest_out_of_range() {
+  Instrument a = sample();
+  a.lfo[0].dest = static_cast<uint8_t>(LfoDest::Rtrg1);  // LFO 2: untouched, survives
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  std::vector<uint8_t> v = out.buf;
+  v[8 + kInstRecSize + 9] = 99;  // LFO 1 dest in the FM record
+  const size_t lfo = 8 + kInstRecSize + kFmRecSize + kFltRecSize + kSliceRecSize + kSynRecSize;
+  v[lfo + 1 + 1 * 5 + 3] = 99;  // LFO 3 dest
+  v[lfo + 1 + 2 * 5 + 3] = static_cast<uint8_t>(LfoDest::Count);  // LFO 4 dest
+  const size_t p = v.size() - 4;
+  const uint32_t c = crc32(v.data(), p);
+  for (int i = 0; i < 4; ++i) v[p + i] = static_cast<uint8_t>(c >> (8 * i));
+  VecSource in(v);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(0, b.lfoDest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Rtrg1), b.lfo[0].dest);
+  TEST_ASSERT_EQUAL(0, b.lfo[1].dest);
+  TEST_ASSERT_EQUAL(0, b.lfo[2].dest);
 }
 
 // The sync byte: bit 0 TEMPO, bit 1 Retrig OFF; both bits round-trip, other bits are dropped.
@@ -437,5 +465,6 @@ int main() {
   RUN_TEST(test_sound_fx_fields_clamped);
   RUN_TEST(test_lfos_roundtrip);
   RUN_TEST(test_lfo_sync_bits);
+  RUN_TEST(test_lfo_dest_out_of_range);
   return UNITY_END();
 }

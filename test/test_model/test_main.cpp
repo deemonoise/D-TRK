@@ -227,20 +227,77 @@ void test_instr_set_type() {
 }
 
 void test_lfo_dest_step() {
+  using T = InstrType;
   const uint8_t vol = static_cast<uint8_t>(LfoDest::Vol), cut = static_cast<uint8_t>(LfoDest::Cutoff);
-  const uint8_t drv = static_cast<uint8_t>(LfoDest::Drive);
-  // FM / DRUM: every target in order, clamped at the ends.
-  TEST_ASSERT_EQUAL(1, lfoDestStep(0, 1, true));
-  TEST_ASSERT_EQUAL(cut, lfoDestStep(vol, 1, true));
-  TEST_ASSERT_EQUAL(drv, lfoDestStep(vol, 5, true));
-  TEST_ASSERT_EQUAL(drv, lfoDestStep(cut, 1, false));  // DRIVE on every type
-  TEST_ASSERT_EQUAL(0, lfoDestStep(2, -9, true));
+  const uint8_t drv = static_cast<uint8_t>(LfoDest::Drive), reso = static_cast<uint8_t>(LfoDest::Reso);
+  const uint8_t last = static_cast<uint8_t>(LfoDest::Count) - 1;
+  // FM: every target in order, clamped at the ends.
+  TEST_ASSERT_EQUAL(1, lfoDestStep(0, 1, T::Fm));
+  TEST_ASSERT_EQUAL(cut, lfoDestStep(vol, 1, T::Fm));
+  TEST_ASSERT_EQUAL(reso, lfoDestStep(drv, 1, T::Chip));
+  TEST_ASSERT_EQUAL(0, lfoDestStep(2, -9, T::Fm));
+  TEST_ASSERT_EQUAL(last, lfoDestStep(0, 99, T::Fm));  // clamped at the end
   // CHIP / SAMPLE: the macro targets are skipped.
-  TEST_ASSERT_EQUAL(vol, lfoDestStep(0, 1, false));
-  TEST_ASSERT_EQUAL(cut, lfoDestStep(0, 2, false));
-  TEST_ASSERT_EQUAL(drv, lfoDestStep(0, 9, false));
-  TEST_ASSERT_EQUAL(0, lfoDestStep(vol, -1, false));
-  TEST_ASSERT_EQUAL(0, lfoDestStep(0, -1, false));
+  TEST_ASSERT_EQUAL(vol, lfoDestStep(0, 1, T::Chip));
+  TEST_ASSERT_EQUAL(cut, lfoDestStep(0, 2, T::Sample));
+  TEST_ASSERT_EQUAL(0, lfoDestStep(vol, -1, T::Chip));
+}
+
+void test_lfo_dest_valid() {
+  using T = InstrType;
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Duty), T::Chip));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), T::Synth));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), T::Sample));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Sub), T::Synth));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Noise), T::Fm));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Semi2), T::Chip));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Col), T::Drum));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Col), T::Chip));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Rtrg4), T::Sample));
+  TEST_ASSERT_FALSE(lfoDestValid(static_cast<uint8_t>(LfoDest::Count), T::Fm));
+  // Stepping skips targets of other types.
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Fine), 1, T::Fm));     // past DUTY..SEMI2
+  TEST_ASSERT_EQUAL(d(LfoDest::Duty), lfoDestStep(d(LfoDest::Fine), 1, T::Chip));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Duty), 1, T::Chip));  // past SUB..SEMI2
+  TEST_ASSERT_EQUAL(d(LfoDest::Sub), lfoDestStep(d(LfoDest::Fine), 1, T::Synth));   // past DUTY
+}
+
+// An LFO can't pick RTRG of itself; RATE / DEPTH of itself are fine.
+void test_lfo_dest_step_skips_self_retrig() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg3), lfoDestStep(d(LfoDest::Rtrg1), 1, InstrType::Fm, 1));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg2), lfoDestStep(d(LfoDest::Rtrg4), -1, InstrType::Fm, 2));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg1), lfoDestStep(d(LfoDest::Rtrg4), -2, InstrType::Fm, 2));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Semi2), 1, InstrType::Synth, 0));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg3), lfoDestStep(d(LfoDest::Rtrg3), 1, InstrType::Fm, 3));  // end, self skipped
+}
+
+void test_lfo_dest_names() {
+  TEST_ASSERT_EQUAL_STRING("PITCH", lfoDestName(0, InstrType::Fm));
+  TEST_ASSERT_EQUAL_STRING("COLOR", lfoDestName(static_cast<uint8_t>(LfoDest::Col), InstrType::Drum));
+  TEST_ASSERT_EQUAL_STRING("SHP2", lfoDestName(static_cast<uint8_t>(LfoDest::Col), InstrType::Synth));
+  TEST_ASSERT_EQUAL_STRING("RESO", lfoDestName(static_cast<uint8_t>(LfoDest::Reso), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("SEMI2", lfoDestName(static_cast<uint8_t>(LfoDest::Semi2), InstrType::Synth));
+  TEST_ASSERT_EQUAL_STRING("L2 RATE", lfoDestName(static_cast<uint8_t>(LfoDest::Rate2), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("L3 DEPTH", lfoDestName(static_cast<uint8_t>(LfoDest::Depth3), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("L4 RTRG", lfoDestName(static_cast<uint8_t>(LfoDest::Rtrg4), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("PITCH", lfoDestName(200, InstrType::Chip));  // out of range
+}
+
+// Type change: a target the new type lacks becomes PITCH, on every LFO.
+void test_instr_set_type_fixes_lfo_dests() {
+  Instrument m;
+  instrSetType(m, InstrType::Synth);
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Sub);
+  m.lfo[0].dest = static_cast<uint8_t>(LfoDest::Reso);
+  m.lfo[1].dest = static_cast<uint8_t>(LfoDest::Duty);  // invalid on SYNTH already: kept until a type change
+  instrSetType(m, InstrType::Chip);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfoDest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Reso), m.lfo[0].dest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Duty), m.lfo[1].dest);  // valid on CHIP
+  instrSetType(m, InstrType::Fm);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfo[1].dest);
 }
 
 void test_filter_defaults_off() {
@@ -381,6 +438,10 @@ int main() {
   RUN_TEST(test_drum_set_machine);
   RUN_TEST(test_instr_set_type);
   RUN_TEST(test_lfo_dest_step);
+  RUN_TEST(test_lfo_dest_valid);
+  RUN_TEST(test_lfo_dest_step_skips_self_retrig);
+  RUN_TEST(test_lfo_dest_names);
+  RUN_TEST(test_instr_set_type_fixes_lfo_dests);
   RUN_TEST(test_filter_defaults_off);
   RUN_TEST(test_synth_type_defaults);
   RUN_TEST(test_synth_type_order);

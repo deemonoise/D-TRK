@@ -1199,6 +1199,146 @@ void test_lfo_reset_keeps_retrig_off_phase() {
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, 31 * 4 * inc, s->lfoPhase(s->trackVoice(0), 0));
 }
 
+// LFO -> LFO uses the previous control update's outputs (1 ms lag). L1 RATE from LFO 2 (square,
+// depth 63): LFO 1 runs 2^(4 x 63/64) ~ 15x faster while LFO 2 is high.
+void test_lfo_rate_mod() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoDepth = 10;
+  m.lfoRate = 0;  // 0.05 Hz
+  m.lfo[0] = {static_cast<uint8_t>(LfoWave::Square), 0, 63, static_cast<uint8_t>(LfoDest::Rate1), 0};
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  const float inc = lfoHz(0) * Synth::kControl / kSynthRate;
+  // The note-on update sets LFO 2's output (+63/64), every later one steps LFO 1 sped up.
+  const int steps = 10 * Synth::kBlock / Synth::kControl - 1;
+  TEST_ASSERT_FLOAT_WITHIN(inc, steps * inc * exp2f(4.f * 63.f / 64.f), s->lfoPhase(s->trackVoice(0), 0));
+}
+
+// L1 DEPTH from LFO 2 (square, held high): -64 silences LFO 1, +63 about doubles it.
+static float depthModSend(int8_t depth2) {
+  Instrument& m = p->instruments[0];
+  m.send = 64;
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Dly);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 0;
+  m.lfoDepth = 16;  // +16 send units
+  m.lfo[0] = {static_cast<uint8_t>(LfoWave::Square), 0, depth2, static_cast<uint8_t>(LfoDest::Depth1), 0};
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 4; ++k) s->render(buf);
+  return s->voice(s->trackVoice(0)).send * 127.f;
+}
+
+void test_lfo_depth_mod() {
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 64.f, depthModSend(-64));
+  tearDown();
+  setUp();
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 96.f, depthModSend(63));  // 64 + 16 x (1 + 63/64), rounded
+  tearDown();
+  setUp();
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 80.f, depthModSend(0));  // depth 0 source: off
+}
+
+// L1 RTRG: every cycle of LFO 2 restarts LFO 1 (per-voice or shared, either side).
+static void rtrgMod(uint8_t sync1, uint8_t sync2) {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoDepth = 10;
+  m.lfoRate = 0;  // slow: without restarts its phase only grows
+  m.lfoSync = sync1;
+  m.lfo[0] = {static_cast<uint8_t>(LfoWave::Saw), 100, 1, static_cast<uint8_t>(LfoDest::Rtrg1), sync2};
+  noteOn(0, 0, 60);
+  const float inc2 = lfoHz(100) * Synth::kControl / kSynthRate;
+  const int ticksPerCycle = static_cast<int>(1.f / inc2);
+  const int blocks = (3 * ticksPerCycle) * Synth::kControl / Synth::kBlock + 1;
+  for (int k = 0; k < blocks; ++k) s->render(buf);
+  const float inc1 = lfoHz(0) * Synth::kControl / kSynthRate;
+  TEST_ASSERT_TRUE(s->lfoPhase(s->trackVoice(0), 0) <= (ticksPerCycle + 2) * inc1);
+  TEST_ASSERT_TRUE(s->lfoPhase(s->trackVoice(0), 0) > 0.f);
+}
+
+void test_lfo_rtrg_mod() { rtrgMod(0, 0); }
+void test_lfo_rtrg_mod_shared_source() { rtrgMod(0, kLfoFree); }
+void test_lfo_rtrg_mod_shared_target() { rtrgMod(kLfoFree, kLfoFree); }
+
+// RTRG on itself is ignored: LFO 1 -> L1 RTRG runs on like a plain LFO (no restart after its wraps).
+void test_lfo_self_rtrg_ignored() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Rtrg1);  // not offered by the UI, set directly
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Saw);
+  m.lfoRate = 100;
+  m.lfoDepth = 63;
+  noteOn(0, 0, 60);
+  const int blocks = 150;
+  for (int k = 0; k < blocks; ++k) s->render(buf);
+  float want = 0;  // the same steps as Synth::lfo
+  for (int k = 0; k < blocks * Synth::kBlock / Synth::kControl - 1; ++k) {
+    want += lfoHz(100) * Synth::kControl * (1.f / kSynthRate);
+    if (want >= 1.f) want -= static_cast<int>(want);
+  }
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, want, s->lfoPhase(s->trackVoice(0), 0));
+}
+
+// A dt = 0 update between ticks (pitch bend, fx) keeps a pending wrap: the restart still comes.
+void test_lfo_rtrg_survives_mid_tick_update() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoDepth = 10;
+  m.lfoRate = 0;
+  m.lfo[0] = {static_cast<uint8_t>(LfoWave::Saw), 100, 1, static_cast<uint8_t>(LfoDest::Rtrg1), 0};
+  noteOn(0, 0, 60);
+  const float inc2 = lfoHz(100) * Synth::kControl / kSynthRate;
+  const int ticksPerCycle = static_cast<int>(1.f / inc2);
+  const int blocks = (3 * ticksPerCycle) * Synth::kControl / Synth::kBlock + 1;
+  for (int k = 0; k < blocks; ++k) {
+    for (int t = 0; t < Synth::kBlock; t += Synth::kControl) send(t + 10, 0, 0xE0, 0, 0x40);  // after each tick
+    s->render(buf);
+  }
+  const float inc1 = lfoHz(0) * Synth::kControl / kSynthRate;
+  TEST_ASSERT_TRUE(s->lfoPhase(s->trackVoice(0), 0) <= (ticksPerCycle + 2) * inc1);
+}
+
+// A shared target ignores RTRG from a per-voice LFO (no single phase to follow).
+void test_lfo_shared_target_ignores_voice_rtrg() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoDepth = 10;
+  m.lfoRate = 0;
+  m.lfoSync = kLfoFree;
+  m.lfo[0] = {static_cast<uint8_t>(LfoWave::Saw), 100, 1, static_cast<uint8_t>(LfoDest::Rtrg1), 0};
+  noteOn(0, 0, 60);
+  const int ticks = 200 * Synth::kBlock / Synth::kControl;
+  for (int k = 0; k < 200; ++k) s->render(buf);
+  const float inc1 = lfoHz(0) * Synth::kControl / kSynthRate;
+  TEST_ASSERT_FLOAT_WITHIN(inc1 * 2, ticks * inc1, s->lfoPhase(s->trackVoice(0), 0));
+}
+
+// A shared (Retrig OFF) LFO ignores RATE from a per-voice LFO, takes it from a shared one.
+void test_lfo_shared_target_rate_sources() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoDepth = 10;
+  m.lfoRate = 0;
+  m.lfoSync = kLfoFree;
+  m.lfo[0] = {static_cast<uint8_t>(LfoWave::Square), 0, 63, static_cast<uint8_t>(LfoDest::Rate1), 0};  // per voice
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  const float inc = lfoHz(0) * Synth::kControl / kSynthRate;
+  const int ticks = 10 * Synth::kBlock / Synth::kControl;
+  TEST_ASSERT_FLOAT_WITHIN(inc * 2, ticks * inc, s->lfoPhase(s->trackVoice(0), 0));  // not sped up
+  m.lfo[0].sync = kLfoFree;  // now shared
+  const float before = s->lfoPhase(s->trackVoice(0), 0);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  TEST_ASSERT_TRUE(s->lfoPhase(s->trackVoice(0), 0) - before > ticks * inc * 8);
+}
+
+// L1 DEPTH from a per-voice LFO scales a shared LFO 1 too (applied per voice).
+void test_lfo_shared_target_depth_from_voice() {
+  Instrument& m = p->instruments[0];
+  m.lfoSync = kLfoFree;
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 64.f, depthModSend(-64));
+}
+
 void test_filter_env_long_attack_not_dropped() {
   Instrument& m = p->instruments[0];
   m.fltMode = static_cast<uint8_t>(FltMode::Lp);
@@ -2384,6 +2524,151 @@ void test_lfo_drive_dest() {
   TEST_ASSERT_TRUE(on && off);
 }
 
+// LFO 1 on dest: square, full depth, fast; returns {min, max} of f(voice) over one second.
+template <class F>
+static void lfoSweep(LfoDest dest, F f, float& lo, float& hi) {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(dest);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoDepth = 63;
+  m.lfoRate = 100;
+  noteOn(0, 0, 60);
+  lo = 1e9f;
+  hi = -1e9f;
+  for (int k = 0; k < kBlocksPerSec; ++k) {
+    s->render(buf);
+    const float x = f(s->voice(s->trackVoice(0)));
+    lo = x < lo ? x : lo;
+    hi = x > hi ? x : hi;
+  }
+}
+
+void test_lfo_send_dests() {
+  p->instruments[0].send = 64;
+  float lo, hi;
+  lfoSweep(LfoDest::Dly, [](const Voice& v) { return v.send; }, lo, hi);
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 1.f, hi);  // 64 + 63 -> 127
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.f, lo);  // 64 - 63 -> ~0
+}
+
+void test_lfo_rsend_dest() {
+  float lo, hi;
+  lfoSweep(LfoDest::Rvb, [](const Voice& v) { return v.rsend; }, lo, hi);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, lo);  // clamped at 0
+  TEST_ASSERT_TRUE(hi > 0.4f);
+}
+
+void test_lfo_crush_dests() {
+  float lo, hi;
+  lfoSweep(LfoDest::Bit, [](const Voice& v) { return v.crush.on() ? 1.f : 0.f; }, lo, hi);
+  TEST_ASSERT_TRUE(lo == 0 && hi == 1);
+  tearDown();
+  setUp();
+  lfoSweep(LfoDest::Srr, [](const Voice& v) { return v.crush.on() ? 1.f : 0.f; }, lo, hi);
+  TEST_ASSERT_TRUE(lo == 0 && hi == 1);
+}
+
+void test_lfo_reso_dest() {
+  p->instruments[0].fltMode = static_cast<uint8_t>(FltMode::Lp);
+  p->instruments[0].reso = 64;
+  float lo, hi;
+  lfoSweep(LfoDest::Reso, [](const Voice& v) { return v.fltRes; }, lo, hi);
+  TEST_ASSERT_FLOAT_WITHIN(1.f, 1.f, lo);
+  TEST_ASSERT_FLOAT_WITHIN(1.f, 127.f, hi);
+}
+
+void test_lfo_fenv_dest() {
+  Instrument& m = p->instruments[0];
+  m.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  m.cutoff = 40;
+  m.fDec = 0;  // hold: the envelope stays at 1
+  float lo, hi;
+  lfoSweep(LfoDest::Fenv, [](const Voice& v) { return v.octHz; }, lo, hi);
+  TEST_ASSERT_TRUE(hi > lo * 16);  // fenv +-63 -> about +-6 octaves
+}
+
+void test_lfo_duty_dest() {
+  p->instruments[0].wave = static_cast<uint8_t>(Wave::Pulse);
+  float lo, hi;
+  lfoSweep(LfoDest::Duty, [](const Voice& v) { return v.duty; }, lo, hi);
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.01f, lo);
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.99f, hi);
+}
+
+void test_lfo_fine_dest() {
+  float lo, hi;
+  lfoSweep(LfoDest::Fine, [](const Voice& v) { return v.hzKey[0]; }, lo, hi);  // CHIP note incl. LFO
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, 59.f, lo);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, 61.f, hi);
+}
+
+constexpr int kLfoSynBlocks = 50;
+static int16_t la_[Synth::kBlock * kLfoSynBlocks], lb_[Synth::kBlock * kLfoSynBlocks];
+
+static void renderInto(int16_t* a, uint8_t note) {
+  noteOn(0, 0, note);
+  for (int k = 0; k < kLfoSynBlocks; ++k) s->render(a + k * Synth::kBlock);
+}
+
+// SYNTH (or the current type) with LFO 1 on dest at depth 0 into la_, then at full depth into lb_.
+static void renderLfoAB(LfoDest dest) {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(dest);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 100;
+  m.lfoDepth = 0;
+  renderInto(la_, 57);
+  s->reset();
+  m.lfoDepth = 63;
+  renderInto(lb_, 57);
+}
+
+static bool synDiffers() {
+  long d = 0, a = 0;
+  for (int i = 0; i < Synth::kBlock * kLfoSynBlocks; ++i) {
+    d += abs(la_[i] - lb_[i]);
+    a += abs(la_[i]);
+  }
+  return a > 0 && d > a / 10;
+}
+
+void test_lfo_syn_sub_dest() {
+  Instrument& m = p->instruments[0];
+  instrSetType(m, InstrType::Synth);
+  m.synSub = 0;
+  renderLfoAB(LfoDest::Sub);
+  TEST_ASSERT_TRUE(synDiffers());
+}
+
+void test_lfo_syn_noise_dest() {
+  Instrument& m = p->instruments[0];
+  instrSetType(m, InstrType::Synth);
+  m.synNoise = 0;
+  renderLfoAB(LfoDest::Noise);
+  TEST_ASSERT_TRUE(synDiffers());
+}
+
+void test_lfo_syn_semi2_dest() {
+  Instrument& m = p->instruments[0];
+  instrSetType(m, InstrType::Synth);
+  m.macro[kMacMix] = 127;  // osc 2 only
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Semi2);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 100;
+  noteOn(0, 0, 57);
+  const int plain = crossings(kBlocksPerSec);
+  s->reset();
+  m.lfoDepth = 63;
+  noteOn(0, 0, 57);
+  const int c = crossings(kBlocksPerSec);
+  TEST_ASSERT_TRUE(abs(c - plain) > plain / 10);
+}
+
+void test_lfo_syn_dests_ignored_on_chip() {
+  renderLfoAB(LfoDest::Sub);  // CHIP: SUB is not a target there
+  TEST_ASSERT_EQUAL_INT16_ARRAY(la_, lb_, Synth::kBlock * kLfoSynBlocks);
+}
+
 static float rvbBuf[Reverb::kBufLen];
 
 void test_rsend_zero_same_with_and_without_buffer() {
@@ -2691,6 +2976,16 @@ int main() {
   RUN_TEST(test_lfo_transport_start_resets_tempo_retrig_off);
   RUN_TEST(test_lfo_transport_pause_holds_tempo_retrig_off);
   RUN_TEST(test_lfo_reset_keeps_retrig_off_phase);
+  RUN_TEST(test_lfo_rate_mod);
+  RUN_TEST(test_lfo_depth_mod);
+  RUN_TEST(test_lfo_rtrg_mod);
+  RUN_TEST(test_lfo_rtrg_mod_shared_source);
+  RUN_TEST(test_lfo_rtrg_mod_shared_target);
+  RUN_TEST(test_lfo_self_rtrg_ignored);
+  RUN_TEST(test_lfo_rtrg_survives_mid_tick_update);
+  RUN_TEST(test_lfo_shared_target_ignores_voice_rtrg);
+  RUN_TEST(test_lfo_shared_target_rate_sources);
+  RUN_TEST(test_lfo_shared_target_depth_from_voice);
   RUN_TEST(test_filter_env_long_attack_not_dropped);
   RUN_TEST(test_filter_env_tail_dropped);
   RUN_TEST(test_drum_sounds_and_ends);
@@ -2742,6 +3037,17 @@ int main() {
   RUN_TEST(test_drive_changes_waveform);
   RUN_TEST(test_drv_lock_on_note_step);
   RUN_TEST(test_lfo_drive_dest);
+  RUN_TEST(test_lfo_send_dests);
+  RUN_TEST(test_lfo_rsend_dest);
+  RUN_TEST(test_lfo_crush_dests);
+  RUN_TEST(test_lfo_reso_dest);
+  RUN_TEST(test_lfo_fenv_dest);
+  RUN_TEST(test_lfo_duty_dest);
+  RUN_TEST(test_lfo_fine_dest);
+  RUN_TEST(test_lfo_syn_sub_dest);
+  RUN_TEST(test_lfo_syn_noise_dest);
+  RUN_TEST(test_lfo_syn_semi2_dest);
+  RUN_TEST(test_lfo_syn_dests_ignored_on_chip);
   RUN_TEST(test_rsend_zero_same_with_and_without_buffer);
   RUN_TEST(test_rsend_makes_tail);
   RUN_TEST(test_rvb_lock_on_note_step);
