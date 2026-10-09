@@ -15,7 +15,10 @@ namespace {
 class SdBackend : public FsBackend {
  public:
   int16_t ready() override {
-    // mediaPresent remounts a card put back in; the folders are made on every new mount.
+    // mediaPresent remounts a card put back in; the folders are made on every new mount. Not while a
+    // file is open: its status command breaks the multi-block write SdFat keeps going between writes.
+    for (FsFile& f : files_)
+      if (f.isOpen()) return mounted_ ? kErrOk : kErrNoCard;
     const bool in = began_ ? SD.mediaPresent() : SD.begin(BUILTIN_SDCARD);
     began_ = true;
     if (in && !mounted_) {

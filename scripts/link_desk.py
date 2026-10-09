@@ -8,6 +8,7 @@ Hello, Time every 50 ms, EvBatch. Log frames from the Teensy are printed as they
   python3 -I scripts/link_desk.py notes          # C-major arpeggio on track 0
   python3 -I scripts/link_desk.py status [secs]
   python3 -I scripts/link_desk.py fs [dir]       # card: list dir, write / read / remove a test file
+  python3 -I scripts/link_desk.py update X.hex   # .hex onto the card, FwFromFile: the board reflashes itself
   python3 -I scripts/link_desk.py selftest       # codec only, no board
 
 Needs pyserial: ~/.platformio/penv/bin/python has it (or pip install pyserial). --port /dev/cu.usbmodemXXXX if autodetect picks wrong.
@@ -179,7 +180,12 @@ class Link:
     def _rx(self):
         buf = bytearray()
         while self.alive:
-            data = self.ser.read(4096)
+            try:
+                data = self.ser.read(self.ser.in_waiting or 1)  # whatever is there: no wait for a full 4 KB
+            except Exception:
+                if self.alive:
+                    raise
+                return  # closed under us (update: the board reboots)
             for b in data:
                 if b:
                     buf.append(b)
@@ -324,6 +330,70 @@ def cmd_fs(link, args):
           (len(data), (t1 - t0) * 1000, (t2 - t1) * 1000, "same" if back == data else "DIFFERENT"))
 
 
+FW_RESULT = ["Ok", "NoSd", "OpenFail", "ReadFail", "BadHex", "TooBig", "BadImage", "FlashFail", "Busy"]
+FW_PATH = "/firmware/teensy.hex"
+
+
+def cmd_update(link, args):
+    """A .hex onto the board's card (/firmware/teensy.hex), then FwFromFile: staged, checked, the board
+    flashes itself and reboots. Prints what the new firmware says on USB Serial for a few seconds."""
+    cmd_hello(link, args)
+    data = open(args.hex, "rb").read()
+    err, body = link.request("FsStat", fs_str(FW_PATH))
+    if err == 0 and not args.force:
+        sys.exit("%s is on the card already (%d B): --force to overwrite" % (FW_PATH, struct.unpack("<I", body[1:5])[0]))
+    t0 = time.monotonic()
+    err, body = link.request("FsOpen", bytes([1]) + fs_str(FW_PATH))
+    fs_check(err, "open " + FW_PATH)
+    h = body[0]
+    for at in range(0, len(data), FS_CHUNK):
+        fs_check(link.request("FsWrite", struct.pack("<BI", h, at) + data[at:at + FS_CHUNK])[0], "write")
+    fs_check(link.request("FsClose", bytes([h]))[0], "close")
+    print("%s: %d B in %.1f s" % (FW_PATH, len(data), time.monotonic() - t0), flush=True)
+    t0 = time.monotonic()
+    seq = link.send("FwFromFile", fs_str(FW_PATH))
+    last, shown = time.monotonic(), 0
+    while True:
+        try:
+            t, s, p = link.frames.get(timeout=max(0.1, last + 5 - time.monotonic()))
+        except queue.Empty:
+            sys.exit("no reply / Progress for 5 s")
+        if t == MSG["Progress"]:
+            last = time.monotonic()
+            op, done, total = struct.unpack("<BII", p[:9])
+            if time.monotonic() - shown > 1:
+                shown = time.monotonic()
+                print("  %5.1f s  %d / %d" % (last - t0, done, total), flush=True)
+        elif t == MSG["FwFromFile"] and s == seq:
+            res, size = struct.unpack("<BI", p[:5])
+            print("FwFromFile: %s, image %d B, %.1f s" % (FW_RESULT[res] if res < len(FW_RESULT) else res, size,
+                                                          time.monotonic() - t0), flush=True)
+            if res:
+                sys.exit(1)
+            break
+    link.alive = False
+    link.ser.close()
+    from serial.tools import list_ports
+    end, ser, out = time.monotonic() + args.secs, None, b""
+    while time.monotonic() < end:
+        if ser is None:
+            ports = [q.device for q in list_ports.comports() if q.vid == 0x16C0 and "M8" not in (q.description or "")]
+            try:
+                ser = __import__("serial").Serial(ports[0], 115200, timeout=0.2) if ports else None
+                if ser:
+                    print("board back after %.1f s on %s" % (time.monotonic() - t0, ports[0]), flush=True)
+            except Exception:
+                ser = None
+            time.sleep(0.2)
+            continue
+        try:
+            out += ser.read(ser.in_waiting or 1)
+        except Exception:
+            ser = None
+    text = bytes(b for b in out if 32 <= b < 127 or b == 10).decode()
+    print(text if text.strip() else "(no text from the board)")
+
+
 BANK_RESULT = ["Ok", "Busy", "NoSd", "NoBank", "OpenFail", "ReadFail", "NotWav", "Unsupported", "Truncated",
                "Full", "WriteFail", "NoMemory", "Link", "Running"]
 
@@ -402,12 +472,16 @@ def main():
     bk = sub.add_parser("bank")
     bk.add_argument("path", nargs="?", help="a WAV on the board's card to import first")
     bk.add_argument("--wt", action="store_true", help="import it as a wavetable")
+    up = sub.add_parser("update")
+    up.add_argument("hex")
+    up.add_argument("--force", action="store_true")
+    up.add_argument("--secs", type=float, default=15.0)
     sub.add_parser("selftest")
     args = ap.parse_args()
     if args.cmd == "selftest":
         return cmd_selftest(args)
     link = Link(args.port or find_port())
-    {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank}[args.cmd](link, args)
+    {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank, "update": cmd_update}[args.cmd](link, args)
     link.alive = False
 
 
