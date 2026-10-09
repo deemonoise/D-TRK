@@ -4,7 +4,7 @@
 
 namespace mt {
 
-constexpr uint32_t kWavMaxRate = 32000;  // bank rate limit: higher rates are downsampled
+constexpr uint32_t kWavMaxRate = 44100;  // bank rate limit: higher rates are downsampled
 
 struct WavInfo {
   uint16_t channels = 0, bits = 0;
@@ -30,16 +30,18 @@ WavErr wavParse(ByteSource& src, WavInfo& out);
 
 // RIFF + fmt + smpl + mtcr + data chunk header.
 constexpr uint32_t kWavHeaderBytes = 12 + 24 + 44 + 16 + 8;
-// Header of a mono 16-bit WAV with root note and data crc (sampleCrc); frames * 2 bytes of data
-// follow. Chunks before "data", so a parser sees them without skipping the data.
-void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc);
+// Header of a mono (or stereo: channels 2) 16-bit WAV with root note and data crc (sampleCrc; stereo:
+// of the mono mix the bank would import); frames * 2 * channels bytes of data follow. Chunks before
+// "data", so a parser sees them without skipping the data.
+void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc,
+               int channels = 1);
 
 // Converts frames of raw data (any channels, 8/16/24 bit PCM) to mono int16: channels averaged,
 // 8 bit unsigned (128 = 0), 24 bit keeps the top 16 bits.
 void wavToMono(const uint8_t* raw, uint32_t frames, const WavInfo& w, int16_t* out);
 
-// Streaming resampler to <= 32 kHz: rates up to 32 kHz pass through; higher rates get a 2-tap
-// average (cheap anti-alias) and linear interpolation at the 32 kHz grid.
+// Streaming resampler to <= 44.1 kHz: rates up to 44.1 kHz pass through; higher rates get a 2-tap
+// average (cheap anti-alias) and linear interpolation at the 44.1 kHz grid.
 class Downsampler {
  public:
   explicit Downsampler(uint32_t inRate) : rate_(inRate) {}

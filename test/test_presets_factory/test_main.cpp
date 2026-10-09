@@ -154,10 +154,10 @@ void test_every_preset_sounds() {
       s.setWavetables(&wt);
       const uint8_t on[3] = {0x90, 60, 127};
       s.event(0, 0, on, 3);
-      int16_t buf[Synth::kBlock];
+      int16_t buf[Synth::kBlock], bufR[Synth::kBlock];
       int peak = 0;
-      for (int k = 0; k < 40; ++k) {  // 160 ms
-        s.render(buf);
+      for (int k = 0; k < 40; ++k) {  // 116 ms
+        s.render(buf, bufR);
         for (int16_t x : buf) peak = x > peak ? x : (-x > peak ? -x : peak);
       }
       TEST_ASSERT_TRUE_MESSAGE(peak > 300, factoryPreset(ty, i).name);

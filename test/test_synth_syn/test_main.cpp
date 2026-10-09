@@ -59,9 +59,9 @@ void test_bl_tri_bounded() {
 
 void test_master_reports_wrap() {
   BlOsc o;
-  const float dt = 1000.f / kSynthRate;  // 32 samples per cycle
+  const float dt = 1000.f / kSynthRate;  // 1 kHz
   int wraps = 0;
-  for (int i = 0; i < 3200; ++i) wraps += o.saw(dt, -1).wrap >= 0;
+  for (int i = 0; i < kSynthRate / 10; ++i) wraps += o.saw(dt, -1).wrap >= 0;  // 100 ms
   TEST_ASSERT_INT_WITHIN(1, 100, wraps);
 }
 

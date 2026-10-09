@@ -20,7 +20,7 @@ struct UsedKeys {
   uint32_t frames[kProjSamples];
   uint32_t wt[kProjWavetables];
   int n = 0, nw = 0;
-  explicit UsedKeys(const Project& p) {
+  explicit UsedKeys(const SynthModel& p) {
     for (; n < p.sampleCount && n < kProjSamples; ++n) {
       crc[n] = p.samples[n].crc;
       frames[n] = p.samples[n].frames;
@@ -70,13 +70,13 @@ uint32_t sampleCrc(const int16_t* d, uint32_t frames, uint32_t prev) {
   return crc32(d, static_cast<size_t>(frames) * 2, prev);
 }
 
-int projSampleFind(const Project& p, const char* name) {
+int projSampleFind(const SynthModel& p, const char* name) {
   for (int i = 0; i < p.sampleCount; ++i)
     if (strcasecmp(p.samples[i].name, name) == 0) return i;
   return -1;
 }
 
-int projWtFind(const Project& p, const char* name) {
+int projWtFind(const SynthModel& p, const char* name) {
   for (int i = 0; i < p.wavetableCount; ++i)
     if (strcasecmp(p.wavetables[i].name, name) == 0) return i;
   return -1;
@@ -114,7 +114,7 @@ int projWtPrune(Project& p) {
   return n;
 }
 
-int projWtBank(const Project& p, const SampleBank& b, int i) {
+int projWtBank(const SynthModel& p, const SampleBank& b, int i) {
   if (i < 0 || i >= p.wavetableCount) return -1;
   char k[kSampleNameMax + 1];
   wtKey(p.wavetables[i].crc, k);
@@ -154,7 +154,7 @@ bool projSampleRename(Project& p, int i, const char* name) {
   return true;
 }
 
-int projSampleUser(const Project& p, const char* name) {
+int projSampleUser(const SynthModel& p, const char* name) {
   for (int i = 0; i < kInstruments; ++i) {
     const Instrument& in = p.instruments[i];
     if (in.type == InstrType::Sample && strcasecmp(in.sample, name) == 0) return i;
@@ -165,7 +165,7 @@ int projSampleUser(const Project& p, const char* name) {
   return -1;
 }
 
-int projSampleBank(const Project& p, const SampleBank& b, int i) {
+int projSampleBank(const SynthModel& p, const SampleBank& b, int i) {
   if (i < 0 || i >= p.sampleCount) return -1;
   char k[kSampleNameMax + 1];
   sampleKey(p.samples[i].crc, k);
@@ -173,9 +173,9 @@ int projSampleBank(const Project& p, const SampleBank& b, int i) {
   return j >= 0 && b.entry(j)->frames == p.samples[i].frames ? j : -1;
 }
 
-bool bankEntryUsed(const Project& p, const BankEntry& e) { return UsedKeys(p).has(e); }
+bool bankEntryUsed(const SynthModel& p, const BankEntry& e) { return UsedKeys(p).has(e); }
 
-bool bankMakeRoom(SampleBank& b, const Project& p, uint32_t frames, BankProgress cb, void* ctx) {
+bool bankMakeRoom(SampleBank& b, const SynthModel& p, uint32_t frames, BankProgress cb, void* ctx) {
   if (frames == 0 || frames > b.capacity() / 2) return false;  // never fits: keep the cache
   const UsedKeys used(p);
   const uint32_t need = (frames * 2 + kBankAlign - 1) / kBankAlign * kBankAlign;
@@ -205,7 +205,7 @@ bool bankMakeRoom(SampleBank& b, const Project& p, uint32_t frames, BankProgress
   }
 }
 
-int bankClearUnused(SampleBank& b, const Project& p) {
+int bankClearUnused(SampleBank& b, const SynthModel& p) {
   const UsedKeys used(p);
   int n = 0;
   for (int i = b.count() - 1; i >= 0; --i)
@@ -213,7 +213,7 @@ int bankClearUnused(SampleBank& b, const Project& p) {
   return n;
 }
 
-uint32_t bankUnusedBytes(const SampleBank& b, const Project& p) {
+uint32_t bankUnusedBytes(const SampleBank& b, const SynthModel& p) {
   const UsedKeys used(p);
   uint32_t sum = 0;
   for (int i = 0; i < b.count(); ++i) {
@@ -221,75 +221,6 @@ uint32_t bankUnusedBytes(const SampleBank& b, const Project& p) {
     if (!used.has(e)) sum += (e.frames * 2 + kBankAlign - 1) / kBankAlign * kBankAlign;
   }
   return sum;
-}
-
-namespace {
-
-// crc of bank entry i's data, read in pieces. False on a read error.
-bool entryCrc(const SampleBank& b, int i, uint32_t& crc) {
-  const uint32_t frames = b.entry(i)->frames;
-  int16_t buf[256];
-  crc = 0;
-  for (uint32_t f = 0; f < frames; f += 256) {
-    const uint32_t n = frames - f < 256 ? frames - f : 256;
-    if (!b.readData(i, f, buf, n)) return false;
-    crc = sampleCrc(buf, n, crc);
-  }
-  return true;
-}
-
-}  // namespace
-
-int migrateSamples(Project& p, SampleBank& b, LegacyIndex& idx) {
-  int missing = 0;
-  for (int t = 0; t < kInstruments; ++t) {
-    const char* name = p.instruments[t].sample;
-    if (!name[0] || projSampleFind(p, name) >= 0) continue;
-    bool seen = false;  // an earlier instrument with this name was already counted missing
-    for (int u = 0; u < t && !seen; ++u) seen = strcasecmp(p.instruments[u].sample, name) == 0;
-    if (seen) continue;
-    if (!projectBaseValid(name)) {  // cannot be a file in the project folder
-      ++missing;
-      continue;
-    }
-    LegacySample s{};
-    const int i = b.find(name);
-    if (i >= 0) {
-      const BankEntry e = *b.entry(i);
-      uint32_t crc;
-      if (!entryCrc(b, i, crc)) {
-        ++missing;
-        continue;
-      }
-      char k[kSampleNameMax + 1];
-      sampleKey(crc, k);
-      if (strcasecmp(e.name, k) == 0) {  // the key of its own data: already plain cache
-        projSampleSet(p, name, crc, e.frames);
-        continue;
-      }
-      strcpy(s.name, e.name);
-      snprintf(s.project, sizeof(s.project), "%s", p.name);
-      s.crc = crc;
-      s.frames = e.frames;
-      // Recorded first: a renamed entry is never left without its old name in the index.
-      if (!idx.add(s)) {
-        ++missing;
-        continue;
-      }
-      const int dup = b.find(k);
-      const bool ok = dup >= 0 && b.entry(dup)->frames == e.frames ? b.remove(i)  // same data cached
-                                                                   : b.rename(i, k);
-      if (!ok) {
-        ++missing;
-        continue;
-      }
-    } else if (!idx.find(name, s)) {
-      ++missing;
-      continue;
-    }
-    projSampleSet(p, name, s.crc, s.frames);
-  }
-  return missing;
 }
 
 }  // namespace mt

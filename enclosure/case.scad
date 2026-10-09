@@ -8,7 +8,7 @@
 
 part = "assembly";
 trk  = false;     // сетка MX 4×4: Shift, Play, A, B, 8 кнопок дорожек, энкодер в блоке 2×2;
-                  // PCF8575, ЦАП PCM5102A, усилитель MAX97220, гнездо наушников
+                  // PCF8575, синт-плата Teensy 4.1, ЦАП PCM5102A, усилитель MAX97220, гнездо наушников
 
 $fn = 48;
 
@@ -58,11 +58,23 @@ trk_pitch = 19;                    // шаг MX
 trk_y0 = 17;                       // центр переднего ряда по Y (следующие — +trk_pitch)
 // Модули на дне под кнопками (замерить): [ширина X, глубина Y, центр X, центр Y]
 pcf_w = 32; pcf_d = 20;            // PCF8575
-pcf_y = 26;
+pcf_x = 73; pcf_y = 26;
 dac_w = 18; dac_d = 38;            // PCM5102 audio DAC v2 (чёрная), гребёнки по Y, штыри до ±25 мм от центра
 dac_x = 22; dac_y = 62;
 amp_w = 30; amp_d = 23;            // MAX97220 (по карточке)
 amp_x = 71; amp_y = 66;
+// Синт-плата Teensy 4.1 (trk): вдоль Y, слот microSD — к передней стенке, USB — к модулю.
+// Лежит на двух рейках по середине (между рядами пинов), бортики с трёх сторон.
+teensy_w = 18; teensy_d = 61;      // плата
+teensy_pcb = 1.6;
+teensy_x = 43.5;                   // центр по X, между ЦАП и усилителем
+teensy_ledge = 3;                  // высота реек: место под хвосты проводов снизу
+teensy_rail_dx = 4.5;              // оси реек от центра платы (ряды пинов — ±7,7)
+teensy_sd_out = 2.5;               // карта выступает за край платы (замерить)
+teensy_sd_z = 1.0;                 // ось карты над верхом платы (замерить)
+teensy_sd_slot_w = 13; teensy_sd_slot_h = 3;   // прорезь под карту (карта 11 × 0,8)
+teensy_sd_notch_d = 12;            // выемка под палец снаружи
+teensy_sd_skin = 0.8;              // стенка, остающаяся за выемкой
 
 // Крепёж: вплавляемые гайки M3
 ins_d     = 4.0;    // отверстие под гайку
@@ -145,14 +157,32 @@ mx_pos = concat([[shift_x, row_y], [play_x, row_y]],
                  [for (r = [1, 0], c = [0 : trk_cols - 1]) [trk_cx(c), trk_cy(r)]]) : []);
 
 // модули на дне: [w, d, x, y]
-bay_mods = trk ? [[pcf_w, pcf_d, W/2, pcf_y], [dac_w, dac_d, dac_x, dac_y], [amp_w, amp_d, amp_x, amp_y]] : [];
+bay_mods = trk ? [[pcf_w, pcf_d, pcf_x, pcf_y], [dac_w, dac_d, dac_x, dac_y], [amp_w, amp_d, amp_x, amp_y]] : [];
 for (m = bay_mods)
     assert(m[2] - m[0]/2 > wall + 1.5 && m[2] + m[0]/2 < W - wall - 1.5 &&
            m[3] - m[1]/2 > wall + 1.5 && m[3] + m[1]/2 < mod_y0 - 1, str("модуль вне отсека: ", m));
 
+// Teensy: передний край платы у стенки (губа там вырезана), карта уходит в прорезь
+teensy_y = wall + 1.5 + teensy_d/2;
+teensy_zc = floor_z + teensy_ledge + teensy_pcb + teensy_sd_z;   // ось карты
+if (trk) {
+    assert(teensy_y + teensy_d/2 < mod_y0 - 1, "Teensy вне отсека");
+    for (m = bay_mods)
+        assert(m[2] + m[0]/2 + 1.5 < teensy_x - teensy_w/2 - 1.5 || m[2] - m[0]/2 - 1.5 > teensy_x + teensy_w/2 + 1.5 ||
+               m[3] - m[1]/2 - 1.5 > teensy_y + teensy_d/2 + 1.5, str("модуль на месте Teensy: ", m));
+}
+
 // ---------- Утилиты ----------
 module rbox(w, d, h, r) {
     linear_extrude(h) offset(r) offset(-r) square([w, d]);
+}
+
+// Прорезь к слоту microSD Teensy в передней стенке (режет и верх, и низ) и выемка под палец
+module teensy_sd_cut() {
+    translate([teensy_x - teensy_sd_slot_w/2, -1, teensy_zc - teensy_sd_slot_h/2])
+        cube([teensy_sd_slot_w, 1 + wall + guide_clr + guide_t + 1, teensy_sd_slot_h]);
+    translate([teensy_x, -1, teensy_zc]) rotate([-90, 0, 0])
+        cylinder(d = teensy_sd_notch_d, h = 1 + wall - teensy_sd_skin);
 }
 
 // ---------- Верх ----------
@@ -198,6 +228,7 @@ module top_shell() {
             translate([0, wall/2 - usbc_plug_depth/2 + 0.01, 0])
                 cube([usbc_plug_w, usbc_plug_depth + 0.02, usbc_plug_h], center = true);
         }
+        if (trk) teensy_sd_cut();
         // jack, наушники (trk) и тумблер
         for (h = concat([[jack_x, jack_d], [sw_x, sw_d]], trk ? [[phones_x, jack_d]] : []))
             translate([h[0], D + 1, back_z]) rotate([90, 0, 0]) cylinder(d = h[1], h = wall + 2);
@@ -265,6 +296,21 @@ module bottom_lid() {
             // бортики PCF8575, ЦАП и усилителя
             for (m = bay_mods) translate([m[2] - m[0]/2 - 0.3, m[3] - m[1]/2 - 0.3, floor_z])
                 fence(m[0] + 0.6, m[1] + 0.6, 1.5);
+            // Teensy: рейки и бортики, открыто к передней стенке (слот карты)
+            if (trk) translate([teensy_x - teensy_w/2, teensy_y - teensy_d/2, floor_z]) {
+                for (dx = [-teensy_rail_dx, teensy_rail_dx])
+                    translate([teensy_w/2 + dx - 0.75, 0, 0]) cube([1.5, teensy_d, teensy_ledge]);
+                difference() {
+                    translate([-0.3, -0.3, 0]) fence(teensy_w + 0.6, teensy_d + 0.6, teensy_ledge + 1.5);
+                    translate([-2, -3, -1]) cube([teensy_w + 4, 3, 20]);
+                }
+            }
+        }
+        if (trk) {
+            teensy_sd_cut();
+            // губы у передней стенки напротив Teensy: плата подходит к стенке вплотную
+            translate([teensy_x - teensy_w/2 - 0.5, wall - 0.01, floor_z + 0.01])
+                cube([teensy_w + 1, guide_clr + guide_t + 0.5, lid_t + guide_h - floor_z + 1]);
         }
         // винты M3 × 10, голова утоплена
         for (p = lid_posts) translate([p[0], p[1], bot_z0 - 1]) {
@@ -316,6 +362,12 @@ module assembly() {
     color("silver") translate([(W - bat_w)/2, mod_y0 + 2, floor_z]) cube([bat_w, bat_d, bat_h]);
     color("blue") translate([ip_x - ip_w/2, D - wall - ip_d, lid_t + ip_rail]) cube([ip_w, ip_d, ip_pcb]);
     for (m = bay_mods) color("green") translate([m[2] - m[0]/2, m[3] - m[1]/2, floor_z]) cube([m[0], m[1], 1.6]);
+    if (trk) {
+        color("green") translate([teensy_x - teensy_w/2, teensy_y - teensy_d/2, floor_z + teensy_ledge])
+            cube([teensy_w, teensy_d, teensy_pcb]);
+        color("black") translate([teensy_x - 5.5, teensy_y - teensy_d/2 - teensy_sd_out, teensy_zc - 0.4])
+            cube([11, 15, 0.8]);   // карта
+    }
     // MX под панелью (корпус 14×14, 5 мм вниз + выводы), колпачки 18×18
     for (p = mx_pos) {
         color("white") translate([p[0] - 7, p[1] - 7, H - mx_plate - 8.3]) cube([14, 14, 8.3]);

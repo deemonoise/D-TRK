@@ -176,7 +176,7 @@ void test_reset_clears_samples() {
 }
 
 // = kSynthRate (synth_osc.h): this test does not link the synth.
-constexpr uint32_t kSampleRateHz = 32000;
+constexpr uint32_t kSampleRateHz = 44100;  // = kSynthRate
 
 void test_cutoff_hz_range() {
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.f, cutoffHz(0));

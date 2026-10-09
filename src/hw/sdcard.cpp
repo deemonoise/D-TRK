@@ -1,18 +1,13 @@
 #include "sdcard.h"
-#include <SD.h>
-#include <driver/gpio.h>
-#include <SPI.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include "pins.h"
-#include "preset_paths.h"
+#include "link/link.h"
+#include "link_msg.h"
+#include "storage/remote_fs.h"
 
 namespace hw {
 namespace {
-
-SPIClass* spi;
-bool ready;
 
 int cmpName(const void* a, const void* b) {
   return strcasecmp(static_cast<const char*>(a), static_cast<const char*>(b));
@@ -40,85 +35,27 @@ int keepName(char (*names)[kNameMax], int n, int max, const char* name, size_t l
 
 }  // namespace
 
-namespace {
-
-// The card drives MISO only while selected; between transfers the line would float without
-// a pull-up (none is known to be fitted on the board), and noise there reads as a response.
-void pullMiso() { gpio_pullup_en(static_cast<gpio_num_t>(pins::kSdMiso)); }
-
-// Card back to idle after an aborted transfer, on a freshly set up bus at a slow rate. CS high
-// alone does not end a multi-block read (CMD18) the card was stuck in: selected, it gets
-// clocks to finish the block it is sending, then CMD12 (STOP_TRANSMISSION) and time to leave
-// busy. Then CS high and 80+ clocks, the SD SPI-mode wake-up before CMD0.
-void resetBus() {
-  spi->end();
-  spi->begin(pins::kSdClk, pins::kSdMiso, pins::kSdMosi, pins::kSdCs);
-  pullMiso();
-  pinMode(pins::kSdCs, OUTPUT);
-  spi->beginTransaction(SPISettings(400000, MSBFIRST, SPI_MODE0));
-  digitalWrite(pins::kSdCs, LOW);
-  for (int i = 0; i < 520; ++i) spi->transfer(0xFF);  // a 512-byte block, its token and CRC
-  static const uint8_t kCmd12[6] = {0x4C, 0, 0, 0, 0, 0x61};
-  for (uint8_t b : kCmd12) spi->transfer(b);
-  spi->transfer(0xFF);  // stuff byte after CMD12
-  for (int i = 0; i < 16 && (spi->transfer(0xFF) & 0x80); ++i) {
-  }
-  for (int i = 0; i < 4096 && spi->transfer(0xFF) != 0xFF; ++i) {  // busy: up to ~80 ms here
-  }
-  digitalWrite(pins::kSdCs, HIGH);
-  for (int i = 0; i < 16; ++i) spi->transfer(0xFF);
-  spi->endTransaction();
-}
-
-bool mount() {
-  for (int attempt = 0; attempt < 3; ++attempt) {
-    if (attempt > 0) {
-      resetBus();
-      delay(50);
-    }
-    if (SD.begin(pins::kSdCs, *spi, attempt == 0 ? 10000000 : 4000000) && SD.cardType() != CARD_NONE) return true;
-    SD.end();
-  }
-  return false;
-}
-
-}  // namespace
-
 bool sdBegin() {
-  if (!spi) {
-    spi = new SPIClass(FSPI);
-    spi->begin(pins::kSdClk, pins::kSdMiso, pins::kSdMosi, pins::kSdCs);
-    pullMiso();
-  }
-  SD.end();  // also after a failed mount: nothing may stay registered
-  ready = mount();
-  if (!ready) {
-    Serial.println("sd: no card");
+  if (!slink::synthUp()) {
+    Serial.println("sd: no synth board");
     return false;
   }
-  if (!SD.exists("/projects")) SD.mkdir("/projects");
-  if (!SD.exists("/midi")) SD.mkdir("/midi");
-  if (!SD.exists("/samples")) SD.mkdir("/samples");
-  if (!SD.exists("/wavetables")) SD.mkdir("/wavetables");
-  if (!SD.exists("/presets")) SD.mkdir("/presets");
-  if (!SD.exists("/templates")) SD.mkdir("/templates");
-  if (!SD.exists("/diag")) SD.mkdir("/diag");
-  for (int t = 0; t < static_cast<int>(mt::InstrType::Count); ++t) {
-    if (!mt::presetTypeHas(static_cast<mt::InstrType>(t))) continue;
-    const char* root = mt::presetRoot(static_cast<mt::InstrType>(t));
-    if (!SD.exists(root)) SD.mkdir(root);
-  }
-  return true;
+  // The synth board mounts the card and makes the standard folders itself.
+  const bool ok = sdFs().exists("/");
+  if (!ok) Serial.printf("sd: no card (%d)\n", storage::remoteLastError());
+  return ok;
 }
 
-bool sdReady() { return ready; }
+bool sdReady() {
+  return slink::synthUp() && storage::remoteLastError() != mt::link::kErrNoCard;
+}
 
 bool sdRecover() {
-  if (ready && SD.exists("/projects")) return true;  // the card answers: a file problem, keep the mount
-  return sdBegin();
+  if (slink::synthUp()) sdFs().exists("/");  // the last result decides sdReady()
+  return sdReady();
 }
 
-fs::FS& sdFs() { return SD; }
+fs::FS& sdFs() { return storage::remoteFs(); }
 
 bool FileSink::write(const void* d, size_t n) {
   const uint8_t* b = static_cast<const uint8_t*>(d);
@@ -181,8 +118,8 @@ bool sdNextEntry(fs::File& dir, String& name, bool& isDir) {
 }
 
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, bool (*accept)(const char*)) {
-  if (!ready) return 0;
-  fs::File d = SD.open(dir);
+  if (!sdReady()) return 0;
+  fs::File d = sdFs().open(dir);
   if (!d || !d.isDirectory()) return 0;
   const size_t extLen = strlen(ext);
   int n = 0;
@@ -205,8 +142,8 @@ int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, b
 }
 
 int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*names)[kNameMax], int max) {
-  if (!ready) return 0;
-  fs::File d = SD.open(dir);
+  if (!sdReady()) return 0;
+  fs::File d = sdFs().open(dir);
   if (!d || !d.isDirectory()) return 0;
   int n = 0;
   String entry;
@@ -229,8 +166,8 @@ int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*n
 }
 
 int sdListDirs(const char* dir, char (*names)[kNameMax], int max) {
-  if (!ready) return 0;
-  fs::File d = SD.open(dir);
+  if (!sdReady()) return 0;
+  fs::File d = sdFs().open(dir);
   if (!d || !d.isDirectory()) return 0;
   int n = 0;
   String entry;

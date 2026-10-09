@@ -117,8 +117,8 @@ void RenderDialog::run() {
   }
   char msg[48];
   const float db = st.peak > 0 ? 20.f * log10f(st.peak / 32767.f) : -96.f;
-  snprintf(msg, sizeof(msg), "%lu.%lus  PEAK %.1fdB%s", static_cast<unsigned long>(st.frames / 32000),
-           static_cast<unsigned long>(st.frames % 32000 / 3200), db, st.clips ? "  CLIP" : "");
+  snprintf(msg, sizeof(msg), "%lu.%lus  PEAK %.1fdB%s", static_cast<unsigned long>(st.frames / mt::kSynthRate),
+           static_cast<unsigned long>(st.frames % mt::kSynthRate / (mt::kSynthRate / 10)), db, st.clips ? "  CLIP" : "");
   app_.toast(msg);
   close();
 }

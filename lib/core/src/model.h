@@ -373,28 +373,17 @@ struct TrackCfg {
   uint8_t instr = 0;  // 0..kInstruments-1, INT tracks
   uint8_t vol = 100;  // 0..127, INT tracks
   uint8_t humanize = 0;  // 0..100: random timing (up to +-10 % of a step) and velocity (+-20) per step
+  int8_t pan = 0;        // INT tracks: -64 (left) .. 0 (centre) .. 63 (right), equal power
 };
 
-struct Project {
-  char name[17] = {0};
+// Everything the synth reads from the project: the sound state the ESP mirrors to the synth board
+// (synth_model.h cuts it into chunks). Fields are grouped by chunk: master, tracks, instruments,
+// samples, wavetables.
+struct SynthModel {
   uint16_t bpm = 120;
   uint8_t scaleRoot = 0;
-  uint8_t scaleType = 0;  // ScaleType (scale.h), 0 = Chromatic
-  TrackCfg tracks[kTracks];
-  Pattern patterns[kPatterns];
-  uint8_t chain[kChainMax] = {0};
-  uint8_t chainLen = 0;
-  // Per chain item: transpose of melodic tracks (semitones, -kChainTrMax..kChainTrMax), passes before
-  // advancing (1..kChainRepMax), mute scene recalled when the item starts (0 = none, 1..kScenes).
-  // Rows move together: chainInsert / chainDelete (edit_ops).
-  int8_t chainTr[kChainMax] = {0};
-  uint8_t chainRep[kChainMax] = {0};  // reset() sets 1
-  uint8_t chainScene[kChainMax] = {0};
-  bool songMode = false;
-  uint16_t scenes[kScenes];  // bit t = track t muted; kSceneEmpty = nothing stored (reset())
-  Instrument instruments[kInstruments];
+  uint8_t scaleType = 0;   // ScaleType (scale.h), 0 = Chromatic
   uint8_t masterVol = 40;  // 0..kMasterVolMax %
-  bool preview = true;     // GRID note entry sounds on INT tracks
   // Send delay (INT tracks): time 1..kDlyTimeMax sixteenths, feedback / tone / return level 0..127.
   uint8_t dlyTime = 3;
   uint8_t dlyFb = 50;
@@ -413,12 +402,30 @@ struct Project {
   // Master DJ filter on the internal sound: -64..-1 low-pass (closing towards -64), 0 off, 1..63
   // high-pass (opening towards 63).
   int8_t djFilter = 0;
-  // PERF: the effect of track button 1..8 (PerfFx).
-  uint8_t perfMap[kPerfButtons] = {1, 2, 3, 4, 5, 6, 7, 8};
+  TrackCfg tracks[kTracks];
+  Instrument instruments[kInstruments];
   ProjSample samples[kProjSamples];
   uint8_t sampleCount = 0;  // names unique ignoring case
   ProjWavetable wavetables[kProjWavetables];
   uint8_t wavetableCount = 0;  // names unique ignoring case
+};
+
+struct Project : SynthModel {
+  char name[17] = {0};
+  Pattern patterns[kPatterns];
+  uint8_t chain[kChainMax] = {0};
+  uint8_t chainLen = 0;
+  // Per chain item: transpose of melodic tracks (semitones, -kChainTrMax..kChainTrMax), passes before
+  // advancing (1..kChainRepMax), mute scene recalled when the item starts (0 = none, 1..kScenes).
+  // Rows move together: chainInsert / chainDelete (edit_ops).
+  int8_t chainTr[kChainMax] = {0};
+  uint8_t chainRep[kChainMax] = {0};  // reset() sets 1
+  uint8_t chainScene[kChainMax] = {0};
+  bool songMode = false;
+  uint16_t scenes[kScenes];  // bit t = track t muted; kSceneEmpty = nothing stored (reset())
+  bool preview = true;     // GRID note entry sounds on INT tracks
+  // PERF: the effect of track button 1..8 (PerfFx).
+  uint8_t perfMap[kPerfButtons] = {1, 2, 3, 4, 5, 6, 7, 8};
   // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
   // whose instrument sample names still have to be migrated (and after reset()).
   bool hasSampleList = false;

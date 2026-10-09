@@ -1,14 +1,11 @@
 #include "model.h"
 #include "hot.h"
+#include "synth_osc.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 namespace mt {
-
-namespace {
-constexpr float kRate = 32000.f;  // = kSynthRate (synth_osc.h)
-}
 
 void Pattern::clear() {
   length = kDefaultSteps;
@@ -172,9 +169,9 @@ float resoQ(float v) {
 }
 
 MT_HOT float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec) {
-  const uint32_t a = static_cast<uint32_t>(envTimeMs(fAtk) * kRate / 1000.f);
+  const uint32_t a = static_cast<uint32_t>(envTimeMs(fAtk) * kSynthRate / 1000.f);
   if (t < a) return static_cast<float>(t) / a;
-  const float d = envTimeMs(fDec) * kRate / 1000.f;
+  const float d = envTimeMs(fDec) * kSynthRate / 1000.f;
   if (d <= 0) return 1.f;
   return expf(-6.9077553f * (t - a) / d);  // ln(1000): -60 dB at d
 }

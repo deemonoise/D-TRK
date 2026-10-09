@@ -4,14 +4,14 @@
 
 namespace mt {
 
-// Flash access behind an interface: RAM in tests, esp_partition on the device.
+// Flash access behind an interface: RAM in tests, the Teensy's program flash on the synth board.
 struct BankFlash {
   virtual uint32_t size() const = 0;
   virtual bool read(uint32_t off, void* d, uint32_t n) = 0;
   virtual bool erase(uint32_t off, uint32_t n) = 0;  // kBankAlign aligned
   // Only into erased (0xFF) bytes.
   virtual bool write(uint32_t off, const void* d, uint32_t n) = 0;
-  virtual const uint8_t* mapped() const = 0;  // whole partition, or nullptr
+  virtual const uint8_t* mapped() const = 0;  // whole region, or nullptr
 };
 
 constexpr int kBankEntries = 128;
@@ -20,7 +20,7 @@ constexpr uint32_t kBankHeader = 8192;  // two table copies, one sector each
 
 struct BankEntry {
   char name[kSampleNameMax + 1];
-  uint32_t offset;  // bytes from partition start, kBankAlign aligned
+  uint32_t offset;  // bytes from the region start, kBankAlign aligned
   uint32_t frames;  // int16 mono
   uint32_t rate;
   uint8_t root;
@@ -30,7 +30,7 @@ struct BankEntry {
 // Progress of a long operation: bytes done of total.
 using BankProgress = void (*)(uint32_t done, uint32_t total, void* ctx);
 
-// Sample bank in a flash partition. Sectors 0 and 1 hold two copies of the table ("MTSB",
+// Sample bank in a flash region. Sectors 0 and 1 hold two copies of the table ("MTSB",
 // version, count, sequence, crc32, entries); every change writes the older copy, so a power cut
 // leaves the previous table. Data: mono int16, each sample starts on a kBankAlign boundary,
 // first-fit allocation. Entries are sorted by name; names are unique ignoring case.

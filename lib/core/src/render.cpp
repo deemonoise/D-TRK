@@ -32,7 +32,9 @@ uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, id
 
 uint64_t songUs(const Project& p) { return ticksToUs(p, songTicks(p)); }
 
-void normalizePeak(int16_t* b, uint32_t n, int16_t peak) {
+void normalizePeak(int16_t* b, uint32_t frames, int16_t peak) { normalizeSamples(b, 2 * frames, peak); }
+
+void normalizeSamples(int16_t* b, uint32_t n, int16_t peak) {
   if (peak <= 0) return;
   const float g = kNormPeak / peak;
   for (uint32_t i = 0; i < n; ++i) {
@@ -43,8 +45,8 @@ void normalizePeak(int16_t* b, uint32_t n, int16_t peak) {
 
 uint32_t trimTail(const int16_t* b, uint32_t n, uint32_t block) {
   uint32_t last = 0;
-  for (uint32_t i = 0; i < n; ++i)
-    if (b[i] > kSilence || b[i] < -kSilence) last = i + 1;
+  for (uint32_t i = 0; i < 2 * n; ++i)
+    if (b[i] > kSilence || b[i] < -kSilence) last = i / 2 + 1;
   const uint32_t keep = (last + block - 1) / block * block;
   return keep < block ? block : (keep > n ? n : keep);
 }
@@ -56,18 +58,17 @@ void nextResampleName(const Project& p, char out[kSampleNameMax + 1]) {
   }
 }
 
-OfflineRender::Guard::Guard(Project& pr, const RenderSpec& s) : p(pr), songMode(pr.songMode) {
+OfflineSequence::Guard::Guard(Project& pr, const RenderSpec& s) : p(pr), songMode(pr.songMode) {
   for (int t = 0; t < kTracks; ++t) mute[t] = p.tracks[t].mute;
   p.songMode = s.mode == RenderSpec::Mode::Song;
 }
 
-OfflineRender::Guard::~Guard() {
+OfflineSequence::Guard::~Guard() {
   p.songMode = songMode;
   for (int t = 0; t < kTracks; ++t) p.tracks[t].mute = mute[t];
 }
 
-OfflineRender::OfflineRender(Project& p, Synth& synth, const RenderSpec& spec)
-    : synth_(synth), spec_(spec), seq_(p) {
+OfflineSequence::OfflineSequence(Project& p, const RenderSpec& spec) : spec_(spec), seq_(p) {
   seq_.setTrackMask(spec.tracksMask);
   seq_.seed(0x5EED);
   if (spec.mode == RenderSpec::Mode::Pattern) seq_.queuePattern(spec.pattern < kPatterns ? spec.pattern : 0);
@@ -80,12 +81,12 @@ OfflineRender::OfflineRender(Project& p, Synth& synth, const RenderSpec& spec)
 }
 
 // Note-offs and releases: what ends sounding notes. Everything else of the next pass is dropped.
-bool OfflineRender::passesAfterEnd(const uint8_t* b, uint8_t len) {
+bool OfflineSequence::passesAfterEnd(const uint8_t* b, uint8_t len) {
   const uint8_t k = b[0] & 0xF0;
   return k == 0x80 || (k == 0x90 && len >= 3 && b[2] == 0) || b[0] == 0xFF;
 }
 
-void OfflineRender::synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) {
+void OfflineSequence::synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) {
   if (len == 0 || len > 3) return;
   if (t >= bodyUs_ && !passesAfterEnd(b, len)) return;
   if (fifoN_ == kFifo) return;  // never with one block of lookahead; the synth's own queue is smaller
@@ -96,8 +97,12 @@ void OfflineRender::synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t l
   memcpy(e.b, b, len);
 }
 
-// As audio.cpp's drain: events of this block (late ones at its start) go in, later ones wait.
-void OfflineRender::drain() {
+// As the audio task's drain: events of this block (late ones at its start) go out, later ones wait.
+bool OfflineSequence::nextBlock(SeqEv* out, int& n) {
+  n = 0;
+  if (done_ >= blocksTotal()) return false;
+  if (done_ < bodyBlocks_) seq_.process(blockT_ + kRenderBlockUs, *this);  // everything of this block
+  else if (done_ == bodyBlocks_) seq_.stop(blockT_, *this);                // the end: release all
   int kept = 0;
   for (int i = 0; i < fifoN_; ++i) {
     const int off = eventOffset(fifo_[i].t, blockT_);
@@ -105,24 +110,36 @@ void OfflineRender::drain() {
       fifo_[kept++] = fifo_[i];
       continue;
     }
-    synth_.event(off, fifo_[i].track, fifo_[i].b, fifo_[i].len);
+    SeqEv& e = out[n++];
+    e.off = static_cast<uint8_t>(off);
+    e.track = fifo_[i].track;
+    e.len = fifo_[i].len;
+    memcpy(e.b, fifo_[i].b, sizeof e.b);
   }
   fifoN_ = kept;
-}
-
-bool OfflineRender::renderBlock(int16_t out[Synth::kBlock]) {
-  if (done_ >= blocksTotal()) return false;
-  if (done_ < bodyBlocks_) seq_.process(blockT_ + kRenderBlockUs, *this);  // everything of this block
-  else if (done_ == bodyBlocks_) seq_.stop(blockT_, *this);                // the end: release all
-  drain();
-  synth_.render(out);
-  for (int i = 0; i < Synth::kBlock; ++i) {
-    const int a = out[i] < 0 ? -out[i] : out[i];
-    if (a > peak_) peak_ = static_cast<int16_t>(a > 32767 ? 32767 : a);
-    if (out[i] >= 32767 || out[i] <= -32767) ++clips_;
-  }
   blockT_ += kRenderBlockUs;
   ++done_;
+  return true;
+}
+
+void BlockRender::render(Synth& synth, const SeqEv* ev, int n, int16_t l[Synth::kBlock],
+                         int16_t r[Synth::kBlock]) {
+  for (int i = 0; i < n; ++i) synth.event(ev[i].off, ev[i].track, ev[i].b, ev[i].len);
+  synth.render(l, r);
+  for (int c = 0; c < 2; ++c) {
+    const int16_t* const out = c ? r : l;
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      const int a = out[i] < 0 ? -out[i] : out[i];
+      if (a > peak) peak = static_cast<int16_t>(a > 32767 ? 32767 : a);
+      if (out[i] >= 32767 || out[i] <= -32767) ++clips;
+    }
+  }
+}
+
+bool OfflineRender::renderBlock(int16_t l[Synth::kBlock], int16_t r[Synth::kBlock]) {
+  int n = 0;
+  if (!seq_.nextBlock(ev_, n)) return false;
+  out_.render(synth_, ev_, n, l, r);
   return true;
 }
 

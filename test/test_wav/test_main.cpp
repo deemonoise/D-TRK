@@ -385,13 +385,13 @@ void test_downsampler_passthrough() {
   TEST_ASSERT_EQUAL_INT16_ARRAY(in, out, 4);
 }
 
-// 1 kHz sine at 48 kHz in uneven chunks: about 2/3 as many frames, still 1 kHz at 32 kHz.
+// 1 kHz sine at 48 kHz in uneven chunks: 44.1 / 48 as many frames, still 1 kHz at 44.1 kHz.
 void test_downsampler_48k() {
   constexpr int kIn = 4800;
   static int16_t in[kIn];
   for (int i = 0; i < kIn; ++i) in[i] = static_cast<int16_t>(16000 * sin(2 * M_PI * 1000.0 * i / 48000.0));
   Downsampler d(48000);
-  TEST_ASSERT_EQUAL_UINT32(32000, d.outRate());
+  TEST_ASSERT_EQUAL_UINT32(44100, d.outRate());
   static int16_t out[kIn];
   int n = 0, pos = 0;
   const int chunks[] = {1, 7, 333, 1000, 59};
@@ -403,7 +403,7 @@ void test_downsampler_48k() {
     n += got;
     pos += k;
   }
-  TEST_ASSERT_INT_WITHIN(1, 3200, n);
+  TEST_ASSERT_INT_WITHIN(1, 4410, n);
   TEST_ASSERT_TRUE(static_cast<uint32_t>(n) <= Downsampler::outFrames(kIn, 48000));
   // Rising zero crossings: 100 periods.
   int cross = 0;
@@ -434,6 +434,24 @@ void test_header_parses_back() {
   TEST_ASSERT_EQUAL(kWavHeaderBytes, w.dataOffset);
 }
 
+void test_stereo_header() {
+  std::vector<uint8_t> f(kWavHeaderBytes);
+  wavHeader(f.data(), 5, 44100, 60, 0x1234, 2);
+  f.resize(kWavHeaderBytes + 5 * 4);
+  TEST_ASSERT_EQUAL_UINT32(f.size() - 8, le32(f.data() + 4));  // RIFF size
+  TEST_ASSERT_EQUAL(2, f[22] | (f[23] << 8));                   // channels
+  TEST_ASSERT_EQUAL_UINT32(44100 * 4, le32(f.data() + 28));     // byte rate
+  TEST_ASSERT_EQUAL(4, f[32] | (f[33] << 8));                   // block align
+  TEST_ASSERT_EQUAL_UINT32(20, le32(f.data() + kWavHeaderBytes - 4));
+  VecSource src(f);
+  WavInfo w;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(2, w.channels);
+  TEST_ASSERT_EQUAL_UINT32(5, w.frames());
+  TEST_ASSERT_TRUE(w.hasCrc);
+  TEST_ASSERT_EQUAL_HEX32(0x1234, w.crc);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_mono16);
@@ -461,5 +479,6 @@ int main() {
   RUN_TEST(test_downsampler_passthrough);
   RUN_TEST(test_downsampler_48k);
   RUN_TEST(test_header_parses_back);
+  RUN_TEST(test_stereo_header);
   return UNITY_END();
 }

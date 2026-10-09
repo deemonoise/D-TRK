@@ -603,7 +603,7 @@ void Sequencer::adjustStep(Step& s, int track) const {
     const int n = s.note + tr;
     s.note = static_cast<uint8_t>(n < 0 ? 0 : (n > 127 ? 127 : n));
   }
-  const PerfFx pf = perf_[track];
+  const PerfFx pf = perf(track);  // checked: GCC cannot see track is in range here
   if (pf == PerfFx::Fade && !internal(track)) {
     // MIDI has no volume slide: the notes go out at half velocity (a drum step's velocity is note).
     if (s.hasNote() && !p_.trackIsDrum(track)) {

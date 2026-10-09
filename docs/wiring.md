@@ -1,7 +1,7 @@
 
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift and eight track buttons with LEDs, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
+Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift and eight track buttons with LEDs, and the synth board — a Teensy 4.1 with a PCM5102A DAC and a MAX97220 headphone amplifier. The display and touch are already routed on the board. The microSD card sits in the Teensy (FAT32 or exFAT); the board's own card slot is not used.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
@@ -18,9 +18,9 @@ WT32-SC01 Plus, expansion connector (Extended IO)
   GND  ──────────── MIDI Sleeve  (DIN 2, shield)
   IO11 ──────────── encoder A
   IO12 ──────────── encoder B         encoder C (middle) ── GND
-  IO13 ──────────── DAC BCK
-  IO14 ──────────── DAC LCK
-  IO21 ──────────── DAC DIN
+  IO13 ──────────── Teensy 0 (RX1)     link, UART TX
+  IO14 ──────────── Teensy 1 (TX1)     link, UART RX
+  IO21 ──────────── Teensy 2           spare, not used yet
 
 WT32-SC01 Plus, Debug connector
   IO43 TXD0 ─────── PCF SDA
@@ -35,9 +35,15 @@ PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
   P15 ──────── Shift ── GND
   P1x ──────── LED cathode;  LED anode ──[R]── 3.3 V
 
+Teensy 4.1 (synth board; VUSB–VIN trace on the back cut)
+  VIN ── board 5V                          GND ── board GND
+  21 (BCLK1) ── DAC BCK                    3V3 ── DAC VIN, DAC XSMT
+  20 (LRCLK1) ── DAC LCK                   microSD slot ── the card (FAT32 or exFAT)
+  7 (OUT1A) ── DAC DIN
+
 PCM5102A                                 MAX97220
-  VIN ── 3.3 V or 5 V                      VCC ── board 5V (or 3.3V);  SHDN ── VCC
-  GND ── star point ── board GND           GND ── star point
+  VIN ── Teensy 3V3 (or 5 V)               VCC ── board 5V (or 3.3V);  SHDN ── VCC
+  GND ── star point ── Teensy GND          GND ── star point
   SCK, FMT, FLT, DEMP ── GND (L)           IN L+ ── DAC L;   IN L− ── DAC GND
   XSMT ── 3.3 V (H)                        IN R+ ── DAC R;   IN R− ── DAC GND
   L / R ── line out, to the amplifier      OUT L / OUT R / GND ── jack Tip / Ring / Sleeve
@@ -60,10 +66,16 @@ PCM5102A                                 MAX97220
 | **EC11 encoder** |                                     |                                                             |
 | `board IO11 / IO12`               | `encoder A / B`                     | outer pins of the group of three; turns the wrong way — swap them |
 | `board GND`                       | `encoder C`                         | middle pin of the group of three                            |
+| **Teensy 4.1 synth board** |                                     |                                                             |
+| `board 5V`                        | `Teensy VIN`                        | after the switch; cut the VUSB–VIN trace on the Teensy's back first |
+| `board GND`                       | `Teensy GND`                        |                                                             |
+| `board IO13`                      | `Teensy 0 (RX1)`                    | link: 3 Mbaud UART, both sides 3.3 V                        |
+| `board IO14`                      | `Teensy 1 (TX1)`                    | link                                                        |
+| `board IO21`                      | `Teensy 2`                          | spare, not used by the firmware yet                         |
 | **PCM5102A DAC** |                                     |                                                             |
-| `board IO13 / IO14 / IO21`        | `DAC BCK / LCK / DIN`               | LCK is also labelled LRCK or WS                             |
-| `board 3V3 or 5V`                 | `DAC VIN`                           | the module has its own LDO                                  |
-| `board GND`                       | `DAC GND`                           | star point of the audio ground                              |
+| `Teensy 21 / 20 / 7`              | `DAC BCK / LCK / DIN`               | BCLK1 / LRCLK1 / OUT1A; LCK is also labelled LRCK or WS     |
+| `Teensy 3V3 (or board 5V)`        | `DAC VIN`                           | the module has its own LDO                                  |
+| `Teensy GND`                      | `DAC GND`                           | star point of the audio ground                              |
 | `GND`                             | `DAC SCK, FMT, FLT, DEMP`           | L: no MCLK (PLL from BCK), I2S, normal latency, de-emphasis off |
 | `3.3 V`                           | `DAC XSMT`                          | H: unmuted                                                  |
 | **MAX97220 headphone amplifier** |                                     |                                                             |
@@ -95,6 +107,16 @@ The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, 
 - **Flash firmware only with the switch off.** Otherwise two sources meet on the 5V line: the computer's USB and the IP5306.
 - Never connect the battery directly to the board's 5V or 3V3 — only through the IP5306.
 - The battery, IP5306 and board negatives form the common ground; everything else in the diagram connects to it as well.
+- **Cut the VUSB–VIN trace** on the back of the Teensy (between the two pads marked VUSB and VIN). Otherwise the computer's USB on the Teensy and the IP5306 feed each other through the 5V line.
+
+## Synth board (Teensy 4.1)
+
+The Teensy runs the internal synth, the microSD card and the sample bank (in its flash); the tracker talks to it over the link (IO13 / IO14). Its USB stays inside the case, so:
+
+- **Flash it once before assembly:** `pio run -e teensy41 -t upload` (Teensy Loader opens; press the button on the Teensy if asked). With the VUSB–VIN trace already cut, USB carries data only: switch the tracker on so the Teensy runs from the board's 5V.
+- Later updates go from the tracker: put `teensy.hex` (`.pio/build/teensy41/firmware.hex`) into `/firmware/` on the card and use PROJ → SYS → Update synth, or upload it on the Wi-Fi page (FILE → Wi-Fi firmware..., section "Synth board"). The Teensy checks the image before replacing its firmware.
+- The card goes into the Teensy's slot; the case has an opening for it, so it can be changed without opening the case. FAT32 or exFAT.
+- Check the link without the rest of the firmware: `wt32-echo` on the board and `teensy41-echo` on the Teensy; the board's serial monitor shows the byte rate and mismatches (0 expected).
 
 ## MIDI jack
 
@@ -104,29 +126,29 @@ The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, 
 ## DAC and headphones
 
 ```
-board IO13 ─── DAC BCK
-board IO14 ─── DAC LCK
-board IO21 ─── DAC DIN
+Teensy 21 ─── DAC BCK
+Teensy 20 ─── DAC LCK
+Teensy 7 ──── DAC DIN
 
 DAC L ──────── amp IN L+          amp OUT L ── Tip    (left)
 DAC R ──────── amp IN R+          amp OUT R ── Ring   (right)
 DAC GND ─┬──── amp IN L−          amp GND ──── Sleeve
          ├──── amp IN R−
          ├──── amp GND
-         └──── board GND          (star point at the DAC's GND)
+         └──── Teensy GND         (star point at the DAC's GND)
 
-DAC SCK, FMT, FLT, DEMP ── GND     DAC XSMT ── 3.3 V     DAC VIN ── 3.3 V or 5 V
+DAC SCK, FMT, FLT, DEMP ── GND     DAC XSMT ── 3.3 V     DAC VIN ── Teensy 3V3 (or 5 V)
 amp VCC, amp SHDN ── board 5V (or 3V3)
 ```
 
-*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is mono, the same on L and R: 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs).*
+*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is stereo: 44.1 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs). The Teensy's MCLK (pin 23) is not connected.*
 
 - **DAC settings.** SCK to GND (no MCLK: the PLL takes the clock from BCK), FMT = L (I2S), FLT = L (normal latency), DEMP = L (de-emphasis off), XSMT = H (unmuted). On the purple GY-PCM5102 modules these are solder pads on the back — check your module's silkscreen.
 - **Line out.** The DAC's L / R give 2.1 Vrms at full scale, centred on ground. Unlike the old SPK output, they can go to a mixer, audio interface or powered speakers — from the DAC before the amplifier, or from the amplifier's headphone output.
 - **Amplifier inputs** are differential: L+ / R+ to the DAC's L / R, L− / R− to the DAC's GND (AGND). Pin names on the module's silkscreen may differ.
 - **DirectDrive outputs** are ground-referenced, without coupling capacitors: the headphone jack's Sleeve goes to GND, and the jack may touch the case.
 - **Level.** 2.1 Vrms from the DAC is more than the MAX97220 can deliver: if it clips or is too loud, lower MAIN (MIX tab) or add a divider / potentiometer between the DAC and the amplifier.
-- **Ground.** Short audio ground wires and one star point at the DAC's GND: the DAC, amplifier and jack grounds meet there, and a single wire runs to the board's GND. Otherwise the IP5306 boost converter may whine in the headphones.
+- **Ground.** Short audio ground wires and one star point at the DAC's GND: the DAC, amplifier and jack grounds meet there, and a single wire runs to the Teensy's GND. Otherwise the IP5306 boost converter may whine in the headphones.
 - Power up the first time with MAIN (MIX tab) at minimum and without wearing the headphones.
 
 ## Which track button is which
@@ -154,9 +176,9 @@ With white and blue LEDs at 3.3 V the voltage headroom is only 0.2–0.4 V, and 
 ## Before powering up
 
 1.  Continuity check: the board's 5V and GND are not shorted; the switch in the "off" position breaks VOUT.
-2.  DAC: XSMT reads 3.3 V; SCK, FMT, FLT, DEMP read GND; GPIO 13, 14, 21 are not shorted to each other, to GND or to 3.3 V. Amplifier: IN L− and IN R− ring to the DAC's GND, SHDN (if broken out) to VCC.
+2.  Teensy: the VUSB–VIN trace is cut (no continuity between the pads); VIN goes to the board's 5V, GND to GND; GPIO 13, 14, 21 go to Teensy pins 0, 1, 2 and are not shorted to each other, to GND or to 3.3 V. DAC: XSMT reads 3.3 V; SCK, FMT, FLT, DEMP read GND; BCK / LCK / DIN go to Teensy 21 / 20 / 7. Amplifier: IN L− and IN R− ring to the DAC's GND, SHDN (if broken out) to VCC.
 3.  A0, A1, A2 on the module can be left alone. If the module is found only sometimes (the address "floats"), bridge all three pads to GND.
 4.  Check whether the module has pull-up resistors on SDA and SCL (usually 4.7–10 kΩ to VCC). If not, add 4.7 kΩ from each line to 3.3 V.
 5.  Power the module only from 3.3 V, not 5 V: otherwise 5 V reaches the board's GPIOs.
 6.  Check that TXD0 and RXD0 are not shorted to each other or to GND. Do not touch GPIO 1, 2, 42: they are used by the built-in RS485.
-7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play and Shift do not work either); `trackio: PCF8575 at 0x..` means it was found.
+7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play and Shift do not work either); `trackio: PCF8575 at 0x..` means it was found. The status bar shows `NO SYNTH` while the Teensy does not answer: check its power and the link wires (IO13 → pin 0, IO14 → pin 1).

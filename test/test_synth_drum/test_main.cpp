@@ -80,7 +80,7 @@ void test_clap_bursts() {
   // Envelope peaks near 0, 10, 20 ms: energy right after each restart beats the one before it.
   auto e = [](int ms) {
     float a = 0;
-    for (int i = ms * 32; i < ms * 32 + 32; ++i) a += buf[i] * buf[i];
+    for (int i = ms * kSynthRate / 1000; i < (ms + 1) * kSynthRate / 1000; ++i) a += buf[i] * buf[i];
     return a;
   };
   TEST_ASSERT_TRUE(e(10) > e(9) * 2);
@@ -141,8 +141,9 @@ void test_clap_tail_uses_noise_decay() {
   run(d, p, kSynthRate / 10);
   // 30 ms: the tail starts at 0.5 and loses 3 dB by 40 ms (200 ms to -60 dB), not the burst decay.
   float a = 0;
-  for (int i = 40 * 32; i < 41 * 32; ++i) a += buf[i] * buf[i];
-  const float rms = sqrtf(a / 32);
+  constexpr int kFrom = 40 * kSynthRate / 1000, kTo = 41 * kSynthRate / 1000;
+  for (int i = kFrom; i < kTo; ++i) a += buf[i] * buf[i];
+  const float rms = sqrtf(a / (kTo - kFrom));
   TEST_ASSERT_TRUE(rms > 0.12f && rms < 0.25f);
 }
 
@@ -197,15 +198,16 @@ void test_tone_ramp_clamped() {
   p.toneHz[0] = 100;
   p.toneLvl[0] = 1;
   p.pitchEnv = 24;  // 400 Hz at the trigger
-  p.pitchMs = 10;   // -6 dB = 12 semitones down in 32 samples: 200 Hz
+  p.pitchMs = 10;   // -6 dB = 12 semitones down in 1 ms: 200 Hz
+  constexpr int kMs = kSynthRate / 1000, kN = kSynthRate / 10;
   DrumVoice d;
   d.trigger(false);
-  for (int i = 0; i < 3200; ++i) buf[i] = 0;
-  d.control(p, 32);
-  d.render(buf, 3200, 1.f);
+  for (int i = 0; i < kN; ++i) buf[i] = 0;
+  d.control(p, kMs);
+  d.render(buf, kN, 1.f);
   int c = 0;
-  for (int i = 321; i < 3200; ++i) c += buf[i - 1] > 0 && buf[i] <= 0;
-  TEST_ASSERT_INT_WITHIN(2, 18, c);  // 2880 samples at 200 Hz
+  for (int i = kN / 10 + 1; i < kN; ++i) c += buf[i - 1] > 0 && buf[i] <= 0;
+  TEST_ASSERT_INT_WITHIN(2, 18, c);  // 90 ms at 200 Hz
 }
 
 // Squares above the Nyquist limit (hz 0) drop out without raising the others' level.

@@ -38,19 +38,19 @@ struct WtSource {
 // Without any kSynthStep (tests, preview) fx wait for the next note-on. On the preview track SLC picks
 // the slice in every slice mode, played at the root (slice audition).
 // Tick length comes from Project::bpm, the step length is ticks per step x tick.
-// Reads Project without locks: the fields it uses are single bytes / aligned halfwords.
+// Reads the SynthModel without locks: the fields it uses are single bytes / aligned halfwords.
 class Synth {
  public:
   static constexpr int kBlock = 128;     // samples per render()
-  static constexpr int kControl = 32;    // samples per control update (1 ms)
+  static constexpr int kControl = 32;    // samples per control update (0.73 ms)
   static constexpr int kMaxEvents = 64;  // per block
 
-  explicit Synth(const Project& p);
+  explicit Synth(const SynthModel& p);
   // Sample source for SAMPLE instruments; nullptr = sampler silent.
   void setBank(const SampleSource* b) { bank_ = b; }
   // Wavetables for SYNTH instruments, resolved at note-on; nullptr = WT oscillators silent.
   void setWavetables(const WtSource* w) { wt_ = w; }
-  // Delay line (len samples, owned by the caller), nullptr = no delay. Clears it.
+  // Delay lines (2 x len samples: L, R; owned by the caller), nullptr = no delay. Clears it.
   void setDelayBuffer(int16_t* buf, uint32_t len) { delay_.setBuffer(buf, len); }
   // Reverb buffer (len floats >= Reverb::kBufLen, owned by the caller), nullptr = no reverb. Clears it.
   void setReverbBuffer(float* buf, int len) { reverb_.setBuffer(buf, len); }
@@ -61,8 +61,9 @@ class Synth {
   void startTrack(uint8_t track);
   // Silences everything at once, clears the queue and the delay line.
   void reset();
-  // Renders kBlock mono samples, applying pending events at their offsets.
-  void render(int16_t* out);
+  // Renders kBlock stereo samples, applying pending events at their offsets. Voices render mono and
+  // split into L / R by their track's pan (centred tracks: L == R).
+  void render(int16_t* l, int16_t* r);
 
   int activeVoices() const;
 
@@ -71,7 +72,7 @@ class Synth {
   // out (kStealMs) and the pool shrinks to the voices left; below kLoadLow it grows back by one
   // every kCapUpBlocks, up to kVoices. Not called (tests, offline render): the whole pool.
   static constexpr float kLoadHigh = 0.80f, kLoadPanic = 1.0f, kLoadLow = 0.65f;
-  static constexpr int kCapUpBlocks = 25;  // 100 ms
+  static constexpr int kCapUpBlocks = 25;  // 73 ms
   static constexpr int kMinVoices = 4;     // never shed below
   void setLoad(float load);
   int voiceCap() const { return cap_; }
@@ -185,8 +186,9 @@ class Synth {
   // call), else the project's.
   const Instrument& instrOf(const Voice& v) const;
   uint8_t trackVol(uint8_t track) const;
+  void updatePans();
 
-  const Project& p_;
+  const SynthModel& p_;
   const SampleSource* bank_ = nullptr;
   const WtSource* wt_ = nullptr;
   mutable Instrument laneScratch_;  // instrOf: KIT sampler lane
@@ -200,14 +202,18 @@ class Synth {
   int nEv_ = 0;
   static constexpr uint8_t kNoArpChord = 0xFF;
   void resetArp(TrackRt& r) const;
-  float mix_[kBlock];
-  float send_[kBlock];  // delay send bus
-  float rsend_[kBlock];  // reverb send bus
-  float sc_[kBlock];     // sidechain key: the voices of Project::scTrack (bypass the compressor)
+  float mixC_[kBlock];  // centred voices, added to L and R as they are
+  float mixL_[kBlock], mixR_[kBlock];
+  float sendL_[kBlock], sendR_[kBlock];  // delay send bus (panned)
+  float rsend_[kBlock];                  // reverb send bus (mono)
+  float scL_[kBlock], scR_[kBlock];      // sidechain key: the voices of Project::scTrack (bypass the compressor)
+  // Per track: L / R gains (panGains x kPanNorm: 1 at the centre), centred = pan 0.
+  float panL_[kSynthTracks], panR_[kSynthTracks];
+  int8_t pan_[kSynthTracks];
   Reverb reverb_;
   Compressor comp_;
-  Svf dj_;  // master DJ filter
-  void djFilter(float* x, int n);
+  Svf dj_[2];  // master DJ filter, L and R
+  void djFilter(float* l, float* r, int n);
   Delay delay_;
   float trackPeak_[kSynthTracks] = {};
   bool meters_ = false;
@@ -220,6 +226,11 @@ class Synth {
   uint32_t fmCalls_ = 0;
   uint32_t drumCalls_ = 0;
 };
+
+// Equal-power pan law: pan -64 (left) .. 0 .. 63 (right) to gains; -64: l 1, r 0; 0: both 0.7071;
+// 63: l 0, r 1. The synth scales them by kPanNorm, so a centred track keeps the mono level.
+void panGains(int8_t pan, float& l, float& r);
+constexpr float kPanNorm = 1.41421356f;
 
 // Where an event stamped t (us) lands in the block that starts playing at blockT: sample offset,
 // clamped to [0, kBlock - 1]. Late events go to 0, events past the block return -1 (keep for later).

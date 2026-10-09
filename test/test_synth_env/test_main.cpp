@@ -6,6 +6,7 @@ using namespace mt;
 void setUp() {}
 void tearDown() {}
 
+
 // Number of next() calls until the stage differs from s.
 static int samplesIn(Env& e, Env::Stage s, int limit = 100000) {
   int n = 0;
@@ -27,13 +28,13 @@ void test_adsr_timing() {
   e.set(10, 10, 0.5f, 10);
   e.gate(true);
   TEST_ASSERT_EQUAL(static_cast<int>(Env::Stage::Attack), static_cast<int>(e.stage()));
-  TEST_ASSERT_INT_WITHIN(1, 320, samplesIn(e, Env::Stage::Attack));
+  TEST_ASSERT_INT_WITHIN(1, 10 * kSynthRate / 1000, samplesIn(e, Env::Stage::Attack));
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.f, e.level());
-  TEST_ASSERT_INT_WITHIN(1, 320, samplesIn(e, Env::Stage::Decay));
+  TEST_ASSERT_INT_WITHIN(1, 10 * kSynthRate / 1000, samplesIn(e, Env::Stage::Decay));
   TEST_ASSERT_EQUAL(static_cast<int>(Env::Stage::Sustain), static_cast<int>(e.stage()));
   for (int i = 0; i < 1000; ++i) TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.5f, e.next());
   e.gate(false);
-  TEST_ASSERT_INT_WITHIN(1, 320, samplesIn(e, Env::Stage::Release));
+  TEST_ASSERT_INT_WITHIN(1, 10 * kSynthRate / 1000, samplesIn(e, Env::Stage::Release));
   TEST_ASSERT_TRUE(e.idle());
   TEST_ASSERT_EQUAL_FLOAT(0.f, e.level());
 }
@@ -79,7 +80,7 @@ void test_zero_attack_then_decay() {
   e.set(0, 10, 0.f, 0);
   e.gate(true);
   TEST_ASSERT_EQUAL_FLOAT(1.f, e.next());
-  TEST_ASSERT_INT_WITHIN(2, 320, samplesIn(e, Env::Stage::Decay));
+  TEST_ASSERT_INT_WITHIN(2, 10 * kSynthRate / 1000, samplesIn(e, Env::Stage::Decay));
   TEST_ASSERT_EQUAL_FLOAT(0.f, e.level());
   TEST_ASSERT_TRUE(e.idle());  // sustain at zero: the note is over, the voice frees
 }
@@ -109,7 +110,7 @@ void test_fade_uses_its_time() {
   e.next();
   e.fade(3);
   TEST_ASSERT_EQUAL(static_cast<int>(Env::Stage::Release), static_cast<int>(e.stage()));
-  TEST_ASSERT_INT_WITHIN(1, 96, samplesIn(e, Env::Stage::Release));
+  TEST_ASSERT_INT_WITHIN(1, 3 * kSynthRate / 1000, samplesIn(e, Env::Stage::Release));
   TEST_ASSERT_TRUE(e.idle());
 }
 

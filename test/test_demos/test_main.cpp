@@ -132,22 +132,22 @@ void test_save_load_round_trip() {
 // The first 20 s of each song sound, without clipping, and stay well inside the voice pool (the
 // demos must not lean on the CPU guard or on stealing).
 void test_songs_render_clean() {
-  static int16_t line[2 * kSynthRate];
+  static int16_t line[2 * 2 * kSynthRate];  // 2 s, L and R
   static float rv[Reverb::kBufLen];
   static BuiltinWt wt;
   for (int i = 0; i < demoCount(); ++i) {
     demoBuild(i, p);
     Synth* synth = new Synth(p);
-    synth->setDelayBuffer(line, sizeof(line) / 2);
+    synth->setDelayBuffer(line, 2 * kSynthRate);
     synth->setReverbBuffer(rv, Reverb::kBufLen);
     synth->setWavetables(&wt);
     RenderSpec spec;
     spec.mode = RenderSpec::Mode::Song;
     OfflineRender::Guard g(p, spec);
     OfflineRender r(p, *synth, spec);
-    int16_t out[Synth::kBlock];
+    int16_t out[Synth::kBlock], outR[Synth::kBlock];
     int maxV = 0, maxHeavy = 0;
-    for (int b = 0; b < 5000 && r.renderBlock(out); ++b) {  // 20 s
+    for (int b = 0; b < 20 * kSynthRate / Synth::kBlock && r.renderBlock(out, outR); ++b) {  // 20 s
       int h = 0;
       for (int k = 0; k < kVoices; ++k) h += heavyLoad(synth->voice(k));
       maxV = synth->activeVoices() > maxV ? synth->activeVoices() : maxV;

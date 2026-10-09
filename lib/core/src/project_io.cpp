@@ -323,6 +323,15 @@ LoadErr readGrov(CrcSource& in, uint32_t size, Project& p) {
   return in.skip(size - kGrovSize) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
+// TPAN: the tracks' pan + 64 (kTracks bytes). Files without it: all centred.
+LoadErr readTpan(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t b[kTracks];
+  if (size < sizeof(b)) return LoadErr::BadValue;
+  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  for (int t = 0; t < kTracks; ++t) p.tracks[t].pan = static_cast<int8_t>(clampu(b[t], 0, 127) - 64);
+  return in.skip(size - sizeof(b)) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 // TLEN: pattern index + kTracks track lengths (0 = the pattern length), after its PATN.
 LoadErr readTlen(CrcSource& in, uint32_t size, Project& p) {
   uint8_t b[1 + kTracks];
@@ -566,6 +575,11 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.chunk("GROV", sizeof(g)) || !o.write(g, sizeof(g))) return false;
   }
   if (!o.chunk("PRFM", kPerfButtons) || !o.write(p.perfMap, kPerfButtons)) return false;
+  {
+    uint8_t pn[kTracks];
+    for (int t = 0; t < kTracks; ++t) pn[t] = static_cast<uint8_t>(p.tracks[t].pan + 64);
+    if (!o.chunk("TPAN", sizeof(pn)) || !o.write(pn, sizeof(pn))) return false;
+  }
 
   uint8_t c[12] = {'C', 'R', 'C', ' '};
   wr32(c + 4, 4);
@@ -666,6 +680,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
     else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);
     else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out);
+    else if (memcmp(ch, "TPAN", 4) == 0) e = readTpan(in, size, out);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;

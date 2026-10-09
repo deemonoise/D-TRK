@@ -1,27 +1,37 @@
 # D-TRK
 
-A 16-track tracker with a built-in synthesizer on the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen).
+A 16-track tracker with a built-in synthesizer: the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen) plus a **Teensy 4.1** synth board.
 16 patterns, song mode, Fill (every Nth / Euclid / random) for notes, volume and FX, saving to microSD, MIDI file import.
-Built-in sound: FM, 808 / 909 drum machines, the SYNTH synthesizer (saw / square / triangle and wavetable), a sampler and chiptune, played through the board's built-in amplifier — each track plays either the internal synth or external MIDI.
+Built-in sound: FM, 808 / 909 drum machines, the SYNTH synthesizer (saw / square / triangle and wavetable), a sampler and chiptune, in stereo at 44.1 kHz through a PCM5102A DAC and a headphone amplifier — each track plays either the internal synth or external MIDI.
 
 User manual: [docs/manual.md](docs/manual.md). Русская версия: [README_ru.md](README_ru.md).
 3D-printable enclosure and battery power circuit: [enclosure/](enclosure/README.md).
 
+## Architecture
+
+The device is two boards connected by a UART link:
+
+- **WT32-SC01 Plus (ESP32-S3)** — the tracker: sequencer, UI (display, touch, encoder, buttons), MIDI OUT, Wi-Fi firmware page.
+- **Teensy 4.1 — the synth board**: the synthesizer engine (`mt::Synth` from `lib/core` inside a Teensy Audio Library `AudioStream`, 44.1 kHz stereo, 32 voices, up to 16 of them "heavy" — FM / DRUM / SYNTH WT), the only microSD card (SdFat, FAT32 or exFAT), the sample bank in its program flash, the PCM5102A DAC and the MAX97220 headphone amplifier.
+- **Link**: ESP `UART_NUM_2` (GPIO TX 13 / RX 14) ↔ Teensy `Serial1` (RX1 0 / TX1 1), 3 Mbaud, COBS frames with CRC16, protocol version 1. Synth events carry a timestamp and are played 4 ms after they are sent; the sound state is mirrored by diffing a `SynthModel` (the base struct of `Project`); files go through a remote `fs::FS` served by the Teensy.
+
+The status bar shows the synth board's state in the CPU field: `NO SYNTH` (no answer: the sequencer and MIDI OUT work, files and internal sound do not), `SYNTH FW` (protocol version mismatch — update the synth board), `SYNC` (sending the sound state), otherwise `CPU NN%` of the synth board. PROJ → SYS: Synth fw (version), Link (counters), Card, CPU profile, Update synth (from `/firmware/teensy.hex` on the card).
+
 ## Wiring
 
-The built-in display, touch panel and microSD slot are already routed on the board. The encoder, the MIDI output and the DAC go to the board's expansion connector (Extended IO); the PCF8575 expander with all the buttons goes to the Debug connector. Full soldering diagram (power, MIDI, buttons, DAC, headphones): [docs/wiring.md](docs/wiring.md).
+The built-in display and touch panel are already routed on the board; the board's own microSD slot is not used (the card is in the Teensy). The encoder, the MIDI output and the link to the Teensy go to the board's expansion connector (Extended IO); the PCF8575 expander with all the buttons goes to the Debug connector. The DAC and the headphone amplifier are on the Teensy. Full soldering diagram (power, MIDI, buttons, link, DAC, headphones): [docs/wiring.md](docs/wiring.md).
 
 | GPIO | What to connect | How |
 |---|---|---|
 | 10 | MIDI OUT | through a 10 Ω resistor to the Tip of the TRS jack (see diagram below) |
 | 11 | Encoder, pin A | the other end — the encoder's common pin to GND |
 | 12 | Encoder, pin B | |
-| 13 | DAC BCK | PCM5102A module, see [Sound](#sound) |
-| 14 | DAC LCK (LRCK, WS) | |
-| 21 | DAC DIN | |
+| 13 | Link TX | to the Teensy's pin 0 (RX1), see [Synth board](#synth-board-teensy-41) |
+| 14 | Link RX | to the Teensy's pin 1 (TX1) |
+| 21 | spare | to the Teensy's pin 2 (reserved, unused) |
 | 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, track buttons | Debug connector (TXD0 / RXD0), **required**, see below |
 | 3.3V | MIDI OUT | through a 33 Ω resistor to the Ring of the TRS jack |
-| GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack, DAC GND |
+| GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack, Teensy GND |
 
 Encoder A and B use the internal pull-up to 3.3 V (`INPUT_PULLUP`), so no external resistors are needed. All buttons are on the PCF8575 expander, whose pins have their own weak pull-ups; a button shorts its pin to GND.
 
@@ -64,6 +74,21 @@ Safe boot (hold Shift at power-on) works as before: the firmware reads Shift fro
 - GPIO 43/44 are free because the log and flashing go through the native USB (`ARDUINO_USB_CDC_ON_BOOT=1`). At startup the ESP32 bootloader prints to TXD0 (GPIO 43) — this does not bother the module.
 - The buttons and LEDs work on the visible half of the tracks — 1–8 or 9–16; the half is chosen by the cursor (move past track 8 and the second half is shown; the GRID header shows `1-8` / `9-16`). Button N selects track N of that half, Shift + N mutes the same track (the toast shows the real number, 1–16), and in GRID edit mode the buttons enter scale degrees. LED N is the same track: lit for the selected one, flashes on notes; activity in the other half is not shown. Details in the [manual](docs/manual.md#trackkeys).
 
+### Synth board (Teensy 4.1)
+
+```
+WT32-SC01 Plus (Extended IO)        Teensy 4.1
+  GPIO 13 (UART TX) ───────────────── 0  (RX1)
+  GPIO 14 (UART RX) ───────────────── 1  (TX1)
+  GPIO 21           ───────────────── 2  (spare, unused)
+  5V (IP5306 output) ──────────────── VIN
+  GND               ───────────────── GND
+```
+
+- Both boards are 3.3 V, no level shifting needed; the Teensy's pins are not 5 V tolerant.
+- Cut the VUSB–VIN jumper on the back of the Teensy so that the computer's USB and the IP5306 do not power each other.
+- The microSD card goes into the Teensy's slot. The DAC is on the Teensy's I2S1, see [DAC](#dac-pcm5102a).
+
 ### MIDI OUT (TRS type A, 3.3 V)
 
 ```
@@ -81,27 +106,27 @@ GND    ────────── Sleeve (MIDI DIN pin 2, shield)
 
 | Block | Pins |
 |---|---|
-| microSD (SPI) | CS 41, MOSI 40, CLK 39, MISO 38 |
+| microSD (SPI) | CS 41, MOSI 40, CLK 39, MISO 38 — not used (the card is in the Teensy), reserve |
 | FT6336U touch (I2C) | SDA 6, SCL 5, INT 7, RST 4 (shared with LCD) |
 | ST7796 display | 8080 bus, 8-bit (internal board routing) |
 
-GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound goes to an external DAC on GPIO 13/14/21 (see below). GPIO 43/44 (Debug connector) are used by the PCF8575.
+GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound comes from the synth board's DAC (see below). GPIO 43/44 (Debug connector) are used by the PCF8575.
 
 ## Sound
 
-Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO; it runs on the synth board: 32 voices, 44.1 kHz, stereo, per-track pan (TRACK → Pan, equal power; stored in the project, old projects are centred). A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to a PCM5102A DAC on the Teensy's I2S1 and from it to a MAX97220 headphone amplifier; the WT32's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
 
 ### DAC (PCM5102A)
 
-A common module (purple GY-PCM5102, black "PCM5102 audio DAC v2" and similar), on the expansion connector.
+A common module (purple GY-PCM5102, black "PCM5102 audio DAC v2" and similar), on the Teensy.
 
 | DAC module | Connect to | Notes |
 |---|---|---|
-| VIN | 3.3 V or 5 V | the module has its own LDO |
+| VIN | Teensy 3V3 (or 5 V) | the module has its own LDO |
 | GND | GND | star point of the audio ground, see below |
-| BCK | GPIO 13 | bit clock |
-| LCK (LRCK, WS) | GPIO 14 | word clock |
-| DIN | GPIO 21 | data |
+| BCK | Teensy 21 (BCLK1) | bit clock |
+| LCK (LRCK, WS) | Teensy 20 (LRCLK1) | word clock |
+| DIN | Teensy 7 (OUT1A) | data |
 | SCK (MCLK) | GND | no MCLK: the DAC's PLL derives the clock from BCK |
 | FMT | L (GND) | I2S format |
 | FLT | L (GND) | normal-latency filter |
@@ -110,7 +135,7 @@ A common module (purple GY-PCM5102, black "PCM5102 audio DAC v2" and similar), o
 
 On many modules FMT, FLT, DEMP and XSMT are solder jumpers (H / L pads) on the back, and SCK has its own pad or header pin — check the silkscreen of your module.
 
-The firmware sends 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs), the same mono signal on L and R. The L / R outputs are a line level: 2.1 Vrms at full scale, centred on ground (no DC offset). Unlike the old SPK output, this can go to a mixer, audio interface, powered speakers or a recorder — from the DAC's L / R (before the amplifier) or from the amplifier's headphone output.
+The synth board sends 44.1 kHz, 16-bit stereo (Teensy Audio Library `AudioOutputI2S`, BCK = 64 fs). The L / R outputs are a line level: 2.1 Vrms at full scale, centred on ground (no DC offset). Unlike the old SPK output, this can go to a mixer, audio interface, powered speakers or a recorder — from the DAC's L / R (before the amplifier) or from the amplifier's headphone output.
 
 ### Headphone amplifier (MAX97220)
 
@@ -124,24 +149,23 @@ board 5V (or 3.3V) ── VCC     GND ── GND     SHDN ── VCC
 
 - The inputs are differential: each channel's "+" goes to the DAC output, its "−" to the DAC's GND (AGND). Pin names on the module's silkscreen may differ — check them.
 - DirectDrive: the outputs are ground-referenced and need no coupling capacitors; the jack's Sleeve goes to GND as usual.
-- Power: 5 V from the board's 5V pin (the IP5306 output after the switch) or 3.3 V. SHDN, if broken out, goes to VCC (amplifier running).
+- Power: 5 V from the IP5306 output after the switch (the same line that feeds the boards) or 3.3 V. SHDN, if broken out, goes to VCC (amplifier running).
 - The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower Phones (PROJ → SYS) or add a divider / potentiometer between the DAC and the amplifier inputs.
-- Ground: keep audio ground wires short and use a star point at the DAC's GND: the DAC, amplifier and headphone jack grounds meet there, and one wire goes from it to the board's GND. This keeps the IP5306 boost converter's whine out of the headphones.
+- Ground: keep audio ground wires short and use a star point at the DAC's GND: the DAC, amplifier and headphone jack grounds meet there, and one wire goes from it to the Teensy's GND. This keeps the IP5306 boost converter's whine out of the headphones.
 - Before first power-up — Phones (PROJ → SYS) at minimum, headphones off your ears, then bring it up.
 
-The internal sound lags behind MIDI tracks by about 14 ms (constant, no jitter). Synthesizer load is shown by `CPU NN%` in the right corner of the status bar (average over 0.5 s; yellow from 60% or if at least one block in the window took longer than 4 ms to compute — this is covered by the DMA queue; red from 85% or for 2 s after an audio dropout — an emptied DMA queue, an audible click).
+The internal sound lags behind MIDI tracks by a few milliseconds: events are played 4 ms after they are sent over the link, plus the audio buffer (constant, no jitter; not compensated yet). The synth board's load is shown by `CPU NN%` in the right corner of the status bar (yellow from 60%, red from 85% or after an audio dropout — an audible click).
 
 ### Samples
 
 - Samples belong to the project: each project has its own list (up to **128**), and an instrument (INST → Sample) chooses only from it. On the card, a project is `/projects/NAME.mtp` plus the folder `/projects/NAME/` with its samples (`<sample>.wav`, mono, 16-bit). The folder is written by Save: missing and changed WAVs are written, files of samples removed from the project are deleted. If the folder could not be written — "SAMPLES NOT SAVED", the project stays unsaved (`*`), and the next Save completes it.
-- To move a project to another card or tracker, copy the `.mtp` and its folder (with a card reader or over Wi-Fi). Load and autoload pull samples that are not in flash from the project folder (with progress); if a file is not found or has changed, the sample is marked `MISSING` (silent), toast "N SAMPLES MISSING".
-- Flash (the `samples` partition, ~9.9 MB, ≈ 2.5 min mono at 32 kHz, up to 128 entries) is the cache the samples play from. Identical data in different projects is stored once. When space runs out, import and loading evict other projects' samples on their own (largest first) and compact the flash; otherwise "BANK FULL". The cache does not depend on the card, and a normal reflash (USB or OTA) does not touch it. The partition came with a new partition table — after updating from an old version, flash **once over USB** (see [Build and flash](#build-and-flash)), otherwise FILE → SAMPLES shows "NO SAMPLE BANK".
+- To move a project to another card or tracker, copy the `.mtp` and its folder (take the card out of the Teensy and use a card reader). Load and autoload pull samples that are not in flash from the project folder (with progress); if a file is not found or has changed, the sample is marked `MISSING` (silent), toast "N SAMPLES MISSING".
+- The sample bank in the Teensy's program flash (from 0x60200000, ~5.75 MB, ≈ 1 min mono at 44.1 kHz, up to 128 entries) is the cache the samples play from. Identical data in different projects is stored once. When space runs out, import and loading evict other projects' samples on their own (largest first) and compact the flash; otherwise "BANK FULL". The cache does not depend on the card, and a synth board firmware update does not touch it.
 - FILE → SAMPLES: the line `FREE n / m KB  CACHE k KB` (CACHE — space taken by other projects' samples), **Import WAV…**, **Compact** (compact the flash), **Clear cache** (remove from flash everything not in the current project), then the project's samples: name, length, size, red `MISSING`. Click a sample — **Rename** (also renames it in instruments; a MISSING sample cannot be renamed) or **Delete** (remove from the project; the next Save deletes the file).
 - `/samples` on the card (created automatically) is the import library, subfolders allowed up to 4 levels. Import WAV…: folders first (`name/`, click to enter, `< Up (..)` to go up), then `.wav` files; hidden files (macOS `._*`) are not shown. Play on a file previews it (first 8 s, Play again stops; in this list the Play button does not start the transport). An imported sample goes into the project folder on save.
-- WAV: PCM **8 / 16 / 24-bit**, mono or stereo (stereo is mixed down to mono), any sample rate: above 32 kHz it is downsampled to 32 kHz, lower rates are stored as is. **Float and 32-bit are not supported** ("UNSUPPORTED WAV").
-- Import, Rename, Delete, Compact and Clear cache work only with playback stopped (writing to flash stops the sound).
+- WAV: PCM **8 / 16 / 24-bit**, mono or stereo (stereo is mixed down to mono), any sample rate: above 44.1 kHz it is downsampled to 44.1 kHz, lower rates are stored as is. **Float and 32-bit are not supported** ("UNSUPPORTED WAV").
+- Import, Rename, Delete, Compact and Clear cache work only with playback stopped (writing to the Teensy's flash pauses the sound).
 - Old projects (from when samples were shared): on load the list is built from the instruments, and samples are taken from flash by their old names. Save such a project once and its folder will appear.
-- `.wav` files can be uploaded over Wi-Fi to `/samples` (and subfolders, up to 4 MB) or straight into the project folder (up to 10 MB).
 
 ### FM
 
@@ -155,14 +179,14 @@ The **KIT** instrument type has 8 lanes: each is either its own mini-sampler (a 
 
 ### DRUM (808 / 909)
 
-**DRUM** — 16 "analog" machines: BD8, SD8, TOM8, CP8, RS8, CL8, CB8, HH8, CY8 (808) and BD9, SD9, TOM9, CP9, RS9, HH9, CY9 (909). The same 5 macro slots and `DEC…CON` locks, but each machine names them differently (TONE, SNAPPY, DRIVE, N.DEC, HP…); an empty slot is a grey "-". Every machine has DECAY. All machines are one-shot and mono per track: a new note cuts off the previous one (choke), note-off doesn't matter; Attack, Decay, Sustain, Release, Mode, Glide are greyed out. Note C4 is the machine's base pitch. Closed / open hat — short and long DECAY. The timbres approximate the originals (the 909 hats and cymbals are samples there, synthesis here). FM, DRUM and SYNTH with a WT oscillator together — no more than 8 voices at once (an extra one steals the oldest).
+**DRUM** — 16 "analog" machines: BD8, SD8, TOM8, CP8, RS8, CL8, CB8, HH8, CY8 (808) and BD9, SD9, TOM9, CP9, RS9, HH9, CY9 (909). The same 5 macro slots and `DEC…CON` locks, but each machine names them differently (TONE, SNAPPY, DRIVE, N.DEC, HP…); an empty slot is a grey "-". Every machine has DECAY. All machines are one-shot and mono per track: a new note cuts off the previous one (choke), note-off doesn't matter; Attack, Decay, Sustain, Release, Mode, Glide are greyed out. Note C4 is the machine's base pitch. Closed / open hat — short and long DECAY. The timbres approximate the originals (the 909 hats and cymbals are samples there, synthesis here). FM, DRUM and SYNTH with a WT oscillator together — no more than 16 voices at once (an extra one steals the oldest).
 
 ### SYNTH (oscillators and wavetable)
 
 **SYNTH** — an "analog" synthesizer: 2 oscillators, each in **SAW**, **SQR**, **TRI** mode (alias-free, PolyBLEP) or **WT** (a wavetable of 64 frames × 256 points with mipmaps, frame position = SHAPE), plus sub (a square −1 / −2 octaves below osc 1), white noise, hard sync of osc 2 to osc 1, osc 2 semitones (±24) and its own AD envelope on SHAPE (Env>Shp ±). The volume envelope is ADSR; Mode POLY / MONO and Glide work as on CHIP. INST pages: MAIN / ENV / **OSC** / **MOD** / FILT / LFO.
 
 - 5 macros on the same slots as FM / DRUM: **SHP1** (square PW or WT frame of osc 1), **SHP2** (the same for osc 2), **MIX** (osc 1 ↔ osc 2), **DET** (osc 2 detune, ±50 cents), **SENV** (env→SHAPE depth). Locks are fx `DEC`, `COL`, `SHP`, `SWP`, `CON` respectively; LFO dest — SHP1…SENV.
-- Wavetables: 8 built-in (`*SAWSQR`, `*PWM`, `*SINSAW`, `*TRISQR`, `*FORMANT`, `*ORGAN`, `*SYNC`, `*BELL`) — built into the flash bank on first start, work without a card. Your own — **IMPORT…** in the wavetable chooser (tap / click the Table row) from `/wavetables` on the card (with subfolders up to 4 levels): WaveEdit (256-point frames, up to 64) and Serum / Vital (2048-point frames or a `clm` chunk; with more than 64 frames, they are taken evenly). One wavetable takes 96 KB of flash; up to 32 wavetables per project. A name already in use with different data gets a `-2`, `-3`… suffix.
+- Wavetables: 8 built-in (`*SAWSQR`, `*PWM`, `*SINSAW`, `*TRISQR`, `*FORMANT`, `*ORGAN`, `*SYNC`, `*BELL`) — built into the synth board's flash bank on first start, work without a card. Your own — **IMPORT…** in the wavetable chooser (tap / click the Table row) from `/wavetables` on the card (with subfolders up to 4 levels): WaveEdit (256-point frames, up to 64) and Serum / Vital (2048-point frames or a `clm` chunk; with more than 64 frames, they are taken evenly). One wavetable takes 96 KB of the bank; up to 32 wavetables per project. A name already in use with different data gets a `-2`, `-3`… suffix.
 - Save writes the project's wavetables to `/projects/NAME/wt/<name>.wav`, and Load pulls missing ones into flash from there. If a wavetable is neither in flash nor in the folder, its name in INST is red and the oscillator is silent.
 - Import works only with playback stopped ("STOP PLAYBACK FIRST"). 37 factory presets (BASS, LEAD, PAD, KEYS, PLUCK, FX) on the built-in wavetables; your own go in `/presets/SYNTH/`.
 
@@ -177,7 +201,7 @@ All types have these at the end of the INST list:
 ### Drive, reverb, compressor
 
 - **Drive** (INST → FILT, first row): tanh overdrive before the filter, lock `DRV`, LFO target `DRIVE`.
-- **Reverb**: the instrument's Rvb send (lock `RVB`), size / decay / level in PROJ. 23 KB buffer in PSRAM.
+- **Reverb**: the instrument's Rvb send (lock `RVB`), size / decay / level in PROJ. Stereo (Freeverb), buffers in the Teensy's RAM.
 - **Compressor** on all built-in sound (PROJ → Comp, Comp rel) with **sidechain** from a track (SC track, SC depth): set SC track to the kick and the mix "pumps".
 - **ARP**: fx `ARM` sets the order (up, down, up-down, random) and the number of notes per step (1–8); ARP + CHD on the same step arpeggiates the chord.
 - **4 LFOs** per instrument (INST → LFO), each in Hz or synced to tempo (1/32 … 8 bars), restarted per note or free-running per track from the playback start (bar-locked with TEMPO); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
@@ -213,7 +237,7 @@ More in the [manual](docs/manual.md#song).
 
 - **MIX** is a separate tab at the bottom, next to TRACK: 8 strips for the half of the tracks under the cursor (volume fader, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
 - Track volume from any screen: hold its button and turn the encoder (Shift ×10); not in GRID edit mode, REC or PERF.
-- **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, mono 16-bit 32 kHz, with delay / reverb / compressor and a 2 s tail. The file can be downloaded over Wi-Fi or imported back as a sample.
+- **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, stereo 16-bit 44.1 kHz, rendered by the synth board, with delay / reverb / compressor and a 2 s tail. The file can be taken from the card or imported back as a sample (mixed down to mono).
 - **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s.
 - Render and resampling work only when stopped, roughly in real time; cancel with a long press of the encoder or Play.
 
@@ -225,32 +249,26 @@ More in the [manual](docs/manual.md#render).
 - **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or use the encoder on the page tabs and click (Shift+click — back); the list wraps around.
 - **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
 - **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in PROJ → SYS.
-- **Wi-Fi page**: tabs per section, scrollable lists with a filter.
 - **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.
 
 ## SD card
 
-**FAT32** with an **MBR** partition scheme. exFAT (the standard for cards over 32 GB) and GPT are not readable — the screen will show "NO SD CARD".
+The card is in the **Teensy's** microSD slot (the WT32's own slot is not used); the tracker reaches it over the link. **FAT32** or **exFAT**, long names. To move files, take the card out of the Teensy and use a card reader. When upgrading from the single-board version, copy the contents of the old card to the new one.
 
-Format it with any tool that offers FAT32 with an MBR partition table (for cards over 32 GB the system formatter often offers only exFAT: use a third-party FAT32 formatter). Formatting erases the card.
-
-The firmware creates the folders `/projects`, `/midi`, `/samples`, `/wavetables` and `/presets` (with subfolders `FM`, `DRUM`, `SAMPLE`, `CHIP`, `SYNTH`) itself. Put MIDI files for import in `/midi`, WAVs for importing into projects in `/samples`, wavetables for SYNTH in `/wavetables`. A project's samples live in `/projects/NAME/`, its wavetables in `/projects/NAME/wt/` (written by the tracker on save), instrument presets in `/presets/<TYPE>/`.
+The firmware creates the folders `/projects`, `/midi`, `/samples`, `/wavetables` and `/presets` (with subfolders `FM`, `DRUM`, `SAMPLE`, `CHIP`, `SYNTH`) itself; `/firmware/teensy.hex` is the synth board firmware for Update synth. Put MIDI files for import in `/midi`, WAVs for importing into projects in `/samples`, wavetables for SYNTH in `/wavetables`. A project's samples live in `/projects/NAME/`, its wavetables in `/projects/NAME/wt/` (written by the tracker on save), instrument presets in `/presets/<TYPE>/`.
 
 ## Wi-Fi
 
-FILE → **Wi-Fi transfer…**: the tracker joins your home network (network and password are entered on screen and stored in flash) and serves the page `http://d-trk.local` (or by the IP shown on screen). On the page:
+FILE → **Wi-Fi firmware…**: the tracker joins your home network (network and password are entered on screen and stored in flash) and serves the page `http://d-trk.local/firmware` (or by the IP shown on screen). The page has two sections:
 
-- MIDI (`/midi`, `.mid` only, up to 512 KB), projects (`/projects`, `.mtp`/`.bak`) and samples (`/samples`, `.wav` only, up to 4 MB): upload, download, rename, delete; samples from `/samples` are then imported into a project on the tracker (FILE → SAMPLES);
-- in the projects section, each project has a `name/` row (marked "samples") with its WAVs (up to 10 MB, name up to 16 characters): enter, upload, download, rename, delete. To move a project, upload the `.mtp`, open its "samples" row and upload the WAVs; if the folder does not exist yet, the first WAV creates it. Renaming a `.mtp` moves the folder, deleting a project (both `.mtp` and `.bak`) deletes it — except for the project open on the tracker: its folder stays (files in it can be changed; the next Save rewrites them from flash);
-- wavetables (`/wavetables`, `.wav` only, up to ~3 MB, subfolders as for samples): imported into a project on the tracker (INST → SYNTH → Table → IMPORT…). The project's wavetables are in the project folder, subfolder `wt/` (marked "wavetables");
-- in the samples section — subfolders: breadcrumb navigation, "New folder", deleting an empty folder; folder name up to 32 characters (Latin letters, digits, space, `.` `_` `-`, not starting with a dot), no deeper than 4 levels. MIDI has no subfolders;
-- presets (`/presets`, `.mti` only, up to 1 KB, name up to 16 characters): at the root — type folders CHIP, SAMPLE, FM, DRUM, SYNTH (cannot be deleted), files only inside them, your own subfolders up to 4 levels. An uploaded preset is checked (CRC, version) and must be in the folder of its type, otherwise it is rejected;
-- firmware update with the file `.pio/build/wt32/firmware.bin`.
+- **Tracker (.bin)** — firmware update of the ESP32-S3 with the file `.pio/build/wt32/firmware.bin`;
+- **Synth board (.hex)** — firmware update of the Teensy with the file `.pio/build/teensy41/firmware.hex`: the tracker stores it on the synth card as `/firmware/teensy.hex`, the Teensy checks the image in its staging area (FlasherX) and only then flashes itself and restarts. Without Wi-Fi: copy the file to `/firmware/teensy.hex` on the card and run PROJ → SYS → Update synth.
+
+There is no file manager any more: projects, samples, MIDI files and presets are moved by taking the card out of the Teensy.
 
 While this mode is open, playback is stopped. Exit with EXIT, a long press of the encoder or another tab; Wi-Fi is turned off.
 
-
-**Security:** the page has no password. While the mode is open, anyone on the same network can change files on the card and flash the tracker. Do not enable it on other people's or public networks.
+**Security:** the page has no password. While the mode is open, anyone on the same network can flash the tracker and the synth board. Do not enable it on other people's or public networks.
 
 More in the [manual](docs/manual.md#wifi).
 
@@ -259,24 +277,38 @@ More in the [manual](docs/manual.md#wifi).
 You need [PlatformIO](https://platformio.org/).
 
 ```
-pio run -e wt32 -t upload     # build and flash over USB
-pio run -e wt32-ota -t upload # over Wi-Fi: FILE → Wi-Fi transfer open on the tracker
-pio test -e native            # core tests on the computer
+pio run -e wt32 -t upload          # tracker (ESP32-S3): build and flash over USB
+pio run -e wt32-ota -t upload      # tracker over Wi-Fi: FILE → Wi-Fi firmware… open on the tracker
+pio run -e teensy41 -t upload      # synth board: first flash over the Teensy's USB (Teensy Loader)
+pio run -e teensy41                # synth board .hex for the Wi-Fi page or /firmware/teensy.hex
+pio test -e native                 # core tests on the computer (955 tests)
 ```
 
-The partition table is custom (`partitions.csv`): two 3 MB firmware slots and a `samples` partition (~9.9 MB) for the sample flash cache. After switching to it, flash once over USB (`pio run -e wt32 -t upload`): OTA does not change the partition table. Wi-Fi settings (NVS) are kept — `nvs` and `otadata` are at the same addresses.
+- **First flash of the Teensy** goes over its USB with Teensy Loader (before the enclosure is closed); later the synth board is updated from the tracker (Wi-Fi page or PROJ → SYS → Update synth).
+- The ESP partition table is custom (`partitions.csv`): two ~8 MB firmware slots (`app0` / `app1`); the old `samples` partition is gone. After switching to it, flash once over USB (`pio run -e wt32 -t upload`): OTA does not change the partition table. Wi-Fi settings (NVS) are kept — `nvs` and `otadata` are at the same addresses.
+- Teensy program flash: firmware from 0x60000000, OTA staging area at 0x60100000, sample bank from 0x60200000.
+
+Service environments:
+
+| Env | What for |
+|---|---|
+| `teensy41-bench` | voice pool bench on the Teensy: results over USB serial and the link log; do not save projects from this build |
+| `teensy41-desk` | desk mode: a bare Teensy on a computer, the link over USB serial, sound on USB audio; drive it with `scripts/link_desk.py hello\|notes\|status\|fs\|selftest` |
+| `wt32-echo` + `teensy41-echo` | link wiring check: echo test between the boards |
 
 ## Structure
 
 | Folder | Contents |
 |---|---|
-| `lib/core` | hardware-independent core: model, sequencer, fx, scales, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, filter), WAV parser, sample bank, project sample list, presets |
+| `lib/core` | hardware-independent code shared by both boards: model, sequencer, fx, scales, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, SYNTH, filter, delay, reverb, compressor), WAV parser, sample bank, project sample list, presets; link: `link_frame`, `link_msg`, `link_fs`, `state_mirror`, `time_sync`, `bank_ops`, `render_link`, `wave_peaks`, `ihex` |
+| `lib/flasherx` | FlasherX (vendored, with its license): writing the Teensy's flash for OTA |
 | `src/engine` | sequencer task on core 0 (timer, MIDI output) |
-| `src/audio` | built-in sound: I2S to the external PCM5102A DAC, audio task, sample bank in flash, WAV import |
-| `src/hw` | input (encoder, buttons), MIDI UART, SD, display configuration |
+| `src/link` | link client on the ESP: UART task, synth events and state, sample bank commands, synth board firmware update |
+| `src/hw` | input (encoder, buttons), MIDI UART, card access, display configuration |
 | `src/ui` | UI screens |
-| `src/storage` | saving and loading projects and presets |
-| `src/net` | Wi-Fi, file transfer web page, OTA |
+| `src/storage` | saving and loading projects and presets; `remote_fs` — the Teensy's card as an `fs::FS` |
+| `src/net` | Wi-Fi, firmware web page, OTA |
+| `src/teensy` | synth board firmware: link server, audio output, sample bank in flash, card file server, render, preview, firmware update, bench |
 | `test` | Unity tests of the core |
 | `docs` | manual and development plans |
 | `enclosure` | enclosure: OpenSCAD model and STL |
@@ -290,4 +322,4 @@ Copyright © 2026 deemonoise.
 
 The name **D-TRK** and its logo are not covered by these licenses: a modified firmware or a device built from this project may say it is based on D-TRK, but must not be called or sold as D-TRK without permission.
 
-Full texts: [LICENSES/](LICENSES/). Third-party libraries (ESP-IDF, Arduino-ESP32, LovyanGFX, Unity) keep their own licenses.
+Full texts: [LICENSES/](LICENSES/). Third-party libraries (ESP-IDF, Arduino-ESP32, LovyanGFX, Teensyduino, Teensy Audio Library, SdFat, FlasherX, Unity) keep their own licenses.

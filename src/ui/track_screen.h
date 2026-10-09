@@ -27,7 +27,7 @@ class TrackScreen : public Screen {
 
  private:
   // Rows in page order: MAIN, NOTE, MIDI (contiguous runs, see kPageFirst).
-  enum Row : int { kName, kOut, kInstr, kVol, kMute, kSolo, kVel, kGate, kPatLen, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
+  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kVel, kGate, kPatLen, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
   enum Page : int { kPgMain, kPgNote, kPgMidi, kPages };
   static constexpr int kPageFirst[kPages + 1] = {kName, kVel, kChannel, kRows};
   static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH

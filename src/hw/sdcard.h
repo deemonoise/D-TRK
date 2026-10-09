@@ -4,11 +4,13 @@
 
 namespace hw {
 
-// microSD over SPI. UI task only; the engine never touches the card.
-bool sdBegin();  // (re)mounts (retries with a bus reset), creates /projects, /midi, /samples, /wavetables and /presets/<TYPE>
+// The microSD card in the synth board, over the link (storage/remote_fs). UI task only; the engine
+// never touches the card. The synth board mounts it and creates /projects, /midi, /samples,
+// /wavetables and /presets/<TYPE>.
+bool sdBegin();  // false without the synth board or a card in it
+// The synth board answers and the last card operation did not find the slot empty.
 bool sdReady();
-// After a read / write error: remounts only if the card no longer answers (a bad file is not a
-// reason to drop the mount). Returns sdReady().
+// After a read / write error: asks the synth board for the card again. Returns sdReady().
 bool sdRecover();
 fs::FS& sdFs();
 

@@ -5,7 +5,7 @@
 #include "app.h"
 #include "page_bar.h"
 #include "audio/audio.h"
-#include "audio/bank.h"
+#include "link/bank_client.h"
 #include "name_edit.h"
 #include "note_name.h"
 #include "sample_set.h"
@@ -183,8 +183,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                       nullptr, notWt,
                       [this, k, notWt] {
                         if (notWt()) return false;
-                        const mt::WtSource* w = audio::wavetableSource();
-                        return !inst().synWt[k][0] || !w || !w->findWt(inst().synWt[k]);
+                        return !inst().synWt[k][0] || !audio::wtCached(inst().synWt[k]);
                       }};
     syn_[shapeRow] = {k ? "Shape2" : "Shape1", macroNum(mt::kMacShp1 + k), macroEdit(mt::kMacShp1 + k),
                       [this, k] {
@@ -275,9 +274,9 @@ void InstScreen::initKit() {
                       {},
                       [this, lane] {
                         const mt::KitLane& ln = lane();
-                        if (!ln.sample[0] || !audio::bankMounted()) return false;
-                        const mt::Project& p = app_.project();
-                        return mt::projSampleBank(p, audio::bank(), mt::projSampleFind(p, ln.sample)) < 0;
+                        if (!ln.sample[0]) return false;
+                        const audio::BankView& v = audio::bankView();
+                        return v.mounted && !v.sampleCached(mt::projSampleFind(app_.project(), ln.sample));
                       }};
     // Instr: INS1..16; a SAMPLE instrument moves the lane note to its root (the sample keeps its pitch).
     r[kLaneInstr] = {"  Instr",
@@ -801,9 +800,9 @@ void InstScreen::drawOsc(LGFX_Sprite& s, int y) {
   const uint8_t shape = m.macro[mt::kMacShp1 + k] > 127 ? 127 : m.macro[mt::kMacShp1 + k];
   switch (static_cast<mt::SynOsc>(m.synOsc[k] % 4)) {
     case mt::SynOsc::Wt: {
-      const mt::WtSource* w = audio::wavetableSource();
-      const int16_t* t = w && m.synWt[k][0] ? w->findWt(m.synWt[k]) : nullptr;
-      if (t) drawWtFrame(s, t, (shape * (mt::kWtFrames - 1) + 63) / 127, x0, top, x1, bot, kText);
+      int8_t pts[mt::kWtFrameLen];
+      if (m.synWt[k][0] && audio::wtFrame(m.synWt[k], (shape * (mt::kWtFrames - 1) + 63) / 127, pts))
+        drawWtFrame(s, pts, x0, top, x1, bot, kText);
       else s.drawLine(x0, mid, x1, mid, kRed);  // missing: silent
       break;
     }

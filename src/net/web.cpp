@@ -4,41 +4,23 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <WebServer.h>
-#include <errno.h>
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>
-#include "esp_heap_caps.h"
 #include "file_rules.h"
-#include "hw/sdcard.h"
-#include "preset_io.h"
-#include "preset_paths.h"
-#include "storage/storage.h"
+#include "link/link.h"
+#include "link/synth_fw.h"
+#include "storage/remote_fs.h"
 #include "web_page.h"
 
 namespace net {
 namespace {
 
-constexpr const char* kTmp = "/~upload.tmp";
-constexpr size_t kListCap = 16 * 1024;
 constexpr uint32_t kRestartDelayMs = 1000;
 
 WebServer* srv = nullptr;
 WebHooks hooks;
-OpenFile openFile = OpenFile::Untouched;
 uint32_t restartAt = 0;
 char busyMsg[32];
-
-// One upload at a time (WebServer serves requests one by one).
-struct Upload {
-  mt::WebDir dir;
-  char sub[mt::kWebSubMax + 1];
-  char name[mt::kWebNameMax + 1];
-  fs::File f;
-  bool started;
-  int code;  // 0 while fine
-  char err[112];
-} up;
 
 struct Fw {
   bool started;
@@ -46,6 +28,22 @@ struct Fw {
   char err[48];
   uint32_t lastKb;
 } fw;
+
+// The synth board's firmware: the .hex uploaded to its card, then FwFromFile (webPoll), then its
+// reboot awaited. /api/update-synth/status reports the state to the page.
+enum class SynthState : uint8_t { Idle, Upload, Flash, Reboot, Done, Error };
+struct SynthUpd {
+  SynthState state;
+  bool started;
+  int code;
+  char msg[48];
+  uint32_t done, total;
+  uint32_t oldBoot, deadline;
+  fs::File file;
+  uint32_t lastKb;
+} syn;
+bool synthPending = false;  // uploaded: FwFromFile at the next webPoll
+bool inSynthFlash = false;  // webPoll is inside FwFromFile (status requests are still served)
 
 // Device log lines: ASCII only (the screen font has no Cyrillic).
 void log(const char* fmt, const char* a, const char* b = "") {
@@ -65,500 +63,9 @@ void busy(const char* msg) {
   if (hooks.busy) hooks.busy(busyMsg);
 }
 
-const char* project() {
-  const char* p = hooks.project ? hooks.project() : "";
-  return p ? p : "";
-}
-
-void touch(const char* name, OpenFile what) {
-  if (mt::isOpenProjectFile(project(), name)) openFile = what;
-}
-
 void reply(int code, const char* text) { srv->send(code, "text/plain; charset=utf-8", text); }
 
-bool openFolder(mt::WebDir d, const char* sub) { return mt::isOpenProjectFolder(project(), d, sub); }
-
-// "/projects/<base>" of a project file (.mtp / .bak), or false.
-bool projectFolderPath(const char* file, char* base, char* path, size_t cap) {
-  return mt::projectFolderOf(file, base) && mt::webPath(path, cap, mt::WebDir::Projects, base, "");
-}
-
-bool isFolder(const char* path) {
-  fs::File f = hw::sdFs().open(path);
-  const bool ok = f && f.isDirectory();
-  f.close();
-  return ok;
-}
-
-// Removes the files of a project folder and its "wt" folder (wavetable sources: files only), then the
-// folder. Other subfolders, deeper ones, and files whose path does not fit keep it in place. True when
-// the folder is gone. wtDepth: how many levels of "wt" folders may still be entered (1 for a project).
-bool removeFolder(const char* path, int wtDepth = 1) {
-  char child[mt::kWebPathMax];
-  int skip = 0;  // leading entries left in place (path too long, a folder not to enter)
-  for (;;) {
-    fs::File dir = hw::sdFs().open(path);
-    if (!dir || !dir.isDirectory()) return false;
-    String entry;
-    bool isDir, found = false, childDir = false;
-    int seen = 0;
-    while (hw::sdNextEntry(dir, entry, isDir)) {
-      if (seen++ < skip) continue;
-      const int n = snprintf(child, sizeof(child), "%s/%s", path, entry.c_str());
-      if (n > 0 && n < static_cast<int>(sizeof(child)) && (!isDir || (wtDepth > 0 && strcasecmp(entry.c_str(), "wt") == 0))) {
-        found = true;
-        childDir = isDir;
-        break;
-      }
-      ++skip;
-    }
-    dir.close();  // removing while the folder is open for reading is not safe on FAT
-    if (!found) break;
-    if (childDir ? !removeFolder(child, wtDepth - 1) : !hw::sdFs().remove(child)) return false;
-  }
-  return hw::sdFs().rmdir(path);
-}
-
-// "/projects/<base><ext>" exists.
-bool projectFileExists(const char* base, const char* ext) {
-  char name[24], p[mt::kWebPathMax];
-  snprintf(name, sizeof(name), "%s%s", base, ext);
-  return mt::webPath(p, sizeof(p), mt::WebDir::Projects, "", name) && hw::sdFs().exists(p);
-}
-
-// "sub/name" for the device log (sub is validated ASCII).
-void shownName(char* out, size_t cap, const char* sub, const char* name) {
-  snprintf(out, cap, "%s%s%s", sub, sub[0] ? "/" : "", name);
-}
-
-// Common checks: card, section, subfolder (samples, wavetables, presets, project folders and their wt), name. False after replying with an error.
-// path gets "<section>/<sub>/<name>" (or the folder itself when nameArg is null).
-bool checkArgs(mt::WebDir& d, String& sub, const char* nameArg, String& name, char* path, size_t cap) {
-  if (!hw::sdReady()) {
-    reply(503, "no SD card");
-    return false;
-  }
-  d = mt::parseWebDir(srv->arg("dir").c_str());
-  sub = srv->arg("sub");
-  if (d == mt::WebDir::Invalid || !mt::webSubValid(d, sub.c_str())) {
-    reply(400, "invalid folder");
-    return false;
-  }
-  if (!nameArg) {
-    if (mt::webPath(path, cap, d, sub.c_str(), "")) return true;
-    reply(400, "invalid folder");
-    return false;
-  }
-  name = srv->arg(nameArg);
-  if (!mt::webFileAllowedIn(d, sub.c_str(), name.c_str())) {
-    reply(400, "invalid name");
-    return false;
-  }
-  if (!mt::webPath(path, cap, d, sub.c_str(), name.c_str())) {
-    reply(400, "path too long");
-    return false;
-  }
-  return true;
-}
-
-void handleList() {
-  mt::WebDir d;
-  String sub, unused;
-  char path[mt::kWebPathMax];
-  if (!checkArgs(d, sub, nullptr, unused, path, sizeof(path))) return;
-  char* buf = static_cast<char*>(heap_caps_malloc(kListCap, MALLOC_CAP_SPIRAM));
-  if (!buf) {
-    reply(500, "out of memory");
-    return;
-  }
-  fs::File dir = hw::sdFs().open(path);
-  if (!dir || !dir.isDirectory()) {
-    heap_caps_free(buf);
-    char base[17];
-    if (d == mt::WebDir::Projects && mt::projectSubBase(sub.c_str(), base) &&
-        (projectFileExists(base, ".mtp") || projectFileExists(base, ".bak"))) {
-      srv->send(200, "application/json", "[]");  // no samples / tables yet: the first upload makes the folder
-      return;
-    }
-    if (sub.length() && hw::sdFs().exists(mt::webDirPath(d))) {
-      reply(404, "folder not found");
-      return;
-    }
-    hw::sdRecover();  // card pulled or changed: remount for the next request
-    reply(503, "card not readable (removed?)");
-    return;
-  }
-  size_t len = 1;
-  buf[0] = '[';
-  buf[1] = 0;
-  bool first = true;
-  String name;
-  bool isDir;
-  while (hw::sdNextEntry(dir, name, isDir)) {
-    if (isDir) {
-      // Only folders that can be opened again through sub (valid name, not too deep).
-      if (!mt::webDirListed(d, sub.c_str(), name.c_str())) continue;
-      if (!mt::jsonAppendDir(buf, kListCap - 1, len, name.c_str(), first)) break;
-    } else {
-      if (!mt::webFileAllowedIn(d, sub.c_str(), name.c_str())) continue;  // also hides legacy.idx
-      char filePath[mt::kWebPathMax];
-      if (!mt::webPath(filePath, sizeof(filePath), d, sub.c_str(), name.c_str())) continue;
-      fs::File f = hw::sdFs().open(filePath);
-      if (!f) continue;
-      const uint32_t size = static_cast<uint32_t>(f.size());
-      f.close();
-      if (!mt::jsonAppendFile(buf, kListCap - 1, len, name.c_str(), size, first)) break;
-    }
-    first = false;
-  }
-  buf[len++] = ']';
-  buf[len] = 0;
-  srv->send(200, "application/json", buf);
-  heap_caps_free(buf);
-}
-
-void handleFile() {
-  mt::WebDir d;
-  String sub, name;
-  char path[mt::kWebPathMax];
-  if (!checkArgs(d, sub, "name", name, path, sizeof(path))) return;
-  fs::File f = hw::sdFs().open(path, FILE_READ);
-  if (!f) {
-    reply(404, "file not found");
-    return;
-  }
-  srv->sendHeader("Content-Disposition", String("attachment; filename=\"") + name + "\"");
-  srv->streamFile(f, "application/octet-stream");
-  f.close();
-}
-
-void uploadFail(int code, const char* msg) {
-  if (up.code) return;
-  Serial.printf("web: upload %s: %d %s (errno %d)\n", up.name, code, msg, errno);
-  up.code = code;
-  strlcpy(up.err, msg, sizeof(up.err));
-  if (up.f) up.f.close();
-  hw::sdFs().remove(kTmp);
-  if (code == 507) hw::sdRecover();  // write errors usually mean the card was pulled: remount
-}
-
-// Uploaded preset (kTmp) loads and its type matches the type folder at the top of sub. False after
-// failing the upload.
-bool checkPreset(const char* sub) {
-  fs::File f = hw::sdFs().open(kTmp, FILE_READ);
-  if (!f) {
-    uploadFail(507, "cannot read the temporary file");
-    return false;
-  }
-  hw::FileSource src(f);
-  mt::Instrument m;
-  const mt::LoadErr e = mt::loadPreset(src, m);
-  f.close();
-  if (e != mt::LoadErr::Ok) {
-    uploadFail(400, "preset file is damaged");
-    return false;
-  }
-  const char* type = mt::presetTypeName(m.type);
-  const size_t n = strlen(type);
-  if (strncmp(sub, type, n) != 0 || (sub[n] && sub[n] != '/')) {  // sub starts with a type folder (webSubValid)
-    char msg[sizeof(up.err)];
-    snprintf(msg, sizeof(msg), "a %s preset: it belongs in /presets/%s", type, type);
-    uploadFail(400, msg);
-    return false;
-  }
-  return true;
-}
-
-void handleUploadChunk() {
-  HTTPUpload& u = srv->upload();
-  switch (u.status) {
-    case UPLOAD_FILE_START: {
-      up = Upload{};
-      up.started = true;
-      if (!hw::sdReady()) return uploadFail(503, "no SD card");
-      up.dir = mt::parseWebDir(srv->arg("dir").c_str());
-      if (up.dir == mt::WebDir::Invalid || srv->arg("sub").length() > mt::kWebSubMax) return uploadFail(400, "invalid folder");
-      if (up.dir == mt::WebDir::Diag) return uploadFail(403, "the logs are written by the tracker");
-      strlcpy(up.sub, srv->arg("sub").c_str(), sizeof(up.sub));
-      if (!mt::webSubValid(up.dir, up.sub)) return uploadFail(400, "invalid folder");
-      strlcpy(up.name, u.filename.c_str(), sizeof(up.name));
-      if (u.filename.length() > mt::kWebNameMax || !mt::webFileAllowedIn(up.dir, up.sub, up.name))
-        return uploadFail(400, up.dir == mt::WebDir::Midi      ? "invalid name (.mid, up to 59 characters, Latin)"
-                               : up.dir == mt::WebDir::Samples || up.dir == mt::WebDir::Wavetables
-                                   ? "invalid name (.wav, up to 59 characters, Latin)"
-                               : up.dir == mt::WebDir::Presets
-                                   ? (up.sub[0] ? "invalid name (.mti, up to 16 characters: A-Z 0-9 - _)"
-                                                : "presets go in the type folders: FM, DRUM, SAMPLE, CHIP, SYNTH")
-                               : up.sub[0] ? "invalid name (.wav, up to 16 characters: A-Z 0-9 - _)"
-                                           : "invalid name (.mtp/.bak, up to 16 characters)");
-      char path[mt::kWebPathMax];
-      if (!mt::webPath(path, sizeof(path), up.dir, up.sub, up.name)) return uploadFail(400, "path too long");
-      if (up.sub[0] && up.dir != mt::WebDir::Projects) {  // a project folder is created at the end
-        char dirPath[mt::kWebPathMax];
-        mt::webPath(dirPath, sizeof(dirPath), up.dir, up.sub, "");
-        if (!isFolder(dirPath)) return uploadFail(404, "folder not found");
-      }
-      if (srv->arg("overwrite") != "1" && hw::sdFs().exists(path)) return uploadFail(409, "file already exists");
-      hw::sdFs().remove(kTmp);
-      up.f = hw::sdFs().open(kTmp, FILE_WRITE);
-      if (!up.f) return uploadFail(507, "cannot open a temporary file on the card");
-      busy("UPLOAD...");
-      break;
-    }
-    case UPLOAD_FILE_WRITE:
-      if (up.code || !up.f) return;
-      if (u.totalSize + u.currentSize > mt::webMaxBytesIn(up.dir, up.sub)) return uploadFail(413, "file too large");
-      if (up.f.write(u.buf, u.currentSize) != u.currentSize) return uploadFail(507, "card full or write error");
-      break;
-    case UPLOAD_FILE_END: {
-      if (up.code || !up.f) return;
-      up.f.close();
-      char path[mt::kWebPathMax];
-      mt::webPath(path, sizeof(path), up.dir, up.sub, up.name);  // checked at the start
-      if (up.dir == mt::WebDir::Projects && !up.sub[0]) {
-        const storage::Result r = storage::installProject(kTmp, up.name);
-        if (r != storage::Result::Ok) {
-          char msg[48];
-          snprintf(msg, sizeof(msg), "project rejected: %s", storage::resultText(r));
-          return uploadFail(r == storage::Result::WriteFail ? 507 : 422, msg);
-        }
-      } else {
-        if (up.dir == mt::WebDir::Presets && !checkPreset(up.sub)) return;
-        // Sample or table of a project: its folder (and the wt folder) appear with the first one.
-        char dirs[2][mt::kWebPathMax];
-        bool made[2] = {false, false};
-        // Folders this upload made, newest first (empty: nothing landed there).
-        auto unmake = [&] {
-          for (int k = 1; k >= 0; --k)
-            if (made[k]) hw::sdFs().rmdir(dirs[k]);
-        };
-        if (up.dir == mt::WebDir::Projects) {
-          char base[17];
-          mt::projectSubBase(up.sub, base);  // checked at the start
-          mt::webPath(dirs[0], sizeof(dirs[0]), up.dir, base, "");
-          mt::webPath(dirs[1], sizeof(dirs[1]), up.dir, up.sub, "");
-          const int need = strcmp(base, up.sub) == 0 ? 1 : 2;
-          for (int i = 0; i < need; ++i) {
-            if (isFolder(dirs[i])) continue;
-            if (!hw::sdFs().mkdir(dirs[i])) {
-              unmake();
-              return uploadFail(507, "cannot create the project folder");
-            }
-            made[i] = true;
-          }
-        }
-        if (hw::sdFs().exists(path) && !hw::sdFs().remove(path)) return uploadFail(507, "cannot replace the file");
-        if (!hw::sdFs().rename(kTmp, path)) {
-          unmake();
-          return uploadFail(507, "cannot rename the temporary file");
-        }
-      }
-      touch(up.name, OpenFile::Replaced);
-      break;
-    }
-    case UPLOAD_FILE_ABORTED: uploadFail(400, "upload aborted"); break;
-  }
-}
-
-void handleUploadDone() {
-  if (!up.started) {
-    reply(400, "no file");
-    return;
-  }
-  char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
-  shownName(shown, sizeof(shown), up.sub, up.name);
-  if (up.code) {
-    if (up.code != 409) logFail(up.name[0] ? shown : "upload", up.code);
-    reply(up.code, up.err);
-  } else {
-    log("+ %s", shown);
-    reply(200, "OK");
-  }
-  up.started = false;
-}
-
-// After a project file rename: the sample folder follows <old>.mtp, or <old>.bak when there is no
-// <old>.mtp (a .bak beside its .mtp leaves the folder to the .mtp). The open project's folder stays:
-// the tracker saves into it under the open name. Returns a note for the page when the folder was
-// meant to move but did not, else nullptr.
-const char* renameFolder(const char* from, const char* to) {
-  const size_t n = strlen(from);
-  const bool bak = n > 4 && strcmp(from + n - 4, ".bak") == 0;
-  char oldBase[17], newBase[17], a[mt::kWebPathMax], b[mt::kWebPathMax];
-  if (!projectFolderPath(from, oldBase, a, sizeof(a)) || !projectFolderPath(to, newBase, b, sizeof(b))) return nullptr;
-  if (strcasecmp(oldBase, newBase) == 0 || !isFolder(a)) return nullptr;  // FAT: case-only change needs nothing
-  if (bak && projectFileExists(oldBase, ".mtp")) return nullptr;
-  if (openFolder(mt::WebDir::Projects, oldBase)) {
-    log("! %s/ kept (open project)", oldBase);
-    return "Renamed. The samples folder keeps the old name: the project is open on the tracker";
-  }
-  if (hw::sdFs().exists(b)) {
-    log("! %s/ kept: %s/ exists", oldBase, newBase);
-    return "Renamed. The samples folder keeps the old name: a folder with the new name exists";
-  }
-  if (!hw::sdFs().rename(a, b)) {
-    log("! %s/ > %s/ failed", oldBase, newBase);
-    return "Renamed. The samples folder could not be renamed";
-  }
-  log("~ %s/ > %s/", oldBase, newBase);
-  return nullptr;
-}
-
-void handleRename() {
-  mt::WebDir d;
-  String sub, from;
-  char a[mt::kWebPathMax], b[mt::kWebPathMax];
-  if (!checkArgs(d, sub, "from", from, a, sizeof(a))) return;
-  const String to = srv->arg("to");
-  if (!mt::webRenameAllowedIn(d, sub.c_str(), from.c_str(), to.c_str())) {
-    reply(400, "invalid name (the extension cannot change)");
-    return;
-  }
-  if (!mt::webPath(b, sizeof(b), d, sub.c_str(), to.c_str())) {
-    reply(400, "path too long");
-    return;
-  }
-  if (!hw::sdFs().exists(a)) {
-    reply(404, "file not found");
-    return;
-  }
-  if (strcasecmp(from.c_str(), to.c_str()) != 0 && hw::sdFs().exists(b)) {
-    reply(409, "a file with this name exists");
-    return;
-  }
-  if (!hw::sdFs().rename(a, b)) {
-    reply(507, "card write error");
-    return;
-  }
-  touch(from.c_str(), OpenFile::Removed);
-  touch(to.c_str(), OpenFile::Replaced);
-  char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
-  shownName(shown, sizeof(shown), sub.c_str(), from.c_str());
-  log("~ %s > %s", shown, to.c_str());
-  const char* note = d == mt::WebDir::Projects && !sub[0] ? renameFolder(from.c_str(), to.c_str()) : nullptr;
-  reply(200, note ? note : "OK");
-}
-
-// After a project file is deleted: once neither <base>.mtp nor <base>.bak is left, its sample folder
-// goes too. The open project's folder stays (the next save writes it again). Returns a note for the
-// page when the folder could not be removed, else nullptr.
-const char* dropFolder(const char* file) {
-  char base[17], dir[mt::kWebPathMax];
-  if (!projectFolderPath(file, base, dir, sizeof(dir)) || openFolder(mt::WebDir::Projects, base)) return nullptr;
-  if (projectFileExists(base, ".mtp") || projectFileExists(base, ".bak") || !isFolder(dir)) return nullptr;
-  if (removeFolder(dir)) {
-    log("x %s/", base);
-    return nullptr;
-  }
-  log("! %s/ not removed", base);
-  return "Deleted. The samples folder could not be deleted";
-}
-
-void handleDelete() {
-  mt::WebDir d;
-  String sub, name;
-  char path[mt::kWebPathMax];
-  if (!checkArgs(d, sub, "name", name, path, sizeof(path))) return;
-  if (!hw::sdFs().exists(path)) {
-    reply(404, "file not found");
-    return;
-  }
-  if (!hw::sdFs().remove(path)) {
-    reply(507, "card write error");
-    return;
-  }
-  touch(name.c_str(), OpenFile::Removed);
-  char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
-  shownName(shown, sizeof(shown), sub.c_str(), name.c_str());
-  log("x %s", shown);
-  const char* note = d == mt::WebDir::Projects && !sub[0] ? dropFolder(name.c_str()) : nullptr;
-  reply(200, note ? note : "OK");
-}
-
-// Why a folder name is not accepted in sub of d.
-const char* mkdirError(mt::WebDir d, const char* sub) {
-  switch (d) {
-    case mt::WebDir::Samples:
-    case mt::WebDir::Wavetables:
-      return "invalid folder name (up to 32 characters: A-Z, digits, space, . _ -; at most 4 levels)";
-    case mt::WebDir::Presets:
-      return sub[0] ? "invalid folder name (up to 32 characters: A-Z, digits, space, . _ -; at most 4 levels in a type folder)"
-                    : "/presets holds only the type folders: FM, DRUM, SAMPLE, CHIP, SYNTH";
-    case mt::WebDir::Projects:
-      return "a project folder (and its wt) appears with its first file and goes with the project";
-    default: return "folders only in samples, wavetables and presets";
-  }
-}
-
-// Folder name argument for mkdir / rmdir (samples, wavetables and presets: project folders come and go with
-// the project). False after replying with an error.
-bool folderArgs(mt::WebDir& d, String& sub, String& name, char* path, size_t cap) {
-  String unused;
-  if (!checkArgs(d, sub, nullptr, unused, path, cap)) return false;
-  name = srv->arg("name");
-  if (!mt::webMkdirAllowed(d, sub.c_str(), name.c_str())) {
-    reply(400, mkdirError(d, sub.c_str()));
-    return false;
-  }
-  if (!mt::webPath(path, cap, d, sub.c_str(), name.c_str())) {
-    reply(400, "path too long");
-    return false;
-  }
-  return true;
-}
-
-void handleMkdir() {
-  mt::WebDir d;
-  String sub, name;
-  char path[mt::kWebPathMax];
-  if (!folderArgs(d, sub, name, path, sizeof(path))) return;
-  if (hw::sdFs().exists(path)) {
-    reply(409, "this name already exists");
-    return;
-  }
-  if (!hw::sdFs().mkdir(path)) {
-    hw::sdRecover();
-    reply(507, "card write error");
-    return;
-  }
-  char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
-  shownName(shown, sizeof(shown), sub.c_str(), name.c_str());
-  log("+ %s/", shown);
-  reply(200, "OK");
-}
-
-void handleRmdir() {
-  mt::WebDir d;
-  String sub, name;
-  char path[mt::kWebPathMax];
-  if (!folderArgs(d, sub, name, path, sizeof(path))) return;
-  if (d == mt::WebDir::Presets && !sub.length()) {
-    reply(400, "type folders cannot be deleted");
-    return;
-  }
-  fs::File dir = hw::sdFs().open(path);
-  if (!dir || !dir.isDirectory()) {
-    reply(404, "folder not found");
-    return;
-  }
-  String entry;
-  bool isDir;
-  const bool empty = !hw::sdNextEntry(dir, entry, isDir);  // hidden files count too: rmdir needs a really empty folder
-  dir.close();
-  if (!empty) {
-    reply(409, "folder not empty: delete its files and folders first");
-    return;
-  }
-  if (!hw::sdFs().rmdir(path)) {
-    hw::sdRecover();
-    reply(507, "card write error");
-    return;
-  }
-  char shown[mt::kWebSubMax + mt::kWebNameMax + 2];
-  shownName(shown, sizeof(shown), sub.c_str(), name.c_str());
-  log("x %s/", shown);
-  reply(200, "OK");
-}
+void page() { srv->send_P(200, "text/html; charset=utf-8", kWebPage); }
 
 void fwFail(int code, const char* msg) {
   if (fw.code) return;
@@ -573,6 +80,7 @@ void handleFwChunk() {
     case UPLOAD_FILE_START:
       fw = Fw{};
       fw.started = true;
+      if (inSynthFlash) return fwFail(409, "the synth board is updating");
       if (!mt::webFirmwareName(u.filename.c_str())) return fwFail(400, "a .bin file is needed");
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) return fwFail(500, Update.errorString());
       busy("FIRMWARE 0 KB");
@@ -615,6 +123,140 @@ void handleFwDone() {
   if (!restartAt) restartAt = 1;
 }
 
+void synthFail(int code, const char* msg) {
+  if (syn.code) return;
+  syn.code = code;
+  syn.state = SynthState::Error;
+  strlcpy(syn.msg, msg, sizeof(syn.msg));
+  if (syn.file) syn.file.close();
+  storage::remoteFs().remove(synthfw::kHexTmp);
+}
+
+bool synthBusy() {
+  return syn.state == SynthState::Upload || syn.state == SynthState::Flash || syn.state == SynthState::Reboot ||
+         synthPending;
+}
+
+void handleSynthChunk() {
+  HTTPUpload& u = srv->upload();
+  fs::FS& fs = storage::remoteFs();
+  switch (u.status) {
+    case UPLOAD_FILE_START:
+      if (synthBusy() || inSynthFlash) {
+        syn.started = true;
+        syn.code = 409;
+        strlcpy(syn.msg, "an update is running", sizeof(syn.msg));
+        return;
+      }
+      syn = SynthUpd{};
+      syn.started = true;
+      syn.state = SynthState::Upload;
+      if (!mt::webSynthFirmwareName(u.filename.c_str())) return synthFail(400, "a .hex file is needed");
+      if (!slink::synthUp()) return synthFail(503, "no synth board");
+      fs.mkdir("/firmware");
+      fs.remove(synthfw::kHexTmp);
+      syn.file = fs.open(synthfw::kHexTmp, FILE_WRITE);
+      if (!syn.file) return synthFail(500, "cannot write the card");
+      busy("SYNTH FW 0 KB");
+      break;
+    case UPLOAD_FILE_WRITE: {
+      if (syn.code) return;
+      if (syn.file.write(u.buf, u.currentSize) != u.currentSize) return synthFail(500, "card write failed");
+      const uint32_t kb = static_cast<uint32_t>((u.totalSize + u.currentSize) / 1024);
+      syn.done = kb * 1024;
+      if (kb - syn.lastKb >= 64) {
+        syn.lastKb = kb;
+        char msg[32];
+        snprintf(msg, sizeof(msg), "SYNTH FW %lu KB", static_cast<unsigned long>(kb));
+        busy(msg);
+      }
+      break;
+    }
+    case UPLOAD_FILE_END:
+      if (syn.code) return;
+      syn.file.close();
+      fs.remove(synthfw::kHexPath);
+      if (!fs.rename(synthfw::kHexTmp, synthfw::kHexPath)) return synthFail(500, "card rename failed");
+      break;
+    case UPLOAD_FILE_ABORTED: synthFail(400, "upload aborted"); break;
+  }
+}
+
+void handleSynthDone() {
+  if (!syn.started) {
+    reply(400, "no file");
+    return;
+  }
+  syn.started = false;
+  if (syn.code) {
+    logFail("synth firmware", syn.code);
+    reply(syn.code, syn.msg);
+    return;
+  }
+  syn.state = SynthState::Flash;
+  syn.done = syn.total = 0;
+  strlcpy(syn.msg, "checking the file", sizeof(syn.msg));
+  synthPending = true;
+  reply(200, "OK");
+}
+
+void handleSynthStatus() {
+  static const char* const kNames[] = {"idle", "upload", "flash", "reboot", "done", "error"};
+  char js[128];
+  const unsigned pct = syn.total ? static_cast<unsigned>(static_cast<uint64_t>(syn.done) * 100 / syn.total) : 0;
+  snprintf(js, sizeof(js), "{\"state\":\"%s\",\"pct\":%u,\"msg\":\"%s\"}",
+           kNames[static_cast<int>(syn.state)], pct, syn.msg);
+  srv->send(200, "application/json", js);
+}
+
+void synthProgress(uint32_t done, uint32_t total, void*) {
+  syn.done = done;
+  syn.total = total;
+  static unsigned lastPct = 101;
+  const unsigned pct = total ? static_cast<unsigned>(static_cast<uint64_t>(done) * 100 / total) : 0;
+  if (pct != lastPct) {
+    lastPct = pct;
+    char msg[32];
+    snprintf(msg, sizeof(msg), "SYNTH FW %u%%", pct);
+    busy(msg);
+  }
+  srv->handleClient();  // the page's status polls (inSynthFlash keeps a second update out)
+}
+
+// webPoll(): the uploaded .hex into the synth board, then its reboot awaited (no blocking).
+void pollSynth() {
+  if (synthPending) {
+    synthPending = false;
+    syn.oldBoot = slink::bootId();
+    uint8_t res = 0;
+    uint32_t bytes = 0;
+    inSynthFlash = true;
+    const synthfw::Result r = synthfw::update(synthfw::kHexPath, res, bytes, synthProgress, nullptr);
+    inSynthFlash = false;
+    if (r == synthfw::Result::Ok) {
+      syn.state = SynthState::Reboot;
+      strlcpy(syn.msg, "the synth board restarts", sizeof(syn.msg));
+      syn.deadline = millis() + synthfw::kRebootWaitMs;
+      busy("SYNTH FW OK, RESTART");
+    } else {
+      syn.state = SynthState::Error;
+      strlcpy(syn.msg, r == synthfw::Result::NoSynth ? "NO ANSWER" : synthfw::rejectText(res), sizeof(syn.msg));
+      log("! synth firmware: %s", syn.msg);
+    }
+    return;
+  }
+  if (syn.state != SynthState::Reboot) return;
+  if (synthfw::rebooted(syn.oldBoot)) {
+    syn.state = SynthState::Done;
+    snprintf(syn.msg, sizeof(syn.msg), "synth firmware %s", slink::synthFw());
+    log("+ synth firmware %s", slink::synthFw());
+  } else if (static_cast<int32_t>(millis() - syn.deadline) >= 0) {
+    syn.state = SynthState::Error;
+    strlcpy(syn.msg, "the synth board did not come back", sizeof(syn.msg));
+    log("! synth firmware: %s", "no answer after the update");
+  }
+}
+
 void beginOta() {
   ArduinoOTA.setHostname("d-trk");  // also starts mDNS: http://d-trk.local
   ArduinoOTA.onStart([] { busy("FIRMWARE..."); });
@@ -642,19 +284,14 @@ void beginOta() {
 bool webBegin(const WebHooks& h) {
   if (srv) return true;
   hooks = h;
-  openFile = OpenFile::Untouched;
   restartAt = 0;
   srv = new WebServer(80);
   if (!srv) return false;
-  srv->on("/", HTTP_GET, [] { srv->send_P(200, "text/html; charset=utf-8", kWebPage); });
-  srv->on("/api/list", HTTP_GET, handleList);
-  srv->on("/api/file", HTTP_GET, handleFile);
-  srv->on("/api/upload", HTTP_POST, handleUploadDone, handleUploadChunk);
-  srv->on("/api/rename", HTTP_POST, handleRename);
-  srv->on("/api/delete", HTTP_POST, handleDelete);
-  srv->on("/api/mkdir", HTTP_POST, handleMkdir);
-  srv->on("/api/rmdir", HTTP_POST, handleRmdir);
+  srv->on("/", HTTP_GET, page);
+  srv->on("/firmware", HTTP_GET, page);
   srv->on("/api/update", HTTP_POST, handleFwDone, handleFwChunk);
+  srv->on("/api/update-synth", HTTP_POST, handleSynthDone, handleSynthChunk);
+  srv->on("/api/update-synth/status", HTTP_GET, handleSynthStatus);
   srv->onNotFound([] { reply(404, "no such page"); });
   srv->begin();
   beginOta();
@@ -665,6 +302,7 @@ void webPoll() {
   if (!srv) return;
   srv->handleClient();
   ArduinoOTA.handle();
+  pollSynth();
   if (restartAt && static_cast<int32_t>(millis() - restartAt) >= 0) ESP.restart();
 }
 
@@ -674,14 +312,16 @@ void webEnd() {
   srv->stop();
   delete srv;
   srv = nullptr;
-  if (up.f) up.f.close();
-  if (hw::sdReady()) hw::sdFs().remove(kTmp);
   if (Update.isRunning()) Update.abort();
+  if (syn.file) {
+    syn.file.close();
+    storage::remoteFs().remove(synthfw::kHexTmp);
+  }
+  syn = SynthUpd{};
+  synthPending = false;
   hooks = WebHooks{};
 }
 
 bool webRunning() { return srv != nullptr; }
-
-OpenFile webOpenFile() { return openFile; }
 
 }  // namespace net

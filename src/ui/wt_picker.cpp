@@ -4,7 +4,7 @@
 #include <strings.h>
 #include "app.h"
 #include "audio/audio.h"
-#include "audio/bank.h"
+#include "link/bank_client.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "sample_set.h"
@@ -42,11 +42,10 @@ bool uniqueName(const mt::Project& p, const char* base, uint32_t crc, char out[m
 
 }  // namespace
 
-void drawWtFrame(LGFX_Sprite& s, const int16_t* table, int f, int x0, int y0, int x1, int y1, uint16_t c) {
-  if (!table) return;
-  const int16_t* fr = table + clampi(f, 0, mt::kWtFrames - 1) * mt::kWtFramePts;  // level 0
+void drawWtFrame(LGFX_Sprite& s, const int8_t* pts, int x0, int y0, int x1, int y1, uint16_t c) {
+  if (!pts) return;
   const int w = x1 - x0, mid = (y0 + y1) / 2, half = (y1 - y0) / 2;
-  auto yAt = [&](int i) { return mid - fr[i] * half / 32768; };
+  auto yAt = [&](int i) { return mid - pts[i] * half / 128; };
   int px = x0, py = yAt(0);
   for (int x = 1; x < w; ++x) {
     const int ny = yAt(x * mt::kWtFrameLen / w);
@@ -71,7 +70,7 @@ bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSa
   app.showBusy("IMPORT...");
   mt::Project& p = app.project();
   uint32_t crc = 0;
-  const audio::BankResult r = audio::importWtToCache(path, p, crc, nullptr, importProgress, &app);
+  const audio::BankResult r = audio::importWtToCache(path, crc, nullptr, importProgress, &app);
   if (r != audio::BankResult::Ok) {
     if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app.toast(audio::bankResultText(r));
@@ -327,7 +326,6 @@ void WtPicker::draw(LGFX_Sprite& s, int y0) {
   s.drawString(sdText, kScreenW - 16 - static_cast<int>(strlen(sdText)) * kCharW, ty);
 
   const int top = y0 + kHeaderH;
-  const mt::WtSource* src = audio::wavetableSource();
   for (int r = 0; r < kRows; ++r) {
     const int row = top_ + r;
     if (row >= rowCount()) break;
@@ -344,7 +342,7 @@ void WtPicker::draw(LGFX_Sprite& s, int y0) {
     const Kind k = kinds_[i];
     uint16_t c = kText;
     if (k == Kind::Import) c = kCyan;
-    else if (k == Kind::Table && !(src && src->findWt(names_[i]))) c = kRed;  // not in the bank
+    else if (k == Kind::Table && !audio::wtCached(names_[i])) c = kRed;  // not in the bank
     s.setTextColor(sel ? kCursor : c);
     if (k == Kind::Table && strcasecmp(inst().synWt[osc_], names_[i]) == 0) s.drawString(">", 4, tyy);  // set now
     s.drawString(names_[i], 16, tyy);
@@ -354,11 +352,11 @@ void WtPicker::draw(LGFX_Sprite& s, int y0) {
   if (top_ > 0) s.drawString("^", kScreenW - 24, top + 4);
   if (top_ + kRows < rowCount()) s.drawString("v", kScreenW - 24, top + (kRows - 1) * kRowH + 4);
   // Frame 0 of the selected table.
-  if (!files_ && sel_ > 0 && kinds_[sel_ - 1] == Kind::Table && src) {
-    const int16_t* t = src->findWt(names_[sel_ - 1]);
-    if (t) {
+  if (!files_ && sel_ > 0 && kinds_[sel_ - 1] == Kind::Table) {
+    int8_t pts[mt::kWtFrameLen];
+    if (audio::wtFrame(names_[sel_ - 1], 0, pts)) {
       s.drawRect(kPvX0 - 4, top + kPvY0 - 4, kPvX1 - kPvX0 + 8, kPvY1 - kPvY0 + 8, kDim);
-      drawWtFrame(s, t, 0, kPvX0, top + kPvY0, kPvX1, top + kPvY1, kGreen);
+      drawWtFrame(s, pts, kPvX0, top + kPvY0, kPvX1, top + kPvY1, kGreen);
     }
   }
 }

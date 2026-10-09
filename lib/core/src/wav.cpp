@@ -148,19 +148,21 @@ WavErr wavParse(ByteSource& src, WavInfo& out) {
   return e;
 }
 
-void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc) {
+void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc,
+               int channels) {
+  const uint32_t ch = channels == 2 ? 2 : 1;
   uint8_t* p = out;
   wrId(p, "RIFF");
-  wr32(p, kWavHeaderBytes - 8 + frames * 2);
+  wr32(p, kWavHeaderBytes - 8 + frames * 2 * ch);
   wrId(p, "WAVE");
   wrId(p, "fmt ");
   wr32(p, 16);
-  wr16(p, 1);         // PCM
-  wr16(p, 1);         // mono
+  wr16(p, 1);  // PCM
+  wr16(p, static_cast<uint16_t>(ch));
   wr32(p, rate);
-  wr32(p, rate * 2);  // byte rate
-  wr16(p, 2);         // block align
-  wr16(p, 16);        // bits
+  wr32(p, rate * 2 * ch);                    // byte rate
+  wr16(p, static_cast<uint16_t>(2 * ch));    // block align
+  wr16(p, 16);                               // bits
   wrId(p, "smpl");
   wr32(p, 36);
   memset(p, 0, 36);
@@ -173,7 +175,7 @@ void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uin
   wr32(p, crc);
   wr32(p, frames);
   wrId(p, "data");
-  wr32(p, frames * 2);
+  wr32(p, frames * 2 * ch);
 }
 
 void wavToMono(const uint8_t* raw, uint32_t frames, const WavInfo& w, int16_t* out) {

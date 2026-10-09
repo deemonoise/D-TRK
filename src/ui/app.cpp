@@ -8,6 +8,7 @@
 #include "storage/settings.h"
 #include "storage/storage.h"
 #include "hw/sdcard.h"
+#include "link_msg.h"
 #include "track_leds.h"
 
 namespace ui {
@@ -81,7 +82,21 @@ void App::transport() {
     toast("WI-FI MODE");
     return;
   }
-  engine::post(shift_ ? engine::Cmd::TogglePlay : engine::Cmd::StartStop);
+  const engine::Cmd c = shift_ ? engine::Cmd::TogglePlay : engine::Cmd::StartStop;
+  if (playWait_ >= 0) {  // a second press while waiting: no start
+    playWait_ = -1;
+    toast("CANCEL");
+    return;
+  }
+  // Started before the synth board has the sound state (just loaded, or it rebooted) the first
+  // notes would sound wrong: the start waits for it (pollSynth), at most kSyncWaitMs.
+  if (!status_.playing && audio::synthUp() && audio::versionOk() && !audio::synced()) {
+    playWait_ = static_cast<int8_t>(c);
+    playWaitAt_ = millis();
+    toast("SYNCING...");
+    return;
+  }
+  engine::post(c);
 }
 
 void App::setBpmEdit(bool on) {
@@ -128,6 +143,10 @@ void App::onInput(const hw::InputEvent& ev) {
     menu_.onInput(ev);
     return;
   }
+  if (versionBarrier()) {
+    barrierInput(ev);
+    return;
+  }
   if (bpmEdit_) {
     if (ev.type == InputType::EncTurn) {
       const int bpm = bpmTarget_ + ev.delta * (ev.shift ? 10 : 1);
@@ -152,7 +171,7 @@ void App::onTouch(const TouchEvent& ev) {
   dirty_ = true;
   if (ev.type == TouchType::HDrag) {
     const int y0 = ev.y0;
-    if (!menu_.isOpen() && y0 >= kAreaY && y0 < kTabY && screen()->wantsHDrag()) screen()->onTouch(ev);
+    if (!menu_.isOpen() && !versionBarrier() && y0 >= kAreaY && y0 < kTabY && screen()->wantsHDrag()) screen()->onTouch(ev);
     return;
   }
   if (menu_.isOpen()) {
@@ -161,7 +180,7 @@ void App::onTouch(const TouchEvent& ev) {
   }
   if (ev.type == TouchType::Drag) {
     const int y0 = ev.y0;
-    if (y0 >= kAreaY && y0 < kTabY) screen()->onTouch(ev);  // ignore drags started on the bars
+    if (y0 >= kAreaY && y0 < kTabY && !versionBarrier()) screen()->onTouch(ev);  // ignore drags started on the bars
     return;
   }
   if (ev.y < kStatusH) {
@@ -180,6 +199,12 @@ void App::onTouch(const TouchEvent& ev) {
     return;
   }
   if (ev.type == TouchType::Tap) setBpmEdit(false);
+  if (versionBarrier()) {
+    if (ev.type == TouchType::Tap && ev.y >= kBarrierBtnY && ev.y < kBarrierBtnY + kBarrierBtnH &&
+        ev.x >= (kScreenW - kBarrierBtnW) / 2 && ev.x < (kScreenW + kBarrierBtnW) / 2)
+      barrierInput({hw::InputType::EncClick});
+    return;
+  }
   screen()->onTouch(ev);
 }
 
@@ -316,17 +341,14 @@ void App::setPhones(int v) {
 
 // Device settings (theme, autosave, phones): written once they stay put for a second (an encoder
 // sweep = one write) and the transport is stopped. An NVS write can erase a flash sector with the
-// caches off: never while playing, and with the audio task parked.
+// caches off: never while playing.
 void App::saveSettingsIdle(uint32_t now) {
   if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
   settingsChangedAt_ = 0;
   if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_) return;
-  {
-    audio::Paused parked;
-    if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
-    if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
-    if (phones_ != savedPhones_) storage::saveSetting("phones", static_cast<uint8_t>(phones_));
-  }
+  if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
+  if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
+  if (phones_ != savedPhones_) storage::saveSetting("phones", static_cast<uint8_t>(phones_));
   savedTheme_ = theme_;
   savedAutosaveMin_ = autosaveMin_;
   savedPhones_ = phones_;
@@ -477,6 +499,8 @@ void App::tick() {
   saveSettingsIdle(now);
   autosaveIdle(now);
   pollCpu(now);
+  audio::pump();
+  pollSynth(now);
   if (toast_[0] && static_cast<int32_t>(now - toastUntil_) >= 0) {
     toast_[0] = 0;
     dirty_ = true;
@@ -512,12 +536,67 @@ void App::pollCpu(uint32_t now) {
   }
 }
 
+// The synth board as the status bar shows it, and a start held back for it (transport).
+void App::pollSynth(uint32_t now) {
+  Synth st = Synth::Ok;
+  if (!audio::synthUp()) st = Synth::Down;
+  else if (!audio::versionOk()) st = Synth::Mismatch;
+  else if (!audio::synced()) st = Synth::Sync;
+  if (st != synth_) {
+    synth_ = st;
+    dirty_ = true;
+  }
+  // Down or mismatched it will not sync: start anyway (MIDI OUT tracks still play).
+  if (playWait_ >= 0 && (st != Synth::Sync || now - playWaitAt_ >= kSyncWaitMs)) {
+    engine::post(static_cast<engine::Cmd>(playWait_));
+    playWait_ = -1;
+    dirty_ = true;
+  }
+}
+
+bool App::versionBarrier() { return synth_ == Synth::Mismatch && !(tab_ == Tab::File && file_.wifiOpen()); }
+
+// The only actions there: Update synth from the card (as PROJ -> SYS), or FILE -> Wi-Fi, whose page
+// takes a synth firmware too.
+void App::barrierInput(const hw::InputEvent& ev) {
+  if (ev.type != hw::InputType::EncClick) return;
+  enum : int { kCancel, kUpdate, kWifi };
+  const MenuItem items[] = {{"Cancel", kCancel}, {"Update synth...", kUpdate}, {"Wi-Fi firmware...", kWifi}};
+  menu_.open("SYNTH FIRMWARE", items, 3, [this](int id) {
+    if (id == kUpdate) {
+      proj_.askUpdateSynth();
+    } else if (id == kWifi) {
+      setTab(Tab::File);
+      file_.openWifi();
+    }
+  });
+}
+
+void App::drawBarrier(int y0) {
+  char line[64];
+  spr_->setTextColor(kRed);
+  snprintf(line, sizeof(line), "Synth firmware %s does not match", audio::synthFw());
+  spr_->drawString(line, 24, y0 + 40);
+  spr_->setTextColor(kText);
+  snprintf(line, sizeof(line), "(protocol %u, this device %u).", audio::synthProtocol(),
+           static_cast<unsigned>(mt::link::kProtocol));
+  spr_->drawString(line, 24, y0 + 64);
+  spr_->drawString("Update it from /firmware/teensy.hex on", 24, y0 + 104);
+  spr_->drawString("its card, or on the Wi-Fi page.", 24, y0 + 128);
+  const int x = (kScreenW - kBarrierBtnW) / 2;
+  spr_->fillRect(x, kBarrierBtnY, kBarrierBtnW, kBarrierBtnH, kPlayBg);
+  spr_->drawRect(x, kBarrierBtnY, kBarrierBtnW, kBarrierBtnH, kCursor);
+  spr_->setTextColor(kCursor);
+  spr_->drawString("UPDATE", x + (kBarrierBtnW - 6 * kCharW) / 2, kBarrierBtnY + (kBarrierBtnH - kCharH) / 2);
+}
+
 void App::draw() {
   if (!spr_) return;
   spr_->fillScreen(kBg);
   drawStatus();
   spr_->setClipRect(0, kAreaY, kScreenW, kAreaH);
-  screen()->draw(*spr_, kAreaY, kAreaH);
+  if (versionBarrier()) drawBarrier(kAreaY);
+  else screen()->draw(*spr_, kAreaY, kAreaH);
   spr_->clearClipRect();
   drawTabs();
   menu_.draw(*spr_);
@@ -575,6 +654,17 @@ void App::drawStatus() {
   } else {
     snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
     spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+  }
+  // The CPU field tells when the synth board is not there or not yet up to date.
+  if (synth_ == Synth::Down || synth_ == Synth::Mismatch) {
+    spr_->setTextColor(kRed);
+    spr_->drawString(synth_ == Synth::Down ? "NO SYNTH" : "SYNTH FW", 416, 4);
+    return;
+  }
+  if (synth_ == Synth::Sync || playWait_ >= 0) {
+    spr_->setTextColor(kYellow);
+    spr_->drawString("SYNC", 416, 4);
+    return;
   }
   snprintf(buf, sizeof(buf), "CPU %3d%%", cpu_ > 999 ? 999 : cpu_);
   spr_->setTextColor(cpuColor_);

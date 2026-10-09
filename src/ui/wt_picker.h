@@ -11,8 +11,9 @@ namespace ui {
 
 class App;
 
-// Level 0 of wavetable frame f (0..63) of a mapped table as a polyline in [x0, x1) x [y0, y1].
-void drawWtFrame(LGFX_Sprite& s, const int16_t* table, int f, int x0, int y0, int x1, int y1, uint16_t c);
+// Level 0 of a wavetable frame (mt::kWtFrameLen points >> 8, audio::wtFrame) as a polyline in
+// [x0, x1) x [y0, y1].
+void drawWtFrame(LGFX_Sprite& s, const int8_t* pts, int x0, int y0, int x1, int y1, uint16_t c);
 
 // Imports the wavetable WAV at path into the bank and the project's list under a name made from
 // base (sanitized, cut to 16; "-2", "-3"... when the name holds another table). out = the name used.

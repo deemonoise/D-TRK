@@ -80,6 +80,9 @@ static void fillFull(Project& p) {
   p.djFilter = -20;
   p.perfMap[3] = static_cast<uint8_t>(PerfFx::RvbMax);
   p.tracks[6].humanize = 40;
+  p.tracks[2].pan = -64;
+  p.tracks[4].pan = -17;
+  p.tracks[9].pan = 63;
   for (int t = 0; t < kTracks; ++t)
     for (int s = 0; s < 128; s += 3) {
       Step& st = p5.steps[t][s];
@@ -188,6 +191,7 @@ static void assertSame(const Project& x, const Project& y) {
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg &c = x.tracks[t], &d = y.tracks[t];
     TEST_ASSERT_EQUAL(c.humanize, d.humanize);
+    TEST_ASSERT_EQUAL(c.pan, d.pan);
     TEST_ASSERT_EQUAL_STRING(c.name, d.name);
     TEST_ASSERT_EQUAL(c.channel, d.channel);
     TEST_ASSERT_EQUAL(c.defVel, d.defVel);
@@ -686,6 +690,21 @@ static bool hasChunk(const std::vector<uint8_t>& f, const char* id) {
     pos += 8 + (f[pos + 4] | (f[pos + 5] << 8) | (f[pos + 6] << 16) | (static_cast<uint32_t>(f[pos + 7]) << 24));
   }
   return false;
+}
+
+void test_pan_round_trip_and_old_file_centred() {
+  fillFull(a);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TPAN"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  TEST_ASSERT_EQUAL(-64, b.tracks[2].pan);
+  TEST_ASSERT_EQUAL(-17, b.tracks[4].pan);
+  TEST_ASSERT_EQUAL(63, b.tracks[9].pan);
+  TEST_ASSERT_EQUAL(0, b.tracks[0].pan);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"TPAN"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  for (int t = 0; t < kTracks; ++t) TEST_ASSERT_EQUAL(0, b.tracks[t].pan);
 }
 
 void test_audio_chunks_written() {
@@ -1566,6 +1585,7 @@ int main() {
   RUN_TEST(test_unknown_chunk_huge_size);
   RUN_TEST(test_proj_chunk_larger_is_skipped);
   RUN_TEST(test_audio_chunks_written);
+  RUN_TEST(test_pan_round_trip_and_old_file_centred);
   RUN_TEST(test_old_file_gets_audio_defaults);
   RUN_TEST(test_old_file_tout_new_tracks_default_int);
   RUN_TEST(test_audio_garbage_clamped);

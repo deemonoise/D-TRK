@@ -5,7 +5,7 @@
 #include <strings.h>
 #include "app.h"
 #include "audio/audio.h"
-#include "audio/bank.h"
+#include "link/bank_client.h"
 #include "esp_heap_caps.h"
 #include "sample_set.h"
 #include "demos.h"
@@ -16,11 +16,9 @@ namespace ui {
 namespace {
 
 constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
-                                   "Import MIDI...", "Render WAV...", "Wi-Fi transfer...", "Retry"};
+                                   "Import MIDI...", "Render WAV...", "Wi-Fi firmware...", "Retry"};
 // The last row: Retry without a card, Restore autosave with one (they never need the row together).
 constexpr const char* kRestoreLabel = "Restore autosave";
-
-constexpr uint32_t kPreviewMs = 8000;  // WAV preview length (32 kHz mono: 512 KB)
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -39,12 +37,12 @@ void FileScreen::onEnter() {
   closeList();
   autoAvail_ = storage::autosaveExists(app_.project().name);
   if (!enabled(sel_)) moveSel(1);
-  cacheValid_ = false;
+  audio::bankViewStale();
   if (samples_) sampleMove(0);  // the bank may have changed
 }
 
 void FileScreen::onProjectReplaced() {
-  cacheValid_ = false;
+  audio::bankViewStale();
   if (samples_) sampleMove(0);  // another sample list
 }
 
@@ -60,6 +58,7 @@ bool FileScreen::enabled(int a) const {
   const bool sd = hw::sdReady();
   switch (a) {
     case kSectionSel: return true;
+    case kWifi: return true;  // the firmware page: no card needed
     case kRetry: return !sd || autoAvail_;
     default: return sd;
   }
@@ -137,7 +136,8 @@ void FileScreen::onMenu(int id) {
     case kRenameSample: {
       // Its file is found by name: renamed, it would be lost from the folder at the next save.
       const mt::Project& p = app_.project();
-      if (audio::bankMounted() && mt::projSampleBank(p, audio::bank(), mt::projSampleFind(p, pending_)) < 0) {
+      const audio::BankView& v = audio::bankView();
+      if (v.mounted && !v.sampleCached(mt::projSampleFind(p, pending_))) {
         app_.toast("SAMPLE MISSING");
         break;
       }
@@ -165,13 +165,7 @@ void FileScreen::onMenu(int id) {
   app_.invalidate();
 }
 
-void FileScreen::startWifi() {
-  if (!hw::sdReady()) {
-    app_.toast(storage::resultText(storage::Result::NoSd));
-    return;
-  }
-  wifi_.open();
-}
+void FileScreen::startWifi() { wifi_.open(); }
 
 void FileScreen::save() {
   const char* name = app_.project().name;
@@ -657,12 +651,13 @@ void FileScreen::setSection(bool samples) {
 int FileScreen::sampleRowCount() const { return kFirstSample + app_.project().sampleCount; }
 
 bool FileScreen::sampleEnabled(int row) const {
-  if (!audio::bankMounted()) return row == kSwitchRow;
+  const audio::BankView& v = audio::bankView();
+  if (!v.mounted) return row == kSwitchRow;
   switch (row) {
     case kSwitchRow: return true;
     case kImportRow: return hw::sdReady();
     case kCompactRow:
-    case kClearRow: return audio::bank().count() > 0;
+    case kClearRow: return v.count > 0;
     default: return row < sampleRowCount();
   }
 }
@@ -720,7 +715,7 @@ void FileScreen::openWavList() {
   }
   midiList_ = false;
   wavList_ = true;
-  // The folder may have been removed (Wi-Fi, card swap): start over at /samples.
+  // The folder may have been removed (card swap): start over at /samples.
   if (!atRoot() && !hw::sdFs().exists(wavDir_)) strlcpy(wavDir_, "/samples", sizeof(wavDir_));
   // Subfolders first, then .wav (any case), both sorted; hidden entries (macOS ._*) are skipped.
   dirCount_ = hw::sdListDirs(wavDir_, names_, kMaxFiles);
@@ -740,7 +735,8 @@ bool FileScreen::onPlay() {
 }
 
 void FileScreen::togglePreview() {
-  const bool again = pvBuf_ && pvSel_ == listSel_ && audio::previewPlaying();
+  // Play again on the one still playing (by its length) stops it.
+  const bool again = pvSel_ == listSel_ && static_cast<int32_t>(pvEndMs_ - millis()) > 0;
   stopPreview();
   if (again) return;
   char path[sizeof(wavDir_) + hw::kNameMax];
@@ -749,31 +745,19 @@ void FileScreen::togglePreview() {
     app_.toast("PATH TOO LONG");
     return;
   }
-  app_.showBusy("LOADING...");
   uint32_t frames = 0, rate = 0;
-  const audio::BankResult r = audio::loadWavPreview(path, kPreviewMs, &pvBuf_, &frames, &rate);
+  const audio::BankResult r = audio::previewFile(path, &frames, &rate);
   if (r != audio::BankResult::Ok) {
-    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app_.toast(audio::bankResultText(r));
     return;
   }
   pvSel_ = listSel_;
-  audio::previewBuffer(pvBuf_, frames, rate);
+  pvEndMs_ = millis() + static_cast<uint32_t>(static_cast<uint64_t>(frames) * 1000 / (rate ? rate : 1)) + 100;
 }
 
 void FileScreen::stopPreview() {
-  if (!pvBuf_ && pvLeftN_ == 0) return;
-  if (audio::previewStop()) {
-    // Acknowledged: the audio task reads no preview buffer any more, the left-over ones included.
-    heap_caps_free(pvBuf_);
-    for (int i = 0; i < pvLeftN_; ++i) heap_caps_free(pvLeft_[i]);
-    pvLeftN_ = 0;
-  } else if (pvBuf_) {
-    // Not acknowledged: the audio task may still read it; freed after a later acknowledged stop.
-    if (pvLeftN_ == kPvLeft) --pvLeftN_;  // never more than a few: the oldest is given up
-    pvLeft_[pvLeftN_++] = pvBuf_;
-  }
-  pvBuf_ = nullptr;
+  if (pvSel_ < 0) return;
+  audio::previewStop();
   pvSel_ = -1;
 }
 
@@ -821,7 +805,7 @@ void FileScreen::doImport(const char* name) {
   app_.showBusy("IMPORT...");
   // The old data of an overwritten name stays cached until evicted: only the list entry changes.
   audio::ImportOut out{};
-  const audio::BankResult r = audio::importToCache(path, p, out, nullptr, progress, this);
+  const audio::BankResult r = audio::importToCache(path, out, nullptr, progress, this);
   if (r != audio::BankResult::Ok) {
     if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
     app_.toast(audio::bankResultText(r));
@@ -899,7 +883,7 @@ void FileScreen::doCompact() {
 void FileScreen::doClear() {
   app_.showBusy("CLEARING...");
   int n = 0;
-  const audio::BankResult r = audio::clearCache(app_.project(), &n);
+  const audio::BankResult r = audio::clearCache(&n);
   if (r != audio::BankResult::Ok) {
     app_.toast(audio::bankResultText(r));
     return;
@@ -909,15 +893,7 @@ void FileScreen::doClear() {
   app_.toast(msg);
 }
 
-uint32_t FileScreen::cacheBytes() {
-  const mt::SampleBank& b = audio::bank();
-  if (cacheValid_ && cacheGen_ == b.generation() && cacheSeq_ == app_.editSeq()) return cacheBytes_;
-  cacheBytes_ = mt::bankUnusedBytes(b, app_.project());
-  cacheGen_ = b.generation();
-  cacheSeq_ = app_.editSeq();
-  cacheValid_ = true;
-  return cacheBytes_;
-}
+uint32_t FileScreen::cacheBytes() { return audio::bankView().unused; }
 
 void FileScreen::samplesInput(const hw::InputEvent& ev) {
   using hw::InputType;
@@ -945,15 +921,15 @@ void FileScreen::samplesTouch(const TouchEvent& ev) {
 
 void FileScreen::drawSamples(LGFX_Sprite& s, int top) {
   const int ty = (kInfoH - kCharH) / 2;
-  if (!audio::bankMounted()) {
+  const audio::BankView& b = audio::bankView();
+  if (!b.mounted) {
     s.setTextColor(kEditCursor);
-    s.drawString("NO SAMPLE BANK (flash partition)", 16, top + ty);
+    s.drawString(b.ok ? "NO SAMPLE BANK (synth flash)" : "SYNTH NOT ANSWERING", 16, top + ty);
     return;
   }
-  const mt::SampleBank& b = audio::bank();
   const mt::Project& p = app_.project();
   char buf[48];
-  const uint32_t cap = b.capacity(), freeB = b.freeBytes();
+  const uint32_t cap = b.capacity, freeB = b.free;
   s.setTextColor(kDim);
   snprintf(buf, sizeof(buf), "FREE %u / %u KB  CACHE %u KB", static_cast<unsigned>(freeB / 1024),
            static_cast<unsigned>(cap / 1024), static_cast<unsigned>(cacheBytes() / 1024));
@@ -990,16 +966,15 @@ void FileScreen::drawSamples(LGFX_Sprite& s, int top) {
     if (i >= p.sampleCount) break;
     const mt::ProjSample& ps = p.samples[i];
     s.drawString(ps.name, 16, yy);
-    const int j = mt::projSampleBank(p, b, i);
     snprintf(buf, sizeof(buf), "%u KB", static_cast<unsigned>((ps.frames * 2 + 1023) / 1024));
     s.drawString(buf, kScreenW - 16 - static_cast<int>(strlen(buf)) * kCharW, yy);
-    if (j < 0) {
+    if (!b.sampleCached(i)) {
       s.setTextColor(kRed);
       s.drawString("MISSING", 16 + 18 * kCharW, yy);
       continue;
     }
-    const mt::BankEntry* e = b.entry(j);
-    const uint32_t ds = e->rate ? (static_cast<uint64_t>(e->frames) * 10 + e->rate / 2) / e->rate : 0;  // 0.1 s
+    const uint32_t rate = b.rate[i];
+    const uint32_t ds = rate ? (static_cast<uint64_t>(ps.frames) * 10 + rate / 2) / rate : 0;  // 0.1 s
     snprintf(buf, sizeof(buf), "%u.%us", static_cast<unsigned>(ds / 10), static_cast<unsigned>(ds % 10));
     s.drawString(buf, 16 + 18 * kCharW, yy);
   }

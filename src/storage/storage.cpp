@@ -4,11 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
-#include "audio/bank.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "file_rules.h"
 #include "hw/sdcard.h"
+#include "link/bank_client.h"
 #include "project_io.h"
 #include "sample_set.h"
 #include "demos.h"
@@ -45,11 +45,11 @@ void freeProject(mt::Project* p) {
 // If one of these fires, a field was added/removed: update snapshot() below and
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
 static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() and project_io");
-static_assert(sizeof(mt::TrackCfg) == 21, "TrackCfg changed: update snapshot() and project_io");
+static_assert(sizeof(mt::TrackCfg) == 22, "TrackCfg changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Pattern) == 4 + mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Instrument) == 380, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 476248, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 476264, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -236,16 +236,18 @@ bool copyFile(const char* src, const char* dst) {
   return ok;
 }
 
-// Bank progress of one sample -> SyncProgress.
-struct PullCtx {
+// Bank job progress (the list entry it is on) -> SyncProgress.
+struct ItemCtx {
+  const mt::Project* live;
   SyncProgress cb;
   void* ctx;
-  const char* name;
 };
 
-void pullProgress(uint32_t done, uint32_t total, void* ctx) {
-  const PullCtx& c = *static_cast<PullCtx*>(ctx);
-  if (c.cb) c.cb(c.name, done, total, c.ctx);
+void itemProgress(int item, uint32_t done, uint32_t total, void* ctx) {
+  const ItemCtx& c = *static_cast<ItemCtx*>(ctx);
+  if (!c.cb || item < 0) return;
+  const char* name = item < audio::kItemWt ? c.live->samples[item].name : c.live->wavetables[item - audio::kItemWt].name;
+  c.cb(name, done, total, c.ctx);
 }
 
 }  // namespace
@@ -283,6 +285,7 @@ const char* resultText(Result r) {
     case Result::EngineBusy: return "ENGINE BUSY";
     case Result::SamplesNotSaved: return "SAMPLES NOT SAVED";
     case Result::AudioBusy: return "AUDIO BUSY";
+    case Result::NoSynth: return "NO SYNTH";
     case Result::DiskFull: return "DISK FULL";
     case Result::Cancelled: return "CANCELLED";
     case Result::Capped: return "SAMPLE CAP";
@@ -370,187 +373,82 @@ Result syncFolder(const mt::Project& live, const char* from, SyncProgress cb, vo
   fs::FS& fs = hw::sdFs();
   const bool had = fs.exists(dir);
   if (!had && live.sampleCount == 0 && live.wavetableCount == 0) return Result::Ok;
-  if (!had && !fs.mkdir(dir)) return Result::WriteFail;
+  // The cached entries: the synth board writes those whose file is not current (and the folders).
+  audio::BankSets sets;
+  ItemCtx ic{&live, cb, ctx};
+  const audio::BankResult br = audio::saveAssets(live.name, &sets, itemProgress, &ic);
   Result r = Result::Ok;
-  for (int i = 0; i < live.sampleCount; ++i) {
-    const mt::ProjSample& s = live.samples[i];
-    const int j = audio::bankMounted() ? mt::projSampleBank(live, audio::bank(), i) : -1;
-    const SamplePath path(live.name, s.name);
-    if (j < 0) {
-      // Missing (not cached): whatever file it has stays; after Save As it gets the old folder's.
-      if (!from || strcasecmp(from, live.name) == 0 || !mt::projectBaseValid(from) || fileCurrent(path.s, s))
-        continue;
-      const SamplePath old(from, s.name);
-      if (!fs.exists(old.s)) continue;
-      if (cb) cb(s.name, 0, 1, ctx);
-      if (!copyFile(old.s, path.s)) {
-        Serial.printf("storage: copy %s: failed\n", old.s);
-        r = Result::WriteFail;
-      }
-      continue;
-    }
-    if (fileCurrent(path.s, s)) continue;
-    if (cb) cb(s.name, 0, s.frames * 2, ctx);
-    const audio::BankResult br = audio::exportWav(j, path.s);
-    if (br != audio::BankResult::Ok) {
-      Serial.printf("storage: write %s: %s\n", path.s, audio::bankResultText(br));
-      r = Result::WriteFail;
-    }
-    if (cb) cb(s.name, s.frames * 2, s.frames * 2, ctx);
+  if (br != audio::BankResult::Ok) {
+    Serial.printf("storage: write %s: %s (%d failed)\n", dir, audio::bankResultText(br), sets.failed);
+    if (br != audio::BankResult::WriteFail) return br == audio::BankResult::NoSd ? Result::NoSd : Result::WriteFail;
+    r = Result::WriteFail;
   }
-  // Wavetable sources, in the "wt" subfolder (their names may equal sample names).
+  // Missing (not cached): whatever file it has stays; after Save As it gets the old folder's.
+  const bool saveAs = from && strcasecmp(from, live.name) != 0 && mt::projectBaseValid(from);
+  if (saveAs && !fs.exists(dir) && !fs.mkdir(dir)) return Result::WriteFail;
   char wtDir[40];
   snprintf(wtDir, sizeof(wtDir), "%s/wt", dir);
-  const bool hadWt = fs.exists(wtDir);
-  const bool wtDirOk = hadWt || live.wavetableCount == 0 || fs.mkdir(wtDir);
-  if (!wtDirOk) r = Result::WriteFail;
-  for (int i = 0; wtDirOk && i < live.wavetableCount; ++i) {
-    const mt::ProjWavetable& t = live.wavetables[i];
-    const int j = audio::bankMounted() ? mt::projWtBank(live, audio::bank(), i) : -1;
-    const WtPath path(live.name, t.name);
-    if (j < 0) {
-      // Missing (not cached): as for samples, Save As copies the old folder's file.
-      if (!from || strcasecmp(from, live.name) == 0 || !mt::projectBaseValid(from) || fileCurrent(path.s, t)) continue;
-      const WtPath old(from, t.name);
-      if (!fs.exists(old.s)) continue;
-      if (cb) cb(t.name, 0, 1, ctx);
-      if (!copyFile(old.s, path.s)) {
-        Serial.printf("storage: copy %s: failed\n", old.s);
-        r = Result::WriteFail;
-      }
-      continue;
-    }
-    if (fileCurrent(path.s, t)) continue;
-    constexpr uint32_t kBytes = mt::kWtSrcSamples * 2;
-    if (cb) cb(t.name, 0, kBytes, ctx);
-    const audio::BankResult br = audio::exportWt(t.name, live, path.s);
-    if (br != audio::BankResult::Ok) {
-      Serial.printf("storage: write %s: %s\n", path.s, audio::bankResultText(br));
+  for (int i = 0; saveAs && i < live.sampleCount; ++i) {
+    const mt::ProjSample& s = live.samples[i];
+    const SamplePath path(live.name, s.name);
+    if (!sets.sampleMissing(i) || fileCurrent(path.s, s)) continue;
+    const SamplePath old(from, s.name);
+    if (!fs.exists(old.s)) continue;
+    if (cb) cb(s.name, 0, 1, ctx);
+    if (!copyFile(old.s, path.s)) {
+      Serial.printf("storage: copy %s: failed\n", old.s);
       r = Result::WriteFail;
     }
-    if (cb) cb(t.name, kBytes, kBytes, ctx);
+  }
+  // Wavetable sources, in the "wt" subfolder (their names may equal sample names).
+  const bool wtDirOk = !saveAs || live.wavetableCount == 0 || fs.exists(wtDir) || fs.mkdir(wtDir);
+  if (!wtDirOk) r = Result::WriteFail;
+  for (int i = 0; saveAs && wtDirOk && i < live.wavetableCount; ++i) {
+    const mt::ProjWavetable& t = live.wavetables[i];
+    const WtPath path(live.name, t.name);
+    if (!sets.wtMissing(i) || fileCurrent(path.s, t)) continue;
+    const WtPath old(from, t.name);
+    if (!fs.exists(old.s)) continue;
+    if (cb) cb(t.name, 0, 1, ctx);
+    if (!copyFile(old.s, path.s)) {
+      Serial.printf("storage: copy %s: failed\n", old.s);
+      r = Result::WriteFail;
+    }
   }
   // A failed write may leave the only good copy of a listed sample under another name: clean up next time.
   if (r != Result::Ok) return r;
   // Files of samples / wavetables in neither the list nor the .bak's, leftovers of interrupted writes.
+  if (!fs.exists(dir)) return Result::Ok;
   mt::ProjectFileNames* bak = bakNames(live.name);
   r = cleanFolder(dir, [&](const char* base) { return mt::projSampleFind(live, base) >= 0 || (bak && bak->has(base, false)); });
-  if (r == Result::Ok && (hadWt || live.wavetableCount > 0))
+  if (r == Result::Ok && fs.exists(wtDir))
     r = cleanFolder(wtDir, [&](const char* base) { return mt::projWtFind(live, base) >= 0 || (bak && bak->has(base, true)); });
   delete bak;
   return r;
 }
 
 Result pullSamples(mt::Project& live, int* missing, SyncProgress cb, void* ctx) {
-  int miss = 0;
+  // A file older than the sample list: its instruments name samples no list has, they stay missing.
+  if (!live.hasSampleList)
+    for (const mt::Instrument& in : live.instruments)
+      if (in.sample[0]) {
+        Serial.printf("storage: %s predates the sample list: samples not migrated\n", live.name);
+        break;
+      }
+  // Whatever the cache lacks comes from the project's folder (on the synth board's card).
+  audio::BankSets sets;
+  ItemCtx ic{&live, cb, ctx};
+  const char* folder = mt::projectBaseValid(live.name) ? live.name : "";
+  const audio::BankResult br = audio::syncProject(folder, &sets, itemProgress, &ic);
   Result r = Result::Ok;
-  bool migrated = false;
-  bool old = !live.hasSampleList;  // file older than the sample list
-  if (old) {
-    old = false;
-    for (const mt::Instrument& in : live.instruments) old = old || in.sample[0];
-  }
-  if (old) {
-    int m = 0;
-    const audio::BankResult br = audio::migrateProject(live, &m);
+  int miss = sets.missing;
+  if (br != audio::BankResult::Ok) {
+    Serial.printf("storage: pull %s: %s\n", live.name, audio::bankResultText(br));
     if (br == audio::BankResult::Busy) r = Result::EngineBusy;
-    miss += m;
-    if (br == audio::BankResult::Ok) live.hasSampleList = migrated = true;
-    Serial.printf("storage: migrated %s: %d samples, %d missing\n", live.name, live.sampleCount, m);
+    miss = live.sampleCount + live.wavetableCount;  // not known: none counts as there
   }
-  const bool sd = hw::sdReady() && mt::projectBaseValid(live.name);
-  for (int i = 0; i < live.sampleCount; ++i) {
-    const mt::ProjSample& s = live.samples[i];
-    if (!audio::bankMounted()) {
-      ++miss;
-      continue;
-    }
-    if (mt::projSampleBank(live, audio::bank(), i) >= 0) continue;
-    SamplePath path(live.name, s.name);
-    // Not in the own folder: an old sample may be in the folder of the project that migrated it.
-    char proj[17], old[17];
-    if (sd && !hw::sdFs().exists(path.s) && audio::legacySource(s.crc, s.frames, proj, old) &&
-        strcasecmp(proj, live.name) != 0)
-      path = SamplePath(proj, old);
-    if (!sd || !hw::sdFs().exists(path.s)) {
-      ++miss;
-      continue;
-    }
-    PullCtx pc{cb, ctx, s.name};
-    if (cb) cb(s.name, 0, 1, ctx);
-    audio::ImportOut out{};
-    const uint32_t want = s.crc;
-    const audio::BankResult br = audio::importToCache(path.s, live, out, &want, pullProgress, &pc);
-    // Other data under this name (edited on a computer): the list keeps its crc, the sample is missing.
-    if (br != audio::BankResult::Ok || out.crc != s.crc || out.frames != s.frames) {
-      Serial.printf("storage: pull %s: %s\n", path.s,
-                    br != audio::BankResult::Ok ? audio::bankResultText(br) : "OTHER DATA");
-      if (br == audio::BankResult::Busy) r = Result::EngineBusy;
-      ++miss;
-    }
-  }
-  for (int i = 0; i < live.wavetableCount; ++i) {
-    const mt::ProjWavetable& t = live.wavetables[i];
-    if (!audio::bankMounted()) {
-      ++miss;
-      continue;
-    }
-    if (mt::projWtBank(live, audio::bank(), i) >= 0) continue;
-    const WtPath path(live.name, t.name);
-    if (!sd || !hw::sdFs().exists(path.s)) {
-      ++miss;
-      continue;
-    }
-    PullCtx pc{cb, ctx, t.name};
-    if (cb) cb(t.name, 0, 1, ctx);
-    uint32_t crc = 0;
-    const uint32_t want = t.crc;
-    const audio::BankResult br = audio::importWtToCache(path.s, live, crc, &want, pullProgress, &pc);
-    // Other data under this name: the list keeps its crc, the wavetable is missing (its osc is silent).
-    if (br != audio::BankResult::Ok || crc != t.crc) {
-      Serial.printf("storage: pull %s: %s\n", path.s,
-                    br != audio::BankResult::Ok ? audio::bankResultText(br) : "OTHER DATA");
-      if (br == audio::BankResult::Busy) r = Result::EngineBusy;
-      ++miss;
-    }
-  }
-  // Migrated samples get their files now (the .mtp is written by the next save).
-  if (migrated && r == Result::Ok && syncFolder(live, live.name, cb, ctx) != Result::Ok) r = Result::SamplesNotSaved;
   if (missing) *missing = miss;
   return r;
-}
-
-Result installProject(const char* tmpPath, const char* fileName) {
-  if (!hw::sdReady()) return Result::NoSd;
-  if (!mt::webFileAllowed(mt::WebDir::Projects, fileName)) return Result::BadFile;
-  mt::Project* chk = allocProject();
-  if (!chk) return Result::NoMemory;
-  const Result r = readFile(tmpPath, *chk);
-  freeProject(chk);
-  if (r != Result::Ok) return r;
-
-  char dst[48];
-  snprintf(dst, sizeof(dst), "%s%s", kDir, fileName);
-  fs::FS& fs = hw::sdFs();
-  const size_t n = strlen(fileName);
-  const bool mtp = n > 4 && strcmp(fileName + n - 4, ".mtp") == 0;
-  char bak[48] = {0};
-  bool rotated = false;
-  if (fs.exists(dst)) {
-    if (mtp) {
-      snprintf(bak, sizeof(bak), "%s%.*s.bak", kDir, static_cast<int>(n - 4), fileName);
-      if (fs.exists(bak)) fs.remove(bak);
-      if (!fs.rename(dst, bak)) return Result::WriteFail;
-      rotated = true;
-    } else if (!fs.remove(dst)) {
-      return Result::WriteFail;
-    }
-  }
-  if (!fs.rename(tmpPath, dst)) {
-    if (rotated) fs.rename(bak, dst);
-    return Result::WriteFail;
-  }
-  return Result::Ok;
 }
 
 namespace {

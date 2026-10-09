@@ -10,7 +10,10 @@
 #include "fx_info.h"
 #include "groove.h"
 #include "hw/sdcard.h"
+#include "link/link.h"
+#include "link/synth_fw.h"
 #include "storage/crashlog.h"
+#include "storage/remote_fs.h"
 #include "synth.h"
 #include "names.h"
 #include "scale.h"
@@ -155,14 +158,43 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
   params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
   params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
                          [](int) {}};
-  // Where the synth and the sequencer live (PSRAM = the audio costs more) and the free internal RAM.
+  // The synth board: its firmware ("NO SYNTH" while it does not answer; "!" = another protocol),
+  // and the link counters since boot: events lost / late on the synth, bad frames here.
+  params_[kSynthFw] = {"Synth fw",
+                       [](char* o, int n) {
+                         if (!audio::synthUp()) snprintf(o, n, "NO SYNTH");
+                         else snprintf(o, n, "%s P%u%s", audio::synthFw(), audio::synthProtocol(),
+                                       audio::versionOk() ? "" : " !");
+                       },
+                       [](int) {}};
+  params_[kLink] = {"Link",
+                    [](char* o, int n) {
+                      const audio::LinkCounters c = audio::linkCounters();
+                      snprintf(o, n, "LOST %lu LATE %lu CRC %lu", static_cast<unsigned long>(c.lost + c.dropped),
+                               static_cast<unsigned long>(c.late), static_cast<unsigned long>(c.crcErrors));
+                    },
+                    [](int) {}};
+  // Click: flash the synth board with /firmware/teensy.hex from its card (Wi-Fi page puts it there).
+  params_[kUpdSynth] = {"Update synth",
+                        [](char* o, int n) { snprintf(o, n, "%s", audio::synthUp() ? "CLICK" : "NO SYNTH"); },
+                        [](int) {}};
+  // The card in the synth board: size and free space.
+  params_[kCard] = {"Card",
+                    [](char* o, int n) {
+                      uint32_t total = 0, free = 0;
+                      if (!audio::synthUp()) snprintf(o, n, "NO SYNTH");
+                      else if (!storage::remoteSpace(total, free)) snprintf(o, n, "NO CARD");
+                      else snprintf(o, n, "%lu.%lu / %lu.%lu GB FREE", static_cast<unsigned long>(free / 1024),
+                                    static_cast<unsigned long>(free % 1024 * 10 / 1024),
+                                    static_cast<unsigned long>(total / 1024),
+                                    static_cast<unsigned long>(total % 1024 * 10 / 1024));
+                    },
+                    [](int) {}};
+  // Where the sequencer lives (PSRAM = it costs more) and the free internal RAM.
   params_[kAudioRam] = {"Audio RAM",
                         [](char* o, int n) {
-                          const bool s = audio::synthInternal(), q = engine::seqInternal();
                           const unsigned kb = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
-                          snprintf(o, n, "%s, RVB %s, %uK FREE",
-                                   s && q ? "INTERNAL" : (s ? "SEQ IN PSRAM" : (q ? "SYNTH IN PSRAM" : "PSRAM")),
-                                   audio::reverbInternal() ? "INT" : "PSRAM", kb);
+                          snprintf(o, n, "SEQ %s, %uK FREE", engine::seqInternal() ? "INTERNAL" : "PSRAM", kb);
                         },
                         [](int) {}};
   // Click: start; play a while (on the screen to measure), click again: the time per stage of the
@@ -223,8 +255,8 @@ void ProjScreen::onEnter() {
 
 // Click (Shift+click) on the page bar: the next (previous) page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
-  if (ev.type == hw::InputType::EncClick && !list_.editing() && onProfileRow()) {
-    toggleProfile();
+  if (ev.type == hw::InputType::EncClick && !list_.editing() && onActionRow()) {
+    runAction();
     return;
   }
   if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
@@ -236,18 +268,83 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
     if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
     return;
   }
-  if (ev.type == TouchType::Tap && kPageFirst[page_] + list_.rowAt(ev.y) == kCpuProf && list_.rowAt(ev.y) >= 0) {
-    list_.setSel(list_.rowAt(ev.y));
-    toggleProfile();
+  const int tapRow = list_.rowAt(ev.y);
+  if (ev.type == TouchType::Tap && tapRow >= 0 &&
+      (kPageFirst[page_] + tapRow == kCpuProf || kPageFirst[page_] + tapRow == kUpdSynth)) {
+    list_.setSel(tapRow);
+    runAction();
     return;
   }
   list_.onTouch(ev);
+}
+
+void ProjScreen::runAction() {
+  if (kPageFirst[page_] + list_.sel() == kUpdSynth) askUpdateSynth();
+  else toggleProfile();
+}
+
+void ProjScreen::askUpdateSynth() {
+  app_.invalidate();
+  if (!audio::synthUp()) {
+    app_.toast("NO SYNTH");
+    return;
+  }
+  fs::File f = hw::sdFs().open(synthfw::kHexPath);
+  if (!f || f.isDirectory()) {
+    app_.toast(storage::remoteLastError() == mt::link::kErrNoCard ? "NO CARD IN THE SYNTH"
+                                                                   : "NO /FIRMWARE/TEENSY.HEX");
+    return;
+  }
+  const unsigned long kb = static_cast<unsigned long>((f.size() + 1023) / 1024);
+  f.close();
+  char title[48];
+  snprintf(title, sizeof(title), "UPDATE SYNTH (%lu KB)?", kb);
+  const MenuItem items[] = {{"Cancel", kMenuCancel}, {"Update", kMenuUpdate}};
+  app_.menu().open(title, items, 2, [this](int id) {
+    if (id == kMenuUpdate) updateSynth();
+  });
+}
+
+void ProjScreen::updateSynth() {
+  const uint32_t oldBoot = slink::bootId();
+  uint8_t res = 0;
+  uint32_t bytes = 0;
+  const synthfw::Result r = synthfw::update(
+      synthfw::kHexPath, res, bytes,
+      [](uint32_t done, uint32_t total, void* a) { static_cast<App*>(a)->showProgress("SYNTH FW", done, total); },
+      &app_);
+  if (r != synthfw::Result::Ok) {
+    app_.endProgress();
+    char line[48];
+    snprintf(line, sizeof(line), "SYNTH FW: %s", r == synthfw::Result::NoSynth ? "NO ANSWER" : synthfw::rejectText(res));
+    app_.toast(line);
+    return;
+  }
+  app_.showBusy("SYNTH FW OK, RESTARTING");
+  const uint32_t t0 = millis();
+  bool back = false;
+  while (millis() - t0 < synthfw::kRebootWaitMs) {
+    if (synthfw::rebooted(oldBoot)) {
+      back = true;
+      break;
+    }
+    delay(100);
+  }
+  app_.endProgress();
+  char line[48];
+  if (back) snprintf(line, sizeof(line), "SYNTH FW %s", slink::synthFw());
+  else snprintf(line, sizeof(line), "SYNTH FW: NO ANSWER AFTER THE UPDATE");
+  app_.toast(line);
 }
 
 void ProjScreen::toggleProfile() {
   app_.invalidate();
   if (!audio::profileRunning()) {
     audio::profileStart();
+    if (!audio::profileRunning()) {
+      app_.toast("PROFILE: NO SYNTH");
+      return;
+    }
     profStartMs_ = millis();
     app_.toast("PROFILE: PLAY, THEN CLICK AGAIN");
     return;

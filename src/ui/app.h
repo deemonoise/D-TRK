@@ -96,10 +96,14 @@ class App {
   static constexpr uint32_t kFlashMs = 50;  // track LED flash per note
   static constexpr uint32_t kCpuMs = 500;   // status bar CPU: averaging window
   static constexpr uint32_t kCpuRedMs = 2000;  // status bar CPU: red held after an audio stall
+  static constexpr uint32_t kSyncWaitMs = 10000;  // Play waits this long at most for the synth's sound state
   static constexpr int kTabW = kScreenW / static_cast<int>(Tab::Count);
   // Status bar hit areas.
   static constexpr int kBpmX0 = 64, kBpmX1 = 176;
   static constexpr int kTransX0 = 256, kTransX1 = 320;
+  // Synth version screen: its Wi-Fi button.
+  static constexpr int kBarrierBtnW = 148, kBarrierBtnH = 36;
+  static constexpr int kBarrierBtnY = kAreaY + 176;
 
   Screen* screen() { return screens_[static_cast<int>(tab_)]; }
   void onTouch(const TouchEvent& ev);
@@ -114,6 +118,11 @@ class App {
   void saveSettingsIdle(uint32_t now);
   void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
+  void pollSynth(uint32_t now);
+  // The synth board answers but speaks another protocol: the work area shows how to update it.
+  bool versionBarrier();
+  void barrierInput(const hw::InputEvent& ev);
+  void drawBarrier(int y0);
   void setBpmEdit(bool on);
   void draw();
   void drawStatus();
@@ -152,6 +161,10 @@ class App {
   uint16_t cpuColor_ = kDim;  // its color: kDim / kYellow / kRed
   uint32_t cpuAt_ = 0;       // last load taken
   uint32_t cpuRedUntil_ = 0;  // millis() until which the CPU readout stays red (audio stall)
+  enum class Synth : uint8_t { Ok, Sync, Down, Mismatch };
+  Synth synth_ = Synth::Ok;  // the synth board as the status bar shows it
+  int8_t playWait_ = -1;     // a start (engine::Cmd) held back until the synth is synced, -1 = none
+  uint32_t playWaitAt_ = 0;
   int bpmTarget_ = 120;  // local while editing: p_->bpm lags behind the engine queue
   bool bpmEdit_ = false;
   int bpmOrig_ = 120;  // BPM when the edit began (Shift+click puts it back)

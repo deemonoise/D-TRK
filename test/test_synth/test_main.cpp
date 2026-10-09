@@ -15,6 +15,10 @@ struct ArrayBank;
 static ArrayBank* ab = nullptr;
 static void freeBank();
 static int16_t buf[Synth::kBlock];
+static int16_t bufR[Synth::kBlock];  // R of the last render1()
+
+// Renders one block: L into out, R into bufR.
+static void render1(int16_t* out) { s->render(out, bufR); }
 
 void setUp() {
   p = new Project();
@@ -49,7 +53,7 @@ static void noteOff(int off, uint8_t track, uint8_t note) { send(off, track, 0x8
 
 static bool silentBlocks(int n) {
   for (int k = 0; k < n; ++k) {
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock; ++i)
       if (buf[i] != 0) return false;
   }
@@ -62,7 +66,7 @@ static int crossings(int n) {
   int16_t prev = 0;
   bool first = true;
   for (int k = 0; k < n; ++k) {
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock; ++i) {
       if (!first && prev >= 0 && buf[i] < 0) ++c;
       prev = buf[i];
@@ -72,15 +76,18 @@ static int crossings(int n) {
   return c;
 }
 
-constexpr int kBlocksPerSec = kSynthRate / Synth::kBlock;  // 250
+constexpr int kBlocksPerSec = kSynthRate / Synth::kBlock;  // 344
+// Blocks covering ms (rounded up); time of n samples in us (rounded).
+constexpr int blocksMs(int ms) { return (ms * kSynthRate / 1000 + Synth::kBlock - 1) / Synth::kBlock; }
+constexpr uint64_t usOf(int n) { return (n * 1000000ull + kSynthRate / 2) / kSynthRate; }
 
 void test_event_offset() {
   const uint64_t bt = 1000000;
   TEST_ASSERT_EQUAL(0, eventOffset(bt, bt));
-  TEST_ASSERT_EQUAL(10, eventOffset(bt + 313, bt));  // 31.25 us per sample
-  TEST_ASSERT_EQUAL(0, eventOffset(bt - 100, bt));   // late: as soon as possible
-  TEST_ASSERT_EQUAL(125, eventOffset(bt + 3900, bt));
-  TEST_ASSERT_EQUAL(-1, eventOffset(bt + 4000, bt));  // next block
+  TEST_ASSERT_EQUAL(10, eventOffset(bt + usOf(10), bt));
+  TEST_ASSERT_EQUAL(0, eventOffset(bt - 100, bt));  // late: as soon as possible
+  TEST_ASSERT_EQUAL(Synth::kBlock - 1, eventOffset(bt + usOf(Synth::kBlock - 1), bt));
+  TEST_ASSERT_EQUAL(-1, eventOffset(bt + usOf(Synth::kBlock), bt));  // next block
   TEST_ASSERT_EQUAL(-1, eventOffset(bt + 100000, bt));
 }
 
@@ -89,12 +96,83 @@ void test_silent_without_events() {
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
+// ---- stereo, pan ----
+
+static int peakOf(const int16_t* x) {
+  int pk = 0;
+  for (int i = 0; i < Synth::kBlock; ++i) pk = abs(x[i]) > pk ? abs(x[i]) : pk;
+  return pk;
+}
+
+void test_centred_track_l_equals_r() {
+  noteOn(0, 0, 60);
+  noteOn(0, 3, 67);
+  for (int k = 0; k < 8; ++k) {
+    render1(buf);
+    TEST_ASSERT_EQUAL_INT16_ARRAY(buf, bufR, Synth::kBlock);
+  }
+  TEST_ASSERT_TRUE(peakOf(buf) > 100);
+}
+
+void test_pan_gains() {
+  float l, r;
+  panGains(0, l, r);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.7071f, l);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.7071f, r);
+  panGains(-64, l, r);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, l);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, r);
+  panGains(63, l, r);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, l);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, r);
+  panGains(-32, l, r);
+  TEST_ASSERT_TRUE(l > r && r > 0.f);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f, l * l + r * r);  // equal power
+}
+
+void test_pan_hard_left_right() {
+  p->tracks[0].pan = -64;
+  noteOn(0, 0, 60);
+  int l = 0;
+  for (int k = 0; k < 4; ++k) {
+    render1(buf);
+    l = peakOf(buf) > l ? peakOf(buf) : l;
+    TEST_ASSERT_EQUAL(0, peakOf(bufR));
+  }
+  TEST_ASSERT_TRUE(l > 100);
+  s->reset();
+  p->tracks[0].pan = 63;
+  noteOn(0, 0, 60);
+  int r = 0;
+  for (int k = 0; k < 4; ++k) {
+    render1(buf);
+    r = peakOf(bufR) > r ? peakOf(bufR) : r;
+    TEST_ASSERT_EQUAL(0, peakOf(buf));
+  }
+  TEST_ASSERT_EQUAL(l, r);  // the same level on its side
+}
+
+// A panned track's delay send is panned too: hard left echoes on the left only.
+void test_pan_sends_follow() {
+  static int16_t line[2 * 1000];
+  s->setDelayBuffer(line, 1000);
+  p->dlyLevel = 127;
+  p->instruments[0].send = 127;
+  p->tracks[0].pan = -64;
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 20; ++k) {
+    render1(buf);
+    TEST_ASSERT_EQUAL(0, peakOf(bufR));
+  }
+  s->setDelayBuffer(nullptr, 0);
+}
+
 void test_track_peaks() {
   float pk[kTracks];
   s->setMeters(true);
   s->takeTrackPeaks(pk);
   noteOn(0, 2, 60);
-  s->render(buf);
+  render1(buf);
   s->takeTrackPeaks(pk);
   for (int t = 0; t < kTracks; ++t) {
     if (t == 2) TEST_ASSERT_TRUE(pk[t] > 0.01f && pk[t] <= 1.f);
@@ -103,14 +181,14 @@ void test_track_peaks() {
   s->takeTrackPeaks(pk);  // cleared by the read
   TEST_ASSERT_EQUAL_FLOAT(0.f, pk[2]);
   s->setMeters(false);  // off: no peaks for a voice without sends
-  s->render(buf);
+  render1(buf);
   s->takeTrackPeaks(pk);
   TEST_ASSERT_EQUAL_FLOAT(0.f, pk[2]);
 }
 
 void test_note_on_lands_on_its_sample() {
   noteOn(64, 0, 60);
-  s->render(buf);
+  render1(buf);
   for (int i = 0; i < 64; ++i) TEST_ASSERT_EQUAL(0, buf[i]);
   TEST_ASSERT_NOT_EQUAL(0, buf[64]);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
@@ -120,7 +198,7 @@ void test_events_sorted_by_offset() {
   noteOn(100, 0, 60);
   noteOff(110, 0, 60);
   noteOn(20, 1, 72);  // queued later, plays earlier
-  s->render(buf);
+  render1(buf);
   for (int i = 0; i < 20; ++i) TEST_ASSERT_EQUAL(0, buf[i]);
   TEST_ASSERT_NOT_EQUAL(0, buf[20]);
 }
@@ -129,21 +207,21 @@ void test_note_off_frees_voice_after_release() {
   p->instruments[0].release = 40;  // envTimeMs(40)
   const int relMs = envTimeMs(40);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOff(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   const int blocks = relMs * kSynthRate / 1000 / Synth::kBlock + 2;
-  for (int k = 0; k < blocks; ++k) s->render(buf);
+  for (int k = 0; k < blocks; ++k) render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
   TEST_ASSERT_TRUE(silentBlocks(1));
 }
 
 void test_velocity_zero_is_note_off() {
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOn(0, 0, 60, 0);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
@@ -161,14 +239,14 @@ void test_master_volume_zero_is_silent() {
 
 void test_instrument_volume_scales_output() {
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   int loud = 0;
   for (int i = 0; i < Synth::kBlock; ++i) loud = abs(buf[i]) > loud ? abs(buf[i]) : loud;
   delete s;
   s = new Synth(*p);
   p->instruments[0].vol = 32;
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   int quiet = 0;
   for (int i = 0; i < Synth::kBlock; ++i) quiet = abs(buf[i]) > quiet ? abs(buf[i]) : quiet;
   TEST_ASSERT_TRUE(quiet > 0);
@@ -188,7 +266,7 @@ static void fillVoices() {
     noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(40 + t));
     noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(70 + t));
   }
-  s->render(buf);
+  render1(buf);
 }
 static int liveVoices() {
   int n = 0;
@@ -207,7 +285,7 @@ void test_guard_sheds_one_voice_per_block_down_to_min() {
   TEST_ASSERT_EQUAL(full - 1, s->voiceCap());
   for (int k = 0; k < 100; ++k) {
     s->setLoad(1.2f);
-    s->render(buf);
+    render1(buf);
   }
   TEST_ASSERT_EQUAL(Synth::kMinVoices, liveVoices());
   TEST_ASSERT_TRUE(s->activeVoices() <= Synth::kMinVoices + 1);  // the faded ones are freed
@@ -216,7 +294,7 @@ void test_guard_sheds_one_voice_per_block_down_to_min() {
 void test_guard_sheds_releasing_first_then_oldest() {
   fillVoices();
   noteOff(0, 5, 75);  // a releasing voice
-  s->render(buf);
+  render1(buf);
   s->setLoad(1.2f);
   for (int i = 0; i < kVoices; ++i) {
     const Voice& v = s->voice(i);
@@ -238,9 +316,9 @@ void test_guard_cap_limits_new_notes_and_recovers() {
   fillVoices();
   for (int k = 0; k < 6; ++k) s->setLoad(1.2f);
   const int cap = s->voiceCap();
-  for (int k = 0; k < 4; ++k) s->render(buf);  // the fades end
+  for (int k = 0; k < 4; ++k) render1(buf);  // the fades end
   for (int t = 0; t < kTracks; ++t) noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(90 + t));
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(s->activeVoices() <= cap);
   // Between the marks the cap holds (once the smoothed load has come down below the high mark).
   for (int k = 0; k < 20; ++k) s->setLoad(0.7f);
@@ -279,7 +357,7 @@ void test_sixteen_voices_soft_clip() {
   }
   int full = 0, total = 0, peak = 0;
   for (int k = 0; k < 50; ++k) {
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock; ++i) {
       TEST_ASSERT_TRUE(buf[i] >= -32767 && buf[i] <= 32767);
       if (abs(buf[i]) == 32767) ++full;
@@ -295,20 +373,20 @@ void test_sixteen_voices_soft_clip() {
 void test_program_change_selects_instrument() {
   send(0, 3, 0xC0, 5, 0, 2);
   noteOn(0, 3, 60);
-  s->render(buf);
+  render1(buf);
   const int v = s->trackVoice(3);
   TEST_ASSERT_TRUE(v >= 0);
   TEST_ASSERT_EQUAL(5, s->voiceInstr(v));
   send(0, 3, 0xC0, 100, 0, 2);  // out of range: last instrument
   noteOn(0, 3, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(kInstruments - 1, s->voiceInstr(s->trackVoice(3)));
 }
 
 void test_default_instrument_from_track_cfg() {
   p->tracks[4].instr = 11;
   noteOn(0, 4, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(11, s->voiceInstr(s->trackVoice(4)));
 }
 
@@ -316,7 +394,7 @@ void test_start_track_resets_program() {
   send(0, 3, 0xC0, 5, 0, 2);
   send(0, 3, 0xFE, 0, 0, 1);
   noteOn(0, 3, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(3, s->voiceInstr(s->trackVoice(3)));
 }
 
@@ -324,7 +402,7 @@ void test_pitch_includes_transpose_and_fine() {
   p->instruments[0].transpose = -12;
   p->instruments[0].fine = 50;
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, 48.5f, s->voice(s->trackVoice(0)).pitch);
 }
 
@@ -350,16 +428,16 @@ void test_all_off_releases_track() {
   noteOn(0, 0, 60);
   noteOn(0, 0, 64);
   noteOn(0, 1, 67);
-  s->render(buf);
+  render1(buf);
   send(0, 0, 0xFF, 0, 0, 1);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());  // release 0: track 0 voices are gone
   TEST_ASSERT_EQUAL(1, s->voice(s->trackVoice(1)).track);
 }
 
 void test_poly_limit_per_track() {
   for (int n = 0; n < 6; ++n) noteOn(0, 0, static_cast<uint8_t>(60 + n));
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(kPolyPerTrack, s->activeVoices());
 }
 
@@ -368,23 +446,23 @@ void test_mono_glide() {
   m.mono = true;
   m.glide = 25;  // 100 ms
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOn(0, 0, 72);
-  for (int k = 0; k < 12; ++k) s->render(buf);  // ~48 ms
+  for (int k = 0; k < blocksMs(48); ++k) render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   const float mid = s->voice(s->trackVoice(0)).pitch;
   TEST_ASSERT_TRUE(mid > 62.f && mid < 70.f);
-  for (int k = 0; k < 20; ++k) s->render(buf);  // past 100 ms
+  for (int k = 0; k < blocksMs(80); ++k) render1(buf);  // past 100 ms
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, 72.f, s->voice(s->trackVoice(0)).pitch);
 }
 
 void test_mono_without_glide_jumps() {
   p->instruments[0].mono = true;
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOn(0, 0, 72);
   noteOff(1, 0, 60);  // the old note's off must not cut the legato note
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, 72.f, s->voice(s->trackVoice(0)).pitch);
   TEST_ASSERT_EQUAL(72, s->voice(s->trackVoice(0)).note);
@@ -396,12 +474,12 @@ void test_mono_glide_not_after_release() {
   m.glide = 25;     // 100 ms
   m.release = 100;  // the old voice is still releasing
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOff(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   noteOn(0, 0, 72);  // not overlapping: no glide
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, 72.f, s->voice(s->trackVoice(0)).pitch);
 }
 
@@ -409,7 +487,7 @@ void test_preview_track() {
   p->instruments[2].vol = 127;
   send(0, kPreviewTrack, 0xC0, 2, 0, 2);
   noteOn(0, kPreviewTrack, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_NOT_EQUAL(0, buf[5]);
   TEST_ASSERT_EQUAL(2, s->voiceInstr(s->trackVoice(kPreviewTrack)));
   TEST_ASSERT_FALSE(s->event(0, kSynthTracks, reinterpret_cast<const uint8_t*>("\x90\x3C\x7F"), 3));
@@ -417,13 +495,13 @@ void test_preview_track() {
 
 void test_queue_overflow_keeps_note_offs() {
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   for (int i = 0; i < Synth::kMaxEvents; ++i) send(10, 1, 0xE0, 0, 0x40);
   const uint8_t off[3] = {0x80, 60, 0};
   TEST_ASSERT_TRUE(s->event(5, 0, off, 3));  // evicts a control
   const uint8_t on[3] = {0x90, 61, 100};
   TEST_ASSERT_FALSE(s->event(5, 1, on, 3));  // full: dropped
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
@@ -453,7 +531,7 @@ void test_sample_resolved_by_name() {
   p->instruments[0].type = InstrType::Sample;
   strcpy(p->instruments[0].sample, "kick");
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL_STRING("kick", bank.asked);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   const Voice& v = s->voice(s->trackVoice(0));
@@ -463,7 +541,7 @@ void test_sample_resolved_by_name() {
   TEST_ASSERT_EQUAL(16000u, v.smpRate);
   strcpy(p->instruments[0].sample, "snare");  // not in the bank
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL_STRING("snare", bank.asked);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
 }
@@ -479,8 +557,8 @@ static int blockPeak() {
 void test_sample_gain_matches_chip() {
   p->instruments[0].wave = static_cast<uint8_t>(Wave::Pulse);
   noteOn(0, 0, 60);
-  s->render(buf);
-  s->render(buf);
+  render1(buf);
+  render1(buf);
   const int chip = blockPeak();
   delete s;
   s = new Synth(*p);
@@ -490,8 +568,8 @@ void test_sample_gain_matches_chip() {
   p->instruments[0].type = InstrType::Sample;
   strcpy(p->instruments[0].sample, "kick");
   noteOn(0, 0, 60);
-  s->render(buf);
-  s->render(buf);
+  render1(buf);
+  render1(buf);
   TEST_ASSERT_INT_WITHIN(chip / 50, chip, blockPeak());
 }
 
@@ -499,12 +577,12 @@ void test_sample_gain_matches_chip() {
 void test_noise_clock_is_93x_note() {
   p->instruments[0].wave = static_cast<uint8_t>(Wave::Metal);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, noteHz(60) * 93.f / kSynthRate, s->voice(s->trackVoice(0)).inc);
   noteOff(0, 0, 60);
   p->instruments[0].wave = static_cast<uint8_t>(Wave::Noise);
   noteOn(0, 0, 127);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL_FLOAT(8.f, s->voice(s->trackVoice(0)).inc);  // capped: 8 LFSR steps per sample
 }
 
@@ -512,11 +590,11 @@ void test_noise_clock_is_93x_note() {
 void test_master_volume_200_is_louder() {
   p->instruments[0].wave = static_cast<uint8_t>(Wave::Pulse);
   noteOn(0, 0, 60);
-  s->render(buf);
-  s->render(buf);
+  render1(buf);
+  render1(buf);
   const int at100 = blockPeak();
   p->masterVol = 200;
-  s->render(buf);
+  render1(buf);
   const int at200 = blockPeak();
   TEST_ASSERT_TRUE(at200 > at100 * 18 / 10);
   TEST_ASSERT_TRUE(at200 < 32767);
@@ -532,12 +610,12 @@ static void stepStart(int off, uint8_t track, uint8_t tps, bool note) {
 static float voiceHz(uint8_t track) { return s->voice(s->trackVoice(track)).inc * kSynthRate; }
 static float voiceSemis(uint8_t track) { return 69.f + 12.f * log2f(voiceHz(track) / 440.f); }
 static void renderMs(int ms) {
-  for (int k = 0; k < ms * kSynthRate / 1000 / Synth::kBlock; ++k) s->render(buf);
+  for (int k = 0; k < blocksMs(ms); ++k) render1(buf);
 }
 
 void test_fx_sld_slides_to_next_note() {
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOff(0, 0, 60);
   stepStart(0, 0, 24, true);
   fx(0, 0, Fx::SLD, 25);  // 100 ms
@@ -552,7 +630,7 @@ void test_fx_sld_slides_to_next_note() {
   // The next note without SLD starts at once.
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(noteHz(60) * 0.01f, noteHz(60), voiceHz(0));
 }
 
@@ -563,7 +641,7 @@ void test_fx_vib_depth_and_period() {
   float lo = 100, hi = 0, prev = 60;
   int firstUp = -1, lastUp = -1, ups = 0;
   for (int k = 0; k < kBlocksPerSec; ++k) {
-    s->render(buf);
+    render1(buf);
     const float x = voiceSemis(0);
     lo = x < lo ? x : lo;
     hi = x > hi ? x : hi;
@@ -577,13 +655,13 @@ void test_fx_vib_depth_and_period() {
   TEST_ASSERT_TRUE(hi <= 62.05f && hi >= 61.8f);
   TEST_ASSERT_TRUE(lo >= 57.95f && lo <= 58.2f);
   TEST_ASSERT_TRUE(ups >= 3);
-  const float periodMs = (lastUp - firstUp) * 4.f / (ups - 1);
+  const float periodMs = (lastUp - firstUp) * (1000.f * Synth::kBlock / kSynthRate) / (ups - 1);
   TEST_ASSERT_FLOAT_WITHIN(250.f * 0.05f, 250.f, periodMs);
   // A new note without VIB ends it.
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 60);
   for (int k = 0; k < 40; ++k) {
-    s->render(buf);
+    render1(buf);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 60.f, voiceSemis(0));
   }
 }
@@ -616,14 +694,14 @@ void test_fx_vsl_fades_over_step() {
   // Kept until the next note-on.
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 62, 127);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f, s->voice(s->trackVoice(0)).gain);
 }
 
 void test_fx_vsl_on_empty_step_fades_sounding_note() {
   p->bpm = 150;
   noteOn(0, 0, 60, 127);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 24, false);
   fx(0, 0, Fx::VSL, static_cast<uint8_t>(-32));
   renderMs(120);
@@ -636,7 +714,7 @@ void test_fx_cut_kills_after_ticks() {
   fx(0, 0, Fx::CUT, 3);  // 15.6 ms
   noteOn(0, 0, 60);
   static int16_t all[8 * Synth::kBlock];
-  for (int k = 0; k < 8; ++k) s->render(all + k * Synth::kBlock);
+  for (int k = 0; k < 8; ++k) render1(all + k * Synth::kBlock);
   int last = -1;
   for (int i = 0; i < 8 * Synth::kBlock; ++i)
     if (all[i] != 0) last = i;
@@ -653,11 +731,11 @@ void test_fx_ofs_stored_for_sample_note() {
   stepStart(0, 0, 24, true);
   fx(0, 0, Fx::OFS, 128);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(128, s->voice(s->trackVoice(0)).ofs);
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(0, s->voice(s->trackVoice(0)).ofs);
 }
 
@@ -665,10 +743,10 @@ void test_start_track_clears_fx() {
   stepStart(0, 0, 24, true);
   fx(0, 0, Fx::VIB, 0x8F);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   s->startTrack(0);
   for (int k = 0; k < 40; ++k) {
-    s->render(buf);
+    render1(buf);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 60.f, voiceSemis(0));
   }
 }
@@ -682,7 +760,7 @@ static void useFm(int instr, FmMachine mc) {
 }
 
 static bool blockSilent() {
-  s->render(buf);
+  render1(buf);
   for (int i = 0; i < Synth::kBlock; ++i)
     if (buf[i] != 0) return false;
   return true;
@@ -693,7 +771,7 @@ void test_fm_kick_sounds_and_ends_by_itself() {
   p->instruments[0].macro[kMacDec] = 20;  // ~14 ms
   noteOn(0, 0, 60);
   TEST_ASSERT_FALSE(blockSilent());
-  for (int k = 0; k < 30; ++k) s->render(buf);
+  for (int k = 0; k < 30; ++k) render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
@@ -702,7 +780,7 @@ void test_fm_drum_ignores_note_off() {
   p->instruments[0].macro[kMacDec] = 110;
   noteOn(0, 0, 60);
   noteOff(10, 0, 60);
-  for (int k = 0; k < 4; ++k) s->render(buf);
+  for (int k = 0; k < 4; ++k) render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   TEST_ASSERT_FALSE(blockSilent());
 }
@@ -712,7 +790,7 @@ void test_fm_drum_chokes_on_same_track() {
   p->instruments[0].mono = false;  // ignored: drums are mono
   noteOn(0, 0, 60);
   noteOn(50, 0, 64);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
 }
 
@@ -723,13 +801,13 @@ void test_fm_tone_poly_and_gated() {
   noteOn(0, 0, 60);
   noteOn(0, 0, 64);
   noteOn(0, 0, 67);
-  for (int k = 0; k < 50; ++k) s->render(buf);
+  for (int k = 0; k < 50; ++k) render1(buf);
   TEST_ASSERT_EQUAL(3, s->activeVoices());  // held
   noteOff(0, 0, 60);
   noteOff(0, 0, 64);
   noteOff(0, 0, 67);
-  s->render(buf);
-  s->render(buf);
+  render1(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());  // release 0
 }
 
@@ -738,7 +816,7 @@ void test_fm_chord_is_one_voice() {
   p->instruments[0].mono = false;
   noteOn(0, 0, 60);
   noteOn(0, 0, 65);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
 }
 
@@ -747,13 +825,13 @@ void test_fm_lock_on_note_step() {
   stepStart(0, 0, 6, true);
   fx(0, 0, Fx::COL, 99);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL(1 << kMacCol, v.lockMask);
   TEST_ASSERT_EQUAL(99, v.lock[kMacCol]);
   stepStart(0, 0, 6, true);  // next step: no lock
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(0, s->voice(s->trackVoice(0)).lockMask);
 }
 
@@ -761,10 +839,10 @@ void test_fm_lock_on_empty_step_hits_sounding_voice() {
   useFm(0, FmMachine::Tone);
   stepStart(0, 0, 6, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::SHP, 127);
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL(1 << kMacShp, v.lockMask);
   TEST_ASSERT_EQUAL(127, v.lock[kMacShp]);
@@ -773,10 +851,10 @@ void test_fm_lock_on_empty_step_hits_sounding_voice() {
 void test_fm_lock_ignored_on_chip() {
   stepStart(0, 0, 6, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::DCY, 1);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(0, s->voice(s->trackVoice(0)).lockMask);
 }
 
@@ -807,12 +885,6 @@ static int maxStep(const int16_t* a, int16_t prev) {
   return m;
 }
 
-static int peakOf(const int16_t* a) {
-  int m = 0;
-  for (int i = 0; i < Synth::kBlock; ++i) m = abs(a[i]) > m ? abs(a[i]) : m;
-  return m;
-}
-
 void test_fm_choke_mid_segment_has_no_jump() {
   useFm(0, FmMachine::Kick);
   Instrument& m = p->instruments[0];
@@ -823,13 +895,13 @@ void test_fm_choke_mid_segment_has_no_jump() {
   noteOn(0, 0, 72);
   int peak = 0;
   for (int k = 0; k < 4; ++k) {
-    s->render(buf);
+    render1(buf);
     peak = peakOf(buf) > peak ? peakOf(buf) : peak;
   }
-  for (int k = 0; k < 60; ++k) s->render(buf);  // decays to ~0.2
+  for (int k = 0; k < 60; ++k) render1(buf);  // decays to ~0.2
   const int16_t prev = buf[Synth::kBlock - 1];
   noteOn(50, 0, 72);  // choke inside a control segment
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   TEST_ASSERT_TRUE(peakOf(buf) > peak / 2);  // retriggered
   TEST_ASSERT_TRUE(maxStep(buf, prev) < peak / 8);
@@ -839,13 +911,13 @@ void test_fm_drum_all_off_fades() {
   useFm(0, FmMachine::Kick);
   p->instruments[0].macro[kMacDec] = 110;
   noteOn(0, 0, 60);
-  for (int k = 0; k < 4; ++k) s->render(buf);
+  for (int k = 0; k < 4; ++k) render1(buf);
   const int16_t prev = buf[Synth::kBlock - 1];
   send(0, 0, 0xFF, 0, 0, 1);  // all off (stop)
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(buf[0] != 0 || buf[1] != 0);  // a short fade, not a cut
   TEST_ASSERT_TRUE(maxStep(buf, prev) < 2000);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
@@ -861,17 +933,17 @@ void test_fm_legato_from_chip_starts_fm_voice() {
   p->instruments[0].mono = true;
   pgm(0, 1);
   noteOn(0, 0, 60);
-  for (int k = 0; k < 100; ++k) s->render(buf);
+  for (int k = 0; k < 100; ++k) render1(buf);
   const float hz = lfoHz(f.lfoRate);
   const float fresh = hz * (Synth::kBlock - Synth::kControl) / kSynthRate;  // first update precedes the note
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] > fresh * 4);
   pgm(0, 0);
   noteOn(0, 0, 62);  // CHIP legato on the same voice
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).fm);
   pgm(0, 1);
   noteOn(0, 0, 64);  // FM legato from a CHIP voice: a new FM note
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, fresh, s->voice(s->trackVoice(0)).lfoPhase[0]);
 }
@@ -885,10 +957,10 @@ void test_fm_tone_after_drum_takes_its_own_env() {
   t.sustain = 0;
   t.macro[kMacDec] = 0;  // 5 ms decay to nothing
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   pgm(0, 1);
   noteOn(0, 0, 60);  // legato into the sounding kick's voice
-  for (int k = 0; k < 10; ++k) s->render(buf);
+  for (int k = 0; k < 10; ++k) render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());  // TONE's env, not the drum gate
 }
 
@@ -896,10 +968,10 @@ void test_fm_machine_switch_keeps_sounding_drum_one_shot() {
   useFm(0, FmMachine::Kick);
   p->instruments[0].macro[kMacDec] = 40;  // ~40 ms
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   fmSetMachine(p->instruments[0], static_cast<uint8_t>(FmMachine::Tone));  // UI edit while it sounds
   p->instruments[0].sustain = 127;
-  for (int k = 0; k < 100; ++k) s->render(buf);  // 400 ms
+  for (int k = 0; k < 100; ++k) render1(buf);  // 400 ms
   TEST_ASSERT_EQUAL(0, s->activeVoices());  // no drone
 }
 
@@ -915,7 +987,7 @@ void test_fm_lfo_random_starts_off_zero() {
   m.lfoDepth = 63;
   m.lfoDest = static_cast<uint8_t>(LfoDest::Pitch);
   noteOn(0, 0, 69);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(fabsf(s->voice(s->trackVoice(0)).lfoRnd[0]) > 0.05f);
   const int c = crossings(124);
   TEST_ASSERT_TRUE(abs(c - plain) > plain / 30);
@@ -930,9 +1002,9 @@ void test_fm_lfo_on_vol() {
   m.lfoDepth = 63;
   m.lfoDest = static_cast<uint8_t>(LfoDest::Vol);
   noteOn(0, 0, 69);
-  for (int k = 0; k < 50; ++k) s->render(buf);
+  renderMs(200);
   const int loud = blockPeak();
-  for (int k = 0; k < 250; ++k) s->render(buf);
+  renderMs(1000);
   const int quiet = blockPeak();
   TEST_ASSERT_TRUE(loud > quiet * 4);
 }
@@ -943,7 +1015,7 @@ void test_fm_lfo_on_macro() {
   m.macro[kMacCol] = 0;  // pure sine
   noteOn(0, 0, 69);
   static int16_t a[Synth::kBlock * 20];
-  for (int k = 0; k < 20; ++k) s->render(a + k * Synth::kBlock);
+  for (int k = 0; k < 20; ++k) render1(a + k * Synth::kBlock);
   s->reset();
   m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
   m.lfoRate = 30;
@@ -952,7 +1024,7 @@ void test_fm_lfo_on_macro() {
   noteOn(0, 0, 69);
   long diff = 0, sum = 0;
   for (int k = 0; k < 20; ++k) {
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock; ++i) {
       diff += abs(buf[i] - a[k * Synth::kBlock + i]);
       sum += abs(a[k * Synth::kBlock + i]);
@@ -967,7 +1039,7 @@ void test_fm_lfo_on_macro() {
 static float rmsBlocks(int n) {
   double acc = 0;
   for (int k = 0; k < n; ++k) {
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock; ++i) acc += double(buf[i]) * buf[i];
   }
   return sqrtf(static_cast<float>(acc / (n * Synth::kBlock)));
@@ -976,7 +1048,7 @@ static float rmsBlocks(int n) {
 void test_filter_off_is_bit_identical() {
   noteOn(0, 0, 72);
   int16_t ref[Synth::kBlock * 4];
-  for (int k = 0; k < 4; ++k) s->render(ref + k * Synth::kBlock);
+  for (int k = 0; k < 4; ++k) render1(ref + k * Synth::kBlock);
   s->reset();
   // Off ignores every filter field, and CHIP ignores an LFO on a macro.
   Instrument& m = p->instruments[0];
@@ -990,20 +1062,20 @@ void test_filter_off_is_bit_identical() {
   m.lfoDepth = 63;
   noteOn(0, 0, 72);
   for (int k = 0; k < 4; ++k) {
-    s->render(buf);
+    render1(buf);
     TEST_ASSERT_EQUAL_INT16_ARRAY(ref + k * Synth::kBlock, buf, Synth::kBlock);
   }
 }
 
 void test_lp_darkens_saw() {
   noteOn(0, 0, 84);
-  s->render(buf);
+  render1(buf);
   const float open = rmsBlocks(8);
   s->reset();
   p->instruments[0].fltMode = static_cast<uint8_t>(FltMode::Lp);
   p->instruments[0].cutoff = 20;  // ~56 Hz, far below C6
   noteOn(0, 0, 84);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(rmsBlocks(8) < open * 0.2f);
 }
 
@@ -1028,7 +1100,7 @@ void test_max_reso_stays_finite() {
   m.cutoff = 127;
   m.fenv = 63;
   noteOn(0, 0, 100);
-  for (int k = 0; k < 50; ++k) s->render(buf);  // softClip keeps int16 in range; must not hang / NaN
+  for (int k = 0; k < 50; ++k) render1(buf);  // softClip keeps int16 in range; must not hang / NaN
   TEST_ASSERT_TRUE(s->activeVoices() == 1);
   Svf f = s->voice(s->trackVoice(0)).flt;
   TEST_ASSERT_TRUE(isfinite(f.process(0)));
@@ -1041,12 +1113,12 @@ void test_flt_lock_on_note_step() {
   stepStart(0, 0, 24, true);
   fx(0, 0, Fx::FLT, 15);
   noteOn(0, 0, 84);
-  s->render(buf);
+  render1(buf);
   const float locked = rmsBlocks(8);
   s->reset();
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 84);  // a new step drops the lock
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(locked < rmsBlocks(8) * 0.3f);
 }
 
@@ -1054,11 +1126,11 @@ void test_flt_lock_without_note_hits_sounding_voice() {
   Instrument& m = p->instruments[0];
   m.fltMode = static_cast<uint8_t>(FltMode::Lp);
   noteOn(0, 0, 84);
-  s->render(buf);
+  render1(buf);
   const float open = rmsBlocks(4);
   stepStart(0, 0, 24, false);
   fx(0, 0, Fx::FLT, 15);
-  for (int k = 0; k < 8; ++k) s->render(buf);  // the filter's state rings down from the open cutoff
+  for (int k = 0; k < 8; ++k) render1(buf);  // the filter's state rings down from the open cutoff
   TEST_ASSERT_TRUE(rmsBlocks(4) < open * 0.3f);
 }
 
@@ -1070,9 +1142,9 @@ static float rmsAfterFilterOn(bool ringFirst) {
   m.cutoff = 77;  // ~C6
   m.reso = 127;
   noteOn(0, 0, 84);
-  for (int k = 0; k < 8; ++k) s->render(buf);
+  for (int k = 0; k < 8; ++k) render1(buf);
   m.fltMode = static_cast<uint8_t>(FltMode::Off);
-  for (int k = 0; k < 2; ++k) s->render(buf);
+  for (int k = 0; k < 2; ++k) render1(buf);
   m.fltMode = static_cast<uint8_t>(FltMode::Lp);
   m.cutoff = 0;
   m.reso = 0;
@@ -1093,11 +1165,11 @@ void test_lfo_restarts_on_mono_retrigger_after_release() {
   m.lfoRate = 60;  // ~1 Hz
   m.lfoDepth = 10;
   noteOn(0, 0, 69);
-  for (int k = 0; k < 50; ++k) s->render(buf);  // ~0.2 cycle
+  for (int k = 0; k < 50; ++k) render1(buf);  // ~0.2 cycle
   noteOff(0, 0, 69);
-  s->render(buf);
+  render1(buf);
   noteOn(0, 0, 69);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] < 0.02f);
 }
 
@@ -1107,7 +1179,7 @@ void test_filter_env_long_attack_not_dropped() {
   m.fenv = 63;
   m.fAtk = 127;  // 10 s: the envelope starts below -60 dB
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).fenvDone);
 }
 
@@ -1117,19 +1189,19 @@ void test_filter_env_tail_dropped() {
   m.fenv = 63;
   m.fDec = 70;  // ~160 ms to -60 dB
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).fenvDone);
-  for (int k = 0; k < 60; ++k) s->render(buf);  // 240 ms
+  for (int k = 0; k < 60; ++k) render1(buf);  // 240 ms
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).fenvDone);
 }
 
 void test_res_lock_on_chip_sets_lock_bit() {
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 24, false);
   fx(0, 0, Fx::RES, 99);
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL(1 << kLockRes, v.lockMask);
   TEST_ASSERT_EQUAL(99, v.lock[kLockRes]);
@@ -1158,12 +1230,12 @@ void test_lfo_cutoff_on_chip() {
   m.lfoRate = 0;
   m.lfoDepth = -64;  // square starts at +1: -64 units of cutoff
   noteOn(0, 0, 84);
-  s->render(buf);
+  render1(buf);
   const float swept = rmsBlocks(8);
   s->reset();
   m.lfoDepth = 0;
   noteOn(0, 0, 84);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(swept < rmsBlocks(8) * 0.7f);
 }
 
@@ -1213,7 +1285,7 @@ static void sampleInstr(uint32_t frames, uint32_t rate) {
 static int renderSamples(int16_t* a, int max) {
   int n = 0;
   for (int k = 0; k < max / Synth::kBlock; ++k) {
-    s->render(a + k * Synth::kBlock);
+    render1(a + k * Synth::kBlock);
     for (int i = 0; i < Synth::kBlock; ++i) n += a[k * Synth::kBlock + i] != 0;
   }
   return n;
@@ -1299,12 +1371,12 @@ void test_sample_mono_retrigger_after_release_restarts() {
   p->instruments[0].mono = true;
   p->instruments[0].release = 100;
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOff(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   noteOn(0, 0, 60);
-  s->render(out);
+  render1(out);
   TEST_ASSERT_FLOAT_WITHIN(2.f, outOf(ab->data[0]), out[0]);
 }
 
@@ -1342,7 +1414,7 @@ static void renderFm(int16_t* a, int n, bool cache, uint8_t note = 69) {
   s->reset();
   s->setFmCache(cache);
   noteOn(0, 0, note);
-  for (int k = 0; k < n; ++k) s->render(a + k * Synth::kBlock);
+  for (int k = 0; k < n; ++k) render1(a + k * Synth::kBlock);
 }
 
 static int16_t fa[Synth::kBlock * 250], fb[Synth::kBlock * 250];
@@ -1352,7 +1424,7 @@ void test_fm_cache_static_note_computes_once() {
   p->instruments[0].sustain = 127;
   noteOn(0, 0, 69);
   const uint32_t c0 = s->fmMachineCalls();
-  for (int k = 0; k < 50; ++k) s->render(buf);
+  for (int k = 0; k < 50; ++k) render1(buf);
   TEST_ASSERT_TRUE(s->fmMachineCalls() - c0 <= 2);
 }
 
@@ -1424,15 +1496,15 @@ void test_fm_ninth_note_steals_oldest_fm_keeps_chip() {
   for (int t = 1; t < 4; ++t) p->tracks[t].instr = 1;
   noteOn(0, 0, 40);  // CHIP
   noteOn(0, 0, 43);
-  s->render(buf);
+  render1(buf);
   for (int t = 1; t <= 2; ++t)
     for (int k = 0; k < 4; ++k) {
       noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(60 + t * 10 + k));
-      s->render(buf);
+      render1(buf);
     }
   TEST_ASSERT_EQUAL(8, fmVoices());
   noteOn(0, 3, 90);  // 9th: steals track 1's note 70
-  s->render(buf);
+  renderMs(kStealMs);  // the fade may span two blocks
   TEST_ASSERT_EQUAL(8, fmVoices());
   TEST_ASSERT_EQUAL(10, s->activeVoices());  // 2 CHIP + 8 FM
   bool has70 = false, has90 = false;
@@ -1466,7 +1538,7 @@ void test_fm_voices_never_exceed_cap() {
     const uint8_t t = (r >> 8) % kTracks, n = 40 + (r >> 16) % 40;
     if ((r >> 4) % 5 == 0) noteOff(0, t, n);
     else noteOn((r >> 20) % Synth::kBlock, t, n);
-    s->render(buf);
+    render1(buf);
     int load = 0, fading = 0;
     for (int i = 0; i < kVoices; ++i) {
       const Voice& x = s->voice(i);
@@ -1474,15 +1546,14 @@ void test_fm_voices_never_exceed_cap() {
       fading += x.on && x.fm && x.stolen;
     }
     TEST_ASSERT_TRUE(load <= kFmVoiceMax);
-    // The fade is exactly one block (4 ms at 32 kHz): a steal mid-block leaves at most one
-    // victim fading into the next one.
-    TEST_ASSERT_TRUE(fmVoices() <= kFmVoiceMax + 1);
-    // One steal per block at most; a kStealMs fade spans a known number of blocks.
+    // One steal per block at most; a kStealMs fade spans a known number of blocks, so the
+    // victims still fading into later blocks are at most one fewer.
     constexpr int kStealBlocks = (kStealMs * kSynthRate / 1000 + Synth::kBlock - 1) / Synth::kBlock + 1;
+    TEST_ASSERT_TRUE(fmVoices() <= kFmVoiceMax + kStealBlocks - 1);
     TEST_ASSERT_TRUE(fading <= kStealBlocks);
   }
   // Stolen voices finish their fade: no steal outlives kStealMs.
-  for (int k = 0; k < 2 * (kStealMs * kSynthRate / 1000) / Synth::kBlock + 2; ++k) s->render(buf);
+  for (int k = 0; k < 2 * (kStealMs * kSynthRate / 1000) / Synth::kBlock + 2; ++k) render1(buf);
   TEST_ASSERT_TRUE(fmVoices() <= kFmVoiceMax);
   for (int i = 0; i < kVoices; ++i) TEST_ASSERT_FALSE(s->voice(i).stolen);
 }
@@ -1500,16 +1571,16 @@ void test_drum_sounds_and_ends() {
   p->instruments[0].macro[kMacDec] = 40;  // short
   noteOn(0, 0, 60);
   TEST_ASSERT_FALSE(silentBlocks(1));
-  for (int k = 0; k < 400 && s->activeVoices(); ++k) s->render(buf);
+  for (int k = 0; k < 400 && s->activeVoices(); ++k) render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
 void test_drum_ignores_note_off() {
   drumInstr(0, DrumMachine::Cy8);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOff(0, 0, 60);
-  for (int k = 0; k < 20; ++k) s->render(buf);  // 80 ms
+  for (int k = 0; k < 20; ++k) render1(buf);  // 80 ms
   TEST_ASSERT_EQUAL(1, s->activeVoices());
 }
 
@@ -1518,9 +1589,9 @@ void test_drum_mono_choke() {
   p->instruments[0].macro[kMacDec] = 120;  // open hat
   p->instruments[0].mono = false;           // ignored: DRUM is always mono
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
 }
 
@@ -1528,10 +1599,10 @@ void test_drum_choke_mid_segment_has_no_jump() {
   drumInstr(0, DrumMachine::Bd8);
   p->instruments[0].macro[kMacDec] = 100;
   noteOn(0, 0, 60);
-  for (int k = 0; k < 30; ++k) s->render(buf);
+  for (int k = 0; k < 30; ++k) render1(buf);
   const int16_t prev = buf[Synth::kBlock - 1];
   noteOn(50, 0, 60);  // choke inside a control segment
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   TEST_ASSERT_TRUE(abs(buf[0] - prev) < 3000);
   TEST_ASSERT_TRUE(abs(buf[50] - buf[49]) < 3000);  // the old hit fades under the new one
@@ -1543,7 +1614,7 @@ void test_drum_dec_lock() {
   stepStart(0, 0, 6, true);
   fx(0, 0, Fx::DCY, 5);  // closed
   noteOn(0, 0, 60);
-  for (int k = 0; k < 40 && s->activeVoices(); ++k) s->render(buf);  // 160 ms
+  for (int k = 0; k < 40 && s->activeVoices(); ++k) render1(buf);  // 160 ms
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
@@ -1551,10 +1622,10 @@ void test_drum_lock_on_empty_step_hits_sounding_voice() {
   drumInstr(0, DrumMachine::Hh8);
   stepStart(0, 0, 6, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::DCY, 7);
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL(1 << kMacDec, v.lockMask);
   TEST_ASSERT_EQUAL(7, v.lock[kMacDec]);
@@ -1581,7 +1652,7 @@ static int endJump(int max) {
   int16_t prev = 0;
   int peak = 1, jump = 0;
   for (int k = 0; k < max && (!k || s->activeVoices()); ++k) {  // a queued note starts on render
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock; ++i) {
       peak = abs(buf[i]) > peak ? abs(buf[i]) : peak;
       if (k || i) jump = abs(buf[i] - prev) > jump ? abs(buf[i] - prev) : jump;
@@ -1589,7 +1660,7 @@ static int endJump(int max) {
     }
   }
   TEST_ASSERT_EQUAL(0, s->activeVoices());
-  s->render(buf);
+  render1(buf);
   jump = abs(buf[0] - prev) > jump ? abs(buf[0] - prev) : jump;
   return jump * 100 / peak;
 }
@@ -1601,7 +1672,7 @@ void test_filter_rings_out_after_release() {
   m.reso = 110;
   m.release = 10;  // ~3 ms: shorter than the filter's ring
   noteOn(0, 0, 36);
-  for (int k = 0; k < 10; ++k) s->render(buf);
+  for (int k = 0; k < 10; ++k) render1(buf);
   noteOff(0, 0, 36);
   TEST_ASSERT_TRUE(endJump(250) < 20);
 }
@@ -1624,9 +1695,9 @@ void test_filter_tail_voice_is_reused_first() {
     m.reso = 127;
   }
   for (int k = 0; k < kVoices; ++k) noteOn(0, k % kTracks, 40 + k);
-  s->render(buf);
+  render1(buf);
   noteOff(0, 3, 43);
-  for (int k = 0; k < 4; ++k) s->render(buf);  // env done, filter still ringing
+  for (int k = 0; k < 4; ++k) render1(buf);  // env done, filter still ringing
   const int tail = [] {
     for (int i = 0; i < kVoices; ++i)
       if (s->voice(i).on && s->voice(i).env.idle()) return i;
@@ -1634,7 +1705,7 @@ void test_filter_tail_voice_is_reused_first() {
   }();
   TEST_ASSERT_TRUE(tail >= 0);
   noteOn(0, 7, 90);  // track 7 is below its poly limit: a new voice
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(90, s->voice(tail).note);
 }
 
@@ -1642,7 +1713,7 @@ void test_drum_cache_static_hit_computes_once() {
   drumInstr(0, DrumMachine::Hh8);
   noteOn(0, 0, 60);
   const uint32_t c0 = s->drumMachineCalls();
-  for (int k = 0; k < 50; ++k) s->render(buf);
+  for (int k = 0; k < 50; ++k) render1(buf);
   TEST_ASSERT_TRUE(s->drumMachineCalls() - c0 <= 2);
 }
 
@@ -1654,7 +1725,7 @@ void test_drum_cache_matches_recompute() {
     s->reset();
     drumInstr(0, mc);
     noteOn(0, 0, 62);
-    for (int k = 0; k < 10; ++k) s->render(buf);
+    for (int k = 0; k < 10; ++k) render1(buf);
     const Instrument& m = p->instruments[0];
     float mac[kFmMacros];
     for (int k = 0; k < kFmMacros; ++k) mac[k] = m.macro[k];
@@ -1675,11 +1746,11 @@ void test_drum_cache_follows_lock() {
   drumInstr(0, DrumMachine::Hh8);
   p->instruments[0].macro[kMacDec] = 120;
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   const float before = s->voice(s->trackVoice(0)).dp().metalMs;
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::DCY, 20);  // lock on the sounding voice
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).dp().metalMs < before * 0.5f);
 }
 
@@ -1689,12 +1760,12 @@ void test_heavy_voice_limit_counts_drum() {
     p->tracks[t].instr = t;
   }
   for (int t = 0; t < kTracks; ++t) noteOn(0, t, 60);
-  s->render(buf);
+  renderMs(kStealMs);  // steals fade over up to two blocks
   // 8 tracks fill kFmVoiceMax; a 9th heavy note (preview track) steals one of them.
   p->instruments[8].type = InstrType::Fm;
   send(0, kPreviewTrack, 0xC0, 8, 0, 2);
   noteOn(0, kPreviewTrack, 60);
-  s->render(buf);
+  renderMs(kStealMs);
   TEST_ASSERT_TRUE(s->activeVoices() <= kFmVoiceMax);
 }
 
@@ -1824,9 +1895,9 @@ static bool releasing(const Voice& v) { return v.env.stage() == Env::Stage::Rele
 void test_sample_ignores_note_off() {
   sampleSetup();
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOff(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
   TEST_ASSERT_FALSE(releasing(s->voice(s->trackVoice(0))));
   renderMs(100);  // 1000 frames at 16 kHz = 62.5 ms: the sample ends by itself
@@ -1848,7 +1919,7 @@ void test_preview_sample_stops_on_note_off() {
   sampleSetup(static_cast<uint8_t>(LoopMode::Forward));
   send(0, kPreviewTrack, 0xC0, 0, 0, 2);
   noteOn(0, kPreviewTrack, 60);
-  s->render(buf);
+  render1(buf);
   noteOff(0, kPreviewTrack, 60);
   renderMs(10);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
@@ -1858,11 +1929,11 @@ void test_sample_choked_by_next_step() {
   sampleSetup(static_cast<uint8_t>(LoopMode::Forward));
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   const int first = s->trackVoice(0);
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(releasing(s->voice(first)));
   renderMs(10);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
@@ -1882,7 +1953,7 @@ void test_sample_same_note_retrigger_chokes() {
   sampleSetup(static_cast<uint8_t>(LoopMode::Forward));
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   noteOn(0, 0, 60);  // a ratchet hit
   renderMs(10);
   TEST_ASSERT_EQUAL(1, s->activeVoices());
@@ -1895,7 +1966,7 @@ void test_sample_choke_leaves_other_tracks() {
   noteOn(0, 0, 60);
   stepStart(0, 1, 24, true);
   noteOn(0, 1, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 62);
   renderMs(10);
@@ -1910,13 +1981,13 @@ void test_mono_sample_restarts() {
   renderMs(20);
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_TRUE((v.pos >> 32) < 200);  // from the start again, not 20 ms in
 }
 
 // Delay: 1/16 at 120 BPM = 4000 samples.
-static int16_t dline[8000];
+static int16_t dline[2 * kSynthRate / 4];  // 250 ms, L and R
 
 // Short note at sample 0 on track 0 (one block, release 0), then nBlocks rendered; first non-zero
 // sample after a silent gap, or -1.
@@ -1924,7 +1995,7 @@ static int echoStart(int nBlocks) {
   noteOff(Synth::kBlock - 1, 0, 60);
   int gap = 0, at = -1;
   for (int k = 0; k < nBlocks && at < 0; ++k) {
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock && at < 0; ++i) {
       if (buf[i] == 0) ++gap;
       else if (gap > 1000) at = k * Synth::kBlock + i;
@@ -1941,38 +2012,38 @@ static void delaySetup(uint8_t send) {
   p->dlyTone = 127;
   p->dlyLevel = 127;
   p->instruments[0].send = send;
-  s->setDelayBuffer(dline, 8000);
+  s->setDelayBuffer(dline, kSynthRate / 4);
 }
 
 void test_delay_echo_after_one_sixteenth() {
   delaySetup(127);
   noteOn(0, 0, 60);
-  const int at = echoStart(40);
-  TEST_ASSERT_TRUE(at >= 3995 && at <= 4005);
+  const int at = echoStart(blocksMs(200));
+  TEST_ASSERT_TRUE(at >= kSynthRate / 8 - 5 && at <= kSynthRate / 8 + 5);  // 125 ms
 }
 
 void test_delay_send_zero_no_echo() {
   delaySetup(0);
   noteOn(0, 0, 60);
-  TEST_ASSERT_EQUAL(-1, echoStart(40));
+  TEST_ASSERT_EQUAL(-1, echoStart(blocksMs(200)));
 }
 
 void test_delay_without_buffer_no_echo() {
   delaySetup(127);
   s->setDelayBuffer(nullptr, 0);
   noteOn(0, 0, 60);
-  TEST_ASSERT_EQUAL(-1, echoStart(40));
+  TEST_ASSERT_EQUAL(-1, echoStart(blocksMs(200)));
 }
 
 void test_delay_send_zero_mix_unchanged() {
   static int16_t ref[Synth::kBlock * 8];
   noteOn(0, 0, 60);
-  for (int k = 0; k < 8; ++k) s->render(ref + k * Synth::kBlock);
+  for (int k = 0; k < 8; ++k) render1(ref + k * Synth::kBlock);
   s->reset();
   delaySetup(0);
   noteOn(0, 0, 60);
   for (int k = 0; k < 8; ++k) {
-    s->render(buf);
+    render1(buf);
     TEST_ASSERT_EQUAL_INT16_ARRAY(ref + k * Synth::kBlock, buf, Synth::kBlock);
   }
 }
@@ -1982,31 +2053,31 @@ void test_dly_lock_on_note_step() {
   stepStart(0, 0, 24, true);
   fx(0, 0, Fx::DLY, 127);
   noteOn(0, 0, 60);
-  const int at = echoStart(40);
-  TEST_ASSERT_TRUE(at >= 3995 && at <= 4005);
+  const int at = echoStart(blocksMs(200));
+  TEST_ASSERT_TRUE(at >= kSynthRate / 8 - 5 && at <= kSynthRate / 8 + 5);  // 125 ms
   s->reset();
   stepStart(0, 0, 24, true);
   noteOn(0, 0, 60);  // a new step drops the lock
-  TEST_ASSERT_EQUAL(-1, echoStart(40));
+  TEST_ASSERT_EQUAL(-1, echoStart(blocksMs(200)));
 }
 
 void test_dly_lock_without_note_hits_sounding_voice() {
   delaySetup(0);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 24, false);
   fx(0, 0, Fx::DLY, 127);
-  s->render(buf);
-  const int at = echoStart(40);  // the note sounded on blocks 1..2 with send
+  render1(buf);
+  const int at = echoStart(blocksMs(200));  // the note sounded on blocks 1..2 with send
   TEST_ASSERT_TRUE(at >= 0);
 }
 
 void test_delay_time_follows_tempo() {
   delaySetup(127);
-  p->bpm = 240;  // 1/16 = 2000 samples
+  p->bpm = 240;  // 1/16 = 62.5 ms
   noteOn(0, 0, 60);
-  const int at = echoStart(40);
-  TEST_ASSERT_TRUE(at >= 1995 && at <= 2005);
+  const int at = echoStart(blocksMs(200));
+  TEST_ASSERT_TRUE(at >= kSynthRate / 16 - 5 && at <= kSynthRate / 16 + 5);
 }
 
 // ---- SYNTH ----
@@ -2021,12 +2092,12 @@ void test_synth_saw_sounds() {
   instrSetType(m, InstrType::Synth);
   m.sustain = 127;
   noteOn(0, 0, 57);  // 220 Hz
-  s->render(buf);
+  render1(buf);
   int nz = 0;
   for (int i = 0; i < Synth::kBlock; ++i) nz += buf[i] != 0;
   TEST_ASSERT_TRUE(nz > 100);
-  // 25 blocks = 100 ms: ~22 falling crossings at 220 Hz.
-  TEST_ASSERT_INT_WITHIN(2, 22, crossings(25));
+  // 100 ms: ~22 falling crossings at 220 Hz.
+  TEST_ASSERT_INT_WITHIN(2, 22, crossings(blocksMs(100)));
 }
 
 void test_synth_missing_wt_silent() {
@@ -2064,7 +2135,7 @@ static int synthPolyChords(SynOsc o1, SynOsc o2) {
     p->tracks[t].instr = 0;
     for (int k = 0; k < kPolyPerTrack; ++k) noteOn(0, t, 48 + t * 2 + k * 4);
   }
-  s->render(buf);
+  render1(buf);
   return s->activeVoices();
 }
 
@@ -2083,7 +2154,7 @@ void test_synth_macro_lock_applies() {
   instrSetType(m, InstrType::Synth);
   send(0, 0, 0xF5, static_cast<uint8_t>(Fx::DCY), 100);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_TRUE(v.lockMask & (1 << kMacShp1));
   TEST_ASSERT_EQUAL(100, v.lock[kMacShp1]);
@@ -2094,10 +2165,10 @@ void test_synth_macro_lock_on_empty_step_hits_sounding_voice() {
   instrSetType(m, InstrType::Synth);
   stepStart(0, 0, 6, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::SHP, 90);  // MIX
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL(1 << kMacMix, v.lockMask);
   TEST_ASSERT_EQUAL(90, v.lock[kMacMix]);
@@ -2116,23 +2187,23 @@ static void lfo1(Instrument& m, uint8_t sync, uint8_t rate, int8_t depth) {
 void test_lfo_free_runs_through_note_ons() {
   lfo1(p->instruments[0], kLfoFree, 40, 20);
   noteOn(0, 0, 60);
-  for (int k = 0; k < 50; ++k) s->render(buf);
+  for (int k = 0; k < 50; ++k) render1(buf);
   const float a = s->trackLfoPhase(0, 0);
   TEST_ASSERT_TRUE(a > 0);
   TEST_ASSERT_EQUAL_FLOAT(0, s->voice(s->trackVoice(0)).lfoPhase[0]);  // the voice's own stays unused
   noteOff(0, 0, 60);
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   const float b = s->trackLfoPhase(0, 0);
   TEST_ASSERT_FLOAT_WITHIN(1e-5f, a + lfoHz(40) * Synth::kBlock / kSynthRate, b);
 }
 
 void test_lfo_free_restarts_on_play_start() {
   lfo1(p->instruments[0], kLfoFree, 40, 20);
-  for (int k = 0; k < 50; ++k) s->render(buf);
+  for (int k = 0; k < 50; ++k) render1(buf);
   TEST_ASSERT_TRUE(s->trackLfoPhase(0, 0) > 0.01f);  // runs without notes
   send(0, 0, 0xFE, 0, 0, 1);
-  s->render(buf);
+  render1(buf);
   // The control update at 0 precedes the event: 3 more updates in the block.
   TEST_ASSERT_FLOAT_WITHIN(1e-5f, lfoHz(40) * (Synth::kBlock - Synth::kControl) / kSynthRate, s->trackLfoPhase(0, 0));
 }
@@ -2141,7 +2212,8 @@ void test_lfo_free_tempo_locks_to_beats() {
   p->bpm = 120;
   lfo1(p->instruments[0], kLfoFree | kLfoTempo, 6, 20);  // 1/4: one cycle per beat (0.5 s)
   send(0, 0, 0xFE, 0, 0, 1);
-  for (int k = 0; k < kBlocksPerSec * 3; ++k) s->render(buf);  // 6 beats, minus the first update
+  // 6 beats (to the nearest block), minus the first update.
+  for (int k = 0; k < (3 * kSynthRate + Synth::kBlock / 2) / Synth::kBlock; ++k) render1(buf);
   const float ph = s->trackLfoPhase(0, 0);
   TEST_ASSERT_TRUE(ph < 0.01f || ph > 0.99f);
 }
@@ -2149,11 +2221,11 @@ void test_lfo_free_tempo_locks_to_beats() {
 void test_lfo_note_mode_unchanged() {
   lfo1(p->instruments[0], 0, 40, 20);
   noteOn(0, 0, 60);
-  for (int k = 0; k < 50; ++k) s->render(buf);
+  for (int k = 0; k < 50; ++k) render1(buf);
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] > 0.01f);
   noteOff(0, 0, 60);
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] < 0.01f);
 }
 
@@ -2162,7 +2234,7 @@ void test_lfo_depth_lock_turns_lfo_on() {
   stepStart(0, 0, 6, true);
   fx(0, 0, Fx::LFD, 30);
   noteOn(0, 0, 60);
-  for (int k = 0; k < 10; ++k) s->render(buf);
+  for (int k = 0; k < 10; ++k) render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL_HEX16(1u << kLfoLkDepth, v.lfoLockMask);
   TEST_ASSERT_EQUAL(30, v.lfoLock[0].depth);
@@ -2175,7 +2247,7 @@ void test_lfo_select_targets_lfo_2() {
   fx(0, 0, Fx::LFS, 99);
   fx(0, 0, Fx::LFT, static_cast<uint8_t>(LfoDest::Cutoff));
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL_HEX16((1u << (kLfoLocks + kLfoLkRate)) | (1u << (kLfoLocks + kLfoLkDest)), v.lfoLockMask);
   TEST_ASSERT_EQUAL(99, v.lfoLock[1].rate);
@@ -2184,7 +2256,7 @@ void test_lfo_select_targets_lfo_2() {
   stepStart(0, 0, 6, true);
   fx(0, 0, Fx::LFD, 10);
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL_HEX16(1u << kLfoLkDepth, s->voice(s->trackVoice(0)).lfoLockMask);
 }
 
@@ -2193,7 +2265,7 @@ void test_lfo_rate_lock_changes_speed() {
   stepStart(0, 0, 6, true);
   fx(0, 0, Fx::LFS, 80);
   noteOn(0, 0, 60);
-  for (int k = 0; k < 10; ++k) s->render(buf);
+  for (int k = 0; k < 10; ++k) render1(buf);
   const float n = 10.f * Synth::kBlock - Synth::kControl;  // the first update precedes the note
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, lfoHz(80) * n / kSynthRate, s->voice(s->trackVoice(0)).lfoPhase[0]);
 }
@@ -2203,26 +2275,26 @@ void test_lfo_reset_fx_sets_phase() {
   stepStart(0, 0, 6, true);
   fx(0, 0, Fx::LFR, 0x80);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   const float adv = lfoHz(40) * (Synth::kBlock - Synth::kControl) / kSynthRate;
   TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f + adv, s->voice(s->trackVoice(0)).lfoPhase[0]);
   // FREE: the track's phase, on a step without a note too.
   lfo1(p->instruments[0], kLfoFree, 40, 20);
-  for (int k = 0; k < 20; ++k) s->render(buf);
+  for (int k = 0; k < 20; ++k) render1(buf);
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::LFR, 0x40);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.25f + adv, s->trackLfoPhase(0, 0));
 }
 
 void test_lfo_lock_on_empty_step_hits_sounding_voice() {
   stepStart(0, 0, 6, true);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   stepStart(0, 0, 6, false);
   fx(0, 0, Fx::LFO, 3);
   fx(0, 0, Fx::LFW, static_cast<uint8_t>(LfoWave::Square));
-  s->render(buf);
+  render1(buf);
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_EQUAL_HEX16(1u << (2 * kLfoLocks + kLfoLkWave), v.lfoLockMask);
   TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Square), v.lfoLock[2].wave);
@@ -2235,7 +2307,7 @@ void test_lfo_wave_lock_sounds() {
   stepStart(0, 0, 6, true);
   fx(0, 0, Fx::LFW, static_cast<uint8_t>(LfoWave::Square));
   noteOn(0, 0, 69);
-  for (int k = 0; k < 4; ++k) s->render(buf);
+  for (int k = 0; k < 4; ++k) render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(0.05f, 69.f + 12.f * 12.f / 64.f, voiceSemis(0));
 }
 
@@ -2271,7 +2343,7 @@ static int trackVoices(int track) {
 void test_kit_sampler_lane_builds_scratch_instrument() {
   kitSetup(0, 0);
   noteOn(0, 0, 60, 100);
-  s->render(buf);
+  render1(buf);
   const int v = onlyVoice();
   TEST_ASSERT_TRUE(v >= 0);
   const Voice& x = s->voice(v);
@@ -2295,7 +2367,7 @@ void test_kit_sampler_lane_builds_scratch_instrument() {
 void test_kit_decay_zero_is_one_shot() {
   kitSetup(0, 0);
   noteOn(0, 0, 61, 100);  // lane 2: decay 0
-  s->render(buf);
+  render1(buf);
   const Voice& x = s->voice(onlyVoice());
   const Instrument& li = s->voiceInstrument(onlyVoice());
   TEST_ASSERT_EQUAL(0, li.decay);
@@ -2307,11 +2379,11 @@ void test_kit_missing_sample_silent() {
   kitSetup(0, 0);
   strcpy(p->instruments[0].kit[0].sample, "nope");
   noteOn(0, 0, 60, 100);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(-1, onlyVoice());
   p->instruments[0].kit[1].sample[0] = 0;  // empty lane
   noteOn(0, 0, 61, 100);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(-1, onlyVoice());
 }
 
@@ -2319,7 +2391,7 @@ void test_kit_inst_lane_plays_instrument() {
   kitSetup(0, 0);
   p->instruments[0].kit[2].instr = 5;
   noteOn(0, 0, 62, 100);
-  s->render(buf);
+  render1(buf);
   const Voice& x = s->voice(onlyVoice());
   TEST_ASSERT_FALSE(x.lane);
   TEST_ASSERT_FALSE(x.sample);
@@ -2332,20 +2404,20 @@ void test_kit_in_kit_lane_silent() {
   instrSetType(p->instruments[3], InstrType::Kit);
   p->instruments[0].kit[2].instr = 3;
   noteOn(0, 0, 62, 100);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(-1, onlyVoice());
 }
 
 void test_kit_eight_lanes_sound_and_rehit_chokes() {
   kitSetup(0, 0);
   for (int l = 0; l < kKitLanes; ++l) noteOn(0, 0, static_cast<uint8_t>(60 + l), 100);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(8, trackVoices(0));
   int lane0 = -1;
   for (int v = 0; v < kVoices; ++v)
     if (s->voice(v).on && s->voice(v).note == 60) lane0 = v;
   noteOn(0, 0, 60, 100);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(8, trackVoices(0));
   int again = -1;
   for (int v = 0; v < kVoices; ++v)
@@ -2356,7 +2428,7 @@ void test_kit_eight_lanes_sound_and_rehit_chokes() {
 void test_kit_unknown_note_silent() {
   kitSetup(0, 0);
   noteOn(0, 0, 40, 100);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_EQUAL(-1, onlyVoice());
 }
 
@@ -2371,14 +2443,14 @@ static float noteRms(uint8_t note, uint8_t vel, int blocks) {
 void test_drive_zero_is_bit_identical() {
   noteOn(0, 0, 60);
   int16_t ref[Synth::kBlock * 4];
-  for (int k = 0; k < 4; ++k) s->render(ref + k * Synth::kBlock);
+  for (int k = 0; k < 4; ++k) render1(ref + k * Synth::kBlock);
   s->reset();
   p->instruments[0].drive = 0;
   p->instruments[0].rsend = 0;
   p->instruments[0].velCut = 63;  // no filter: nothing to move
   noteOn(0, 0, 60);
   int16_t got[Synth::kBlock * 4];
-  for (int k = 0; k < 4; ++k) s->render(got + k * Synth::kBlock);
+  for (int k = 0; k < 4; ++k) render1(got + k * Synth::kBlock);
   TEST_ASSERT_EQUAL_MEMORY(ref, got, sizeof(ref));
 }
 
@@ -2396,12 +2468,12 @@ void test_drv_lock_on_note_step() {
   fx(0, 0, Fx::DRV, 127);
   noteOn(0, 0, 60);
   noteOn(0, 1, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).drive.on());
   TEST_ASSERT_FALSE(s->voice(s->trackVoice(1)).drive.on());
   stepStart(0, 0, 24, false);  // without a note: the sounding voice
   fx(0, 0, Fx::DRV, 0);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).drive.on());
 }
 
@@ -2414,7 +2486,7 @@ void test_lfo_drive_dest() {
   noteOn(0, 0, 60);
   bool on = false, off = false;
   for (int k = 0; k < kBlocksPerSec; ++k) {
-    s->render(buf);
+    render1(buf);
     const bool d = s->voice(s->trackVoice(0)).drive.on();
     on |= d;
     off |= !d;
@@ -2427,12 +2499,12 @@ static float rvbBuf[Reverb::kBufLen];
 void test_rsend_zero_same_with_and_without_buffer() {
   noteOn(0, 0, 60);
   int16_t ref[Synth::kBlock * 8];
-  for (int k = 0; k < 8; ++k) s->render(ref + k * Synth::kBlock);
+  for (int k = 0; k < 8; ++k) render1(ref + k * Synth::kBlock);
   s->reset();
   s->setReverbBuffer(rvbBuf, Reverb::kBufLen);
   noteOn(0, 0, 60);
   int16_t got[Synth::kBlock * 8];
-  for (int k = 0; k < 8; ++k) s->render(got + k * Synth::kBlock);
+  for (int k = 0; k < 8; ++k) render1(got + k * Synth::kBlock);
   TEST_ASSERT_EQUAL_MEMORY(ref, got, sizeof(ref));
 }
 
@@ -2446,7 +2518,7 @@ static int tailSamples(bool withBuffer) {
   renderMs(20);
   int nz = 0;
   for (int k = 0; k < 75; ++k) {  // 300 ms
-    s->render(buf);
+    render1(buf);
     for (int i = 0; i < Synth::kBlock; ++i) nz += buf[i] != 0;
   }
   return nz;
@@ -2461,11 +2533,11 @@ void test_rvb_lock_on_note_step() {
   stepStart(0, 0, 24, true);
   fx(0, 0, Fx::RVB, 127);
   noteOn(0, 0, 60);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, s->voice(s->trackVoice(0)).rsend);
   stepStart(0, 0, 24, true);  // a new step drops the lock
   noteOn(0, 0, 62);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.f, s->voice(s->trackVoice(0)).rsend);
 }
 
@@ -2479,9 +2551,9 @@ static void sidechainRun(bool pad, bool kick, int16_t (&out)[Synth::kBlock * 10]
   p->instruments[0].vol = pad ? 30 : 0;
   p->instruments[1].vol = kick ? 127 : 0;
   noteOn(0, 0, 48);
-  for (int k = 0; k < 40; ++k) s->render(buf);
+  for (int k = 0; k < 40; ++k) render1(buf);
   noteOn(0, 1, 36);
-  for (int k = 0; k < 10; ++k) s->render(out + k * Synth::kBlock);
+  for (int k = 0; k < 10; ++k) render1(out + k * Synth::kBlock);
 }
 
 // The pad under the kick (output minus the kick alone) is ducked against the pad alone.
@@ -2523,12 +2595,12 @@ void test_comp_off_is_bit_identical() {
   p->scDepth = 127;  // ignored with compAmt 0
   noteOn(0, 0, 60);
   int16_t got[Synth::kBlock * 4];
-  for (int k = 0; k < 4; ++k) s->render(got + k * Synth::kBlock);
+  for (int k = 0; k < 4; ++k) render1(got + k * Synth::kBlock);
   s->reset();
   p->scTrack = 0;
   noteOn(0, 0, 60);
   int16_t ref[Synth::kBlock * 4];
-  for (int k = 0; k < 4; ++k) s->render(ref + k * Synth::kBlock);
+  for (int k = 0; k < 4; ++k) render1(ref + k * Synth::kBlock);
   TEST_ASSERT_EQUAL_MEMORY(ref, got, sizeof(ref));
 }
 
@@ -2541,8 +2613,8 @@ static void arpOffsets(uint8_t arm, int (&got)[4], int chord = -1) {
   fx(0, 0, Fx::ARM, arm);
   if (chord >= 0) send(0, 0, 0xF5, kSynthArpChord, static_cast<uint8_t>(chord));
   noteOn(0, 0, 60);
-  for (int k = 0; k < 4; ++k) {
-    renderMs(k == 0 ? 16 : 32);  // 16, 48, 80, 112 ms (whole blocks)
+  for (int k = 0, done = 0; k < 4; ++k) {
+    for (; done < blocksMs(15 + 30 * k); ++done) render1(buf);  // 15, 45, 75, 105 ms (whole blocks)
     got[k] = s->voice(s->trackVoice(0)).arpOff;
   }
 }
@@ -2610,17 +2682,17 @@ void test_velmac_shifts_decay() {
   m.macro[kMacDec] = 40;
   m.velMac = 0;
   noteOn(0, 0, 60, 127);
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(0.6f, 40.f, s->voice(s->trackVoice(0)).fpMac[kMacDec]);
   s->reset();
   m.velMac = 63;
   noteOn(0, 0, 60, 127);
-  s->render(buf);
+  render1(buf);
   // The DECAY the voice used went up by 63 x 63 / 64 = 62 macro units: its params cache key shows it.
   TEST_ASSERT_FLOAT_WITHIN(0.6f, 40.f + 62.f, s->voice(s->trackVoice(0)).fpMac[kMacDec]);
   s->reset();
   noteOn(0, 0, 60, 1);  // velocity 1: down by 63 x 63 / 64, clamped at 0
-  s->render(buf);
+  render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(0.6f, 0.f, s->voice(s->trackVoice(0)).fpMac[kMacDec]);
 }
 
@@ -2637,6 +2709,10 @@ int main() {
   RUN_TEST(test_event_offset);
   RUN_TEST(test_silent_without_events);
   RUN_TEST(test_note_on_lands_on_its_sample);
+  RUN_TEST(test_centred_track_l_equals_r);
+  RUN_TEST(test_pan_gains);
+  RUN_TEST(test_pan_hard_left_right);
+  RUN_TEST(test_pan_sends_follow);
   RUN_TEST(test_track_peaks);
   RUN_TEST(test_events_sorted_by_offset);
   RUN_TEST(test_note_off_frees_voice_after_release);

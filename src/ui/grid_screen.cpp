@@ -702,8 +702,8 @@ void GridScreen::resample(bool wholePattern) {
   }
   app_.markDirty();
   char msg[40];
-  snprintf(msg, sizeof(msg), "%s %lu.%lus%s", name, static_cast<unsigned long>(rs.frames / 32000),
-           static_cast<unsigned long>(rs.frames % 32000 / 3200), r == storage::Result::Capped ? "  60 S CAP" : "");
+  snprintf(msg, sizeof(msg), "%s %lu.%lus%s", name, static_cast<unsigned long>(rs.frames / mt::kSynthRate),
+           static_cast<unsigned long>(rs.frames % mt::kSynthRate / (mt::kSynthRate / 10)), r == storage::Result::Capped ? "  60 S CAP" : "");
   app_.toast(msg);
 }
 

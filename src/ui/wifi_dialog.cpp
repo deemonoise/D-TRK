@@ -20,7 +20,6 @@ bool WifiDialog::open() {
     return false;
   }
   app_.lockTransport(true);
-  audio::reverbToPsram();  // Wi-Fi needs the internal RAM
   open_ = true;
   logCount_ = 0;
   {
@@ -46,40 +45,10 @@ void WifiDialog::close() {
   kb_.close();
   heap_caps_free(nets_);
   nets_ = nullptr;
-  const net::OpenFile changed = net::webOpenFile();
-  const bool served = net::webRunning();
   net::webEnd();
   net::off();
-  audio::reverbToInternal();
   app_.lockTransport(false);
   open_ = false;
-  if (!served) return;
-  if (changed == net::OpenFile::Replaced) {
-    app_.markDirty();  // memory and card differ now
-    const MenuItem items[] = {{"Keep current", kKeep}, {"Reload from card", kReload}};
-    app_.menu().open("PROJECT FILE CHANGED", items, 2, [this](int id) {
-      if (id == kReload) reload();
-    });
-  } else if (changed == net::OpenFile::Removed) {
-    app_.markDirty();
-    app_.toast("PROJECT FILE REMOVED");
-  }
-}
-
-void WifiDialog::reload() {
-  char nm[17];
-  strlcpy(nm, app_.project().name, sizeof(nm));
-  app_.showBusy("LOADING...");
-  int missing = 0;
-  const storage::Result r = storage::load(app_.project(), nm, false, &missing, App::syncProgress, &app_);
-  if (r != storage::Result::Ok && r != storage::Result::SamplesNotSaved) {
-    app_.toast(storage::resultText(r));
-    return;
-  }
-  app_.projectReplaced();
-  char msg[32];
-  snprintf(msg, sizeof(msg), "LOADED %s", nm);
-  app_.loadedToast(msg, missing, r == storage::Result::SamplesNotSaved);
 }
 
 void WifiDialog::setState(St s) {
@@ -157,10 +126,6 @@ void WifiDialog::goOnline() {
   net::WebHooks h;
   h.log = [this](const char* line) { addLog(line); };
   h.busy = [this](const char* msg) { app_.showBusy(msg); };
-  h.project = [this]() -> const char* {
-    const char* n = app_.project().name;
-    return strcmp(n, "untitled") == 0 ? "" : n;
-  };
   net::webBegin(h);
   addLog("ONLINE");
   setState(St::Online);
@@ -260,7 +225,7 @@ void WifiDialog::draw(LGFX_Sprite& s, int y0) {
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.setTextColor(kText);
-  s.drawString("WI-FI TRANSFER", 16, ty);
+  s.drawString("WI-FI FIRMWARE", 16, ty);
   s.setTextColor(kDim);
   s.drawString(creds_.ssid, kScreenW - 16 - static_cast<int>(strlen(creds_.ssid)) * kCharW, ty);
 
@@ -278,12 +243,12 @@ void WifiDialog::draw(LGFX_Sprite& s, int y0) {
       break;
     case St::Online:
       s.setTextColor(kCursor);
-      s.drawString("http://d-trk.local", 16, y);
+      s.drawString("http://d-trk.local/firmware", 16, y);
       net::ip(buf, sizeof(buf));
       s.setTextColor(kText);
       if (buf[0]) {
         char url[40];
-        snprintf(url, sizeof(url), "http://%s", buf);
+        snprintf(url, sizeof(url), "http://%s/firmware", buf);
         s.drawString(url, 16, y + kLineH);
       }
       break;

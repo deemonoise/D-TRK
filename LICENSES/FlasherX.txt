@@ -1,0 +1,21 @@
+FlasherX (https://github.com/joepasquariello/FlasherX), vendored in lib/flasherx/src:
+FlashTxx.c, FlashTxx.h, FXUtil.cpp, FXUtil.h.
+
+From FlashTxx.h / FlashTxx.c:
+
+  Original by Niels A. Moseley, 2015.
+  Modifications for OTA updates by Jon Zeeff, Deb Hollenback
+  Paul Stoffregen's T4.x flash routines from Teensy4 core added by Jon Zeeff
+  Frank Boesing's T3.x flash routines adapted for OTA by Joe Pasquariello
+  This code is released into the public domain.
+
+From FXUtil.cpp (Intel HEX parsing):
+
+  /* Intel HEX read/write functions, Paul Stoffregen, paul@ece.orst.edu */
+  /* This code is in the public domain.  Please retain my name and */
+  /* email address in distributed copies, and let me know about any bugs */
+
+  /* I, Paul Stoffregen, give no warranty, expressed or implied for */
+  /* this software and/or documentation provided, including, without */
+  /* limitation, warranty of merchantability and fitness for a */
+  /* particular purpose. */

@@ -13,6 +13,8 @@
 #include "storage/storage.h"
 #include "ui/app.h"
 
+static constexpr uint32_t kSynthWaitMs = 3000;  // boot: wait for the synth board at most this long
+
 static LGFX lcd;
 static mt::Project* project;
 static ui::App app;
@@ -32,17 +34,20 @@ static void loadDemo(mt::Project& p) {
   for (int i = 2; i < 16; i += 4) pat.steps[2][i].note = 60;
 }
 
-#ifdef WT_BENCH
-namespace audio {
-void wtBench();
+#ifdef LINK_ECHO_TEST
+namespace slink {
+void echoTest();
 }
 #endif
 
 void setup() {
   Serial.begin(115200);
-  // Before anything else: the synth and the sequencer need large blocks of internal RAM (in PSRAM
-  // the audio costs far more); the SD card, the screen and Wi-Fi fragment it later.
-  audio::reserve();
+#ifdef LINK_ECHO_TEST
+  delay(2000);
+  slink::echoTest();
+#endif
+  // Before anything else: the sequencer needs a large block of internal RAM; the link, the screen
+  // and Wi-Fi fragment it later.
   engine::reserve();
   void* mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_SPIRAM);
   if (!mem) mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_8BIT);
@@ -58,23 +63,39 @@ void setup() {
   // Shift is on the expander: trackioBegin reads the port before returning.
   hw::trackioBegin();
   const bool safeBoot = hw::expanderDown(pins::kShiftBit);
-  const bool sd = hw::sdBegin();
-  storage::logBoot();  // a crash / watchdog / brownout restart goes into /diag/crashlog.txt
-  const bool loaded = sd && !safeBoot && storage::autoload(*project, &fromBak, &autoErr);
-  if (!loaded) loadDemo(*project);
 
   lcd.init();
   lcd.setRotation(1);
   pinMode(pins::kLcdBacklight, OUTPUT);
   digitalWrite(pins::kLcdBacklight, HIGH);
 
+  // The card is on the synth board: start the link and give the board a moment to answer.
+  audio::begin(project);
+  lcd.fillScreen(TFT_BLACK);
+  lcd.setTextColor(TFT_WHITE);
+  lcd.drawString("Synth: connecting...", 16, 16);
+  for (const uint32_t t0 = millis(); !audio::synthUp() && millis() - t0 < kSynthWaitMs;) delay(20);
+  if (!audio::synthUp()) lcd.drawString("Synth: no answer, going on", 16, 40);
+
+  const bool sd = hw::sdBegin();
+  storage::logBoot();  // a crash / watchdog / brownout restart goes into /diag/crashlog.txt (now or later)
+  const bool loaded = sd && !safeBoot && storage::autoload(*project, &fromBak, &autoErr);
+  if (!loaded) loadDemo(*project);
+
   hw::inputBegin();
   engine::begin(project);
-  audio::begin(project);
   app.begin(&lcd, project);
   engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));  // song position display
-  // Bank mounted by audio::begin, engine not playing: bring in the samples the cache lacks.
+  // Engine not playing: the synth board brings the samples its bank lacks in from the project's folder
+  // (BankSync). It may still be booting (its first boot builds the built-in wavetables): wait a while.
   int missing = 0;
+  if (loaded && (project->sampleCount > 0 || project->wavetableCount > 0)) {
+    const uint32_t t0 = millis();
+    while (!audio::synthUp() && millis() - t0 < 8000) {
+      audio::pump();
+      delay(20);
+    }
+  }
   const bool folderFail = loaded && storage::pullSamples(*project, &missing, ui::App::syncProgress, &app) ==
                                         storage::Result::SamplesNotSaved;
   // One toast: autoload error (nothing loaded), or backup / missing samples / folder not written.
@@ -87,10 +108,6 @@ void setup() {
   } else if (fromBak || missing > 0 || folderFail) {
     app.loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
-#ifdef WT_BENCH
-  audio::wtBench();
-  app.toast("WT BENCH: /midi/bench.mid");
-#endif
 }
 
 void loop() {
@@ -98,5 +115,10 @@ void loop() {
   while (hw::inputPoll(ev, 0)) app.onInput(ev);
   app.tick();
   audio::pollLog();
+  static uint32_t logCheckMs = 0;
+  if (millis() - logCheckMs >= 1000) {  // a crash record held back for the card
+    logCheckMs = millis();
+    storage::flushBootLog();
+  }
   vTaskDelay(1);
 }

@@ -19,24 +19,24 @@ namespace {
 
 // Output frame j: picked source frame (n > 64) or spectra interpolated between neighbours.
 struct FileSrc final : WtSpectrumSource {
-  const int16_t* d;
+  WtFrameReader* rd;
   WtFormat f;
   void spectrum(int j, float* re, float* im) override {
     if (f.frames == 1) {
-      wtAnalyze(d, f.frameLen, re, im);
+      wtAnalyze(rd->frame(0, f), f.frameLen, re, im);
       return;
     }
     const double pos = j * (f.frames - 1) / double(kWtFrames - 1);
     if (f.frames > kWtFrames) {
-      wtAnalyze(d + static_cast<long>(lrint(pos)) * f.frameLen, f.frameLen, re, im);
+      wtAnalyze(rd->frame(static_cast<int>(lrint(pos)), f), f.frameLen, re, im);
       return;
     }
     const int a = static_cast<int>(pos);
     const int b = a + 1 < f.frames ? a + 1 : a;
     const float t = static_cast<float>(pos - a);
     float re2[kWtHarm], im2[kWtHarm];
-    wtAnalyze(d + a * f.frameLen, f.frameLen, re, im);
-    wtAnalyze(d + b * f.frameLen, f.frameLen, re2, im2);
+    wtAnalyze(rd->frame(a, f), f.frameLen, re, im);
+    wtAnalyze(rd->frame(b, f), f.frameLen, re2, im2);
     for (int h = 0; h < kWtHarm; ++h) {
       re[h] += (re2[h] - re[h]) * t;
       im[h] += (im2[h] - im[h]) * t;
@@ -44,14 +44,25 @@ struct FileSrc final : WtSpectrumSource {
   }
 };
 
+struct MemReader final : WtFrameReader {
+  const int16_t* d;
+  const int16_t* frame(int k, const WtFormat& fmt) override { return d + static_cast<long>(k) * fmt.frameLen; }
+};
+
 }  // namespace
 
-WtErr wtImport(const int16_t* mono, uint32_t n, uint16_t clm, int16_t* table) {
+WtErr wtImport(WtFrameReader& rd, uint32_t n, uint16_t clm, int16_t* table) {
   FileSrc s;
-  s.d = mono;
+  s.rd = &rd;
   const WtErr e = wtDetect(n, clm, s.f);
   if (e != WtErr::Ok) return e;
   return wtBuild(s, table) ? WtErr::Ok : WtErr::Silent;
+}
+
+WtErr wtImport(const int16_t* mono, uint32_t n, uint16_t clm, int16_t* table) {
+  MemReader rd;
+  rd.d = mono;
+  return wtImport(rd, n, clm, table);
 }
 
 }  // namespace mt

@@ -24,7 +24,7 @@ Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (g
    5     6     7     8
 ```
 
-The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier. At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. The 3 mm LEDs go into the standard windows of the MX switches (you need clear keycaps or keycaps with a window). Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
+The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier, and a bay for the Teensy 4.1 synth board between the DAC and the amplifier: two rails under the middle of the board (clear of the pin rows, room for wire tails underneath), fences on three sides, its microSD end against the front wall. The front wall has a slot to the Teensy's card with a finger notch, so the card can be changed without opening the case (not printed yet). At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. The 3 mm LEDs go into the standard windows of the MX switches (you need clear keycaps or keycaps with a window). Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
 
 PLA/PETG, 3 wall perimeters, 20–30 % infill.
 
@@ -61,9 +61,10 @@ For the track-button version, add `-D trk=true` and write to `stl/case8_*.stl`. 
 
 | Module | Variables | Default |
 |---|---|---|
-| PCF8575 | `pcf_w`, `pcf_d` | 32 × 20 |
+| PCF8575 | `pcf_w`, `pcf_d` (centre `pcf_x`, `pcf_y`) | 32 × 20 |
 | PCM5102A | `dac_w`, `dac_d` (centre `dac_x`, `dac_y`) | 18 × 38 (black "PCM5102 audio DAC v2", from a photo; headers along Y, pins up to 51 mm) |
 | MAX97220 | `amp_w`, `amp_d` (centre `amp_x`, `amp_y`) | 30 × 23 (from the listing) |
+| Teensy 4.1 | `teensy_w`, `teensy_d` (centre `teensy_x`; the card's overhang `teensy_sd_out` and height above the board `teensy_sd_z`) | 18 × 61; card 2.5 mm past the board, its axis 1 mm above it (measure) |
 
 There are ~15 mm above the modules to the bottom of the switches and the encoder: leave out pin headers (or use right-angle ones) and solder wires straight to the pads. The DAC's right-angle headers can stay: no Dupont housings, solder the wires to the pins (they can be trimmed to 3 mm). If a module does not fit the bay, `case.scad` stops with "модуль вне отсека" (module outside the bay).
 
@@ -128,7 +129,7 @@ IP5306 quirks:
 
 Do not connect the battery directly to the board's 3.3V or 5V.
 
-The board's own Type-C (flashing) and the microSD slot are accessible only with the lid off. Do not flash with the switch closed: two 5 V sources on the same line.
+The board's own Type-C (flashing) is accessible only with the lid off; its microSD slot is not used (the card is in the Teensy). The Teensy's USB is inside too: flash it once before assembly. Do not flash with the switch closed: two 5 V sources on the same line.
 
 ## Assembly
 

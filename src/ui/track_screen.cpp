@@ -42,6 +42,16 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
   params_[kVol] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u", cfg().vol); },
                    [this](int d) { cfg().vol = static_cast<uint8_t>(clampi(cfg().vol + d, 0, 127)); },
                    [this] { return !internal(); }};
+  // Pan: L64 .. C .. R63 (equal power, INT tracks only).
+  params_[kPan] = {"Pan",
+                   [this](char* o, int n) {
+                     const int v = cfg().pan;
+                     if (v < 0) snprintf(o, n, "L%d", -v);
+                     else if (v > 0) snprintf(o, n, "R%d", v);
+                     else snprintf(o, n, "C");
+                   },
+                   [this](int d) { cfg().pan = static_cast<int8_t>(clampi(cfg().pan + d, -64, 63)); },
+                   [this] { return !internal(); }};
   auto midiOnly = [this] { return internal(); };
   params_[kChannel] = {"Channel", [this](char* o, int n) { snprintf(o, n, "%u", cfg().channel + 1); },
                        [this](int d) { cfg().channel = static_cast<uint8_t>(clampi(cfg().channel + d, 0, 15)); },

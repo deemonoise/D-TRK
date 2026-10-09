@@ -1,6 +1,7 @@
 #include <math.h>
 #include <unity.h>
 #include "synth_fm.h"
+#include "synth_osc.h"
 
 using namespace mt;
 
@@ -168,11 +169,12 @@ void test_clap_bursts_retrigger_noise() {
   p.tail = 0.5f;
   FmVoice v;
   v.trigger(false);
-  run(v, p, buf, 1600);  // 50 ms
-  // Energy just after the 2nd burst start is above the energy just before it.
+  run(v, p, buf, 50 * kSynthRate / 1000);  // 50 ms
+  // Energy just after the 2nd burst start (10 ms) is above the energy just before it.
+  constexpr int k2nd = 10 * kSynthRate / 1000;
   float before = 0, after = 0;
-  for (int i = 280; i < 320; ++i) before += fabsf(buf[i]);
-  for (int i = 330; i < 370; ++i) after += fabsf(buf[i]);
+  for (int i = k2nd - 40; i < k2nd; ++i) before += fabsf(buf[i]);
+  for (int i = k2nd + 10; i < k2nd + 50; ++i) after += fabsf(buf[i]);
   TEST_ASSERT_TRUE(after > before * 2);
 }
 

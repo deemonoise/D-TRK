@@ -14,12 +14,21 @@
 
 namespace mt {
 
-// Voice pool and heavy-voice cap; a build may override them (the pool bench, see audio.cpp).
+// Voice pool and heavy-voice cap; a build may override them. The synth board (Teensy 4.1, 600 MHz)
+// has 32 / 16, the ESP and the native tests 24 / 8.
 #ifndef MT_VOICES
+#ifdef __IMXRT1062__
+#define MT_VOICES 32
+#else
 #define MT_VOICES 24
 #endif
+#endif
 #ifndef MT_HEAVY_MAX
+#ifdef __IMXRT1062__
+#define MT_HEAVY_MAX 16
+#else
 #define MT_HEAVY_MAX 8
+#endif
 #endif
 constexpr int kVoices = MT_VOICES;
 constexpr int kPolyPerTrack = 4;

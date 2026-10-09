@@ -10,7 +10,7 @@
 namespace ui {
 
 // Two sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
-// transfer; Load shows /projects/*.mtp) and SAMPLES (the project's samples: import WAV from /samples and its
+// firmware; Load shows /projects/*.mtp) and SAMPLES (the project's samples: import WAV from /samples and its
 // subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries).
 class FileScreen : public Screen {
  public:
@@ -24,6 +24,9 @@ class FileScreen : public Screen {
   void draw(LGFX_Sprite& s, int y0, int h) override;
   void poll() override { wifi_.poll(); }
   bool wantsRedraw(const engine::Status&) override { return wifi_.wantsRedraw(); }
+  // FILE -> Wi-Fi as if chosen (asks about unsaved changes first); the synth version screen uses it.
+  void openWifi() { run(kWifi); }
+  bool wifiOpen() const { return wifi_.isOpen(); }
 
  private:
   enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kRetry, kActions };
@@ -77,7 +80,7 @@ class FileScreen : public Screen {
   void sampleMove(int delta);
   void sampleRun(int row);
   void openWavList();
-  // WAV preview in the import list (Play): stopPreview() also frees the buffer.
+  // WAV preview in the import list (Play): streamed from the card by the synth board.
   void togglePreview();
   void stopPreview();
   void importAs(const char* initial);
@@ -117,14 +120,9 @@ class FileScreen : public Screen {
   bool wavList_ = false;              // names_ lists folders, then *.wav in wavDir_
   char wavDir_[128] = "/samples";     // kept between imports
   char wavFile_[hw::kNameMax] = {0};  // WAV being imported
-  int16_t* pvBuf_ = nullptr;          // previewed WAV, PSRAM
-  static constexpr int kPvLeft = 4;
-  int16_t* pvLeft_[kPvLeft] = {};     // buffers whose stop the audio task did not acknowledge yet
-  int pvLeftN_ = 0;
-  int pvSel_ = -1;                    // listSel_ it belongs to
+  int pvSel_ = -1;                    // listSel_ of the WAV previewed on the synth board, -1 none
+  uint32_t pvEndMs_ = 0;              // millis() when it has played to its end
   const char* busyLabel_ = "";
-  // cacheBytes() result for this bank generation / project edit.
-  uint32_t cacheBytes_ = 0, cacheGen_ = 0, cacheSeq_ = 0;
   // New: template menu ids are the built-in index, kTplUser + k (userTplNames_[k]), kTplSave,
   // kTplDemos (the demo songs menu) or kTplDemo + i (demo song i).
   static constexpr int kUserTpl = 8, kTplUser = 100, kTplSave = 200, kTplDemos = 300, kTplDemo = 400;
@@ -137,7 +135,6 @@ class FileScreen : public Screen {
   char userTplLabels_[kUserTpl][20] = {};
   bool autoAvail_ = false;  // /projects/<name>.auto exists (checked on enter / after file actions)
   void restoreAutosave();
-  bool cacheValid_ = false;
 };
 
 }  // namespace ui

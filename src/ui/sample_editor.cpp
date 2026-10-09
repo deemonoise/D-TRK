@@ -1,10 +1,11 @@
 #include "sample_editor.h"
+#include <Arduino.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
 #include "audio/audio.h"
-#include "audio/bank.h"
+#include "link/bank_client.h"
 #include "engine/engine.h"
 #include "note_name.h"
 #include "sample_set.h"
@@ -48,10 +49,10 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
                            return;
                          }
                          snprintf(inst().sample, sizeof(inst().sample), "%s", p.samples[i].name);
-                         const int j = audio::bankMounted() ? mt::projSampleBank(p, audio::bank(), i) : -1;
-                         if (const mt::BankEntry* e = j >= 0 ? audio::bank().entry(j) : nullptr) {
-                           inst().root = e->root > 127 ? 127 : e->root;
-                           inst().loop = e->loop < static_cast<uint8_t>(mt::LoopMode::Count) ? e->loop : 0;
+                         audio::SampleInfo si;
+                         if (audio::sampleInfo(i, si) == audio::BankResult::Ok && si.cached) {
+                           inst().root = si.root > 127 ? 127 : si.root;
+                           inst().loop = si.loop < static_cast<uint8_t>(mt::LoopMode::Count) ? si.loop : 0;
                          }
                        },
                        {}, [this] { return sampleMissing(); }};
@@ -120,24 +121,23 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
 mt::Instrument& SampleEditor::inst() { return app_.project().instruments[instr_ < 0 ? 0 : instr_]; }
 
 int SampleEditor::bankIndex() {
-  if (!audio::bankMounted() || !inst().sample[0]) return -1;
-  const mt::Project& p = app_.project();
-  return mt::projSampleBank(p, audio::bank(), mt::projSampleFind(p, inst().sample));
+  if (!inst().sample[0]) return -1;
+  const int i = mt::projSampleFind(app_.project(), inst().sample);
+  return audio::bankView().sampleCached(i) ? i : -1;
 }
 
 bool SampleEditor::sampleMissing() { return inst().sample[0] && bankIndex() < 0; }
 
 void SampleEditor::sync() {
+  // Frames and rate from the synth board's bank view; the data stays there (WavePeaks, Onsets).
   const int i = bankIndex();
-  const mt::BankEntry* e = i >= 0 ? audio::bank().entry(i) : nullptr;
-  const int16_t* d = e ? audio::bank().data(i) : nullptr;
-  const uint32_t frames = d ? e->frames : 0;
-  const uint32_t gen = audio::bank().generation();
-  gen_ = gen;  // a new bank generation only invalidates the wave / onset caches
-  if (d != data_ || frames != frames_) {
-    data_ = d;
+  const audio::BankView& v = audio::bankView();
+  const uint32_t frames = i >= 0 ? app_.project().samples[i].frames : 0;
+  gen_ = v.gen;  // a new bank generation only invalidates the wave / onset caches
+  if (i != idx_ || frames != frames_) {
+    idx_ = i;
     frames_ = frames;
-    rate_ = d ? e->rate : 0;
+    rate_ = i >= 0 ? v.rate[i] : 0;
     zoom_ = 0;
     viewCol_ = 0;
     sel_ = kS;
@@ -337,12 +337,25 @@ uint32_t SampleEditor::snap(uint32_t f) {
   return i >= 0 ? onsets_[i].pos : f;
 }
 
-void SampleEditor::ensureOnsets() {
-  if (data_ == onsData_ && frames_ == onsFrames_ && gen_ == onsGen_) return;
-  onsData_ = data_;
+bool SampleEditor::ensureOnsets() {
+  const bool same = idx_ == onsIdx_ && frames_ == onsFrames_ && gen_ == onsGen_;
+  if (same && onsOk_) return true;
+  // A failed fetch is not repeated at once (a Shift drag asks on every move).
+  if (same && millis() - onsFailAt_ < kRetryMs) return false;
+  onsIdx_ = idx_;
   onsFrames_ = frames_;
   onsGen_ = gen_;
-  nOnsets_ = data_ ? mt::detectOnsets(data_, frames_, rate_, onsets_, mt::kMaxOnsets) : 0;
+  nOnsets_ = 0;
+  onsOk_ = false;
+  if (idx_ < 0 || !frames_) return false;
+  const int n = audio::synthUp() ? audio::onsets(idx_, onsets_, mt::kMaxOnsets) : -1;
+  if (n < 0) {
+    onsFailAt_ = millis();
+    return false;
+  }
+  nOnsets_ = n;
+  onsOk_ = true;
+  return true;
 }
 
 // --- input ---
@@ -428,7 +441,10 @@ void SampleEditor::tool(int t, bool longPress) {
     case kChopBtn: {
       const bool trans = m.chopMode == static_cast<uint8_t>(mt::ChopMode::Trans);
       if (trans && !frames_) return;  // needs the data
-      if (trans) ensureOnsets();
+      if (trans && !ensureOnsets()) {
+        app_.toast("NO TRANSIENTS");
+        return;
+      }
       engine::lockProject();
       if (trans) mt::chopTransients(m, onsets_, nOnsets_, frames_, rate_);
       else mt::chopEqual(m);
@@ -506,11 +522,12 @@ void SampleEditor::onTouch(const TouchEvent& ev) {
 
 void SampleEditor::updateWave() {
   const uint32_t g0 = viewCol_, vl = viewLen();
-  const bool same = data_ == waveData_ && frames_ == waveFrames_ && gen_ == waveGen_ && vl == waveLen_;
-  if (same && g0 == waveCol_) return;
-  // Scrolled by fewer than kScreenW columns: shift the cache, compute only the exposed columns.
+  const bool key = idx_ == waveIdx_ && frames_ == waveFrames_ && gen_ == waveGen_ && vl == waveLen_;
+  const bool retry = waveFail_ && millis() - waveFailAt_ >= kRetryMs;
+  if (key && g0 == waveCol_ && !retry) return;
+  // Scrolled by fewer than kScreenW columns: shift the cache, fetch only the exposed columns.
   int from = 0, to = kScreenW;
-  if (same) {
+  if (key && !waveFail_) {
     const int64_t k = static_cast<int64_t>(g0) - waveCol_;
     if (k > 0 && k < kScreenW) {
       memmove(waveMin_, waveMin_ + k, kScreenW - k);
@@ -522,43 +539,37 @@ void SampleEditor::updateWave() {
       to = static_cast<int>(-k);
     }
   }
-  waveData_ = data_;
+  waveIdx_ = idx_;
   waveFrames_ = frames_;
   waveGen_ = gen_;
   waveCol_ = g0;
   waveLen_ = vl;
-  if (!data_ || !frames_) return;
-  // Long views: at most kProbe evenly spaced frames per column (flash reads are not free).
-  constexpr uint32_t kProbe = 256;
-  for (int x = from; x < to; ++x) {
-    const uint32_t a = gridFrame(g0 + x);
-    uint32_t b = gridFrame(g0 + x + 1);
-    if (b <= a) b = a + 1;
-    if (a >= frames_) {  // past the end of a short sample
-      waveMin_[x] = 1;
-      waveMax_[x] = 0;
-      continue;
-    }
-    const uint32_t stride = (b - a) > kProbe ? (b - a) / kProbe : 1;
-    int lo = 32767, hi = -32768;
-    for (uint32_t k = a; k < b && k < frames_; k += stride) {
-      const int v = data_[k];
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
-    waveMin_[x] = static_cast<int8_t>(lo >> 8);
-    waveMax_[x] = static_cast<int8_t>(hi >> 8);
+  waveFail_ = false;
+  if (idx_ < 0 || !frames_) return;
+  const audio::BankResult r =
+      audio::synthUp() ? audio::wavePeaks(idx_, g0 + from, vl, kScreenW, to - from, waveMin_ + from, waveMax_ + from)
+                       : audio::BankResult::Link;
+  if (r != audio::BankResult::Ok) {  // nothing shown; all columns again later
+    memset(waveMin_, 1, sizeof(waveMin_));
+    memset(waveMax_, 0, sizeof(waveMax_));
+    waveFail_ = true;
+    waveFailAt_ = millis();
   }
 }
 
 void SampleEditor::drawWave(LGFX_Sprite& s, int y) {
   s.fillRect(0, y, kScreenW, kWaveH, kBeatBg);
   updateWave();
-  if (!data_) {
+  if (!frames_) {
     const char* msg = inst().sample[0] ? "MISSING" : "NO SAMPLE";
     s.setTextColor(inst().sample[0] ? kRed : kDim);
     s.drawString(msg, (kScreenW - static_cast<int>(strlen(msg)) * kCharW) / 2, y + (kWaveH - kCharH) / 2);
     return;
+  }
+  if (waveFail_) {  // the synth board gave no peaks: the markers only
+    const char* msg = "NO WAVE";
+    s.setTextColor(kDim);
+    s.drawString(msg, (kScreenW - static_cast<int>(strlen(msg)) * kCharW) / 2, y + (kWaveH - kCharH) / 2);
   }
   const uint32_t fs = markerFrame(kS), fe = markerFrame(kE);
   const int mid = y + kWaveH / 2;

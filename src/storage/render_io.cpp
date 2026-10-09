@@ -4,59 +4,161 @@
 #include <stdio.h>
 #include <string.h>
 #include "audio/audio.h"
-#include "audio/bank.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "hw/sdcard.h"
+#include "link/bank_client.h"
+#include "link/link.h"
+#include "link_msg.h"
+#include "render_link.h"
 #include "sample_set.h"
-#include "wav.h"
+
+using namespace mt::link;
 
 namespace storage {
 namespace {
 
 constexpr int kBlock = mt::Synth::kBlock;
+constexpr uint32_t kSyncWaitMs = 2000;
+constexpr uint32_t kStartMs = 1500;   // opening the file on the board's card
+constexpr uint32_t kBlocksMs = 1500;  // up to 8 blocks rendered and written
+constexpr uint32_t kProgressMs = 50;
 
 bool stopped() {
   const engine::Status s = engine::status();
   return !s.playing && !s.paused;
 }
 
-// The render object (a Sequencer inside, ~40 KB) lives in PSRAM for the render only.
+// The synth board has the current sound state (it renders with its mirror of it).
+bool waitSynced() {
+  const uint32_t t0 = millis();
+  for (;;) {
+    audio::pump();
+    if (audio::synced()) return true;
+    if ((audio::synthUp() && !audio::versionOk()) || millis() - t0 >= kSyncWaitMs) return false;
+    delay(5);
+  }
+}
+
+// The sequence (a Sequencer inside, ~40 KB) and its packer live in PSRAM for the render only.
 struct RenderMem {
-  void* mem = heap_caps_malloc(sizeof(mt::OfflineRender), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  mt::OfflineRender* r = nullptr;
+  struct Parts {
+    mt::OfflineSequence seq;
+    mt::RenderPacker pack;
+    RenderBlocks frame;
+    Parts(mt::Project& p, const mt::RenderSpec& spec, uint32_t maxBlocks) : seq(p, spec), pack(seq, maxBlocks) {}
+  };
+  void* mem = heap_caps_malloc(sizeof(Parts), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  Parts* r = nullptr;
   ~RenderMem() {
-    end();
+    if (r) r->~Parts();
     heap_caps_free(mem);
   }
-  mt::OfflineRender* start(mt::Project& p, mt::Synth& synth, const mt::RenderSpec& spec) {
-    end();
-    synth.reset();
-    r = new (mem) mt::OfflineRender(p, synth, spec);
+  Parts* start(mt::Project& p, const mt::RenderSpec& spec, uint32_t maxBlocks) {
+    r = new (mem) Parts(p, spec, maxBlocks);
     return r;
-  }
-  void end() {
-    if (r) r->~OfflineRender();
-    r = nullptr;
   }
 };
 
-// Audio parked, project locked, songMode / mutes set for the render; undone in reverse order.
+// Project locked for the render (the engine is stopped: it only waits for the lock on commands).
 struct Session {
-  audio::Paused paused;
-  mt::Synth* synth = nullptr;
-  bool locked = false;
-  explicit Session() {
-    if (!paused.ok) return;
-    synth = audio::liveSynth();
-    engine::lockProject();
-    locked = true;
-  }
-  ~Session() {
-    if (synth) synth->reset();
-    if (locked) engine::unlockProject();
-  }
+  Session() { engine::lockProject(); }
+  ~Session() { engine::unlockProject(); }
 };
+
+Result fromRender(const RenderRep& rep) {
+  switch (static_cast<RenderResult>(rep.result)) {
+    case RenderResult::Ok: return Result::Ok;
+    case RenderResult::NoSd: return Result::NoSd;
+    case RenderResult::ReadFail: return Result::ReadFail;
+    case RenderResult::Busy: return Result::AudioBusy;
+    case RenderResult::Bank:
+      switch (static_cast<mt::BankResult>(rep.bank)) {
+        case mt::BankResult::Full: return Result::BankFull;
+        case mt::BankResult::NoBank: return Result::NoBank;
+        case mt::BankResult::Busy: return Result::AudioBusy;
+        default: return Result::WriteFail;
+      }
+    case RenderResult::NoRender:
+    case RenderResult::BadOrder: return Result::NoSynth;  // the board restarted or lost the render
+    default: return Result::WriteFail;
+  }
+}
+
+template <class Req>
+bool call(Msg t, const Req& q, RenderRep& rep, uint32_t timeoutMs) {
+  uint8_t p[kMaxPayload];
+  Writer w(p, sizeof p);
+  encode(q, w);
+  if (!w.ok()) return false;
+  uint8_t reply[kMaxPayload];
+  int len = 0;
+  if (!slink::request(t, p, w.size(), t, reply, len, timeoutMs)) return false;
+  Reader r(reply, len);
+  return decode(r, rep);
+}
+
+bool callEnd(const RenderEndReq& q, RenderRep& rep) {
+  uint8_t p[kMaxPayload];
+  Writer w(p, sizeof p);
+  encode(q, w);
+  uint8_t reply[kMaxPayload];
+  int len = 0;
+  if (!w.ok() || !slink::requestLong(Msg::RenderEnd, p, w.size(), reply, len)) return false;
+  Reader r(reply, len);
+  return decode(r, rep);
+}
+
+void abortRender() {
+  RenderEndReq q;
+  q.abort = 1;
+  RenderRep rep;
+  callEnd(q, rep);
+}
+
+// One render on the board: start, every block's events, end. rep: RenderEnd's reply.
+Result run(mt::Project& p, const mt::RenderSpec& spec, uint8_t target, const char* path, uint32_t maxBlocks,
+           const RenderEndReq& endReq, RenderRep& rep, bool& capped, RenderProgress cb, void* ctx) {
+  capped = false;
+  if (!slink::synthUp() || !waitSynced()) return Result::NoSynth;
+  RenderMem rm;
+  if (!rm.mem) return Result::NoMemory;
+  Session ses;
+  mt::OfflineSequence::Guard guard(p, spec);
+  RenderMem::Parts* r = rm.start(p, spec, maxBlocks);
+  const uint32_t total = r->seq.blocksTotal() < maxBlocks ? r->seq.blocksTotal() : maxBlocks;
+  capped = r->seq.blocksTotal() > maxBlocks;
+  RenderStartReq q;
+  q.target = target;
+  if (path) {
+    if (strlen(path) >= sizeof q.path) return Result::WriteFail;
+    strcpy(q.path, path);
+  }
+  if (!call(Msg::RenderStart, q, rep, kStartMs)) return Result::NoSynth;
+  if (rep.result != static_cast<uint8_t>(RenderResult::Ok)) return fromRender(rep);
+  uint32_t lastCb = millis();
+  while (r->pack.next(r->frame)) {
+    if (!call(Msg::RenderBlocks, r->frame, rep, kBlocksMs)) {
+      abortRender();
+      return Result::NoSynth;
+    }
+    if (rep.result != static_cast<uint8_t>(RenderResult::Ok)) {
+      abortRender();
+      return fromRender(rep);
+    }
+    const uint32_t now = millis();
+    if (cb && now - lastCb >= kProgressMs) {
+      lastCb = now;
+      if (!cb(r->pack.blocksPacked(), total, ctx)) {
+        abortRender();
+        return Result::Cancelled;
+      }
+    }
+  }
+  if (cb) cb(total, total, ctx);
+  if (!callEnd(endReq, rep)) return Result::NoSynth;
+  return fromRender(rep);
+}
 
 }  // namespace
 
@@ -72,148 +174,37 @@ Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, R
   st = {0, 0, 0};
   if (!hw::sdReady()) return Result::NoSd;
   if (!stopped()) return Result::EngineBusy;
-  fs::FS& fs = hw::sdFs();
-  if (!fs.exists(kRenderDir) && !fs.mkdir(kRenderDir)) return Result::WriteFail;
-  // Blocks are gathered in internal RAM and written 16 at a time.
-  constexpr int kGroup = 16;
-  int16_t* buf = static_cast<int16_t*>(heap_caps_malloc(kGroup * kBlock * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-  RenderMem rm;
-  if (!buf || !rm.mem) {
-    heap_caps_free(buf);
-    return Result::NoMemory;
-  }
-  char tmp[96];
-  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-  if (fs.exists(tmp)) fs.remove(tmp);
-  Result r = Result::Ok;
-  uint32_t crc = 0, frames = 0;
-  {
-    Session ses;
-    if (!ses.synth) {
-      heap_caps_free(buf);
-      return Result::AudioBusy;
-    }
-    mt::OfflineRender::Guard guard(p, spec);
-    fs::File f = fs.open(tmp, FILE_WRITE);
-    if (!f) r = Result::WriteFail;
-    uint8_t hdr[mt::kWavHeaderBytes] = {0};
-    if (r == Result::Ok && f.write(hdr, sizeof(hdr)) != sizeof(hdr)) r = Result::DiskFull;
-    mt::OfflineRender* ren = r == Result::Ok ? rm.start(p, *ses.synth, spec) : nullptr;
-    while (r == Result::Ok) {
-      int n = 0;
-      while (n < kGroup && ren->renderBlock(buf + n * kBlock)) ++n;
-      if (n == 0) break;
-      const size_t bytes = static_cast<size_t>(n) * kBlock * 2;
-      crc = mt::sampleCrc(buf, static_cast<uint32_t>(n) * kBlock, crc);
-      frames += static_cast<uint32_t>(n) * kBlock;
-      if (f.write(reinterpret_cast<const uint8_t*>(buf), bytes) != bytes) r = Result::DiskFull;
-      else if (cb && !cb(ren->blocksDone(), ren->blocksTotal(), ctx)) r = Result::Cancelled;
-    }
-    if (r == Result::Ok) {
-      mt::wavHeader(hdr, frames, mt::kSynthRate, 60, crc);
-      if (!f.seek(0) || f.write(hdr, sizeof(hdr)) != sizeof(hdr)) r = Result::DiskFull;
-    }
-    if (ren) st = {frames, ren->peak(), ren->clips()};
-    if (f) f.close();
-    rm.end();
-  }
-  heap_caps_free(buf);
-  if (r == Result::Ok) {
-    if (fs.exists(path)) fs.remove(path);
-    if (!fs.rename(tmp, path)) r = Result::WriteFail;
-  }
-  if (r != Result::Ok && fs.exists(tmp)) fs.remove(tmp);
+  RenderRep rep;
+  bool capped = false;
+  const Result r = run(p, spec, RenderStartReq::kFile, path, 0xFFFFFFFFu, RenderEndReq{}, rep, capped, cb, ctx);
+  if (r == Result::Ok) st = {rep.frames, static_cast<int16_t>(rep.peak), rep.clips};
   return r;
 }
-
-namespace {
-
-// Pass 2 of a resample: the bank asks for consecutive pieces, served from rendered blocks.
-struct ResampleFill {
-  mt::OfflineRender* ren;
-  int16_t peak;
-  int16_t block[kBlock];
-  int at = kBlock;  // next sample of block to hand out
-  uint32_t base = 0;  // progress: blocks of pass 1
-  RenderProgress cb;
-  void* ctx;
-  bool cancelled = false;
-};
-
-bool fillResample(int16_t* out, uint32_t, uint32_t n, void* c) {
-  ResampleFill& f = *static_cast<ResampleFill*>(c);
-  for (uint32_t i = 0; i < n; ++i) {
-    if (f.at == kBlock) {
-      if (!f.ren->renderBlock(f.block)) memset(f.block, 0, sizeof(f.block));  // not reached: frames <= total
-      mt::normalizePeak(f.block, kBlock, f.peak);
-      f.at = 0;
-      if (f.cb && !f.cb(f.base + f.ren->blocksDone(), 2 * f.base, f.ctx)) {
-        f.cancelled = true;
-        return false;
-      }
-    }
-    out[i] = f.block[f.at++];
-  }
-  return true;
-}
-
-Result fromBank(audio::BankResult b) {
-  switch (b) {
-    case audio::BankResult::Ok: return Result::Ok;
-    case audio::BankResult::Full: return Result::BankFull;
-    case audio::BankResult::NoBank: return Result::NoBank;
-    case audio::BankResult::Busy: return Result::EngineBusy;
-    case audio::BankResult::NoMemory: return Result::NoMemory;
-    default: return Result::WriteFail;
-  }
-}
-
-}  // namespace
 
 Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampleNameMax + 1], RenderStats& st,
                 RenderProgress cb, void* ctx) {
   st = {0, 0, 0};
   name[0] = 0;
-  if (!audio::bankMounted()) return Result::NoBank;
   if (!stopped()) return Result::EngineBusy;
   if (p.sampleCount >= mt::kProjSamples) return Result::BankFull;
-  RenderMem rm;
-  if (!rm.mem) return Result::NoMemory;
-  Session ses;
-  if (!ses.synth) return Result::AudioBusy;
-  mt::OfflineRender::Guard guard(p, spec);
-  // Pass 1: peak and the last block above -60 dBFS.
-  mt::OfflineRender* ren = rm.start(p, *ses.synth, spec);
-  const uint32_t total = ren->blocksTotal();
-  const uint32_t maxBlocks = kResampleMaxFrames / kBlock;
-  int16_t block[kBlock];
-  uint32_t n = 0, lastLoud = 0;
+  if (!hw::sdReady()) return Result::NoSd;  // the render goes through a file on the card
+  RenderEndReq end;
+  end.normalize = 1;
+  end.trim = 1;
+  RenderRep rep;
   bool capped = false;
-  while (ren->renderBlock(block)) {
-    for (int16_t x : block)
-      if (x > mt::kSilence || x < -mt::kSilence) lastLoud = n + 1;
-    ++n;
-    if (cb && !cb(n, 2 * total, ctx)) return Result::Cancelled;
-    if (n >= maxBlocks && ren->blocksDone() < total) {
-      capped = true;
-      break;
-    }
-  }
-  const int16_t peak = ren->peak();
-  const uint32_t frames = (lastLoud ? lastLoud : 1) * kBlock;
-  // Pass 2: the same render, normalized, into the bank.
-  ResampleFill fill{rm.start(p, *ses.synth, spec), peak, {}, kBlock, total, cb, ctx};
-  audio::ImportOut out{};
-  const audio::BankResult br = audio::cacheWrite(p, frames, fillResample, &fill, out);
-  rm.end();
-  if (fill.cancelled) return Result::Cancelled;
-  if (br != audio::BankResult::Ok) return fromBank(br);
+  const Result r = run(p, spec, RenderStartReq::kBank, nullptr, kResampleMaxFrames / kBlock, end, rep, capped, cb, ctx);
+  audio::bankViewStale();
+  if (r != Result::Ok) return r;
+  engine::lockProject();
   mt::nextResampleName(p, name);
-  if (mt::projSampleSet(p, name, out.crc, out.frames) < 0) {
+  const int idx = mt::projSampleSet(p, name, rep.crc, rep.frames);
+  engine::unlockProject();
+  if (idx < 0) {
     name[0] = 0;
     return Result::BankFull;  // the list is full (checked above) or the name is bad (never)
   }
-  st = {out.frames, peak, 0};
+  st = {rep.frames, static_cast<int16_t>(rep.peak), rep.clips};
   return capped ? Result::Capped : Result::Ok;
 }
 

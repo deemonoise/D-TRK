@@ -5,7 +5,7 @@
 
 namespace mt {
 
-constexpr int kSynthRate = 32000;
+constexpr int kSynthRate = 44100;
 constexpr int kWtLen = 32;
 extern const int8_t kWavetable[kWavetables][kWtLen];  // -127..127
 

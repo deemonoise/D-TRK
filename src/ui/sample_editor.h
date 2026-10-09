@@ -72,7 +72,8 @@ class SampleEditor {
   uint32_t frameAt(int x) const;
   int xOf(uint32_t f) const;  // may be off screen
   uint32_t snap(uint32_t f);  // nearest onset, f if none
-  void ensureOnsets();
+  bool ensureOnsets();        // false: the synth board did not give them
+  static constexpr uint32_t kRetryMs = 2000;
   void updateWave();
   void drawWave(LGFX_Sprite& s, int y);
   void drawTools(LGFX_Sprite& s, int y);
@@ -88,19 +89,22 @@ class SampleEditor {
   uint32_t viewCol_ = 0;  // zoom grid column the view starts on (see gridFrame())
   uint16_t dragId_ = 0;
   Drag drag_ = Drag::None;
-  // Current sample data (sync()).
-  const int16_t* data_ = nullptr;
+  // Current sample (sync()): its bank data is on the synth board, project sample idx_.
+  int idx_ = -1;
   uint32_t frames_ = 0, rate_ = 0, gen_ = 0;
-  // Waveform cache: per screen column min / max of the view, int8; min > max = no data.
+  // Waveform cache (WavePeaks): per screen column min / max of the view, int8; min > max = no data.
   int8_t waveMin_[kScreenW] = {0};
   int8_t waveMax_[kScreenW] = {0};
-  const int16_t* waveData_ = nullptr;
+  int waveIdx_ = -1;
   uint32_t waveFrames_ = 0, waveGen_ = 0, waveCol_ = 0, waveLen_ = 0;
-  // Transients of the current data, lazily (ensureOnsets()).
+  bool waveFail_ = false;  // the last fetch failed: all again after kRetryMs
+  uint32_t waveFailAt_ = 0;
+  // Transients of the current sample (Onsets), lazily (ensureOnsets()).
   mt::Onset onsets_[mt::kMaxOnsets];
   int nOnsets_ = 0;
-  const int16_t* onsData_ = nullptr;
-  uint32_t onsFrames_ = 0, onsGen_ = 0;
+  bool onsOk_ = false;
+  int onsIdx_ = -1;
+  uint32_t onsFrames_ = 0, onsGen_ = 0, onsFailAt_ = 0;
 };
 
 }  // namespace ui

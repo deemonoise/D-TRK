@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
+A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the synth board's stereo audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -26,7 +26,7 @@ A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank o
 
 ## Quick start
 
-1.  Insert a microSD card formatted **FAT32** with an **MBR** partition scheme and power on the device. Without a card, a demo beat loads on tracks 1–3.
+1.  Insert a microSD card formatted **FAT32** or **exFAT** into the synth board (Teensy 4.1) and power on the device. Without a card, a demo beat loads on tracks 1–3.
 2.  Press <kbd>Play</kbd>. The sequencer sends MIDI Start and plays from the first step. Press again to stop.
 3.  In the **GRID** tab, tap a cell, then tap it again to enter edit mode. Press keys on the mini keyboard at the bottom or turn the encoder.
 4.  In the **FILE** tab, choose **Save As…**, enter a name and press OK. The project loads automatically at the next power-on.
@@ -76,9 +76,10 @@ The LEDs show the same half as the buttons: LED N is track N of half 1–8 or 9�
 |------|----------|
 | `10` | MIDI TX (UART, 31250 baud) |
 | `11 / 12` | Encoder A / B (EC11) |
-| `13 / 14 / 21` | PCM5102A DAC: BCK / LCK / DIN |
+| `13 / 14` | Link to the synth board: UART TX → Teensy RX1 (pin 0), RX ← Teensy TX1 (pin 1), 3 Mbaud |
 | `43 / 44` | PCF8575 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
-| `41 / 40 / 39 / 38` | microSD: CS / MOSI / CLK / MISO (built-in slot) |
+
+The display board's built-in microSD slot and its NS4168 amplifier are not used: the card, the PCM5102A DAC and the headphone amplifier are on the synth board (see [Built-in sound](#sound)).
 
 All buttons are on the PCF8575: track buttons on P00–P07, encoder button on P13, Play on P14, Shift on P15; each shorts its pin to GND. Without the expander the encoder button, Play and Shift do not work. Encoder A / B use the board's internal pull-ups. MIDI OUT is TRS type A, 3.3 V:
 
@@ -105,7 +106,10 @@ A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; t
 | `5/16` | Step / pattern length. |
 | `PLAY` | State: PLAY, PAUSE, STOP. A tap works like the Play button; with Shift, like Shift+Play. |
 | `L3` | Pattern pass counter. The CND condition uses it. While fill is held — `FILL`. |
-| `CPU 42%` | Built-in synth load: the average time to compute an audio block over the last 0.5 s, as a % of the block duration (4 ms). Gray below 60%; yellow at 60–84% or if any block in those 0.5 s took longer than 4 ms (the DMA queue headroom covers that); red from 85% or for 2 s after an audio dropout (DMA ran empty — an audible click). While no audio is being computed, the last value is shown. |
+| `CPU 42%` | Synth board load: the average time to compute an audio block over the last 0.5 s, as a % of the block duration (128 samples, 2.9 ms). Gray below 60%; yellow at 60–84% or if any block in those 0.5 s took longer than a block; red from 85% or for 2 s after an audio dropout (an audible click). While no audio is being computed, the last value is shown. |
+| `NO SYNTH` | Red, in place of CPU: the synth board does not answer. INT tracks are silent and the card is unavailable; MIDI OUT still plays. |
+| `SYNTH FW` | Red, in place of CPU: the synth board's firmware protocol does not match the tracker's. A full-screen notice blocks the UI; a click or a tap on **UPDATE** opens a menu: **Update synth…** (flash from `/firmware/teensy.hex` on the synth card, as PROJ → SYS → Update synth) or **Wi-Fi firmware…** (see [below](#wifi)). |
+| `SYNC` | Yellow, in place of CPU: the sound state (instruments, mixer, samples) is being sent to the synth board. Play waits for it for a moment. |
 
 Tabs switch only by tapping the bottom bar. Yellow messages (toasts) cover the right part of the status bar for 1.5 seconds.
 
@@ -219,11 +223,11 @@ The effect is added to steps as they play: the step's own fx stay, and the same 
 
 ### Resample
 
-**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new project sample: only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name), normalized to −1 dBFS, trailing silence is trimmed, and there is no delay / reverb tail past the end of the pattern. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
+**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new mono project sample (the stereo mix is summed): only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name), normalized to −1 dBFS, trailing silence is trimmed, and there is no delay / reverb tail past the end of the pattern. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
 
 - Only when stopped (`STOP FIRST`). The pattern is rendered twice (measuring, then recording), each pass roughly in real time — progress `RENDER nn%`; a long encoder press or Play cancels (`CANCELLED`).
-- Nothing longer than 60 s is recorded: `SAMPLE CAP`, the sample is still added. No room in flash — `BANK FULL`; the same if the list already has 128 samples.
-- The result: `RS3 2.1s`. The render matches playback (without the 14 ms output latency); notes pushed past the end of the pattern by NDG / swing are cut off.
+- Nothing longer than 60 s is recorded: `SAMPLE CAP`, the sample is still added. No room in the synth board's flash — `BANK FULL`; the same if the list already has 128 samples.
+- The result: `RS3 2.1s`. The render matches playback (without the output latency); notes pushed past the end of the pattern by NDG / swing are cut off.
 
 ### Undo
 
@@ -400,6 +404,7 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 | Out | MIDI / INT | INT |
 | Instr | 1–16 (instrument number and name), INT only | 1 |
 | Volume | 0–127, INT only | 100 |
+| Pan | L64 … C … R63, INT only | C |
 | Mute / Solo | ON / OFF | OFF |
 | **NOTE** | | |
 | Def vel | 1–127 | 100 |
@@ -414,7 +419,8 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 - **Name:** click to edit. A turn changes the character; <kbd>Shift</kbd>+turn or tapping a character moves the cursor.
 - **Program** is sent immediately when changed and at every start. The value is "raw": 0 = the first patch.
 - **Out:** MIDI — the track plays to MIDI OUT; INT — to the built-in synthesizer (see [Built-in sound](#sound)). You can switch during playback: sounding notes are released, and the following steps go to the new output.
-- **Instr / Volume** work only on INT; on MIDI they are gray. On INT, Channel, CC A, CC B and Program are gray. Def vel and Def gate apply to both outputs.
+- **Instr / Volume / Pan** work only on INT; on MIDI they are gray. On INT, Channel, CC A, CC B and Program are gray. Def vel and Def gate apply to both outputs.
+- **Pan:** the track's place in the stereo output, equal-power law: L64 is fully left, C the centre, R63 fully right. Projects saved before Pan existed load with all tracks centred.
 - **Solo:** if solo is on for at least one track, only the soloed tracks play. Mute takes priority over solo.
 
 <a id="mixer"></a>
@@ -427,7 +433,7 @@ A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight st
 - **MAIN** — the overall volume of the built-in sound, 0–200%, default 40% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: PROJ → SYS → Phones.
 - **Encoder:** turn — **MAIN** volume; <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX; there is no strip selection.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
-- **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
+- **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output (left and right summed), ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
 - Track volume without going to MIX: hold its button and turn the encoder (see [track buttons](#trackkeys)).
 
 <a id="inst"></a>
@@ -598,7 +604,7 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 - **Note** C-4 plays the machine's base pitch, other notes are relative to it (tones and metal; clap noise does not depend on the note). Transpose and Fine work as for CHIP.
 - Closed / open hat — short and long DECAY (for example, a `DEC` lock); on the same track they cut each other off.
 - Changing the machine sets its default macro values. When switching Type to FM or DRUM, the machine and macros are reset as well: the slots mean different things in each.
-- FM, DRUM and SYNTH with a wavetable (at least one oscillator in WT mode) together play no more than 8 voices: a ninth steals the oldest of them (releasing ones first); CHIP, SAMPLE and SYNTH without WT are not affected.
+- FM, DRUM and SYNTH with a wavetable (at least one oscillator in WT mode) together play no more than 16 voices: a seventeenth steals the oldest of them (releasing ones first); CHIP, SAMPLE and SYNTH without WT are not affected.
 - The timbres are approximations. On the 909 the hats and cymbals are samples in the original; here they are synthesized: a different inharmonic frequency set and more noise.
 
 | Machine | Pitch at C-4 | DECAY | 2 | 3 | 4 | 5 |
@@ -666,9 +672,9 @@ A lock on a step with a note applies to that note; on a step without a note — 
 
 ### Wavetables
 
-A table is 64 frames of 256 points (one period per frame). In flash it is stored with mipmaps: 8 levels with a decreasing number of harmonics (128, 64, 32…); the level is chosen by note pitch, so high notes play without aliasing. One table in flash takes 96 KB, in the same partition as samples (shared cache and eviction, see [SAMPLES](#samples)).
+A table is 64 frames of 256 points (one period per frame). In the synth board's flash it is stored with mipmaps: 8 levels with a decreasing number of harmonics (128, 64, 32…); the level is chosen by note pitch, so high notes play without aliasing. One table in flash takes 96 KB, in the same bank as samples (shared cache and eviction, see [SAMPLES](#samples)).
 
-**Built-in tables** (names with an asterisk) are always available, without a card and without importing. They are generated in flash on the firmware's first start (≈ 770 KB, a few seconds) and are never evicted:
+**Built-in tables** (names with an asterisk) are always available, without a card and without importing. They are generated in the synth board's flash on its firmware's first start (≈ 770 KB, a few seconds) and are never evicted:
 
 | Name | Frame 0 → frame 63 |
 |---|---|
@@ -692,7 +698,7 @@ A table is 64 frames of 256 points (one period per frame). In flash it is stored
 | **CANCEL** button, long press | Restore the previous table. |
 | **IMPORT…** | The `/wavetables` list: folders first (up to 4 levels), then `.wav` files; the `..` row goes up (from the root — back to the table list). Click or tap a file — import with progress, toast "IMPORTED name", the table is set on the oscillator. Buttons **OPEN** and **BACK**. |
 
-- **Library on the card:** `/wavetables` (created automatically), subfolders up to 4 levels are allowed. Files are copied with a card reader or over [Wi-Fi](#wifi). Importing does not copy the file: the table goes into the project folder when you save.
+- **Library on the card:** `/wavetables` (created automatically), subfolders up to 4 levels are allowed. Files are copied on a computer: take the card out of the synth board. Importing does not copy the file: the table goes into the project folder when you save.
 - **Formats:** WAV PCM 8 / 16 / 24 bit, mono or stereo (mixed down to mono); the sample rate in the header doesn't matter. The frame layout is detected by length:
   - **WaveEdit** and similar — frames of 256 points, up to 64 frames (up to 16,384 samples);
   - **Serum / Vital** — frames of 2048 points (or the size from the `clm` chunk), up to 256 frames; each frame is reduced to 256 points.
@@ -803,7 +809,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 ## PROJ: project and pattern
 
-Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects), **SYS** (Phones, Preview, theme, autosave, version). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and click (<kbd>Shift</kbd>+click goes back).
+Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects), **SYS** (Phones, Preview, theme, autosave, versions, synth board, card, diagnostics). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and click (<kbd>Shift</kbd>+click goes back).
 
 | Parameter | Values | Scope |
 |---|---|---|
@@ -837,9 +843,13 @@ Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 | Theme | 17 themes, default CLASSIC | device: interface colors (see below) |
 | Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |
 | Firmware | build commit | display only: firmware version ("+" means built with local changes) |
-| Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot (crashes are logged to crashlog.txt) |
-| Audio RAM | INTERNAL / SYNTH IN PSRAM / SEQ IN PSRAM, RVB INT / PSRAM, free K | display only: the synth and sequencer should be in internal memory; in PSRAM, audio costs noticeably more CPU. The reverb buffer goes into internal memory if 24 KB remain free after it; while Wi-Fi is on it moves to PSRAM |
-| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the audio time broken down by part (queue, events, voice management, voices by type, delay, reverb, master) is appended to /diag/cpuprof.txt |
+| Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot of the tracker (crashes are logged to crashlog.txt on the card) |
+| Synth fw | version and protocol (`Pn`), NO SYNTH | display only: the synth board's firmware; "!" after it means its protocol does not match the tracker's (the status bar shows `SYNTH FW`); NO SYNTH — the board does not answer |
+| Link | LOST n LATE n CRC n | display only: link counters since power-on: events lost, events that came too late to play on time, damaged frames |
+| Update synth | CLICK / NO SYNTH | click, confirm: the synth board is flashed from `/firmware/teensy.hex` on its card (progress `SYNTH FW`) and reboots; the new version is shown when it answers again. The file gets there from the [Wi-Fi page](#wifi) or a computer |
+| Card | free / total GB, NO CARD, NO SYNTH | display only: the microSD card in the synth board |
+| Audio RAM | SEQ INTERNAL / PSRAM, free K | display only: where the sequencer lives (it should be in internal memory; in PSRAM it costs more) and the tracker's free internal RAM |
+| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the synth board's audio time broken down by stage (queue, events, voice management, voices by type, delay, reverb, master) is appended to /diag/cpuprof.txt on the card |
 
 <a id="themes"></a>
 
@@ -847,7 +857,7 @@ Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 
 <a id="reverb"></a>
 
-**Reverb** is a shared mono reverb (4 comb filters and 2 allpasses, like Freeverb). Instruments send to it with the Rvb send parameter, steps with the RVB fx. Delay echoes do not go into the reverb. Changing the size on the fly jumps.
+**Reverb** is a shared stereo reverb (per channel 4 comb filters and 2 allpasses, like Freeverb; the right channel is slightly detuned for width). Instruments send to it with the Rvb send parameter, steps with the RVB fx. Delay echoes do not go into the reverb. Changing the size on the fly jumps.
 
 <a id="comp"></a>
 
@@ -855,7 +865,7 @@ The **compressor** sits on the sum of the internal sound after the delay and rev
 
 <a id="delay"></a>
 
-**Delay** is a single shared mono delay for the internal sound (it does not affect the MIDI output). Instruments send sound to it with the Dly send parameter, individual steps with the DLY fx. The time is synced to BPM: 1/16 at 120 BPM = 125 ms. The line is sized for 4 s, i.e. 16/16 down to 60 BPM; at slower tempos the time is capped at 4 s. Changing the time or tempo on the fly jumps (a click on the tail is possible). On stop, the echo rings out.
+**Delay** is a single shared stereo delay for the internal sound (two lines, left and right, with the same settings) (it does not affect the MIDI output). Instruments send sound to it with the Dly send parameter, individual steps with the DLY fx. The time is synced to BPM: 1/16 at 120 BPM = 125 ms. The line is sized for 2 s, i.e. 16/16 down to 120 BPM; at slower tempos the time is capped at 2 s. Changing the time or tempo on the fly jumps (a click on the tail is possible). On stop, the echo rings out.
 
 **Scales:** Chromatic, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor, Pentatonic major, Pentatonic minor, Blues. The default is C Chromatic, i.e. no restriction.
 
@@ -917,17 +927,17 @@ A chain of up to 64 entries. An entry is a pattern, a transposition, a number of
 
 ## FILE: saving and loading
 
-> The card must be **FAT32** with an **MBR** partition scheme. exFAT (common on cards larger than 32 GB) and GPT are not readable; the screen will show "NO SD CARD". On a Mac: `diskutil eraseDisk FAT32 MIDI MBRFormat /dev/diskN`. This command erases the whole card.
+> The card sits in the synth board (Teensy 4.1) and must be **FAT32** or **exFAT**. If the synth board does not see it, the screen shows "NO SD CARD"; if the synth board itself does not answer (`NO SYNTH`), the card is unavailable too. To copy files to and from the card (projects, samples, MIDI, wavetables, presets), take it out of the synth board and use a computer; moving from the old tracker is just copying the old card's contents.
 
 | Item | What it does |
 |---|---|
 | Save | Save under the current name. Without a name it works like Save As. Works during playback. The project's sample folder is written along with the project (see [below](#samples)). |
 | Save As… | On-screen keyboard, then OK. If a file with that name already exists, asks Overwrite. The sample folder is written in full under the new name. |
-| Load… | Project list. If there are unsaved changes, asks for confirmation. Stops playback. Samples and wavetables missing from flash are pulled in from the project folder. |
+| Load… | Project list. If there are unsaved changes, asks for confirmation. Stops playback. Samples and wavetables missing from the synth board's flash are pulled in from the project folder. |
 | New | Template menu: **EMPTY** (blank), built-in **808 SET**, **909 SET**, **FM SET** (a drum KIT on track 1 and melodic instruments on the following ones), **CHIPTUNE**, **MIDI 8** (8 MIDI tracks on channels 1–8), then your own templates (`> NAME`), **Demo songs…** and **Save as template…**, which saves the current project without notes (instruments, tracks, settings) to `/templates`. Asks about unsaved changes after you choose. |
 | Import MIDI… | Import a `.mid` from the `/midi` folder. |
 | Render WAV… | Record the internal sound to a WAV on the card; see [below](#render). |
-| Wi-Fi transfer… | Files to and from the card over Wi-Fi, firmware update. See [below](#wifi). |
+| Wi-Fi firmware… | Firmware update of the tracker and the synth board over Wi-Fi. See [below](#wifi). |
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
 **Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
@@ -947,22 +957,22 @@ A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the 
 
 <a id="render"></a>
 
-**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: mono, 16-bit, 32 kHz. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (the whole chain with repeats; available if the chain has rows); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is visible on the [Wi-Fi](#wifi) page (download) and in FILE → SAMPLES → Import (bring it back into the project as a sample). MIDI tracks are not included in the render.
+**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: stereo, 16-bit, 44.1 kHz; the synth board renders it and writes it to its card. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (the whole chain with repeats; available if the chain has rows); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is on the card (take it to a computer) and in FILE → SAMPLES → Import (bring it back into the project as a mono sample). MIDI tracks are not included in the render.
 
 - Only when stopped (`STOP FIRST`). Progress shows `RENDER nn%`, roughly in real time; a long press of the encoder or Play cancels (`CANCELLED`, no file is created).
 - Done: `12.3s PEAK -2.1dB`; `CLIP` means there was clipping (lower MAIN or the volumes). Errors: `DISK FULL`, `WRITE FAILED`, `AUDIO BUSY` (audio did not stop within 0.5 s; try again).
-- The render reproduces playback, just without the 14 ms output latency; PRB / NRN / VRN are random but identical from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
+- The render reproduces playback, just without the output latency; PRB / NRN / VRN are random but identical from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
 
 Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and click. PROJECTS holds the items above, SAMPLES the [project samples](#samples).
 
 - **Project name:** up to 16 characters, A–Z a–z 0–9 \_ -. Case is preserved, but names differing only in case are the same file.
 - **Keyboard:** digits, A–Z, - \_, DEL, CANCEL, OK. <kbd>Shift</kbd>+key gives a lowercase letter. Encoder: turn selects a key, click presses it, long press cancels.
-- **Reliability:** saving writes a temporary file, verifies it, and renames the previous version to `.bak`. If the file is corrupted, Load offers **Load backup**. A `.bak` has no sample folder of its own: it takes samples from the same project folder, so a sample removed from the project after that version may turn up MISSING if it has already been evicted from flash.
+- **Reliability:** saving writes a temporary file, verifies it, and renames the previous version to `.bak`. If the file is corrupted, Load offers **Load backup**. A `.bak` has no sample folder of its own: it takes samples from the same project folder, so a sample removed from the project after that version may turn up MISSING if it has already been evicted from the synth board's flash.
 - **Autosave:** unsaved changes are written every N minutes (PROJ → SYS → Autosave: OFF, 1, 2, 5, 10 min, default 5) to `/projects/name.auto` (the project file only), while the transport is stopped and nothing has been pressed for 3 s (toast "AUTOSAVE…"). Save deletes it. After a crash or power-off: FILE → Restore autosave.
 - **Safe boot:** hold <kbd>Shift</kbd> at power-on and the project is not loaded automatically (toast "SAFE BOOT"). Use it for a project that crashes the tracker on load.
-- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt`; it is visible and downloadable on the [Wi-Fi](#wifi) page (Diag tab). The firmware version and the reason for the last reboot are in PROJ → SYS.
+- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt` on the card in the synth board (as soon as the card is available after the reboot); read it on a computer. The firmware version and the reason for the last reboot are in PROJ → SYS.
 - **Autoload:** at power-on, the last saved or loaded project is loaded. If it is corrupted, the `.bak` is used (toast "LOADED BACKUP"). If that fails too, the demo loads with the toast "AUTOLOAD: …". New disables autoload until the next save.
-- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 32 instruments, Preview, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard and Fill parameters.
+- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume, Pan), 32 instruments, Preview, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard and Fill parameters.
 - **Compatibility:** the file now holds 16 tracks per pattern. Projects from older versions (8 tracks) open as usual, with tracks 9–16 empty. A file written by this firmware cannot be opened by older firmware: it will report a corrupted file (not a "newer version"). To go back to older firmware, keep a copy of the `.mtp` / `.bak` saved by it.
 
 | Path | Contents |
@@ -971,9 +981,10 @@ Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and
 | `/projects/name.bak` | previous version |
 | `/projects/name/*.wav` | project samples (written by Save) |
 | `/projects/name/wt/*.wav` | project [wavetables](#wavetables) (written by Save) |
-| `/projects/legacy.idx` | internal: samples carried over from old projects |
 | `/projects/name.auto` | autosave |
 | `/diag/crashlog.txt`, `/diag/cpuprof.txt` | log of reboots after crashes, CPU profile results (older firmware kept them in `/projects`: moved at start-up) |
+| `/samples/render/*.wav` | [Render WAV](#render) results |
+| `/firmware/teensy.hex` | synth board firmware for Update synth (put there by the [Wi-Fi page](#wifi) or a computer) |
 | `/templates/*.mtp` | your own project templates (FILE → New) |
 | `/last.txt` | name of the project to autoload |
 | `/midi/*.mid` | files for import (subfolders allowed) |
@@ -992,13 +1003,13 @@ Samples belong to the project: each project has its own list (up to 128), and in
 | Where | What |
 |---|---|
 | `/projects/name.mtp` | the project and its sample list (name, length, checksum) |
-| `/projects/name/<sample>.wav` | project samples: mono, 16-bit, same sample rate as in flash (up to 32 kHz). Written by Save: missing and changed files are written, files of samples removed from the project are deleted. |
+| `/projects/name/<sample>.wav` | project samples: mono, 16-bit, same sample rate as in flash (up to 44.1 kHz). Written by Save: missing and changed files are written, files of samples removed from the project are deleted. |
 | `/samples/` | library: samples are imported into the project from here. Import does not copy the file; the sample gets into the project folder when you save. |
-| flash, **samples** partition | cache (~9.9 MB, ≈ 2.5 min of mono at 32 kHz, up to 128 entries): samples play from here. Independent of the card and not erased by firmware updates. Identical data in different projects is stored once. |
+| synth board's flash, sample bank | cache (about 6 MB, ≈ 1 min of mono at 44.1 kHz, up to 128 entries): samples play from here. Independent of the card and not erased by synth board updates (Update synth, Wi-Fi page). Identical data in different projects is stored once. |
 
 Screen rows:
 
-- At the top: `FREE n / m KB CACHE k KB` and a bar showing used space. FREE is free flash space, CACHE is how much the samples of other projects take up (the cache). If there is not enough room for an import or load, the cache is evicted automatically, largest entries first, never touching the current project's samples; if it still does not fit, "BANK FULL".
+- At the top: `FREE n / m KB CACHE k KB` and a bar showing used space. FREE is free space in the synth board's flash, CACHE is how much the samples of other projects take up (the cache). If there is not enough room for an import or load, the cache is evicted automatically, largest entries first, never touching the current project's samples; if it still does not fit, "BANK FULL".
 - **Import WAV…**: a list of `.wav` files from `/samples`. Subfolders first (`name/`, select to enter), then files; in a subfolder the first row **\< Up (..)** goes up one level, and the path is shown in the header. Up to 4 levels of nesting; hidden files (macOS `._*`) are not shown. Selecting a file opens the keyboard with the sample name (defaults to the file name without extension, up to 16 characters A–Z a–z 0–9 \_ -). If the project already has that name, asks **Overwrite**. Import progress is shown in percent. When the list is full, "SAMPLE LIST FULL". **Play** on a file auditions it without importing: the first 8 seconds at the sample's volume with Vol at full (Master applies); Play again or moving the cursor stops it. Works during playback too; in this list the Play button does not start the transport (the button in the header does).
 - **Compact**: defragment flash by moving samples to the start so the free space becomes one block. Usually not needed: import and load compact on their own when gaps get in the way.
 - **Clear cache**: remove everything from flash that is not part of the current project (toast "CLEARED n"). Other projects' samples stay in their folders on the card and are pulled back in when those projects are loaded.
@@ -1012,50 +1023,39 @@ Import, Rename and Delete change the project (a `*` appears); save it so the cha
 
 **Saving.** If the folder could not be written (card full, write error), toast "SAMPLES NOT SAVED". The `.mtp` file is saved anyway, but the project stays marked `*`: the next Save completes the folder. A MISSING sample leaves its file untouched on save; Save As to a new name copies such files from the old folder.
 
-**Moving a project** to another card or another tracker: copy `name.mtp` and the `name/` folder to `/projects` (on a computer or via [Wi-Fi](#wifi)). On load, the samples are pulled into flash automatically.
+**Moving a project** to another card or another tracker: copy `name.mtp` and the `name/` folder to `/projects` on a computer (take the card out of the synth board). On load, the samples are pulled into the synth board's flash automatically.
 
-**Old projects** (before this version, when samples were shared by all projects): on load, the sample list is built from the instruments and taken from flash by the old names. Save such a project once and its folder appears; from then on it moves like any other. If an old sample is no longer in flash, it is MISSING; import it again.
+**Old projects** (before per-project samples, when samples were shared by all projects): on load, the sample list is built from the instruments, but those samples lived in the old tracker's flash and are not on the synth board: they are MISSING. Import them again and save the project; from then on it moves like any other.
 
 | WAV | Support |
 |---|---|
 | Format | PCM 8, 16, 24-bit. Float and 32-bit are not supported ("UNSUPPORTED WAV"). |
 | Channels | mono or stereo (stereo is mixed down to mono) |
-| Sample rate | any; above 32 kHz it is downsampled to 32 kHz, below that it is stored as is |
-| Size | as much as fits in flash; via Wi-Fi, files up to 4 MB |
+| Sample rate | any; above 44.1 kHz it is downsampled to 44.1 kHz, below that it is stored as is |
+| Size | as much as fits in the synth board's flash |
 
-> Import, Rename, Delete, Compact and Clear cache work only with playback stopped ("STOP PLAYBACK FIRST"): writing to flash stops the audio. Load and New stop playback themselves. If the partition is not found ("NO SAMPLE BANK"), the firmware was flashed with an old partition table; flash it over USB once (see README).
+> Import, Rename, Delete, Compact and Clear cache work only with playback stopped ("STOP PLAYBACK FIRST"): writing to the synth board's flash stops the audio. Load and New stop playback themselves. If the synth board does not answer, the page shows "SYNTH NOT ANSWERING"; "NO SAMPLE BANK" means the bank in the synth board's flash is not available.
 
 <a id="wifi"></a>
 
-### Wi-Fi: files and firmware without opening the case
+### Wi-Fi: firmware without opening the case
 
-FILE → **Wi-Fi transfer…** connects the tracker to your home network and opens a web page. The tracker has no access point of its own: the computer or phone must be on the same network.
-
-At the top of the page are tabs: **Projects**, **Samples**, **MIDI**, **Wavetables**, **Presets**, **Diag**, **Firmware**; one section is shown at a time. The file list scrolls in its own pane, with a name filter and the file count above it. The selected tab stays in the address (`#samples`), so you can bookmark it.
+FILE → **Wi-Fi firmware…** connects the tracker to your home network and opens a web page for firmware updates. The tracker has no access point of its own: the computer or phone must be on the same network. There is no file manager on the page: projects, samples, MIDI files, wavetables and presets are moved by taking the microSD card out of the synth board and using a computer.
 
 1.  If there are unsaved changes, a menu appears: **Cancel**, **Save & continue** (only for a project with a name), **Continue w/o saving**. The reason: after a firmware update the tracker reboots.
 2.  Playback stops, and <kbd>Play</kbd> does not work in this mode (toast "WI-FI MODE").
 3.  The first time: a list of networks, then the password on the on-screen keyboard. **\#+=** switches to the symbols page with space, **ABC** goes back. Letters are lowercase; <kbd>Shift</kbd> gives uppercase. The network and password are stored in flash after a successful connection.
-4.  The screen shows the address `http://d-trk.local` and the IP (if `.local` does not open, e.g. on Android, use the IP).
+4.  The screen shows the address `http://d-trk.local` and the IP (if `.local` does not open, e.g. on Android, use the IP). The page is also at `/firmware`.
 5.  **EXIT** (or a long press of the encoder, or switching to another tab) turns Wi-Fi off. **NETWORK** chooses another network. **RETRY** retries the connection after an error.
 
-The page has six file sections: **MIDI** (`/midi`), **Projects** (`/projects`, with the projects' sample and wavetable folders), **Samples** (`/samples`, the import library), **Wavetables** (`/wavetables`) and **Presets** (`/presets`), plus **Diag** (`/diag`: the tracker's logs crashlog.txt and cpuprof.txt, download and delete only). Drag files with the mouse into the drop zone or pick them with the button; the list lets you download (click the name), rename and delete. If a file already exists, the page asks whether to replace it. A log of recent actions is shown on the tracker's screen.
+The page has two sections; drag the file with the mouse into the drop zone or pick it with a click:
 
-- **MIDI:** `.mid` only, up to 512 KB, name up to 59 characters, Latin characters only (Cyrillic is not displayed on screen).
-- **Samples:** `.wav` only, up to 4 MB, name up to 59 characters, Latin characters only. The file goes into the library on the card; FILE → SAMPLES → Import WAV… on the tracker adds it to the project.
-- **Wavetables:** `.wav` only (formats as for [import](#wavetables)), up to ~3 MB (the longest Serum table: 256 frames × 2048, stereo 24-bit), name up to 59 characters, Latin characters only. Folders work as for samples, up to 4 levels. A table gets into the project via INST → SYNTH → Table → IMPORT… on the tracker.
-- **Sample folders:** the path is shown above the list (click a part to go there); the **..** row goes up. **New folder** creates a folder inside the current one, and files are uploaded there. Folder names: up to 32 characters, Latin letters, digits, space, `. _ -`, not starting with a dot or a space; no deeper than 4 levels. Only an empty folder can be deleted. Wavetable folders work the same way. MIDI has no folders.
-- **Presets:** `.mti` only, up to 1 KB, name up to 16 characters (A–Z 0–9 \_ -). The section root holds the type folders CHIP, SAMPLE, FM, DRUM, SYNTH: they cannot be deleted, no new folders can be created next to them, and files cannot be uploaded to the root. Inside a type folder you can have your own folders, as for samples, up to 4 levels. An uploaded preset is checked (CRC, version) and must go into the folder of its own type: a DRUM preset is rejected in `/presets/FM` ("it belongs in /presets/DRUM").
-- **Projects:** `.mtp` and `.bak`, names following the project rules. An uploaded `.mtp` is checked (CRC, version); a corrupted one is rejected. When replacing, the old file becomes the `.bak`, as when saving.
-- **Project folders:** in the Projects section, each project has a **name/** row marked "samples". Click to enter: inside are the project's `.wav` files (up to 10 MB, name up to 16 characters), which you can download, upload, rename and delete. If the folder does not exist on the card yet, the row is still there and opens an empty folder; the first uploaded WAV creates it. There is no New folder button here: folders appear and disappear together with projects. Inside a project folder there is a **wt/** row ("wavetables"): the project's [wavetables](#wavetables) (`.wav`, name up to 16 characters), with the same actions; the `wt` folder is created by the first uploaded file and is deleted together with the project.
-- **Moving a project over Wi-Fi:** download `name.mtp` and the files in its folder from one tracker; on the other, upload `name.mtp`, open the **name/** row ("samples") and upload the WAVs there (several at once is fine), and the wavetables into its **wt/**. Samples and wavetables get into flash when the project is loaded on the tracker.
-- **Renaming and deleting a project:** renaming the `.mtp` moves its folder too (if there is no folder with the new name yet; renaming a lone `.bak` moves it when there is no `.mtp`). Deleting a project deletes the folder once neither the `.mtp` nor the `.bak` remains; the confirmation warns about this. If the folder was not moved or deleted, the page says so in its response. The exception is the project open on the tracker: renaming or deleting its file leaves the folder in place. You can change the files inside its folder; the next Save rewrites them from flash.
-- **Open project:** if its file was replaced through the page, the tracker asks on exit: **Keep current** or **Reload from card**. If the file was deleted or renamed, toast "PROJECT FILE REMOVED"; the project stays in memory and can be saved.
+- **Tracker (.bin):** the file `.pio/build/wt32/firmware.bin`. The tracker's screen shows "FIRMWARE n KB", then reboots after verifying the image. From PlatformIO, while the mode is open: `pio run -e wt32-ota -t upload`. If the upload is interrupted or the image is corrupted, the old firmware stays.
+- **Synth board (.hex):** the file `.pio/build/teensy41/firmware.hex`. It is saved on the synth board's card as `/firmware/teensy.hex` ("SYNTH FW n KB"), then the synth board checks it, flashes it ("SYNTH FW n%") and reboots; the page shows the new version when the board answers again. The same file can later be flashed again with PROJ → SYS → **Update synth**.
 
-**Over-the-air firmware.** The Firmware section of the page: the file `.pio/build/wt32/firmware.bin`. The tracker's screen shows "FIRMWARE n KB", then reboots after verifying the image. From PlatformIO, while the mode is open: `pio run -e wt32-ota -t upload`. If the upload is interrupted or the image is corrupted, the old firmware stays.
+**Synth board, first flash.** The very first firmware goes into the Teensy over its own USB with Teensy Loader, before assembly. After that it is updated from the tracker: PROJ → SYS → Update synth (from `/firmware/teensy.hex` on its card) or the Wi-Fi page.
 
-
-> The page has no password: while Wi-Fi mode is open, anyone on the same network can read, change and delete files and flash the tracker. Do not use this mode on other people's or public networks.
+> The page has no password: while Wi-Fi mode is open, anyone on the same network can flash the tracker and the synth board. Do not use this mode on other people's or public networks.
 
 <a id="import"></a>
 
@@ -1102,9 +1102,9 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 
 ## Internal sound
 
-The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 16 voices shared by all tracks, 32 kHz, mono. A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
+The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, stereo. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
 
-Sound goes to an external PCM5102A DAC on GPIO 13 / 14 / 21 (BCK / LCK / DIN) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. The signal is mono, the same on L and R.
+Sound goes from the synth board to an external PCM5102A DAC and from it to a MAX97220 headphone amplifier; the display board's NS4168 amplifier and SPK connector are not used. The output is stereo: each INT track is placed with TRACK → Pan; delay and reverb are stereo.
 
 - DAC settings: SCK to GND (no MCLK), FMT, FLT, DEMP = L, XSMT = H.
 - The DAC's L / R are a line output (2.1 Vrms full scale, centred on ground): they can go to a mixer, audio interface or powered speakers — straight from the DAC or from the amplifier's headphone output.
@@ -1114,13 +1114,14 @@ Sound goes to an external PCM5102A DAC on GPIO 13 / 14 / 21 (BCK / LCK / DIN) an
 Full wiring, settings and grounding notes — README, "Sound" section, and [wiring.md](wiring.md).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 40%), with soft limiting.
-- **Voices:** a shared pool of 24. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 8 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A ninth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track.
+- **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 16 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track.
 - **CPU guard:** when the audio render nears its time budget (above 80 % on average, or one block over 100 %), the oldest voice fades out in 4 ms (releasing voices first) and the pool shrinks to the voices left; once the load drops below 65 % it grows back by one voice every 0.1 s. A heavy project thins out instead of crackling or restarting the device.
-- **Latency:** the internal sound lags the MIDI tracks by about 14 ms, constantly, without jitter. MIDI tracks are not delayed.
+- **Latency:** events reach the synth board and play about 4 ms after the sequencer step (a fixed delay that absorbs the link), plus the audio output buffer: the internal sound lags the MIDI tracks by about 10 ms, constantly, without jitter. MIDI tracks are not delayed.
+- **No synth board:** if it does not answer, the status bar shows `NO SYNTH`: INT tracks are silent, the card is unavailable, MIDI tracks keep playing. After the board comes back, the tracker sends it the sound state (`SYNC`).
 - **Sequencer:** RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI. Added: the [synth fx](#synthfx) SLD, VIB, ARP, VSL, OFS, CUT, slice selection SLC, locks of the FM, DRUM and SYNTH macros DEC, COL, SHP, SWP, CON, and filter locks FLT, RES. Track button LEDs also flash on INT notes. Mute, solo, stop and pause silence the sound the same way as MIDI notes.
 - **Start:** Program Change is not sent to INT tracks; the instrument from PGM (back to Instr from TRACK), PBN and synth fx are reset.
 - **Load:** `CPU NN%` in the right corner of the [status bar](#screen).
-- Sample import, renaming and deletion, wavetable import, Compact and Clear cache are available only when stopped: there is no sound while writing to flash.
+- Sample import, renaming and deletion, wavetable import, Compact and Clear cache are available only when stopped: there is no sound while the synth board writes to its flash.
 
 <a id="limits"></a>
 
@@ -1136,11 +1137,10 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | Files in a list | 128 |
 | Project / track / instrument name | 16 / 8 / 8 characters |
 | MIDI import | 512 KB, 16,384 notes, 32 sources |
-| Instruments / voices | 32 / 24 (POLY: up to 4 per track; fewer under the CPU guard) |
-| Samples | 128 per project, name up to 16 characters; flash cache ~9.9 MB (≈ 2.5 min at 32 kHz), 128 entries |
-| Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048, via Wi-Fi up to ~3 MB |
-| Presets | `.mti` file 204 bytes (v2: 156, v1: 84; via Wi-Fi up to 1 KB), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
-| WAV via Wi-Fi | 4 MB to `/samples`, 10 MB to a project folder (name up to 16 characters) |
+| Instruments / voices | 32 / 32, of them up to 16 heavy (FM, DRUM, wavetable SYNTH) (POLY: up to 4 per track; fewer under the CPU guard) |
+| Samples | 128 per project, name up to 16 characters; cache in the synth board's flash about 6 MB (≈ 1 min at 44.1 kHz), 128 entries |
+| Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048 |
+| Presets | `.mti` file 204 bytes (v2: 156, v1: 84), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
 | Long press | 0.5 s |
 
 **Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 40%, Preview ON.
