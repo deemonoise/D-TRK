@@ -1,23 +1,23 @@
 // SPDX-FileCopyrightText: 2026 deemonoise
 // SPDX-License-Identifier: CERN-OHL-S-2.0
 // Source location: https://github.com/deemonoise/D-TRK
-// Кноб энкодера EC11 (D-вал) с накаткой. Все размеры в мм.
+// Кноб энкодера EC11 (D-вал) с накаткой, фаской 3 мм и насечками на ней. Все размеры в мм.
 // Снизу выборка под гайку и резьбовую втулку — низ кноба висит над панелью на `gap`.
 // Рендер: openscad -o stl/knob.stl knob.scad   (печать верхом на стол, без поддержек)
-// Корпус с кнопками дорожек: openscad -o stl/knob8.stl -D knob_d=17 knob.scad
-// (энкодер в сетке MX с шагом 19: до колпачка 18 мм под ним остаётся 1,5 мм)
 
 part = "print";   // "print" — для печати, "view" — как стоит на панели
 
 $fn = 96;
 
 // ---------- Кноб ----------
-knob_d   = 30;      // 17 — для корпуса с кнопками дорожек
+knob_d   = 30;
 knurl_n  = round(PI * knob_d / 2.6);   // канавок в каждую сторону (шаг ~2,6)
 knurl_dp = 0.8;     // глубина канавки
 knurl_top = 0.4;    // ширина площадки ромба / шаг
 knurl_ang = 30;     // угол винтовой канавки к оси
 skin     = 1.5;     // толщина крышки над концом вала
+chamfer  = 3;       // фаска 45° по верхней кромке
+cham_n   = knurl_n; // насечек на фаске (радиальные V-канавки)
 
 // ---------- Энкодер (замерить) ----------
 shaft_d   = 6.0;    // ⌀ вала
@@ -52,6 +52,8 @@ echo(str("Кноб: ⌀", knob_d, " x ", knob_h, " мм, зазор до пан�
 assert(bore_h - bush_cav_h >= 5, "вал заходит в кноб меньше 5 мм");
 assert((knob_d - nut_cav_d) / 2 - knurl_dp >= 1.2, "стенка у гайки тоньше 1,2 мм");
 
+assert(chamfer < knob_h - 2, "фаска выше кноба");
+
 // ---------- Модель ----------
 module d_profile(d, dd) {
     intersection() {
@@ -75,13 +77,32 @@ module knurl_2d() {
     }
 }
 
+// V-канавка вдоль образующей фаски: локальные x — нормаль к фаске, y — по касательной, z — вверх по фаске
+module cham_groove() {
+    s = 1 / sqrt(2);
+    r = knob_d / 2;
+    w = knurl_p * (1 - knurl_top);
+    k = (knurl_dp + 0.5) / knurl_dp;
+    multmatrix([[s, 0, -s, r + s], [0, 1, 0, 0], [s, 0, s, knob_h - chamfer - s], [0, 0, 0, 1]])
+        linear_extrude(chamfer * sqrt(2) + 2)
+            polygon([[-knurl_dp, 0], [0.5, -w/2 * k], [0.5, w/2 * k]]);
+}
+
 module knob() {
     difference() {
-        // две встречные винтовые накатки — пересечение даёт ромбы
         intersection() {
+            // две встречные винтовые накатки — пересечение даёт ромбы
             linear_extrude(knob_h, twist =  knurl_tw, slices = 40) knurl_2d();
             linear_extrude(knob_h, twist = -knurl_tw, slices = 40) knurl_2d();
+            // фаска
+            union() {
+                cylinder(d = knob_d + 2, h = knob_h - chamfer);
+                translate([0, 0, knob_h - chamfer - 0.01])
+                    cylinder(d1 = knob_d, d2 = knob_d - 2*chamfer, h = chamfer + 0.01);
+            }
         }
+        // насечки на фаске
+        for (i = [0 : cham_n - 1]) rotate(i * 360 / cham_n) cham_groove();
         // выборки снизу: гайка, втулка
         translate([0, 0, -0.01]) cylinder(d = nut_cav_d, h = nut_cav_h + 0.01);
         translate([0, 0, -0.01]) cylinder(d = bush_cav_d, h = bush_cav_h + 0.01);

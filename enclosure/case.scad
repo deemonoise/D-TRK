@@ -7,7 +7,8 @@
 // Вариант с 8 кнопками дорожек: -D 'trk=true'
 
 part = "assembly";
-trk  = false;     // блок 8 кнопок дорожек (2 ряда × 4 MX) + расширитель PCF8575
+trk  = false;     // сетка MX 4×4: Shift, Play, A, B, 8 кнопок дорожек, энкодер в блоке 2×2;
+                  // PCF8575, ЦАП PCM5102A, усилитель MAX97220, гнездо наушников
 
 $fn = 48;
 
@@ -35,9 +36,11 @@ usbc_plug_w = 12.5; usbc_plug_h = 7.0; usbc_plug_depth = 1.0; // раззенк�
 ip_x = 25;            // центр по X
 
 // Панельные компоненты задней стенки
-jack_d   = 6.3;  jack_x = 55;   // PJ-392, резьба M6
+jack_d   = 6.3;  jack_x = 55;   // PJ-392 MIDI OUT, резьба M6
+phones_x = 41;                              // PJ-392 наушники (trk), между Type-C и MIDI
 sw_d     = 6.3;  sw_x   = 73;   // MTS-102, резьба M6
 back_z   = 9;                   // высота осей jack и тумблера над низом
+label_h  = 2.8;  label_dp = 0.6;           // гравировка подписей над гнёздами (trk)
 
 // Органы управления
 mx_hole   = 14.0;   // вырез MX
@@ -46,15 +49,20 @@ mx_pocket = 15.6;   // карман снизу вокруг выреза
 ec11_d    = 7.2;    // отверстие EC11
 sh_x = 22; pl_x = 44; enc_x = 80;   // центры по X (без кнопок дорожек)
 ctrl_y = 17;                       // центр ряда по Y (без кнопок дорожек)
-// С кнопками дорожек ряд Shift, Play, энкодер встаёт в их сетку над ними:
-// Shift — колонка 1, Play — колонка 2, энкодер — колонка 4.
+// trk: сетка 4×4 с шагом MX, ряды от экрана: Shift Play [энк]; A B [энк]; 1–4; 5–8.
+// Энкодер — в центре блока 2×2 справа сверху (кноб ⌀30, до колпачков 4,5 мм).
 
-// Кнопки дорожек (trk = true)
-trk_cols = 4; trk_rows = 2;
+// Сетка (trk = true)
+trk_cols = 4; trk_rows = 4;
 trk_pitch = 19;                    // шаг MX
-trk_y0 = 17;                       // центр переднего ряда по Y (второй — +trk_pitch)
-pcf_w = 32; pcf_d = 20;            // модуль PCF8575 (замерить)
-pcf_y = 26;                        // центр модуля по Y
+trk_y0 = 17;                       // центр переднего ряда по Y (следующие — +trk_pitch)
+// Модули на дне под кнопками (замерить): [ширина X, глубина Y, центр X, центр Y]
+pcf_w = 32; pcf_d = 20;            // PCF8575
+pcf_y = 26;
+dac_w = 18; dac_d = 38;            // PCM5102 audio DAC v2 (чёрная), гребёнки по Y, штыри до ±25 мм от центра
+dac_x = 22; dac_y = 62;
+amp_w = 30; amp_d = 23;            // MAX97220 (по карточке)
+amp_x = 71; amp_y = 66;
 
 // Крепёж: вплавляемые гайки M3
 ins_d     = 4.0;    // отверстие под гайку
@@ -80,7 +88,7 @@ guide_h = 1.5;      //   высота,
 guide_clr = 0.2;    //   зазор к внутренней стенке верха
 corner_r = 3.0;
 side_m = 1.0;       // зазор модуль — стенка по бокам
-ctrl_d = trk ? 72 : 32;   // глубина переднего отсека (органы управления)
+ctrl_d = trk ? 91 : 32;   // глубина переднего отсека (органы управления)
 back_m = 9;         // полоса за модулем
 
 // ---------- Производные ----------
@@ -113,16 +121,23 @@ floor_z = lid_t - tray_h;             // верх дна
 echo(str("Корпус: ", W, " x ", D, " x ", H + tray_h, " мм"));
 echo(str("Под MX до дна: ", H - mx_plate - floor_z, " мм"));
 
-// центры MX: Shift, Play и (trk) 8 кнопок дорожек; кнопка 1 — левая в ряду ближе к экрану
+// центры MX: Shift, Play, (trk) A, B и 8 кнопок дорожек; кнопка 1 — левая в ряду ближе к экрану
 function trk_cx(c) = W/2 + (c - (trk_cols - 1)/2) * trk_pitch;
-row_y  = trk ? trk_y0 + trk_rows * trk_pitch : ctrl_y;
+function trk_cy(r) = trk_y0 + r * trk_pitch;   // r = 0 — передний ряд
+row_y  = trk ? trk_cy(3) : ctrl_y;
 shift_x = trk ? trk_cx(0) : sh_x;
 play_x  = trk ? trk_cx(1) : pl_x;
-encod_x = trk ? trk_cx(trk_cols - 1) : enc_x;
+enc_pos = trk ? [(trk_cx(2) + trk_cx(3))/2, (trk_cy(2) + trk_cy(3))/2] : [enc_x, ctrl_y];
 
 mx_pos = concat([[shift_x, row_y], [play_x, row_y]],
-    trk ? [for (r = [trk_rows - 1 : -1 : 0], c = [0 : trk_cols - 1])
-              [trk_cx(c), trk_y0 + r * trk_pitch]] : []);
+    trk ? concat([[trk_cx(0), trk_cy(2)], [trk_cx(1), trk_cy(2)]],          // A, B
+                 [for (r = [1, 0], c = [0 : trk_cols - 1]) [trk_cx(c), trk_cy(r)]]) : []);
+
+// модули на дне: [w, d, x, y]
+bay_mods = trk ? [[pcf_w, pcf_d, W/2, pcf_y], [dac_w, dac_d, dac_x, dac_y], [amp_w, amp_d, amp_x, amp_y]] : [];
+for (m = bay_mods)
+    assert(m[2] - m[0]/2 > wall + 1.5 && m[2] + m[0]/2 < W - wall - 1.5 &&
+           m[3] - m[1]/2 > wall + 1.5 && m[3] + m[1]/2 < mod_y0 - 1, str("модуль вне отсека: ", m));
 
 // ---------- Утилиты ----------
 module rbox(w, d, h, r) {
@@ -162,7 +177,7 @@ module top_shell() {
                 cube([mx_pocket, mx_pocket, top_t - mx_plate + 1]);
         }
         // EC11
-        translate([encod_x, row_y, H - top_t - 1]) cylinder(d = ec11_d, h = top_t + 2);
+        translate([enc_pos[0], enc_pos[1], H - top_t - 1]) cylinder(d = ec11_d, h = top_t + 2);
         // гайки в стойках
         for (p = lid_posts) translate([p[0], p[1], lid_t - 0.01]) cylinder(d = ins_d, h = ins_depth);
         for (x = clamp_xs, y = clamp_ys) translate([x, y, clamp_zt - 0.01]) cylinder(d = ins_d, h = ins_depth);
@@ -172,9 +187,14 @@ module top_shell() {
             translate([0, wall/2 - usbc_plug_depth/2 + 0.01, 0])
                 cube([usbc_plug_w, usbc_plug_depth + 0.02, usbc_plug_h], center = true);
         }
-        // jack и тумблер
-        for (h = [[jack_x, jack_d], [sw_x, sw_d]])
+        // jack, наушники (trk) и тумблер
+        for (h = concat([[jack_x, jack_d], [sw_x, sw_d]], trk ? [[phones_x, jack_d]] : []))
             translate([h[0], D + 1, back_z]) rotate([90, 0, 0]) cylinder(d = h[1], h = wall + 2);
+        // подписи над гнёздами (читаются сзади)
+        if (trk) for (l = [[jack_x, "MIDI"], [phones_x, "PHONES"]])
+            translate([l[0], D - label_dp, back_z + jack_d/2 + 2.5]) rotate([90, 0, 180])
+                linear_extrude(label_dp + 1)
+                    text(l[1], size = label_h, font = "Liberation Sans:style=Bold", halign = "center");
     }
 }
 
@@ -231,9 +251,9 @@ module bottom_lid() {
                     translate([-2, ip_d - 1, -1]) cube([ip_w + 4, 5, 20]);   // открыто к стенке
                 }
             }
-            // бортик PCF8575
-            if (trk) translate([(W - pcf_w)/2 - 0.3, pcf_y - pcf_d/2 - 0.3, floor_z])
-                fence(pcf_w + 0.6, pcf_d + 0.6, 1.5);
+            // бортики PCF8575, ЦАП и усилителя
+            for (m = bay_mods) translate([m[2] - m[0]/2 - 0.3, m[3] - m[1]/2 - 0.3, floor_z])
+                fence(m[0] + 0.6, m[1] + 0.6, 1.5);
         }
         // винты M3 × 10, голова утоплена
         for (p = lid_posts) translate([p[0], p[1], bot_z0 - 1]) {
@@ -263,9 +283,14 @@ module assembly() {
     color("black") translate([mod_x0 + mod_clr, mod_y0 + mod_clr, mod_zb]) cube([mod_w, mod_d, mod_h]);
     color("silver") translate([(W - bat_w)/2, mod_y0 + 2, floor_z]) cube([bat_w, bat_d, bat_h]);
     color("blue") translate([ip_x - ip_w/2, D - wall - ip_d, lid_t + ip_rail]) cube([ip_w, ip_d, ip_pcb]);
-    if (trk) color("green") translate([(W - pcf_w)/2, pcf_y - pcf_d/2, floor_z]) cube([pcf_w, pcf_d, 1.6]);
-    // MX под панелью (корпус 14×14, 5 мм вниз + выводы)
-    for (p = mx_pos) color("white") translate([p[0] - 7, p[1] - 7, H - mx_plate - 8.3]) cube([14, 14, 8.3]);
+    for (m = bay_mods) color("green") translate([m[2] - m[0]/2, m[3] - m[1]/2, floor_z]) cube([m[0], m[1], 1.6]);
+    // MX под панелью (корпус 14×14, 5 мм вниз + выводы), колпачки 18×18
+    for (p = mx_pos) {
+        color("white") translate([p[0] - 7, p[1] - 7, H - mx_plate - 8.3]) cube([14, 14, 8.3]);
+        color("lightgray") translate([p[0] - 9, p[1] - 9, H + 5]) cube([18, 18, 8]);
+    }
+    // кноб ⌀30
+    color("darkgray") translate([enc_pos[0], enc_pos[1], H + 1]) cylinder(d = 30, h = 17);
 }
 
 if (part == "top")         translate([0, D, H]) rotate([180, 0, 0]) top_shell();   // лицом на стол

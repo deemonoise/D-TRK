@@ -11,9 +11,20 @@ Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (g
 | `stl/case_top.stl` | 1 | face down on the bed, no supports |
 | `stl/case_bottom.stl` | 1 | bottom down on the bed, no supports |
 | `stl/clamp.stl` | 2 | flat |
-| `stl/knob.stl` or `stl/knob8.stl` (case with track buttons) | 1 | top down on the bed, no supports ([knob.scad](knob.scad)) |
+| `stl/knob.stl` | 1 | top down on the bed, no supports ([knob.scad](knob.scad)) |
 
-**Version with 8 track buttons** (Shift, Play and the encoder under the screen, 2 rows × 4 MX below them, PCF8575 expander; see the [plan](../docs/plans/future-track-buttons.md)): overall size 98.4 × 145.4 × 31 mm; print `stl/case8_top.stl` and `stl/case8_bottom.stl` instead of `case_*`, the clamps are the same. The 3 mm LEDs go into the standard windows of the MX switches (you need clear keycaps or keycaps with a window); the case does not change for them. Wiring is in the [README](../README.md#track-buttons-optional).
+**Version with track buttons** (`case8_*`): overall size 98.4 × 164.4 × 31 mm; print `stl/case8_top.stl` and `stl/case8_bottom.stl` instead of `case_*`, the clamps are the same. Under the screen there is a 4 × 4 MX grid at 19 mm pitch:
+
+```
+   [     screen      ]
+ Shift  Play  ┌─────────┐
+              │ ENC ⌀30 │
+   A     B    └─────────┘
+   1     2     3     4
+   5     6     7     8
+```
+
+The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier. At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. The 3 mm LEDs go into the standard windows of the MX switches (you need clear keycaps or keycaps with a window). Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
 
 PLA/PETG, 3 wall perimeters, 20–30 % infill.
 
@@ -42,7 +53,15 @@ $OS -o stl/case_bottom.stl -D 'part="bottom"' case.scad
 $OS -o stl/clamp.stl       -D 'part="clamp"'  case.scad
 ```
 
-For the track-button version, add `-D trk=true` and write to `stl/case8_*.stl`. Measure the PCF8575 module: `pcf_w`, `pcf_d` (default 32 × 20).
+For the track-button version, add `-D trk=true` and write to `stl/case8_*.stl`. Measure the modules on the floor (width along X × depth along Y, without protruding pins):
+
+| Module | Variables | Default |
+|---|---|---|
+| PCF8575 | `pcf_w`, `pcf_d` | 32 × 20 |
+| PCM5102A | `dac_w`, `dac_d` (centre `dac_x`, `dac_y`) | 18 × 38 (black "PCM5102 audio DAC v2", from a photo; headers along Y, pins up to 51 mm) |
+| MAX97220 | `amp_w`, `amp_d` (centre `amp_x`, `amp_y`) | 30 × 23 (from the listing) |
+
+There are ~15 mm above the modules to the bottom of the switches and the encoder: leave out pin headers (or use right-angle ones) and solder wires straight to the pads. The DAC's right-angle headers can stay: no Dupont housings, solder the wires to the pins (they can be trimmed to 3 mm). If a module does not fit the bay, `case.scad` stops with "модуль вне отсека" (module outside the bay).
 
 `part="assembly"` (the default) is an assembly with component mock-ups for checking in OpenSCAD.
 
@@ -50,9 +69,9 @@ The most critical part is the top: print `case_top.stl` first and test-fit the m
 
 ## Encoder knob
 
-[knob.scad](knob.scad): ⌀30 × 18 mm, flat top, diamond knurling (two opposing helical grooves, pitch ~2.6 mm — 36 of them on ⌀30, 30° to the axis), fits a D-shaft. The underside is recessed for the nut and threaded bushing, so the knob floats 1 mm above the panel (0.5 mm with the encoder button pressed). The shaft goes 12.5 mm into the knob.
+[knob.scad](knob.scad): ⌀30 × 18 mm, flat top with a 3 mm × 45° chamfer carrying radial notches (36 V-grooves, `chamfer`, `cham_n`), diamond knurling (two opposing helical grooves, pitch ~2.6 mm — 36 of them on ⌀30, 30° to the axis), fits a D-shaft. The underside is recessed for the nut and threaded bushing, so the knob floats 1 mm above the panel (0.5 mm with the encoder button pressed). The shaft goes 12.5 mm into the knob.
 
-Case with track buttons: the encoder sits on the MX grid (19 mm pitch), and a ⌀30 knob would overlap the keycap below it. For this case use `knob8.stl` — ⌀17 × 18 mm, 21 grooves: 1.5 mm clearance to the 18 mm keycap, more than 10 mm to the screen window and the right wall. The wall around the nut is ~1.4 mm (2.2 without a groove); print with 3–4 perimeters.
+Both cases use `knob.stl` (⌀30): in the track-button case the encoder takes a 2 × 2 block of the MX grid.
 
 Measure the encoder:
 
@@ -69,7 +88,6 @@ The knob height depends on `shaft_l`. If it is tight on the shaft, increase `sha
 
 ```
 $OS -o stl/knob.stl knob.scad
-$OS -o stl/knob8.stl -D knob_d=17 knob.scad
 ```
 
 ## Hardware and materials
@@ -82,8 +100,8 @@ $OS -o stl/knob8.stl -D knob_d=17 knob.scad
 - MTS-102 toggle switch (M6 nut).
 - IP5306 charger/power-bank module with Type-C and USB-A (desolder the USB-A).
 - LiPo 103450 battery (~2000 mAh).
-- 2 MX switches (10 for the track-button version), EC11 encoder with push button, keycaps.
-- Track-button version: PCF8575 module, 8 × 3 mm LEDs, 8 × 330 Ω resistors.
+- 2 MX switches (12 for the track-button version), EC11 encoder with push button, keycaps.
+- Track-button version: PCF8575 module, PCM5102A DAC, MAX97220 amplifier, a second PJ-392 jack (headphones), optionally 8 × 3 mm LEDs and 8 × 330 Ω resistors.
 
 ## Power
 
