@@ -410,24 +410,34 @@ void InstScreen::initTail(Param* t, bool macros) {
                    lfo().wave = w;
                  },
                  noLfo};
-  t[kLfoSync] = {"Sync", [cfg](char* o, int n) { snprintf(o, n, "%s", cfg().sync ? "TEMPO" : "FREE"); },
+  // Sync: the rate in Hz or a tempo division; Trig: NOTE (restart at note-on) or FREE (one phase per
+  // track, restarted at playback start). Both live in the sync byte (kLfoTempo | kLfoFree).
+  t[kLfoSync] = {"Sync", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoTempo(cfg().sync) ? "TEMPO" : "HZ"); },
                  [cfg, lfo](int d) {
-                   const uint8_t on = d > 0 ? 1 : 0;
-                   if (on == cfg().sync) return;
+                   const bool on = d > 0;
+                   const uint8_t s = cfg().sync;
+                   if (on == mt::lfoTempo(s)) return;
                    const mt::LfoRef l = lfo();
-                   l.sync = on;
+                   l.sync = static_cast<uint8_t>(on ? (s | mt::kLfoTempo) : (s & ~mt::kLfoTempo));
                    l.rate = on ? 6 : 64;  // 1/4, or about 1.6 Hz
+                 },
+                 noLfo};
+  t[kLfoTrig] = {"Trig", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoFree(cfg().sync) ? "FREE" : "NOTE"); },
+                 [cfg, lfo](int d) {
+                   const uint8_t s = cfg().sync;
+                   const uint8_t v = static_cast<uint8_t>(d > 0 ? (s | mt::kLfoFree) : (s & ~mt::kLfoFree));
+                   lfo().sync = v;
                  },
                  noLfo};
   t[kLfoRate] = {"Rate",
                  [cfg](char* o, int n) {
                    const mt::LfoCfg l = cfg();
-                   if (l.sync) snprintf(o, n, "%s", mt::lfoSyncName(l.rate));
+                   if (mt::lfoTempo(l.sync)) snprintf(o, n, "%s", mt::lfoSyncName(l.rate));
                    else snprintf(o, n, "%.2f Hz", mt::lfoHz(l.rate));
                  },
                  [cfg, lfo](int d) {
                    const mt::LfoCfg l = cfg();
-                   const uint8_t r = static_cast<uint8_t>(clampi(l.rate + d, 0, l.sync ? mt::kLfoSyncSteps - 1 : 127));
+                   const uint8_t r = static_cast<uint8_t>(clampi(l.rate + d, 0, mt::lfoTempo(l.sync) ? mt::kLfoSyncSteps - 1 : 127));
                    lfo().rate = r;
                  },
                  noLfo};

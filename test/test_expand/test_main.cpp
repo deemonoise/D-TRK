@@ -535,6 +535,29 @@ void test_cnd_fill_values() {
   TEST_ASSERT_FALSE(expandStep(s, t, on, rng, out));
 }
 
+// LFO (the selector) goes out before the step's other LFO fx, whatever its slot; INT only.
+void test_lfo_select_goes_first() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  s.fx[0] = {Fx::LFD, 20};
+  s.fx[5] = {Fx::LFO, 3};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  int sel = -1, dep = -1;
+  for (int i = 0; i < out.count; ++i) {
+    if (out.ev[i].kind != EvKind::SynthFx) continue;
+    if (out.ev[i].note == static_cast<uint8_t>(Fx::LFO)) sel = i;
+    if (out.ev[i].note == static_cast<uint8_t>(Fx::LFD)) dep = i;
+  }
+  TEST_ASSERT_TRUE(sel >= 0 && sel < dep);
+  TEST_ASSERT_EQUAL(3, out.ev[sel].vel);
+  TEST_ASSERT_EQUAL(2, countKind(out, EvKind::SynthFx));
+  t.out = TrackOut::Midi;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(0, countKind(out, EvKind::SynthFx));
+}
+
 // ---- ARP + CHD ----
 
 void test_arp_chd_int_emits_root_and_arpchord() {
@@ -770,5 +793,6 @@ int main() {
   RUN_TEST(test_arp_index_modes);
   RUN_TEST(test_cnd_pre_nei_and_result);
   RUN_TEST(test_rat_velocity_ramp);
+  RUN_TEST(test_lfo_select_goes_first);
   return UNITY_END();
 }

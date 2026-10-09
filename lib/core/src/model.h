@@ -99,12 +99,21 @@ enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Driv
 constexpr int kLfos = 4;
 struct LfoCfg {
   uint8_t wave = 0;   // LfoWave
-  uint8_t rate = 64;  // 0..127 (lfoHz), or a division index when sync (lfoSyncHz)
+  uint8_t rate = 64;  // 0..127 (lfoHz), or a division index when TEMPO (lfoSyncHz)
   int8_t depth = 0;   // -64..63
   uint8_t dest = 0;   // LfoDest
-  uint8_t sync = 0;   // 1 = rate is a tempo division
+  uint8_t sync = 0;   // kLfoTempo | kLfoFree
 };
 static_assert(sizeof(LfoCfg) == 5, "LfoCfg layout (file format)");
+// LFO sync byte: TEMPO = the rate is a tempo division; FREE = one phase per track, not restarted at
+// note-on, restarted at playback start (0xFE). Without FREE the phase is the voice's, restarted at
+// note-on (NOTE).
+constexpr uint8_t kLfoTempo = 1, kLfoFree = 2;
+inline bool lfoTempo(uint8_t sync) { return sync & kLfoTempo; }
+inline bool lfoFree(uint8_t sync) { return sync & kLfoFree; }
+// LFO fx locks (Fx::LFD .. LFT in this order): bit LFO x kLfoLocks + LfoLock of a lock mask.
+enum LfoLock : uint8_t { kLfoLkDepth, kLfoLkRate, kLfoLkWave, kLfoLkDest, kLfoLocks };
+static_assert(kLfos * kLfoLocks <= 16, "LFO lock mask is a uint16_t");
 
 // Internal synth instrument. One-byte fields: the audio task reads them without a lock.
 constexpr uint8_t kMasterVolMax = 200;  // master volume %, above 100 = up to +6 dB
@@ -144,7 +153,7 @@ struct Instrument {
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
   int8_t lfoDepth = 0;   // -64..63, 0 = off
   uint8_t lfoDest = 0;   // LfoDest
-  uint8_t lfoSync = 0;   // LFO 1 synced to the tempo: lfoRate is a division (lfoSyncHz)
+  uint8_t lfoSync = 0;   // LFO 1: kLfoTempo (lfoRate is a division, lfoSyncHz) | kLfoFree
   // Filter, every type: see cutoffHz, resoQ, filterEnv.
   uint8_t fltMode = 0;          // FltMode
   uint8_t cutoff = 127;         // 0..127
@@ -232,8 +241,14 @@ uint8_t lfoDestStep(uint8_t dest, int d, bool macros);
 // ACC: drum tracks, lane mask: lanes in it play at the step velocity, the others at 60 % (fxDrumOnly).
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
-  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR, Count
+  SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
+  LFO, LFD, LFS, LFW, LFT, LFR, Count
 };
+// LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
+// first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
+// lfoHz, or a division clamped to kLfoSyncSteps - 1 when TEMPO), wave, dest, like FLT: this step's
+// note-ons, or the sounding voices on a step without a note. LFR restarts its phase at val / 256: the
+// track's (FREE), and the step's note-ons' or the sounding voices' (NOTE). INT tracks only.
 // BIT, SRR lock the voice's bit-depth / sample-rate reduction (kLockBit / kLockSrr, 0 = off; no
 // instrument setting), INT tracks only.
 // DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.

@@ -2103,6 +2103,142 @@ void test_synth_macro_lock_on_empty_step_hits_sounding_voice() {
   TEST_ASSERT_EQUAL(90, v.lock[kMacMix]);
 }
 
+// ---- LFO: FREE mode, LFO fx ----
+
+static void lfo1(Instrument& m, uint8_t sync, uint8_t rate, int8_t depth) {
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Sine);
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Pitch);
+  m.lfoSync = sync;
+  m.lfoRate = rate;
+  m.lfoDepth = depth;
+}
+
+void test_lfo_free_runs_through_note_ons() {
+  lfo1(p->instruments[0], kLfoFree, 40, 20);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 50; ++k) s->render(buf);
+  const float a = s->trackLfoPhase(0, 0);
+  TEST_ASSERT_TRUE(a > 0);
+  TEST_ASSERT_EQUAL_FLOAT(0, s->voice(s->trackVoice(0)).lfoPhase[0]);  // the voice's own stays unused
+  noteOff(0, 0, 60);
+  noteOn(0, 0, 62);
+  s->render(buf);
+  const float b = s->trackLfoPhase(0, 0);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, a + lfoHz(40) * Synth::kBlock / kSynthRate, b);
+}
+
+void test_lfo_free_restarts_on_play_start() {
+  lfo1(p->instruments[0], kLfoFree, 40, 20);
+  for (int k = 0; k < 50; ++k) s->render(buf);
+  TEST_ASSERT_TRUE(s->trackLfoPhase(0, 0) > 0.01f);  // runs without notes
+  send(0, 0, 0xFE, 0, 0, 1);
+  s->render(buf);
+  // The control update at 0 precedes the event: 3 more updates in the block.
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, lfoHz(40) * (Synth::kBlock - Synth::kControl) / kSynthRate, s->trackLfoPhase(0, 0));
+}
+
+void test_lfo_free_tempo_locks_to_beats() {
+  p->bpm = 120;
+  lfo1(p->instruments[0], kLfoFree | kLfoTempo, 6, 20);  // 1/4: one cycle per beat (0.5 s)
+  send(0, 0, 0xFE, 0, 0, 1);
+  for (int k = 0; k < kBlocksPerSec * 3; ++k) s->render(buf);  // 6 beats, minus the first update
+  const float ph = s->trackLfoPhase(0, 0);
+  TEST_ASSERT_TRUE(ph < 0.01f || ph > 0.99f);
+}
+
+void test_lfo_note_mode_unchanged() {
+  lfo1(p->instruments[0], 0, 40, 20);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 50; ++k) s->render(buf);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] > 0.01f);
+  noteOff(0, 0, 60);
+  noteOn(0, 0, 62);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lfoPhase[0] < 0.01f);
+}
+
+void test_lfo_depth_lock_turns_lfo_on() {
+  lfo1(p->instruments[0], 0, 40, 0);  // off in the instrument
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::LFD, 30);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL_HEX16(1u << kLfoLkDepth, v.lfoLockMask);
+  TEST_ASSERT_EQUAL(30, v.lfoLock[0].depth);
+  TEST_ASSERT_TRUE(v.lfoPhase[0] > 0);  // running
+}
+
+void test_lfo_select_targets_lfo_2() {
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::LFO, 2);
+  fx(0, 0, Fx::LFS, 99);
+  fx(0, 0, Fx::LFT, static_cast<uint8_t>(LfoDest::Cutoff));
+  noteOn(0, 0, 60);
+  s->render(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL_HEX16((1u << (kLfoLocks + kLfoLkRate)) | (1u << (kLfoLocks + kLfoLkDest)), v.lfoLockMask);
+  TEST_ASSERT_EQUAL(99, v.lfoLock[1].rate);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Cutoff), v.lfoLock[1].dest);
+  // The next step starts without a selection: LFO 1 again.
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::LFD, 10);
+  noteOn(0, 0, 62);
+  s->render(buf);
+  TEST_ASSERT_EQUAL_HEX16(1u << kLfoLkDepth, s->voice(s->trackVoice(0)).lfoLockMask);
+}
+
+void test_lfo_rate_lock_changes_speed() {
+  lfo1(p->instruments[0], 0, 40, 20);
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::LFS, 80);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  const float n = 10.f * Synth::kBlock - Synth::kControl;  // the first update precedes the note
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, lfoHz(80) * n / kSynthRate, s->voice(s->trackVoice(0)).lfoPhase[0]);
+}
+
+void test_lfo_reset_fx_sets_phase() {
+  lfo1(p->instruments[0], 0, 40, 20);
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::LFR, 0x80);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  const float adv = lfoHz(40) * (Synth::kBlock - Synth::kControl) / kSynthRate;
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f + adv, s->voice(s->trackVoice(0)).lfoPhase[0]);
+  // FREE: the track's phase, on a step without a note too.
+  lfo1(p->instruments[0], kLfoFree, 40, 20);
+  for (int k = 0; k < 20; ++k) s->render(buf);
+  stepStart(0, 0, 6, false);
+  fx(0, 0, Fx::LFR, 0x40);
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.25f + adv, s->trackLfoPhase(0, 0));
+}
+
+void test_lfo_lock_on_empty_step_hits_sounding_voice() {
+  stepStart(0, 0, 6, true);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  stepStart(0, 0, 6, false);
+  fx(0, 0, Fx::LFO, 3);
+  fx(0, 0, Fx::LFW, static_cast<uint8_t>(LfoWave::Square));
+  s->render(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL_HEX16(1u << (2 * kLfoLocks + kLfoLkWave), v.lfoLockMask);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Square), v.lfoLock[2].wave);
+}
+
+void test_lfo_wave_lock_sounds() {
+  // A square LFO on the pitch locked over a sine of the instrument: +depth semitones in the first half.
+  Instrument& m = p->instruments[0];
+  lfo1(m, 0, 0, 12);  // 0.05 Hz: the first half covers the test; depth 12 = 2.25 semitones
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::LFW, static_cast<uint8_t>(LfoWave::Square));
+  noteOn(0, 0, 69);
+  for (int k = 0; k < 4; ++k) s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, 69.f + 12.f * 12.f / 64.f, voiceSemis(0));
+}
+
 // ---- KIT: lanes ----
 
 static FakeBank* kitSetup(int track, int kitIdx) {
@@ -2650,5 +2786,15 @@ int main() {
   RUN_TEST(test_arp_chord_cycles_chord_notes);
   RUN_TEST(test_velcut_opens_filter_with_velocity);
   RUN_TEST(test_velmac_shifts_decay);
+  RUN_TEST(test_lfo_free_runs_through_note_ons);
+  RUN_TEST(test_lfo_free_restarts_on_play_start);
+  RUN_TEST(test_lfo_free_tempo_locks_to_beats);
+  RUN_TEST(test_lfo_note_mode_unchanged);
+  RUN_TEST(test_lfo_depth_lock_turns_lfo_on);
+  RUN_TEST(test_lfo_select_targets_lfo_2);
+  RUN_TEST(test_lfo_rate_lock_changes_speed);
+  RUN_TEST(test_lfo_reset_fx_sets_phase);
+  RUN_TEST(test_lfo_lock_on_empty_step_hits_sounding_voice);
+  RUN_TEST(test_lfo_wave_lock_sounds);
   return UNITY_END();
 }

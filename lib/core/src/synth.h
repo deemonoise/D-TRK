@@ -101,6 +101,8 @@ class Synth {
   int trackVoice(uint8_t track) const;
   int voiceInstr(int v) const { return voices_[v].instr; }
   const Voice& voice(int v) const { return voices_[v]; }
+  // FREE LFO i (0..kLfos-1) of a track: its phase 0..1.
+  float trackLfoPhase(uint8_t track, int i) const { return rt_[track].lfoPhase[i]; }
   // FM / DRUM params cache (on by default); off recomputes every control update (tests, diagnostics).
   void setFmCache(bool on) { fmCache_ = on; }
   // fmMachine() / drumMachine() evaluations so far.
@@ -137,6 +139,13 @@ class Synth {
     float lastPitch;   // of the last note-on, < 0 = none (SLD)
     uint16_t lockMask;  // LockBit: this step's note-ons
     uint8_t lock[kLocks];
+    float lfoPhase[kLfos];  // FREE LFOs: the track's phase 0..1, restarted by 0xFE
+    float lfoRnd[kLfos];    // FREE Random: value of the current cycle
+    uint8_t lfoSel;         // LFO fx: LFO 0..kLfos-1 this step's LFD .. LFR act on
+    uint16_t lfoLockMask;   // LFO locks (see Voice::lfoLockMask): this step's note-ons
+    LfoCfg lfoLock[kLfos];
+    uint8_t lfoRst;         // LFR: bit per LFO, this step's note-ons start at lfoRstPh / 256
+    uint8_t lfoRstPh[kLfos];
   };
   static constexpr uint8_t kNoInstr = mt::kNoInstr;
 
@@ -159,6 +168,9 @@ class Synth {
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
   void controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut);
   float lfo(Voice& v, const LfoCfg& c, int i, int dt);
+  static LfoCfg lfoCfgOf(const Voice* v, const Instrument& m, int i);  // the instrument's + v's locks
+  void advanceTrackLfos(int dt);
+  void lfoFx(uint8_t track, Fx f, uint8_t val, bool now);
   void resetLfos(Voice& v);
   static float cachedHz(Voice& v, int k, float note);  // noteHz, reused while note stays
   static bool oneShot(const Voice& v);

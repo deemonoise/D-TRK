@@ -53,6 +53,12 @@ constexpr Info kInfo[] = {
     {"ARS", "STEP ARP", 0, 0, kArsDefault, false},  // ARS: steps per note, octaves, then mode
     {"BIT", "BIT CRUSH", 0, 127, 64, false},        // BIT: bit-depth reduction lock, 0 = off
     {"SRR", "SAMPLE RATE REDUCE", 0, 127, 64, false},  // SRR: sample-rate reduction lock, 0 = off
+    {"LFO", "LFO SELECT", 1, kLfos, 1, false},        // LFO: target of the step's LFD .. LFR
+    {"LFD", "LFO DEPTH", -64, 63, 32, true},           // LFD: depth lock
+    {"LFS", "LFO RATE", 0, 127, 64, false},            // LFS: rate lock
+    {"LFW", "LFO WAVE", 0, static_cast<int16_t>(LfoWave::Count) - 1, 0, false},  // LFW: wave lock
+    {"LFT", "LFO DEST", 0, static_cast<int16_t>(LfoDest::Count) - 1, 0, false},  // LFT: dest lock
+    {"LFR", "LFO RESET", 0, 255, 0, false},            // LFR: phase restart at val / 256
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -100,6 +106,7 @@ constexpr Fx kOrder[] = {
     Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN,
     Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
     Fx::FLT, Fx::RES, Fx::DRV, Fx::BIT, Fx::SRR, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
+    Fx::LFO, Fx::LFD, Fx::LFS, Fx::LFW, Fx::LFT, Fx::LFR,
     Fx::OFS, Fx::SLC,
     Fx::DLY, Fx::RVB,
     Fx::CHN, Fx::CCA, Fx::CCB, Fx::PGM,
@@ -137,7 +144,21 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::VSL: snprintf(out, 5, "%+3d", fxSigned(v)); return;
     case Fx::VIB:
     case Fx::ARP:
-    case Fx::ACC: snprintf(out, 5, " %02X", v); return;
+    case Fx::ACC:
+    case Fx::LFR: snprintf(out, 5, " %02X", v); return;
+    case Fx::LFD: snprintf(out, 5, "%+3d", fxSigned(v)); return;
+    case Fx::LFW: {
+      static const char* const kW[] = {"SIN", "TRI", "SAW", "SQR", "RND"};
+      static_assert(sizeof(kW) / sizeof(kW[0]) == static_cast<int>(LfoWave::Count), "LFW names");
+      snprintf(out, 5, "%s", kW[v < static_cast<uint8_t>(LfoWave::Count) ? v : 0]);
+      return;
+    }
+    case Fx::LFT: {
+      static const char* const kD[] = {"PIT", "DEC", "COL", "SHP", "SWP", "CON", "VOL", "CUT", "DRV"};
+      static_assert(sizeof(kD) / sizeof(kD[0]) == static_cast<int>(LfoDest::Count), "LFT names");
+      snprintf(out, 5, "%s", kD[v < static_cast<uint8_t>(LfoDest::Count) ? v : 0]);
+      return;
+    }
     case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
     case Fx::RAT: {  // "  4", ramp up " 4^", down " 4v"
       const int n = v & 15, ramp = (v >> 4) & 3;
@@ -199,7 +220,10 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   return static_cast<uint8_t>(cur);
 }
 
-bool fxSynthOnly(Fx f) { return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR; }
+bool fxSynthOnly(Fx f) {
+  return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR ||
+         (f >= Fx::LFO && f <= Fx::LFR);
+}
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
 

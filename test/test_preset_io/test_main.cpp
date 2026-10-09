@@ -382,6 +382,25 @@ void test_lfos_roundtrip() {
   TEST_ASSERT_EQUAL(0, b.lfo[1].depth);
 }
 
+// FREE (bit 1 of the sync byte) survives, alone (rate 0..127 kept) and with TEMPO.
+void test_lfo_free_flag_roundtrip() {
+  Instrument a = sample();
+  a.lfoSync = kLfoFree;
+  a.lfoRate = 100;
+  a.lfo[1] = {0, 5, 10, 0, kLfoTempo | kLfoFree};
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(kLfoFree, b.lfoSync);
+  TEST_ASSERT_EQUAL(100, b.lfoRate);
+  TEST_ASSERT_EQUAL(kLfoTempo | kLfoFree, b.lfo[1].sync);
+  TEST_ASSERT_EQUAL(5, b.lfo[1].rate);
+  TEST_ASSERT_TRUE(lfoTempo(b.lfo[1].sync) && lfoFree(b.lfo[1].sync));
+  TEST_ASSERT_FALSE(lfoTempo(b.lfoSync));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -399,5 +418,6 @@ int main() {
   RUN_TEST(test_v3_file_loads_with_sound_fx_defaults);
   RUN_TEST(test_sound_fx_fields_clamped);
   RUN_TEST(test_lfos_roundtrip);
+  RUN_TEST(test_lfo_free_flag_roundtrip);
   return UNITY_END();
 }

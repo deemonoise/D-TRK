@@ -108,6 +108,13 @@ void Synth::startTrack(uint8_t track) {
   r.lastPitch = -1;
   r.lockMask = 0;
   for (auto& x : r.lock) x = 0;
+  for (int i = 0; i < kLfos; ++i) {  // FREE LFOs restart with the playback
+    r.lfoPhase[i] = 0;
+    r.lfoRnd[i] = rnd();
+  }
+  r.lfoSel = 0;
+  r.lfoLockMask = 0;
+  r.lfoRst = 0;
   for (auto& v : voices_)
     if (v.on && v.track == track) control(v, 0);
 }
@@ -211,6 +218,9 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
     r.cut = r.sld = 0;
     r.vslSet = r.ofsSet = r.slcSet = false;
     r.lockMask = 0;
+    r.lfoSel = 0;
+    r.lfoLockMask = 0;
+    r.lfoRst = 0;
     return;
   }
   if (cmd == kSynthArpChord) {  // the step's note-on arpeggiates this chord (intervals from its note)
@@ -291,7 +301,63 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
       }
       break;
     }
+    case Fx::LFO:
+    case Fx::LFD:
+    case Fx::LFS:
+    case Fx::LFW:
+    case Fx::LFT:
+    case Fx::LFR: lfoFx(track, static_cast<Fx>(cmd), val, now); break;
     default: break;
+  }
+}
+
+// LFO fx (see Fx::LFO): the selection, locks of the selected LFO, its phase restart.
+void Synth::lfoFx(uint8_t track, Fx f, uint8_t val, bool now) {
+  TrackRt& r = rt_[track];
+  if (f == Fx::LFO) {
+    r.lfoSel = static_cast<uint8_t>(val >= 1 && val <= kLfos ? val - 1 : 0);
+    return;
+  }
+  const int i = r.lfoSel;
+  if (f == Fx::LFR) {
+    const float ph = val * (1.f / 256.f);
+    r.lfoPhase[i] = ph;  // FREE: the track's, at once
+    r.lfoRnd[i] = rnd();
+    if (now) {
+      for (auto& x : voices_)
+        if (x.on && x.track == track) {
+          x.lfoPhase[i] = ph;
+          x.lfoRnd[i] = rnd();
+        }
+    } else {
+      r.lfoRst |= static_cast<uint8_t>(1u << i);
+      r.lfoRstPh[i] = val;
+    }
+    return;
+  }
+  const int k = static_cast<int>(f) - static_cast<int>(Fx::LFD);  // LfoLock
+  auto set = [k, val](LfoCfg& c) {
+    if (k == kLfoLkDepth) {
+      const int d = fxSigned(val);
+      c.depth = static_cast<int8_t>(d < -64 ? -64 : (d > 63 ? 63 : d));
+    } else if (k == kLfoLkRate) {
+      c.rate = val > 127 ? 127 : val;
+    } else if (k == kLfoLkWave) {
+      c.wave = val < static_cast<uint8_t>(LfoWave::Count) ? val : 0;
+    } else {
+      c.dest = val < static_cast<uint8_t>(LfoDest::Count) ? val : 0;
+    }
+  };
+  const uint16_t bit = static_cast<uint16_t>(1u << (i * kLfoLocks + k));
+  if (now) {
+    for (auto& x : voices_)
+      if (x.on && x.track == track) {
+        set(x.lfoLock[i]);
+        x.lfoLockMask |= bit;
+      }
+  } else {
+    set(r.lfoLock[i]);
+    r.lfoLockMask |= bit;
   }
 }
 
@@ -516,6 +582,8 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   constexpr uint8_t kMacroBits = (1 << kFmMacros) - 1;
   v.lockMask = (heavy || synT) ? r.lockMask : (r.lockMask & ~kMacroBits);
   for (int k = 0; k < kLocks; ++k) v.lock[k] = r.lock[k];
+  v.lfoLockMask = r.lfoLockMask;
+  for (int i = 0; i < kLfos; ++i) v.lfoLock[i] = r.lfoLock[i];
   if (fm || drumT || synT) v.useEngine(fm ? EngineKind::Fm : drumT ? EngineKind::Drum : EngineKind::Syn);
   if (fm) {
     v.fpValid = false;
@@ -526,6 +594,11 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       resetLfos(v);
     }
   }
+  for (int i = 0; i < kLfos; ++i)  // LFR: this step's note-ons start there, after the restart above
+    if (r.lfoRst & (1u << i)) {
+      v.lfoPhase[i] = r.lfoRstPh[i] * (1.f / 256.f);
+      v.lfoRnd[i] = rnd();
+    }
   if (drumT) {
     v.fpValid = false;
     v.drv().trigger(wasDrum);
@@ -701,7 +774,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   float lfoVol = 1, lfoCut = 0, lfoDrv = 0;
   float lm[kFmMacros] = {};
   for (int i = 0; i < kLfos; ++i) {
-    const LfoCfg c = lfoAt(m, i);
+    const LfoCfg c = lfoCfgOf(&v, m, i);
     const float l = lfo(v, c, i, dt);
     if (l == 0) continue;
     const uint8_t dest = c.dest < static_cast<uint8_t>(LfoDest::Count) ? c.dest : 0;
@@ -809,23 +882,70 @@ void Synth::resetLfos(Voice& v) {
   }
 }
 
-// LFO i of a voice: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM), restarted at
-// note-on; -1..1 x depth / 64.
+// LFO i of an instrument with v's LFO fx locks over it (v: nullptr = none).
+LfoCfg Synth::lfoCfgOf(const Voice* v, const Instrument& m, int i) {
+  LfoCfg c = lfoAt(m, i);
+  const unsigned b = v ? (v->lfoLockMask >> (i * kLfoLocks)) & ((1u << kLfoLocks) - 1) : 0;
+  if (!b) return c;
+  const LfoCfg& l = v->lfoLock[i];
+  if (b & (1u << kLfoLkDepth)) c.depth = l.depth;
+  if (b & (1u << kLfoLkRate)) c.rate = l.rate;
+  if (b & (1u << kLfoLkWave)) c.wave = l.wave;
+  if (b & (1u << kLfoLkDest)) c.dest = l.dest;
+  if (lfoTempo(c.sync) && c.rate >= kLfoSyncSteps) c.rate = kLfoSyncSteps - 1;
+  return c;
+}
+
+static float lfoHzOf(const LfoCfg& c, uint16_t bpm) { return lfoTempo(c.sync) ? lfoSyncHz(c.rate, bpm) : lfoHz(c.rate); }
+
+// FREE LFOs: every track's phase, once per control update (before the voices read it). Rate: the
+// track's instrument with the locks of its newest voice.
+MT_HOT void Synth::advanceTrackLfos(int dt) {
+  for (int t = 0; t < kSynthTracks; ++t) {
+    const Instrument& m = p_.instruments[trackInstr(static_cast<uint8_t>(t))];
+    bool any = lfoFree(m.lfoSync);
+    for (const LfoCfg& l : m.lfo) any |= lfoFree(l.sync);
+    if (!any) continue;
+    const int vi = trackVoice(static_cast<uint8_t>(t));
+    TrackRt& r = rt_[t];
+    for (int i = 0; i < kLfos; ++i) {
+      const LfoCfg c = lfoCfgOf(vi >= 0 ? &voices_[vi] : nullptr, m, i);
+      if (!lfoFree(c.sync)) continue;
+      float& ph = r.lfoPhase[i];
+      ph += lfoHzOf(c, p_.bpm) * dt * (1.f / kSynthRate);
+      if (ph >= 1.f) {
+        ph -= static_cast<int>(ph);
+        r.lfoRnd[i] = rnd();
+      }
+    }
+  }
+}
+
+// LFO i of a voice: free (lfoHz) or a tempo division (lfoSyncHz at the project's BPM); NOTE: the
+// voice's phase, restarted at note-on; FREE: the track's (advanceTrackLfos). -1..1 x depth / 64.
 MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt) {
   if (!c.depth) return 0;
-  const float hz = c.sync ? lfoSyncHz(c.rate, p_.bpm) : lfoHz(c.rate);
-  float& ph = v.lfoPhase[i];
-  ph += hz * dt * (1.f / kSynthRate);
-  if (ph >= 1.f) {
-    ph -= static_cast<int>(ph);
-    v.lfoRnd[i] = rnd();
+  float ph, rv;
+  if (lfoFree(c.sync)) {
+    const TrackRt& r = rt_[v.track < kSynthTracks ? v.track : 0];
+    ph = r.lfoPhase[i];
+    rv = r.lfoRnd[i];
+  } else {
+    float& p = v.lfoPhase[i];
+    p += lfoHzOf(c, p_.bpm) * dt * (1.f / kSynthRate);
+    if (p >= 1.f) {
+      p -= static_cast<int>(p);
+      v.lfoRnd[i] = rnd();
+    }
+    ph = p;
+    rv = v.lfoRnd[i];
   }
   float w;
   switch (static_cast<LfoWave>(c.wave)) {
     case LfoWave::Tri: w = 4.f * (ph < 0.5f ? 0.5f - ph : ph - 0.5f) - 1.f; break;
     case LfoWave::Saw: w = 2.f * ph - 1.f; break;
     case LfoWave::Square: w = ph < 0.5f ? 1.f : -1.f; break;
-    case LfoWave::Random: w = v.lfoRnd[i]; break;
+    case LfoWave::Random: w = rv; break;
     default: w = sinf(6.2831853f * ph); break;
   }
   const int d = c.depth < -64 ? -64 : (c.depth > 63 ? 63 : c.depth);
@@ -1063,9 +1183,11 @@ MT_HOT void Synth::render(int16_t* out) {
   int e = 0;
   for (int pos = 0; pos < kBlock;) {
     mark(kProfMaster);
-    if (pos % kControl == 0)
+    if (pos % kControl == 0) {
+      advanceTrackLfos(kControl);
       for (auto& v : voices_)
         if (v.on && !v.env.idle()) control(v, kControl);  // a ringing filter tail keeps its cutoff
+    }
     mark(kProfControl);
     ctlLeft_ = kControl - pos % kControl;
     while (e < nEv_ && ev_[e].off <= pos) apply(ev_[e++]);
