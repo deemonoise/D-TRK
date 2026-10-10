@@ -690,7 +690,12 @@ void run(void*) {
     }
     {  // after the scope: it shows the mix, the phones level only the headphones
       const int32_t g = phonesQ15.load(std::memory_order_relaxed);
-      for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = static_cast<int16_t>((mono[i] * g) >> 15);
+      // +1 LSB DC: the PCM5102A never sees digital silence, so its auto-mute does not click on/off
+      // between notes (the output is AC-coupled, the offset is inaudible).
+      for (int i = 0; i < kBlock; ++i) {
+        const int32_t v = ((mono[i] * g) >> 15) + 1;
+        lr[2 * i] = lr[2 * i + 1] = static_cast<int16_t>(v > 32767 ? 32767 : v);
+      }
     }
     size_t written = 0;
     const int64_t w0 = esp_timer_get_time();
