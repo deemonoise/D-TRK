@@ -92,25 +92,32 @@ enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLocks };
 static_assert(kLocks <= 16, "lockMask is a uint16_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
-// Dec..Con = macro index + 1 (FM / DRUM only). Stored in files: new targets before Count only.
-enum class LfoDest : uint8_t { Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive, Count };
+// Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2: SYNTH (osc 2);
+// RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Stored in files:
+// new targets before Count only.
+enum class LfoDest : uint8_t {
+  Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive,
+  Reso, Fenv, Dly, Rvb, Bit, Srr, Fine, Duty, Sub, Noise, Semi2,
+  Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4,
+  Count
+};
 
 // LFO 2..4 of an instrument (LFO 1 keeps its own fields: older files). depth 0 = off.
 constexpr int kLfos = 4;
+static_assert(static_cast<int>(LfoDest::Rtrg1) - static_cast<int>(LfoDest::Rate1) == 2 * kLfos, "LFO targets");
+// LFO sync byte (LfoCfg::sync, Instrument::lfoSync): bit 0 TEMPO (rate is a division, lfoSyncHz),
+// bit 1 Retrig OFF (one phase per instrument, not restarted by notes; see Synth).
+constexpr uint8_t kLfoTempo = 1, kLfoFree = 2;
+inline bool lfoTempo(uint8_t s) { return s & kLfoTempo; }
+inline bool lfoFree(uint8_t s) { return s & kLfoFree; }
 struct LfoCfg {
   uint8_t wave = 0;   // LfoWave
   uint8_t rate = 64;  // 0..127 (lfoHz), or a division index when TEMPO (lfoSyncHz)
   int8_t depth = 0;   // -64..63
   uint8_t dest = 0;   // LfoDest
-  uint8_t sync = 0;   // kLfoTempo | kLfoFree
+  uint8_t sync = 0;   // kLfoTempo | kLfoFree bits
 };
 static_assert(sizeof(LfoCfg) == 5, "LfoCfg layout (file format)");
-// LFO sync byte: TEMPO = the rate is a tempo division; FREE = one phase per track, not restarted at
-// note-on, restarted at playback start (0xFE). Without FREE the phase is the voice's, restarted at
-// note-on (NOTE).
-constexpr uint8_t kLfoTempo = 1, kLfoFree = 2;
-inline bool lfoTempo(uint8_t sync) { return sync & kLfoTempo; }
-inline bool lfoFree(uint8_t sync) { return sync & kLfoFree; }
 // LFO fx locks (Fx::LFD .. LFT in this order): bit LFO x kLfoLocks + LfoLock of a lock mask.
 enum LfoLock : uint8_t { kLfoLkDepth, kLfoLkRate, kLfoLkWave, kLfoLkDest, kLfoLocks };
 static_assert(kLfos * kLfoLocks <= 16, "LFO lock mask is a uint16_t");
@@ -153,7 +160,7 @@ struct Instrument {
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
   int8_t lfoDepth = 0;   // -64..63, 0 = off
   uint8_t lfoDest = 0;   // LfoDest
-  uint8_t lfoSync = 0;   // LFO 1: kLfoTempo (lfoRate is a division, lfoSyncHz) | kLfoFree
+  uint8_t lfoSync = 0;   // LFO 1 kLfoTempo | kLfoFree bits (TEMPO: lfoRate is a division)
   // Filter, every type: see cutoffHz, resoQ, filterEnv.
   uint8_t fltMode = 0;          // FltMode
   uint8_t cutoff = 127;         // 0..127
@@ -222,13 +229,18 @@ float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec);
 // DRUM: sets the machine (clamped) and its default macros.
 void drumSetMachine(Instrument& m, uint8_t machine);
 // Changes the type. FM / DRUM: the machine (clamped) with its default macros (they mean other
-// things per type); SYNTH: its default macros; KIT: its default lanes. CHIP / SAMPLE: a macro LFO
-// target becomes PITCH.
+// things per type); SYNTH: its default macros; KIT: its default lanes. A LFO target the type lacks
+// (lfoDestValid) becomes PITCH.
 void instrSetType(Instrument& m, InstrType t);
 // KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
 void kitSetDefaults(Instrument& m);
-// LFO target d steps from dest (clamped at the ends); macros = false (CHIP / SAMPLE) skips DECAY..CONTOUR.
-uint8_t lfoDestStep(uint8_t dest, int d, bool macros);
+// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
+bool lfoDestValid(uint8_t dest, InstrType t);
+// LFO target d steps from dest over the targets valid for t (clamped at the ends); self (0..kLfos-1,
+// -1 = none): that LFO's RTRG is skipped.
+uint8_t lfoDestStep(uint8_t dest, int d, InstrType t, int self = -1);
+// Display name of the target: SYNTH names its macros SHP1..SENV; out of range = PITCH.
+const char* lfoDestName(uint8_t dest, InstrType t);
 
 // Values are stored in project files: new commands go before Count only.
 // SLD..SLC act on INT tracks only (synth fx, see fxSynthOnly). DCY..CON lock FM / DRUM / SYNTH macros
@@ -248,7 +260,8 @@ enum class Fx : uint8_t {
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
 // lfoHz, or a division clamped to kLfoSyncSteps - 1 when TEMPO), wave, dest, like FLT: this step's
 // note-ons, or the sounding voices on a step without a note. LFR restarts its phase at val / 256: the
-// track's (FREE), and the step's note-ons' or the sounding voices' (NOTE). INT tracks only.
+// instrument's (Retrig OFF; the rate lock does not apply to that shared phase), and the step's
+// note-ons' or the sounding voices' (Retrig ON). INT tracks only.
 // BIT, SRR lock the voice's bit-depth / sample-rate reduction (kLockBit / kLockSrr, 0 = off; no
 // instrument setting), INT tracks only.
 // DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.
@@ -393,8 +406,8 @@ struct Project {
   bool songMode = false;
   uint16_t scenes[kScenes];  // bit t = track t muted; kSceneEmpty = nothing stored (reset())
   Instrument instruments[kInstruments];
-  uint8_t masterVol = 40;  // 0..kMasterVolMax %
-  bool preview = true;     // GRID note entry sounds on INT tracks
+  uint8_t masterVol = 100;  // 0..kMasterVolMax %
+  bool preview = true;      // GRID note entry sounds on INT tracks
   // Send delay (INT tracks): time 1..kDlyTimeMax sixteenths, feedback / tone / return level 0..127.
   uint8_t dlyTime = 3;
   uint8_t dlyFb = 50;

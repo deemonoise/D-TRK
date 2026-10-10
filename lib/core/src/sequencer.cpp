@@ -76,11 +76,20 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
       out.send(m, 2);
     }
   }
+  synthTransport(now, out, 0xFA);
   const uint8_t s = 0xFA;
   out.send(&s, 1);
   anchorTick_ = stepTick_ = clockTick_ = 0;
   anchorAt(now);
   state_ = State::Playing;
+}
+
+void Sequencer::synthTransport(uint64_t now, MidiSink& out, uint8_t msg) {
+  for (int i = 0; i < kTracks; ++i)
+    if (internal(i)) {
+      out.synth(now, static_cast<uint8_t>(i), &msg, 1);
+      return;
+    }
 }
 
 void Sequencer::pause(uint64_t now, MidiSink& out) {
@@ -90,6 +99,7 @@ void Sequencer::pause(uint64_t now, MidiSink& out) {
   silence(now, out);
   const uint8_t s = 0xFC;
   out.send(&s, 1);
+  synthTransport(now, out, 0xFC);
   heardPos_ = pos_;
   heardPat_ = cur_;
   heardSong_ = songPos_;
@@ -106,6 +116,7 @@ void Sequencer::resume(uint64_t now, MidiSink& out) {
   out.send(m, 3);
   const uint8_t c = 0xFB;
   out.send(&c, 1);
+  synthTransport(now, out, 0xFB);
   // The step sits at its exact tick after the clock origin, so a slave following
   // SPP + clock stays aligned even when the position is not on a sixteenth.
   anchorTick_ = clockTick_ = static_cast<uint64_t>(spp) * 24;

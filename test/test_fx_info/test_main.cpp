@@ -263,7 +263,7 @@ void test_lfo_fx() {
   TEST_ASSERT_EQUAL_STRING("SQR", fmt(Fx::LFW, static_cast<uint8_t>(LfoWave::Square)));
   TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Random), fxStep(Fx::LFW, 0, 10));
   TEST_ASSERT_EQUAL_STRING("CUT", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Cutoff)));
-  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Drive), fxStep(Fx::LFT, 0, 20));
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Count) - 1, fxStep(Fx::LFT, 0, 40));
   TEST_ASSERT_EQUAL_STRING(" 80", fmt(Fx::LFR, 0x80));
   for (int f = static_cast<int>(Fx::LFO); f <= static_cast<int>(Fx::LFR); ++f) TEST_ASSERT_TRUE(fxSynthOnly(static_cast<Fx>(f)));
   TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::LFO);

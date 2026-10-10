@@ -154,7 +154,9 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
       return;
     }
     case Fx::LFT: {
-      static const char* const kD[] = {"PIT", "DEC", "COL", "SHP", "SWP", "CON", "VOL", "CUT", "DRV"};
+      static const char* const kD[] = {"PIT", "DEC", "COL", "SHP", "SWP", "CON", "VOL", "CUT", "DRV", "RES", "FEN",
+                                       "DLY", "RVB", "BIT", "SRR", "FIN", "DUT", "SUB", "NOI", "SM2", "RA1", "RA2",
+                                       "RA3", "RA4", "DP1", "DP2", "DP3", "DP4", "RG1", "RG2", "RG3", "RG4"};
       static_assert(sizeof(kD) / sizeof(kD[0]) == static_cast<int>(LfoDest::Count), "LFT names");
       snprintf(out, 5, "%s", kD[v < static_cast<uint8_t>(LfoDest::Count) ? v : 0]);
       return;

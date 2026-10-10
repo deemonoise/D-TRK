@@ -65,7 +65,7 @@ void Project::reset() {
     fmSetMachine(instruments[i], static_cast<uint8_t>(FmMachine::Tone));
     snprintf(instruments[i].name, sizeof(instruments[i].name), "INS%d", i + 1);
   }
-  masterVol = 40;
+  masterVol = 100;
   preview = true;
   dlyTime = 3;
   dlyFb = 50;
@@ -215,8 +215,7 @@ void instrSetType(Instrument& m, InstrType t) {
   } else if (t == InstrType::Kit) kitSetDefaults(m);
   for (int i = 0; i < kLfos; ++i) {
     uint8_t& dest = lfoRef(m, i).dest;
-    const bool macroDest = dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con);
-    if ((t == InstrType::Chip || t == InstrType::Sample) && macroDest) dest = static_cast<uint8_t>(LfoDest::Pitch);
+    if (!lfoDestValid(dest, t)) dest = static_cast<uint8_t>(LfoDest::Pitch);
   }
 }
 
@@ -227,18 +226,43 @@ void kitSetDefaults(Instrument& m) {
   }
 }
 
-uint8_t lfoDestStep(uint8_t dest, int d, bool macros) {
+bool lfoDestValid(uint8_t dest, InstrType t) {
+  if (dest >= static_cast<uint8_t>(LfoDest::Count)) return false;
+  const auto d = static_cast<LfoDest>(dest);
+  if (d >= LfoDest::Dec && d <= LfoDest::Con)
+    return t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth;
+  if (d == LfoDest::Duty) return t == InstrType::Chip;
+  if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2) return t == InstrType::Synth;
+  return true;
+}
+
+uint8_t lfoDestStep(uint8_t dest, int d, InstrType t, int self) {
   constexpr int kLast = static_cast<int>(LfoDest::Count) - 1;
-  constexpr int kMac0 = static_cast<int>(LfoDest::Dec), kMac1 = static_cast<int>(LfoDest::Con);
+  const int selfRtrg = self >= 0 && self < kLfos ? static_cast<int>(LfoDest::Rtrg1) + self : -1;
+  auto ok = [&](int x) { return x != selfRtrg && lfoDestValid(static_cast<uint8_t>(x), t); };
   int v = dest > kLast ? 0 : dest;
   const int step = d > 0 ? 1 : -1;
   for (int i = 0; i < (d > 0 ? d : -d); ++i) {
     int nv = v + step;
-    while (!macros && nv >= kMac0 && nv <= kMac1) nv += step;
+    while (nv >= 0 && nv <= kLast && !ok(nv)) nv += step;
     if (nv < 0 || nv > kLast) break;
     v = nv;
   }
   return static_cast<uint8_t>(v);
+}
+
+const char* lfoDestName(uint8_t dest, InstrType t) {
+  static const char* const kNames[] = {
+      "PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP", "CONTOUR", "VOL", "CUTOFF", "DRIVE",
+      "RESO", "FENV", "DLY", "RVB", "BIT", "SRR", "FINE", "DUTY", "SUB", "NOISE", "SEMI2",
+      "L1 RATE", "L2 RATE", "L3 RATE", "L4 RATE", "L1 DEPTH", "L2 DEPTH", "L3 DEPTH", "L4 DEPTH",
+      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG"};
+  static const char* const kSyn[] = {"SHP1", "SHP2", "MIX", "DET", "SENV"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");
+  if (dest >= static_cast<uint8_t>(LfoDest::Count)) dest = 0;
+  const int mac = dest - static_cast<int>(LfoDest::Dec);
+  if (t == InstrType::Synth && mac >= 0 && mac < kFmMacros) return kSyn[mac];
+  return kNames[dest];
 }
 
 bool Project::anySolo() const {

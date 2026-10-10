@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
+A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid and an arpeggio generator, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -10,7 +10,7 @@ A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank o
 3. [Screen and status bar](#screen)
 4. [GRID: pattern editor](#grid)
 5. [Effects (fx)](#fx)
-6. [Fill and Euclid](#euclid)
+6. [Fill, Euclid and arp](#euclid)
 7. [TRACK: track settings](#track)
 8. [INST: instruments](#inst)
 9. [PROJ: project and pattern](#proj)
@@ -275,10 +275,10 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `SRR` | 0–127 | INT | Sample-rate reduction for the step's note: 0 — off, 127 — each sample is held for ≈ 64 samples (a rough "digital" sound). Together with BIT — classic lo-fi. The constant value is INST → FILT → Downsample. |
 | `LFO` | 1–4 | INT | Which LFO of the instrument this step's `LFD`…`LFR` act on; without it — LFO 1. Slot order doesn't matter. |
 | `LFD` | −64…+63 | INT | Depth lock of the selected LFO (turns the LFO on even if the instrument's Depth is 0). |
-| `LFS` | 0–127 | INT | Rate lock of the selected LFO: in HZ — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS). |
+| `LFS` | 0–127 | INT | Rate lock of the selected LFO: in FREE — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS); not applied to a Retrig OFF LFO (its phase is the instrument's). |
 | `LFW` | SIN, TRI, SAW, SQR, RND | INT | Wave lock of the selected LFO. |
-| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV | INT | Dest lock of the selected LFO (macros — FM, DRUM, SYNTH only). |
-| `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): a FREE LFO — the track's phase, a NOTE LFO — the step's notes or the sounding notes. |
+| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV, RES, FEN, DLY, RVB, BIT, SRR, FIN, DUT, SUB, NOI, SM2, RA1–RA4, DP1–DP4, RG1–RG4 | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
+| `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): Retrig OFF — the instrument's shared phase, Retrig ON — the step's notes or the sounding notes. |
 | `DEC` | 0–127 | INT | FM, DRUM, SYNTH: the DECAY macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP1). |
 | `COL` | 0–127 | INT | FM, DRUM, SYNTH: the COLOR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP2). |
 | `SHP` | 0–127 | INT | FM, DRUM, SYNTH: the SHAPE macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — MIX). |
@@ -360,9 +360,9 @@ CND first, then PRB. If any condition fails, the whole step is silent, including
 
 <a id="euclid"></a>
 
-## Fill and Euclid
+## Fill, Euclid and arp
 
-Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog.
+Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog. The first row, **Type**, switches the dialog between filling (`FILL`) and the [arpeggio generator](#arp) (`ARP`).
 
 | Row | Values | Meaning |
 |-----|--------|---------|
@@ -384,6 +384,106 @@ Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX
 - Settings are remembered until power-off; they are not saved to a file.
 
 The list works the same as in PROJ: turn — row, click — edit, turn in edit mode — value. A tap selects a row, a second tap edits, dragging in edit mode changes the value.
+
+<a id="arp"></a>
+
+### Arp (Type: ARP)
+
+The first row of the Fill dialog is **Type**: `FILL` (filling, see above) or `ARP`, an arpeggio generator in the spirit of the Access Virus. It does not play live: it writes the arpeggio as notes and fx onto one track (**Dest**). A rhythm pattern (factory or your own) runs over the "held" notes: the chord from the Root and Chord rows, or the notes of the selection. The step range is the same as Fill's: the selection or, without one, the track under the cursor for its length. Preview, **OK** (one undo step, toast `ARP`) and **CANCEL** work as in Fill. The header shows where it writes and where it reads: `ARP T4 1-16`, with Source SELECTION `ARP T4 1-16 < T1-3`.
+
+| Row | Values | Default | Meaning |
+|-----|--------|---------|---------|
+| Type | FILL, ARP | FILL | Filling or arp. Each has its own set of rows and its own settings. |
+| Source | CHORD, SELECTION | CHORD | Where the notes come from: the chord from Root + Chord, or the notes of the selected tracks (see below). |
+| Root | any note | the track's last entered note | CHORD: the chord's bottom note. The default is taken on the first open. CHORD only. |
+| Chord | tri 7th su2 su4 6th ad9 pwr oct | tri | CHORD: the chord, as in [CHD](#fx), built on the project's scale degrees. CHORD only. |
+| Dest | T1–T16 and the track name | the first track of the selection | The track written. It may lie inside or outside the selection. A drum track turns the row red and nothing is written. |
+| Mode | UP, DOWN, UP/DN, DN/UP, PLAYED, RANDOM, CONVERGE, DIVERGE, PEDAL, CHORD | UP | Note order, see below. |
+| Octaves | 1–4 | 1 | How many octaves: the notes repeat an octave up, one octave after another (above 127 dropped). |
+| Pattern | factory, then your own | 16THS | The rhythm pattern. Your own (from `/presets/ARP`) follow the factory ones, alphabetically. |
+| Rate | ×1–×4 | ×1 | Track steps per arp step: ×2 runs the arp in eighths on a 1/16 track. The steps in between are left empty. |
+| Rotate | 0…pattern length − 1 | 0 | The pattern step to start from. |
+| Gate | 5–100 % | 50 % | Length of a normal note. Short (`s`) is half, long (`l`) is 100 %. All × Rate. |
+| Swing | 0–100 % | 0 % | NDG = Swing / 2 on the odd arp steps (100 % shifts them by half a step). |
+| Vel Lo | 1–127 | 60 | Velocity of ghost notes (`o`). |
+| Vel Hi | 1–127 | 120 | Velocity of accents (`X`). A normal note gets the middle between Lo and Hi. |
+| Slide | SLD value | 16 | SLD time on slide notes (`~`). |
+| Roll | 0–100 % | 0 % | Share of notes with a random RAT 2–4 (slide notes are left alone). |
+| Ghost PRB | OFF, 0–99 % | OFF | PRB on ghost notes: they don't play every pass. OFF (100 %) writes no PRB. |
+| Mutate | 0–100 % | 0 % | Pattern variations: hits dropped and added, accents and pitches changed. Depends on Seed. |
+| Seed / Reseed | — | — | Variant of the random parts (RANDOM, Roll, Mutate); the rows show only when one of them is on. Reseed (or <kbd>Shift</kbd>+click) picks a new random one. |
+| Capture | SAVE DEST AS PATTERN | — | Save Dest's rhythm as your own pattern, see below. |
+
+**Modes.** The notes are sorted bottom to top (except PLAYED); Octaves adds copies of them in the octaves above.
+
+| Mode | Order |
+|------|-------|
+| UP | Bottom to top. |
+| DOWN | Top to bottom. |
+| UP/DN | Up, then down; the end notes are not repeated. |
+| DN/UP | Down, then up; the end notes are not repeated. |
+| PLAYED | As the notes were taken: a CHORD chord from its bottom note; SELECTION track by track from the top, each with its step note, then the notes of its CHD. |
+| RANDOM | A random note on every hit (from Seed). |
+| CONVERGE | From the edges to the middle: bottom, top, second from the bottom, second from the top… |
+| DIVERGE | From the middle to the edges (CONVERGE backwards). |
+| PEDAL | The bottom note every other hit, the others in turn: 1-2-1-3-1-4… |
+| CHORD | The whole chord on every hit: the bottom note + CHD (the Chord row; with SELECTION, tri). |
+
+The note cycle runs on continuously: the pattern repeats over the range, and the note cycle restarts neither on a pattern repeat nor on a chord change.
+
+**SELECTION.** The notes of all selected tracks together with their CHD form the held chord. A step with notes on at least one of the tracks replaces the whole chord, which then holds until the next such step. An OFF with no notes on that step releases the chord: the arp is silent until new notes. The source is read from step 1 of the pattern, not from the start of the range: a chord set before the selected steps already sounds on the first of them. The source is taken as it was when the dialog opened, so Dest may lie inside the selection too: the arp is written over the chord it is built from. Drum tracks in the selection are not a source.
+
+**What is written to Dest.** On every step of the range the note and velocity are replaced, and the arp's own fx GAT, TIE, SLD, NDG, RAT, PRB, CHD, ARS and ARP are cleared; other locks (FLT, DLY…) stay. Then on every hit:
+
+- **Note and velocity:** Vel Lo / the middle / Vel Hi by accent.
+- **Length:** always GAT. A normal note is Gate %, a short one half of it, a long one 100 %; all × Rate.
+- **Tie (`-`):** TIE on the previous note and OFF on the first rest after it. A tie that runs to the end of the range becomes a long GAT to the range's end instead of TIE (up to 800 %); otherwise the note would hang past the range.
+- **Slide (`~`):** SLD (the Slide row) on the note, and the previous note's GAT is stretched into the next one so the voice glides legato. After a rest SLD is written too: the synth takes the note from the last pitch. A slide on the first note of the range is not written.
+- **Swing:** NDG on the odd arp steps. **Ghost PRB:** PRB on ghost notes. **Roll:** RAT 2–4. **CHORD mode:** CHD.
+- No free fx slot: that fx is skipped.
+
+**Pattern format.** A pattern is a line of tokens separated by spaces (or commas), one token per step, up to 32 steps (the rest are ignored). The first character is the step type, followed without a space by note modifiers in any order:
+
+| Token | Meaning |
+|-------|---------|
+| `x` | note |
+| `X` | accented note (Vel Hi) |
+| `o` | ghost note (Vel Lo, Ghost PRB) |
+| `.` | rest |
+| `-` | tie: the previous note holds |
+| `s` | after a note: short (half of Gate) |
+| `l` | after a note: long (100 %) |
+| `~` | after a note: slide into it from the previous one |
+| `r` | after a note: repeat the previous note (the cycle does not move) |
+| `p` | after a note: the lowest held note, a "pedal" (the cycle does not move) |
+| `^` / `v` | after a note: an octave up / down |
+
+Example: `X x~ x . X x~ X x`: 8 steps, an accent, a slide note, a note, a rest, and again. Unknown tokens are skipped.
+
+**Capture** saves Dest's rhythm as your own pattern: a name from the keyboard (up to 16 characters: A–Z, 0–9, `-`, `_`), file `/presets/ARP/NAME.arp`. It takes Dest's range as it was before the dialog opened (your own line, not the preview), at most 32 steps. A note becomes `x` / `X` / `o` (velocity split into three levels within the range's spread; with a spread under 6 or the track velocity, a normal note), GAT under 35 % `s`, from 90 % `l`, SLD `~`, empty steps after a TIE note `-`, everything else `.`; the same pitch as the previous note becomes `r`, the range's lowest note `p`. The first note is always a plain one (NEXT); octaves are not captured. GAT is captured as written, so capture a line written at Rate ×1: the arp's GAT at Rate ×2–×4 is multiplied by Rate and captures as long notes. After saving, the pattern is selected in Pattern right away (toast `SAVED`). No notes in the range: `NO NOTES`; no valid characters in the name: `BAD NAME`; the write failed (no card etc.): a toast with the error. `.arp` is plain text in the format above, so it can be edited on a computer (card reader). A broken file shows an error toast when selected and plays the first factory pattern. The Pattern list holds up to 32 of your own patterns.
+
+**Factory patterns** (42), by style:
+
+| Style | Patterns |
+|-------|----------|
+| BASIC | 16THS, 8THS, TRIPLET, DOTTED, QUARTERS, OFFBEAT, ACCENT 4 |
+| TR (trance) | TR GATE, TR OFFBT, TR ROLL, TR PEDAL, TR UPLIFT, TR 332, TR CHUG |
+| PSY (psytrance) | PSY GALOP, PSY TRIPL |
+| TE (techno) | TE STAB, TE HYPNO3, TE MINIMAL, TE RUMBLE, TE ROLLER |
+| HO (house) | HO OFFBT, HO ORGAN, HO PIANO, HO SHUFFLE |
+| DNB | DNB ROLL, DNB STAB, DNB AMEN, DNB REESE, DNB 2STEP |
+| ACID | ACID 1, ACID 2, ACID 3 |
+| EL (electro) | EL FUNK, EL ROBOT |
+| BR (breaks) | BR BREAK |
+| SW (synthwave) | SW 8THS, SW DRIVE |
+| DUB | DUB STAB, DUB ECHO |
+| CHIP | CHIP OCT, CHIP RUN |
+
+TRIPLET, PSY TRIPL and TE HYPNO3 are 12 steps long (over 16 steps they make a polyrhythm), the rest 16.
+
+- Dest is a [drum track](#drumtrack): nothing is written, the Dest row is red.
+- Slides (SLD) sound only on INT tracks; on a MIDI track SLD is written but does nothing (grey).
+- Like Fill's, the arp settings are remembered until power-off; your own patterns live on the card.
 
 <a id="track"></a>
 
@@ -424,7 +524,7 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
 
 - **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. On a MIDI track the fader is empty and `MIDI` is shown instead of the value.
-- **MAIN** — the overall volume of the built-in sound, 0–200%, default 40% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: PROJ → SYS → Phones.
+- **MAIN** — the overall volume of the built-in sound, 0–200%, default 100% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: PROJ → SYS → Phones.
 - **Encoder:** turn — **MAIN** volume; <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX; there is no strip selection.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
 - **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
@@ -458,7 +558,7 @@ The page is remembered when you switch instruments and when you change Type: for
 | OSC / SMPL / FM / DRUM | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) and [DRUM](#drum) — Machine and 5 macros; [SYNTH](#synth) — oscillators and tables |
 | MOD (SYNTH only) | Sub, Sub oct, Noise, Env\>Shp, Env atk, Env dec |
 | FILT | Drive, Bit crush, Downsample, Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — [drive, lo-fi and filter](#filter) |
-| LFO | LFO (1–4), Wave, Sync, Trig, Rate, Depth, Dest |
+| LFO | LFO (1–4), Wave, Sync, Retrig, Rate, Depth, Dest |
 
 ### MAIN and ENV
 
@@ -586,7 +686,7 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 - **Drums** (KICK, SNARE, METAL, PERC, CLAP, HAT): Attack, Sustain, Release are gray; length is set by DECAY. Always mono per track: a new note restarts the voice without a click (choke) — open and closed hats on the same track cut each other off.
 - **TONE and CHORD:** Attack, Sustain, Release come from the shared parameters; Decay is always gray for FM — DECAY replaces it. Mode and Glide work only for TONE; CHORD is mono, the whole chord in one voice.
 - **The note** sets the machine's pitch relative to C-4; Transpose and Fine work as for CHIP. PREVIEW plays note C-4.
-- The LFO phase resets on every new note except legato: TONE in MONO and CHORD (always mono, overlapping notes play legato).
+- The LFO phase (with Retrig ON) resets on every new note except legato: TONE in MONO and CHORD (always mono, overlapping notes play legato).
 
 <a id="drum"></a>
 
@@ -724,16 +824,18 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 | Key track | 0–100% | 0% | Cutoff follows the note from C-4: 100% — one octave per octave. |
 | LFO | 1–4 | 1 | Which of the instrument's four LFOs the rows below edit; the number in brackets is how many are on. All four run at once; their effects on the same destination add up (VOL — multiplies). |
 | Wave | SINE, TRI, SAW, SQR, RND | SINE | LFO shape; RND — a random value each period. |
-| Sync | HZ / TEMPO | HZ | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
-| Trig | NOTE / FREE | NOTE | NOTE — each note has its own phase, restarted on a new note (except legato). FREE — one phase per track, notes don't restart it; it starts from zero when playback starts. FREE + TEMPO — the LFO is locked to the bar. |
-| Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in HZ — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
-| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64. |
-| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); for CHIP and SAMPLE they are skipped. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. |
+| Sync | FREE / TEMPO | FREE | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
+| Retrig | ON / OFF | ON | ON — the LFO phase restarts on every new note (except legato). OFF — one phase per instrument, shared by all its voices and all tracks playing it: a note lands in the running phase. With FREE the LFO runs continuously; with TEMPO it restarts when playback starts, so a 1 BAR LFO always begins at the start of the bar and every run sounds the same. RND with OFF gives one shared value per period. |
+| Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in FREE — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
+| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64; RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE ±64 steps; FINE ±1 semitone; DUTY ±49%; SEMI2 ±24 semitones; L1–L4 RATE ×/÷16; L1–L4 DEPTH 0…×2. |
+| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); DUTY — only for CHIP; SUB, NOISE and SEMI2 (oscillator 2) — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample, Sub, Noise; FINE — fine pitch; DUTY — the PULSE Duty; L1–L4 — another LFO of the instrument (see below). |
 
-- The filter envelope and the phase of a NOTE LFO restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303. A FREE LFO runs continuously, also after Stop.
+- The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303.
 - LFOs can be controlled from steps: fx `LFO`, `LFD`, `LFS`, `LFW`, `LFT`, `LFR` (see the [fx table](#fx)).
 - Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz.
 - Old projects load with Filter OFF and sound as before.
+
+**LFO to LFO.** An LFO can modulate another LFO of the same instrument. **L1–L4 RATE** speeds up / slows down the target: its rate × 2^(±4), ≈ ×/÷16 at full depth, in FREE and TEMPO. **L1–L4 DEPTH** scales the target's depth: × (1 + value), limited to 0…2 — −64 silences the target, +63 nearly doubles it. **L1–L4 RTRG** restarts the target at phase 0 on each cycle of the source (RND gets a new value); only depth ≠ 0 matters, its amount doesn't. An LFO can't pick its own RTRG. Modulation reaches the target with a 1 ms lag, so any routing works, loops included. A Retrig OFF target (one phase per instrument) takes RATE and RTRG only from Retrig OFF LFOs — a per-voice LFO has no single phase to give; DEPTH works from any LFO. While playback is stopped, a TEMPO + Retrig OFF target holds and ignores restarts.
 
 <a id="kit"></a>
 
@@ -753,21 +855,20 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 
 - Each lane is mono: a repeated hit cuts off its own previous one (choke); different lanes sound at the same time — up to 8 voices per track.
 - PREVIEW plays a lane with note C-4 (the first one by default).
-- KIT has no presets ("NO KIT PRESETS"); there is no KIT type in the preset browser.
+- KIT has factory presets only: **PRESET** opens Load straight away, `[FACTORY]` → KIT. A factory kit fills the lanes and writes its drums (factory DRUM / FM / CHIP presets) into **INS25…INS32**, or INS17…INS24 when the kit itself is in INS25…INS32; lane k plays note C-4 + k. Whatever was in those slots is overwritten on OK (CANCEL brings them back). Your own KIT presets cannot be saved yet.
 - Renaming a sample in FILE → SAMPLES also updates the lanes; Delete leaves the name in the lane (the lane is silent, like MISSING) and asks for confirmation if the sample is used in a lane.
 
 <a id="presets"></a>
 
 ### Presets
 
-The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu, then a preset browser that fills the whole tab. A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
+The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu (on a KIT — Load right away), then a preset browser that fills the whole tab. A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
 
-**Browser header:** the type (with arrows in Load), the path inside the type folder, and three buttons. At the root of a type there is a `[FACTORY]` row (Load only), then your own folders (`name/`), then files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, sorted into categories; they cannot be changed or deleted.
+**Browser header:** the path and three buttons (Save: the type, then the path inside the type folder). Load always opens at the top: a `[FACTORY]` row, then a folder per type (FM, SYNTH, DRUM, SAMPLE, CHIP) with your own folders (`name/`) and files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, by type (including KIT) and category; they cannot be changed or deleted. A preset of another type changes the instrument's type. Save opens in the folder of the instrument's type.
 
 | Input | Load | Save |
 |---|---|---|
 | Turn | Row; the preset under the cursor is applied to the instrument at once and plays C-4 (audition, marked `>`). | Row. |
-| <kbd>Shift</kbd>+turn, tap on the arrows | Another type (FM, SYNTH, DRUM, SAMPLE, CHIP). Defaults to the instrument's type. | — |
 | Tap on a preset | Audition (same as turning). | Write over it (asks Overwrite). |
 | Click on a preset | Take it and close. | Write over it (asks Overwrite). |
 | Click / tap on a folder | Enter; `..` goes up. | |
@@ -779,7 +880,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 - A **SAMPLE preset** stores the sample name. If that sample is in the project, it is applied together with the preset's Root and slices; otherwise the instrument's sample, Root and slices stay as they were. The Slices, Chop and Chop N / Sens modes are always taken from the preset. There are no factory SAMPLE presets.
 - A **SYNTH preset** stores the oscillator wavetable names: built-in tables are always available, a project table is matched by name, and a missing one is imported from `/wavetables` (see [wavetables](#wavetables)). Factory SYNTH presets use only built-in tables.
 - **Format:** presets are saved in v3 format, including slices and SYNTH parameters; older presets (v1, v2) load as before.
-- **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP"). The last opened folder of each type is remembered until power-off.
+- **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP").
 - Without a card, Load shows only `[FACTORY]` and Save does not open ("NO SD CARD").
 
 | Type | Category | Factory presets |
@@ -798,6 +899,10 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 | SYNTH | LEAD | LEAD, SYNCLD |
 | SYNTH | PAD | PAD, PWMSTR, WTSWEEP |
 | SYNTH | KEYS | PLUCK, BELL |
+| KIT | DRUM | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT |
+| KIT | FM | FM KIT, FM PUNCH, FM PERC |
+| KIT | CHIP | CHIP KIT |
+| KIT | MIX | HYBRID, DUB KIT |
 
 <a id="proj"></a>
 
@@ -980,6 +1085,7 @@ Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and
 | `/samples/*.wav` | WAV library for importing into projects (subfolders allowed) |
 | `/wavetables/*.wav` | wavetable library for SYNTH (subfolders allowed) |
 | `/presets/TYPE/…/name.mti` | [instrument presets](#presets): folders CHIP, SAMPLE, FM, DRUM, SYNTH, each with up to 4 levels of your own folders |
+| `/presets/ARP/name.arp` | your own [arp](#arp) patterns (Capture), text |
 
 The `/projects`, `/midi`, `/samples`, `/wavetables` and `/presets` folders (with the type folders) are created automatically.
 
@@ -1113,7 +1219,7 @@ Sound goes to an external PCM5102A DAC on GPIO 13 / 14 / 21 (BCK / LCK / DIN) an
 
 Full wiring, settings and grounding notes — README, "Sound" section, and [wiring.md](wiring.md).
 
-- **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 40%), with soft limiting.
+- **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting.
 - **Voices:** a shared pool of 24. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 8 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A ninth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track.
 - **CPU guard:** when the audio render nears its time budget (above 80 % on average, or one block over 100 %), the oldest voice fades out in 4 ms (releasing voices first) and the pool shrinks to the voices left; once the load drops below 65 % it grows back by one voice every 0.1 s. A heavy project thins out instead of crackling or restarting the device.
 - **Latency:** the internal sound lags the MIDI tracks by about 14 ms, constantly, without jitter. MIDI tracks are not delayed.
@@ -1141,6 +1247,7 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048, via Wi-Fi up to ~3 MB |
 | Presets | `.mti` file 204 bytes (v2: 156, v1: 84; via Wi-Fi up to 1 KB), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
 | WAV via Wi-Fi | 4 MB to `/samples`, 10 MB to a project folder (name up to 16 characters) |
+| Arp patterns | up to 32 steps; 42 factory, up to 32 of your own listed, name up to 16 characters |
 | Long press | 0.5 s |
 
-**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 40%, Preview ON.
+**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 100%, Preview ON.

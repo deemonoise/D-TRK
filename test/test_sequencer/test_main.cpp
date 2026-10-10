@@ -1544,6 +1544,40 @@ void test_start_resets_int_tracks() {
   TEST_ASSERT_EQUAL(6, fe[1].track);
 }
 
+// Transport start reaches the synth once (TEMPO LFOs with Retrig OFF), at the start time; not
+// without INT tracks.
+void test_start_sends_transport_start_to_synth() {
+  p->tracks[3].out = TrackOut::Int;
+  p->tracks[5].out = TrackOut::Int;
+  seq->start(1234, *sink);
+  auto fa = sink->synKind(0xFA);
+  TEST_ASSERT_EQUAL(1, fa.size());
+  TEST_ASSERT_EQUAL(1, fa[0].len);
+  TEST_ASSERT_EQUAL(1234, fa[0].t);
+  TEST_ASSERT_EQUAL(1, sink->times(0xFA).size());  // MIDI out: its own 0xFA only
+}
+
+// Pause and resume reach the synth too (TEMPO LFOs with Retrig OFF hold while paused).
+void test_pause_resume_sent_to_synth() {
+  p->tracks[2].out = TrackOut::Int;
+  seq->start(0, *sink);
+  run(0, 100000);
+  sink->now = 100000;
+  seq->pause(100000, *sink);
+  auto fc = sink->synKind(0xFC);
+  TEST_ASSERT_EQUAL(1, fc.size());
+  TEST_ASSERT_EQUAL(2, fc[0].track);
+  TEST_ASSERT_EQUAL(1, fc[0].len);
+  TEST_ASSERT_EQUAL(100000, fc[0].t);
+  TEST_ASSERT_EQUAL(0, sink->synKind(0xFB).size());
+  sink->now = 200000;
+  seq->resume(200000, *sink);
+  auto fb = sink->synKind(0xFB);
+  TEST_ASSERT_EQUAL(1, fb.size());
+  TEST_ASSERT_EQUAL(1, fb[0].len);
+  TEST_ASSERT_EQUAL(200000, fb[0].t);
+}
+
 void test_track_out_change_releases_held_notes() {
   p->patterns[0].steps[0][0].note = 60;
   p->patterns[0].steps[0][0].fx[0] = {Fx::GAT, 200};
@@ -2199,6 +2233,8 @@ int main() {
   RUN_TEST(test_int_track_pgm_goes_to_synth);
   RUN_TEST(test_send_program_int_track_uses_instrument);
   RUN_TEST(test_start_resets_int_tracks);
+  RUN_TEST(test_start_sends_transport_start_to_synth);
+  RUN_TEST(test_pause_resume_sent_to_synth);
   RUN_TEST(test_track_out_change_releases_held_notes);
   RUN_TEST(test_int_track_synth_fx_before_note);
   RUN_TEST(test_midi_track_synth_fx_go_nowhere);

@@ -24,10 +24,20 @@ struct WtSource {
   virtual const int16_t* findWt(const char* name) const = 0;
 };
 
+// LFO -> LFO modulation of an instrument's LFOs for one control update, per target j: rate octaves,
+// depth factor (0..2) and a restart (bit j).
+struct LfoMods {
+  float oct[kLfos] = {};
+  float depth[kLfos] = {1, 1, 1, 1};
+  uint8_t rtrg = 0;
+};
+static_assert(kLfos == 4, "LfoMods::depth initializer");
+
 // Hardware-free synth for INT tracks. Messages are MIDI-like, channel nibble ignored:
 // 0x90 note vel (vel 0 = off), 0x80 note, 0xE0 lsb msb (bend, +-2 semitones), 0xC0 prog (instrument),
 // 0xF5 cmd val (synth fx: cmd = Fx SLD..SLC, or kSynthStep), 0xFE (start: reset the track's runtime
-// state), 0xFF (all off: release every voice of the track).
+// state), 0xFF (all off: release every voice of the track), 0xFA / 0xFC / 0xFB (transport start /
+// pause / resume, any track: TEMPO LFOs with Retrig OFF back to phase 0 / hold / run on).
 //
 // Synth fx follow the step model of the sequencer: 0xF5 kSynthStep (ticks per step | 0x80 if the step
 // has a note) opens a step, then come the step's fx, then its notes. On a step with a note the fx apply
@@ -101,8 +111,6 @@ class Synth {
   int trackVoice(uint8_t track) const;
   int voiceInstr(int v) const { return voices_[v].instr; }
   const Voice& voice(int v) const { return voices_[v]; }
-  // FREE LFO i (0..kLfos-1) of a track: its phase 0..1.
-  float trackLfoPhase(uint8_t track, int i) const { return rt_[track].lfoPhase[i]; }
   // FM / DRUM params cache (on by default); off recomputes every control update (tests, diagnostics).
   void setFmCache(bool on) { fmCache_ = on; }
   // fmMachine() / drumMachine() evaluations so far.
@@ -111,6 +119,8 @@ class Synth {
 
   // Voice i's instrument as it plays (a KIT sampler lane: the SAMPLE instrument built from the lane).
   const Instrument& voiceInstrument(int i) const { return instrOf(voices_[i]); }
+  // Phase (0..1) LFO i of voice v reads: its own, or with Retrig OFF (lfoFree) its instrument's.
+  float lfoPhase(int v, int i) const;
 
  private:
   struct Ev {
@@ -139,8 +149,6 @@ class Synth {
     float lastPitch;   // of the last note-on, < 0 = none (SLD)
     uint16_t lockMask;  // LockBit: this step's note-ons
     uint8_t lock[kLocks];
-    float lfoPhase[kLfos];  // FREE LFOs: the track's phase 0..1, restarted by 0xFE
-    float lfoRnd[kLfos];    // FREE Random: value of the current cycle
     uint8_t lfoSel;         // LFO fx: LFO 0..kLfos-1 this step's LFD .. LFR act on
     uint16_t lfoLockMask;   // LFO locks (see Voice::lfoLockMask): this step's note-ons
     LfoCfg lfoLock[kLfos];
@@ -163,15 +171,17 @@ class Synth {
   void control(Voice& v, int dt);
   void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
-  void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
+  void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
   static void macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]);
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
-  void controlFilter(Voice& v, const Instrument& m, float pitch, float lfoCut);
-  float lfo(Voice& v, const LfoCfg& c, int i, int dt);
+  void controlFilter(Voice& v, const Instrument& m, float pitch, const float* la);  // la: control()'s LFO sums
+  float lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods);
+  float lfoRateHz(const LfoCfg& c) const;
   static LfoCfg lfoCfgOf(const Voice* v, const Instrument& m, int i);  // the instrument's + v's locks
-  void advanceTrackLfos(int dt);
   void lfoFx(uint8_t track, Fx f, uint8_t val, bool now);
   void resetLfos(Voice& v);
+  void advanceInstLfos();
+  void transportStart();
   static float cachedHz(Voice& v, int k, float note);  // noteHz, reused while note stays
   static bool oneShot(const Voice& v);
   static uint8_t machineOf(const Instrument& m);
@@ -216,6 +226,16 @@ class Synth {
   uint32_t profBlocks_ = 0;
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
   uint32_t rng_ = 0x2545F491;  // LFO Random
+  // Retrig OFF LFOs (lfoFree): one phase (and Random value) per instrument, shared by its voices;
+  // advanceInstLfos moves them once per control update, before the voices read them. Kept by reset()
+  // (audio park mid-play): only 0xFA restarts the TEMPO ones.
+  float instLfoPhase_[kInstruments][kLfos] = {};
+  float instLfoRnd_[kInstruments][kLfos] = {};
+  // Their last outputs (x depth / 64 x DEPTH from shared LFOs) and wraps (bit i): LFO -> LFO sources
+  // for the shared LFOs' RATE / RTRG (advanceInstLfos) and for the voices' targets (control).
+  float instLfoOut_[kInstruments][kLfos] = {};
+  uint8_t instLfoWrap_[kInstruments] = {};
+  bool paused_ = false;  // transport paused (0xFC .. 0xFB / 0xFA): TEMPO ones hold
   bool fmCache_ = true;
   uint32_t fmCalls_ = 0;
   uint32_t drumCalls_ = 0;

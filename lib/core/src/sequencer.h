@@ -181,6 +181,9 @@ class Sequencer {
     for (StepArp& a : arps_) a.n = 0;
   }
   void silence(uint64_t now, MidiSink& out);
+  // Transport message (0xFA start, 0xFC pause, 0xFB resume) to the synth, on the first INT track; none
+  // without INT tracks. TEMPO LFOs with Retrig OFF follow it.
+  void synthTransport(uint64_t now, MidiSink& out, uint8_t msg);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
   bool expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex);
   ExpandCtx ctx(uint32_t su) const {

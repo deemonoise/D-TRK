@@ -12,7 +12,7 @@ constexpr size_t kFmRecSize = 16;    // drive, rsend, velCut, velMac at 10..13, 
 constexpr size_t kFltRecSize = 8;    // filter, delay send
 constexpr size_t kSliceRecSize = 8 + 2 * kMaxSlices;  // modes, count, 3 reserved, positions
 constexpr size_t kSynRecSize = 48;  // SYNTH: 41 bytes of fields + reserved
-constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, depth, dest, sync
+constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, depth, dest, sync (bits)
 
 void packInst(const Instrument& m, uint8_t* b);
 void unpackInst(const uint8_t* b, Instrument& m);

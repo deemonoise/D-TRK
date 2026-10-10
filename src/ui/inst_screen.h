@@ -58,7 +58,7 @@ class InstScreen : public Screen {
                        kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
   static constexpr int kDrive = 0, kBit = 1, kSrr = 2, kFltMode = 3, kCutoff = 4, kReso = 5, kFEnv = 6, kFAtk = 7,
-                       kFDec = 8, kKeytrack = 9, kLfoSel = 10, kLfoWave = 11, kLfoSync = 12, kLfoTrig = 13,
+                       kFDec = 8, kKeytrack = 9, kLfoSel = 10, kLfoWave = 11, kLfoSync = 12, kLfoRetrig = 13,
                        kLfoRate = 14, kLfoDepth = 15, kLfoDest = 16, kTailRows = 17;
   // tail: FILT = [0, 10) (Drive, Bit crush, Downsample first: they are before the filter), LFO
   static constexpr int kFiltRows = 10;
@@ -107,8 +107,8 @@ class InstScreen : public Screen {
   void drawPageBar(LGFX_Sprite& s, int y);
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
   void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC page: frame / waveform of the selected osc
-  void initTail(Param* t, bool macros);  // t = &rows[type's row count]; macros: FM / DRUM LFO targets
-  void relabel();                        // DRUM macro labels of the current machine
+  void initTail(Param* t);  // t = &rows[type's row count]
+  void relabel();           // DRUM macro labels of the current machine
   void leaveEdit();
   void fixNames();  // empty name -> INSn
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }

@@ -365,7 +365,9 @@ void test_lfos_roundtrip() {
   Instrument a = sample();
   a.lfoSync = 1;
   a.lfoRate = 6;
+  a.lfoDest = static_cast<uint8_t>(LfoDest::Rtrg4);
   a.lfo[0] = {2, 40, -30, static_cast<uint8_t>(LfoDest::Cutoff), 0};
+  a.lfo[1] = {0, 30, 40, static_cast<uint8_t>(LfoDest::Semi2), 0};
   a.lfo[2] = {4, 9, 20, static_cast<uint8_t>(LfoDest::Vol), 1};
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
@@ -379,7 +381,70 @@ void test_lfos_roundtrip() {
   TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Cutoff), b.lfo[0].dest);
   TEST_ASSERT_EQUAL(1, b.lfo[2].sync);
   TEST_ASSERT_EQUAL(9, b.lfo[2].rate);
-  TEST_ASSERT_EQUAL(0, b.lfo[1].depth);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Rtrg4), b.lfoDest);
+  TEST_ASSERT_EQUAL(30, b.lfo[1].rate);
+  TEST_ASSERT_EQUAL(40, b.lfo[1].depth);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Semi2), b.lfo[1].dest);
+}
+
+// A dest byte past the last target (newer firmware / junk) loads as PITCH (0), for LFO 1..4.
+void test_lfo_dest_out_of_range() {
+  Instrument a = sample();
+  a.lfo[0].dest = static_cast<uint8_t>(LfoDest::Rtrg1);  // LFO 2: untouched, survives
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  std::vector<uint8_t> v = out.buf;
+  v[8 + kInstRecSize + 9] = 99;  // LFO 1 dest in the FM record
+  const size_t lfo = 8 + kInstRecSize + kFmRecSize + kFltRecSize + kSliceRecSize + kSynRecSize;
+  v[lfo + 1 + 1 * 5 + 3] = 99;  // LFO 3 dest
+  v[lfo + 1 + 2 * 5 + 3] = static_cast<uint8_t>(LfoDest::Count);  // LFO 4 dest
+  const size_t p = v.size() - 4;
+  const uint32_t c = crc32(v.data(), p);
+  for (int i = 0; i < 4; ++i) v[p + i] = static_cast<uint8_t>(c >> (8 * i));
+  VecSource in(v);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(0, b.lfoDest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Rtrg1), b.lfo[0].dest);
+  TEST_ASSERT_EQUAL(0, b.lfo[1].dest);
+  TEST_ASSERT_EQUAL(0, b.lfo[2].dest);
+}
+
+// The sync byte: bit 0 TEMPO, bit 1 Retrig OFF; both bits round-trip, other bits are dropped.
+void test_lfo_sync_bits() {
+  for (uint8_t s = 0; s < 4; ++s) {
+    Instrument a;
+    a.lfoSync = s;
+    for (int i = 0; i < kLfos - 1; ++i) a.lfo[i].sync = s;
+    uint8_t r[kLfoRecSize];
+    packLfo(a, r);
+    Instrument b;
+    unpackLfo(r, b);
+    TEST_ASSERT_EQUAL(s, b.lfoSync);
+    for (int i = 0; i < kLfos - 1; ++i) TEST_ASSERT_EQUAL(s, b.lfo[i].sync);
+    TEST_ASSERT_EQUAL(s & 1, lfoTempo(b.lfoSync));
+    TEST_ASSERT_EQUAL((s >> 1) & 1, lfoFree(b.lfoSync));
+  }
+  // Old values 0 / 1 read as before; a free-running LFO keeps its rate, a TEMPO one is clamped.
+  uint8_t r[kLfoRecSize] = {0};
+  r[0] = 1;
+  r[1 + 1] = 100;  // LFO 2 rate
+  r[1 + 4] = 0;    // LFO 2 free
+  r[6 + 1] = 100;  // LFO 3 rate
+  r[6 + 4] = 1;    // LFO 3 TEMPO
+  r[11 + 4] = 0xF6;  // LFO 4: junk high bits dropped -> 2 (FREE, Retrig OFF)
+  r[11 + 1] = 100;
+  Instrument b;
+  b.lfoRate = 100;
+  unpackLfo(r, b);
+  TEST_ASSERT_EQUAL(1, b.lfoSync);
+  TEST_ASSERT_EQUAL(kLfoSyncSteps - 1, b.lfoRate);
+  TEST_ASSERT_EQUAL(0, b.lfo[0].sync);
+  TEST_ASSERT_EQUAL(100, b.lfo[0].rate);
+  TEST_ASSERT_EQUAL(1, b.lfo[1].sync);
+  TEST_ASSERT_EQUAL(kLfoSyncSteps - 1, b.lfo[1].rate);
+  TEST_ASSERT_EQUAL(kLfoFree, b.lfo[2].sync);
+  TEST_ASSERT_EQUAL(100, b.lfo[2].rate);
 }
 
 // FREE (bit 1 of the sync byte) survives, alone (rate 0..127 kept) and with TEMPO.
@@ -419,5 +484,7 @@ int main() {
   RUN_TEST(test_sound_fx_fields_clamped);
   RUN_TEST(test_lfos_roundtrip);
   RUN_TEST(test_lfo_free_flag_roundtrip);
+  RUN_TEST(test_lfo_sync_bits);
+  RUN_TEST(test_lfo_dest_out_of_range);
   return UNITY_END();
 }

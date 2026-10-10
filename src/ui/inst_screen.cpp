@@ -218,11 +218,11 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    else snprintf(o, n, "HOLD");
                  },
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
-  initTail(chip_ + kChipRows, false);
-  initTail(sample_ + kCommon, false);
-  initTail(fm_ + kMacRows, true);
-  initTail(drum_ + kMacRows, true);
-  initTail(syn_ + kSynRows, true);
+  initTail(chip_ + kChipRows);
+  initTail(sample_ + kCommon);
+  initTail(fm_ + kMacRows);
+  initTail(drum_ + kMacRows);
+  initTail(syn_ + kSynRows);
   initKit();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
@@ -335,7 +335,7 @@ void InstScreen::buildLanes(bool keep) {
   else list_.setParams(kitShown_, n);
 }
 
-void InstScreen::initTail(Param* t, bool macros) {
+void InstScreen::initTail(Param* t) {
   t[kDrive] = {"Drive",
                [this](char* o, int n) {
                  if (inst().drive) snprintf(o, n, "%u", inst().drive);
@@ -413,25 +413,24 @@ void InstScreen::initTail(Param* t, bool macros) {
                    lfo().wave = w;
                  },
                  noLfo};
-  // Sync: the rate in Hz or a tempo division; Trig: NOTE (restart at note-on) or FREE (one phase per
-  // track, restarted at playback start). Both live in the sync byte (kLfoTempo | kLfoFree).
-  t[kLfoSync] = {"Sync", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoTempo(cfg().sync) ? "TEMPO" : "HZ"); },
+  t[kLfoSync] = {"Sync", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoTempo(cfg().sync) ? "TEMPO" : "FREE"); },
                  [cfg, lfo](int d) {
                    const bool on = d > 0;
                    const uint8_t s = cfg().sync;
                    if (on == mt::lfoTempo(s)) return;
                    const mt::LfoRef l = lfo();
-                   l.sync = static_cast<uint8_t>(on ? (s | mt::kLfoTempo) : (s & ~mt::kLfoTempo));
+                   l.sync = static_cast<uint8_t>(on ? s | mt::kLfoTempo : s & ~mt::kLfoTempo);  // keeps Retrig
                    l.rate = on ? 6 : 64;  // 1/4, or about 1.6 Hz
                  },
                  noLfo};
-  t[kLfoTrig] = {"Trig", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoFree(cfg().sync) ? "FREE" : "NOTE"); },
-                 [cfg, lfo](int d) {
-                   const uint8_t s = cfg().sync;
-                   const uint8_t v = static_cast<uint8_t>(d > 0 ? (s | mt::kLfoFree) : (s & ~mt::kLfoFree));
-                   lfo().sync = v;
-                 },
-                 noLfo};
+  // Retrig OFF: one phase per instrument for all its voices (FREE runs on, TEMPO from the transport start).
+  t[kLfoRetrig] = {"Retrig", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoFree(cfg().sync) ? "OFF" : "ON"); },
+                   [cfg, lfo](int d) {
+                     const uint8_t s = cfg().sync;
+                     const uint8_t v = static_cast<uint8_t>(d > 0 ? s & ~mt::kLfoFree : s | mt::kLfoFree);
+                     lfo().sync = v;
+                   },
+                   noLfo};
   t[kLfoRate] = {"Rate",
                  [cfg](char* o, int n) {
                    const mt::LfoCfg l = cfg();
@@ -451,20 +450,9 @@ void InstScreen::initTail(Param* t, bool macros) {
                   }};
   // DRUM shows the generic macro names here, not the machine's; SYNTH its own.
   t[kLfoDest] = {"Dest",
-                 [this, cfg](char* o, int n) {
-                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP",
-                                                        "CONTOUR", "VOL",  "CUTOFF", "DRIVE"};
-                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET",
-                                                      "SENV",  "VOL",  "CUTOFF", "DRIVE"};
-                   constexpr int kN = static_cast<int>(mt::LfoDest::Count);
-                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN, "LFO dest names");
-                   static_assert(sizeof(kSyn) / sizeof(kSyn[0]) == kN, "LFO dest names");
-                   const int dest = cfg().dest % kN;
-                   const bool syn = inst().type == mt::InstrType::Synth;
-                   snprintf(o, n, "%s", syn ? kSyn[dest] : kNames[dest]);
-                 },
-                 [cfg, lfo, macros](int d) {
-                   const uint8_t v = mt::lfoDestStep(cfg().dest, d, macros);
+                 [this, cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoDestName(cfg().dest, inst().type)); },
+                 [this, cfg, lfo](int d) {
+                   const uint8_t v = mt::lfoDestStep(cfg().dest, d, inst().type, lfoSel_);
                    lfo().dest = v;
                  },
                  noLfo};
@@ -642,8 +630,9 @@ void InstScreen::openTables(int osc) {
 
 void InstScreen::presetMenu() {
   leaveEdit();
-  if (inst().type == mt::InstrType::Kit) {
-    app_.toast("NO KIT PRESETS");
+  if (inst().type == mt::InstrType::Kit) {  // factory kits only: no Save
+    typeSnapInstr_ = -1;
+    presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
   enum : int { kLoad, kSave };

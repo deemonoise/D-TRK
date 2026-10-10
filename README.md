@@ -180,7 +180,7 @@ All types have these at the end of the INST list:
 - **Reverb**: the instrument's Rvb send (lock `RVB`), size / decay / level in PROJ. 23 KB buffer in PSRAM.
 - **Compressor** on all built-in sound (PROJ → Comp, Comp rel) with **sidechain** from a track (SC track, SC depth): set SC track to the kick and the mix "pumps".
 - **ARP**: fx `ARM` sets the order (up, down, up-down, random) and the number of notes per step (1–8); ARP + CHD on the same step arpeggiates the chord.
-- **4 LFOs** per instrument (INST → LFO), each in Hz or synced to tempo (1/32 … 8 bars), restarted per note or free-running per track from the playback start (bar-locked with TEMPO); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
+- **4 LFOs** per instrument (INST → LFO), each with a free Hz rate or tempo sync (1/32 … 8 bars) and the phase retriggered on every note or free-running (Retrig ON / OFF); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
 - **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; **DJ filter** on the master (PROJ → FX).
 - Pattern **groove** (PROJ → SONG → Groove: MPC 54–66, SHUFFLE, PUSH, LAID BACK, DRUNK, BOOM BAP, HOUSE) and track **Humanize** (TRACK → NOTE); conditions `CND PRE / NEI`, volume ramp up/down on `RAT` (`4^`, `4v`).
 - **Step arp** `ARS` (INT and MIDI): the CHD notes (or ARP 0/x/y, or the note itself) across a range of 1–4 octaves play as separate notes on the track's following empty steps — every step or every N; until the next note, OFF or a pattern change. The fx list in GRID is grouped: notes and arp, timing, randomness, pitch and volume, sound, sample, sends, MIDI.
