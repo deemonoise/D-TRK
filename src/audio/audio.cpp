@@ -730,6 +730,8 @@ bool initI2s() {
   };
   // 16-bit samples in 32-bit slots: BCK = 64 fs, which the PCM5102A PLL locks to without MCLK.
   sc.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
+  // The default WS width is the data width (16): WS would drop mid-slot and garble the right channel.
+  sc.slot_cfg.ws_width = 32;
   if (i2s_channel_init_std_mode(tx, &sc) != ESP_OK) return false;
   return i2s_channel_enable(tx) == ESP_OK;
 }
