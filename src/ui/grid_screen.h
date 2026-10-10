@@ -19,6 +19,8 @@ class GridScreen : public Screen {
   void onProjectReplaced() override;
   void onPatternChange() override;
   void onInput(const hw::InputEvent& ev) override;
+  void onBack() override;
+  void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
@@ -27,6 +29,8 @@ class GridScreen : public Screen {
   void trackRelease(int n);  // PERF: the held effect ends
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
   bool buttonsBusy() const { return edit_ || rec_ || perf_; }
+  void undo();  // with a toast; the next edit takes a fresh snapshot
+  bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen(); }  // Fill / Transpose preview
 
  private:
   // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
@@ -72,7 +76,6 @@ class GridScreen : public Screen {
   void cancelCell();  // Shift+click in edit: the cell back as it was, edit off
   void openEditStepMenu();
   void toggleView();
-  void undo();
   void editTurn(int delta, bool shift);
   void setNote(uint8_t note);
   void previewNote(uint8_t note);
@@ -82,6 +85,7 @@ class GridScreen : public Screen {
   void setPerf(bool on);
   void perfRelease();
   bool recordKey(int n, bool shift);  // REC while playing: button N into the heard step
+  int heardTrackStep(int tr);  // the heard step of track tr (own length and speed); slow: the last one played
   void writeStep(const mt::Step& st);
   void openMenu();
   void openFill();
@@ -97,8 +101,9 @@ class GridScreen : public Screen {
   // Drum track: the track's instrument is a KIT, steps are lane masks.
   bool drumAt(int tr) const;
   bool drum() const { return drumAt(track()); }
-  bool keyboardShown() const { return edit_ && curField_ == kNote && !drum(); }
-  bool padShown() const { return edit_ && curField_ == kNote && drum(); }  // lane pad instead of the keyboard
+  // Not while A holds the edit: the grid keeps its rows.
+  bool keyboardShown() const { return edit_ && !holdEdit_ && curField_ == kNote && !drum(); }
+  bool padShown() const { return edit_ && !holdEdit_ && curField_ == kNote && drum(); }  // lane pad instead of the keyboard
   void toggleLane(int lane);
   void drawOverview(LGFX_Sprite& s, int gridY);
   void drawDetail(LGFX_Sprite& s, int gridY);
@@ -119,6 +124,7 @@ class GridScreen : public Screen {
   bool detail_ = false;
   bool edit_ = false;
   bool editPushed_ = false;    // undo snapshot taken in this edit session
+  bool holdEdit_ = false;      // edit entered by A + turn: releasing A ends it
   // Edit: the cell under the cursor when edit began or the cursor arrived, and whether a step was
   // written before that (then cancelCell() keeps the undo snapshot).
   mt::Step cellOrig_{};

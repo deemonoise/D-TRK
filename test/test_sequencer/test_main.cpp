@@ -2137,6 +2137,368 @@ void test_humanize_stays_within_range() {
   TEST_ASSERT_TRUE(moved);
 }
 
+void test_speed_x2_plays_two_steps_per_step() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  seq->start(0, *sink);
+  run(0, 130000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(62500, sink->times(0x90, 62)[0]);
+  TEST_ASSERT_EQUAL(125000, sink->times(0x90, 64)[0]);
+  TEST_ASSERT_EQUAL(31250, sink->times(0x80, 60)[0]);  // default gate: half of the track's own step
+}
+
+void test_speed_x2_with_x1_track_in_sync() {
+  Pattern& pt = p->patterns[0];
+  pt.length = 4;
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  for (int i = 0; i < 4; ++i) pt.steps[0][i].note = 60;  // x2: 4 steps loop twice per pass
+  pt.steps[1][0].note = 36;                              // x1: once per pass
+  seq->start(0, *sink);
+  run(0, 999999);  // two passes of 500000
+  TEST_ASSERT_EQUAL(16, sink->times(0x90, 60).size());  // 2 passes x 8
+  auto kick = sink->times(0x91, 36);  // track 1 is on channel 1
+  TEST_ASSERT_EQUAL(2, kick.size());
+  TEST_ASSERT_EQUAL(500000, kick[1]);
+}
+
+// A full load at x4 loses nothing: every track plays every sub-step, tracks 0-3 also with RAT 4.
+void test_speed_x4_heap_holds() {
+  Pattern& pt = p->patterns[0];
+  for (int tr = 0; tr < kTracks; ++tr) {
+    pt.trackSpeed[tr] = static_cast<uint8_t>(TrackSpeed::X4);
+    for (int i = 0; i < pt.length; ++i) {
+      pt.steps[tr][i].note = static_cast<uint8_t>(40 + tr);
+      if (tr < 4) pt.steps[tr][i].fx[0] = {Fx::RAT, 4};
+    }
+  }
+  seq->start(0, *sink);
+  run(0, 1999999);  // one pass: the next starts at 2000000
+  for (int tr = 0; tr < kTracks; ++tr) {  // track tr is on MIDI channel tr
+    const size_t want = 16u * 4u * (tr < 4 ? 4u : 1u);
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x90 + tr), 40 + tr).size());
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x80 + tr), 40 + tr).size());
+  }
+}
+
+// test_speed_x4_heap_holds at finer resolutions: the lookahead is 48 ticks, so it plans more pattern
+// steps ahead (16th: 2-3, 16th triplet: 3-4, 32nd: 4-5) and fewer RAT tracks fit. Peak heap (NoteOns
+// are pushed below kCap - kOffReserve = 768): 16th + RAT 4 on 4 tracks 671; 16T 703 with 2 (3: 799);
+// 32nd 759 with 1 (2: 879, 4: 1119).
+static void x4Load(Resolution res, int ratTracks) {
+  Pattern& pt = p->patterns[0];
+  pt.res = res;
+  for (int tr = 0; tr < kTracks; ++tr) {
+    pt.trackSpeed[tr] = static_cast<uint8_t>(TrackSpeed::X4);
+    for (int i = 0; i < pt.length; ++i) {
+      pt.steps[tr][i].note = static_cast<uint8_t>(40 + tr);
+      if (tr < ratTracks) pt.steps[tr][i].fx[0] = {Fx::RAT, 4};
+    }
+  }
+}
+
+static void checkX4Load(int ratTracks) {
+  for (int tr = 0; tr < kTracks; ++tr) {  // track tr is on MIDI channel tr
+    const size_t want = 16u * 4u * (tr < ratTracks ? 4u : 1u);
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x90 + tr), 40 + tr).size());
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x80 + tr), 40 + tr).size());
+  }
+}
+
+void test_speed_x4_heap_holds_at_16th_triplet() {
+  x4Load(Resolution::SixteenthTriplet, 2);
+  seq->start(0, *sink);
+  run(0, 1333332);  // one pass of 16 x 83333
+  checkX4Load(2);
+}
+
+void test_speed_x4_heap_holds_at_32nd() {
+  x4Load(Resolution::ThirtySecond, 1);
+  seq->start(0, *sink);
+  run(0, 999999);  // one pass of 16 x 62500
+  checkX4Load(1);
+}
+
+void test_speed_x2_replans_after_edit() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  pt.steps[0][3].note = 60;  // sub-step 1 of pattern step 1: 187500
+  seq->start(0, *sink);
+  run(0, 10000);             // planned ahead, not heard
+  pt.steps[0][3].note = 62;
+  seq->releaseTies(10000, *sink);  // replans the unheard steps
+  run(10000, 200000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(187500, sink->times(0x90, 62)[0]);
+}
+
+void test_speed_half_plays_every_other_step() {
+  Pattern& pt = p->patterns[0];
+  pt.length = 4;
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  pt.steps[0][3].note = 65;
+  seq->start(0, *sink);
+  run(0, 999999);  // two passes of 4 steps
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 62)[0]);
+  TEST_ASSERT_EQUAL(500000, sink->times(0x90, 64)[0]);  // the second pass goes on, not from 0
+  TEST_ASSERT_EQUAL(750000, sink->times(0x90, 65)[0]);
+  TEST_ASSERT_EQUAL(125000, sink->times(0x80, 60)[0]);  // gate: half of a two-step-long step
+}
+
+void test_speed_half_tie_holds_over_skipped_step() {
+  // As test_tie_holds_until_next_note_with_overlap, on a 1/2 track: track step 1 = pattern step 2.
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][0].fx[0] = {Fx::TIE, 0};
+  pt.steps[0][1].note = 64;
+  seq->start(0, *sink);
+  run(0, 300000);
+  auto off60 = sink->times(0x80, 60);
+  TEST_ASSERT_EQUAL(1, off60.size());
+  TEST_ASSERT_EQUAL(251000, off60[0]);  // held through the skipped pattern step 1
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 64)[0]);
+}
+
+void test_speed_half_restarts_on_new_pattern() {
+  // Pattern 0 has 3 steps: its 1/2 track would rest on the next pass's step 0, a new pattern starts it at 0.
+  p->patterns[0].length = 3;
+  p->patterns[0].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][1].note = 61;
+  p->patterns[1].length = 4;
+  p->patterns[1].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[1].steps[0][0].note = 62;
+  p->patterns[1].steps[0][1].note = 64;
+  seq->start(0, *sink);
+  seq->queuePattern(1);
+  run(0, 700000);
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 61)[0]);
+  auto on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(375000, on62[0]);
+  TEST_ASSERT_EQUAL(625000, sink->times(0x90, 64)[0]);
+}
+
+void test_speed_half_continues_over_own_loop() {
+  // Same pattern, 3 steps: the 1/2 track counts through the pass end; its 3 steps take two passes.
+  p->patterns[0].length = 3;
+  p->patterns[0].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][1].note = 61;
+  p->patterns[0].steps[0][2].note = 62;
+  seq->start(0, *sink);
+  run(0, 800000);
+  auto on60 = sink->times(0x90, 60);
+  TEST_ASSERT_EQUAL(2, on60.size());
+  TEST_ASSERT_EQUAL(0, on60[0]);
+  TEST_ASSERT_EQUAL(750000, on60[1]);  // pass 2, step 0
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 61)[0]);
+  TEST_ASSERT_EQUAL(500000, sink->times(0x90, 62)[0]);  // pass 1, pattern step 1
+}
+
+void test_speed_x2_squeezed_into_swung_slot() {
+  Pattern& pt = p->patterns[0];
+  pt.swing = 75;  // step 1 at 187500
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  pt.steps[0][3].note = 65;
+  seq->start(0, *sink);
+  run(0, 240000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(93750, sink->times(0x90, 62)[0]);   // slot [0, 187500)
+  TEST_ASSERT_EQUAL(187500, sink->times(0x90, 64)[0]);  // slot [187500, 250000)
+  TEST_ASSERT_EQUAL(218750, sink->times(0x90, 65)[0]);
+  TEST_ASSERT_EQUAL(31250, sink->times(0x80, 60)[0]);  // the gate still counts from the track's step
+}
+
+void test_speed_x2_groove_accent_on_both_sub_steps() {
+  Pattern& pt = p->patterns[0];
+  pt.groove = 5;  // SHUFFLE: odd steps +33 %, velocities 100 / 70 / 95 / 70
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  for (int i = 0; i < 4; ++i) {
+    pt.steps[0][i].note = static_cast<uint8_t>(60 + i);
+    pt.steps[0][i].vel = 100;
+  }
+  seq->start(0, *sink);
+  run(0, 240000);
+  int vel[4] = {0, 0, 0, 0};
+  for (const auto& r : sink->log)
+    if (r.b[0] == 0x90 && r.b[1] >= 60 && r.b[1] < 64) vel[r.b[1] - 60] = r.b[2];
+  TEST_ASSERT_EQUAL(100, vel[0]);
+  TEST_ASSERT_EQUAL(100, vel[1]);
+  TEST_ASSERT_EQUAL(70, vel[2]);  // pattern step 1: both sub-steps accented
+  TEST_ASSERT_EQUAL(70, vel[3]);
+  TEST_ASSERT_EQUAL(166250, sink->times(0x90, 62)[0]);  // 125000 + 33 %: step 1's sub-step 0
+}
+
+// A stall ending inside a pattern step: the sub-steps already past are missed, not played together.
+void test_speed_x4_stall_skips_past_sub_steps() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X4);
+  fillSteps(0, 60);
+  seq->start(0, *sink);
+  run(0, 100000);
+  sink->now = 2100000;  // stalled; the step at 2000000 has sub-steps 2000000 .. 2093750
+  seq->process(2100000, *sink);
+  run(2100000, 2124999);
+  TEST_ASSERT_EQUAL(1, between(sink->times(0x90, 60), 2000000, 2125000).size());  // only the last
+}
+
+void test_speed_heard_loop_follows_heard_step() {
+  p->patterns[0].length = 4;
+  seq->start(0, *sink);
+  run(0, 400000);  // heard: step 3 of pass 0; planned into pass 1
+  TEST_ASSERT_EQUAL(3, seq->playPos());
+  TEST_ASSERT_EQUAL(0, seq->heardLoop());
+  TEST_ASSERT_EQUAL(1, seq->loopCount());
+  run(400001, 520000);
+  TEST_ASSERT_EQUAL(0, seq->playPos());
+  TEST_ASSERT_EQUAL(1, seq->heardLoop());
+}
+
+void test_speed_x4_timing() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X4);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  pt.steps[0][3].note = 65;
+  seq->start(0, *sink);
+  run(0, 120000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(31250, sink->times(0x90, 62)[0]);
+  TEST_ASSERT_EQUAL(62500, sink->times(0x90, 64)[0]);
+  TEST_ASSERT_EQUAL(93750, sink->times(0x90, 65)[0]);
+}
+
+void test_speed_quarter_plays_every_fourth_step() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Quarter);
+  for (int i = 0; i < 4; ++i) pt.steps[0][i].note = static_cast<uint8_t>(60 + i);
+  seq->start(0, *sink);
+  run(0, 1999999);  // one pass: track steps 0..3
+  for (int i = 0; i < 4; ++i) {
+    const auto on = sink->times(0x90, 60 + i);
+    TEST_ASSERT_EQUAL(1, on.size());
+    TEST_ASSERT_EQUAL(500000u * i, on[0]);
+  }
+  TEST_ASSERT_EQUAL(250000, sink->times(0x80, 60)[0]);  // gate: half of a four-step-long step
+}
+
+void test_speed_x2_int_step_marker_ticks() {
+  p->tracks[1].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::Eighth;  // 48 ticks per pattern step
+  p->patterns[0].trackSpeed[1] = static_cast<uint8_t>(TrackSpeed::X2);
+  p->patterns[0].steps[1][0].note = 60;
+  p->patterns[0].steps[1][1].note = 62;
+  seq->start(0, *sink);
+  run(0, 240000);
+  std::vector<SynRec> mk;
+  for (const SynRec& r : sink->synKind(0xF5))
+    if (r.b[1] == kSynthStep) mk.push_back(r);
+  TEST_ASSERT_EQUAL(2, mk.size());
+  TEST_ASSERT_EQUAL_HEX8(0x80 | 24, mk[0].b[2]);
+  TEST_ASSERT_EQUAL(0, mk[0].t);
+  TEST_ASSERT_EQUAL_HEX8(0x80 | 24, mk[1].b[2]);
+  TEST_ASSERT_EQUAL(125000, mk[1].t);
+}
+
+void test_speed_x2_step_arp_on_sub_steps() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  Step& s = pt.steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARS, kArsDefault};
+  pt.steps[0][5].note = kNoteOff;  // track step 5: 312500
+  seq->start(0, *sink);
+  run(0, 62500 * 7);
+  const std::vector<int> on = notesOn(0x90);
+  const int want[] = {60, 64, 67, 60, 64};
+  TEST_ASSERT_EQUAL(5, on.size());
+  for (int i = 0; i < 5; ++i) TEST_ASSERT_EQUAL(want[i], on[i]);
+  TEST_ASSERT_EQUAL(62500, sink->times(0x90, 64)[0]);
+  TEST_ASSERT_EQUAL(125000, sink->times(0x90, 67)[0]);
+  TEST_ASSERT_TRUE(sink->times(0x80, 64)[0] < 125000);  // the arp gate counts from the track's step
+}
+
+// A replan reaching back over a pass end keeps a 1/2 track's count (3 steps: it spans two passes).
+void test_speed_half_rewind_across_pass_end() {
+  Pattern& pt = p->patterns[0];
+  pt.length = 3;
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 61;
+  pt.steps[0][2].note = 62;
+  seq->start(0, *sink);
+  run(0, 240000);  // planned past the pass end at 375000
+  seq->releaseTies(240000, *sink);  // replans from step 2
+  run(240000, 800000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 61).size());
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 61)[0]);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 62).size());
+  TEST_ASSERT_EQUAL(500000, sink->times(0x90, 62)[0]);  // pass 1, pattern step 1
+  const auto on60 = sink->times(0x90, 60);
+  TEST_ASSERT_EQUAL(2, on60.size());
+  TEST_ASSERT_EQUAL(750000, on60[1]);
+}
+
+// Paused after an odd number of passes of a 3-step pattern: a pattern queued now starts its pass
+// count at 0, so its 1/2 track plays its step 0 on the first step after resume.
+void test_speed_half_queue_while_paused_starts_at_step0() {
+  p->patterns[0].length = 3;
+  p->patterns[1].length = 3;
+  p->patterns[1].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[1].steps[0][0].note = 62;
+  seq->start(0, *sink);
+  run(0, 450000);  // pass 1 of pattern 0 (375000..750000)
+  sink->now = 450000;
+  seq->pause(450000, *sink);
+  seq->queuePattern(1);
+  TEST_ASSERT_EQUAL(0, seq->loopCount());
+  TEST_ASSERT_EQUAL(0, seq->heardLoop());
+  sink->now = 1000000;
+  seq->resume(1000000, *sink);
+  run(1000000, 1100000);
+  const auto on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(1000000, on62[0]);
+}
+
+// Pause / resume mid-pattern: a 1/2 track over a 3-step pattern goes on with its count.
+void test_speed_half_pause_resume_continues() {
+  p->patterns[0].length = 3;
+  p->patterns[0].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][1].note = 61;
+  p->patterns[0].steps[0][2].note = 62;
+  seq->start(0, *sink);
+  run(0, 300000);  // steps up to 250000 heard; 375000 (pass 1, pos 0) planned, not heard
+  sink->now = 300000;
+  seq->pause(300000, *sink);
+  sink->now = 1000000;
+  seq->resume(1000000, *sink);  // from pass 1, pos 0 (count 3: rests)
+  run(1000000, 1400000);
+  const auto on60 = sink->times(0x90, 60), on61 = sink->times(0x90, 61), on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(2, on60.size());
+  TEST_ASSERT_EQUAL(0, on60[0]);
+  TEST_ASSERT_EQUAL(1375000, on60[1]);  // pass 2, pos 0 (count 6)
+  TEST_ASSERT_EQUAL(1, on61.size());
+  TEST_ASSERT_EQUAL(250000, on61[0]);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(1125000, on62[0]);  // pass 1, pos 1 (count 4)
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -2270,5 +2632,26 @@ int main() {
   RUN_TEST(test_cnd_pre_follows_previous_condition);
   RUN_TEST(test_groove_shifts_and_accents);
   RUN_TEST(test_humanize_stays_within_range);
+  RUN_TEST(test_speed_x2_plays_two_steps_per_step);
+  RUN_TEST(test_speed_x2_with_x1_track_in_sync);
+  RUN_TEST(test_speed_x4_heap_holds);
+  RUN_TEST(test_speed_x4_heap_holds_at_16th_triplet);
+  RUN_TEST(test_speed_x4_heap_holds_at_32nd);
+  RUN_TEST(test_speed_half_queue_while_paused_starts_at_step0);
+  RUN_TEST(test_speed_half_pause_resume_continues);
+  RUN_TEST(test_speed_x2_replans_after_edit);
+  RUN_TEST(test_speed_half_plays_every_other_step);
+  RUN_TEST(test_speed_half_tie_holds_over_skipped_step);
+  RUN_TEST(test_speed_half_restarts_on_new_pattern);
+  RUN_TEST(test_speed_half_continues_over_own_loop);
+  RUN_TEST(test_speed_x2_squeezed_into_swung_slot);
+  RUN_TEST(test_speed_x2_groove_accent_on_both_sub_steps);
+  RUN_TEST(test_speed_x4_stall_skips_past_sub_steps);
+  RUN_TEST(test_speed_heard_loop_follows_heard_step);
+  RUN_TEST(test_speed_x4_timing);
+  RUN_TEST(test_speed_quarter_plays_every_fourth_step);
+  RUN_TEST(test_speed_x2_int_step_marker_ticks);
+  RUN_TEST(test_speed_x2_step_arp_on_sub_steps);
+  RUN_TEST(test_speed_half_rewind_across_pass_end);
   return UNITY_END();
 }

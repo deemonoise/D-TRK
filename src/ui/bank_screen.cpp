@@ -11,6 +11,7 @@ void BankScreen::onEnter() {
   copyFrom_ = -1;
   masksStale_ = true;  // GRID may have edited patterns
   rowEdit_ = false;
+  holdRow_ = false;
   if (app_.status().songPos >= 0) row_ = app_.status().songPos;
   clampRow();
   showRow(row_);
@@ -19,6 +20,7 @@ void BankScreen::onEnter() {
 void BankScreen::onProjectReplaced() {
   row_ = top_ = 0;
   rowEdit_ = false;
+  holdRow_ = false;
   copyFrom_ = -1;
   masksStale_ = true;
 }
@@ -248,6 +250,7 @@ void BankScreen::setSong(bool on) {
   app_.markDirty();
   copyFrom_ = -1;
   rowEdit_ = false;
+  holdRow_ = false;
   app_.toast(on ? "SONG ON (NEXT LOOP)" : "SONG OFF");
 }
 
@@ -262,7 +265,7 @@ void BankScreen::clampRow() {
   const int n = chainLen();
   if (row_ >= n) row_ = n - 1;
   if (row_ < 0) row_ = 0;
-  if (n == 0) rowEdit_ = false;
+  if (n == 0) rowEdit_ = holdRow_ = false;
 }
 
 void BankScreen::showRow(int row) {
@@ -331,6 +334,7 @@ void BankScreen::snapRow() {
 
 void BankScreen::cancelRow() {
   rowEdit_ = false;
+  holdRow_ = false;
   mt::Project& p = app_.project();
   if (origRow_ < 0 || origRow_ >= chainLen()) return;
   const int r = origRow_;
@@ -492,6 +496,7 @@ void BankScreen::openRowMenu(int row) {
     snprintf(title, sizeof(title), "SONG");
   }
   rowEdit_ = false;
+  holdRow_ = false;
   app_.menu().open(title, items, sizeof(items) / sizeof(items[0]), [this](int id) { onMenu(id); });
 }
 
@@ -515,6 +520,7 @@ void BankScreen::chainInput(const hw::InputEvent& ev) {
         cancelRow();
         break;
       }
+      holdRow_ = false;  // a click edit: A release must not end it
       if (n == 0) insertRow(0, app_.editPattern());
       else rowEdit_ = !rowEdit_;
       if (rowEdit_) {
@@ -523,7 +529,38 @@ void BankScreen::chainInput(const hw::InputEvent& ev) {
       }
       break;
     case InputType::EncLong: openRowMenu(row_); break;
+    // A + turn: hold edit of the selected row (Shift picks the field), release = keep, B = cancel.
+    case InputType::EditTurn:
+      if (!rowEdit_) {
+        if (n == 0) break;
+        rowEdit_ = true;
+        holdRow_ = true;
+        rowField_ = kFPat;
+        snapRow();
+      }
+      if (ev.shift) rowField_ = clampi(rowField_ + ev.delta, 0, kFCount - 1);
+      else editRow(ev.delta);
+      break;
+    case InputType::EditEnd:
+      if (holdRow_) rowEdit_ = false;
+      holdRow_ = false;
+      break;
+    case InputType::EditCancel:
+      if (rowEdit_) cancelRow();
+      holdRow_ = false;
+      break;
     default: break;
+  }
+}
+
+// B: leave copy mode, else leave row edit keeping the value.
+void BankScreen::onBack() {
+  if (copyFrom_ >= 0) {
+    copyFrom_ = -1;
+    app_.toast("CANCEL");
+  } else {
+    rowEdit_ = false;
+    holdRow_ = false;
   }
 }
 
@@ -564,10 +601,12 @@ void BankScreen::chainTouch(const TouchEvent& ev) {
   }
   if (r >= n) {
     rowEdit_ = false;
+    holdRow_ = false;
     return;
   }
   // A tap on a field of the selected row edits that field; elsewhere it toggles row edit.
   const int f = ev.x >= kFieldX0 && ev.x < kFieldX0 + kFCount * kFieldW ? (ev.x - kFieldX0) / kFieldW : -1;
+  holdRow_ = false;
   if (r == row_) {
     if (f >= 0 && (!rowEdit_ || f != rowField_)) {
       if (!rowEdit_) snapRow();
@@ -583,6 +622,7 @@ void BankScreen::chainTouch(const TouchEvent& ev) {
   } else {
     row_ = r;
     rowEdit_ = false;
+    holdRow_ = false;
   }
   showRow(row_);
 }

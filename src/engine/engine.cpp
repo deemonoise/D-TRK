@@ -65,7 +65,7 @@ void handle(const Command& c) {
 
 void publish() {
   const Status s{seq->playing(),       seq->paused(),       seq->heardPattern(),
-                 static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->loopCount(),
+                 static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->heardLoop(),
                  static_cast<int8_t>(seq->heardSongPos()), seq->fill(),
                  seq->heardStepTime(),  seq->stepDuration()};
   portENTER_CRITICAL(&statusMux);

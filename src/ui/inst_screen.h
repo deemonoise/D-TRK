@@ -35,6 +35,8 @@ class InstScreen : public Screen {
   bool buttonsBusy() const;
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
+  void onPage(int d) override;
+  void onBack() override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && onEditor(); }

@@ -18,10 +18,17 @@ class Screen {
   virtual void onPatternChange() {}
   // Project loaded / new (called on every screen, before onPatternChange): drop references to old data.
   virtual void onProjectReplaced() {}
-  // EncTurn / EncClick / EncLong; PlayPress and Shift are handled by App.
+  // EncTurn / EncClick / EncLong, EditTurn / EditEnd / EditCancel (A chords); PlayPress and Shift are
+  // handled by App.
   virtual void onInput(const hw::InputEvent& ev) = 0;
   // Play button; true = handled here (the transport stays as it is).
   virtual bool onPlay() { return false; }
+  // Button B tap: close the open overlay / step back. Nothing by default.
+  virtual void onBack() {}
+  // B + Shift + turn: previous / next page.
+  virtual void onPage(int) {}
+  // Button A tap (alone); shift = Shift held.
+  virtual void onATap(bool) {}
   // Absolute screen coordinates; only events inside the work area (or Drag) arrive here.
   virtual void onTouch(const TouchEvent& ev) = 0;
   virtual bool wantsHDrag() const { return false; }  // HDrag events reach onTouch only if true

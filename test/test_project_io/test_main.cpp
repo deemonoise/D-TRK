@@ -1499,6 +1499,48 @@ void test_tlen_clamped_to_length() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+void test_tspd_round_trip_and_default() {
+  a.reset();
+  a.patterns[2].steps[0][0].note = 60;  // stored pattern
+  a.patterns[2].trackSpeed[5] = static_cast<uint8_t>(TrackSpeed::X2);
+  a.patterns[4].trackSpeed[15] = static_cast<uint8_t>(TrackSpeed::Quarter);  // stored only for its speed
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(static_cast<int>(TrackSpeed::X2), b.patterns[2].trackSpeed[5]);
+  TEST_ASSERT_EQUAL(0, b.patterns[2].trackSpeed[4]);
+  TEST_ASSERT_EQUAL(static_cast<int>(TrackSpeed::Quarter), b.patterns[4].trackSpeed[15]);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"TSPD"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.patterns[2].trackSpeed[5]);
+}
+
+void test_tspd_absent_without_speeds_and_bad_values() {
+  a.reset();
+  a.patterns[1].steps[0][0].note = 60;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(withoutChunks(out.buf, {"TSPD"}) == out.buf);  // no chunk written
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "PATN", patn(1, 8));
+  std::vector<uint8_t> sp(1 + kTracks, 0);
+  sp[0] = 1;
+  sp[1] = 200;  // unknown: x1
+  sp[2] = static_cast<uint8_t>(TrackSpeed::X4);
+  putChunk(f, "TSPD", sp);
+  sp[0] = 40;   // no such pattern: skipped
+  putChunk(f, "TSPD", sp);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.patterns[1].trackSpeed[0]);
+  TEST_ASSERT_EQUAL(static_cast<int>(TrackSpeed::X4), b.patterns[1].trackSpeed[1]);
+  f = fileHeader();
+  putChunk(f, "TSPD", {1, 2, 3});  // wrong size
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
 void test_scns_round_trip_and_default() {
   a.reset();
   a.scenes[0] = 0x0005;
@@ -1618,6 +1660,8 @@ int main() {
   RUN_TEST(test_chn2_garbage_clamped);
   RUN_TEST(test_tlen_round_trip_and_default);
   RUN_TEST(test_tlen_clamped_to_length);
+  RUN_TEST(test_tspd_round_trip_and_default);
+  RUN_TEST(test_tspd_absent_without_speeds_and_bad_values);
   RUN_TEST(test_scns_round_trip_and_default);
   RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
   RUN_TEST(test_read_file_names);

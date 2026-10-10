@@ -1,4 +1,5 @@
 #pragma once
+#include "ab_keys.h"
 #include "bank_screen.h"
 #include "edit_ops.h"
 #include "engine/engine.h"
@@ -115,6 +116,10 @@ class App {
   void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
   void setBpmEdit(bool on);
+  void abAction(const mt::AbOut& o);  // A / B chord result
+  void cycleTab(int d);
+  void soloKey(int n);
+  void queueKey(int n, bool shift);
   void draw();
   void drawStatus();
   void drawTabs();
@@ -167,6 +172,7 @@ class App {
   uint32_t editSeq_ = 0, savedSeq_ = 0;
   bool shift_ = false;
   bool fillHeld_ = false;   // Shift + Play held while playing: fill
+  mt::AbKeys ab_;  // buttons A / B
   int8_t heldTrackBtn_ = -1;  // track button held (0..7 of the visible half), -1 = none
   uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;

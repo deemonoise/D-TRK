@@ -5,8 +5,7 @@
 namespace storage {
 namespace {
 
-// Longest token "Xs~r^" (5) + blank per step: 32 * 6 - 1 = 191 chars; the rest is slack.
-constexpr int kTextMax = mt::kArpPatMax * 7 + 2;
+constexpr int kTextMax = mt::kArpTextMax + 2;  // formatArpPattern's longest text + slack
 
 bool arpPath(char* out, size_t cap, const char* name, const char* ext) {
   const int n = snprintf(out, cap, "%s/%s%s", kArpDir, name, ext);

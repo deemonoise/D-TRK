@@ -89,6 +89,7 @@ void GridScreen::onPatternChange() {
   curStep_ = 0;
   top_ = 0;
   edit_ = false;
+  holdEdit_ = false;
   editPushed_ = false;
   selOn_ = false;
   needVisible_ = true;
@@ -146,6 +147,7 @@ void GridScreen::setEdit(bool on) {
     app_.toast(kFieldNames[curField_]);
   }
   edit_ = on;
+  if (!on) holdEdit_ = false;
   if (on) snapCell();
   needVisible_ = true;  // the keyboard changes the row count
 }
@@ -253,6 +255,7 @@ void GridScreen::setRec(bool on) {
   if (on) {
     setPerf(false);
     edit_ = false;
+    holdEdit_ = false;
     recLoop_ = UINT32_MAX;
   }
   rec_ = on;
@@ -262,6 +265,7 @@ void GridScreen::setPerf(bool on) {
   if (on) {
     rec_ = false;
     edit_ = false;
+    holdEdit_ = false;
   } else {
     perfRelease();
   }
@@ -274,15 +278,40 @@ void GridScreen::perfRelease() {
   perfBtn_ = -1;
 }
 
-// REC: the note lands on the heard step of the track (its own length), or the next one past its
-// half. Melodic: button N = scale degree in the octave of the track's last note, Shift + N clears
-// the step's note. Drum track: button N sets lane N, Shift + N clears it.
+// The track step heard at the play position: trackStepAt, sub-step 0 on a fast track. A slow
+// track holds the step it played last (back to the last pattern step where c % D == 0, maybe in
+// the previous pass).
+int GridScreen::heardTrackStep(int tr) {
+  const engine::Status& st = app_.status();
+  const mt::Pattern& pt = pat();
+  const int d = mt::speedDiv(mt::toSpeed(pt.trackSpeed[tr]));
+  if (d <= 1) return mt::trackStepAt(pt, tr, st.pos, st.loop, 0);
+  const int tl = pt.trackLen[tr] && pt.trackLen[tr] < pt.length ? pt.trackLen[tr] : pt.length;
+  if (tl <= 0) return 0;
+  const uint64_t c = static_cast<uint64_t>(st.loop) * pt.length + st.pos;
+  return static_cast<int>(((c - c % d) / d) % tl);
+}
+
+// REC: the note lands on the heard step of the track (its own length and speed), or the next one
+// past its half. Melodic: button N = scale degree in the octave of the track's last note, Shift + N
+// clears the step's note. Drum track: button N sets lane N, Shift + N clears it.
 bool GridScreen::recordKey(int n, bool shift) {
   const engine::Status& st = app_.status();
   const int tr = track();
   const mt::Pattern& pt = pat();
   const int tl = pt.trackLen[tr] && pt.trackLen[tr] < len() ? pt.trackLen[tr] : len();
-  const int step = mt::recordStepFor(st.pos % tl, engine::stepPhase(st), tl);
+  const mt::TrackSpeed sp = mt::toSpeed(pt.trackSpeed[tr]);
+  const int mul = mt::speedMul(sp);
+  const int div = mt::speedDiv(sp);
+  uint8_t phase = engine::stepPhase(st);
+  // xN: the pattern step holds N track steps, the phase picks one and the phase inside it. A slow
+  // track step spans D pattern steps: the phase counts over all of them.
+  if (div > 1) {
+    const uint64_t c = static_cast<uint64_t>(st.loop) * pt.length + st.pos;
+    phase = static_cast<uint8_t>((static_cast<int>(c % div) * 256 + phase) / div);
+  }
+  const int sub = phase * mul / 256;
+  const int step = mt::recordStepFor((heardTrackStep(tr) + sub) % tl, static_cast<uint8_t>((phase * mul) % 256), tl);
   if (st.loop != recLoop_ || app_.editPattern() != recPat_) {  // one undo snapshot per pass and pattern
     app_.pushUndo();
     recLoop_ = st.loop;
@@ -403,7 +432,78 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
         openMenu();
       }
       break;
+    case InputType::EditTurn:  // A + turn: edits the cell, entering edit for as long as A is held
+      if (!edit_) {
+        selOn_ = false;
+        setEdit(true);
+        holdEdit_ = true;
+      }
+      editTurn(ev.delta, ev.shift);
+      break;
+    case InputType::EditEnd:
+      if (holdEdit_ && edit_) setEdit(false);
+      holdEdit_ = false;
+      break;
+    case InputType::EditCancel:
+      if (edit_) cancelCell();
+      holdEdit_ = false;
+      break;
     default: break;
+  }
+}
+
+// A tap: empty step = the track's last note (drum: the lane under the cursor), a note step = hear it;
+// Shift + A = Clear step. In edit, an entered note moves the cursor by Edit step like a track button.
+void GridScreen::onATap(bool shift) {
+  if (dialogOpen()) return;
+  const int tr = track(), step = cur();
+  if (!edit_) editPushed_ = false;  // outside edit every tap is its own undo step
+  if (shift) {
+    if (pat().steps[tr][step].isEmpty()) return;  // nothing to clear: no undo snapshot
+    apply(mt::makeSel(tr, step, tr, step), kClearStep);
+    editPushed_ = false;  // the clear has its own snapshot; edit continues from the cleared cell
+    if (edit_) snapCell();
+    return;
+  }
+  const mt::Step& st = pat().steps[tr][step];
+  if (drum()) {
+    if (!st.hasNote()) {
+      toggleLane(lane_);  // the cursor stays, as with a track button
+    } else if (const mt::Instrument* k = app_.project().kitOf(tr)) {
+      int lane = lane_;  // the cursor lane, else the first lane of the step
+      for (int l = 0; !(st.vel & (1u << lane)) && l < mt::kKitLanes; ++l) lane = l;
+      if (st.vel & (1u << lane)) previewNote(k->kit[lane].note);
+    }
+    return;
+  }
+  if (st.hasNote()) {
+    previewNote(st.note);
+    return;
+  }
+  setNote(lastNote_[tr]);
+  if (edit_ && editStep_) moveStep(editStep_);
+}
+
+// Back: closes a dialog, else drops the selection, else leaves edit / REC / PERF.
+void GridScreen::onBack() {
+  if (fill_.isOpen()) {
+    fill_.onInput({hw::InputType::EncLong, 0, false});
+    return;
+  }
+  if (transpose_.isOpen()) {
+    transpose_.onInput({hw::InputType::EncLong, 0, false});
+    return;
+  }
+  if (selOn_) {
+    selOn_ = false;
+  } else if (edit_) {
+    setEdit(false);
+  } else if (rec_) {
+    setRec(false);
+    app_.toast("REC OFF");
+  } else if (perf_) {
+    setPerf(false);
+    app_.toast("PERF OFF");
   }
 }
 
@@ -879,8 +979,9 @@ void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
     needVisible_ = false;
   } else if (follow_ && !dragFrozen_ && st.playing && !edit_ && st.pos < n &&
              millis() - lastMoveMs_ >= kFollowPauseMs) {
-    // Smooth follow: play row stays in the middle, view scrolls one row per step.
-    top_ = st.pos - rows_ / 2;
+    // Smooth follow: play row stays in the middle, view scrolls one row per step (detail: the
+    // track's own step).
+    top_ = (detail_ ? heardTrackStep(track()) : st.pos) - rows_ / 2;
     if (top_ > n - rows_) top_ = n - rows_;
   }
   if (top_ >= n) top_ = n > rows_ ? n - rows_ : 0;
@@ -996,11 +1097,12 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
     s.drawString(buf, kNumW + (kFx1 + 2 * k) * kFieldW + 4, gridY - kNamesH);
   }
 
+  const int heard = st.playing || st.paused ? heardTrackStep(tr) : -1;  // the track's own step
   for (int row = 0; row < rows_; ++row) {
     const int step = top_ + row;
     if (step >= n) break;
     const int y = gridY + row * kRowH;
-    if ((st.playing || st.paused) && step == st.pos) s.fillRect(0, y, kScreenW, kRowH, kPlayBg);
+    if (step == heard) s.fillRect(0, y, kScreenW, kRowH, kPlayBg);
     else if (step % 4 == 0) s.fillRect(0, y, kScreenW, kRowH, kBeatBg);
 
     s.setTextColor(kDim);

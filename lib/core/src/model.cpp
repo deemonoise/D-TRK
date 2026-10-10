@@ -15,6 +15,7 @@ void Pattern::clear() {
   res = Resolution::Sixteenth;
   swing = 50;
   memset(trackLen, 0, sizeof(trackLen));
+  memset(trackSpeed, 0, sizeof(trackSpeed));
   for (auto& tr : steps)
     for (auto& s : tr) s = Step();
 }
@@ -122,6 +123,13 @@ const char* lfoSyncName(uint8_t div) {
   static const char* const kNames[kLfoSyncSteps] = {"1/32", "1/16T", "1/16", "1/8T", "1/8",  "1/4T",
                                                     "1/4",  "1/2",   "1 BAR", "2 BARS", "4 BARS", "8 BARS"};
   return kNames[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
+}
+
+const char* speedName(TrackSpeed s) {
+  static const char* const kNames[] = {"x1", "x2", "x4", "1/2", "1/4"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(TrackSpeed::Count), "speed names");
+  const uint8_t i = static_cast<uint8_t>(s);
+  return i < static_cast<uint8_t>(TrackSpeed::Count) ? kNames[i] : "x1";
 }
 
 LfoRef lfoRef(Instrument& m, int i) {

@@ -158,6 +158,7 @@ void SampleEditor::bind(int instr) {
 void SampleEditor::enter(bool bar) {
   sync();
   list_.setEdit(false);
+  holdMarker_ = false;
   if (bar) list_.selectBar();
   else list_.setSel(0);
 }
@@ -268,6 +269,7 @@ void SampleEditor::selectMarker(int id) {
   sel_ = id;
   if (list_.sel() != kMarkerRow) {
     list_.setEdit(false);
+    holdMarker_ = false;
     list_.setSel(kMarkerRow);
   }
   if (frames_) showFrame(markerFrame(id));
@@ -382,8 +384,26 @@ void SampleEditor::playSlice(int k) {
 }
 
 int SampleEditor::onInput(const hw::InputEvent& ev) {
+  using hw::InputType;
   sync();
-  if (list_.sel() == kMarkerRow && list_.editing() && ev.type == hw::InputType::EncTurn) {
+  // A + turn on the marker row: the row has no edit(), so enter the edit as a click does (the
+  // instrument snapshot for EditCancel), then move the marker as a turn while editing does.
+  if (list_.sel() == kMarkerRow && ev.type == InputType::EditTurn) {
+    if (!list_.editing()) {
+      list_.onInput({InputType::EncClick, 0, false});
+      holdMarker_ = true;
+    }
+    hw::InputEvent t = ev;
+    t.type = InputType::EncTurn;
+    return onInput(t);
+  }
+  if (ev.type == InputType::EditEnd && holdMarker_) {
+    holdMarker_ = false;
+    list_.setEdit(false);
+    return 0;
+  }
+  if (ev.type == InputType::EditCancel || ev.type == InputType::EncClick) holdMarker_ = false;
+  if (list_.sel() == kMarkerRow && list_.editing() && ev.type == InputType::EncTurn) {
     if (!frames_ || !ev.delta) return 0;
     const int dir = ev.delta < 0 ? -1 : 1;
     uint32_t f = markerFrame(sel_);
@@ -499,6 +519,7 @@ void SampleEditor::onTouch(const TouchEvent& ev) {
       tool(clampi(ev.x / kToolW, 0, kClr), ev.type == TouchType::LongPress);
     return;
   }
+  holdMarker_ = false;  // a tap may toggle the row edit
   list_.onTouch(ev);
 }
 

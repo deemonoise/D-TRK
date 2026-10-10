@@ -511,6 +511,16 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
   }
 }
 
+// B: the open dialog / keyboard gets its long press (close / cancel), else the file list closes.
+void FileScreen::onBack() {
+  const hw::InputEvent lp{hw::InputType::EncLong, 0, false};
+  if (kb_.isOpen()) kb_.onInput(lp);
+  else if (import_.isOpen()) import_.onInput(lp);
+  else if (render_.isOpen()) render_.onInput(lp);
+  else if (wifi_.isOpen()) wifi_.onInput(lp);
+  else if (names_) closeList();
+}
+
 void FileScreen::onTouch(const TouchEvent& ev) {
   if (kb_.isOpen()) {
     kb_.onTouch(ev, app_.shift());

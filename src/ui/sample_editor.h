@@ -14,7 +14,8 @@ class App;
 
 // SAMPLE page of InstScreen: waveform with markers (Start green, End red, Loop yellow, slices
 // cyan), zoom, toolbar (< > - + CHOP CLR) and the sample rows. Marker row: click = edit, turn =
-// move the selected marker 1 px of the zoom, Shift+turn = to the next / previous transient.
+// move the selected marker 1 px of the zoom, Shift+turn = to the next / previous transient; A + turn
+// = the same as a hold edit.
 // Touch: tap = nearest marker, drag a marker = move it (Shift: snap to a transient), drag elsewhere
 // = scroll (zoomed), long press = new slice (Shift: at the nearest transient). CLR: tap = remove the
 // selected slice, long press = all slices.
@@ -32,7 +33,10 @@ class SampleEditor {
   void onTouch(const TouchEvent& ev);
   void draw(LGFX_Sprite& s, int y);
   bool editing() const { return list_.editing(); }
-  void leaveEdit() { list_.setEdit(false); }
+  void leaveEdit() {
+    list_.setEdit(false);
+    holdMarker_ = false;
+  }
   uint8_t previewNote();        // NOTE mode with a slice selected: root + slice, else C4
   // Track button k (0..7): plays slice (selected slice, or the first) + k to its end, any slice mode.
   void playSlice(int k);
@@ -84,6 +88,7 @@ class SampleEditor {
   int y_;  // page top, from draw()
   int instr_ = -1;
   int sel_ = kS;
+  bool holdMarker_ = false;  // marker row edit entered by A + turn (EditEnd leaves it)
   int zoom_ = 0;
   uint32_t viewCol_ = 0;  // zoom grid column the view starts on (see gridFrame())
   uint16_t dragId_ = 0;

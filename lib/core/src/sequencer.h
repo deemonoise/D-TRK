@@ -58,6 +58,14 @@ constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the 
 //
 // Live: setFill() is the held fill (CND FIL / NFL), perfOn() a punch-in effect on a track until
 // perfOff() (or stop()). Both apply to steps planned from then on (at most the lookahead late).
+//
+// Pattern::trackSpeed: an xN track plays N of its steps per pattern step, squeezed evenly into the
+// slot up to the next (swung / grooved) pattern step; the groove accent of the pattern step applies to
+// all of them. A /D track plays one step every D pattern steps, counted from loop_ through pass ends
+// (a new pattern starts it at step 0); between them it is not touched (TIE, ARS go on). GAT, RAT, NDG,
+// TIE, ARS, VSL count from the track's own step; CND counts pattern passes. Limits: NDG on a slow track
+// is planned at most kLookTicks ahead, and the synth's step length byte caps at 127 ticks. Editing the
+// pattern length while it plays shifts a /D track's phase (the count is pass * length + pos).
 class Sequencer {
  public:
   explicit Sequencer(Project& p) : p_(p), bpm_(clampBpm(p.bpm)) {}
@@ -92,7 +100,8 @@ class Sequencer {
   uint8_t heardPattern() const { return heardPat_; }
   // The switch the UI should show as pending: scheduled but not heard yet counts.
   int pendingPattern() const { return queued_ >= 0 ? queued_ : (heardPat_ != cur_ ? cur_ : -1); }
-  uint32_t loopCount() const { return loop_; }
+  uint32_t loopCount() const { return loop_; }  // planned, ahead of what is heard
+  uint32_t heardLoop() const { return heardLoop_; }  // passes of the heard pattern (trackStepAt)
   // Chain index of the heard pattern; -1 outside song mode.
   int heardSongPos() const { return heardSong_; }
   void seed(uint32_t s) { rng_ = Rng(s); }
@@ -135,6 +144,7 @@ class Sequencer {
     uint32_t serial;
     uint32_t loop;
     uint8_t pos, pat;  // what played
+    uint32_t posLoop;  // loop_ when pos played (loop is the one before the step)
     uint8_t prevPos, prevPat;
     int8_t prevQueued;
     int8_t song, prevSong;  // songPos_ when played / before
@@ -175,8 +185,8 @@ class Sequencer {
   void releaseTie(int track, uint64_t t);
   void pushOff(int track, uint64_t t);
   void releaseAllTies(uint64_t t);
-  // ARS: the next arp note of the track on a step without a note (sounds only if aud).
-  void arpStep(int track, uint64_t t, int64_t earliest, bool aud);
+  // ARS: the next arp note of the track on a step without a note (sounds only if aud); su: the track's step.
+  void arpStep(int track, uint64_t t, int64_t earliest, bool aud, uint32_t su);
   void stopArps() {
     for (StepArp& a : arps_) a.n = 0;
   }
@@ -186,16 +196,24 @@ class Sequencer {
   void synthTransport(uint64_t now, MidiSink& out, uint8_t msg);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
   bool expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex);
-  ExpandCtx ctx(uint32_t su) const {
-    ExpandCtx c{su, loop_, p_.scaleRoot, static_cast<ScaleType>(p_.scaleType), ticks()};
+  // A track's sub-steps per pattern step (mul) and its own step: su us, tps ticks (TrackSpeed).
+  struct TrackTiming {
+    int mul;
+    uint32_t su;
+    uint16_t tps;
+  };
+  TrackTiming timing(const Pattern& pt, int tr, uint32_t su) const;
+  int64_t stepShift(const Pattern& pt, int pos, uint32_t su) const;
+  // su, tps: the track's own step (TrackSpeed).
+  ExpandCtx ctx(uint32_t su, uint16_t tps) const {
+    ExpandCtx c{su, loop_, p_.scaleRoot, static_cast<ScaleType>(p_.scaleType), tps};
     c.fill = fill_;
     return c;
   }
-  // The step of `track` at pass position pos: the track loops on its own length (polymeter).
-  static int stepIndex(const Pattern& pt, int track, int pos) {
-    const uint8_t n = pt.trackLen[track];
-    return n && n < pt.length ? pos % n : pos;
-  }
+  // One track step of tr at t (a pattern step, or a sub-step of a fast track); tps: its ticks.
+  void playTrackStep(int tr, const Step& raw, uint64_t t, const ExpandCtx& c, uint16_t tps, int64_t earliest);
+  // skipStep for one track step at t: the controls go out at now.
+  void skipTrackStep(int tr, const Step& raw, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps);
   // The step as it plays: the chain transpose on a melodic track, the track's punch-in fx.
   void adjustStep(Step& s, int track) const;
   int chainTranspose() const { return songPos_ >= 0 && songPos_ < chainLen() ? p_.chainTr[songPos_] : 0; }
@@ -206,7 +224,7 @@ class Sequencer {
   void applyScene(int songPos, uint64_t t);
   // Plays this step: not muted / solo-excluded, no perf Mute (whose first muted step ends its notes).
   bool audible(int track, uint64_t t);
-  void pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note,
+  void pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note, uint16_t tps,
                      bool nudge = true);
   int pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool nudge = true);
   bool push(uint64_t t, uint8_t s, uint8_t d1, uint8_t d2, uint32_t id, bool cont = false, uint8_t len = 3,
@@ -248,6 +266,7 @@ class Sequencer {
   Sched hist_[kHist] = {};   // newest first
   uint8_t histN_ = 0;
   uint8_t heardPos_ = 0;
+  uint32_t heardLoop_ = 0;
   uint8_t heardPat_ = 0;
   int heardSong_ = -1;
   uint32_t nextId_ = 1;

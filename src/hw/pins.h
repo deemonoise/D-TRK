@@ -27,9 +27,9 @@ constexpr uint8_t kTrackLedBit[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0
 constexpr uint8_t kEncSwBit = 11;  // P13
 constexpr uint8_t kPlayBit = 12;   // P14
 constexpr uint8_t kShiftBit = 13;  // P15
-// Buttons A and B (under Shift / Play), not used by the firmware yet.
-constexpr uint8_t kBtnABit = 14;   // P16
-constexpr uint8_t kBtnBBit = 15;   // P17
+// Buttons A and B (under Play / Shift): chords with the encoder / track buttons, see ui::App.
+constexpr uint8_t kBtnABit = 15;   // P17
+constexpr uint8_t kBtnBBit = 14;   // P16
 // External PCM5102A DAC (SCK to GND: clock from BCK by its PLL) on the extended IO header.
 // The onboard NS4168 (GPIO 35/36/37, SPK connector) is not used.
 constexpr int kI2sBclk = 13;

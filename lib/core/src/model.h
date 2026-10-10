@@ -348,6 +348,16 @@ inline uint16_t ticksPerStep(Resolution r) {
   }
 }
 
+// Per pattern, per track: x2 / x4 play 2 / 4 track steps per pattern step, 1/2 / 1/4 one every 2 / 4.
+// 0 = x1, so zeroed (old) patterns play as before.
+enum class TrackSpeed : uint8_t { X1, X2, X4, Half, Quarter, Count };
+inline TrackSpeed toSpeed(uint8_t v) {
+  return v < static_cast<uint8_t>(TrackSpeed::Count) ? static_cast<TrackSpeed>(v) : TrackSpeed::X1;
+}
+inline int speedMul(TrackSpeed s) { return s == TrackSpeed::X2 ? 2 : (s == TrackSpeed::X4 ? 4 : 1); }
+inline int speedDiv(TrackSpeed s) { return s == TrackSpeed::Half ? 2 : (s == TrackSpeed::Quarter ? 4 : 1); }
+const char* speedName(TrackSpeed s);  // "1/4", "1/2", "x1", "x2", "x4"
+
 // GAT value: 1..100 -> 1..100 %, 101..200 -> 107..800 % (7 % per unit).
 inline uint16_t gatePercent(uint8_t v) {
   if (v == 0) return 1;
@@ -365,12 +375,29 @@ struct Pattern {
   uint8_t swing = 50;  // 50..75 %
   uint8_t groove = 0;  // groove template (grooveAt), 0 = OFF: swing applies
   uint8_t trackLen[kTracks] = {0};  // 0 = length, else 1..length: the track loops on its own (polymeter)
+  uint8_t trackSpeed[kTracks] = {0};  // TrackSpeed, per track
   Step steps[kTracks][kMaxSteps];
 
   void clear();
   bool isEmpty() const;  // steps only (trackLen ignored)
   void fitTrackLen();    // after a length change: track lengths past it become the length
 };
+
+// The step of `track` at pattern step pos, sub-step sub (0..speedMul-1), pass = passes of the
+// pattern since it started. -1: a slow track does not play on this pattern step. The track loops
+// on its own length (polymeter); slow tracks count through pass ends.
+inline int trackStepAt(const Pattern& pt, int track, int pos, uint32_t pass, int sub) {
+  const uint8_t n = pt.trackLen[track];
+  const int len = n && n < pt.length ? n : pt.length;
+  if (len <= 0) return 0;
+  const TrackSpeed s = toSpeed(pt.trackSpeed[track]);
+  const int d = speedDiv(s);
+  if (d > 1) {
+    const uint64_t c = static_cast<uint64_t>(pass) * pt.length + pos;
+    return c % d ? -1 : static_cast<int>((c / d) % len);
+  }
+  return (pos * speedMul(s) + sub) % len;
+}
 
 struct TrackCfg {
   char name[9] = {0};

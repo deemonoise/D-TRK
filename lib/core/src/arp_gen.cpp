@@ -1,5 +1,6 @@
 #include "arp_gen.h"
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include "rng.h"
 
@@ -7,6 +8,18 @@ namespace mt {
 namespace {
 
 bool blank(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ','; }
+
+int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// Signed decimal at p (p moves past it); 0 when none. Capped so it cannot overflow.
+int readInt(const char*& p) {
+  const bool neg = *p == '-';
+  if (*p == '-' || *p == '+') ++p;
+  int v = 0;
+  for (; *p >= '0' && *p <= '9'; ++p)
+    if (v < 100000) v = v * 10 + (*p - '0');
+  return neg ? -v : v;
+}
 
 struct Factory {
   const char* name;
@@ -55,14 +68,13 @@ constexpr Factory kFactory[] = {
     {"DUB ECHO", ". . Xs . . o . o . . Xs . . o . o"},
     {"CHIP OCT", "x xr^ x xr^ x xr^ x xr^ x xr^ x xr^ x xr^ x xr^"},
     {"CHIP RUN", "xs xs xs xs xs xs xs xs xs xs xs xs xs xs xs xs"},
+#include "arp_virus.inc"
 };
 constexpr int kFactoryN = sizeof(kFactory) / sizeof(kFactory[0]);
 
 const char* const kModeNames[] = {"UP",     "DOWN",     "UP/DN",   "DN/UP", "PLAYED",
                                   "RANDOM", "CONVERGE", "DIVERGE", "PEDAL", "CHORD"};
 static_assert(sizeof(kModeNames) / sizeof(kModeNames[0]) == static_cast<size_t>(ArpMode::Count), "mode names");
-
-int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 constexpr int kHeldMax = kTracks * 4;  // every track of a selection with a 4-note CHD
 constexpr int kSeqMax = kHeldMax * 4;   // x 4 octaves
@@ -141,7 +153,10 @@ void mutateStep(ArpStep& a, int amount, Rng& r) {
   const int pitch = static_cast<int>(r.below(400));
   const uint32_t accV = r.below(3), pitchV = r.below(4);
   if (a.kind != ArpKind::Tie && hit < amount) a.kind = a.kind == ArpKind::Note ? ArpKind::Rest : ArpKind::Note;
-  if (acc < amount) a.acc = static_cast<ArpAcc>(accV);
+  if (acc < amount) {
+    a.acc = static_cast<ArpAcc>(accV);
+    a.velPct = 0;  // a redrawn accent drops the exact velocity
+  }
   if (pitch < amount) {
     a.pitch = pitchV == 3 ? ArpPitch::Next : static_cast<ArpPitch>(pitchV);
     a.oct = pitchV == 3 ? 1 : 0;
@@ -201,7 +216,7 @@ bool parseArpPattern(const char* text, ArpPattern& out) {
         while (*p && !blank(*p)) ++p;
         continue;
     }
-    for (; *p && !blank(*p); ++p) {
+    for (; *p && !blank(*p) && *p != ':'; ++p) {
       switch (*p) {
         case 's': a.len = ArpLen::Short; break;
         case 'l': a.len = ArpLen::Long; break;
@@ -212,6 +227,19 @@ bool parseArpPattern(const char* text, ArpPattern& out) {
         case 'v': a.oct = -1; break;
         default: break;
       }
+    }
+    if (*p == ':') {
+      ++p;
+      a.velPct = static_cast<uint8_t>(clampInt(readInt(p), 0, 200));
+      if (*p == ':') {
+        ++p;
+        a.gatePct = static_cast<uint16_t>(clampInt(readInt(p), 0, 800));
+      }
+      if (*p == ':') {
+        ++p;
+        a.nudge = static_cast<int8_t>(clampInt(readInt(p), -50, 50));
+      }
+      while (*p && !blank(*p)) ++p;
     }
     out.steps[out.len++] = a;
   }
@@ -244,6 +272,13 @@ bool formatArpPattern(const ArpPattern& p, char* out, int cap) {
     if (a.pitch == ArpPitch::Root && !put('p')) return false;
     if (a.oct > 0 && !put('^')) return false;
     if (a.oct < 0 && !put('v')) return false;
+    if (a.velPct || a.gatePct || a.nudge) {
+      char num[24];
+      int k = snprintf(num, sizeof(num), ":%d:%d", a.velPct, a.gatePct);
+      if (a.nudge) k += snprintf(num + k, sizeof(num) - k, ":%d", a.nudge);
+      for (int c = 0; c < k; ++c)
+        if (!put(num[c])) return false;
+    }
   }
   if (cap < 1) return false;
   out[n] = '\0';
@@ -363,12 +398,15 @@ bool applyArp(const Pattern& src, Pattern& dst, const Sel& sel, const ArpSpec& s
     const int base = note;
     note = clampInt(note + 12 * a.oct, 0, 127);
     st.note = static_cast<uint8_t>(note);
-    st.vel = static_cast<uint8_t>(a.acc == ArpAcc::Ghost    ? velLo
+    st.vel = static_cast<uint8_t>(a.velPct                  ? clampInt(velHi * a.velPct / 128, 1, 127)
+                                  : a.acc == ArpAcc::Ghost  ? velLo
                                   : a.acc == ArpAcc::Accent ? velHi
                                                             : (velLo + velHi) / 2);
     tied = false;
-    const int pct =
-        (a.len == ArpLen::Short ? (gate / 2 < 5 ? 5 : gate / 2) : (a.len == ArpLen::Long ? 100 : gate)) * rate;
+    // An exact gate ignores Short / Long; Gate 50 = the pattern as written.
+    const int pct = a.gatePct ? a.gatePct * gate / 50 * rate
+                              : (a.len == ArpLen::Short ? (gate / 2 < 5 ? 5 : gate / 2)
+                                                        : (a.len == ArpLen::Long ? 100 : gate)) * rate;
     putFx(st, Fx::GAT, gateValue(pct));
     if (a.slide && prevNote >= 0) {
       // The previous note is held into this one only when adjacent; after a rest the synth still
@@ -377,7 +415,9 @@ bool applyArp(const Pattern& src, Pattern& dst, const Sel& sel, const ArpSpec& s
       putFx(st, Fx::SLD, spec.slide ? spec.slide : 1);
     }
     if (spec.mode == ArpMode::Chord) putFx(st, Fx::CHD, chd);
-    if (swing && (j & 1)) putFx(st, Fx::NDG, static_cast<uint8_t>(swing / 2));
+    // The nudge is a share of the arp step (x rate), swing adds to it; NDG holds a signed value.
+    const int ndg = a.nudge * rate + (swing && (j & 1) ? swing / 2 : 0);
+    if (ndg) putFx(st, Fx::NDG, static_cast<uint8_t>(static_cast<int8_t>(clampInt(ndg, -50, 50))));
     if (a.acc == ArpAcc::Ghost && spec.ghostPrb < 100) putFx(st, Fx::PRB, spec.ghostPrb);
     const int rollP = static_cast<int>(rol.below(100)), rollV = static_cast<int>(rol.below(3));
     if (!a.slide && rollP < roll) putFx(st, Fx::RAT, static_cast<uint8_t>(2 + rollV));

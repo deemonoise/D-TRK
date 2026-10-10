@@ -19,6 +19,7 @@ class BankScreen : public Screen {
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
   void onProjectReplaced() override;
+  void onBack() override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
 
@@ -85,6 +86,7 @@ class BankScreen : public Screen {
   int dragAcc_ = 0;   // drag px not yet turned into rows / edits
   int lastSongPos_ = -1;
   bool rowEdit_ = false;
+  bool holdRow_ = false;  // row edit started by A + turn (A release ends it)
   int rowField_ = kFPat;  // field edited in row edit
   // The row as it was when row edit began (Shift+click puts it back).
   int origRow_ = -1;

@@ -72,6 +72,30 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                         patLenSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
                         patLenPat_ = app_.editPattern();
                       }};
+  // The track's speed in the edited pattern: 1/4 1/2 x1 x2 x4 (left to right).
+  params_[kSpeed] = {"Speed",
+                     [this](char* o, int n) {
+                       const mt::Pattern& pt = app_.project().patterns[app_.editPattern()];
+                       snprintf(o, n, "%s", mt::speedName(mt::toSpeed(pt.trackSpeed[app_.curTrack()])));
+                     },
+                     [this](int d) {
+                       static constexpr mt::TrackSpeed kOrder[] = {mt::TrackSpeed::Quarter, mt::TrackSpeed::Half,
+                                                                   mt::TrackSpeed::X1, mt::TrackSpeed::X2,
+                                                                   mt::TrackSpeed::X4};
+                       constexpr int kN = sizeof(kOrder) / sizeof(kOrder[0]);
+                       mt::Pattern& pt = app_.project().patterns[app_.editPattern()];
+                       uint8_t& v = pt.trackSpeed[app_.curTrack()];
+                       int i = 0;
+                       while (i < kN && kOrder[i] != mt::toSpeed(v)) ++i;
+                       if (i == kN) i = 2;  // x1
+                       const int ni = clampi(i + d, 0, kN - 1);
+                       if (kOrder[ni] == mt::toSpeed(v)) return;
+                       // Whole-pattern snapshot, once per run of Speed edits on one pattern (as Pat len).
+                       if (app_.editSeq() != speedSeq_ || app_.editPattern() != speedPat_) app_.pushUndo();
+                       v = static_cast<uint8_t>(kOrder[ni]);
+                       speedSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
+                       speedPat_ = app_.editPattern();
+                     }};
   params_[kHumanize] = {"Humanize",
                         [this](char* o, int n) {
                           if (cfg().humanize) snprintf(o, n, "%u", cfg().humanize);
@@ -196,11 +220,28 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     list_.edit(ev.delta);  // no x10 for characters
     return;
   }
+  // A + turn on the name row: a character, Shift = the position.
+  if (ev.type == hw::InputType::EditTurn && page_ == kPgMain && list_.sel() == kName && list_.holdEdit()) {
+    if (ev.shift) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+    else list_.edit(ev.delta);
+    return;
+  }
   if (const int ov = list_.onInput(ev)) {  // click (Shift+click) on the page bar: the next (previous) page
     showPage(page_ + ov, true);
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();
+}
+
+// B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
+void TrackScreen::onPage(int d) {
+  if (mixer_) return;
+  showPage(page_ + d, list_.barSelected());
+}
+
+// B: leaves the edit with the value kept (as the second click), a name edit gets fixNames().
+void TrackScreen::onBack() {
+  if (!mixer_ && list_.editing()) leaveEdit();
 }
 
 void TrackScreen::onTouch(const TouchEvent& ev) {
@@ -316,6 +357,10 @@ void TrackScreen::toggleMuteSolo(int track, bool solo) {
 }
 
 void TrackScreen::mixerInput(const hw::InputEvent& ev) {
+  if (ev.type == hw::InputType::EditTurn) {  // A + turn: master volume, Shift = x10
+    setMasterVol(app_.project().masterVol + ev.delta * (ev.shift ? 10 : 1));
+    return;
+  }
   if (ev.type != hw::InputType::EncTurn) return;
   if (ev.shift) {  // A / B: the same strip in the other half
     app_.setCurTrack((app_.curTrack() + kStrips) % mt::kTracks);

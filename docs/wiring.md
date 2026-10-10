@@ -1,7 +1,7 @@
 
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift and eight track buttons with LEDs, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
+Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons with LEDs, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
@@ -33,6 +33,8 @@ PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
   P13 ──────── encoder shaft button ── GND
   P14 ──────── Play ── GND
   P15 ──────── Shift ── GND
+  P16 ──────── B ── GND
+  P17 ──────── A ── GND
   P1x ──────── LED cathode;  LED anode ──[R]── 3.3 V
 
 PCM5102A                                 MAX97220
@@ -43,7 +45,7 @@ PCM5102A                                 MAX97220
   L / R ── line out, to the amplifier      OUT L / OUT R / GND ── jack Tip / Ring / Sleeve
 ```
 
-*Every "GND" is a wire to the board's common GND; every "3.3 V" goes to the board's 3V3 pin. Encoder A and B use the board's internal pull-ups, and the PCF8575 pins have their own weak pull-ups, so the buttons and encoder need no external resistors. The PCF8575 is required: without it the encoder button, Play, Shift and the track buttons do not work.*
+*Every "GND" is a wire to the board's common GND; every "3.3 V" goes to the board's 3V3 pin. Encoder A and B use the board's internal pull-ups, and the PCF8575 pins have their own weak pull-ups, so the buttons and encoder need no external resistors. The PCF8575 is required: without it the encoder button, Play, Shift, A, B and the track buttons do not work.*
 
 ## Connection table
 
@@ -82,7 +84,7 @@ PCM5102A                                 MAX97220
 | `PCF P13`                         | `encoder shaft button`              | other pin to GND                                            |
 | `PCF P14`                         | `Play button`                       | other pin to GND                                            |
 | `PCF P15`                         | `Shift button`                      | other pin to GND                                            |
-| `PCF P16 / P17`                   | `button A / B`                      | other pin to GND; reserved, not used by the firmware yet    |
+| `PCF P16 / P17`                   | `button B / A`                      | other pin to GND                                            |
 | `PCF P10 … P17`                   | `LED 1 … 8 cathode`                 | anode through its own resistor to 3.3 V; P13–P17 are taken by the buttons, so LEDs 4–8 need other pins (`kTrackLedBit`) |
 
 The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, no LEDs are fitted, and P11 is free.
@@ -159,4 +161,4 @@ With white and blue LEDs at 3.3 V the voltage headroom is only 0.2–0.4 V, and 
 4.  Check whether the module has pull-up resistors on SDA and SCL (usually 4.7–10 kΩ to VCC). If not, add 4.7 kΩ from each line to 3.3 V.
 5.  Power the module only from 3.3 V, not 5 V: otherwise 5 V reaches the board's GPIOs.
 6.  Check that TXD0 and RXD0 are not shorted to each other or to GND. Do not touch GPIO 1, 2, 42: they are used by the built-in RS485.
-7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play and Shift do not work either); `trackio: PCF8575 at 0x..` means it was found.
+7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play, Shift, A and B do not work either); `trackio: PCF8575 at 0x..` means it was found.

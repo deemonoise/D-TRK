@@ -19,7 +19,7 @@ The built-in display, touch panel and microSD slot are already routed on the boa
 | 13 | DAC BCK | PCM5102A module, see [Sound](#sound) |
 | 14 | DAC LCK (LRCK, WS) | |
 | 21 | DAC DIN | |
-| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, track buttons | Debug connector (TXD0 / RXD0), **required**, see below |
+| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, **A**, **B**, track buttons | Debug connector (TXD0 / RXD0), **required**, see below |
 | 3.3V | MIDI OUT | through a 33 Ω resistor to the Ring of the TRS jack |
 | GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack, DAC GND |
 
@@ -33,7 +33,7 @@ It is a good idea to add 10 nF capacitors from A and B to GND — they reduce co
 
 ### Buttons on the PCF8575 (required)
 
-The encoder button, Play, Shift and 8 MX track buttons with 8 3 mm LEDs in the switch windows are connected via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the track buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work: the encoder button, Play, Shift and the track buttons do nothing.
+The encoder button, Play, Shift, A, B and 8 MX track buttons with 8 3 mm LEDs in the switch windows are connected via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the track buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work: the encoder button, Play, Shift, A, B and the track buttons do nothing.
 
 | PCF8575 | Connection |
 |---|---|
@@ -45,10 +45,10 @@ The encoder button, Play, Shift and 8 MX track buttons with 8 3 mm LEDs in the s
 | P13 | encoder button (the shaft button), other pin to GND |
 | P14 | **Play** button, other pin to GND |
 | P15 | **Shift** button, other pin to GND |
-| P16 / P17 | buttons **A** / **B** (under Shift / Play), other pin to GND; reserved, the firmware does not use them yet |
+| P16 / P17 | buttons **B** / **A** (under Shift / Play), other pin to GND: hold-to-edit, tabs, back, undo, solo and pattern queue ([manual](docs/manual.md#abkeys)) |
 | P10–P17 | LED 1–8 cathodes, except P13–P17 (taken by the buttons above) |
 
-The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`): if a pin is damaged, a button can be moved to the pin of an unfitted LED (number 8–15 = P10–P17), and that LED marked as `0xFF`. Since P13–P17 now carry the encoder button, Play, Shift, A and B, LEDs 4–8 need other free pins or stay unfitted (`0xFF`). On the author's unit P00 and P10 read low, so button 1 lives on P12, no LEDs are fitted, and P11 is free.
+The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`, `kBtnABit`, `kBtnBBit`): if a pin is damaged, a button can be moved to the pin of an unfitted LED (number 8–15 = P10–P17), and that LED marked as `0xFF`. Since P13–P17 now carry the encoder button, Play, Shift, A and B, LEDs 4–8 need other free pins or stay unfitted (`0xFF`). On the author's unit P00 and P10 read low, so button 1 lives on P12, no LEDs are fitted, and P11 is free.
 
 Safe boot (hold Shift at power-on) works as before: the firmware reads Shift from the expander before the autoload.
 
@@ -203,6 +203,7 @@ Details (INST tab, preset browser, DRUM machine table, SYNTH and wavetables, fx 
 - **Song mode** (BANK): each chain entry has a pattern, a transposition of melodic tracks (±24), a number of passes (x1–x16) and a mute scene (S1–S8) that is applied when the entry starts. The chain row reads `P05 +3 x2 S1`; Shift + turn in row edit mode selects the field.
 - **Mute scenes**: 8 tiles under the chain — tap recalls, long tap stores the current mutes, Shift + tap clears.
 - **Per-track length** (TRACK → Pat len): the track loops its first N steps within the pattern (polymeter); in GRID the steps beyond are grey, and the boundary is marked with a line.
+- **Per-track speed** (TRACK → Speed): 1/4, 1/2, x1, x2, x4 per track and pattern — x2 / x4 loop the track 2 / 4 times faster (x2 at 1/16 = 1/32), 1/2 / 1/4 stretch it across pattern passes; works with Pat len.
 - **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press is pause, as before.
 - **REC** (GRID menu): while playing, the track buttons write scale degrees into the playing step of the current track (on a drum track — lanes); Shift + N erases.
 - **PERF** (GRID menu): an effect while the button is held — 1 RAT 2, 2 RAT 4, 3 filter closed, 4 open, 5 delay, 6 short DECAY, 7 fade, 8 mute.
@@ -222,7 +223,7 @@ More in the [manual](docs/manual.md#render).
 ## Interface
 
 - **Themes**: PROJ → SYS → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
-- **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or use the encoder on the page tabs and click (Shift+click — back); the list wraps around.
+- **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or use the encoder on the page tabs and click (Shift+click — back), or B + Shift + turn; the list wraps around.
 - **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
 - **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in PROJ → SYS.
 - **Wi-Fi page**: tabs per section, scrollable lists with a filter.

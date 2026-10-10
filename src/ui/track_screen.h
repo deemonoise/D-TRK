@@ -11,8 +11,9 @@ namespace ui {
 // MIXER view (the MIX tab, setMixer): 8 strips of the half holding the cursor (A = 1-8, B = 9-16, as
 // GRID's Overview), the master strip MAIN and the output scope below. Strip: name, volume fader
 // (INT), delay / reverb send of its instrument (read only), M / S. Turn = master volume, Shift + turn
-// = the other half; a track button held + turn = that track's volume, Shift + track button = mute
-// (App, every screen). Touch: the fader follows the finger, M / S toggle (solo only here).
+// = the other half, A + turn = master volume (Shift = x10); a track button held + turn = that track's
+// volume, Shift + track button = mute (App, every screen). Touch: the fader follows the finger, M / S
+// toggle (solo only here).
 class TrackScreen : public Screen {
  public:
   explicit TrackScreen(App& app);
@@ -20,6 +21,8 @@ class TrackScreen : public Screen {
   void onLeave() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
+  void onPage(int d) override;
+  void onBack() override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
   // MIX tab (true) or TRACK tab (false): the mixer view or the track settings.
@@ -27,7 +30,7 @@ class TrackScreen : public Screen {
 
  private:
   // Rows in page order: MAIN, NOTE, MIDI (contiguous runs, see kPageFirst).
-  enum Row : int { kName, kOut, kInstr, kVol, kMute, kSolo, kVel, kGate, kPatLen, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
+  enum Row : int { kName, kOut, kInstr, kVol, kMute, kSolo, kVel, kGate, kPatLen, kSpeed, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
   enum Page : int { kPgMain, kPgNote, kPgMidi, kPages };
   static constexpr int kPageFirst[kPages + 1] = {kName, kVel, kChannel, kRows};
   static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
@@ -83,6 +86,8 @@ class TrackScreen : public Screen {
   void followTrack();
   int patLenPat_ = -1;      // the pattern of that run
   uint32_t patLenSeq_ = 0;  // App::editSeq() right after the last Pat len edit: one undo snapshot per run
+  int speedPat_ = -1;       // the same for Speed
+  uint32_t speedSeq_ = 0;
   ParamList list_{kAreaY + kHeaderH + PageBar::kH};
   int y0_ = kAreaY;
   int namePos_ = 0;

@@ -35,6 +35,7 @@ void ParamList::beginEdit() {
 
 bool ParamList::cancelEdit() {
   if (!edit_) return false;
+  hold_ = false;
   void* dst = snapOk_ ? scope_() : nullptr;  // asked while still editing, as in beginEdit()
   edit_ = false;
   dragAcc_ = 0;
@@ -76,6 +77,18 @@ void ParamList::ensureVisible() {
   if (top_ < 0) top_ = 0;
 }
 
+bool ParamList::holdEdit() {
+  if (sel_ < 0 || sel_ >= count_ || !params_[sel_].edit) return false;
+  if (!edit_) {
+    ensureVisible();  // never edit a row scrolled out of sight
+    edit_ = true;
+    hold_ = true;
+    dragAcc_ = 0;
+    beginEdit();
+  }
+  return true;
+}
+
 int ParamList::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
   switch (ev.type) {
@@ -101,8 +114,17 @@ int ParamList::onInput(const hw::InputEvent& ev) {
       }
       ensureVisible();  // never edit a row scrolled out of sight
       edit_ = !edit_;
+      hold_ = false;
       if (edit_) beginEdit();
       break;
+    case InputType::EditTurn:
+      if (holdEdit()) edit(ev.delta * (ev.shift ? 10 : 1));
+      break;
+    case InputType::EditEnd:  // A released: a hold edit keeps its value
+      if (hold_) edit_ = false;
+      hold_ = false;
+      break;
+    case InputType::EditCancel: cancelEdit(); break;
     default: break;
   }
   return 0;
@@ -135,6 +157,7 @@ void ParamList::onTouch(const TouchEvent& ev) {
   if (ev.type != TouchType::Tap) return;
   const int r = rowAt(ev.y);
   if (r < 0) return;
+  hold_ = false;
   if (r == sel_) {
     edit_ = !edit_;
     if (edit_) beginEdit();

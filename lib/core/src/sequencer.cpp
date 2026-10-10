@@ -44,6 +44,7 @@ void Sequencer::anchorAt(uint64_t now) {
   playStartT_ = now;
   histN_ = 0;
   heardPos_ = pos_;
+  heardLoop_ = loop_;
   heardPat_ = cur_;
   heardSong_ = songPos_;
   heardStepT_ = now;
@@ -101,6 +102,7 @@ void Sequencer::pause(uint64_t now, MidiSink& out) {
   out.send(&s, 1);
   synthTransport(now, out, 0xFC);
   heardPos_ = pos_;
+  heardLoop_ = loop_;
   heardPat_ = cur_;
   heardSong_ = songPos_;
   state_ = State::Paused;
@@ -133,6 +135,7 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   pos_ = 0;
   heardPos_ = 0;
   loop_ = 0;
+  heardLoop_ = 0;
   rep_ = 0;
   for (PerfFx& f : perf_) f = PerfFx::None;
   perfMuted_ = 0;
@@ -167,7 +170,9 @@ void Sequencer::queuePattern(uint8_t idx) {
     cur_ = idx;
     queued_ = -1;
     pos_ = 0;
+    loop_ = 0;  // a new pattern counts its passes from 0 (CND, slow tracks)
     heardPos_ = 0;
+    heardLoop_ = 0;
     heardPat_ = cur_;
   }
 }
@@ -362,6 +367,7 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   for (int i = 0; i < histN_; ++i) {
     if (hist_[i].t <= now) {
       heardPos_ = hist_[i].pos;
+      heardLoop_ = hist_[i].posLoop;
       heardPat_ = hist_[i].pat;
       heardSong_ = hist_[i].song;
       heardStepT_ = hist_[i].t;
@@ -375,6 +381,20 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   if (planAt < next) next = planAt;
   if (!heap_.empty() && heap_.top().t < next) next = heap_.top().t;
   return next;
+}
+
+// Swing (odd steps) or the groove template's shift of pattern step pos, in us.
+int64_t Sequencer::stepShift(const Pattern& pt, int pos, uint32_t su) const {
+  if (pt.groove) return static_cast<int64_t>(su) * grooveAt(pt.groove).shift[pos % 16] / 100;
+  if (!(pos & 1)) return 0;
+  const uint8_t sw = pt.swing < 50 ? 50 : (pt.swing > 75 ? 75 : pt.swing);
+  return static_cast<int64_t>(static_cast<uint64_t>(su) * (sw - 50) / 50);
+}
+
+Sequencer::TrackTiming Sequencer::timing(const Pattern& pt, int tr, uint32_t su) const {
+  const TrackSpeed sp = toSpeed(pt.trackSpeed[tr]);
+  const int mul = speedMul(sp), div = speedDiv(sp);
+  return {mul, su / mul * div, static_cast<uint16_t>(ticks() / mul * div)};
 }
 
 void Sequencer::scheduleStep(uint64_t now) {
@@ -403,103 +423,35 @@ void Sequencer::scheduleStep(uint64_t now) {
   if (pos_ >= p_.patterns[cur_].length) endOfPass();  // length shrank mid-pass
   Pattern& pat = p_.patterns[cur_];
   const uint32_t su = stepUs();
-  uint64_t t = tickTime(stepTick_);
-  ExpandCtx c = ctx(su);
-  if (pat.groove) {  // the groove template replaces the swing: shift and accent per step of 16
-    const Groove& g = grooveAt(pat.groove);
-    const int64_t sh = static_cast<int64_t>(su) * g.shift[pos_ % 16] / 100;
-    t = static_cast<uint64_t>(static_cast<int64_t>(t) + sh);
-    c.velPct = g.vel[pos_ % 16];
-  } else if (pos_ & 1) {
-    const uint8_t sw = pat.swing < 50 ? 50 : (pat.swing > 75 ? 75 : pat.swing);
-    t += static_cast<uint64_t>(su) * (sw - 50) / 50;
-  }
+  const uint64_t t = static_cast<uint64_t>(static_cast<int64_t>(tickTime(stepTick_)) + stepShift(pat, pos_, su));
+  // The groove template replaces the swing: shift and accent per step of 16.
+  const uint8_t velPct = pat.groove ? grooveAt(pat.groove).vel[pos_ % 16] : 100;
+  // Sub-steps of a fast track share the slot up to the next (shifted) step evenly.
+  const int nextPos = pos_ + 1 < pat.length ? pos_ + 1 : 0;
+  const int64_t nextT = static_cast<int64_t>(tickTime(stepTick_ + ticks())) + stepShift(pat, nextPos, su);
+  const uint64_t slot = nextT > static_cast<int64_t>(t) ? static_cast<uint64_t>(nextT) - t : 0;
   // Nothing may land in the past; a shifted note keeps its gate.
   const int64_t earliest = static_cast<int64_t>(now > playStartT_ ? now : playStartT_);
 
-  ExpandOut& ex = ex_;
   for (int tr = 0; tr < kTracks; ++tr) {
-    Step s = pat.steps[tr][stepIndex(pat, tr, pos_)];
-    adjustStep(s, tr);
-    const bool aud = audible(tr, t);
-    const bool hasFx = s.hasFx();
-    if (!s.hasNote()) {
-      // OFF ends a tie (and every INT voice); controls on OFF or on a step without a note still go out.
-      // An ARS note due here counts as the step's note for the synth (its fx lock it).
-      StepArp& a = arps_[tr];
-      bool stop = s.note == kNoteOff;
-      if (stop) pushOff(tr, t);
-      const bool arpDue = a.n && !stop && a.wait + 1 >= a.div;
-      if (hasFx && aud && expand(s, tr, c, ex)) {
-        pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), arpDue && ex.offUs < 0);
-        pushControls(ex, t, earliest, static_cast<uint8_t>(tr));
-        if (ex.offUs >= 0) {
-          pushOff(tr, atLeast(static_cast<int64_t>(t) + ex.offUs, earliest));
-          stop = true;
-        }
-      }
-      if (stop) a.n = 0;
-      else arpStep(tr, t, earliest, aud);
-      continue;
-    }
-    if (!aud) arps_[tr].n = 0;
-    if (!aud || !expand(s, tr, c, ex)) {  // a step failing CND / PRB leaves a running arp alone
-      releaseTie(tr, t + kTieOverlapUs);
-      continue;
-    }
-    arps_[tr] = ex.arp;
-    if (ex.offUs >= 0) arps_[tr].n = 0;
-    pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), true);
-    int i = pushControls(ex, t, earliest, static_cast<uint8_t>(tr));  // index of the first NoteOn
-    uint64_t shift = 0;
-    auto at = [&](const StepEvent& e) {
-      const int64_t et = static_cast<int64_t>(t) + e.offsetUs;
-      if (e.kind == EvKind::NoteOn) shift = et < earliest ? static_cast<uint64_t>(earliest - et) : 0;
-      return static_cast<uint64_t>(et) + shift;
-    };
-    Tie& tie = ties_[tr];
-    uint32_t id = 0;
-    uint64_t onT = 0;
-    bool keep = false;  // the latest NoteOn made it into the heap
-    const StepEvent& first = ex.ev[i];  // stale when the step has no NoteOn (empty KIT mask)
-    if (tie.on && i < ex.count && tie.ch == first.ch && tie.note == first.note) {
-      // Same pitch: the held note goes on; this step's gate (or next tie) ends it.
-      // If another track took the voice meanwhile, the continuation sounds it again.
-      const uint64_t on = at(first);
-      push(on > tie.onT ? on : tie.onT, 0x90 | tie.ch, tie.note, first.vel, tie.id, true, 3, tr);
-      if (i + 1 == ex.count) {  // tied again: the next release must follow the continuation
-        if (on > tie.onT) tie.onT = on;
-        continue;
-      }
-      const uint64_t off = at(ex.ev[i + 1]);
-      const uint64_t minOff = tie.onT + kMinGateUs;
-      push(off > minOff ? off : minOff, 0x80 | tie.ch, tie.note, 0, tie.id, false, 3, tr);
-      keep = true;
-      tie.on = false;
-      i += 2;
-    } else {
-      releaseTie(tr, t + kTieOverlapUs);
-    }
-    for (; i < ex.count; ++i) {
-      const StepEvent& e = ex.ev[i];
-      const uint64_t et = at(e);
-      if (e.kind == EvKind::NoteOn) {
-        id = newId();
-        onT = et;
-        keep = push(et, 0x90 | e.ch, e.note, e.vel, id, false, 3, tr);
-      } else if (keep) {
-        push(et, 0x80 | e.ch, e.note, 0, id, false, 3, tr);
+    const TrackTiming tm = timing(pat, tr, su);
+    ExpandCtx tc = ctx(tm.su, tm.tps);
+    tc.velPct = velPct;
+    for (int k = 0; k < tm.mul; ++k) {
+      const int idx = trackStepAt(pat, tr, pos_, loop_, k);
+      if (idx < 0) break;  // a slow track rests on this pattern step
+      const uint64_t tk = t + slot * k / tm.mul;
+      if (tm.mul > 1 && t + slot * (k + 1) / tm.mul <= now) {
+        skipTrackStep(tr, pat.steps[tr][idx], tk, now, tc, tm.tps);  // after a stall: as a missed step
+      } else {
+        playTrackStep(tr, pat.steps[tr][idx], tk, tc, tm.tps, earliest);
       }
     }
-    if (ex.tie && keep) {
-      const StepEvent& last = ex.ev[ex.count - 1];
-      tie = {true, last.ch, last.note, id, onT};
-    }
-    if (ex.offUs >= 0) pushOff(tr, atLeast(static_cast<int64_t>(t) + ex.offUs, earliest) + shift);
   }
 
   h.t = t;
   h.pos = pos_;
+  h.posLoop = loop_;
   h.pat = cur_;
   h.song = static_cast<int8_t>(songPos_);
   ++stepSerial_;
@@ -509,18 +461,100 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.scene = sceneSet_;
 }
 
+void Sequencer::playTrackStep(int tr, const Step& raw, uint64_t t, const ExpandCtx& c, uint16_t tps,
+                              int64_t earliest) {
+  ExpandOut& ex = ex_;
+  Step s = raw;
+  adjustStep(s, tr);
+  const bool aud = audible(tr, t);
+  const bool hasFx = s.hasFx();
+  if (!s.hasNote()) {
+    // OFF ends a tie (and every INT voice); controls on OFF or on a step without a note still go out.
+    // An ARS note due here counts as the step's note for the synth (its fx lock it).
+    StepArp& a = arps_[tr];
+    bool stop = s.note == kNoteOff;
+    if (stop) pushOff(tr, t);
+    const bool arpDue = a.n && !stop && a.wait + 1 >= a.div;
+    if (hasFx && aud && expand(s, tr, c, ex)) {
+      pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), arpDue && ex.offUs < 0, tps);
+      pushControls(ex, t, earliest, static_cast<uint8_t>(tr));
+      if (ex.offUs >= 0) {
+        pushOff(tr, atLeast(static_cast<int64_t>(t) + ex.offUs, earliest));
+        stop = true;
+      }
+    }
+    if (stop) a.n = 0;
+    else arpStep(tr, t, earliest, aud, c.stepUs);
+    return;
+  }
+  if (!aud) arps_[tr].n = 0;
+  if (!aud || !expand(s, tr, c, ex)) {  // a step failing CND / PRB leaves a running arp alone
+    releaseTie(tr, t + kTieOverlapUs);
+    return;
+  }
+  arps_[tr] = ex.arp;
+  if (ex.offUs >= 0) arps_[tr].n = 0;
+  pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), true, tps);
+  int i = pushControls(ex, t, earliest, static_cast<uint8_t>(tr));  // index of the first NoteOn
+  uint64_t shift = 0;
+  auto at = [&](const StepEvent& e) {
+    const int64_t et = static_cast<int64_t>(t) + e.offsetUs;
+    if (e.kind == EvKind::NoteOn) shift = et < earliest ? static_cast<uint64_t>(earliest - et) : 0;
+    return static_cast<uint64_t>(et) + shift;
+  };
+  Tie& tie = ties_[tr];
+  uint32_t id = 0;
+  uint64_t onT = 0;
+  bool keep = false;  // the latest NoteOn made it into the heap
+  const StepEvent& first = ex.ev[i];  // stale when the step has no NoteOn (empty KIT mask)
+  if (tie.on && i < ex.count && tie.ch == first.ch && tie.note == first.note) {
+    // Same pitch: the held note goes on; this step's gate (or next tie) ends it.
+    // If another track took the voice meanwhile, the continuation sounds it again.
+    const uint64_t on = at(first);
+    push(on > tie.onT ? on : tie.onT, 0x90 | tie.ch, tie.note, first.vel, tie.id, true, 3, tr);
+    if (i + 1 == ex.count) {  // tied again: the next release must follow the continuation
+      if (on > tie.onT) tie.onT = on;
+      return;
+    }
+    const uint64_t off = at(ex.ev[i + 1]);
+    const uint64_t minOff = tie.onT + kMinGateUs;
+    push(off > minOff ? off : minOff, 0x80 | tie.ch, tie.note, 0, tie.id, false, 3, tr);
+    keep = true;
+    tie.on = false;
+    i += 2;
+  } else {
+    releaseTie(tr, t + kTieOverlapUs);
+  }
+  for (; i < ex.count; ++i) {
+    const StepEvent& e = ex.ev[i];
+    const uint64_t et = at(e);
+    if (e.kind == EvKind::NoteOn) {
+      id = newId();
+      onT = et;
+      keep = push(et, 0x90 | e.ch, e.note, e.vel, id, false, 3, tr);
+    } else if (keep) {
+      push(et, 0x80 | e.ch, e.note, 0, id, false, 3, tr);
+    }
+  }
+  if (ex.tie && keep) {
+    const StepEvent& last = ex.ev[ex.count - 1];
+    tie = {true, last.ch, last.note, id, onT};
+  }
+  if (ex.offUs >= 0) pushOff(tr, atLeast(static_cast<int64_t>(t) + ex.offUs, earliest) + shift);
+}
+
 // INT tracks: tells the synth a step starts (see Synth: 0xF5 0xF0), with the controls' time.
 // Sent before every step with a note (it ends the previous step's fx) and before synth fx.
 void Sequencer::pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note,
-                              bool nudge) {
+                              uint16_t tps, bool nudge) {
   if (!internal(track) || ex.count == 0) return;
   bool fx = false;
   for (int i = 0; i < ex.count && !fx; ++i) fx = ex.ev[i].kind == EvKind::SynthFx;
   if (!note && !fx) return;
   int64_t et = static_cast<int64_t>(t) + (nudge ? ex.ev[0].offsetUs : 0);
   if (et < earliest) et = earliest;
-  const uint8_t tps = static_cast<uint8_t>(ticks() > 127 ? 127 : ticks());
-  push(static_cast<uint64_t>(et), 0xF5, kSynthStep, static_cast<uint8_t>(tps | (note ? 0x80 : 0)), 0, false, 3,
+  const uint8_t tp = static_cast<uint8_t>(tps > 127 ? 127 : tps);
+  push(static_cast<uint64_t>(et), 0xF5, kSynthStep, static_cast<uint8_t>(tp | (note ? 0x80 : 0)), 0, false, 3,
        track);
 }
 
@@ -553,32 +587,43 @@ void Sequencer::skipStep(uint64_t now) {
   if (pos_ >= p_.patterns[cur_].length) endOfPass();
   const Pattern& pat = p_.patterns[cur_];
   const uint64_t t = tickTime(stepTick_);
-  const ExpandCtx c = ctx(stepUs());
+  const uint64_t slot = tickTime(stepTick_ + ticks()) - t;
+  const uint32_t su = stepUs();
   for (int tr = 0; tr < kTracks; ++tr) {
-    Step s = pat.steps[tr][stepIndex(pat, tr, pos_)];
-    adjustStep(s, tr);
-    if (s.note == kNoteOff) pushOff(tr, t);
-    else if (s.hasNote()) releaseTie(tr, t);
-    const bool aud = audible(tr, t);
-    // The arp follows the step as scheduleStep would have played it (its notes are dropped).
-    StepArp& a = arps_[tr];
-    bool stopArp = s.note == kNoteOff || (s.hasNote() && !aud);
-    if ((s.hasFx() || s.hasNote()) && aud && expand(s, tr, c, ex_)) {
-      pushStepStart(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false, false);
-      pushControls(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false);  // all at now, no nudge
-      if (s.hasNote()) a = ex_.arp;
-      if (ex_.offUs >= 0) {
-        pushOff(tr, now);
-        stopArp = true;
-      }
-    } else if (s.hasNote() && aud) {
-      continue;  // CND / PRB failed: a running arp goes on
+    const TrackTiming tm = timing(pat, tr, su);
+    const ExpandCtx c = ctx(tm.su, tm.tps);
+    for (int k = 0; k < tm.mul; ++k) {
+      const int idx = trackStepAt(pat, tr, pos_, loop_, k);
+      if (idx < 0) break;  // a slow track rests on this pattern step
+      skipTrackStep(tr, pat.steps[tr][idx], t + slot * k / tm.mul, now, c, tm.tps);
     }
-    if (stopArp) a.n = 0;
-    else if (!s.hasNote()) arpStep(tr, t, static_cast<int64_t>(now), false);  // counted, not played
   }
   stepTick_ += ticks();
   if (++pos_ >= pat.length) endOfPass();
+}
+
+void Sequencer::skipTrackStep(int tr, const Step& raw, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps) {
+  Step s = raw;
+  adjustStep(s, tr);
+  if (s.note == kNoteOff) pushOff(tr, t);
+  else if (s.hasNote()) releaseTie(tr, t);
+  const bool aud = audible(tr, t);
+  // The arp follows the step as scheduleStep would have played it (its notes are dropped).
+  StepArp& a = arps_[tr];
+  bool stopArp = s.note == kNoteOff || (s.hasNote() && !aud);
+  if ((s.hasFx() || s.hasNote()) && aud && expand(s, tr, c, ex_)) {
+    pushStepStart(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false, tps, false);
+    pushControls(ex_, now, static_cast<int64_t>(now), static_cast<uint8_t>(tr), false);  // all at now, no nudge
+    if (s.hasNote()) a = ex_.arp;
+    if (ex_.offUs >= 0) {
+      pushOff(tr, now);
+      stopArp = true;
+    }
+  } else if (s.hasNote() && aud) {
+    return;  // CND / PRB failed: a running arp goes on
+  }
+  if (stopArp) a.n = 0;
+  else if (!s.hasNote()) arpStep(tr, t, static_cast<int64_t>(now), false, c.stepUs);  // counted, not played
 }
 
 void Sequencer::endOfPass() {
@@ -717,7 +762,7 @@ void Sequencer::releaseAllTies(uint64_t t) {
   stopArps();
 }
 
-void Sequencer::arpStep(int track, uint64_t t, int64_t earliest, bool aud) {
+void Sequencer::arpStep(int track, uint64_t t, int64_t earliest, bool aud, uint32_t su) {
   StepArp& a = arps_[track];
   if (!a.n || ++a.wait < a.div) return;
   a.wait = 0;
@@ -727,7 +772,7 @@ void Sequencer::arpStep(int track, uint64_t t, int64_t earliest, bool aud) {
   const int idx = a.mode == 3 ? static_cast<int>(rng_.below(all)) : arpIndex(a.mode, a.k, all);
   if (!aud) return;
   // Gate: a share of the arp's step span, ending before the next arp note.
-  const uint32_t span = stepUs() * a.div;
+  const uint32_t span = su * a.div;
   uint32_t gate = static_cast<uint32_t>(static_cast<uint64_t>(span) * a.gate / 100);
   if (gate + kMinGateUs > span) gate = span > 2 * kMinGateUs ? span - kMinGateUs : kMinGateUs;
   if (gate < kMinGateUs) gate = kMinGateUs;

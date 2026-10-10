@@ -414,6 +414,44 @@ void test_lfo_sync_and_refs() {
   TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfo[2].dest);
 }
 
+void test_track_speed_factors() {
+  TEST_ASSERT_EQUAL(1, speedMul(TrackSpeed::X1));
+  TEST_ASSERT_EQUAL(2, speedMul(TrackSpeed::X2));
+  TEST_ASSERT_EQUAL(4, speedMul(TrackSpeed::X4));
+  TEST_ASSERT_EQUAL(1, speedMul(TrackSpeed::Half));
+  TEST_ASSERT_EQUAL(2, speedDiv(TrackSpeed::Half));
+  TEST_ASSERT_EQUAL(4, speedDiv(TrackSpeed::Quarter));
+  TEST_ASSERT_EQUAL(1, speedDiv(TrackSpeed::X4));
+  TEST_ASSERT_EQUAL_STRING("x2", speedName(TrackSpeed::X2));
+  TEST_ASSERT_EQUAL_STRING("1/4", speedName(TrackSpeed::Quarter));
+}
+
+void test_track_step_at() {
+  Pattern pt;
+  pt.clear();
+  pt.length = 16;
+  // x1: as stepIndex today, with polymeter.
+  TEST_ASSERT_EQUAL(5, trackStepAt(pt, 0, 5, 0, 0));
+  pt.trackLen[0] = 3;
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 0, 5, 7, 0));
+  pt.trackLen[0] = 0;
+  // x2: two track steps per pattern step, wraps at the track length.
+  pt.trackSpeed[1] = static_cast<uint8_t>(TrackSpeed::X2);
+  TEST_ASSERT_EQUAL(10, trackStepAt(pt, 1, 5, 0, 0));
+  TEST_ASSERT_EQUAL(11, trackStepAt(pt, 1, 5, 0, 1));
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 1, 9, 0, 0));  // 18 % 16
+  // 1/2: plays on even counts, the whole track over two passes.
+  pt.trackSpeed[2] = static_cast<uint8_t>(TrackSpeed::Half);
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 2, 4, 0, 0));
+  TEST_ASSERT_EQUAL(-1, trackStepAt(pt, 2, 5, 0, 0));  // not this pattern step
+  TEST_ASSERT_EQUAL(8, trackStepAt(pt, 2, 0, 1, 0));   // (16 + 0) / 2
+  TEST_ASSERT_EQUAL(15, trackStepAt(pt, 2, 14, 1, 0));
+  TEST_ASSERT_EQUAL(0, trackStepAt(pt, 2, 0, 2, 0));
+  // Bad stored value plays as x1.
+  pt.trackSpeed[3] = 99;
+  TEST_ASSERT_EQUAL(5, trackStepAt(pt, 3, 5, 0, 0));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_step_is_14_bytes_and_empty_by_default);
@@ -450,5 +488,7 @@ int main() {
   RUN_TEST(test_kit_defaults_and_drum_track);
   RUN_TEST(test_sound_fx_defaults);
   RUN_TEST(test_lfo_sync_and_refs);
+  RUN_TEST(test_track_speed_factors);
+  RUN_TEST(test_track_step_at);
   return UNITY_END();
 }
