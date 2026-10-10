@@ -152,7 +152,7 @@ void takePreviewRequest() {
 
 // Internal RAM: touched every block.
 int16_t mono[kBlock];
-int16_t lr[kBlock * 2];
+int32_t lr[kBlock * 2];
 
 // The block clock steps by exactly kBlockUs (the DMA consumes samples at that rate), so the
 // delay stays constant whatever the wakeup jitter. It is set again at start (the DMA is filled
@@ -690,12 +690,11 @@ void run(void*) {
     }
     {  // after the scope: it shows the mix, the phones level only the headphones
       const int32_t g = phonesQ15.load(std::memory_order_relaxed);
+      // 32-bit output: the phones gain loses no bits, so a low level does not turn quiet tails
+      // into 16-bit grain. |mono * g| <= 2^30, doubled it fills the 32-bit range.
       // +1 LSB DC: the PCM5102A never sees digital silence, so its auto-mute does not click on/off
       // between notes (the output is AC-coupled, the offset is inaudible).
-      for (int i = 0; i < kBlock; ++i) {
-        const int32_t v = ((mono[i] * g) >> 15) + 1;
-        lr[2 * i] = lr[2 * i + 1] = static_cast<int16_t>(v > 32767 ? 32767 : v);
-      }
+      for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = mono[i] * g * 2 + 1;
     }
     size_t written = 0;
     const int64_t w0 = esp_timer_get_time();
@@ -722,7 +721,7 @@ bool initI2s() {
 
   i2s_std_config_t sc = {
       .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kRate),
-      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
       .gpio_cfg =
           {
               .mclk = I2S_GPIO_UNUSED,
@@ -733,7 +732,7 @@ bool initI2s() {
               .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
           },
   };
-  // 16-bit samples in 32-bit slots: BCK = 64 fs, which the PCM5102A PLL locks to without MCLK.
+  // 32-bit samples in 32-bit slots: BCK = 64 fs, which the PCM5102A PLL locks to without MCLK.
   sc.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
   // The default WS width is the data width (16): WS would drop mid-slot and garble the right channel.
   sc.slot_cfg.ws_width = 32;
