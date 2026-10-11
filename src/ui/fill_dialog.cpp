@@ -1,7 +1,7 @@
 #include "fill_dialog.h"
 #include <algorithm>
+#include <esp_heap_caps.h>
 #include <esp_random.h>
-#include <new>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
@@ -15,9 +15,11 @@ namespace {
 const char* const kWhereNames[] = {"EVERY N", "EUCLID", "RANDOM %"};
 const char* const kValueNames[] = {"CONST", "RAMP", "RANDOM"};
 const char* const kModeNames[] = {"OVERWRITE", "EMPTY ONLY", "NOTES ONLY"};
+const char* const kTypeNames[] = {"FILL", "ARP", "CHORDS", "BASS"};
 static_assert(sizeof(kWhereNames) / sizeof(kWhereNames[0]) == static_cast<size_t>(mt::FillWhere::Count), "where names");
 static_assert(sizeof(kValueNames) / sizeof(kValueNames[0]) == static_cast<size_t>(mt::FillValue::Count), "value names");
 static_assert(sizeof(kModeNames) / sizeof(kModeNames[0]) == static_cast<size_t>(mt::FillMode::Count), "mode names");
+static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<size_t>(mt::FillType::Count), "type names");
 constexpr int kTargets = 2 + mt::kFxSlots;  // NOTE, VEL, FX1..
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -31,10 +33,8 @@ E stepEnum(E e, int d) {
 }  // namespace
 
 FillDialog::FillDialog(App& app) : app_(app) {
-  params_[kType] = {"Type", [this](char* o, int n) { snprintf(o, n, "%s", f_->arp ? "ARP" : "FILL"); },
-                    [this](int d) {
-                      if (d) f_->arp = d > 0;
-                    }};
+  params_[kType] = {"Type", [this](char* o, int n) { snprintf(o, n, "%s", kTypeNames[static_cast<int>(f_->type)]); },
+                    [this](int d) { f_->type = stepEnum(f_->type, d); }};
   params_[kWhere] = {"Steps", [this](char* o, int n) { snprintf(o, n, "%s", kWhereNames[static_cast<int>(f_->where)]); },
                      [this](int d) { f_->where = stepEnum(f_->where, d); }};
   params_[kEvery] = {"Every", [this](char* o, int n) { snprintf(o, n, "%u", f_->every); },
@@ -99,8 +99,13 @@ FillDialog::FillDialog(App& app) : app_(app) {
                        snprintf(o, n, "%s", nn);
                      },
                      [this](int d) { a_->root = clampu8(a_->root + d, 0, 127); }};
-  params_[kAChord] = {"Chord", [this](char* o, int n) { snprintf(o, n, "%s", mt::chordName(a_->chord)); },
-                      [this](int d) { a_->chord = clampu8(a_->chord + d, 0, mt::kChordCount - 1); }};
+  params_[kAChord] = {"Chord",
+                      [this](char* o, int n) {
+                        char l[5];
+                        mt::chordLabel(a_->chord, l);
+                        snprintf(o, n, "%s", l);
+                      },
+                      [this](int d) { a_->chord = clampu8(a_->chord + d, 0, mt::kChordValues - 1); }};
   params_[kADest] = {"Dest",
                      [this](char* o, int n) {
                        snprintf(o, n, "T%d %s", a_->dest + 1, app_.project().tracks[a_->dest].name);
@@ -149,9 +154,11 @@ FillDialog::FillDialog(App& app) : app_(app) {
   params_[kReseed] = {"Reseed", [](char* o, int n) { snprintf(o, n, "CLICK / SHIFT+CLICK"); }, nullptr};
   params_[kOk] = {"OK", nullptr, nullptr};
   params_[kCancel] = {"Cancel", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
+  initGenParams();
   list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
   list_.setOnEdit([this] {
-    if (f_->arp && (!listed_ || a_->pattern != resolved_)) syncArp();
+    if (f_->type == mt::FillType::Arp && (!listed_ || a_->pattern != resolved_)) syncArp();
+    syncGen();
     buildRows();
     preview();
   });
@@ -218,6 +225,16 @@ void FillDialog::formatValue(uint8_t v, char* out, int n) const {
   }
 }
 
+uint32_t& FillDialog::seed() {
+  switch (f_->type) {
+    case mt::FillType::Arp: return a_->seed;
+    case mt::FillType::Chords: return c_->seed;
+    // Source PROGRESSION draws the chord progression (RANDOM / Mutate) from the chord spec's seed.
+    case mt::FillType::Bass: return b_->source == mt::BassSource::Progression ? c_->seed : b_->seed;
+    default: return f_->seed;
+  }
+}
+
 uint8_t FillDialog::stepValue(uint8_t v, int d) const {
   switch (f_->target) {
     case mt::FillTarget::Note: return clampu8(v + d, 0, 127);
@@ -233,11 +250,17 @@ void FillDialog::buildRows() {
   const bool seeded = f_->where == mt::FillWhere::Random || (values && f_->value == mt::FillValue::Random);
   params_[kFrom].label = f_->value == mt::FillValue::Const ? "Value" : "From";
   shownCount_ = 0;
-  auto add = [this](int id) {
-    shownIds_[shownCount_] = id;
-    shown_[shownCount_++] = params_[id];
-  };
-  if (f_->arp) {
+  if (f_->type == mt::FillType::Chords) {
+    buildChordRows();
+    list_.replaceParams(shown_, shownCount_);
+    return;
+  }
+  if (f_->type == mt::FillType::Bass) {
+    buildBassRows();
+    list_.replaceParams(shown_, shownCount_);
+    return;
+  }
+  if (f_->type == mt::FillType::Arp) {
     static const int kArpRows[] = {kType,   kASource, kARoot,  kAChord, kADest,  kAMode,  kAOct,
                                    kAPattern, kARate, kARotate, kAGate, kASwing, kAVelLo, kAVelHi,
                                    kASlide, kARoll,   kAGhost, kAMutate, kSeed, kReseed, kACapture,
@@ -247,7 +270,7 @@ void FillDialog::buildRows() {
     for (const int id : kArpRows) {
       if ((id == kARoot || id == kAChord) && !chord) continue;
       if ((id == kSeed || id == kReseed) && !arpSeeded) continue;
-      add(id);
+      addRow(id);
     }
     list_.replaceParams(shown_, shownCount_);
     return;
@@ -263,11 +286,16 @@ void FillDialog::buildRows() {
       case kValue: case kFrom: show = values; break;
       case kTo: show = values && f_->value != mt::FillValue::Const; break;
       case kSeed: case kReseed: show = seeded; break;
-      default: show = id < kASource || id > kACapture; break;  // ARP rows hidden
+      default: show = id < kASource || id >= kReseed; break;  // ARP / CHORDS / BASS rows hidden
     }
-    if (show) add(id);
+    if (show) addRow(id);
   }
   list_.replaceParams(shown_, shownCount_);
+}
+
+void FillDialog::addRow(int id) {
+  shownIds_[shownCount_] = id;
+  shown_[shownCount_++] = params_[id];
 }
 
 int FillDialog::listRow(int id) const {
@@ -296,10 +324,11 @@ void FillDialog::clampParams() {
   }
 }
 
-bool FillDialog::open(int pattern, const mt::Sel& sel, mt::FillSpec* f, mt::ArpSpec* a, bool drum) {
+bool FillDialog::open(int pattern, const mt::Sel& sel, mt::FillSpec* f, mt::ArpSpec* a, mt::ChordSpec* c,
+                      mt::BassSpec* b, bool drum) {
   saved_ = app_.undoScratch();
   if (!saved_) return false;
-  if (!userNames_) userNames_ = new (std::nothrow) char[kUserMax][hw::kNameMax];
+  if (!userNames_) userNames_ = allocNames();
   pattern_ = clampi(pattern, 0, mt::kPatterns - 1);
   const int plen = clampi(app_.project().patterns[pattern_].length, mt::kMinSteps, mt::kMaxSteps);
   sel_ = sel;
@@ -307,14 +336,22 @@ bool FillDialog::open(int pattern, const mt::Sel& sel, mt::FillSpec* f, mt::ArpS
   if (sel_.s0 > sel_.s1) sel_.s0 = sel_.s1;
   f_ = f;
   a_ = a;
+  c_ = c;
+  b_ = b;
   drum_ = drum;
   clampParams();
   if (a_->dest >= mt::kTracks) a_->dest = mt::kTracks - 1;
-  listed_ = false;  // the card is read only once the dialog shows ARP
+  if (c_->dest >= mt::kTracks) c_->dest = mt::kTracks - 1;
+  if (b_->dest >= mt::kTracks) b_->dest = mt::kTracks - 1;
+  listed_ = false;  // the card is read only once the dialog shows ARP (CHORDS / BASS: their files)
   resolved_ = -1;
   userCount_ = 0;
+  progListed_ = bassListed_ = false;
+  progResolved_ = rhythmResolved_ = bassResolved_ = -1;
+  progUserCount_ = bassUserCount_ = 0;
   touched_ = 0;
-  if (f_->arp) syncArp();
+  if (f_->type == mt::FillType::Arp) syncArp();
+  syncGen();
   // No lock: the engine never writes pattern data.
   *saved_ = app_.project().patterns[pattern_];
   seqAtOpen_ = app_.editSeq();
@@ -338,18 +375,35 @@ void FillDialog::preview() {
   mt::Project& p = app_.project();
   bool drumTr[mt::kTracks];
   for (int t = 0; t < mt::kTracks; ++t) drumTr[t] = p.trackIsDrum(t);
+  mt::ChordSeg segs[mt::kProgMax];
+  const int segN = f_->type == mt::FillType::Bass ? bassSegs(segs) : 0;
+  // PROGRESSION: one seed for the chord line and the bass variation (the Seed row edits c_->seed).
+  if (segN) b_->seed = c_->seed;
   engine::lockProject();
   restore();
-  if (f_->arp) {
-    touched_ |= static_cast<uint16_t>(1u << a_->dest);
-  } else {
-    for (int t = sel_.t0; t <= sel_.t1; ++t) touched_ |= static_cast<uint16_t>(1u << t);
+  switch (f_->type) {
+    case mt::FillType::Arp: touched_ |= static_cast<uint16_t>(1u << a_->dest); break;
+    case mt::FillType::Chords: touched_ |= static_cast<uint16_t>(1u << c_->dest); break;
+    case mt::FillType::Bass: touched_ |= static_cast<uint16_t>(1u << b_->dest); break;
+    default:
+      for (int t = sel_.t0; t <= sel_.t1; ++t) touched_ |= static_cast<uint16_t>(1u << t);
+      break;
   }
   const mt::ScaleType scale = static_cast<mt::ScaleType>(p.scaleType);
-  if (f_->arp)  // false on a drum Dest (its row shows red): nothing written
-    (void)mt::applyArp(*saved_, p.patterns[pattern_], sel_, *a_, arpPat_, p.scaleRoot, scale, drumTr);
-  else
-    mt::applyFill(p.patterns[pattern_], sel_, *f_, p.scaleRoot, scale, drumTr);
+  // The generators return false on a drum Dest (its row shows red): nothing written.
+  switch (f_->type) {
+    case mt::FillType::Arp:
+      (void)mt::applyArp(*saved_, p.patterns[pattern_], sel_, *a_, arpPat_, p.scaleRoot, scale, drumTr);
+      break;
+    case mt::FillType::Chords:
+      (void)mt::applyChords(p.patterns[pattern_], sel_, *c_, prog_, rhythmPat_, p.scaleRoot, scale, drumTr);
+      break;
+    case mt::FillType::Bass:
+      (void)mt::applyBass(*saved_, p.patterns[pattern_], sel_, *b_, bassPat_, p.scaleRoot, scale, segs, segN,
+                          drumTr);
+      break;
+    default: mt::applyFill(p.patterns[pattern_], sel_, *f_, p.scaleRoot, scale, drumTr); break;
+  }
   engine::unlockProject();
   app_.markDirty();
   ++previews_;
@@ -366,6 +420,16 @@ void FillDialog::ok() {
   // an arp's Dest may lie outside the selection).
   engine::lockProject();
   mt::Pattern& pt = app_.project().patterns[pattern_];
+  bool changed = false;  // a drum Dest / an empty source writes nothing: no undo step then
+  for (int t = 0; t < mt::kTracks && !changed; ++t)
+    if (touched_ & (1u << t)) changed = memcmp(pt.steps[t], saved_->steps[t], sizeof(pt.steps[t])) != 0;
+  if (!changed) {
+    engine::unlockProject();
+    // Back to the dirty state of open() (as cancel) unless something else was edited meanwhile.
+    if (app_.editSeq() == seqAtOpen_ + previews_) app_.rewindEditSeq(seqAtOpen_);
+    app_.toast("NOTHING WRITTEN");
+    return;
+  }
   auto swapTouched = [&] {
     for (int t = 0; t < mt::kTracks; ++t)
       if (touched_ & (1u << t)) std::swap_ranges(pt.steps[t], pt.steps[t] + mt::kMaxSteps, saved_->steps[t]);
@@ -374,7 +438,7 @@ void FillDialog::ok() {
   app_.pushUndo(static_cast<uint8_t>(pattern_));
   swapTouched();
   engine::unlockProject();
-  app_.toast(f_->arp ? "ARP" : "FILL");
+  app_.toast(kTypeNames[static_cast<int>(f_->type)]);
 }
 
 void FillDialog::cancel() {
@@ -389,6 +453,10 @@ void FillDialog::cancel() {
   if (app_.editSeq() == seqAtOpen_ + previews_) app_.rewindEditSeq(seqAtOpen_);
   else app_.markDirty();
   engine::post(engine::Cmd::ReleaseTies);
+}
+
+char (*FillDialog::allocNames())[hw::kNameMax] {
+  return static_cast<char(*)[hw::kNameMax]>(heap_caps_malloc(kUserMax * hw::kNameMax, MALLOC_CAP_SPIRAM));
 }
 
 void FillDialog::reseed() {
@@ -474,6 +542,10 @@ bool FillDialog::action(int row) {
   else if (row == kReseed) reseed();
   else if (row == kACapture)
     kb_.open("ARP NAME:", "", [this](const char* t) { capture(t); });
+  else if (row == kCCapture)
+    kb_.open("PROG NAME:", "", [this](const char* t) { captureProg(t); });
+  else if (row == kBCapture)
+    kb_.open("BASS NAME:", "", [this](const char* t) { captureBass(t); });
   else return false;
   app_.invalidate();
   return true;
@@ -519,7 +591,7 @@ void FillDialog::onTouch(const TouchEvent& ev) {
   if (ev.type == TouchType::Tap) {
     const int r = list_.rowAt(ev.y);
     const int id = rowId(r);
-    if (id == kOk || id == kCancel || id == kReseed || id == kACapture) {
+    if (id == kOk || id == kCancel || id == kReseed || id == kACapture || id == kCCapture || id == kBCapture) {
       list_.setSel(r);
       list_.setEdit(false);
       action(id);
@@ -545,9 +617,19 @@ void FillDialog::draw(LGFX_Sprite& s, int y0) {
   }
   char buf[48];
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
-  if (f_->arp) {
-    const int n = snprintf(buf, sizeof(buf), "ARP T%d %d-%d", a_->dest + 1, sel_.s0 + 1, sel_.s1 + 1);
-    if (a_->source == mt::ArpSource::Selection && n > 0 && n < static_cast<int>(sizeof(buf))) {
+  if (f_->type != mt::FillType::Fill) {
+    int dest = a_->dest;
+    bool fromSel = a_->source == mt::ArpSource::Selection;
+    if (f_->type == mt::FillType::Chords) {
+      dest = c_->dest;
+      fromSel = false;
+    } else if (f_->type == mt::FillType::Bass) {
+      dest = b_->dest;
+      fromSel = b_->source == mt::BassSource::Selection;
+    }
+    const int n = snprintf(buf, sizeof(buf), "%s T%d %d-%d", kTypeNames[static_cast<int>(f_->type)], dest + 1,
+                           sel_.s0 + 1, sel_.s1 + 1);
+    if (fromSel && n > 0 && n < static_cast<int>(sizeof(buf))) {
       if (sel_.t0 == sel_.t1) snprintf(buf + n, sizeof(buf) - n, " < T%d", sel_.t0 + 1);
       else snprintf(buf + n, sizeof(buf) - n, " < T%d-%d", sel_.t0 + 1, sel_.t1 + 1);
     }

@@ -773,10 +773,12 @@ void GridScreen::openFill() {
   if (!arpInit_) {
     arpInit_ = true;
     arpSpec_.root = lastNote_[tr];
+    bassSpec_.root = static_cast<uint8_t>(36 + lastNote_[tr] % 12);  // its pitch class in octave 2
   }
-  arpSpec_.dest = sel.t0;  // default: the first track of the selection
+  // default: the first track of the selection
+  arpSpec_.dest = chordSpec_.dest = bassSpec_.dest = sel.t0;
   setEdit(false);
-  if (!fill_.open(app_.editPattern(), sel, &f, &arpSpec_, drum())) app_.toast("NO MEMORY");
+  if (!fill_.open(app_.editPattern(), sel, &f, &arpSpec_, &chordSpec_, &bassSpec_, drum())) app_.toast("NO MEMORY");
 }
 
 // Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
@@ -1133,7 +1135,7 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
       const mt::Fx cmd = f >= kFx1 ? c.fx[(f - kFx1) / 2].cmd : mt::Fx::None;
       const bool ignored = f >= kFx1 && ((midi && mt::fxSynthOnly(cmd)) || (!drumTr && mt::fxDrumOnly(cmd)));
       s.setTextColor(has && audible && !ignored && !past ? kText : kDim);
-      s.drawString(txt, kNumW + f * kFieldW + 4, y);
+      s.drawString(txt, kNumW + f * kFieldW + (strlen(txt) > 3 ? 0 : 4), y);  // 4 chars (CHD "MA72") fill the field
     }
     if (step == curStep_)
       s.drawRect(kNumW + curField_ * kFieldW, y, kFieldW, kRowH, edit_ ? kEditCursor : kCursor);

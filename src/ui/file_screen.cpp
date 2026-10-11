@@ -506,7 +506,12 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
   }
   switch (ev.type) {
     case InputType::EncTurn: moveSel(ev.delta); break;
-    case InputType::EncClick: run(sel_); break;
+    case InputType::EncClick:
+      if (sel_ != kSectionSel) run(sel_);  // the section switch: A + turn
+      break;
+    case InputType::EditTurn:
+      if (sel_ == kSectionSel && ev.delta) setSection(true);
+      break;
     default: break;
   }
 }
@@ -639,7 +644,7 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
     s.drawString(buf, 16, ty);
   }
   if (!names_) {
-    // Sections: a page bar; with the encoder focus on it, an outline (click = the other section).
+    // Sections: a page bar; with the encoder focus on it, an outline (A + turn = the other section).
     static const char* const kNames[] = {"PROJECTS", "SAMPLES"};
     const int by = y0 + kHeaderH;
     PageBar::draw(s, by, kNames, 2, samples_ ? 1 : 0);
@@ -933,7 +938,12 @@ void FileScreen::samplesInput(const hw::InputEvent& ev) {
   using hw::InputType;
   switch (ev.type) {
     case InputType::EncTurn: sampleMove(ev.delta); break;
-    case InputType::EncClick: sampleRun(ssel_); break;
+    case InputType::EncClick:
+      if (ssel_ != kSwitchRow) sampleRun(ssel_);  // the section switch: A + turn
+      break;
+    case InputType::EditTurn:
+      if (ssel_ == kSwitchRow && ev.delta) setSection(false);
+      break;
     default: break;
   }
 }

@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <string.h>
 #include "fx_info.h"
+#include "scale.h"
 
 using namespace mt;
 
@@ -27,7 +28,8 @@ void test_format() {
   TEST_ASSERT_EQUAL_STRING("800", fmt(Fx::GAT, 200));
   TEST_ASSERT_EQUAL_STRING("3:4", fmt(Fx::CND, 0x34));
   TEST_ASSERT_EQUAL_STRING("FST", fmt(Fx::CND, 0));
-  TEST_ASSERT_EQUAL_STRING("7th", fmt(Fx::CHD, 1));
+  TEST_ASSERT_EQUAL_STRING("7th ", fmt(Fx::CHD, 1));
+  TEST_ASSERT_EQUAL_STRING("MA72", fmt(Fx::CHD, chordValue(kChordMaj7, 2)));
   TEST_ASSERT_EQUAL_STRING(" --", fmt(Fx::TIE, 0));
   TEST_ASSERT_EQUAL_STRING("   ", fmt(Fx::None, 0));
 }
@@ -39,6 +41,7 @@ void test_step_clamps_and_signed() {
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(-50), fxStep(Fx::NDG, 0, -80));
   TEST_ASSERT_EQUAL(50, fxStep(Fx::NDG, static_cast<uint8_t>(-1), 100));
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(-64), fxStep(Fx::PBN, 0, -100));
+  TEST_ASSERT_EQUAL(kChordValues - 1, fxStep(Fx::CHD, 0, 1000));  // every type x inversion
 }
 
 void test_cnd_order() {

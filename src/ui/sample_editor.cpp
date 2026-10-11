@@ -33,6 +33,12 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
                          else snprintf(o, n, "%c %s", "SEL"[sel_], p);
                        },
                        {}};
+  // View state, not instrument data: no dirty flag (see setOnEdit below).
+  rows_[kZoomRow] = {"Zoom", [this](char* o, int n) { zoomText(o, n); },
+                     [this](int d) {
+                       if (frames_) setZoom(zoom_ + d);
+                     },
+                     [this] { return !frames_; }};
   rows_[kSampleRow] = {"Sample",
                        [this](char* o, int n) { snprintf(o, n, "%s", inst().sample[0] ? inst().sample : "---"); },
                        [this](int d) {
@@ -112,8 +118,13 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
   list_.setParams(rows_, kRows);
   list_.setVisibleRows(kListRows);
   list_.setPageBar(true);
-  list_.setOnEdit([this] { app_.markDirty(); });
-  list_.setEditScope([this]() -> void* { return &inst(); }, sizeof(mt::Instrument));
+  list_.setOnEdit([this] {
+    if (list_.sel() != kZoomRow) app_.markDirty();
+  });
+  // Zoom is view state: no snapshot, so a cancel steps the zoom back and keeps instrument changes
+  // made meanwhile (touch tools do not leave the row edit).
+  list_.setEditScope([this]() -> void* { return list_.sel() == kZoomRow ? nullptr : &inst(); },
+                     sizeof(mt::Instrument));
   list_.setOnCancel([this] { app_.toast("CANCEL"); });
 }
 
@@ -237,7 +248,7 @@ void SampleEditor::setMarkerFrame(int id, uint32_t f, int dir) {
   app_.markDirty();
 }
 
-int SampleEditor::stepMarker(int dir) {
+int SampleEditor::nextMarker(int dir) {
   const uint32_t cur = markerFrame(sel_);
   int best = -1;
   uint32_t bf = 0;
@@ -273,6 +284,16 @@ void SampleEditor::selectMarker(int id) {
     list_.setSel(kMarkerRow);
   }
   if (frames_) showFrame(markerFrame(id));
+}
+
+bool SampleEditor::insertSlice(uint32_t f) {
+  engine::lockProject();
+  const int i = mt::sliceInsert(inst(), mt::frameToFrac(f, frames_));
+  engine::unlockProject();
+  if (i < 0) return false;
+  app_.markDirty();
+  selectMarker(kSlice0 + i);
+  return true;
 }
 
 // --- view ---
@@ -315,6 +336,11 @@ void SampleEditor::setView(int64_t start) {
 void SampleEditor::setZoom(int z) {
   zoom_ = clampi(z, 0, zMax());
   setView(static_cast<int64_t>(markerFrame(sel_)) - viewLen() / 2);
+}
+
+void SampleEditor::zoomText(char* o, int n) const {
+  if (zoom_ > 0 && viewLen() == static_cast<uint32_t>(kScreenW)) snprintf(o, n, "1:1");
+  else snprintf(o, n, "x%u", 1u << zoom_);
 }
 
 void SampleEditor::showFrame(uint32_t f) {
@@ -427,46 +453,94 @@ int SampleEditor::onInput(const hw::InputEvent& ev) {
   return list_.onInput(ev);
 }
 
-void SampleEditor::tool(int t, bool longPress) {
+void SampleEditor::stepMarker(int dir) {
+  sync();
+  selectMarker(nextMarker(dir));
+}
+
+void SampleEditor::chop() {
+  sync();
   mt::Instrument& m = inst();
+  const bool trans = m.chopMode == static_cast<uint8_t>(mt::ChopMode::Trans);
+  if (trans && !frames_) {  // needs the data
+    app_.toast("NO SAMPLE");
+    return;
+  }
+  if (trans) ensureOnsets();
+  engine::lockProject();
+  if (trans) mt::chopTransients(m, onsets_, nOnsets_, frames_, rate_);
+  else mt::chopEqual(m);
+  engine::unlockProject();
+  app_.markDirty();
+  if (m.sliceCount) selectMarker(kSlice0);
+}
+
+void SampleEditor::deleteSlice() {
+  sync();
+  if (!sliceSelected()) return;
+  const int i = sel_ - kSlice0;
+  engine::lockProject();
+  mt::sliceRemove(inst(), i);
+  engine::unlockProject();
+  app_.markDirty();
+  selectMarker(i > 0 ? kSlice0 + i - 1 : kS);
+}
+
+void SampleEditor::clearSlices() {
+  sync();
+  if (!inst().sliceCount) return;
+  engine::lockProject();
+  mt::sliceClear(inst());
+  engine::unlockProject();
+  app_.markDirty();
+  selectMarker(kS);
+}
+
+void SampleEditor::addSlice(bool onset) {
+  sync();
+  if (!frames_) {
+    app_.toast("NO SAMPLE");
+    return;
+  }
+  const uint32_t f0 = markerFrame(sel_);
+  uint32_t f;
+  if (onset) {
+    ensureOnsets();
+    const int i = mt::stepOnset(onsets_, nOnsets_, f0, 1);
+    if (i < 0) {
+      app_.toast("NO ONSET");
+      return;
+    }
+    f = onsets_[i].pos;
+  } else {
+    const int next = nextMarker(1);
+    const uint32_t f1 = next != sel_ ? markerFrame(next) : frames_;
+    f = f1 > f0 ? f0 + (f1 - f0) / 2 : f0;
+  }
+  if (!insertSlice(f)) app_.toast("NO ROOM");
+}
+
+bool SampleEditor::sliceSelected() {
+  sync();
+  return sel_ >= kSlice0 && visible(sel_);
+}
+
+bool SampleEditor::hasSlices() { return inst().sliceCount > 0; }
+
+void SampleEditor::tool(int t, bool longPress) {
   if (longPress) {
-    if (t != kClr || !m.sliceCount) return;
-    engine::lockProject();
-    mt::sliceClear(m);
-    engine::unlockProject();
-    app_.markDirty();
-    selectMarker(kS);
+    if (t == kClr) clearSlices();
     return;
   }
   switch (t) {
     case kPrev:
-    case kNext: selectMarker(stepMarker(t == kPrev ? -1 : 1)); break;
+    case kNext: stepMarker(t == kPrev ? -1 : 1); break;
     case kZoomOut:
     case kZoomIn:
       if (frames_) setZoom(zoom_ + (t == kZoomIn ? 1 : -1));
       break;
-    case kChopBtn: {
-      const bool trans = m.chopMode == static_cast<uint8_t>(mt::ChopMode::Trans);
-      if (trans && !frames_) return;  // needs the data
-      if (trans) ensureOnsets();
-      engine::lockProject();
-      if (trans) mt::chopTransients(m, onsets_, nOnsets_, frames_, rate_);
-      else mt::chopEqual(m);
-      engine::unlockProject();
-      app_.markDirty();
-      if (m.sliceCount) selectMarker(kSlice0);
-      break;
-    }
-    case kClr: {
-      if (sel_ < kSlice0) return;
-      const int i = sel_ - kSlice0;
-      engine::lockProject();
-      mt::sliceRemove(m, i);
-      engine::unlockProject();
-      app_.markDirty();
-      selectMarker(i > 0 ? kSlice0 + i - 1 : kS);
-      break;
-    }
+    case kChopBtn: chop(); break;
+    case kClr: deleteSlice(); break;
     default: break;
   }
 }
@@ -505,12 +579,7 @@ void SampleEditor::onTouch(const TouchEvent& ev) {
     } else if (ev.type == TouchType::LongPress && frames_) {
       uint32_t f = frameAt(ev.x);
       if (app_.shift()) f = snap(f);
-      engine::lockProject();
-      const int i = mt::sliceInsert(inst(), mt::frameToFrac(f, frames_));
-      engine::unlockProject();
-      if (i < 0) return;  // full or taken
-      app_.markDirty();
-      selectMarker(kSlice0 + i);
+      insertSlice(f);  // silent when full or taken
     }
     return;
   }
@@ -613,8 +682,7 @@ void SampleEditor::drawWave(LGFX_Sprite& s, int y) {
   if (visible(kL)) line(kL, kYellow);
   line(kS, kGreen);
   line(kE, kRed);
-  if (zoom_ > 0 && viewLen() == static_cast<uint32_t>(kScreenW)) snprintf(buf, sizeof(buf), "1:1");
-  else snprintf(buf, sizeof(buf), "x%u", 1u << zoom_);
+  zoomText(buf, sizeof(buf));
   s.setTextColor(kDim);
   s.drawString(buf, kScreenW - 4 - static_cast<int>(strlen(buf)) * kCharW, y + 2);
 }

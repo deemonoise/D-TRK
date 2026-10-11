@@ -217,6 +217,7 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     const FxSlot* arp = s.find(Fx::ARP);
     if (!ars && t.out == TrackOut::Int && arp && arp->val && nNotes > 1 && out.count < kMaxStepEvents) {
       out.ev[out.count++] = {nudge, EvKind::SynthFx, ch, kSynthArpChord, f->val};
+      notes[0] = static_cast<uint8_t>(root);  // an inverted chord's lowest note is not the root
       nNotes = 1;
     }
   }

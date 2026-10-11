@@ -151,7 +151,9 @@ class GridScreen : public Screen {
   mt::FillSpec fillSpec_;  // RAM only, shared by the tracks
   bool fillInit_ = false;  // values set from the cursor once
   mt::ArpSpec arpSpec_;    // RAM only, FILL's arp page
-  bool arpInit_ = false;   // root set from the track once
+  bool arpInit_ = false;   // roots (arp, bass) set from the track once
+  mt::ChordSpec chordSpec_;  // RAM only, FILL's chords page
+  mt::BassSpec bassSpec_;    // RAM only, FILL's bass page
   TransposeDialog transpose_{app_};
   mt::FxSlot lastFx_[mt::kTracks][mt::kFxSlots] = {};  // last FX written per track and slot, offered on empty slots
   bool fxCycled_ = false;  // a command was turned on this cell: passing "..." does not offer lastFx_ again

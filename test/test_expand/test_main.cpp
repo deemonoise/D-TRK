@@ -579,6 +579,26 @@ void test_arp_chd_int_emits_root_and_arpchord() {
   TEST_ASSERT_EQUAL(60, out.ev[firstOn].note);
 }
 
+void test_arp_chd_inverted_keeps_root() {
+  TrackCfg t;
+  t.out = TrackOut::Int;
+  Step s = note(60);
+  const uint8_t chd = chordValue(kChordMaj, 1);  // E G C: the root is not the lowest note
+  s.fx[0] = {Fx::CHD, chd};
+  s.fx[1] = {Fx::ARP, 0x37};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, t, cMajor, rng, out));
+  TEST_ASSERT_EQUAL(1, countKind(out, EvKind::NoteOn));
+  int arpChord = -1, firstOn = -1;
+  for (int i = 0; i < out.count; ++i) {
+    if (out.ev[i].kind == EvKind::SynthFx && out.ev[i].note == kSynthArpChord) arpChord = i;
+    if (out.ev[i].kind == EvKind::NoteOn && firstOn < 0) firstOn = i;
+  }
+  TEST_ASSERT_TRUE(arpChord >= 0 && arpChord < firstOn);
+  TEST_ASSERT_EQUAL(chd, out.ev[arpChord].vel);  // the full CHD value, inversion included
+  TEST_ASSERT_EQUAL(60, out.ev[firstOn].note);
+}
+
 void test_arp_chd_midi_full_chord() {
   TrackCfg t;
   t.out = TrackOut::Midi;
@@ -784,6 +804,7 @@ int main() {
   RUN_TEST(test_acc_ignored_on_melodic_track);
   RUN_TEST(test_cnd_fill_values);
   RUN_TEST(test_arp_chd_int_emits_root_and_arpchord);
+  RUN_TEST(test_arp_chd_inverted_keeps_root);
   RUN_TEST(test_arp_chd_midi_full_chord);
   RUN_TEST(test_arp_00_chd_normal_chord);
   RUN_TEST(test_ars_chord_plays_first_note_and_hands_over_the_arp);

@@ -20,7 +20,7 @@ constexpr Info kInfo[] = {
     {"GAT", "GATE LENGTH", 1, 200, 100, false}, // GAT (see gatePercent)
     {"TIE", "TIE", 0, 0, 0, false},     // TIE
     {"NDG", "NUDGE", -50, 50, 0, true},   // NDG
-    {"CHD", "CHORD", 0, kChordCount - 1, 0, false},
+    {"CHD", "CHORD", 0, kChordValues - 1, 0, false},
     {"STR", "STRUM", 1, 50, 10, false},   // STR
     {"CND", "CONDITION", 0, 0, 0x12, false},  // CND: own ordering
     {"VRN", "VELOCITY RANDOM", 0, 64, 16, false},   // VRN
@@ -166,7 +166,7 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
       if (v == 64) snprintf(out, 5, "C");
       else snprintf(out, 5, "%c%d", v < 64 ? 'L' : 'R', v < 64 ? 64 - v : v - 64);
       return;
-    case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
+    case Fx::CHD: chordLabel(v, out); return;
     case Fx::RAT: {  // "  4", ramp up " 4^", down " 4v"
       const int n = v & 15, ramp = (v >> 4) & 3;
       if (ramp == kRatUp || ramp == kRatDown) snprintf(out, 5, " %d%c", n < 2 ? 2 : (n > 8 ? 8 : n), ramp == kRatUp ? '^' : 'v');

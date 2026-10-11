@@ -635,12 +635,46 @@ void InstScreen::presetMenu() {
     presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
-  enum : int { kLoad, kSave };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel };
+  auto choose = [this](int id) {
+    switch (id) {
+      case kChop: editor_.chop(); break;
+      case kAdd: editor_.addSlice(app_.shift()); break;  // Shift held on the click: at a transient
+      case kDel: editor_.deleteSlice(); break;
+      case kClear: {
+        const MenuItem confirm[] = {{"Cancel", kCancel}, {"Clear! (confirm)", kClearConfirm}};
+        app_.menu().open("CLEAR SLICES?", confirm, 2, [this](int i) {
+          if (i == kClearConfirm) editor_.clearSlices();
+        });
+        break;
+      }
+      case kLoad:
+      case kSave:
+        typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
+        presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
+        break;
+      default: break;
+    }
+  };
+  if (onEditor()) {
+    editor_.bind(instr_);
+    const MenuItem items[] = {{"Chop", kChop},
+                              {"Add slice", kAdd},
+                              {"Delete slice", kDel, editor_.sliceSelected()},
+                              {"Clear slices", kClear, editor_.hasSlices()},
+                              {"Load preset", kLoad},
+                              {"Save preset", kSave}};
+    app_.menu().open("SAMPLE", items, 6, choose);
+    return;
+  }
   const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
-  app_.menu().open("PRESET", items, 2, [this](int id) {
-    typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
-    presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
-  });
+  app_.menu().open("PRESET", items, 2, choose);
+}
+
+void InstScreen::onATap(bool shift) {
+  if (presets_.isOpen() || wt_.isOpen() || !onEditor()) return;
+  editor_.bind(instr_);
+  editor_.stepMarker(shift ? -1 : 1);
 }
 
 void InstScreen::changeInstr(int d) {
@@ -703,7 +737,7 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
   }
   const int ov = onEditor() ? editor_.onInput(ev) : list_.onInput(ev);
   if (ov) {
-    showPage(physPage() + ov, true);  // click (Shift+click) on the page bar
+    showPage(physPage() + ov, true);  // A + turn on the page bar
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();

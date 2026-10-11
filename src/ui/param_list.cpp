@@ -106,7 +106,7 @@ int ParamList::onInput(const hw::InputEvent& ev) {
       break;
     }
     case InputType::EncClick:
-      if (bar_ && sel_ < 0) return ev.shift ? -1 : 1;
+      if (bar_ && sel_ < 0) break;
       if (count_ == 0) break;
       if (edit_ && ev.shift) {
         cancelEdit();
@@ -118,6 +118,7 @@ int ParamList::onInput(const hw::InputEvent& ev) {
       if (edit_) beginEdit();
       break;
     case InputType::EditTurn:
+      if (bar_ && sel_ < 0) return ev.delta;
       if (holdEdit()) edit(ev.delta * (ev.shift ? 10 : 1));
       break;
     case InputType::EditEnd:  // A released: a hold edit keeps its value

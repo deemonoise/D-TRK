@@ -20,11 +20,11 @@ struct Param {
 // setEditScope() bytes copied back, else edit(+-1) until the value text matches again). Tap = select, tap on the selected row = edit. Drag while editing = edit(-dy / 16).
 // Button A: EditTurn enters the edit if needed (hold edit) and edits (Shift = x10), EditEnd (A released)
 // leaves a hold edit with the value kept, EditCancel (B while A held) = cancelEdit(). Rows without edit
-// and the page bar ignore EditTurn. A click / tap edit is never left by EditEnd.
+// ignore EditTurn. A click / tap edit is never left by EditEnd.
 // With setVisibleRows() smaller than the row count the list scrolls (Drag while not editing).
 // setPageBar(true): the screen's page bar is a position above the first row (sel() == -1, drawn by
-// the screen, see barSelected()); turning cycles through it and the rows. A click on it returns +1
-// (next page), Shift+click -1 (previous page); the screen switches and keeps the bar selected.
+// the screen, see barSelected()); turning cycles through it and the rows. A click on it does nothing;
+// A + turn on it returns the delta (pages to move); the screen switches and keeps the bar selected.
 class ParamList {
  public:
   static constexpr int kRowH = 24;
@@ -94,7 +94,7 @@ class ParamList {
   void setOnCancel(std::function<void()> f) { onCancel_ = std::move(f); }
   // Restores the value the edit began with and leaves edit; false when not editing.
   bool cancelEdit();
-  // 0, or -1 / +1: a click (Shift+click) on the page bar, the previous / next page.
+  // 0, or the pages to move: A + turn on the page bar.
   int onInput(const hw::InputEvent& ev);
   void onTouch(const TouchEvent& ev);
   void edit(int delta);

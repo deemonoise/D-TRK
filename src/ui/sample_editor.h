@@ -19,11 +19,14 @@ class App;
 // Touch: tap = nearest marker, drag a marker = move it (Shift: snap to a transient), drag elsewhere
 // = scroll (zoomed), long press = new slice (Shift: at the nearest transient). CLR: tap = remove the
 // selected slice, long press = all slices.
+// Hardware (InstScreen): A tap / Shift + A tap = next / previous marker; Zoom row = the - / + buttons;
+// the SAMPLE menu (Shift + long press) = CHOP, Add slice (midway to the next marker, Shift: at the next
+// transient), Delete slice (CLR tap), Clear slices (CLR long press).
 class SampleEditor {
  public:
-  static constexpr int kWaveH = 148;
+  static constexpr int kWaveH = 100;
   static constexpr int kToolH = 24;
-  static constexpr int kListRows = 2;  // (page area 220 - kWaveH - kToolH) / ParamList::kRowH
+  static constexpr int kListRows = 4;  // (page area 220 - kWaveH - kToolH) / ParamList::kRowH
 
   explicit SampleEditor(App& app, int y = kAreaY + 52);
   void bind(int instr);         // instrument index; resets zoom when the sample data changes
@@ -40,10 +43,21 @@ class SampleEditor {
   uint8_t previewNote();        // NOTE mode with a slice selected: root + slice, else C4
   // Track button k (0..7): plays slice (selected slice, or the first) + k to its end, any slice mode.
   void playSlice(int k);
+  // Toolbar actions, shared by touch and the hardware (InstScreen).
+  void stepMarker(int dir);    // select the previous / next marker (<, >)
+  void chop();                 // CHOP
+  void deleteSlice();          // CLR tap: the selected slice, if any
+  void clearSlices();          // CLR long press
+  // New slice, selected: midway between the selected marker and the next one (none: the sample end),
+  // onset: at the first transient right of the selected marker. Toasts when it can't.
+  void addSlice(bool onset);
+  bool sliceSelected();
+  bool hasSlices();
 
  private:
-  static constexpr int kMarkerRow = 0, kSampleRow = 1, kRoot = 2, kStart = 3, kEnd = 4, kLoop = 5,
-                       kLoopStart = 6, kReverse = 7, kSlices = 8, kChop = 9, kAmount = 10, kRows = 11;
+  static constexpr int kMarkerRow = 0, kZoomRow = 1, kSampleRow = 2, kRoot = 3, kStart = 4, kEnd = 5,
+                       kLoop = 6, kLoopStart = 7, kReverse = 8, kSlices = 9, kChop = 10, kAmount = 11,
+                       kRows = 12;
   static constexpr int kS = 0, kE = 1, kL = 2, kSlice0 = 3;  // marker ids, slice i = kSlice0 + i
   static constexpr int kMarkers = kSlice0 + mt::kMaxSlices;
   static constexpr int kGrab = 16;      // px: tap / drag reach of a marker
@@ -62,9 +76,10 @@ class SampleEditor {
   void region(uint32_t& from, uint32_t& to);  // Start..End frames, as Synth::startSample
   // dir: -1 / +1 = the fraction moves at least one unit that way (encoder at full zoom).
   void setMarkerFrame(int id, uint32_t f, int dir = 0);
-  int stepMarker(int dir);  // previous / next visible marker by frame order, sel_ if none
+  int nextMarker(int dir);  // previous / next visible marker by frame order, sel_ if none
   int nearestMarker(int x);  // visible marker within kGrab px of x, -1 if none
   void selectMarker(int id);  // also selects the marker row
+  bool insertSlice(uint32_t f);  // new slice at frame f, selected; false: full or taken
   int zMax() const;
   uint32_t viewLen() const;
   uint32_t gridFrame(uint32_t g) const;  // first frame of zoom grid column g
@@ -72,6 +87,7 @@ class SampleEditor {
   void setCol(int64_t g);                 // view start on grid column g, clamped
   void setView(int64_t start);  // clamped, snapped to the grid column holding start
   void setZoom(int z);          // centred on the selected marker
+  void zoomText(char* o, int n) const;  // "x4", "1:1" at 1 frame per column
   void showFrame(uint32_t f);   // scroll so that f is on screen
   uint32_t frameAt(int x) const;
   int xOf(uint32_t f) const;  // may be off screen

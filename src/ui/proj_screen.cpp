@@ -221,7 +221,7 @@ void ProjScreen::onEnter() {
   bpmTarget_ = app_.project().bpm;
 }
 
-// Click (Shift+click) on the page bar: the next (previous) page.
+// A + turn on the page bar: the previous / next page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
   if (ev.type == hw::InputType::EncClick && !list_.editing() && onProfileRow()) {
     toggleProfile();

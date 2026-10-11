@@ -1,7 +1,7 @@
 # D-TRK
 
 A 16-track tracker with a built-in synthesizer on the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen).
-16 patterns, song mode, Fill (every Nth / Euclid / random) for notes, volume and FX, saving to microSD, MIDI file import.
+16 patterns, song mode, Fill (every Nth / Euclid / random) for notes, volume and FX, arpeggio, chord-progression and bass-line generators, saving to microSD, MIDI file import.
 Built-in sound: FM, 808 / 909 drum machines, the SYNTH synthesizer (saw / square / triangle and wavetable), a sampler and chiptune, played through the board's built-in amplifier — each track plays either the internal synth or external MIDI.
 
 User manual: [docs/manual.md](docs/manual.md). Русская версия: [README_ru.md](README_ru.md).
@@ -180,6 +180,7 @@ All types have these at the end of the INST list:
 - **Reverb**: the instrument's Rvb send (lock `RVB`), size / decay / level in PROJ. 23 KB buffer in PSRAM.
 - **Compressor** on all built-in sound (PROJ → Comp, Comp rel) with **sidechain** from a track (SC track, SC depth): set SC track to the kick and the mix "pumps".
 - **ARP**: fx `ARM` sets the order (up, down, up-down, random) and the number of notes per step (1–8); ARP + CHD on the same step arpeggiates the chord.
+- **Chords** `CHD`: 36 types × 4 inversions, shown with the inversion digit (`MA7 `, `MA72`). Lowercase types (`tri 7th su2 su4 6th ad9 9th 7s4 a11`) are built on the project scale's degrees, `pwr` / `oct` are the fixed +7 / +12; UPPERCASE ones (`MAJ MIN DIM AUG SU2 SU4 MA7 MI7 DOM HDM DM7 MMA MA6 MI6 MA9 MI9 DO9 7S4 AD9 MD9 D7# D7b D13 M11 QRT`) are fixed intervals. Old projects keep their chords.
 - **4 LFOs** per instrument (INST → LFO), each with a free Hz rate or tempo sync (1/32 … 8 bars) and the phase retriggered on every note or free-running (Retrig ON / OFF); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
 - **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; **DJ filter** on the master (PROJ → FX).
 - Pattern **groove** (PROJ → SONG → Groove: MPC 54–66, SHUFFLE, PUSH, LAID BACK, DRUNK, BOOM BAP, HOUSE) and track **Humanize** (TRACK → NOTE); conditions `CND PRE / NEI`, volume ramp up/down on `RAT` (`4^`, `4v`).
@@ -204,6 +205,7 @@ Details (INST tab, preset browser, DRUM machine table, SYNTH and wavetables, fx 
 - **Mute scenes**: 8 tiles under the chain — tap recalls, long tap stores the current mutes, Shift + tap clears.
 - **Per-track length** (TRACK → Pat len): the track loops its first N steps within the pattern (polymeter); in GRID the steps beyond are grey, and the boundary is marked with a line.
 - **Per-track speed** (TRACK → Speed): 1/4, 1/2, x1, x2, x4 per track and pattern — x2 / x4 loop the track 2 / 4 times faster (x2 at 1/16 = 1/32), 1/2 / 1/4 stretch it across pattern passes; works with Pat len.
+- **Fill generators** (GRID → Fill…, row Type): **ARP** (Virus-style arpeggiator, 106 rhythm patterns), **CHORDS** (a progression like `1 5 6 4`, `2MI7 5DOM 1MA7*2` or `1 b7 b6 5` in the project's key, 30 factory progressions + RANDOM, 16 rhythms, CLOSE voice leading by inversions) and **BASS** (a bass line whose notes are roles — root, 3rd, 5th, 7th, approach, walk — against a fixed root, the selected tracks' chords or the CHORDS progression; 24 factory patterns). Each writes notes and fx onto one track with live preview and undo; Capture saves your own patterns to `/presets/ARP`, `/presets/PRG`, `/presets/BAS`. More in the [manual](docs/manual.md#euclid).
 - **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press is pause, as before.
 - **REC** (GRID menu): while playing, the track buttons write scale degrees into the playing step of the current track (on a drum track — lanes); Shift + N erases.
 - **PERF** (GRID menu): an effect while the button is held — 1 RAT 2, 2 RAT 4, 3 filter closed, 4 open, 5 delay, 6 short DECAY, 7 fade, 8 mute.
@@ -224,7 +226,7 @@ More in the [manual](docs/manual.md#render).
 ## Interface
 
 - **Themes**: PROJ → SYS → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
-- **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or use the encoder on the page tabs and click (Shift+click — back), or B + Shift + turn; the list wraps around.
+- **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or put the encoder on the page tabs and hold A + turn, or B + Shift + turn; the list wraps around.
 - **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
 - **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in PROJ → SYS.
 - **Wi-Fi page**: tabs per section, scrollable lists with a filter.
