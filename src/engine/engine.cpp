@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <atomic>
 #include <new>
+#include <string.h>
 #include "driver/gptimer.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
@@ -80,9 +81,9 @@ void run(void*) {
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
     const uint64_t next = seq->process(nowUs(), midi);
     const uint16_t act = seq->takeActivity();
+    publish();  // under the mutex: seqToPsram() / seqToInternal() may move seq
     xSemaphoreGive(projMutex);
     if (act) activity.fetch_or(act, std::memory_order_relaxed);
-    publish();
 
     if (next != mt::kNever) {
       if (next <= nowUs() + 30) continue;  // due almost now: spin once more
@@ -109,6 +110,36 @@ void reserve() {
 }
 
 bool seqInternal() { return seq && esp_ptr_internal(seq); }
+
+namespace {
+
+bool seqWasInternal = false;  // seqToPsram() moved it out of internal RAM
+
+// The sequencer holds no pointers into itself (Project& and plain arrays): a byte copy moves it.
+bool moveSeq(uint32_t caps) {
+  void* nb = heap_caps_malloc(sizeof(mt::Sequencer), caps);
+  if (!nb) return false;
+  xSemaphoreTake(projMutex, portMAX_DELAY);
+  void* old = seq;
+  memcpy(nb, old, sizeof(mt::Sequencer));
+  seq = static_cast<mt::Sequencer*>(nb);
+  seqMem = esp_ptr_internal(nb) ? nb : nullptr;
+  xSemaphoreGive(projMutex);
+  heap_caps_free(old);
+  return true;
+}
+
+}  // namespace
+
+void seqToPsram() {
+  if (!seqInternal()) return;
+  seqWasInternal = moveSeq(MALLOC_CAP_SPIRAM);
+}
+
+void seqToInternal() {
+  if (!seqWasInternal || seqInternal()) return;
+  if (moveSeq(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) seqWasInternal = false;
+}
 
 void begin(mt::Project* p) {
   // ~50 KB: keep it out of PSRAM, the engine touches it on every event. reserve() took it at boot.

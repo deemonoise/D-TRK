@@ -14,7 +14,7 @@ struct WavInfo {
   bool hasRoot = false;                    // "smpl" chunk present
   uint8_t root = 60;                       // smpl MIDIUnityNote, 60 without one
   bool hasCrc = false;                     // "mtcr" chunk present and its frames match frames()
-  uint32_t crc = 0;                        // mtcr: crc32 of the int16 data (sampleCrc)
+  uint32_t crc = 0;                        // mtcr: crc32 of the int16 data, all channels (sampleCrc)
   uint16_t clmFrame = 0;                   // Serum "clm " chunk: samples per frame, 0 = none
   uint32_t frameBytes() const { return static_cast<uint32_t>(channels) * (bits / 8); }
   uint32_t frames() const { return frameBytes() ? dataBytes / frameBytes() : 0; }
@@ -30,9 +30,11 @@ WavErr wavParse(ByteSource& src, WavInfo& out);
 
 // RIFF + fmt + smpl + mtcr + data chunk header.
 constexpr uint32_t kWavHeaderBytes = 12 + 24 + 44 + 16 + 8;
-// Header of a mono 16-bit WAV with root note and data crc (sampleCrc); frames * 2 bytes of data
-// follow. Chunks before "data", so a parser sees them without skipping the data.
-void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc);
+// Header of a 16-bit WAV with `channels` channels (1 mono, 2 interleaved stereo), root note and data
+// crc (sampleCrc over all frames * channels samples); frames * channels * 2 bytes of data follow.
+// Chunks before "data", so a parser sees them without skipping the data.
+void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc,
+               uint16_t channels = 1);
 
 // Converts frames of raw data (any channels, 8/16/24 bit PCM) to mono int16: channels averaged,
 // 8 bit unsigned (128 = 0), 24 bit keeps the top 16 bits.

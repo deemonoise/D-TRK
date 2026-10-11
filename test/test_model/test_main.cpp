@@ -230,7 +230,7 @@ void test_lfo_dest_step() {
   using T = InstrType;
   const uint8_t vol = static_cast<uint8_t>(LfoDest::Vol), cut = static_cast<uint8_t>(LfoDest::Cutoff);
   const uint8_t drv = static_cast<uint8_t>(LfoDest::Drive), reso = static_cast<uint8_t>(LfoDest::Reso);
-  const uint8_t last = static_cast<uint8_t>(LfoDest::Count) - 1;
+  const uint8_t last = static_cast<uint8_t>(LfoDest::Rtrg4);  // last in the display order
   // FM: every target in order, clamped at the ends.
   TEST_ASSERT_EQUAL(1, lfoDestStep(0, 1, T::Fm));
   TEST_ASSERT_EQUAL(cut, lfoDestStep(vol, 1, T::Fm));
@@ -283,6 +283,20 @@ void test_lfo_dest_names() {
   TEST_ASSERT_EQUAL_STRING("L3 DEPTH", lfoDestName(static_cast<uint8_t>(LfoDest::Depth3), InstrType::Chip));
   TEST_ASSERT_EQUAL_STRING("L4 RTRG", lfoDestName(static_cast<uint8_t>(LfoDest::Rtrg4), InstrType::Chip));
   TEST_ASSERT_EQUAL_STRING("PITCH", lfoDestName(200, InstrType::Chip));  // out of range
+}
+
+// PAN: every type; the Dest list shows it between RVB and BIT (display order, not the enum's).
+void test_lfo_dest_pan() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_EQUAL_STRING("PAN", lfoDestName(d(LfoDest::Pan), InstrType::Synth));
+  for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
+    const auto it = static_cast<InstrType>(t);
+    TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Pan), it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Rvb), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Bit), lfoDestStep(d(LfoDest::Pan), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Bit), -1, it));
+  }
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg4), lfoDestStep(d(LfoDest::Rtrg3), 1, InstrType::Chip));  // PAN not at the end
 }
 
 // Type change: a target the new type lacks becomes PITCH, on every LFO.
@@ -392,7 +406,8 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(50, p.compRel);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(12, kLocks);  // + BIT, SRR
+  TEST_ASSERT_EQUAL(13, kLocks);  // + BIT, SRR, PAN
+  TEST_ASSERT_EQUAL(kLockSrr + 1, kLockPan);
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockFlt, static_cast<int>(Fx::FLT));  // lock order unchanged
 }
 
@@ -490,5 +505,6 @@ int main() {
   RUN_TEST(test_lfo_sync_and_refs);
   RUN_TEST(test_track_speed_factors);
   RUN_TEST(test_track_step_at);
+  RUN_TEST(test_lfo_dest_pan);
   return UNITY_END();
 }

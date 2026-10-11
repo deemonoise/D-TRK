@@ -72,6 +72,24 @@ float softClip(float x) {
   return x * (1.5f - 0.5f * x * x);
 }
 
+// Pan gains per position 0..127, constant power x sqrt 2 (centre 1 / 1, hard left sqrt 2 / 0).
+// Filled once by the first Synth (initPan), outside the audio path.
+float panL[128], panR[128];
+bool panReady = false;
+
+void initPan() {
+  if (panReady) return;
+  for (int p = 0; p < 128; ++p) {
+    const float th = 0.78539816f * (1.f + (p - 64) / (p < 64 ? 64.f : 63.f));
+    panL[p] = 1.41421356f * cosf(th);
+    panR[p] = 1.41421356f * sinf(th);
+  }
+  panL[64] = panR[64] = 1.f;  // exact: centred voices are bit-exact to the mono mix
+  panR[0] = 0;
+  panL[127] = 0;
+  panReady = true;
+}
+
 }  // namespace
 
 int eventOffset(uint64_t t, uint64_t blockT) {
@@ -82,6 +100,7 @@ int eventOffset(uint64_t t, uint64_t blockT) {
 
 Synth::Synth(const Project& p) : p_(p) {
   Drive::init();  // the tanh table, outside the audio path
+  initPan();
   reset();
   for (auto& r : instLfoRnd_)
     for (float& x : r) x = rnd();
@@ -185,6 +204,29 @@ uint8_t Synth::trackInstr(uint8_t track) const {
 MT_HOT uint8_t Synth::trackVol(uint8_t track) const {
   const uint8_t v = track < kTracks ? p_.tracks[track].vol : kPreviewVol;
   return v > 127 ? 127 : v;
+}
+
+MT_HOT uint8_t Synth::trackPan(uint8_t track) const {
+  const uint8_t v = track < kTracks ? p_.tracks[track].pan : 64;  // the preview track: centre
+  return v > 127 ? 127 : v;
+}
+
+// Linear ramp of the gains, landing on the target after len samples (render() snaps them there at
+// the control boundary). Equal target: steps exactly 0, a centred voice keeps 1.0.
+MT_HOT void Synth::setPanTarget(Voice& v, uint8_t pan, int len) {
+  const float l = panL[pan & 127], r = panR[pan & 127];
+  v.tgl = l;
+  v.tgr = r;
+  if (!v.panSet) {
+    v.gl = l;
+    v.gr = r;
+    v.dgl = v.dgr = 0;
+    v.panSet = true;
+    return;
+  }
+  const float k = 1.f / static_cast<float>(len < 1 ? 1 : len);
+  v.dgl = (l - v.gl) * k;
+  v.dgr = (r - v.gr) * k;
 }
 
 void Synth::apply(const Ev& e) {
@@ -315,13 +357,15 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
     case Fx::DRV:
     case Fx::RVB:
     case Fx::BIT:
-    case Fx::SRR: {
+    case Fx::SRR:
+    case Fx::PAN: {
       // Lock: this step's note-ons, or the track's sounding voices. Macros: FM / DRUM / SYNTH voices only.
       const int k = cmd == static_cast<uint8_t>(Fx::DLY)   ? kLockDly
                     : cmd == static_cast<uint8_t>(Fx::DRV) ? kLockDrv
                     : cmd == static_cast<uint8_t>(Fx::RVB) ? kLockRvb
                     : cmd == static_cast<uint8_t>(Fx::BIT) ? kLockBit
                     : cmd == static_cast<uint8_t>(Fx::SRR) ? kLockSrr
+                    : cmd == static_cast<uint8_t>(Fx::PAN) ? kLockPan
                                                            : cmd - static_cast<uint8_t>(Fx::DCY);
       const bool macro = k < kFmMacros;
       const uint8_t lv = val > 127 ? 127 : val;
@@ -330,6 +374,8 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
           if (x.on && x.track == track && (!macro || x.fm || x.drum || x.syn)) {
             x.lock[k] = lv;
             x.lockMask |= static_cast<uint16_t>(1u << k);
+            // PAN ramps from here to the control boundary (the others wait for the next update).
+            if (k == kLockPan) control(x, 0);
           }
       } else {
         r.lock[k] = lv;
@@ -621,6 +667,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   constexpr uint8_t kMacroBits = (1 << kFmMacros) - 1;
   v.lockMask = (heavy || synT) ? r.lockMask : (r.lockMask & ~kMacroBits);
   for (int k = 0; k < kLocks; ++k) v.lock[k] = r.lock[k];
+  // A fresh note starts where it is panned (control() below snaps the gains); a legato / slide
+  // continuation of the sounding voice ramps to a new pan instead (no click).
+  if (!overlap) v.panSet = false;
   v.lfoLockMask = r.lfoLockMask;
   for (int i = 0; i < kLfos; ++i) v.lfoLock[i] = r.lfoLock[i];
   if (fm || drumT || synT) v.useEngine(fm ? EngineKind::Fm : drumT ? EngineKind::Drum : EngineKind::Syn);
@@ -832,6 +881,8 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   v.send = u7(snd + 64.f * la[ld(LfoDest::Dly)]) * (1.f / 127.f);
   const uint8_t rs = (v.lockMask & (1u << kLockRvb)) ? v.lock[kLockRvb] : m.rsend;
   v.rsend = u7(rs + 64.f * la[ld(LfoDest::Rvb)]) * (1.f / 127.f);
+  const uint8_t pb = (v.lockMask & (1u << kLockPan)) ? v.lock[kLockPan] : trackPan(v.track);
+  setPanTarget(v, u7(pb + 64.f * la[ld(LfoDest::Pan)]), dt ? dt : ctlLeft_);
   const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : m.drive;
   v.drive.set(u7(drv + 64.f * la[ld(LfoDest::Drive)]));
   const uint8_t bits = (v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : m.crushBits;
@@ -1216,17 +1267,21 @@ MT_HOT void Synth::renderChip(Voice& v, float* out, int n) {
 // Sample playback: 32.32 fixed point position, linear interpolation between frames. The loop
 // region [loopLo, loopHi) bounds the play direction's edge (for Off it is the whole region).
 // Master DJ filter (Project::djFilter): low-pass 20 kHz .. 100 Hz to the left, high-pass 20 Hz ..
-// 8 kHz to the right, a little resonance; the state is cleared while it is off.
-void Synth::djFilter(float* x, int n) {
+// 8 kHz to the right, a little resonance; one state per channel, cleared while it is off.
+void Synth::djFilter(float* l, float* r, int n) {
   const int v = p_.djFilter;
   if (v == 0) {
-    dj_.reset();
+    djL_.reset();
+    djR_.reset();
     return;
   }
   const float a = v < 0 ? -v / 64.f : v / 63.f;
   const float hz = v < 0 ? 20000.f * powf(100.f / 20000.f, a) : 20.f * powf(8000.f / 20.f, a);
-  dj_.set(v < 0 ? Svf::Mode::Lp : Svf::Mode::Hp, hz, 0.9f);
-  for (int i = 0; i < n; ++i) x[i] = dj_.process(x[i]);
+  const Svf::Mode md = v < 0 ? Svf::Mode::Lp : Svf::Mode::Hp;
+  djL_.set(md, hz, 0.9f);
+  djR_.set(md, hz, 0.9f);
+  for (int i = 0; i < n; ++i) l[i] = djL_.process(l[i]);
+  for (int i = 0; i < n; ++i) r[i] = djR_.process(r[i]);
 }
 
 MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
@@ -1271,7 +1326,29 @@ MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   v.dir = step >= 0 ? 1 : -1;
 }
 
-MT_HOT void Synth::render(int16_t* out) {
+// x x (gl, gr) added into l / r. Ramping (a step non-zero): each gain steps before its sample, gl /
+// gr return the gains reached. Steady: no increments (centred: x x 1 adds x bit-exactly).
+MT_INLINE static void panAdd(const float* __restrict x, float* __restrict l, float* __restrict r, int n,
+                             float& gl, float& gr, float dgl, float dgr) {
+  float a = gl, b = gr;
+  if (dgl == 0 && dgr == 0) {
+    for (int i = 0; i < n; ++i) {
+      l[i] += x[i] * a;
+      r[i] += x[i] * b;
+    }
+    return;
+  }
+  for (int i = 0; i < n; ++i) {
+    a += dgl;
+    b += dgr;
+    l[i] += x[i] * a;
+    r[i] += x[i] * b;
+  }
+  gl = a;
+  gr = b;
+}
+
+MT_HOT void Synth::renderCore() {
   // Profiling: t = the cycle counter at the last mark; mark(stage) books the time since.
   uint32_t (*const clk)() = clock_;
   uint32_t t = clk ? clk() : 0;
@@ -1281,12 +1358,14 @@ MT_HOT void Synth::render(int16_t* out) {
     prof_[stage] += now - t;
     t = now;
   };
-  for (auto& x : mix_) x = 0;
+  for (auto& x : mixL_) x = 0;
+  for (auto& x : mixR_) x = 0;
   for (auto& x : send_) x = 0;
   for (auto& x : rsend_) x = 0;
-  for (auto& x : sc_) x = 0;
+  for (auto& x : scL_) x = 0;
+  for (auto& x : scR_) x = 0;
   const int scTrack = p_.scTrack >= 1 && p_.scTrack <= kTracks ? p_.scTrack - 1 : -1;
-  // Sidechain ducking: the key track goes around the compressor (into sc_ only, added back after it),
+  // Sidechain ducking: the key track goes around the compressor (into sc only, added back after it),
   // so it ducks the rest of the mix without squashing itself.
   const bool keyAround = scTrack >= 0 && p_.compAmt > 0 && p_.scDepth > 0;
   int e = 0;
@@ -1303,41 +1382,50 @@ MT_HOT void Synth::render(int16_t* out) {
     mark(kProfEvents);
     int end = (pos / kControl + 1) * kControl;
     if (e < nEv_ && ev_[e].off < end) end = ev_[e].off;
+    const bool boundary = end % kControl == 0;
     for (auto& v : voices_) {
       if (!v.on) continue;
       const bool sc = v.track == scTrack;
       const int n = end - pos;
-      const bool sends = v.send > 0 || v.rsend > 0 || sc;
-      if (!sends && !meters_) {
-        renderVoice(v, mix_ + pos, n);
-        if (v.env.idle() && !(v.fltOn && v.flt.ringing())) v.on = false;
-        if (clk) mark(v.fm ? kProfFm : v.drum ? kProfDrum : v.syn ? kProfSyn : v.sample ? kProfSample : kProfChip);
-        continue;
-      }
-      // Through tmp: the sends, and the peak for the track's level meter (MIX). A voice adds into the
-      // mix once, so mix + (0 + x) is bit-exact to rendering straight into the mix.
+      // Through tmp, then panned into the mix. A voice adds into the mix once, so mix + (0 + x) x 1
+      // is bit-exact to rendering straight into the mix.
       float tmp[kControl] = {0};
       renderVoice(v, tmp, n);
-      float pk = trackPeak_[v.track < kSynthTracks ? v.track : 0];
-      if (sends) {
-        const float vs = v.send, vr = v.rsend;  // locals: the stores below may alias v
-        float* const dry = sc && keyAround ? sc_ : mix_;
-        for (int i = 0; i < n; ++i) {
-          dry[pos + i] += tmp[i];
-          send_[pos + i] += tmp[i] * vs;
-          rsend_[pos + i] += tmp[i] * vr;
-          if (sc && !keyAround) sc_[pos + i] += tmp[i];
-          const float a = fabsf(tmp[i]);
-          if (a > pk) pk = a;
-        }
-      } else {
-        for (int i = 0; i < n; ++i) {
-          mix_[pos + i] += tmp[i];
-          const float a = fabsf(tmp[i]);
-          if (a > pk) pk = a;
-        }
+      float gl = v.gl, gr = v.gr;
+      const float dgl = v.dgl, dgr = v.dgr;  // locals: the stores below may alias v
+      if (sc && !keyAround) {  // the key also stays in the mix
+        float a = gl, b = gr;
+        panAdd(tmp, scL_ + pos, scR_ + pos, n, a, b, dgl, dgr);
       }
-      trackPeak_[v.track < kSynthTracks ? v.track : 0] = pk;
+      const bool key = sc && keyAround;
+      panAdd(tmp, (key ? scL_ : mixL_) + pos, (key ? scR_ : mixR_) + pos, n, gl, gr, dgl, dgr);
+      if (boundary) {  // the ramp has landed: exact targets, no drift (a filter tail gets no updates)
+        v.gl = v.tgl;
+        v.gr = v.tgr;
+        v.dgl = v.dgr = 0;
+      } else {
+        v.gl = gl;
+        v.gr = gr;
+      }
+      // The sends (mono, pre-pan) and the peak for the track's level meter (MIX).
+      if (v.send > 0 || v.rsend > 0 || sc || meters_) {
+        float pk = trackPeak_[v.track < kSynthTracks ? v.track : 0];
+        if (v.send > 0 || v.rsend > 0) {
+          const float vs = v.send, vr = v.rsend;
+          for (int i = 0; i < n; ++i) {
+            send_[pos + i] += tmp[i] * vs;
+            rsend_[pos + i] += tmp[i] * vr;
+            const float a = fabsf(tmp[i]);
+            if (a > pk) pk = a;
+          }
+        } else {
+          for (int i = 0; i < n; ++i) {
+            const float a = fabsf(tmp[i]);
+            if (a > pk) pk = a;
+          }
+        }
+        trackPeak_[v.track < kSynthTracks ? v.track : 0] = pk;
+      }
       if (clk) mark(v.fm ? kProfFm : v.drum ? kProfDrum : v.syn ? kProfSyn : v.sample ? kProfSample : kProfChip);
       // Freed once the note has ended and its filter has rung out: cutting a resonant filter
       // mid-ring clicks.
@@ -1348,19 +1436,41 @@ MT_HOT void Synth::render(int16_t* out) {
   nEv_ = 0;
   ctlLeft_ = kControl;
   mark(kProfMaster);
-  delay_.process(send_, mix_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, p_.dlyLevel);
+  delay_.process(send_, mixL_, mixR_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, p_.dlyLevel);
   mark(kProfDelay);
-  reverb_.process(rsend_, mix_, kBlock, p_.rvbSize, p_.rvbDamp, p_.rvbLevel);
+  reverb_.process(rsend_, mixL_, mixR_, kBlock, p_.rvbSize, p_.rvbDamp, p_.rvbLevel);
   mark(kProfReverb);
-  comp_.process(mix_, scTrack >= 0 ? sc_ : nullptr, kBlock, p_.compAmt, p_.compRel, p_.scDepth);
+  comp_.process(mixL_, mixR_, scTrack >= 0 ? scL_ : nullptr, scTrack >= 0 ? scR_ : nullptr, kBlock, p_.compAmt,
+                p_.compRel, p_.scDepth);
   if (keyAround)
-    for (int i = 0; i < kBlock; ++i) mix_[i] += sc_[i];
-  djFilter(mix_, kBlock);  // after the key track is back: the filter sweeps the whole mix
+    for (int i = 0; i < kBlock; ++i) {
+      mixL_[i] += scL_[i];
+      mixR_[i] += scR_[i];
+    }
+  djFilter(mixL_, mixR_, kBlock);  // after the key track is back: the filter sweeps the whole mix
   const uint8_t mv = p_.masterVol > kMasterVolMax ? kMasterVolMax : p_.masterVol;
   const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
-  for (int i = 0; i < kBlock; ++i) out[i] = static_cast<int16_t>(softClip(mix_[i] * g) * 32767.f);
+  for (int i = 0; i < kBlock; ++i) mixL_[i] = softClip(mixL_[i] * g) * 32767.f;
+  for (int i = 0; i < kBlock; ++i) mixR_[i] = softClip(mixR_[i] * g) * 32767.f;
   mark(kProfMaster);
   if (clk) ++profBlocks_;
+}
+
+MT_HOT void Synth::renderStereo(int16_t* lr) {
+  renderCore();
+  for (int i = 0; i < kBlock; ++i) {
+    lr[2 * i] = static_cast<int16_t>(mixL_[i]);
+    lr[2 * i + 1] = static_cast<int16_t>(mixR_[i]);
+  }
+}
+
+// The downmix of the two int16 channels: equal sides give that side exactly.
+MT_HOT void Synth::render(int16_t* out) {
+  renderCore();
+  for (int i = 0; i < kBlock; ++i) {
+    const int l = static_cast<int16_t>(mixL_[i]), r = static_cast<int16_t>(mixR_[i]);
+    out[i] = static_cast<int16_t>((l + r) >> 1);
+  }
 }
 
 void Synth::takeTrackPeaks(float out[kTracks]) {

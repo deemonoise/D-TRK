@@ -186,6 +186,11 @@ LoadErr readTout(CrcSource& in, uint32_t size, Project& p) {
   });
 }
 
+// TPAN: one pan byte per track; tracks it lacks (and files without it) stay centred (reset()).
+LoadErr readTpan(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, 1, kTracks, [&](int t, const uint8_t* b) { p.tracks[t].pan = clampu(b[0], 0, 127); });
+}
+
 LoadErr readInst(CrcSource& in, uint32_t size, Project& p) {
   return readRecords(in, size, kInstRecSize, kInstruments,
                      [&](int i, const uint8_t* b) { unpackInst(b, p.instruments[i]); });
@@ -524,6 +529,10 @@ bool saveProject(const Project& p, ByteSink& out) {
     const uint8_t b[kToutSize] = {static_cast<uint8_t>(c.out), c.instr, c.vol};
     if (!o.write(b, sizeof(b))) return false;
   }
+  // TOUT keeps its 3-byte records (older readers): the pan goes in its own chunk.
+  if (!o.chunk("TPAN", 1 + kTracks) || !o.write(&count, 1)) return false;
+  for (const TrackCfg& c : p.tracks)
+    if (!o.write(&c.pan, 1)) return false;
 
   const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0),
                                  p.dlyTime,   p.dlyFb,
@@ -678,6 +687,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "FLTR", 4) == 0) e = readFltr(in, size, out);
     else if (memcmp(ch, "SLCE", 4) == 0) e = readSlce(in, size, out);
     else if (memcmp(ch, "TOUT", 4) == 0) e = readTout(in, size, out);
+    else if (memcmp(ch, "TPAN", 4) == 0) e = readTpan(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);

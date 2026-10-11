@@ -18,6 +18,7 @@ void Reverb::setBuffer(float* buf, int len) {
     ap_[a] = p;
     p += kApLen[a];
   }
+  apR_ = p;
   clear();
 }
 
@@ -30,11 +31,23 @@ void Reverb::clear() {
     combLen_[c] = kCombLen[c];
   }
   for (int a = 0; a < kAllpasses; ++a) apIdx_[a] = 0;
+  apRIdx_ = 0;
   idle_ = true;
   quiet_ = 0;
 }
 
-MT_HOT void Reverb::process(const float* in, float* mix, int n, uint8_t size, uint8_t damp, uint8_t level) {
+namespace {
+// Freeverb allpass, g = 0.5.
+MT_INLINE float allpass(float* line, int& idx, int len, float x) {
+  const float b = line[idx];
+  line[idx] = x + b * 0.5f;
+  if (++idx >= len) idx = 0;
+  return b - x * 0.5f;
+}
+}  // namespace
+
+MT_HOT void Reverb::process(const float* in, float* mixL, float* mixR, int n, uint8_t size, uint8_t damp,
+                            uint8_t level) {
   if (!buf_ || level == 0) return;
   bool input = false;
   for (int i = 0; i < n && !input; ++i) input = in[i] != 0.f;
@@ -62,21 +75,21 @@ MT_HOT void Reverb::process(const float* in, float* mix, int n, uint8_t size, ui
       if (++combIdx_[c] >= combLen_[c]) combIdx_[c] = 0;
       acc += out;
     }
-    for (int a = 0; a < kAllpasses; ++a) {  // Freeverb allpass, g = 0.5
-      float* line = ap_[a];
-      const float b = line[apIdx_[a]];
-      line[apIdx_[a]] = acc + b * 0.5f;
-      acc = b - acc * 0.5f;
-      if (++apIdx_[a] >= kApLen[a]) apIdx_[a] = 0;
-    }
-    mix[i] += acc * wet;
-    const float a = acc < 0 ? -acc : acc;
-    if (a > peak) peak = a;
+    acc = allpass(ap_[0], apIdx_[0], kApLen[0], acc);
+    const float l = allpass(ap_[1], apIdx_[1], kApLen[1], acc);
+    mixL[i] += l * wet;
+    const float al = l < 0 ? -l : l;
+    if (al > peak) peak = al;
+    const float r = allpass(apR_, apRIdx_, kApRLen, acc);
+    mixR[i] += r * wet;
+    const float ar = r < 0 ? -r : r;
+    if (ar > peak) peak = ar;
   }
   quiet_ = !input && peak < 1e-5f ? quiet_ + n : 0;
   if (quiet_ >= kQuietIdle) {  // the tail has died out: drop the remains, rest until the next input
     for (int i = 0; i < kBufLen; ++i) buf_[i] = 0;
     for (float& s : store_) s = 0;
+    apRIdx_ = 0;
     idle_ = true;
     quiet_ = 0;
   }

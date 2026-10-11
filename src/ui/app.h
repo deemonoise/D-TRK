@@ -108,8 +108,13 @@ class App {
   void trackKey(int n, bool shift);
   void trackRelease(int n);
   void fillDown();
-  bool holdVolume() const;           // hold a track button + turn = its volume, here and now
+  // Hold a track button + turn = its volume (encoder click while held: its pan, again: volume), here
+  // and now.
+  bool holdVolume() const;
+  int heldTrack() const { return (curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + heldTrackBtn_; }
   void nudgeTrackVol(int track, int d);
+  void nudgeTrackPan(int track, int d);  // as nudgeTrackVol
+  void holdToast(int track);             // "TRK3 VOL 100" / "TRK3 PAN L12" / "TRK3 MIDI"
   void fillUp();
   void updateLeds(uint32_t now);
   void saveSettingsIdle(uint32_t now);
@@ -174,6 +179,7 @@ class App {
   bool fillHeld_ = false;   // Shift + Play held while playing: fill
   mt::AbKeys ab_;  // buttons A / B
   int8_t heldTrackBtn_ = -1;  // track button held (0..7 of the visible half), -1 = none
+  bool holdPan_ = false;      // the held button's turn sets the pan, not the volume (until released)
   uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;
   bool dirty_ = true;

@@ -30,8 +30,8 @@ void Delay::clear() {
   lp_ = 0;
 }
 
-MT_HOT void Delay::process(const float* send, float* mix, int n, uint32_t delay, uint8_t fb, uint8_t tone,
-                           uint8_t level) {
+MT_HOT void Delay::process(const float* send, float* mixL, float* mixR, int n, uint32_t delay, uint8_t fb,
+                           uint8_t tone, uint8_t level) {
   if (!buf_) return;
   if (delay < 1) delay = 1;
   if (delay > len_ - 1) delay = len_ - 1;
@@ -43,7 +43,9 @@ MT_HOT void Delay::process(const float* send, float* mix, int n, uint32_t delay,
   float lp = lp_;
   for (int i = 0; i < n; ++i) {
     lp += (buf_[r] * (1.f / kScale) - lp) * a;
-    mix[i] += lp * lv;
+    const float y = lp * lv;
+    mixL[i] += y;
+    mixR[i] += y;
     float x = (send[i] + lp * g) * kScale;
     x = x > 32767.f ? 32767.f : (x < -32768.f ? -32768.f : x);
     buf_[w] = static_cast<int16_t>(lrintf(x));

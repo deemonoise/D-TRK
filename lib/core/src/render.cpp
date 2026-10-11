@@ -110,19 +110,35 @@ void OfflineRender::drain() {
   fifoN_ = kept;
 }
 
-bool OfflineRender::renderBlock(int16_t out[Synth::kBlock]) {
+bool OfflineRender::beginBlock() {
   if (done_ >= blocksTotal()) return false;
   if (done_ < bodyBlocks_) seq_.process(blockT_ + kRenderBlockUs, *this);  // everything of this block
   else if (done_ == bodyBlocks_) seq_.stop(blockT_, *this);                // the end: release all
   drain();
-  synth_.render(out);
-  for (int i = 0; i < Synth::kBlock; ++i) {
+  return true;
+}
+
+void OfflineRender::account(const int16_t* out, int n) {
+  for (int i = 0; i < n; ++i) {
     const int a = out[i] < 0 ? -out[i] : out[i];
     if (a > peak_) peak_ = static_cast<int16_t>(a > 32767 ? 32767 : a);
     if (out[i] >= 32767 || out[i] <= -32767) ++clips_;
   }
   blockT_ += kRenderBlockUs;
   ++done_;
+}
+
+bool OfflineRender::renderBlock(int16_t out[Synth::kBlock]) {
+  if (!beginBlock()) return false;
+  synth_.render(out);
+  account(out, Synth::kBlock);
+  return true;
+}
+
+bool OfflineRender::renderBlockStereo(int16_t out[2 * Synth::kBlock]) {
+  if (!beginBlock()) return false;
+  synth_.renderStereo(out);
+  account(out, 2 * Synth::kBlock);
   return true;
 }
 

@@ -74,9 +74,12 @@ Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, R
   if (!stopped()) return Result::EngineBusy;
   fs::FS& fs = hw::sdFs();
   if (!fs.exists(kRenderDir) && !fs.mkdir(kRenderDir)) return Result::WriteFail;
-  // Blocks are gathered in internal RAM and written 16 at a time.
-  constexpr int kGroup = 16;
-  int16_t* buf = static_cast<int16_t*>(heap_caps_malloc(kGroup * kBlock * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  // Stereo blocks (kBlock frames, interleaved L R) are gathered in internal RAM and written 8 at a
+  // time: 4 KB.
+  constexpr int kGroup = 8;
+  constexpr int kBlockSamples = 2 * kBlock;
+  int16_t* buf = static_cast<int16_t*>(
+      heap_caps_malloc(kGroup * kBlockSamples * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   RenderMem rm;
   if (!buf || !rm.mem) {
     heap_caps_free(buf);
@@ -101,16 +104,16 @@ Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, R
     mt::OfflineRender* ren = r == Result::Ok ? rm.start(p, *ses.synth, spec) : nullptr;
     while (r == Result::Ok) {
       int n = 0;
-      while (n < kGroup && ren->renderBlock(buf + n * kBlock)) ++n;
+      while (n < kGroup && ren->renderBlockStereo(buf + n * kBlockSamples)) ++n;
       if (n == 0) break;
-      const size_t bytes = static_cast<size_t>(n) * kBlock * 2;
-      crc = mt::sampleCrc(buf, static_cast<uint32_t>(n) * kBlock, crc);
+      const size_t bytes = static_cast<size_t>(n) * kBlockSamples * sizeof(int16_t);
+      crc = mt::sampleCrc(buf, static_cast<uint32_t>(n) * kBlockSamples, crc);
       frames += static_cast<uint32_t>(n) * kBlock;
       if (f.write(reinterpret_cast<const uint8_t*>(buf), bytes) != bytes) r = Result::DiskFull;
       else if (cb && !cb(ren->blocksDone(), ren->blocksTotal(), ctx)) r = Result::Cancelled;
     }
     if (r == Result::Ok) {
-      mt::wavHeader(hdr, frames, mt::kSynthRate, 60, crc);
+      mt::wavHeader(hdr, frames, mt::kSynthRate, 60, crc, 2);
       if (!f.seek(0) || f.write(hdr, sizeof(hdr)) != sizeof(hdr)) r = Result::DiskFull;
     }
     if (ren) st = {frames, ren->peak(), ren->clips()};

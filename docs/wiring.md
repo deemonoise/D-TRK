@@ -121,7 +121,7 @@ DAC SCK, FMT, FLT, DEMP ── GND     DAC XSMT ── 3.3 V     DAC VIN ── 
 amp VCC, amp SHDN ── board 5V (or 3V3)
 ```
 
-*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is mono, the same on L and R: 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs).*
+*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is stereo, left on L and right on R (tracks panned to the centre sound the same on both): 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs).*
 
 - **DAC settings.** SCK to GND (no MCLK: the PLL takes the clock from BCK), FMT = L (I2S), FLT = L (normal latency), DEMP = L (de-emphasis off), XSMT = H (unmuted). On the purple GY-PCM5102 modules these are solder pads on the back — check your module's silkscreen.
 - **Line out.** The DAC's L / R give 2.1 Vrms at full scale, centred on ground. Unlike the old SPK output, they can go to a mixer, audio interface or powered speakers — from the DAC before the amplifier, or from the amplifier's headphone output.

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "audio/audio.h"
+#include "fx_info.h"
 #include "esp_heap_caps.h"
 #include "hw/trackio.h"
 #include "storage/settings.h"
@@ -111,16 +112,28 @@ void App::onInput(const hw::InputEvent& ev) {
       fillUp();
       return;
     case InputType::TrackRelease:
-      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      if (ev.delta == heldTrackBtn_) {
+        heldTrackBtn_ = -1;
+        holdPan_ = false;
+      }
       trackRelease(ev.delta);
       return;
+    case InputType::EncClick:
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL <-> PAN
+        holdPan_ = !holdPan_;
+        holdToast(heldTrack());
+        return;
+      }
+      break;
     case InputType::EncTurn:
       if (const mt::AbOut o = ab_.turn(ev.delta, ev.shift); o.act != mt::AbAction::Pass) {
         abAction(o);
         return;
       }
       if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed
-        nudgeTrackVol((curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + heldTrackBtn_, ev.delta * (ev.shift ? 10 : 1));
+        const int d = ev.delta * (ev.shift ? 10 : 1);
+        if (holdPan_) nudgeTrackPan(heldTrack(), d);
+        else nudgeTrackVol(heldTrack(), d);
         return;
       }
       break;
@@ -132,6 +145,7 @@ void App::onInput(const hw::InputEvent& ev) {
         return;
       }
       heldTrackBtn_ = ev.delta;
+      holdPan_ = false;  // a new hold starts on the volume
       if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
       return;
     case InputType::EditEnd:  // A released: always ends the screen's hold edit (menu / BPM edit or not)
@@ -357,6 +371,38 @@ void App::nudgeTrackVol(int track, int d) {
   toast(msg);
 }
 
+// Pan of a held track button's track (INT only), with a toast; as nudgeTrackVol.
+void App::nudgeTrackPan(int track, int d) {
+  mt::TrackCfg& t = p_->tracks[track];
+  if (t.out == mt::TrackOut::Int) {
+    int v = t.pan + d;
+    v = v < 0 ? 0 : (v > 127 ? 127 : v);
+    if (v != t.pan) {
+      engine::lockProject();
+      t.pan = static_cast<uint8_t>(v);
+      engine::unlockProject();
+      markDirty();
+    }
+  }
+  holdToast(track);
+}
+
+// What the held button's turn changes now, with its value.
+void App::holdToast(int track) {
+  const mt::TrackCfg& t = p_->tracks[track];
+  char msg[24];
+  if (t.out != mt::TrackOut::Int) {
+    snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
+  } else if (holdPan_) {
+    char v[5];
+    mt::fxFormat(mt::Fx::PAN, t.pan, v);
+    snprintf(msg, sizeof(msg), "TRK%d PAN %s", track + 1, v);
+  } else {
+    snprintf(msg, sizeof(msg), "TRK%d VOL %d", track + 1, t.vol);
+  }
+  toast(msg);
+}
+
 void App::trackRelease(int n) {
   if (n < 0 || n >= mt::kTrackLeds) return;
   if (tab_ == Tab::Grid) grid_.trackRelease(n);
@@ -501,7 +547,10 @@ void App::dropInput(const hw::InputEvent& ev) {
       }
       break;
     case hw::InputType::TrackRelease:
-      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      if (ev.delta == heldTrackBtn_) {
+        heldTrackBtn_ = -1;
+        holdPan_ = false;
+      }
       trackRelease(ev.delta);
       break;
     case hw::InputType::AUp:
@@ -512,6 +561,7 @@ void App::dropInput(const hw::InputEvent& ev) {
 
 void App::endProgress() {
   heldTrackBtn_ = -1;  // its release may have been dropped with the queued input
+  holdPan_ = false;
   ab_.reset();         // so may the A / B releases
   screen()->onInput(hw::InputEvent{hw::InputType::EditEnd, 0, false});  // no hold edit left stuck
   progLabel_[0] = 0;

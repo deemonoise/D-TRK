@@ -21,7 +21,7 @@ constexpr uint32_t kResampleMaxFrames = 60 * 32000;    // 60 s
 // path of the WAV of spec for project p: /samples/render/<project>_P01.wav or <project>_SONG.wav.
 // stem >= 0: one track's file, "_T03" appended (track 3).
 void renderPath(const mt::Project& p, const mt::RenderSpec& spec, char* out, int n, int stem = -1);
-// Renders spec into path (mono 16-bit 32 kHz WAV with "mtcr" crc, written via path.tmp).
+// Renders spec into path (stereo 16-bit 32 kHz WAV with "mtcr" crc, written via path.tmp).
 Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, RenderStats& st, RenderProgress cb,
                  void* ctx);
 // Renders spec twice: measures (peak, the last block above -60 dBFS), then writes it normalized to

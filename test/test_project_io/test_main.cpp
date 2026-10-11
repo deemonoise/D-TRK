@@ -1516,6 +1516,35 @@ void test_tspd_round_trip_and_default() {
   TEST_ASSERT_EQUAL(0, b.patterns[2].trackSpeed[5]);
 }
 
+// TPAN: the track pans; a file without it (older firmware) loads every track centred.
+void test_tpan_round_trip_and_default() {
+  a.reset();
+  TEST_ASSERT_EQUAL(64, a.tracks[0].pan);  // fresh project: centre
+  a.tracks[3].pan = 10;
+  a.tracks[7].pan = 127;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TPAN"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int t = 0; t < kTracks; ++t) TEST_ASSERT_EQUAL(a.tracks[t].pan, b.tracks[t].pan);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"TPAN"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  for (int t = 0; t < kTracks; ++t) TEST_ASSERT_EQUAL(64, b.tracks[t].pan);
+}
+
+// TPAN values over 127 are clamped; tracks the chunk lacks stay centred.
+void test_tpan_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TRKS", trks(kTracks, kTracks));
+  putChunk(f, "TPAN", {2, 200, 5});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(127, b.tracks[0].pan);
+  TEST_ASSERT_EQUAL(5, b.tracks[1].pan);
+  TEST_ASSERT_EQUAL(64, b.tracks[2].pan);
+}
+
 void test_tspd_absent_without_speeds_and_bad_values() {
   a.reset();
   a.patterns[1].steps[0][0].note = 60;
@@ -1662,6 +1691,8 @@ int main() {
   RUN_TEST(test_tlen_clamped_to_length);
   RUN_TEST(test_tspd_round_trip_and_default);
   RUN_TEST(test_tspd_absent_without_speeds_and_bad_values);
+  RUN_TEST(test_tpan_round_trip_and_default);
+  RUN_TEST(test_tpan_garbage_clamped);
   RUN_TEST(test_scns_round_trip_and_default);
   RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
   RUN_TEST(test_read_file_names);

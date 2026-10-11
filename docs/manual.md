@@ -42,7 +42,7 @@ A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank o
 | <kbd>Shift</kbd>+<kbd>Play</kbd>, hold | During playback: **fill** while Play is held (steps with [CND FIL](#cnd) play, steps with NFL don't). Releasing after 0.5 s only ends the fill, without pausing. |
 | <kbd>Shift</kbd> | A modifier; does nothing on its own. While held, a yellow `SHIFT` replaces the FILE tab. |
 | Encoder turn | Moves the cursor or selects a row. In edit mode, changes the value. With Shift, a coarse step (usually ×10). |
-| Encoder click | Enter or leave edit mode, choose a menu item. |
+| Encoder click | Enter or leave edit mode, choose a menu item. With a track button held — switch that button's turn between volume and pan (see [Track buttons](#trackkeys)). |
 | Hold <kbd>A</kbd> + turn | Edit the value under the cursor without a click; releasing A commits it. See [Buttons A and B](#abkeys). |
 | Encoder long press | 0.5 s: context menu or close a dialog. |
 | Tap | Select. Tapping the selected item again enters edit mode. |
@@ -64,6 +64,7 @@ A block of 8 buttons, each with an LED, on the PCF8575 expander (the same module
 | <kbd>N</kbd> | Select track N of the visible half (in 9–16, button 1 is track 9): the GRID cursor moves to it, TRACK shows it. |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Mute / unmute the same track (N of the visible half), on any screen. The toast `TRACK n MUTE` / `TRACK n ON` shows the real number, 1–16. |
 | Hold <kbd>N</kbd> + turn | Volume of track N (Volume, INT) on any screen, ×10 with <kbd>Shift</kbd>; toast `TRK5 VOL 100`. The turn does not reach the screen meanwhile. The press on its own works as usual (selects the track). Not active in GRID edit mode, REC or PERF — there the buttons play. On a MIDI track: `TRK5 MIDI`, nothing changes. |
+| Hold <kbd>N</kbd> + encoder click | Switch the held-button turn between volume and pan of track N (INT); toast `TRK5 PAN L12` / `TRK5 VOL 100`. Turning then changes the pan (×10 with <kbd>Shift</kbd>). Releasing the button returns to volume: every new hold starts on volume. While a track button is held, the click always goes to this toggle (in GRID outside edit mode it no longer turns edit mode on); only where the buttons are busy — GRID edit mode, REC, PERF and the sample editor in INST — the click keeps its usual meaning. |
 | <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on in PROJ. Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
 | <kbd>N</kbd> in the sample editor (INST, SMPL page) | Play a slice to the end: 1 — the selected slice (if no slice is selected, the first one), 2 — the one after it, and so on. Works with any Slices setting (OFF, NOTE, FX), at the original pitch. Toast "SLICE n"; no such slice — "NO SLICE n"; no slices at all — "NO SLICES". |
 | <kbd>Shift</kbd>+<kbd>N</kbd> in GRID edit mode | The same degree an octave up. |
@@ -164,7 +165,7 @@ Track name color: yellow — solo, gray — not audible, white — normal.
 
 - **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on in PROJ.
 - **VEL.** 0–127, ×10 with Shift. A value of 0 is shown as `...` and means "the track's default velocity".
-- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN; pitch and volume SLD, VIB, PBN, VSL, ACC; sound FLT, RES, DRV, DEC, COL, SHP, SWP, CON; sample OFS, SLC; sends DLY, RVB; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
+- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN; pitch and volume SLD, VIB, PBN, VSL, ACC; sound FLT, RES, DRV, DEC, COL, SHP, SWP, CON; sample OFS, SLC; sends and pan DLY, RVB, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
 - **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
 
 One edit session (from entering to leaving edit mode) is one undo step.
@@ -244,7 +245,7 @@ The effect is added to steps as they play: the step's own fx stay, and the same 
 
 ### Resample
 
-**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new project sample: only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name), normalized to −1 dBFS, trailing silence is trimmed, and there is no delay / reverb tail past the end of the pattern. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
+**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new project sample: only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name), normalized to −1 dBFS, trailing silence is trimmed, and there is no delay / reverb tail past the end of the pattern. The sample is mono (the bank is mono): left and right are mixed, (L + R) / 2. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
 
 - Only when stopped (`STOP FIRST`). The pattern is rendered twice (measuring, then recording), each pass roughly in real time — progress `RENDER nn%`; a long encoder press or Play cancels (`CANCELLED`).
 - Nothing longer than 60 s is recorded: `SAMPLE CAP`, the sample is still added. No room in flash — `BANK FULL`; the same if the list already has 128 samples.
@@ -304,7 +305,7 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `LFD` | −64…+63 | INT | Depth lock of the selected LFO (turns the LFO on even if the instrument's Depth is 0). |
 | `LFS` | 0–127 | INT | Rate lock of the selected LFO: in FREE — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS); not applied to a Retrig OFF LFO (its phase is the instrument's). |
 | `LFW` | SIN, TRI, SAW, SQR, RND | INT | Wave lock of the selected LFO. |
-| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV, RES, FEN, DLY, RVB, BIT, SRR, FIN, DUT, SUB, NOI, SM2, RA1–RA4, DP1–DP4, RG1–RG4 | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
+| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV, RES, FEN, DLY, RVB, PAN, BIT, SRR, FIN, DUT, SUB, NOI, SM2, RA1–RA4, DP1–DP4, RG1–RG4 | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
 | `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): Retrig OFF — the instrument's shared phase, Retrig ON — the step's notes or the sounding notes. |
 | `DEC` | 0–127 | INT | FM, DRUM, SYNTH: the DECAY macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP1). |
 | `COL` | 0–127 | INT | FM, DRUM, SYNTH: the COLOR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP2). |
@@ -318,6 +319,7 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `DLY` | 0–127 | INT | Send to [delay](#delay) for the step's note (replaces the instrument's Dly send), any instrument type. |
 | `RVB` | 0–127 | INT | Send to [reverb](#reverb) for the step's note (replaces the instrument's Rvb send). |
 | **MIDI only** | | | |
+| `PAN` | L64…C…R63 | INT | Pan lock (replaces the track's [Pan](#track)): for the step's notes, on a step without a note — for the track's sounding voices (moves smoothly, no click). The LFO PAN target moves around it. |
 | `CHN` | 1–16 | MIDI | MIDI channel for this step: notes, CC, PB, PGM. |
 | `CCA` | 0–127 | MIDI | CC with the track's "CC A" number (default 74). |
 | `CCB` | 0–127 | MIDI | CC with the track's "CC B" number (default 71). |
@@ -343,7 +345,7 @@ Example: note C-4, CHD tri, ARS U1, empty steps below and OFF on step 9 — eigh
 
 **ARP + CHD.** If a step has both ARP (not 00) and CHD, an INT track plays a single note and ARP cycles through the chord notes (in the project scale) instead of 0, x, y — in ARM's order and speed. On a MIDI track the chord sounds in full, as before. ARP 00 with CHD is a plain chord.
 
-SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, RVB, ARM only take effect on tracks with Out = INT. On MIDI tracks they send nothing and are shown in gray. VIB and ARP values are hexadecimal: `47` = x 4, y 7.
+SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, RVB, PAN, ARM only take effect on tracks with Out = INT. On MIDI tracks they send nothing and are shown in gray. VIB and ARP values are hexadecimal: `47` = x 4, y 7.
 
 - **Step with a note.** The fx apply to that step's note. A new step with a note resets VIB and ARP: to keep the vibrato or arpeggio going, repeat the fx.
 - **Step without a note** (empty or OFF). VSL, CUT and ARP act immediately on the track's sounding voices; VIB changes the parameters of the sounding vibrato. SLD glides the sounding voice to the track's last played note. VIB and ARP hold until the next step with a note.
@@ -555,7 +557,7 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 - **Name:** click to edit (or hold <kbd>A</kbd> and turn). A turn changes the character; <kbd>Shift</kbd>+turn or tapping a character moves the cursor.
 - **Program** is sent immediately when changed and at every start. The value is "raw": 0 = the first patch.
 - **Out:** MIDI — the track plays to MIDI OUT; INT — to the built-in synthesizer (see [Built-in sound](#sound)). You can switch during playback: sounding notes are released, and the following steps go to the new output.
-- **Instr / Volume** work only on INT; on MIDI they are gray. On INT, Channel, CC A, CC B and Program are gray. Def vel and Def gate apply to both outputs.
+- **Instr / Volume / Pan** work only on INT; on MIDI they are gray. On INT, Channel, CC A, CC B and Program are gray. Def vel and Def gate apply to both outputs.
 - **Solo:** if solo is on for at least one track, only the soloed tracks play. Mute takes priority over solo.
 - **Pat len** and **Speed** are stored per pattern for each track: saved in the project, copied with the pattern, undone with Undo.
 - **Speed:** x2 / x4 — the track plays 2 / 4 of its own steps per pattern step (at 1/16 resolution x2 = 1/32); its length stays the same, it just loops faster. 1/2 / 1/4 — one track step per 2 / 4 pattern steps; the track carries on across the end of the pattern pass (a 16-step track at 1/2 in a 16-step pattern plays all its steps over two passes) and restarts from step 1 when a pattern starts or changes. Works together with Pat len (polymeter). GAT, RAT, NDG, TIE and ARS count in the track's own step. Swing and groove move the pattern step; the sub-steps of a fast track are spread evenly inside the (swung) pattern step.
@@ -568,12 +570,13 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 
 A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
 
-- **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. On a MIDI track the fader is empty and `MIDI` is shown instead of the value.
+- **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. Under the value, on INT tracks, the **pan** row: `C` / `L12` / `R40` and a bar with a tick at the position. On a MIDI track the fader is empty, `MIDI` is shown instead of the value, and there is no pan row.
 - **MAIN** — the overall volume of the built-in sound, 0–200%, default 100% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: PROJ → SYS → Phones.
-- **Encoder:** turn — **MAIN** volume; <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX; there is no strip selection.
+- **Encoder:** turn — **MAIN** volume (or the selected pan, see below); <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10; a click while holding switches the turn to pan); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX.
+- **Pan:** tap a strip's pan row — that track is selected (the row is highlighted), and the encoder turn (and <kbd>A</kbd> + turn, ×10 with <kbd>Shift</kbd>) changes its pan instead of MAIN. Tapping the same row again, tapping another strip's pan row (selects that one), a <kbd>B</kbd> tap, <kbd>Shift</kbd>+turn (half switch) or leaving the tab drops the selection: the encoder turns MAIN again.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
 - **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
-- Track volume without going to MIX: hold its button and turn the encoder (see [track buttons](#trackkeys)).
+- Track volume and pan without going to MIX: hold its button and turn the encoder; a click while holding switches to pan (see [track buttons](#trackkeys)).
 
 <a id="inst"></a>
 
@@ -723,6 +726,7 @@ P-lock: fx `DEC`, `COL`, `SHP`, `SWP`, `CON` (0–127) set a macro for the note 
 | PERC | index: tom → wood, rim, click | modulator ratio 1–7, including inharmonic ones | pitch drop, up to 24 semitones | drop time 5–200 ms |
 | TONE | brightness (constant part of the index) | 5 zones: sine, "saw", "square", stack, bell | decaying part of the index (pluck) | its time 20 ms … 2 s |
 | CHORD | from sine to saw (feedback) | chord type, 12 zones | decaying brightness boost | its time 20 ms … 2 s |
+| Pan | L64…C…R63, INT only | C |
 | CLAP | noise filter frequency (BP 0.6–3 kHz, higher with the note) | number of claps 2–5 and spacing 5–15 ms | filter resonance | tail level relative to the claps |
 | HAT | HP cutoff 3–12 kHz | metal / noise balance | metal frequency spread | metal and noise length relative to DECAY |
 
@@ -736,6 +740,7 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 <a id="drum"></a>
 
 ### DRUM (808 / 909)
+- **Pan:** where the track sits between the left and right channels; `C` is the centre, `L64` hard left, `R63` hard right. The instruments are mono, the track places them in the stereo field. Not sent to MIDI (no CC10). The step fx [PAN](#fx) locks it, the LFO target PAN moves it (autopan). <kbd>Shift</kbd>+turn — ×10, as on the other rows.
 
 **DRUM** — 16 "analog" machines in the spirit of the TR-808 and TR-909, with their own synthesis (tones with a pitch envelope, a click, "metal" from 6 squares, filtered noise, drive). The same 5 macro slots as FM and the same `DEC`, `COL`, `SHP`, `SWP`, `CON` locks, but each machine has its own slot names (table below). A slot that does nothing is shown as a gray "-". All values are 0–127; DECAY is a number too — its range differs between machines.
 
@@ -873,7 +878,7 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 | Retrig | ON / OFF | ON | ON — the LFO phase restarts on every new note (except legato). OFF — one phase per instrument, shared by all its voices and all tracks playing it: a note lands in the running phase. With FREE the LFO runs continuously; with TEMPO it restarts when playback starts, so a 1 BAR LFO always begins at the start of the bar and every run sounds the same. RND with OFF gives one shared value per period. |
 | Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in FREE — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
 | Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64; RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE ±64 steps; FINE ±1 semitone; DUTY ±49%; SEMI2 ±24 semitones; L1–L4 RATE ×/÷16; L1–L4 DEPTH 0…×2. |
-| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); DUTY — only for CHIP; SUB, NOISE and SEMI2 (oscillator 2) — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample, Sub, Noise; FINE — fine pitch; DUTY — the PULSE Duty; L1–L4 — another LFO of the instrument (see below). |
+| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, PAN, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); DUTY — only for CHIP; SUB, NOISE and SEMI2 (oscillator 2) — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample, Sub, Noise; FINE — fine pitch; DUTY — the PULSE Duty; PAN — autopan (see below); L1–L4 — another LFO of the instrument (see below). |
 
 - The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303.
 - LFOs can be controlled from steps: fx `LFO`, `LFD`, `LFS`, `LFW`, `LFT`, `LFR` (see the [fx table](#fx)).
@@ -997,15 +1002,15 @@ Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 
 <a id="reverb"></a>
 
-**Reverb** is a shared mono reverb (4 comb filters and 2 allpasses, like Freeverb). Instruments send to it with the Rvb send parameter, steps with the RVB fx. Delay echoes do not go into the reverb. Changing the size on the fly jumps.
+**Reverb** is a shared reverb (4 comb filters and 2 allpasses, like Freeverb): mono send, pseudo-stereo return (the right channel has its own last allpass, so the tail is wider than the dry sound). Instruments send to it with the Rvb send parameter (before pan), steps with the RVB fx. Delay echoes do not go into the reverb. Changing the size on the fly jumps.
 
 <a id="comp"></a>
 
-The **compressor** sits on the sum of the internal sound after the delay and reverb, before the master volume: 4:1, 1 ms attack; Comp sets the threshold and the makeup gain (half of the threshold reduction). **Sidechain:** SC track = the kick track, Comp 60–100, SC depth 100+, and the whole mix ducks on every hit ("pumping"); Comp rel sets how fast it comes back. The key is that track's internal sound (INT); the track itself plays as usual. Comp OFF: the compressor leaves the sound untouched.
+The **compressor** sits on the sum of the internal sound after the delay and reverb, before the master volume: stereo-linked (one gain on both channels), 4:1, 1 ms attack; Comp sets the threshold and the makeup gain (half of the threshold reduction). **Sidechain:** SC track = the kick track, Comp 60–100, SC depth 100+, and the whole mix ducks on every hit ("pumping"); Comp rel sets how fast it comes back. The key is that track's internal sound (INT); the track itself plays as usual. Comp OFF: the compressor leaves the sound untouched.
 
 <a id="delay"></a>
 
-**Delay** is a single shared mono delay for the internal sound (it does not affect the MIDI output). Instruments send sound to it with the Dly send parameter, individual steps with the DLY fx. The time is synced to BPM: 1/16 at 120 BPM = 125 ms. The line is sized for 4 s, i.e. 16/16 down to 60 BPM; at slower tempos the time is capped at 4 s. Changing the time or tempo on the fly jumps (a click on the tail is possible). On stop, the echo rings out.
+**Delay** is a single shared mono delay for the internal sound (it does not affect the MIDI output): the send is taken before pan, the echoes return to the centre. Instruments send sound to it with the Dly send parameter, individual steps with the DLY fx. The time is synced to BPM: 1/16 at 120 BPM = 125 ms. The line is sized for 4 s, i.e. 16/16 down to 60 BPM; at slower tempos the time is capped at 4 s. Changing the time or tempo on the fly jumps (a click on the tail is possible). On stop, the echo rings out.
 
 **Scales:** Chromatic, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor, Pentatonic major, Pentatonic minor, Blues. The default is C Chromatic, i.e. no restriction.
 
@@ -1081,6 +1086,7 @@ A chain of up to 64 entries. An entry is a pattern, a transposition, a number of
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
 **Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
+- **PAN** (INT tracks): shifts the voice's pan by up to ±64 around the track's Pan (or the step's PAN lock) at full depth, limited to hard left / hard right. Retrig ON — each note has its own phase (chord notes spread across the field); Retrig OFF — one shared autopan for all voices.
 
 | Demo | Tempo, key | What to look at |
 |---|---|---|
@@ -1097,7 +1103,7 @@ A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the 
 
 <a id="render"></a>
 
-**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: mono, 16-bit, 32 kHz. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (the whole chain with repeats; available if the chain has rows); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is visible on the [Wi-Fi](#wifi) page (download) and in FILE → SAMPLES → Import (bring it back into the project as a sample). MIDI tracks are not included in the render.
+**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: stereo, 16-bit, 32 kHz. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (the whole chain with repeats; available if the chain has rows); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing, also stereo with the track's pan; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is visible on the [Wi-Fi](#wifi) page (download) and in FILE → SAMPLES → Import (bring it back into the project as a sample). MIDI tracks are not included in the render.
 
 - Only when stopped (`STOP FIRST`). Progress shows `RENDER nn%`, roughly in real time; a long press of the encoder or Play cancels (`CANCELLED`, no file is created).
 - Done: `12.3s PEAK -2.1dB`; `CLIP` means there was clipping (lower MAIN or the volumes). Errors: `DISK FULL`, `WRITE FAILED`, `AUDIO BUSY` (audio did not stop within 0.5 s; try again).
@@ -1253,9 +1259,9 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 
 ## Internal sound
 
-The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 16 voices shared by all tracks, 32 kHz, mono. A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
+The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 16 voices shared by all tracks, 32 kHz, mono instruments with per-track pan, stereo output. A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
 
-Sound goes to an external PCM5102A DAC on GPIO 13 / 14 / 21 (BCK / LCK / DIN) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. The signal is mono, the same on L and R.
+Sound goes to an external PCM5102A DAC on GPIO 13 / 14 / 21 (BCK / LCK / DIN) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. The signal is stereo: the DAC's L / R go to the amplifier's L / R. Old projects (all tracks at centre) sound the same on both channels.
 
 - DAC settings: SCK to GND (no MCLK), FMT, FLT, DEMP = L, XSMT = H.
 - The DAC's L / R are a line output (2.1 Vrms full scale, centred on ground): they can go to a mixer, audio interface or powered speakers — straight from the DAC or from the amplifier's headphone output.
@@ -1296,3 +1302,4 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | Long press | 0.5 s |
 
 **Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 100%, Preview ON.
+- **Pan:** each voice is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level (as before), hard left is +3 dB on the left and silence on the right. The delay and reverb sends are taken before pan (mono); the delay returns to the centre, the reverb in pseudo-stereo. The compressor is stereo-linked; the DJ filter, MAIN and the soft clip work on both channels.

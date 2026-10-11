@@ -71,7 +71,11 @@ class Synth {
   void startTrack(uint8_t track);
   // Silences everything at once, clears the queue and the delay line.
   void reset();
-  // Renders kBlock mono samples, applying pending events at their offsets.
+  // Renders kBlock stereo frames, interleaved L R (lr[2 * kBlock]), applying pending events at
+  // their offsets.
+  void renderStereo(int16_t* lr);
+  // Renders kBlock mono samples: the downmix (L + R) >> 1 of the same block (centre pan and no
+  // reverb: bit-exact to either side).
   void render(int16_t* out);
 
   int activeVoices() const;
@@ -91,7 +95,7 @@ class Synth {
   // on either side of the reset.
   void takeTrackPeaks(float out[kTracks]);
   // Meters on (MIX shown): the voices go through their segment buffer to measure the peaks; off,
-  // a voice without sends renders straight into the mix (a little cheaper). Peaks stay 0 when off.
+  // a voice without sends skips the peak scan. Peaks stay 0 when off.
   void setMeters(bool on) { meters_ = on; }
 
   // Profiling (PROJ -> SYS -> CPU profile): cycles spent per stage, summed until takeProfile().
@@ -195,6 +199,12 @@ class Synth {
   // call), else the project's.
   const Instrument& instrOf(const Voice& v) const;
   uint8_t trackVol(uint8_t track) const;
+  uint8_t trackPan(uint8_t track) const;
+  // Pan gains towards pan (0..127): the ramp reaches them in len samples (the next control update);
+  // a voice without panSet snaps.
+  static void setPanTarget(Voice& v, uint8_t pan, int len);
+  // The block through the master chain into mixL_ / mixR_ (master gain and soft clip applied).
+  void renderCore();
 
   const Project& p_;
   const SampleSource* bank_ = nullptr;
@@ -210,14 +220,14 @@ class Synth {
   int nEv_ = 0;
   static constexpr uint8_t kNoArpChord = 0xFF;
   void resetArp(TrackRt& r) const;
-  float mix_[kBlock];
-  float send_[kBlock];  // delay send bus
-  float rsend_[kBlock];  // reverb send bus
-  float sc_[kBlock];     // sidechain key: the voices of Project::scTrack (bypass the compressor)
+  float mixL_[kBlock], mixR_[kBlock];
+  float send_[kBlock];   // delay send bus (mono, pre-pan)
+  float rsend_[kBlock];  // reverb send bus (mono, pre-pan)
+  float scL_[kBlock], scR_[kBlock];  // sidechain key: the voices of Project::scTrack (bypass the compressor)
   Reverb reverb_;
   Compressor comp_;
-  Svf dj_;  // master DJ filter
-  void djFilter(float* x, int n);
+  Svf djL_, djR_;  // master DJ filter
+  void djFilter(float* l, float* r, int n);
   Delay delay_;
   float trackPeak_[kSynthTracks] = {};
   bool meters_ = false;

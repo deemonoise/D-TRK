@@ -89,7 +89,7 @@ GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the
 
 ## Sound
 
-Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz, mono. A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz; mono instruments, stereo output with per-track pan (TRACK → Pan, step fx `PAN`, LFO PAN for autopan). A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
 
 ### DAC (PCM5102A)
 
@@ -110,7 +110,7 @@ A common module (purple GY-PCM5102, black "PCM5102 audio DAC v2" and similar), o
 
 On many modules FMT, FLT, DEMP and XSMT are solder jumpers (H / L pads) on the back, and SCK has its own pad or header pin — check the silkscreen of your module.
 
-The firmware sends 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs), the same mono signal on L and R. The L / R outputs are a line level: 2.1 Vrms at full scale, centred on ground (no DC offset). Unlike the old SPK output, this can go to a mixer, audio interface, powered speakers or a recorder — from the DAC's L / R (before the amplifier) or from the amplifier's headphone output.
+The firmware sends 32 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs), stereo: the DAC's L / R carry the left and right channels of the mix (tracks at centre sound the same on both). The L / R outputs are a line level: 2.1 Vrms at full scale, centred on ground (no DC offset). Unlike the old SPK output, this can go to a mixer, audio interface, powered speakers or a recorder — from the DAC's L / R (before the amplifier) or from the amplifier's headphone output.
 
 ### Headphone amplifier (MAX97220)
 
@@ -212,10 +212,11 @@ More in the [manual](docs/manual.md#song).
 
 ## Mixer and render
 
-- **MIX** is a separate tab at the bottom, next to TRACK: 8 strips for the half of the tracks under the cursor (volume fader, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
-- Track volume from any screen: hold its button and turn the encoder (Shift ×10); not in GRID edit mode, REC or PERF.
-- **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, mono 16-bit 32 kHz, with delay / reverb / compressor and a 2 s tail. The file can be downloaded over Wi-Fi or imported back as a sample.
-- **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s.
+- **MIX** is a separate tab at the bottom, next to TRACK: 8 strips for the half of the tracks under the cursor (volume fader, pan, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
+- Track volume from any screen: hold its button and turn the encoder (Shift ×10); a click while holding switches the turn to pan. Not in GRID edit mode, REC or PERF.
+- **Pan** per INT track (L64…C…R63): TRACK → Pan, the MIX pan row (tap it, then turn), step fx `PAN`, LFO dest PAN (autopan; with Retrig ON chord notes spread across the field). The reverb returns in pseudo-stereo, the delay in the centre.
+- **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, stereo 16-bit 32 kHz, with delay / reverb / compressor and a 2 s tail. The file can be downloaded over Wi-Fi or imported back as a sample.
+- **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s; mono (L + R) / 2.
 - Render and resampling work only when stopped, roughly in real time; cancel with a long press of the encoder or Play.
 
 More in the [manual](docs/manual.md#render).
@@ -227,7 +228,7 @@ More in the [manual](docs/manual.md#render).
 - **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
 - **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in PROJ → SYS.
 - **Wi-Fi page**: tabs per section, scrollable lists with a filter.
-- **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.
+- **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder (click while holding — pan), a track's pan — tap its pan row and turn, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.
 
 ## SD card
 

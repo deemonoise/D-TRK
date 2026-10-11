@@ -76,7 +76,7 @@ void test_cmd_cycle() {
   TEST_ASSERT_TRUE(fxNextCmd(Fx::ARS, 1) == Fx::RAT);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::FLT, 1) == Fx::RES);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::RVB);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHN, -1) == Fx::RVB);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHN, -1) == Fx::PAN);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::CHD, -3) == Fx::CCB);
   // Every command once per round.
   bool seen[static_cast<int>(Fx::Count)] = {};
@@ -312,6 +312,22 @@ void test_rat_ramp() {
   TEST_ASSERT_EQUAL_HEX8(2, fxStep(Fx::RAT, 2, -1));
 }
 
+// PAN: the track's pan lock, 0..127 shown L64 .. C .. R63, INT tracks only, after RVB.
+void test_pan_fx() {
+  TEST_ASSERT_EQUAL_STRING("PAN", fxName(Fx::PAN));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::PAN));
+  TEST_ASSERT_EQUAL_STRING("C", fmt(Fx::PAN, 64));
+  TEST_ASSERT_EQUAL_STRING("L64", fmt(Fx::PAN, 0));
+  TEST_ASSERT_EQUAL_STRING("R63", fmt(Fx::PAN, 127));
+  TEST_ASSERT_EQUAL_STRING("R12", fmt(Fx::PAN, 76));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::PAN, 120, 50));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::PAN, 5, -50));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::PAN));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::RVB, 1) == Fx::PAN);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::PAN, 1) == Fx::CHN);
+  TEST_ASSERT_EQUAL_STRING("PAN", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Pan)));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_long_names);
@@ -335,5 +351,6 @@ int main() {
   RUN_TEST(test_new_sound_fx);
   RUN_TEST(test_arm_format_and_step);
   RUN_TEST(test_lfo_fx);
+  RUN_TEST(test_pan_fx);
   return UNITY_END();
 }

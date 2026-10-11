@@ -41,6 +41,10 @@ struct Status {
 void reserve();
 void begin(mt::Project* p);
 bool seqInternal();  // the sequencer ended up in internal RAM
+// Wi-Fi needs the internal RAM: the sequencer (~33 KB) waits in PSRAM meanwhile (transport stopped).
+// seqToInternal() brings it back when the room is there again, else it stays in PSRAM (slower).
+void seqToPsram();
+void seqToInternal();
 // False when the command queue was full (the command is lost).
 bool post(Cmd c, uint16_t arg = 0);
 // As post, waiting up to 50 ms for room: for commands that must not be lost (fill / perf release).

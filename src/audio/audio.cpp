@@ -151,7 +151,7 @@ void takePreviewRequest() {
 }
 
 // Internal RAM: touched every block.
-int16_t mono[kBlock];
+int16_t st[kBlock * 2];  // the rendered block, interleaved L R
 int32_t lr[kBlock * 2];
 
 // The block clock steps by exactly kBlockUs (the DMA consumes samples at that rate), so the
@@ -204,18 +204,19 @@ void drain(Ring& q) {
   }
 }
 
+// out: interleaved stereo, 2 * kBlock samples.
 [[maybe_unused]] void renderSynth(int16_t* out) {
   const uint32_t q0 = synth->profNow();
   advanceClock();
   drain(engineQ);
   drain(uiQ);
   if (synth->profiling()) synth->addProfile(mt::Synth::kProfQueue, synth->profNow() - q0);
-  synth->render(out);
+  synth->renderStereo(out);
   takePreviewRequest();
   if (oneshot.playing()) {
     // Level of a sample at full instrument volume (synth: x4 x0.25 x masterVol).
     const uint8_t mv = project->masterVol > mt::kMasterVolMax ? mt::kMasterVolMax : project->masterVol;
-    oneshot.mix(out, kBlock, mv * 0.01f);
+    oneshot.mixStereo(out, kBlock, mv * 0.01f);
   }
   pvPlaying.store(oneshot.playing(), std::memory_order_relaxed);
 }
@@ -257,9 +258,15 @@ void benchBegin() {
   }
 }
 
+// Mono out[0..n) to interleaved stereo in place (backwards: no sample is read after its overwrite).
+void monoToStereo(int16_t* out, int n) {
+  for (int i = n - 1; i >= 0; --i) out[2 * i] = out[2 * i + 1] = out[i];
+}
+
+// out: interleaved stereo, 2 * kBlock samples (the bench renders mono into both channels).
 void renderBench(int16_t* out) {
   if (!benchOn) {
-    memset(out, 0, sizeof(int16_t) * kBlock);
+    memset(out, 0, sizeof(int16_t) * kBlock * 2);
     return;
   }
   for (int i = 0; i < kBlock; ++i) {
@@ -278,6 +285,7 @@ void renderBench(int16_t* out) {
     // Keep it inaudible-ish: the point is the timing, not the sound.
     out[i] = static_cast<int16_t>(acc * (1.0f / 1024.0f));
   }
+  monoToStereo(out, kBlock);
 }
 #endif
 
@@ -595,6 +603,7 @@ void benchPoolTick() {
 }
 #endif
 
+// Renders one block into out: interleaved stereo, 2 * kBlock samples.
 void render(int16_t* out) {
 #ifdef AUDIO_BENCH
   renderBench(out);
@@ -658,7 +667,7 @@ void run(void*) {
     blockEvents = 0;
 #endif
     const int64_t t0 = esp_timer_get_time();
-    render(mono);
+    render(st);
     const uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - t0);
 #ifdef AUDIO_CPU_LOG
     cpuSum.fetch_add(us, std::memory_order_relaxed);
@@ -680,9 +689,10 @@ void run(void*) {
       int at = scopeAt.load(std::memory_order_relaxed);
       int pk = scopePk.load(std::memory_order_relaxed);
       for (int i = 0; i < kBlock; ++i) {
-        scope[at] = mono[i];
+        const int m = (st[2 * i] + st[2 * i + 1]) >> 1;  // the scope shows the mono sum
+        scope[at] = static_cast<int16_t>(m);
         at = (at + 1) % kScopeLen;
-        const int a = mono[i] < 0 ? -mono[i] : mono[i];
+        const int a = m < 0 ? -m : m;
         if (a > pk) pk = a;
       }
       scopeAt.store(at, std::memory_order_relaxed);
@@ -691,10 +701,10 @@ void run(void*) {
     {  // after the scope: it shows the mix, the phones level only the headphones
       const int32_t g = phonesQ15.load(std::memory_order_relaxed);
       // 32-bit output: the phones gain loses no bits, so a low level does not turn quiet tails
-      // into 16-bit grain. |mono * g| <= 2^30, doubled it fills the 32-bit range.
+      // into 16-bit grain. |x * g| <= 2^30, doubled it fills the 32-bit range.
       // +1 LSB DC: the PCM5102A never sees digital silence, so its auto-mute does not click on/off
       // between notes (the output is AC-coupled, the offset is inaudible).
-      for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = mono[i] * g * 2 + 1;
+      for (int i = 0; i < 2 * kBlock; ++i) lr[i] = st[i] * g * 2 + 1;
     }
     size_t written = 0;
     const int64_t w0 = esp_timer_get_time();
@@ -823,7 +833,7 @@ void begin(mt::Project* p) {
     synth->setDelayBuffer(line, kDelayLen);
   else
     Serial.println("audio: no PSRAM for the delay line");
-  // Reverb: 5934 floats (23 KB), read and written every sample: internal RAM when there is room,
+  // Reverb: 6398 floats (25 KB), read and written every sample: internal RAM when there is room,
   // else PSRAM (slower through the cache); none = no reverb.
   // Keeps kRvKeepFree of internal RAM free.
   float* rvMem = nullptr;

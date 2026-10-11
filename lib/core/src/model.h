@@ -88,17 +88,18 @@ static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field"
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
-// send, the drive, the reverb send.
-enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLocks };
+// send, the drive, the reverb send, the bit / sample-rate reduction, the pan.
+enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLockPan, kLocks };
 static_assert(kLocks <= 16, "lockMask is a uint16_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
 // Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2: SYNTH (osc 2);
-// RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Stored in files:
-// new targets before Count only.
+// RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Pan: the track's
+// pan (+-64 at full depth). Stored in files: new targets before Count only (the Dest list shows them
+// in its own order, see lfoDestStep).
 enum class LfoDest : uint8_t {
   Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive,
   Reso, Fenv, Dly, Rvb, Bit, Srr, Fine, Duty, Sub, Noise, Semi2,
-  Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4,
+  Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4, Pan,
   Count
 };
 
@@ -236,8 +237,8 @@ void instrSetType(Instrument& m, InstrType t);
 void kitSetDefaults(Instrument& m);
 // LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
 bool lfoDestValid(uint8_t dest, InstrType t);
-// LFO target d steps from dest over the targets valid for t (clamped at the ends); self (0..kLfos-1,
-// -1 = none): that LFO's RTRG is skipped.
+// LFO target d steps from dest over the targets valid for t, in the display order (PAN after RVB;
+// clamped at the ends); self (0..kLfos-1, -1 = none): that LFO's RTRG is skipped.
 uint8_t lfoDestStep(uint8_t dest, int d, InstrType t, int self = -1);
 // Display name of the target: SYNTH names its macros SHP1..SENV; out of range = PITCH.
 const char* lfoDestName(uint8_t dest, InstrType t);
@@ -254,7 +255,7 @@ const char* lfoDestName(uint8_t dest, InstrType t);
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
-  LFO, LFD, LFS, LFW, LFT, LFR, Count
+  LFO, LFD, LFS, LFW, LFT, LFR, PAN, Count
 };
 // LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
@@ -265,6 +266,7 @@ enum class Fx : uint8_t {
 // BIT, SRR lock the voice's bit-depth / sample-rate reduction (kLockBit / kLockSrr, 0 = off; no
 // instrument setting), INT tracks only.
 // DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.
+// PAN locks the track's pan (kLockPan): 0..127, 64 = centre, shown L64 .. C .. R63, INT tracks only.
 // ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
 // kArmDefault (UP, 3) is the plain ARP. INT tracks only.
 // ARS (step arp, the sequencer's): (octaves - 1) << 6 | mode << 4 | steps per note (1..kArmRateMax),
@@ -412,6 +414,7 @@ struct TrackCfg {
   TrackOut out = TrackOut::Int;  // files without TOUT load as MIDI (see loadProject)
   uint8_t instr = 0;  // 0..kInstruments-1, INT tracks
   uint8_t vol = 100;  // 0..127, INT tracks
+  uint8_t pan = 64;   // 0..127, 64 = centre, INT tracks
   uint8_t humanize = 0;  // 0..100: random timing (up to +-10 % of a step) and velocity (+-20) per step
 };
 

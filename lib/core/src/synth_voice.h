@@ -69,6 +69,12 @@ struct Voice {
   float amp = 0;            // gain * instrument vol * track vol
   float send = 0;           // delay send 0..1: DLY lock or Instrument::send
   float rsend = 0;          // reverb send 0..1: RVB lock or Instrument::rsend
+  // Pan gains (Synth::setPanTarget): current L / R, the per-sample steps of the ramp to the target
+  // (tgl, tgr) reached at the next control update. panSet false: the next update snaps (note-on).
+  float gl = 1, gr = 1;
+  float dgl = 0, dgr = 0;
+  float tgl = 1, tgr = 1;
+  bool panSet = false;
   Drive drive;              // DRV lock or Instrument::drive, + LFO
   Crush crush;              // BIT / SRR locks (0 = off)
   // Control-rate math caches (exp2f is costly on the ESP32): the input of the last call and its

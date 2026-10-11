@@ -2974,6 +2974,224 @@ void test_velmac_shifts_decay() {
   TEST_ASSERT_FLOAT_WITHIN(0.6f, 0.f, s->voice(s->trackVoice(0)).fpMac[kMacDec]);
 }
 
+// ---- pan / stereo ----
+
+static int16_t lr[2 * Synth::kBlock];
+
+// Sum of squares of channel ch (0 = L, 1 = R) in lr.
+static double chanEnergy(int ch) {
+  double e = 0;
+  for (int i = 0; i < Synth::kBlock; ++i) e += double(lr[2 * i + ch]) * lr[2 * i + ch];
+  return e;
+}
+
+// Centre pan: both channels carry the old mono mix, bit-exact (CHIP, FM and SYNTH voices; DRUM
+// output differs between two Synth instances even in mono, so it is checked for L == R below).
+void test_stereo_centre_equals_mono() {
+  useFm(1, FmMachine::Tone);
+  instrSetType(p->instruments[2], InstrType::Synth);
+  Synth mono(*p);
+  auto hit = [](Synth& x) {
+    const uint8_t a[3] = {0x90, 60, 127}, b[3] = {0x90, 64, 100}, c[3] = {0x90, 67, 90};
+    x.event(0, 0, a, 3);
+    x.event(10, 1, b, 3);
+    x.event(50, 2, c, 3);
+  };
+  hit(mono);
+  hit(*s);
+  long energy = 0;
+  for (int k = 0; k < 40; ++k) {
+    s->renderStereo(lr);
+    mono.render(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      TEST_ASSERT_EQUAL_INT16(lr[2 * i], lr[2 * i + 1]);
+      TEST_ASSERT_EQUAL_INT16(buf[i], lr[2 * i]);
+      energy += abs(buf[i]);
+    }
+  }
+  TEST_ASSERT_TRUE(energy > 0);
+}
+
+void test_stereo_centre_drum_sides_equal() {
+  drumInstr(0, DrumMachine::Bd8);
+  drumInstr(1, DrumMachine::Hh8);
+  noteOn(0, 0, 36);
+  noteOn(20, 1, 42);
+  long energy = 0;
+  for (int k = 0; k < 40; ++k) {
+    s->renderStereo(lr);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      TEST_ASSERT_EQUAL_INT16(lr[2 * i], lr[2 * i + 1]);
+      energy += abs(lr[2 * i]);
+    }
+  }
+  TEST_ASSERT_TRUE(energy > 0);
+}
+
+void test_pan_hard_left_silences_right() {
+  p->tracks[0].pan = 0;
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) {
+    s->renderStereo(lr);
+    TEST_ASSERT_TRUE(chanEnergy(1) == 0);
+    TEST_ASSERT_TRUE(chanEnergy(0) > 0);
+  }
+}
+
+void test_pan_hard_right_silences_left() {
+  p->tracks[0].pan = 127;
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) {
+    s->renderStereo(lr);
+    TEST_ASSERT_TRUE(chanEnergy(0) == 0);
+    TEST_ASSERT_TRUE(chanEnergy(1) > 0);
+  }
+}
+
+// Constant power x sqrt 2: hard left is sqrt 2 x the centre level on L (quiet: the soft clip stays
+// linear enough).
+void test_pan_hard_left_constant_power() {
+  p->tracks[0].vol = 20;
+  noteOn(0, 0, 60);
+  s->renderStereo(lr);
+  s->renderStereo(lr);
+  const double c = chanEnergy(0);
+  s->reset();
+  p->tracks[0].pan = 0;
+  noteOn(0, 0, 60);
+  s->renderStereo(lr);
+  s->renderStereo(lr);
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 2.f, static_cast<float>(chanEnergy(0) / c));
+}
+
+void test_fx_pan_lock_on_note_step() {
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::PAN, 0);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 4; ++k) {
+    s->renderStereo(lr);
+    TEST_ASSERT_TRUE(chanEnergy(1) == 0);
+    TEST_ASSERT_TRUE(chanEnergy(0) > 0);
+  }
+  noteOff(0, 0, 60);  // release 0: gone at once
+  stepStart(0, 0, 24, true);  // a new step drops the lock: centre again
+  noteOn(0, 0, 62);
+  s->renderStereo(lr);
+  s->renderStereo(lr);
+  TEST_ASSERT_TRUE(chanEnergy(0) > 0 && chanEnergy(0) == chanEnergy(1));
+}
+
+// Autopan: a fast square LFO at full depth swings the note between the sides.
+void test_lfo_pan_dest_alternates() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Pan);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoDepth = 63;
+  m.lfoRate = 100;
+  noteOn(0, 0, 60);
+  int left = 0, right = 0;
+  for (int k = 0; k < kBlocksPerSec; ++k) {
+    s->renderStereo(lr);
+    const double l = chanEnergy(0), r = chanEnergy(1);
+    if (l > 10 * r) ++left;
+    if (r > 10 * l) ++right;
+  }
+  TEST_ASSERT_TRUE(left > 10);
+  TEST_ASSERT_TRUE(right > 10);
+}
+
+// The gains ramp across a control segment: moving a sustained note from hard left to hard right
+// between blocks fades R in linearly over the next 32 samples (no step), then R carries what L did.
+void test_pan_change_ramps() {
+  p->instruments[0].wave = static_cast<uint8_t>(Wave::Pulse);
+  p->tracks[0].pan = 0;
+  p->tracks[0].vol = 40;  // the soft clip stays near linear: R = x x gr
+  static int16_t ref[Synth::kBlock * 6];  // L of the note staying hard left
+  {
+    Synth left(*p);
+    const uint8_t on[3] = {0x90, 45, 127};
+    left.event(0, 0, on, 3);
+    for (int k = 0; k < 6; ++k) {
+      left.renderStereo(lr);
+      for (int i = 0; i < Synth::kBlock; ++i) ref[k * Synth::kBlock + i] = lr[2 * i];
+    }
+  }
+  noteOn(0, 0, 45);
+  for (int k = 0; k < 4; ++k) s->renderStereo(lr);
+  TEST_ASSERT_EQUAL_INT16(0, lr[2 * Synth::kBlock - 1]);
+  p->tracks[0].pan = 127;
+  int amp = 0;
+  for (int k = 4; k < 6; ++k) {
+    s->renderStereo(lr);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      const int j = (k - 4) * Synth::kBlock + i;
+      const float w = j < Synth::kControl ? (j + 1) / static_cast<float>(Synth::kControl) : 1.f;
+      const int want = ref[k * Synth::kBlock + i];
+      TEST_ASSERT_INT_WITHIN(2 + abs(want) / 100, static_cast<int>(want * w), lr[2 * i + 1]);
+      amp = abs(want) > amp ? abs(want) : amp;
+    }
+  }
+  TEST_ASSERT_TRUE(amp > 1000);
+}
+
+// A legato note with a new PAN lock keeps sounding on its voice: the gains ramp over the control
+// segment instead of jumping (L fades out over 32 samples, then silent).
+void test_pan_legato_lock_ramps() {
+  p->instruments[0].mono = true;
+  p->tracks[0].vol = 40;
+  noteOn(0, 0, 45);
+  s->renderStereo(lr);
+  s->renderStereo(lr);
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::PAN, 127);
+  noteOn(0, 0, 47);  // legato: the same sounding voice
+  s->renderStereo(lr);
+  TEST_ASSERT_EQUAL(1, s->activeVoices());
+  long head = 0;
+  for (int i = 0; i < 8; ++i) head += abs(lr[2 * i]);
+  TEST_ASSERT_TRUE(head > 1000);  // a jump would silence L at once
+  for (int i = Synth::kControl; i < Synth::kBlock; ++i) TEST_ASSERT_EQUAL_INT16(0, lr[2 * i]);
+}
+
+// A PAN fx on a step without a note, mid control period (offset 10): the sounding note ramps over
+// the 22 samples left and lands on hard left at the boundary.
+void test_pan_fx_mid_segment_lands_at_boundary() {
+  p->tracks[0].vol = 40;
+  noteOn(0, 0, 45);
+  s->renderStereo(lr);
+  stepStart(10, 0, 24, false);
+  fx(10, 0, Fx::PAN, 0);
+  s->renderStereo(lr);
+  for (int i = 0; i < 10; ++i) TEST_ASSERT_EQUAL_INT16(lr[2 * i], lr[2 * i + 1]);
+  for (int i = 10; i < Synth::kControl; ++i) {  // R / L = gr / gl along the ramp
+    const float w = (i - 9) / 22.f;
+    const float gl = 1.f + (1.41421356f - 1.f) * w, gr = 1.f - w;
+    const float want = lr[2 * i] * gr / gl;
+    TEST_ASSERT_INT_WITHIN(2 + abs(lr[2 * i]) / 50, static_cast<int>(want), lr[2 * i + 1]);
+  }
+  long l = 0;
+  for (int i = Synth::kControl; i < Synth::kBlock; ++i) {
+    TEST_ASSERT_EQUAL_INT16(0, lr[2 * i + 1]);
+    l += abs(lr[2 * i]);
+  }
+  TEST_ASSERT_TRUE(l > 0);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_TRUE(v.gr == 0.f && v.dgl == 0.f && v.dgr == 0.f);
+}
+
+// The reverb is pseudo-stereo: a centred note gets different L and R tails.
+void test_reverb_makes_sides_differ() {
+  s->setReverbBuffer(rvbBuf, Reverb::kBufLen);
+  p->instruments[0].rsend = 127;
+  noteOn(0, 0, 60);
+  long diff = 0;
+  for (int k = 0; k < 40; ++k) {
+    s->renderStereo(lr);
+    for (int i = 0; i < Synth::kBlock; ++i) diff += abs(lr[2 * i] - lr[2 * i + 1]);
+  }
+  TEST_ASSERT_TRUE(diff > 1000);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -3169,5 +3387,16 @@ int main() {
   RUN_TEST(test_lfo_reset_fx_sets_phase);
   RUN_TEST(test_lfo_lock_on_empty_step_hits_sounding_voice);
   RUN_TEST(test_lfo_wave_lock_sounds);
+  RUN_TEST(test_stereo_centre_equals_mono);
+  RUN_TEST(test_stereo_centre_drum_sides_equal);
+  RUN_TEST(test_pan_hard_left_silences_right);
+  RUN_TEST(test_pan_hard_right_silences_left);
+  RUN_TEST(test_pan_hard_left_constant_power);
+  RUN_TEST(test_fx_pan_lock_on_note_step);
+  RUN_TEST(test_lfo_pan_dest_alternates);
+  RUN_TEST(test_pan_change_ramps);
+  RUN_TEST(test_pan_legato_lock_ramps);
+  RUN_TEST(test_pan_fx_mid_segment_lands_at_boundary);
+  RUN_TEST(test_reverb_makes_sides_differ);
   return UNITY_END();
 }
