@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "hot.h"
 
 namespace mt {
 
@@ -210,7 +211,7 @@ struct LfoRef {
 };
 struct Instrument;
 LfoRef lfoRef(Instrument& m, int i);
-inline LfoCfg lfoAt(const Instrument& m, int i) {
+MT_INLINE LfoCfg lfoAt(const Instrument& m, int i) {
   if (i <= 0 || i >= kLfos) return {m.lfoWave, m.lfoRate, m.lfoDepth, m.lfoDest, m.lfoSync};
   return m.lfo[i - 1];
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <math.h>
 #include <stdint.h>
+#include "fastmath.h"
 
 namespace mt {
 
@@ -9,11 +10,11 @@ namespace mt {
 class Drive {
  public:
   static constexpr int kTab = 257;
-  void set(uint8_t drive) {  // per control update
+  MT_INLINE void set(uint8_t drive) {  // per control update (inlined: in IRAM with the caller)
     if (drive == drive_) return;
     drive_ = drive;
     g_ = drive ? 1.f + (drive > 127 ? 127 : drive) * (7.f / 127.f) : 0.f;
-    norm_ = drive ? 1.f / tanhf(g_) : 1.f;
+    norm_ = drive ? 1.f / fastTanh(g_) : 1.f;  // per control update with an LFO on DRIVE
   }
   bool on() const { return g_ != 0.f; }
   float process(float x) const {

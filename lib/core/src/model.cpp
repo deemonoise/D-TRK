@@ -1,4 +1,5 @@
 #include "model.h"
+#include "fastmath.h"
 #include "hot.h"
 #include <math.h>
 #include <stdio.h>
@@ -113,9 +114,9 @@ uint16_t fmDecayMs(uint8_t v) {
   return static_cast<uint16_t>(5.f * powf(800.f, v / 127.f) + 0.5f);
 }
 
-float lfoSyncHz(uint8_t div, uint16_t bpm) {
+MT_HOT float lfoSyncHz(uint8_t div, uint16_t bpm) {
   // Beats (quarters) per LFO cycle.
-  static const float kBeats[kLfoSyncSteps] = {0.125f, 1.f / 6, 0.25f, 1.f / 3, 0.5f, 2.f / 3, 1, 2, 4, 8, 16, 32};
+  MT_DATA static const float kBeats[kLfoSyncSteps] = {0.125f, 1.f / 6, 0.25f, 1.f / 3, 0.5f, 2.f / 3, 1, 2, 4, 8, 16, 32};
   return (bpm ? bpm : 120) / 60.f / kBeats[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
 }
 
@@ -184,7 +185,7 @@ MT_HOT float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec) {
   if (t < a) return static_cast<float>(t) / a;
   const float d = envTimeMs(fDec) * kRate / 1000.f;
   if (d <= 0) return 1.f;
-  return expf(-6.9077553f * (t - a) / d);  // ln(1000): -60 dB at d
+  return fastExp(-6.9077553f * (t - a) / d);  // ln(1000): -60 dB at d
 }
 
 void drumSetMachine(Instrument& m, uint8_t machine) {

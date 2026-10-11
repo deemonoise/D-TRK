@@ -205,6 +205,8 @@ void drain(Ring& q) {
 }
 
 // out: interleaved stereo, 2 * kBlock samples.
+std::atomic<uint32_t> profPeak{0};  // the slowest block's cycles while profiling
+
 [[maybe_unused]] void renderSynth(int16_t* out) {
   const uint32_t q0 = synth->profNow();
   advanceClock();
@@ -219,6 +221,10 @@ void drain(Ring& q) {
     oneshot.mixStereo(out, kBlock, mv * 0.01f);
   }
   pvPlaying.store(oneshot.playing(), std::memory_order_relaxed);
+  if (synth->profiling()) {
+    const uint32_t c = synth->profNow() - q0;
+    if (c > profPeak.load(std::memory_order_relaxed)) profPeak.store(c, std::memory_order_relaxed);
+  }
 }
 
 #ifdef AUDIO_BENCH_ANY
@@ -798,8 +804,9 @@ static uint32_t cycles() { return esp_cpu_get_cycle_count(); }
 
 void profileStart() {
   if (!synth) return;
-  uint32_t sink[kProfStages], blocks;
-  synth->takeProfile(sink, blocks);  // clear (a block in flight may land either side)
+  uint32_t sink[kProfStages], sinkN[kProfStages], blocks;
+  synth->takeProfile(sink, sinkN, blocks);  // clear (a block in flight may land either side)
+  profPeak.store(0, std::memory_order_relaxed);
   synth->setProfiler(cycles);
 }
 
@@ -809,11 +816,16 @@ bool profileStop(Profile& out) {
   if (!synth) return false;
   synth->setProfiler(nullptr);
   vTaskDelay(pdMS_TO_TICKS(10));  // let a block that read the clock finish
-  uint32_t c[kProfStages];
-  synth->takeProfile(c, out.blocks);
+  uint32_t c[kProfStages], n[kProfStages];
+  synth->takeProfile(c, n, out.blocks);
   if (!out.blocks) return false;
-  const float perUs = 1.f / (static_cast<float>(getCpuFrequencyMhz()) * out.blocks);
-  for (int i = 0; i < kProfStages; ++i) out.us[i] = c[i] * perUs;
+  const float mhz = static_cast<float>(getCpuFrequencyMhz());
+  const float perUs = 1.f / (mhz * out.blocks);
+  for (int i = 0; i < kProfStages; ++i) {
+    out.us[i] = c[i] * perUs;
+    out.n[i] = static_cast<float>(n[i]) / out.blocks;
+  }
+  out.peakUs = profPeak.load(std::memory_order_relaxed) / mhz;
   return true;
 }
 

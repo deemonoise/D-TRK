@@ -24,6 +24,8 @@ class Delay {
   uint32_t len_ = 0;
   uint32_t w_ = 0;  // write position
   float lp_ = 0;
+  uint8_t tone_ = 0xFF;  // the TONE coef_ was made for (powf / expf: once per change)
+  float coef_ = 1;
 };
 
 }  // namespace mt

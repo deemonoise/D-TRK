@@ -1,5 +1,6 @@
 #include "synth_fm.h"
 #include <math.h>
+#include "fastmath.h"
 #include "hot.h"
 
 namespace mt {
@@ -16,9 +17,9 @@ MT_INLINE uint32_t cycles(float c) {
 }
 
 // Exponential decay to -60 dB in ms; t in samples.
-float decayAt(float ms, float t) {
+MT_HOT float decayAt(float ms, float t) {
   if (ms <= 0) return 1;
-  return expf(-6.9078f * t / (ms * kSamplesPerMs));
+  return fastExp(-6.9078f * t / (ms * kSamplesPerMs));
 }
 
 // One operator's per-sample state, in locals for the duration of a block.
@@ -50,7 +51,7 @@ MT_INLINE float opStep(OpRun& s, float mod) {
 
 }  // namespace
 
-bool fmCarrier(FmAlg a, int op) {
+MT_HOT bool fmCarrier(FmAlg a, int op) {
   switch (a) {
     case FmAlg::Stack:
     case FmAlg::TwoToOne: return op == 0;
@@ -60,7 +61,7 @@ bool fmCarrier(FmAlg a, int op) {
   }
 }
 
-float fmMaxIndex(float hz) {
+MT_HOT float fmMaxIndex(float hz) {
   if (hz <= 0) return 8;
   const float m = 12000.f / hz - 1.f;
   return m < 0.2f ? 0.2f : (m > 8.f ? 8.f : m);
@@ -76,7 +77,7 @@ void FmVoice::trigger(bool keepPhase) {
   svf_.reset();
 }
 
-void FmVoice::Decay::at(float newMs, float newOff, uint32_t t0, int newSpan, float& e0, float& e1) {
+MT_HOT void FmVoice::Decay::at(float newMs, float newOff, uint32_t t0, int newSpan, float& e0, float& e1) {
   if (newMs <= 0) {
     e0 = e1 = 1;
     return;
@@ -84,8 +85,8 @@ void FmVoice::Decay::at(float newMs, float newOff, uint32_t t0, int newSpan, flo
   const bool same = newMs == ms && newOff == off;
   if (!same || t0 != t || newSpan != span) {
     const float k = -6.9078f / (newMs * kSamplesPerMs);
-    if (!same || t0 != t) e = expf(k * (static_cast<float>(t0) - newOff));
-    if (!same || newSpan != span) c = expf(k * newSpan);
+    if (!same || t0 != t) e = fastExp(k * (static_cast<float>(t0) - newOff));
+    if (!same || newSpan != span) c = fastExp(k * newSpan);
   }
   ms = newMs;
   off = newOff;
@@ -97,7 +98,7 @@ void FmVoice::Decay::at(float newMs, float newOff, uint32_t t0, int newSpan, flo
   t = t0 + static_cast<uint32_t>(newSpan);
 }
 
-void FmVoice::noisePair(const FmParams& p, uint32_t t0, int span, float& n0, float& n1) {
+MT_HOT void FmVoice::noisePair(const FmParams& p, uint32_t t0, int span, float& n0, float& n1) {
   const float burst = p.burstMs * kSamplesPerMs;
   if (p.bursts && burst > 0) {
     const float bursts = p.bursts * burst;
@@ -109,10 +110,10 @@ void FmVoice::noisePair(const FmParams& p, uint32_t t0, int span, float& n0, flo
       return;
     }
     // During the bursts (the clap's first few tens of ms): direct.
-    auto at = [&](float t) {
+    auto at = [&](float t) __attribute__((always_inline)) {  // inlined: in IRAM with the caller
       if (t < bursts) {
         const float in = t - burst * static_cast<int>(t / burst);
-        return expf(-in / (burst * 0.25f));
+        return fastExp(-in / (burst * 0.25f));
       }
       return p.tail * decayAt(p.noiseMs, t - bursts);
     };
@@ -123,7 +124,7 @@ void FmVoice::noisePair(const FmParams& p, uint32_t t0, int span, float& n0, flo
   noiseDec_.at(p.noiseMs, 0, t0, span, n0, n1);
 }
 
-void FmVoice::ampPair(const FmParams& p, uint32_t t0, int span, float& a0, float& a1) {
+MT_HOT void FmVoice::ampPair(const FmParams& p, uint32_t t0, int span, float& a0, float& a1) {
   if (!p.oneShot) {
     a0 = a1 = 1;
     return;
@@ -137,7 +138,7 @@ void FmVoice::ampPair(const FmParams& p, uint32_t t0, int span, float& a0, float
     ampDec_.at(p.ampMs, start, t0, span, a0, a1);
     return;
   }
-  auto at = [&](float t) {
+  auto at = [&](float t) __attribute__((always_inline)) {  // inlined: in IRAM with the caller
     if (t < kAttack) return ampStart_ + (1.f - ampStart_) * t / kAttack;
     if (t < start) return 1.f;
     return decayAt(p.ampMs, t - start);
@@ -155,10 +156,10 @@ MT_HOT void FmVoice::control(const FmParams& p, int span) {
   if (p.pitchEnv != 0) {
     float d0, d1;
     pitchDec_.at(p.pitchMs, 0, t_, span, d0, d1);
-    auto bend = [&](float d) {
+    auto bend = [&](float d) __attribute__((always_inline)) {  // inlined: in IRAM with the caller
       if (p.pitchEnv == bendEnv_ && d == bendD_) return bend_;
       const float semis = p.pitchEnv * d;
-      const float b = fabsf(semis) < 1e-4f ? 1.f : exp2f(semis * (1.f / 12.f));
+      const float b = fabsf(semis) < 1e-4f ? 1.f : fastExp2(semis * (1.f / 12.f));
       bendEnv_ = p.pitchEnv, bendD_ = d, bend_ = b;
       return b;
     };

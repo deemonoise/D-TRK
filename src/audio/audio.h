@@ -23,10 +23,12 @@ void reverbToPsram();
 void reverbToInternal();
 
 // CPU profile (PROJ -> SYS): the render time per stage (mt::Synth::ProfStage) while running.
-constexpr int kProfStages = 11;
+constexpr int kProfStages = 18;
 struct Profile {
   uint32_t blocks;               // blocks rendered while it ran
   float us[kProfStages];         // average per block, us
+  float n[kProfStages];          // counts per block (mt::Synth::takeProfile), 0 = none
+  float peakUs;                  // the slowest block (queue, render, preview mix)
 };
 void profileStart();
 bool profileRunning();

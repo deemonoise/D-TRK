@@ -1,4 +1,5 @@
 #include "synth_comp.h"
+#include "fastmath.h"
 #include "hot.h"
 
 namespace mt {
@@ -30,9 +31,9 @@ MT_HOT void Compressor::process(float* l, float* r, const float* scL, const floa
     if (++hold_ >= kHold) {
       hold_ = 0;
       if (env_ < 1e-20f) env_ = 0;  // silence: no denormal tail
-      const float envDb = env_ > 1e-6f ? 6.02f * log2f(env_) : -120.f;
+      const float envDb = env_ > 1e-6f ? 6.02f * fastLog2(env_) : -120.f;
       const float over = envDb - thrDb_;
-      gain_ = (over > 0 ? exp2f(-over * 0.75f / 6.02f) : 1.f) * makeup_;
+      gain_ = (over > 0 ? fastExp2(-over * 0.75f / 6.02f) : 1.f) * makeup_;
     }
     l[i] *= gain_;
     r[i] *= gain_;

@@ -1,5 +1,6 @@
 #include "synth_drum.h"
 #include <math.h>
+#include "fastmath.h"
 #include "hot.h"
 #include "synth_osc.h"
 
@@ -15,7 +16,7 @@ constexpr float kZero = 1e-6f;  // envelopes below snap to 0 (no denormals, sile
 constexpr float kBpNoise = 0.4f;
 
 // Per-sample multiplier reaching -60 dB in ms; 0 ms = no decay.
-float decayK(float ms) { return ms > 0 ? expf(-6.9077553f / (ms * kSamplesPerMs)) : 1.f; }
+MT_HOT float decayK(float ms) { return ms > 0 ? fastExp(-6.9077553f / (ms * kSamplesPerMs)) : 1.f; }
 const float kChokeK = decayK(2);  // choke tail: 2 ms to -60 dB
 const float kAccK = decayK(kAccentMs);
 
@@ -29,11 +30,11 @@ MT_INLINE float softSat(float x) {
   return u * (1.5f - 0.5f * u * u);
 }
 
-float snap(float e) { return e < kZero && e > -kZero ? 0 : e; }
+MT_INLINE float snap(float e) { return e < kZero && e > -kZero ? 0 : e; }
 
 }  // namespace
 
-float DrumVoice::K::get(float t) {
+MT_HOT float DrumVoice::K::get(float t) {
   if (t != ms) {
     ms = t;
     k = decayK(t);
@@ -74,7 +75,7 @@ MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
     burstLen_ = p.bursts ? static_cast<int32_t>(p.burstMs * kSamplesPerMs) : 0;
     burstsLeft_ = burstLen_ > 0 ? p.bursts : 0;
     burstT_ = burstLen_;
-    burstK_ = burstLen_ > 0 ? expf(-4.f / burstLen_) : 1.f;  // each hit fades ~35 dB
+    burstK_ = burstLen_ > 0 ? fastExp(-4.f / burstLen_) : 1.f;  // each hit fades ~35 dB
   }
   toneE_ = snap(toneE_);
   pitchE_ = snap(pitchE_);
@@ -89,8 +90,8 @@ MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
   toneK_.get(p.toneMs);
   float m0 = 1, m1 = 1;
   if (p.pitchEnv != 0 && pitchE_ > 0) {
-    m0 = exp2f(p.pitchEnv * pitchE_ * (1.f / 12.f));
-    m1 = exp2f(p.pitchEnv * pitchE_ * powf(pk, static_cast<float>(span)) * (1.f / 12.f));
+    m0 = fastExp2(p.pitchEnv * pitchE_ * (1.f / 12.f));
+    m1 = fastExp2(p.pitchEnv * pitchE_ * fastPow(pk, static_cast<float>(span)) * (1.f / 12.f));
   }
   for (int k = 0; k < kDrumTones; ++k) {
     const float hz = p.toneHz[k];
@@ -145,7 +146,7 @@ MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
       // Svf band-pass: peak q, bandwidth hz / q, so white noise keeps pi hz q / rate of its power.
       const float hz = p.noiseHz < 20.f ? 20.f : (p.noiseHz > kMaxHz ? kMaxHz : p.noiseHz);
       const float q = p.noiseQ < 0.5f ? 0.5f : p.noiseQ;
-      noiseGain_ = kBpNoise * sqrtf(kSynthRate / (3.14159265f * hz * q));
+      noiseGain_ = kBpNoise * fastPow(kSynthRate / (3.14159265f * hz * q), 0.5f);
     }
   }
 
@@ -242,7 +243,7 @@ MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp) {
   impulse_ = impulse;
 }
 
-bool DrumVoice::done() const {
+MT_HOT bool DrumVoice::done() const {
   if (fresh_ || burstsLeft_) return false;
   // Drive raises quiet parts by up to driveGain_ (tanh is linear near 0).
   const float off = kOff / driveGain_;
