@@ -613,29 +613,42 @@ Examples: `1 5 6 4` · `2MI7 5DOM 1MA7*2` · `1 b7 b6 5` · `@steps 1MI7*8 b6MA7
 
 **Capture** saves Dest's chords as your own progression `/presets/PRG/NAME.prg`: the keyboard asks `PROG NAME:`; name rules, toasts (`SAVED`, `NO NOTES`, `BAD NAME`, `LIST FULL`) and the list of up to 32 files as in [ARP Capture](#arp). After saving, the progression is selected in Progression. It takes Dest's range as it was before the dialog opened. A new chord starts at every step whose note or CHD differs from the current chord; steps without a note continue it. A root in the scale becomes a degree with its CHD type name, a root outside the scale a Roman numeral (`n`, else `b`, else `#`) with its type; a note without CHD becomes `MAJ` or `MIN` by the scale's third (`MAJ` outside the scale). Lengths are written in steps (`@steps`), up to 16 chords; inversions are not saved — Voicing chooses them. `.prg` is plain text in the format above.
 
-**Factory progressions** (30):
+**Factory progressions** (55):
 
 | Name | Progression | | Name | Progression |
 |------|-------------|---|------|-------------|
-| POP 1564 | `1 5 6 4` | | TRNC EPIC | `1 b6 b7 b3` |
-| POP 6415 | `6 4 1 5` | | TRNC 6471 | `6 4 b7 1` |
-| POP 1645 | `1 6 4 5` | | TRNC 1671 | `1 b6 b7 1` |
-| POP 1465 | `1 4 6 5` | | SW 1671 | `1MIN b6 b7 1MIN` |
-| JAZZ 251 | `2MI7 5DOM 1MA7*2` | | SW 6455 | `6 4 5 5` |
-| JAZZ 1625 | `1MA7 6MI7 2MI7 5DOM` | | DUB 17 | `1 b7` |
-| JAZZ 3625 | `3MI7 6MI7 2MI7 5DOM` | | BLUES 12 | `1DOM*4 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
-| MIN 1636 | `1 b6 b3 b7` | | ROCK 1741 | `1 b7 4 1` |
-| MIN 1767 | `1 b7 b6 b7` | | ROCK 1454 | `1 4 5 4` |
-| ANDALUS | `1MIN b7 b6 5MAJ` | | DORIAN 14 | `1MIN 4MAJ` |
-| MIN 1451 | `1 4 5 1` | | PHRYG 12 | `1MIN b2MAJ` |
-| DEEP 2 | `1MI7 4MI7` | | LYDIAN 12 | `1MAJ 2MAJ` |
-| DEEP 1MI9 | `1MI9 b7MA7` | | GOSPEL | `1 4 1 5 6 4 1 5` |
-| DEEP 21 | `2MI7 1MA7` | | CANON | `1 5 6 3 4 1 4 5` |
-| HOUSE 4 | `1MI7 b6MA7 b7DOM 1MI7` | | AXIS | `1 5 6 4 1 5 4 4` |
+| POP 1564 | `1 5 6 4` | | DEEP 21 | `2MI7 1MA7` |
+| POP 6415 | `6 4 1 5` | | HOUSE 4 | `1MI7 b6MA7 b7DOM 1MI7` |
+| POP 1645 | `1 6 4 5` | | HOUSE 2 | `1MI9 b7MA7 b6MA7 b7MA7` |
+| POP 1465 | `1 4 6 5` | | LIQUID | `1MI9 b6MA7 b3MA7 b7DOM` |
+| POP 4156 | `4 1 5 6` | | TRNC EPIC | `1 b6 b7 b3` |
+| POP 1364 | `1 3 6 4` | | TRNC 6471 | `6 4 b7 1` |
+| OLDIES | `1 6 2 5` | | TRNC 1671 | `1 b6 b7 1` |
+| AXIS | `1 5 6 4 1 5 4 4` | | SW 1671 | `1MIN b6 b7 1MIN` |
+| CANON | `1 5 6 3 4 1 4 5` | | SW 6455 | `6 4 5 5` |
+| ROYAL RD | `4MA7 5DOM 3MI7 6MIN` | | DUB 17 | `1 b7` |
+| CITY POP | `4MA7 3DOM 6MI7 5MI7 1DOM` | | DUB 1b6 | `1MI7 b6MA7` |
+| JAZZ 251 | `2MI7 5DOM 1MA7*2` | | FUNK 14 | `1DO9 4DO9` |
+| JAZZ 1625 | `1MA7 6MI7 2MI7 5DOM` | | BLUES 12 | `1DOM*4 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
+| JAZZ 3625 | `3MI7 6MI7 2MI7 5DOM` | | BLUES QC | `1DOM 4DOM 1DOM*2 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
+| JAZZ TURN | `1MA7 6DOM 2MI7 5DOM` | | MIN BLUES | `1MI7*4 4MI7*2 1MI7*2 b6DOM 5DOM 1MI7*2` |
+| JAZZ BACK | `4MA7 b7DOM 1MA7*2` | | ROCK 1741 | `1 b7 4 1` |
+| MIN 251 | `2HDM 5D7b 1MI7*2` | | ROCK 1454 | `1 4 5 4` |
+| NEO SOUL | `4MA7 3MI7 2MI7 1MA7` | | MIXO 1574 | `1MAJ 5MAJ b7MAJ 4MAJ` |
+| SOUL 25 | `2MI9 5DO9` | | DORIAN 14 | `1MIN 4MAJ` |
+| LOFI | `4MA7 3MI7 6MI7 1MA7` | | DORIAN 12 | `1MI7 2MI7` |
+| GOSPEL | `1 4 1 5 6 4 1 5` | | PHRYG 12 | `1MIN b2MAJ` |
+| GOSPEL 2 | `1MAJ 4MAJ #4DIM 5MAJ` | | LYDIAN 12 | `1MAJ 2MAJ` |
+| MIN 1636 | `1 b6 b3 b7` | | CINEMA | `1MAJ b6MAJ b3MAJ 4MAJ` |
+| MIN 1767 | `1 b7 b6 b7` | | HERO | `1MAJ 3MAJ 4MAJ 4MIN` |
+| ANDALUS | `1MIN b7 b6 5MAJ` | | AMBIENT | `1ad9 4ad9 6ad9 5ad9` |
+| MIN 1451 | `1 4 5 1` | | SUS DRIFT | `1SU2 4SU2 5SU4 1SU2` |
+| DEEP 2 | `1MI7 4MI7` | | QUARTAL | `1QRT 2QRT 4QRT 5QRT` |
+| DEEP 1MI9 | `1MI9 b7MA7` | | | |
 
 The MIN, DEEP, TRNC and SW progressions are meant for a minor project scale, the POP / JAZZ ones for major; with fixed qualities (`MI7`, `DOM`, `MIN`…) a progression sounds the same in any scale.
 
-**Rhythms** (16 steps each): HOLD (one hit held for the whole chord), HALF, QUARTER, 8THS, STAB, OFFBEAT, CHARLSTN, HOUSE PNO, DUB SKNK, REGGAE, TRNC GATE, SYNCOPA, PUSH, FUNK, POP 8, BALLAD. The rhythm counts from the start of each chord and repeats every 16 steps; a chord shorter than 16 steps plays only its beginning. A rhythm of a single hit followed only by ties (HOLD) is not repeated: it holds for the whole chord, however long.
+**Rhythms** (16 steps each): HOLD (one hit held for the whole chord), HALF, QUARTER, 8THS, STAB, OFFBEAT, CHARLSTN, HOUSE PNO, DUB SKNK, REGGAE, TRNC GATE, SYNCOPA, PUSH, FUNK, POP 8, BALLAD, UPBEAT16, GALLOP, REV GALLOP, THREE, DOUBLE, ANTICIP, ROLL UP, SWELL, LONG SHRT, SHRT LONG, LATE HOLD, STUTTER, PNO COMP, GHOST 3, CHOP 3, TRESILLO. The rhythm counts from the start of each chord and repeats every 16 steps; a chord shorter than 16 steps plays only its beginning. A rhythm of a single hit followed only by ties (HOLD) is not repeated: it holds for the whole chord, however long.
 
 - The settings are remembered until power-off, like Fill's; your own progressions live on the card.
 
@@ -1507,7 +1520,7 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | Presets | `.mti` file 204 bytes (v2: 156, v1: 84; via Wi-Fi up to 1 KB), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
 | WAV via Wi-Fi | 4 MB to `/samples`, 10 MB to a project folder (name up to 16 characters) |
 | Arp patterns | up to 32 steps; 106 factory, up to 32 of your own listed, name up to 16 characters |
-| Chord progressions | up to 16 chords; 30 factory + RANDOM, 16 rhythms, up to 32 of your own listed |
+| Chord progressions | up to 16 chords; 55 factory + RANDOM, 32 rhythms, up to 32 of your own listed |
 | Bass patterns | up to 32 steps; 24 factory, up to 32 of your own listed |
 | CHD | 36 types × 4 inversions |
 | Long press | 0.5 s |

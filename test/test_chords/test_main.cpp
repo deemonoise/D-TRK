@@ -70,7 +70,7 @@ void test_steps_and_format() {
 }
 
 void test_factory_parses() {
-  TEST_ASSERT_TRUE(progFactoryCount() >= 30);
+  TEST_ASSERT_TRUE(progFactoryCount() >= 55);
   for (int i = 0; i < progFactoryCount(); ++i) {
     Progression p;
     TEST_ASSERT_TRUE(strlen(progFactoryName(i)) <= 10);
@@ -78,7 +78,7 @@ void test_factory_parses() {
     TEST_ASSERT_TRUE(p.n > 0);
   }
   TEST_ASSERT_NULL(progFactoryName(progFactoryCount()));
-  TEST_ASSERT_EQUAL(16, chordRhythmCount());
+  TEST_ASSERT_EQUAL(32, chordRhythmCount());
   for (int i = 0; i < chordRhythmCount(); ++i) {
     ArpPattern r;
     TEST_ASSERT_TRUE(strlen(chordRhythmName(i)) <= 10);

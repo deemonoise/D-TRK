@@ -613,29 +613,42 @@ TRIPLET, PSY TRIPL и TE HYPNO3 — по 12 шагов (поверх 16 шаго
 
 **Capture** сохраняет аккорды Dest как свою прогрессию `/presets/PRG/ИМЯ.prg`: клавиатура спрашивает `PROG NAME:`; правила имени, toast (`SAVED`, `NO NOTES`, `BAD NAME`, `LIST FULL`) и список до 32 файлов — как у [Capture в ARP](#arp). После сохранения прогрессия сразу выбрана в Progression. Берётся диапазон Dest таким, каким он был до открытия диалога. Новый аккорд начинается на каждом шаге, где нота или CHD отличаются от текущего аккорда; шаги без ноты его продолжают. Корень в ладу → ступень с именем типа CHD, корень вне лада → римская ступень (`n`, иначе `b`, иначе `#`) с типом; нота без CHD → `MAJ` или `MIN` по терции лада (`MAJ` вне лада). Длины пишутся в шагах (`@steps`), до 16 аккордов; обращения не сохраняются — их выбирает Voicing. `.prg` — обычный текст в формате выше.
 
-**Заводские прогрессии** (30):
+**Заводские прогрессии** (55):
 
 | Имя | Прогрессия | | Имя | Прогрессия |
 |------|-------------|---|------|-------------|
-| POP 1564 | `1 5 6 4` | | TRNC EPIC | `1 b6 b7 b3` |
-| POP 6415 | `6 4 1 5` | | TRNC 6471 | `6 4 b7 1` |
-| POP 1645 | `1 6 4 5` | | TRNC 1671 | `1 b6 b7 1` |
-| POP 1465 | `1 4 6 5` | | SW 1671 | `1MIN b6 b7 1MIN` |
-| JAZZ 251 | `2MI7 5DOM 1MA7*2` | | SW 6455 | `6 4 5 5` |
-| JAZZ 1625 | `1MA7 6MI7 2MI7 5DOM` | | DUB 17 | `1 b7` |
-| JAZZ 3625 | `3MI7 6MI7 2MI7 5DOM` | | BLUES 12 | `1DOM*4 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
-| MIN 1636 | `1 b6 b3 b7` | | ROCK 1741 | `1 b7 4 1` |
-| MIN 1767 | `1 b7 b6 b7` | | ROCK 1454 | `1 4 5 4` |
-| ANDALUS | `1MIN b7 b6 5MAJ` | | DORIAN 14 | `1MIN 4MAJ` |
-| MIN 1451 | `1 4 5 1` | | PHRYG 12 | `1MIN b2MAJ` |
-| DEEP 2 | `1MI7 4MI7` | | LYDIAN 12 | `1MAJ 2MAJ` |
-| DEEP 1MI9 | `1MI9 b7MA7` | | GOSPEL | `1 4 1 5 6 4 1 5` |
-| DEEP 21 | `2MI7 1MA7` | | CANON | `1 5 6 3 4 1 4 5` |
-| HOUSE 4 | `1MI7 b6MA7 b7DOM 1MI7` | | AXIS | `1 5 6 4 1 5 4 4` |
+| POP 1564 | `1 5 6 4` | | DEEP 21 | `2MI7 1MA7` |
+| POP 6415 | `6 4 1 5` | | HOUSE 4 | `1MI7 b6MA7 b7DOM 1MI7` |
+| POP 1645 | `1 6 4 5` | | HOUSE 2 | `1MI9 b7MA7 b6MA7 b7MA7` |
+| POP 1465 | `1 4 6 5` | | LIQUID | `1MI9 b6MA7 b3MA7 b7DOM` |
+| POP 4156 | `4 1 5 6` | | TRNC EPIC | `1 b6 b7 b3` |
+| POP 1364 | `1 3 6 4` | | TRNC 6471 | `6 4 b7 1` |
+| OLDIES | `1 6 2 5` | | TRNC 1671 | `1 b6 b7 1` |
+| AXIS | `1 5 6 4 1 5 4 4` | | SW 1671 | `1MIN b6 b7 1MIN` |
+| CANON | `1 5 6 3 4 1 4 5` | | SW 6455 | `6 4 5 5` |
+| ROYAL RD | `4MA7 5DOM 3MI7 6MIN` | | DUB 17 | `1 b7` |
+| CITY POP | `4MA7 3DOM 6MI7 5MI7 1DOM` | | DUB 1b6 | `1MI7 b6MA7` |
+| JAZZ 251 | `2MI7 5DOM 1MA7*2` | | FUNK 14 | `1DO9 4DO9` |
+| JAZZ 1625 | `1MA7 6MI7 2MI7 5DOM` | | BLUES 12 | `1DOM*4 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
+| JAZZ 3625 | `3MI7 6MI7 2MI7 5DOM` | | BLUES QC | `1DOM 4DOM 1DOM*2 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
+| JAZZ TURN | `1MA7 6DOM 2MI7 5DOM` | | MIN BLUES | `1MI7*4 4MI7*2 1MI7*2 b6DOM 5DOM 1MI7*2` |
+| JAZZ BACK | `4MA7 b7DOM 1MA7*2` | | ROCK 1741 | `1 b7 4 1` |
+| MIN 251 | `2HDM 5D7b 1MI7*2` | | ROCK 1454 | `1 4 5 4` |
+| NEO SOUL | `4MA7 3MI7 2MI7 1MA7` | | MIXO 1574 | `1MAJ 5MAJ b7MAJ 4MAJ` |
+| SOUL 25 | `2MI9 5DO9` | | DORIAN 14 | `1MIN 4MAJ` |
+| LOFI | `4MA7 3MI7 6MI7 1MA7` | | DORIAN 12 | `1MI7 2MI7` |
+| GOSPEL | `1 4 1 5 6 4 1 5` | | PHRYG 12 | `1MIN b2MAJ` |
+| GOSPEL 2 | `1MAJ 4MAJ #4DIM 5MAJ` | | LYDIAN 12 | `1MAJ 2MAJ` |
+| MIN 1636 | `1 b6 b3 b7` | | CINEMA | `1MAJ b6MAJ b3MAJ 4MAJ` |
+| MIN 1767 | `1 b7 b6 b7` | | HERO | `1MAJ 3MAJ 4MAJ 4MIN` |
+| ANDALUS | `1MIN b7 b6 5MAJ` | | AMBIENT | `1ad9 4ad9 6ad9 5ad9` |
+| MIN 1451 | `1 4 5 1` | | SUS DRIFT | `1SU2 4SU2 5SU4 1SU2` |
+| DEEP 2 | `1MI7 4MI7` | | QUARTAL | `1QRT 2QRT 4QRT 5QRT` |
+| DEEP 1MI9 | `1MI9 b7MA7` | | | |
 
 Прогрессии MIN, DEEP, TRNC и SW рассчитаны на минорный лад проекта, POP / JAZZ — на мажорный; с фиксированными качествами (`MI7`, `DOM`, `MIN`…) прогрессия звучит одинаково в любом ладу.
 
-**Ритмы** (по 16 шагов): HOLD (один удар на весь аккорд), HALF, QUARTER, 8THS, STAB, OFFBEAT, CHARLSTN, HOUSE PNO, DUB SKNK, REGGAE, TRNC GATE, SYNCOPA, PUSH, FUNK, POP 8, BALLAD. Ритм отсчитывается от начала каждого аккорда и повторяется каждые 16 шагов; аккорд короче 16 шагов играет только его начало. Ритм из одного удара и одних таев (HOLD) не повторяется: он держит аккорд целиком, какой бы длины тот ни был.
+**Ритмы** (по 16 шагов): HOLD (один удар на весь аккорд), HALF, QUARTER, 8THS, STAB, OFFBEAT, CHARLSTN, HOUSE PNO, DUB SKNK, REGGAE, TRNC GATE, SYNCOPA, PUSH, FUNK, POP 8, BALLAD, UPBEAT16, GALLOP, REV GALLOP, THREE, DOUBLE, ANTICIP, ROLL UP, SWELL, LONG SHRT, SHRT LONG, LATE HOLD, STUTTER, PNO COMP, GHOST 3, CHOP 3, TRESILLO. Ритм отсчитывается от начала каждого аккорда и повторяется каждые 16 шагов; аккорд короче 16 шагов играет только его начало. Ритм из одного удара и одних таев (HOLD) не повторяется: он держит аккорд целиком, какой бы длины тот ни был.
 
 - Параметры, как и у Fill, помнятся до выключения питания; свои прогрессии лежат на карте.
 
@@ -1507,7 +1520,7 @@ FILE → **Wi-Fi transfer…** подключает трекер к домашн
 | Пресеты                             | файл `.mti` 204 байта (v2 — 156, v1 — 84; через Wi-Fi до 1 КБ), имя до 16 символов, до 4 уровней папок в папке типа, до 64 строк в одной папке; 145 заводских                        |
 | WAV через Wi-Fi                     | 4 МБ в `/samples`, 10 МБ в папку проекта (имя до 16 символов)                                                                                                                        |
 | Арп-паттерны                        | до 32 шагов; 106 заводских, до 32 своих в списке, имя до 16 символов                                                                                                                 |
-| Прогрессии аккордов                 | до 16 аккордов; 30 заводских + RANDOM, 16 ритмов, до 32 своих в списке                                                                                                               |
+| Прогрессии аккордов                 | до 16 аккордов; 55 заводских + RANDOM, 32 ритма, до 32 своих в списке                                                                                                               |
 | Бас-паттерны                        | до 32 шагов; 24 заводских, до 32 своих в списке                                                                                                                                      |
 | CHD                                 | 36 типов × 4 обращения                                                                                                                                                               |
 | Долгое нажатие                      | 0,5 с                                                                                                                                                                                |
