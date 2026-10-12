@@ -121,12 +121,6 @@ class Sequencer {
   uint8_t phase256(uint64_t now) const;
   uint64_t heardStepTime() const { return heardStepT_; }
   uint32_t stepDuration() const { return stepUs(); }
-  // Tracks whose NoteOns went out since the last call (bit = track).
-  uint16_t takeActivity() {
-    const uint16_t a = activity_;
-    activity_ = 0;
-    return a;
-  }
 
  private:
   enum class State : uint8_t { Stopped, Playing, Paused };
@@ -270,7 +264,6 @@ class Sequencer {
   uint8_t heardPat_ = 0;
   int heardSong_ = -1;
   uint32_t nextId_ = 1;
-  uint16_t activity_ = 0;
   Tie ties_[kTracks];
   StepArp arps_[kTracks];  // running ARS per track (n = 0: none)
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack

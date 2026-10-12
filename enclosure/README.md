@@ -24,7 +24,7 @@ Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (g
    5     6     7     8
 ```
 
-The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier. At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. The 3 mm LEDs go into the standard windows of the MX switches (you need clear keycaps or keycaps with a window). Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
+The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier. At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
 
 PLA/PETG, 3 wall perimeters, 20–30 % infill.
 
@@ -105,7 +105,7 @@ $OS -o stl/knob.stl knob.scad
 - IP5306 charger/power-bank module with Type-C and USB-A (desolder the USB-A).
 - LiPo 103450 battery (~2000 mAh).
 - 2 MX switches (12 for the track-button version), EC11 encoder with push button, keycaps.
-- Track-button version: PCF8575 module, PCM5102A DAC, MAX97220 amplifier, a second PJ-392 jack (headphones), optionally 8 × 3 mm LEDs and 8 × 330 Ω resistors.
+- Track-button version: PCF8575 module, PCM5102A DAC, MAX97220 amplifier, a second PJ-392 jack (headphones).
 
 ## Power
 

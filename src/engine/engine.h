@@ -50,8 +50,6 @@ bool post(Cmd c, uint16_t arg = 0);
 // As post, waiting up to 50 ms for room: for commands that must not be lost (fill / perf release).
 bool postWait(Cmd c, uint16_t arg = 0);
 Status status();
-// Tracks that sent a NoteOn since the last call (bit = track), for the activity LEDs.
-uint16_t takeActivity();
 // Engine timer time, us (time stamps of synth events).
 uint64_t nowUs();
 // Position inside the heard step of s now, 0..255 (live recording).

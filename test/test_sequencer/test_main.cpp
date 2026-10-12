@@ -217,24 +217,12 @@ void test_drum_track_plays_lane_notes() {
   TEST_ASSERT_EQUAL(2, sink->times(on).size());
 }
 
-void test_activity_marks_sounding_tracks() {
-  p->patterns[0].steps[2][0].note = 60;
-  p->patterns[0].steps[5][0].note = 62;
-  p->tracks[5].mute = true;
-  seq->start(0, *sink);
-  TEST_ASSERT_EQUAL_HEX16(0, seq->takeActivity());
-  run(0, 1000);
-  TEST_ASSERT_EQUAL_HEX16(1 << 2, seq->takeActivity());
-  TEST_ASSERT_EQUAL_HEX16(0, seq->takeActivity());  // cleared by take
-}
-
 void test_track_15_plays() {
   p->patterns[0].steps[kTracks - 1][0].note = 60;
   seq->start(0, *sink);
   run(0, 1000);
   const uint8_t on = static_cast<uint8_t>(0x90 | (p->tracks[kTracks - 1].channel & 0x0F));
   TEST_ASSERT_EQUAL(1, sink->times(on, 60).size());
-  TEST_ASSERT_EQUAL_HEX16(1u << (kTracks - 1), seq->takeActivity());
 }
 
 void test_tie_holds_until_next_note_with_overlap() {
@@ -1480,15 +1468,6 @@ void test_int_track_muted_sends_nothing_to_synth() {
   seq->start(0, *sink);
   run(0, 200000);
   TEST_ASSERT_EQUAL(0, sink->synKind(0x90).size());
-  TEST_ASSERT_EQUAL_HEX8(0, seq->takeActivity());
-}
-
-void test_int_track_marks_activity() {
-  p->tracks[4].out = TrackOut::Int;
-  p->patterns[0].steps[4][0].note = 60;
-  seq->start(0, *sink);
-  run(0, 1000);
-  TEST_ASSERT_EQUAL_HEX8(1 << 4, seq->takeActivity());
 }
 
 void test_int_track_stop_sends_off_and_all_off() {
@@ -2511,7 +2490,6 @@ int main() {
   RUN_TEST(test_retrigger_ignores_stale_note_off);
   RUN_TEST(test_muted_track_is_silent);
   RUN_TEST(test_drum_track_plays_lane_notes);
-  RUN_TEST(test_activity_marks_sounding_tracks);
   RUN_TEST(test_track_15_plays);
   RUN_TEST(test_tie_holds_until_next_note_with_overlap);
   RUN_TEST(test_set_bpm_while_playing);
@@ -2590,7 +2568,6 @@ int main() {
   RUN_TEST(test_int_track_events_carry_scheduled_time);
   RUN_TEST(test_int_and_midi_same_channel_and_note_both_sound);
   RUN_TEST(test_int_track_muted_sends_nothing_to_synth);
-  RUN_TEST(test_int_track_marks_activity);
   RUN_TEST(test_int_track_stop_sends_off_and_all_off);
   RUN_TEST(test_int_track_pgm_goes_to_synth);
   RUN_TEST(test_send_program_int_track_uses_instrument);

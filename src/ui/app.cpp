@@ -9,7 +9,7 @@
 #include "storage/settings.h"
 #include "storage/storage.h"
 #include "hw/sdcard.h"
-#include "track_leds.h"
+#include "track_buttons.h"
 
 namespace ui {
 namespace {
@@ -229,8 +229,8 @@ void App::cycleTab(int d) {
 
 // A + button N: solo track N of the half holding the cursor.
 void App::soloKey(int n) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
-  const int track = (curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + n;
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
   mt::TrackCfg& t = p_->tracks[track];
   engine::lockProject();
   t.solo = !t.solo;
@@ -243,8 +243,8 @@ void App::soloKey(int n) {
 
 // B + button N: queue pattern N of the bank holding the edit pattern; Shift = switch at once (as BANK).
 void App::queueKey(int n, bool shift) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
-  const int pat = (editPattern() / mt::kTrackLeds) * mt::kTrackLeds + n;
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int pat = (editPattern() / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (pat >= mt::kPatterns) return;
   if (!shift && status_.songPos >= 0) {  // the sequencer ignores a queue while the song plays its chain
     toast("SONG MODE");
@@ -328,8 +328,8 @@ bool App::doUndo() {
 // selection and note entry, the sample editor plays slices (button index); Shift + N mutes on
 // every other screen too.
 void App::trackKey(int n, bool shift) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
-  const int track = (curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + n;
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (tab_ == Tab::Grid && grid_.trackKey(n, shift)) return;
   if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
   if (!shift) {
@@ -404,7 +404,7 @@ void App::holdToast(int track) {
 }
 
 void App::trackRelease(int n) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
+  if (n < 0 || n >= mt::kTrackButtons) return;
   if (tab_ == Tab::Grid) grid_.trackRelease(n);
 }
 
@@ -420,16 +420,6 @@ void App::fillUp() {
   fillHeld_ = false;
   engine::postWait(engine::Cmd::Fill, 0);
   if (millis() - fillDownMs_ < hw::kLongPressMs) engine::post(engine::Cmd::TogglePlay);
-}
-
-void App::updateLeds(uint32_t now) {
-  const uint16_t act = engine::takeActivity();
-  uint16_t flash = 0;
-  for (int i = 0; i < mt::kTracks; ++i) {
-    if (act & (1u << i)) flashUntil_[i] = now + kFlashMs;
-    if (static_cast<int32_t>(flashUntil_[i] - now) > 0) flash |= static_cast<uint16_t>(1u << i);
-  }
-  hw::trackLeds(mt::trackLedMaskHalf(curTrack_, flash));
 }
 
 void App::setTheme(int i) {
@@ -622,7 +612,6 @@ void App::tick() {
     dirty_ = true;
   }
   const uint32_t now = millis();
-  updateLeds(now);
   saveSettingsIdle(now);
   autosaveIdle(now);
   pollCpu(now);

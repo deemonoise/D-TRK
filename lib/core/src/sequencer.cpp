@@ -874,7 +874,6 @@ void Sequencer::dispatch(const SchedEvent& e, MidiSink& out) {
       const uint8_t off[3] = {static_cast<uint8_t>(0x80 | ch), e.b[1], 0};
       send(off, 3);
     }
-    if (e.track < kTracks) activity_ |= static_cast<uint16_t>(1u << e.track);
   } else if (kind == 0x80) {
     if (!noteOff(e.b[1], e.id)) return;
   }

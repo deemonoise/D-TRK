@@ -33,7 +33,7 @@ It is a good idea to add 10 nF capacitors from A and B to GND — they reduce co
 
 ### Buttons on the PCF8575 (required)
 
-The encoder button, Play, Shift, A, B and 8 MX track buttons with 8 3 mm LEDs in the switch windows are connected via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the track buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work: the encoder button, Play, Shift, A, B and the track buttons do nothing.
+The encoder button, Play, Shift, A, B and 8 MX track buttons are connected via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the track buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work: the encoder button, Play, Shift, A, B and the track buttons do nothing.
 
 | PCF8575 | Connection |
 |---|---|
@@ -46,23 +46,16 @@ The encoder button, Play, Shift, A, B and 8 MX track buttons with 8 3 mm LEDs in
 | P14 | **Play** button, other pin to GND |
 | P15 | **Shift** button, other pin to GND |
 | P16 / P17 | buttons **B** / **A** (under Shift / Play), other pin to GND: hold-to-edit, tabs, back, undo, solo and pattern queue ([manual](docs/manual.md#abkeys)) |
-| P10–P17 | LED 1–8 cathodes, except P13–P17 (taken by the buttons above) |
 
-The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`, `kBtnABit`, `kBtnBBit`): if a pin is damaged, a button can be moved to the pin of an unfitted LED (number 8–15 = P10–P17), and that LED marked as `0xFF`. Since P13–P17 now carry the encoder button, Play, Shift, A and B, LEDs 4–8 need other free pins or stay unfitted (`0xFF`). On the author's unit P00 and P10 read low, so button 1 lives on P12, no LEDs are fitted, and P11 is free.
+The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`, `kBtnABit`, `kBtnBBit`): if a pin is damaged, a button can be moved to a free pin (number 0–15 = P00–P07, P10–P17). On the author's unit P00 and P10 read low, so button 1 lives on P12, and P11 is free.
 
 Safe boot (hold Shift at power-on) works as before: the firmware reads Shift from the expander before the autoload.
 
-```
-+3.3V ──[330 Ω]──|>|── P1x     (LED is lit when P1x = 0)
-```
-
-- 330 Ω — for red/yellow/green LEDs (≈ 4 mA). White and blue ones don't have enough headroom at 3.3 V: use 47–68 Ω, and brightness will vary from unit to unit.
-- The PCF8575 pulls a pin down (up to 25 mA) but up only with a weak pull-up, so the LEDs are switched only on the cathode, as in the diagram.
 - 4.7 kΩ SDA/SCL pull-ups to 3.3 V are usually already on the module — check.
 - INT is not needed: the firmware polls the module every 5 ms. The detected address is printed to the USB log (`trackio: PCF8575 at 0x..`).
 - If the A0–A2 pads are not bridged anywhere and the module has no resistors to GND, the address floats and may "wander" — in that case bridge the pads to GND.
 - GPIO 43/44 are free because the log and flashing go through the native USB (`ARDUINO_USB_CDC_ON_BOOT=1`). At startup the ESP32 bootloader prints to TXD0 (GPIO 43) — this does not bother the module.
-- The buttons and LEDs work on the visible half of the tracks — 1–8 or 9–16; the half is chosen by the cursor (move past track 8 and the second half is shown; the GRID header shows `1-8` / `9-16`). Button N selects track N of that half, Shift + N mutes the same track (the toast shows the real number, 1–16), and in GRID edit mode the buttons enter scale degrees. LED N is the same track: lit for the selected one, flashes on notes; activity in the other half is not shown. Details in the [manual](docs/manual.md#trackkeys).
+- The buttons work on the visible half of the tracks — 1–8 or 9–16; the half is chosen by the cursor (move past track 8 and the second half is shown; the GRID header shows `1-8` / `9-16`). Button N selects track N of that half, Shift + N mutes the same track (the toast shows the real number, 1–16), and in GRID edit mode the buttons enter scale degrees. Details in the [manual](docs/manual.md#trackkeys).
 
 ### MIDI OUT (TRS type A, 3.3 V)
 

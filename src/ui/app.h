@@ -94,7 +94,6 @@ class App {
  private:
   static constexpr uint32_t kFrameMs = 25;
   static constexpr uint32_t kToastMs = 1500;
-  static constexpr uint32_t kFlashMs = 50;  // track LED flash per note
   static constexpr uint32_t kCpuMs = 500;   // status bar CPU: averaging window
   static constexpr uint32_t kCpuRedMs = 2000;  // status bar CPU: red held after an audio stall
   static constexpr int kTabW = kScreenW / static_cast<int>(Tab::Count);
@@ -111,12 +110,11 @@ class App {
   // Hold a track button + turn = its volume (encoder click while held: its pan, again: volume), here
   // and now.
   bool holdVolume() const;
-  int heldTrack() const { return (curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + heldTrackBtn_; }
+  int heldTrack() const { return (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + heldTrackBtn_; }
   void nudgeTrackVol(int track, int d);
   void nudgeTrackPan(int track, int d);  // as nudgeTrackVol
   void holdToast(int track);             // "TRK3 VOL 100" / "TRK3 PAN L12" / "TRK3 MIDI"
   void fillUp();
-  void updateLeds(uint32_t now);
   void saveSettingsIdle(uint32_t now);
   void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
@@ -166,7 +164,6 @@ class App {
   bool bpmEdit_ = false;
   int bpmOrig_ = 120;  // BPM when the edit began (Shift+click puts it back)
   uint8_t curTrack_ = 0;
-  uint32_t flashUntil_[mt::kTracks] = {};
   int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
   int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)
   int phones_ = 100, savedPhones_ = 100;  // phones level, % (device setting)

@@ -4,7 +4,7 @@
 #include "fill_dialog.h"
 #include "model.h"
 #include "screen.h"
-#include "track_leds.h"
+#include "track_buttons.h"
 #include "transpose_dialog.h"
 
 namespace ui {
@@ -48,7 +48,7 @@ class GridScreen : public Screen {
   static constexpr int kRowH = 16;
   static constexpr int kNumW = 32;
   static constexpr int kColW = 56;     // Overview track column
-  static constexpr int kOverviewTracks = mt::kTrackLeds;  // overview columns: one half of the tracks
+  static constexpr int kOverviewTracks = mt::kTrackButtons;  // overview columns: one half of the tracks
   static_assert(kNumW + kOverviewTracks * kColW <= kScreenW, "Overview columns must fit");
   static_assert(mt::kTracks % kOverviewTracks == 0, "halves must tile the tracks");
   static constexpr int kDetW = kScreenW - kNumW;  // Detail: the current track only

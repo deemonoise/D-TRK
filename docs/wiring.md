@@ -1,7 +1,7 @@
 
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons with LEDs, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
+Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
@@ -25,7 +25,7 @@ WT32-SC01 Plus, expansion connector (Extended IO)
 WT32-SC01 Plus, Debug connector
   IO43 TXD0 ─────── PCF SDA
   IO44 RXD0 ─────── PCF SCL
-  3V3 ───────────── PCF VCC, 3.3 V rail for the LED resistors
+  3V3 ───────────── PCF VCC
   GND ───────────── PCF GND
 
 PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
@@ -35,7 +35,6 @@ PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
   P15 ──────── Shift ── GND
   P16 ──────── B ── GND
   P17 ──────── A ── GND
-  P1x ──────── LED cathode;  LED anode ──[R]── 3.3 V
 
 PCM5102A                                 MAX97220
   VIN ── 3.3 V or 5 V                      VCC ── board 5V (or 3.3V);  SHDN ── VCC
@@ -76,7 +75,7 @@ PCM5102A                                 MAX97220
 | `amp VCC`                         | `amp SHDN`                          | if broken out: VCC = running                                |
 | `amp OUT L / OUT R / GND`         | `jack Tip / Ring / Sleeve`          | DirectDrive: no output capacitors, Sleeve to GND is normal  |
 | **PCF8575 and buttons (required)** |                                     |                                                             |
-| `board 3V3`                       | `PCF VCC + 3.3 V rail`              | the rail feeds all 8 LED resistors                          |
+| `board 3V3`                       | `PCF VCC`                           | 3.3 V only, not 5 V                                         |
 | `board GND`                       | `PCF GND`                           | do not solder A0, A1, A2: the firmware finds the address 0x20–0x27 itself |
 | `Debug TXD0 (IO43) / RXD0 (IO44)` | `PCF SDA / SCL`                     | Debug connector; 3V3 and GND can be taken from it too       |
 | `—`                               | `PCF INT`                           | leave unconnected: the module is polled every 5 ms          |
@@ -85,9 +84,8 @@ PCM5102A                                 MAX97220
 | `PCF P14`                         | `Play button`                       | other pin to GND                                            |
 | `PCF P15`                         | `Shift button`                      | other pin to GND                                            |
 | `PCF P16 / P17`                   | `button B / A`                      | other pin to GND                                            |
-| `PCF P10 … P17`                   | `LED 1 … 8 cathode`                 | anode through its own resistor to 3.3 V; P13–P17 are taken by the buttons, so LEDs 4–8 need other pins (`kTrackLedBit`) |
 
-The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, no LEDs are fitted, and P11 is free.
+The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, and P11 is free.
 
 10 nF capacitors from the encoder's A and B pins to GND are recommended for less bounce. They are not required: the firmware has a filter.
 
@@ -135,23 +133,7 @@ amp VCC, amp SHDN ── board 5V (or 3V3)
 
 ![Button layout: Shift, Play and the encoder under the screen; below them buttons 1–4, and 5–8 at the front edge. The bottom view is mirrored: button 1 is on the right.](img/wiring-3.svg)
 
-*Button number = track number = pin number + 1 (button 1 is P00 and P10). While soldering, the lid lies face down, so the left-to-right order is reversed: button 1 ends up on the right.*
-
-## LED polarity
-
-![LED: the long leg is the anode, to the resistor and 3.3 V; the short leg on the flat side is the cathode, to pin P1x.](img/wiring-4.svg)
-
-*The LED goes into the window of the MX switch housing, with the legs passing straight through. A reversed LED will not burn out, it just won't light.*
-
-## LED resistors
-
-| LED colour                 | Drop          | Resistor   | Current    |
-|----------------------------|---------------|------------|------------|
-| red, yellow, orange        | `≈ 2.0 V`     | `330 Ω`    | `≈ 4 mA`   |
-| green (yellow-green)       | `≈ 2.1 V`     | `330 Ω`    | `≈ 3.5 mA` |
-| white, blue, bright green  | `≈ 2.9–3.1 V` | `47–68 Ω`  | `≈ 3–8 mA` |
-
-With white and blue LEDs at 3.3 V the voltage headroom is only 0.2–0.4 V, and brightness varies noticeably from one LED to the next. Red or yellow with 330 Ω are more reliable. Do not go below 47 Ω: the PCF8575 handles up to 25 mA per pin, but all 8 LEDs together should not draw more than ~80 mA.
+*Button number = track number = pin number + 1 (button 1 is P00). While soldering, the lid lies face down, so the left-to-right order is reversed: button 1 ends up on the right.*
 
 ## Before powering up
 
