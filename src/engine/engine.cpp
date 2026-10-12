@@ -56,7 +56,8 @@ void handle(const Command& c) {
     case Cmd::SendProgram: seq->sendProgram(now, c.arg, midi); break;
     case Cmd::ReleaseTies: seq->releaseTies(now, midi); break;
     case Cmd::TrackOut: seq->trackOutChanged(now, c.arg, midi); break;
-    case Cmd::ChainEdit: seq->chainEdited(now, midi, c.arg >> 8, static_cast<mt::ChainOp>(c.arg & 0xFF)); break;
+    case Cmd::SongEdit: seq->songEdited(now, midi, c.arg >> 8, static_cast<mt::SongOp>(c.arg & 0xFF)); break;
+    case Cmd::SetSong: seq->setSong(now, midi, c.arg >> 15, c.arg & 0xFF); break;
     case Cmd::Fill: seq->setFill(c.arg != 0); break;
     case Cmd::PerfOn: seq->perfOn(c.arg & 0xFF, static_cast<mt::PerfFx>(c.arg >> 8)); break;
     case Cmd::PerfOff: seq->perfOff(c.arg); break;
@@ -66,7 +67,7 @@ void handle(const Command& c) {
 void publish() {
   const Status s{seq->playing(),       seq->paused(),       seq->heardPattern(),
                  static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->heardLoop(),
-                 static_cast<int8_t>(seq->heardSongPos()), seq->fill(),
+                 static_cast<int8_t>(seq->heardSongPos()), seq->fill(), seq->song(),
                  seq->heardStepTime(),  seq->stepDuration()};
   portENTER_CRITICAL(&statusMux);
   st = s;
@@ -188,5 +189,6 @@ uint8_t stepPhase(const Status& s) { return mt::stepPhase256(nowUs(), s.stepT, s
 
 void lockProject() { xSemaphoreTake(projMutex, portMAX_DELAY); }
 void unlockProject() { xSemaphoreGive(projMutex); }
+bool savedMutes(uint16_t& bits) { return seq && seq->savedMutes(bits); }
 
 }  // namespace engine

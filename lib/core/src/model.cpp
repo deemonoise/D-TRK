@@ -88,13 +88,9 @@ void Project::reset() {
   wavetableCount = 0;
   hasSampleList = false;
   for (auto& p : patterns) p.clear();
-  memset(chain, 0, sizeof(chain));
-  chainLen = 0;
-  memset(chainTr, 0, sizeof(chainTr));
-  memset(chainRep, 1, sizeof(chainRep));
-  memset(chainScene, 0, sizeof(chainScene));
-  songMode = false;
-  for (uint16_t& sc : scenes) sc = kSceneEmpty;
+  memset(song, 0, sizeof(song));
+  memset(songMute, 0, sizeof(songMute));
+  songLen = 0;
 }
 
 // Tables built on first use: powf is costly on the ESP32 and these run per voice at control rate.

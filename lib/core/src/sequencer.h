@@ -24,33 +24,32 @@ class MidiSink {
 
 constexpr uint64_t kNever = UINT64_MAX;
 
-// What changed in Project.chain / songMode (see Sequencer::chainEdited).
-enum class ChainOp : uint8_t { Edit, Insert, Delete };
+// What changed in Project.song / songMute / songLen (see Sequencer::songEdited).
+enum class SongOp : uint8_t { Edit, Insert, Delete };
 constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the next note starts
 
 // Hardware-free sequencer. The caller passes the current time in us and calls
 // process() again no later than the time it returns.
 //
-// Song mode (Project.songMode with chainLen > 0) plays the chain: start() begins at
-// chain[0] and every pattern end advances to the next entry, after the last back to
-// chain[0]. The next entry is decided when the last step of a pass is scheduled, like
-// a queued pattern, so rewind() undoes it together with that step. queuePattern() is
-// ignored while the song is active; selectPattern() still switches at once and the
-// chain goes on from its position. Enabling the song while playing starts chain[0] at
-// the next pattern end, disabling it keeps the current pattern looping. With an empty
-// chain the current pattern plays as without song mode. Chain edits take effect at
-// the next pattern end: entries are clamped to valid patterns, a position beyond a
-// shrunk chain wraps to chain[0]. After every chain / songMode write the caller calls
-// chainEdited() (under the same lock): it re-decides unheard chain advances and keeps
-// the position on the same entry when rows are inserted or deleted before it. A
-// decision whose last step has been heard stays. Stopped in song mode, the sequencer
-// shows chain[0] (pattern() == chain[0], heardSongPos() == 0).
+// SONG or LOOP is a runtime flag (setSong), not part of the project. SONG (with songLen > 0) plays
+// the slots of Project.song: start() begins at the slot given to setSong and every pattern end
+// advances to the next slot, after the last back to slot 0. The next slot is decided when the last
+// step of a pass is scheduled, like a queued pattern, so rewind() undoes it together with that step.
+// queuePattern() is ignored while the song plays (stopped it works); selectPattern() still switches
+// at once and the song goes on from its position. setSong while playing takes effect at the pass
+// end: on goes to the given slot, off keeps the heard pattern looping. With no slots the current
+// pattern loops. Song edits take effect at the next pattern end: slots are clamped to valid
+// patterns, a position beyond a shrunk song wraps to slot 0. After every song write the caller
+// calls songEdited() (under the same lock): it re-decides unheard advances and keeps the position
+// on the same slot when slots are inserted or deleted before it. A decision whose last step has
+// been heard stays. Stopped, no slot is shown (heardSongPos() == -1).
 //
-// A chain item plays chainRep passes before the next one (a repeat goes on like a loop: ties and
-// CND continue), transposes the notes of melodic tracks by chainTr while it plays (drum tracks, OFF
-// and empty steps untouched) and, when it starts, recalls its mute scene into TrackCfg::mute (an
-// empty scene is skipped). Pattern::trackLen makes a track loop on its own length inside the
-// pass; the pass counter follows the pattern length.
+// A slot that plays the same pattern as the one before goes on like a loop (ties and CND continue).
+// When a slot starts, its songMute mask is written into every TrackCfg::mute (newly muted tracks
+// go silent); a live mute change holds until the next slot start. The first slot start saves the
+// mutes, which come back when the song stops being heard: stop(), or a pass end outside the song (LOOP,
+// no slots). Pause keeps them. Pattern::trackLen makes a track
+// loop on its own length inside the pass; the pass counter follows the pattern length.
 //
 // ARS (step arp): a note step with ARS plays its first arp note, every following step of the track
 // without a note plays the next one (every `div` steps) until a note step that plays, OFF (note or
@@ -76,7 +75,7 @@ class Sequencer {
   void stop(uint64_t now, MidiSink& out);
   void togglePlay(uint64_t now, MidiSink& out);
 
-  void queuePattern(uint8_t idx);   // switch at the end of the current pass; ignored in song mode
+  void queuePattern(uint8_t idx);   // switch at the end of the current pass; ignored while the song plays
   void selectPattern(uint8_t idx);  // switch from the next step
   void setBpm(uint16_t bpm);
   // Program change of one track, sent now (nothing for kNoProgram).
@@ -84,9 +83,19 @@ class Sequencer {
   // Replans the unheard steps from the (edited) pattern, then ends every held TIE now
   // (not before onT + kMinGateUs), e.g. after its pattern was cleared.
   void releaseTies(uint64_t now, MidiSink& out);
-  // After a chain edit: Insert = a row inserted at `at`, Delete = row `at` removed,
-  // Edit = entries or songMode changed in place.
-  void chainEdited(uint64_t now, MidiSink& out, int at, ChainOp op);
+  // After a song edit: Insert = a slot inserted at `at`, Delete = slot `at` removed,
+  // Edit = slots, masks or songLen changed in place.
+  void songEdited(uint64_t now, MidiSink& out, int at, SongOp op);
+  // SONG (on, with songLen > 0) or LOOP. Stopped: start() plays slot `slot` (clamped). Playing: takes
+  // effect at the end of the pass (unheard steps are replanned): on = slot `slot` follows (already in
+  // the song: it goes on), off = the heard pattern keeps looping. Paused: as playing, on resume.
+  void setSong(uint64_t now, MidiSink& out, bool on, int slot);
+  bool song() const { return song_; }
+  // The mutes from before the song (bit = track), held while the song plays; false when none.
+  bool savedMutes(uint16_t& bits) const {
+    bits = savedMute_;
+    return muteHeld_;
+  }
   // After TrackCfg::out of a track changed: ends its sounding notes on both outputs.
   void trackOutChanged(uint64_t now, int track, MidiSink& out);
 
@@ -102,7 +111,7 @@ class Sequencer {
   int pendingPattern() const { return queued_ >= 0 ? queued_ : (heardPat_ != cur_ ? cur_ : -1); }
   uint32_t loopCount() const { return loop_; }  // planned, ahead of what is heard
   uint32_t heardLoop() const { return heardLoop_; }  // passes of the heard pattern (trackStepAt)
-  // Chain index of the heard pattern; -1 outside song mode.
+  // Song slot of the heard pattern; -1 outside the song (and stopped).
   int heardSongPos() const { return heardSong_; }
   void seed(uint32_t s) { rng_ = Rng(s); }
   // Tracks that may sound (bit = track), on top of mute / solo. Offline render; default all.
@@ -142,22 +151,27 @@ class Sequencer {
     uint8_t prevPos, prevPat;
     int8_t prevQueued;
     int8_t song, prevSong;  // songPos_ when played / before
-    uint8_t prevRep;        // rep_ before
     Tie ties[kTracks];
     StepArp arps[kTracks];
     uint16_t perfMuted;   // perfMuted_ before: its first-muted-step release is undone with the step
     uint16_t condBits;    // condBits_ before
     uint16_t mutes;       // TrackCfg::mute bits before
-    bool scene;           // the step's pass end recalled a scene (mutes written)
+    bool muteSet;         // the step's pass end started a slot or left the song (mutes written)
+    bool held;            // muteHeld_ before
+    uint16_t saved;       // savedMute_ before
   };
   static constexpr int kHist = 16;           // covers every scheduled but unheard step
   static constexpr uint16_t kLookTicks = 48;  // the largest nudge: -50 % of a quarter
   static constexpr uint64_t kTickNs = 625000000ull;  // one 96 PPQN tick is kTickNs / bpm ns
 
   static uint16_t clampBpm(uint16_t b) { return b < 20 ? 20 : (b > 300 ? 300 : b); }
-  int chainLen() const { return p_.chainLen > kChainMax ? kChainMax : p_.chainLen; }
-  bool songActive() const { return p_.songMode && chainLen() > 0; }
-  uint8_t chainAt(int i) const { return p_.chain[i] < kPatterns ? p_.chain[i] : kPatterns - 1; }
+  int songLen() const { return p_.songLen > kSongMax ? kSongMax : p_.songLen; }
+  bool songActive() const { return song_ && songLen() > 0; }
+  uint8_t songAt(int i) const { return p_.song[i] < kPatterns ? p_.song[i] : kPatterns - 1; }
+  // Slot the song enters at (start, loop -> song): setSong's slot, clamped to the last.
+  int songEntry() const { return songFrom_ < songLen() ? songFrom_ : songLen() - 1; }
+  // Unheard steps replanned (a song advance among them decided again); their tie releases kept.
+  void replan(uint64_t now, MidiSink& out);
   uint16_t ticks() const { return ticksPerStep(p_.patterns[cur_].res); }
   uint32_t stepUs() const { return 625000u * ticks() / bpm_; }
   uint32_t lookUs() const { return 625000u * kLookTicks / bpm_; }
@@ -208,14 +222,14 @@ class Sequencer {
   void playTrackStep(int tr, const Step& raw, uint64_t t, const ExpandCtx& c, uint16_t tps, int64_t earliest);
   // skipStep for one track step at t: the controls go out at now.
   void skipTrackStep(int tr, const Step& raw, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps);
-  // The step as it plays: the chain transpose on a melodic track, the track's punch-in fx.
+  // The step as it plays: the track's punch-in fx.
   void adjustStep(Step& s, int track) const;
-  int chainTranspose() const { return songPos_ >= 0 && songPos_ < chainLen() ? p_.chainTr[songPos_] : 0; }
-  int chainRep(int i) const {
-    const uint8_t r = p_.chainRep[i];
-    return r < 1 ? 1 : (r > kChainRepMax ? kChainRepMax : r);
-  }
-  void applyScene(int songPos, uint64_t t);
+  // The slot's mask into every track's mute; tracks it newly mutes go silent at t.
+  void applyMute(int slot, uint64_t t);
+  // Mutes from bits; tracks it newly mutes go silent at t (none when t is kNever).
+  void writeMutes(uint16_t bits, uint64_t t);
+  // Back to the mutes saved at the song start, if held.
+  void restoreMutes(uint64_t t);
   // Plays this step: not muted / solo-excluded, no perf Mute (whose first muted step ends its notes).
   bool audible(int track, uint64_t t);
   void pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note, uint16_t tps,
@@ -234,13 +248,16 @@ class Sequencer {
   State state_ = State::Stopped;
   uint8_t cur_ = 0;
   int queued_ = -1;
-  int songPos_ = -1;  // chain index of cur_, -1 outside song mode
-  uint8_t rep_ = 0;   // passes of the chain item done (song mode)
+  int songPos_ = -1;  // song slot of cur_, -1 outside the song
+  bool song_ = false;      // setSong
+  uint8_t songFrom_ = 0;   // setSong's slot
   bool fill_ = false;
   PerfFx perf_[kTracks] = {};
   uint16_t perfMuted_ = 0;  // perf Mute already ended the track's notes
-  bool sceneSet_ = false;
-  uint16_t condBits_ = 0;   // per track: the last CND / PRB result (CND PRE / NEI)   // applyScene wrote the mutes while the current step was planned
+  bool muteSet_ = false;    // applyMute wrote the mutes while the current step was planned
+  bool muteHeld_ = false;   // savedMute_ holds the mutes from before the song
+  uint16_t savedMute_ = 0;
+  uint16_t condBits_ = 0;   // per track: the last CND / PRB result (CND PRE / NEI)
   uint16_t mask_ = 0xFFFF;  // setTrackMask
   uint64_t endTick_ = kNever;  // setEndTick
   uint64_t heardStepT_ = 0;  // start of the heard step

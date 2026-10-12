@@ -9,11 +9,7 @@ constexpr int kMaxSteps = 128;
 constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
 constexpr int kPatterns = 16;
-constexpr int kChainMax = 64;
-constexpr int kChainRepMax = 16;  // passes of a chain item
-constexpr int kChainTrMax = 24;   // chain item transpose, semitones
-constexpr int kScenes = 8;        // mute scenes
-constexpr uint16_t kSceneEmpty = 0xFFFF;  // a scene slot with nothing stored (all 16 muted is no use)
+constexpr int kSongMax = 128;  // song slots
 constexpr int kPpqn = 96;
 
 constexpr uint8_t kNoteEmpty = 0xFF;
@@ -426,16 +422,10 @@ struct Project {
   uint8_t scaleType = 0;  // ScaleType (scale.h), 0 = Chromatic
   TrackCfg tracks[kTracks];
   Pattern patterns[kPatterns];
-  uint8_t chain[kChainMax] = {0};
-  uint8_t chainLen = 0;
-  // Per chain item: transpose of melodic tracks (semitones, -kChainTrMax..kChainTrMax), passes before
-  // advancing (1..kChainRepMax), mute scene recalled when the item starts (0 = none, 1..kScenes).
-  // Rows move together: chainInsert / chainDelete (edit_ops).
-  int8_t chainTr[kChainMax] = {0};
-  uint8_t chainRep[kChainMax] = {0};  // reset() sets 1
-  uint8_t chainScene[kChainMax] = {0};
-  bool songMode = false;
-  uint16_t scenes[kScenes];  // bit t = track t muted; kSceneEmpty = nothing stored (reset())
+  // Song: slot i plays pattern song[i]; when it starts, track t is muted iff bit t of songMute[i].
+  uint8_t song[kSongMax] = {0};
+  uint16_t songMute[kSongMax] = {0};
+  uint8_t songLen = 0;
   Instrument instruments[kInstruments];
   uint8_t masterVol = 100;  // 0..kMasterVolMax %
   bool preview = true;      // GRID note entry sounds on INT tracks

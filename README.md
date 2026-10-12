@@ -1,7 +1,7 @@
 # D-TRK
 
 A 16-track tracker with a built-in synthesizer on the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen).
-16 patterns, song mode, Fill (every Nth / Euclid / random) for notes, volume and FX, arpeggio, chord-progression and bass-line generators, saving to microSD, MIDI file import.
+16 patterns, a song of up to 128 slots (SONG tab), Fill (every Nth / Euclid / random) for notes, volume and FX, arpeggio, chord-progression and bass-line generators, saving to microSD, MIDI file import.
 Built-in sound: FM, 808 / 909 drum machines, the SYNTH synthesizer (saw / square / triangle and wavetable), a sampler and chiptune, played through the board's built-in amplifier — each track plays either the internal synth or external MIDI.
 
 User manual: [docs/manual.md](docs/manual.md). Русская версия: [README_ru.md](README_ru.md).
@@ -194,8 +194,7 @@ Details (INST tab, preset browser, DRUM machine table, SYNTH and wavetables, fx 
 
 ## Song and live performance
 
-- **Song mode** (BANK): each chain entry has a pattern, a transposition of melodic tracks (±24), a number of passes (x1–x16) and a mute scene (S1–S8) that is applied when the entry starts. The chain row reads `P05 +3 x2 S1`; Shift + turn in row edit mode selects the field.
-- **Mute scenes**: 8 tiles under the chain — tap recalls, long tap stores the current mutes, Shift + tap clears.
+- **Song** (SONG tab): up to 128 slots, each with a pattern and the mutes of the 16 tracks; the mutes are applied when the slot starts. An A tap copies the slot below it (that is how repeats are made), a click or tap on a cell mutes the track in the slot, the track buttons do the same. Play on the SONG tab plays the song, on other tabs it loops the pattern; tapping `S03 P05` in the status bar toggles SONG / LOOP at the end of the pass.
 - **Per-track length** (TRACK → Pat len): the track loops its first N steps within the pattern (polymeter); in GRID the steps beyond are grey, and the boundary is marked with a line.
 - **Per-track speed** (TRACK → Speed): 1/4, 1/2, x1, x2, x4 per track and pattern — x2 / x4 loop the track 2 / 4 times faster (x2 at 1/16 = 1/32), 1/2 / 1/4 stretch it across pattern passes; works with Pat len.
 - **Fill generators** (GRID → Fill…, row Type): **ARP** (Virus-style arpeggiator, 106 rhythm patterns), **CHORDS** (a progression like `1 5 6 4`, `2MI7 5DOM 1MA7*2` or `1 b7 b6 5` in the project's key, 55 factory progressions + RANDOM, 32 rhythms, CLOSE voice leading by inversions) and **BASS** (a bass line whose notes are roles — root, 3rd, 5th, 7th, approach, walk — against a fixed root, the selected tracks' chords or the CHORDS progression; 48 factory patterns). Each writes notes and fx onto one track with live preview and undo; Capture saves your own patterns to `/presets/ARP`, `/presets/PRG`, `/presets/BAS`. More in the [manual](docs/manual.md#euclid).
@@ -207,7 +206,7 @@ More in the [manual](docs/manual.md#song).
 
 ## Mixer and render
 
-- **MIX** is a separate tab at the bottom, next to TRACK: 8 strips for the half of the tracks under the cursor (volume fader, pan, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
+- **MIX** is a separate tab at the bottom, between INST and BANK: 8 strips for the half of the tracks under the cursor (volume fader, pan, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
 - Track volume from any screen: hold its button and turn the encoder (Shift ×10); a click while holding switches the turn to pan. Not in GRID edit mode, REC or PERF.
 - **Pan** per INT track (L64…C…R63): TRACK → Pan, the MIX pan row (tap it, then turn), step fx `PAN`, LFO dest PAN (autopan; with Retrig ON chord notes spread across the field). The reverb returns in pseudo-stereo, the delay in the centre.
 - **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, stereo 16-bit 32 kHz, with delay / reverb / compressor and a 2 s tail. The file can be downloaded over Wi-Fi or imported back as a sample.

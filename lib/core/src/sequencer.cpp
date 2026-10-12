@@ -54,8 +54,8 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   if (state_ == State::Playing) silence(now, out);
   heap_.clear();
   if (songActive()) {
-    songPos_ = 0;
-    cur_ = chainAt(0);
+    songPos_ = songEntry();
+    cur_ = songAt(songPos_);
   } else {
     songPos_ = -1;
     if (queued_ >= 0) cur_ = queued_;
@@ -63,10 +63,10 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   queued_ = -1;
   pos_ = 0;
   loop_ = 0;
-  rep_ = 0;
   perfMuted_ = 0;
   condBits_ = 0;
-  if (songPos_ >= 0) applyScene(songPos_, now);
+  restoreMutes(kNever);  // restart: saved again from the user's mutes
+  if (songPos_ >= 0) applyMute(songPos_, now);
   for (int i = 0; i < kTracks; ++i) {
     const TrackCfg& t = p_.tracks[i];
     if (internal(i)) {
@@ -112,7 +112,7 @@ void Sequencer::resume(uint64_t now, MidiSink& out) {
   if (state_ != State::Paused) return;
   // Song Position Pointer counts sixteenths (24 ticks at 96 PPQN). It is the position
   // within the current pattern, not since start(): a slave sees every pass (and every
-  // chain entry) restart at 0, which is what a pattern-based slave expects.
+  // song slot) restart at 0, which is what a pattern-based slave expects.
   const uint16_t spp = static_cast<uint16_t>(static_cast<uint32_t>(pos_) * ticks() / 24);
   const uint8_t m[3] = {0xF2, static_cast<uint8_t>(spp & 0x7F), static_cast<uint8_t>((spp >> 7) & 0x7F)};
   out.send(m, 3);
@@ -136,21 +136,16 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   heardPos_ = 0;
   loop_ = 0;
   heardLoop_ = 0;
-  rep_ = 0;
   for (PerfFx& f : perf_) f = PerfFx::None;
   perfMuted_ = 0;
+  restoreMutes(kNever);
   showStopped();
 }
 
-// Stopped: start() plays chain[0] in song mode, so that is what is shown.
+// Stopped: no slot is shown, the pattern stays.
 void Sequencer::showStopped() {
   songPos_ = -1;
-  if (songActive()) {
-    cur_ = chainAt(0);
-    heardSong_ = 0;
-  } else {
-    heardSong_ = -1;
-  }
+  heardSong_ = -1;
   heardPat_ = cur_;
 }
 
@@ -163,7 +158,7 @@ void Sequencer::togglePlay(uint64_t now, MidiSink& out) {
 }
 
 void Sequencer::queuePattern(uint8_t idx) {
-  if (idx >= kPatterns || songActive()) return;
+  if (idx >= kPatterns || (state_ != State::Stopped && songActive())) return;
   if (state_ == State::Playing) {
     queued_ = idx;
   } else {
@@ -221,26 +216,34 @@ void Sequencer::releaseTies(uint64_t now, MidiSink& out) {
   emitDue(now, out);
 }
 
-void Sequencer::chainEdited(uint64_t now, MidiSink& out, int at, ChainOp op) {
+void Sequencer::replan(uint64_t now, MidiSink& out) {
+  if (state_ != State::Playing) return;  // paused: already rewound
+  emitDue(now, out);
+  if (rewind(now)) {
+    tag_ = stepSerial_ - 1;
+    releaseAllTies(tickTime(stepTick_));
+  }
+}
+
+void Sequencer::setSong(uint64_t now, MidiSink& out, bool on, int slot) {
+  replan(now, out);  // an advance among the unheard steps is decided again
+  song_ = on;
+  songFrom_ = static_cast<uint8_t>(slot < 0 ? 0 : (slot >= kSongMax ? kSongMax - 1 : slot));
+}
+
+void Sequencer::songEdited(uint64_t now, MidiSink& out, int at, SongOp op) {
   if (state_ == State::Stopped) {
     showStopped();
     return;
   }
-  if (state_ == State::Playing) {
-    emitDue(now, out);
-    // Unheard steps are replanned: an advance among them is decided again on the new chain.
-    if (rewind(now)) {
-      tag_ = stepSerial_ - 1;
-      releaseAllTies(tickTime(stepTick_));
-    }
-  }
-  if (op == ChainOp::Edit) return;
-  // The playing item deleted: the passes counted were its own, the next one starts at the pass end.
-  if (op == ChainOp::Delete && songPos_ == at) rep_ = kChainRepMax;
+  replan(now, out);  // an advance among the unheard steps is decided again on the new song
+  if (op == SongOp::Edit) return;
   auto remap = [&](int v) {
     if (v < 0) return v;
-    if (op == ChainOp::Insert) return v >= at ? v + 1 : v;
-    return v > at ? v - 1 : (v == at ? at - 1 : v);  // a deleted entry goes on with the next one
+    if (op == SongOp::Insert) return v >= at ? v + 1 : v;
+    if (v != at) return v > at ? v - 1 : v;
+    // A deleted slot goes on with the next one: slot 0 via the last, so the pass end wraps to the new slot 0.
+    return at > 0 ? at - 1 : songLen() - 1;
   };
   songPos_ = remap(songPos_);
   heardSong_ = remap(heardSong_);
@@ -301,16 +304,17 @@ bool Sequencer::rewind(uint64_t now) {
   heap_.removeIf([&](const SchedEvent& e) { return static_cast<int32_t>(e.tag - h.serial) >= 0; });
   memcpy(ties_, h.ties, sizeof(ties_));
   memcpy(arps_, h.arps, sizeof(arps_));
-  // A perf Mute's or scene's release went with the undone steps: replanning must push it again.
+  // A perf Mute's or slot mask's release went with the undone steps: replanning must push it again.
   perfMuted_ = h.perfMuted;
   condBits_ = h.condBits;
+  muteHeld_ = h.held;
+  savedMute_ = h.saved;
   for (int i = 0; i <= k; ++i)
-    if (hist_[i].scene) {
+    if (hist_[i].muteSet) {
       for (int tr = 0; tr < kTracks; ++tr) p_.tracks[tr].mute = (h.mutes >> tr) & 1;
       break;
     }
-  songPos_ = h.prevSong;  // a chain advance among the undone steps is decided again
-  rep_ = h.prevRep;
+  songPos_ = h.prevSong;  // a song advance among the undone steps is decided again
   stepTick_ = h.tick;
   stepSerial_ = h.serial;
   for (int i = k + 1; i < histN_; ++i) hist_[i - k - 1] = hist_[i];
@@ -408,15 +412,16 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.prevPat = cur_;
   h.prevQueued = static_cast<int8_t>(queued_);
   h.prevSong = static_cast<int8_t>(songPos_);
-  h.prevRep = rep_;
   memcpy(h.ties, ties_, sizeof(ties_));
   memcpy(h.arps, arps_, sizeof(arps_));
   h.perfMuted = perfMuted_;
   h.condBits = condBits_;
+  h.held = muteHeld_;
+  h.saved = savedMute_;
   h.mutes = 0;
   for (int i = 0; i < kTracks; ++i)
     if (p_.tracks[i].mute) h.mutes |= static_cast<uint16_t>(1u << i);
-  sceneSet_ = false;
+  muteSet_ = false;
   tag_ = stepSerial_;
   minT_ = kNever;
 
@@ -458,7 +463,7 @@ void Sequencer::scheduleStep(uint64_t now) {
   stepTick_ += ticks();
   if (++pos_ >= pat.length) endOfPass();
   h.first = minT_ == kNever ? t : minT_;
-  h.scene = sceneSet_;
+  h.muteSet = muteSet_;
 }
 
 void Sequencer::playTrackStep(int tr, const Step& raw, uint64_t t, const ExpandCtx& c, uint16_t tps,
@@ -631,18 +636,13 @@ void Sequencer::endOfPass() {
   ++loop_;
   int next = queued_;
   if (songActive()) {
-    if (songPos_ >= 0 && songPos_ < chainLen() && ++rep_ < chainRep(songPos_)) {
-      next = -1;  // another pass of the same item: ties and CND go on
-    } else {
-      rep_ = 0;
-      songPos_ = songPos_ + 1 < chainLen() ? songPos_ + 1 : 0;
-      next = chainAt(songPos_);
-      applyScene(songPos_, tickTime(stepTick_));
-      if (next == cur_) next = -1;  // a repeated entry goes on like a loop (ties, CND)
-    }
+    songPos_ = songPos_ < 0 ? songEntry() : (songPos_ + 1 < songLen() ? songPos_ + 1 : 0);
+    next = songAt(songPos_);
+    applyMute(songPos_, tickTime(stepTick_));
+    if (next == cur_) next = -1;  // the same pattern again goes on like a loop (ties, CND)
   } else {
     songPos_ = -1;
-    rep_ = 0;
+    restoreMutes(tickTime(stepTick_));
   }
   queued_ = -1;
   if (next >= 0) {
@@ -654,11 +654,6 @@ void Sequencer::endOfPass() {
 }
 
 void Sequencer::adjustStep(Step& s, int track) const {
-  const int tr = chainTranspose();
-  if (tr && s.hasNote() && !p_.trackIsDrum(track)) {
-    const int n = s.note + tr;
-    s.note = static_cast<uint8_t>(n < 0 ? 0 : (n > 127 ? 127 : n));
-  }
   const PerfFx pf = perf_[track];
   if (pf == PerfFx::Fade && !internal(track)) {
     // MIDI has no volume slide: the notes go out at half velocity (a drum step's velocity is note).
@@ -726,18 +721,30 @@ bool Sequencer::audible(int track, uint64_t t) {
   return p_.trackAudible(track) && (mask_ & bit);
 }
 
-// The item's mute scene into the tracks; tracks it mutes go silent at t.
-void Sequencer::applyScene(int songPos, uint64_t t) {
-  if (songPos < 0 || songPos >= chainLen()) return;
-  const uint8_t sc = p_.chainScene[songPos];
-  if (sc == 0 || sc > kScenes || p_.scenes[sc - 1] == kSceneEmpty) return;
-  const uint16_t m = p_.scenes[sc - 1];
+void Sequencer::applyMute(int slot, uint64_t t) {
+  if (slot < 0 || slot >= songLen()) return;
+  if (!muteHeld_) {
+    savedMute_ = 0;
+    for (int tr = 0; tr < kTracks; ++tr)
+      if (p_.tracks[tr].mute) savedMute_ |= static_cast<uint16_t>(1u << tr);
+    muteHeld_ = true;
+  }
+  writeMutes(p_.songMute[slot], t);
+}
+
+void Sequencer::restoreMutes(uint64_t t) {
+  if (!muteHeld_) return;
+  muteHeld_ = false;
+  writeMutes(savedMute_, t);
+}
+
+void Sequencer::writeMutes(uint16_t bits, uint64_t t) {
   for (int tr = 0; tr < kTracks; ++tr) {
-    const bool mute = (m >> tr) & 1;
-    if (mute && !p_.tracks[tr].mute) pushOff(tr, t);
+    const bool mute = (bits >> tr) & 1;
+    if (mute && !p_.tracks[tr].mute && t != kNever) pushOff(tr, t);
     p_.tracks[tr].mute = mute;
   }
-  sceneSet_ = true;
+  muteSet_ = true;
 }
 
 uint8_t Sequencer::phase256(uint64_t now) const { return stepPhase256(now, heardStepT_, stepUs()); }

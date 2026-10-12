@@ -41,7 +41,7 @@ struct RenderMem {
   }
 };
 
-// Audio parked, project locked, songMode / mutes set for the render; undone in reverse order.
+// Audio parked, project locked, mutes saved for the render; undone in reverse order.
 struct Session {
   audio::Paused paused;
   mt::Synth* synth = nullptr;
@@ -96,7 +96,7 @@ Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, R
       heap_caps_free(buf);
       return Result::AudioBusy;
     }
-    mt::OfflineRender::Guard guard(p, spec);
+    mt::OfflineRender::Guard guard(p);
     fs::File f = fs.open(tmp, FILE_WRITE);
     if (!f) r = Result::WriteFail;
     uint8_t hdr[mt::kWavHeaderBytes] = {0};
@@ -184,7 +184,7 @@ Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampl
   if (!rm.mem) return Result::NoMemory;
   Session ses;
   if (!ses.synth) return Result::AudioBusy;
-  mt::OfflineRender::Guard guard(p, spec);
+  mt::OfflineRender::Guard guard(p);
   // Pass 1: peak and the last block above -60 dBFS.
   mt::OfflineRender* ren = rm.start(p, *ses.synth, spec);
   const uint32_t total = ren->blocksTotal();

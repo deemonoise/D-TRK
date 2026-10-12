@@ -72,7 +72,7 @@ void setup() {
   engine::begin(project);
   audio::begin(project);
   app.begin(&lcd, project);
-  engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));  // song position display
+  engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));  // song position display
   // Bank mounted by audio::begin, engine not playing: bring in the samples the cache lacks.
   int missing = 0;
   const bool folderFail = loaded && storage::pullSamples(*project, &missing, ui::App::syncProgress, &app) ==
@@ -84,7 +84,7 @@ void setup() {
     char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
     app.toast(msg);
-  } else if (fromBak || missing > 0 || folderFail) {
+  } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped()) {
     app.loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
 #ifdef WT_BENCH
