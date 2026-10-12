@@ -1,32 +1,20 @@
 #pragma once
 #include <math.h>
 #include <stdint.h>
+#include "fastmath.h"
 #include "hot.h"
 #include "synth_osc.h"
 
 namespace mt {
 
 // State-variable filter (Simper, trapezoidal integration): stable under fast cutoff changes.
-// set() at control rate (tanf), process() per sample.
+// set() at control rate (fastTan), process() per sample.
 struct Svf {
   enum class Mode : uint8_t { Lp, Bp, Hp };
 
   // hz is clamped to 20 Hz .. 0.45 x the sample rate, q to >= 0.5.
-  // Unchanged settings skip the tanf (Synth sets every control tick).
-  void set(Mode m, float hz, float q) {
-    if (m == mode_ && hz == hz_ && q == q_) return;
-    mode_ = m;
-    hz_ = hz;
-    q_ = q;
-    const float maxHz = kSynthRate * 0.45f;
-    hz = hz < 20.f ? 20.f : (hz > maxHz ? maxHz : hz);
-    q = q < 0.5f ? 0.5f : q;
-    const float g = tanf(hz * (3.14159265f / kSynthRate));
-    k_ = 1.f / q;
-    a1_ = 1.f / (1.f + g * (g + k_));
-    a2_ = g * a1_;
-    a3_ = g * a2_;
-  }
+  // Unchanged settings skip the fastTan (Synth sets every control tick).
+  void set(Mode m, float hz, float q);
   void reset() { ic1_ = ic2_ = 0; }
   // Still ringing with no input: state above -80 dB of full scale (Synth keeps the voice for it).
   MT_INLINE bool ringing() const {

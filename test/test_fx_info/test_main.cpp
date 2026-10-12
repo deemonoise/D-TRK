@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <string.h>
 #include "fx_info.h"
+#include "scale.h"
 
 using namespace mt;
 
@@ -27,7 +28,8 @@ void test_format() {
   TEST_ASSERT_EQUAL_STRING("800", fmt(Fx::GAT, 200));
   TEST_ASSERT_EQUAL_STRING("3:4", fmt(Fx::CND, 0x34));
   TEST_ASSERT_EQUAL_STRING("FST", fmt(Fx::CND, 0));
-  TEST_ASSERT_EQUAL_STRING("7th", fmt(Fx::CHD, 1));
+  TEST_ASSERT_EQUAL_STRING("7th ", fmt(Fx::CHD, 1));
+  TEST_ASSERT_EQUAL_STRING("MA72", fmt(Fx::CHD, chordValue(kChordMaj7, 2)));
   TEST_ASSERT_EQUAL_STRING(" --", fmt(Fx::TIE, 0));
   TEST_ASSERT_EQUAL_STRING("   ", fmt(Fx::None, 0));
 }
@@ -39,6 +41,7 @@ void test_step_clamps_and_signed() {
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(-50), fxStep(Fx::NDG, 0, -80));
   TEST_ASSERT_EQUAL(50, fxStep(Fx::NDG, static_cast<uint8_t>(-1), 100));
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(-64), fxStep(Fx::PBN, 0, -100));
+  TEST_ASSERT_EQUAL(kChordValues - 1, fxStep(Fx::CHD, 0, 1000));  // every type x inversion
 }
 
 void test_cnd_order() {
@@ -76,7 +79,7 @@ void test_cmd_cycle() {
   TEST_ASSERT_TRUE(fxNextCmd(Fx::ARS, 1) == Fx::RAT);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::FLT, 1) == Fx::RES);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::DLY, 1) == Fx::RVB);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHN, -1) == Fx::RVB);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CHN, -1) == Fx::PAN);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::CHD, -3) == Fx::CCB);
   // Every command once per round.
   bool seen[static_cast<int>(Fx::Count)] = {};
@@ -249,6 +252,27 @@ void test_long_names() {
   }
 }
 
+// LFO .. LFR: LFO control, INT tracks only, next to the sound locks.
+void test_lfo_fx() {
+  TEST_ASSERT_EQUAL_STRING("LFO", fxName(Fx::LFO));
+  TEST_ASSERT_EQUAL_STRING("LFO RESET", fxLongName(Fx::LFR));
+  TEST_ASSERT_EQUAL(1, fxDefault(Fx::LFO));
+  TEST_ASSERT_EQUAL(4, fxStep(Fx::LFO, 3, 5));
+  TEST_ASSERT_EQUAL(1, fxStep(Fx::LFO, 2, -5));
+  TEST_ASSERT_EQUAL_STRING("  2", fmt(Fx::LFO, 2));
+  TEST_ASSERT_EQUAL_STRING("-20", fmt(Fx::LFD, static_cast<uint8_t>(-20)));
+  TEST_ASSERT_EQUAL(-64, fxSigned(fxStep(Fx::LFD, static_cast<uint8_t>(-60), -10)));
+  TEST_ASSERT_EQUAL_STRING("127", fmt(Fx::LFS, 127));
+  TEST_ASSERT_EQUAL_STRING("SQR", fmt(Fx::LFW, static_cast<uint8_t>(LfoWave::Square)));
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Random), fxStep(Fx::LFW, 0, 10));
+  TEST_ASSERT_EQUAL_STRING("CUT", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Cutoff)));
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Count) - 1, fxStep(Fx::LFT, 0, 40));
+  TEST_ASSERT_EQUAL_STRING(" 80", fmt(Fx::LFR, 0x80));
+  for (int f = static_cast<int>(Fx::LFO); f <= static_cast<int>(Fx::LFR); ++f) TEST_ASSERT_TRUE(fxSynthOnly(static_cast<Fx>(f)));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::LFO);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::LFR, 1) == Fx::OFS);
+}
+
 // ACC: drum tracks only, lane mask 0..255 shown as two hex digits (like VIB / ARP).
 void test_acc_lane_mask() {
   TEST_ASSERT_EQUAL_STRING("ACC", fxName(Fx::ACC));
@@ -291,6 +315,22 @@ void test_rat_ramp() {
   TEST_ASSERT_EQUAL_HEX8(2, fxStep(Fx::RAT, 2, -1));
 }
 
+// PAN: the track's pan lock, 0..127 shown L64 .. C .. R63, INT tracks only, after RVB.
+void test_pan_fx() {
+  TEST_ASSERT_EQUAL_STRING("PAN", fxName(Fx::PAN));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::PAN));
+  TEST_ASSERT_EQUAL_STRING("C", fmt(Fx::PAN, 64));
+  TEST_ASSERT_EQUAL_STRING("L64", fmt(Fx::PAN, 0));
+  TEST_ASSERT_EQUAL_STRING("R63", fmt(Fx::PAN, 127));
+  TEST_ASSERT_EQUAL_STRING("R12", fmt(Fx::PAN, 76));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::PAN, 120, 50));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::PAN, 5, -50));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::PAN));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::RVB, 1) == Fx::PAN);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::PAN, 1) == Fx::CHN);
+  TEST_ASSERT_EQUAL_STRING("PAN", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Pan)));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_long_names);
@@ -313,5 +353,7 @@ int main() {
   RUN_TEST(test_cnd_order_has_fill);
   RUN_TEST(test_new_sound_fx);
   RUN_TEST(test_arm_format_and_step);
+  RUN_TEST(test_lfo_fx);
+  RUN_TEST(test_pan_fx);
   return UNITY_END();
 }

@@ -15,6 +15,8 @@ enum class FillValue : uint8_t { Const, Ramp, Random, Count };
 // Overwrite: every hit. Empty: only where the field is empty (no note / default velocity / free
 // slot). Notes: only steps holding a note.
 enum class FillMode : uint8_t { Overwrite, Empty, Notes, Count };
+// What the FILL dialog generates: this spec, or the arp / chords / bass generator (their own specs).
+enum class FillType : uint8_t { Fill, Arp, Chords, Bass, Count };
 
 struct FillSpec {
   FillWhere where = FillWhere::Every;
@@ -31,7 +33,7 @@ struct FillSpec {
   FillMode mode = FillMode::Overwrite;
   uint8_t lane = 0;                             // drum track, Note: the lane set on the hits
   uint32_t seed = 1;
-  bool arp = false;                             // FILL dialog shows the arp generator (ArpSpec) instead
+  FillType type = FillType::Fill;               // FILL dialog page; only Fill uses the fields above
 };
 
 // Hit mask of the spec over n positions (n <= kMaxSteps). Random draws from rng state `seed`.

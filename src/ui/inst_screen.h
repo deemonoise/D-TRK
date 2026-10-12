@@ -11,6 +11,8 @@ namespace ui {
 // Instrument editor. Shift+turn (or a tap on the header arrows) = instrument -+1; entering the tab
 // selects the instrument of App::curTrack(). PREVIEW (tap, or a long press) plays C4 for 300 ms.
 // PRESET (tap, or Shift + long press): LOAD / SAVE menu, then the PresetBrowser over the list.
+// On the SMPL page that menu is SAMPLE: Chop, Add slice (Shift on the click: at a transient), Delete
+// slice, Clear slices (confirm), Load / Save preset; A tap / Shift + A tap = next / previous marker.
 // Name: click to edit, turn = character, Shift+turn = position.
 // Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
 // ADSR graph), the type's own (OSC / SMPL / FM / DRUM; SYNTH: OSC and MOD), FILT, LFO. The page is
@@ -35,6 +37,9 @@ class InstScreen : public Screen {
   bool buttonsBusy() const;
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
+  void onPage(int d) override;
+  void onBack() override;
+  void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && onEditor(); }

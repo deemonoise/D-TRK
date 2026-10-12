@@ -48,7 +48,8 @@ constexpr float kMaxDt = 0.4999f;  // phase step per sample, below Nyquist
 
 MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap, int n) {
   // Below Nyquist: the BL oscillators wrap their phase once per sample (WtOsc::step clamps alike).
-  const float dt = fminf(p_.hz[k] * (1.f / kSynthRate), kMaxDt);
+  const float hzDt = p_.hz[k] * (1.f / kSynthRate);
+  const float dt = hzDt < kMaxDt ? hzDt : kMaxDt;  // no fminf: a flash call
   float s = shape_[k];
   const float ds = shapeStep_[k];
   switch (static_cast<SynOsc>(p_.mode[k])) {
@@ -107,7 +108,8 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
 MT_HOT void SynVoice::render(float* out, int n, float amp) {
   constexpr int kChunk = 32;
   const float g = amp * kSynGain;
-  const float subDt = fminf(p_.hz[0] * (1.f / kSynthRate) / (p_.subOct >= 2 ? 4.f : 2.f), kMaxDt);
+  const float subHz = p_.hz[0] * (1.f / kSynthRate) / (p_.subOct >= 2 ? 4.f : 2.f);
+  const float subDt = subHz < kMaxDt ? subHz : kMaxDt;  // no fminf: a flash call
   // An oscillator out of the mix for the whole block is skipped (osc 1 still runs as a sync master).
   const float mixEnd = mix_ + mixStep_ * n;
   const bool need1 = mix_ < 1.f || mixEnd < 1.f || p_.sync;

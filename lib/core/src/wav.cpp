@@ -148,18 +148,20 @@ WavErr wavParse(ByteSource& src, WavInfo& out) {
   return e;
 }
 
-void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc) {
+void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc,
+               uint16_t channels) {
+  const uint32_t align = 2u * channels;  // bytes per frame
   uint8_t* p = out;
   wrId(p, "RIFF");
-  wr32(p, kWavHeaderBytes - 8 + frames * 2);
+  wr32(p, kWavHeaderBytes - 8 + frames * align);
   wrId(p, "WAVE");
   wrId(p, "fmt ");
   wr32(p, 16);
   wr16(p, 1);         // PCM
-  wr16(p, 1);         // mono
+  wr16(p, channels);
   wr32(p, rate);
-  wr32(p, rate * 2);  // byte rate
-  wr16(p, 2);         // block align
+  wr32(p, rate * align);  // byte rate
+  wr16(p, align);         // block align
   wr16(p, 16);        // bits
   wrId(p, "smpl");
   wr32(p, 36);
@@ -171,9 +173,9 @@ void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uin
   wrId(p, "mtcr");
   wr32(p, 8);
   wr32(p, crc);
-  wr32(p, frames);
+  wr32(p, frames);  // frames, not samples: wavParse checks it against data bytes / block align
   wrId(p, "data");
-  wr32(p, frames * 2);
+  wr32(p, frames * align);
 }
 
 void wavToMono(const uint8_t* raw, uint32_t frames, const WavInfo& w, int16_t* out) {

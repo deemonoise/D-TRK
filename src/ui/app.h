@@ -1,4 +1,5 @@
 #pragma once
+#include "ab_keys.h"
 #include "bank_screen.h"
 #include "edit_ops.h"
 #include "engine/engine.h"
@@ -93,7 +94,6 @@ class App {
  private:
   static constexpr uint32_t kFrameMs = 25;
   static constexpr uint32_t kToastMs = 1500;
-  static constexpr uint32_t kFlashMs = 50;  // track LED flash per note
   static constexpr uint32_t kCpuMs = 500;   // status bar CPU: averaging window
   static constexpr uint32_t kCpuRedMs = 2000;  // status bar CPU: red held after an audio stall
   static constexpr int kTabW = kScreenW / static_cast<int>(Tab::Count);
@@ -107,14 +107,22 @@ class App {
   void trackKey(int n, bool shift);
   void trackRelease(int n);
   void fillDown();
-  bool holdVolume() const;           // hold a track button + turn = its volume, here and now
+  // Hold a track button + turn = its volume (encoder click while held: its pan, again: volume), here
+  // and now.
+  bool holdVolume() const;
+  int heldTrack() const { return (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + heldTrackBtn_; }
   void nudgeTrackVol(int track, int d);
+  void nudgeTrackPan(int track, int d);  // as nudgeTrackVol
+  void holdToast(int track);             // "TRK3 VOL 100" / "TRK3 PAN L12" / "TRK3 MIDI"
   void fillUp();
-  void updateLeds(uint32_t now);
   void saveSettingsIdle(uint32_t now);
   void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
   void setBpmEdit(bool on);
+  void abAction(const mt::AbOut& o);  // A / B chord result
+  void cycleTab(int d);
+  void soloKey(int n);
+  void queueKey(int n, bool shift);
   void draw();
   void drawStatus();
   void drawTabs();
@@ -156,7 +164,6 @@ class App {
   bool bpmEdit_ = false;
   int bpmOrig_ = 120;  // BPM when the edit began (Shift+click puts it back)
   uint8_t curTrack_ = 0;
-  uint32_t flashUntil_[mt::kTracks] = {};
   int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
   int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)
   int phones_ = 100, savedPhones_ = 100;  // phones level, % (device setting)
@@ -167,7 +174,9 @@ class App {
   uint32_t editSeq_ = 0, savedSeq_ = 0;
   bool shift_ = false;
   bool fillHeld_ = false;   // Shift + Play held while playing: fill
+  mt::AbKeys ab_;  // buttons A / B
   int8_t heldTrackBtn_ = -1;  // track button held (0..7 of the visible half), -1 = none
+  bool holdPan_ = false;      // the held button's turn sets the pan, not the volume (until released)
   uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;
   bool dirty_ = true;

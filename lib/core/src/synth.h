@@ -71,7 +71,11 @@ class Synth {
   void startTrack(uint8_t track);
   // Silences everything at once, clears the queue and the delay line.
   void reset();
-  // Renders kBlock mono samples, applying pending events at their offsets.
+  // Renders kBlock stereo frames, interleaved L R (lr[2 * kBlock]), applying pending events at
+  // their offsets.
+  void renderStereo(int16_t* lr);
+  // Renders kBlock mono samples: the downmix (L + R) >> 1 of the same block (centre pan and no
+  // reverb: bit-exact to either side).
   void render(int16_t* out);
 
   int activeVoices() const;
@@ -91,21 +95,25 @@ class Synth {
   // on either side of the reset.
   void takeTrackPeaks(float out[kTracks]);
   // Meters on (MIX shown): the voices go through their segment buffer to measure the peaks; off,
-  // a voice without sends renders straight into the mix (a little cheaper). Peaks stay 0 when off.
+  // a voice without sends skips the peak scan. Peaks stay 0 when off.
   void setMeters(bool on) { meters_ = on; }
 
   // Profiling (PROJ -> SYS -> CPU profile): cycles spent per stage, summed until takeProfile().
-  // clock = a cycle counter; nullptr (the default) = off, no cost.
+  // clock = a cycle counter; nullptr (the default) = off, no cost. cache = cacheInstruments(). Control: instLfo = the shared
+  // LFOs, ctlMod / ctlFlt / ctlEng = a voice's update up to the filter, the filter, the engine's.
+  // mix = clearing the buses and the segment loop. Counts (takeProfile): ctlMod = control updates,
+  // the voice stages = voices sounding at a block's start, summed over the blocks.
   enum ProfStage : uint8_t {
-    kProfQueue, kProfEvents, kProfControl, kProfChip, kProfSample, kProfFm, kProfDrum, kProfSyn,
-    kProfDelay, kProfReverb, kProfMaster, kProfStages
+    kProfQueue, kProfEvents, kProfCache, kProfInstLfo, kProfCtlMod, kProfCtlFlt, kProfCtlEng, kProfChip,
+    kProfSample, kProfFm, kProfDrum, kProfSyn, kProfMix, kProfDelay, kProfReverb, kProfComp, kProfDj,
+    kProfMaster, kProfStages
   };
   static const char* profName(int stage);
   void setProfiler(uint32_t (*clock)()) { clock_ = clock; }
   bool profiling() const { return clock_ != nullptr; }
   void addProfile(int stage, uint32_t cycles) { prof_[stage] += cycles; }
-  // Copies the sums (and the blocks rendered) and clears them.
-  void takeProfile(uint32_t out[kProfStages], uint32_t& blocks);
+  // Copies the sums, counts (and the blocks rendered) and clears them.
+  void takeProfile(uint32_t out[kProfStages], uint32_t count[kProfStages], uint32_t& blocks);
   uint32_t profNow() const { return clock_ ? clock_() : 0; }
   // Newest allocated voice of the track, or -1.
   int trackVoice(uint8_t track) const;
@@ -149,6 +157,11 @@ class Synth {
     float lastPitch;   // of the last note-on, < 0 = none (SLD)
     uint16_t lockMask;  // LockBit: this step's note-ons
     uint8_t lock[kLocks];
+    uint8_t lfoSel;         // LFO fx: LFO 0..kLfos-1 this step's LFD .. LFR act on
+    uint16_t lfoLockMask;   // LFO locks (see Voice::lfoLockMask): this step's note-ons
+    LfoCfg lfoLock[kLfos];
+    uint8_t lfoRst;         // LFR: bit per LFO, this step's note-ons start at lfoRstPh / 256
+    uint8_t lfoRstPh[kLfos];
   };
   static constexpr uint8_t kNoInstr = mt::kNoInstr;
 
@@ -172,6 +185,8 @@ class Synth {
   void controlFilter(Voice& v, const Instrument& m, float pitch, const float* la);  // la: control()'s LFO sums
   float lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods);
   float lfoRateHz(const LfoCfg& c) const;
+  static LfoCfg lfoCfgOf(const Voice* v, const Instrument& m, int i);  // the instrument's + v's locks
+  void lfoFx(uint8_t track, Fx f, uint8_t val, bool now);
   void resetLfos(Voice& v);
   void advanceInstLfos();
   void transportStart();
@@ -185,14 +200,48 @@ class Synth {
   static void renderChip(Voice& v, float* out, int n);
   uint8_t trackInstr(uint8_t track) const;
   // The voice's instrument: a KIT sampler lane's, built into laneScratch_ (valid until the next
-  // call), else the project's.
+  // call), else inst(v.instr).
   const Instrument& instrOf(const Voice& v) const;
+  // Instrument i: its copy in internal RAM if cached, else the project's.
+  MT_INLINE const Instrument& inst(uint8_t i) const {
+    const int s = i < kInstruments ? instSlot_[i] : -1;
+    return s >= 0 ? instCopy_[s] : p_.instruments[i < kInstruments ? i : 0];
+  }
+  // Block start: the sounding voices' instruments into the slots, the LFO settings of theirs and of
+  // kLfoScan more (round robin).
+  void cacheInstruments();
+  // Copies instrument i into its slot (a free one if it has none; none left: not cached) and its
+  // LFO settings.
+  void cacheInstrument(uint8_t i);
+  void cacheLfos(int m);  // instrument m's LFO settings into instLfoCfg_ / instShared_
   uint8_t trackVol(uint8_t track) const;
+  uint8_t trackPan(uint8_t track) const;
+  // Pan gains towards pan (0..127): the ramp reaches them in len samples (the next control update);
+  // a voice without panSet snaps.
+  static void setPanTarget(Voice& v, uint8_t pan, int len);
+  // The block through the master chain into mixL_ / mixR_ (master gain and soft clip applied).
+  void renderCore();
 
   const Project& p_;
   const SampleSource* bank_ = nullptr;
   const WtSource* wt_ = nullptr;
   mutable Instrument laneScratch_;  // instrOf: KIT sampler lane
+  // The project sits in PSRAM: a cache miss there costs ~1 us on the ESP32-S3 and the UI's frame
+  // buffer keeps evicting it, so the control updates read copies in internal RAM. The sounding
+  // voices' instruments are copied at each block's start and at their note-ons (an edit lands at
+  // the next block); more instruments than slots are read from the project.
+  static constexpr int kInstSlots = 8;
+  Instrument instCopy_[kInstSlots];
+  uint8_t slotInst_[kInstSlots] = {};
+  int8_t instSlot_[kInstruments];  // the slot of an instrument, -1 = none
+  int nInstSlots_ = 0;
+  // Every instrument's LFO settings and Retrig OFF mask (sharedLfos) for advanceInstLfos. A silent
+  // instrument's are refreshed round robin, kLfoScan per block (all 32 in 64 ms): reading every one
+  // per block costs ~100 cache misses. Only the shared phases of silent instruments read them.
+  static constexpr int kLfoScan = 2;
+  LfoCfg instLfoCfg_[kInstruments][kLfos];
+  uint8_t instShared_[kInstruments] = {};
+  uint8_t lfoScan_ = 0;  // the next instrument of the round robin
   Voice voices_[kVoices];
   float load_ = 0;  // smoothed render load (setLoad)
   int cap_ = kVoices;
@@ -203,20 +252,29 @@ class Synth {
   int nEv_ = 0;
   static constexpr uint8_t kNoArpChord = 0xFF;
   void resetArp(TrackRt& r) const;
-  float mix_[kBlock];
-  float send_[kBlock];  // delay send bus
-  float rsend_[kBlock];  // reverb send bus
-  float sc_[kBlock];     // sidechain key: the voices of Project::scTrack (bypass the compressor)
+  float mixL_[kBlock], mixR_[kBlock];
+  float send_[kBlock];   // delay send bus (mono, pre-pan)
+  float rsend_[kBlock];  // reverb send bus (mono, pre-pan)
+  float scL_[kBlock], scR_[kBlock];  // sidechain key: the voices of Project::scTrack (bypass the compressor)
   Reverb reverb_;
   Compressor comp_;
-  Svf dj_;  // master DJ filter
-  void djFilter(float* x, int n);
+  Svf djL_, djR_;  // master DJ filter
+  void djFilter(float* l, float* r, int n);
   Delay delay_;
   float trackPeak_[kSynthTracks] = {};
   bool meters_ = false;
   uint32_t (*clock_)() = nullptr;
   uint32_t prof_[kProfStages] = {};
+  uint32_t profN_[kProfStages] = {};
   uint32_t profBlocks_ = 0;
+  uint32_t profT_ = 0;  // the cycle counter at the last mark
+  // Books the cycles since the last mark to stage.
+  MT_INLINE void mark(int stage) {
+    if (!clock_) return;
+    const uint32_t now = clock_();
+    prof_[stage] += now - profT_;
+    profT_ = now;
+  }
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
   uint32_t rng_ = 0x2545F491;  // LFO Random
   // Retrig OFF LFOs (lfoFree): one phase (and Random value) per instrument, shared by its voices;

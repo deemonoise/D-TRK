@@ -3,12 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 #include "audio/audio.h"
+#include "fx_info.h"
 #include "esp_heap_caps.h"
 #include "hw/trackio.h"
 #include "storage/settings.h"
 #include "storage/storage.h"
 #include "hw/sdcard.h"
-#include "track_leds.h"
+#include "track_buttons.h"
 
 namespace ui {
 namespace {
@@ -95,6 +96,10 @@ void App::onInput(const hw::InputEvent& ev) {
   shift_ = ev.shift;
   dirty_ = true;
   switch (ev.type) {
+    case InputType::ADown: abAction(ab_.aDown()); return;
+    case InputType::AUp: abAction(ab_.aUp(ev.shift)); return;
+    case InputType::BDown: abAction(ab_.bDown()); return;
+    case InputType::BUp: abAction(ab_.bUp(ev.shift)); return;
     case InputType::PlayPress:
       if (!menu_.isOpen() && !bpmEdit_ && screen()->onPlay()) return;
       if (ev.shift && status_.playing && !transportLocked_) {
@@ -107,20 +112,44 @@ void App::onInput(const hw::InputEvent& ev) {
       fillUp();
       return;
     case InputType::TrackRelease:
-      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      if (ev.delta == heldTrackBtn_) {
+        heldTrackBtn_ = -1;
+        holdPan_ = false;
+      }
       trackRelease(ev.delta);
       return;
+    case InputType::EncClick:
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL <-> PAN
+        holdPan_ = !holdPan_;
+        holdToast(heldTrack());
+        return;
+      }
+      break;
     case InputType::EncTurn:
+      if (const mt::AbOut o = ab_.turn(ev.delta, ev.shift); o.act != mt::AbAction::Pass) {
+        abAction(o);
+        return;
+      }
       if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed
-        nudgeTrackVol((curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + heldTrackBtn_, ev.delta * (ev.shift ? 10 : 1));
+        const int d = ev.delta * (ev.shift ? 10 : 1);
+        if (holdPan_) nudgeTrackPan(heldTrack(), d);
+        else nudgeTrackVol(heldTrack(), d);
         return;
       }
       break;
     case InputType::ShiftDown: shift_ = true; return;
     case InputType::ShiftUp: shift_ = false; return;
     case InputType::TrackPress:
+      if (const mt::AbOut o = ab_.track(ev.delta, ev.shift); o.act != mt::AbAction::Pass) {
+        abAction(o);  // a chord: no hold-button volume for this press
+        return;
+      }
       heldTrackBtn_ = ev.delta;
+      holdPan_ = false;  // a new hold starts on the volume
       if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
+      return;
+    case InputType::EditEnd:  // A released: always ends the screen's hold edit (menu / BPM edit or not)
+      screen()->onInput(ev);
       return;
     default: break;
   }
@@ -129,7 +158,8 @@ void App::onInput(const hw::InputEvent& ev) {
     return;
   }
   if (bpmEdit_) {
-    if (ev.type == InputType::EncTurn) {
+    if (ev.type == InputType::EditCancel) return;  // A chord: BPM edit stays
+    if (ev.type == InputType::EncTurn || ev.type == InputType::EditTurn) {
       const int bpm = bpmTarget_ + ev.delta * (ev.shift ? 10 : 1);
       bpmTarget_ = bpm < 20 ? 20 : (bpm > 300 ? 300 : bpm);
       engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
@@ -145,6 +175,85 @@ void App::onInput(const hw::InputEvent& ev) {
     return;
   }
   screen()->onInput(ev);
+}
+
+// A / B chords (mt::AbKeys). Edit actions go through onInput as InputTypes: the menu ignores them,
+// the BPM edit takes EditTurn as a turn, otherwise the screen gets them.
+void App::abAction(const mt::AbOut& o) {
+  using mt::AbAction;
+  hw::InputType t;
+  switch (o.act) {
+    case AbAction::EditTurn: t = hw::InputType::EditTurn; break;
+    case AbAction::EditEnd: t = hw::InputType::EditEnd; break;
+    case AbAction::EditCancel: t = hw::InputType::EditCancel; break;
+    case AbAction::TabTurn: cycleTab(o.delta); return;
+    case AbAction::PageTurn:
+      if (!menu_.isOpen() && !bpmEdit_) screen()->onPage(o.delta);
+      return;
+    case AbAction::Undo:
+      if (menu_.isOpen()) return;
+      if (tab_ == Tab::Grid && grid_.dialogOpen()) return;  // the Fill / Transpose preview owns the pattern
+      setBpmEdit(false);
+      if (tab_ == Tab::Grid) {
+        grid_.undo();
+      } else {
+        const bool ok = doUndo();
+        if (ok) engine::post(engine::Cmd::ReleaseTies);
+        toast(ok ? "UNDO" : "NOTHING TO UNDO");
+      }
+      return;
+    case AbAction::Back:
+      if (menu_.isOpen()) menu_.close();
+      else if (bpmEdit_) setBpmEdit(false);
+      else screen()->onBack();
+      return;
+    case AbAction::ATap:
+      if (!menu_.isOpen() && !bpmEdit_) screen()->onATap(o.shift);
+      return;
+    case AbAction::Solo:
+      if (!menu_.isOpen()) soloKey(o.delta);
+      return;
+    case AbAction::QueuePattern:
+      if (!menu_.isOpen()) queueKey(o.delta, o.shift);
+      return;
+    default: return;
+  }
+  onInput(hw::InputEvent{t, o.delta, o.shift});
+}
+
+// B + turn: tabs in a ring.
+void App::cycleTab(int d) {
+  constexpr int n = static_cast<int>(Tab::Count);
+  setTab(static_cast<Tab>(((static_cast<int>(tab_) + d) % n + n) % n));  // closes the menu and the BPM edit
+}
+
+// A + button N: solo track N of the half holding the cursor.
+void App::soloKey(int n) {
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
+  mt::TrackCfg& t = p_->tracks[track];
+  engine::lockProject();
+  t.solo = !t.solo;
+  engine::unlockProject();
+  markDirty();
+  char msg[16];
+  snprintf(msg, sizeof(msg), "TRACK %d %s", track + 1, t.solo ? "SOLO" : "ON");
+  toast(msg);
+}
+
+// B + button N: queue pattern N of the bank holding the edit pattern; Shift = switch at once (as BANK).
+void App::queueKey(int n, bool shift) {
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int pat = (editPattern() / mt::kTrackButtons) * mt::kTrackButtons + n;
+  if (pat >= mt::kPatterns) return;
+  if (!shift && status_.songPos >= 0) {  // the sequencer ignores a queue while the song plays its chain
+    toast("SONG MODE");
+    return;
+  }
+  engine::post(shift ? engine::Cmd::SelectPattern : engine::Cmd::QueuePattern, static_cast<uint16_t>(pat));
+  char msg[20];
+  snprintf(msg, sizeof(msg), "PATTERN %02d%s", pat + 1, !shift && status_.playing ? " NEXT" : "");
+  toast(msg);
 }
 
 void App::onTouch(const TouchEvent& ev) {
@@ -219,8 +328,8 @@ bool App::doUndo() {
 // selection and note entry, the sample editor plays slices (button index); Shift + N mutes on
 // every other screen too.
 void App::trackKey(int n, bool shift) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
-  const int track = (curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + n;
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (tab_ == Tab::Grid && grid_.trackKey(n, shift)) return;
   if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
   if (!shift) {
@@ -262,8 +371,40 @@ void App::nudgeTrackVol(int track, int d) {
   toast(msg);
 }
 
+// Pan of a held track button's track (INT only), with a toast; as nudgeTrackVol.
+void App::nudgeTrackPan(int track, int d) {
+  mt::TrackCfg& t = p_->tracks[track];
+  if (t.out == mt::TrackOut::Int) {
+    int v = t.pan + d;
+    v = v < 0 ? 0 : (v > 127 ? 127 : v);
+    if (v != t.pan) {
+      engine::lockProject();
+      t.pan = static_cast<uint8_t>(v);
+      engine::unlockProject();
+      markDirty();
+    }
+  }
+  holdToast(track);
+}
+
+// What the held button's turn changes now, with its value.
+void App::holdToast(int track) {
+  const mt::TrackCfg& t = p_->tracks[track];
+  char msg[24];
+  if (t.out != mt::TrackOut::Int) {
+    snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
+  } else if (holdPan_) {
+    char v[5];
+    mt::fxFormat(mt::Fx::PAN, t.pan, v);
+    snprintf(msg, sizeof(msg), "TRK%d PAN %s", track + 1, v);
+  } else {
+    snprintf(msg, sizeof(msg), "TRK%d VOL %d", track + 1, t.vol);
+  }
+  toast(msg);
+}
+
 void App::trackRelease(int n) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
+  if (n < 0 || n >= mt::kTrackButtons) return;
   if (tab_ == Tab::Grid) grid_.trackRelease(n);
 }
 
@@ -279,16 +420,6 @@ void App::fillUp() {
   fillHeld_ = false;
   engine::postWait(engine::Cmd::Fill, 0);
   if (millis() - fillDownMs_ < hw::kLongPressMs) engine::post(engine::Cmd::TogglePlay);
-}
-
-void App::updateLeds(uint32_t now) {
-  const uint16_t act = engine::takeActivity();
-  uint16_t flash = 0;
-  for (int i = 0; i < mt::kTracks; ++i) {
-    if (act & (1u << i)) flashUntil_[i] = now + kFlashMs;
-    if (static_cast<int32_t>(flashUntil_[i] - now) > 0) flash |= static_cast<uint16_t>(1u << i);
-  }
-  hw::trackLeds(mt::trackLedMaskHalf(curTrack_, flash));
 }
 
 void App::setTheme(int i) {
@@ -406,15 +537,23 @@ void App::dropInput(const hw::InputEvent& ev) {
       }
       break;
     case hw::InputType::TrackRelease:
-      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      if (ev.delta == heldTrackBtn_) {
+        heldTrackBtn_ = -1;
+        holdPan_ = false;
+      }
       trackRelease(ev.delta);
       break;
+    case hw::InputType::AUp:
+    case hw::InputType::BUp: ab_.reset(); break;  // no tap / edit end from a dropped chord
     default: break;
   }
 }
 
 void App::endProgress() {
   heldTrackBtn_ = -1;  // its release may have been dropped with the queued input
+  holdPan_ = false;
+  ab_.reset();         // so may the A / B releases
+  screen()->onInput(hw::InputEvent{hw::InputType::EditEnd, 0, false});  // no hold edit left stuck
   progLabel_[0] = 0;
   progPct_ = -1;
   hw::InputEvent ev;
@@ -473,7 +612,6 @@ void App::tick() {
     dirty_ = true;
   }
   const uint32_t now = millis();
-  updateLeds(now);
   saveSettingsIdle(now);
   autosaveIdle(now);
   pollCpu(now);

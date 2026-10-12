@@ -153,9 +153,14 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
   // ARS: the sequencer arpeggiates, the synth's own ARP / ARM stay out.
   const FxSlot* ars = c.kit ? nullptr : s.find(Fx::ARS);
 
-  // Control events, in slot order, before any note.
+  // Control events, in slot order, before any note; the LFO selection first (the LFO fx after it act
+  // on the LFO it picks).
+  if (t.out == TrackOut::Int)
+    if (const FxSlot* sel = s.find(Fx::LFO))
+      out.ev[out.count++] = {nudge, EvKind::SynthFx, ch, static_cast<uint8_t>(Fx::LFO), sel->val};
   for (const FxSlot& f : s.fx) {
     switch (f.cmd) {
+      case Fx::LFO: break;  // sent above
       case Fx::ARP:
       case Fx::ARM:
         if (ars) break;
@@ -212,6 +217,7 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     const FxSlot* arp = s.find(Fx::ARP);
     if (!ars && t.out == TrackOut::Int && arp && arp->val && nNotes > 1 && out.count < kMaxStepEvents) {
       out.ev[out.count++] = {nudge, EvKind::SynthFx, ch, kSynthArpChord, f->val};
+      notes[0] = static_cast<uint8_t>(root);  // an inverted chord's lowest note is not the root
       nNotes = 1;
     }
   }

@@ -68,6 +68,27 @@ void test_stop_silences() {
   for (int i = 0; i < 16; ++i) TEST_ASSERT_EQUAL_INT16(0, out[i]);
 }
 
+// Stereo: the same sample into L and R, as mix() gives on a mono buffer (gain, saturation, resampling).
+void test_mix_stereo_matches_mono() {
+  OneShot m, st;
+  m.start(data, 64, kSynthRate / 2);
+  st.start(data, 64, kSynthRate / 2);
+  static int16_t lr[2 * 140];
+  for (int i = 0; i < 140; ++i) {
+    out[i] = static_cast<int16_t>(i * 300 - 10000);
+    lr[2 * i] = lr[2 * i + 1] = out[i];
+  }
+  m.mix(out, 70, 0.75f);
+  st.mixStereo(lr, 70, 0.75f);
+  m.mix(out + 70, 70, 0.75f);  // across blocks, past the end
+  st.mixStereo(lr + 140, 70, 0.75f);
+  for (int i = 0; i < 140; ++i) {
+    TEST_ASSERT_EQUAL_INT16(out[i], lr[2 * i]);
+    TEST_ASSERT_EQUAL_INT16(out[i], lr[2 * i + 1]);
+  }
+  TEST_ASSERT_FALSE(st.playing());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_idle_adds_nothing);
@@ -76,5 +97,6 @@ int main(int, char**) {
   RUN_TEST(test_mix_adds_with_gain_and_saturates);
   RUN_TEST(test_resumes_across_blocks);
   RUN_TEST(test_stop_silences);
+  RUN_TEST(test_mix_stereo_matches_mono);
   return UNITY_END();
 }

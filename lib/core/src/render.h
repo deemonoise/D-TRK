@@ -40,8 +40,10 @@ struct RenderSpec {
 class OfflineRender : public MidiSink {
  public:
   OfflineRender(Project& p, Synth& synth, const RenderSpec& spec);
-  // Renders the next block; false when done (nothing written).
+  // Renders the next block, mono (the synth's downmix); false when done (nothing written).
   bool renderBlock(int16_t out[Synth::kBlock]);
+  // As renderBlock, stereo: kBlock frames interleaved L R. peak / clips count both channels.
+  bool renderBlockStereo(int16_t out[2 * Synth::kBlock]);
   uint32_t blocksTotal() const { return bodyBlocks_ + spec_.tailBlocks; }
   uint32_t blocksDone() const { return done_; }
   int16_t peak() const { return peak_; }
@@ -69,6 +71,10 @@ class OfflineRender : public MidiSink {
   static constexpr int kFifo = 256;
   static bool passesAfterEnd(const uint8_t* b, uint8_t len);
   void drain();
+  // Sequencing of the next block up to the synth (false when done); account() books the n samples
+  // the synth wrote into peak / clips and moves on to the next block.
+  bool beginBlock();
+  void account(const int16_t* out, int n);
   Synth& synth_;
   RenderSpec spec_;
   Sequencer seq_;

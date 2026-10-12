@@ -1,12 +1,11 @@
 #include "arp_gen.h"
 #include <stddef.h>
 #include <string.h>
+#include "gen_util.h"
 #include "rng.h"
 
 namespace mt {
 namespace {
-
-bool blank(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ','; }
 
 struct Factory {
   const char* name;
@@ -55,14 +54,13 @@ constexpr Factory kFactory[] = {
     {"DUB ECHO", ". . Xs . . o . o . . Xs . . o . o"},
     {"CHIP OCT", "x xr^ x xr^ x xr^ x xr^ x xr^ x xr^ x xr^ x xr^"},
     {"CHIP RUN", "xs xs xs xs xs xs xs xs xs xs xs xs xs xs xs xs"},
+#include "arp_virus.inc"
 };
 constexpr int kFactoryN = sizeof(kFactory) / sizeof(kFactory[0]);
 
 const char* const kModeNames[] = {"UP",     "DOWN",     "UP/DN",   "DN/UP", "PLAYED",
                                   "RANDOM", "CONVERGE", "DIVERGE", "PEDAL", "CHORD"};
 static_assert(sizeof(kModeNames) / sizeof(kModeNames[0]) == static_cast<size_t>(ArpMode::Count), "mode names");
-
-int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 constexpr int kHeldMax = kTracks * 4;  // every track of a selection with a 4-note CHD
 constexpr int kSeqMax = kHeldMax * 4;   // x 4 octaves
@@ -134,78 +132,22 @@ int lowest(const uint8_t* seq, int n) {
   return v;
 }
 
-// Seeded variation of one arp step: hits toggled, accents and pitches redrawn. Always draws the
-// same count of numbers so a step's change does not shift the next ones.
-void mutateStep(ArpStep& a, int amount, Rng& r) {
-  const int hit = static_cast<int>(r.below(200)), acc = static_cast<int>(r.below(300));
-  const int pitch = static_cast<int>(r.below(400));
-  const uint32_t accV = r.below(3), pitchV = r.below(4);
-  if (a.kind != ArpKind::Tie && hit < amount) a.kind = a.kind == ArpKind::Note ? ArpKind::Rest : ArpKind::Note;
-  if (acc < amount) a.acc = static_cast<ArpAcc>(accV);
-  if (pitch < amount) {
-    a.pitch = pitchV == 3 ? ArpPitch::Next : static_cast<ArpPitch>(pitchV);
-    a.oct = pitchV == 3 ? 1 : 0;
-  }
-}
-
-bool arpFx(Fx f) {
-  switch (f) {
-    case Fx::GAT:
-    case Fx::TIE:
-    case Fx::SLD:
-    case Fx::NDG:
-    case Fx::RAT:
-    case Fx::PRB:
-    case Fx::CHD:
-    case Fx::ARS:
-    case Fx::ARP:
-      return true;
-    default:
-      return false;
-  }
-}
-
-// The slot already holding f, else the first free one. False: no slot (fx skipped).
-bool putFx(Step& s, Fx f, uint8_t v) {
-  for (FxSlot& sl : s.fx)
-    if (sl.cmd == f) {
-      sl.val = v;
-      return true;
-    }
-  for (FxSlot& sl : s.fx)
-    if (sl.cmd == Fx::None) {
-      sl.cmd = f;
-      sl.val = v;
-      return true;
-    }
-  return false;
-}
-
 }  // namespace
+
+// Mods of a token, distinct chars: room for every ASCII char, so no mod is ever dropped.
+constexpr int kArpModsCap = 129;
 
 bool parseArpPattern(const char* text, ArpPattern& out) {
   out = ArpPattern{};
   const char* p = text;
   while (*p && out.len < kArpPatMax) {
-    while (*p && blank(*p)) ++p;
+    while (*p && isBlankChar(*p)) ++p;
     if (!*p) break;
     ArpStep a;
-    const char c = *p++;
-    switch (c) {
-      case 'x': a.kind = ArpKind::Note; break;
-      case 'X': a.kind = ArpKind::Note; a.acc = ArpAcc::Accent; break;
-      case 'o': a.kind = ArpKind::Note; a.acc = ArpAcc::Ghost; break;
-      case '.': break;
-      case '-': a.kind = ArpKind::Tie; break;
-      default:
-        while (*p && !blank(*p)) ++p;
-        continue;
-    }
-    for (; *p && !blank(*p); ++p) {
-      switch (*p) {
-        case 's': a.len = ArpLen::Short; break;
-        case 'l': a.len = ArpLen::Long; break;
-        case '~': a.slide = true; break;
+    char mods[kArpModsCap];
+    if (!parseGenToken(p, a, mods, kArpModsCap)) continue;
+    for (const char* m = mods; *m; ++m) {
+      switch (*m) {
         case 'r': a.pitch = ArpPitch::Repeat; break;
         case 'p': a.pitch = ArpPitch::Root; break;
         case '^': a.oct = 1; break;
@@ -220,30 +162,20 @@ bool parseArpPattern(const char* text, ArpPattern& out) {
 
 bool formatArpPattern(const ArpPattern& p, char* out, int cap) {
   int n = 0;
-  auto put = [&](char c) {
-    if (n + 1 >= cap) return false;
-    out[n++] = c;
-    return true;
-  };
   for (int i = 0; i < p.len && i < kArpPatMax; ++i) {
     const ArpStep& a = p.steps[i];
-    if (i > 0 && !put(' ')) return false;
-    if (a.kind == ArpKind::Rest) {
-      if (!put('.')) return false;
-      continue;
+    if (i > 0) {
+      if (n + 1 >= cap) return false;
+      out[n++] = ' ';
     }
-    if (a.kind == ArpKind::Tie) {
-      if (!put('-')) return false;
-      continue;
-    }
-    if (!put(a.acc == ArpAcc::Accent ? 'X' : (a.acc == ArpAcc::Ghost ? 'o' : 'x'))) return false;
-    if (a.len == ArpLen::Short && !put('s')) return false;
-    if (a.len == ArpLen::Long && !put('l')) return false;
-    if (a.slide && !put('~')) return false;
-    if (a.pitch == ArpPitch::Repeat && !put('r')) return false;
-    if (a.pitch == ArpPitch::Root && !put('p')) return false;
-    if (a.oct > 0 && !put('^')) return false;
-    if (a.oct < 0 && !put('v')) return false;
+    char mods[4];
+    int m = 0;
+    if (a.pitch == ArpPitch::Repeat) mods[m++] = 'r';
+    if (a.pitch == ArpPitch::Root) mods[m++] = 'p';
+    if (a.oct > 0) mods[m++] = '^';
+    if (a.oct < 0) mods[m++] = 'v';
+    mods[m] = '\0';
+    if (!formatGenToken(a, mods, out, cap, n)) return false;
   }
   if (cap < 1) return false;
   out[n] = '\0';
@@ -270,18 +202,12 @@ bool applyArp(const Pattern& src, Pattern& dst, const Sel& sel, const ArpSpec& s
               uint8_t root, ScaleType scale, const bool* drumTracks) {
   if (pat.len == 0 || spec.dest >= kTracks) return false;
   if (drumTracks && drumTracks[spec.dest]) return false;
-  const int plen = clampInt(dst.length, 1, kMaxSteps);
-  const int s0 = clampInt(sel.s0, 0, plen - 1), s1 = clampInt(sel.s1, s0, plen - 1);
+  const int plen = genClamp(dst.length, 1, kMaxSteps);
+  const int s0 = genClamp(sel.s0, 0, plen - 1), s1 = genClamp(sel.s1, s0, plen - 1);
   Step* out = dst.steps[spec.dest];
-  for (int s = s0; s <= s1; ++s) {
-    Step& st = out[s];
-    st.note = kNoteEmpty;
-    st.vel = kVelDefault;
-    for (FxSlot& sl : st.fx)
-      if (arpFx(sl.cmd)) sl = FxSlot{};
-  }
+  clearGenRange(out, s0, s1);
 
-  const int octaves = clampInt(spec.octaves, 1, 4), rate = clampInt(spec.rate, 1, 4);
+  const int octaves = genClamp(spec.octaves, 1, 4), rate = genClamp(spec.rate, 1, 4);
   Held held;
   if (spec.source == ArpSource::Chord) {
     uint8_t c[4];
@@ -292,11 +218,11 @@ bool applyArp(const Pattern& src, Pattern& dst, const Sel& sel, const ArpSpec& s
   int seqN = buildSeq(held, spec.mode, octaves, seq);
   const uint8_t chd = spec.source == ArpSource::Chord ? spec.chord : kChordTriad;
   int nextSrc = 0;  // SELECTION: the first source step not read yet (chords set before s0 count)
-  const int velLo = clampInt(spec.velLo, 1, 127), velHi = clampInt(spec.velHi, 1, 127);
-  const int gate = clampInt(spec.gate, 5, 100);
+  const int velLo = genClamp(spec.velLo, 1, 127), velHi = genClamp(spec.velHi, 1, 127);
+  const int gate = genClamp(spec.gate, 5, 100);
 
-  const int mutate = clampInt(spec.mutate, 0, 100), swing = clampInt(spec.swing, 0, 100);
-  const int roll = clampInt(spec.roll, 0, 100);
+  const int mutate = genClamp(spec.mutate, 0, 100), swing = genClamp(spec.swing, 0, 100);
+  const int roll = genClamp(spec.roll, 0, 100);
   // Separate streams, so changing Roll or Mutate does not redraw the RANDOM notes (and back).
   Rng rng(spec.seed ^ 0xA5A5F00Du);       // RANDOM-mode notes
   Rng mut(spec.seed * 2654435761u + 1u);  // mutate, a fixed count of draws per arp step
@@ -361,15 +287,11 @@ bool applyArp(const Pattern& src, Pattern& dst, const Sel& sel, const ArpSpec& s
       note = seq[idx];
     }
     const int base = note;
-    note = clampInt(note + 12 * a.oct, 0, 127);
+    note = genClamp(note + 12 * a.oct, 0, 127);
     st.note = static_cast<uint8_t>(note);
-    st.vel = static_cast<uint8_t>(a.acc == ArpAcc::Ghost    ? velLo
-                                  : a.acc == ArpAcc::Accent ? velHi
-                                                            : (velLo + velHi) / 2);
+    st.vel = genVelocity(a, velLo, velHi);
     tied = false;
-    const int pct =
-        (a.len == ArpLen::Short ? (gate / 2 < 5 ? 5 : gate / 2) : (a.len == ArpLen::Long ? 100 : gate)) * rate;
-    putFx(st, Fx::GAT, gateValue(pct));
+    putFx(st, Fx::GAT, gateValue(genGatePct(a, gate, rate)));
     if (a.slide && prevNote >= 0) {
       // The previous note is held into this one only when adjacent; after a rest the synth still
       // glides from the last pitch.
@@ -377,7 +299,9 @@ bool applyArp(const Pattern& src, Pattern& dst, const Sel& sel, const ArpSpec& s
       putFx(st, Fx::SLD, spec.slide ? spec.slide : 1);
     }
     if (spec.mode == ArpMode::Chord) putFx(st, Fx::CHD, chd);
-    if (swing && (j & 1)) putFx(st, Fx::NDG, static_cast<uint8_t>(swing / 2));
+    // The nudge is a share of the arp step (x rate), swing adds to it; NDG holds a signed value.
+    const int ndg = a.nudge * rate + (swing && (j & 1) ? swing / 2 : 0);
+    if (ndg) putFx(st, Fx::NDG, static_cast<uint8_t>(static_cast<int8_t>(genClamp(ndg, -50, 50))));
     if (a.acc == ArpAcc::Ghost && spec.ghostPrb < 100) putFx(st, Fx::PRB, spec.ghostPrb);
     const int rollP = static_cast<int>(rol.below(100)), rollV = static_cast<int>(rol.below(3));
     if (!a.slide && rollP < roll) putFx(st, Fx::RAT, static_cast<uint8_t>(2 + rollV));
@@ -397,9 +321,9 @@ bool applyArp(const Pattern& src, Pattern& dst, const Sel& sel, const ArpSpec& s
 
 bool captureArp(const Pattern& p, int track, int s0, int s1, ArpPattern& out) {
   if (track < 0 || track >= kTracks) return false;
-  const int plen = clampInt(p.length, 1, kMaxSteps);
-  s0 = clampInt(s0, 0, plen - 1);
-  s1 = clampInt(s1, s0, plen - 1);
+  const int plen = genClamp(p.length, 1, kMaxSteps);
+  s0 = genClamp(s0, 0, plen - 1);
+  s1 = genClamp(s1, s0, plen - 1);
   const int n = s1 - s0 + 1 < kArpPatMax ? s1 - s0 + 1 : kArpPatMax;
   const Step* tr = p.steps[track];
   int lo = 128, vMin = 128, vMax = 0;

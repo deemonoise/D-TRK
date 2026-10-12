@@ -9,8 +9,12 @@ namespace mt {
 // Arp generator of FILL: a rhythm pattern (factory or user) run over held notes, written as notes
 // and fx on one track. Text form of a pattern, one token per step: 'x' note, 'X' accent, 'o' ghost,
 // '.' rest, '-' tie (the previous note holds); after a note: 's' short, 'l' long, '~' slide,
-// 'r' repeat the previous note, 'p' the lowest held note, '^' +12, 'v' -12.
+// 'r' repeat the previous note, 'p' the lowest held note, '^' +12, 'v' -12; then optionally
+// ':vel%:gate%:nudge' (exact velocity % of Vel Hi at 128, gate % of a step, NDG -50..50; empty or
+// 0 = none).
 constexpr int kArpPatMax = 32;
+// Longest text of formatArpPattern: "Xs~r^:200:800:-50" + blank on every step.
+constexpr int kArpTextMax = kArpPatMax * 18;
 
 enum class ArpKind : uint8_t { Rest, Note, Tie };
 enum class ArpAcc : uint8_t { Ghost, Norm, Accent };
@@ -24,7 +28,11 @@ struct ArpStep {
   ArpPitch pitch = ArpPitch::Next;
   int8_t oct = 0;  // -1, 0, +1
   bool slide = false;
+  uint8_t velPct = 0;    // 0 none, else velocity = Vel Hi * velPct / 128
+  int8_t nudge = 0;      // NDG of the step, -50..50
+  uint16_t gatePct = 0;  // 0 none, else gate in % of a step (x Gate / 50 x rate)
 };
+static_assert(sizeof(ArpStep) == 10, "ArpStep without padding (memcmp of steps)");
 
 struct ArpPattern {
   uint8_t len = 0;
@@ -36,7 +44,7 @@ bool parseArpPattern(const char* text, ArpPattern& out);
 // Canonical text (tokens joined by ' '). False when cap is too small.
 bool formatArpPattern(const ArpPattern& p, char* out, int cap);
 
-// Built-in patterns, grouped by style (BASIC, TR, PSY, TE, HO, DNB, ACID, EL, BR, SW, DUB, CHIP).
+// Built-in patterns, grouped by style (BASIC, TR, PSY, TE, HO, DNB, ACID, EL, BR, SW, DUB, CHIP, VIRUS).
 int arpFactoryCount();
 const char* arpFactoryName(int i);  // up to 10 chars; nullptr out of range
 const char* arpFactoryText(int i);  // nullptr out of range
@@ -67,7 +75,8 @@ struct ArpSpec {
 
 // Writes the arp into track spec.dest of dst over steps sel.s0..s1 (clamped to the pattern length):
 // note, velocity and the arp's fx (GAT TIE SLD NDG RAT PRB CHD ARS ARP) of the range are replaced,
-// other fx stay. Held notes: the chord (CHORD) or, per step, the notes of src tracks sel.t0..t1 with
+// other fx stay. A step's exact fields override its accent velocity / length gate (scaled by Gate / 50
+// and rate) and add NDG (x rate, plus swing, clamped to +-50). Held notes: the chord (CHORD) or, per step, the notes of src tracks sel.t0..t1 with
 // their CHD (SELECTION; a step with notes replaces the held chord, OFF alone releases it). src may
 // be dst's pre-fill copy; SELECTION reads src from step 0, so chords set before s0 hold at s0.
 // drumTracks[t]: never a source; a drum dest writes nothing (false). Callers must pass it whenever

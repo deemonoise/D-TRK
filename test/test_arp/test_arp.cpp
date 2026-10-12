@@ -8,6 +8,11 @@ using namespace mt;
 void setUp() {}
 void tearDown() {}
 
+// Field-wise equality: ArpPattern has a padding byte after len, ArpStep has none.
+static bool samePattern(const ArpPattern& a, const ArpPattern& b) {
+  return a.len == b.len && memcmp(a.steps, b.steps, sizeof(a.steps)) == 0;
+}
+
 void test_parse_tokens() {
   ArpPattern p;
   TEST_ASSERT_TRUE(parseArpPattern("Xs~ xl o xr^ xpv . - ?z x", p));
@@ -34,7 +39,7 @@ void test_format_round_trip() {
   TEST_ASSERT_TRUE(formatArpPattern(p, buf, sizeof(buf)));
   TEST_ASSERT_EQUAL_STRING("Xs~ xl o xr^ xpv . -", buf);
   TEST_ASSERT_TRUE(parseArpPattern(buf, q));
-  TEST_ASSERT_EQUAL(0, memcmp(&p, &q, sizeof(p)));
+  TEST_ASSERT_TRUE(samePattern(p, q));
   TEST_ASSERT_FALSE(formatArpPattern(p, buf, 4));
 }
 
@@ -46,6 +51,45 @@ void test_parse_caps_at_32() {
   TEST_ASSERT_EQUAL(kArpPatMax, p.len);
 }
 
+void test_parse_exact_fields() {
+  ArpPattern p;
+  TEST_ASSERT_TRUE(parseArpPattern("X:128:150 x:61:33:-17 o:40 x::200 x~:90:50:+60 .", p));
+  TEST_ASSERT_EQUAL(6, p.len);
+  TEST_ASSERT_EQUAL(ArpAcc::Accent, p.steps[0].acc);
+  TEST_ASSERT_EQUAL(128, p.steps[0].velPct);
+  TEST_ASSERT_EQUAL(150, p.steps[0].gatePct);
+  TEST_ASSERT_EQUAL(0, p.steps[0].nudge);
+  TEST_ASSERT_EQUAL(61, p.steps[1].velPct);
+  TEST_ASSERT_EQUAL(33, p.steps[1].gatePct);
+  TEST_ASSERT_EQUAL(-17, p.steps[1].nudge);
+  TEST_ASSERT_EQUAL(40, p.steps[2].velPct);
+  TEST_ASSERT_EQUAL(0, p.steps[2].gatePct);
+  TEST_ASSERT_EQUAL(0, p.steps[3].velPct);
+  TEST_ASSERT_EQUAL(200, p.steps[3].gatePct);
+  TEST_ASSERT_TRUE(p.steps[4].slide);
+  TEST_ASSERT_EQUAL(90, p.steps[4].velPct);
+  TEST_ASSERT_EQUAL(50, p.steps[4].nudge);  // +60 clamped to 50
+  TEST_ASSERT_EQUAL(ArpKind::Rest, p.steps[5].kind);
+  TEST_ASSERT_TRUE(parseArpPattern("x:999:9999", p));
+  TEST_ASSERT_EQUAL(200, p.steps[0].velPct);
+  TEST_ASSERT_EQUAL(800, p.steps[0].gatePct);
+}
+
+void test_format_exact_fields() {
+  ArpPattern p, q;
+  TEST_ASSERT_TRUE(parseArpPattern("X:128:150 x:61:33:-17 xs~ . -", p));
+  char buf[kArpTextMax + 1];
+  TEST_ASSERT_TRUE(formatArpPattern(p, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING("X:128:150 x:61:33:-17 xs~ . -", buf);
+  TEST_ASSERT_TRUE(parseArpPattern(buf, q));
+  TEST_ASSERT_TRUE(samePattern(p, q));
+  // The longest token on every step fits kArpTextMax.
+  char text[kArpTextMax + 1] = "";
+  for (int i = 0; i < kArpPatMax; ++i) strcat(text, "Xs~r^:200:800:-50 ");
+  TEST_ASSERT_TRUE(parseArpPattern(text, p));
+  TEST_ASSERT_TRUE(formatArpPattern(p, buf, sizeof(buf)));
+}
+
 void test_factory_patterns_parse() {
   TEST_ASSERT_TRUE(arpFactoryCount() >= 40);
   for (int i = 0; i < arpFactoryCount(); ++i) {
@@ -55,11 +99,38 @@ void test_factory_patterns_parse() {
     bool note = false;
     for (int k = 0; k < p.len; ++k) note |= p.steps[k].kind == ArpKind::Note;
     TEST_ASSERT_TRUE_MESSAGE(note, arpFactoryName(i));
-    char back[256];
+    char back[kArpTextMax + 1];
     TEST_ASSERT_TRUE(formatArpPattern(p, back, sizeof(back)));
   }
   TEST_ASSERT_EQUAL_STRING("16THS", arpFactoryName(0));
   TEST_ASSERT_NULL(arpFactoryName(arpFactoryCount()));
+}
+
+void test_virus_patterns() {
+  int first = -1;
+  for (int i = 0; i < arpFactoryCount(); ++i)
+    if (strcmp(arpFactoryName(i), "VIRUS 01") == 0) first = i;
+  TEST_ASSERT_TRUE(first >= 0);
+  TEST_ASSERT_EQUAL(first + 64, arpFactoryCount());  // VIRUS 01..64 close the list
+  TEST_ASSERT_EQUAL_STRING("VIRUS 64", arpFactoryName(first + 63));
+  bool nudged = false;
+  for (int i = first; i < first + 64; ++i) {
+    ArpPattern p;
+    TEST_ASSERT_TRUE_MESSAGE(parseArpPattern(arpFactoryText(i), p), arpFactoryName(i));
+    TEST_ASSERT_EQUAL_MESSAGE(kArpPatMax, p.len, arpFactoryName(i));
+    for (int k = 0; k < p.len; ++k) {
+      if (p.steps[k].kind != ArpKind::Note) continue;
+      TEST_ASSERT_TRUE(p.steps[k].velPct > 0 && p.steps[k].gatePct > 0);
+      nudged |= p.steps[k].nudge != 0;
+    }
+  }
+  TEST_ASSERT_TRUE(nudged);  // the triplet patterns
+  ArpPattern v1;  // VIRUS 01: a note on every other step, gate 100 %
+  parseArpPattern(arpFactoryText(first), v1);
+  for (int k = 0; k < kArpPatMax; ++k) {
+    TEST_ASSERT_EQUAL(k % 2 ? ArpKind::Rest : ArpKind::Note, v1.steps[k].kind);
+    if (k % 2 == 0) TEST_ASSERT_EQUAL(100, v1.steps[k].gatePct);
+  }
 }
 
 static Pattern S, D;
@@ -311,6 +382,39 @@ void test_swing_on_odd_arp_steps() {
   TEST_ASSERT_NULL(D.steps[0][0].find(Fx::NDG));
   TEST_ASSERT_EQUAL(20, fxSigned(D.steps[0][1].find(Fx::NDG)->val));
   TEST_ASSERT_NULL(D.steps[0][2].find(Fx::NDG));
+}
+
+void test_exact_velocity_and_gate() {
+  reset();
+  ArpSpec a = spec();  // velLo 60, velHi 120, gate 50, rate 1
+  applyArp(S, D, makeSel(0, 0, 0, 15), a, pat("x:128:150 x:64:33 x o:200"), 0, ScaleType::Major);
+  TEST_ASSERT_EQUAL(120, D.steps[0][0].vel);  // 120 * 128 / 128
+  TEST_ASSERT_EQUAL(60, D.steps[0][1].vel);   // 120 * 64 / 128
+  TEST_ASSERT_EQUAL(90, D.steps[0][2].vel);   // no field: the middle
+  TEST_ASSERT_EQUAL(127, D.steps[0][3].vel);  // clamped
+  TEST_ASSERT_EQUAL(gateValue(150), D.steps[0][0].find(Fx::GAT)->val);
+  TEST_ASSERT_EQUAL(33, D.steps[0][1].find(Fx::GAT)->val);
+  TEST_ASSERT_EQUAL(50, D.steps[0][2].find(Fx::GAT)->val);
+}
+
+void test_exact_gate_scales_with_gate_and_rate() {
+  reset();
+  ArpSpec a = spec();
+  a.gate = 100;
+  a.rate = 2;
+  applyArp(S, D, makeSel(0, 0, 0, 15), a, pat("x:100:33"), 0, ScaleType::Major);
+  TEST_ASSERT_EQUAL(gateValue(132), D.steps[0][0].find(Fx::GAT)->val);  // 33 * 100 / 50 * 2
+}
+
+void test_nudge_with_swing_clamped() {
+  reset();
+  ArpSpec a = spec();
+  a.swing = 40;  // +20 on odd arp steps
+  applyArp(S, D, makeSel(0, 0, 0, 15), a, pat("x:100:50:-17 x:100:50:40 x:100:50:10 x"), 0, ScaleType::Major);
+  TEST_ASSERT_EQUAL(-17, fxSigned(D.steps[0][0].find(Fx::NDG)->val));
+  TEST_ASSERT_EQUAL(50, fxSigned(D.steps[0][1].find(Fx::NDG)->val));  // 40 + 20 clamped
+  TEST_ASSERT_EQUAL(10, fxSigned(D.steps[0][2].find(Fx::NDG)->val));
+  TEST_ASSERT_EQUAL(20, fxSigned(D.steps[0][3].find(Fx::NDG)->val));
 }
 
 void test_ghost_prb_and_roll() {
@@ -565,7 +669,10 @@ int main() {
   RUN_TEST(test_parse_tokens);
   RUN_TEST(test_format_round_trip);
   RUN_TEST(test_parse_caps_at_32);
+  RUN_TEST(test_parse_exact_fields);
+  RUN_TEST(test_format_exact_fields);
   RUN_TEST(test_factory_patterns_parse);
+  RUN_TEST(test_virus_patterns);
   RUN_TEST(test_modes_triad);
   RUN_TEST(test_modes_seventh);
   RUN_TEST(test_chord_mode_writes_chd);
@@ -583,6 +690,9 @@ int main() {
   RUN_TEST(test_selection_dest_inside_reads_snapshot);
   RUN_TEST(test_selection_skips_drum_sources);
   RUN_TEST(test_swing_on_odd_arp_steps);
+  RUN_TEST(test_exact_velocity_and_gate);
+  RUN_TEST(test_exact_gate_scales_with_gate_and_rate);
+  RUN_TEST(test_nudge_with_swing_clamped);
   RUN_TEST(test_ghost_prb_and_roll);
   RUN_TEST(test_mutate_seeded);
   RUN_TEST(test_roll_keeps_random_notes);

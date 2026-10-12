@@ -151,8 +151,8 @@ void takePreviewRequest() {
 }
 
 // Internal RAM: touched every block.
-int16_t mono[kBlock];
-int16_t lr[kBlock * 2];
+int16_t st[kBlock * 2];  // the rendered block, interleaved L R
+int32_t lr[kBlock * 2];
 
 // The block clock steps by exactly kBlockUs (the DMA consumes samples at that rate), so the
 // delay stays constant whatever the wakeup jitter. It is set again at start (the DMA is filled
@@ -204,20 +204,27 @@ void drain(Ring& q) {
   }
 }
 
+// out: interleaved stereo, 2 * kBlock samples.
+std::atomic<uint32_t> profPeak{0};  // the slowest block's cycles while profiling
+
 [[maybe_unused]] void renderSynth(int16_t* out) {
   const uint32_t q0 = synth->profNow();
   advanceClock();
   drain(engineQ);
   drain(uiQ);
   if (synth->profiling()) synth->addProfile(mt::Synth::kProfQueue, synth->profNow() - q0);
-  synth->render(out);
+  synth->renderStereo(out);
   takePreviewRequest();
   if (oneshot.playing()) {
     // Level of a sample at full instrument volume (synth: x4 x0.25 x masterVol).
     const uint8_t mv = project->masterVol > mt::kMasterVolMax ? mt::kMasterVolMax : project->masterVol;
-    oneshot.mix(out, kBlock, mv * 0.01f);
+    oneshot.mixStereo(out, kBlock, mv * 0.01f);
   }
   pvPlaying.store(oneshot.playing(), std::memory_order_relaxed);
+  if (synth->profiling()) {
+    const uint32_t c = synth->profNow() - q0;
+    if (c > profPeak.load(std::memory_order_relaxed)) profPeak.store(c, std::memory_order_relaxed);
+  }
 }
 
 #ifdef AUDIO_BENCH_ANY
@@ -257,9 +264,15 @@ void benchBegin() {
   }
 }
 
+// Mono out[0..n) to interleaved stereo in place (backwards: no sample is read after its overwrite).
+void monoToStereo(int16_t* out, int n) {
+  for (int i = n - 1; i >= 0; --i) out[2 * i] = out[2 * i + 1] = out[i];
+}
+
+// out: interleaved stereo, 2 * kBlock samples (the bench renders mono into both channels).
 void renderBench(int16_t* out) {
   if (!benchOn) {
-    memset(out, 0, sizeof(int16_t) * kBlock);
+    memset(out, 0, sizeof(int16_t) * kBlock * 2);
     return;
   }
   for (int i = 0; i < kBlock; ++i) {
@@ -278,6 +291,7 @@ void renderBench(int16_t* out) {
     // Keep it inaudible-ish: the point is the timing, not the sound.
     out[i] = static_cast<int16_t>(acc * (1.0f / 1024.0f));
   }
+  monoToStereo(out, kBlock);
 }
 #endif
 
@@ -595,6 +609,7 @@ void benchPoolTick() {
 }
 #endif
 
+// Renders one block into out: interleaved stereo, 2 * kBlock samples.
 void render(int16_t* out) {
 #ifdef AUDIO_BENCH
   renderBench(out);
@@ -658,7 +673,7 @@ void run(void*) {
     blockEvents = 0;
 #endif
     const int64_t t0 = esp_timer_get_time();
-    render(mono);
+    render(st);
     const uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - t0);
 #ifdef AUDIO_CPU_LOG
     cpuSum.fetch_add(us, std::memory_order_relaxed);
@@ -680,9 +695,10 @@ void run(void*) {
       int at = scopeAt.load(std::memory_order_relaxed);
       int pk = scopePk.load(std::memory_order_relaxed);
       for (int i = 0; i < kBlock; ++i) {
-        scope[at] = mono[i];
+        const int m = (st[2 * i] + st[2 * i + 1]) >> 1;  // the scope shows the mono sum
+        scope[at] = static_cast<int16_t>(m);
         at = (at + 1) % kScopeLen;
-        const int a = mono[i] < 0 ? -mono[i] : mono[i];
+        const int a = m < 0 ? -m : m;
         if (a > pk) pk = a;
       }
       scopeAt.store(at, std::memory_order_relaxed);
@@ -690,7 +706,11 @@ void run(void*) {
     }
     {  // after the scope: it shows the mix, the phones level only the headphones
       const int32_t g = phonesQ15.load(std::memory_order_relaxed);
-      for (int i = 0; i < kBlock; ++i) lr[2 * i] = lr[2 * i + 1] = static_cast<int16_t>((mono[i] * g) >> 15);
+      // 32-bit output: the phones gain loses no bits, so a low level does not turn quiet tails
+      // into 16-bit grain. |x * g| <= 2^30, doubled it fills the 32-bit range.
+      // +1 LSB DC: the PCM5102A never sees digital silence, so its auto-mute does not click on/off
+      // between notes (the output is AC-coupled, the offset is inaudible).
+      for (int i = 0; i < 2 * kBlock; ++i) lr[i] = st[i] * g * 2 + 1;
     }
     size_t written = 0;
     const int64_t w0 = esp_timer_get_time();
@@ -717,7 +737,7 @@ bool initI2s() {
 
   i2s_std_config_t sc = {
       .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kRate),
-      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
       .gpio_cfg =
           {
               .mclk = I2S_GPIO_UNUSED,
@@ -728,6 +748,10 @@ bool initI2s() {
               .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
           },
   };
+  // 32-bit samples in 32-bit slots: BCK = 64 fs, which the PCM5102A PLL locks to without MCLK.
+  sc.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
+  // The default WS width is the data width (16): WS would drop mid-slot and garble the right channel.
+  sc.slot_cfg.ws_width = 32;
   if (i2s_channel_init_std_mode(tx, &sc) != ESP_OK) return false;
   return i2s_channel_enable(tx) == ESP_OK;
 }
@@ -780,8 +804,9 @@ static uint32_t cycles() { return esp_cpu_get_cycle_count(); }
 
 void profileStart() {
   if (!synth) return;
-  uint32_t sink[kProfStages], blocks;
-  synth->takeProfile(sink, blocks);  // clear (a block in flight may land either side)
+  uint32_t sink[kProfStages], sinkN[kProfStages], blocks;
+  synth->takeProfile(sink, sinkN, blocks);  // clear (a block in flight may land either side)
+  profPeak.store(0, std::memory_order_relaxed);
   synth->setProfiler(cycles);
 }
 
@@ -791,11 +816,16 @@ bool profileStop(Profile& out) {
   if (!synth) return false;
   synth->setProfiler(nullptr);
   vTaskDelay(pdMS_TO_TICKS(10));  // let a block that read the clock finish
-  uint32_t c[kProfStages];
-  synth->takeProfile(c, out.blocks);
+  uint32_t c[kProfStages], n[kProfStages];
+  synth->takeProfile(c, n, out.blocks);
   if (!out.blocks) return false;
-  const float perUs = 1.f / (static_cast<float>(getCpuFrequencyMhz()) * out.blocks);
-  for (int i = 0; i < kProfStages; ++i) out.us[i] = c[i] * perUs;
+  const float mhz = static_cast<float>(getCpuFrequencyMhz());
+  const float perUs = 1.f / (mhz * out.blocks);
+  for (int i = 0; i < kProfStages; ++i) {
+    out.us[i] = c[i] * perUs;
+    out.n[i] = static_cast<float>(n[i]) / out.blocks;
+  }
+  out.peakUs = profPeak.load(std::memory_order_relaxed) / mhz;
   return true;
 }
 
@@ -815,7 +845,7 @@ void begin(mt::Project* p) {
     synth->setDelayBuffer(line, kDelayLen);
   else
     Serial.println("audio: no PSRAM for the delay line");
-  // Reverb: 5934 floats (23 KB), read and written every sample: internal RAM when there is room,
+  // Reverb: 6398 floats (25 KB), read and written every sample: internal RAM when there is room,
   // else PSRAM (slower through the cache); none = no reverb.
   // Keeps kRvKeepFree of internal RAM free.
   float* rvMem = nullptr;

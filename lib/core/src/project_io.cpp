@@ -105,9 +105,15 @@ bool trackLenSet(const Pattern& p) {
   return false;
 }
 
+bool trackSpeedSet(const Pattern& p) {
+  for (uint8_t n : p.trackSpeed)
+    if (n) return true;
+  return false;
+}
+
 bool patternStored(const Pattern& p) {
   return p.length != kDefaultSteps || p.res != Resolution::Sixteenth || p.swing != 50 || !p.isEmpty() ||
-         trackLenSet(p);
+         trackLenSet(p) || trackSpeedSet(p);
 }
 
 uint8_t validNote(uint8_t n) { return (n < 128 || n == kNoteOff) ? n : kNoteEmpty; }
@@ -178,6 +184,11 @@ LoadErr readTout(CrcSource& in, uint32_t size, Project& p) {
     c.instr = clampu(b[1], 0, kInstruments - 1);
     c.vol = clampu(b[2], 0, 127);
   });
+}
+
+// TPAN: one pan byte per track; tracks it lacks (and files without it) stay centred (reset()).
+LoadErr readTpan(CrcSource& in, uint32_t size, Project& p) {
+  return readRecords(in, size, 1, kTracks, [&](int t, const uint8_t* b) { p.tracks[t].pan = clampu(b[0], 0, 127); });
 }
 
 LoadErr readInst(CrcSource& in, uint32_t size, Project& p) {
@@ -331,6 +342,17 @@ LoadErr readTlen(CrcSource& in, uint32_t size, Project& p) {
   if (b[0] >= kPatterns) return LoadErr::Ok;
   Pattern& pt = p.patterns[b[0]];
   for (int t = 0; t < kTracks; ++t) pt.trackLen[t] = clampu(b[1 + t], 0, pt.length);
+  return LoadErr::Ok;
+}
+
+// TSPD: pattern index + kTracks track speeds (TrackSpeed, 0 = x1; unknown -> x1).
+LoadErr readTspd(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t b[1 + kTracks];
+  if (size != sizeof(b)) return LoadErr::BadValue;
+  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  if (b[0] >= kPatterns) return LoadErr::Ok;
+  Pattern& pt = p.patterns[b[0]];
+  for (int t = 0; t < kTracks; ++t) pt.trackSpeed[t] = static_cast<uint8_t>(toSpeed(b[1 + t]));
   return LoadErr::Ok;
 }
 
@@ -507,6 +529,10 @@ bool saveProject(const Project& p, ByteSink& out) {
     const uint8_t b[kToutSize] = {static_cast<uint8_t>(c.out), c.instr, c.vol};
     if (!o.write(b, sizeof(b))) return false;
   }
+  // TOUT keeps its 3-byte records (older readers): the pan goes in its own chunk.
+  if (!o.chunk("TPAN", 1 + kTracks) || !o.write(&count, 1)) return false;
+  for (const TrackCfg& c : p.tracks)
+    if (!o.write(&c.pan, 1)) return false;
 
   const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0),
                                  p.dlyTime,   p.dlyFb,
@@ -557,6 +583,11 @@ bool saveProject(const Project& p, ByteSink& out) {
       uint8_t tl[1 + kTracks] = {static_cast<uint8_t>(i)};
       memcpy(tl + 1, pt.trackLen, kTracks);
       if (!o.chunk("TLEN", sizeof(tl)) || !o.write(tl, sizeof(tl))) return false;
+    }
+    if (trackSpeedSet(pt)) {
+      uint8_t sp[1 + kTracks] = {static_cast<uint8_t>(i)};
+      memcpy(sp + 1, pt.trackSpeed, kTracks);
+      if (!o.chunk("TSPD", sizeof(sp)) || !o.write(sp, sizeof(sp))) return false;
     }
   }
   {
@@ -656,6 +687,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "FLTR", 4) == 0) e = readFltr(in, size, out);
     else if (memcmp(ch, "SLCE", 4) == 0) e = readSlce(in, size, out);
     else if (memcmp(ch, "TOUT", 4) == 0) e = readTout(in, size, out);
+    else if (memcmp(ch, "TPAN", 4) == 0) e = readTpan(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
@@ -664,6 +696,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, out);
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
+    else if (memcmp(ch, "TSPD", 4) == 0) e = readTspd(in, size, out);
     else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);
     else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, out);

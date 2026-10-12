@@ -275,6 +275,57 @@ void test_peak_and_clips() {
   TEST_ASSERT_TRUE(r.clips() > 0);
 }
 
+// Stereo blocks: as many as mono ones, interleaved L R; a centred project has L == R, equal to
+// the mono render; peak / clips over both channels.
+void test_render_block_stereo() {
+  Project& p = *mkProj();
+  p.patterns[0].steps[0][0].note = 60;
+  p.patterns[0].steps[1][4].note = 64;
+  RenderSpec s;
+  s.tailBlocks = 10;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p, s);
+  std::vector<int16_t> mono, st;
+  synth.reset();
+  {
+    OfflineRender r(p, synth, s);
+    int16_t out[Synth::kBlock];
+    while (r.renderBlock(out)) mono.insert(mono.end(), out, out + Synth::kBlock);
+  }
+  synth.reset();
+  OfflineRender r(p, synth, s);
+  int16_t lr[2 * Synth::kBlock];
+  uint32_t blocks = 0;
+  while (r.renderBlockStereo(lr)) {
+    st.insert(st.end(), lr, lr + 2 * Synth::kBlock);
+    ++blocks;
+  }
+  TEST_ASSERT_EQUAL(r.blocksTotal(), blocks);
+  TEST_ASSERT_EQUAL(2 * mono.size(), st.size());
+  for (size_t i = 0; i < mono.size(); ++i) {
+    TEST_ASSERT_EQUAL_INT16(mono[i], st[2 * i]);
+    TEST_ASSERT_EQUAL_INT16(mono[i], st[2 * i + 1]);
+  }
+  TEST_ASSERT_TRUE(r.peak() > 1000);
+}
+
+// Hard right: the peak comes from R alone.
+void test_render_block_stereo_peak_over_both_channels() {
+  Project& p = *mkProj();
+  p.tracks[0].pan = 127;
+  p.patterns[0].steps[0][0].note = 60;
+  RenderSpec s;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p, s);
+  OfflineRender r(p, synth, s);
+  int16_t lr[2 * Synth::kBlock];
+  int16_t peakL = 0;
+  while (r.renderBlockStereo(lr))
+    for (int i = 0; i < Synth::kBlock; ++i) peakL = lr[2 * i] > peakL ? lr[2 * i] : peakL;
+  TEST_ASSERT_EQUAL_INT16(0, peakL);
+  TEST_ASSERT_TRUE(r.peak() > 1000);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_pass_us);
@@ -293,5 +344,7 @@ int main() {
   RUN_TEST(test_guard_restores_flags_and_mutes);
   RUN_TEST(test_two_renders_identical);
   RUN_TEST(test_peak_and_clips);
+  RUN_TEST(test_render_block_stereo);
+  RUN_TEST(test_render_block_stereo_peak_over_both_channels);
   return UNITY_END();
 }

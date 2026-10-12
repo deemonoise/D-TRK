@@ -20,6 +20,7 @@ class FileScreen : public Screen {
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
   bool onPlay() override;
+  void onBack() override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   void poll() override { wifi_.poll(); }

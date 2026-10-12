@@ -30,12 +30,16 @@ void Delay::clear() {
   lp_ = 0;
 }
 
-MT_HOT void Delay::process(const float* send, float* mix, int n, uint32_t delay, uint8_t fb, uint8_t tone,
-                           uint8_t level) {
+MT_HOT void Delay::process(const float* send, float* mixL, float* mixR, int n, uint32_t delay, uint8_t fb,
+                           uint8_t tone, uint8_t level) {
   if (!buf_) return;
   if (delay < 1) delay = 1;
   if (delay > len_ - 1) delay = len_ - 1;
-  const float a = toneCoef(tone);
+  if (tone != tone_) {
+    tone_ = tone;
+    coef_ = toneCoef(tone);
+  }
+  const float a = coef_;
   const float g = (fb > 127 ? 127 : fb) * (kFbMax / 127.f);
   const float lv = (level > 127 ? 127 : level) * (1.f / 127.f);
   uint32_t w = w_;
@@ -43,10 +47,12 @@ MT_HOT void Delay::process(const float* send, float* mix, int n, uint32_t delay,
   float lp = lp_;
   for (int i = 0; i < n; ++i) {
     lp += (buf_[r] * (1.f / kScale) - lp) * a;
-    mix[i] += lp * lv;
+    const float y = lp * lv;
+    mixL[i] += y;
+    mixR[i] += y;
     float x = (send[i] + lp * g) * kScale;
     x = x > 32767.f ? 32767.f : (x < -32768.f ? -32768.f : x);
-    buf_[w] = static_cast<int16_t>(lrintf(x));
+    buf_[w] = static_cast<int16_t>(x < 0 ? x - 0.5f : x + 0.5f);  // no lrintf: a flash call per sample
     if (++w == len_) w = 0;
     if (++r == len_) r = 0;
   }

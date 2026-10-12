@@ -635,12 +635,46 @@ void InstScreen::presetMenu() {
     presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
-  enum : int { kLoad, kSave };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel };
+  auto choose = [this](int id) {
+    switch (id) {
+      case kChop: editor_.chop(); break;
+      case kAdd: editor_.addSlice(app_.shift()); break;  // Shift held on the click: at a transient
+      case kDel: editor_.deleteSlice(); break;
+      case kClear: {
+        const MenuItem confirm[] = {{"Cancel", kCancel}, {"Clear! (confirm)", kClearConfirm}};
+        app_.menu().open("CLEAR SLICES?", confirm, 2, [this](int i) {
+          if (i == kClearConfirm) editor_.clearSlices();
+        });
+        break;
+      }
+      case kLoad:
+      case kSave:
+        typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
+        presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
+        break;
+      default: break;
+    }
+  };
+  if (onEditor()) {
+    editor_.bind(instr_);
+    const MenuItem items[] = {{"Chop", kChop},
+                              {"Add slice", kAdd},
+                              {"Delete slice", kDel, editor_.sliceSelected()},
+                              {"Clear slices", kClear, editor_.hasSlices()},
+                              {"Load preset", kLoad},
+                              {"Save preset", kSave}};
+    app_.menu().open("SAMPLE", items, 6, choose);
+    return;
+  }
   const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
-  app_.menu().open("PRESET", items, 2, [this](int id) {
-    typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
-    presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
-  });
+  app_.menu().open("PRESET", items, 2, choose);
+}
+
+void InstScreen::onATap(bool shift) {
+  if (presets_.isOpen() || wt_.isOpen() || !onEditor()) return;
+  editor_.bind(instr_);
+  editor_.stepMarker(shift ? -1 : 1);
 }
 
 void InstScreen::changeInstr(int d) {
@@ -695,12 +729,31 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
     list_.edit(ev.delta);  // no x10 for characters
     return;
   }
+  // A + turn on the name row: a character, Shift = the position.
+  if (ev.type == hw::InputType::EditTurn && page_ == kPgMain && list_.sel() == kName && list_.holdEdit()) {
+    if (ev.shift) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+    else list_.edit(ev.delta);
+    return;
+  }
   const int ov = onEditor() ? editor_.onInput(ev) : list_.onInput(ev);
   if (ov) {
-    showPage(physPage() + ov, true);  // click (Shift+click) on the page bar
+    showPage(physPage() + ov, true);  // A + turn on the page bar
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();
+}
+
+// B + Shift + turn: the previous / next page (not over the browsers); the cursor stays on the page bar.
+void InstScreen::onPage(int d) {
+  if (presets_.isOpen() || wt_.isOpen()) return;
+  showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
+}
+
+// B: closes the browser (as its long press), else leaves the edit with the value kept.
+void InstScreen::onBack() {
+  if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
+  else if (wt_.isOpen()) wt_.onInput({hw::InputType::EncLong, 0, false});
+  else if (onEditor() ? editor_.editing() : list_.editing()) leaveEdit();
 }
 
 void InstScreen::onTouch(const TouchEvent& ev) {

@@ -444,15 +444,19 @@ void test_plan_matches_import() {
   TEST_ASSERT_EQUAL(77, importPlan(I, N, nN, M, 77).bpm);
 }
 
-// A target track's own length is reset: notes past its old loop play.
+// A target track's own length and speed are reset: notes past its old loop play, at x1.
 void test_resets_target_track_length() {
   P.patterns[0].trackLen[0] = 8;
   P.patterns[0].trackLen[1] = 12;
+  P.patterns[0].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  P.patterns[0].trackSpeed[1] = static_cast<uint8_t>(TrackSpeed::Half);
   M.patternLen = 16;
   add(24 * 10, 62);  // step 10, past the old loop of 8
   run();
   TEST_ASSERT_EQUAL(0, P.patterns[0].trackLen[0]);
   TEST_ASSERT_EQUAL(12, P.patterns[0].trackLen[1]);  // not a target: kept (fits 16)
+  TEST_ASSERT_EQUAL(0, P.patterns[0].trackSpeed[0]);
+  TEST_ASSERT_EQUAL(static_cast<int>(TrackSpeed::Half), P.patterns[0].trackSpeed[1]);
   TEST_ASSERT_EQUAL(62, st(0, 0, 10).note);
 }
 

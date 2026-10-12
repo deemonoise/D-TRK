@@ -69,6 +69,12 @@ struct Voice {
   float amp = 0;            // gain * instrument vol * track vol
   float send = 0;           // delay send 0..1: DLY lock or Instrument::send
   float rsend = 0;          // reverb send 0..1: RVB lock or Instrument::rsend
+  // Pan gains (Synth::setPanTarget): current L / R, the per-sample steps of the ramp to the target
+  // (tgl, tgr) reached at the next control update. panSet false: the next update snaps (note-on).
+  float gl = 1, gr = 1;
+  float dgl = 0, dgr = 0;
+  float tgl = 1, tgr = 1;
+  bool panSet = false;
   Drive drive;              // DRV lock or Instrument::drive, + LFO
   Crush crush;              // BIT / SRR locks (0 = off)
   // Control-rate math caches (exp2f is costly on the ESP32): the input of the last call and its
@@ -105,8 +111,10 @@ struct Voice {
   uint8_t machine = 0;               // FmMachine / DrumMachine, latched at note-on: a sounding note keeps it
   uint16_t lockMask = 0;             // locked for this note: bit = LockBit (macros: FM / DRUM only)
   uint8_t lock[kLocks] = {0};
-  float lfoPhase[kLfos] = {};        // 0..1, per LFO
+  float lfoPhase[kLfos] = {};        // 0..1, per LFO (Retrig OFF ones use the instrument's)
   float lfoRnd[kLfos] = {};          // Random wave: value of the current cycle
+  uint16_t lfoLockMask = 0;          // LFO fx locks of this note: bit = LFO x kLfoLocks + LfoLock
+  LfoCfg lfoLock[kLfos];             // their values
   float lfoOut[kLfos] = {};          // last update's output (-1..1 x depth / 64): LFO -> LFO source
   uint8_t lfoWrap = 0;               // bit i: LFO i's phase wrapped since the last update (RTRG source)
   // fmMachine() cache: params for the key below, recomputed when a macro moves >= 0.5 or the

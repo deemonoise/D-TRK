@@ -230,7 +230,7 @@ void test_lfo_dest_step() {
   using T = InstrType;
   const uint8_t vol = static_cast<uint8_t>(LfoDest::Vol), cut = static_cast<uint8_t>(LfoDest::Cutoff);
   const uint8_t drv = static_cast<uint8_t>(LfoDest::Drive), reso = static_cast<uint8_t>(LfoDest::Reso);
-  const uint8_t last = static_cast<uint8_t>(LfoDest::Count) - 1;
+  const uint8_t last = static_cast<uint8_t>(LfoDest::Rtrg4);  // last in the display order
   // FM: every target in order, clamped at the ends.
   TEST_ASSERT_EQUAL(1, lfoDestStep(0, 1, T::Fm));
   TEST_ASSERT_EQUAL(cut, lfoDestStep(vol, 1, T::Fm));
@@ -283,6 +283,20 @@ void test_lfo_dest_names() {
   TEST_ASSERT_EQUAL_STRING("L3 DEPTH", lfoDestName(static_cast<uint8_t>(LfoDest::Depth3), InstrType::Chip));
   TEST_ASSERT_EQUAL_STRING("L4 RTRG", lfoDestName(static_cast<uint8_t>(LfoDest::Rtrg4), InstrType::Chip));
   TEST_ASSERT_EQUAL_STRING("PITCH", lfoDestName(200, InstrType::Chip));  // out of range
+}
+
+// PAN: every type; the Dest list shows it between RVB and BIT (display order, not the enum's).
+void test_lfo_dest_pan() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_EQUAL_STRING("PAN", lfoDestName(d(LfoDest::Pan), InstrType::Synth));
+  for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
+    const auto it = static_cast<InstrType>(t);
+    TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Pan), it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Rvb), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Bit), lfoDestStep(d(LfoDest::Pan), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Bit), -1, it));
+  }
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg4), lfoDestStep(d(LfoDest::Rtrg3), 1, InstrType::Chip));  // PAN not at the end
 }
 
 // Type change: a target the new type lacks becomes PITCH, on every LFO.
@@ -392,7 +406,8 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(50, p.compRel);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(12, kLocks);  // + BIT, SRR
+  TEST_ASSERT_EQUAL(13, kLocks);  // + BIT, SRR, PAN
+  TEST_ASSERT_EQUAL(kLockSrr + 1, kLockPan);
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockFlt, static_cast<int>(Fx::FLT));  // lock order unchanged
 }
 
@@ -412,6 +427,44 @@ void test_lfo_sync_and_refs() {
   m.lfo[2].dest = static_cast<uint8_t>(LfoDest::Col);
   instrSetType(m, InstrType::Chip);
   TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfo[2].dest);
+}
+
+void test_track_speed_factors() {
+  TEST_ASSERT_EQUAL(1, speedMul(TrackSpeed::X1));
+  TEST_ASSERT_EQUAL(2, speedMul(TrackSpeed::X2));
+  TEST_ASSERT_EQUAL(4, speedMul(TrackSpeed::X4));
+  TEST_ASSERT_EQUAL(1, speedMul(TrackSpeed::Half));
+  TEST_ASSERT_EQUAL(2, speedDiv(TrackSpeed::Half));
+  TEST_ASSERT_EQUAL(4, speedDiv(TrackSpeed::Quarter));
+  TEST_ASSERT_EQUAL(1, speedDiv(TrackSpeed::X4));
+  TEST_ASSERT_EQUAL_STRING("x2", speedName(TrackSpeed::X2));
+  TEST_ASSERT_EQUAL_STRING("1/4", speedName(TrackSpeed::Quarter));
+}
+
+void test_track_step_at() {
+  Pattern pt;
+  pt.clear();
+  pt.length = 16;
+  // x1: as stepIndex today, with polymeter.
+  TEST_ASSERT_EQUAL(5, trackStepAt(pt, 0, 5, 0, 0));
+  pt.trackLen[0] = 3;
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 0, 5, 7, 0));
+  pt.trackLen[0] = 0;
+  // x2: two track steps per pattern step, wraps at the track length.
+  pt.trackSpeed[1] = static_cast<uint8_t>(TrackSpeed::X2);
+  TEST_ASSERT_EQUAL(10, trackStepAt(pt, 1, 5, 0, 0));
+  TEST_ASSERT_EQUAL(11, trackStepAt(pt, 1, 5, 0, 1));
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 1, 9, 0, 0));  // 18 % 16
+  // 1/2: plays on even counts, the whole track over two passes.
+  pt.trackSpeed[2] = static_cast<uint8_t>(TrackSpeed::Half);
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 2, 4, 0, 0));
+  TEST_ASSERT_EQUAL(-1, trackStepAt(pt, 2, 5, 0, 0));  // not this pattern step
+  TEST_ASSERT_EQUAL(8, trackStepAt(pt, 2, 0, 1, 0));   // (16 + 0) / 2
+  TEST_ASSERT_EQUAL(15, trackStepAt(pt, 2, 14, 1, 0));
+  TEST_ASSERT_EQUAL(0, trackStepAt(pt, 2, 0, 2, 0));
+  // Bad stored value plays as x1.
+  pt.trackSpeed[3] = 99;
+  TEST_ASSERT_EQUAL(5, trackStepAt(pt, 3, 5, 0, 0));
 }
 
 int main() {
@@ -450,5 +503,8 @@ int main() {
   RUN_TEST(test_kit_defaults_and_drum_track);
   RUN_TEST(test_sound_fx_defaults);
   RUN_TEST(test_lfo_sync_and_refs);
+  RUN_TEST(test_track_speed_factors);
+  RUN_TEST(test_track_step_at);
+  RUN_TEST(test_lfo_dest_pan);
   return UNITY_END();
 }

@@ -15,14 +15,16 @@ void setUp() {
 }
 void tearDown() { delete d; }
 
-// Runs n samples with an impulse of height a at sample 0 (none if at < 0), collects the mix.
+// Runs n samples with an impulse of height a at sample 0 (none if at < 0), collects the mix (L;
+// R must get the same return).
 static void run(float* mix, int n, uint32_t delay, uint8_t fb, uint8_t tone, uint8_t level, float a = 1.f) {
-  float send[64];
+  float send[64], r[64];
   for (int i = 0; i < n; i += 64) {
     const int k = n - i < 64 ? n - i : 64;
     for (int j = 0; j < k; ++j) send[j] = (i + j == 0) ? a : 0.f;
-    for (int j = 0; j < k; ++j) mix[i + j] = 0;
-    d->process(send, mix + i, k, delay, fb, tone, level);
+    for (int j = 0; j < k; ++j) mix[i + j] = r[j] = 0;
+    d->process(send, mix + i, r, k, delay, fb, tone, level);
+    TEST_ASSERT_EQUAL_MEMORY(mix + i, r, sizeof(float) * k);
   }
 }
 
@@ -71,10 +73,14 @@ void test_tone_darkens_the_echo() {
 
 void test_no_buffer_leaves_mix() {
   d->setBuffer(nullptr, 0);
-  float send[8] = {1, 1, 1, 1, 1, 1, 1, 1}, mix[8] = {0.5f};
-  d->process(send, mix, 8, 4, 127, 127, 127);
+  float send[8] = {1, 1, 1, 1, 1, 1, 1, 1}, mix[8] = {0.5f}, r[8] = {0.25f};
+  d->process(send, mix, r, 8, 4, 127, 127, 127);
   TEST_ASSERT_EQUAL_FLOAT(0.5f, mix[0]);
-  for (int i = 1; i < 8; ++i) TEST_ASSERT_EQUAL_FLOAT(0.f, mix[i]);
+  TEST_ASSERT_EQUAL_FLOAT(0.25f, r[0]);
+  for (int i = 1; i < 8; ++i) {
+    TEST_ASSERT_EQUAL_FLOAT(0.f, mix[i]);
+    TEST_ASSERT_EQUAL_FLOAT(0.f, r[i]);
+  }
 }
 
 void test_delay_clamped_to_buffer() {
@@ -85,8 +91,8 @@ void test_delay_clamped_to_buffer() {
 
 void test_clear_silences_the_line() {
   static float mix[256];
-  float send[1] = {1.f}, m[1] = {0};
-  d->process(send, m, 1, 100, 127, 127, 127);
+  float send[1] = {1.f}, m[1] = {0}, r[1] = {0};
+  d->process(send, m, r, 1, 100, 127, 127, 127);
   d->clear();
   run(mix, 256, 100, 127, 127, 127, 0.f);
   for (int i = 0; i < 256; ++i) TEST_ASSERT_EQUAL_FLOAT(0.f, mix[i]);
@@ -96,6 +102,21 @@ void test_line_saturates_instead_of_wrapping() {
   static float mix[256];
   run(mix, 256, 100, 0, 127, 127, 10.f);  // above the line's +-4 range
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, 32767.f / Delay::kScale, mix[100]);
+}
+
+// The same return on both sides, added onto whatever each side holds.
+void test_return_on_both_sides() {
+  float l[256], r[256];
+  float send[256] = {1.f};
+  for (int i = 0; i < 256; ++i) {
+    l[i] = 0.5f;
+    r[i] = -0.25f;
+  }
+  d->process(send, l, r, 256, 100, 0, 127, 127);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1.5f, l[100]);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.75f, r[100]);
+  TEST_ASSERT_EQUAL_FLOAT(0.5f, l[99]);
+  TEST_ASSERT_EQUAL_FLOAT(-0.25f, r[99]);
 }
 
 int main() {
@@ -109,5 +130,6 @@ int main() {
   RUN_TEST(test_delay_clamped_to_buffer);
   RUN_TEST(test_clear_silences_the_line);
   RUN_TEST(test_line_saturates_instead_of_wrapping);
+  RUN_TEST(test_return_on_both_sides);
   return UNITY_END();
 }

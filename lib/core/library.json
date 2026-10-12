@@ -1,0 +1,6 @@
+{
+  "name": "core",
+  "build": {
+    "flags": ["-O2"]
+  }
+}

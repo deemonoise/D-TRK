@@ -221,7 +221,7 @@ void ProjScreen::onEnter() {
   bpmTarget_ = app_.project().bpm;
 }
 
-// Click (Shift+click) on the page bar: the next (previous) page.
+// A + turn on the page bar: the previous / next page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
   if (ev.type == hw::InputType::EncClick && !list_.editing() && onProfileRow()) {
     toggleProfile();
@@ -229,6 +229,12 @@ void ProjScreen::onInput(const hw::InputEvent& ev) {
   }
   if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
 }
+
+// B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
+void ProjScreen::onPage(int d) { showPage(page_ + d, list_.barSelected()); }
+
+// B: leaves the edit with the value kept.
+void ProjScreen::onBack() { list_.setEdit(false); }
 
 void ProjScreen::onTouch(const TouchEvent& ev) {
   const int barY = kAreaY + kHeaderH;

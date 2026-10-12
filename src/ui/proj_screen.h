@@ -15,6 +15,8 @@ class ProjScreen : public Screen {
   void onEnter() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
+  void onPage(int d) override;
+  void onBack() override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
 
  private:

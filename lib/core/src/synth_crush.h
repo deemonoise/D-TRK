@@ -39,7 +39,12 @@ struct Crush {
       }
       x = held_;
     }
-    if (bits_) x = floorf(x / step_ + 0.5f) * step_;
+    if (bits_) {  // floor(x / step + 0.5) x step, no floorf (a flash call per sample on the ESP32)
+      const float y = x / step_ + 0.5f;
+      int i = static_cast<int>(y);
+      if (static_cast<float>(i) > y) --i;
+      x = static_cast<float>(i) * step_;
+    }
     return x;
   }
 
