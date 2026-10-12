@@ -4,14 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
-#include "audio/audio.h"
 #include "engine/engine.h"
-#include "esp_heap_caps.h"
 #include "fx_info.h"
 #include "groove.h"
-#include "hw/sdcard.h"
-#include "storage/crashlog.h"
-#include "synth.h"
 #include "names.h"
 #include "scale.h"
 
@@ -132,54 +127,8 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                              app_.project().perfMap[b] = static_cast<uint8_t>(clampi(app_.project().perfMap[b] + d, 0, kLast));
                            }};
   }
-  // Live output level (device setting); the project's master is MAIN on TRACK / MIX.
-  params_[kPhones] = {"Phones", [this](char* o, int n) { snprintf(o, n, "%d%%", app_.phones()); },
-                      [this](int d) { app_.setPhones(app_.phones() + d); }};
-  params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
-                       [this](int d) { app_.project().preview = d > 0; }};
-  params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
-                     [this](int d) { app_.setTheme(app_.theme() + d); }};
-  params_[kAutosave] = {"Autosave",
-                        [this](char* o, int n) {
-                          if (app_.autosaveMin()) snprintf(o, n, "%d MIN", app_.autosaveMin());
-                          else snprintf(o, n, "OFF");
-                        },
-                        [this](int d) {
-                          static const int kSteps[] = {0, 1, 2, 5, 10};
-                          int i = 0;
-                          while (i < 4 && kSteps[i] < app_.autosaveMin()) ++i;
-                          i = clampi(i + (d > 0 ? 1 : -1), 0, 4);
-                          app_.setAutosaveMin(kSteps[i]);
-                        }};
-  // Read only: the firmware version and why the device last restarted (crash log: /diag/crashlog.txt).
-  params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
-  params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
-                         [](int) {}};
-  // Where the synth and the sequencer live (PSRAM = the audio costs more) and the free internal RAM.
-  params_[kAudioRam] = {"Audio RAM",
-                        [](char* o, int n) {
-                          const bool s = audio::synthInternal(), q = engine::seqInternal();
-                          const unsigned kb = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
-                          snprintf(o, n, "%s, RVB %s, %uK FREE",
-                                   s && q ? "INTERNAL" : (s ? "SEQ IN PSRAM" : (q ? "SYNTH IN PSRAM" : "PSRAM")),
-                                   audio::reverbInternal() ? "INT" : "PSRAM", kb);
-                        },
-                        [](int) {}};
-  // Click: start; play a while (on the screen to measure), click again: the time per stage of the
-  // audio render goes to /diag/cpuprof.txt.
-  params_[kCpuProf] = {"CPU profile",
-                       [this](char* o, int n) {
-                         if (audio::profileRunning())
-                           snprintf(o, n, "RUNNING %lus, CLICK", static_cast<unsigned long>((millis() - profStartMs_) / 1000));
-                         else
-                           snprintf(o, n, "CLICK TO START");
-                       },
-                       [](int) {}};
-  // Phones, the theme and the read-only rows are not project data: editing them does not mark it dirty.
-  list_.setOnEdit([this] {
-    const int r = kPageFirst[page_] + list_.sel();
-    if (r != kPhones && r < kTheme) app_.markDirty();
-  });
+  // Every row is project data (device settings live on FILE > SYSTEM).
+  list_.setOnEdit([this] { app_.markDirty(); });
   list_.setOnCancel([this] { app_.toast("CANCEL"); });
   showPage(kPgSong, false);
 }
@@ -223,10 +172,6 @@ void ProjScreen::onEnter() {
 
 // A + turn on the page bar: the previous / next page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
-  if (ev.type == hw::InputType::EncClick && !list_.editing() && onProfileRow()) {
-    toggleProfile();
-    return;
-  }
   if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
 }
 
@@ -242,42 +187,7 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
     if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
     return;
   }
-  if (ev.type == TouchType::Tap && kPageFirst[page_] + list_.rowAt(ev.y) == kCpuProf && list_.rowAt(ev.y) >= 0) {
-    list_.setSel(list_.rowAt(ev.y));
-    toggleProfile();
-    return;
-  }
   list_.onTouch(ev);
-}
-
-void ProjScreen::toggleProfile() {
-  app_.invalidate();
-  if (!audio::profileRunning()) {
-    audio::profileStart();
-    profStartMs_ = millis();
-    app_.toast("PROFILE: PLAY, THEN CLICK AGAIN");
-    return;
-  }
-  audio::Profile pr;
-  const uint32_t secs = (millis() - profStartMs_) / 1000;
-  if (!audio::profileStop(pr)) {
-    app_.toast("PROFILE: NOTHING RENDERED");
-    return;
-  }
-  float total = 0;
-  int top = 0;
-  for (int i = 0; i < audio::kProfStages; ++i) {
-    total += pr.us[i];
-    if (pr.us[i] > pr.us[top]) top = i;
-  }
-  constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
-  char line[96];
-  snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
-           static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
-  const bool saved = storage::appendCpuProfile(line, pr);
-  snprintf(line, sizeof(line), "%s %.0f%%, TOP %s %.0f%%", saved ? "SAVED" : "NO SD", total * 100 / kBlockUs,
-           mt::Synth::profName(top), pr.us[top] * 100 / kBlockUs);
-  app_.toast(line);
 }
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
@@ -286,7 +196,7 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF", "SYS"};
+  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);

@@ -4,17 +4,20 @@
 #include "keyboard.h"
 #include "render_dialog.h"
 #include "page_bar.h"
+#include "param_list.h"
 #include "screen.h"
 #include "wifi_dialog.h"
 
 namespace ui {
 
-// Two sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
-// transfer; Load shows /projects/*.mtp) and SAMPLES (the project's samples: import WAV from /samples and its
-// subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries).
+// Three sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
+// transfer; Load shows /projects/*.mtp), SAMPLES (the project's samples: import WAV from /samples and its
+// subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries) and SYSTEM
+// (device settings saved in NVS, not in the project, and diagnostics: firmware, last reset, RAM,
+// battery, CPU profile).
 class FileScreen : public Screen {
  public:
-  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app) {}
+  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app) { initSystem(); }
   void onEnter() override;
   void onLeave() override;
   void onProjectReplaced() override;
@@ -23,8 +26,9 @@ class FileScreen : public Screen {
   void onBack() override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  void onPage(int d) override;
   void poll() override { wifi_.poll(); }
-  bool wantsRedraw(const engine::Status&) override { return wifi_.wantsRedraw(); }
+  bool wantsRedraw(const engine::Status&) override;  // Wi-Fi, SYSTEM: Battery / CPU profile rows
 
  private:
   enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kRetry, kActions };
@@ -32,6 +36,7 @@ class FileScreen : public Screen {
     kCancel, kDiscardLoad, kDiscardNew, kRestoreAuto, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
   };
+  enum Section : int { kSecProjects, kSecSamples, kSecSystem, kSections };
   static constexpr int kSectionSel = kActions;  // PROJECTS focus on the header section switch
   // SAMPLES rows: Import, Compact, Clear cache, then the project's samples.
   enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kClearRow, kFirstSample };
@@ -44,8 +49,14 @@ class FileScreen : public Screen {
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
   static constexpr int kSampleRows = (kAreaH - kHeaderH - PageBar::kH - kInfoH) / kRowH;
   static_assert(kHeaderH + PageBar::kH + kActions * kActionH <= kAreaH, "FILE actions fit");
-  // PROJECTS / SAMPLES: the page bar under the header (also a focus position of the encoder:
-  // kSectionSel in PROJECTS, kSwitchRow in SAMPLES).
+  // PROJECTS / SAMPLES / SYSTEM: the page bar under the header (also a focus position of the encoder:
+  // kSectionSel in PROJECTS, kSwitchRow in SAMPLES, the list's page bar in SYSTEM).
+
+  // SYSTEM rows.
+  enum SysRow : int {
+    kPhones, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kAudioRam, kBattery, kCpuProf, kSysRows
+  };
+  static constexpr int kSysListRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;
 
   bool enabled(int a) const;
   void moveSel(int delta);
@@ -71,7 +82,13 @@ class FileScreen : public Screen {
   void reopenList();  // lists curDir() again
   bool listUp();      // to the parent folder; false at the root
   void drawHeader(LGFX_Sprite& s, int y0);
-  void setSection(bool samples);
+  void setSection(int section);  // wraps around; the encoder focus goes to the page bar
+  // SYSTEM
+  void initSystem();
+  void systemInput(const hw::InputEvent& ev);
+  void systemTouch(const TouchEvent& ev);
+  void toggleProfile();  // start, or stop and append the result to /diag/cpuprof.txt
+  uint32_t profSecs() const;  // seconds since the profile started
   // SAMPLES
   bool sampleEnabled(int row) const;
   int sampleRowCount() const;
@@ -112,7 +129,7 @@ class FileScreen : public Screen {
   int dirCount_ = 0;       // folders at the start of names_
   char midiDir_[160] = "/midi";  // kept between imports
   char pending_[hw::kNameMax] = {0};  // target of a confirmation menu
-  bool samples_ = false;              // SAMPLES section shown
+  int section_ = kSecProjects;        // Section shown
   int ssel_ = kImportRow;             // SampleRow or kFirstSample + project sample index
   int stop_ = 0;                      // first visible SAMPLES row
   bool wavList_ = false;              // names_ lists folders, then *.wav in wavDir_
@@ -139,6 +156,11 @@ class FileScreen : public Screen {
   bool autoAvail_ = false;  // /projects/<name>.auto exists (checked on enter / after file actions)
   void restoreAutosave();
   bool cacheValid_ = false;
+  Param sysParams_[kSysRows];
+  ParamList sysList_{kAreaY + kHeaderH + PageBar::kH};
+  uint32_t profStartMs_ = 0;
+  uint32_t batSeqDrawn_ = 0;    // App::batterySeq() at the last SYSTEM draw
+  uint32_t profSecDrawn_ = 0;   // profSecs() at the last SYSTEM draw
 };
 
 }  // namespace ui

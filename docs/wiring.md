@@ -1,14 +1,15 @@
 
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
+Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery monitor, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, a PCM5102A DAC and a MAX97220 headphone amplifier. The display, touch and microSD are already routed on the board.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
 ## Schematic
 
 ```
-LiPo 103450 + / − ──── IP5306 B+ / B−          (IP5306 Type-C — charging)
+LiPo 103450 + ── INA226 IN+ ─[shunt]─ INA226 IN− ── IP5306 B+   (IP5306 Type-C — charging)
+LiPo 103450 − ──────────────────────────────────── IP5306 B−
 IP5306 VOUT ──[switch]── board 5V              (VOUT/GND — pads of the desoldered USB-A)
 IP5306 GND ──────────── board GND              (common ground)
 
@@ -27,6 +28,12 @@ WT32-SC01 Plus, Debug connector
   IO44 RXD0 ─────── PCF SCL
   3V3 ───────────── PCF VCC
   GND ───────────── PCF GND
+  (INA226 SDA / SCL / VCC / GND — in parallel with the PCF, on the same wires)
+
+INA226 (address 0x40: A0, A1 to GND; ALE not needed)
+  IN+ ── LiPo +          IN− ── IP5306 B+
+  VBS ── IN+             (if broken out: battery voltage)
+  VCC ── 3.3 V           GND ── GND
 
 PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
   P00 … P07 ── track button 1 … 8 ── GND
@@ -54,6 +61,15 @@ PCM5102A                                 MAX97220
 | `LiPo + / −`                      | `IP5306 B+ / B−`                    | 103450 battery with a protection board                      |
 | `IP5306 VOUT`                     | `switch → board 5V`                 | VOUT and GND are the pads of the desoldered USB-A port      |
 | `IP5306 GND`                      | `board GND`                         |                                                             |
+| **INA226 battery monitor** |                                     |                                                             |
+| `LiPo +`                          | `INA IN+`                           | the shunt sits in the battery's positive wire               |
+| `INA IN−`                         | `IP5306 B+`                         | current "+" = discharge, "−" = charging                     |
+| `INA IN+`                         | `INA VBS`                           | if the pin exists; measures the battery voltage             |
+| `board 3V3`                       | `INA VCC`                           | 3.3 V only, not 5 V                                         |
+| `board GND`                       | `INA GND`                           | common ground, which is also the battery negative           |
+| `Debug TXD0 (IO43) / RXD0 (IO44)` | `INA SDA / SCL`                     | in parallel with the PCF8575, the addresses don't overlap   |
+| `GND`                             | `INA A0, A1`                        | address 0x40; already so on most modules                    |
+| `—`                               | `INA ALE`                           | leave unconnected                                           |
 | **MIDI OUT** |                                     |                                                             |
 | `board IO10`                      | `10 Ω → Tip`                        | MIDI DIN pin 5                                              |
 | `board 3V3`                       | `33 Ω → Ring`                       | MIDI DIN pin 4                                              |
@@ -95,6 +111,16 @@ The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, 
 - **Flash firmware only with the switch off.** Otherwise two sources meet on the 5V line: the computer's USB and the IP5306.
 - Never connect the battery directly to the board's 5V or 3V3 — only through the IP5306.
 - The battery, IP5306 and board negatives form the common ground; everything else in the diagram connects to it as well.
+
+## INA226 battery monitor
+
+The INA226 sits in the battery's positive wire, before the IP5306, and reports over I2C the battery voltage and the signed current through it: "+" is discharge, "−" is charging from Type-C. The switch is after the IP5306, so the shunt is always in the circuit, while the chip itself runs from the board's 3.3 V and is unpowered when the tracker is off. It does not drain the battery.
+
+- **Shunt.** Most modules carry an R100 (0.1 Ω): ±0.8 A range. The tracker draws ~0.3 A from the battery — enough. The IP5306 charges at up to ~2 A: the reading will clip at 0.8 A, but the sign (charging) is still visible. The shunt then dissipates up to ~0.4 W — it should be a 2512 package on the module. To measure the charge current too, replace the shunt with an R010 (0.01 Ω, ±8 A).
+- **IN+ and IN− wires** — same gauge as the battery wire: the full current, including charging, flows through them.
+- **VBS.** If the module has a VBS (or VBUS) pin, connect it to IN+ so the voltage is measured right at the battery. If not, the module measures at IN− — off by the shunt drop, which doesn't matter for the charge percentage.
+- **Address 0x40.** A0 and A1 to GND; modules usually already pull them down with resistors. The PCF8575 is at 0x20–0x27, no overlap.
+- **I2C pull-ups.** The module has its own 10 kΩ on SDA and SCL; together with the PCF8575's pull-ups this is fine.
 
 ## MIDI jack
 
@@ -143,4 +169,5 @@ amp VCC, amp SHDN ── board 5V (or 3V3)
 4.  Check whether the module has pull-up resistors on SDA and SCL (usually 4.7–10 kΩ to VCC). If not, add 4.7 kΩ from each line to 3.3 V.
 5.  Power the module only from 3.3 V, not 5 V: otherwise 5 V reaches the board's GPIOs.
 6.  Check that TXD0 and RXD0 are not shorted to each other or to GND. Do not touch GPIO 1, 2, 42: they are used by the built-in RS485.
-7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play, Shift, A and B do not work either); `trackio: PCF8575 at 0x..` means it was found.
+7.  INA226: IN+ rings to the battery positive, IN− to the IP5306 B+; between IN+ and IN− you read the shunt (a fraction of an ohm), not an open circuit. The module's VCC goes to 3.3 V, not 5 V.
+8.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play, Shift, A and B do not work either); `trackio: PCF8575 at 0x..` means it was found.

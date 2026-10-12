@@ -9,7 +9,7 @@ User manual: [docs/manual.md](docs/manual.md). Русская версия: [REA
 
 ## Wiring
 
-The built-in display, touch panel and microSD slot are already routed on the board. The encoder, the MIDI output and the DAC go to the board's expansion connector (Extended IO); the PCF8575 expander with all the buttons goes to the Debug connector. Full soldering diagram (power, MIDI, buttons, DAC, headphones): [docs/wiring.md](docs/wiring.md).
+The built-in display, touch panel and microSD slot are already routed on the board. The encoder, the MIDI output and the DAC go to the board's expansion connector (Extended IO); the PCF8575 expander with all the buttons goes to the Debug connector. Full soldering diagram (power, MIDI, buttons, DAC, headphones): [docs/wiring.md](docs/wiring.md). Parts list: [docs/bom.md](docs/bom.md).
 
 | GPIO | What to connect | How |
 |---|---|---|
@@ -19,7 +19,7 @@ The built-in display, touch panel and microSD slot are already routed on the boa
 | 13 | DAC BCK | PCM5102A module, see [Sound](#sound) |
 | 14 | DAC LCK (LRCK, WS) | |
 | 21 | DAC DIN | |
-| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, **A**, **B**, track buttons | Debug connector (TXD0 / RXD0), **required**, see below |
+| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, **A**, **B**, track buttons; INA226 battery monitor (0x40) on the same lines | Debug connector (TXD0 / RXD0), **required**, see below; INA226 — [docs/wiring.md](docs/wiring.md#ina226-battery-monitor) |
 | 3.3V | MIDI OUT | through a 33 Ω resistor to the Ring of the TRS jack |
 | GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack, DAC GND |
 
@@ -78,11 +78,11 @@ GND    ────────── Sleeve (MIDI DIN pin 2, shield)
 | FT6336U touch (I2C) | SDA 6, SCL 5, INT 7, RST 4 (shared with LCD) |
 | ST7796 display | 8080 bus, 8-bit (internal board routing) |
 
-GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound goes to an external DAC on GPIO 13/14/21 (see below). GPIO 43/44 (Debug connector) are used by the PCF8575.
+GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound goes to an external DAC on GPIO 13/14/21 (see below). GPIO 43/44 (Debug connector) are used by the PCF8575 and the INA226.
 
 ## Sound
 
-Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz; mono instruments, stereo output with per-track pan (TRACK → Pan, step fx `PAN`, LFO PAN for autopan). A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO, 16 voices, 32 kHz; mono instruments, stereo output with per-track pan (TRACK → Pan, step fx `PAN`, LFO PAN for autopan). A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to an external PCM5102A DAC (GPIO 13 / 14 / 21) and from it to a MAX97220 headphone amplifier; the board's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: FILE → SYSTEM → Phones, 0–100 %, a device setting stored in the board's memory.
 
 ### DAC (PCM5102A)
 
@@ -118,11 +118,11 @@ board 5V (or 3.3V) ── VCC     GND ── GND     SHDN ── VCC
 - The inputs are differential: each channel's "+" goes to the DAC output, its "−" to the DAC's GND (AGND). Pin names on the module's silkscreen may differ — check them.
 - DirectDrive: the outputs are ground-referenced and need no coupling capacitors; the jack's Sleeve goes to GND as usual.
 - Power: 5 V from the board's 5V pin (the IP5306 output after the switch) or 3.3 V. SHDN, if broken out, goes to VCC (amplifier running).
-- The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower Phones (PROJ → SYS) or add a divider / potentiometer between the DAC and the amplifier inputs.
+- The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower Phones (FILE → SYSTEM) or add a divider / potentiometer between the DAC and the amplifier inputs.
 - Ground: keep audio ground wires short and use a star point at the DAC's GND: the DAC, amplifier and headphone jack grounds meet there, and one wire goes from it to the board's GND. This keeps the IP5306 boost converter's whine out of the headphones.
-- Before first power-up — Phones (PROJ → SYS) at minimum, headphones off your ears, then bring it up.
+- Before first power-up — Phones (FILE → SYSTEM) at minimum, headphones off your ears, then bring it up.
 
-The internal sound lags behind MIDI tracks by about 14 ms (constant, no jitter). Synthesizer load is shown by `CPU NN%` in the right corner of the status bar (average over 0.5 s; yellow from 60% or if at least one block in the window took longer than 4 ms to compute — this is covered by the DMA queue; red from 85% or for 2 s after an audio dropout — an emptied DMA queue, an audible click).
+The internal sound lags behind MIDI tracks by about 14 ms (constant, no jitter). Synthesizer load is shown by `CPU NN%` in the right corner of the status bar (average over 0.5 s; yellow from 60% or if at least one block in the window took longer than 4 ms to compute — this is covered by the DMA queue; red from 85% or for 2 s after an audio dropout — an emptied DMA queue, an audible click). Before it, with an [INA226](docs/wiring.md#ina226-battery-monitor) fitted, the battery icon and charge `85%` (yellow from 20%, red from 10%, green while charging; at 10% a toast `BATTERY LOW - SAVE`); voltage and current are in FILE → SYSTEM → Battery.
 
 ### Samples
 
@@ -218,10 +218,10 @@ More in the [manual](docs/manual.md#render).
 
 ## Interface
 
-- **Themes**: PROJ → SYS → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
-- **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or put the encoder on the page tabs and hold A + turn, or B + Shift + turn; the list wraps around.
+- **Themes**: FILE → SYSTEM → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
+- **Pages** in TRACK (MAIN / NOTE / MIDI), PROJ (SONG / FX / COMP / PERF) and FILE (PROJECTS / SAMPLES / SYSTEM): tap a page tab, or put the encoder on the page tabs and hold A + turn, or B + Shift + turn; the list wraps around.
 - **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
-- **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in PROJ → SYS.
+- **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (FILE → SYSTEM → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in FILE → SYSTEM.
 - **Wi-Fi page**: tabs per section, scrollable lists with a filter.
 - **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder (click while holding — pan), a track's pan — tap its pan row and turn, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.
 

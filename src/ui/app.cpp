@@ -5,6 +5,7 @@
 #include "audio/audio.h"
 #include "fx_info.h"
 #include "esp_heap_caps.h"
+#include "hw/battery.h"
 #include "hw/trackio.h"
 #include "storage/settings.h"
 #include "storage/storage.h"
@@ -49,7 +50,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   }
   Serial.printf("psram free %u KB\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
-  // Device settings in NVS: the colour theme, the autosave interval, the phones level.
+  // Device settings in NVS: the colour theme, the autosave interval, the phones level, preview.
   const int theme = storage::loadTheme(0);
   theme_ = savedTheme_ = theme < themeCount() ? theme : 0;
   applyTheme(theme_);
@@ -58,6 +59,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   const int ph = storage::loadSetting("phones", 100);
   phones_ = savedPhones_ = ph <= 100 ? ph : 100;
   audio::setPhones(static_cast<uint8_t>(phones_));
+  preview_ = savedPreview_ = storage::loadSetting("preview", 1) != 0;
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -445,22 +447,32 @@ void App::setPhones(int v) {
   settingsChangedAt_ = millis() | 1;
 }
 
-// Device settings (theme, autosave, phones): written once they stay put for a second (an encoder
+void App::setPreview(bool on) {
+  if (on == preview_) return;
+  preview_ = on;
+  settingsChangedAt_ = millis() | 1;
+}
+
+// Device settings (theme, autosave, phones, preview): written once they stay put for a second (an encoder
 // sweep = one write) and the transport is stopped. An NVS write can erase a flash sector with the
 // caches off: never while playing, and with the audio task parked.
 void App::saveSettingsIdle(uint32_t now) {
   if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
   settingsChangedAt_ = 0;
-  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_) return;
+  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_ &&
+      preview_ == savedPreview_)
+    return;
   {
     audio::Paused parked;
     if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
     if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
     if (phones_ != savedPhones_) storage::saveSetting("phones", static_cast<uint8_t>(phones_));
+    if (preview_ != savedPreview_) storage::saveSetting("preview", preview_ ? 1 : 0);
   }
   savedTheme_ = theme_;
   savedAutosaveMin_ = autosaveMin_;
   savedPhones_ = phones_;
+  savedPreview_ = preview_;
 }
 
 // Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
@@ -615,6 +627,7 @@ void App::tick() {
   saveSettingsIdle(now);
   autosaveIdle(now);
   pollCpu(now);
+  pollBattery(now);
   if (toast_[0] && static_cast<int32_t>(now - toastUntil_) >= 0) {
     toast_[0] = 0;
     dirty_ = true;
@@ -646,6 +659,34 @@ void App::pollCpu(uint32_t now) {
   if (pct != cpu_ || color != cpuColor_) {
     cpu_ = pct;
     cpuColor_ = color;
+    dirty_ = true;
+  }
+}
+
+// Feeds each new battery sample (taken once a second by trackio) to the gauge; polled every
+// kBatMs so it does not drift against the reader (s.ms keeps a sample from being fed twice).
+// A sample older than kBatStaleMs (reader stopped) counts as none: the status bar hides the
+// battery, the SYS row shows "---". The status bar redraws when the percent, charging or
+// freshness changes (its colour follows from them); batSeq_ tells FILE SYSTEM of every change.
+void App::pollBattery(uint32_t now) {
+  if (now - batAt_ < kBatMs) return;
+  batAt_ = now;
+  hw::BatterySample s;
+  if (hw::batteryLast(s) && !(batHave_ && s.ms == batSample_.ms)) {
+    const float dt = batHave_ ? (s.ms - batSample_.ms) / 1000.f : 0.f;
+    gauge_.update(s.volts, s.amps, dt);
+    batSample_ = s;
+    batHave_ = true;
+    ++batSeq_;
+    if (gauge_.takeLowAlert()) toast("BATTERY LOW - SAVE");
+  }
+  const bool fresh = batHave_ && now - batSample_.ms <= kBatStaleMs;
+  if (fresh != batFresh_) ++batSeq_;
+  const int pct = fresh ? gauge_.percent() : -1;
+  if (fresh != batFresh_ || pct != batPct_ || gauge_.charging() != batChg_) {
+    batFresh_ = fresh;
+    batPct_ = pct;
+    batChg_ = gauge_.charging();
     dirty_ = true;
   }
 }
@@ -705,18 +746,58 @@ void App::drawStatus() {
   spr_->setTextColor(kText);
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
   spr_->drawString(buf, 200, 4);  // up to "128/128"
-  spr_->drawString(status_.playing ? "PLAY" : (status_.paused ? "PAUSE" : "STOP"), 264, 4);
-  if (status_.fill) {
-    spr_->setTextColor(kCursor);
-    spr_->drawString("FILL", 328, 4);
+  if (status_.playing) {
+    // Playing: PLAY on a green box, readable at a glance.
+    spr_->fillRect(260, 3, 40, 18, kGreen);
+    spr_->setTextColor(kStatusBg);
+    spr_->drawString("PLAY", 264, 4);
     spr_->setTextColor(kText);
   } else {
-    snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
-    spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+    spr_->drawString(status_.paused ? "PAUSE" : "STOP", 264, 4);
   }
+  if (status_.fill) {
+    spr_->setTextColor(kCursor);
+    spr_->drawString("FILL", 312, 4);
+    spr_->setTextColor(kText);
+  } else {
+    if (status_.loop <= 9999) snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
+    else snprintf(buf, sizeof(buf), "L10K+");
+    spr_->drawString(buf, 312, 4);  // up to 5 chars before the battery
+  }
+  drawBattery();
   snprintf(buf, sizeof(buf), "CPU %3d%%", cpu_ > 999 ? 999 : cpu_);
   spr_->setTextColor(cpuColor_);
   spr_->drawString(buf, 416, 4);
+}
+
+// Status bar battery: icon (body 14x10, nub, fill by percent, a bolt while charging) and "85%".
+// Green while charging, red <= 10 %, yellow <= 20 %. Nothing without the sensor or a fresh sample.
+void App::drawBattery() {
+  const int pct = gauge_.percent();
+  if (!hw::batteryPresent() || !batFresh_ || pct < 0) return;
+  const bool chg = gauge_.charging();
+  const uint16_t c = chg ? kGreen : (pct <= 10 ? kRed : (pct <= 20 ? kYellow : kDim));
+  constexpr int x = 360, y = 7;
+  spr_->drawRect(x, y, 14, 10, c);
+  spr_->fillRect(x + 14, y + 3, 2, 4, c);
+  int w = pct * 12 / 100;
+  if (pct > 0 && w < 1) w = 1;
+  if (w > 0) spr_->fillRect(x + 1, y + 1, w, 8, c);
+  if (chg) {  // bolt: cut out of the fill, drawn in c over the empty part
+    for (int part = 0; part < 2; ++part) {
+      const int x0 = part ? x + 1 + w : x + 1, pw = part ? 12 - w : w;
+      if (pw <= 0) continue;
+      const uint16_t bc = part ? c : kStatusBg;
+      spr_->setClipRect(x0, y + 1, pw, 8);
+      spr_->fillTriangle(x + 8, y + 1, x + 4, y + 5, x + 7, y + 5, bc);
+      spr_->fillTriangle(x + 6, y + 4, x + 9, y + 4, x + 5, y + 8, bc);
+    }
+    spr_->clearClipRect();
+  }
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d%%", pct);
+  spr_->setTextColor(c);
+  spr_->drawString(buf, 380, 4);  // up to "100%", ends at 412
 }
 
 void App::drawTabs() {

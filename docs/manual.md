@@ -65,7 +65,7 @@ A block of 8 buttons on the PCF8575 expander (the same module carries the encode
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Mute / unmute the same track (N of the visible half), on any screen. The toast `TRACK n MUTE` / `TRACK n ON` shows the real number, 1–16. |
 | Hold <kbd>N</kbd> + turn | Volume of track N (Volume, INT) on any screen, ×10 with <kbd>Shift</kbd>; toast `TRK5 VOL 100`. The turn does not reach the screen meanwhile. The press on its own works as usual (selects the track). Not active in GRID edit mode, REC or PERF — there the buttons play. On a MIDI track: `TRK5 MIDI`, nothing changes. |
 | Hold <kbd>N</kbd> + encoder click | Switch the held-button turn between volume and pan of track N (INT); toast `TRK5 PAN L12` / `TRK5 VOL 100`. Turning then changes the pan (×10 with <kbd>Shift</kbd>). Releasing the button returns to volume: every new hold starts on volume. While a track button is held, the click always goes to this toggle (in GRID outside edit mode it no longer turns edit mode on); only where the buttons are busy — GRID edit mode, REC, PERF and the sample editor in INST — the click keeps its usual meaning. |
-| <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on in PROJ. Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
+| <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on (FILE → SYSTEM). Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
 | <kbd>N</kbd> in the sample editor (INST, SMPL page) | Play a slice to the end: 1 — the selected slice (if no slice is selected, the first one), 2 — the one after it, and so on. Works with any Slices setting (OFF, NOTE, FX), at the original pitch. Toast "SLICE n"; no such slice — "NO SLICE n"; no slices at all — "NO SLICES". |
 | <kbd>Shift</kbd>+<kbd>N</kbd> in GRID edit mode | The same degree an octave up. |
 | <kbd>N</kbd> in GRID edit mode on a [drum track](#drumtrack) | Toggle lane N in the step under the cursor. The cursor doesn't move; no Shift needed. |
@@ -103,7 +103,7 @@ The encoder click works as before; A is just a faster way to edit one value: hol
 | `10` | MIDI TX (UART, 31250 baud) |
 | `11 / 12` | Encoder A / B (EC11) |
 | `13 / 14 / 21` | PCM5102A DAC: BCK / LCK / DIN |
-| `43 / 44` | PCF8575 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
+| `43 / 44` | PCF8575 and INA226 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
 | `41 / 40 / 39 / 38` | microSD: CS / MOSI / CLK / MISO (built-in slot) |
 
 All buttons are on the PCF8575: track buttons on P00–P07, encoder button on P13, Play on P14, Shift on P15, B on P16, A on P17; each shorts its pin to GND. Without the expander the encoder button, Play, Shift, A and B do not work. Encoder A / B use the board's internal pull-ups. MIDI OUT is TRS type A, 3.3 V:
@@ -118,7 +118,7 @@ A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; t
 
 ## Screen and status bar
 
-    S03 P05*  >P07  120 BPM  5/16  PLAY  L3  CPU  42%
+    S03 P05*  >P07  120 BPM  5/16  PLAY  L3  [=] 85%  CPU  42%
     tab work area
     GRID  TRACK  MIX  BANK  INST  PROJ  FILE
 
@@ -130,10 +130,11 @@ A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; t
 | `120 BPM` | Tempo. A tap enters tempo editing (red): encoder ±1, ±10 with Shift, range 20–300. Leave with a click, a tap on the work area or a tab change. |
 | `5/16` | Step / pattern length. |
 | `PLAY` | State: PLAY, PAUSE, STOP. A tap works like the Play button; with Shift, like Shift+Play. |
-| `L3` | Pattern pass counter. The CND condition uses it. While fill is held — `FILL`. |
+| `L3` | Pattern pass counter. The CND condition uses it. Up to `L9999`, beyond that `L10K+`. While fill is held — `FILL`. |
+| `[=] 85%` | Battery charge from the [INA226](wiring.md#ina226-battery-monitor): the icon fills by level, a lightning bolt while charging. Green while charging, yellow at 20% and below, red at 10% and below, otherwise dim. Estimated from the voltage corrected for the load current and smoothed (~30 s); while discharging it only goes down (in the first minute after power-on it may move both ways). While charging it reads high and shows 100% before charging ends. Not shown without the sensor. At 10% (not while charging) a single toast `BATTERY LOW - SAVE`; it repeats only after a recharge. |
 | `CPU 42%` | Built-in synth load: the average time to compute an audio block over the last 0.5 s, as a % of the block duration (4 ms). Gray below 60%; yellow at 60–84% or if any block in those 0.5 s took longer than 4 ms (the DMA queue headroom covers that); red from 85% or for 2 s after an audio dropout (DMA ran empty — an audible click). While no audio is being computed, the last value is shown. |
 
-Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar for 1.5 seconds.
+Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar (battery and CPU) for 1.5 seconds.
 
 **Menus** open in the center of the screen and show up to 12 items; long lists scroll by dragging. Encoder: turn to select (wraps around: after the last item comes the first), click to execute, long press to close. All parameter and file lists wrap around the same way. A tap outside the menu also closes it. Gray items are currently unavailable.
 
@@ -164,7 +165,7 @@ Track name color: yellow — solo, gray — not audible, white — normal.
 
 ### What a turn changes in edit mode
 
-- **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on in PROJ.
+- **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on (FILE → SYSTEM).
 - **VEL.** 0–127, ×10 with Shift. A value of 0 is shown as `...` and means "the track's default velocity".
 - **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN; pitch and volume SLD, VIB, PBN, VSL, ACC; sound FLT, RES, DRV, DEC, COL, SHP, SWP, CON; sample OFS, SLC; sends and pan DLY, RVB, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
 - **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
@@ -183,7 +184,7 @@ A track whose TRACK → Instr is set to a [KIT](#kit) instrument is a drum track
 
 - **Overview:** the cell shows 8 small squares; a filled one means the lane sounds. There is no velocity bar; the fx dot is in the top corner of the cell.
 - **Detail:** the NOTE field shows the same squares, the VEL field the step velocity (`...` — the track's Def vel).
-- **Editing NOTE:** a turn moves the red frame across lanes, <kbd>Shift</kbd>+turn toggles the lane under the frame. Instead of the mini keyboard, the bottom shows a **pad of 8 buttons** with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same in edit mode. A lane sounds as soon as it's turned on (Preview in PROJ).
+- **Editing NOTE:** a turn moves the red frame across lanes, <kbd>Shift</kbd>+turn toggles the lane under the frame. Instead of the mini keyboard, the bottom shows a **pad of 8 buttons** with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same in edit mode. A lane sounds as soon as it's turned on (Preview in FILE → SYSTEM).
 - **Editing VEL:** 1–127, ×10 with Shift.
 - A step with all lanes turned off stays (silent, fx still work) — remove it with Clear step. OFF is set as usual through the menu and releases all lanes.
 - A step's fx apply to all its lanes: RAT repeats each one, NDG shifts them, PRB and CND decide for the whole step, DEC / FLT / DLY and other locks apply per voice. CHD, NRN, STR, TIE, ARP, SLD, VIB and SLC do nothing on a drum track. The **ACC** fx is for drum tracks only.
@@ -781,7 +782,7 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
 
 - **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. Under the value, on INT tracks, the **pan** row: `C` / `L12` / `R40` and a bar with a tick at the position. On a MIDI track the fader is empty, `MIDI` is shown instead of the value, and there is no pan row.
-- **MAIN** — the overall volume of the built-in sound, 0–200%, default 100% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: PROJ → SYS → Phones.
+- **MAIN** — the overall volume of the built-in sound, 0–200%, default 100% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: FILE → SYSTEM → Phones.
 - **Encoder:** turn — **MAIN** volume (or the selected pan, see below); <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10; a click while holding switches the turn to pan); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX.
 - **Pan:** tap a strip's pan row — that track is selected (the row is highlighted), and the encoder turn (and <kbd>A</kbd> + turn, ×10 with <kbd>Shift</kbd>) changes its pan instead of MAIN. Tapping the same row again, tapping another strip's pan row (selects that one), a <kbd>B</kbd> tap, <kbd>Shift</kbd>+turn (half switch) or leaving the tab drops the selection: the encoder turns MAIN again.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
@@ -1189,7 +1190,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 ## PROJ: project and pattern
 
-Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects), **SYS** (Phones, Preview, theme, autosave, version). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
+Four pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects). Device settings (Phones, Preview, theme, autosave, version) are in [FILE → SYSTEM](#system). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
 
 | Parameter | Values | Scope |
 |---|---|---|
@@ -1217,19 +1218,6 @@ Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 | SC depth | 0–127, default 64 | project: sidechain amount |
 | **PERF** | | |
 | Button 1 … Button 8 | [PERF](#live) effects or --- | project: what track button N holds in PERF mode |
-| **SYS** | | |
-| Phones | 0–100%, default 100% | device: live output level (headphones / speaker), attenuation only; not in Render WAV, the project's master is MIX → MAIN. Stored in the board's memory one second after a change |
-| Preview | ON / OFF, default ON | project: entering a note in GRID on an INT track sounds it immediately |
-| Theme | 17 themes, default CLASSIC | device: interface colors (see below) |
-| Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |
-| Firmware | build commit | display only: firmware version ("+" means built with local changes) |
-| Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot (crashes are logged to crashlog.txt) |
-| Audio RAM | INTERNAL / SYNTH IN PSRAM / SEQ IN PSRAM, RVB INT / PSRAM, free K | display only: the synth and sequencer should be in internal memory; in PSRAM, audio costs noticeably more CPU. The reverb buffer goes into internal memory if 24 KB remain free after it; while Wi-Fi is on it moves to PSRAM |
-| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the audio time broken down by part (queue, events, voice management, voices by type, delay, reverb, master) is appended to /diag/cpuprof.txt |
-
-<a id="themes"></a>
-
-**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like MAIN volume: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast) and PAPER (light).
 
 <a id="reverb"></a>
 
@@ -1339,16 +1327,16 @@ A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the 
 - Done: `12.3s PEAK -2.1dB`; `CLIP` means there was clipping (lower MAIN or the volumes). Errors: `DISK FULL`, `WRITE FAILED`, `AUDIO BUSY` (audio did not stop within 0.5 s; try again).
 - The render reproduces playback, just without the 14 ms output latency; PRB / NRN / VRN are random but identical from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
 
-Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and hold <kbd>A</kbd> + turn. PROJECTS holds the items above, SAMPLES the [project samples](#samples).
+Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and hold <kbd>A</kbd> + turn. PROJECTS holds the items above, SAMPLES the [project samples](#samples), SYSTEM the [device settings](#system).
 
 - **Project name:** up to 16 characters, A–Z a–z 0–9 \_ -. Case is preserved, but names differing only in case are the same file.
 - **Keyboard:** digits, A–Z, - \_, DEL, CANCEL, OK. <kbd>Shift</kbd>+key gives a lowercase letter. Encoder: turn selects a key, click presses it, long press cancels.
 - **Reliability:** saving writes a temporary file, verifies it, and renames the previous version to `.bak`. If the file is corrupted, Load offers **Load backup**. A `.bak` has no sample folder of its own: it takes samples from the same project folder, so a sample removed from the project after that version may turn up MISSING if it has already been evicted from flash.
-- **Autosave:** unsaved changes are written every N minutes (PROJ → SYS → Autosave: OFF, 1, 2, 5, 10 min, default 5) to `/projects/name.auto` (the project file only), while the transport is stopped and nothing has been pressed for 3 s (toast "AUTOSAVE…"). Save deletes it. After a crash or power-off: FILE → Restore autosave.
+- **Autosave:** unsaved changes are written every N minutes (FILE → SYSTEM → Autosave: OFF, 1, 2, 5, 10 min, default 5) to `/projects/name.auto` (the project file only), while the transport is stopped and nothing has been pressed for 3 s (toast "AUTOSAVE…"). Save deletes it. After a crash or power-off: FILE → Restore autosave.
 - **Safe boot:** hold <kbd>Shift</kbd> at power-on and the project is not loaded automatically (toast "SAFE BOOT"). Use it for a project that crashes the tracker on load.
-- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt`; it is visible and downloadable on the [Wi-Fi](#wifi) page (Diag tab). The firmware version and the reason for the last reboot are in PROJ → SYS.
+- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt`; it is visible and downloadable on the [Wi-Fi](#wifi) page (Diag tab). The firmware version and the reason for the last reboot are in FILE → SYSTEM.
 - **Autoload:** at power-on, the last saved or loaded project is loaded. If it is corrupted, the `.bak` is used (toast "LOADED BACKUP"). If that fails too, the demo loads with the toast "AUTOLOAD: …". New disables autoload until the next save.
-- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 32 instruments, Preview, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard and Fill parameters.
+- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 32 instruments, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard, Fill parameters and the [SYSTEM](#system) settings (Preview included; older project files that still contain it open as usual).
 - **Compatibility:** the file now holds 16 tracks per pattern. Projects from older versions (8 tracks) open as usual, with tracks 9–16 empty. A file written by this firmware cannot be opened by older firmware: it will report a corrupted file (not a "newer version"). To go back to older firmware, keep a copy of the `.mtp` / `.bak` saved by it.
 
 | Path | Contents |
@@ -1413,6 +1401,28 @@ Import, Rename and Delete change the project (a `*` appears); save it so the cha
 | Size | as much as fits in flash; via Wi-Fi, files up to 4 MB |
 
 > Import, Rename, Delete, Compact and Clear cache work only with playback stopped ("STOP PLAYBACK FIRST"): writing to flash stops the audio. Load and New stop playback themselves. If the partition is not found ("NO SAMPLE BANK"), the firmware was flashed with an old partition table; flash it over USB once (see README).
+
+<a id="system"></a>
+
+### SYSTEM: device settings
+
+Settings of the device itself and diagnostics, the same for every project. The settings are stored in the board's memory, not in the project file; none of these rows marks the project as changed (`*`).
+
+| Parameter | Values | Scope |
+|---|---|---|
+| Phones | 0–100%, default 100% | device: live output level (headphones / speaker), attenuation only; not in Render WAV, the project's master is MIX → MAIN. Stored in the board's memory one second after a change |
+| Preview | ON / OFF, default ON | device: entering a note in GRID on an INT track sounds it immediately. Shared by all projects and stored in the board's memory like Phones; not saved with the project |
+| Theme | 17 themes, default CLASSIC | device: interface colors (see below) |
+| Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |
+| Firmware | build commit | display only: firmware version ("+" means built with local changes) |
+| Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot (crashes are logged to crashlog.txt) |
+| Audio RAM | INTERNAL / SYNTH IN PSRAM / SEQ IN PSRAM, RVB INT / PSRAM, free K | display only: the synth and sequencer should be in internal memory; in PSRAM, audio costs noticeably more CPU. The reverb buffer goes into internal memory if 24 KB remain free after it; while Wi-Fi is on it moves to PSRAM |
+| Battery | `3.92V 120mA 85%`, `4.05V CHG 820mA 64%`, NOT FOUND, --- | display only: battery voltage, current and charge from the [INA226](wiring.md#ina226-battery-monitor); CHG — charging; NOT FOUND — no sensor (the boot log says `battery: INA226 at 0x40` / `battery: INA226 not found`); --- — no reading yet. With the stock 0.1 Ω shunt the current tops out at about 820 mA, so while charging it shows ~820 mA |
+| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the audio time broken down by part (queue, events, voice management, voices by type, delay, reverb, master) is appended to /diag/cpuprof.txt |
+
+<a id="themes"></a>
+
+**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like Phones: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast) and PAPER (light).
 
 <a id="wifi"></a>
 
@@ -1537,4 +1547,4 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | CHD | 36 types × 4 inversions |
 | Long press | 0.5 s |
 
-**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 100%, Preview ON.
+**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 100%.

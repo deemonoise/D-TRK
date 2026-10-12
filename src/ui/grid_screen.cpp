@@ -214,11 +214,11 @@ void GridScreen::setNote(uint8_t note) {
   previewNote(note);
 }
 
-// Entered notes sound on INT tracks (PROJ Preview), with the track's instrument.
+// Entered notes sound on INT tracks (FILE > SYSTEM Preview, a device setting), with the track's instrument.
 void GridScreen::previewNote(uint8_t note) {
   const mt::Project& p = app_.project();
   const mt::TrackCfg& t = p.tracks[track()];
-  if (!p.preview || t.out != mt::TrackOut::Int || note > 127) return;
+  if (!app_.preview() || t.out != mt::TrackOut::Int || note > 127) return;
   audio::preview(t.instr < mt::kInstruments ? t.instr : 0, note);
 }
 

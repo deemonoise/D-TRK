@@ -1,10 +1,12 @@
 #pragma once
 #include "ab_keys.h"
 #include "bank_screen.h"
+#include "battery_gauge.h"
 #include "edit_ops.h"
 #include "engine/engine.h"
 #include "file_screen.h"
 #include "grid_screen.h"
+#include "hw/battery.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "inst_screen.h"
@@ -51,6 +53,9 @@ class App {
   // Phones: live output level 0..100 % (device setting; the project's master is masterVol).
   int phones() const { return phones_; }
   void setPhones(int v);
+  // Preview: notes entered on GRID sound on INT tracks (device setting; the project's byte is ignored).
+  bool preview() const { return preview_; }
+  void setPreview(bool on);
   void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
   void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
   bool doUndo();    // false when there is nothing to undo
@@ -58,6 +63,14 @@ class App {
     if (undoBuf_) undo_.drop();
   }
   void toast(const char* msg);
+  // Battery (FILE SYSTEM row): the gauge and the last sample it took (false before the first or
+  // when stale); batterySeq() changes with every new sample or freshness change.
+  const mt::BatteryGauge& battery() const { return gauge_; }
+  bool batterySample(hw::BatterySample& out) const {
+    out = batSample_;
+    return batFresh_;
+  }
+  uint32_t batterySeq() const { return batSeq_; }
   // Draws msg over the current frame and pushes it right away: call before blocking SD I/O.
   void showBusy(const char* msg);
   // showBusy("label NN%"), redrawn at most every 200 ms unless the label changes.
@@ -96,6 +109,8 @@ class App {
   static constexpr uint32_t kToastMs = 1500;
   static constexpr uint32_t kCpuMs = 500;   // status bar CPU: averaging window
   static constexpr uint32_t kCpuRedMs = 2000;  // status bar CPU: red held after an audio stall
+  static constexpr uint32_t kBatMs = 250;        // battery poll (the reader samples once a second)
+  static constexpr uint32_t kBatStaleMs = 5000;  // older sample = no data
   static constexpr int kTabW = kScreenW / static_cast<int>(Tab::Count);
   // Status bar hit areas.
   static constexpr int kBpmX0 = 64, kBpmX1 = 176;
@@ -118,6 +133,7 @@ class App {
   void saveSettingsIdle(uint32_t now);
   void autosaveIdle(uint32_t now);
   void pollCpu(uint32_t now);
+  void pollBattery(uint32_t now);
   void setBpmEdit(bool on);
   void abAction(const mt::AbOut& o);  // A / B chord result
   void cycleTab(int d);
@@ -125,6 +141,7 @@ class App {
   void queueKey(int n, bool shift);
   void draw();
   void drawStatus();
+  void drawBattery();  // status bar, right of the loop counter
   void drawTabs();
   void drawBusy();
 
@@ -160,6 +177,14 @@ class App {
   uint16_t cpuColor_ = kDim;  // its color: kDim / kYellow / kRed
   uint32_t cpuAt_ = 0;       // last load taken
   uint32_t cpuRedUntil_ = 0;  // millis() until which the CPU readout stays red (audio stall)
+  mt::BatteryGauge gauge_;
+  hw::BatterySample batSample_{0.f, 0.f, 0};  // last sample fed to gauge_
+  bool batHave_ = false;     // batSample_ is valid
+  uint32_t batAt_ = 0;       // last poll
+  bool batFresh_ = false;    // batSample_ is no older than kBatStaleMs
+  uint32_t batSeq_ = 0;      // bumped per new sample / freshness change
+  int batPct_ = -1;          // percent (-1 when stale) and charging as last drawn
+  bool batChg_ = false;
   int bpmTarget_ = 120;  // local while editing: p_->bpm lags behind the engine queue
   bool bpmEdit_ = false;
   int bpmOrig_ = 120;  // BPM when the edit began (Shift+click puts it back)
@@ -167,6 +192,7 @@ class App {
   int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
   int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)
   int phones_ = 100, savedPhones_ = 100;  // phones level, % (device setting)
+  bool preview_ = true, savedPreview_ = true;  // GRID note preview (device setting)
   uint32_t settingsChangedAt_ = 0;  // 0 = nothing pending
   uint32_t autosaveDue_ = 0;        // when the next autosave is due, 0 = not counting
   uint32_t autosavedSeq_ = 0;       // editSeq_ of the last autosave
