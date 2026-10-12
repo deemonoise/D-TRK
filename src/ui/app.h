@@ -14,13 +14,14 @@
 #include "model.h"
 #include "proj_screen.h"
 #include "screen.h"
+#include "song_screen.h"
 #include "touch.h"
 #include "track_screen.h"
 #include "undo.h"
 
 namespace ui {
 
-enum class Tab : uint8_t { Grid, Track, Mix, Bank, Inst, Proj, File, Count };  // MIX: TRACK's mixer view
+enum class Tab : uint8_t { Grid, Track, Inst, Mix, Bank, Song, Proj, File, Count };  // MIX: TRACK's mixer view
 
 class App {
  public:
@@ -35,6 +36,8 @@ class App {
   bool shift() const { return shift_; }
   void invalidate() { dirty_ = true; }
   uint8_t editPattern() const { return status_.pattern; }
+  // SONG plays (or is paused): the sequencer ignores QueuePattern.
+  bool songPlays() const { return status_.song && p_->songLen > 0 && (status_.playing || status_.paused); }
   // Track shared by GRID and TRACK screens.
   int curTrack() const { return curTrack_; }
   void setCurTrack(int t) { curTrack_ = static_cast<uint8_t>(((t % mt::kTracks) + mt::kTracks) % mt::kTracks); }
@@ -83,7 +86,7 @@ class App {
   void endProgress();
   void dropInput(const hw::InputEvent& ev);
   // One toast after a load: what (e.g. "LOADED X", may be nullptr), missing samples, a failed sample
-  // folder write; leading parts are dropped when it gets too long.
+  // folder write, a dropped legacy song transpose (storage); leading parts are dropped when too long.
   void loadedToast(const char* what, int missing, bool folderFail);
 
   // Unsaved changes: every UI write to the project calls markDirty().
@@ -113,12 +116,14 @@ class App {
   static constexpr uint32_t kBatStaleMs = 5000;  // older sample = no data
   static constexpr int kTabW = kScreenW / static_cast<int>(Tab::Count);
   // Status bar hit areas.
+  static constexpr int kModeX0 = 0, kModeX1 = 64;  // SONG / LOOP
   static constexpr int kBpmX0 = 64, kBpmX1 = 176;
   static constexpr int kTransX0 = 256, kTransX1 = 320;
 
   Screen* screen() { return screens_[static_cast<int>(tab_)]; }
   void onTouch(const TouchEvent& ev);
   void transport();
+  void postSong(bool on);  // SetSong from the SONG cursor
   void trackKey(int n, bool shift);
   void trackRelease(int n);
   void fillDown();
@@ -155,10 +160,12 @@ class App {
   GridScreen grid_{*this};
   TrackScreen track_{*this};
   BankScreen bank_{*this};
+  SongScreen song_{*this};
   InstScreen inst_{*this};
   ProjScreen proj_{*this};
   FileScreen file_{*this};
-  Screen* screens_[static_cast<int>(Tab::Count)] = {&grid_, &track_, &track_, &bank_, &inst_, &proj_, &file_};
+  Screen* screens_[static_cast<int>(Tab::Count)] = {&grid_, &track_, &inst_, &track_, &bank_, &song_,
+                                                       &proj_, &file_};
   Tab tab_ = Tab::Grid;
 
   mt::Undo::Entry* undoBuf_ = nullptr;  // kDepth entries + 1 scratch

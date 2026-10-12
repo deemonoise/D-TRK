@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
+A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank of 16 patterns, a song of up to 128 slots, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -15,7 +15,7 @@ A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank o
 8. [INST: instruments](#inst)
 9. [PROJ: project and pattern](#proj)
 10. [BANK: pattern bank](#bank)
-11. [Song mode](#song)
+11. [SONG: the song](#song)
 12. [FILE: saving and loading](#file)
 13. [MIDI import](#import)
 14. [MIDI output](#midi)
@@ -63,6 +63,7 @@ A block of 8 buttons on the PCF8575 expander (the same module carries the encode
 |--------|--------------|
 | <kbd>N</kbd> | Select track N of the visible half (in 9–16, button 1 is track 9): the GRID cursor moves to it, TRACK shows it. |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Mute / unmute the same track (N of the visible half), on any screen. The toast `TRACK n MUTE` / `TRACK n ON` shows the real number, 1–16. |
+| <kbd>N</kbd> on the [SONG](#song) tab | Mute / unmute track N in the selected song slot. The half is the one holding the current track, as in GRID and TRACK (not the SONG cursor column). |
 | Hold <kbd>N</kbd> + turn | Volume of track N (Volume, INT) on any screen, ×10 with <kbd>Shift</kbd>; toast `TRK5 VOL 100`. The turn does not reach the screen meanwhile. The press on its own works as usual (selects the track). Not active in GRID edit mode, REC or PERF — there the buttons play. On a MIDI track: `TRK5 MIDI`, nothing changes. |
 | Hold <kbd>N</kbd> + encoder click | Switch the held-button turn between volume and pan of track N (INT); toast `TRK5 PAN L12` / `TRK5 VOL 100`. Turning then changes the pan (×10 with <kbd>Shift</kbd>). Releasing the button returns to volume: every new hold starts on volume. While a track button is held, the click always goes to this toggle (in GRID outside edit mode it no longer turns edit mode on); only where the buttons are busy — GRID edit mode, REC, PERF and the sample editor in INST — the click keeps its usual meaning. |
 | <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on (FILE → SYSTEM). Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
@@ -80,19 +81,19 @@ Two buttons: B under Shift (PCF8575 P16), A under Play (P17). Both are chord but
 
 | Action | What it does |
 |--------|--------------|
-| Hold <kbd>A</kbd> + turn | Edit the value under the cursor: enters edit mode if it is off and changes the value at once. Releasing A commits the value and leaves edit mode (if A entered it). Works on parameter lists, the GRID cell, name rows, the BANK chain, sample markers, MIX (MAIN volume). |
-| Hold <kbd>A</kbd> + <kbd>Shift</kbd> + turn | Whatever <kbd>Shift</kbd>+turn does in edit mode: ×10, a note by octaves, the next field of a BANK chain entry, a sample marker to the nearest onset, the cursor position on a name row. |
+| Hold <kbd>A</kbd> + turn | Edit the value under the cursor: enters edit mode if it is off and changes the value at once. Releasing A commits the value and leaves edit mode (if A entered it). Works on parameter lists, the GRID cell, name rows, SONG (the slot's pattern), sample markers, MIX (MAIN volume). |
+| Hold <kbd>A</kbd> + <kbd>Shift</kbd> + turn | Whatever <kbd>Shift</kbd>+turn does in edit mode: ×10, a note by octaves, a sample marker to the nearest onset, the cursor position on a name row. |
 | Hold <kbd>A</kbd>, press <kbd>B</kbd> | Cancel the edit: the value made with A is restored. |
 | <kbd>A</kbd> tap in GRID | Empty step: put the track's last note (on a [drum track](#drumtrack), toggle the lane under the cursor). Step with a note: hear it. |
 | <kbd>Shift</kbd>+<kbd>A</kbd> in GRID | Clear the step under the cursor. |
 | <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> in the sample editor (INST, SMPL page) | Next / previous marker, like **\>** / **\<** — see [SAMPLE](#sample). |
 | Hold <kbd>A</kbd> + <kbd>N</kbd> | Solo / unsolo track N of the visible half; toast `TRACK n SOLO` / `TRACK n ON`. |
-| Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → MIX → BANK → INST → PROJ → FILE → GRID. |
+| Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ. |
 | <kbd>B</kbd> tap | Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker it steps back one level. In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. |
-| <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo). |
-| Hold <kbd>B</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. In song mode a queue is ignored (toast `SONG MODE`). |
-| Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Switch to pattern N at once, also in song mode. |
+| <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
+| Hold <kbd>B</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. While the song plays (SONG mode) a queue is ignored (toast `SONG MODE`). |
+| Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Switch to pattern N at once, also while the song plays. |
 
 The encoder click works as before; A is just a faster way to edit one value: hold, turn, release.
 
@@ -120,13 +121,13 @@ A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; t
 
     S03 P05*  >P07  120 BPM  5/16  PLAY  L3  [=] 85%  CPU  42%
     tab work area
-    GRID  TRACK  MIX  BANK  INST  PROJ  FILE
+    GRID  TRACK  INST  MIX  BANK  SONG  PROJ  FILE
 
 | Element | Meaning |
 |---------|---------|
-| `P05` | The pattern currently playing. In song mode — `S03 P05`: third chain entry, pattern 5. `S--` — the chain hasn't started yet. |
+| `P05` | The pattern currently playing (LOOP mode). In SONG mode — `S03 P05`: third song slot, pattern 5; `S--` — the song has not been heard yet. During play or pause, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass — see [SONG](#song). |
 | `*` | There are unsaved changes. |
-| `>P07` | Queued pattern: switches at the end of the pass. Not shown in song mode. |
+| `>P07` | Queued pattern: switches at the end of the pass. Not shown in SONG mode. |
 | `120 BPM` | Tempo. A tap enters tempo editing (red): encoder ±1, ±10 with Shift, range 20–300. Leave with a click, a tap on the work area or a tab change. |
 | `5/16` | Step / pattern length. |
 | `PLAY` | State: PLAY, PAUSE, STOP. A tap works like the Play button; with Shift, like Shift+Play. |
@@ -142,7 +143,7 @@ Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A 
 
 ## GRID: pattern editor
 
-GRID always edits the pattern that is playing. When the pattern changes (queue, chain, loading), the cursor moves to step 1, edit mode turns off and the selection is cleared.
+GRID always edits the pattern that is playing. When the pattern changes (queue, song, loading), the cursor moves to step 1, edit mode turns off and the selection is cleared.
 
 ### Two views
 
@@ -257,7 +258,7 @@ The effect is added to steps as they play: the step's own fx stay, and the same 
 
 ### Undo
 
-<kbd>Shift</kbd>+long press in GRID or <kbd>Shift</kbd>+<kbd>B</kbd> on any screen. 8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo, mute/solo and chain edits are not undone. There is no redo. Load, New and import clear the history.
+<kbd>Shift</kbd>+long press in GRID or <kbd>Shift</kbd>+<kbd>B</kbd> on any screen. 8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo and mute/solo are not undone. Song edits have their own history on the [SONG](#song) tab (also <kbd>Shift</kbd>+<kbd>B</kbd>, 8 steps). There is no redo. Load, New and import clear the history.
 
 ### Step
 
@@ -740,7 +741,7 @@ The next chord: with PROGRESSION the next one of the progression, with SELECTION
 
 ## TRACK: track settings
 
-The track is the one under the cursor in GRID. To switch: tap the arrows in the header or <kbd>Shift</kbd>+turn outside edit mode. The mixer for all tracks is the neighboring [MIX](#mixer) tab.
+The track is the one under the cursor in GRID. To switch: tap the arrows in the header or <kbd>Shift</kbd>+turn outside edit mode. The mixer for all tracks is the [MIX](#mixer) tab.
 
 Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap its tab below the header; with the encoder, a turn cycles through the rows and the page tabs (above the first row, framed); there, <kbd>A</kbd> held + turn goes to the next / previous page (the cursor stays on the page tabs); a click does nothing.
 
@@ -779,7 +780,7 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 
 ### MIX
 
-A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
+A separate tab at the bottom of the screen, between INST and BANK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
 
 - **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. Under the value, on INT tracks, the **pan** row: `C` / `L12` / `R40` and a bar with a tick at the position. On a MIDI track the fader is empty, `MIDI` is shown instead of the value, and there is no pan row.
 - **MAIN** — the overall volume of the built-in sound, 0–200%, default 100% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: FILE → SYSTEM → Phones.
@@ -1247,8 +1248,8 @@ A 4×4 grid of tiles: patterns P01–P16. Each tile shows the number, length, re
 
 | Input | Action |
 |---|---|
-| Tap / click | **Queue**: during playback switches at the end of the pass, when stopped switches at once. |
-| <kbd>Shift</kbd>+tap / click | **Immediately**: switches from the next step, keeping the position. |
+| Tap / click | **Queue**: during playback switches at the end of the pass, when stopped switches at once. While the song plays: toast `SONG MODE`. |
+| <kbd>Shift</kbd>+tap / click | **Immediately**: switches from the next step, keeping the position. Also works while the song plays. |
 | Long tap / press | Pattern menu. |
 | Turn | Select a tile. |
 
@@ -1257,35 +1258,70 @@ A 4×4 grid of tiles: patterns P01–P16. Each tile shows the number, length, re
 - **Copy to…**, then tap the target tile. Everything is copied: steps, length, resolution, swing. Tapping the same tile cancels.
 - **Clear**, with confirmation. Also resets length (16), resolution (1/16), swing (50).
 - **Length 16 / 32 / 64**: quick length change.
-- **Song mode**: turns on song mode.
 
 Any pattern change clears TIE. The pass counter is reset.
 
 <a id="song"></a>
 
-## Song mode
+## SONG: the song
 
-A chain of up to 64 entries. An entry is a pattern, a transposition, a number of passes and a mute scene. To turn it on: tile menu → **Song mode**. In song mode the BANK tab shows the chain list instead of the tiles.
+A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the 16 tracks. Repeats are equal slots in a row.
 
-- Header: `SONG n/64`, the **+ ADD** button (append the playing pattern at the end) and **SONG OFF**.
-- Row: `>` next to the playing entry, the number and four fields, `P05 +3 x2 S1`: pattern, transposition, passes, scene; default values (`+0 x1 S-`) are gray. On the right, the pattern's length and resolution.
-- Turn to select a row. Click to edit the row: turning or dragging changes the field (red), <kbd>Shift</kbd>+turn selects the field. Tapping a field of the selected row edits that field directly. On an empty chain, a click adds the playing pattern.
-- **Transposition** −24…+24 semitones: notes on melodic tracks sound shifted while the entry plays (clamped to 0 and 127). Drum tracks, OFF and the pattern's steps themselves are not changed.
-- **Passes** x1…x16: how many times to play the pattern before the next entry. Repeats sound like a loop: TIE and the CND counter carry on.
-- **Scene** S1…S8: when the entry starts, track mutes are set from the scene (an empty scene changes nothing). `S-`: leave as is.
-- **Scenes**: 8 tiles `S1…S8` below the list. Tap to recall (mute all tracks as in the scene), long tap to store the current mutes, <kbd>Shift</kbd>+tap to clear. A filled tile is highlighted; one matching the current mutes has a yellow border. Scenes are stored in the project.
-- Long press opens the row menu: **Insert Pxx before**, **Delete**, **Duplicate**, **Append Pxx**, **Song mode off**. Pxx is the playing pattern.
+- Header: `n/128` and the track numbers 1–16 above the columns.
+- Row: slot number, `Pxx`, then 16 cells:
+  - filled: the track plays;
+  - outline: the track is muted in this slot;
+  - dim dot: the track has no steps in this pattern (mute can still be set);
+  - dim outline: no data and muted.
+- The heard slot has a highlighted row and a progress bar under its number.
+- The cursor is a yellow frame on a cell (columns: PAT and tracks 1–16); red in pattern edit.
+- 10 rows are visible, the list scrolls. During play it follows the heard slot; after you turn, tap or scroll, following pauses for 2 s.
+- An empty song shows one row `+ ADD Pxx` (the heard pattern). Click or tap adds it.
+
+| Input | Action |
+|---|---|
+| Turn | Row (in pattern edit: change the pattern). |
+| <kbd>Shift</kbd>+turn | Column. |
+| Click on PAT | Pattern edit on / off; <kbd>Shift</kbd>+click in pattern edit cancels it (the old pattern returns). |
+| Click on a track cell | Mute / unmute that track in this slot. |
+| Hold <kbd>A</kbd> + turn | Change the slot's pattern; <kbd>A</kbd>+<kbd>B</kbd> cancels. |
+| Tap on a cell | Move the cursor there; on a track cell, also toggle mute. |
+| Vertical drag starting on PAT of the selected row | Change the pattern. |
+| Other drag | Scroll. |
+| [Track button](#trackkeys) <kbd>N</kbd> | Mute / unmute track N in the selected slot. The half 1–8 / 9–16 is the one holding the current track (as in GRID and TRACK), not the cursor column. |
+| <kbd>Shift</kbd>+<kbd>N</kbd> | Live mute, as on every tab; lasts until the next slot starts. |
+| <kbd>A</kbd> tap | **Add**: a copy of the selected slot right below it, and the cursor moves to it (toast `SONG FULL` at 128). |
+| Long press / long tap | Row menu. |
+| <kbd>B</kbd> tap | Leave pattern edit. |
+| <kbd>Shift</kbd>+<kbd>B</kbd> | Undo song edits (8 steps). |
+
+**Row menu:**
+
+- **Add**: same as an <kbd>A</kbd> tap.
+- **Insert Pxx above**: insert the heard pattern above, with no mutes.
+- **Delete**.
+- **Mutes ← live**: store the current track mutes in the slot.
+- **Clear mutes**.
+- **Clear song**, with confirmation.
 
 ### How the song plays
 
-- Playback starts from the first entry. At the end of a pass, the next entry follows; after the last one, the first one again.
-- Turning the mode on during playback: the chain starts at the end of the current pass. Turning it off: the current pattern keeps looping.
-- Chain edits during playback are picked up at the end of the pass. Inserting or deleting a row above the playing one does not disturb the position.
-- Two identical entries in a row sound as a repeat: TIE and the CND counter are kept.
-- Editing the passes during playback is picked up if the decision to move on has not been made yet. Deleting the playing entry: the next one starts at the end of the pass.
-- An empty chain plays the current pattern, as without song mode.
-- Pattern queueing does not work in song mode; the tiles are unavailable.
-- When stopped, GRID shows and edits the first entry of the chain, and the status bar shows `S01`.
+- **Play on the SONG tab** plays the song from the selected slot. **Play on any other tab** loops the current pattern (LOOP). With an empty song, Play loops the pattern.
+- While the transport runs, switching tabs does not change the mode. Pause and continue keep the mode.
+- The status bar shows `S03 P05` in SONG (`S--` until the song is heard) and `P05` in LOOP. During play or pause, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass (stopped, the tap does nothing: Play picks the mode by tab), with toast `SONG` / `LOOP` (`SONG EMPTY` if the song has no slots). LOOP→SONG continues from the slot under the SONG cursor; SONG→LOOP keeps looping the heard pattern.
+- After the last slot, slot 1 plays again.
+- **Mutes:** when a slot starts, all 16 track mutes are set from it. <kbd>Shift</kbd>+<kbd>N</kbd> during play changes a mute only until the next slot; the slot itself is not changed. In LOOP the slot mutes are not applied. When the song stops or switches to LOOP, the track mutes return to what they were before the song started (pause keeps the slot mutes); a saved project keeps those mutes too.
+- Two equal adjacent slots play as a repeat: TIE and the CND counter continue. Repeats are made by duplicating slots (<kbd>A</kbd> tap).
+- Edits during play are picked up at the end of the pass. Inserting or deleting above the heard slot does not shift the position. Deleting the heard slot: the next one starts at the end of the pass.
+- The pattern queue (BANK tile tap, <kbd>B</kbd>+<kbd>N</kbd>) works only in LOOP; while the song plays (or is paused) it toasts `SONG MODE`. <kbd>B</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> and <kbd>Shift</kbd>+tap on a BANK tile (switch at once) still work.
+- When stopped, moving the SONG cursor makes that slot's pattern current, and GRID shows it.
+
+### Old projects
+
+- Repeats ×N become N slots in a row.
+- A mute scene becomes the slot's mutes. A slot with no scene keeps the previous slot's mutes; the first slot starts with all tracks on.
+- Transpose is dropped, with the toast `SONG: TRANSPOSE DROPPED`.
+- The project is saved in the new format.
 
 <a id="file"></a>
 
@@ -1304,12 +1340,12 @@ A chain of up to 64 entries. An entry is a pattern, a transposition, a number of
 | Wi-Fi transfer… | Files to and from the card over Wi-Fi, firmware update. See [below](#wifi). |
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
-**Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
+**Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play on the SONG tab plays the song. Each one shows off part of the device:
 
 | Demo | Tempo, key | What to look at |
 |---|---|---|
 | DEMO-TRANCE | 138, A minor | supersaw hook, pads and bass pumped by the sidechain (key: the KICK track), ARS arpeggio on CHD chords, a breakdown with FLT locks opening the lead and a riser held by TIE, snare rolls with RAT ramps |
-| DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (chain transpose) |
+| DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (transposed copies in patterns P06 and P07) |
 | DEMO-ACID | 128, A minor | a 303-style line with SLD slides, accents and a FLT lock on every step, the filter opening section by section; a 12-step polymeter section (track length), hats on probability (PRB), RES and DLY locks in the break |
 | DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, a low-passed master (DJ filter) |
 | DEMO-SYNTHWAVE | 108, E minor | driving 16th bass pumped by the sidechain, a gated-reverb clap, a sync-pluck ARS arpeggio, a wavetable lead with VIB, tom fills |
@@ -1321,7 +1357,7 @@ A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the 
 
 <a id="render"></a>
 
-**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: stereo, 16-bit, 32 kHz. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (the whole chain with repeats; available if the chain has rows); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing, also stereo with the track's pan; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is visible on the [Wi-Fi](#wifi) page (download) and in FILE → SAMPLES → Import (bring it back into the project as a sample). MIDI tracks are not included in the render.
+**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: stereo, 16-bit, 32 kHz. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (all song slots in order; available if the song has slots); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing, also stereo with the track's pan; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is visible on the [Wi-Fi](#wifi) page (download) and in FILE → SAMPLES → Import (bring it back into the project as a sample). MIDI tracks are not included in the render.
 
 - Only when stopped (`STOP FIRST`). Progress shows `RENDER nn%`, roughly in real time; a long press of the encoder or Play cancels (`CANCELLED`, no file is created).
 - Done: `12.3s PEAK -2.1dB`; `CLIP` means there was clipping (lower MAIN or the volumes). Errors: `DISK FULL`, `WRITE FAILED`, `AUDIO BUSY` (audio did not stop within 0.5 s; try again).
@@ -1336,7 +1372,7 @@ Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as 
 - **Safe boot:** hold <kbd>Shift</kbd> at power-on and the project is not loaded automatically (toast "SAFE BOOT"). Use it for a project that crashes the tracker on load.
 - **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt`; it is visible and downloadable on the [Wi-Fi](#wifi) page (Diag tab). The firmware version and the reason for the last reboot are in FILE → SYSTEM.
 - **Autoload:** at power-on, the last saved or loaded project is loaded. If it is corrupted, the `.bak` is used (toast "LOADED BACKUP"). If that fails too, the demo loads with the toast "AUTOLOAD: …". New disables autoload until the next save.
-- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 32 instruments, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard, Fill parameters and the [SYSTEM](#system) settings (Preview included; older project files that still contain it open as usual).
+- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume), 32 instruments, delay settings, tempo, scale and the song (slots with their mutes). The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard, Fill parameters and the [SYSTEM](#system) settings (Preview included; older project files that still contain it open as usual).
 - **Compatibility:** the file now holds 16 tracks per pattern. Projects from older versions (8 tracks) open as usual, with tracks 9–16 empty. A file written by this firmware cannot be opened by older firmware: it will report a corrupted file (not a "newer version"). To go back to older firmware, keep a copy of the `.mtp` / `.bak` saved by it.
 
 | Path | Contents |
@@ -1529,7 +1565,7 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | What | How many |
 |---|---|
 | Tracks / patterns / steps | 16 / 16 / 4–128 |
-| Song chain | 64 entries |
+| Song | 128 slots |
 | Undo | 8 steps (pattern snapshots) |
 | BPM / Swing | 20–300 / 50–75% |
 | fx per step | 2 |

@@ -10,7 +10,14 @@
 namespace mt {
 namespace {
 
-constexpr size_t kProjSize = 17 + 2 + 4 + kChainMax;
+// Legacy song (PROJ chain, CHN2, SCNS): limits of the old model.
+constexpr int kOldChainMax = 64;
+constexpr int kOldChainRepMax = 16;
+constexpr int kOldChainTrMax = 24;
+constexpr int kOldScenes = 8;
+constexpr uint16_t kOldSceneEmpty = 0xFFFF;
+
+constexpr size_t kProjSize = 17 + 2 + 4 + kOldChainMax;
 constexpr size_t kTrackSize = 9 + 6 + 1;
 constexpr size_t kTrksSize = 1 + kTracks * kTrackSize;
 constexpr size_t kPatHeader = 4;
@@ -36,6 +43,7 @@ static_assert(kSliceRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kSmplSize <= kMaxRec, "readRecords buffer");
 constexpr size_t kWtblSize = 20;  // name[16] u32 crc
 constexpr size_t kChn2Rec = 4;    // pattern, transpose, repeat, scene
+constexpr size_t kSng3Rec = 3;    // pattern, mute u16
 static_assert(kSynRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kWtblSize <= kMaxRec, "readRecords buffer");
 
@@ -118,7 +126,19 @@ bool patternStored(const Pattern& p) {
 
 uint8_t validNote(uint8_t n) { return (n < 128 || n == kNoteOff) ? n : kNoteEmpty; }
 
-LoadErr readProj(CrcSource& in, uint32_t size, Project& p) {
+// Song of older files (PROJ chain, CHN2, SCNS), migrated to Project::song at the end of a load.
+struct LegacySong {
+  int n = 0;
+  uint8_t pat[kOldChainMax], rep[kOldChainMax], scene[kOldChainMax];
+  int8_t tr[kOldChainMax];
+  uint16_t scenes[kOldScenes];
+  bool chn2 = false;
+  LegacySong() {
+    for (uint16_t& m : scenes) m = kOldSceneEmpty;
+  }
+};
+
+LoadErr readProj(CrcSource& in, uint32_t size, Project& p, LegacySong& ls) {
   if (size < kProjSize) return LoadErr::BadValue;
   uint8_t b[kProjSize];
   if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
@@ -128,9 +148,15 @@ LoadErr readProj(CrcSource& in, uint32_t size, Project& p) {
   p.bpm = static_cast<uint16_t>(bpm < 20 ? 20 : (bpm > 300 ? 300 : bpm));
   p.scaleRoot = b[19] < 12 ? b[19] : 0;
   p.scaleType = b[20] < static_cast<int>(ScaleType::Count) ? b[20] : 0;
-  p.songMode = b[21] != 0;
-  p.chainLen = clampu(b[22], 0, kChainMax);
-  for (int i = 0; i < kChainMax; ++i) p.chain[i] = clampu(b[23 + i], 0, kPatterns - 1);
+  if (!ls.chn2) {  // b[21] songMode: unused
+    ls.n = clampu(b[22], 0, kOldChainMax);
+    for (int i = 0; i < ls.n; ++i) {
+      ls.pat[i] = clampu(b[23 + i], 0, kPatterns - 1);
+      ls.rep[i] = 1;
+      ls.scene[i] = 0;
+      ls.tr[i] = 0;
+    }
+  }
   return in.skip(size - kProjSize) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
@@ -297,20 +323,46 @@ LoadErr readWtbl(CrcSource& in, uint32_t size, Project& p) {
   });
 }
 
-// CHN2: count, then per item pattern, transpose (int8), repeat, scene. Replaces PROJ's chain (still
-// written there for old firmware); files without it keep tr 0 / rep 1 / no scene.
-LoadErr readChn2(CrcSource& in, uint32_t size, Project& p) {
-  int n = 0;
-  const LoadErr e = readRecords(in, size, kChn2Rec, kChainMax, [&](int i, const uint8_t* b) {
-    p.chain[i] = clampu(b[0], 0, kPatterns - 1);
-    const int tr = static_cast<int8_t>(b[1]);
-    p.chainTr[i] = static_cast<int8_t>(tr < -kChainTrMax ? -kChainTrMax : (tr > kChainTrMax ? kChainTrMax : tr));
-    p.chainRep[i] = clampu(b[2], 1, kChainRepMax);
-    p.chainScene[i] = b[3] <= kScenes ? b[3] : 0;  // no such scene: none
-    n = i + 1;
+// SNG3: count, then per slot pattern, mute mask (u16).
+LoadErr readSng3(CrcSource& in, uint32_t size, Project& p) {
+  p.songLen = 0;
+  return readRecords(in, size, kSng3Rec, kSongMax, [&](int i, const uint8_t* b) {
+    p.song[i] = clampu(b[0], 0, kPatterns - 1);
+    p.songMute[i] = static_cast<uint16_t>(b[1] | (b[2] << 8));
+    p.songLen = static_cast<uint8_t>(i + 1);
   });
-  if (e == LoadErr::Ok) p.chainLen = static_cast<uint8_t>(n);
-  return e;
+}
+
+// CHN2 (legacy): count, then per item pattern, transpose (int8), repeat, scene. Replaces PROJ's chain.
+LoadErr readChn2(CrcSource& in, uint32_t size, LegacySong& ls) {
+  ls.chn2 = true;
+  ls.n = 0;
+  return readRecords(in, size, kChn2Rec, kOldChainMax, [&](int i, const uint8_t* b) {
+    ls.pat[i] = clampu(b[0], 0, kPatterns - 1);
+    const int tr = static_cast<int8_t>(b[1]);
+    ls.tr[i] = static_cast<int8_t>(tr < -kOldChainTrMax ? -kOldChainTrMax
+                                                        : (tr > kOldChainTrMax ? kOldChainTrMax : tr));
+    ls.rep[i] = clampu(b[2], 1, kOldChainRepMax);
+    ls.scene[i] = b[3] <= kOldScenes ? b[3] : 0;  // no such scene: none
+    ls.n = i + 1;
+  });
+}
+
+// Legacy chain -> song: repeats expanded (up to kSongMax slots); a slot's mask is its item's scene,
+// else the previous slot's (the scene stayed in force).
+void migrateSong(const LegacySong& ls, Project& p, LoadNotes* notes) {
+  int n = 0;
+  uint16_t mask = 0;
+  for (int i = 0; i < ls.n && n < kSongMax; ++i) {
+    const int s = ls.scene[i];
+    if (s >= 1 && s <= kOldScenes && ls.scenes[s - 1] != kOldSceneEmpty) mask = ls.scenes[s - 1];
+    if (ls.tr[i] != 0 && notes) notes->songTransposeDropped = true;
+    for (int r = 0; r < (ls.rep[i] ? ls.rep[i] : 1) && n < kSongMax; ++r, ++n) {
+      p.song[n] = ls.pat[i];
+      p.songMute[n] = mask;
+    }
+  }
+  p.songLen = static_cast<uint8_t>(n);
 }
 
 // GROV: the patterns' groove (kPatterns bytes), then the tracks' humanize (kTracks bytes). Files
@@ -356,12 +408,12 @@ LoadErr readTspd(CrcSource& in, uint32_t size, Project& p) {
   return LoadErr::Ok;
 }
 
-// SCNS: kScenes mute masks, LE uint16.
-LoadErr readScns(CrcSource& in, uint32_t size, Project& p) {
-  uint8_t b[2 * kScenes];
+// SCNS (legacy): kOldScenes mute masks, LE uint16.
+LoadErr readScns(CrcSource& in, uint32_t size, LegacySong& ls) {
+  uint8_t b[2 * kOldScenes];
   if (size != sizeof(b)) return LoadErr::BadValue;
   if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
-  for (int i = 0; i < kScenes; ++i) p.scenes[i] = static_cast<uint16_t>(b[2 * i] | (b[2 * i + 1] << 8));
+  for (int i = 0; i < kOldScenes; ++i) ls.scenes[i] = static_cast<uint16_t>(b[2 * i] | (b[2 * i + 1] << 8));
   return LoadErr::Ok;
 }
 
@@ -437,21 +489,16 @@ bool saveProject(const Project& p, ByteSink& out) {
   wr16(pr + 17, p.bpm);
   pr[19] = p.scaleRoot;
   pr[20] = p.scaleType;
-  pr[21] = p.songMode ? 1 : 0;
-  pr[22] = p.chainLen;
-  memcpy(pr + 23, p.chain, kChainMax);
+  memset(pr + 21, 0, kProjSize - 21);  // songMode, chainLen, chain: legacy (SNG3)
   if (!o.chunk("PROJ", kProjSize) || !o.write(pr, sizeof(pr))) return false;
 
-  uint8_t chainN = p.chainLen > kChainMax ? kChainMax : p.chainLen;
-  if (!o.chunk("CHN2", 1 + chainN * kChn2Rec) || !o.write(&chainN, 1)) return false;
-  for (int i = 0; i < chainN; ++i) {
-    const uint8_t b[kChn2Rec] = {p.chain[i], static_cast<uint8_t>(p.chainTr[i]), p.chainRep[i], p.chainScene[i]};
+  const uint8_t songN = p.songLen > kSongMax ? kSongMax : p.songLen;
+  if (!o.chunk("SNG3", 1 + songN * kSng3Rec) || !o.write(&songN, 1)) return false;
+  for (int i = 0; i < songN; ++i) {
+    uint8_t b[kSng3Rec] = {p.song[i]};
+    wr16(b + 1, p.songMute[i]);
     if (!o.write(b, sizeof(b))) return false;
   }
-
-  uint8_t sc[2 * kScenes];
-  for (int i = 0; i < kScenes; ++i) wr16(sc + 2 * i, p.scenes[i]);
-  if (!o.chunk("SCNS", sizeof(sc)) || !o.write(sc, sizeof(sc))) return false;
 
   uint8_t count = kTracks;
   if (!o.chunk("TRKS", kTrksSize) || !o.write(&count, 1)) return false;
@@ -646,7 +693,7 @@ LoadErr readProjectFileNames(ByteSource& src, ProjectFileNames& out) {
   }
 }
 
-LoadErr loadProject(ByteSource& src, Project& out) {
+LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
   out.reset();
   // Files older than TOUT were MIDI-only.
   for (TrackCfg& c : out.tracks) c.out = TrackOut::Midi;
@@ -656,6 +703,8 @@ LoadErr loadProject(ByteSource& src, Project& out) {
   if (memcmp(h, "MTRK", 4) != 0) return LoadErr::BadMagic;
   if ((h[4] | (h[5] << 8)) > kProjectVersion) return LoadErr::BadVersion;
 
+  LegacySong legacy;
+  bool sng3 = false;
   for (;;) {
     uint8_t ch[8];
     if (!in.raw().read(ch, 8)) return LoadErr::Truncated;
@@ -665,6 +714,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
       if (size != 4) return LoadErr::BadValue;
       if (!in.raw().read(v, 4)) return LoadErr::Truncated;
       if (rd32(v) != in.crc()) return LoadErr::BadCrc;
+      if (!sng3 && legacy.n > 0) migrateSong(legacy, out, notes);
       for (Instrument& m : out.instruments) fixInstrument(m);
       for (Pattern& pt : out.patterns)  // a PATN after its TLEN may have shortened the pattern
         for (uint8_t& n : pt.trackLen)
@@ -679,7 +729,7 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     }
     in.add(ch, 8);
     LoadErr e;
-    if (memcmp(ch, "PROJ", 4) == 0) e = readProj(in, size, out);
+    if (memcmp(ch, "PROJ", 4) == 0) e = readProj(in, size, out, legacy);
     else if (memcmp(ch, "TRKS", 4) == 0) e = readTrks(in, size, out);
     else if (memcmp(ch, "PATN", 4) == 0) e = readPatn(in, size, out);
     else if (memcmp(ch, "INST", 4) == 0) e = readInst(in, size, out);
@@ -694,12 +744,16 @@ LoadErr loadProject(ByteSource& src, Project& out) {
     else if (memcmp(ch, "LFOX", 4) == 0) e = readLfox(in, size, out);
     else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
-    else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, out);
+    else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, legacy);
+    else if (memcmp(ch, "SNG3", 4) == 0) {
+      sng3 = true;
+      e = readSng3(in, size, out);
+    }
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
     else if (memcmp(ch, "TSPD", 4) == 0) e = readTspd(in, size, out);
     else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);
     else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out);
-    else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, out);
+    else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, legacy);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;
   }

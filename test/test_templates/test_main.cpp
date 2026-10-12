@@ -58,16 +58,16 @@ void test_strip_keeps_sound_drops_notes() {
   strcpy(p.name, "SONG");
   p.patterns[2].steps[1][3].note = 60;
   p.patterns[2].length = 32;
-  p.chainLen = 3;
-  p.songMode = true;
-  p.scenes[1] = 5;
+  p.songLen = 3;
+  p.song[1] = 4;
+  p.songMute[1] = 0x0005;
   p.bpm = 133;
   templateStrip(p);
   TEST_ASSERT_FALSE(p.patterns[2].steps[1][3].hasNote());
   TEST_ASSERT_EQUAL(16, p.patterns[2].length);
-  TEST_ASSERT_EQUAL(0, p.chainLen);
-  TEST_ASSERT_FALSE(p.songMode);
-  TEST_ASSERT_EQUAL_HEX16(kSceneEmpty, p.scenes[1]);
+  TEST_ASSERT_EQUAL(0, p.songLen);
+  TEST_ASSERT_EQUAL(0, p.song[1]);
+  TEST_ASSERT_EQUAL_HEX16(0, p.songMute[1]);
   TEST_ASSERT_EQUAL(133, p.bpm);  // project settings stay
   TEST_ASSERT_TRUE(p.instruments[0].type == InstrType::Kit);
   TEST_ASSERT_EQUAL_STRING("untitled", p.name);

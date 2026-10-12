@@ -10,7 +10,7 @@ constexpr uint32_t kRenderBlockUs = 1000000u * Synth::kBlock / kSynthRate;  // 4
 constexpr int16_t kSilence = 33;             // -60 dBFS
 constexpr float kNormPeak = 0.891f * 32767;  // -1 dBFS
 
-// Length of one pass of pattern idx / of the song (chain passes), in ticks and in us.
+// Length of one pass of pattern idx / of the song (one pass per slot), in ticks and in us.
 uint64_t passTicks(const Project& p, int idx);
 uint64_t songTicks(const Project& p);
 uint64_t passUs(const Project& p, int idx);
@@ -31,10 +31,11 @@ struct RenderSpec {
 };
 
 // Offline render of the INT tracks through `synth` on a virtual block clock, with a sequencer of
-// its own over the live project: block n starts at n x kRenderBlockUs; the sequencer is processed one
-// block ahead and its synth events are time-stamped into blocks like the audio task does
-// (eventOffset). The length is analytic (passUs / songUs); after it only note-offs and releases pass
-// (the next pass never starts), the sequencer stops at the first tail block. MIDI is dropped.
+// its own over the live project (Mode::Song: SONG from slot 0, else LOOP): block n starts at
+// n x kRenderBlockUs; the sequencer is processed one block ahead and its synth events are
+// time-stamped into blocks like the audio task does (eventOffset). The length is analytic
+// (passUs / songUs); after it only note-offs and releases pass (the next pass never starts), the
+// sequencer stops at the first tail block. MIDI is dropped.
 // Deterministic (fixed seed): two renders of the same spec are sample-identical.
 // The caller owns the synth (reset before and after) and keeps the project still (lock).
 class OfflineRender : public MidiSink {
@@ -52,14 +53,13 @@ class OfflineRender : public MidiSink {
   void send(const uint8_t*, uint8_t) override {}
   void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) override;
 
-  // Song mode on / off for the render; restores it and the track mutes (chain scenes) at the end.
+  // Restores the track mutes (written by the song's slot masks) at the end of the render.
   struct Guard {
-    Guard(Project& p, const RenderSpec& s);
+    explicit Guard(Project& p);
     ~Guard();
     Guard(const Guard&) = delete;
     Guard& operator=(const Guard&) = delete;
     Project& p;
-    bool songMode;
     bool mute[kTracks];
   };
 

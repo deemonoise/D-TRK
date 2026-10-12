@@ -84,7 +84,13 @@ void App::transport() {
     toast("WI-FI MODE");
     return;
   }
+  // Stopped: the start plays the song from the SONG cursor on the SONG tab, else loops.
+  if (!status_.playing && !status_.paused) postSong(tab_ == Tab::Song && p_->songLen > 0);
   engine::post(shift_ ? engine::Cmd::TogglePlay : engine::Cmd::StartStop);
+}
+
+void App::postSong(bool on) {
+  engine::post(engine::Cmd::SetSong, static_cast<uint16_t>((on ? 0x8000 : 0) | (song_.cursor() & 0xff)));
 }
 
 void App::setBpmEdit(bool on) {
@@ -198,6 +204,8 @@ void App::abAction(const mt::AbOut& o) {
       setBpmEdit(false);
       if (tab_ == Tab::Grid) {
         grid_.undo();
+      } else if (tab_ == Tab::Song) {
+        song_.undo();
       } else {
         const bool ok = doUndo();
         if (ok) engine::post(engine::Cmd::ReleaseTies);
@@ -248,7 +256,7 @@ void App::queueKey(int n, bool shift) {
   if (n < 0 || n >= mt::kTrackButtons) return;
   const int pat = (editPattern() / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (pat >= mt::kPatterns) return;
-  if (!shift && status_.songPos >= 0) {  // the sequencer ignores a queue while the song plays its chain
+  if (!shift && songPlays()) {  // the sequencer ignores a queue while the song plays
     toast("SONG MODE");
     return;
   }
@@ -277,7 +285,16 @@ void App::onTouch(const TouchEvent& ev) {
   }
   if (ev.y < kStatusH) {
     if (ev.type != TouchType::Tap) return;
-    if (ev.x >= kBpmX0 && ev.x < kBpmX1) setBpmEdit(!bpmEdit_);
+    if (ev.x >= kModeX0 && ev.x < kModeX1) {
+      if (!status_.playing && !status_.paused) return;  // stopped, Play picks the mode by tab
+      const bool on = !status_.song;
+      if (on && p_->songLen == 0) {
+        toast("SONG EMPTY");
+        return;
+      }
+      postSong(on);
+      toast(on ? "SONG" : "LOOP");
+    } else if (ev.x >= kBpmX0 && ev.x < kBpmX1) setBpmEdit(!bpmEdit_);
     else if (ev.x >= kTransX0 && ev.x < kTransX1) transport();
     return;
   }
@@ -305,8 +322,8 @@ void App::projectReplaced() {
   markSaved();
   setBpmEdit(false);
   lastBpm_ = p_->bpm;
-  // Let the sequencer re-read songMode/chain (shows S01 while stopped).
-  engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));
+  // Let the sequencer re-read the song (stopped: no slot shown).
+  engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
   for (Screen* sc : screens_)
     if (sc) sc->onProjectReplaced();
   for (Screen* sc : screens_)
@@ -334,6 +351,7 @@ void App::trackKey(int n, bool shift) {
   const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (tab_ == Tab::Grid && grid_.trackKey(n, shift)) return;
   if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
+  if (tab_ == Tab::Song && song_.trackKey(n, shift)) return;
   if (!shift) {
     setCurTrack(track);
     return;
@@ -574,11 +592,12 @@ void App::endProgress() {
 }
 
 void App::loadedToast(const char* what, int missing, bool folderFail) {
-  char parts[3][40];
+  char parts[4][40];
   int n = 0;
   if (what && what[0]) strlcpy(parts[n++], what, sizeof(parts[0]));
   if (missing > 0) snprintf(parts[n++], sizeof(parts[0]), "%d SAMPLES MISSING", missing);
   if (folderFail) strlcpy(parts[n++], "SAMPLES NOT SAVED", sizeof(parts[0]));
+  if (storage::songTransposeDropped()) strlcpy(parts[n++], "SONG: TRANSPOSE DROPPED", sizeof(parts[0]));
   for (int first = 0; first < n; ++first) {
     char msg[128] = "";
     for (int k = first; k < n; ++k) {
@@ -719,9 +738,9 @@ void App::drawStatus() {
   char buf[24];
   spr_->fillRect(0, 0, kScreenW, kStatusH, kStatusBg);
   spr_->setTextColor(kText);
-  // Song mode: "S03 P05" (heard chain entry, "S--" before the song is heard); no queue in song mode.
-  // No lock: the UI is the only writer of songMode / chainLen.
-  const bool song = p_->songMode && p_->chainLen > 0;
+  // Song: "S03 P05" (heard slot, "S--" before the song is heard); no queue in song mode.
+  // Stopped: Play picks the mode by tab, so no "S" here. No lock: the UI is the only writer of songLen.
+  const bool song = songPlays();
   if (song) {
     if (status_.songPos >= 0) snprintf(buf, sizeof(buf), "S%02d P%02d%s", status_.songPos + 1, status_.pattern + 1,
                                        projectDirty() ? "*" : "");
@@ -801,7 +820,7 @@ void App::drawBattery() {
 }
 
 void App::drawTabs() {
-  static const char* const kNames[] = {"GRID", "TRACK", "MIX", "BANK", "INST", "PROJ", "FILE"};
+  static const char* const kNames[] = {"GRID", "TRACK", "INST", "MIX", "BANK", "SONG", "PROJ", "FILE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(Tab::Count), "tab names");
   spr_->fillRect(0, kTabY, kScreenW, kTabH, kStatusBg);
   for (int i = 0; i < static_cast<int>(Tab::Count); ++i) {

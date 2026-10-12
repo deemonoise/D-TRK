@@ -65,12 +65,18 @@ void test_project_reset_defaults() {
   delete p;
 }
 
-void test_project_reset_clears_song_mode() {
+void test_project_reset_clears_song() {
   Project* p = new Project();
-  TEST_ASSERT_FALSE(p->songMode);
-  p->songMode = true;
+  p->songLen = 3;
+  p->song[0] = 5;
+  p->song[kSongMax - 1] = 7;
+  p->songMute[2] = 0xABCD;
   p->reset();
-  TEST_ASSERT_FALSE(p->songMode);
+  TEST_ASSERT_EQUAL(0, p->songLen);
+  for (int i = 0; i < kSongMax; ++i) {
+    TEST_ASSERT_EQUAL(0, p->song[i]);
+    TEST_ASSERT_EQUAL_HEX16(0, p->songMute[i]);
+  }
   delete p;
 }
 
@@ -475,7 +481,7 @@ int main() {
   RUN_TEST(test_ticks_per_step);
   RUN_TEST(test_gate_percent_encoding);
   RUN_TEST(test_project_reset_defaults);
-  RUN_TEST(test_project_reset_clears_song_mode);
+  RUN_TEST(test_project_reset_clears_song);
   RUN_TEST(test_track_audible_mute_solo);
   RUN_TEST(test_reset_audio_defaults);
   RUN_TEST(test_instr_type_order);

@@ -77,7 +77,7 @@ void test_names_are_project_file_names() {
 }
 
 // Every track with steps plays a preset (no instrument left at the reset default by a typo),
-// kits included, and the song chain only names patterns that have notes.
+// kits included, and the song only names patterns that have notes.
 void test_every_used_track_has_its_instruments() {
   for (int i = 0; i < demoCount(); ++i) {
     demoBuild(i, p);
@@ -93,16 +93,58 @@ void test_every_used_track_has_its_instruments() {
         TEST_ASSERT_TRUE(p.instruments[l.instr].type != InstrType::Kit);
       }
     }
-    TEST_ASSERT_TRUE(p.songMode);
-    TEST_ASSERT_TRUE(p.chainLen > 0);
-    for (int c = 0; c < p.chainLen; ++c) {
-      TEST_ASSERT_TRUE(p.chain[c] < kPatterns);
-      TEST_ASSERT_FALSE_MESSAGE(p.patterns[p.chain[c]].isEmpty(), demoName(i));
-      TEST_ASSERT_TRUE(p.chainRep[c] >= 1 && p.chainRep[c] <= kChainRepMax);
+    TEST_ASSERT_TRUE(p.songLen > 0);
+    for (int c = 0; c < p.songLen; ++c) {
+      TEST_ASSERT_TRUE(p.song[c] < kPatterns);
+      TEST_ASSERT_FALSE_MESSAGE(p.patterns[p.song[c]].isEmpty(), demoName(i));
+      TEST_ASSERT_EQUAL_HEX16_MESSAGE(0, p.songMute[c], demoName(i));
     }
     const uint64_t us = songUs(p);
     TEST_ASSERT_TRUE_MESSAGE(us > 60000000ull && us < 150000000ull, demoName(i));  // 1..2.5 min
   }
+}
+
+// Each old chain row became `rep` slots: the slot count is the sum of the old repeats.
+void test_song_slots_expand_repeats() {
+  static const int kSlots[] = {14, 11, 36, 9, 9, 15, 11, 16};
+  TEST_ASSERT_EQUAL(demoCount(), static_cast<int>(sizeof(kSlots) / sizeof(kSlots[0])));
+  for (int i = 0; i < demoCount(); ++i) {
+    demoBuild(i, p);
+    TEST_ASSERT_EQUAL_MESSAGE(kSlots[i], p.songLen, demoName(i));
+  }
+}
+
+// CHIPTUNE's last chorus and ending a tone up: copies of patterns 2 and 4 in 5 and 6, melodic tracks
+// +2 semitones, the drum track untouched.
+void test_chip_transposed_copies() {
+  demoBuild(1, p);
+  static const uint8_t kSong[] = {0, 1, 1, 2, 2, 3, 1, 2, 5, 5, 6};
+  TEST_ASSERT_EQUAL(sizeof(kSong), p.songLen);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(kSong, p.song, sizeof(kSong));
+  static const int kCopy[][2] = {{2, 5}, {4, 6}};
+  for (const auto& c : kCopy) {
+    const Pattern& a = p.patterns[c[0]];
+    const Pattern& b = p.patterns[c[1]];
+    TEST_ASSERT_EQUAL(a.length, b.length);
+    TEST_ASSERT_EQUAL(a.swing, b.swing);
+    TEST_ASSERT_EQUAL_MEMORY(a.trackLen, b.trackLen, sizeof(a.trackLen));
+    for (int t = 0; t < kTracks; ++t) {
+      if (p.trackIsDrum(t)) {
+        TEST_ASSERT_EQUAL_MEMORY(a.steps[t], b.steps[t], sizeof(Step) * a.length);
+        continue;
+      }
+      for (int s = 0; s < a.length; ++s) {
+        const Step& x = a.steps[t][s];
+        const Step& y = b.steps[t][s];
+        const int want = x.hasNote() ? (x.note + 2 > 127 ? 127 : x.note + 2) : x.note;
+        TEST_ASSERT_EQUAL(want, y.note);
+        TEST_ASSERT_EQUAL(x.vel, y.vel);
+        TEST_ASSERT_EQUAL_MEMORY(x.fx, y.fx, sizeof(x.fx));
+      }
+    }
+  }
+  TEST_ASSERT_TRUE(p.trackIsDrum(0));
+  TEST_ASSERT_FALSE(p.trackIsDrum(1));
 }
 
 // A demo survives a save / load unchanged: everything it uses is in the file format.
@@ -115,9 +157,9 @@ void test_save_load_round_trip() {
     TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, q)));
     TEST_ASSERT_EQUAL(p.bpm, q.bpm);
     TEST_ASSERT_EQUAL(p.masterVol, q.masterVol);
-    TEST_ASSERT_EQUAL(p.chainLen, q.chainLen);
-    TEST_ASSERT_EQUAL_MEMORY(p.chain, q.chain, sizeof(p.chain));
-    TEST_ASSERT_EQUAL_MEMORY(p.chainTr, q.chainTr, sizeof(p.chainTr));
+    TEST_ASSERT_EQUAL(p.songLen, q.songLen);
+    TEST_ASSERT_EQUAL_MEMORY(p.song, q.song, sizeof(p.song));
+    TEST_ASSERT_EQUAL_MEMORY(p.songMute, q.songMute, sizeof(p.songMute));
     for (int k = 0; k < kPatterns; ++k) {
       TEST_ASSERT_EQUAL(p.patterns[k].length, q.patterns[k].length);
       TEST_ASSERT_EQUAL_MEMORY(p.patterns[k].trackLen, q.patterns[k].trackLen, sizeof(p.patterns[k].trackLen));
@@ -143,7 +185,7 @@ void test_songs_render_clean() {
     synth->setWavetables(&wt);
     RenderSpec spec;
     spec.mode = RenderSpec::Mode::Song;
-    OfflineRender::Guard g(p, spec);
+    OfflineRender::Guard g(p);
     OfflineRender r(p, *synth, spec);
     int16_t out[Synth::kBlock];
     int maxV = 0, maxHeavy = 0;
@@ -165,6 +207,8 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_names_are_project_file_names);
   RUN_TEST(test_every_used_track_has_its_instruments);
+  RUN_TEST(test_song_slots_expand_repeats);
+  RUN_TEST(test_chip_transposed_copies);
   RUN_TEST(test_save_load_round_trip);
   RUN_TEST(test_songs_render_clean);
   return UNITY_END();

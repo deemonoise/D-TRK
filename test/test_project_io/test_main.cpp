@@ -9,6 +9,11 @@
 
 using namespace mt;
 
+// Legacy song chunks (PROJ chain, CHN2, SCNS): limits of the old model.
+static constexpr int kOldChainMax = 64;
+static constexpr int kOldScenes = 8;
+static constexpr uint16_t kOldSceneEmpty = 0xFFFF;
+
 struct VecSink : ByteSink {
   std::vector<uint8_t> buf;
   bool write(const void* d, size_t n) override {
@@ -50,10 +55,11 @@ static void fillFull(Project& p) {
   p.bpm = 137;
   p.scaleRoot = 9;
   p.scaleType = 2;
-  p.songMode = true;
-  p.chainLen = 5;
+  p.songLen = 5;
   const uint8_t ch[] = {0, 3, 3, 15, 7};
-  memcpy(p.chain, ch, sizeof(ch));
+  const uint16_t mu[] = {0, 0x0001, 0x8001, 0xFFFF, 0x1234};
+  memcpy(p.song, ch, sizeof(ch));
+  memcpy(p.songMute, mu, sizeof(mu));
   for (int t = 0; t < kTracks; ++t) {
     TrackCfg& c = p.tracks[t];
     snprintf(c.name, sizeof(c.name), "T%d_x", t);
@@ -174,17 +180,11 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL(x.bpm, y.bpm);
   TEST_ASSERT_EQUAL(x.scaleRoot, y.scaleRoot);
   TEST_ASSERT_EQUAL(x.scaleType, y.scaleType);
-  TEST_ASSERT_EQUAL(x.songMode, y.songMode);
-  TEST_ASSERT_EQUAL(x.chainLen, y.chainLen);
-  TEST_ASSERT_EQUAL_MEMORY(x.chain, y.chain, kChainMax);
-  for (int i = 0; i < x.chainLen; ++i) {
-    TEST_ASSERT_EQUAL(x.chainTr[i], y.chainTr[i]);
-    TEST_ASSERT_EQUAL(x.chainRep[i], y.chainRep[i]);
-    TEST_ASSERT_EQUAL(x.chainScene[i], y.chainScene[i]);
-  }
+  TEST_ASSERT_EQUAL(x.songLen, y.songLen);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(x.song, y.song, x.songLen);
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(x.songMute, y.songMute, x.songLen);
   TEST_ASSERT_EQUAL_UINT8_ARRAY(x.perfMap, y.perfMap, kPerfButtons);
   TEST_ASSERT_EQUAL(x.djFilter, y.djFilter);
-  TEST_ASSERT_EQUAL_UINT16_ARRAY(x.scenes, y.scenes, kScenes);
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg &c = x.tracks[t], &d = y.tracks[t];
     TEST_ASSERT_EQUAL(c.humanize, d.humanize);
@@ -298,11 +298,11 @@ void test_load_resets_target_first() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   b.patterns[3].steps[0][0].note = 50;
-  b.songMode = true;
+  b.songLen = 3;
   VecSource in(out.buf);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
   TEST_ASSERT_TRUE(b.patterns[3].isEmpty());
-  TEST_ASSERT_FALSE(b.songMode);
+  TEST_ASSERT_EQUAL(0, b.songLen);
 }
 
 void test_empty_patterns_not_written() {
@@ -409,7 +409,7 @@ void test_garbage_values_clamped() {
   pr.push_back(200);  // scaleType
   pr.push_back(7);    // songMode
   pr.push_back(200);  // chainLen
-  for (int i = 0; i < kChainMax; ++i) pr.push_back(99);
+  for (int i = 0; i < kOldChainMax; ++i) pr.push_back(99);
   putChunk(f, "PROJ", pr);
 
   std::vector<uint8_t> tr = {static_cast<uint8_t>(kTracks)};
@@ -448,9 +448,8 @@ void test_garbage_values_clamped() {
   TEST_ASSERT_EQUAL(300, b.bpm);
   TEST_ASSERT_TRUE(b.scaleRoot < 12);
   TEST_ASSERT_TRUE(b.scaleType < static_cast<int>(ScaleType::Count));
-  TEST_ASSERT_TRUE(b.songMode);
-  TEST_ASSERT_EQUAL(kChainMax, b.chainLen);
-  for (int i = 0; i < kChainMax; ++i) TEST_ASSERT_TRUE(b.chain[i] < kPatterns);
+  TEST_ASSERT_EQUAL(kOldChainMax, b.songLen);  // the PROJ chain, migrated
+  for (int i = 0; i < kOldChainMax; ++i) TEST_ASSERT_TRUE(b.song[i] < kPatterns && b.songMute[i] == 0);
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg& c2 = b.tracks[t];
     TEST_ASSERT_EQUAL(8, strlen(c2.name));
@@ -1399,67 +1398,140 @@ void test_patn_vel_mask_only_on_drum_tracks() {
   TEST_ASSERT_EQUAL_HEX8(0x25, b.patterns[0].steps[0][3].vel);
 }
 
-// ---- Song + live chunks: CHN2, TLEN, SCNS ----
+// ---- Song (SNG3), legacy song chunks (CHN2, SCNS, PROJ chain), TLEN ----
 
-void test_chn2_round_trip() {
-  a.reset();
-  a.chainLen = 3;
-  a.chain[0] = 2;
-  a.chainTr[0] = -5;
-  a.chainRep[0] = 4;
-  a.chainScene[0] = 3;
-  a.chain[2] = 7;
-  a.chainTr[2] = 12;
-  a.chainRep[2] = 1;
+void test_sng3_round_trip() {
+  a.songLen = 3;
+  a.song[0] = 2;
+  a.song[1] = 15;
+  a.song[2] = 7;
+  a.songMute[0] = 0x0005;
+  a.songMute[2] = 0xFFFF;
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SNG3"));
+  LoadNotes notes;
   VecSource in(out.buf);
-  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
-  TEST_ASSERT_EQUAL(3, b.chainLen);
-  TEST_ASSERT_EQUAL(2, b.chain[0]);
-  TEST_ASSERT_EQUAL(-5, b.chainTr[0]);
-  TEST_ASSERT_EQUAL(4, b.chainRep[0]);
-  TEST_ASSERT_EQUAL(3, b.chainScene[0]);
-  TEST_ASSERT_EQUAL(7, b.chain[2]);
-  TEST_ASSERT_EQUAL(12, b.chainTr[2]);
-  TEST_ASSERT_EQUAL(1, b.chainRep[1]);
-  TEST_ASSERT_EQUAL(0, b.chainScene[1]);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b, &notes)));
+  TEST_ASSERT_EQUAL(3, b.songLen);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(a.song, b.song, 3);
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(a.songMute, b.songMute, 3);
+  TEST_ASSERT_FALSE(notes.songTransposeDropped);
 }
 
-// A file without CHN2 (old firmware): chain from PROJ, tr 0, rep 1, scene 0.
-void test_chain_without_chn2_defaults() {
-  a.reset();
-  a.chainLen = 2;
-  a.chain[1] = 5;
-  a.chainTr[1] = 7;
+void test_sng3_garbage_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SNG3", {2, 200, 0x34, 0x12, 5, 0, 0});  // pattern 200 -> last
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(2, b.songLen);
+  TEST_ASSERT_EQUAL(kPatterns - 1, b.song[0]);
+  TEST_ASSERT_EQUAL_HEX16(0x1234, b.songMute[0]);
+  TEST_ASSERT_EQUAL(5, b.song[1]);
+  f = fileHeader();
+  putChunk(f, "SNG3", {2, 1, 0, 0});  // count 2, one record
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+void test_save_writes_no_legacy_song_chunks() {
+  fillFull(a);
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
-  const std::vector<uint8_t> f = withoutChunks(out.buf, {"CHN2"});
-  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
-  TEST_ASSERT_EQUAL(2, b.chainLen);
-  TEST_ASSERT_EQUAL(5, b.chain[1]);
-  TEST_ASSERT_EQUAL(0, b.chainTr[1]);
-  TEST_ASSERT_EQUAL(1, b.chainRep[1]);
-  TEST_ASSERT_EQUAL(0, b.chainScene[1]);
+  TEST_ASSERT_FALSE(hasChunk(out.buf, "CHN2"));
+  TEST_ASSERT_FALSE(hasChunk(out.buf, "SCNS"));
+  // PROJ keeps its size; songMode, chainLen and the chain are 0 (old firmware sees no chain).
+  TEST_ASSERT_EQUAL(0, memcmp(out.buf.data() + 8, "PROJ", 4));
+  const uint32_t size = out.buf[12] | (out.buf[13] << 8);
+  TEST_ASSERT_EQUAL(17 + 2 + 4 + kOldChainMax, size);
+  for (uint32_t i = 21; i < size; ++i) TEST_ASSERT_EQUAL(0, out.buf[16 + i]);
 }
 
-void test_chn2_garbage_clamped() {
+// A PROJ payload of the old firmware with the given chain.
+static std::vector<uint8_t> oldProj(std::initializer_list<uint8_t> chain) {
+  std::vector<uint8_t> pr(17, 0);
+  memcpy(pr.data(), "old", 3);
+  put16(pr, 120);
+  pr.push_back(0);
+  pr.push_back(0);
+  pr.push_back(1);  // songMode
+  pr.push_back(static_cast<uint8_t>(chain.size()));
+  pr.insert(pr.end(), chain.begin(), chain.end());
+  pr.resize(17 + 2 + 4 + kOldChainMax, 0);
+  return pr;
+}
+
+// CHN2 + SCNS (written after it) become song slots: repeats expanded, scene masks, else the
+// previous slot's mask; a transpose is dropped and reported.
+void test_chn2_scns_migrated() {
   std::vector<uint8_t> f = fileHeader();
-  putChunk(f, "CHN2", {1, 200, 90, 0, 9});  // count 1: pattern 200, transpose +90, repeat 0, scene 9
+  putChunk(f, "PROJ", oldProj({9, 9}));  // CHN2 wins over the PROJ chain
+  putChunk(f, "CHN2", {3, 1, 0, 2, 1, 2, 0, 1, 0, 3, 2, 1, 2});  // {P1 x2 sc1} {P2} {P3 tr+2 sc2}
+  std::vector<uint8_t> sc;
+  put16(sc, 0x0003);
+  for (int i = 1; i < kOldScenes; ++i) put16(sc, kOldSceneEmpty);
+  putChunk(f, "SCNS", sc);
+  finish(f);
+  LoadNotes notes;
+  VecSource in(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b, &notes)));
+  TEST_ASSERT_EQUAL(4, b.songLen);
+  const uint8_t pats[] = {1, 1, 2, 3};
+  const uint16_t mutes[] = {3, 3, 3, 3};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(pats, b.song, 4);
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(mutes, b.songMute, 4);
+  TEST_ASSERT_TRUE(notes.songTransposeDropped);
+}
+
+// A file without CHN2 (oldest firmware): the PROJ chain, one slot per item, no mutes.
+void test_proj_chain_migrated() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "PROJ", oldProj({4, 0, 7}));
+  finish(f);
+  LoadNotes notes;
+  VecSource in(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b, &notes)));
+  TEST_ASSERT_EQUAL(3, b.songLen);
+  const uint8_t pats[] = {4, 0, 7};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(pats, b.song, 3);
+  for (int i = 0; i < 3; ++i) TEST_ASSERT_EQUAL_HEX16(0, b.songMute[i]);
+  TEST_ASSERT_FALSE(notes.songTransposeDropped);
+}
+
+// Expanded repeats stop at kSongMax; garbage CHN2 values are clamped.
+void test_chn2_migration_capped_and_clamped() {
+  std::vector<uint8_t> chn = {10};
+  for (int i = 0; i < 10; ++i) {
+    const uint8_t r[] = {200, 0, 40, 9};  // pattern 200, repeat 40 (-> 16), no such scene
+    chn.insert(chn.end(), r, r + 4);
+  }
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "CHN2", chn);
   finish(f);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
-  TEST_ASSERT_EQUAL(1, b.chainLen);
-  TEST_ASSERT_EQUAL(kPatterns - 1, b.chain[0]);
-  TEST_ASSERT_EQUAL(kChainTrMax, b.chainTr[0]);
-  TEST_ASSERT_EQUAL(1, b.chainRep[0]);
-  TEST_ASSERT_EQUAL(0, b.chainScene[0]);
+  TEST_ASSERT_EQUAL(kSongMax, b.songLen);
+  for (int i = 0; i < kSongMax; ++i) TEST_ASSERT_TRUE(b.song[i] == kPatterns - 1 && b.songMute[i] == 0);
   f = fileHeader();
-  putChunk(f, "CHN2", {1, 3, static_cast<uint8_t>(-90), 40, 8});
+  putChunk(f, "CHN2", {1, 3, 0, 0, 0});  // repeat 0 counts as 1
   finish(f);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
-  TEST_ASSERT_EQUAL(-kChainTrMax, b.chainTr[0]);
-  TEST_ASSERT_EQUAL(kChainRepMax, b.chainRep[0]);
-  TEST_ASSERT_EQUAL(kScenes, b.chainScene[0]);
+  TEST_ASSERT_EQUAL(1, b.songLen);
+  TEST_ASSERT_EQUAL(3, b.song[0]);
+}
+
+// SNG3 wins over the legacy chunks.
+void test_sng3_skips_migration() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SNG3", {1, 6, 1, 0});
+  putChunk(f, "CHN2", {1, 3, 5, 2, 0});
+  finish(f);
+  LoadNotes notes;
+  VecSource in(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b, &notes)));
+  TEST_ASSERT_EQUAL(1, b.songLen);
+  TEST_ASSERT_EQUAL(6, b.song[0]);
+  TEST_ASSERT_EQUAL_HEX16(1, b.songMute[0]);
+  TEST_ASSERT_FALSE(notes.songTransposeDropped);
 }
 
 void test_tlen_round_trip_and_default() {
@@ -1570,22 +1642,6 @@ void test_tspd_absent_without_speeds_and_bad_values() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
-void test_scns_round_trip_and_default() {
-  a.reset();
-  a.scenes[0] = 0x0005;
-  a.scenes[7] = 0x8000;
-  VecSink out;
-  TEST_ASSERT_TRUE(saveProject(a, out));
-  VecSource in(out.buf);
-  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
-  TEST_ASSERT_EQUAL_HEX16(0x0005, b.scenes[0]);
-  TEST_ASSERT_EQUAL_HEX16(0x8000, b.scenes[7]);
-  TEST_ASSERT_EQUAL_HEX16(kSceneEmpty, b.scenes[3]);
-  const std::vector<uint8_t> f = withoutChunks(out.buf, {"SCNS"});
-  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
-  TEST_ASSERT_EQUAL_HEX16(kSceneEmpty, b.scenes[0]);
-}
-
 void test_audi_sound_fx_defaults_and_clamps() {
   std::vector<uint8_t> f = fileHeader();
   putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30});  // a 6-byte (older) AUDI
@@ -1684,16 +1740,19 @@ int main() {
   RUN_TEST(test_kits_round_trip_and_defaults);
   RUN_TEST(test_kits_garbage_clamped);
   RUN_TEST(test_patn_vel_mask_only_on_drum_tracks);
-  RUN_TEST(test_chn2_round_trip);
-  RUN_TEST(test_chain_without_chn2_defaults);
-  RUN_TEST(test_chn2_garbage_clamped);
+  RUN_TEST(test_sng3_round_trip);
+  RUN_TEST(test_sng3_garbage_clamped);
+  RUN_TEST(test_save_writes_no_legacy_song_chunks);
+  RUN_TEST(test_chn2_scns_migrated);
+  RUN_TEST(test_proj_chain_migrated);
+  RUN_TEST(test_chn2_migration_capped_and_clamped);
+  RUN_TEST(test_sng3_skips_migration);
   RUN_TEST(test_tlen_round_trip_and_default);
   RUN_TEST(test_tlen_clamped_to_length);
   RUN_TEST(test_tspd_round_trip_and_default);
   RUN_TEST(test_tspd_absent_without_speeds_and_bad_values);
   RUN_TEST(test_tpan_round_trip_and_default);
   RUN_TEST(test_tpan_garbage_clamped);
-  RUN_TEST(test_scns_round_trip_and_default);
   RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
   RUN_TEST(test_read_file_names);
   return UNITY_END();

@@ -10,7 +10,7 @@ namespace ui {
 
 class App;
 
-// FILE -> Render WAV: Source (PATTERN 01..16, SONG when the chain has rows), Tracks (ALL, SOLOED
+// FILE -> Render WAV: Source (PATTERN 01..16, SONG when the song has slots), Tracks (ALL, SOLOED
 // when a solo is on, STEMS), RENDER / CANCEL. Renders the internal synth offline into
 // /samples/render/<project>_P01.wav (or _SONG.wav) with a 2 s tail (storage::renderWav), asking before
 // it overwrites. STEMS: one file per audible INT track with notes in the source, _P01_T03.wav; each

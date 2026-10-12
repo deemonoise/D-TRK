@@ -34,14 +34,14 @@ void test_pass_us() {
   TEST_ASSERT_EQUAL_UINT64(4000000ull, passUs(p, 2));
 }
 
-void test_song_us_sums_chain_with_repeats() {
+void test_song_us_sums_slot_passes() {
   Project& p = *mkProj();
   p.patterns[1].length = 32;
-  p.chain[0] = 0;
-  p.chain[1] = 1;
-  p.chain[2] = 0;
-  p.chainLen = 3;
-  p.chainRep[1] = 2;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.song[2] = 1;
+  p.song[3] = 0;
+  p.songLen = 4;
   TEST_ASSERT_EQUAL_UINT64(2000000ull + 2 * 4000000ull + 2000000ull, songUs(p));
 }
 
@@ -98,7 +98,7 @@ void test_note_lands_in_its_block() {
   p.patterns[0].steps[0][4].note = 60;  // step 4 = 500 000 us = block 125
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(500, r.blocksTotal());  // 2 s / 4 ms, no tail
   const int first = firstLoudBlock(r);
@@ -116,7 +116,7 @@ void test_pattern_spec_picks_pattern() {
   RenderSpec s;
   s.pattern = 3;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_INT_WITHIN(1, 250, firstLoudBlock(r));
 }
@@ -127,7 +127,7 @@ void test_mask_silences_other_track() {
   RenderSpec s;
   s.tracksMask = 1;  // track 0 only
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(-1, firstLoudBlock(r));
   TEST_ASSERT_EQUAL(0, r.peak());
@@ -139,7 +139,7 @@ void test_next_pass_never_sounds() {
   RenderSpec s;
   s.tailBlocks = 100;  // 2 s .. 2.4 s: the next pass would play the note again at 2 s
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   int16_t out[Synth::kBlock];
   int n = 0, loudBody = 0, loudTail = 0;
@@ -160,7 +160,7 @@ void test_first_step_on_time() {
   p.patterns[0].steps[0][0].note = 60;
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(0, firstLoudBlock(r));
 }
@@ -173,7 +173,7 @@ void test_next_pass_negative_nudge_stays_out() {
   RenderSpec s;
   s.tailBlocks = 100;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   int16_t out[Synth::kBlock];
   int n = 0, loudLate = 0;
@@ -189,50 +189,67 @@ void test_next_pass_negative_nudge_stays_out() {
 void test_song_total_and_tail() {
   Project& p = *mkProj();
   p.patterns[1].length = 32;
-  p.chain[0] = 0;
-  p.chain[1] = 1;
-  p.chainLen = 2;
-  p.chainRep[1] = 2;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.song[2] = 1;
+  p.songLen = 3;
   RenderSpec s;
   s.mode = RenderSpec::Mode::Song;
   s.tailBlocks = 10;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
-  TEST_ASSERT_TRUE(p.songMode);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(500 + 2 * 1000 + 10, r.blocksTotal());
 }
 
-void test_song_plays_chain_items() {
+void test_song_plays_slots() {
   Project& p = *mkProj();
   p.patterns[1].length = 16;
   p.patterns[1].steps[0][0].note = 72;  // only P02 has a note
-  p.chain[0] = 0;
-  p.chain[1] = 1;
-  p.chainLen = 2;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.songLen = 2;
   RenderSpec s;
   s.mode = RenderSpec::Mode::Song;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_INT_WITHIN(1, 500, firstLoudBlock(r));  // P02 starts at 2 s
 }
 
-void test_guard_restores_flags_and_mutes() {
+void test_guard_restores_mutes() {
   Project& p = *mkProj();
-  p.songMode = false;
   p.tracks[2].mute = true;
   RenderSpec s;
   s.mode = RenderSpec::Mode::Song;
   {
-    OfflineRender::Guard g(p, s);
-    TEST_ASSERT_TRUE(p.songMode);
-    p.tracks[2].mute = false;  // a chain scene during the render
+    OfflineRender::Guard g(p);
+    p.tracks[2].mute = false;  // a slot mask during the render
     p.tracks[5].mute = true;
   }
-  TEST_ASSERT_FALSE(p.songMode);
   TEST_ASSERT_TRUE(p.tracks[2].mute);
   TEST_ASSERT_FALSE(p.tracks[5].mute);
+}
+
+// The slot masks apply during a song render; the live mutes come back after it.
+void test_song_render_applies_masks_and_restores_mutes() {
+  Project& p = *mkProj();
+  p.patterns[0].steps[0][0].note = 60;  // track 0, muted by slot 0
+  p.patterns[1].length = 16;
+  p.patterns[1].steps[0][0].note = 72;  // track 0, slot 1 unmutes it
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.songMute[0] = 1;
+  p.songLen = 2;
+  RenderSpec s;
+  s.mode = RenderSpec::Mode::Song;
+  Synth& synth = *synthFor(p);
+  {
+    OfflineRender::Guard g(p);
+    OfflineRender r(p, synth, s);
+    TEST_ASSERT_INT_WITHIN(1, 500, firstLoudBlock(r));  // slot 0 silent, slot 1 at 2 s
+  }
+  TEST_ASSERT_FALSE(p.tracks[0].mute);
 }
 
 void test_two_renders_identical() {
@@ -244,7 +261,7 @@ void test_two_renders_identical() {
   }
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   std::vector<int16_t> a, b;
   for (std::vector<int16_t>* v : {&a, &b}) {
     synth.reset();
@@ -268,7 +285,7 @@ void test_peak_and_clips() {
   p.instruments[0].vol = 127;
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   firstLoudBlock(r);
   TEST_ASSERT_TRUE(r.peak() > 30000);
@@ -284,7 +301,7 @@ void test_render_block_stereo() {
   RenderSpec s;
   s.tailBlocks = 10;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   std::vector<int16_t> mono, st;
   synth.reset();
   {
@@ -316,7 +333,7 @@ void test_render_block_stereo_peak_over_both_channels() {
   p.patterns[0].steps[0][0].note = 60;
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   int16_t lr[2 * Synth::kBlock];
   int16_t peakL = 0;
@@ -329,7 +346,7 @@ void test_render_block_stereo_peak_over_both_channels() {
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_pass_us);
-  RUN_TEST(test_song_us_sums_chain_with_repeats);
+  RUN_TEST(test_song_us_sums_slot_passes);
   RUN_TEST(test_normalize_peak);
   RUN_TEST(test_trim_tail);
   RUN_TEST(test_next_resample_name);
@@ -340,8 +357,9 @@ int main() {
   RUN_TEST(test_first_step_on_time);
   RUN_TEST(test_next_pass_negative_nudge_stays_out);
   RUN_TEST(test_song_total_and_tail);
-  RUN_TEST(test_song_plays_chain_items);
-  RUN_TEST(test_guard_restores_flags_and_mutes);
+  RUN_TEST(test_song_plays_slots);
+  RUN_TEST(test_song_render_applies_masks_and_restores_mutes);
+  RUN_TEST(test_guard_restores_mutes);
   RUN_TEST(test_two_renders_identical);
   RUN_TEST(test_peak_and_clips);
   RUN_TEST(test_render_block_stereo);
