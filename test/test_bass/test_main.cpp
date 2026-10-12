@@ -55,7 +55,7 @@ void test_parse_format_round_trip() {
 }
 
 void test_factory_patterns_parse() {
-  TEST_ASSERT_TRUE(bassFactoryCount() >= 24);
+  TEST_ASSERT_TRUE(bassFactoryCount() >= 48);
   for (int i = 0; i < bassFactoryCount(); ++i) {
     BassPattern p;
     TEST_ASSERT_NOT_NULL(bassFactoryName(i));

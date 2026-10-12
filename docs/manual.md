@@ -703,22 +703,34 @@ The next chord: with PROGRESSION the next one of the progression, with SELECTION
 
 **Capture** saves Dest's line (up to 32 steps) as your own pattern `/presets/BAS/NAME.bas` (the keyboard asks `BASS NAME:`; toasts as in [ARP Capture](#arp)); the rhythm is captured as in ARP. A note's role is found against the chord of its step from the current Source (SELECTION without a selection or PROGRESSION without chords falls back to ROOT): root / 3 / 5 / 7 within an octave up or down (with `^` / `v`), else `a` if it is a semitone below the next root, else `r` if it repeats the previous note (± an octave), else the nearest of root, third and fifth. `w` is never captured. `.bas` is plain text; the Pattern list holds up to 32 of your own.
 
-**Factory patterns** (24):
+**Factory patterns** (48):
 
 | Name | Pattern | | Name | Pattern |
 |------|---------|---|------|---------|
-| HOUSE OFF | `. . x . . . x . . . x . . . x .` | | SYNTHW 8 | `x . x . x . x . x . x . x . x xa` |
-| DISCO OCT | `x . x^ .` × 4 | | ELECTRO | `X . . x . . X . . x . x X . x .` |
-| TECHNO RL | `. x x x` × 4 | | FUNK | `X . x^ . . x . x X . . x^ . x7 x .` |
-| TECHNO 16 | `X x x x` × 4 | | WALKING | `x . . . x3 . . . x5 . . . xa . . .` |
-| ACID 1 | `X x~ x5 . X x~ X3 x x . X~ x . x5 X~ x` | | ROCK 8 | `x` × 16 |
-| ACID 2 | `x^ x X~ x5 . x x^~ x X . x~ x7 x X x^ .` | | TRNC OFF | `. . X . . . X . . . X . . . X .` |
-| ACID 3 | `Xr x~ x . X~ xv x . Xr x x~ x . X x~ x5` | | PSY | `. X x x` × 4 |
-| DNB | `Xl - . . . . x . . . Xl - . . x .` | | UKG | `X . . x . . . x . . X . . . x .` |
-| REESE | `xl - - - - - - - x5l - - - - - - -` | | BOOGIE | `x . x3 . x5 . x7 . x^ . x7 . x5 . x3 .` |
-| DUB | `Xl - - . . . x5 . Xl - - . . . x .` | | OCT JUMP | `x x^` × 8 |
-| REGGAETN | `X . . x . . x . X . . x . . x .` | | ROOT 5TH | `x . . . x5 . . . x . . . x5 . . .` |
-| TECHNO OFF | `. . x . . x . . . . x . . x . .` | | APPROACH | `xl - - - - - - - - - - - - - xa .` |
+| HOUSE OFF | `. . x . . . x . . . x . . . x .` | | DEEP HOUSE | `x . . x . . x . . . x . . x5 . .` |
+| DISCO OCT | `x . x^ . x . x^ . x . x^ . x . x^ .` | | GARAGE | `. . x . . x . x . . x . . x . x` |
+| TECHNO RL | `. x x x . x x x . x x x . x x x` | | MINIMAL | `x . . . . . x . . . . . x . . .` |
+| TECHNO 16 | `X x x x X x x x X x x x X x x x` | | ROLLING | `x x^ x x x x^ x x x x^ x x x x^ x x` |
+| ACID 1 | `X x~ x5 . X x~ X3 x x . X~ x . x5 X~ x` | | GALLOP | `x . x x x . x x x . x x x . x x` |
+| ACID 2 | `x^ x X~ x5 . x x^~ x X . x~ x7 x X x^ .` | | PSY TRIP | `. x x . x x . x x . x x . x x .` |
+| ACID 3 | `Xr x~ x . X~ xv x . Xr x x~ x . X x~ x5` | | EBM | `X x x5 x X x x5 x X x x5 x X x x5 x` |
+| DNB | `Xl - . . . . x . . . Xl - . . x .` | | ITALO | `x . x^ x x . x^ x x . x^ x x . x^ x` |
+| REESE | `xl - - - - - - - x5l - - - - - - -` | | NU DISCO | `x . x^ . . x . x^ x . x^ . . x x^ .` |
+| DUB | `Xl - - . . . x5 . Xl - - . . . x .` | | ACID 4 | `X~ x x^ x~ . x X5 x~ x x^ . X~ xv x x~ x5` |
+| REGGAETN | `X . . x . . x . X . . x . . x .` | | BREAKBEAT | `X . . x . . . x . x . . . . x .` |
+| SYNTHW 8 | `x . x . x . x . x . x . x . x xa` | | SYNCOPA | `x . x . . x . x . . x . x . . x` |
+| ELECTRO | `X . . x . . X . . x . x X . x .` | | SUB HOLD | `xl - - - - - - - - - - - - - - -` |
+| FUNK | `X . x^ . . x . x X . . x^ . x7 x .` | | OCT HOLD | `xl - - - x^l - - - xl - - - x^l - - -` |
+| WALKING | `x . . . x3 . . . x5 . . . xa . . .` | | DUBSTEP | `Xl - - - - - . . . . x . xv . . .` |
+| ROCK 8 | `x x x x x x x x x x x x x x x x` | | TRAP 808 | `Xl - - - - - x . . . Xl - - x . .` |
+| TRNC OFF | `. . X . . . X . . . X . . . X .` | | ONE DROP | `Xl - . . . . x5 x . . . . x . . .` |
+| PSY | `. X x x . X x x . X x x . X x x` | | MOTOWN | `x . . x x5 . x . x . . x x7 . xa .` |
+| UKG | `X . . x . . . x . . X . . . x .` | | SLAP | `X . x^ x . x X . . x^ . X x . x^ .` |
+| BOOGIE | `x . x3 . x5 . x7 . x^ . x7 . x5 . x3 .` | | WALK STEP | `x . . . xw . . . xw . . . xa . . .` |
+| OCT JUMP | `x x^ x x^ x x^ x x^ x x^ x x^ x x^ x x^` | | ARPEGGIO | `x x3 x5 x7 x^ x7 x5 x3 x x3 x5 x7 x^ x7 x5 x3` |
+| ROOT 5TH | `x . . . x5 . . . x . . . x5 . . .` | | COUNTRY | `x . . . x5v . . . x . . . x5v . . .` |
+| APPROACH | `xl - - - - - - - - - - - - - xa .` | | BOSSA | `x . . x5 x5 . . x x . . x5 x5 . . x` |
+| TECHNO OFF | `. . x . . x . . . . x . . x . .` | | TUMBAO | `. . . x . . x . . . . x5 . . x .` |
 
 - Dest is a [drum track](#drumtrack): nothing is written, the Dest row is red. Slides sound only on INT tracks.
 - The settings are remembered until power-off; your own patterns live on the card.
@@ -1521,7 +1533,7 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | WAV via Wi-Fi | 4 MB to `/samples`, 10 MB to a project folder (name up to 16 characters) |
 | Arp patterns | up to 32 steps; 106 factory, up to 32 of your own listed, name up to 16 characters |
 | Chord progressions | up to 16 chords; 55 factory + RANDOM, 32 rhythms, up to 32 of your own listed |
-| Bass patterns | up to 32 steps; 24 factory, up to 32 of your own listed |
+| Bass patterns | up to 32 steps; 48 factory, up to 32 of your own listed |
 | CHD | 36 types × 4 inversions |
 | Long press | 0.5 s |
 

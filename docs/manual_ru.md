@@ -703,22 +703,34 @@ TRIPLET, PSY TRIPL и TE HYPNO3 — по 12 шагов (поверх 16 шаго
 
 **Capture** сохраняет линию Dest (до 32 шагов) как свой паттерн `/presets/BAS/ИМЯ.bas` (клавиатура спрашивает `BASS NAME:`; toast — как у [Capture в ARP](#arp)); ритм снимается как в ARP. Роль ноты определяется по аккорду её шага из текущего Source (SELECTION без выделения или PROGRESSION без аккордов — как ROOT): корень / 3 / 5 / 7 в пределах октавы вверх или вниз (с `^` / `v`), иначе `a`, если нота на полутон ниже следующего корня, иначе `r`, если повторяет предыдущую ноту (± октава), иначе ближайшая из корня, терции и квинты. `w` не снимается. `.bas` — обычный текст; в списке Pattern — до 32 своих.
 
-**Заводские паттерны** (24):
+**Заводские паттерны** (48):
 
 | Имя | Паттерн | | Имя | Паттерн |
 |------|---------|---|------|---------|
-| HOUSE OFF | `. . x . . . x . . . x . . . x .` | | SYNTHW 8 | `x . x . x . x . x . x . x . x xa` |
-| DISCO OCT | `x . x^ .` × 4 | | ELECTRO | `X . . x . . X . . x . x X . x .` |
-| TECHNO RL | `. x x x` × 4 | | FUNK | `X . x^ . . x . x X . . x^ . x7 x .` |
-| TECHNO 16 | `X x x x` × 4 | | WALKING | `x . . . x3 . . . x5 . . . xa . . .` |
-| ACID 1 | `X x~ x5 . X x~ X3 x x . X~ x . x5 X~ x` | | ROCK 8 | `x` × 16 |
-| ACID 2 | `x^ x X~ x5 . x x^~ x X . x~ x7 x X x^ .` | | TRNC OFF | `. . X . . . X . . . X . . . X .` |
-| ACID 3 | `Xr x~ x . X~ xv x . Xr x x~ x . X x~ x5` | | PSY | `. X x x` × 4 |
-| DNB | `Xl - . . . . x . . . Xl - . . x .` | | UKG | `X . . x . . . x . . X . . . x .` |
-| REESE | `xl - - - - - - - x5l - - - - - - -` | | BOOGIE | `x . x3 . x5 . x7 . x^ . x7 . x5 . x3 .` |
-| DUB | `Xl - - . . . x5 . Xl - - . . . x .` | | OCT JUMP | `x x^` × 8 |
-| REGGAETN | `X . . x . . x . X . . x . . x .` | | ROOT 5TH | `x . . . x5 . . . x . . . x5 . . .` |
-| TECHNO OFF | `. . x . . x . . . . x . . x . .` | | APPROACH | `xl - - - - - - - - - - - - - xa .` |
+| HOUSE OFF | `. . x . . . x . . . x . . . x .` | | DEEP HOUSE | `x . . x . . x . . . x . . x5 . .` |
+| DISCO OCT | `x . x^ . x . x^ . x . x^ . x . x^ .` | | GARAGE | `. . x . . x . x . . x . . x . x` |
+| TECHNO RL | `. x x x . x x x . x x x . x x x` | | MINIMAL | `x . . . . . x . . . . . x . . .` |
+| TECHNO 16 | `X x x x X x x x X x x x X x x x` | | ROLLING | `x x^ x x x x^ x x x x^ x x x x^ x x` |
+| ACID 1 | `X x~ x5 . X x~ X3 x x . X~ x . x5 X~ x` | | GALLOP | `x . x x x . x x x . x x x . x x` |
+| ACID 2 | `x^ x X~ x5 . x x^~ x X . x~ x7 x X x^ .` | | PSY TRIP | `. x x . x x . x x . x x . x x .` |
+| ACID 3 | `Xr x~ x . X~ xv x . Xr x x~ x . X x~ x5` | | EBM | `X x x5 x X x x5 x X x x5 x X x x5 x` |
+| DNB | `Xl - . . . . x . . . Xl - . . x .` | | ITALO | `x . x^ x x . x^ x x . x^ x x . x^ x` |
+| REESE | `xl - - - - - - - x5l - - - - - - -` | | NU DISCO | `x . x^ . . x . x^ x . x^ . . x x^ .` |
+| DUB | `Xl - - . . . x5 . Xl - - . . . x .` | | ACID 4 | `X~ x x^ x~ . x X5 x~ x x^ . X~ xv x x~ x5` |
+| REGGAETN | `X . . x . . x . X . . x . . x .` | | BREAKBEAT | `X . . x . . . x . x . . . . x .` |
+| SYNTHW 8 | `x . x . x . x . x . x . x . x xa` | | SYNCOPA | `x . x . . x . x . . x . x . . x` |
+| ELECTRO | `X . . x . . X . . x . x X . x .` | | SUB HOLD | `xl - - - - - - - - - - - - - - -` |
+| FUNK | `X . x^ . . x . x X . . x^ . x7 x .` | | OCT HOLD | `xl - - - x^l - - - xl - - - x^l - - -` |
+| WALKING | `x . . . x3 . . . x5 . . . xa . . .` | | DUBSTEP | `Xl - - - - - . . . . x . xv . . .` |
+| ROCK 8 | `x x x x x x x x x x x x x x x x` | | TRAP 808 | `Xl - - - - - x . . . Xl - - x . .` |
+| TRNC OFF | `. . X . . . X . . . X . . . X .` | | ONE DROP | `Xl - . . . . x5 x . . . . x . . .` |
+| PSY | `. X x x . X x x . X x x . X x x` | | MOTOWN | `x . . x x5 . x . x . . x x7 . xa .` |
+| UKG | `X . . x . . . x . . X . . . x .` | | SLAP | `X . x^ x . x X . . x^ . X x . x^ .` |
+| BOOGIE | `x . x3 . x5 . x7 . x^ . x7 . x5 . x3 .` | | WALK STEP | `x . . . xw . . . xw . . . xa . . .` |
+| OCT JUMP | `x x^ x x^ x x^ x x^ x x^ x x^ x x^ x x^` | | ARPEGGIO | `x x3 x5 x7 x^ x7 x5 x3 x x3 x5 x7 x^ x7 x5 x3` |
+| ROOT 5TH | `x . . . x5 . . . x . . . x5 . . .` | | COUNTRY | `x . . . x5v . . . x . . . x5v . . .` |
+| APPROACH | `xl - - - - - - - - - - - - - xa .` | | BOSSA | `x . . x5 x5 . . x x . . x5 x5 . . x` |
+| TECHNO OFF | `. . x . . x . . . . x . . x . .` | | TUMBAO | `. . . x . . x . . . . x5 . . x .` |
 
 - Dest — [драм-дорожка](#drumtrack): ничего не пишется, строка Dest красная. Слайды звучат только на INT-дорожках.
 - Параметры помнятся до выключения питания; свои паттерны лежат на карте.
@@ -1521,7 +1533,7 @@ FILE → **Wi-Fi transfer…** подключает трекер к домашн
 | WAV через Wi-Fi                     | 4 МБ в `/samples`, 10 МБ в папку проекта (имя до 16 символов)                                                                                                                        |
 | Арп-паттерны                        | до 32 шагов; 106 заводских, до 32 своих в списке, имя до 16 символов                                                                                                                 |
 | Прогрессии аккордов                 | до 16 аккордов; 55 заводских + RANDOM, 32 ритма, до 32 своих в списке                                                                                                               |
-| Бас-паттерны                        | до 32 шагов; 24 заводских, до 32 своих в списке                                                                                                                                      |
+| Бас-паттерны                        | до 32 шагов; 48 заводских, до 32 своих в списке                                                                                                                                      |
 | CHD                                 | 36 типов × 4 обращения                                                                                                                                                               |
 | Долгое нажатие                      | 0,5 с                                                                                                                                                                                |
 
