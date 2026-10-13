@@ -147,9 +147,9 @@ void tick(uint32_t last) {
 }
 
 void foldProfile() {
-  uint32_t c[mt::Synth::kProfStages], b;
+  uint32_t c[mt::Synth::kProfStages], n[mt::Synth::kProfStages], b;
   __disable_irq();
-  synth->takeProfile(c, b);
+  synth->takeProfile(c, n, b);
   __enable_irq();
   for (int i = 0; i < mt::Synth::kProfStages; ++i) prof[i] += c[i];
   profBlocks += b;
@@ -242,9 +242,9 @@ void step() {
       synth->setProfiler(cycleClock);
       profOn = true;
     }
-    uint32_t c[mt::Synth::kProfStages], b;
+    uint32_t c[mt::Synth::kProfStages], n[mt::Synth::kProfStages], b;
     __disable_irq();
-    synth->takeProfile(c, b);  // dropped: the settling part
+    synth->takeProfile(c, n, b);  // dropped: the settling part
     __enable_irq();
   } else if (profOn) {
     foldProfile();

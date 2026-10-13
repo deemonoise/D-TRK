@@ -1,4 +1,5 @@
 #include "model.h"
+#include "fastmath.h"
 #include "hot.h"
 #include "synth_osc.h"
 #include <math.h>
@@ -12,6 +13,7 @@ void Pattern::clear() {
   res = Resolution::Sixteenth;
   swing = 50;
   memset(trackLen, 0, sizeof(trackLen));
+  memset(trackSpeed, 0, sizeof(trackSpeed));
   for (auto& tr : steps)
     for (auto& s : tr) s = Step();
 }
@@ -62,7 +64,7 @@ void Project::reset() {
     fmSetMachine(instruments[i], static_cast<uint8_t>(FmMachine::Tone));
     snprintf(instruments[i].name, sizeof(instruments[i].name), "INS%d", i + 1);
   }
-  masterVol = 40;
+  masterVol = 100;
   preview = true;
   dlyTime = 3;
   dlyFb = 50;
@@ -75,21 +77,21 @@ void Project::reset() {
   compRel = 50;
   scTrack = 0;
   scDepth = 64;
-  djFilter = 0;
-  for (int i = 0; i < kPerfButtons; ++i) perfMap[i] = static_cast<uint8_t>(i + 1);
+  memcpy(perfMap, kPerfDefaultMap, sizeof(perfMap));
+  perfDefaultDepths();
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};
   wavetableCount = 0;
   hasSampleList = false;
   for (auto& p : patterns) p.clear();
-  memset(chain, 0, sizeof(chain));
-  chainLen = 0;
-  memset(chainTr, 0, sizeof(chainTr));
-  memset(chainRep, 1, sizeof(chainRep));
-  memset(chainScene, 0, sizeof(chainScene));
-  songMode = false;
-  for (uint16_t& sc : scenes) sc = kSceneEmpty;
+  memset(song, 0, sizeof(song));
+  memset(songMute, 0, sizeof(songMute));
+  songLen = 0;
+}
+
+void Project::perfDefaultDepths() {
+  for (int i = 0; i < kPerfButtons; ++i) perfDepth[i] = perfRange(static_cast<PerfFx>(perfMap[i])).def;
 }
 
 // Tables built on first use: powf is costly on the ESP32 and these run per voice at control rate.
@@ -109,9 +111,9 @@ uint16_t fmDecayMs(uint8_t v) {
   return static_cast<uint16_t>(5.f * powf(800.f, v / 127.f) + 0.5f);
 }
 
-float lfoSyncHz(uint8_t div, uint16_t bpm) {
+MT_HOT float lfoSyncHz(uint8_t div, uint16_t bpm) {
   // Beats (quarters) per LFO cycle.
-  static const float kBeats[kLfoSyncSteps] = {0.125f, 1.f / 6, 0.25f, 1.f / 3, 0.5f, 2.f / 3, 1, 2, 4, 8, 16, 32};
+  MT_DATA static const float kBeats[kLfoSyncSteps] = {0.125f, 1.f / 6, 0.25f, 1.f / 3, 0.5f, 2.f / 3, 1, 2, 4, 8, 16, 32};
   return (bpm ? bpm : 120) / 60.f / kBeats[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
 }
 
@@ -119,6 +121,13 @@ const char* lfoSyncName(uint8_t div) {
   static const char* const kNames[kLfoSyncSteps] = {"1/32", "1/16T", "1/16", "1/8T", "1/8",  "1/4T",
                                                     "1/4",  "1/2",   "1 BAR", "2 BARS", "4 BARS", "8 BARS"};
   return kNames[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
+}
+
+const char* speedName(TrackSpeed s) {
+  static const char* const kNames[] = {"x1", "x2", "x4", "1/2", "1/4"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(TrackSpeed::Count), "speed names");
+  const uint8_t i = static_cast<uint8_t>(s);
+  return i < static_cast<uint8_t>(TrackSpeed::Count) ? kNames[i] : "x1";
 }
 
 LfoRef lfoRef(Instrument& m, int i) {
@@ -173,7 +182,7 @@ MT_HOT float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec) {
   if (t < a) return static_cast<float>(t) / a;
   const float d = envTimeMs(fDec) * kSynthRate / 1000.f;
   if (d <= 0) return 1.f;
-  return expf(-6.9077553f * (t - a) / d);  // ln(1000): -60 dB at d
+  return fastExp(-6.9077553f * (t - a) / d);  // ln(1000): -60 dB at d
 }
 
 void drumSetMachine(Instrument& m, uint8_t machine) {
@@ -212,8 +221,7 @@ void instrSetType(Instrument& m, InstrType t) {
   } else if (t == InstrType::Kit) kitSetDefaults(m);
   for (int i = 0; i < kLfos; ++i) {
     uint8_t& dest = lfoRef(m, i).dest;
-    const bool macroDest = dest >= static_cast<uint8_t>(LfoDest::Dec) && dest <= static_cast<uint8_t>(LfoDest::Con);
-    if ((t == InstrType::Chip || t == InstrType::Sample) && macroDest) dest = static_cast<uint8_t>(LfoDest::Pitch);
+    if (!lfoDestValid(dest, t)) dest = static_cast<uint8_t>(LfoDest::Pitch);
   }
 }
 
@@ -224,18 +232,56 @@ void kitSetDefaults(Instrument& m) {
   }
 }
 
-uint8_t lfoDestStep(uint8_t dest, int d, bool macros) {
-  constexpr int kLast = static_cast<int>(LfoDest::Count) - 1;
-  constexpr int kMac0 = static_cast<int>(LfoDest::Dec), kMac1 = static_cast<int>(LfoDest::Con);
-  int v = dest > kLast ? 0 : dest;
+bool lfoDestValid(uint8_t dest, InstrType t) {
+  if (dest >= static_cast<uint8_t>(LfoDest::Count)) return false;
+  const auto d = static_cast<LfoDest>(dest);
+  if (d >= LfoDest::Dec && d <= LfoDest::Con)
+    return t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth;
+  if (d == LfoDest::Duty) return t == InstrType::Chip;
+  if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2) return t == InstrType::Synth;
+  return true;
+}
+
+// The Dest list order: the enum's, with PAN (appended for the file format) next to the sends.
+constexpr LfoDest kDestOrder[] = {
+    LfoDest::Pitch, LfoDest::Dec,    LfoDest::Col,    LfoDest::Shp,    LfoDest::Swp,    LfoDest::Con,
+    LfoDest::Vol,   LfoDest::Cutoff, LfoDest::Drive,  LfoDest::Reso,   LfoDest::Fenv,   LfoDest::Dly,
+    LfoDest::Rvb,   LfoDest::Pan,    LfoDest::Bit,    LfoDest::Srr,    LfoDest::Fine,   LfoDest::Duty,
+    LfoDest::Sub,   LfoDest::Noise,  LfoDest::Semi2,  LfoDest::Rate1,  LfoDest::Rate2,  LfoDest::Rate3,
+    LfoDest::Rate4, LfoDest::Depth1, LfoDest::Depth2, LfoDest::Depth3, LfoDest::Depth4, LfoDest::Rtrg1,
+    LfoDest::Rtrg2, LfoDest::Rtrg3,  LfoDest::Rtrg4};
+constexpr int kDestN = sizeof(kDestOrder) / sizeof(kDestOrder[0]);
+static_assert(kDestN == static_cast<int>(LfoDest::Count), "kDestOrder must list every LfoDest once");
+
+uint8_t lfoDestStep(uint8_t dest, int d, InstrType t, int self) {
+  const int selfRtrg = self >= 0 && self < kLfos ? static_cast<int>(LfoDest::Rtrg1) + self : -1;
+  auto at = [](int i) { return static_cast<int>(kDestOrder[i]); };
+  auto ok = [&](int i) { return at(i) != selfRtrg && lfoDestValid(static_cast<uint8_t>(at(i)), t); };
+  int v = 0;  // position in kDestOrder; out of range = PITCH
+  for (int i = 0; i < kDestN; ++i)
+    if (at(i) == dest) v = i;
   const int step = d > 0 ? 1 : -1;
   for (int i = 0; i < (d > 0 ? d : -d); ++i) {
     int nv = v + step;
-    while (!macros && nv >= kMac0 && nv <= kMac1) nv += step;
-    if (nv < 0 || nv > kLast) break;
+    while (nv >= 0 && nv < kDestN && !ok(nv)) nv += step;
+    if (nv < 0 || nv >= kDestN) break;
     v = nv;
   }
-  return static_cast<uint8_t>(v);
+  return static_cast<uint8_t>(at(v));
+}
+
+const char* lfoDestName(uint8_t dest, InstrType t) {
+  static const char* const kNames[] = {
+      "PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP", "CONTOUR", "VOL", "CUTOFF", "DRIVE",
+      "RESO", "FENV", "DLY", "RVB", "BIT", "SRR", "FINE", "DUTY", "SUB", "NOISE", "SEMI2",
+      "L1 RATE", "L2 RATE", "L3 RATE", "L4 RATE", "L1 DEPTH", "L2 DEPTH", "L3 DEPTH", "L4 DEPTH",
+      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN"};
+  static const char* const kSyn[] = {"SHP1", "SHP2", "MIX", "DET", "SENV"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");
+  if (dest >= static_cast<uint8_t>(LfoDest::Count)) dest = 0;
+  const int mac = dest - static_cast<int>(LfoDest::Dec);
+  if (t == InstrType::Synth && mac >= 0 && mac < kFmMacros) return kSyn[mac];
+  return kNames[dest];
 }
 
 bool Project::anySolo() const {

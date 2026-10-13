@@ -5,7 +5,7 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 1;
+constexpr uint16_t kProtocol = 2;
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -19,6 +19,7 @@ enum class Msg : uint8_t {
   Status, Progress, FwFromFile, Log,
   FsRmdir,
   WtFrame,
+  Perf,
 };
 
 // Fs* replies: err first, 0 = ok.
@@ -80,6 +81,7 @@ struct Hello {
   char fw[16] = {};
   uint32_t bootId = 0;
   uint32_t modelSize = 0;  // sizeof(SynthModel): both sides must agree on the mirror layout
+  uint8_t perfSec = 0;     // seconds of PERF ring buffer the synth board holds, 0 = buffer effects silent
 };
 
 struct Time {
@@ -120,6 +122,7 @@ struct Status {
   uint16_t outPeak = 0;
   uint8_t trackPeak[16] = {};  // 100 = full scale at MAIN 100 %
   uint16_t lost = 0;
+  uint8_t parks = 0;    // synth parks since boot (mod 256): each one resets the synth, PERF included
   uint16_t scopeN = 0;  // 0 while the meters are off; the newest output, every 2nd sample, >> 8
   int8_t scope[kScopeMax];
 };
@@ -137,6 +140,11 @@ struct Progress {
 // Meters (MIX shown: track peaks + scope in Status), Phones (output level 0..100 %).
 struct Byte {
   uint8_t v = 0;
+};
+
+// PERF on the master: synth message 0xF6 op val on the preview track (see Synth), played now.
+struct Perf {
+  uint8_t op = 0, val = 0;
 };
 
 // Plays note with instrument instr on the synth's preview track for holdMs (0 = the default 300 ms).
@@ -325,14 +333,16 @@ struct FwRep {
 };
 
 // Profile (PROJ -> SYS -> CPU profile): Byte request, v 1 = start (clears the sums), 0 = stop. The
-// reply: the render cycles per Synth::ProfStage summed since the start, the blocks rendered, and the
-// cycles per us to convert them.
+// reply: the render cycles and counts per Synth::ProfStage summed since the start, the blocks
+// rendered, the slowest block (events, render, preview mix) and the cycles per us to convert them.
 struct ProfileRep {
-  static constexpr int kStages = 11;  // Synth::kProfStages
+  static constexpr int kStages = 18;  // Synth::kProfStages
   uint8_t running = 0;
   uint32_t blocks = 0;
   uint32_t cyclesPerUs = 0;
+  uint32_t peakCycles = 0;
   uint64_t cycles[kStages] = {};
+  uint32_t count[kStages] = {};
 };
 
 struct Log {
@@ -351,6 +361,7 @@ void encode(const Status& m, Writer& w);
 void encode(const Progress& m, Writer& w);
 void encode(const Log& m, Writer& w);
 void encode(const Byte& m, Writer& w);
+void encode(const Perf& m, Writer& w);
 void encode(const PreviewNote& m, Writer& w);
 void encode(const ProfileRep& m, Writer& w);
 void encode(const PreviewSlice& m, Writer& w);
@@ -389,6 +400,7 @@ bool decode(Reader& r, Status& m);
 bool decode(Reader& r, Progress& m);
 bool decode(Reader& r, Log& m);
 bool decode(Reader& r, Byte& m);
+bool decode(Reader& r, Perf& m);
 bool decode(Reader& r, PreviewNote& m);
 bool decode(Reader& r, PreviewSlice& m);
 bool decode(Reader& r, BankProjectReq& m);

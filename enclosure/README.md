@@ -24,7 +24,7 @@ Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (g
    5     6     7     8
 ```
 
-The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier, and a bay for the Teensy 4.1 synth board between the DAC and the amplifier: two rails under the middle of the board (clear of the pin rows, room for wire tails underneath), fences on three sides, its microSD end against the front wall. The front wall has a slot to the Teensy's card with a finger notch, so the card can be changed without opening the case (not printed yet). At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. The 3 mm LEDs go into the standard windows of the MX switches (you need clear keycaps or keycaps with a window). Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
+The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier, and a bay for the Teensy 4.1 synth board between the DAC and the amplifier: two rails under the middle of the board (clear of the pin rows, room for wire tails underneath), fences on three sides, its microSD end against the front wall. The front wall has a slot to the Teensy's card with a finger notch, so the card can be changed without opening the case (not printed yet). At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
 
 PLA/PETG, 3 wall perimeters, 20–30 % infill.
 
@@ -97,6 +97,8 @@ $OS -o stl/knob.stl knob.scad
 
 ## Hardware and materials
 
+Full parts list for both versions: [docs/bom.md](../docs/bom.md).
+
 - M3 heat-set inserts (5–6 mm long, outer ⌀ ~4.5) — 8 pcs.
 - M3 × 10 DIN 912 screws (socket head cap) — 4 pcs. (bottom part, heads sunk flush).
 - M3 × 6 screws — 4 pcs. (clamps).
@@ -105,21 +107,25 @@ $OS -o stl/knob.stl knob.scad
 - MTS-102 toggle switch (M6 nut).
 - IP5306 charger/power-bank module with Type-C and USB-A (desolder the USB-A).
 - LiPo 103450 battery (~2000 mAh).
+- INA226 module (battery monitor, R100 or R010 shunt).
 - 2 MX switches (12 for the track-button version), EC11 encoder with push button, keycaps.
-- Track-button version: PCF8575 module, PCM5102A DAC, MAX97220 amplifier, a second PJ-392 jack (headphones), optionally 8 × 3 mm LEDs and 8 × 330 Ω resistors.
+- PCF8575 module — in both versions: without it the encoder button, Play and Shift do not work.
+- Track-button version: PCM5102A DAC, MAX97220 amplifier, a second PJ-392 jack (headphones).
 
 ## Power
 
 The IP5306 module charges the LiPo from Type-C by itself and puts out a stable 5 V. Desolder the USB-A socket (otherwise it won't fit height-wise) and solder the output wires to its VBUS and GND pads.
 
 ```
-LiPo + ── IP5306 B+ (BAT+)
-LiPo − ── IP5306 B− (BAT−)
+LiPo + ── INA226 IN+ ─[shunt]─ INA226 IN− ── IP5306 B+ (BAT+)
+LiPo − ───────────────────────────────────── IP5306 B− (BAT−)
 IP5306 VOUT (VBUS USB-A) ── switch ── board 5V
 IP5306 GND               ───────────── board GND
 ```
 
 The switch is on the output, not on the battery: this way charging works even with the device switched off.
+
+The INA226 measures the battery voltage and current for the charge indicator; it runs from the board's 3.3 V, its I2C is in parallel with the PCF8575. Details in the [wiring diagram](../docs/wiring.md#ina226-battery-monitor).
 
 IP5306 quirks:
 - The output turns on by itself when a load appears (the switch is closed). If it does not, briefly press the module's button or short its pads (KEY) to GND. If there is no button and auto-start is unreliable, move the switch into the battery line, but then charge only with the switch on.

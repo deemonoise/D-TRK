@@ -49,6 +49,7 @@ StatusAgg agg = {};
 int8_t scopeBuf[Status::kScopeMax];
 int scopeN = 0;
 uint32_t lostTotal = 0, lateTotal = 0;
+uint8_t parkCount = 0;  // Status::parks, latest
 char logLines[kLogLines][Log::kMax + 1];
 int logHead = 0, logCount = 0;
 
@@ -117,6 +118,7 @@ void onStatus(Reader& r) {
     if (s.trackPeak[t] > agg.trackPeak[t]) agg.trackPeak[t] = s.trackPeak[t];
   lostTotal += s.lost;
   lateTotal += s.late;
+  parkCount = s.parks;
   scopeN = s.scopeN;
   memcpy(scopeBuf, s.scope, s.scopeN);
   portEXIT_CRITICAL(&mux);
@@ -350,6 +352,20 @@ uint32_t bootId() {
   const uint32_t b = helloSeen ? hello.bootId : 0;
   portEXIT_CRITICAL(&mux);
   return b;
+}
+
+uint8_t perfSeconds() {
+  portENTER_CRITICAL(&mux);
+  const uint8_t s = helloSeen ? hello.perfSec : 0;
+  portEXIT_CRITICAL(&mux);
+  return s;
+}
+
+uint8_t parks() {
+  portENTER_CRITICAL(&mux);
+  const uint8_t p = parkCount;
+  portEXIT_CRITICAL(&mux);
+  return p;
 }
 
 bool takeReply(Reply& r) { return replyQ && xQueueReceive(replyQ, &r, 0) == pdTRUE; }

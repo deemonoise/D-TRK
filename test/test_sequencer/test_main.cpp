@@ -217,24 +217,12 @@ void test_drum_track_plays_lane_notes() {
   TEST_ASSERT_EQUAL(2, sink->times(on).size());
 }
 
-void test_activity_marks_sounding_tracks() {
-  p->patterns[0].steps[2][0].note = 60;
-  p->patterns[0].steps[5][0].note = 62;
-  p->tracks[5].mute = true;
-  seq->start(0, *sink);
-  TEST_ASSERT_EQUAL_HEX16(0, seq->takeActivity());
-  run(0, 1000);
-  TEST_ASSERT_EQUAL_HEX16(1 << 2, seq->takeActivity());
-  TEST_ASSERT_EQUAL_HEX16(0, seq->takeActivity());  // cleared by take
-}
-
 void test_track_15_plays() {
   p->patterns[0].steps[kTracks - 1][0].note = 60;
   seq->start(0, *sink);
   run(0, 1000);
   const uint8_t on = static_cast<uint8_t>(0x90 | (p->tracks[kTracks - 1].channel & 0x0F));
   TEST_ASSERT_EQUAL(1, sink->times(on, 60).size());
-  TEST_ASSERT_EQUAL_HEX16(1u << (kTracks - 1), seq->takeActivity());
 }
 
 void test_tie_holds_until_next_note_with_overlap() {
@@ -1030,15 +1018,20 @@ void test_release_ties_fuzz() {
 
 // ---- song mode ----
 
-// Patterns 0..4: 4 steps each, step 0 plays 60 + index.
-static void songSetup(std::initializer_list<uint8_t> chain) {
+// Patterns 0..4: 4 steps each, step 0 plays 60 + index. Song on, from slot 0.
+static void songSetup(std::initializer_list<uint8_t> slots) {
   for (int i = 0; i < 5; ++i) {
     p->patterns[i].length = 4;
     p->patterns[i].steps[0][0].note = static_cast<uint8_t>(60 + i);
   }
-  p->songMode = true;
-  p->chainLen = 0;
-  for (uint8_t c : chain) p->chain[p->chainLen++] = c;
+  p->songLen = 0;
+  for (uint8_t c : slots) p->song[p->songLen++] = c;
+  seq->setSong(0, *sink, true, 0);
+}
+
+static void setSongAt(uint64_t t, bool on, int slot) {
+  sink->now = t;
+  seq->setSong(t, *sink, on, slot);
 }
 
 // Step-0 notes (60..64) in the order they went out.
@@ -1049,8 +1042,9 @@ static std::vector<int> heardPatterns() {
   return out;
 }
 
-void test_song_plays_chain_and_loops() {
+void test_song_plays_slots_and_wraps() {
   songSetup({2, 1, 3});
+  TEST_ASSERT_TRUE(seq->song());
   seq->start(0, *sink);
   TEST_ASSERT_EQUAL(2, seq->pattern());
   TEST_ASSERT_EQUAL(0, seq->heardSongPos());
@@ -1065,7 +1059,26 @@ void test_song_plays_chain_and_loops() {
   TEST_ASSERT_EQUAL(-1, seq->queued());
 }
 
-void test_song_repeated_entry_keeps_pattern() {
+void test_song_starts_at_set_slot() {
+  songSetup({1, 2, 3});
+  seq->setSong(0, *sink, true, 2);
+  seq->start(0, *sink);
+  TEST_ASSERT_EQUAL(3, seq->pattern());
+  TEST_ASSERT_EQUAL(2, seq->heardSongPos());
+  run(0, 1100000);
+  const std::vector<int> want = {3, 1, 2};  // the last slot wraps to slot 0
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+}
+
+void test_song_start_slot_clamped() {
+  songSetup({1, 2});
+  seq->setSong(0, *sink, true, 50);
+  seq->start(0, *sink);
+  TEST_ASSERT_EQUAL(1, seq->heardSongPos());
+  TEST_ASSERT_EQUAL(2, seq->pattern());
+}
+
+void test_song_repeated_slot_keeps_pattern() {
   songSetup({1, 1, 2});
   seq->start(0, *sink);
   run(0, 2100000);
@@ -1073,9 +1086,8 @@ void test_song_repeated_entry_keeps_pattern() {
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_ignores_queue() {
+void test_song_ignores_queue_while_playing() {
   songSetup({1});
-  seq->queuePattern(3);  // stopped: ignored too
   seq->start(0, *sink);
   seq->queuePattern(2);
   TEST_ASSERT_EQUAL(-1, seq->queued());
@@ -1085,10 +1097,19 @@ void test_song_ignores_queue() {
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
+void test_song_stopped_queue_works() {
+  songSetup({1, 2});
+  seq->queuePattern(3);
+  TEST_ASSERT_EQUAL(3, seq->pattern());
+  TEST_ASSERT_EQUAL(3, seq->heardPattern());
+  seq->start(0, *sink);  // the song plays from its slot
+  TEST_ASSERT_EQUAL(1, seq->pattern());
+}
+
 void test_song_tempo_change_after_boundary_decided() {
   songSetup({1, 2});
   seq->start(0, *sink);
-  run(0, 480000);  // step 3 heard, step 0 of the next entry scheduled
+  run(0, 480000);  // step 3 heard, step 0 of the next slot scheduled
   seq->setBpm(240);
   run(480000, 1100000);  // 2 at 500000, 1 at 750000, 2 at 1000000
   const std::vector<int> want = {1, 2, 1, 2};
@@ -1131,7 +1152,7 @@ void test_song_fuzz_tempo_pause_keeps_order() {
         default: break;
       }
       TEST_ASSERT_TRUE(seq->heardSongPos() >= 0 && seq->heardSongPos() < 4);
-      TEST_ASSERT_EQUAL(p->chain[seq->heardSongPos()], seq->heardPattern());
+      TEST_ASSERT_EQUAL(p->song[seq->heardSongPos()], seq->heardPattern());
     }
     const std::vector<int> got = heardPatterns();
     TEST_ASSERT_TRUE(got.size() > 8);
@@ -1140,10 +1161,10 @@ void test_song_fuzz_tempo_pause_keeps_order() {
   }
 }
 
-void test_song_pause_resume_continues_entry() {
+void test_song_pause_resume_continues_slot() {
   songSetup({1, 2});
   seq->start(0, *sink);
-  run(0, 700000);  // in entry 2 (pattern 2), step 1 heard
+  run(0, 700000);  // in slot 1 (pattern 2), step 1 heard
   sink->now = 700000;
   seq->pause(700000, *sink);
   TEST_ASSERT_EQUAL(1, seq->heardSongPos());
@@ -1157,14 +1178,12 @@ void test_song_pause_resume_continues_entry() {
   TEST_ASSERT_EQUAL(0, seq->heardSongPos());
 }
 
-void test_song_stop_then_start_from_first_entry() {
+void test_song_stop_then_start_from_set_slot() {
   songSetup({1, 2});
   seq->start(0, *sink);
   run(0, 700000);
   seq->stop(700000, *sink);
-  TEST_ASSERT_EQUAL(0, seq->heardSongPos());  // stopped: shows what start() plays
-  TEST_ASSERT_EQUAL(1, seq->heardPattern());
-  TEST_ASSERT_EQUAL(1, seq->pattern());
+  TEST_ASSERT_EQUAL(-1, seq->heardSongPos());  // stopped: no slot shown
   sink->log.clear();
   seq->start(1000000, *sink);
   run(1000000, 1000000);
@@ -1172,31 +1191,31 @@ void test_song_stop_then_start_from_first_entry() {
   TEST_ASSERT_EQUAL(0, seq->heardSongPos());
 }
 
-void test_song_chain_shrink_while_playing() {
+void test_song_shrink_while_playing() {
   songSetup({1, 2, 3});
   seq->start(0, *sink);
-  run(0, 1100000);  // entry 3 heard
-  p->chainLen = 2;
+  run(0, 1100000);  // slot 2 heard
+  p->songLen = 2;
   run(1100000, 2100000);
   const std::vector<int> want = {1, 2, 3, 1, 2};
   TEST_ASSERT_TRUE(heardPatterns() == want);
   TEST_ASSERT_EQUAL(1, seq->heardSongPos());
 }
 
-void test_song_empty_chain_keeps_pattern() {
+void test_song_empty_keeps_pattern() {
   songSetup({1, 2, 3});
   seq->start(0, *sink);
-  run(0, 600000);  // entry 2 heard
-  p->chainLen = 0;
+  run(0, 600000);  // slot 1 heard
+  p->songLen = 0;
   run(600000, 1600000);
   const std::vector<int> want = {1, 2, 2, 2};
   TEST_ASSERT_TRUE(heardPatterns() == want);
   TEST_ASSERT_EQUAL(-1, seq->heardSongPos());
-  seq->queuePattern(4);  // no song without a chain: queue works
+  seq->queuePattern(4);  // no song without slots: queue works
   TEST_ASSERT_EQUAL(4, seq->queued());
 }
 
-void test_song_empty_chain_at_start_plays_current() {
+void test_song_empty_at_start_plays_current() {
   songSetup({});
   seq->selectPattern(3);
   seq->start(0, *sink);
@@ -1206,10 +1225,10 @@ void test_song_empty_chain_at_start_plays_current() {
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_chain_entries_clamped() {
+void test_song_slots_clamped() {
   songSetup({99});
-  p->chainLen = 200;
-  for (int i = 1; i < kChainMax; ++i) p->chain[i] = 1;
+  p->songLen = 200;
+  for (int i = 1; i < kSongMax; ++i) p->song[i] = 1;
   seq->start(0, *sink);
   TEST_ASSERT_EQUAL(kPatterns - 1, seq->pattern());
   run(0, 2100000);  // pattern 15 keeps 16 steps
@@ -1217,13 +1236,14 @@ void test_song_chain_entries_clamped() {
   TEST_ASSERT_EQUAL(1, seq->heardPattern());
 }
 
-void test_song_enable_while_playing_starts_chain_at_boundary() {
+void test_song_enable_while_playing_starts_slot_at_boundary() {
   songSetup({2, 3});
-  p->songMode = false;
+  seq->setSong(0, *sink, false, 0);
+  TEST_ASSERT_FALSE(seq->song());
   seq->start(0, *sink);
   seq->queuePattern(1);
   run(0, 100000);
-  p->songMode = true;  // the song wins over the queued pattern
+  setSongAt(100000, true, 0);  // the song wins over the queued pattern
   TEST_ASSERT_EQUAL(-1, seq->heardSongPos());
   run(100000, 1100000);
   const std::vector<int> want = {0, 2, 3};
@@ -1231,11 +1251,36 @@ void test_song_enable_while_playing_starts_chain_at_boundary() {
   TEST_ASSERT_EQUAL(1, seq->heardSongPos());
 }
 
+void test_song_enable_while_looping_goes_to_slot() {
+  songSetup({2, 3, 4});
+  seq->setSong(0, *sink, false, 0);
+  seq->start(0, *sink);
+  run(0, 100000);
+  setSongAt(100000, true, 2);
+  run(100000, 1100000);
+  const std::vector<int> want = {0, 4, 2};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+  TEST_ASSERT_EQUAL(0, seq->heardSongPos());
+}
+
+// A slot past the end enters the last slot, as on start().
+void test_song_enable_while_looping_slot_clamped() {
+  songSetup({2, 3, 4});
+  seq->setSong(0, *sink, false, 0);
+  seq->start(0, *sink);
+  run(0, 100000);
+  setSongAt(100000, true, 50);
+  run(100000, 600000);
+  const std::vector<int> want = {0, 4};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+  TEST_ASSERT_EQUAL(2, seq->heardSongPos());
+}
+
 void test_song_disable_while_playing_keeps_pattern() {
   songSetup({2, 3});
   seq->start(0, *sink);
-  run(0, 600000);  // entry 2 (pattern 3) heard
-  p->songMode = false;
+  run(0, 600000);  // slot 1 (pattern 3) heard
+  setSongAt(600000, false, 0);
   TEST_ASSERT_EQUAL(1, seq->heardSongPos());  // until the boundary
   run(600000, 1600000);
   const std::vector<int> want = {2, 3, 3, 3};
@@ -1243,6 +1288,7 @@ void test_song_disable_while_playing_keeps_pattern() {
   TEST_ASSERT_EQUAL(-1, seq->heardSongPos());
 }
 
+// Two equal adjacent slots go on like a loop: the tie holds over the boundary.
 void test_song_tie_released_on_change_held_on_repeat() {
   songSetup({1, 1, 2});
   p->patterns[1].steps[1][3].note = 70;
@@ -1254,11 +1300,11 @@ void test_song_tie_released_on_change_held_on_repeat() {
   TEST_ASSERT_EQUAL(1000000, off[0]);  // held across 1 -> 1, released at 1 -> 2
 }
 
-void test_song_select_then_chain_goes_on() {
+void test_song_select_then_song_goes_on() {
   songSetup({1, 2, 3});
   seq->start(0, *sink);
   run(0, 200000);  // steps up to the 1 -> 2 advance are scheduled
-  seq->selectPattern(4);  // from the next step: replaces entry 2's pattern
+  seq->selectPattern(4);  // from the next step: replaces slot 1's pattern
   run(200000, 600000);
   TEST_ASSERT_EQUAL(4, seq->heardPattern());
   TEST_ASSERT_EQUAL(1, seq->heardSongPos());
@@ -1267,7 +1313,7 @@ void test_song_select_then_chain_goes_on() {
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_entries_with_own_length_and_resolution() {
+void test_song_slots_with_own_length_and_resolution() {
   songSetup({1, 2});
   p->patterns[2].length = 3;
   p->patterns[2].res = Resolution::Eighth;
@@ -1307,26 +1353,29 @@ void test_song_stall_skips_across_boundaries() {
   TEST_ASSERT_EQUAL(1500000, sink->times(0x90, 61).back());
 }
 
-// Edits the chain the way the UI does: the write, then chainEdited() at the same time.
-static void chainInsert(uint64_t t, int at, uint8_t pat) {
-  memmove(p->chain + at + 1, p->chain + at, p->chainLen - at);
-  p->chain[at] = pat;
-  ++p->chainLen;
+// Edits the song the way the UI does: the write, then songEdited() at the same time.
+static void songInsert(uint64_t t, int at, uint8_t pat) {
+  memmove(p->song + at + 1, p->song + at, p->songLen - at);
+  memmove(p->songMute + at + 1, p->songMute + at, (p->songLen - at) * sizeof(uint16_t));
+  p->song[at] = pat;
+  p->songMute[at] = 0;
+  ++p->songLen;
   sink->now = t;
-  seq->chainEdited(t, *sink, at, ChainOp::Insert);
+  seq->songEdited(t, *sink, at, SongOp::Insert);
 }
-static void chainDelete(uint64_t t, int at) {
-  memmove(p->chain + at, p->chain + at + 1, p->chainLen - at - 1);
-  --p->chainLen;
+static void songDelete(uint64_t t, int at) {
+  memmove(p->song + at, p->song + at + 1, p->songLen - at - 1);
+  memmove(p->songMute + at, p->songMute + at + 1, (p->songLen - at - 1) * sizeof(uint16_t));
+  --p->songLen;
   sink->now = t;
-  seq->chainEdited(t, *sink, at, ChainOp::Delete);
+  seq->songEdited(t, *sink, at, SongOp::Delete);
 }
 
-void test_song_insert_before_playing_keeps_entry() {
+void test_song_insert_before_playing_keeps_slot() {
   songSetup({1, 2, 3});
   seq->start(0, *sink);
-  run(0, 600000);  // entry 2 heard
-  chainInsert(600000, 0, 4);
+  run(0, 600000);  // slot 1 heard
+  songInsert(600000, 0, 4);
   TEST_ASSERT_EQUAL(2, seq->heardSongPos());
   run(600000, 2100000);
   const std::vector<int> want = {1, 2, 3, 4, 1};
@@ -1337,49 +1386,63 @@ void test_song_insert_after_boundary_decided() {
   songSetup({1, 2});
   seq->start(0, *sink);
   run(0, 300000);  // 1 -> 2 decided, not heard
-  chainInsert(300000, 1, 4);
+  songInsert(300000, 1, 4);
   run(300000, 1100000);
   const std::vector<int> want = {1, 4, 2};
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_delete_before_playing_keeps_entry() {
+void test_song_delete_before_playing_keeps_slot() {
   songSetup({1, 2, 3});
   seq->start(0, *sink);
   run(0, 600000);
-  chainDelete(600000, 0);
+  songDelete(600000, 0);
   TEST_ASSERT_EQUAL(0, seq->heardSongPos());
   run(600000, 1600000);
   const std::vector<int> want = {1, 2, 3, 2};
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_delete_playing_entry_goes_on_with_next() {
+void test_song_delete_playing_slot_goes_on_with_next() {
   songSetup({1, 2, 3});
   seq->start(0, *sink);
   run(0, 600000);
-  chainDelete(600000, 1);
+  songDelete(600000, 1);
   run(600000, 1600000);
   const std::vector<int> want = {1, 2, 3, 1};
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_delete_first_playing_entry() {
+void test_song_delete_first_playing_slot() {
   songSetup({1, 2, 3});
   seq->start(0, *sink);
   run(0, 100000);
-  chainDelete(100000, 0);
+  songDelete(100000, 0);
   run(100000, 1100000);
   const std::vector<int> want = {1, 2, 3};
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_edit_next_entry_in_lookahead() {
+// Deleting the playing slot 0 goes on with the new slot 0 (the next one), not the setSong slot.
+void test_song_delete_playing_slot_0_goes_on_with_next() {
+  songSetup({1, 2, 3, 4});
+  seq->setSong(0, *sink, true, 2);
+  seq->start(0, *sink);
+  run(0, 1100000);  // slot 2, slot 3, then slot 0 heard
+  TEST_ASSERT_EQUAL(0, seq->heardSongPos());
+  songDelete(1100000, 0);
+  run(1100000, 1600000);
+  const std::vector<int> want = {3, 4, 1, 2};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+  TEST_ASSERT_EQUAL(0, seq->heardSongPos());
+}
+
+void test_song_edit_next_slot_in_lookahead() {
   songSetup({1, 2});
   seq->start(0, *sink);
   run(0, 300000);  // 1 -> 2 decided, not heard
-  p->chain[1] = 3;
-  seq->chainEdited(300000, *sink, 1, ChainOp::Edit);
+  p->song[1] = 3;
+  seq->songEdited(300000, *sink, 1, SongOp::Edit);
   run(300000, 600000);
   const std::vector<int> want = {1, 3};
   TEST_ASSERT_TRUE(heardPatterns() == want);
@@ -1387,28 +1450,188 @@ void test_song_edit_next_entry_in_lookahead() {
 
 void test_song_enable_in_lookahead() {
   songSetup({2});
-  p->songMode = false;
+  seq->setSong(0, *sink, false, 0);
   seq->start(0, *sink);
   run(0, 300000);  // 0 -> 0 decided, not heard
-  p->songMode = true;
-  seq->chainEdited(300000, *sink, 0, ChainOp::Edit);
+  setSongAt(300000, true, 0);
   run(300000, 600000);
   const std::vector<int> want = {0, 2};
   TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
-void test_song_edit_while_stopped_shows_first_entry() {
+void test_song_edit_while_stopped_keeps_pattern() {
   songSetup({2, 3});
-  p->songMode = false;
-  seq->chainEdited(0, *sink, 0, ChainOp::Edit);
+  seq->songEdited(0, *sink, 0, SongOp::Edit);
   TEST_ASSERT_EQUAL(-1, seq->heardSongPos());
   TEST_ASSERT_EQUAL(0, seq->heardPattern());
-  p->songMode = true;
-  seq->chainEdited(0, *sink, 0, ChainOp::Edit);
-  TEST_ASSERT_EQUAL(0, seq->heardSongPos());
-  TEST_ASSERT_EQUAL(2, seq->heardPattern());
+  TEST_ASSERT_EQUAL(0, seq->pattern());
 }
 
+// Every slot start writes all mutes from its mask: slot 0 mutes track 3, slot 1 unmutes it.
+void test_song_slot_mask_sets_mutes() {
+  songSetup({0, 0});
+  p->songMute[0] = 1u << 3;
+  p->songMute[1] = 0;
+  p->patterns[0].steps[3][0].note = 60;
+  p->patterns[0].steps[2][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 1010000);  // slots at 0, 500 000, 1 000 000
+  TEST_ASSERT_TRUE(p->tracks[3].mute);
+  auto on = sink->times(0x93, 60);
+  TEST_ASSERT_EQUAL(1, on.size());
+  TEST_ASSERT_EQUAL(500000, on[0]);
+  TEST_ASSERT_EQUAL(3, sink->times(0x92, 60).size());
+}
+
+// A sounding (tied) note of a track the next slot mutes ends at the slot start.
+void test_song_slot_mask_ends_sounding_note() {
+  songSetup({1, 1});
+  p->songMute[1] = 1u << 1;
+  p->patterns[1].steps[1][3].note = 70;
+  p->patterns[1].steps[1][3].fx[0] = {Fx::TIE, 0};
+  seq->start(0, *sink);
+  run(0, 600000);
+  auto off = sink->times(0x81, 70);
+  TEST_ASSERT_EQUAL(1, off.size());
+  TEST_ASSERT_EQUAL(500000, off[0]);
+  TEST_ASSERT_TRUE(p->tracks[1].mute);
+}
+
+// A live mute mid-slot holds until the next slot start, which writes the slot's mask.
+void test_song_live_mute_overwritten_at_slot_start() {
+  songSetup({0, 0});
+  p->patterns[0].steps[2][3].note = 61;
+  seq->start(0, *sink);
+  run(0, 510000);
+  p->tracks[2].mute = true;  // slot 1: its step 3 (875 000) is planned after this
+  run(510000, 1400000);
+  const std::vector<uint64_t> want = {375000, 1375000};
+  TEST_ASSERT_TRUE(sink->times(0x92, 61) == want);
+  TEST_ASSERT_FALSE(p->tracks[2].mute);
+}
+
+// Pre-song mutes: track 5 muted. Slot 0 mutes track 3, slot 1 track 4.
+static void songMuteSetup() {
+  songSetup({0, 0});
+  p->tracks[5].mute = true;
+  p->songMute[0] = 1u << 3;
+  p->songMute[1] = 1u << 4;
+}
+static bool muted(int t) { return p->tracks[t].mute; }
+
+void test_song_stop_restores_pre_song_mutes() {
+  songMuteSetup();
+  seq->start(0, *sink);
+  run(0, 600000);  // slot 1 heard
+  TEST_ASSERT_TRUE(muted(4));
+  TEST_ASSERT_FALSE(muted(5));
+  uint16_t held = 0;
+  TEST_ASSERT_TRUE(seq->savedMutes(held));
+  TEST_ASSERT_EQUAL_HEX16(1u << 5, held);
+  seq->stop(600000, *sink);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_FALSE(muted(4));
+  TEST_ASSERT_TRUE(muted(5));
+  TEST_ASSERT_FALSE(seq->savedMutes(held));
+}
+
+// SONG -> LOOP: the slot mutes hold until the pass end, then the pre-song mutes return.
+void test_song_to_loop_restores_mutes_at_pass_end() {
+  songMuteSetup();
+  p->patterns[0].steps[3][0].note = 60;
+  seq->start(0, *sink);
+  run(0, 100000);
+  setSongAt(100000, false, 0);
+  run(100000, 400000);
+  run(400000, 1100000);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_TRUE(muted(5));
+  const std::vector<uint64_t> want = {500000, 1000000};
+  TEST_ASSERT_TRUE(sink->times(0x93, 60) == want);
+  seq->stop(1100000, *sink);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_TRUE(muted(5));
+}
+
+// Slot to slot: the mutes saved at the song start stay (no new snapshot).
+void test_song_slots_do_not_resnapshot_mutes() {
+  songMuteSetup();
+  seq->start(0, *sink);
+  run(0, 1100000);  // slots 0, 1, 0
+  TEST_ASSERT_TRUE(muted(3));
+  seq->stop(1100000, *sink);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_FALSE(muted(4));
+  TEST_ASSERT_TRUE(muted(5));
+}
+
+void test_song_pause_resume_keeps_slot_mutes() {
+  songMuteSetup();
+  seq->start(0, *sink);
+  run(0, 200000);
+  sink->now = 200000;
+  seq->pause(200000, *sink);
+  TEST_ASSERT_TRUE(muted(3));
+  TEST_ASSERT_FALSE(muted(5));
+  sink->now = 300000;
+  seq->resume(300000, *sink);
+  run(300000, 600000);  // slot 1 (500 000); the next slot start is not planned yet
+  TEST_ASSERT_TRUE(muted(4));
+  TEST_ASSERT_FALSE(muted(5));
+  seq->stop(600000, *sink);
+  TEST_ASSERT_TRUE(muted(5));
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_FALSE(muted(4));
+}
+
+void test_loop_play_never_touches_mutes() {
+  songMuteSetup();
+  seq->setSong(0, *sink, false, 0);
+  seq->start(0, *sink);
+  run(0, 600000);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_TRUE(muted(5));
+  p->tracks[6].mute = true;  // live
+  run(600000, 1100000);
+  uint16_t held = 0;
+  TEST_ASSERT_FALSE(seq->savedMutes(held));
+  seq->stop(1100000, *sink);
+  TEST_ASSERT_TRUE(muted(5));
+  TEST_ASSERT_TRUE(muted(6));
+  TEST_ASSERT_FALSE(muted(3));
+}
+
+// Clear song while playing: the pattern loops on and the pre-song mutes return at the pass end.
+void test_song_clear_during_play_restores_mutes() {
+  songMuteSetup();
+  seq->start(0, *sink);
+  run(0, 200000);
+  p->songLen = 0;
+  sink->now = 200000;
+  seq->songEdited(200000, *sink, 0, SongOp::Edit);
+  run(200000, 600000);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_TRUE(muted(5));
+  seq->stop(600000, *sink);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_TRUE(muted(5));
+}
+
+// A restore planned ahead (SONG -> LOOP) is undone with its steps by a rewind (pause), and stop still restores.
+void test_song_mute_restore_undone_by_rewind() {
+  songMuteSetup();
+  seq->start(0, *sink);
+  run(0, 100000);
+  setSongAt(100000, false, 0);
+  run(100000, 300000);  // the pass end (step 3, 375 000) is planned, not heard
+  sink->now = 300000;
+  seq->pause(300000, *sink);
+  TEST_ASSERT_TRUE(muted(3));
+  TEST_ASSERT_FALSE(muted(5));
+  seq->stop(300000, *sink);
+  TEST_ASSERT_FALSE(muted(3));
+  TEST_ASSERT_TRUE(muted(5));
+}
 
 // --- INT tracks (internal synth) ---
 
@@ -1480,15 +1703,6 @@ void test_int_track_muted_sends_nothing_to_synth() {
   seq->start(0, *sink);
   run(0, 200000);
   TEST_ASSERT_EQUAL(0, sink->synKind(0x90).size());
-  TEST_ASSERT_EQUAL_HEX8(0, seq->takeActivity());
-}
-
-void test_int_track_marks_activity() {
-  p->tracks[4].out = TrackOut::Int;
-  p->patterns[0].steps[4][0].note = 60;
-  seq->start(0, *sink);
-  run(0, 1000);
-  TEST_ASSERT_EQUAL_HEX8(1 << 4, seq->takeActivity());
 }
 
 void test_int_track_stop_sends_off_and_all_off() {
@@ -1542,6 +1756,108 @@ void test_start_resets_int_tracks() {
   TEST_ASSERT_EQUAL(2, fe.size());
   TEST_ASSERT_EQUAL(1, fe[0].track);
   TEST_ASSERT_EQUAL(6, fe[1].track);
+}
+
+// Transport start reaches the synth once (TEMPO LFOs with Retrig OFF), at the start time; not
+// without INT tracks.
+void test_start_sends_transport_start_to_synth() {
+  p->tracks[3].out = TrackOut::Int;
+  p->tracks[5].out = TrackOut::Int;
+  seq->start(1234, *sink);
+  auto fa = sink->synKind(0xFA);
+  TEST_ASSERT_EQUAL(1, fa.size());
+  TEST_ASSERT_EQUAL(1, fa[0].len);
+  TEST_ASSERT_EQUAL(1234, fa[0].t);
+  TEST_ASSERT_EQUAL(1, sink->times(0xFA).size());  // MIDI out: its own 0xFA only
+}
+
+static std::vector<SynRec> perfSteps() {
+  std::vector<SynRec> out;
+  for (const auto& r : sink->synKind(0xF6))
+    if (r.b[1] == 4) out.push_back(r);
+  return out;
+}
+
+// The PERF step clock: 0xF6 4 (1/16 index in the pass, mod 64) on every 1/16 boundary, on the first INT track,
+// at the unshifted step time (swing ignored); never on MIDI out.
+void test_perf_step_clock_to_synth() {
+  p->tracks[2].out = TrackOut::Int;
+  p->tracks[5].out = TrackOut::Int;
+  p->patterns[0].swing = 75;
+  seq->start(0, *sink);
+  run(0, 1000000);
+  const auto v = perfSteps();
+  TEST_ASSERT_TRUE(v.size() >= 6);
+  const uint64_t su = 625000ull * 24 / p->bpm;
+  for (size_t i = 0; i < v.size(); ++i) {
+    TEST_ASSERT_EQUAL(2, v[i].track);
+    TEST_ASSERT_EQUAL(3, v[i].len);
+    TEST_ASSERT_EQUAL(static_cast<int>(i % p->patterns[0].length), v[i].b[2]);
+    TEST_ASSERT_TRUE(v[i].t + 1 >= i * su && v[i].t <= i * su + 1);
+  }
+  for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(0xF6, r.b[0]);
+}
+
+// 1/32 resolution: one 1/16 boundary every 2 steps; no INT track: none.
+void test_perf_step_clock_resolution_and_midi_only() {
+  p->tracks[0].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::ThirtySecond;
+  seq->start(0, *sink);
+  run(0, 1000000);
+  const auto v = perfSteps();
+  TEST_ASSERT_TRUE(v.size() >= 6);
+  const uint64_t su = 625000ull * 24 / p->bpm;
+  const size_t pass = p->patterns[0].length / 2;  // sixteenths per pass
+  for (size_t i = 0; i < v.size(); ++i) {
+    TEST_ASSERT_EQUAL(static_cast<int>(i % pass), v[i].b[2]);
+    TEST_ASSERT_TRUE(v[i].t + 1 >= i * su && v[i].t <= i * su + 1);
+  }
+  tearDown();
+  setUp();
+  seq->start(0, *sink);
+  run(0, 1000000);
+  TEST_ASSERT_EQUAL(0, perfSteps().size());
+  for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(0xF6, r.b[0]);
+}
+
+// The clock is pass-relative: a 1/32 pattern of 13 steps (6.5 sixteenths) restarts it at 0 on
+// every pass (pattern steps 0, 2, .. 12 -> 0 .. 6); it never stops after a pass.
+void test_perf_step_clock_odd_pass() {
+  p->tracks[0].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::ThirtySecond;
+  p->patterns[0].length = 13;
+  seq->start(0, *sink);
+  const uint64_t su = 625000ull * 12 / p->bpm;  // one 1/32 step
+  run(0, 3 * 13 * su - su / 2);
+  const auto v = perfSteps();
+  TEST_ASSERT_EQUAL(3 * 7, v.size());
+  for (size_t i = 0; i < v.size(); ++i) {
+    const uint64_t pass = i / 7, k = i % 7;
+    TEST_ASSERT_EQUAL(static_cast<int>(k), v[i].b[2]);
+    const uint64_t want = (pass * 13 + 2 * k) * su;
+    TEST_ASSERT_TRUE(v[i].t + 1 >= want && v[i].t <= want + 1);
+  }
+}
+
+// Pause and resume reach the synth too (TEMPO LFOs with Retrig OFF hold while paused).
+void test_pause_resume_sent_to_synth() {
+  p->tracks[2].out = TrackOut::Int;
+  seq->start(0, *sink);
+  run(0, 100000);
+  sink->now = 100000;
+  seq->pause(100000, *sink);
+  auto fc = sink->synKind(0xFC);
+  TEST_ASSERT_EQUAL(1, fc.size());
+  TEST_ASSERT_EQUAL(2, fc[0].track);
+  TEST_ASSERT_EQUAL(1, fc[0].len);
+  TEST_ASSERT_EQUAL(100000, fc[0].t);
+  TEST_ASSERT_EQUAL(0, sink->synKind(0xFB).size());
+  sink->now = 200000;
+  seq->resume(200000, *sink);
+  auto fb = sink->synKind(0xFB);
+  TEST_ASSERT_EQUAL(1, fb.size());
+  TEST_ASSERT_EQUAL(1, fb[0].len);
+  TEST_ASSERT_EQUAL(200000, fb[0].t);
 }
 
 void test_track_out_change_releases_held_notes() {
@@ -1678,110 +1994,7 @@ void test_fx_off_releases_tie() {
   TEST_ASSERT_EQUAL(250000 + 62500, offs[0]);
 }
 
-// ---- Song: chain transpose / repeat / scene, polymeter ----
-
-void test_chain_transpose_melodic_not_drum() {
-  p->songMode = true;
-  p->chainLen = 1;
-  p->chain[0] = 0;
-  p->chainTr[0] = 5;
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  instrSetType(p->instruments[1], InstrType::Kit);  // track 1: a drum track (lanes 60..67)
-  p->tracks[1].instr = 1;
-  p->patterns[0].steps[1][0].note = 100;  // step velocity
-  p->patterns[0].steps[1][0].vel = 1;     // lane 1: note 60
-  seq->start(0, *sink);
-  run(0, 10000);
-  TEST_ASSERT_EQUAL(1, sink->times(0x90, 65).size());
-  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
-  TEST_ASSERT_EQUAL(1, sink->times(0x91, 60).size());  // the lane note is not transposed
-}
-
-void test_chain_transpose_clamps_and_skips_off() {
-  p->songMode = true;
-  p->chainLen = 1;
-  p->chainTr[0] = 24;
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 120;
-  p->patterns[0].steps[0][1].note = kNoteOff;
-  seq->start(0, *sink);
-  run(0, 300000);
-  TEST_ASSERT_EQUAL(1, sink->times(0x90, 127).size());
-  TEST_ASSERT_EQUAL(kNoteOff, p->patterns[0].steps[0][1].note);  // the pattern itself is untouched
-  TEST_ASSERT_EQUAL(120, p->patterns[0].steps[0][0].note);
-}
-
-void test_chain_repeat_advances_after_n_passes() {
-  p->songMode = true;
-  p->chainLen = 2;
-  p->chain[0] = 0;
-  p->chainRep[0] = 3;
-  p->chain[1] = 1;
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  p->patterns[1].length = 4;
-  p->patterns[1].steps[0][0].note = 62;
-  seq->start(0, *sink);
-  run(0, 1510000);  // 3 passes of P0, then P1 starts at 1 500 000
-  TEST_ASSERT_EQUAL(3, sink->times(0x90, 60).size());
-  auto on62 = sink->times(0x90, 62);
-  TEST_ASSERT_EQUAL(1, on62.size());
-  TEST_ASSERT_EQUAL(1500000, on62[0]);
-}
-
-// Raising the repeat count while the advance is planned but not heard re-decides it (rewind restores
-// the pass count).
-void test_chain_repeat_edit_before_advance_heard() {
-  p->songMode = true;
-  p->chainLen = 2;
-  p->chain[0] = 0;
-  p->chainRep[0] = 2;
-  p->chain[1] = 1;
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  p->patterns[1].length = 4;
-  p->patterns[1].steps[0][0].note = 62;
-  seq->start(0, *sink);
-  run(0, 800000);  // pass 2 playing; its last step (875 000) and the advance already planned
-  p->chainRep[0] = 3;
-  sink->now = 800000;
-  seq->chainEdited(800000, *sink, 0, ChainOp::Edit);
-  run(800000, 1510000);
-  TEST_ASSERT_EQUAL(3, sink->times(0x90, 60).size());
-  auto on62 = sink->times(0x90, 62);
-  TEST_ASSERT_EQUAL(1, on62.size());
-  TEST_ASSERT_EQUAL(1500000, on62[0]);
-}
-
-void test_chain_scene_sets_mutes() {
-  p->songMode = true;
-  p->chainLen = 2;
-  p->chain[0] = 0;
-  p->chainScene[0] = 2;
-  p->chain[1] = 0;
-  p->chainScene[1] = 0;  // no scene: mutes stay
-  p->scenes[1] = 1u << 3;  // scene 2 mutes track 4
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[3][0].note = 60;
-  p->patterns[0].steps[2][0].note = 60;
-  seq->start(0, *sink);
-  run(0, 1010000);  // passes at 0, 500 000, 1 000 000
-  TEST_ASSERT_TRUE(p->tracks[3].mute);
-  TEST_ASSERT_EQUAL(0, sink->times(0x93, 60).size());
-  TEST_ASSERT_EQUAL(3, sink->times(0x92, 60).size());
-}
-
-void test_chain_empty_scene_ignored() {
-  p->songMode = true;
-  p->chainLen = 1;
-  p->chainScene[0] = 1;  // scene 1 is empty
-  p->tracks[2].mute = true;
-  seq->start(0, *sink);
-  run(0, 10000);
-  TEST_ASSERT_TRUE(p->tracks[2].mute);
-  TEST_ASSERT_FALSE(p->tracks[0].mute);
-}
+// ---- polymeter ----
 
 // Track 0 has length 3 inside a 16-step pattern: its step 0 plays at positions 0, 3, 6 ... 15.
 void test_track_length_polymeter() {
@@ -1817,77 +2030,6 @@ void test_fill_gates_fil_steps() {
   TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
   TEST_ASSERT_EQUAL(1000000, sink->times(0x90, 60)[0]);
   TEST_ASSERT_EQUAL(2, sink->times(0x91, 62).size());
-}
-
-void test_perf_rat2_doubles_and_release_restores() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->start(0, *sink);
-  seq->perfOn(0, PerfFx::Rat2);
-  run(0, 260000);
-  TEST_ASSERT_EQUAL(2, sink->times(0x90, 60).size());
-  seq->perfOff(0);
-  run(260001, 1010000);  // 500 000 was planned with it (lookahead), 1 000 000 without
-  TEST_ASSERT_EQUAL(5, sink->times(0x90, 60).size());
-}
-
-void test_perf_keeps_step_fx_and_replaces_same_cmd() {
-  Step s;
-  s.note = 60;
-  s.fx[0] = {Fx::RAT, 3};
-  for (int k = 1; k < kFxSlots; ++k) s.fx[k] = {Fx::PRB, 100};
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0] = s;
-  seq->perfOn(0, PerfFx::Rat4);
-  seq->start(0, *sink);
-  run(0, 120000);
-  TEST_ASSERT_EQUAL(4, sink->times(0x90, 60).size());  // RAT 4 took the RAT slot
-  TEST_ASSERT_EQUAL(3, p->patterns[0].steps[0][0].fx[0].val);
-}
-
-void test_perf_mute_silences_track() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  p->patterns[0].steps[1][0].note = 62;
-  seq->perfOn(0, PerfFx::Mute);
-  seq->start(0, *sink);
-  run(0, 260000);
-  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
-  TEST_ASSERT_EQUAL(1, sink->times(0x91, 62).size());
-}
-
-void test_perf_synth_fx_skipped_on_midi_track() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->perfOn(0, PerfFx::FltLow);
-  seq->start(0, *sink);
-  run(0, 10000);
-  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
-  TEST_ASSERT_EQUAL(0, sink->synKind(0xF5).size());
-}
-
-void test_perf_flt_on_int_track() {
-  p->tracks[0].out = TrackOut::Int;
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->perfOn(0, PerfFx::FltLow);
-  seq->start(0, *sink);
-  run(0, 10000);
-  bool flt = false;
-  for (const SynRec& r : sink->synKind(0xF5)) flt |= r.b[1] == static_cast<uint8_t>(Fx::FLT) && r.b[2] == 30;
-  TEST_ASSERT_TRUE(flt);
-}
-
-void test_stop_clears_perf() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->perfOn(0, PerfFx::Mute);
-  seq->start(0, *sink);
-  run(0, 10000);
-  seq->stop(10000, *sink);
-  seq->start(20000, *sink);
-  run(20000, 30000);
-  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
 }
 
 void test_phase256_within_step() {
@@ -2025,22 +2167,6 @@ void test_step_arp_on_int_track_uses_track_voices() {
   TEST_ASSERT_TRUE(noteStart);
 }
 
-// A perf Mute's release is planned with the next step; a rewind (tempo change) replans it.
-void test_perf_mute_release_survives_rewind() {
-  Step& s = p->patterns[0].steps[0][0];
-  s.note = 60;
-  s.fx[0] = {Fx::TIE, 0};
-  seq->start(0, *sink);
-  run(0, 200000);
-  seq->perfOn(0, PerfFx::Mute);
-  run(200001, 260000);  // the step at 250 ms is planned with its release
-  p->bpm = 121;         // the next process rewinds and replans it
-  run(260001, 700000);
-  const auto off = sink->times(0x80, 60);
-  TEST_ASSERT_EQUAL(1, off.size());
-  TEST_ASSERT_TRUE(off[0] < 400000);
-}
-
 // 1:2 on step 0 and PRE on step 1: step 1 plays in the passes where step 0 played; NEI on track 2
 // follows track 1.
 void test_cnd_pre_follows_previous_condition() {
@@ -2103,6 +2229,368 @@ void test_humanize_stays_within_range() {
   TEST_ASSERT_TRUE(moved);
 }
 
+void test_speed_x2_plays_two_steps_per_step() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  seq->start(0, *sink);
+  run(0, 130000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(62500, sink->times(0x90, 62)[0]);
+  TEST_ASSERT_EQUAL(125000, sink->times(0x90, 64)[0]);
+  TEST_ASSERT_EQUAL(31250, sink->times(0x80, 60)[0]);  // default gate: half of the track's own step
+}
+
+void test_speed_x2_with_x1_track_in_sync() {
+  Pattern& pt = p->patterns[0];
+  pt.length = 4;
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  for (int i = 0; i < 4; ++i) pt.steps[0][i].note = 60;  // x2: 4 steps loop twice per pass
+  pt.steps[1][0].note = 36;                              // x1: once per pass
+  seq->start(0, *sink);
+  run(0, 999999);  // two passes of 500000
+  TEST_ASSERT_EQUAL(16, sink->times(0x90, 60).size());  // 2 passes x 8
+  auto kick = sink->times(0x91, 36);  // track 1 is on channel 1
+  TEST_ASSERT_EQUAL(2, kick.size());
+  TEST_ASSERT_EQUAL(500000, kick[1]);
+}
+
+// A full load at x4 loses nothing: every track plays every sub-step, tracks 0-3 also with RAT 4.
+void test_speed_x4_heap_holds() {
+  Pattern& pt = p->patterns[0];
+  for (int tr = 0; tr < kTracks; ++tr) {
+    pt.trackSpeed[tr] = static_cast<uint8_t>(TrackSpeed::X4);
+    for (int i = 0; i < pt.length; ++i) {
+      pt.steps[tr][i].note = static_cast<uint8_t>(40 + tr);
+      if (tr < 4) pt.steps[tr][i].fx[0] = {Fx::RAT, 4};
+    }
+  }
+  seq->start(0, *sink);
+  run(0, 1999999);  // one pass: the next starts at 2000000
+  for (int tr = 0; tr < kTracks; ++tr) {  // track tr is on MIDI channel tr
+    const size_t want = 16u * 4u * (tr < 4 ? 4u : 1u);
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x90 + tr), 40 + tr).size());
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x80 + tr), 40 + tr).size());
+  }
+}
+
+// test_speed_x4_heap_holds at finer resolutions: the lookahead is 48 ticks, so it plans more pattern
+// steps ahead (16th: 2-3, 16th triplet: 3-4, 32nd: 4-5) and fewer RAT tracks fit. Peak heap (NoteOns
+// are pushed below kCap - kOffReserve = 768): 16th + RAT 4 on 4 tracks 671; 16T 703 with 2 (3: 799);
+// 32nd 759 with 1 (2: 879, 4: 1119).
+static void x4Load(Resolution res, int ratTracks) {
+  Pattern& pt = p->patterns[0];
+  pt.res = res;
+  for (int tr = 0; tr < kTracks; ++tr) {
+    pt.trackSpeed[tr] = static_cast<uint8_t>(TrackSpeed::X4);
+    for (int i = 0; i < pt.length; ++i) {
+      pt.steps[tr][i].note = static_cast<uint8_t>(40 + tr);
+      if (tr < ratTracks) pt.steps[tr][i].fx[0] = {Fx::RAT, 4};
+    }
+  }
+}
+
+static void checkX4Load(int ratTracks) {
+  for (int tr = 0; tr < kTracks; ++tr) {  // track tr is on MIDI channel tr
+    const size_t want = 16u * 4u * (tr < ratTracks ? 4u : 1u);
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x90 + tr), 40 + tr).size());
+    TEST_ASSERT_EQUAL(want, sink->times(static_cast<uint8_t>(0x80 + tr), 40 + tr).size());
+  }
+}
+
+void test_speed_x4_heap_holds_at_16th_triplet() {
+  x4Load(Resolution::SixteenthTriplet, 2);
+  seq->start(0, *sink);
+  run(0, 1333332);  // one pass of 16 x 83333
+  checkX4Load(2);
+}
+
+void test_speed_x4_heap_holds_at_32nd() {
+  x4Load(Resolution::ThirtySecond, 1);
+  seq->start(0, *sink);
+  run(0, 999999);  // one pass of 16 x 62500
+  checkX4Load(1);
+}
+
+void test_speed_x2_replans_after_edit() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  pt.steps[0][3].note = 60;  // sub-step 1 of pattern step 1: 187500
+  seq->start(0, *sink);
+  run(0, 10000);             // planned ahead, not heard
+  pt.steps[0][3].note = 62;
+  seq->releaseTies(10000, *sink);  // replans the unheard steps
+  run(10000, 200000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
+  TEST_ASSERT_EQUAL(187500, sink->times(0x90, 62)[0]);
+}
+
+void test_speed_half_plays_every_other_step() {
+  Pattern& pt = p->patterns[0];
+  pt.length = 4;
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  pt.steps[0][3].note = 65;
+  seq->start(0, *sink);
+  run(0, 999999);  // two passes of 4 steps
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 62)[0]);
+  TEST_ASSERT_EQUAL(500000, sink->times(0x90, 64)[0]);  // the second pass goes on, not from 0
+  TEST_ASSERT_EQUAL(750000, sink->times(0x90, 65)[0]);
+  TEST_ASSERT_EQUAL(125000, sink->times(0x80, 60)[0]);  // gate: half of a two-step-long step
+}
+
+void test_speed_half_tie_holds_over_skipped_step() {
+  // As test_tie_holds_until_next_note_with_overlap, on a 1/2 track: track step 1 = pattern step 2.
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][0].fx[0] = {Fx::TIE, 0};
+  pt.steps[0][1].note = 64;
+  seq->start(0, *sink);
+  run(0, 300000);
+  auto off60 = sink->times(0x80, 60);
+  TEST_ASSERT_EQUAL(1, off60.size());
+  TEST_ASSERT_EQUAL(251000, off60[0]);  // held through the skipped pattern step 1
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 64)[0]);
+}
+
+void test_speed_half_restarts_on_new_pattern() {
+  // Pattern 0 has 3 steps: its 1/2 track would rest on the next pass's step 0, a new pattern starts it at 0.
+  p->patterns[0].length = 3;
+  p->patterns[0].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][1].note = 61;
+  p->patterns[1].length = 4;
+  p->patterns[1].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[1].steps[0][0].note = 62;
+  p->patterns[1].steps[0][1].note = 64;
+  seq->start(0, *sink);
+  seq->queuePattern(1);
+  run(0, 700000);
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 61)[0]);
+  auto on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(375000, on62[0]);
+  TEST_ASSERT_EQUAL(625000, sink->times(0x90, 64)[0]);
+}
+
+void test_speed_half_continues_over_own_loop() {
+  // Same pattern, 3 steps: the 1/2 track counts through the pass end; its 3 steps take two passes.
+  p->patterns[0].length = 3;
+  p->patterns[0].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][1].note = 61;
+  p->patterns[0].steps[0][2].note = 62;
+  seq->start(0, *sink);
+  run(0, 800000);
+  auto on60 = sink->times(0x90, 60);
+  TEST_ASSERT_EQUAL(2, on60.size());
+  TEST_ASSERT_EQUAL(0, on60[0]);
+  TEST_ASSERT_EQUAL(750000, on60[1]);  // pass 2, step 0
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 61)[0]);
+  TEST_ASSERT_EQUAL(500000, sink->times(0x90, 62)[0]);  // pass 1, pattern step 1
+}
+
+void test_speed_x2_squeezed_into_swung_slot() {
+  Pattern& pt = p->patterns[0];
+  pt.swing = 75;  // step 1 at 187500
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  pt.steps[0][3].note = 65;
+  seq->start(0, *sink);
+  run(0, 240000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(93750, sink->times(0x90, 62)[0]);   // slot [0, 187500)
+  TEST_ASSERT_EQUAL(187500, sink->times(0x90, 64)[0]);  // slot [187500, 250000)
+  TEST_ASSERT_EQUAL(218750, sink->times(0x90, 65)[0]);
+  TEST_ASSERT_EQUAL(31250, sink->times(0x80, 60)[0]);  // the gate still counts from the track's step
+}
+
+void test_speed_x2_groove_accent_on_both_sub_steps() {
+  Pattern& pt = p->patterns[0];
+  pt.groove = 5;  // SHUFFLE: odd steps +33 %, velocities 100 / 70 / 95 / 70
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  for (int i = 0; i < 4; ++i) {
+    pt.steps[0][i].note = static_cast<uint8_t>(60 + i);
+    pt.steps[0][i].vel = 100;
+  }
+  seq->start(0, *sink);
+  run(0, 240000);
+  int vel[4] = {0, 0, 0, 0};
+  for (const auto& r : sink->log)
+    if (r.b[0] == 0x90 && r.b[1] >= 60 && r.b[1] < 64) vel[r.b[1] - 60] = r.b[2];
+  TEST_ASSERT_EQUAL(100, vel[0]);
+  TEST_ASSERT_EQUAL(100, vel[1]);
+  TEST_ASSERT_EQUAL(70, vel[2]);  // pattern step 1: both sub-steps accented
+  TEST_ASSERT_EQUAL(70, vel[3]);
+  TEST_ASSERT_EQUAL(166250, sink->times(0x90, 62)[0]);  // 125000 + 33 %: step 1's sub-step 0
+}
+
+// A stall ending inside a pattern step: the sub-steps already past are missed, not played together.
+void test_speed_x4_stall_skips_past_sub_steps() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X4);
+  fillSteps(0, 60);
+  seq->start(0, *sink);
+  run(0, 100000);
+  sink->now = 2100000;  // stalled; the step at 2000000 has sub-steps 2000000 .. 2093750
+  seq->process(2100000, *sink);
+  run(2100000, 2124999);
+  TEST_ASSERT_EQUAL(1, between(sink->times(0x90, 60), 2000000, 2125000).size());  // only the last
+}
+
+void test_speed_heard_loop_follows_heard_step() {
+  p->patterns[0].length = 4;
+  seq->start(0, *sink);
+  run(0, 400000);  // heard: step 3 of pass 0; planned into pass 1
+  TEST_ASSERT_EQUAL(3, seq->playPos());
+  TEST_ASSERT_EQUAL(0, seq->heardLoop());
+  TEST_ASSERT_EQUAL(1, seq->loopCount());
+  run(400001, 520000);
+  TEST_ASSERT_EQUAL(0, seq->playPos());
+  TEST_ASSERT_EQUAL(1, seq->heardLoop());
+}
+
+void test_speed_x4_timing() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X4);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 62;
+  pt.steps[0][2].note = 64;
+  pt.steps[0][3].note = 65;
+  seq->start(0, *sink);
+  run(0, 120000);
+  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60)[0]);
+  TEST_ASSERT_EQUAL(31250, sink->times(0x90, 62)[0]);
+  TEST_ASSERT_EQUAL(62500, sink->times(0x90, 64)[0]);
+  TEST_ASSERT_EQUAL(93750, sink->times(0x90, 65)[0]);
+}
+
+void test_speed_quarter_plays_every_fourth_step() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Quarter);
+  for (int i = 0; i < 4; ++i) pt.steps[0][i].note = static_cast<uint8_t>(60 + i);
+  seq->start(0, *sink);
+  run(0, 1999999);  // one pass: track steps 0..3
+  for (int i = 0; i < 4; ++i) {
+    const auto on = sink->times(0x90, 60 + i);
+    TEST_ASSERT_EQUAL(1, on.size());
+    TEST_ASSERT_EQUAL(500000u * i, on[0]);
+  }
+  TEST_ASSERT_EQUAL(250000, sink->times(0x80, 60)[0]);  // gate: half of a four-step-long step
+}
+
+void test_speed_x2_int_step_marker_ticks() {
+  p->tracks[1].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::Eighth;  // 48 ticks per pattern step
+  p->patterns[0].trackSpeed[1] = static_cast<uint8_t>(TrackSpeed::X2);
+  p->patterns[0].steps[1][0].note = 60;
+  p->patterns[0].steps[1][1].note = 62;
+  seq->start(0, *sink);
+  run(0, 240000);
+  std::vector<SynRec> mk;
+  for (const SynRec& r : sink->synKind(0xF5))
+    if (r.b[1] == kSynthStep) mk.push_back(r);
+  TEST_ASSERT_EQUAL(2, mk.size());
+  TEST_ASSERT_EQUAL_HEX8(0x80 | 24, mk[0].b[2]);
+  TEST_ASSERT_EQUAL(0, mk[0].t);
+  TEST_ASSERT_EQUAL_HEX8(0x80 | 24, mk[1].b[2]);
+  TEST_ASSERT_EQUAL(125000, mk[1].t);
+}
+
+void test_speed_x2_step_arp_on_sub_steps() {
+  Pattern& pt = p->patterns[0];
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  Step& s = pt.steps[0][0];
+  s.note = 60;
+  s.fx[0] = {Fx::CHD, kChordTriad};
+  s.fx[1] = {Fx::ARS, kArsDefault};
+  pt.steps[0][5].note = kNoteOff;  // track step 5: 312500
+  seq->start(0, *sink);
+  run(0, 62500 * 7);
+  const std::vector<int> on = notesOn(0x90);
+  const int want[] = {60, 64, 67, 60, 64};
+  TEST_ASSERT_EQUAL(5, on.size());
+  for (int i = 0; i < 5; ++i) TEST_ASSERT_EQUAL(want[i], on[i]);
+  TEST_ASSERT_EQUAL(62500, sink->times(0x90, 64)[0]);
+  TEST_ASSERT_EQUAL(125000, sink->times(0x90, 67)[0]);
+  TEST_ASSERT_TRUE(sink->times(0x80, 64)[0] < 125000);  // the arp gate counts from the track's step
+}
+
+// A replan reaching back over a pass end keeps a 1/2 track's count (3 steps: it spans two passes).
+void test_speed_half_rewind_across_pass_end() {
+  Pattern& pt = p->patterns[0];
+  pt.length = 3;
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  pt.steps[0][0].note = 60;
+  pt.steps[0][1].note = 61;
+  pt.steps[0][2].note = 62;
+  seq->start(0, *sink);
+  run(0, 240000);  // planned past the pass end at 375000
+  seq->releaseTies(240000, *sink);  // replans from step 2
+  run(240000, 800000);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 61).size());
+  TEST_ASSERT_EQUAL(250000, sink->times(0x90, 61)[0]);
+  TEST_ASSERT_EQUAL(1, sink->times(0x90, 62).size());
+  TEST_ASSERT_EQUAL(500000, sink->times(0x90, 62)[0]);  // pass 1, pattern step 1
+  const auto on60 = sink->times(0x90, 60);
+  TEST_ASSERT_EQUAL(2, on60.size());
+  TEST_ASSERT_EQUAL(750000, on60[1]);
+}
+
+// Paused after an odd number of passes of a 3-step pattern: a pattern queued now starts its pass
+// count at 0, so its 1/2 track plays its step 0 on the first step after resume.
+void test_speed_half_queue_while_paused_starts_at_step0() {
+  p->patterns[0].length = 3;
+  p->patterns[1].length = 3;
+  p->patterns[1].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[1].steps[0][0].note = 62;
+  seq->start(0, *sink);
+  run(0, 450000);  // pass 1 of pattern 0 (375000..750000)
+  sink->now = 450000;
+  seq->pause(450000, *sink);
+  seq->queuePattern(1);
+  TEST_ASSERT_EQUAL(0, seq->loopCount());
+  TEST_ASSERT_EQUAL(0, seq->heardLoop());
+  sink->now = 1000000;
+  seq->resume(1000000, *sink);
+  run(1000000, 1100000);
+  const auto on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(1000000, on62[0]);
+}
+
+// Pause / resume mid-pattern: a 1/2 track over a 3-step pattern goes on with its count.
+void test_speed_half_pause_resume_continues() {
+  p->patterns[0].length = 3;
+  p->patterns[0].trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  p->patterns[0].steps[0][0].note = 60;
+  p->patterns[0].steps[0][1].note = 61;
+  p->patterns[0].steps[0][2].note = 62;
+  seq->start(0, *sink);
+  run(0, 300000);  // steps up to 250000 heard; 375000 (pass 1, pos 0) planned, not heard
+  sink->now = 300000;
+  seq->pause(300000, *sink);
+  sink->now = 1000000;
+  seq->resume(1000000, *sink);  // from pass 1, pos 0 (count 3: rests)
+  run(1000000, 1400000);
+  const auto on60 = sink->times(0x90, 60), on61 = sink->times(0x90, 61), on62 = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(2, on60.size());
+  TEST_ASSERT_EQUAL(0, on60[0]);
+  TEST_ASSERT_EQUAL(1375000, on60[1]);  // pass 2, pos 0 (count 6)
+  TEST_ASSERT_EQUAL(1, on61.size());
+  TEST_ASSERT_EQUAL(250000, on61[0]);
+  TEST_ASSERT_EQUAL(1, on62.size());
+  TEST_ASSERT_EQUAL(1125000, on62[0]);  // pass 1, pos 1 (count 4)
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -2115,7 +2603,6 @@ int main() {
   RUN_TEST(test_retrigger_ignores_stale_note_off);
   RUN_TEST(test_muted_track_is_silent);
   RUN_TEST(test_drum_track_plays_lane_notes);
-  RUN_TEST(test_activity_marks_sounding_tracks);
   RUN_TEST(test_track_15_plays);
   RUN_TEST(test_tie_holds_until_next_note_with_overlap);
   RUN_TEST(test_set_bpm_while_playing);
@@ -2162,43 +2649,63 @@ int main() {
   RUN_TEST(test_release_ties_keeps_unheard_tie_release);
   RUN_TEST(test_release_ties_keeps_upcoming_tie_length);
   RUN_TEST(test_release_ties_fuzz);
-  RUN_TEST(test_song_plays_chain_and_loops);
-  RUN_TEST(test_song_repeated_entry_keeps_pattern);
-  RUN_TEST(test_song_ignores_queue);
+  RUN_TEST(test_song_plays_slots_and_wraps);
+  RUN_TEST(test_song_starts_at_set_slot);
+  RUN_TEST(test_song_start_slot_clamped);
+  RUN_TEST(test_song_repeated_slot_keeps_pattern);
+  RUN_TEST(test_song_ignores_queue_while_playing);
+  RUN_TEST(test_song_stopped_queue_works);
   RUN_TEST(test_song_tempo_change_after_boundary_decided);
   RUN_TEST(test_song_tempo_change_before_boundary_heard);
   RUN_TEST(test_song_fuzz_tempo_pause_keeps_order);
-  RUN_TEST(test_song_pause_resume_continues_entry);
-  RUN_TEST(test_song_stop_then_start_from_first_entry);
-  RUN_TEST(test_song_chain_shrink_while_playing);
-  RUN_TEST(test_song_empty_chain_keeps_pattern);
-  RUN_TEST(test_song_empty_chain_at_start_plays_current);
-  RUN_TEST(test_song_chain_entries_clamped);
-  RUN_TEST(test_song_enable_while_playing_starts_chain_at_boundary);
+  RUN_TEST(test_song_pause_resume_continues_slot);
+  RUN_TEST(test_song_stop_then_start_from_set_slot);
+  RUN_TEST(test_song_shrink_while_playing);
+  RUN_TEST(test_song_empty_keeps_pattern);
+  RUN_TEST(test_song_empty_at_start_plays_current);
+  RUN_TEST(test_song_slots_clamped);
+  RUN_TEST(test_song_enable_while_playing_starts_slot_at_boundary);
+  RUN_TEST(test_song_enable_while_looping_goes_to_slot);
+  RUN_TEST(test_song_enable_while_looping_slot_clamped);
   RUN_TEST(test_song_disable_while_playing_keeps_pattern);
   RUN_TEST(test_song_tie_released_on_change_held_on_repeat);
-  RUN_TEST(test_song_select_then_chain_goes_on);
-  RUN_TEST(test_song_entries_with_own_length_and_resolution);
+  RUN_TEST(test_song_select_then_song_goes_on);
+  RUN_TEST(test_song_slots_with_own_length_and_resolution);
   RUN_TEST(test_song_release_ties_across_boundary);
   RUN_TEST(test_song_stall_skips_across_boundaries);
-  RUN_TEST(test_song_insert_before_playing_keeps_entry);
+  RUN_TEST(test_song_insert_before_playing_keeps_slot);
   RUN_TEST(test_song_insert_after_boundary_decided);
-  RUN_TEST(test_song_delete_before_playing_keeps_entry);
-  RUN_TEST(test_song_delete_playing_entry_goes_on_with_next);
-  RUN_TEST(test_song_delete_first_playing_entry);
-  RUN_TEST(test_song_edit_next_entry_in_lookahead);
+  RUN_TEST(test_song_delete_before_playing_keeps_slot);
+  RUN_TEST(test_song_delete_playing_slot_goes_on_with_next);
+  RUN_TEST(test_song_delete_first_playing_slot);
+  RUN_TEST(test_song_delete_playing_slot_0_goes_on_with_next);
+  RUN_TEST(test_song_edit_next_slot_in_lookahead);
   RUN_TEST(test_song_enable_in_lookahead);
-  RUN_TEST(test_song_edit_while_stopped_shows_first_entry);
+  RUN_TEST(test_song_edit_while_stopped_keeps_pattern);
+  RUN_TEST(test_song_slot_mask_sets_mutes);
+  RUN_TEST(test_song_slot_mask_ends_sounding_note);
+  RUN_TEST(test_song_live_mute_overwritten_at_slot_start);
+  RUN_TEST(test_song_stop_restores_pre_song_mutes);
+  RUN_TEST(test_song_to_loop_restores_mutes_at_pass_end);
+  RUN_TEST(test_song_slots_do_not_resnapshot_mutes);
+  RUN_TEST(test_song_pause_resume_keeps_slot_mutes);
+  RUN_TEST(test_loop_play_never_touches_mutes);
+  RUN_TEST(test_song_clear_during_play_restores_mutes);
+  RUN_TEST(test_song_mute_restore_undone_by_rewind);
   RUN_TEST(test_midi_track_does_not_reach_synth);
   RUN_TEST(test_int_track_notes_go_to_synth_only);
   RUN_TEST(test_int_track_events_carry_scheduled_time);
   RUN_TEST(test_int_and_midi_same_channel_and_note_both_sound);
   RUN_TEST(test_int_track_muted_sends_nothing_to_synth);
-  RUN_TEST(test_int_track_marks_activity);
   RUN_TEST(test_int_track_stop_sends_off_and_all_off);
   RUN_TEST(test_int_track_pgm_goes_to_synth);
   RUN_TEST(test_send_program_int_track_uses_instrument);
   RUN_TEST(test_start_resets_int_tracks);
+  RUN_TEST(test_start_sends_transport_start_to_synth);
+  RUN_TEST(test_perf_step_clock_to_synth);
+  RUN_TEST(test_perf_step_clock_resolution_and_midi_only);
+  RUN_TEST(test_perf_step_clock_odd_pass);
+  RUN_TEST(test_pause_resume_sent_to_synth);
   RUN_TEST(test_track_out_change_releases_held_notes);
   RUN_TEST(test_int_track_synth_fx_before_note);
   RUN_TEST(test_midi_track_synth_fx_go_nowhere);
@@ -2208,20 +2715,8 @@ int main() {
   RUN_TEST(test_int_fx_off_on_note_step);
   RUN_TEST(test_fx_off_releases_tie);
   RUN_TEST(test_int_track_step_markers);
-  RUN_TEST(test_chain_transpose_melodic_not_drum);
-  RUN_TEST(test_chain_transpose_clamps_and_skips_off);
-  RUN_TEST(test_chain_repeat_advances_after_n_passes);
-  RUN_TEST(test_chain_repeat_edit_before_advance_heard);
-  RUN_TEST(test_chain_scene_sets_mutes);
-  RUN_TEST(test_chain_empty_scene_ignored);
   RUN_TEST(test_track_length_polymeter);
   RUN_TEST(test_fill_gates_fil_steps);
-  RUN_TEST(test_perf_rat2_doubles_and_release_restores);
-  RUN_TEST(test_perf_keeps_step_fx_and_replaces_same_cmd);
-  RUN_TEST(test_perf_mute_silences_track);
-  RUN_TEST(test_perf_synth_fx_skipped_on_midi_track);
-  RUN_TEST(test_perf_flt_on_int_track);
-  RUN_TEST(test_stop_clears_perf);
   RUN_TEST(test_phase256_within_step);
   RUN_TEST(test_track_mask_silences_others);
   RUN_TEST(test_step_arp_plays_on_following_steps);
@@ -2230,9 +2725,29 @@ int main() {
   RUN_TEST(test_step_arp_updown_over_two_octaves);
   RUN_TEST(test_step_arp_survives_a_stall);
   RUN_TEST(test_step_arp_on_int_track_uses_track_voices);
-  RUN_TEST(test_perf_mute_release_survives_rewind);
   RUN_TEST(test_cnd_pre_follows_previous_condition);
   RUN_TEST(test_groove_shifts_and_accents);
   RUN_TEST(test_humanize_stays_within_range);
+  RUN_TEST(test_speed_x2_plays_two_steps_per_step);
+  RUN_TEST(test_speed_x2_with_x1_track_in_sync);
+  RUN_TEST(test_speed_x4_heap_holds);
+  RUN_TEST(test_speed_x4_heap_holds_at_16th_triplet);
+  RUN_TEST(test_speed_x4_heap_holds_at_32nd);
+  RUN_TEST(test_speed_half_queue_while_paused_starts_at_step0);
+  RUN_TEST(test_speed_half_pause_resume_continues);
+  RUN_TEST(test_speed_x2_replans_after_edit);
+  RUN_TEST(test_speed_half_plays_every_other_step);
+  RUN_TEST(test_speed_half_tie_holds_over_skipped_step);
+  RUN_TEST(test_speed_half_restarts_on_new_pattern);
+  RUN_TEST(test_speed_half_continues_over_own_loop);
+  RUN_TEST(test_speed_x2_squeezed_into_swung_slot);
+  RUN_TEST(test_speed_x2_groove_accent_on_both_sub_steps);
+  RUN_TEST(test_speed_x4_stall_skips_past_sub_steps);
+  RUN_TEST(test_speed_heard_loop_follows_heard_step);
+  RUN_TEST(test_speed_x4_timing);
+  RUN_TEST(test_speed_quarter_plays_every_fourth_step);
+  RUN_TEST(test_speed_x2_int_step_marker_ticks);
+  RUN_TEST(test_speed_x2_step_arp_on_sub_steps);
+  RUN_TEST(test_speed_half_rewind_across_pass_end);
   return UNITY_END();
 }

@@ -18,10 +18,13 @@ struct Param {
 // Rows of "label  value". Turn = select, click = edit (value red), turn while editing = edit(delta),
 // Shift = x10, Shift+click while editing = cancel (the value as it was when the edit began: the
 // setEditScope() bytes copied back, else edit(+-1) until the value text matches again). Tap = select, tap on the selected row = edit. Drag while editing = edit(-dy / 16).
+// Button A: EditTurn enters the edit if needed (hold edit) and edits (Shift = x10), EditEnd (A released)
+// leaves a hold edit with the value kept, EditCancel (B while A held) = cancelEdit(). Rows without edit
+// ignore EditTurn. A click / tap edit is never left by EditEnd.
 // With setVisibleRows() smaller than the row count the list scrolls (Drag while not editing).
 // setPageBar(true): the screen's page bar is a position above the first row (sel() == -1, drawn by
-// the screen, see barSelected()); turning cycles through it and the rows. A click on it returns +1
-// (next page), Shift+click -1 (previous page); the screen switches and keeps the bar selected.
+// the screen, see barSelected()); turning cycles through it and the rows. A click on it does nothing;
+// A + turn on it returns the delta (pages to move); the screen switches and keeps the bar selected.
 class ParamList {
  public:
   static constexpr int kRowH = 24;
@@ -67,14 +70,20 @@ class ParamList {
     if (!bar_) return;
     sel_ = -1;
     edit_ = false;
+    hold_ = false;
     top_ = 0;
   }
   bool barSelected() const { return bar_ && sel_ < 0; }
   bool editing() const { return edit_; }
-  void setEdit(bool on) {
+  bool holding() const { return hold_; }  // the edit is an A + turn one: A released ends it
+  // hold: restores a hold edit (rows rebuilt while A is held), so EditEnd still ends it.
+  void setEdit(bool on, bool hold = false) {
     edit_ = on;
+    hold_ = on && hold;
     dragAcc_ = 0;
   }
+  // A + turn: enters the edit of the selected row if needed (hold edit). False = row not editable.
+  bool holdEdit();
   // Called after every edit (dirty flag), also after a cancel.
   void setOnEdit(std::function<void()> f) { onEdit_ = std::move(f); }
   // Bytes an edit of these rows may change (e.g. the instrument): copied when an edit begins and
@@ -87,7 +96,7 @@ class ParamList {
   void setOnCancel(std::function<void()> f) { onCancel_ = std::move(f); }
   // Restores the value the edit began with and leaves edit; false when not editing.
   bool cancelEdit();
-  // 0, or -1 / +1: a click (Shift+click) on the page bar, the previous / next page.
+  // 0, or the pages to move: A + turn on the page bar.
   int onInput(const hw::InputEvent& ev);
   void onTouch(const TouchEvent& ev);
   void edit(int delta);
@@ -108,6 +117,7 @@ class ParamList {
   int visible_ = 0;  // 0 = all
   int dragAcc_ = 0;  // drag px not yet turned into rows
   bool edit_ = false;
+  bool hold_ = false;  // edit_ entered by holdEdit(): EditEnd leaves it
   bool bar_ = false;  // setPageBar: position -1 is the screen's page bar
   int y_;  // top of the first row, updated by draw()
   std::function<void()> onEdit_;

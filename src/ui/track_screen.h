@@ -10,9 +10,12 @@ namespace ui {
 // Name: click to edit, turn = character, Shift+turn = position.
 // MIXER view (the MIX tab, setMixer): 8 strips of the half holding the cursor (A = 1-8, B = 9-16, as
 // GRID's Overview), the master strip MAIN and the output scope below. Strip: name, volume fader
-// (INT), delay / reverb send of its instrument (read only), M / S. Turn = master volume, Shift + turn
-// = the other half; a track button held + turn = that track's volume, Shift + track button = mute
-// (App, every screen). Touch: the fader follows the finger, M / S toggle (solo only here).
+// (INT), pan bar (INT), delay / reverb send of its instrument (read only), M / S. Turn = master
+// volume, Shift + turn = the other half, A + turn = master volume (Shift = x10); a tap on a pan bar
+// selects it: turn / A + turn then change that track's pan instead (tap again, B, Shift + turn or
+// leaving the tab drop it). A track button held + turn = that track's volume (+ encoder click: its
+// pan), Shift + track button = mute (App, every screen). Touch: the fader follows the finger, M / S
+// toggle (solo only here).
 class TrackScreen : public Screen {
  public:
   explicit TrackScreen(App& app);
@@ -20,6 +23,8 @@ class TrackScreen : public Screen {
   void onLeave() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
+  void onPage(int d) override;
+  void onBack() override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
   // MIX tab (true) or TRACK tab (false): the mixer view or the track settings.
@@ -27,7 +32,7 @@ class TrackScreen : public Screen {
 
  private:
   // Rows in page order: MAIN, NOTE, MIDI (contiguous runs, see kPageFirst).
-  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kVel, kGate, kPatLen, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
+  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kVel, kGate, kPatLen, kSpeed, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
   enum Page : int { kPgMain, kPgNote, kPgMidi, kPages };
   static constexpr int kPageFirst[kPages + 1] = {kName, kVel, kChannel, kRows};
   static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
@@ -50,7 +55,9 @@ class TrackScreen : public Screen {
   static constexpr int kMasterW = 48, kMasterX = kStripX0 + kStrips * kStripW + 8;  // 432
   static constexpr int kMaster = kStrips;  // hitStrip: the master strip
   static constexpr int kNameY = 2, kFaderY = 16, kFaderH = 64, kFaderW = 12, kValY = 84;
-  static constexpr int kSendY = 100, kSendDy = 16, kBtnY = 134, kBtnW = 22, kBtnH = 16;
+  // Pan row: the text at kPanY - 2 and the bar (2 px line, 4 px tick) under it, at kPanY + kPanBarDy.
+  static constexpr int kPanY = 100, kPanBarDy = 13;
+  static constexpr int kSendY = 116, kSendDy = 16, kBtnY = 150, kBtnW = 22, kBtnH = 16;
   // Scope under the strips: the waveform (auto gain) and a peak meter with CLIP.
   static constexpr int kScopeY = kBtnY + kBtnH + 6, kScopeH = kAreaH - kScopeY - 4, kMeterW = 10;
   static constexpr uint32_t kScopeMs = 50;  // ~20 frames a second while the MIX tab is shown
@@ -63,7 +70,7 @@ class TrackScreen : public Screen {
   void updateMeters();
   float level_[mt::kTracks] = {};
   uint32_t clipAt_[mt::kTracks] = {};  // millis() | 1 of the last full-scale peak, held 1 s
-  enum class Part : uint8_t { Name, Fader, Mute, Solo };
+  enum class Part : uint8_t { Name, Fader, Pan, Mute, Solo };
   int firstTrack() const;
   void mixerInput(const hw::InputEvent& ev);
   void mixerTouch(const TouchEvent& ev);
@@ -71,10 +78,12 @@ class TrackScreen : public Screen {
   void drawFader(LGFX_Sprite& s, int x, int y, int value, int max, uint16_t fill);
   bool hitStrip(int x, int y, int& strip, Part& part) const;
   void setVol(int track, int v);
+  void setPan(int track, int v);
   void setMasterVol(int v);  // project data: saved with it, in Render WAV
   void toggleMuteSolo(int track, bool solo);
   uint32_t mixSignature() const;
   bool mixer_ = false;
+  int panSel_ = -1;  // track whose pan bar the encoder turns, -1 = none (the encoder turns MAIN)
   uint32_t mixSig_ = 0;
 
   App& app_;
@@ -83,6 +92,8 @@ class TrackScreen : public Screen {
   void followTrack();
   int patLenPat_ = -1;      // the pattern of that run
   uint32_t patLenSeq_ = 0;  // App::editSeq() right after the last Pat len edit: one undo snapshot per run
+  int speedPat_ = -1;       // the same for Speed
+  uint32_t speedSeq_ = 0;
   ParamList list_{kAreaY + kHeaderH + PageBar::kH};
   int y0_ = kAreaY;
   int namePos_ = 0;

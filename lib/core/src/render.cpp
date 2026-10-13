@@ -20,11 +20,8 @@ uint64_t passTicks(const Project& p, int idx) {
 
 uint64_t songTicks(const Project& p) {
   uint64_t ticks = 0;
-  const int n = p.chainLen > kChainMax ? kChainMax : p.chainLen;
-  for (int i = 0; i < n; ++i) {
-    const int rep = p.chainRep[i] < 1 ? 1 : (p.chainRep[i] > kChainRepMax ? kChainRepMax : p.chainRep[i]);
-    ticks += passTicks(p, p.chain[i] < kPatterns ? p.chain[i] : kPatterns - 1) * rep;
-  }
+  const int n = p.songLen > kSongMax ? kSongMax : p.songLen;
+  for (int i = 0; i < n; ++i) ticks += passTicks(p, p.song[i] < kPatterns ? p.song[i] : kPatterns - 1);
   return ticks;
 }
 
@@ -58,19 +55,18 @@ void nextResampleName(const Project& p, char out[kSampleNameMax + 1]) {
   }
 }
 
-OfflineSequence::Guard::Guard(Project& pr, const RenderSpec& s) : p(pr), songMode(pr.songMode) {
+OfflineSequence::Guard::Guard(Project& pr) : p(pr) {
   for (int t = 0; t < kTracks; ++t) mute[t] = p.tracks[t].mute;
-  p.songMode = s.mode == RenderSpec::Mode::Song;
 }
 
 OfflineSequence::Guard::~Guard() {
-  p.songMode = songMode;
   for (int t = 0; t < kTracks; ++t) p.tracks[t].mute = mute[t];
 }
 
 OfflineSequence::OfflineSequence(Project& p, const RenderSpec& spec) : spec_(spec), seq_(p) {
   seq_.setTrackMask(spec.tracksMask);
   seq_.seed(0x5EED);
+  seq_.setSong(0, *this, spec.mode == RenderSpec::Mode::Song, 0);
   if (spec.mode == RenderSpec::Mode::Pattern) seq_.queuePattern(spec.pattern < kPatterns ? spec.pattern : 0);
   bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p) : passUs(p, spec.pattern);
   bodyBlocks_ = static_cast<uint32_t>((bodyUs_ + kRenderBlockUs - 1) / kRenderBlockUs);

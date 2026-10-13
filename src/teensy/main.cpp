@@ -25,8 +25,8 @@ extern "C" uint8_t external_psram_size;
 
 namespace {
 
-// Delay lines (L, R) from the RAM2 (OCRAM) heap: 2 s each (352,800 B), 1.5 s when that would
-// leave less than kRam2Reserve for the jobs (wavetable loads, previews).
+// Delay line (mono send, returned to both sides) from the RAM2 (OCRAM) heap: 2 s (176,400 B), 1.5 s
+// when that would leave less than kRam2Reserve for the jobs (wavetable loads, previews).
 constexpr uint32_t kDelayLen = 2 * mt::kSynthRate;
 constexpr uint32_t kDelayLenShort = 3 * mt::kSynthRate / 2;
 constexpr uint32_t kRam2Reserve = 64 * 1024;
@@ -59,13 +59,35 @@ void loadDemoModel() {
 
 uint32_t ram2Free() { return static_cast<uint32_t>(&_heap_end - __brkval); }
 
-// The delay lines take what RAM2 can spare (malloc, not DMAMEM: the desk build borrows RAM2 for a
+// PERF ring buffer (REPEAT .. TAPE STOP): 6 s, else 4 s, else 2 s from PSRAM when the board has
+// it; without PSRAM 1 s from RAM2 if that still leaves the short delay line and kRam2Reserve (taken
+// before the delay line: 1 s of PERF beats the delay's last 0.5 s). Held for good (no screen sprite
+// here to share the memory with). Returns the seconds held, 0 = buffer effects silent.
+uint8_t allocPerf() {
+  if (external_psram_size) {
+    for (const uint32_t sec : {6u, 4u, 2u}) {
+      const uint32_t frames = sec * mt::kSynthRate;
+      auto* b = static_cast<int16_t*>(extmem_calloc(frames * 2, sizeof(int16_t)));
+      if (!b) continue;
+      synth.setPerfBuffer(b, frames, false);
+      return static_cast<uint8_t>(sec);
+    }
+  }
+  const uint32_t frames = mt::kSynthRate;
+  if (ram2Free() < (frames * 2 + kDelayLenShort) * sizeof(int16_t) + kRam2Reserve) return 0;
+  auto* b = static_cast<int16_t*>(calloc(frames * 2, sizeof(int16_t)));
+  if (!b) return 0;
+  synth.setPerfBuffer(b, frames, false);
+  return 1;
+}
+
+// The delay line takes what RAM2 can spare (malloc, not DMAMEM: the desk build borrows RAM2 for a
 // whole Project at boot first).
 // Returns the line length (0 = no delay).
 uint32_t allocDelay() {
   uint32_t len = kDelayLen;
-  if (ram2Free() < 2 * len * sizeof(int16_t) + kRam2Reserve) len = kDelayLenShort;
-  auto* line = static_cast<int16_t*>(malloc(2 * len * sizeof(int16_t)));
+  if (ram2Free() < len * sizeof(int16_t) + kRam2Reserve) len = kDelayLenShort;
+  auto* line = static_cast<int16_t*>(malloc(len * sizeof(int16_t)));
   if (!line) return 0;
   synth.setDelayBuffer(line, len);
   return len;
@@ -97,6 +119,7 @@ void setup() {
   // its built-in wavetables need a 96 KB table from the RAM2 (OCRAM) heap before the delay line.
   card::begin();
   bank::begin(model, synth, stream);
+  const uint8_t perfSec = allocPerf();
   const uint32_t delayLen = allocDelay();
   synth.setReverbBuffer(reverbBuf, mt::Reverb::kBufLen);
   AudioMemory(12);
@@ -104,10 +127,10 @@ void setup() {
   preview::begin(model, stream);
   render::begin(synth, stream);
   fw::begin(stream);
-  link::begin(model, synth, stream);
-  link::log("synth board up, model %u B, voices %d / heavy %d, delay %lu ms, RAM2 free %lu B, PSRAM %u MB",
+  link::begin(model, synth, stream, perfSec);
+  link::log("synth board up, model %u B, voices %d / heavy %d, delay %lu ms, PERF %u s, RAM2 free %lu B, PSRAM %u MB",
             sizeof model, mt::kVoices, mt::kFmVoiceMax, static_cast<unsigned long>(delayLen * 1000 / mt::kSynthRate),
-            static_cast<unsigned long>(ram2Free()), external_psram_size);
+            perfSec, static_cast<unsigned long>(ram2Free()), external_psram_size);
   bank::logState();
 #ifdef AUDIO_BENCH_POOL
   bench::begin(model, synth, stream);

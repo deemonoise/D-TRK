@@ -158,7 +158,11 @@ bool profileStop(Profile& out) {
   if (!profileCall(0, rep) || rep.blocks == 0 || rep.cyclesPerUs == 0) return false;
   out.blocks = rep.blocks;
   const double div = static_cast<double>(rep.cyclesPerUs) * rep.blocks;
-  for (int i = 0; i < kProfStages; ++i) out.us[i] = static_cast<float>(rep.cycles[i] / div);
+  for (int i = 0; i < kProfStages; ++i) {
+    out.us[i] = static_cast<float>(rep.cycles[i] / div);
+    out.n[i] = static_cast<float>(rep.count[i]) / rep.blocks;
+  }
+  out.peakUs = static_cast<float>(rep.peakCycles) / rep.cyclesPerUs;
   return true;
 }
 
@@ -177,6 +181,12 @@ void previewSlice(uint8_t instr, uint8_t slice, uint8_t root, uint32_t holdMs) {
   slink::send(Msg::PreviewSlice, PreviewSlice{static_cast<uint8_t>(instr & 15), slice, static_cast<uint8_t>(root & 127),
                                               holdMs > 25000 ? 25000 : holdMs});
 }
+
+bool perf(uint8_t op, uint8_t val) { return slink::send(Msg::Perf, Perf{op, val}); }
+
+uint32_t parkCount() { return slink::bootId() << 8 | slink::parks(); }
+
+uint32_t perfBuffer(bool on) { return on ? slink::perfSeconds() : 0; }
 
 Load takeLoad() {
   absorb();

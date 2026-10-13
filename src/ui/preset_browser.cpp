@@ -37,7 +37,13 @@ void PresetBrowser::open(Mode mode, int instr) {
     return;
   }
   names_ = static_cast<char(*)[hw::kNameMax]>(heap_caps_malloc(kMaxEntries * hw::kNameMax, MALLOC_CAP_SPIRAM));
-  if (!names_) {
+  if (mode == Mode::Load)
+    blockBackup_ = static_cast<mt::Instrument*>(heap_caps_malloc(mt::kKitLanes * sizeof(mt::Instrument), MALLOC_CAP_SPIRAM));
+  if (!names_ || (mode == Mode::Load && !blockBackup_)) {
+    heap_caps_free(names_);
+    heap_caps_free(blockBackup_);
+    names_ = nullptr;
+    blockBackup_ = nullptr;
     app_.toast(storage::resultText(storage::Result::NoMemory));
     return;
   }
@@ -45,12 +51,17 @@ void PresetBrowser::open(Mode mode, int instr) {
   mode_ = mode;
   instr_ = instr;
   backup_ = inst();
+  block_ = mt::factoryKitBlock(instr_);
+  blockChanged_ = false;
+  if (blockBackup_) memcpy(blockBackup_, &app_.project().instruments[block_], mt::kKitLanes * sizeof(mt::Instrument));
   seqBefore_ = seqAfter_ = app_.editSeq();
   changed_ = false;
-  type_ = mt::presetTypeHas(backup_.type) ? backup_.type : mt::InstrType::Chip;
-  const char* last = lastDir_[static_cast<int>(type_)];
-  strlcpy(dir_, last[0] && hw::sdReady() && hw::sdFs().exists(last) ? last : mt::presetRoot(type_), sizeof(dir_));
+  // Load starts at the top (type list), Save in the instrument's type root.
+  type_ = mode_ == Mode::Load ? mt::InstrType::Count
+                              : (mt::presetTypeHas(backup_.type) ? backup_.type : mt::InstrType::Chip);
+  strlcpy(dir_, type_ == mt::InstrType::Count ? "" : mt::presetRoot(type_), sizeof(dir_));
   inFactory_ = false;
+  facType_ = mt::InstrType::Count;
   category_[0] = 0;
   list();
 }
@@ -61,13 +72,17 @@ void PresetBrowser::close(bool keep) {
   if (mode_ == Mode::Load && !keep && changed_) {
     engine::lockProject();
     inst() = backup_;
+    if (blockChanged_)
+      memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
     engine::unlockProject();
     // Nothing else edited since the audition: the project is as clean as before.
     if (app_.editSeq() == seqAfter_) app_.rewindEditSeq(seqBefore_);
     else app_.markDirty();
   }
   heap_caps_free(names_);
+  heap_caps_free(blockBackup_);
   names_ = nullptr;
+  blockBackup_ = nullptr;
   count_ = 0;
   open_ = false;
   app_.invalidate();
@@ -86,19 +101,29 @@ void PresetBrowser::list() {
   picked_ = -1;
   if (inFactory_) {
     add(Kind::Up, 0, "..");
-    if (!category_[0]) {
-      const int n = mt::factoryCategoryCount(type_);
-      for (int k = 0; k < n; ++k) add(Kind::Category, k, mt::factoryCategory(type_, k));
+    if (facType_ == mt::InstrType::Count) {
+      for (int k = 0; k < static_cast<int>(mt::InstrType::Count); ++k) {
+        const mt::InstrType t = mt::instrTypeAt(k);
+        if (mt::factoryCount(t) > 0) add(Kind::FactoryType, static_cast<int>(t), mt::presetTypeName(t));
+      }
+    } else if (!category_[0]) {
+      const int n = mt::factoryCategoryCount(facType_);
+      for (int k = 0; k < n; ++k) add(Kind::Category, k, mt::factoryCategory(facType_, k));
     } else {
-      for (int i = 0; i < mt::factoryCount(type_); ++i) {
-        const mt::FactoryPreset& f = mt::factoryPreset(type_, i);
+      for (int i = 0; i < mt::factoryCount(facType_); ++i) {
+        const mt::FactoryPreset& f = mt::factoryPreset(facType_, i);
         if (strcmp(f.category, category_) == 0) add(Kind::FactoryFile, i, f.name);
       }
     }
+  } else if (type_ == mt::InstrType::Count) {  // Load top: [FACTORY], the types' user folders
+    add(Kind::Factory, 0, "[FACTORY]");
+    for (int k = 0; k < static_cast<int>(mt::InstrType::Count); ++k) {
+      const mt::InstrType t = mt::instrTypeAt(k);
+      if (mt::presetTypeHas(t)) add(Kind::UserType, static_cast<int>(t), mt::presetTypeName(t));
+    }
   } else {
-    const bool root = mt::presetDepth(dir_) <= 0;
-    if (!root) add(Kind::Up, 0, "..");
-    if (root && mode_ == Mode::Load && mt::factoryCount(type_) > 0) add(Kind::Factory, 0, "[FACTORY]");
+    // A type root goes up to the top in Load; Save stays in its type.
+    if (mt::presetDepth(dir_) > 0 || mode_ == Mode::Load) add(Kind::Up, 0, "..");
     if (hw::sdReady()) {
       // Straight into names_, kinds after.
       int from = count_;
@@ -108,7 +133,6 @@ void PresetBrowser::list() {
       count_ += hw::sdList(dir_, ".mti", names_ + count_, kMaxEntries - count_, storage::validName);
       for (int i = from; i < count_; ++i) entries_[i] = {Kind::File, 0};
     }
-    strlcpy(lastDir_[static_cast<int>(type_)], dir_, sizeof(lastDir_[0]));
   }
   sel_ = count_ > 1 && entries_[0].kind == Kind::Up ? 1 : 0;
   top_ = 0;
@@ -124,14 +148,30 @@ void PresetBrowser::enter(int i) {
       if (inFactory_ && category_[0]) {
         strlcpy(left, category_, sizeof(left));
         category_[0] = 0;
+      } else if (inFactory_ && facType_ != mt::InstrType::Count) {
+        strlcpy(left, mt::presetTypeName(facType_), sizeof(left));
+        facType_ = mt::InstrType::Count;
       } else if (inFactory_) {
         strlcpy(left, "[FACTORY]", sizeof(left));
         inFactory_ = false;
+      } else if (mode_ == Mode::Load && mt::presetDepth(dir_) <= 0) {
+        strlcpy(left, mt::presetTypeName(type_), sizeof(left));
+        type_ = mt::InstrType::Count;
+        dir_[0] = 0;
       } else if (!mt::presetUp(dir_, left, sizeof(left))) {
         return;
       }
       break;
-    case Kind::Factory: inFactory_ = true; break;
+    case Kind::UserType:
+      type_ = static_cast<mt::InstrType>(entries_[i].index);
+      strlcpy(dir_, mt::presetRoot(type_), sizeof(dir_));
+      break;
+    case Kind::Factory:  // the type list, the browsed type selected
+      inFactory_ = true;
+      facType_ = mt::InstrType::Count;
+      strlcpy(left, mt::presetTypeName(backup_.type), sizeof(left));
+      break;
+    case Kind::FactoryType: facType_ = static_cast<mt::InstrType>(entries_[i].index); break;
     case Kind::Category: strlcpy(category_, names_[i], sizeof(category_)); break;
     case Kind::Folder: {
       if (mt::presetDepth(dir_) >= mt::kPresetDepthMax) {
@@ -161,9 +201,27 @@ void PresetBrowser::enter(int i) {
 void PresetBrowser::apply(const mt::Instrument& src) {
   const bool found = mt::projSampleFind(app_.project(), src.sample) >= 0;
   engine::lockProject();
+  if (blockChanged_) {  // a kit picked before: its drums go
+    memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
+    blockChanged_ = false;
+  }
   mt::applyPreset(inst(), src, found);
   engine::unlockProject();
   if (inst().type == mt::InstrType::Synth) resolveTables();
+  app_.markDirty();
+  seqAfter_ = app_.editSeq();
+  changed_ = true;
+  audio::preview(static_cast<uint8_t>(instr_), kPreviewNote);
+}
+
+void PresetBrowser::applyKit(int index) {
+  engine::lockProject();
+  // A kit picked before: its drums go, the block is back as on open.
+  if (blockChanged_)
+    memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
+  mt::factoryBuildKit(index, app_.project(), instr_);
+  engine::unlockProject();
+  blockChanged_ = true;
   app_.markDirty();
   seqAfter_ = app_.editSeq();
   changed_ = true;
@@ -195,8 +253,13 @@ void PresetBrowser::resolveTables() {
 void PresetBrowser::pick(int i) {
   if (mode_ != Mode::Load || i < 0 || i >= count_) return;
   mt::Instrument m;
+  if (entries_[i].kind == Kind::FactoryFile && facType_ == mt::InstrType::Kit) {
+    applyKit(entries_[i].index);
+    picked_ = i;
+    return;
+  }
   if (entries_[i].kind == Kind::FactoryFile) {
-    mt::factoryBuild(type_, entries_[i].index, m);
+    mt::factoryBuild(facType_, entries_[i].index, m);
   } else if (entries_[i].kind == Kind::File) {
     // 84 bytes: no busy overlay, it would flash on every encoder step.
     const storage::Result r = storage::loadPreset(dir_, names_[i], m);
@@ -345,21 +408,6 @@ void PresetBrowser::onMenu(int id) {
   app_.invalidate();
 }
 
-void PresetBrowser::switchType(int d) {
-  if (mode_ != Mode::Load) return;
-  constexpr int kTypes = static_cast<int>(mt::InstrType::Count);
-  int pos = mt::instrTypePos(type_);
-  do {  // types without presets (KIT) are skipped
-    pos = ((pos + d) % kTypes + kTypes) % kTypes;
-  } while (!mt::presetTypeHas(mt::instrTypeAt(pos)));
-  type_ = mt::instrTypeAt(pos);
-  const char* last = lastDir_[static_cast<int>(type_)];
-  strlcpy(dir_, last[0] && hw::sdReady() && hw::sdFs().exists(last) ? last : mt::presetRoot(type_), sizeof(dir_));
-  inFactory_ = false;
-  category_[0] = 0;
-  list();
-}
-
 void PresetBrowser::button(int b) {
   if (mode_ == Mode::Load) {
     switch (b) {
@@ -390,8 +438,7 @@ void PresetBrowser::onInput(const hw::InputEvent& ev) {
   }
   switch (ev.type) {
     case InputType::EncTurn:
-      if (ev.shift) switchType(ev.delta);
-      else moveSel(ev.delta);
+      moveSel(ev.delta);
       break;
     case InputType::EncClick: choose(sel_); break;
     case InputType::EncLong: close(false); break;
@@ -414,8 +461,6 @@ void PresetBrowser::onTouch(const TouchEvent& ev) {
   }
   if (ev.type != TouchType::Tap) return;
   if (ev.y < top) {
-    if (mode_ == Mode::Load && ev.x < kLeftX1) switchType(-1);
-    else if (mode_ == Mode::Load && ev.x >= kRightX0 && ev.x < kRightX1) switchType(1);
     for (int b = 0; b < 3; ++b)
       if (ev.x >= kBtnX[b] && ev.x < kBtnX1[b]) button(b);
     return;
@@ -433,31 +478,34 @@ void PresetBrowser::onTouch(const TouchEvent& ev) {
 }
 
 void PresetBrowser::drawHeader(LGFX_Sprite& s, int y0) {
-  const int cy = y0 + kHeaderH / 2;
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
-  const char* tn = mt::presetTypeName(type_);
-  s.setTextColor(kText);
-  if (mode_ == Mode::Load) {
-    s.fillTriangle(14, cy - 2, 26, cy - 9, 26, cy + 5, kCursor);
-    s.fillTriangle(kRightX0 + 26, cy - 2, kRightX0 + 14, cy - 9, kRightX0 + 14, cy + 5, kCursor);
-    const int mid = (kLeftX1 + kRightX0) / 2;
-    s.drawString(tn, mid - static_cast<int>(strlen(tn)) * kCharW / 2, ty);
-  } else {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "SAVE %s", tn);
-    s.drawString(buf, 8, ty);
-  }
-  // Path below the type's root, its tail when long.
+  // Load: the whole path from the top ("/", "/SYNTH/MINE", "[FACTORY]/KIT/DRUM"). Save: the type,
+  // then the path below its root.
+  int pathX = 8;
   char path[mt::kPresetDirMax + 16];
-  if (inFactory_) snprintf(path, sizeof(path), "[FACTORY]%s%s", category_[0] ? "/" : "", category_);
-  else snprintf(path, sizeof(path), "%s", mt::presetSubPath(dir_)[0] ? mt::presetSubPath(dir_) : "/");
-  constexpr int kFit = (kBtnX[0] - 8 - kPathX) / kCharW;
+  if (mode_ == Mode::Save) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "SAVE %s", mt::presetTypeName(type_));
+    s.setTextColor(kText);
+    s.drawString(buf, 8, ty);
+    pathX = kPathX;
+    snprintf(path, sizeof(path), "%s", mt::presetSubPath(dir_)[0] ? mt::presetSubPath(dir_) : "/");
+  } else if (inFactory_) {
+    snprintf(path, sizeof(path), "[FACTORY]%s%s%s%s", facType_ != mt::InstrType::Count ? "/" : "",
+             facType_ != mt::InstrType::Count ? mt::presetTypeName(facType_) : "", category_[0] ? "/" : "",
+             category_);
+  } else if (type_ == mt::InstrType::Count) {
+    snprintf(path, sizeof(path), "/");
+  } else {
+    snprintf(path, sizeof(path), "/%s%s", mt::presetTypeName(type_), mt::presetSubPath(dir_));
+  }
+  const int fit = (kBtnX[0] - 8 - pathX) / kCharW;
   const int len = static_cast<int>(strlen(path));
-  char shown[kFit + 1];
-  snprintf(shown, sizeof(shown), "%s%s", len > kFit ? "..." : "", path + (len > kFit ? len - kFit + 3 : 0));
-  s.setTextColor(kDim);
-  s.drawString(shown, kPathX, ty);
+  char shown[mt::kPresetDirMax + 16];
+  snprintf(shown, sizeof(shown), "%s%s", len > fit ? "..." : "", path + (len > fit ? len - fit + 3 : 0));
+  s.setTextColor(mode_ == Mode::Load ? kText : kDim);
+  s.drawString(shown, pathX, ty);
   const char* const* labels = mode_ == Mode::Load ? kLoadBtns : kSaveBtns;
   const bool delOk = sel_ < count_ && entries_[sel_].kind == Kind::File;
   for (int b = 0; b < 3; ++b) {
@@ -489,7 +537,7 @@ void PresetBrowser::draw(LGFX_Sprite& s, int y0) {
     const int ty = ry + (kRowH - kCharH) / 2;
     if (i == picked_) s.drawString(">", 4, ty);  // applied now
     s.drawString(names_[i], 16, ty);
-    if (k == Kind::Folder || k == Kind::Category)
+    if (k == Kind::Folder || k == Kind::Category || k == Kind::FactoryType || k == Kind::UserType)
       s.drawString("/", 16 + static_cast<int>(strlen(names_[i])) * kCharW, ty);
   }
   s.setTextColor(kDim);

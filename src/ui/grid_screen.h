@@ -4,7 +4,7 @@
 #include "fill_dialog.h"
 #include "model.h"
 #include "screen.h"
-#include "track_leds.h"
+#include "track_buttons.h"
 #include "transpose_dialog.h"
 
 namespace ui {
@@ -19,14 +19,17 @@ class GridScreen : public Screen {
   void onProjectReplaced() override;
   void onPatternChange() override;
   void onInput(const hw::InputEvent& ev) override;
+  void onBack() override;
+  void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
   // Track button N: false when App should handle it (Shift + N outside edit = mute).
   bool trackKey(int n, bool shift);
-  void trackRelease(int n);  // PERF: the held effect ends
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
-  bool buttonsBusy() const { return edit_ || rec_ || perf_; }
+  bool buttonsBusy() const;
+  void undo();  // with a toast; the next edit takes a fresh snapshot
+  bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen(); }  // Fill / Transpose preview
 
  private:
   // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
@@ -44,7 +47,7 @@ class GridScreen : public Screen {
   static constexpr int kRowH = 16;
   static constexpr int kNumW = 32;
   static constexpr int kColW = 56;     // Overview track column
-  static constexpr int kOverviewTracks = mt::kTrackLeds;  // overview columns: one half of the tracks
+  static constexpr int kOverviewTracks = mt::kTrackButtons;  // overview columns: one half of the tracks
   static_assert(kNumW + kOverviewTracks * kColW <= kScreenW, "Overview columns must fit");
   static_assert(mt::kTracks % kOverviewTracks == 0, "halves must tile the tracks");
   static constexpr int kDetW = kScreenW - kNumW;  // Detail: the current track only
@@ -72,16 +75,16 @@ class GridScreen : public Screen {
   void cancelCell();  // Shift+click in edit: the cell back as it was, edit off
   void openEditStepMenu();
   void toggleView();
-  void undo();
   void editTurn(int delta, bool shift);
   void setNote(uint8_t note);
   void previewNote(uint8_t note);
   void enterDegree(int button, bool octaveUp);
   uint8_t degreeNote(int button, bool octaveUp, int ref) const;  // scale degree in the octave of ref
   void setRec(bool on);
-  void setPerf(bool on);
-  void perfRelease();
+  void setPerf(bool on);  // the shared PERF (App::perf()); on turns REC and edit off
+  bool perf() const;
   bool recordKey(int n, bool shift);  // REC while playing: button N into the heard step
+  int heardTrackStep(int tr);  // the heard step of track tr (own length and speed); slow: the last one played
   void writeStep(const mt::Step& st);
   void openMenu();
   void openFill();
@@ -97,8 +100,9 @@ class GridScreen : public Screen {
   // Drum track: the track's instrument is a KIT, steps are lane masks.
   bool drumAt(int tr) const;
   bool drum() const { return drumAt(track()); }
-  bool keyboardShown() const { return edit_ && curField_ == kNote && !drum(); }
-  bool padShown() const { return edit_ && curField_ == kNote && drum(); }  // lane pad instead of the keyboard
+  // Not while A holds the edit: the grid keeps its rows.
+  bool keyboardShown() const { return edit_ && !holdEdit_ && curField_ == kNote && !drum(); }
+  bool padShown() const { return edit_ && !holdEdit_ && curField_ == kNote && drum(); }  // lane pad instead of the keyboard
   void toggleLane(int lane);
   void drawOverview(LGFX_Sprite& s, int gridY);
   void drawDetail(LGFX_Sprite& s, int gridY);
@@ -106,7 +110,7 @@ class GridScreen : public Screen {
   // Lane mask as squares: one row of 8 (Overview column) or compact 2 x 4 (Detail NOTE field).
   void drawMask(LGFX_Sprite& s, int x, int y, uint8_t mask, bool audible, int cursorLane, bool compact);
   void drawPad(LGFX_Sprite& s, int y);
-  bool drawBadge(LGFX_Sprite& s, int y);
+  int drawBadge(LGFX_Sprite& s, int y);  // its width in px, 0 when neither REC nor PERF
   bool selected(int tr, int step) const;
 
   App& app_;
@@ -119,6 +123,7 @@ class GridScreen : public Screen {
   bool detail_ = false;
   bool edit_ = false;
   bool editPushed_ = false;    // undo snapshot taken in this edit session
+  bool holdEdit_ = false;      // edit entered by A + turn: releasing A ends it
   // Edit: the cell under the cursor when edit began or the cursor arrived, and whether a step was
   // written before that (then cancelCell() keeps the undo snapshot).
   mt::Step cellOrig_{};
@@ -133,17 +138,19 @@ class GridScreen : public Screen {
   uint8_t lastNote_[mt::kTracks];  // set to 60 in the constructor
   int lane_ = 0;  // drum track, NOTE field in edit: the lane under the encoder
   // Live modes, exclusive with each other and with edit. REC: track buttons write into the heard
-  // step while playing (one undo snapshot per pass). PERF: a held button = punch-in effect.
+  // step while playing (one undo snapshot per pass). PERF (App::perf(), shared with SONG): a held
+  // button = punch-in effect.
   bool rec_ = false;
-  bool perf_ = false;
   uint32_t recLoop_ = UINT32_MAX;  // pass of the last REC undo snapshot
   int recPat_ = -1;                // and its pattern
-  int perfBtn_ = -1;   // button holding the punch-in effect
-  int perfTrack_ = 0;  // its track
 
   FillDialog fill_{app_};
   mt::FillSpec fillSpec_;  // RAM only, shared by the tracks
   bool fillInit_ = false;  // values set from the cursor once
+  mt::ArpSpec arpSpec_;    // RAM only, FILL's arp page
+  bool arpInit_ = false;   // roots (arp, bass) set from the track once
+  mt::ChordSpec chordSpec_;  // RAM only, FILL's chords page
+  mt::BassSpec bassSpec_;    // RAM only, FILL's bass page
   TransposeDialog transpose_{app_};
   mt::FxSlot lastFx_[mt::kTracks][mt::kFxSlots] = {};  // last FX written per track and slot, offered on empty slots
   bool fxCycled_ = false;  // a command was turned on this cell: passing "..." does not offer lastFx_ again

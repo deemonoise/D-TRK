@@ -217,11 +217,11 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    else snprintf(o, n, "HOLD");
                  },
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
-  initTail(chip_ + kChipRows, false);
-  initTail(sample_ + kCommon, false);
-  initTail(fm_ + kMacRows, true);
-  initTail(drum_ + kMacRows, true);
-  initTail(syn_ + kSynRows, true);
+  initTail(chip_ + kChipRows);
+  initTail(sample_ + kCommon);
+  initTail(fm_ + kMacRows);
+  initTail(drum_ + kMacRows);
+  initTail(syn_ + kSynRows);
   initKit();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
@@ -334,7 +334,7 @@ void InstScreen::buildLanes(bool keep) {
   else list_.setParams(kitShown_, n);
 }
 
-void InstScreen::initTail(Param* t, bool macros) {
+void InstScreen::initTail(Param* t) {
   t[kDrive] = {"Drive",
                [this](char* o, int n) {
                  if (inst().drive) snprintf(o, n, "%u", inst().drive);
@@ -412,25 +412,24 @@ void InstScreen::initTail(Param* t, bool macros) {
                    lfo().wave = w;
                  },
                  noLfo};
-  // Sync: the rate in Hz or a tempo division; Trig: NOTE (restart at note-on) or FREE (one phase per
-  // track, restarted at playback start). Both live in the sync byte (kLfoTempo | kLfoFree).
-  t[kLfoSync] = {"Sync", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoTempo(cfg().sync) ? "TEMPO" : "HZ"); },
+  t[kLfoSync] = {"Sync", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoTempo(cfg().sync) ? "TEMPO" : "FREE"); },
                  [cfg, lfo](int d) {
                    const bool on = d > 0;
                    const uint8_t s = cfg().sync;
                    if (on == mt::lfoTempo(s)) return;
                    const mt::LfoRef l = lfo();
-                   l.sync = static_cast<uint8_t>(on ? (s | mt::kLfoTempo) : (s & ~mt::kLfoTempo));
+                   l.sync = static_cast<uint8_t>(on ? s | mt::kLfoTempo : s & ~mt::kLfoTempo);  // keeps Retrig
                    l.rate = on ? 6 : 64;  // 1/4, or about 1.6 Hz
                  },
                  noLfo};
-  t[kLfoTrig] = {"Trig", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoFree(cfg().sync) ? "FREE" : "NOTE"); },
-                 [cfg, lfo](int d) {
-                   const uint8_t s = cfg().sync;
-                   const uint8_t v = static_cast<uint8_t>(d > 0 ? (s | mt::kLfoFree) : (s & ~mt::kLfoFree));
-                   lfo().sync = v;
-                 },
-                 noLfo};
+  // Retrig OFF: one phase per instrument for all its voices (FREE runs on, TEMPO from the transport start).
+  t[kLfoRetrig] = {"Retrig", [cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoFree(cfg().sync) ? "OFF" : "ON"); },
+                   [cfg, lfo](int d) {
+                     const uint8_t s = cfg().sync;
+                     const uint8_t v = static_cast<uint8_t>(d > 0 ? s & ~mt::kLfoFree : s | mt::kLfoFree);
+                     lfo().sync = v;
+                   },
+                   noLfo};
   t[kLfoRate] = {"Rate",
                  [cfg](char* o, int n) {
                    const mt::LfoCfg l = cfg();
@@ -450,20 +449,9 @@ void InstScreen::initTail(Param* t, bool macros) {
                   }};
   // DRUM shows the generic macro names here, not the machine's; SYNTH its own.
   t[kLfoDest] = {"Dest",
-                 [this, cfg](char* o, int n) {
-                   static const char* const kNames[] = {"PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP",
-                                                        "CONTOUR", "VOL",  "CUTOFF", "DRIVE"};
-                   static const char* const kSyn[] = {"PITCH", "SHP1", "SHP2", "MIX", "DET",
-                                                      "SENV",  "VOL",  "CUTOFF", "DRIVE"};
-                   constexpr int kN = static_cast<int>(mt::LfoDest::Count);
-                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN, "LFO dest names");
-                   static_assert(sizeof(kSyn) / sizeof(kSyn[0]) == kN, "LFO dest names");
-                   const int dest = cfg().dest % kN;
-                   const bool syn = inst().type == mt::InstrType::Synth;
-                   snprintf(o, n, "%s", syn ? kSyn[dest] : kNames[dest]);
-                 },
-                 [cfg, lfo, macros](int d) {
-                   const uint8_t v = mt::lfoDestStep(cfg().dest, d, macros);
+                 [this, cfg](char* o, int n) { snprintf(o, n, "%s", mt::lfoDestName(cfg().dest, inst().type)); },
+                 [this, cfg, lfo](int d) {
+                   const uint8_t v = mt::lfoDestStep(cfg().dest, d, inst().type, lfoSel_);
                    lfo().dest = v;
                  },
                  noLfo};
@@ -532,11 +520,12 @@ void InstScreen::syncParams() {
   // Same page in the new type's rows; outside the type page the row and edit state stay (Type edit).
   const int sel = list_.sel();
   const bool ed = list_.editing();
+  const bool hold = list_.holding();  // A + turn on Type: releasing A must still end the edit
   const bool bar = onEditor() ? editor_.barSelected() : list_.barSelected();
   showPage(physPage(), bar);
   if (page_ != kPgType && page_ != kPgType2 && !bar) {
     list_.setSel(sel);
-    list_.setEdit(ed);
+    list_.setEdit(ed, hold);
   }
 }
 
@@ -641,16 +630,51 @@ void InstScreen::openTables(int osc) {
 
 void InstScreen::presetMenu() {
   leaveEdit();
-  if (inst().type == mt::InstrType::Kit) {
-    app_.toast("NO KIT PRESETS");
+  if (inst().type == mt::InstrType::Kit) {  // factory kits only: no Save
+    typeSnapInstr_ = -1;
+    presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
-  enum : int { kLoad, kSave };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel };
+  auto choose = [this](int id) {
+    switch (id) {
+      case kChop: editor_.chop(); break;
+      case kAdd: editor_.addSlice(app_.shift()); break;  // Shift held on the click: at a transient
+      case kDel: editor_.deleteSlice(); break;
+      case kClear: {
+        const MenuItem confirm[] = {{"Cancel", kCancel}, {"Clear! (confirm)", kClearConfirm}};
+        app_.menu().open("CLEAR SLICES?", confirm, 2, [this](int i) {
+          if (i == kClearConfirm) editor_.clearSlices();
+        });
+        break;
+      }
+      case kLoad:
+      case kSave:
+        typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
+        presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
+        break;
+      default: break;
+    }
+  };
+  if (onEditor()) {
+    editor_.bind(instr_);
+    const MenuItem items[] = {{"Chop", kChop},
+                              {"Add slice", kAdd},
+                              {"Delete slice", kDel, editor_.sliceSelected()},
+                              {"Clear slices", kClear, editor_.hasSlices()},
+                              {"Load preset", kLoad},
+                              {"Save preset", kSave}};
+    app_.menu().open("SAMPLE", items, 6, choose);
+    return;
+  }
   const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
-  app_.menu().open("PRESET", items, 2, [this](int id) {
-    typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
-    presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
-  });
+  app_.menu().open("PRESET", items, 2, choose);
+}
+
+void InstScreen::onATap(bool shift) {
+  if (presets_.isOpen() || wt_.isOpen() || !onEditor()) return;
+  editor_.bind(instr_);
+  editor_.stepMarker(shift ? -1 : 1);
 }
 
 void InstScreen::changeInstr(int d) {
@@ -705,12 +729,31 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
     list_.edit(ev.delta);  // no x10 for characters
     return;
   }
+  // A + turn on the name row: a character, Shift = the position.
+  if (ev.type == hw::InputType::EditTurn && page_ == kPgMain && list_.sel() == kName && list_.holdEdit()) {
+    if (ev.shift) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+    else list_.edit(ev.delta);
+    return;
+  }
   const int ov = onEditor() ? editor_.onInput(ev) : list_.onInput(ev);
   if (ov) {
-    showPage(physPage() + ov, true);  // click (Shift+click) on the page bar
+    showPage(physPage() + ov, true);  // A + turn on the page bar
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();
+}
+
+// B + Shift + turn: the previous / next page (not over the browsers); the cursor stays on the page bar.
+void InstScreen::onPage(int d) {
+  if (presets_.isOpen() || wt_.isOpen()) return;
+  showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
+}
+
+// B: closes the browser (as its long press), else leaves the edit with the value kept.
+void InstScreen::onBack() {
+  if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
+  else if (wt_.isOpen()) wt_.onInput({hw::InputType::EncLong, 0, false});
+  else if (onEditor() ? editor_.editing() : list_.editing()) leaveEdit();
 }
 
 void InstScreen::onTouch(const TouchEvent& ev) {

@@ -1,20 +1,13 @@
 #include "proj_screen.h"
 #include <Arduino.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
-#include "audio/audio.h"
 #include "engine/engine.h"
-#include "esp_heap_caps.h"
 #include "fx_info.h"
 #include "groove.h"
-#include "hw/sdcard.h"
-#include "link/link.h"
-#include "link/synth_fw.h"
-#include "storage/crashlog.h"
-#include "storage/remote_fs.h"
-#include "synth.h"
 #include "names.h"
 #include "scale.h"
 
@@ -114,104 +107,42 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        noComp};
   params_[kScDepth] = {"SC depth", num(&mt::Project::scDepth), u7(&mt::Project::scDepth),
                        [this] { return app_.project().compAmt == 0 || app_.project().scTrack == 0; }};
-  params_[kDjFilter] = {"DJ filter",
-                        [this](char* o, int n) {
-                          const int v = app_.project().djFilter;
-                          if (v == 0) snprintf(o, n, "OFF");
-                          else snprintf(o, n, "%s %d", v < 0 ? "LP" : "HP", v < 0 ? -v : v);
-                        },
-                        [this](int d) {
-                          app_.project().djFilter = static_cast<int8_t>(clampi(app_.project().djFilter + d, -64, 63));
-                        }};
+  // PERF: Button N picks the effect (a new one starts at its default), Value its start depth.
   for (int b = 0; b < mt::kPerfButtons; ++b) {
     snprintf(perfLabels_[b], sizeof(perfLabels_[b]), "Button %d", b + 1);
-    params_[kPerf1 + b] = {perfLabels_[b],
-                           [this, b](char* o, int n) {
-                             const uint8_t f = app_.project().perfMap[b];
-                             snprintf(o, n, "%s", f ? mt::perfFxName(static_cast<mt::PerfFx>(f)) : "---");
-                           },
-                           [this, b](int d) {
-                             constexpr int kLast = static_cast<int>(mt::PerfFx::Count) - 1;
-                             app_.project().perfMap[b] = static_cast<uint8_t>(clampi(app_.project().perfMap[b] + d, 0, kLast));
-                           }};
+    params_[kPerf1 + 2 * b] = {perfLabels_[b],
+                               [this, b](char* o, int n) {
+                                 const uint8_t f = app_.project().perfMap[b];
+                                 snprintf(o, n, "%s", f ? mt::perfName(static_cast<mt::PerfFx>(f)) : "---");
+                               },
+                               [this, b](int d) {
+                                 constexpr int kLast = static_cast<int>(mt::PerfFx::Count) - 1;
+                                 mt::Project& p = app_.project();
+                                 const int f = clampi(p.perfMap[b] + d, 0, kLast);
+                                 if (f == p.perfMap[b]) return;
+                                 p.perfMap[b] = static_cast<uint8_t>(f);
+                                 p.perfDepth[b] = mt::perfRange(static_cast<mt::PerfFx>(f)).def;
+                               }};
+    params_[kPerf1 + 2 * b + 1] = {"  Value",
+                                   [this, b](char* o, int n) {
+                                     const mt::Project& p = app_.project();
+                                     if (p.perfMap[b]) mt::perfValue(static_cast<mt::PerfFx>(p.perfMap[b]), p.perfDepth[b], o, n);
+                                     else snprintf(o, n, "---");
+                                   },
+                                   [this, b](int d) {
+                                     mt::Project& p = app_.project();
+                                     const mt::PerfRange r = mt::perfRange(static_cast<mt::PerfFx>(p.perfMap[b]));
+                                     p.perfDepth[b] = static_cast<int8_t>(clampi(p.perfDepth[b] + d, r.lo, r.hi));
+                                   },
+                                   [this, b] { return app_.project().perfMap[b] == 0; }};
   }
-  // Live output level (device setting); the project's master is MAIN on TRACK / MIX.
-  params_[kPhones] = {"Phones", [this](char* o, int n) { snprintf(o, n, "%d%%", app_.phones()); },
-                      [this](int d) { app_.setPhones(app_.phones() + d); }};
-  params_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.project().preview ? "ON" : "OFF"); },
-                       [this](int d) { app_.project().preview = d > 0; }};
-  params_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
-                     [this](int d) { app_.setTheme(app_.theme() + d); }};
-  params_[kAutosave] = {"Autosave",
-                        [this](char* o, int n) {
-                          if (app_.autosaveMin()) snprintf(o, n, "%d MIN", app_.autosaveMin());
-                          else snprintf(o, n, "OFF");
-                        },
-                        [this](int d) {
-                          static const int kSteps[] = {0, 1, 2, 5, 10};
-                          int i = 0;
-                          while (i < 4 && kSteps[i] < app_.autosaveMin()) ++i;
-                          i = clampi(i + (d > 0 ? 1 : -1), 0, 4);
-                          app_.setAutosaveMin(kSteps[i]);
-                        }};
-  // Read only: the firmware version and why the device last restarted (crash log: /diag/crashlog.txt).
-  params_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); }, [](int) {}};
-  params_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
-                         [](int) {}};
-  // The synth board: its firmware ("NO SYNTH" while it does not answer; "!" = another protocol),
-  // and the link counters since boot: events lost / late on the synth, bad frames here.
-  params_[kSynthFw] = {"Synth fw",
-                       [](char* o, int n) {
-                         if (!audio::synthUp()) snprintf(o, n, "NO SYNTH");
-                         else snprintf(o, n, "%s P%u%s", audio::synthFw(), audio::synthProtocol(),
-                                       audio::versionOk() ? "" : " !");
-                       },
-                       [](int) {}};
-  params_[kLink] = {"Link",
-                    [](char* o, int n) {
-                      const audio::LinkCounters c = audio::linkCounters();
-                      snprintf(o, n, "LOST %lu LATE %lu CRC %lu", static_cast<unsigned long>(c.lost + c.dropped),
-                               static_cast<unsigned long>(c.late), static_cast<unsigned long>(c.crcErrors));
-                    },
-                    [](int) {}};
-  // Click: flash the synth board with /firmware/teensy.hex from its card (Wi-Fi page puts it there).
-  params_[kUpdSynth] = {"Update synth",
-                        [](char* o, int n) { snprintf(o, n, "%s", audio::synthUp() ? "CLICK" : "NO SYNTH"); },
-                        [](int) {}};
-  // The card in the synth board: size and free space.
-  params_[kCard] = {"Card",
-                    [](char* o, int n) {
-                      uint32_t total = 0, free = 0;
-                      if (!audio::synthUp()) snprintf(o, n, "NO SYNTH");
-                      else if (!storage::remoteSpace(total, free)) snprintf(o, n, "NO CARD");
-                      else snprintf(o, n, "%lu.%lu / %lu.%lu GB FREE", static_cast<unsigned long>(free / 1024),
-                                    static_cast<unsigned long>(free % 1024 * 10 / 1024),
-                                    static_cast<unsigned long>(total / 1024),
-                                    static_cast<unsigned long>(total % 1024 * 10 / 1024));
-                    },
-                    [](int) {}};
-  // Where the sequencer lives (PSRAM = it costs more) and the free internal RAM.
-  params_[kAudioRam] = {"Audio RAM",
-                        [](char* o, int n) {
-                          const unsigned kb = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
-                          snprintf(o, n, "SEQ %s, %uK FREE", engine::seqInternal() ? "INTERNAL" : "PSRAM", kb);
-                        },
-                        [](int) {}};
-  // Click: start; play a while (on the screen to measure), click again: the time per stage of the
-  // audio render goes to /diag/cpuprof.txt.
-  params_[kCpuProf] = {"CPU profile",
-                       [this](char* o, int n) {
-                         if (audio::profileRunning())
-                           snprintf(o, n, "RUNNING %lus, CLICK", static_cast<unsigned long>((millis() - profStartMs_) / 1000));
-                         else
-                           snprintf(o, n, "CLICK TO START");
-                       },
-                       [](int) {}};
-  // Phones, the theme and the read-only rows are not project data: editing them does not mark it dirty.
-  list_.setOnEdit([this] {
-    const int r = kPageFirst[page_] + list_.sel();
-    if (r != kPhones && r < kTheme) app_.markDirty();
-  });
+  // Shift+click cancel on PERF restores the effect and its depth together (a new effect resets the depth).
+  static_assert(offsetof(mt::Project, perfDepth) == offsetof(mt::Project, perfMap) + sizeof(mt::Project::perfMap),
+                "perfDepth follows perfMap");
+  list_.setEditScope([this]() -> void* { return page_ == kPgPerf ? app_.project().perfMap : nullptr; },
+                     sizeof(mt::Project::perfMap) + sizeof(mt::Project::perfDepth));
+  // Every row is project data (device settings live on FILE > SYSTEM).
+  list_.setOnEdit([this] { app_.markDirty(); });
   list_.setOnCancel([this] { app_.toast("CANCEL"); });
   showPage(kPgSong, false);
 }
@@ -253,14 +184,16 @@ void ProjScreen::onEnter() {
   bpmTarget_ = app_.project().bpm;
 }
 
-// Click (Shift+click) on the page bar: the next (previous) page.
+// A + turn on the page bar: the previous / next page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
-  if (ev.type == hw::InputType::EncClick && !list_.editing() && onActionRow()) {
-    runAction();
-    return;
-  }
   if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
 }
+
+// B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
+void ProjScreen::onPage(int d) { showPage(page_ + d, list_.barSelected()); }
+
+// B: leaves the edit with the value kept.
+void ProjScreen::onBack() { list_.setEdit(false); }
 
 void ProjScreen::onTouch(const TouchEvent& ev) {
   const int barY = kAreaY + kHeaderH;
@@ -268,107 +201,7 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
     if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
     return;
   }
-  const int tapRow = list_.rowAt(ev.y);
-  if (ev.type == TouchType::Tap && tapRow >= 0 &&
-      (kPageFirst[page_] + tapRow == kCpuProf || kPageFirst[page_] + tapRow == kUpdSynth)) {
-    list_.setSel(tapRow);
-    runAction();
-    return;
-  }
   list_.onTouch(ev);
-}
-
-void ProjScreen::runAction() {
-  if (kPageFirst[page_] + list_.sel() == kUpdSynth) askUpdateSynth();
-  else toggleProfile();
-}
-
-void ProjScreen::askUpdateSynth() {
-  app_.invalidate();
-  if (!audio::synthUp()) {
-    app_.toast("NO SYNTH");
-    return;
-  }
-  fs::File f = hw::sdFs().open(synthfw::kHexPath);
-  if (!f || f.isDirectory()) {
-    app_.toast(storage::remoteLastError() == mt::link::kErrNoCard ? "NO CARD IN THE SYNTH"
-                                                                   : "NO /FIRMWARE/TEENSY.HEX");
-    return;
-  }
-  const unsigned long kb = static_cast<unsigned long>((f.size() + 1023) / 1024);
-  f.close();
-  char title[48];
-  snprintf(title, sizeof(title), "UPDATE SYNTH (%lu KB)?", kb);
-  const MenuItem items[] = {{"Cancel", kMenuCancel}, {"Update", kMenuUpdate}};
-  app_.menu().open(title, items, 2, [this](int id) {
-    if (id == kMenuUpdate) updateSynth();
-  });
-}
-
-void ProjScreen::updateSynth() {
-  const uint32_t oldBoot = slink::bootId();
-  uint8_t res = 0;
-  uint32_t bytes = 0;
-  const synthfw::Result r = synthfw::update(
-      synthfw::kHexPath, res, bytes,
-      [](uint32_t done, uint32_t total, void* a) { static_cast<App*>(a)->showProgress("SYNTH FW", done, total); },
-      &app_);
-  if (r != synthfw::Result::Ok) {
-    app_.endProgress();
-    char line[48];
-    snprintf(line, sizeof(line), "SYNTH FW: %s", r == synthfw::Result::NoSynth ? "NO ANSWER" : synthfw::rejectText(res));
-    app_.toast(line);
-    return;
-  }
-  app_.showBusy("SYNTH FW OK, RESTARTING");
-  const uint32_t t0 = millis();
-  bool back = false;
-  while (millis() - t0 < synthfw::kRebootWaitMs) {
-    if (synthfw::rebooted(oldBoot)) {
-      back = true;
-      break;
-    }
-    delay(100);
-  }
-  app_.endProgress();
-  char line[48];
-  if (back) snprintf(line, sizeof(line), "SYNTH FW %s", slink::synthFw());
-  else snprintf(line, sizeof(line), "SYNTH FW: NO ANSWER AFTER THE UPDATE");
-  app_.toast(line);
-}
-
-void ProjScreen::toggleProfile() {
-  app_.invalidate();
-  if (!audio::profileRunning()) {
-    audio::profileStart();
-    if (!audio::profileRunning()) {
-      app_.toast("PROFILE: NO SYNTH");
-      return;
-    }
-    profStartMs_ = millis();
-    app_.toast("PROFILE: PLAY, THEN CLICK AGAIN");
-    return;
-  }
-  audio::Profile pr;
-  const uint32_t secs = (millis() - profStartMs_) / 1000;
-  if (!audio::profileStop(pr)) {
-    app_.toast("PROFILE: NOTHING RENDERED");
-    return;
-  }
-  float total = 0;
-  int top = 0;
-  for (int i = 0; i < audio::kProfStages; ++i) {
-    total += pr.us[i];
-    if (pr.us[i] > pr.us[top]) top = i;
-  }
-  constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
-  char line[96];
-  snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
-           static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
-  const bool saved = storage::appendCpuProfile(line, pr);
-  snprintf(line, sizeof(line), "%s %.0f%%, TOP %s %.0f%%", saved ? "SAVED" : "NO SD", total * 100 / kBlockUs,
-           mt::Synth::profName(top), pr.us[top] * 100 / kBlockUs);
-  app_.toast(line);
 }
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
@@ -377,7 +210,7 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF", "SYS"};
+  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);

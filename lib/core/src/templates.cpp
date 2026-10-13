@@ -114,15 +114,11 @@ void templateBuild(int i, Project& p) {
 
 void templateStrip(Project& p) {
   for (Pattern& pt : p.patterns) pt = Pattern();
-  p.chainLen = 0;
-  for (int i = 0; i < kChainMax; ++i) {
-    p.chain[i] = 0;
-    p.chainTr[i] = 0;
-    p.chainRep[i] = 1;
-    p.chainScene[i] = 0;
+  p.songLen = 0;
+  for (int i = 0; i < kSongMax; ++i) {
+    p.song[i] = 0;
+    p.songMute[i] = 0;
   }
-  for (uint16_t& s : p.scenes) s = kSceneEmpty;
-  p.songMode = false;
   strncpy(p.name, "untitled", sizeof(p.name) - 1);
   p.name[sizeof(p.name) - 1] = 0;
 }

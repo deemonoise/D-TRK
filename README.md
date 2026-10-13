@@ -1,11 +1,58 @@
 # D-TRK
 
-A 16-track tracker with a built-in synthesizer: the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen) plus a **Teensy 4.1** synth board.
-16 patterns, song mode, Fill (every Nth / Euclid / random) for notes, volume and FX, saving to microSD, MIDI file import.
-Built-in sound: FM, 808 / 909 drum machines, the SYNTH synthesizer (saw / square / triangle and wavetable), a sampler and chiptune, in stereo at 44.1 kHz through a PCM5102A DAC and a headphone amplifier — each track plays either the internal synth or external MIDI.
+A pocket 16-track tracker with a built-in synthesizer. Built on the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen) plus a **Teensy 4.1** synth board: an encoder, Play, Shift, A and B buttons and 8 mechanical track buttons. With A / B the tracker works almost without the touchscreen: navigation, editing and page switching are done with the encoder and buttons. Stereo sound at 44.1 kHz through a PCM5102A DAC and a headphone amplifier. MIDI OUT (TRS) sends notes, clock and Start / Stop. The firmware is open (GPL v3), and so is the 3D-printable enclosure (CERN-OHL-S).
 
 User manual: [docs/manual.md](docs/manual.md). Русская версия: [README_ru.md](README_ru.md).
 3D-printable enclosure and battery power circuit: [enclosure/](enclosure/README.md).
+
+## Features
+
+### Sequencer
+
+- 16 tracks, 16 patterns, 4 to 128 steps, tempo 20–300 BPM, swing.
+- Each track has its own length and speed (1/4, 1/2, x1, x2, x4): polymeter, slow pads over fast grooves.
+- A step holds a note, volume, chord (36 types × 4 inversions) and 6 fx commands: slide, vibrato, retrigger, arp, trig conditions (probability, fill, "previous played"…), p-locks of sound parameters, pan and LFOs.
+- Fill notes, volume or any fx on every Nth step, by Euclid or at random, with value ramps.
+- Generators that write straight into notes: **ARP** (106 patterns, including 64 from the Access Virus), **CHORDS** (55 progressions in the project key, 32 rhythms, RANDOM, Mutate, voice leading) and **BASS** (48 bass patterns that follow the chords). Your own patterns are saved with Capture.
+- Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
+- Scales, undo, selection, copy.
+
+### Built-in sound
+
+32 instruments, 32 voices (up to 16 of them FM / DRUM / SYNTH WT), 44.1 kHz, stereo with per-track pan. Types:
+
+- **FM**: 8 machines in the spirit of the Model:Cycles (kick, snare, metal, perc, tone, chord, clap, hat) with 5 macros.
+- **DRUM**: 16 machines in the spirit of the TR-808 and TR-909.
+- **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables.
+- **SAMPLE**: a sampler with slices, WAV import from the card. The sample editor works without the touchscreen too.
+- **CHIP**: pulse, triangle, noise, metal and wavetable for chiptune.
+- **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
+
+Every instrument has an LP / BP / HP filter with an envelope, drive and 4 LFOs (tempo sync, modulate each other, controlled from steps). 145 factory presets.
+
+### Mix and effects
+
+- Mixer: faders, pan, sends, mute / solo, level meters, scope.
+- Delay and pseudo-stereo reverb on sends, master compressor with sidechain, PERF punch-in effects on the master (repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb throw, freeze).
+- Per-note lo-fi: bit depth and sample rate.
+- Each track goes to the internal synth or to external MIDI.
+
+### Live performance and song
+
+- **Song** (SONG tab, Polyend-style): up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
+- **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb throw, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable.
+- **REC**: record notes from the track buttons while playing.
+- Shift + Play: the song from the SONG cursor on any tab; held while playing, fill.
+
+### Files and extras
+
+- Projects, samples and presets on microSD, autosave, templates and 8 demo songs.
+- MIDI file import.
+- Stereo WAV render: a pattern, the whole song or per-track stems. Resample a track into a new sample.
+- Wi-Fi: a web page for firmware updates (the tracker and the synth board).
+- 17 themes.
+
+Technical details follow: architecture, wiring, sound, file formats, build.
 
 ## Architecture
 
@@ -13,13 +60,13 @@ The device is two boards connected by a UART link:
 
 - **WT32-SC01 Plus (ESP32-S3)** — the tracker: sequencer, UI (display, touch, encoder, buttons), MIDI OUT, Wi-Fi firmware page.
 - **Teensy 4.1 — the synth board**: the synthesizer engine (`mt::Synth` from `lib/core` inside a Teensy Audio Library `AudioStream`, 44.1 kHz stereo, 32 voices, up to 16 of them "heavy" — FM / DRUM / SYNTH WT), the only microSD card (SdFat, FAT32 or exFAT), the sample bank in its program flash, the PCM5102A DAC and the MAX97220 headphone amplifier.
-- **Link**: ESP `UART_NUM_2` (GPIO TX 13 / RX 14) ↔ Teensy `Serial1` (RX1 0 / TX1 1), 3 Mbaud, COBS frames with CRC16, protocol version 1. Synth events carry a timestamp and are played 4 ms after they are sent; the sound state is mirrored by diffing a `SynthModel` (the base struct of `Project`); files go through a remote `fs::FS` served by the Teensy.
+- **Link**: ESP `UART_NUM_2` (GPIO TX 13 / RX 14) ↔ Teensy `Serial1` (RX1 0 / TX1 1), 3 Mbaud, COBS frames with CRC16, protocol version 2. Synth events carry a timestamp and are played 4 ms after they are sent; the sound state is mirrored by diffing a `SynthModel` (the base struct of `Project`); files go through a remote `fs::FS` served by the Teensy.
 
-The status bar shows the synth board's state in the CPU field: `NO SYNTH` (no answer: the sequencer and MIDI OUT work, files and internal sound do not), `SYNTH FW` (protocol version mismatch — update the synth board), `SYNC` (sending the sound state), otherwise `CPU NN%` of the synth board. PROJ → SYS: Synth fw (version), Link (counters), Card, CPU profile, Update synth (from `/firmware/teensy.hex` on the card).
+The status bar shows the synth board's state in the CPU field: `NO SYNTH` (no answer: the sequencer and MIDI OUT work, files and internal sound do not), `SYNTH FW` (protocol version mismatch — update the synth board), `SYNC` (sending the sound state), otherwise `CPU NN%` of the synth board. FILE → SYSTEM: Synth fw (version), Update synth (from `/firmware/teensy.hex` on the card), Card, Link (counters), CPU profile.
 
 ## Wiring
 
-The built-in display and touch panel are already routed on the board; the board's own microSD slot is not used (the card is in the Teensy). The encoder, the MIDI output and the link to the Teensy go to the board's expansion connector (Extended IO); the PCF8575 expander with all the buttons goes to the Debug connector. The DAC and the headphone amplifier are on the Teensy. Full soldering diagram (power, MIDI, buttons, link, DAC, headphones): [docs/wiring.md](docs/wiring.md).
+The built-in display and touch panel are already routed on the board; the board's own microSD slot is not used (the card is in the Teensy). The encoder, the MIDI output and the link to the Teensy go to the board's expansion connector (Extended IO); the PCF8575 expander with all the buttons and the INA226 battery monitor go to the Debug connector. The DAC and the headphone amplifier are on the Teensy. Full soldering diagram (power, MIDI, buttons, link, DAC, headphones): [docs/wiring.md](docs/wiring.md). Parts list: [docs/bom.md](docs/bom.md).
 
 | GPIO | What to connect | How |
 |---|---|---|
@@ -29,7 +76,7 @@ The built-in display and touch panel are already routed on the board; the board'
 | 13 | Link TX | to the Teensy's pin 0 (RX1), see [Synth board](#synth-board-teensy-41) |
 | 14 | Link RX | to the Teensy's pin 1 (TX1) |
 | 21 | spare | to the Teensy's pin 2 (reserved, unused) |
-| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, track buttons | Debug connector (TXD0 / RXD0), **required**, see below |
+| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, **A**, **B**, track buttons; INA226 battery monitor (0x40) on the same lines | Debug connector (TXD0 / RXD0), **required**, see below; INA226 — [docs/wiring.md](docs/wiring.md#ina226-battery-monitor) |
 | 3.3V | MIDI OUT | through a 33 Ω resistor to the Ring of the TRS jack |
 | GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack, Teensy GND |
 
@@ -43,7 +90,7 @@ It is a good idea to add 10 nF capacitors from A and B to GND — they reduce co
 
 ### Buttons on the PCF8575 (required)
 
-The encoder button, Play, Shift and 8 MX track buttons with 8 3 mm LEDs in the switch windows are connected via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the track buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work: the encoder button, Play, Shift and the track buttons do nothing.
+The encoder button, Play, Shift, A, B and 8 MX track buttons are connected via a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). There are 16 tracks; the track buttons work on the visible half (1–8 or 9–16, see below). If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work: the encoder button, Play, Shift, A, B and the track buttons do nothing.
 
 | PCF8575 | Connection |
 |---|---|
@@ -55,24 +102,17 @@ The encoder button, Play, Shift and 8 MX track buttons with 8 3 mm LEDs in the s
 | P13 | encoder button (the shaft button), other pin to GND |
 | P14 | **Play** button, other pin to GND |
 | P15 | **Shift** button, other pin to GND |
-| P16 / P17 | buttons **A** / **B** (under Shift / Play), other pin to GND; reserved, the firmware does not use them yet |
-| P10–P17 | LED 1–8 cathodes, except P13–P17 (taken by the buttons above) |
+| P16 / P17 | buttons **B** / **A** (under Shift / Play), other pin to GND: hold-to-edit, tabs, back, undo, solo and pattern queue ([manual](docs/manual.md#abkeys)) |
 
-The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kTrackLedBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`): if a pin is damaged, a button can be moved to the pin of an unfitted LED (number 8–15 = P10–P17), and that LED marked as `0xFF`. Since P13–P17 now carry the encoder button, Play, Shift, A and B, LEDs 4–8 need other free pins or stay unfitted (`0xFF`). On the author's unit P00 and P10 read low, so button 1 lives on P12, no LEDs are fitted, and P11 is free.
+The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`, `kBtnABit`, `kBtnBBit`): if a pin is damaged, a button can be moved to a free pin (number 0–15 = P00–P07, P10–P17). On the author's unit P00 and P10 read low, so button 1 lives on P12, and P11 is free.
 
 Safe boot (hold Shift at power-on) works as before: the firmware reads Shift from the expander before the autoload.
 
-```
-+3.3V ──[330 Ω]──|>|── P1x     (LED is lit when P1x = 0)
-```
-
-- 330 Ω — for red/yellow/green LEDs (≈ 4 mA). White and blue ones don't have enough headroom at 3.3 V: use 47–68 Ω, and brightness will vary from unit to unit.
-- The PCF8575 pulls a pin down (up to 25 mA) but up only with a weak pull-up, so the LEDs are switched only on the cathode, as in the diagram.
 - 4.7 kΩ SDA/SCL pull-ups to 3.3 V are usually already on the module — check.
 - INT is not needed: the firmware polls the module every 5 ms. The detected address is printed to the USB log (`trackio: PCF8575 at 0x..`).
 - If the A0–A2 pads are not bridged anywhere and the module has no resistors to GND, the address floats and may "wander" — in that case bridge the pads to GND.
 - GPIO 43/44 are free because the log and flashing go through the native USB (`ARDUINO_USB_CDC_ON_BOOT=1`). At startup the ESP32 bootloader prints to TXD0 (GPIO 43) — this does not bother the module.
-- The buttons and LEDs work on the visible half of the tracks — 1–8 or 9–16; the half is chosen by the cursor (move past track 8 and the second half is shown; the GRID header shows `1-8` / `9-16`). Button N selects track N of that half, Shift + N mutes the same track (the toast shows the real number, 1–16), and in GRID edit mode the buttons enter scale degrees. LED N is the same track: lit for the selected one, flashes on notes; activity in the other half is not shown. Details in the [manual](docs/manual.md#trackkeys).
+- The buttons work on the visible half of the tracks — 1–8 or 9–16; the half is chosen by the cursor (move past track 8 and the second half is shown; the GRID header shows `1-8` / `9-16`). Button N selects track N of that half, Shift + N mutes the same track (the toast shows the real number, 1–16), and in GRID edit mode the buttons enter scale degrees. Details in the [manual](docs/manual.md#trackkeys).
 
 ### Synth board (Teensy 4.1)
 
@@ -110,11 +150,11 @@ GND    ────────── Sleeve (MIDI DIN pin 2, shield)
 | FT6336U touch (I2C) | SDA 6, SCL 5, INT 7, RST 4 (shared with LCD) |
 | ST7796 display | 8080 bus, 8-bit (internal board routing) |
 
-GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound comes from the synth board's DAC (see below). GPIO 43/44 (Debug connector) are used by the PCF8575.
+GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound comes from the synth board's DAC (see below). GPIO 43/44 (Debug connector) are used by the PCF8575 and the INA226.
 
 ## Sound
 
-Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and LFO; it runs on the synth board: 32 voices, 44.1 kHz, stereo, per-track pan (TRACK → Pan, equal power; stored in the project, old projects are centred). A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to a PCM5102A DAC on the Teensy's I2S1 and from it to a MAX97220 headphone amplifier; the WT32's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: PROJ → SYS → Phones, 0–100 %, a device setting stored in the board's memory.
+Built-in synthesizer: 32 instruments (FM — 8 machines; DRUM — 16 machines in the spirit of the TR-808 / TR-909; SYNTH — 2 oscillators BL saw / square / tri or wavetable, sub, noise, sync; SAMPLE — project samples, played from flash; CHIP — pulse, triangle, saw, noise, metal, 16 wavetables; see below), each with a filter and 4 LFOs; it runs on the synth board: 32 voices, 44.1 kHz; mono instruments, stereo output with per-track pan (TRACK → Pan, step fx `PAN`, LFO PAN for autopan). A track is switched in TRACK → Out: INT (default in a new project) or MIDI. Sound goes to a PCM5102A DAC on the Teensy's I2S1 and from it to a MAX97220 headphone amplifier; the WT32's NS4168 amplifier and SPK connector are not used. Master volume: MIX tab → MAIN, 0–200 % (above 100 % — up to +6 dB, peaks of loud chords are softly clipped); saved with the project and included in Render WAV. Output level of the device: FILE → SYSTEM → Phones, 0–100 %, a device setting stored in the board's memory.
 
 ### DAC (PCM5102A)
 
@@ -135,7 +175,7 @@ A common module (purple GY-PCM5102, black "PCM5102 audio DAC v2" and similar), o
 
 On many modules FMT, FLT, DEMP and XSMT are solder jumpers (H / L pads) on the back, and SCK has its own pad or header pin — check the silkscreen of your module.
 
-The synth board sends 44.1 kHz, 16-bit stereo (Teensy Audio Library `AudioOutputI2S`, BCK = 64 fs). The L / R outputs are a line level: 2.1 Vrms at full scale, centred on ground (no DC offset). Unlike the old SPK output, this can go to a mixer, audio interface, powered speakers or a recorder — from the DAC's L / R (before the amplifier) or from the amplifier's headphone output.
+The synth board sends 44.1 kHz, 16-bit stereo (Teensy Audio Library `AudioOutputI2S`, BCK = 64 fs): the DAC's L / R carry the left and right channels of the mix (tracks at centre sound the same on both). The L / R outputs are a line level: 2.1 Vrms at full scale, centred on ground (no DC offset). Unlike the old SPK output, this can go to a mixer, audio interface, powered speakers or a recorder — from the DAC's L / R (before the amplifier) or from the amplifier's headphone output.
 
 ### Headphone amplifier (MAX97220)
 
@@ -150,11 +190,11 @@ board 5V (or 3.3V) ── VCC     GND ── GND     SHDN ── VCC
 - The inputs are differential: each channel's "+" goes to the DAC output, its "−" to the DAC's GND (AGND). Pin names on the module's silkscreen may differ — check them.
 - DirectDrive: the outputs are ground-referenced and need no coupling capacitors; the jack's Sleeve goes to GND as usual.
 - Power: 5 V from the IP5306 output after the switch (the same line that feeds the boards) or 3.3 V. SHDN, if broken out, goes to VCC (amplifier running).
-- The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower Phones (PROJ → SYS) or add a divider / potentiometer between the DAC and the amplifier inputs.
+- The PCM5102A's 2.1 Vrms full scale is more than the amplifier can deliver: if it clips or is too loud, lower Phones (FILE → SYSTEM) or add a divider / potentiometer between the DAC and the amplifier inputs.
 - Ground: keep audio ground wires short and use a star point at the DAC's GND: the DAC, amplifier and headphone jack grounds meet there, and one wire goes from it to the Teensy's GND. This keeps the IP5306 boost converter's whine out of the headphones.
-- Before first power-up — Phones (PROJ → SYS) at minimum, headphones off your ears, then bring it up.
+- Before first power-up — Phones (FILE → SYSTEM) at minimum, headphones off your ears, then bring it up.
 
-The internal sound lags behind MIDI tracks by a few milliseconds: events are played 4 ms after they are sent over the link, plus the audio buffer (constant, no jitter; not compensated yet). The synth board's load is shown by `CPU NN%` in the right corner of the status bar (yellow from 60%, red from 85% or after an audio dropout — an audible click).
+The internal sound lags behind MIDI tracks by a few milliseconds: events are played 4 ms after they are sent over the link, plus the audio buffer (constant, no jitter; not compensated yet). The synth board's load is shown by `CPU NN%` in the right corner of the status bar (yellow from 60%, red from 85% or after an audio dropout — an audible click). Before it, with an [INA226](docs/wiring.md#ina226-battery-monitor) fitted, the battery icon and charge `85%` (yellow from 20%, red from 10%, green while charging; at 10% a toast `BATTERY LOW - SAVE`); voltage and current are in FILE → SYSTEM → Battery.
 
 ### Samples
 
@@ -204,8 +244,9 @@ All types have these at the end of the INST list:
 - **Reverb**: the instrument's Rvb send (lock `RVB`), size / decay / level in PROJ. Stereo (Freeverb), buffers in the Teensy's RAM.
 - **Compressor** on all built-in sound (PROJ → Comp, Comp rel) with **sidechain** from a track (SC track, SC depth): set SC track to the kick and the mix "pumps".
 - **ARP**: fx `ARM` sets the order (up, down, up-down, random) and the number of notes per step (1–8); ARP + CHD on the same step arpeggiates the chord.
-- **4 LFOs** per instrument (INST → LFO), each in Hz or synced to tempo (1/32 … 8 bars), restarted per note or free-running per track from the playback start (bar-locked with TEMPO); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
-- **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; **DJ filter** on the master (PROJ → FX).
+- **Chords** `CHD`: 36 types × 4 inversions, shown with the inversion digit (`MA7 `, `MA72`). Lowercase types (`tri 7th su2 su4 6th ad9 9th 7s4 a11`) are built on the project scale's degrees, `pwr` / `oct` are the fixed +7 / +12; UPPERCASE ones (`MAJ MIN DIM AUG SU2 SU4 MA7 MI7 DOM HDM DM7 MMA MA6 MI6 MA9 MI9 DO9 7S4 AD9 MD9 D7# D7b D13 M11 QRT`) are fixed intervals. Old projects keep their chords.
+- **4 LFOs** per instrument (INST → LFO), each with a free Hz rate or tempo sync (1/32 … 8 bars) and the phase retriggered on every note or free-running (Retrig ON / OFF); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
+- **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; CRUSH / DOWNSAMPLE and the LP / HP filter on the whole mix as **PERF** effects.
 - Pattern **groove** (PROJ → SONG → Groove: MPC 54–66, SHUFFLE, PUSH, LAID BACK, DRUNK, BOOM BAP, HOUSE) and track **Humanize** (TRACK → NOTE); conditions `CND PRE / NEI`, volume ramp up/down on `RAT` (`4^`, `4v`).
 - **Step arp** `ARS` (INT and MIDI): the CHD notes (or ARP 0/x/y, or the note itself) across a range of 1–4 octaves play as separate notes on the track's following empty steps — every step or every N; until the next note, OFF or a pattern change. The fx list in GRID is grouped: notes and arp, timing, randomness, pitch and volume, sound, sample, sends, MIDI.
 - **Velocity**: Vel>Cut (filter cutoff) and Vel>Dec (DECAY macro) in INST → ENV.
@@ -224,32 +265,34 @@ Details (INST tab, preset browser, DRUM machine table, SYNTH and wavetables, fx 
 
 ## Song and live performance
 
-- **Song mode** (BANK): each chain entry has a pattern, a transposition of melodic tracks (±24), a number of passes (x1–x16) and a mute scene (S1–S8) that is applied when the entry starts. The chain row reads `P05 +3 x2 S1`; Shift + turn in row edit mode selects the field.
-- **Mute scenes**: 8 tiles under the chain — tap recalls, long tap stores the current mutes, Shift + tap clears.
+- **Song** (SONG tab): up to 128 slots, each with a pattern and the mutes of the 16 tracks; the mutes are applied when the slot starts. An A tap copies the slot below it (that is how repeats are made), a click or tap on a cell mutes the track in the slot, the track buttons do the same. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the SONG cursor on any tab (while playing, a short press restarts it from there); tapping `S03 P05` in the status bar toggles SONG / LOOP at the end of the pass.
 - **Per-track length** (TRACK → Pat len): the track loops its first N steps within the pattern (polymeter); in GRID the steps beyond are grey, and the boundary is marked with a line.
-- **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press is pause, as before.
+- **Per-track speed** (TRACK → Speed): 1/4, 1/2, x1, x2, x4 per track and pattern — x2 / x4 loop the track 2 / 4 times faster (x2 at 1/16 = 1/32), 1/2 / 1/4 stretch it across pattern passes; works with Pat len.
+- **Fill generators** (GRID → Fill…, row Type): **ARP** (Virus-style arpeggiator, 106 rhythm patterns), **CHORDS** (a progression like `1 5 6 4`, `2MI7 5DOM 1MA7*2` or `1 b7 b6 5` in the project's key, 55 factory progressions + RANDOM, 32 rhythms, CLOSE voice leading by inversions) and **BASS** (a bass line whose notes are roles — root, 3rd, 5th, 7th, approach, walk — against a fixed root, the selected tracks' chords or the CHORDS progression; 48 factory patterns). Each writes notes and fx onto one track with live preview and undo; Capture saves your own patterns to `/presets/ARP`, `/presets/PRG`, `/presets/BAS`. More in the [manual](docs/manual.md#euclid).
+- **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press starts the song from the SONG cursor.
 - **REC** (GRID menu): while playing, the track buttons write scale degrees into the playing step of the current track (on a drum track — lanes); Shift + N erases.
-- **PERF** (GRID menu): an effect while the button is held — 1 RAT 2, 2 RAT 4, 3 filter closed, 4 open, 5 delay, 6 short DECAY, 7 fade, 8 mute.
+- **PERF** (GRID or SONG menu, one shared mode): punch-in effects on the whole internal mix while a button is held, PO-33 style — repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb throw, reverb freeze. The encoder sets the depth while the button is held (Shift ×10), several buttons stack, Shift + N still mutes (in SONG too); INT sound only, live only. Default: 1 REPEAT, 2 ROLL, 3 FILTER, 4 GATE, 5 DELAY THROW, 6 REVERB THROW, 7 CRUSH, 8 TAPE STOP.
 
 More in the [manual](docs/manual.md#song).
 
 ## Mixer and render
 
-- **MIX** is a separate tab at the bottom, next to TRACK: 8 strips for the half of the tracks under the cursor (volume fader, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
-- Track volume from any screen: hold its button and turn the encoder (Shift ×10); not in GRID edit mode, REC or PERF.
+- **MIX** is a separate tab at the bottom, between INST and BANK: 8 strips for the half of the tracks under the cursor (volume fader, pan, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
+- Track volume from any screen: hold its button and turn the encoder (Shift ×10); a click while holding switches the turn to pan. Not in GRID edit mode, REC or PERF (GRID or SONG).
+- **Pan** per INT track (L64…C…R63): TRACK → Pan, the MIX pan row (tap it, then turn), step fx `PAN`, LFO dest PAN (autopan; with Retrig ON chord notes spread across the field). The reverb returns in pseudo-stereo, the delay in the centre.
 - **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, stereo 16-bit 44.1 kHz, rendered by the synth board, with delay / reverb / compressor and a 2 s tail. The file can be taken from the card or imported back as a sample (mixed down to mono).
-- **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s.
+- **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s; mono (L + R) / 2.
 - Render and resampling work only when stopped, roughly in real time; cancel with a long press of the encoder or Play.
 
 More in the [manual](docs/manual.md#render).
 
 ## Interface
 
-- **Themes**: PROJ → SYS → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
-- **Pages** in TRACK (MAIN / NOTE / MIDI) and PROJ (SONG / FX / COMP / SYS): tap a page tab, or use the encoder on the page tabs and click (Shift+click — back); the list wraps around.
-- **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
-- **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (PROJ → SYS → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in PROJ → SYS.
-- **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.
+- **Themes**: FILE → SYSTEM → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
+- **Pages** in TRACK (MAIN / NOTE / MIDI), PROJ (SONG / FX / COMP / PERF) and FILE (PROJECTS / SAMPLES / SYSTEM): tap a page tab, or put the encoder on the page tabs and hold A + turn, or B + Shift + turn; the list wraps around.
+- **PERF**: the effect of each button is configured in PROJ → PERF (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP, GATE, FILTER, CRUSH, DOWNSAMPLE, DRIVE, DELAY THROW, REVERB THROW, FREEZE or ---); each button also has a start Value (button 1 REPEAT 1/8, button 2 REPEAT 1/32); pressing starts there and shows a toast with its name and value (`PERF REPEAT 1/8`).
+- **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (FILE → SYSTEM → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in FILE → SYSTEM.
+- **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder (click while holding — pan), a track's pan — tap its pan row and turn, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.
 
 ## SD card
 
@@ -262,7 +305,7 @@ The firmware creates the folders `/projects`, `/midi`, `/samples`, `/wavetables`
 FILE → **Wi-Fi firmware…**: the tracker joins your home network (network and password are entered on screen and stored in flash) and serves the page `http://d-trk.local/firmware` (or by the IP shown on screen). The page has two sections:
 
 - **Tracker (.bin)** — firmware update of the ESP32-S3 with the file `.pio/build/wt32/firmware.bin`;
-- **Synth board (.hex)** — firmware update of the Teensy with the file `.pio/build/teensy41/firmware.hex`: the tracker stores it on the synth card as `/firmware/teensy.hex`, the Teensy checks the image in its staging area (FlasherX) and only then flashes itself and restarts. Without Wi-Fi: copy the file to `/firmware/teensy.hex` on the card and run PROJ → SYS → Update synth.
+- **Synth board (.hex)** — firmware update of the Teensy with the file `.pio/build/teensy41/firmware.hex`: the tracker stores it on the synth card as `/firmware/teensy.hex`, the Teensy checks the image in its staging area (FlasherX) and only then flashes itself and restarts. Without Wi-Fi: copy the file to `/firmware/teensy.hex` on the card and run FILE → SYSTEM → Update synth.
 
 There is no file manager any more: projects, samples, MIDI files and presets are moved by taking the card out of the Teensy.
 
@@ -284,7 +327,7 @@ pio run -e teensy41                # synth board .hex for the Wi-Fi page or /fir
 pio test -e native                 # core tests on the computer (955 tests)
 ```
 
-- **First flash of the Teensy** goes over its USB with Teensy Loader (before the enclosure is closed); later the synth board is updated from the tracker (Wi-Fi page or PROJ → SYS → Update synth).
+- **First flash of the Teensy** goes over its USB with Teensy Loader (before the enclosure is closed); later the synth board is updated from the tracker (Wi-Fi page or FILE → SYSTEM → Update synth).
 - The ESP partition table is custom (`partitions.csv`): two ~8 MB firmware slots (`app0` / `app1`); the old `samples` partition is gone. After switching to it, flash once over USB (`pio run -e wt32 -t upload`): OTA does not change the partition table. Wi-Fi settings (NVS) are kept — `nvs` and `otadata` are at the same addresses.
 - Teensy program flash: firmware from 0x60000000, OTA staging area at 0x60100000, sample bank from 0x60200000.
 

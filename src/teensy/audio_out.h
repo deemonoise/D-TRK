@@ -30,12 +30,21 @@ class SynthStream : public AudioStream {
   };
   Stats take();
   void addLost() { lost_++; }
+  // The slowest block's cycles since the previous call (CPU profile), cleared.
+  uint32_t takeProfPeak() {
+    const uint32_t c = profPeak_;
+    profPeak_ = 0;
+    return c;
+  }
 
   // Parked (bank changes): silence, due events are dropped, the synth is not run, so it never reads
   // the bank. Takes effect at once for the next block (loop() never runs inside update()). Unparking
   // resets the synth (its voices may point at moved bank data) in the next block.
   void park(bool on);
   bool parked() const { return parked_; }
+  // Parks since boot (mod 256): each one ends with a synth reset, which releases PERF (the ESP's
+  // PERF pad polls it through Status).
+  uint8_t parks() const { return parks_; }
 
   // Phones level 0..100 % (gain (pct/100)^2) on the output, after the scope.
   void setPhones(uint8_t pct);
@@ -59,7 +68,7 @@ class SynthStream : public AudioStream {
   void (*volatile hook_)(uint32_t) = nullptr;
   uint32_t lastCycles_ = 0;
   EvQueue<256> q_;
-  volatile uint32_t cycles_ = 0, blocks_ = 0, peakCycles_ = 0;
+  volatile uint32_t cycles_ = 0, blocks_ = 0, peakCycles_ = 0, profPeak_ = 0;
   volatile uint16_t stalls_ = 0, late_ = 0, lost_ = 0, outPeak_ = 0;
   volatile int32_t phonesQ15_ = 32768;
   static constexpr int kScopeLen = 512;
@@ -67,4 +76,5 @@ class SynthStream : public AudioStream {
   volatile int scopeAt_ = 0;
   volatile bool scopeOn_ = false;
   volatile bool parked_ = false, resetPending_ = false;
+  volatile uint8_t parks_ = 0;
 };

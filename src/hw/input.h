@@ -3,8 +3,11 @@
 
 namespace hw {
 
+// EditTurn / EditEnd / EditCancel are made by ui::App from A chords (delta, shift as in EncTurn);
+// drivers never queue them.
 enum class InputType : uint8_t {
-  EncTurn, EncClick, EncLong, PlayPress, ShiftDown, ShiftUp, TrackPress, PlayRelease, TrackRelease
+  EncTurn, EncClick, EncLong, PlayPress, ShiftDown, ShiftUp, TrackPress, PlayRelease, TrackRelease,
+  ADown, AUp, BDown, BUp, EditTurn, EditEnd, EditCancel
 };
 
 struct InputEvent {

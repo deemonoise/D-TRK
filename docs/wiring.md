@@ -1,14 +1,15 @@
 
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift and eight track buttons with LEDs, and the synth board — a Teensy 4.1 with a PCM5102A DAC and a MAX97220 headphone amplifier. The display and touch are already routed on the board. The microSD card sits in the Teensy (FAT32 or exFAT); the board's own card slot is not used.
+Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery monitor, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, and the synth board — a Teensy 4.1 with a PCM5102A DAC and a MAX97220 headphone amplifier. The display and touch are already routed on the board. The microSD card sits in the Teensy (FAT32 or exFAT); the board's own card slot is not used.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
 ## Schematic
 
 ```
-LiPo 103450 + / − ──── IP5306 B+ / B−          (IP5306 Type-C — charging)
+LiPo 103450 + ── INA226 IN+ ─[shunt]─ INA226 IN− ── IP5306 B+   (IP5306 Type-C — charging)
+LiPo 103450 − ──────────────────────────────────── IP5306 B−
 IP5306 VOUT ──[switch]── board 5V              (VOUT/GND — pads of the desoldered USB-A)
 IP5306 GND ──────────── board GND              (common ground)
 
@@ -25,15 +26,22 @@ WT32-SC01 Plus, expansion connector (Extended IO)
 WT32-SC01 Plus, Debug connector
   IO43 TXD0 ─────── PCF SDA
   IO44 RXD0 ─────── PCF SCL
-  3V3 ───────────── PCF VCC, 3.3 V rail for the LED resistors
+  3V3 ───────────── PCF VCC
   GND ───────────── PCF GND
+  (INA226 SDA / SCL / VCC / GND — in parallel with the PCF, on the same wires)
+
+INA226 (address 0x40: A0, A1 to GND; ALE not needed)
+  IN+ ── LiPo +          IN− ── IP5306 B+
+  VBS ── IN+             (if broken out: battery voltage)
+  VCC ── 3.3 V           GND ── GND
 
 PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
   P00 … P07 ── track button 1 … 8 ── GND
   P13 ──────── encoder shaft button ── GND
   P14 ──────── Play ── GND
   P15 ──────── Shift ── GND
-  P1x ──────── LED cathode;  LED anode ──[R]── 3.3 V
+  P16 ──────── B ── GND
+  P17 ──────── A ── GND
 
 Teensy 4.1 (synth board; VUSB–VIN trace on the back cut)
   VIN ── board 5V                          GND ── board GND
@@ -49,7 +57,7 @@ PCM5102A                                 MAX97220
   L / R ── line out, to the amplifier      OUT L / OUT R / GND ── jack Tip / Ring / Sleeve
 ```
 
-*Every "GND" is a wire to the board's common GND; every "3.3 V" goes to the board's 3V3 pin. Encoder A and B use the board's internal pull-ups, and the PCF8575 pins have their own weak pull-ups, so the buttons and encoder need no external resistors. The PCF8575 is required: without it the encoder button, Play, Shift and the track buttons do not work.*
+*Every "GND" is a wire to the board's common GND; every "3.3 V" goes to the board's 3V3 pin. Encoder A and B use the board's internal pull-ups, and the PCF8575 pins have their own weak pull-ups, so the buttons and encoder need no external resistors. The PCF8575 is required: without it the encoder button, Play, Shift, A, B and the track buttons do not work.*
 
 ## Connection table
 
@@ -59,6 +67,15 @@ PCM5102A                                 MAX97220
 | `LiPo + / −`                      | `IP5306 B+ / B−`                    | 103450 battery with a protection board                      |
 | `IP5306 VOUT`                     | `switch → board 5V`                 | VOUT and GND are the pads of the desoldered USB-A port      |
 | `IP5306 GND`                      | `board GND`                         |                                                             |
+| **INA226 battery monitor** |                                     |                                                             |
+| `LiPo +`                          | `INA IN+`                           | the shunt sits in the battery's positive wire               |
+| `INA IN−`                         | `IP5306 B+`                         | current "+" = discharge, "−" = charging                     |
+| `INA IN+`                         | `INA VBS`                           | if the pin exists; measures the battery voltage             |
+| `board 3V3`                       | `INA VCC`                           | 3.3 V only, not 5 V                                         |
+| `board GND`                       | `INA GND`                           | common ground, which is also the battery negative           |
+| `Debug TXD0 (IO43) / RXD0 (IO44)` | `INA SDA / SCL`                     | in parallel with the PCF8575, the addresses don't overlap   |
+| `GND`                             | `INA A0, A1`                        | address 0x40; already so on most modules                    |
+| `—`                               | `INA ALE`                           | leave unconnected                                           |
 | **MIDI OUT** |                                     |                                                             |
 | `board IO10`                      | `10 Ω → Tip`                        | MIDI DIN pin 5                                              |
 | `board 3V3`                       | `33 Ω → Ring`                       | MIDI DIN pin 4                                              |
@@ -86,7 +103,7 @@ PCM5102A                                 MAX97220
 | `amp VCC`                         | `amp SHDN`                          | if broken out: VCC = running                                |
 | `amp OUT L / OUT R / GND`         | `jack Tip / Ring / Sleeve`          | DirectDrive: no output capacitors, Sleeve to GND is normal  |
 | **PCF8575 and buttons (required)** |                                     |                                                             |
-| `board 3V3`                       | `PCF VCC + 3.3 V rail`              | the rail feeds all 8 LED resistors                          |
+| `board 3V3`                       | `PCF VCC`                           | 3.3 V only, not 5 V                                         |
 | `board GND`                       | `PCF GND`                           | do not solder A0, A1, A2: the firmware finds the address 0x20–0x27 itself |
 | `Debug TXD0 (IO43) / RXD0 (IO44)` | `PCF SDA / SCL`                     | Debug connector; 3V3 and GND can be taken from it too       |
 | `—`                               | `PCF INT`                           | leave unconnected: the module is polled every 5 ms          |
@@ -94,10 +111,9 @@ PCM5102A                                 MAX97220
 | `PCF P13`                         | `encoder shaft button`              | other pin to GND                                            |
 | `PCF P14`                         | `Play button`                       | other pin to GND                                            |
 | `PCF P15`                         | `Shift button`                      | other pin to GND                                            |
-| `PCF P16 / P17`                   | `button A / B`                      | other pin to GND; reserved, not used by the firmware yet    |
-| `PCF P10 … P17`                   | `LED 1 … 8 cathode`                 | anode through its own resistor to 3.3 V; P13–P17 are taken by the buttons, so LEDs 4–8 need other pins (`kTrackLedBit`) |
+| `PCF P16 / P17`                   | `button B / A`                      | other pin to GND                                            |
 
-The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, no LEDs are fitted, and P11 is free.
+The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, and P11 is free.
 
 10 nF capacitors from the encoder's A and B pins to GND are recommended for less bounce. They are not required: the firmware has a filter.
 
@@ -117,6 +133,16 @@ The Teensy runs the internal synth, the microSD card and the sample bank (in its
 - Later updates go from the tracker: put `teensy.hex` (`.pio/build/teensy41/firmware.hex`) into `/firmware/` on the card and use PROJ → SYS → Update synth, or upload it on the Wi-Fi page (FILE → Wi-Fi firmware..., section "Synth board"). The Teensy checks the image before replacing its firmware.
 - The card goes into the Teensy's slot; the case has an opening for it, so it can be changed without opening the case. FAT32 or exFAT.
 - Check the link without the rest of the firmware: `wt32-echo` on the board and `teensy41-echo` on the Teensy; the board's serial monitor shows the byte rate and mismatches (0 expected).
+
+## INA226 battery monitor
+
+The INA226 sits in the battery's positive wire, before the IP5306, and reports over I2C the battery voltage and the signed current through it: "+" is discharge, "−" is charging from Type-C. The switch is after the IP5306, so the shunt is always in the circuit, while the chip itself runs from the board's 3.3 V and is unpowered when the tracker is off. It does not drain the battery.
+
+- **Shunt.** Most modules carry an R100 (0.1 Ω): ±0.8 A range. The tracker draws ~0.3 A from the battery — enough. The IP5306 charges at up to ~2 A: the reading will clip at 0.8 A, but the sign (charging) is still visible. The shunt then dissipates up to ~0.4 W — it should be a 2512 package on the module. To measure the charge current too, replace the shunt with an R010 (0.01 Ω, ±8 A).
+- **IN+ and IN− wires** — same gauge as the battery wire: the full current, including charging, flows through them.
+- **VBS.** If the module has a VBS (or VBUS) pin, connect it to IN+ so the voltage is measured right at the battery. If not, the module measures at IN− — off by the shunt drop, which doesn't matter for the charge percentage.
+- **Address 0x40.** A0 and A1 to GND; modules usually already pull them down with resistors. The PCF8575 is at 0x20–0x27, no overlap.
+- **I2C pull-ups.** The module has its own 10 kΩ on SDA and SCL; together with the PCF8575's pull-ups this is fine.
 
 ## MIDI jack
 
@@ -141,7 +167,7 @@ DAC SCK, FMT, FLT, DEMP ── GND     DAC XSMT ── 3.3 V     DAC VIN ── 
 amp VCC, amp SHDN ── board 5V (or 3V3)
 ```
 
-*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is stereo: 44.1 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs). The Teensy's MCLK (pin 23) is not connected.*
+*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is stereo, left on L and right on R (tracks panned to the centre sound the same on both): 44.1 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs). The Teensy's MCLK (pin 23) is not connected.*
 
 - **DAC settings.** SCK to GND (no MCLK: the PLL takes the clock from BCK), FMT = L (I2S), FLT = L (normal latency), DEMP = L (de-emphasis off), XSMT = H (unmuted). On the purple GY-PCM5102 modules these are solder pads on the back — check your module's silkscreen.
 - **Line out.** The DAC's L / R give 2.1 Vrms at full scale, centred on ground. Unlike the old SPK output, they can go to a mixer, audio interface or powered speakers — from the DAC before the amplifier, or from the amplifier's headphone output.
@@ -155,23 +181,7 @@ amp VCC, amp SHDN ── board 5V (or 3V3)
 
 ![Button layout: Shift, Play and the encoder under the screen; below them buttons 1–4, and 5–8 at the front edge. The bottom view is mirrored: button 1 is on the right.](img/wiring-3.svg)
 
-*Button number = track number = pin number + 1 (button 1 is P00 and P10). While soldering, the lid lies face down, so the left-to-right order is reversed: button 1 ends up on the right.*
-
-## LED polarity
-
-![LED: the long leg is the anode, to the resistor and 3.3 V; the short leg on the flat side is the cathode, to pin P1x.](img/wiring-4.svg)
-
-*The LED goes into the window of the MX switch housing, with the legs passing straight through. A reversed LED will not burn out, it just won't light.*
-
-## LED resistors
-
-| LED colour                 | Drop          | Resistor   | Current    |
-|----------------------------|---------------|------------|------------|
-| red, yellow, orange        | `≈ 2.0 V`     | `330 Ω`    | `≈ 4 mA`   |
-| green (yellow-green)       | `≈ 2.1 V`     | `330 Ω`    | `≈ 3.5 mA` |
-| white, blue, bright green  | `≈ 2.9–3.1 V` | `47–68 Ω`  | `≈ 3–8 mA` |
-
-With white and blue LEDs at 3.3 V the voltage headroom is only 0.2–0.4 V, and brightness varies noticeably from one LED to the next. Red or yellow with 330 Ω are more reliable. Do not go below 47 Ω: the PCF8575 handles up to 25 mA per pin, but all 8 LEDs together should not draw more than ~80 mA.
+*Button number = track number = pin number + 1 (button 1 is P00). While soldering, the lid lies face down, so the left-to-right order is reversed: button 1 ends up on the right.*
 
 ## Before powering up
 
@@ -181,4 +191,5 @@ With white and blue LEDs at 3.3 V the voltage headroom is only 0.2–0.4 V, and 
 4.  Check whether the module has pull-up resistors on SDA and SCL (usually 4.7–10 kΩ to VCC). If not, add 4.7 kΩ from each line to 3.3 V.
 5.  Power the module only from 3.3 V, not 5 V: otherwise 5 V reaches the board's GPIOs.
 6.  Check that TXD0 and RXD0 are not shorted to each other or to GND. Do not touch GPIO 1, 2, 42: they are used by the built-in RS485.
-7.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play and Shift do not work either); `trackio: PCF8575 at 0x..` means it was found. The status bar shows `NO SYNTH` while the Teensy does not answer: check its power and the link wires (IO13 → pin 0, IO14 → pin 1).
+7.  INA226: IN+ rings to the battery positive, IN− to the IP5306 B+; between IN+ and IN− you read the shunt (a fraction of an ohm), not an open circuit. The module's VCC goes to 3.3 V, not 5 V.
+8.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play, Shift, A and B do not work either); `trackio: PCF8575 at 0x..` means it was found. The status bar shows `NO SYNTH` while the Teensy does not answer: check its power and the link wires (IO13 → pin 0, IO14 → pin 1).

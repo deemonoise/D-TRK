@@ -3,13 +3,15 @@
 #include <stdio.h>
 #include <string.h>
 #include "audio/audio.h"
+#include "fx_info.h"
 #include "esp_heap_caps.h"
+#include "hw/battery.h"
 #include "hw/trackio.h"
 #include "storage/settings.h"
 #include "storage/storage.h"
 #include "hw/sdcard.h"
 #include "link_msg.h"
-#include "track_leds.h"
+#include "track_buttons.h"
 
 namespace ui {
 namespace {
@@ -49,7 +51,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   }
   Serial.printf("psram free %u KB\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
-  // Device settings in NVS: the colour theme, the autosave interval, the phones level.
+  // Device settings in NVS: the colour theme, the autosave interval, the phones level, preview.
   const int theme = storage::loadTheme(0);
   theme_ = savedTheme_ = theme < themeCount() ? theme : 0;
   applyTheme(theme_);
@@ -58,9 +60,11 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   const int ph = storage::loadSetting("phones", 100);
   phones_ = savedPhones_ = ph <= 100 ? ph : 100;
   audio::setPhones(static_cast<uint8_t>(phones_));
+  preview_ = savedPreview_ = storage::loadSetting("preview", 1) != 0;
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
+  if (perfTab(tab_)) perf_.attach();
   screen()->onEnter();
   dirty_ = true;
 }
@@ -70,7 +74,11 @@ void App::setTab(Tab t) {
   setBpmEdit(false);
   if (t == tab_) return;
   menu_.close();
+  if (perfTab(tab_)) perf_.allOff();  // leaving releases the held effects
   screen()->onLeave();
+  // GRID <-> SONG keeps the PERF buffer; any other tab frees it (its PSRAM is needed there).
+  if (perfTab(t)) perf_.attach();
+  else perf_.detach();
   tab_ = t;
   if (t == Tab::Track || t == Tab::Mix) track_.setMixer(t == Tab::Mix);  // one screen, two views
   screen()->onEnter();
@@ -82,14 +90,23 @@ void App::transport() {
     toast("WI-FI MODE");
     return;
   }
-  const engine::Cmd c = shift_ ? engine::Cmd::TogglePlay : engine::Cmd::StartStop;
   if (playWait_ >= 0) {  // a second press while waiting: no start
     playWait_ = -1;
     toast("CANCEL");
     return;
   }
-  // Started before the synth board has the sound state (just loaded, or it rebooted) the first
-  // notes would sound wrong: the start waits for it (pollSynth), at most kSyncWaitMs.
+  if (shift_) {
+    startSong();
+    return;
+  }
+  // Stopped: the start plays the song from the SONG cursor on the SONG tab, else loops.
+  if (!status_.playing && !status_.paused) postSong(tab_ == Tab::Song && p_->songLen > 0);
+  postStart(engine::Cmd::StartStop);
+}
+
+// Started before the synth board has the sound state (just loaded, or it rebooted) the first
+// notes would sound wrong: the start waits for it (pollSynth), at most kSyncWaitMs.
+void App::postStart(engine::Cmd c) {
   if (!status_.playing && audio::synthUp() && audio::versionOk() && !audio::synced()) {
     playWait_ = static_cast<int8_t>(c);
     playWaitAt_ = millis();
@@ -97,6 +114,21 @@ void App::transport() {
     return;
   }
   engine::post(c);
+}
+
+// Shift + Play: the song from the SONG cursor, on any tab; playing, it starts again from there.
+void App::startSong() {
+  if (p_->songLen == 0) {
+    toast("SONG EMPTY");
+    return;
+  }
+  engine::post(engine::Cmd::Stop);
+  postSong(true);
+  postStart(engine::Cmd::StartStop);
+}
+
+void App::postSong(bool on) {
+  engine::post(engine::Cmd::SetSong, static_cast<uint16_t>((on ? 0x8000 : 0) | (song_.cursor() & 0xff)));
 }
 
 void App::setBpmEdit(bool on) {
@@ -110,6 +142,10 @@ void App::onInput(const hw::InputEvent& ev) {
   shift_ = ev.shift;
   dirty_ = true;
   switch (ev.type) {
+    case InputType::ADown: abAction(ab_.aDown()); return;
+    case InputType::AUp: abAction(ab_.aUp(ev.shift)); return;
+    case InputType::BDown: abAction(ab_.bDown()); return;
+    case InputType::BUp: abAction(ab_.bUp(ev.shift)); return;
     case InputType::PlayPress:
       if (!menu_.isOpen() && !bpmEdit_ && screen()->onPlay()) return;
       if (ev.shift && status_.playing && !transportLocked_) {
@@ -122,20 +158,44 @@ void App::onInput(const hw::InputEvent& ev) {
       fillUp();
       return;
     case InputType::TrackRelease:
-      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      if (ev.delta == heldTrackBtn_) {
+        heldTrackBtn_ = -1;
+        holdPan_ = false;
+      }
       trackRelease(ev.delta);
       return;
+    case InputType::EncClick:
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL <-> PAN
+        holdPan_ = !holdPan_;
+        holdToast(heldTrack());
+        return;
+      }
+      break;
     case InputType::EncTurn:
+      if (const mt::AbOut o = ab_.turn(ev.delta, ev.shift); o.act != mt::AbAction::Pass) {
+        abAction(o);
+        return;
+      }
       if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed
-        nudgeTrackVol((curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + heldTrackBtn_, ev.delta * (ev.shift ? 10 : 1));
+        const int d = ev.delta * (ev.shift ? 10 : 1);
+        if (holdPan_) nudgeTrackPan(heldTrack(), d);
+        else nudgeTrackVol(heldTrack(), d);
         return;
       }
       break;
     case InputType::ShiftDown: shift_ = true; return;
     case InputType::ShiftUp: shift_ = false; return;
     case InputType::TrackPress:
+      if (const mt::AbOut o = ab_.track(ev.delta, ev.shift); o.act != mt::AbAction::Pass) {
+        abAction(o);  // a chord: no hold-button volume for this press
+        return;
+      }
       heldTrackBtn_ = ev.delta;
+      holdPan_ = false;  // a new hold starts on the volume
       if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
+      return;
+    case InputType::EditEnd:  // A released: always ends the screen's hold edit (menu / BPM edit or not)
+      screen()->onInput(ev);
       return;
     default: break;
   }
@@ -148,7 +208,8 @@ void App::onInput(const hw::InputEvent& ev) {
     return;
   }
   if (bpmEdit_) {
-    if (ev.type == InputType::EncTurn) {
+    if (ev.type == InputType::EditCancel) return;  // A chord: BPM edit stays
+    if (ev.type == InputType::EncTurn || ev.type == InputType::EditTurn) {
       const int bpm = bpmTarget_ + ev.delta * (ev.shift ? 10 : 1);
       bpmTarget_ = bpm < 20 ? 20 : (bpm > 300 ? 300 : bpm);
       engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
@@ -164,6 +225,87 @@ void App::onInput(const hw::InputEvent& ev) {
     return;
   }
   screen()->onInput(ev);
+}
+
+// A / B chords (mt::AbKeys). Edit actions go through onInput as InputTypes: the menu ignores them,
+// the BPM edit takes EditTurn as a turn, otherwise the screen gets them.
+void App::abAction(const mt::AbOut& o) {
+  using mt::AbAction;
+  hw::InputType t;
+  switch (o.act) {
+    case AbAction::EditTurn: t = hw::InputType::EditTurn; break;
+    case AbAction::EditEnd: t = hw::InputType::EditEnd; break;
+    case AbAction::EditCancel: t = hw::InputType::EditCancel; break;
+    case AbAction::TabTurn: cycleTab(o.delta); return;
+    case AbAction::PageTurn:
+      if (!menu_.isOpen() && !bpmEdit_) screen()->onPage(o.delta);
+      return;
+    case AbAction::Undo:
+      if (menu_.isOpen()) return;
+      if (tab_ == Tab::Grid && grid_.dialogOpen()) return;  // the Fill / Transpose preview owns the pattern
+      setBpmEdit(false);
+      if (tab_ == Tab::Grid) {
+        grid_.undo();
+      } else if (tab_ == Tab::Song) {
+        song_.undo();
+      } else {
+        const bool ok = doUndo();
+        if (ok) engine::post(engine::Cmd::ReleaseTies);
+        toast(ok ? "UNDO" : "NOTHING TO UNDO");
+      }
+      return;
+    case AbAction::Back:
+      if (menu_.isOpen()) menu_.close();
+      else if (bpmEdit_) setBpmEdit(false);
+      else screen()->onBack();
+      return;
+    case AbAction::ATap:
+      if (!menu_.isOpen() && !bpmEdit_) screen()->onATap(o.shift);
+      return;
+    case AbAction::Solo:
+      if (!menu_.isOpen()) soloKey(o.delta);
+      return;
+    case AbAction::QueuePattern:
+      if (!menu_.isOpen()) queueKey(o.delta, o.shift);
+      return;
+    default: return;
+  }
+  onInput(hw::InputEvent{t, o.delta, o.shift});
+}
+
+// B + turn: tabs in a ring.
+void App::cycleTab(int d) {
+  constexpr int n = static_cast<int>(Tab::Count);
+  setTab(static_cast<Tab>(((static_cast<int>(tab_) + d) % n + n) % n));  // closes the menu and the BPM edit
+}
+
+// A + button N: solo track N of the half holding the cursor.
+void App::soloKey(int n) {
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
+  mt::TrackCfg& t = p_->tracks[track];
+  engine::lockProject();
+  t.solo = !t.solo;
+  engine::unlockProject();
+  markDirty();
+  char msg[16];
+  snprintf(msg, sizeof(msg), "TRACK %d %s", track + 1, t.solo ? "SOLO" : "ON");
+  toast(msg);
+}
+
+// B + button N: queue pattern N of the bank holding the edit pattern; Shift = switch at once (as BANK).
+void App::queueKey(int n, bool shift) {
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int pat = (editPattern() / mt::kTrackButtons) * mt::kTrackButtons + n;
+  if (pat >= mt::kPatterns) return;
+  if (!shift && songPlays()) {  // the sequencer ignores a queue while the song plays
+    toast("SONG MODE");
+    return;
+  }
+  engine::post(shift ? engine::Cmd::SelectPattern : engine::Cmd::QueuePattern, static_cast<uint16_t>(pat));
+  char msg[20];
+  snprintf(msg, sizeof(msg), "PATTERN %02d%s", pat + 1, !shift && status_.playing ? " NEXT" : "");
+  toast(msg);
 }
 
 void App::onTouch(const TouchEvent& ev) {
@@ -185,7 +327,16 @@ void App::onTouch(const TouchEvent& ev) {
   }
   if (ev.y < kStatusH) {
     if (ev.type != TouchType::Tap) return;
-    if (ev.x >= kBpmX0 && ev.x < kBpmX1) setBpmEdit(!bpmEdit_);
+    if (ev.x >= kModeX0 && ev.x < kModeX1) {
+      if (!status_.playing && !status_.paused) return;  // stopped, Play picks the mode by tab
+      const bool on = !status_.song;
+      if (on && p_->songLen == 0) {
+        toast("SONG EMPTY");
+        return;
+      }
+      postSong(on);
+      toast(on ? "SONG" : "LOOP");
+    } else if (ev.x >= kBpmX0 && ev.x < kBpmX1) setBpmEdit(!bpmEdit_);
     else if (ev.x >= kTransX0 && ev.x < kTransX1) transport();
     return;
   }
@@ -219,8 +370,9 @@ void App::projectReplaced() {
   markSaved();
   setBpmEdit(false);
   lastBpm_ = p_->bpm;
-  // Let the sequencer re-read songMode/chain (shows S01 while stopped).
-  engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));
+  // Let the sequencer re-read the song (stopped: no slot shown).
+  engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
+  perf_.allOff();  // the loaded project does not inherit the held effects
   for (Screen* sc : screens_)
     if (sc) sc->onProjectReplaced();
   for (Screen* sc : screens_)
@@ -244,10 +396,11 @@ bool App::doUndo() {
 // selection and note entry, the sample editor plays slices (button index); Shift + N mutes on
 // every other screen too.
 void App::trackKey(int n, bool shift) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
-  const int track = (curTrack_ / mt::kTrackLeds) * mt::kTrackLeds + n;
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (tab_ == Tab::Grid && grid_.trackKey(n, shift)) return;
   if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
+  if (tab_ == Tab::Song && song_.trackKey(n, shift)) return;
   if (!shift) {
     setCurTrack(track);
     return;
@@ -263,7 +416,8 @@ void App::trackKey(int n, bool shift) {
 }
 
 bool App::holdVolume() const {
-  return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) && !busy_;
+  return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) &&
+         !(tab_ == Tab::Song && perf_.on()) && !busy_;
 }
 
 // Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.
@@ -287,12 +441,45 @@ void App::nudgeTrackVol(int track, int d) {
   toast(msg);
 }
 
-void App::trackRelease(int n) {
-  if (n < 0 || n >= mt::kTrackLeds) return;
-  if (tab_ == Tab::Grid) grid_.trackRelease(n);
+// Pan of a held track button's track (INT only), with a toast; as nudgeTrackVol.
+void App::nudgeTrackPan(int track, int d) {
+  mt::TrackCfg& t = p_->tracks[track];
+  if (t.out == mt::TrackOut::Int) {
+    int v = t.pan + d;
+    v = v < 0 ? 0 : (v > 127 ? 127 : v);
+    if (v != t.pan) {
+      engine::lockProject();
+      t.pan = static_cast<uint8_t>(v);
+      engine::unlockProject();
+      markDirty();
+    }
+  }
+  holdToast(track);
 }
 
-// Shift + Play while playing: fill while held; a short press is still Shift + Play (pause) on release.
+// What the held button's turn changes now, with its value.
+void App::holdToast(int track) {
+  const mt::TrackCfg& t = p_->tracks[track];
+  char msg[24];
+  if (t.out != mt::TrackOut::Int) {
+    snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
+  } else if (holdPan_) {
+    char v[5];
+    mt::fxFormat(mt::Fx::PAN, t.pan, v);
+    snprintf(msg, sizeof(msg), "TRK%d PAN %s", track + 1, v);
+  } else {
+    snprintf(msg, sizeof(msg), "TRK%d VOL %d", track + 1, t.vol);
+  }
+  toast(msg);
+}
+
+void App::trackRelease(int n) {
+  if (n < 0 || n >= mt::kTrackButtons) return;
+  if (perfTab(tab_)) perf_.release(n);  // PERF: the effect the button held ends
+}
+
+// Shift + Play while playing: fill while held; a short press is still Shift + Play (song start) on
+// release.
 void App::fillDown() {
   fillHeld_ = true;
   fillDownMs_ = millis();
@@ -303,17 +490,7 @@ void App::fillUp() {
   if (!fillHeld_) return;
   fillHeld_ = false;
   engine::postWait(engine::Cmd::Fill, 0);
-  if (millis() - fillDownMs_ < hw::kLongPressMs) engine::post(engine::Cmd::TogglePlay);
-}
-
-void App::updateLeds(uint32_t now) {
-  const uint16_t act = engine::takeActivity();
-  uint16_t flash = 0;
-  for (int i = 0; i < mt::kTracks; ++i) {
-    if (act & (1u << i)) flashUntil_[i] = now + kFlashMs;
-    if (static_cast<int32_t>(flashUntil_[i] - now) > 0) flash |= static_cast<uint16_t>(1u << i);
-  }
-  hw::trackLeds(mt::trackLedMaskHalf(curTrack_, flash));
+  if (millis() - fillDownMs_ < hw::kLongPressMs) startSong();
 }
 
 void App::setTheme(int i) {
@@ -339,19 +516,29 @@ void App::setPhones(int v) {
   settingsChangedAt_ = millis() | 1;
 }
 
-// Device settings (theme, autosave, phones): written once they stay put for a second (an encoder
+void App::setPreview(bool on) {
+  if (on == preview_) return;
+  preview_ = on;
+  settingsChangedAt_ = millis() | 1;
+}
+
+// Device settings (theme, autosave, phones, preview): written once they stay put for a second (an encoder
 // sweep = one write) and the transport is stopped. An NVS write can erase a flash sector with the
 // caches off: never while playing.
 void App::saveSettingsIdle(uint32_t now) {
   if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
   settingsChangedAt_ = 0;
-  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_) return;
+  if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_ &&
+      preview_ == savedPreview_)
+    return;
   if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
   if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
   if (phones_ != savedPhones_) storage::saveSetting("phones", static_cast<uint8_t>(phones_));
+  if (preview_ != savedPreview_) storage::saveSetting("preview", preview_ ? 1 : 0);
   savedTheme_ = theme_;
   savedAutosaveMin_ = autosaveMin_;
   savedPhones_ = phones_;
+  savedPreview_ = preview_;
 }
 
 // Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
@@ -428,15 +615,23 @@ void App::dropInput(const hw::InputEvent& ev) {
       }
       break;
     case hw::InputType::TrackRelease:
-      if (ev.delta == heldTrackBtn_) heldTrackBtn_ = -1;
+      if (ev.delta == heldTrackBtn_) {
+        heldTrackBtn_ = -1;
+        holdPan_ = false;
+      }
       trackRelease(ev.delta);
       break;
+    case hw::InputType::AUp:
+    case hw::InputType::BUp: ab_.reset(); break;  // no tap / edit end from a dropped chord
     default: break;
   }
 }
 
 void App::endProgress() {
   heldTrackBtn_ = -1;  // its release may have been dropped with the queued input
+  holdPan_ = false;
+  ab_.reset();         // so may the A / B releases
+  screen()->onInput(hw::InputEvent{hw::InputType::EditEnd, 0, false});  // no hold edit left stuck
   progLabel_[0] = 0;
   progPct_ = -1;
   hw::InputEvent ev;
@@ -445,11 +640,12 @@ void App::endProgress() {
 }
 
 void App::loadedToast(const char* what, int missing, bool folderFail) {
-  char parts[3][40];
+  char parts[4][40];
   int n = 0;
   if (what && what[0]) strlcpy(parts[n++], what, sizeof(parts[0]));
   if (missing > 0) snprintf(parts[n++], sizeof(parts[0]), "%d SAMPLES MISSING", missing);
   if (folderFail) strlcpy(parts[n++], "SAMPLES NOT SAVED", sizeof(parts[0]));
+  if (storage::songTransposeDropped()) strlcpy(parts[n++], "SONG: TRANSPOSE DROPPED", sizeof(parts[0]));
   for (int first = 0; first < n; ++first) {
     char msg[128] = "";
     for (int k = first; k < n; ++k) {
@@ -495,16 +691,17 @@ void App::tick() {
     dirty_ = true;
   }
   const uint32_t now = millis();
-  updateLeds(now);
   saveSettingsIdle(now);
   autosaveIdle(now);
   pollCpu(now);
   audio::pump();
   pollSynth(now);
+  pollBattery(now);
   if (toast_[0] && static_cast<int32_t>(now - toastUntil_) >= 0) {
     toast_[0] = 0;
     dirty_ = true;
   }
+  perf_.poll(status_.playing);
   screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
 
@@ -554,9 +751,37 @@ void App::pollSynth(uint32_t now) {
   }
 }
 
+// Feeds each new battery sample (taken once a second by trackio) to the gauge; polled every
+// kBatMs so it does not drift against the reader (s.ms keeps a sample from being fed twice).
+// A sample older than kBatStaleMs (reader stopped) counts as none: the status bar hides the
+// battery, the SYS row shows "---". The status bar redraws when the percent, charging or
+// freshness changes (its colour follows from them); batSeq_ tells FILE SYSTEM of every change.
+void App::pollBattery(uint32_t now) {
+  if (now - batAt_ < kBatMs) return;
+  batAt_ = now;
+  hw::BatterySample s;
+  if (hw::batteryLast(s) && !(batHave_ && s.ms == batSample_.ms)) {
+    const float dt = batHave_ ? (s.ms - batSample_.ms) / 1000.f : 0.f;
+    gauge_.update(s.volts, s.amps, dt);
+    batSample_ = s;
+    batHave_ = true;
+    ++batSeq_;
+    if (gauge_.takeLowAlert()) toast("BATTERY LOW - SAVE");
+  }
+  const bool fresh = batHave_ && now - batSample_.ms <= kBatStaleMs;
+  if (fresh != batFresh_) ++batSeq_;
+  const int pct = fresh ? gauge_.percent() : -1;
+  if (fresh != batFresh_ || pct != batPct_ || gauge_.charging() != batChg_) {
+    batFresh_ = fresh;
+    batPct_ = pct;
+    batChg_ = gauge_.charging();
+    dirty_ = true;
+  }
+}
+
 bool App::versionBarrier() { return synth_ == Synth::Mismatch && !(tab_ == Tab::File && file_.wifiOpen()); }
 
-// The only actions there: Update synth from the card (as PROJ -> SYS), or FILE -> Wi-Fi, whose page
+// The only actions there: Update synth from the card (as FILE -> SYSTEM), or FILE -> Wi-Fi, whose page
 // takes a synth firmware too.
 void App::barrierInput(const hw::InputEvent& ev) {
   if (ev.type != hw::InputType::EncClick) return;
@@ -564,7 +789,7 @@ void App::barrierInput(const hw::InputEvent& ev) {
   const MenuItem items[] = {{"Cancel", kCancel}, {"Update synth...", kUpdate}, {"Wi-Fi firmware...", kWifi}};
   menu_.open("SYNTH FIRMWARE", items, 3, [this](int id) {
     if (id == kUpdate) {
-      proj_.askUpdateSynth();
+      file_.askUpdateSynth();
     } else if (id == kWifi) {
       setTab(Tab::File);
       file_.openWifi();
@@ -619,9 +844,9 @@ void App::drawStatus() {
   char buf[24];
   spr_->fillRect(0, 0, kScreenW, kStatusH, kStatusBg);
   spr_->setTextColor(kText);
-  // Song mode: "S03 P05" (heard chain entry, "S--" before the song is heard); no queue in song mode.
-  // No lock: the UI is the only writer of songMode / chainLen.
-  const bool song = p_->songMode && p_->chainLen > 0;
+  // Song: "S03 P05" (heard slot, "S--" before the song is heard); no queue in song mode.
+  // Stopped: Play picks the mode by tab, so no "S" here. No lock: the UI is the only writer of songLen.
+  const bool song = songPlays();
   if (song) {
     if (status_.songPos >= 0) snprintf(buf, sizeof(buf), "S%02d P%02d%s", status_.songPos + 1, status_.pattern + 1,
                                        projectDirty() ? "*" : "");
@@ -646,15 +871,25 @@ void App::drawStatus() {
   spr_->setTextColor(kText);
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
   spr_->drawString(buf, 200, 4);  // up to "128/128"
-  spr_->drawString(status_.playing ? "PLAY" : (status_.paused ? "PAUSE" : "STOP"), 264, 4);
-  if (status_.fill) {
-    spr_->setTextColor(kCursor);
-    spr_->drawString("FILL", 328, 4);
+  if (status_.playing) {
+    // Playing: PLAY on a green box, readable at a glance.
+    spr_->fillRect(260, 3, 40, 18, kGreen);
+    spr_->setTextColor(kStatusBg);
+    spr_->drawString("PLAY", 264, 4);
     spr_->setTextColor(kText);
   } else {
-    snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
-    spr_->drawString(buf, 328, 4);  // up to 11 chars (uint32) before the CPU field
+    spr_->drawString(status_.paused ? "PAUSE" : "STOP", 264, 4);
   }
+  if (status_.fill) {
+    spr_->setTextColor(kCursor);
+    spr_->drawString("FILL", 312, 4);
+    spr_->setTextColor(kText);
+  } else {
+    if (status_.loop <= 9999) snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
+    else snprintf(buf, sizeof(buf), "L10K+");
+    spr_->drawString(buf, 312, 4);  // up to 5 chars before the battery
+  }
+  drawBattery();
   // The CPU field tells when the synth board is not there or not yet up to date.
   if (synth_ == Synth::Down || synth_ == Synth::Mismatch) {
     spr_->setTextColor(kRed);
@@ -671,8 +906,38 @@ void App::drawStatus() {
   spr_->drawString(buf, 416, 4);
 }
 
+// Status bar battery: icon (body 14x10, nub, fill by percent, a bolt while charging) and "85%".
+// Green while charging, red <= 10 %, yellow <= 20 %. Nothing without the sensor or a fresh sample.
+void App::drawBattery() {
+  const int pct = gauge_.percent();
+  if (!hw::batteryPresent() || !batFresh_ || pct < 0) return;
+  const bool chg = gauge_.charging();
+  const uint16_t c = chg ? kGreen : (pct <= 10 ? kRed : (pct <= 20 ? kYellow : kDim));
+  constexpr int x = 360, y = 7;
+  spr_->drawRect(x, y, 14, 10, c);
+  spr_->fillRect(x + 14, y + 3, 2, 4, c);
+  int w = pct * 12 / 100;
+  if (pct > 0 && w < 1) w = 1;
+  if (w > 0) spr_->fillRect(x + 1, y + 1, w, 8, c);
+  if (chg) {  // bolt: cut out of the fill, drawn in c over the empty part
+    for (int part = 0; part < 2; ++part) {
+      const int x0 = part ? x + 1 + w : x + 1, pw = part ? 12 - w : w;
+      if (pw <= 0) continue;
+      const uint16_t bc = part ? c : kStatusBg;
+      spr_->setClipRect(x0, y + 1, pw, 8);
+      spr_->fillTriangle(x + 8, y + 1, x + 4, y + 5, x + 7, y + 5, bc);
+      spr_->fillTriangle(x + 6, y + 4, x + 9, y + 4, x + 5, y + 8, bc);
+    }
+    spr_->clearClipRect();
+  }
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d%%", pct);
+  spr_->setTextColor(c);
+  spr_->drawString(buf, 380, 4);  // up to "100%", ends at 412
+}
+
 void App::drawTabs() {
-  static const char* const kNames[] = {"GRID", "TRACK", "MIX", "BANK", "INST", "PROJ", "FILE"};
+  static const char* const kNames[] = {"GRID", "TRACK", "INST", "MIX", "BANK", "SONG", "PROJ", "FILE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(Tab::Count), "tab names");
   spr_->fillRect(0, kTabY, kScreenW, kTabH, kStatusBg);
   for (int i = 0; i < static_cast<int>(Tab::Count); ++i) {

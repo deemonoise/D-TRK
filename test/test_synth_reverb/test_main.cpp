@@ -1,6 +1,7 @@
 #include <math.h>
 #include <string.h>
 #include <unity.h>
+#include "synth_osc.h"
 #include "synth_reverb.h"
 
 using namespace mt;
@@ -15,25 +16,12 @@ void tearDown() {}
 
 void test_silent_without_buffer() {
   Reverb r;
-  float in[kN] = {1}, mix[kN] = {0};
-  r.process(in, mix, right, kN, 60, 70, 127);
-  for (float x : mix) TEST_ASSERT_TRUE(x == 0.f);
+  float in[kN] = {1}, mix[kN] = {0}, mr[kN] = {0};
+  r.process(in, mix, mr, kN, 60, 70, 127, false);
+  for (int i = 0; i < kN; ++i) TEST_ASSERT_TRUE(mix[i] == 0.f && mr[i] == 0.f);
   r.setBuffer(buf, Reverb::kBufLen - 1);  // too short: off
-  r.process(in, mix, right, kN, 60, 70, 127);
-  for (float x : mix) TEST_ASSERT_TRUE(x == 0.f);
-}
-
-void test_level_zero_bit_exact() {
-  Reverb r;
-  r.setBuffer(buf, Reverb::kBufLen);
-  float in[kN], mix[kN], mixR[kN], ref[kN];
-  for (int i = 0; i < kN; ++i) {
-    in[i] = 0.5f;
-    mix[i] = mixR[i] = ref[i] = i * 0.001f;
-  }
-  r.process(in, mix, mixR, kN, 60, 70, 0);
-  TEST_ASSERT_EQUAL_MEMORY(ref, mix, sizeof(ref));
-  TEST_ASSERT_EQUAL_MEMORY(ref, mixR, sizeof(ref));
+  r.process(in, mix, mr, kN, 60, 70, 127, false);
+  for (int i = 0; i < kN; ++i) TEST_ASSERT_TRUE(mix[i] == 0.f && mr[i] == 0.f);
 }
 
 // Peak of the output per 100 ms window after an impulse, for `seconds`.
@@ -44,10 +32,9 @@ static int tailWindows(uint8_t size, float* peaks, int maxWin) {
   int w = 0, inWin = 0;
   float peak = 0;
   for (int b = 0; w < maxWin; ++b) {
-    float in[kN] = {0}, mix[kN] = {0}, mixR[kN] = {0};
+    float in[kN] = {0}, mix[kN] = {0}, mr[kN] = {0};
     if (b == 0) in[0] = 1.f;
-    r.process(in, mix, mixR, kN, size, 70, 127);
-    for (int i = 0; i < kN; ++i) mix[i] = fabsf(mix[i]) > fabsf(mixR[i]) ? mix[i] : mixR[i];
+    r.process(in, mix, mr, kN, size, 70, 127, false);  // L: the mono path
     for (int i = 0; i < kN && w < maxWin; ++i) {
       if (fabsf(mix[i]) > peak) peak = fabsf(mix[i]);
       if (++inWin == win) {
@@ -82,61 +69,150 @@ static int decayWindow(uint8_t size) {
 
 void test_size_lengthens_tail() { TEST_ASSERT_TRUE(decayWindow(0) < decayWindow(127)); }
 
-// After the tail dies out the reverb rests: the mix is untouched (no denormal noise, no work).
-void test_idle_after_tail() {
+// Stereo: an impulse rings on both sides, and the sides differ (the extra allpass on R).
+void test_stereo_impulse_both_sides_differ() {
   Reverb r;
   r.setBuffer(buf, Reverb::kBufLen);
-  float in[kN] = {1}, mix[kN] = {0};
-  r.process(in, mix, right, kN, 127, 0, 127);
-  in[0] = 0;
-  for (int b = 0; b < kRate * 30 / kN; ++b) r.process(in, mix, right, kN, 127, 0, 127);  // 30 s
-  float ref[kN];
-  float mixR[kN];
-  for (int i = 0; i < kN; ++i) mix[i] = mixR[i] = ref[i] = 0.25f;
-  r.process(in, mix, mixR, kN, 127, 0, 127);
-  TEST_ASSERT_EQUAL_MEMORY(ref, mix, sizeof(ref));
-  TEST_ASSERT_EQUAL_MEMORY(ref, mixR, sizeof(ref));
-  in[5] = 1;  // new input wakes it
-  r.process(in, mix, right, kN, 127, 0, 127);
-  in[5] = 0;
-  bool any = false;
-  for (int b = 0; b < 20; ++b) {  // the first echo needs > 1000 samples
-    float tail[kN] = {0};
-    r.process(in, tail, right, kN, 127, 0, 127);
-    for (float x : tail) any |= x != 0;
-  }
-  TEST_ASSERT_TRUE(any);
-}
-
-// A mono impulse comes back different on L and R (the spread), with about the same energy on each:
-// the stereo mean within 10 % of the L channel alone (the mono reverb's lines).
-void test_stereo_spread() {
-  Reverb r;
-  r.setBuffer(buf, Reverb::kBufLen);
-  double el = 0, er = 0;
-  int differ = 0;
-  for (int b = 0; b < kRate / kN; ++b) {  // 1 s
+  bool anyL = false, anyR = false, diff = false;
+  for (int b = 0; b < 40; ++b) {
     float in[kN] = {0}, l[kN] = {0}, rr[kN] = {0};
     if (b == 0) in[0] = 1.f;
-    r.process(in, l, rr, kN, 80, 40, 127);
+    r.process(in, l, rr, kN, 60, 70, 127, false);
     for (int i = 0; i < kN; ++i) {
-      el += l[i] * l[i];
-      er += rr[i] * rr[i];
-      differ += fabsf(l[i] - rr[i]) > 1e-6f;
+      anyL |= l[i] != 0;
+      anyR |= rr[i] != 0;
+      diff |= l[i] != rr[i];
     }
   }
-  TEST_ASSERT_TRUE(el > 0);
-  TEST_ASSERT_TRUE(differ > kRate / 4);
-  TEST_ASSERT_FLOAT_WITHIN(0.1f, 1.f, static_cast<float>((el + er) / 2 / el));
+  TEST_ASSERT_TRUE(anyL);
+  TEST_ASSERT_TRUE(anyR);
+  TEST_ASSERT_TRUE(diff);
+}
+
+// L is the old mono reverb: fixed samples of its output (recorded from the mono overload before it
+// went), so the L path stays bit-exact to the reverb of earlier firmware.
+void test_left_matches_old_mono_output() {
+  Reverb s;
+  s.setBuffer(buf, Reverb::kBufLen);
+  for (int b = 0; b < 41; ++b) {
+    float in[kN], l[kN], rr[kN];
+    for (int i = 0; i < kN; ++i) {
+      in[i] = b < 4 ? sinf((b * kN + i) * 0.37f) * 0.5f : 0.f;
+      l[i] = rr[i] = 0.01f * i;
+    }
+    s.process(in, l, rr, kN, 90, 40, 100, false);
+    if (b == 10) {
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.024409445f, l[0]);
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.383048922f, l[37]);
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.27066743f, l[127]);
+    } else if (b == 20) {
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.0418658666f, l[0]);
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.459059447f, l[37]);
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.25382888f, l[127]);
+    } else if (b == 40) {
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.0524678901f, l[0]);
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.404035568f, l[37]);
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.19150639f, l[127]);
+    }
+  }
+}
+
+void test_stereo_level_zero_untouched() {
+  Reverb r;
+  r.setBuffer(buf, Reverb::kBufLen);
+  float in[kN], l[kN], rr[kN], ref[kN];
+  for (int i = 0; i < kN; ++i) {
+    in[i] = 0.5f;
+    l[i] = rr[i] = ref[i] = i * 0.001f;
+  }
+  r.process(in, l, rr, kN, 60, 70, 0, false);
+  TEST_ASSERT_EQUAL_MEMORY(ref, l, sizeof(ref));
+  TEST_ASSERT_EQUAL_MEMORY(ref, rr, sizeof(ref));
+}
+
+// The idle check covers both outputs: it rests only once both tails are gone, then wakes on input.
+void test_stereo_idle_after_tail() {
+  Reverb r;
+  r.setBuffer(buf, Reverb::kBufLen);
+  float in[kN] = {1}, l[kN] = {0}, rr[kN] = {0};
+  r.process(in, l, rr, kN, 127, 0, 127, false);
+  in[0] = 0;
+  for (int b = 0; b < kSynthRate * 30 / kN; ++b) r.process(in, l, rr, kN, 127, 0, 127, false);  // 30 s
+  float ref[kN];
+  for (int i = 0; i < kN; ++i) l[i] = rr[i] = ref[i] = 0.25f;
+  r.process(in, l, rr, kN, 127, 0, 127, false);
+  TEST_ASSERT_EQUAL_MEMORY(ref, l, sizeof(ref));
+  TEST_ASSERT_EQUAL_MEMORY(ref, rr, sizeof(ref));
+  in[5] = 1;
+  r.process(in, l, rr, kN, 127, 0, 127, false);
+  in[5] = 0;
+  bool anyL = false, anyR = false;
+  for (int b = 0; b < 20; ++b) {
+    float tl[kN] = {0}, tr[kN] = {0};
+    r.process(in, tl, tr, kN, 127, 0, 127, false);
+    for (int i = 0; i < kN; ++i) {
+      anyL |= tl[i] != 0;
+      anyR |= tr[i] != 0;
+    }
+  }
+  TEST_ASSERT_TRUE(anyL);
+  TEST_ASSERT_TRUE(anyR);
+}
+
+// FREEZE: the lines loop without loss or input; 3 s later the tail is as loud as right after the
+// burst (within 1 dB).
+void test_freeze_holds_tail() {
+  Reverb r;
+  r.setBuffer(buf, Reverb::kBufLen);
+  uint32_t seed = 1;
+  for (int b = 0; b < 32; ++b) {  // 128 ms of noise
+    float in[kN], l[kN] = {0}, rr[kN] = {0};
+    for (int i = 0; i < kN; ++i) {
+      seed = seed * 1664525u + 1013904223u;
+      in[i] = static_cast<int32_t>(seed) * (0.5f / 2147483648.f);
+    }
+    r.process(in, l, rr, kN, 80, 60, 127, false);
+  }
+  const int win = 4096;
+  auto rms = [&](bool burstIn) {
+    double sum = 0;
+    for (int b = 0; b < win / kN; ++b) {
+      float in[kN], l[kN] = {0}, rr[kN] = {0};
+      for (int i = 0; i < kN; ++i) in[i] = burstIn ? 1.f : 0.f;  // frozen: the input is ignored
+      r.process(in, l, rr, kN, 80, 60, 127, true);
+      for (int i = 0; i < kN; ++i) sum += static_cast<double>(l[i]) * l[i] + static_cast<double>(rr[i]) * rr[i];
+    }
+    return sqrt(sum / (2.0 * win));
+  };
+  const double first = rms(false);
+  TEST_ASSERT_TRUE(first > 1e-3);
+  for (int b = 0; b < kRate * 3 / kN; ++b) {
+    float in[kN] = {0}, l[kN] = {0}, rr[kN] = {0};
+    if (b % 50 == 0) in[3] = 1.f;  // ignored while frozen
+    r.process(in, l, rr, kN, 80, 60, 127, true);
+  }
+  const double later = rms(true);
+  const double db = 20.0 * log10(later / first);
+  TEST_ASSERT_TRUE(db > -1.0 && db < 1.0);
+  // Released: the tail decays again.
+  for (int b = 0; b < kRate * 3 / kN; ++b) {
+    float in[kN] = {0}, l[kN] = {0}, rr[kN] = {0};
+    r.process(in, l, rr, kN, 80, 60, 127, false);
+  }
+  float in[kN] = {0}, l[kN] = {0}, rr[kN] = {0};
+  r.process(in, l, rr, kN, 80, 60, 127, false);
+  for (int i = 0; i < kN; ++i) TEST_ASSERT_TRUE(fabsf(l[i]) < first * 0.01);
 }
 
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_silent_without_buffer);
-  RUN_TEST(test_level_zero_bit_exact);
   RUN_TEST(test_impulse_tail_decays);
   RUN_TEST(test_size_lengthens_tail);
-  RUN_TEST(test_idle_after_tail);
-  RUN_TEST(test_stereo_spread);
+  RUN_TEST(test_stereo_impulse_both_sides_differ);
+  RUN_TEST(test_left_matches_old_mono_output);
+  RUN_TEST(test_stereo_level_zero_untouched);
+  RUN_TEST(test_stereo_idle_after_tail);
+  RUN_TEST(test_freeze_holds_tail);
   return UNITY_END();
 }

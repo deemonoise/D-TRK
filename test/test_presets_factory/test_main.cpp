@@ -38,6 +38,7 @@ void test_counts() {
   TEST_ASSERT_TRUE(factoryCount(InstrType::Fm) >= 30);
   TEST_ASSERT_TRUE(factoryCount(InstrType::Drum) >= 30);
   TEST_ASSERT_TRUE(factoryCount(InstrType::Synth) >= 30);
+  TEST_ASSERT_TRUE(factoryCount(InstrType::Kit) >= 12);
   TEST_ASSERT_EQUAL(0, factoryCount(InstrType::Sample));
 }
 
@@ -149,7 +150,8 @@ void test_every_preset_sounds() {
       p.masterVol = 100;
       p.tracks[0].out = TrackOut::Int;
       p.tracks[0].vol = 127;
-      factoryBuild(ty, i, p.instruments[0]);
+      if (ty == InstrType::Kit) factoryBuildKit(i, p, 0);  // note 60 = lane 1
+      else factoryBuild(ty, i, p.instruments[0]);
       Synth s(p);
       s.setWavetables(&wt);
       const uint8_t on[3] = {0x90, 60, 127};
@@ -165,6 +167,48 @@ void test_every_preset_sounds() {
   }
 }
 
+void test_kit_block() {
+  TEST_ASSERT_EQUAL(24, factoryKitBlock(0));
+  TEST_ASSERT_EQUAL(24, factoryKitBlock(23));
+  TEST_ASSERT_EQUAL(16, factoryKitBlock(24));
+  TEST_ASSERT_EQUAL(16, factoryKitBlock(31));
+}
+
+// Every lane's drum is a factory preset; it lands in the block, transposed to sound on note 60 + k.
+void test_kit_lanes() {
+  static Project p;
+  for (int slot : {0, 30}) {
+    for (int i = 0; i < factoryCount(InstrType::Kit); ++i) {
+      const FactoryPreset& f = factoryPreset(InstrType::Kit, i);
+      TEST_ASSERT_TRUE_MESSAGE(f.drumCount >= 1 && f.drumCount <= kKitLanes, f.name);
+      p.reset();
+      strcpy(p.instruments[factoryKitBlock(slot) + kKitLanes - 1].name, "KEEP");
+      factoryBuildKit(i, p, slot);
+      const Instrument& k = p.instruments[slot];
+      TEST_ASSERT_TRUE(k.type == InstrType::Kit);
+      TEST_ASSERT_EQUAL_STRING(f.name, k.name);
+      const int first = factoryKitBlock(slot);
+      for (int l = 0; l < kKitLanes; ++l) {
+        TEST_ASSERT_EQUAL(60 + l, k.kit[l].note);
+        if (l >= f.drumCount) {
+          TEST_ASSERT_EQUAL_MESSAGE(kNoInstr, k.kit[l].instr, f.name);
+          continue;
+        }
+        TEST_ASSERT_EQUAL_MESSAGE(first + l, k.kit[l].instr, f.drums[l].name);
+        TEST_ASSERT_EQUAL(f.drums[l].vol, k.kit[l].vol);
+        const Instrument& d = p.instruments[first + l];
+        TEST_ASSERT_TRUE_MESSAGE(d.type == f.drums[l].type, f.drums[l].name);
+        TEST_ASSERT_EQUAL_STRING(f.drums[l].name, d.name);
+        Instrument ref;
+        for (int j = 0; j < factoryCount(d.type); ++j)
+          if (strcmp(factoryPreset(d.type, j).name, d.name) == 0) factoryBuild(d.type, j, ref);
+        TEST_ASSERT_EQUAL(ref.transpose - l, d.transpose);
+      }
+      if (f.drumCount < kKitLanes) TEST_ASSERT_EQUAL_STRING("KEEP", p.instruments[first + kKitLanes - 1].name);
+    }
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_counts);
@@ -175,5 +219,7 @@ int main() {
   RUN_TEST(test_synth_presets_builtin_tables);
   RUN_TEST(test_chord_preset_is_maj7);
   RUN_TEST(test_every_preset_sounds);
+  RUN_TEST(test_kit_block);
+  RUN_TEST(test_kit_lanes);
   return UNITY_END();
 }

@@ -25,10 +25,11 @@ void clearSel(Pattern& p, const Sel& s);
 void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t,
                   const bool* drumTracks = nullptr);
 
-// Chain rows: inserts pattern `pat` (transpose 0, 1 pass, no scene) at `at` (clamped to
-// 0..chainLen), false when the chain is full; deletes row `at` (nothing past the end). Both keep
-// chain / chainTr / chainRep / chainScene aligned; a freed row gets the defaults.
-bool chainInsert(Project& p, int at, uint8_t pat);
-void chainDelete(Project& p, int at);
+// Song slots: inserts slot (pat, mute) at `at` (clamped to 0..songLen), false when full; deletes slot
+// `at` (nothing past the end). A freed slot is zeroed.
+bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute);
+void songDelete(Project& p, int at);
+// Bit t set: track t of pattern pat has a non-empty step within the pattern length.
+uint16_t patternTrackMask(const Project& p, int pat);
 
 }  // namespace mt

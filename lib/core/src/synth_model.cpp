@@ -11,7 +11,7 @@ constexpr uint32_t kSamplesOff = offsetof(SynthModel, samples);
 constexpr uint32_t kWtOff = offsetof(SynthModel, wavetables);
 
 static_assert(offsetof(SynthModel, bpm) == 0, "master chunk starts the model");
-static_assert(offsetof(SynthModel, djFilter) < kTracksOff, "master fields before the tracks");
+static_assert(offsetof(SynthModel, scDepth) < kTracksOff, "master fields before the tracks");
 static_assert(kTracksOff < kInstrOff && kInstrOff < kSamplesOff && kSamplesOff < kWtOff,
               "chunk order in SynthModel");
 static_assert(offsetof(SynthModel, sampleCount) < kWtOff, "sampleCount in the samples chunk");

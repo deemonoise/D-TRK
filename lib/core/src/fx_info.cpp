@@ -20,7 +20,7 @@ constexpr Info kInfo[] = {
     {"GAT", "GATE LENGTH", 1, 200, 100, false}, // GAT (see gatePercent)
     {"TIE", "TIE", 0, 0, 0, false},     // TIE
     {"NDG", "NUDGE", -50, 50, 0, true},   // NDG
-    {"CHD", "CHORD", 0, kChordCount - 1, 0, false},
+    {"CHD", "CHORD", 0, kChordValues - 1, 0, false},
     {"STR", "STRUM", 1, 50, 10, false},   // STR
     {"CND", "CONDITION", 0, 0, 0x12, false},  // CND: own ordering
     {"VRN", "VELOCITY RANDOM", 0, 64, 16, false},   // VRN
@@ -59,6 +59,7 @@ constexpr Info kInfo[] = {
     {"LFW", "LFO WAVE", 0, static_cast<int16_t>(LfoWave::Count) - 1, 0, false},  // LFW: wave lock
     {"LFT", "LFO DEST", 0, static_cast<int16_t>(LfoDest::Count) - 1, 0, false},  // LFT: dest lock
     {"LFR", "LFO RESET", 0, 255, 0, false},            // LFR: phase restart at val / 256
+    {"PAN", "PAN", 0, 127, 64, false},                 // PAN: track pan lock, 64 = centre
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -108,7 +109,7 @@ constexpr Fx kOrder[] = {
     Fx::FLT, Fx::RES, Fx::DRV, Fx::BIT, Fx::SRR, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
     Fx::LFO, Fx::LFD, Fx::LFS, Fx::LFW, Fx::LFT, Fx::LFR,
     Fx::OFS, Fx::SLC,
-    Fx::DLY, Fx::RVB,
+    Fx::DLY, Fx::RVB, Fx::PAN,
     Fx::CHN, Fx::CCA, Fx::CCB, Fx::PGM,
 };
 constexpr int kOrderN = sizeof(kOrder) / sizeof(kOrder[0]);
@@ -154,12 +155,18 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
       return;
     }
     case Fx::LFT: {
-      static const char* const kD[] = {"PIT", "DEC", "COL", "SHP", "SWP", "CON", "VOL", "CUT", "DRV"};
+      static const char* const kD[] = {"PIT", "DEC", "COL", "SHP", "SWP", "CON", "VOL", "CUT", "DRV", "RES", "FEN",
+                                       "DLY", "RVB", "BIT", "SRR", "FIN", "DUT", "SUB", "NOI", "SM2", "RA1", "RA2",
+                                       "RA3", "RA4", "DP1", "DP2", "DP3", "DP4", "RG1", "RG2", "RG3", "RG4", "PAN"};
       static_assert(sizeof(kD) / sizeof(kD[0]) == static_cast<int>(LfoDest::Count), "LFT names");
       snprintf(out, 5, "%s", kD[v < static_cast<uint8_t>(LfoDest::Count) ? v : 0]);
       return;
     }
-    case Fx::CHD: snprintf(out, 5, "%s", chordName(v)); return;
+    case Fx::PAN:  // "C", "L64" .. "R63"
+      if (v == 64) snprintf(out, 5, "C");
+      else snprintf(out, 5, "%c%d", v < 64 ? 'L' : 'R', v < 64 ? 64 - v : v - 64);
+      return;
+    case Fx::CHD: chordLabel(v, out); return;
     case Fx::RAT: {  // "  4", ramp up " 4^", down " 4v"
       const int n = v & 15, ramp = (v >> 4) & 3;
       if (ramp == kRatUp || ramp == kRatDown) snprintf(out, 5, " %d%c", n < 2 ? 2 : (n > 8 ? 8 : n), ramp == kRatUp ? '^' : 'v');
@@ -222,19 +229,10 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
 
 bool fxSynthOnly(Fx f) {
   return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR ||
-         (f >= Fx::LFO && f <= Fx::LFR);
+         (f >= Fx::LFO && f <= Fx::LFR) || f == Fx::PAN;
 }
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
-
-const char* perfFxName(PerfFx f) {
-  static const char* const kNames[] = {"",          "RAT 2",       "RAT 4",  "FILTER LOW", "FILTER HIGH", "DELAY MAX",
-                                       "CRUSH",     "FADE",        "MUTE",   "SHORT DECAY", "RAT 3",       "RAT 8",
-                                       "ROLL UP",   "REVERB MAX",  "DOWNSAMPLE", "DRIVE"};
-  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(PerfFx::Count), "perf names");
-  const int i = static_cast<int>(f);
-  return i < static_cast<int>(PerfFx::Count) ? kNames[i] : "";
-}
 
 Fx fxNextCmd(Fx f, int delta) {
   int at = 0;

@@ -40,14 +40,14 @@ void test_pass_us() {
   TEST_ASSERT_EQUAL_UINT64(4000000ull, passUs(p, 2));
 }
 
-void test_song_us_sums_chain_with_repeats() {
+void test_song_us_sums_slot_passes() {
   Project& p = *mkProj();
   p.patterns[1].length = 32;
-  p.chain[0] = 0;
-  p.chain[1] = 1;
-  p.chain[2] = 0;
-  p.chainLen = 3;
-  p.chainRep[1] = 2;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.song[2] = 1;
+  p.song[3] = 0;
+  p.songLen = 4;
   TEST_ASSERT_EQUAL_UINT64(2000000ull + 2 * 4000000ull + 2000000ull, songUs(p));
 }
 
@@ -105,7 +105,7 @@ void test_note_lands_in_its_block() {
   p.patterns[0].steps[0][4].note = 60;  // step 4 = 500 000 us
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(blocksFor(2000000), r.blocksTotal());  // 2 s, no tail
   const int first = firstLoudBlock(r);
@@ -123,7 +123,7 @@ void test_pattern_spec_picks_pattern() {
   RenderSpec s;
   s.pattern = 3;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_INT_WITHIN(1, blockAt(1000000), firstLoudBlock(r));
 }
@@ -134,7 +134,7 @@ void test_mask_silences_other_track() {
   RenderSpec s;
   s.tracksMask = 1;  // track 0 only
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(-1, firstLoudBlock(r));
   TEST_ASSERT_EQUAL(0, r.peak());
@@ -146,7 +146,7 @@ void test_next_pass_never_sounds() {
   RenderSpec s;
   s.tailBlocks = 100;  // 2 s .. 2.29 s: the next pass would play the note again at 2 s
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   int16_t out[Synth::kBlock], outR[Synth::kBlock];
   int n = 0, loudBody = 0, loudTail = 0;
@@ -167,7 +167,7 @@ void test_first_step_on_time() {
   p.patterns[0].steps[0][0].note = 60;
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(0, firstLoudBlock(r));
 }
@@ -180,7 +180,7 @@ void test_next_pass_negative_nudge_stays_out() {
   RenderSpec s;
   s.tailBlocks = 100;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   int16_t out[Synth::kBlock], outR[Synth::kBlock];
   int n = 0, loudLate = 0;
@@ -196,50 +196,67 @@ void test_next_pass_negative_nudge_stays_out() {
 void test_song_total_and_tail() {
   Project& p = *mkProj();
   p.patterns[1].length = 32;
-  p.chain[0] = 0;
-  p.chain[1] = 1;
-  p.chainLen = 2;
-  p.chainRep[1] = 2;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.song[2] = 1;
+  p.songLen = 3;
   RenderSpec s;
   s.mode = RenderSpec::Mode::Song;
   s.tailBlocks = 10;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
-  TEST_ASSERT_TRUE(p.songMode);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_EQUAL(blocksFor(10000000) + 10, r.blocksTotal());
 }
 
-void test_song_plays_chain_items() {
+void test_song_plays_slots() {
   Project& p = *mkProj();
   p.patterns[1].length = 16;
   p.patterns[1].steps[0][0].note = 72;  // only P02 has a note
-  p.chain[0] = 0;
-  p.chain[1] = 1;
-  p.chainLen = 2;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.songLen = 2;
   RenderSpec s;
   s.mode = RenderSpec::Mode::Song;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   TEST_ASSERT_INT_WITHIN(1, blockAt(2000000), firstLoudBlock(r));  // P02 starts at 2 s
 }
 
-void test_guard_restores_flags_and_mutes() {
+void test_guard_restores_mutes() {
   Project& p = *mkProj();
-  p.songMode = false;
   p.tracks[2].mute = true;
   RenderSpec s;
   s.mode = RenderSpec::Mode::Song;
   {
-    OfflineRender::Guard g(p, s);
-    TEST_ASSERT_TRUE(p.songMode);
-    p.tracks[2].mute = false;  // a chain scene during the render
+    OfflineRender::Guard g(p);
+    p.tracks[2].mute = false;  // a slot mask during the render
     p.tracks[5].mute = true;
   }
-  TEST_ASSERT_FALSE(p.songMode);
   TEST_ASSERT_TRUE(p.tracks[2].mute);
   TEST_ASSERT_FALSE(p.tracks[5].mute);
+}
+
+// The slot masks apply during a song render; the live mutes come back after it.
+void test_song_render_applies_masks_and_restores_mutes() {
+  Project& p = *mkProj();
+  p.patterns[0].steps[0][0].note = 60;  // track 0, muted by slot 0
+  p.patterns[1].length = 16;
+  p.patterns[1].steps[0][0].note = 72;  // track 0, slot 1 unmutes it
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.songMute[0] = 1;
+  p.songLen = 2;
+  RenderSpec s;
+  s.mode = RenderSpec::Mode::Song;
+  Synth& synth = *synthFor(p);
+  {
+    OfflineRender::Guard g(p);
+    OfflineRender r(p, synth, s);
+    TEST_ASSERT_INT_WITHIN(1, blockAt(2000000), firstLoudBlock(r));  // slot 0 silent, slot 1 at 2 s
+  }
+  TEST_ASSERT_FALSE(p.tracks[0].mute);
 }
 
 void test_two_renders_identical() {
@@ -251,7 +268,7 @@ void test_two_renders_identical() {
   }
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   std::vector<int16_t> a, b;
   for (std::vector<int16_t>* v : {&a, &b}) {
     synth.reset();
@@ -276,9 +293,9 @@ void test_centred_project_renders_l_equals_r() {
   RenderSpec s;
   s.tailBlocks = 50;
   Synth& synth = *synthFor(p);
-  static int16_t dline[2 * kSynthRate / 4];
+  static int16_t dline[kSynthRate / 4];
   synth.setDelayBuffer(dline, kSynthRate / 4);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   int16_t out[Synth::kBlock], outR[Synth::kBlock];
   while (r.renderBlock(out, outR)) TEST_ASSERT_EQUAL_INT16_ARRAY(out, outR, Synth::kBlock);
@@ -297,7 +314,7 @@ void test_peak_and_clips() {
   p.instruments[0].vol = 127;
   RenderSpec s;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   firstLoudBlock(r);
   TEST_ASSERT_TRUE(r.peak() > 30000);
@@ -312,9 +329,9 @@ static uint32_t demoRenderHash(uint32_t* blocks, int16_t* peak) {
   RenderSpec s;
   s.tailBlocks = 20;
   Synth& synth = *synthFor(p);
-  static int16_t dline[2 * kSynthRate / 4];
+  static int16_t dline[kSynthRate / 4];
   synth.setDelayBuffer(dline, kSynthRate / 4);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineRender r(p, synth, s);
   int16_t out[Synth::kBlock], outR[Synth::kBlock];
   uint32_t h = 2166136261u;
@@ -336,7 +353,7 @@ void test_demo_render_unchanged_by_split() {
   int16_t peak = 0;
   const uint32_t h = demoRenderHash(&blocks, &peak);
   TEST_ASSERT_TRUE(peak > 1000);
-  TEST_ASSERT_EQUAL_HEX32(0xABF36BA1u, h);
+  TEST_ASSERT_EQUAL_HEX32(0x066F5DE1u, h);
 }
 
 // The synth boards render on one synth, reset between renders: drum noise and LFO Random included,
@@ -347,7 +364,7 @@ void test_demo_rendered_twice_on_one_synth_identical() {
   RenderSpec s;
   s.tailBlocks = 20;
   Synth& synth = *synthFor(p);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   uint32_t h[2];
   for (uint32_t& v : h) {
     synth.reset();
@@ -366,7 +383,7 @@ static void fillSeqProj(Project& p) {
   for (int t = 0; t < 4; ++t) {
     p.tracks[t].out = TrackOut::Int;
     p.tracks[t].instr = 0;
-    p.tracks[t].pan = static_cast<int8_t>(t * 30 - 45);
+    p.tracks[t].pan = static_cast<uint8_t>(t * 30 + 19);
     for (int i = t; i < 16; i += 3) p.patterns[0].steps[t][i].note = static_cast<uint8_t>(48 + t * 5 + i);
   }
   p.patterns[0].steps[1][4].fx[0] = {Fx::PRB, 50};
@@ -378,7 +395,7 @@ static void fillSeqProj(Project& p) {
 void test_sequence_plus_synth_matches_render() {
   RenderSpec s;
   s.tailBlocks = 40;
-  static int16_t dline[2 * kSynthRate / 4];
+  static int16_t dline[kSynthRate / 4];
   std::vector<int16_t> want;
   int16_t peak = 0;
   uint32_t clips = 0, total = 0;
@@ -387,7 +404,7 @@ void test_sequence_plus_synth_matches_render() {
     fillSeqProj(p);
     Synth& synth = *synthFor(p);
     synth.setDelayBuffer(dline, kSynthRate / 4);
-    OfflineRender::Guard g(p, s);
+    OfflineRender::Guard g(p);
     OfflineRender r(p, synth, s);
     int16_t l[Synth::kBlock], rr[Synth::kBlock];
     while (r.renderBlock(l, rr)) {
@@ -402,7 +419,7 @@ void test_sequence_plus_synth_matches_render() {
   fillSeqProj(p);
   Synth& synth = *synthFor(p);
   synth.setDelayBuffer(dline, kSynthRate / 4);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   OfflineSequence q(p, s);
   BlockRender br;
   static SeqEv ev[OfflineSequence::kMaxEvents];
@@ -438,7 +455,7 @@ static bool feedOut(const int16_t* l, const int16_t* r, void* ctx) {
 static void linkRenderMatches(void (*fill)(Project&), uint32_t tail, int* contFrames) {
   RenderSpec s;
   s.tailBlocks = tail;
-  static int16_t dline[2 * kSynthRate / 4];
+  static int16_t dline[kSynthRate / 4];
   std::vector<int16_t> want;
   int16_t peak = 0;
   uint32_t clips = 0;
@@ -447,7 +464,7 @@ static void linkRenderMatches(void (*fill)(Project&), uint32_t tail, int* contFr
     fill(p);
     Synth& synth = *synthFor(p);
     synth.setDelayBuffer(dline, kSynthRate / 4);
-    OfflineRender::Guard g(p, s);
+    OfflineRender::Guard g(p);
     OfflineRender r(p, synth, s);
     int16_t l[Synth::kBlock], rr[Synth::kBlock];
     while (r.renderBlock(l, rr)) {
@@ -461,7 +478,7 @@ static void linkRenderMatches(void (*fill)(Project&), uint32_t tail, int* contFr
   fill(p);
   Synth& synth = *synthFor(p);
   synth.setDelayBuffer(dline, kSynthRate / 4);
-  OfflineRender::Guard g(p, s);
+  OfflineRender::Guard g(p);
   static OfflineSequence* q = nullptr;
   delete q;
   q = new OfflineSequence(p, s);
@@ -530,10 +547,27 @@ void test_feeder_refuses_out_of_order() {
   TEST_ASSERT_EQUAL(1, fd.blocks());
 }
 
+// Hard right: L stays silent, the peak comes from R alone.
+void test_render_hard_right_peak_from_r() {
+  Project& p = *mkProj();
+  p.tracks[0].pan = 127;
+  p.patterns[0].steps[0][0].note = 60;
+  RenderSpec s;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p);
+  OfflineRender r(p, synth, s);
+  int16_t l[Synth::kBlock], rr[Synth::kBlock];
+  int16_t peakL = 0;
+  while (r.renderBlock(l, rr))
+    for (int i = 0; i < Synth::kBlock; ++i) peakL = l[i] > peakL ? l[i] : peakL;
+  TEST_ASSERT_EQUAL_INT16(0, peakL);
+  TEST_ASSERT_TRUE(r.peak() > 1000);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_pass_us);
-  RUN_TEST(test_song_us_sums_chain_with_repeats);
+  RUN_TEST(test_song_us_sums_slot_passes);
   RUN_TEST(test_normalize_peak);
   RUN_TEST(test_trim_tail);
   RUN_TEST(test_next_resample_name);
@@ -544,8 +578,9 @@ int main() {
   RUN_TEST(test_first_step_on_time);
   RUN_TEST(test_next_pass_negative_nudge_stays_out);
   RUN_TEST(test_song_total_and_tail);
-  RUN_TEST(test_song_plays_chain_items);
-  RUN_TEST(test_guard_restores_flags_and_mutes);
+  RUN_TEST(test_song_plays_slots);
+  RUN_TEST(test_song_render_applies_masks_and_restores_mutes);
+  RUN_TEST(test_guard_restores_mutes);
   RUN_TEST(test_two_renders_identical);
   RUN_TEST(test_peak_and_clips);
   RUN_TEST(test_centred_project_renders_l_equals_r);
@@ -555,5 +590,6 @@ int main() {
   RUN_TEST(test_link_render_matches);
   RUN_TEST(test_link_render_splits_dense_block);
   RUN_TEST(test_feeder_refuses_out_of_order);
+  RUN_TEST(test_render_hard_right_peak_from_r);
   return UNITY_END();
 }

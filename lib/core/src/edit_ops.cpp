@@ -50,36 +50,40 @@ void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t ro
   }
 }
 
-bool chainInsert(Project& p, int at, uint8_t pat) {
-  const int n = p.chainLen;
-  if (n >= kChainMax) return false;
+bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute) {
+  const int n = p.songLen;
+  if (n >= kSongMax) return false;
   at = clampi(at, 0, n);
   const size_t k = static_cast<size_t>(n - at);
-  memmove(p.chain + at + 1, p.chain + at, k);
-  memmove(p.chainTr + at + 1, p.chainTr + at, k);
-  memmove(p.chainRep + at + 1, p.chainRep + at, k);
-  memmove(p.chainScene + at + 1, p.chainScene + at, k);
-  p.chain[at] = pat < kPatterns ? pat : kPatterns - 1;
-  p.chainTr[at] = 0;
-  p.chainRep[at] = 1;
-  p.chainScene[at] = 0;
-  p.chainLen = static_cast<uint8_t>(n + 1);
+  memmove(p.song + at + 1, p.song + at, k);
+  memmove(p.songMute + at + 1, p.songMute + at, k * sizeof(p.songMute[0]));
+  p.song[at] = pat < kPatterns ? pat : kPatterns - 1;
+  p.songMute[at] = mute;
+  p.songLen = static_cast<uint8_t>(n + 1);
   return true;
 }
 
-void chainDelete(Project& p, int at) {
-  const int n = p.chainLen;
+void songDelete(Project& p, int at) {
+  const int n = p.songLen;
   if (at < 0 || at >= n) return;
   const size_t k = static_cast<size_t>(n - at - 1);
-  memmove(p.chain + at, p.chain + at + 1, k);
-  memmove(p.chainTr + at, p.chainTr + at + 1, k);
-  memmove(p.chainRep + at, p.chainRep + at + 1, k);
-  memmove(p.chainScene + at, p.chainScene + at + 1, k);
-  p.chain[n - 1] = 0;
-  p.chainTr[n - 1] = 0;
-  p.chainRep[n - 1] = 1;
-  p.chainScene[n - 1] = 0;
-  p.chainLen = static_cast<uint8_t>(n - 1);
+  memmove(p.song + at, p.song + at + 1, k);
+  memmove(p.songMute + at, p.songMute + at + 1, k * sizeof(p.songMute[0]));
+  p.song[n - 1] = 0;
+  p.songMute[n - 1] = 0;
+  p.songLen = static_cast<uint8_t>(n - 1);
+}
+
+uint16_t patternTrackMask(const Project& p, int pat) {
+  const Pattern& pt = p.patterns[pat];
+  uint16_t m = 0;
+  for (int t = 0; t < kTracks; ++t)
+    for (int s = 0; s < pt.length; ++s)
+      if (!pt.steps[t][s].isEmpty()) {
+        m |= 1 << t;
+        break;
+      }
+  return m;
 }
 
 }  // namespace mt

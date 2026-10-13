@@ -6,28 +6,30 @@
 
 namespace ui {
 
-// Project settings on pages SONG, FX, COMP, PERF (the effect of each track button in PERF mode),
-// SYS; length / resolution / swing apply to the heard
-// pattern. SYS also holds the device's colour theme (not saved in the project).
+// Project settings on pages SONG, FX, COMP, PERF (the effect and start value of each track button in
+// PERF mode);
+// length / resolution / swing apply to the heard pattern. Device settings and diagnostics are on
+// FILE > SYSTEM.
 class ProjScreen : public Screen {
  public:
   explicit ProjScreen(App& app);
   void onEnter() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
+  void onPage(int d) override;
+  void onBack() override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
-  // Update synth (also from the version-mismatch screen): /firmware/teensy.hex on the synth board's
-  // card -> confirm -> FwFromFile -> its reboot.
-  void askUpdateSynth();
 
  private:
   enum Row : int {
     kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
-    kRvbSize, kRvbDamp, kRvbLevel, kDjFilter, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1, kPerf8 = kPerf1 + 7, kPhones, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kSynthFw, kLink, kUpdSynth, kCard, kAudioRam, kCpuProf, kRows
+    kRvbSize, kRvbDamp, kRvbLevel, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1,
+    kPerfLast = kPerf1 + 2 * mt::kPerfButtons - 1,  // Button N, then its start Value
+    kRows
   };
   // Pages: contiguous runs of rows.
-  enum Page : int { kPgSong, kPgFx, kPgComp, kPgPerf, kPgSys, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kBpm, kDlyTime, kCompAmt, kPerf1, kPhones, kRows};
+  enum Page : int { kPgSong, kPgFx, kPgComp, kPgPerf, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kBpm, kDlyTime, kCompAmt, kPerf1, kRows};
   char perfLabels_[8][10] = {};  // "Button 1".. (Param labels must outlive the list)
   static constexpr int kHeaderH = 28;
   static constexpr int kListRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
@@ -36,15 +38,6 @@ class ProjScreen : public Screen {
   mt::Pattern& pat();
   void snapPattern();
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
-  // Rows that act on a click: CPU profile, Update synth.
-  bool onActionRow() const {
-    const int r = kPageFirst[page_] + list_.sel();
-    return r == kCpuProf || r == kUpdSynth;
-  }
-  void runAction();
-  void toggleProfile();  // start, or stop and append the result to /diag/cpuprof.txt
-  void updateSynth();
-  uint32_t profStartMs_ = 0;
   int bpm();  // local target while it is ahead of the engine, else p.bpm
   void editBpm(int delta);
 
@@ -56,7 +49,6 @@ class ProjScreen : public Screen {
   uint32_t patSeq_ = 0;  // App::editSeq() right after the last pattern-field edit (snapPattern)
   int patIdx_ = -1;      // and its pattern
   int page_ = kPgSong;
-  enum MenuId : int { kMenuCancel, kMenuUpdate };
 };
 
 }  // namespace ui

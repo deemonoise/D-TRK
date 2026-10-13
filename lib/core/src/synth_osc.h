@@ -20,6 +20,8 @@ MT_INLINE float tableSine(uint32_t ph) {
   const float a = gSine[i];
   return a + (gSine[i + 1] - a) * f;
 }
+// sin(2 pi x ph), ph in 0 .. 1.
+MT_INLINE float phaseSine(float ph) { return tableSine(static_cast<uint32_t>(ph * 1073741824.f) << 2); }
 
 // Frequency of a (fractional) MIDI note, Hz. 69 = 440.
 float noteHz(float note);

@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = 1
+PROTOCOL = 2
 MAX_PAYLOAD = 512
 
 # lib/core/src/link_msg.h, enum class Msg (append only).
@@ -40,7 +40,7 @@ MSG = {name: i + 1 for i, name in enumerate(
     "RenderStart RenderBlocks RenderEnd "
     "Meters Phones Profile "
     "Status Progress FwFromFile Log "
-    "FsRmdir WtFrame".split())}
+    "FsRmdir WtFrame Perf".split())}
 MSG_NAME = {v: k for k, v in MSG.items()}
 
 # lib/core/src/link_msg.h, kErr*.
@@ -111,12 +111,13 @@ def now_us():
 
 
 def hello_payload():
-    return struct.pack("<H16sII", PROTOCOL, b"desk", 0, 0)  # modelSize 0: no mirror
+    return struct.pack("<H16sIIB", PROTOCOL, b"desk", 0, 0, 0)  # modelSize 0: no mirror
 
 
 def parse_hello(p):
     proto, fw, boot, size = struct.unpack("<H16sII", p[:26])
-    return proto, fw.split(b"\x00")[0].decode(errors="replace"), boot, size
+    perf = p[26] if len(p) > 26 else 0  # protocol 1 ends at modelSize
+    return proto, fw.split(b"\x00")[0].decode(errors="replace"), boot, size, perf
 
 
 def ev_batch(events):
@@ -147,9 +148,9 @@ def parse_list(p):
 def parse_status(p):
     cpu, stalls, late, voices, out_peak = struct.unpack("<BHHBH", p[:8])
     peaks = list(p[8:24])
-    lost, scope_n = struct.unpack("<HH", p[24:28])
+    lost, parks, scope_n = struct.unpack("<HBH", p[24:29])
     return dict(cpu=cpu, stalls=stalls, late=late, voices=voices, out=out_peak, lost=lost,
-                peaks=peaks, scope=scope_n)
+                parks=parks, peaks=peaks, scope=scope_n)
 
 
 class Link:
@@ -269,9 +270,10 @@ def cmd_hello(link, args):
     h = link.hello()
     if not h:
         sys.exit("no Hello from the board")
-    proto, fw, boot, size = h
+    proto, fw, boot, size, perf = h
     ok = "ok" if proto == PROTOCOL else "MISMATCH (script %d)" % PROTOCOL
-    print("protocol %d %s, fw %s, boot %08x, SynthModel %d B" % (proto, ok, fw, boot, size))
+    print("protocol %d %s, fw %s, boot %08x, SynthModel %d B, PERF buffer %d s" %
+          (proto, ok, fw, boot, size, perf))
     return h
 
 
@@ -289,10 +291,51 @@ def cmd_notes(link, args):
         print_status(parse_status(s))
 
 
+def peaks_for(link, secs):
+    """Output peak of every 0.1 s for secs (each Status holds the peak of its own ~40 ms)."""
+    end, out, top, start = time.monotonic() + secs, [], 0, time.monotonic()
+    while time.monotonic() < end:
+        p = link.wait("Status", 0.5)
+        if p:
+            top = max(top, parse_status(p)["out"])
+        if time.monotonic() - start >= 0.1:
+            start += 0.1
+            out.append(top)
+            top = 0
+    return out
+
+
+def cmd_perf(link, args):
+    """PERF on the master: notes, the effect pressed over them, the notes stop. A buffer effect
+    (REPEAT, FREEZE...) keeps sounding from the ring buffer after the last note, until released:
+    the last second held is loud, the notes alone (fx 0) are silent by then."""
+    h = cmd_hello(link, args)
+    time.sleep(0.3)
+    t = now_us()
+    # Every 60 ms: shorter than any REPEAT loop, so whatever step the press falls in holds a hit.
+    link.send("Ev", ev_batch([(t + i * 60000 + d, 0, [0x90 if d == 0 else 0x80, 60 + 7 * (i % 2), 100 if d == 0 else 0])
+                              for i in range(20) for d in (0, 40000)]))
+    time.sleep(0.9)
+    while link.wait("Status", 0.01) is not None:  # stale ones from the wait
+        pass
+    link.send("Perf", struct.pack("<BB", 0, args.fx))
+    if args.depth:
+        link.send("Perf", struct.pack("<Bb", 2, args.depth))
+    held = peaks_for(link, args.hold)
+    link.send("Perf", struct.pack("<BB", 1, args.fx))
+    after = peaks_for(link, 1.5)
+    link.send("Perf", struct.pack("<BB", 3, 0))
+    print("held    ", " ".join("%d" % (v // 100) for v in held))
+    print("released", " ".join("%d" % (v // 100) for v in after))
+    print("fx %d: out peak in the last second held %d, the last second released %d (PERF buffer %d s)" %
+          (args.fx, max(held[-10:] or [0]), max(after[-10:] or [0]), h[4]))
+
+
 def print_status(s):
     peaks = " ".join("%3d" % v for v in s["peaks"])
-    print("cpu %3d%%  voices %2d  out %5d  late %d  stalls %d  lost %d  | %s" %
-          (s["cpu"], s["voices"], s["out"], s["late"], s["stalls"], s["lost"], peaks), flush=True)
+    print("cpu %3d%%  voices %2d  out %5d  late %d  stalls %d  lost %d  parks %d  | %s" %
+          (s["cpu"], s["voices"], s["out"], s["late"], s["stalls"], s["lost"], s["parks"], peaks),
+          flush=True)
 
 
 def cmd_status(link, args):
@@ -572,8 +615,10 @@ def cmd_pnote(link, args):
     """PreviewNote: instrument instr plays note for ms on the preview track."""
     cmd_hello(link, args)
     time.sleep(0.2)
+    while link.wait("Status", 0.01) is not None:
+        pass
     link.send("PreviewNote", struct.pack("<BBI", args.instr, args.note, args.ms))
-    time.sleep(args.ms / 1000 + 0.5)
+    print("out peak per 0.1 s:", " ".join("%d" % (v // 100) for v in peaks_for(link, args.ms / 1000 + 0.5)))
 
 
 def cmd_preview(link, args):
@@ -646,6 +691,9 @@ def cmd_selftest(args):
     assert len(batch) <= MAX_PAYLOAD
     assert parse_hello(hello_payload())[0] == PROTOCOL
     assert MSG["FsOpen"] == 7 and MSG["Log"] == 37 and MSG["FsRmdir"] == 38 and MSG["WtFrame"] == 39
+    assert MSG["Perf"] == 40 and parse_hello(hello_payload())[4] == 0
+    st = parse_status(struct.pack("<BHHBH", 50, 1, 2, 3, 400) + bytes(16) + struct.pack("<HBH", 4, 7, 0))
+    assert st["parks"] == 7 and st["lost"] == 4 and st["scope"] == 0
     assert MSG["BankSync"] == 16 and MSG["BankIndex"] == 20 and MSG["Progress"] == 35
     idx = struct.pack("<BBIIII", 0, 3, 5000, 4000, 100, 7) + bytes(20) + bytes([0xFF, 2]) + struct.pack("<HH", 44100, 0)
     b = parse_bank_index(idx)
@@ -688,6 +736,10 @@ def main():
     rd.add_argument("--abort-after", type=int)
     rd.add_argument("--normalize", action="store_true")
     rd.add_argument("--trim", action="store_true")
+    pf = sub.add_parser("perf")
+    pf.add_argument("fx", type=int, nargs="?", default=1, help="mt::PerfFx: 1 REPEAT, 2 ROLL, 13 FREEZE...")
+    pf.add_argument("--depth", type=int, default=0, help="turn the depth by this much after the press")
+    pf.add_argument("--hold", type=float, default=4.0)
     up = sub.add_parser("update")
     up.add_argument("hex")
     up.add_argument("--force", action="store_true")
@@ -697,7 +749,7 @@ def main():
     if args.cmd == "selftest":
         return cmd_selftest(args)
     link = Link(args.port or find_port())
-    {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank, "update": cmd_update,
+    {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank, "perf": cmd_perf, "update": cmd_update,
      "card": cmd_card, "model": cmd_model, "pnote": cmd_pnote, "preview": cmd_preview, "render": cmd_render}[args.cmd](link, args)
     link.alive = False
 

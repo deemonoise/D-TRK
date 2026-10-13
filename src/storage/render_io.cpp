@@ -124,7 +124,7 @@ Result run(mt::Project& p, const mt::RenderSpec& spec, uint8_t target, const cha
   RenderMem rm;
   if (!rm.mem) return Result::NoMemory;
   Session ses;
-  mt::OfflineSequence::Guard guard(p, spec);
+  mt::OfflineSequence::Guard guard(p);
   RenderMem::Parts* r = rm.start(p, spec, maxBlocks);
   const uint32_t total = r->seq.blocksTotal() < maxBlocks ? r->seq.blocksTotal() : maxBlocks;
   capped = r->seq.blocksTotal() > maxBlocks;

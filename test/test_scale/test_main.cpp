@@ -90,6 +90,106 @@ void test_scale_degrees() {
   TEST_ASSERT_EQUAL(6, scaleDegrees(ScaleType::Blues));
 }
 
+static void expectNotes(const uint8_t* got, int n, const int* want, int wn) {
+  TEST_ASSERT_EQUAL(wn, n);
+  for (int i = 0; i < wn; ++i) TEST_ASSERT_EQUAL(want[i], got[i]);
+}
+
+void test_new_diatonic_chords() {
+  uint8_t n[4];
+  const int ninth[] = {60, 64, 71, 74}, sus7[] = {60, 65, 67, 71}, add11[] = {60, 64, 67, 77};
+  expectNotes(n, chordNotes(60, kChordNinth, 0, ScaleType::Major, n), ninth, 4);
+  expectNotes(n, chordNotes(60, kChordSeventhSus4, 0, ScaleType::Major, n), sus7, 4);
+  expectNotes(n, chordNotes(60, kChordAdd11, 0, ScaleType::Major, n), add11, 4);
+}
+
+void test_fixed_chords() {
+  static const int8_t kWant[][4] = {
+      {0, 4, 7, -1},  {0, 3, 7, -1},  {0, 3, 6, -1},  {0, 4, 8, -1},  {0, 2, 7, -1},  {0, 5, 7, -1},
+      {0, 4, 7, 11},  {0, 3, 7, 10},  {0, 4, 7, 10},  {0, 3, 6, 10},  {0, 3, 6, 9},   {0, 3, 7, 11},
+      {0, 4, 7, 9},   {0, 3, 7, 9},   {0, 4, 11, 14}, {0, 3, 10, 14}, {0, 4, 10, 14}, {0, 5, 7, 10},
+      {0, 4, 7, 14},  {0, 3, 7, 14},  {0, 4, 10, 15}, {0, 4, 10, 13}, {0, 4, 10, 21}, {0, 3, 10, 17},
+      {0, 5, 10, 15},
+  };
+  TEST_ASSERT_EQUAL(kChordTypes - kChordMaj, sizeof(kWant) / sizeof(kWant[0]));
+  const ScaleType scales[] = {ScaleType::Major, ScaleType::Minor, ScaleType::Chromatic};
+  for (int i = 0; i < kChordTypes - kChordMaj; ++i) {
+    for (ScaleType sc : scales) {
+      uint8_t n[4];
+      int want[4], wn = 0;
+      for (int8_t d : kWant[i])
+        if (d >= 0) want[wn++] = 60 + d;
+      expectNotes(n, chordNotes(60, static_cast<uint8_t>(kChordMaj + i), 3, sc, n), want, wn);
+    }
+  }
+}
+
+void test_inversions() {
+  uint8_t n[4];
+  const int i1[] = {64, 67, 72}, i2[] = {67, 72, 76}, i3[] = {72, 76, 79}, m7[] = {71, 72, 76, 79};
+  expectNotes(n, chordNotes(60, chordValue(kChordMaj, 1), 0, ScaleType::Major, n), i1, 3);
+  expectNotes(n, chordNotes(60, chordValue(kChordMaj, 2), 0, ScaleType::Major, n), i2, 3);
+  expectNotes(n, chordNotes(60, chordValue(kChordMaj, 3), 0, ScaleType::Major, n), i3, 3);
+  expectNotes(n, chordNotes(60, chordValue(kChordMaj7, 3), 0, ScaleType::Major, n), m7, 4);
+  // diatonic types invert too: C major triad, 1st inversion
+  expectNotes(n, chordNotes(60, chordValue(kChordTriad, 1), 0, ScaleType::Major, n), i1, 3);
+  // two-note types: pwr inv 1 = G C
+  const int p1[] = {67, 72};
+  expectNotes(n, chordNotes(60, chordValue(kChordPower, 1), 0, ScaleType::Minor, n), p1, 2);
+  const int p2[] = {72, 79};
+  expectNotes(n, chordNotes(60, chordValue(kChordPower, 2), 0, ScaleType::Minor, n), p2, 2);
+  // a lifted note equal to one already in the chord is dropped: oct inv 1 = C5 alone
+  const int o1[] = {72};
+  expectNotes(n, chordNotes(60, chordValue(kChordOctave, 1), 0, ScaleType::Minor, n), o1, 1);
+  TEST_ASSERT_EQUAL(kChordTypes, chordValue(kChordTriad, 1));
+  TEST_ASSERT_EQUAL(kChordMaj7, chordType(chordValue(kChordMaj7, 2)));
+  TEST_ASSERT_EQUAL(2, chordInv(chordValue(kChordMaj7, 2)));
+}
+
+void test_chords_near_top() {
+  uint8_t n[4];
+  // 120 + 4 + 7 + 11: 131 dropped
+  const int top[] = {120, 124, 127};
+  expectNotes(n, chordNotes(120, kChordMaj7, 0, ScaleType::Major, n), top, 3);
+  // inversion of the top note is dropped, never wraps
+  const int inv[] = {124, 127};
+  expectNotes(n, chordNotes(120, chordValue(kChordMaj, 1), 0, ScaleType::Major, n), inv, 2);
+  for (int v = 0; v < kChordValues; ++v) {
+    const int c = chordNotes(127, static_cast<uint8_t>(v), 0, ScaleType::Minor, n);
+    TEST_ASSERT_TRUE(c >= 0 && c <= 4);
+    for (int i = 0; i < c; ++i) TEST_ASSERT_TRUE(n[i] <= 127);
+    for (int i = 1; i < c; ++i) TEST_ASSERT_TRUE(n[i - 1] <= n[i]);
+  }
+}
+
+void test_chord_labels() {
+  char b[5];
+  chordLabel(chordValue(kChordMaj7, 0), b);
+  TEST_ASSERT_EQUAL_STRING("MA7 ", b);
+  chordLabel(chordValue(kChordMaj7, 2), b);
+  TEST_ASSERT_EQUAL_STRING("MA72", b);
+  chordLabel(chordValue(kChordTriad, 2), b);
+  TEST_ASSERT_EQUAL_STRING("tri2", b);
+  chordLabel(200, b);
+  TEST_ASSERT_EQUAL_STRING("??? ", b);
+  TEST_ASSERT_EQUAL_STRING("QRT", chordName(kChordQuartal));
+  TEST_ASSERT_EQUAL_STRING("MA7", chordName(chordValue(kChordMaj7, 1)));
+  TEST_ASSERT_EQUAL_STRING("???", chordName(kChordValues));
+  TEST_ASSERT_EQUAL(36, kChordTypes);
+  TEST_ASSERT_EQUAL(144, kChordValues);
+}
+
+void test_chord_type_by_name() {
+  TEST_ASSERT_EQUAL(kChordMaj7, chordTypeByName("MA7", 3));
+  TEST_ASSERT_EQUAL(kChordTriad, chordTypeByName("tri", 3));
+  TEST_ASSERT_EQUAL(kChordMaj, chordTypeByName("MAJ", 3));
+  TEST_ASSERT_EQUAL(kChordDom7Flat9, chordTypeByName("D7b", 3));
+  TEST_ASSERT_EQUAL(-1, chordTypeByName("xyz", 3));
+  TEST_ASSERT_EQUAL(-1, chordTypeByName("TRI", 3));
+  TEST_ASSERT_EQUAL(-1, chordTypeByName("MA", 2));
+  TEST_ASSERT_EQUAL(-1, chordTypeByName("MA7x", 4));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_masks);
@@ -99,5 +199,11 @@ int main() {
   RUN_TEST(test_names);
   RUN_TEST(test_degree_note);
   RUN_TEST(test_scale_degrees);
+  RUN_TEST(test_new_diatonic_chords);
+  RUN_TEST(test_fixed_chords);
+  RUN_TEST(test_inversions);
+  RUN_TEST(test_chords_near_top);
+  RUN_TEST(test_chord_labels);
+  RUN_TEST(test_chord_type_by_name);
   return UNITY_END();
 }

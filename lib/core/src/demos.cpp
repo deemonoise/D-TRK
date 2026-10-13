@@ -1,6 +1,7 @@
 #include "demos.h"
 #include <string.h>
 #include <initializer_list>
+#include "edit_ops.h"
 #include "presets_factory.h"
 #include "scale.h"
 
@@ -153,19 +154,28 @@ void roll(Pattern& pt, int t, int lane, int from, int to, int every, uint8_t lo,
 
 struct Item {
   uint8_t pattern, rep;
-  int8_t tr;
-  uint8_t scene;
 };
 
+// The song: each item becomes `rep` slots of its pattern, nothing muted.
 void song(Project& p, const Item* items, int n) {
-  p.chainLen = static_cast<uint8_t>(n);
-  for (int i = 0; i < n; ++i) {
-    p.chain[i] = items[i].pattern;
-    p.chainRep[i] = items[i].rep;
-    p.chainTr[i] = items[i].tr;
-    p.chainScene[i] = items[i].scene;
-  }
-  p.songMode = true;
+  int len = 0;
+  for (int i = 0; i < n; ++i)
+    for (int r = 0; r < items[i].rep && len < kSongMax; ++r) {
+      p.song[len] = items[i].pattern;
+      p.songMute[len] = 0;
+      ++len;
+    }
+  p.songLen = static_cast<uint8_t>(len);
+}
+
+// Pattern `to` = pattern `from` with the melodic tracks moved by `semis` (drum tracks as they are).
+void transposedCopy(Project& p, int from, int to, int semis) {
+  Pattern& pt = p.patterns[to];
+  pt = p.patterns[from];
+  bool drum[kTracks];
+  for (int t = 0; t < kTracks; ++t) drum[t] = p.trackIsDrum(t);
+  transposeSel(pt, makeSel(0, 0, kTracks - 1, kMaxSteps - 1), semis, false, p.scaleRoot,
+               static_cast<ScaleType>(p.scaleType), drum);
 }
 
 void name(Project& p, const char* n) {
@@ -296,7 +306,7 @@ void buildTrance(Project& p) {
   pad(outro);
   arp(outro, 0);
 
-  static const Item kSong[] = {{0, 2, 0, 0}, {1, 2, 0, 0}, {2, 4, 0, 0}, {3, 1, 0, 0}, {2, 4, 0, 0}, {4, 1, 0, 0}};
+  static const Item kSong[] = {{0, 2}, {1, 2}, {2, 4}, {3, 1}, {2, 4}, {4, 1}};
   song(p, kSong, 6);
 }
 
@@ -405,8 +415,10 @@ void buildChip(Project& p) {
   fx(end, kLead, 0, Fx::VIB, 0x46);
   fx(end, kLead, 0, Fx::GAT, kGat800);
 
-  static const Item kSong[] = {{0, 1, 0, 0}, {1, 2, 0, 0}, {2, 2, 0, 0}, {3, 1, 0, 0},
-                               {1, 1, 0, 0}, {2, 1, 0, 0}, {2, 2, 2, 0}, {4, 1, 2, 0}};
+  // The last chorus and the ending a tone up: copies in the free slots 5 and 6.
+  transposedCopy(p, 2, 5, 2);
+  transposedCopy(p, 4, 6, 2);
+  static const Item kSong[] = {{0, 1}, {1, 2}, {2, 2}, {3, 1}, {1, 1}, {2, 1}, {5, 2}, {6, 1}};
   song(p, kSong, 8);
 }
 
@@ -484,12 +496,12 @@ void buildAcid(Project& p) {
   chord(peak, kStab, 10, 57, kChordTriad, 50);
   chord(peak, kStab, 14, 60, kChordTriad, 50);
 
-  static const Item kSong[] = {{0, 4, 0, 0}, {1, 8, 0, 0}, {2, 8, 0, 0}, {3, 4, 0, 0}, {4, 8, 0, 0}, {1, 4, 0, 0}};
+  static const Item kSong[] = {{0, 4}, {1, 8}, {2, 8}, {3, 4}, {4, 8}, {1, 4}};
   song(p, kSong, 6);
 }
 
 // ---- LOFI: 84 BPM, C major, Dm7 G7 Cmaj7 Am7. Swung dusty drums, crushed FM e-piano, vinyl
-// crackle on probability, humanize, a low-passed master ----
+// crackle on probability, humanize, low-passed keys and melody ----
 
 void buildLofi(Project& p) {
   name(p, "DEMO-LOFI");
@@ -505,8 +517,13 @@ void buildLofi(Project& p) {
   keys.crushBits = 45;
   keys.crushRate = 20;
   keys.rsend = 60;
-  ins(p, 2, InstrType::Synth, "MOOGISH");
-  ins(p, 3, InstrType::Chip, "MUSICBOX").send = 60;
+  keys.fltMode = static_cast<uint8_t>(FltMode::Lp);  // dark top: the old master low-pass of this demo
+  keys.cutoff = 107;                                 // ~5 kHz
+  ins(p, 2, InstrType::Synth, "MOOGISH");  // its own LP sits well below 5 kHz already
+  Instrument& box = ins(p, 3, InstrType::Chip, "MUSICBOX");
+  box.send = 60;
+  box.fltMode = static_cast<uint8_t>(FltMode::Lp);  // dark top, as the keys
+  box.cutoff = 107;
   Instrument& vinyl = ins(p, 4, InstrType::Chip, "NOIS HH");
   vinyl.decay = 6;
   vinyl.release = 6;
@@ -525,7 +542,6 @@ void buildLofi(Project& p) {
   p.rvbDamp = 100;
   p.rvbLevel = 70;
   p.compAmt = 35;
-  p.djFilter = -18;  // a gentle low-pass on the whole mix
 
   static const uint8_t kChord[4] = {50, 55, 60, 57};  // D3 G3 C4 A3: 7th chords in C major
   auto keys2 = [](Pattern& pt) {
@@ -592,7 +608,7 @@ void buildLofi(Project& p) {
   outro.steps[kKeys][58] = Step();  // the last chord rings out
   chord(outro, kKeys, 48, kChord[3], kChordSeventh, kGat800);
 
-  static const Item kSong[] = {{0, 1, 0, 0}, {1, 2, 0, 0}, {2, 2, 0, 0}, {3, 1, 0, 0}, {2, 2, 0, 0}, {4, 1, 0, 0}};
+  static const Item kSong[] = {{0, 1}, {1, 2}, {2, 2}, {3, 1}, {2, 2}, {4, 1}};
   song(p, kSong, 6);
 }
 
@@ -701,7 +717,7 @@ void buildSynthwave(Project& p) {
   arp(outro, 0);
   hits(outro, kKick, 0, "x...x...x...x...", 0, 32);
 
-  static const Item kSong[] = {{0, 1, 0, 0}, {1, 2, 0, 0}, {2, 2, 0, 0}, {3, 1, 0, 0}, {2, 2, 0, 0}, {4, 1, 0, 0}};
+  static const Item kSong[] = {{0, 1}, {1, 2}, {2, 2}, {3, 1}, {2, 2}, {4, 1}};
   song(p, kSong, 6);
 }
 
@@ -726,7 +742,7 @@ void buildDubTechno(Project& p) {
   stab.reso = 35;
   stab.lfoWave = static_cast<uint8_t>(LfoWave::Sine);
   stab.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
-  stab.lfoSync = 1;
+  stab.lfoSync = kLfoTempo;
   stab.lfoRate = 10;  // 4 bars
   stab.lfoDepth = 24;
   ins(p, 2, InstrType::Synth, "SUBBASS");
@@ -803,7 +819,7 @@ void buildDubTechno(Project& p) {
   drone(brk);
   hits(brk, kDrums, kRs, "...x.....x....x.");
 
-  static const Item kSong[] = {{0, 2, 0, 0}, {1, 3, 0, 0}, {2, 4, 0, 0}, {3, 2, 0, 0}, {1, 3, 0, 0}, {0, 1, 0, 0}};
+  static const Item kSong[] = {{0, 2}, {1, 3}, {2, 4}, {3, 2}, {1, 3}, {0, 1}};
   song(p, kSong, 6);
 }
 
@@ -909,7 +925,7 @@ void buildIdm(Project& p) {
   glitch(brk);
   hits(brk, kClick, 0, "x..x...", 0, 7);
 
-  static const Item kSong[] = {{0, 1, 0, 0}, {1, 3, 0, 0}, {2, 3, 0, 0}, {3, 1, 0, 0}, {1, 2, 0, 0}, {0, 1, 0, 0}};
+  static const Item kSong[] = {{0, 1}, {1, 3}, {2, 3}, {3, 1}, {1, 2}, {0, 1}};
   song(p, kSong, 6);
 }
 
@@ -943,10 +959,11 @@ void buildHouse(Project& p) {
   p.rvbSize = 85;
   p.rvbLevel = 75;
   p.compAmt = 40;
-  // PERF: filter down / up, delay and reverb throws, rolls, short decays, mute.
-  static const PerfFx kPerf[kPerfButtons] = {PerfFx::FltLow, PerfFx::FltHigh, PerfFx::DlyMax,  PerfFx::RvbMax,
-                                             PerfFx::Rat4,   PerfFx::RatUp,   PerfFx::DecShort, PerfFx::Mute};
+  // PERF: filter, repeat, roll, delay and reverb throws, gate, tape stop, freeze.
+  static const PerfFx kPerf[kPerfButtons] = {PerfFx::Filter, PerfFx::Repeat,   PerfFx::Roll,     PerfFx::DelayThrow,
+                                             PerfFx::ReverbThrow, PerfFx::Gate, PerfFx::TapeStop, PerfFx::Freeze};
   for (int i = 0; i < kPerfButtons; ++i) p.perfMap[i] = static_cast<uint8_t>(kPerf[i]);
+  p.perfDefaultDepths();
 
   static const uint8_t kRoot[4] = {53, 53, 58, 58};  // F3 F3 Bb3 Bb3: Fm7, Bbm7
   auto drums = [](Pattern& pt, bool clap) {
@@ -994,7 +1011,7 @@ void buildHouse(Project& p) {
     if (brk.steps[kStab][s].hasNote()) fx(brk, kStab, s, Fx::FLT, static_cast<uint8_t>(40 + s));
   roll(brk, kDrums, kCp, 48, 64, 1, 30, 120);
 
-  static const Item kSong[] = {{0, 4, 0, 0}, {1, 2, 0, 0}, {2, 4, 0, 0}, {3, 1, 0, 0}, {2, 4, 0, 0}, {1, 1, 0, 0}};
+  static const Item kSong[] = {{0, 4}, {1, 2}, {2, 4}, {3, 1}, {2, 4}, {1, 1}};
   song(p, kSong, 6);
 }
 

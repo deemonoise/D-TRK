@@ -35,7 +35,7 @@ RenderDialog::RenderDialog(App& app) : app_(app) {
   list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
 }
 
-bool RenderDialog::songOk() const { return app_.project().chainLen > 0; }
+bool RenderDialog::songOk() const { return app_.project().songLen > 0; }
 
 void RenderDialog::open() {
   source_ = app_.editPattern();
@@ -127,7 +127,7 @@ uint16_t RenderDialog::stemTracks(const mt::RenderSpec& spec) const {
   const mt::Project& p = app_.project();
   bool used[mt::kPatterns] = {};
   if (spec.mode == mt::RenderSpec::Mode::Song) {
-    for (int i = 0; i < p.chainLen && i < mt::kChainMax; ++i) used[p.chain[i] < mt::kPatterns ? p.chain[i] : 0] = true;
+    for (int i = 0; i < p.songLen && i < mt::kSongMax; ++i) used[p.song[i] < mt::kPatterns ? p.song[i] : 0] = true;
   } else {
     used[spec.pattern] = true;
   }

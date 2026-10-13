@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song chain, Fill with Euclid, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the synth board's stereo audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder and two buttons, Play and Shift.
+A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song of up to 128 slots, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the synth board's stereo audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -10,12 +10,12 @@ A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S
 3. [Screen and status bar](#screen)
 4. [GRID: pattern editor](#grid)
 5. [Effects (fx)](#fx)
-6. [Fill and Euclid](#euclid)
+6. [Fill, Euclid, arp, chords and bass](#euclid)
 7. [TRACK: track settings](#track)
 8. [INST: instruments](#inst)
 9. [PROJ: project and pattern](#proj)
 10. [BANK: pattern bank](#bank)
-11. [Song mode](#song)
+11. [SONG: the song](#song)
 12. [FILE: saving and loading](#file)
 13. [MIDI import](#import)
 14. [MIDI output](#midi)
@@ -37,38 +37,65 @@ A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S
 
 | Action | What it does |
 |--------|--------------|
-| <kbd>Play</kbd> | Start from the first step / stop. When paused, also restarts from the beginning. |
-| <kbd>Shift</kbd>+<kbd>Play</kbd> | Pause and resume: stopped → start, playing → pause, paused → resume from the same spot. During playback, pause triggers on releasing Play if it was held for less than 0.5 s. |
-| <kbd>Shift</kbd>+<kbd>Play</kbd>, hold | During playback: **fill** while Play is held (steps with [CND FIL](#cnd) play, steps with NFL don't). Releasing after 0.5 s only ends the fill, without pausing. |
+| <kbd>Play</kbd> | Start from the first step / stop. Stopped on the SONG tab with a non-empty song, plays the song from the slot under the SONG cursor; otherwise loops the current pattern (LOOP), see [SONG](#song). |
+| <kbd>Shift</kbd>+<kbd>Play</kbd> | **Song from the cursor**, on any tab: stopped → the song starts from the slot under the SONG cursor; playing → a short press (Play released within 0.5 s) starts the song from that slot again. Empty song: toast `SONG EMPTY`, nothing happens. There is no pause. |
+| <kbd>Shift</kbd>+<kbd>Play</kbd>, hold | During playback: **fill** while Play is held (steps with [CND FIL](#cnd) play, steps with NFL don't). Releasing after 0.5 s only ends the fill, the song does not restart. |
 | <kbd>Shift</kbd> | A modifier; does nothing on its own. While held, a yellow `SHIFT` replaces the FILE tab. |
 | Encoder turn | Moves the cursor or selects a row. In edit mode, changes the value. With Shift, a coarse step (usually ×10). |
-| Encoder click | Enter or leave edit mode, choose a menu item. |
+| Encoder click | Enter or leave edit mode, choose a menu item. With a track button held — switch that button's turn between volume and pan (see [Track buttons](#trackkeys)). |
+| Hold <kbd>A</kbd> + turn | Edit the value under the cursor without a click; releasing A commits it. See [Buttons A and B](#abkeys). |
 | Encoder long press | 0.5 s: context menu or close a dialog. |
 | Tap | Select. Tapping the selected item again enters edit mode. |
 | Long tap | 0.5 s: context menu. |
 | Drag | Scroll. In edit mode, changes the value: up increases, down decreases. |
 
-Play works on any screen, even over an open menu.
+Play works on any screen, even over an open menu. Tabs, pages, back and undo are also on the [A and B buttons](#abkeys).
 
 <a id="trackkeys"></a>
 
 ### Track buttons
 
-In GRID the buttons also record notes live (REC) and hold effects (PERF) — see [REC and PERF](#live).
+In GRID the buttons also record notes live (REC), and in GRID and SONG they hold effects (PERF) — see [REC and PERF](#live).
 
-A block of 8 buttons, each with an LED, on the PCF8575 expander (the same module carries the encoder button, Play and Shift). There are 16 tracks, so the buttons work on the **visible half** — 1–8 or 9–16, the same one [Overview](#grid) shows. The half is not a mode: the cursor selects it. Move past track 8 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a track button) and the buttons and LEDs switch to 9–16; move back and they return to 1–8. The GRID header shows which half is active: `1-8` or `9-16` on the left above the step numbers.
+A block of 8 buttons on the PCF8575 expander (the same module carries the encoder button, Play, Shift, A and B). There are 16 tracks, so the buttons work on the **visible half** — 1–8 or 9–16, the same one [Overview](#grid) shows. The half is not a mode: the cursor selects it. Move past track 8 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a track button) and the buttons switch to 9–16; move back and they return to 1–8. The GRID header shows which half is active: `1-8` or `9-16` on the left above the step numbers.
 
 | Action | What it does |
 |--------|--------------|
 | <kbd>N</kbd> | Select track N of the visible half (in 9–16, button 1 is track 9): the GRID cursor moves to it, TRACK shows it. |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Mute / unmute the same track (N of the visible half), on any screen. The toast `TRACK n MUTE` / `TRACK n ON` shows the real number, 1–16. |
-| Hold <kbd>N</kbd> + turn | Volume of track N (Volume, INT) on any screen, ×10 with <kbd>Shift</kbd>; toast `TRK5 VOL 100`. The turn does not reach the screen meanwhile. The press on its own works as usual (selects the track). Not active in GRID edit mode, REC or PERF — there the buttons play. On a MIDI track: `TRK5 MIDI`, nothing changes. |
-| <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on in PROJ. Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
+| <kbd>N</kbd> on the [SONG](#song) tab | Mute / unmute track N in the selected song slot. The half is the one holding the current track, as in GRID and TRACK (not the SONG cursor column). With [PERF](#live) on and the transport playing, N holds its effect instead; <kbd>Shift</kbd>+N still mutes. |
+| Hold <kbd>N</kbd> + turn | Volume of track N (Volume, INT) on any screen, ×10 with <kbd>Shift</kbd>; toast `TRK5 VOL 100`. The turn does not reach the screen meanwhile. The press on its own works as usual (selects the track). Not active in GRID edit mode, REC or PERF (GRID or SONG) — there the buttons play. On a MIDI track: `TRK5 MIDI`, nothing changes. |
+| Hold <kbd>N</kbd> + encoder click | Switch the held-button turn between volume and pan of track N (INT); toast `TRK5 PAN L12` / `TRK5 VOL 100`. Turning then changes the pan (×10 with <kbd>Shift</kbd>). Releasing the button returns to volume: every new hold starts on volume. While a track button is held, the click always goes to this toggle (in GRID outside edit mode it no longer turns edit mode on); only where the buttons are busy — GRID edit mode, REC, PERF and the sample editor in INST — the click keeps its usual meaning. |
+| <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on (FILE → SYSTEM). Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
 | <kbd>N</kbd> in the sample editor (INST, SMPL page) | Play a slice to the end: 1 — the selected slice (if no slice is selected, the first one), 2 — the one after it, and so on. Works with any Slices setting (OFF, NOTE, FX), at the original pitch. Toast "SLICE n"; no such slice — "NO SLICE n"; no slices at all — "NO SLICES". |
 | <kbd>Shift</kbd>+<kbd>N</kbd> in GRID edit mode | The same degree an octave up. |
 | <kbd>N</kbd> in GRID edit mode on a [drum track](#drumtrack) | Toggle lane N in the step under the cursor. The cursor doesn't move; no Shift needed. |
 
-The LEDs show the same half as the buttons: LED N is track N of half 1–8 or 9–16. A track flashes on each of its notes; a muted track stays dark. The selected track is lit steadily and goes dark on its notes. Activity of tracks in the other half is not shown. Degree entry and slices in the sample editor don't depend on the half — there the button number is what counts. OFF and clearing a step work as before, through the menu.
+Degree entry and slices in the sample editor don't depend on the half — there the button number is what counts. OFF and clearing a step work as before, through the menu.
+
+<a id="abkeys"></a>
+
+### Buttons A and B
+
+Two buttons: B under Shift (PCF8575 P16), A under Play (P17). Both are chord buttons: hold one and turn the encoder or press another button. A short press on its own (a tap) counts on release and only if nothing else happened while the button was held. If both are held, B wins.
+
+| Action | What it does |
+|--------|--------------|
+| Hold <kbd>A</kbd> + turn | Edit the value under the cursor: enters edit mode if it is off and changes the value at once. Releasing A commits the value and leaves edit mode (if A entered it). Works on parameter lists, the GRID cell, name rows, SONG (the slot's pattern), sample markers, MIX (MAIN volume). |
+| Hold <kbd>A</kbd> + <kbd>Shift</kbd> + turn | Whatever <kbd>Shift</kbd>+turn does in edit mode: ×10, a note by octaves, a sample marker to the nearest onset, the cursor position on a name row. |
+| Hold <kbd>A</kbd>, press <kbd>B</kbd> | Cancel the edit: the value made with A is restored. |
+| <kbd>A</kbd> tap in GRID | Empty step: put the track's last note (on a [drum track](#drumtrack), toggle the lane under the cursor). Step with a note: hear it. |
+| <kbd>Shift</kbd>+<kbd>A</kbd> in GRID | Clear the step under the cursor. |
+| <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> in the sample editor (INST, SMPL page) | Next / previous marker, like **\>** / **\<** — see [SAMPLE](#sample). |
+| Hold <kbd>A</kbd> + <kbd>N</kbd> | Solo / unsolo track N of the visible half; toast `TRACK n SOLO` / `TRACK n ON`. |
+| Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. |
+| Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ. |
+| <kbd>B</kbd> tap | Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker it steps back one level. In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. |
+| <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
+| Hold <kbd>B</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. While the song plays (SONG mode) a queue is ignored (toast `SONG MODE`). |
+| Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Switch to pattern N at once, also while the song plays. |
+
+The encoder click works as before; A is just a faster way to edit one value: hold, turn, release.
 
 ### Wiring
 
@@ -77,11 +104,11 @@ The LEDs show the same half as the buttons: LED N is track N of half 1–8 or 9�
 | `10` | MIDI TX (UART, 31250 baud) |
 | `11 / 12` | Encoder A / B (EC11) |
 | `13 / 14` | Link to the synth board: UART TX → Teensy RX1 (pin 0), RX ← Teensy TX1 (pin 1), 3 Mbaud |
-| `43 / 44` | PCF8575 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
+| `43 / 44` | PCF8575 and INA226 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
 
 The display board's built-in microSD slot and its NS4168 amplifier are not used: the card, the PCM5102A DAC and the headphone amplifier are on the synth board (see [Built-in sound](#sound)).
 
-All buttons are on the PCF8575: track buttons on P00–P07, encoder button on P13, Play on P14, Shift on P15; each shorts its pin to GND. Without the expander the encoder button, Play and Shift do not work. Encoder A / B use the board's internal pull-ups. MIDI OUT is TRS type A, 3.3 V:
+All buttons are on the PCF8575: track buttons on P00–P07, encoder button on P13, Play on P14, Shift on P15, B on P16, A on P17; each shorts its pin to GND. Without the expander the encoder button, Play, Shift, A and B do not work. Encoder A / B use the board's internal pull-ups. MIDI OUT is TRS type A, 3.3 V:
 
 - +3.3 V → 33 Ω → Ring (DIN pin 4)
 - GPIO10 → 10 Ω → Tip (DIN pin 5)
@@ -93,25 +120,26 @@ A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; t
 
 ## Screen and status bar
 
-    S03 P05*  >P07  120 BPM  5/16  PLAY  L3  CPU  42%
+    S03 P05*  >P07  120 BPM  5/16  PLAY  L3  [=] 85%  CPU  42%
     tab work area
-    GRID  TRACK  MIX  BANK  INST  PROJ  FILE
+    GRID  TRACK  INST  MIX  BANK  SONG  PROJ  FILE
 
 | Element | Meaning |
 |---------|---------|
-| `P05` | The pattern currently playing. In song mode — `S03 P05`: third chain entry, pattern 5. `S--` — the chain hasn't started yet. |
+| `P05` | The pattern currently playing (LOOP mode). In SONG mode — `S03 P05`: third song slot, pattern 5; `S--` — the song has not been heard yet. During play, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass — see [SONG](#song). |
 | `*` | There are unsaved changes. |
-| `>P07` | Queued pattern: switches at the end of the pass. Not shown in song mode. |
+| `>P07` | Queued pattern: switches at the end of the pass. Not shown in SONG mode. |
 | `120 BPM` | Tempo. A tap enters tempo editing (red): encoder ±1, ±10 with Shift, range 20–300. Leave with a click, a tap on the work area or a tab change. |
 | `5/16` | Step / pattern length. |
-| `PLAY` | State: PLAY, PAUSE, STOP. A tap works like the Play button; with Shift, like Shift+Play. |
-| `L3` | Pattern pass counter. The CND condition uses it. While fill is held — `FILL`. |
+| `PLAY` | State: PLAY, STOP. A tap works like the Play button; <kbd>Shift</kbd>+tap, like <kbd>Shift</kbd>+<kbd>Play</kbd> (the song from the SONG cursor). |
+| `L3` | Pattern pass counter. The CND condition uses it. Up to `L9999`, beyond that `L10K+`. While fill is held — `FILL`. |
+| `[=] 85%` | Battery charge from the [INA226](wiring.md#ina226-battery-monitor): the icon fills by level, a lightning bolt while charging. Green while charging, yellow at 20% and below, red at 10% and below, otherwise dim. Estimated from the voltage corrected for the load current and smoothed (~30 s); while discharging it only goes down (in the first minute after power-on it may move both ways). While charging it reads high and shows 100% before charging ends. Not shown without the sensor. At 10% (not while charging) a single toast `BATTERY LOW - SAVE`; it repeats only after a recharge. |
 | `CPU 42%` | Synth board load: the average time to compute an audio block over the last 0.5 s, as a % of the block duration (128 samples, 2.9 ms). Gray below 60%; yellow at 60–84% or if any block in those 0.5 s took longer than a block; red from 85% or for 2 s after an audio dropout (an audible click). While no audio is being computed, the last value is shown. |
 | `NO SYNTH` | Red, in place of CPU: the synth board does not answer. INT tracks are silent and the card is unavailable; MIDI OUT still plays. |
-| `SYNTH FW` | Red, in place of CPU: the synth board's firmware protocol does not match the tracker's. A full-screen notice blocks the UI; a click or a tap on **UPDATE** opens a menu: **Update synth…** (flash from `/firmware/teensy.hex` on the synth card, as PROJ → SYS → Update synth) or **Wi-Fi firmware…** (see [below](#wifi)). |
+| `SYNTH FW` | Red, in place of CPU: the synth board's firmware protocol does not match the tracker's. A full-screen notice blocks the UI; a click or a tap on **UPDATE** opens a menu: **Update synth…** (flash from `/firmware/teensy.hex` on the synth card, as FILE → SYSTEM → Update synth) or **Wi-Fi firmware…** (see [below](#wifi)). |
 | `SYNC` | Yellow, in place of CPU: the sound state (instruments, mixer, samples) is being sent to the synth board. Play waits for it for a moment. |
 
-Tabs switch only by tapping the bottom bar. Yellow messages (toasts) cover the right part of the status bar for 1.5 seconds.
+Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar (battery and CPU) for 1.5 seconds.
 
 **Menus** open in the center of the screen and show up to 12 items; long lists scroll by dragging. Encoder: turn to select (wraps around: after the last item comes the first), click to execute, long press to close. All parameter and file lists wrap around the same way. A tap outside the menu also closes it. Gray items are currently unavailable.
 
@@ -119,12 +147,12 @@ Tabs switch only by tapping the bottom bar. Yellow messages (toasts) cover the r
 
 ## GRID: pattern editor
 
-GRID always edits the pattern that is playing. When the pattern changes (queue, chain, loading), the cursor moves to step 1, edit mode turns off and the selection is cleared.
+GRID always edits the pattern that is playing. When the pattern changes (queue, song, loading), the cursor moves to step 1, edit mode turns off and the selection is cleared.
 
 ### Two views
 
-- **Overview** (default): 8 columns — one half of the 16 tracks, the one the cursor is in: 1–8 or 9–16. Which half is on screen is shown on the left above the step numbers: `1-8` or `9-16`. The half is not a separate mode: when the cursor moves from track 8 to track 9 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a [track button](#trackkeys)), the second half is shown; move back and the first returns. The [track buttons and LEDs](#trackkeys) follow the same half. A cell shows the note, a velocity bar and a yellow dot if the step has fx. The dot is gray if all of the step's fx are synth fx on a MIDI track (they have no effect there). Every fourth step is highlighted, and the playback row is marked.
-- **Detail**: one (the current) track across the full width, 14 fields: NOTE, VEL and six pairs FX1…FX6 with their values. The track number (`T3`) is above the step numbers, the name above NOTE/VEL. <kbd>Shift</kbd>+turn past the last field moves to the next track; the track buttons switch it too. Tapping the name row mutes (with <kbd>Shift</kbd>, solos) that track. Synth fx on a MIDI track are shown in gray.
+- **Overview** (default): 8 columns — one half of the 16 tracks, the one the cursor is in: 1–8 or 9–16. Which half is on screen is shown on the left above the step numbers: `1-8` or `9-16`. The half is not a separate mode: when the cursor moves from track 8 to track 9 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a [track button](#trackkeys)), the second half is shown; move back and the first returns. The [track buttons](#trackkeys) follow the same half. A cell shows the note, a velocity bar and a yellow dot if the step has fx. The dot is gray if all of the step's fx are synth fx on a MIDI track (they have no effect there). Every fourth step is highlighted, and the playback row is marked.
+- **Detail**: one (the current) track across the full width, 14 fields: NOTE, VEL and six pairs FX1…FX6 with their values. The track number (`T3`) is above the step numbers, the name above NOTE/VEL. <kbd>Shift</kbd>+turn past the last field moves to the next track; the track buttons switch it too. Tapping the name row mutes (with <kbd>Shift</kbd>, solos) that track. Synth fx on a MIDI track are shown in gray. The playback row and follow show the track's own step (Pat len, [Speed](#track)): a x2 / x4 track moves 2 / 4 rows per pattern step. Overview shows the pattern step.
 
 Track name color: yellow — solo, gray — not audible, white — normal.
 
@@ -138,12 +166,13 @@ Track name color: yellow — solo, gray — not audible, white — normal.
 | <kbd>Shift</kbd>+click | Toggle Overview / Detail | |
 | Long press | Context menu | |
 | <kbd>Shift</kbd>+long press | Undo | |
+| Hold <kbd>A</kbd> + turn | Enter edit mode and change the value (the mini keyboard / lane pad stays hidden); releasing A leaves edit mode | Change the value; releasing A keeps edit mode on |
 
 ### What a turn changes in edit mode
 
-- **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on in PROJ.
+- **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on (FILE → SYSTEM).
 - **VEL.** 0–127, ×10 with Shift. A value of 0 is shown as `...` and means "the track's default velocity".
-- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN; pitch and volume SLD, VIB, PBN, VSL, ACC; sound FLT, RES, DRV, DEC, COL, SHP, SWP, CON; sample OFS, SLC; sends DLY, RVB; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
+- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN; pitch and volume SLD, VIB, PBN, VSL, ACC; sound FLT, RES, DRV, DEC, COL, SHP, SWP, CON; sample OFS, SLC; sends and pan DLY, RVB, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
 - **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
 
 One edit session (from entering to leaving edit mode) is one undo step.
@@ -160,7 +189,7 @@ A track whose TRACK → Instr is set to a [KIT](#kit) instrument is a drum track
 
 - **Overview:** the cell shows 8 small squares; a filled one means the lane sounds. There is no velocity bar; the fx dot is in the top corner of the cell.
 - **Detail:** the NOTE field shows the same squares, the VEL field the step velocity (`...` — the track's Def vel).
-- **Editing NOTE:** a turn moves the red frame across lanes, <kbd>Shift</kbd>+turn toggles the lane under the frame. Instead of the mini keyboard, the bottom shows a **pad of 8 buttons** with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same in edit mode. A lane sounds as soon as it's turned on (Preview in PROJ).
+- **Editing NOTE:** a turn moves the red frame across lanes, <kbd>Shift</kbd>+turn toggles the lane under the frame. Instead of the mini keyboard, the bottom shows a **pad of 8 buttons** with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same in edit mode. A lane sounds as soon as it's turned on (Preview in FILE → SYSTEM).
 - **Editing VEL:** 1–127, ×10 with Shift.
 - A step with all lanes turned off stays (silent, fx still work) — remove it with Clear step. OFF is set as usual through the menu and releases all lanes.
 - A step's fx apply to all its lanes: RAT repeats each one, NDG shifts them, PRB and CND decide for the whole step, DEC / FLT / DLY and other locks apply per voice. CHD, NRN, STR, TIE, ARP, SLD, VIB and SLC do nothing on a drum track. The **ACC** fx is for drum tracks only.
@@ -202,36 +231,45 @@ Menu → **Select** sets a selection corner at the cell under the cursor. While 
 
 Two modes from the GRID context menu. They exclude each other and edit mode: turning one on turns the others off. The header above the step numbers shows `REC` (red) or `PERF` (yellow). They work during playback; when stopped, the buttons behave as usual.
 
-- **REC** — records from the track buttons into the current track. Button N writes scale degree N (in the octave of the track's last note) into the playing step; a press in the second half of a step lands in the next one. <kbd>Shift</kbd>+N erases that step's note. On a drum track button N sets lane N, <kbd>Shift</kbd>+N removes it. Each pattern pass is one undo step. Choose the track to record into by tapping its name (in REC this is not mute) or with <kbd>Shift</kbd>+turn. The recorded note sounds immediately if Preview is on.
-- **PERF** — an effect on the current track while the button is held; the press shows its name (`PERF FILTER LOW`). Which effect is on which button is set in [PROJ → PERF](#proj) and stored in the project. Release — the effect is removed. Pressing another button replaces the effect. <kbd>Shift</kbd>+N still mutes.
+PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row menu too, and it is one shared mode — turned on in either menu it is on in both (turning it on in SONG leaves pattern edit; GRID turns REC off when you come back). In SONG with PERF on, button N holds its effect while playing, the encoder turns a held effect's depth instead of moving the cursor, and <kbd>Shift</kbd>+N mutes the track live. The SONG header shows the same `PERF …` badge in place of `n/128`.
 
-| Effect | What it does | Output |
-|--------|--------------|--------|
-| RAT 2 / RAT 3 / RAT 4 / RAT 8 | retrigger (by default RAT 2 is button 1, RAT 4 is button 2) | both |
-| ROLL UP | RAT 8 with rising velocity — a "build-up" | both |
-| FILTER LOW / FILTER HIGH | FLT 30 / FLT 120 (buttons 3, 4) | INT |
-| DELAY MAX / REVERB MAX | DLY 127 (button 5) / RVB 127 | INT |
-| CRUSH / DOWNSAMPLE / DRIVE | BIT 100 (button 6) / SRR 90 / DRV 100 | INT |
-| SHORT DECAY | DEC 20 — short DECAY macro | INT |
-| FADE | fade VSL −16; on MIDI, half velocity (button 7) | both |
-| MUTE | track mute (button 8) | both |
-| --- | the button does nothing | |
+- **REC** — records from the track buttons into the current track. Button N writes scale degree N (in the octave of the track's last note) into the playing step; a press in the second half of a step lands in the next one. On a track with its own Speed this is the track's own step that is sounding. <kbd>Shift</kbd>+N erases that step's note. On a drum track button N sets lane N, <kbd>Shift</kbd>+N removes it. Each pattern pass is one undo step. Choose the track to record into by tapping its name (in REC this is not mute) or with <kbd>Shift</kbd>+turn. The recorded note sounds immediately if Preview is on.
+- **PERF** (GRID and SONG) — punch-in effects on the whole internal mix while a button is held, PO-33 / EP-133 style. Which effect is on which button, and the Value it starts at, is set in [PROJ → PERF](#proj) and stored in the project: button 1 can hold REPEAT 1/8 and button 2 REPEAT 1/32. The press starts the effect at the button's Value and shows it (`PERF REPEAT 1/8`); turning the encoder while the button is held changes the depth (<kbd>Shift</kbd> ×10 on the wide ranges: FILTER, DRIVE, DELAY THROW, REVERB THROW, FREEZE). The turn is not remembered: every press starts at the button's Value (PROJ → PERF). Release — the effect is gone. <kbd>Shift</kbd>+N still mutes.
 
-The effect is added to steps as they play: the step's own fx stay, and the same command in the step is replaced. Steps already scheduled ahead (up to an eighth note) play as they were. Stop removes all effects; leaving GRID removes the held one.
+| Effect | What it does | Encoder | Default |
+|--------|--------------|---------|---------|
+| REPEAT | loops the mix from the last grid step boundary | 1/2, 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 — applies at the next loop | 1/16 |
+| ROLL | a repeat from 1/8, the loop halves every N loops down to 1/64 | N = 1…4 | 2 |
+| REVERSE | plays the buffer backwards from the press point, looping over the window | 1/4, 1/2, 1, 2 bars | 1 bar |
+| SCRATCH | the read head swings (sine) around the press point | period 1/4, 1/8, 1/16, 1/32 | 1/8 |
+| TAPE STOP | the speed falls to 0, then silence; release returns the live mix | 1/16, 1/8, 1/4, 1/2, 1 bar | 1/4 bar |
+| GATE | 50 % gate in phase with the grid | 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 | 1/16 |
+| FILTER | at OFF nothing happens; counter-clockwise closes a low-pass (20 kHz → 100 Hz), clockwise opens a high-pass (20 Hz → 8 kHz), with a little resonance | LP 64 … OFF … HP 63 | OFF |
+| CRUSH | bit depth | 2…12 bits | 6 |
+| DOWNSAMPLE | sample and hold | 16 kHz, 8 kHz, 4 kHz, 2 kHz, 1 kHz, 500 Hz | 8 kHz |
+| DRIVE | saturation, level compensated | 0…100 | 60 |
+| DELAY THROW | the whole mix into the [delay](#delay) send while held, the tail rings out | send 0…127 | 100 |
+| REVERB THROW | the same into the [reverb](#reverb) | send 0…127 | 100 |
+| FREEZE | the reverb frozen (feedback 1, input closed), the tail hangs; the encoder sets the live mix level under the frozen tail (DRY 0…100) | 0…100 | 50 |
+| --- | the button does nothing | | |
+
+The header shows the held effects in press order by short name: `PERF RPT FLT CRS` (RPT ROL REV SCR TPS GAT FLT CRS DWN DRV DLY RVB FRZ). Several buttons held together stack. The buffer effects (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP) share one read head, so only the last pressed of them plays; release it and the previous still-held one returns. Everything else stacks freely. The encoder turns the last pressed held effect. Stop, PERF off or leaving the tab (GRID or SONG) releases everything. PERF touches INT sound only — MIDI tracks are not affected — and only live: Render WAV and Resample do not include it. The buffer effects play from a buffer on the synth board: 6 s with PSRAM on the Teensy, 1 s without it (toast `PERF: NO MEMORY FOR REPEAT` if there is none — then they are silent).
 
 <a id="resample"></a>
 
 ### Resample
 
-**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new mono project sample (the stereo mix is summed): only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name), normalized to −1 dBFS, trailing silence is trimmed, and there is no delay / reverb tail past the end of the pattern. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
+**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new project sample: only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name), normalized to −1 dBFS, trailing silence is trimmed, and there is no delay / reverb tail past the end of the pattern. The sample is mono (the bank is mono): left and right are mixed, (L + R) / 2. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
 
 - Only when stopped (`STOP FIRST`). The pattern is rendered twice (measuring, then recording), each pass roughly in real time — progress `RENDER nn%`; a long encoder press or Play cancels (`CANCELLED`).
 - Nothing longer than 60 s is recorded: `SAMPLE CAP`, the sample is still added. No room in the synth board's flash — `BANK FULL`; the same if the list already has 128 samples.
 - The result: `RS3 2.1s`. The render matches playback (without the output latency); notes pushed past the end of the pattern by NDG / swing are cut off.
 
+<a id="undo"></a>
+
 ### Undo
 
-8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo, mute/solo and chain edits are not undone. There is no redo. Load, New and import clear the history.
+<kbd>Shift</kbd>+long press in GRID or <kbd>Shift</kbd>+<kbd>B</kbd> on any screen. 8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo and mute/solo are not undone. Song edits have their own history on the [SONG](#song) tab (also <kbd>Shift</kbd>+<kbd>B</kbd>, 8 steps). There is no redo. Load, New and import clear the history.
 
 ### Step
 
@@ -248,7 +286,7 @@ Each step has six slots. If the same command is in several slots, the first one 
 | Code | Value | Output | What it does |
 |------|-------|--------|--------------|
 | **Notes and arpeggio** | | | |
-| `CHD` | tri 7th su2 su4 6th ad9 pwr oct | both | Chord built from the note: up to 4 notes; notes above 127 are dropped. |
+| `CHD` | 36 types × 4 inversions: `tri`…`a11`, `MAJ`…`QRT`, inversion digit `MA72` | both | Chord built from the note: up to 4 notes; notes above 127 are dropped. Lowercase types follow the project scale, UPPERCASE ones are fixed intervals — see [CHD chords](#chd). |
 | `STR` | 1–50 | both | Strum: the k-th chord note is delayed by k×STR% of a step. |
 | `ARP` | 00–FF (xy) | INT | Arpeggio: note, +x, +y semitones in a loop, three switches per step (ARM changes order and speed) — a fast "chiptune" arp inside the sounding note. With CHD in the same step it arpeggiates the chord notes — see below. For an arp on sequencer steps, use ARS. |
 | `ARM` | U1…R8 | INT | ARP mode: the letter is the order (U up, D down from the top, B up-down without repeating the end notes, R random), the digit is notes per step (1–8). A turn changes the digit first, then the letter. The default U3 = plain ARP. Does nothing without ARP; holds together with ARP until the next step with a note. |
@@ -279,10 +317,10 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `SRR` | 0–127 | INT | Sample-rate reduction for the step's note: 0 — off, 127 — each sample is held for ≈ 64 samples (a rough "digital" sound). Together with BIT — classic lo-fi. The constant value is INST → FILT → Downsample. |
 | `LFO` | 1–4 | INT | Which LFO of the instrument this step's `LFD`…`LFR` act on; without it — LFO 1. Slot order doesn't matter. |
 | `LFD` | −64…+63 | INT | Depth lock of the selected LFO (turns the LFO on even if the instrument's Depth is 0). |
-| `LFS` | 0–127 | INT | Rate lock of the selected LFO: in HZ — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS). |
+| `LFS` | 0–127 | INT | Rate lock of the selected LFO: in FREE — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS); not applied to a Retrig OFF LFO (its phase is the instrument's). |
 | `LFW` | SIN, TRI, SAW, SQR, RND | INT | Wave lock of the selected LFO. |
-| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV | INT | Dest lock of the selected LFO (macros — FM, DRUM, SYNTH only). |
-| `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): a FREE LFO — the track's phase, a NOTE LFO — the step's notes or the sounding notes. |
+| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV, RES, FEN, DLY, RVB, PAN, BIT, SRR, FIN, DUT, SUB, NOI, SM2, RA1–RA4, DP1–DP4, RG1–RG4 | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
+| `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): Retrig OFF — the instrument's shared phase, Retrig ON — the step's notes or the sounding notes. |
 | `DEC` | 0–127 | INT | FM, DRUM, SYNTH: the DECAY macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP1). |
 | `COL` | 0–127 | INT | FM, DRUM, SYNTH: the COLOR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP2). |
 | `SHP` | 0–127 | INT | FM, DRUM, SYNTH: the SHAPE macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — MIX). |
@@ -294,6 +332,7 @@ Each step has six slots. If the same command is in several slots, the first one 
 | **Sends** | | | |
 | `DLY` | 0–127 | INT | Send to [delay](#delay) for the step's note (replaces the instrument's Dly send), any instrument type. |
 | `RVB` | 0–127 | INT | Send to [reverb](#reverb) for the step's note (replaces the instrument's Rvb send). |
+| `PAN` | L64…C…R63 | INT | Pan lock (replaces the track's [Pan](#track)): for the step's notes, on a step without a note — for the track's sounding voices (moves smoothly, no click). The LFO PAN target moves around it. |
 | **MIDI only** | | | |
 | `CHN` | 1–16 | MIDI | MIDI channel for this step: notes, CC, PB, PGM. |
 | `CCA` | 0–127 | MIDI | CC with the track's "CC A" number (default 74). |
@@ -320,7 +359,7 @@ Example: note C-4, CHD tri, ARS U1, empty steps below and OFF on step 9 — eigh
 
 **ARP + CHD.** If a step has both ARP (not 00) and CHD, an INT track plays a single note and ARP cycles through the chord notes (in the project scale) instead of 0, x, y — in ARM's order and speed. On a MIDI track the chord sounds in full, as before. ARP 00 with CHD is a plain chord.
 
-SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, RVB, ARM only take effect on tracks with Out = INT. On MIDI tracks they send nothing and are shown in gray. VIB and ARP values are hexadecimal: `47` = x 4, y 7.
+SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, RVB, PAN, ARM only take effect on tracks with Out = INT. On MIDI tracks they send nothing and are shown in gray. VIB and ARP values are hexadecimal: `47` = x 4, y 7.
 
 - **Step with a note.** The fx apply to that step's note. A new step with a note resets VIB and ARP: to keep the vibrato or arpeggio going, repeat the fx.
 - **Step without a note** (empty or OFF). VSL, CUT and ARP act immediately on the track's sounding voices; VIB changes the parameters of the sounding vibrato. SLD glides the sounding voice to the track's last played note. VIB and ARP hold until the next step with a note.
@@ -337,9 +376,45 @@ SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, 
 
 Other fx on INT: RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI; PBN and PGM — see the table; CHN, CCA, CCB are ignored.
 
+<a id="chd"></a>
+
 ### CHD chords
 
-tri = 1-3-5, 7th = 1-3-5-7, su2 = 1-2-5, su4 = 1-4-5, 6th = 1-3-5-6, ad9 = 1-3-5-9 — degrees of the project scale. pwr = note + fifth (7 semitones), oct = note + octave. With the chromatic scale, the chord is built as in major from that note.
+The step's note is the chord's root; CHD adds up to 3 notes to it (4 in total, notes above 127 are dropped). A CHD value is a chord type plus an inversion. The cell shows 4 characters: the type's 3 and the inversion digit — `MA7 ` (root position), `MA71`, `tri2`. A turn goes through all 36 types in root position, then all of them with inversion 1, 2 and 3.
+
+- **Inversion** k moves the k lowest notes of the chord up an octave: C E G with inversion 1 is E G C', with inversion 2 G C' E'. The step's note stays the root, it just is no longer the bottom note. A note that would go above 127 or land on a note already in the chord is dropped.
+- **lowercase types are diatonic:** degrees of the project scale counted from the note, so in C major `tri` on C is C E G and on D is D F A. With the chromatic scale they are built as in major from the note. Exceptions: `pwr` and `oct` are always note + 7 and note + 12 semitones.
+- **UPPERCASE types are fixed:** semitones from the note, the scale is ignored. `MAJ` on D in C major is D F# A.
+- Old projects keep their chords: the first 8 types (`tri`…`oct`) in root position have the same values as before.
+
+Diatonic (scale degrees, 1 = the note):
+
+| Type | Degrees | | Type | Degrees |
+|------|---------|---|------|---------|
+| `tri` | 1 3 5 | | `ad9` | 1 3 5 9 |
+| `7th` | 1 3 5 7 | | `pwr` | note + 7 semitones |
+| `su2` | 1 2 5 | | `oct` | note + 12 semitones |
+| `su4` | 1 4 5 | | `9th` | 1 3 7 9 |
+| `6th` | 1 3 5 6 | | `7s4` | 1 4 5 7 |
+| | | | `a11` | 1 3 5 11 |
+
+Fixed (semitones from the note):
+
+| Type | Semitones | Chord | | Type | Semitones | Chord |
+|------|-----------|-------|---|------|-----------|-------|
+| `MAJ` | 0 4 7 | major | | `MI6` | 0 3 7 9 | minor 6th |
+| `MIN` | 0 3 7 | minor | | `MA9` | 0 4 11 14 | major 9th (no 5th) |
+| `DIM` | 0 3 6 | diminished | | `MI9` | 0 3 10 14 | minor 9th (no 5th) |
+| `AUG` | 0 4 8 | augmented | | `DO9` | 0 4 10 14 | dominant 9th (no 5th) |
+| `SU2` | 0 2 7 | sus2 | | `7S4` | 0 5 7 10 | 7sus4 |
+| `SU4` | 0 5 7 | sus4 | | `AD9` | 0 4 7 14 | add9 |
+| `MA7` | 0 4 7 11 | major 7th | | `MD9` | 0 3 7 14 | minor add9 |
+| `MI7` | 0 3 7 10 | minor 7th | | `D7#` | 0 4 10 15 | 7♯9 |
+| `DOM` | 0 4 7 10 | dominant 7th | | `D7b` | 0 4 10 13 | 7♭9 |
+| `HDM` | 0 3 6 10 | half-diminished (m7♭5) | | `D13` | 0 4 10 21 | 13th |
+| `DM7` | 0 3 6 9 | diminished 7th | | `M11` | 0 3 10 17 | minor 11th |
+| `MMA` | 0 3 7 11 | minor-major 7th | | `QRT` | 0 5 10 15 | quartal (fourths) |
+| `MA6` | 0 4 7 9 | major 6th | | | | |
 
 <a id="cnd"></a>
 
@@ -364,9 +439,9 @@ CND first, then PRB. If any condition fails, the whole step is silent, including
 
 <a id="euclid"></a>
 
-## Fill and Euclid
+## Fill, Euclid, arp, chords and bass
 
-Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog.
+Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog. The first row, **Type**, switches the dialog between filling (`FILL`), the [arpeggio generator](#arp) (`ARP`), the [chord generator](#chords) (`CHORDS`) and the [bass generator](#bass) (`BASS`).
 
 | Row | Values | Meaning |
 |-----|--------|---------|
@@ -389,13 +464,297 @@ Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX
 
 The list works the same as in PROJ: turn — row, click — edit, turn in edit mode — value. A tap selects a row, a second tap edits, dragging in edit mode changes the value.
 
+<a id="arp"></a>
+
+### Arp (Type: ARP)
+
+The first row of the Fill dialog is **Type**: `FILL` (filling, see above) or `ARP`, an arpeggio generator in the spirit of the Access Virus. It does not play live: it writes the arpeggio as notes and fx onto one track (**Dest**). A rhythm pattern (factory or your own) runs over the "held" notes: the chord from the Root and Chord rows, or the notes of the selection. The step range is the same as Fill's: the selection or, without one, the track under the cursor for its length. Preview, **OK** (one undo step, toast `ARP`) and **CANCEL** work as in Fill. The header shows where it writes and where it reads: `ARP T4 1-16`, with Source SELECTION `ARP T4 1-16 < T1-3`.
+
+| Row | Values | Default | Meaning |
+|-----|--------|---------|---------|
+| Type | FILL, ARP, CHORDS, BASS | FILL | Filling, arp, [chords](#chords) or [bass](#bass). Each has its own set of rows and its own settings. |
+| Source | CHORD, SELECTION | CHORD | Where the notes come from: the chord from Root + Chord, or the notes of the selected tracks (see below). |
+| Root | any note | the track's last entered note | CHORD: the chord's bottom note. The default is taken on the first open. CHORD only. |
+| Chord | any [CHD](#chd) type and inversion | tri | CHORD: the chord, as in [CHD](#chd): lowercase types on the project's scale degrees, UPPERCASE ones fixed. CHORD only. |
+| Dest | T1–T16 and the track name | the first track of the selection | The track written. It may lie inside or outside the selection. A drum track turns the row red and nothing is written. |
+| Mode | UP, DOWN, UP/DN, DN/UP, PLAYED, RANDOM, CONVERGE, DIVERGE, PEDAL, CHORD | UP | Note order, see below. |
+| Octaves | 1–4 | 1 | How many octaves: the notes repeat an octave up, one octave after another (above 127 dropped). |
+| Pattern | factory, then your own | 16THS | The rhythm pattern. Your own (from `/presets/ARP`) follow the factory ones, alphabetically. |
+| Rate | ×1–×4 | ×1 | Track steps per arp step: ×2 runs the arp in eighths on a 1/16 track. The steps in between are left empty. |
+| Rotate | 0…pattern length − 1 | 0 | The pattern step to start from. |
+| Gate | 5–100 % | 50 % | Length of a normal note. Short (`s`) is half, long (`l`) is 100 %. All × Rate. For patterns with exact gates (VIRUS) 50 % = as written; other values scale them. |
+| Swing | 0–100 % | 0 % | NDG = Swing / 2 on the odd arp steps (100 % shifts them by half a step). |
+| Vel Lo | 1–127 | 60 | Velocity of ghost notes (`o`). |
+| Vel Hi | 1–127 | 120 | Velocity of accents (`X`). A normal note gets the middle between Lo and Hi. VIRUS patterns: exact velocity, Vel Hi is the level of 128 %. |
+| Slide | SLD value | 16 | SLD time on slide notes (`~`). |
+| Roll | 0–100 % | 0 % | Share of notes with a random RAT 2–4 (slide notes are left alone). |
+| Ghost PRB | OFF, 0–99 % | OFF | PRB on ghost notes: they don't play every pass. OFF (100 %) writes no PRB. |
+| Mutate | 0–100 % | 0 % | Pattern variations: hits dropped and added, accents and pitches changed. Depends on Seed. A redrawn accent drops the step's exact velocity. |
+| Seed / Reseed | — | — | Variant of the random parts (RANDOM, Roll, Mutate); the rows show only when one of them is on. Reseed (or <kbd>Shift</kbd>+click) picks a new random one. |
+| Capture | SAVE DEST AS PATTERN | — | Save Dest's rhythm as your own pattern, see below. |
+
+**Modes.** The notes are sorted bottom to top (except PLAYED); Octaves adds copies of them in the octaves above.
+
+| Mode | Order |
+|------|-------|
+| UP | Bottom to top. |
+| DOWN | Top to bottom. |
+| UP/DN | Up, then down; the end notes are not repeated. |
+| DN/UP | Down, then up; the end notes are not repeated. |
+| PLAYED | As the notes were taken: a CHORD chord from its bottom note; SELECTION track by track from the top, each with its step note, then the notes of its CHD. |
+| RANDOM | A random note on every hit (from Seed). |
+| CONVERGE | From the edges to the middle: bottom, top, second from the bottom, second from the top… |
+| DIVERGE | From the middle to the edges (CONVERGE backwards). |
+| PEDAL | The bottom note every other hit, the others in turn: 1-2-1-3-1-4… |
+| CHORD | The whole chord on every hit: the bottom note + CHD (the Chord row; with SELECTION, tri). |
+
+The note cycle runs on continuously: the pattern repeats over the range, and the note cycle restarts neither on a pattern repeat nor on a chord change.
+
+**SELECTION.** The notes of all selected tracks together with their CHD form the held chord. A step with notes on at least one of the tracks replaces the whole chord, which then holds until the next such step. An OFF with no notes on that step releases the chord: the arp is silent until new notes. The source is read from step 1 of the pattern, not from the start of the range: a chord set before the selected steps already sounds on the first of them. The source is taken as it was when the dialog opened, so Dest may lie inside the selection too: the arp is written over the chord it is built from. Drum tracks in the selection are not a source.
+
+**What is written to Dest.** On every step of the range the note and velocity are replaced, and the arp's own fx GAT, TIE, SLD, NDG, RAT, PRB, CHD, ARS and ARP are cleared; other locks (FLT, DLY…) stay. Then on every hit:
+
+- **Note and velocity:** Vel Lo / the middle / Vel Hi by accent. A step with an exact velocity (see the pattern format): Vel Hi × vel % / 128, 1–127.
+- **Length:** always GAT. A normal note is Gate %, a short one half of it, a long one 100 %; all × Rate. A step with an exact gate: gate % × Gate / 50 × Rate (Short / Long ignored).
+- **Tie (`-`):** TIE on the previous note and OFF on the first rest after it. A tie that runs to the end of the range becomes a long GAT to the range's end instead of TIE (up to 800 %); otherwise the note would hang past the range.
+- **Slide (`~`):** SLD (the Slide row) on the note, and the previous note's GAT is stretched into the next one so the voice glides legato. After a rest SLD is written too: the synth takes the note from the last pitch. A slide on the first note of the range is not written.
+- **Swing:** NDG on the odd arp steps; a step's own nudge (× Rate) is added to it, clamped to ±50. **Ghost PRB:** PRB on ghost notes. **Roll:** RAT 2–4. **CHORD mode:** CHD.
+- No free fx slot: that fx is skipped.
+
+**Pattern format.** A pattern is a line of tokens separated by spaces (or commas), one token per step, up to 32 steps (the rest are ignored). The first character is the step type, followed without a space by note modifiers in any order:
+
+| Token | Meaning |
+|-------|---------|
+| `x` | note |
+| `X` | accented note (Vel Hi) |
+| `o` | ghost note (Vel Lo, Ghost PRB) |
+| `.` | rest |
+| `-` | tie: the previous note holds |
+| `s` | after a note: short (half of Gate) |
+| `l` | after a note: long (100 %) |
+| `~` | after a note: slide into it from the previous one |
+| `r` | after a note: repeat the previous note (the cycle does not move) |
+| `p` | after a note: the lowest held note, a "pedal" (the cycle does not move) |
+| `^` / `v` | after a note: an octave up / down |
+
+After the modifiers a note may carry exact values as fields `:vel:gate[:nudge]`:
+
+| Field | Values | Meaning |
+|-------|--------|---------|
+| `vel` | 0–200 % | Velocity = Vel Hi × vel % / 128 (1–127); Vel Lo is not used for such a step. |
+| `gate` | 0–800 % of a step | GAT, scaled by Gate / 50 (Gate 50 % = as written) and × Rate; Short / Long are ignored. |
+| `nudge` | −50…50 % of a step | NDG × Rate, plus Swing / 2 on the odd arp steps, clamped to ±50. |
+
+An empty field or 0 means none (the usual rule applies). Example: `X:128:150 x:61:33:-17`: an accent at full Vel Hi, 1.5 steps long; a quiet short note pulled 17 % early.
+
+Example: `X x~ x . X x~ X x`: 8 steps, an accent, a slide note, a note, a rest, and again. Unknown tokens are skipped. Your own `.arp` files may use the fields too.
+
+**Capture** saves Dest's rhythm as your own pattern: a name from the keyboard (up to 16 characters: A–Z, 0–9, `-`, `_`), file `/presets/ARP/NAME.arp`. It takes Dest's range as it was before the dialog opened (your own line, not the preview), at most 32 steps. A note becomes `x` / `X` / `o` (velocity split into three levels within the range's spread; with a spread under 6 or the track velocity, a normal note), GAT under 35 % `s`, from 90 % `l`, SLD `~`, empty steps after a TIE note `-`, everything else `.`; the same pitch as the previous note becomes `r`, the range's lowest note `p`. The first note is always a plain one (NEXT); octaves are not captured. GAT is captured as written, so capture a line written at Rate ×1: the arp's GAT at Rate ×2–×4 is multiplied by Rate and captures as long notes. After saving, the pattern is selected in Pattern right away (toast `SAVED`). No notes in the range: `NO NOTES`; no valid characters in the name: `BAD NAME`; the write failed (no card etc.): a toast with the error. `.arp` is plain text in the format above, so it can be edited on a computer (card reader). A broken file shows an error toast when selected and plays the first factory pattern. The Pattern list holds up to 32 of your own patterns.
+
+**Factory patterns** (106), by style:
+
+| Style | Patterns |
+|-------|----------|
+| BASIC | 16THS, 8THS, TRIPLET, DOTTED, QUARTERS, OFFBEAT, ACCENT 4 |
+| TR (trance) | TR GATE, TR OFFBT, TR ROLL, TR PEDAL, TR UPLIFT, TR 332, TR CHUG |
+| PSY (psytrance) | PSY GALOP, PSY TRIPL |
+| TE (techno) | TE STAB, TE HYPNO3, TE MINIMAL, TE RUMBLE, TE ROLLER |
+| HO (house) | HO OFFBT, HO ORGAN, HO PIANO, HO SHUFFLE |
+| DNB | DNB ROLL, DNB STAB, DNB AMEN, DNB REESE, DNB 2STEP |
+| ACID | ACID 1, ACID 2, ACID 3 |
+| EL (electro) | EL FUNK, EL ROBOT |
+| BR (breaks) | BR BREAK |
+| SW (synthwave) | SW 8THS, SW DRIVE |
+| DUB | DUB STAB, DUB ECHO |
+| CHIP | CHIP OCT, CHIP RUN |
+| VIRUS | VIRUS 01 … VIRUS 64 |
+
+TRIPLET, PSY TRIPL and TE HYPNO3 are 12 steps long (over 16 steps they make a polyrhythm), the rest 16.
+
+**VIRUS** — the 64 arpeggiator patterns of the Access Virus B / Indigo (OS 4.90), taken from the AudioXL Arpeggiator, with exact velocity, gate and nudge per step. Each is 32 steps (one Virus cell = 2 steps), so at Rate ×1 on a 1/16 track it plays like the Virus at Arp Clock 1/8. For the original 1/16 tempo set the Dest track's Speed to x2 ([TRACK → Speed](#track)). The triplet and 1/64 patterns (35, 38–42, 51, 56, 64) are placed with NDG; Swing adds to it (clamped to ±50). Events that fell into the same step were merged (the louder one kept), so VIRUS 35, 37 and 40 are noticeably thinner than the originals. VIRUS sounds best at Rate ×1 (use track Speed for tempo): at Rate ×2 and up nudges over ±25 % hit the NDG limit of ±50 and long gates can reach the GAT maximum of 800 %.
+
+- Dest is a [drum track](#drumtrack): nothing is written, the Dest row is red.
+- Slides (SLD) sound only on INT tracks; on a MIDI track SLD is written but does nothing (grey).
+- Like Fill's, the arp settings are remembered until power-off; your own patterns live on the card.
+
+<a id="chords"></a>
+
+### Chords (Type: CHORDS)
+
+`CHORDS` writes a chord progression onto one track (**Dest**): on every hit of a rhythm, the chord's root as the step note and its type with inversion as [CHD](#chd). The roots come from the project scale and its root (PROJ → SONG), so one progression follows the key of any project: `1 5 6 4` in A minor is Am Em F Dm (degrees of the scale), `1 b7 b6 5` is a fixed "Roman" line in any scale. The range, Preview, **OK** (one undo step, toast `CHORDS`) and **CANCEL** work as in ARP; the header reads `CHORDS T4 1-16`. A drum Dest turns the row red and nothing is written.
+
+| Row | Values | Default | Meaning |
+|-----|--------|---------|---------|
+| Type | FILL, ARP, CHORDS, BASS | FILL | See above. |
+| Progression | factory, your own, RANDOM | POP 1564 | The progression. Your own (from `/presets/PRG`) follow the factory ones, alphabetically; the last entry, RANDOM, is generated, see below. |
+| Chords | 2–8 | 4 | RANDOM: how many chords. RANDOM only. |
+| Octave | C2–C5 | C4 | Octave of the roots: every root is placed within C…B of it (CLOSE may take one an octave lower). |
+| Chord Type | TRIAD, 7TH, 9TH, SUS | TRIAD | The chord for tokens without a quality: `tri`, `7th`, `9th`, `su4` — diatonic, so major or minor as the scale has it. |
+| Voicing | ROOT, CLOSE | CLOSE | ROOT: every chord in root position. CLOSE: inversions chosen for smooth voice leading, see below. |
+| Length | AUTO, 1–64 | AUTO | Steps per unit of chord length. AUTO spreads the progression evenly over the range: range / sum of the lengths, at least 1. |
+| Dest | T1–T16 and the track name | the first track of the selection | The track written; reset to that track every time the dialog opens. |
+| Rhythm | factory | HOLD | How each chord is played, in ARP pattern tokens. It restarts on every chord. |
+| Gate | 5–100 % | 50 % | Length of a normal hit, as in ARP. |
+| Vel Lo / Vel Hi | 1–127 | 60 / 110 | Velocity of ghost / accented hits; a normal one gets the middle. |
+| Mutate | 0–100 % | 0 % | Chords replaced by relatives and rhythm variations, see below. Depends on Seed. |
+| Seed / Reseed | — | — | Variant of RANDOM and Mutate; shown only when one of them is on. Reseed (or <kbd>Shift</kbd>+click) picks a new one. |
+| Capture | SAVE DEST AS PROG | — | Save Dest's chords as your own progression, see below. |
+
+**Progression format.** One token per chord, separated by spaces: `[b|#|n]degree[quality][*N]`.
+
+| Part | Meaning |
+|------|---------|
+| `1`…`7` | Degree of the project scale from its root. With the chromatic scale — major degrees. Scales shorter than 7 notes wrap around. |
+| `b` / `#` / `n` before the degree | A Roman numeral: the degree of the major scale from the scale root, a semitone down / up / unchanged — the same in any scale. `b7` is always 10 semitones above the root, `b6` 8, `b3` 3; `n6` in minor is the major sixth. |
+| quality | A [CHD](#chd) type name, case-sensitive: `MI7`, `DOM`, `MA7`, `tri`, `9th`… Without one: the Chord Type row's chord; a Roman numeral without one: `MAJ`. |
+| `*N` | Length in units of Length (default 1, up to 128). |
+| `@steps` | As the first token: lengths count steps, the Length row is ignored (Capture writes files like this). |
+
+Examples: `1 5 6 4` · `2MI7 5DOM 1MA7*2` · `1 b7 b6 5` · `@steps 1MI7*8 b6MA7*8`. Up to 16 chords; unknown tokens are skipped. The chords are placed one after another from the start of the range; the progression does not loop: the last chord holds to the end of the range, chords that don't fit are dropped. With AUTO the leftover steps of the division go to the last chord.
+
+**Voicing CLOSE.** The first chord is in root position. Every next one takes, among its inversions at its root or an octave lower (not more than 7 semitones below the Octave's C), the one whose notes move least from the previous chord's notes (the sum of the distances, note by note from the bottom); ties keep the root's octave and the lower inversion. The result is written as the CHD inversion digit; when the octave-lower variant wins, the step note itself is an octave lower.
+
+**What is written to Dest.** The note, velocity and the generator fx (GAT, TIE, SLD, NDG, RAT, PRB, CHD, ARS, ARP) of the range are replaced, as in ARP; other locks stay. Then, with the rhythm restarting on every chord:
+
+- **Hit** (`x` `X` `o`): the root with CHD, velocity Vel Lo / middle / Vel Hi (`:vel` — exact, as in ARP), GAT from Gate (`s` half, `l` 100 %, `:gate` exact). `^` / `v` move the whole chord an octave up / down; other pitch modifiers (`r`, `p`) and slides (`~`) are ignored, nudge too.
+- **Tie** (`-`): TIE on the previous hit of the same chord and OFF on the first rest after it; a `-` at the start of a chord acts as a rest. A tie running to the end of the range becomes a long GAT (up to 800 %). A new chord's hit simply replaces a running tie.
+- No free fx slot: the fx is skipped (CHD goes first).
+
+**RANDOM.** Starts on I and moves by harmonic function: tonic → mostly subdominant or dominant, subdominant → mostly dominant, dominant → mostly tonic; never the same degree twice in a row. Major-like scales (Major, Lydian, Mixolydian, PentMaj, Chromatic) use I ii iii IV V vi, the others i III iv v VI VII; the last chord is V or IV in major (v, iv or VII in minor), so the loop leads back to I. The chords are diatonic (the Chord Type row). The same Seed gives the same progression.
+
+**Mutate.** Each chord, with the Mutate chance, is replaced by its relative (major: I↔vi, ii↔IV, iii↔V; minor: i↔III, iv↔VI, v↔VII) and, if the token has no quality, gets a random Chord Type (triad, 7th, 9th or sus). Roman tokens (`b` `#` `n`) are left as they are. The rhythm mutates as in ARP (hits dropped and added, accents redrawn), without pitch changes. Works with factory, your own and RANDOM progressions.
+
+**Capture** saves Dest's chords as your own progression `/presets/PRG/NAME.prg`: the keyboard asks `PROG NAME:`; name rules, toasts (`SAVED`, `NO NOTES`, `BAD NAME`, `LIST FULL`) and the list of up to 32 files as in [ARP Capture](#arp). After saving, the progression is selected in Progression. It takes Dest's range as it was before the dialog opened. A new chord starts at every step whose note or CHD differs from the current chord; steps without a note continue it. A root in the scale becomes a degree with its CHD type name, a root outside the scale a Roman numeral (`n`, else `b`, else `#`) with its type; a note without CHD becomes `MAJ` or `MIN` by the scale's third (`MAJ` outside the scale). Lengths are written in steps (`@steps`), up to 16 chords; inversions are not saved — Voicing chooses them. `.prg` is plain text in the format above.
+
+**Factory progressions** (55):
+
+| Name | Progression | | Name | Progression |
+|------|-------------|---|------|-------------|
+| POP 1564 | `1 5 6 4` | | DEEP 21 | `2MI7 1MA7` |
+| POP 6415 | `6 4 1 5` | | HOUSE 4 | `1MI7 b6MA7 b7DOM 1MI7` |
+| POP 1645 | `1 6 4 5` | | HOUSE 2 | `1MI9 b7MA7 b6MA7 b7MA7` |
+| POP 1465 | `1 4 6 5` | | LIQUID | `1MI9 b6MA7 b3MA7 b7DOM` |
+| POP 4156 | `4 1 5 6` | | TRNC EPIC | `1 b6 b7 b3` |
+| POP 1364 | `1 3 6 4` | | TRNC 6471 | `6 4 b7 1` |
+| OLDIES | `1 6 2 5` | | TRNC 1671 | `1 b6 b7 1` |
+| AXIS | `1 5 6 4 1 5 4 4` | | SW 1671 | `1MIN b6 b7 1MIN` |
+| CANON | `1 5 6 3 4 1 4 5` | | SW 6455 | `6 4 5 5` |
+| ROYAL RD | `4MA7 5DOM 3MI7 6MIN` | | DUB 17 | `1 b7` |
+| CITY POP | `4MA7 3DOM 6MI7 5MI7 1DOM` | | DUB 1b6 | `1MI7 b6MA7` |
+| JAZZ 251 | `2MI7 5DOM 1MA7*2` | | FUNK 14 | `1DO9 4DO9` |
+| JAZZ 1625 | `1MA7 6MI7 2MI7 5DOM` | | BLUES 12 | `1DOM*4 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
+| JAZZ 3625 | `3MI7 6MI7 2MI7 5DOM` | | BLUES QC | `1DOM 4DOM 1DOM*2 4DOM*2 1DOM*2 5DOM 4DOM 1DOM 5DOM` |
+| JAZZ TURN | `1MA7 6DOM 2MI7 5DOM` | | MIN BLUES | `1MI7*4 4MI7*2 1MI7*2 b6DOM 5DOM 1MI7*2` |
+| JAZZ BACK | `4MA7 b7DOM 1MA7*2` | | ROCK 1741 | `1 b7 4 1` |
+| MIN 251 | `2HDM 5D7b 1MI7*2` | | ROCK 1454 | `1 4 5 4` |
+| NEO SOUL | `4MA7 3MI7 2MI7 1MA7` | | MIXO 1574 | `1MAJ 5MAJ b7MAJ 4MAJ` |
+| SOUL 25 | `2MI9 5DO9` | | DORIAN 14 | `1MIN 4MAJ` |
+| LOFI | `4MA7 3MI7 6MI7 1MA7` | | DORIAN 12 | `1MI7 2MI7` |
+| GOSPEL | `1 4 1 5 6 4 1 5` | | PHRYG 12 | `1MIN b2MAJ` |
+| GOSPEL 2 | `1MAJ 4MAJ #4DIM 5MAJ` | | LYDIAN 12 | `1MAJ 2MAJ` |
+| MIN 1636 | `1 b6 b3 b7` | | CINEMA | `1MAJ b6MAJ b3MAJ 4MAJ` |
+| MIN 1767 | `1 b7 b6 b7` | | HERO | `1MAJ 3MAJ 4MAJ 4MIN` |
+| ANDALUS | `1MIN b7 b6 5MAJ` | | AMBIENT | `1ad9 4ad9 6ad9 5ad9` |
+| MIN 1451 | `1 4 5 1` | | SUS DRIFT | `1SU2 4SU2 5SU4 1SU2` |
+| DEEP 2 | `1MI7 4MI7` | | QUARTAL | `1QRT 2QRT 4QRT 5QRT` |
+| DEEP 1MI9 | `1MI9 b7MA7` | | | |
+
+The MIN, DEEP, TRNC and SW progressions are meant for a minor project scale, the POP / JAZZ ones for major; with fixed qualities (`MI7`, `DOM`, `MIN`…) a progression sounds the same in any scale.
+
+**Rhythms** (16 steps each): HOLD (one hit held for the whole chord), HALF, QUARTER, 8THS, STAB, OFFBEAT, CHARLSTN, HOUSE PNO, DUB SKNK, REGGAE, TRNC GATE, SYNCOPA, PUSH, FUNK, POP 8, BALLAD, UPBEAT16, GALLOP, REV GALLOP, THREE, DOUBLE, ANTICIP, ROLL UP, SWELL, LONG SHRT, SHRT LONG, LATE HOLD, STUTTER, PNO COMP, GHOST 3, CHOP 3, TRESILLO. The rhythm counts from the start of each chord and repeats every 16 steps; a chord shorter than 16 steps plays only its beginning. A rhythm of a single hit followed only by ties (HOLD) is not repeated: it holds for the whole chord, however long.
+
+- The settings are remembered until power-off, like Fill's; your own progressions live on the card.
+
+<a id="bass"></a>
+
+### Bass (Type: BASS)
+
+`BASS` writes a bass line in harmony with chords onto Dest. The pattern is an ARP rhythm in which a note is not a pitch but a role against the chord of its step: root, third, fifth, seventh, a lead-in to the next chord. The chords come from a fixed root, from the selected tracks or from the CHORDS progression. The range, Preview, **OK** (one undo step, toast `BASS`) and **CANCEL** work as in ARP; the header reads `BASS T4 1-16`, with Source SELECTION `BASS T4 1-16 < T1-3`.
+
+| Row | Values | Default | Meaning |
+|-----|--------|---------|---------|
+| Type | FILL, ARP, CHORDS, BASS | FILL | See above. |
+| Source | ROOT, SELECTION, PROGRESSION | ROOT | Where the chords come from, see below. |
+| Root | any note | the track's last entered note, in octave 2 | ROOT: the tonic; only its pitch class counts, the octave comes from Octave. Taken on the first open. ROOT only. |
+| Octave | C1–C3 | C2 | Octave of the bass: every chord root is placed within C…B of it. |
+| Dest | T1–T16 and the track name | the first track of the selection | The track written; reset to that track every time the dialog opens. |
+| Pattern | factory, then your own | HOUSE OFF | The bass pattern. Your own (from `/presets/BAS`) follow the factory ones, alphabetically. |
+| Rate | ×1–×4 | ×1 | Track steps per pattern step, as in ARP. |
+| Rotate | 0…pattern length − 1 | 0 | The pattern step to start from. |
+| Gate | 5–100 % | 50 % | As in ARP. |
+| Swing | 0–100 % | 0 % | As in ARP. |
+| Vel Lo / Vel Hi | 1–127 | 70 / 120 | As in ARP. |
+| Slide | SLD value | 16 | SLD time on slide notes (`~`). |
+| Mutate | 0–100 % | 0 % | Pattern variations as in ARP; a redrawn pitch becomes the root, fifth, third or the root an octave up. |
+| Seed / Reseed | — | — | Variant of Mutate; shown only when it is on. With Source PROGRESSION the rows edit the CHORDS seed instead (the variant of its RANDOM progression / Mutate) and show when one of those is on. |
+| Capture | SAVE DEST AS PATTERN | — | Save Dest's line as your own bass pattern, see below. |
+
+**Sources.**
+
+| Source | The chord of a step |
+|--------|---------------------|
+| ROOT | One chord for the whole range: the scale's triad (`tri`) on Root. |
+| SELECTION | As in [ARP SELECTION](#arp): the lowest note of the selected tracks with its CHD (without one — `tri`) is the chord until the next step with notes; an OFF with no notes is silence. Read from step 1 of the pattern as it was when the dialog opened, so Dest may lie inside the selection. Drum tracks are not a source. |
+| PROGRESSION | The [CHORDS](#chords) progression with its current settings (Progression, Chords, Octave, Chord Type, Voicing, Length, Mutate, Seed), laid over the same range. Set it up on Type CHORDS, write the chords to one track, then switch to BASS and write the bass to another. |
+
+The chord's root is moved into the Octave; the bass always uses the chord in root position (CHD inversions are ignored).
+
+**Pattern format.** The ARP tokens (`x X o . - s l ~` and `:vel:gate:nudge`, see the [ARP format](#arp)); after a note, instead of the ARP pitch modifiers, a role:
+
+| Token | Note |
+|-------|------|
+| `1` | the chord's root (also with no role) |
+| `3` `5` `7` | the 2nd, 3rd, 4th note of the chord — the third, fifth, seventh of `tri`, `MI7`, `DOM`…; a chord without that note: the 3rd / 5th / 7th scale degree above the root |
+| `a` | approach: a semitone below the root of the next chord |
+| `w` | walk: one scale step from the previous note toward the next chord's root (never past it; already there — the root) |
+| `r` | the previous note |
+| `^` / `v` | an octave up / down; combines with a role: `5^`, `av` |
+
+The next chord: with PROGRESSION the next one of the progression, with SELECTION the next chord change (searched past the range, up to the end of the pattern); with ROOT, or no change ahead, the range's first chord. `r` and `w` start from the previous note without its `^` / `v`. If a token has several roles, the last one wins. Example: `x . x5 . x^ . x7 . x . x3 . x5 . xa .`.
+
+**What is written to Dest** — as in ARP: note, velocity, GAT, TIE / OFF, SLD with the previous note stretched, NDG for Swing and nudge; no RAT, PRB or CHD. Same cleared fx.
+
+**Capture** saves Dest's line (up to 32 steps) as your own pattern `/presets/BAS/NAME.bas` (the keyboard asks `BASS NAME:`; toasts as in [ARP Capture](#arp)); the rhythm is captured as in ARP. A note's role is found against the chord of its step from the current Source (SELECTION without a selection or PROGRESSION without chords falls back to ROOT): root / 3 / 5 / 7 within an octave up or down (with `^` / `v`), else `a` if it is a semitone below the next root, else `r` if it repeats the previous note (± an octave), else the nearest of root, third and fifth. `w` is never captured. `.bas` is plain text; the Pattern list holds up to 32 of your own.
+
+**Factory patterns** (48):
+
+| Name | Pattern | | Name | Pattern |
+|------|---------|---|------|---------|
+| HOUSE OFF | `. . x . . . x . . . x . . . x .` | | DEEP HOUSE | `x . . x . . x . . . x . . x5 . .` |
+| DISCO OCT | `x . x^ . x . x^ . x . x^ . x . x^ .` | | GARAGE | `. . x . . x . x . . x . . x . x` |
+| TECHNO RL | `. x x x . x x x . x x x . x x x` | | MINIMAL | `x . . . . . x . . . . . x . . .` |
+| TECHNO 16 | `X x x x X x x x X x x x X x x x` | | ROLLING | `x x^ x x x x^ x x x x^ x x x x^ x x` |
+| ACID 1 | `X x~ x5 . X x~ X3 x x . X~ x . x5 X~ x` | | GALLOP | `x . x x x . x x x . x x x . x x` |
+| ACID 2 | `x^ x X~ x5 . x x^~ x X . x~ x7 x X x^ .` | | PSY TRIP | `. x x . x x . x x . x x . x x .` |
+| ACID 3 | `Xr x~ x . X~ xv x . Xr x x~ x . X x~ x5` | | EBM | `X x x5 x X x x5 x X x x5 x X x x5 x` |
+| DNB | `Xl - . . . . x . . . Xl - . . x .` | | ITALO | `x . x^ x x . x^ x x . x^ x x . x^ x` |
+| REESE | `xl - - - - - - - x5l - - - - - - -` | | NU DISCO | `x . x^ . . x . x^ x . x^ . . x x^ .` |
+| DUB | `Xl - - . . . x5 . Xl - - . . . x .` | | ACID 4 | `X~ x x^ x~ . x X5 x~ x x^ . X~ xv x x~ x5` |
+| REGGAETN | `X . . x . . x . X . . x . . x .` | | BREAKBEAT | `X . . x . . . x . x . . . . x .` |
+| SYNTHW 8 | `x . x . x . x . x . x . x . x xa` | | SYNCOPA | `x . x . . x . x . . x . x . . x` |
+| ELECTRO | `X . . x . . X . . x . x X . x .` | | SUB HOLD | `xl - - - - - - - - - - - - - - -` |
+| FUNK | `X . x^ . . x . x X . . x^ . x7 x .` | | OCT HOLD | `xl - - - x^l - - - xl - - - x^l - - -` |
+| WALKING | `x . . . x3 . . . x5 . . . xa . . .` | | DUBSTEP | `Xl - - - - - . . . . x . xv . . .` |
+| ROCK 8 | `x x x x x x x x x x x x x x x x` | | TRAP 808 | `Xl - - - - - x . . . Xl - - x . .` |
+| TRNC OFF | `. . X . . . X . . . X . . . X .` | | ONE DROP | `Xl - . . . . x5 x . . . . x . . .` |
+| PSY | `. X x x . X x x . X x x . X x x` | | MOTOWN | `x . . x x5 . x . x . . x x7 . xa .` |
+| UKG | `X . . x . . . x . . X . . . x .` | | SLAP | `X . x^ x . x X . . x^ . X x . x^ .` |
+| BOOGIE | `x . x3 . x5 . x7 . x^ . x7 . x5 . x3 .` | | WALK STEP | `x . . . xw . . . xw . . . xa . . .` |
+| OCT JUMP | `x x^ x x^ x x^ x x^ x x^ x x^ x x^ x x^` | | ARPEGGIO | `x x3 x5 x7 x^ x7 x5 x3 x x3 x5 x7 x^ x7 x5 x3` |
+| ROOT 5TH | `x . . . x5 . . . x . . . x5 . . .` | | COUNTRY | `x . . . x5v . . . x . . . x5v . . .` |
+| APPROACH | `xl - - - - - - - - - - - - - xa .` | | BOSSA | `x . . x5 x5 . . x x . . x5 x5 . . x` |
+| TECHNO OFF | `. . x . . x . . . . x . . x . .` | | TUMBAO | `. . . x . . x . . . . x5 . . x .` |
+
+- Dest is a [drum track](#drumtrack): nothing is written, the Dest row is red. Slides sound only on INT tracks.
+- The settings are remembered until power-off; your own patterns live on the card.
+
 <a id="track"></a>
 
 ## TRACK: track settings
 
-The track is the one under the cursor in GRID. To switch: tap the arrows in the header or <kbd>Shift</kbd>+turn outside edit mode. The mixer for all tracks is the neighboring [MIX](#mixer) tab.
+The track is the one under the cursor in GRID. To switch: tap the arrows in the header or <kbd>Shift</kbd>+turn outside edit mode. The mixer for all tracks is the [MIX](#mixer) tab.
 
-Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap its tab below the header; with the encoder, a turn cycles through the rows and the page tabs (above the first row, framed); a click on the page tabs goes to the next page, <kbd>Shift</kbd>+click to the previous one (the cursor stays on the page tabs).
+Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap its tab below the header; with the encoder, a turn cycles through the rows and the page tabs (above the first row, framed); there, <kbd>A</kbd> held + turn goes to the next / previous page (the cursor stays on the page tabs); a click does nothing.
 
 | Parameter | Values | Default |
 |-----------|--------|---------|
@@ -404,37 +763,43 @@ Parameters are on three pages: **MAIN**, **NOTE**, **MIDI**. To pick a page, tap
 | Out | MIDI / INT | INT |
 | Instr | 1–16 (instrument number and name), INT only | 1 |
 | Volume | 0–127, INT only | 100 |
-| Pan | L64 … C … R63, INT only | C |
+| Pan | L64…C…R63, INT only | C |
 | Mute / Solo | ON / OFF | OFF |
 | **NOTE** | | |
 | Def vel | 1–127 | 100 |
 | Def gate | 1–800% | 50% |
 | Pat len | OFF or 1…length−1 (in the playing pattern) | OFF |
+| Speed | 1/4, 1/2, x1, x2, x4 (in the playing pattern) | x1 |
 | Humanize | OFF, 1–100: each note of the track is randomly shifted in time (up to ±10% of a step at 100) and in velocity (up to ±20) — a "live" feel | OFF |
 | **MIDI** | | |
 | Channel | 1–16 | track number |
 | CC A / CC B | CC number 0–127 | 74 / 71 |
 | Program | --- or 0–127 | --- (don't send) |
 
-- **Name:** click to edit. A turn changes the character; <kbd>Shift</kbd>+turn or tapping a character moves the cursor.
+- **Name:** click to edit (or hold <kbd>A</kbd> and turn). A turn changes the character; <kbd>Shift</kbd>+turn or tapping a character moves the cursor.
+- **Pan:** where the track sits between the left and right channels; `C` is the centre, `L64` hard left, `R63` hard right. The instruments are mono, the track places them in the stereo field. Not sent to MIDI (no CC10). The step fx [PAN](#fx) locks it, the LFO target PAN moves it (autopan). <kbd>Shift</kbd>+turn — ×10, as on the other rows.
 - **Program** is sent immediately when changed and at every start. The value is "raw": 0 = the first patch.
 - **Out:** MIDI — the track plays to MIDI OUT; INT — to the built-in synthesizer (see [Built-in sound](#sound)). You can switch during playback: sounding notes are released, and the following steps go to the new output.
 - **Instr / Volume / Pan** work only on INT; on MIDI they are gray. On INT, Channel, CC A, CC B and Program are gray. Def vel and Def gate apply to both outputs.
-- **Pan:** the track's place in the stereo output, equal-power law: L64 is fully left, C the centre, R63 fully right. Projects saved before Pan existed load with all tracks centred.
 - **Solo:** if solo is on for at least one track, only the soloed tracks play. Mute takes priority over solo.
+- **Pat len** and **Speed** are stored per pattern for each track: saved in the project, copied with the pattern, undone with Undo.
+- **Speed:** x2 / x4 — the track plays 2 / 4 of its own steps per pattern step (at 1/16 resolution x2 = 1/32); its length stays the same, it just loops faster. 1/2 / 1/4 — one track step per 2 / 4 pattern steps; the track carries on across the end of the pattern pass (a 16-step track at 1/2 in a 16-step pattern plays all its steps over two passes) and restarts from step 1 when a pattern starts or changes. Works together with Pat len (polymeter). GAT, RAT, NDG, TIE and ARS count in the track's own step. Swing and groove move the pattern step; the sub-steps of a fast track are spread evenly inside the (swung) pattern step.
+
+> Speed limits: very dense combinations (many x4 tracks with RAT) can drop notes (the event queue holds 1024). A 1/2 track in a pattern of even length never swings (it always lands on even pattern steps). Conditions (CND) count pattern passes, not track loops. On INT tracks the step length is capped at ~127 ticks, so slow tracks at a coarse resolution have a limited step length and long NDG. Muting a slow track ends its notes at its next own step. Changing the pattern length during playback shifts the phase of slow tracks.
 
 <a id="mixer"></a>
 
 ### MIX
 
-A separate tab at the bottom of the screen, next to TRACK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
+A separate tab at the bottom of the screen, between INST and BANK: tap **MIX**. Eight strips for the half of the tracks where the cursor is (1–8 or 9–16, as in Overview GRID), with the **MAIN** strip on the right.
 
-- **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. On a MIDI track the fader is empty and `MIDI` is shown instead of the value.
-- **MAIN** — the overall volume of the built-in sound, 0–200%, default 40% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: PROJ → SYS → Phones.
-- **Encoder:** turn — **MAIN** volume; <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX; there is no strip selection.
+- **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. Under the value, on INT tracks, the **pan** row: `C` / `L12` / `R40` and a bar with a tick at the position. On a MIDI track the fader is empty, `MIDI` is shown instead of the value, and there is no pan row.
+- **MAIN** — the overall volume of the built-in sound, 0–200%, default 100% (it used to live in PROJ). Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: FILE → SYSTEM → Phones.
+- **Encoder:** turn — **MAIN** volume (or the selected pan, see below); <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10; a click while holding switches the turn to pan); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX.
+- **Pan:** tap a strip's pan row — that track is selected (the row is highlighted), and the encoder turn (and <kbd>A</kbd> + turn, ×10 with <kbd>Shift</kbd>) changes its pan instead of MAIN. Tapping the same row again, tapping another strip's pan row (selects that one), a <kbd>B</kbd> tap, <kbd>Shift</kbd>+turn (half switch) or leaving the tab drops the selection: the encoder turns MAIN again.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
 - **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output (left and right summed), ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
-- Track volume without going to MIX: hold its button and turn the encoder (see [track buttons](#trackkeys)).
+- Track volume and pan without going to MIX: hold its button and turn the encoder; a click while holding switches to pan (see [track buttons](#trackkeys)).
 
 <a id="inst"></a>
 
@@ -448,11 +813,11 @@ Parameters are spread over 5 pages (6 for SYNTH). Below the header are the page 
 |---|---|
 | Tap the page tabs | Open the page (cursor on the tabs). |
 | Turn | Cycles through the page's rows and the tab strip above the first row (framed when selected). |
-| Click / <kbd>Shift</kbd>+click on the tabs | Next / previous page (wraps: after LFO comes MAIN); the cursor stays on the tabs. |
+| <kbd>A</kbd> + turn on the tabs | Next / previous page (wraps: after LFO comes MAIN); the cursor stays on the tabs. |
 | Tap the arrows in the header | Previous / next instrument (wraps). |
 | <kbd>Shift</kbd>+turn outside edit mode | Also changes the instrument. The open page stays the same. |
 | **PREVIEW** button / encoder long press | Audition the instrument: note C-4, 0.3 s. Works during playback too. On the SMPL page with Slices = NOTE and a slice selected, that slice plays. |
-| **PRESET** button / <kbd>Shift</kbd>+encoder long press | Load / Save menu — [presets](#presets). |
+| **PRESET** button / <kbd>Shift</kbd>+encoder long press | Load / Save menu — [presets](#presets). On the SMPL page — the SAMPLE menu with the slice commands and the same Load / Save ([SAMPLE](#sample)). |
 | Turn, click, tap | As in PROJ: row, edit, value. |
 
 The page is remembered when you switch instruments and when you change Type: for example, from FILT of one instrument you land on FILT of the next.
@@ -464,7 +829,7 @@ The page is remembered when you switch instruments and when you change Type: for
 | OSC / SMPL / FM / DRUM | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) and [DRUM](#drum) — Machine and 5 macros; [SYNTH](#synth) — oscillators and tables |
 | MOD (SYNTH only) | Sub, Sub oct, Noise, Env\>Shp, Env atk, Env dec |
 | FILT | Drive, Bit crush, Downsample, Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — [drive, lo-fi and filter](#filter) |
-| LFO | LFO (1–4), Wave, Sync, Trig, Rate, Depth, Dest |
+| LFO | LFO (1–4), Wave, Sync, Retrig, Rate, Depth, Dest |
 
 ### MAIN and ENV
 
@@ -513,11 +878,12 @@ Duty, PWM rate and PWM depth are active only for PULSE; for other waves they are
 
 **A sample plays to the end.** On pattern tracks SAMPLE ignores note off: GAT and TIE are not needed, the sample (or slice) plays to the end of its region, and with a loop — forever. The envelope works (Sustain 0 silences it after Decay). The sound is stopped by: OFF in the note column, fx `OFF` and `CUT`, stop, and **choke** — a new sample note on this track silences its previous samples within 3 ms. Notes of the same step (chord CHD, STR) do not choke each other; a repeat of the same note (RAT) does. In MONO the next note always restarts the sample from the beginning; legato (continuing from the same position) is only possible with SLD; Glide does not work for samples. Auditioning (Preview, the editor) still cuts off on release.
 
-The SMPL page is the sample editor: a large waveform with markers at the top, a button strip below it, and below that a list of rows (2 rows visible, the list scrolls).
+The SMPL page is the sample editor: a large waveform with markers at the top, a button strip below it, and below that a list of rows (4 rows visible, the list scrolls).
 
 | Parameter | Values | Meaning |
 |---|---|---|
 | Marker | `S`, `E`, `L` or `#n` and position in % | The selected marker (see below). Click to edit: turning moves the marker. |
+| Zoom | x1, x2, x4 … 1:1 | Waveform zoom, the same as **−** / **+**. Click + turn (or hold <kbd>A</kbd> + turn) changes it, centered on the selected marker. A view setting: not saved with the instrument. |
 | Sample | --- or a project sample | Steps through the [project samples](#samples) (FILE → SAMPLES); samples from other projects are not visible. Selecting a sample sets its Root and Loop and erases the slices. A red name means the sample is unavailable (MISSING or removed from the project): the voice is silent, and after importing it again under the same name it plays again. |
 | Root | C-m…G-9 | The note at which the sample plays at its original pitch. With Slices = NOTE, this note plays slice 1. |
 | Start / End | 0–100%, step 0.1% | The played region of the sample. Start cannot exceed End. |
@@ -546,7 +912,28 @@ The SMPL page is the sample editor: a large waveform with markers at the top, a 
 | Marker row in edit mode: turn | Move the selected marker by 1 pixel at the current zoom (at 1:1 — by one sample); the waveform scrolls to follow the marker. |
 | Marker row in edit mode: <kbd>Shift</kbd>+turn | Jump to the next / previous transient. |
 
-- The Marker row is the first on the SMPL page, Chop N / Sens the last: turning wraps around through the tabs; for other pages click on the tabs.
+**Without touch.** Every button and gesture has a hardware equivalent:
+
+| Input | Action |
+|---|---|
+| <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> tap | Next / previous marker, like **\>** / **\<**. |
+| Zoom row | Zoom, like **−** / **+**. |
+| <kbd>Shift</kbd>+encoder long press or the **PRESET** button | The **SAMPLE** menu (see below). |
+
+There is no separate scrolling: the view follows the marker being moved (Marker row) and centers on the selected marker when the zoom changes.
+
+The **SAMPLE** menu (on the SMPL page instead of the PRESET menu; on other INST pages it stays PRESET with Load / Save):
+
+| Item | Action |
+|---|---|
+| Chop | Same as the **CHOP** button. |
+| Add slice | New slice midway between the selected marker and the next one (if there is none — the end of the sample). With <kbd>Shift</kbd> held on the click — at the next transient to the right of the selected marker. The new slice becomes selected. Toasts: `NO SAMPLE` — no sample, `NO ONSET` — no transient to the right, `NO ROOM` — 32 slices already or no space. |
+| Delete slice | Same as a **CLR** tap. Gray unless a slice is selected. |
+| Clear slices | Same as a long **CLR** press, with a confirmation. |
+| Load preset / Save preset | As in the PRESET menu — [presets](#presets). |
+
+
+- The Marker row is the first on the SMPL page, Chop N / Sens the last: turning wraps around through the tabs; for other pages hold <kbd>A</kbd> and turn on the tabs.
 - A slice can only move between its neighboring slices; it cannot overtake them. Slices are stored as a fraction of the whole sample and do not depend on Start / End.
 - Transients (attacks) are detected automatically from rising loudness, no closer than 40 ms to each other. They are used both for <kbd>Shift</kbd> snapping and for Chop TRANS.
 - Changing the sample (Sample row) erases the slices.
@@ -592,7 +979,7 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 - **Drums** (KICK, SNARE, METAL, PERC, CLAP, HAT): Attack, Sustain, Release are gray; length is set by DECAY. Always mono per track: a new note restarts the voice without a click (choke) — open and closed hats on the same track cut each other off.
 - **TONE and CHORD:** Attack, Sustain, Release come from the shared parameters; Decay is always gray for FM — DECAY replaces it. Mode and Glide work only for TONE; CHORD is mono, the whole chord in one voice.
 - **The note** sets the machine's pitch relative to C-4; Transpose and Fine work as for CHIP. PREVIEW plays note C-4.
-- The LFO phase resets on every new note except legato: TONE in MONO and CHORD (always mono, overlapping notes play legato).
+- The LFO phase (with Retrig ON) resets on every new note except legato: TONE in MONO and CHORD (always mono, overlapping notes play legato).
 
 <a id="drum"></a>
 
@@ -730,16 +1117,19 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 | Key track | 0–100% | 0% | Cutoff follows the note from C-4: 100% — one octave per octave. |
 | LFO | 1–4 | 1 | Which of the instrument's four LFOs the rows below edit; the number in brackets is how many are on. All four run at once; their effects on the same destination add up (VOL — multiplies). |
 | Wave | SINE, TRI, SAW, SQR, RND | SINE | LFO shape; RND — a random value each period. |
-| Sync | HZ / TEMPO | HZ | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
-| Trig | NOTE / FREE | NOTE | NOTE — each note has its own phase, restarted on a new note (except legato). FREE — one phase per track, notes don't restart it; it starts from zero when playback starts. FREE + TEMPO — the LFO is locked to the bar. |
-| Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in HZ — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
-| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64. |
-| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); for CHIP and SAMPLE they are skipped. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. |
+| Sync | FREE / TEMPO | FREE | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
+| Retrig | ON / OFF | ON | ON — the LFO phase restarts on every new note (except legato). OFF — one phase per instrument, shared by all its voices and all tracks playing it: a note lands in the running phase. With FREE the LFO runs continuously; with TEMPO it restarts when playback starts, so a 1 BAR LFO always begins at the start of the bar and every run sounds the same. RND with OFF gives one shared value per period. |
+| Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in FREE — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
+| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64; RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE ±64 steps; FINE ±1 semitone; DUTY ±49%; SEMI2 ±24 semitones; L1–L4 RATE ×/÷16; L1–L4 DEPTH 0…×2. |
+| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, PAN, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); DUTY — only for CHIP; SUB, NOISE and SEMI2 (oscillator 2) — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample, Sub, Noise; FINE — fine pitch; DUTY — the PULSE Duty; PAN — autopan (see below); L1–L4 — another LFO of the instrument (see below). |
 
-- The filter envelope and the phase of a NOTE LFO restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303. A FREE LFO runs continuously, also after Stop.
+- The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303.
+- **PAN** (INT tracks): shifts the voice's pan by up to ±64 around the track's Pan (or the step's PAN lock) at full depth, limited to hard left / hard right. Retrig ON — each note has its own phase (chord notes spread across the field); Retrig OFF — one shared autopan for all voices.
 - LFOs can be controlled from steps: fx `LFO`, `LFD`, `LFS`, `LFW`, `LFT`, `LFR` (see the [fx table](#fx)).
 - Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz.
 - Old projects load with Filter OFF and sound as before.
+
+**LFO to LFO.** An LFO can modulate another LFO of the same instrument. **L1–L4 RATE** speeds up / slows down the target: its rate × 2^(±4), ≈ ×/÷16 at full depth, in FREE and TEMPO. **L1–L4 DEPTH** scales the target's depth: × (1 + value), limited to 0…2 — −64 silences the target, +63 nearly doubles it. **L1–L4 RTRG** restarts the target at phase 0 on each cycle of the source (RND gets a new value); only depth ≠ 0 matters, its amount doesn't. An LFO can't pick its own RTRG. Modulation reaches the target with a 1 ms lag, so any routing works, loops included. A Retrig OFF target (one phase per instrument) takes RATE and RTRG only from Retrig OFF LFOs — a per-voice LFO has no single phase to give; DEPTH works from any LFO. While playback is stopped, a TEMPO + Retrig OFF target holds and ignores restarts.
 
 <a id="kit"></a>
 
@@ -759,21 +1149,20 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 
 - Each lane is mono: a repeated hit cuts off its own previous one (choke); different lanes sound at the same time — up to 8 voices per track.
 - PREVIEW plays a lane with note C-4 (the first one by default).
-- KIT has no presets ("NO KIT PRESETS"); there is no KIT type in the preset browser.
+- KIT has factory presets only: **PRESET** opens Load straight away, `[FACTORY]` → KIT. A factory kit fills the lanes and writes its drums (factory DRUM / FM / CHIP presets) into **INS25…INS32**, or INS17…INS24 when the kit itself is in INS25…INS32; lane k plays note C-4 + k. Whatever was in those slots is overwritten on OK (CANCEL brings them back). Your own KIT presets cannot be saved yet.
 - Renaming a sample in FILE → SAMPLES also updates the lanes; Delete leaves the name in the lane (the lane is silent, like MISSING) and asks for confirmation if the sample is used in a lane.
 
 <a id="presets"></a>
 
 ### Presets
 
-The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu, then a preset browser that fills the whole tab. A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
+The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu (on a KIT — Load right away), then a preset browser that fills the whole tab. A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
 
-**Browser header:** the type (with arrows in Load), the path inside the type folder, and three buttons. At the root of a type there is a `[FACTORY]` row (Load only), then your own folders (`name/`), then files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, sorted into categories; they cannot be changed or deleted.
+**Browser header:** the path and three buttons (Save: the type, then the path inside the type folder). Load always opens at the top: a `[FACTORY]` row, then a folder per type (FM, SYNTH, DRUM, SAMPLE, CHIP) with your own folders (`name/`) and files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, by type (including KIT) and category; they cannot be changed or deleted. A preset of another type changes the instrument's type. Save opens in the folder of the instrument's type.
 
 | Input | Load | Save |
 |---|---|---|
 | Turn | Row; the preset under the cursor is applied to the instrument at once and plays C-4 (audition, marked `>`). | Row. |
-| <kbd>Shift</kbd>+turn, tap on the arrows | Another type (FM, SYNTH, DRUM, SAMPLE, CHIP). Defaults to the instrument's type. | — |
 | Tap on a preset | Audition (same as turning). | Write over it (asks Overwrite). |
 | Click on a preset | Take it and close. | Write over it (asks Overwrite). |
 | Click / tap on a folder | Enter; `..` goes up. | |
@@ -785,7 +1174,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 - A **SAMPLE preset** stores the sample name. If that sample is in the project, it is applied together with the preset's Root and slices; otherwise the instrument's sample, Root and slices stay as they were. The Slices, Chop and Chop N / Sens modes are always taken from the preset. There are no factory SAMPLE presets.
 - A **SYNTH preset** stores the oscillator wavetable names: built-in tables are always available, a project table is matched by name, and a missing one is imported from `/wavetables` (see [wavetables](#wavetables)). Factory SYNTH presets use only built-in tables.
 - **Format:** presets are saved in v3 format, including slices and SYNTH parameters; older presets (v1, v2) load as before.
-- **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP"). The last opened folder of each type is remembered until power-off.
+- **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP").
 - Without a card, Load shows only `[FACTORY]` and Save does not open ("NO SD CARD").
 
 | Type | Category | Factory presets |
@@ -804,12 +1193,16 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 | SYNTH | LEAD | LEAD, SYNCLD |
 | SYNTH | PAD | PAD, PWMSTR, WTSWEEP |
 | SYNTH | KEYS | PLUCK, BELL |
+| KIT | DRUM | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT |
+| KIT | FM | FM KIT, FM PUNCH, FM PERC |
+| KIT | CHIP | CHIP KIT |
+| KIT | MIX | HYBRID, DUB KIT |
 
 <a id="proj"></a>
 
 ## PROJ: project and pattern
 
-Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects), **SYS** (Phones, Preview, theme, autosave, versions, synth board, card, diagnostics). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and click (<kbd>Shift</kbd>+click goes back).
+Four pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb), **COMP** (compressor, sidechain), **PERF** (button effects and their start values). Device settings (Phones, Preview, theme, autosave, versions, synth board, card, diagnostics) are in [FILE → SYSTEM](#system). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
 
 | Parameter | Values | Scope |
 |---|---|---|
@@ -828,44 +1221,27 @@ Five pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 | Dly level | 0–127, default 100 | project: echo volume; 0 turns the delay off (the rows above are grayed out) |
 | Reverb | 0–127, default 60 | project: [reverb](#reverb) size, i.e. tail length |
 | Rvb damp | 0–127, default 70 | project: high-frequency damping in the tail (higher is darker) |
-| Rvb level | 0–127, default 80 | project: reverb volume; 0 turns it off |
-| DJ filter | LP 64 … OFF … HP 63 | project: a filter on all internal sound, before the compressor. Turning left closes a low-pass (20 kHz → 100 Hz), turning right opens a high-pass (20 Hz → 8 kHz), with a little resonance. Handy for live tweaking. |
+| Rvb level | 0–127, default 80 | project: reverb volume; 0 = off, the tail is cleared |
 | **COMP** | | |
 | Comp | OFF, 1–127, default OFF | project: [compressor](#comp) on all internal sound; higher means a lower threshold (−6 … −30 dB) |
 | Comp rel | 20 ms … 1 s, default ≈ 90 ms | project: compressor release |
 | SC track | OFF, T1–T16, default OFF | project: sidechain key track: its sound ducks the whole mix |
 | SC depth | 0–127, default 64 | project: sidechain amount |
 | **PERF** | | |
-| Button 1 … Button 8 | [PERF](#live) effects or --- | project: what track button N holds in PERF mode |
-| **SYS** | | |
-| Phones | 0–100%, default 100% | device: live output level (headphones / speaker), attenuation only; not in Render WAV, the project's master is MIX → MAIN. Stored in the board's memory one second after a change |
-| Preview | ON / OFF, default ON | project: entering a note in GRID on an INT track sounds it immediately |
-| Theme | 17 themes, default CLASSIC | device: interface colors (see below) |
-| Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |
-| Firmware | build commit | display only: firmware version ("+" means built with local changes) |
-| Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot of the tracker (crashes are logged to crashlog.txt on the card) |
-| Synth fw | version and protocol (`Pn`), NO SYNTH | display only: the synth board's firmware; "!" after it means its protocol does not match the tracker's (the status bar shows `SYNTH FW`); NO SYNTH — the board does not answer |
-| Link | LOST n LATE n CRC n | display only: link counters since power-on: events lost, events that came too late to play on time, damaged frames |
-| Update synth | CLICK / NO SYNTH | click, confirm: the synth board is flashed from `/firmware/teensy.hex` on its card (progress `SYNTH FW`) and reboots; the new version is shown when it answers again. The file gets there from the [Wi-Fi page](#wifi) or a computer |
-| Card | free / total GB, NO CARD, NO SYNTH | display only: the microSD card in the synth board |
-| Audio RAM | SEQ INTERNAL / PSRAM, free K | display only: where the sequencer lives (it should be in internal memory; in PSRAM it costs more) and the tracker's free internal RAM |
-| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the synth board's audio time broken down by stage (queue, events, voice management, voices by type, delay, reverb, master) is appended to /diag/cpuprof.txt on the card |
-
-<a id="themes"></a>
-
-**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like MAIN volume: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast) and PAPER (light).
+| Button 1 … Button 8 | one of the 13 [PERF](#live) effects or --- | project: what track button N holds in PERF mode; picking an effect sets its Value to the effect's default. New project: 1 REPEAT, 2 ROLL, 3 FILTER, 4 GATE, 5 DELAY THROW, 6 REVERB THROW, 7 CRUSH, 8 TAPE STOP. Old maps are converted: RAT → REPEAT, ROLL UP → ROLL, FILTER LOW / HIGH → FILTER, DELAY MAX / REVERB MAX → DELAY / REVERB THROW, CRUSH / SRR / DRIVE → CRUSH / DOWNSAMPLE / DRIVE, FADE / MUTE / SHORT DECAY → --- |
+| &nbsp;&nbsp;Value | the effect's encoder range (see [PERF](#live)), default the effect's default; --- without an effect | project: under each Button row, the depth a press of that button starts at (`1/8`, `LP 20`, `6 BIT`); <kbd>Shift</kbd> ×10 |
 
 <a id="reverb"></a>
 
-**Reverb** is a shared stereo reverb (per channel 4 comb filters and 2 allpasses, like Freeverb; the right channel is slightly detuned for width). Instruments send to it with the Rvb send parameter, steps with the RVB fx. Delay echoes do not go into the reverb. Changing the size on the fly jumps.
+**Reverb** is a shared reverb (4 comb filters and 2 allpasses, like Freeverb): mono send, pseudo-stereo return (the right channel has its own last allpass, so the tail is wider than the dry sound). Instruments send to it with the Rvb send parameter (before pan), steps with the RVB fx. Delay echoes do not go into the reverb. Changing the size on the fly jumps.
 
 <a id="comp"></a>
 
-The **compressor** sits on the sum of the internal sound after the delay and reverb, before the master volume: 4:1, 1 ms attack; Comp sets the threshold and the makeup gain (half of the threshold reduction). **Sidechain:** SC track = the kick track, Comp 60–100, SC depth 100+, and the whole mix ducks on every hit ("pumping"); Comp rel sets how fast it comes back. The key is that track's internal sound (INT); the track itself plays as usual. Comp OFF: the compressor leaves the sound untouched.
+The **compressor** sits on the sum of the internal sound after the delay and reverb, before the master volume: stereo-linked (one gain on both channels), 4:1, 1 ms attack; Comp sets the threshold and the makeup gain (half of the threshold reduction). **Sidechain:** SC track = the kick track, Comp 60–100, SC depth 100+, and the whole mix ducks on every hit ("pumping"); Comp rel sets how fast it comes back. The key is that track's internal sound (INT); the track itself plays as usual. Comp OFF: the compressor leaves the sound untouched.
 
 <a id="delay"></a>
 
-**Delay** is a single shared stereo delay for the internal sound (two lines, left and right, with the same settings) (it does not affect the MIDI output). Instruments send sound to it with the Dly send parameter, individual steps with the DLY fx. The time is synced to BPM: 1/16 at 120 BPM = 125 ms. The line is sized for 2 s, i.e. 16/16 down to 120 BPM; at slower tempos the time is capped at 2 s. Changing the time or tempo on the fly jumps (a click on the tail is possible). On stop, the echo rings out.
+**Delay** is a single shared mono delay for the internal sound (it does not affect the MIDI output): the send is taken before pan, the echoes return to the centre. Instruments send sound to it with the Dly send parameter, individual steps with the DLY fx. The time is synced to BPM: 1/16 at 120 BPM = 125 ms. The line is sized for 2 s, i.e. 16/16 down to 120 BPM; at slower tempos the time is capped at 2 s. Changing the time or tempo on the fly jumps (a click on the tail is possible). On stop, the echo rings out.
 
 **Scales:** Chromatic, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor, Pentatonic major, Pentatonic minor, Blues. The default is C Chromatic, i.e. no restriction.
 
@@ -883,8 +1259,8 @@ A 4×4 grid of tiles: patterns P01–P16. Each tile shows the number, length, re
 
 | Input | Action |
 |---|---|
-| Tap / click | **Queue**: during playback switches at the end of the pass, when stopped switches at once. |
-| <kbd>Shift</kbd>+tap / click | **Immediately**: switches from the next step, keeping the position. |
+| Tap / click | **Queue**: during playback switches at the end of the pass, when stopped switches at once. While the song plays: toast `SONG MODE`. |
+| <kbd>Shift</kbd>+tap / click | **Immediately**: switches from the next step, keeping the position. Also works while the song plays. |
 | Long tap / press | Pattern menu. |
 | Turn | Select a tile. |
 
@@ -893,35 +1269,72 @@ A 4×4 grid of tiles: patterns P01–P16. Each tile shows the number, length, re
 - **Copy to…**, then tap the target tile. Everything is copied: steps, length, resolution, swing. Tapping the same tile cancels.
 - **Clear**, with confirmation. Also resets length (16), resolution (1/16), swing (50).
 - **Length 16 / 32 / 64**: quick length change.
-- **Song mode**: turns on song mode.
 
 Any pattern change clears TIE. The pass counter is reset.
 
 <a id="song"></a>
 
-## Song mode
+## SONG: the song
 
-A chain of up to 64 entries. An entry is a pattern, a transposition, a number of passes and a mute scene. To turn it on: tile menu → **Song mode**. In song mode the BANK tab shows the chain list instead of the tiles.
+A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the 16 tracks. Repeats are equal slots in a row.
 
-- Header: `SONG n/64`, the **+ ADD** button (append the playing pattern at the end) and **SONG OFF**.
-- Row: `>` next to the playing entry, the number and four fields, `P05 +3 x2 S1`: pattern, transposition, passes, scene; default values (`+0 x1 S-`) are gray. On the right, the pattern's length and resolution.
-- Turn to select a row. Click to edit the row: turning or dragging changes the field (red), <kbd>Shift</kbd>+turn selects the field. Tapping a field of the selected row edits that field directly. On an empty chain, a click adds the playing pattern.
-- **Transposition** −24…+24 semitones: notes on melodic tracks sound shifted while the entry plays (clamped to 0 and 127). Drum tracks, OFF and the pattern's steps themselves are not changed.
-- **Passes** x1…x16: how many times to play the pattern before the next entry. Repeats sound like a loop: TIE and the CND counter carry on.
-- **Scene** S1…S8: when the entry starts, track mutes are set from the scene (an empty scene changes nothing). `S-`: leave as is.
-- **Scenes**: 8 tiles `S1…S8` below the list. Tap to recall (mute all tracks as in the scene), long tap to store the current mutes, <kbd>Shift</kbd>+tap to clear. A filled tile is highlighted; one matching the current mutes has a yellow border. Scenes are stored in the project.
-- Long press opens the row menu: **Insert Pxx before**, **Delete**, **Duplicate**, **Append Pxx**, **Song mode off**. Pxx is the playing pattern.
+- Header: `n/128` and the track numbers 1–16 above the columns. With [PERF](#live) on, the yellow `PERF` badge with the held effects replaces `n/128` (and covers the track numbers it reaches).
+- Row: slot number, `Pxx`, then 16 cells:
+  - filled: the track plays;
+  - outline: the track is muted in this slot;
+  - dim dot: the track has no steps in this pattern (mute can still be set);
+  - dim outline: no data and muted.
+- The heard slot has a highlighted row and a progress bar under its number.
+- The cursor is a yellow frame on a cell (columns: PAT and tracks 1–16); red in pattern edit.
+- 10 rows are visible, the list scrolls. During play it follows the heard slot; after you turn, tap or scroll, following pauses for 2 s.
+- An empty song shows one row `+ ADD Pxx` (the heard pattern). Click or tap adds it.
+
+| Input | Action |
+|---|---|
+| Turn | Row (in pattern edit: change the pattern). While a [PERF](#live) effect is held: its depth. |
+| <kbd>Shift</kbd>+turn | Column. |
+| Click on PAT | Pattern edit on / off; <kbd>Shift</kbd>+click in pattern edit cancels it (the old pattern returns). |
+| Click on a track cell | Mute / unmute that track in this slot. |
+| Hold <kbd>A</kbd> + turn | Change the slot's pattern; <kbd>A</kbd>+<kbd>B</kbd> cancels. |
+| Tap on a cell | Move the cursor there; on a track cell, also toggle mute. |
+| Vertical drag starting on PAT of the selected row | Change the pattern. |
+| Other drag | Scroll. |
+| [Track button](#trackkeys) <kbd>N</kbd> | Mute / unmute track N in the selected slot. The half 1–8 / 9–16 is the one holding the current track (as in GRID and TRACK), not the cursor column. With [PERF](#live) on and the transport playing: hold its PERF effect (release ends it). |
+| <kbd>Shift</kbd>+<kbd>N</kbd> | Live mute, as on every tab (with PERF on too); lasts until the next slot starts. |
+| <kbd>A</kbd> tap | **Add**: a copy of the selected slot right below it, and the cursor moves to it (toast `SONG FULL` at 128). |
+| Long press / long tap | Row menu. |
+| <kbd>B</kbd> tap | Leave pattern edit; otherwise PERF off. |
+| <kbd>Shift</kbd>+<kbd>B</kbd> | Undo song edits (8 steps). |
+
+**Row menu:**
+
+- **Add**: same as an <kbd>A</kbd> tap.
+- **Insert Pxx above**: insert the heard pattern above, with no mutes.
+- **Delete**.
+- **Mutes ← live**: store the current track mutes in the slot.
+- **Clear mutes**.
+- **Clear song**, with confirmation.
+- **Perf: ON/OFF**: [PERF](#live), shared with the GRID menu.
 
 ### How the song plays
 
-- Playback starts from the first entry. At the end of a pass, the next entry follows; after the last one, the first one again.
-- Turning the mode on during playback: the chain starts at the end of the current pass. Turning it off: the current pattern keeps looping.
-- Chain edits during playback are picked up at the end of the pass. Inserting or deleting a row above the playing one does not disturb the position.
-- Two identical entries in a row sound as a repeat: TIE and the CND counter are kept.
-- Editing the passes during playback is picked up if the decision to move on has not been made yet. Deleting the playing entry: the next one starts at the end of the pass.
-- An empty chain plays the current pattern, as without song mode.
-- Pattern queueing does not work in song mode; the tiles are unavailable.
-- When stopped, GRID shows and edits the first entry of the chain, and the status bar shows `S01`.
+- **Play on the SONG tab** plays the song from the selected slot. **Play on any other tab** loops the current pattern (LOOP). With an empty song, Play loops the pattern.
+- **<kbd>Shift</kbd>+<kbd>Play</kbd> on any tab** plays the song from the slot under the SONG cursor; while playing, a short <kbd>Shift</kbd>+<kbd>Play</kbd> starts the song from that slot again (held longer, it is [fill](#cnd)). <kbd>Shift</kbd>+tap on `PLAY` in the status bar does the same. Empty song: toast `SONG EMPTY`.
+- While the transport runs, switching tabs does not change the mode.
+- The status bar shows `S03 P05` in SONG (`S--` until the song is heard) and `P05` in LOOP. During play, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass (stopped, the tap does nothing: Play picks the mode by tab), with toast `SONG` / `LOOP` (`SONG EMPTY` if the song has no slots). LOOP→SONG continues from the slot under the SONG cursor; SONG→LOOP keeps looping the heard pattern.
+- After the last slot, slot 1 plays again.
+- **Mutes:** when a slot starts, all 16 track mutes are set from it. <kbd>Shift</kbd>+<kbd>N</kbd> during play changes a mute only until the next slot; the slot itself is not changed. In LOOP the slot mutes are not applied. When the song stops or switches to LOOP, the track mutes return to what they were before the song started; a saved project keeps those mutes too.
+- Two equal adjacent slots play as a repeat: TIE and the CND counter continue. Repeats are made by duplicating slots (<kbd>A</kbd> tap).
+- Edits during play are picked up at the end of the pass. Inserting or deleting above the heard slot does not shift the position. Deleting the heard slot: the next one starts at the end of the pass.
+- The pattern queue (BANK tile tap, <kbd>B</kbd>+<kbd>N</kbd>) works only in LOOP; while the song plays it toasts `SONG MODE`. <kbd>B</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> and <kbd>Shift</kbd>+tap on a BANK tile (switch at once) still work.
+- When stopped, moving the SONG cursor makes that slot's pattern current, and GRID shows it.
+
+### Old projects
+
+- Repeats ×N become N slots in a row.
+- A mute scene becomes the slot's mutes. A slot with no scene keeps the previous slot's mutes; the first slot starts with all tracks on.
+- Transpose is dropped, with the toast `SONG: TRANSPOSE DROPPED`.
+- The project is saved in the new format.
 
 <a id="file"></a>
 
@@ -940,39 +1353,39 @@ A chain of up to 64 entries. An entry is a pattern, a transposition, a number of
 | Wi-Fi firmware… | Firmware update of the tracker and the synth board over Wi-Fi. See [below](#wifi). |
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
-**Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play runs the song (SONG mode). Each one shows off part of the device:
+**Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play on the SONG tab plays the song. Each one shows off part of the device:
 
 | Demo | Tempo, key | What to look at |
 |---|---|---|
 | DEMO-TRANCE | 138, A minor | supersaw hook, pads and bass pumped by the sidechain (key: the KICK track), ARS arpeggio on CHD chords, a breakdown with FLT locks opening the lead and a riser held by TIE, snare rolls with RAT ramps |
-| DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (chain transpose) |
+| DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (transposed copies in patterns P06 and P07) |
 | DEMO-ACID | 128, A minor | a 303-style line with SLD slides, accents and a FLT lock on every step, the filter opening section by section; a 12-step polymeter section (track length), hats on probability (PRB), RES and DLY locks in the break |
-| DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, a low-passed master (DJ filter) |
+| DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, dark instruments with low cutoffs |
 | DEMO-SYNTHWAVE | 108, E minor | driving 16th bass pumped by the sidechain, a gated-reverb clap, a sync-pluck ARS arpeggio, a wavetable lead with VIB, tom fills |
 | DEMO-DUBTECHNO | 120, C minor | one FM CHORD (minor 9) stab through a long dark delay and a big reverb, its filter swept by a 4-bar synced LFO and FLT locks, DLY / RVB throws, a drone held by TIE |
 | DEMO-IDM | 110, D dorian | every part on its own track length (7, 5, 13, 9, 11, 6 steps against 16): the parts drift; CND 1:2 / 1:3, PRE and NEI conditions, PRB and NRN random notes, a 5/16 delay |
-| DEMO-HOUSE | 124, F minor | swung 909 with humanize, an offbeat FM bass, 7th-chord stabs, congas on probability, a choir breakdown with a clap roll; PERF buttons set for live play (filter down / up, delay and reverb throws, rolls, short decay, mute) |
+| DEMO-HOUSE | 124, F minor | swung 909 with humanize, an offbeat FM bass, 7th-chord stabs, congas on probability, a choir breakdown with a clap roll; PERF buttons set for live play (FILTER, REPEAT, ROLL, DELAY THROW, REVERB THROW, GATE, TAPE STOP, FREEZE) |
 
 A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the card, and from there it is an ordinary project to take apart and change.
 
 <a id="render"></a>
 
-**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: stereo, 16-bit, 44.1 kHz; the synth board renders it and writes it to its card. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (the whole chain with repeats; available if the chain has rows); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is on the card (take it to a computer) and in FILE → SAMPLES → Import (bring it back into the project as a mono sample). MIDI tracks are not included in the render.
+**Render WAV…** is an offline render of the internal sound (INT tracks, with delay, reverb and compressor) to WAV: stereo, 16-bit, 44.1 kHz; the synth board renders it and writes it to its card. Rows: **Source**: `PATTERN 01…16` (defaults to the playing one) or `SONG` (all song slots in order; available if the song has slots); **Tracks**: `ALL`, `SOLOED` (only soloed tracks; available if solo is on) or `STEMS`, where each audible INT track with notes goes to its own file `_P01_T03.wav` (stems for mixing, also stereo with the track's pan; each stem gets its own shared delay / reverb / compressor, and sidechain from other tracks does not apply). **RENDER** writes to `/samples/render/<project>_P01.wav` or `_SONG.wav`, with a 2 s tail; if the file exists, it asks **Overwrite**. The folder is on the card (take it to a computer) and in FILE → SAMPLES → Import (bring it back into the project as a mono sample). MIDI tracks are not included in the render.
 
 - Only when stopped (`STOP FIRST`). Progress shows `RENDER nn%`, roughly in real time; a long press of the encoder or Play cancels (`CANCELLED`, no file is created).
 - Done: `12.3s PEAK -2.1dB`; `CLIP` means there was clipping (lower MAIN or the volumes). Errors: `DISK FULL`, `WRITE FAILED`, `AUDIO BUSY` (audio did not stop within 0.5 s; try again).
 - The render reproduces playback, just without the output latency; PRB / NRN / VRN are random but identical from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
 
-Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and click. PROJECTS holds the items above, SAMPLES the [project samples](#samples).
+Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and hold <kbd>A</kbd> + turn. PROJECTS holds the items above, SAMPLES the [project samples](#samples), SYSTEM the [device settings](#system).
 
 - **Project name:** up to 16 characters, A–Z a–z 0–9 \_ -. Case is preserved, but names differing only in case are the same file.
 - **Keyboard:** digits, A–Z, - \_, DEL, CANCEL, OK. <kbd>Shift</kbd>+key gives a lowercase letter. Encoder: turn selects a key, click presses it, long press cancels.
 - **Reliability:** saving writes a temporary file, verifies it, and renames the previous version to `.bak`. If the file is corrupted, Load offers **Load backup**. A `.bak` has no sample folder of its own: it takes samples from the same project folder, so a sample removed from the project after that version may turn up MISSING if it has already been evicted from the synth board's flash.
-- **Autosave:** unsaved changes are written every N minutes (PROJ → SYS → Autosave: OFF, 1, 2, 5, 10 min, default 5) to `/projects/name.auto` (the project file only), while the transport is stopped and nothing has been pressed for 3 s (toast "AUTOSAVE…"). Save deletes it. After a crash or power-off: FILE → Restore autosave.
+- **Autosave:** unsaved changes are written every N minutes (FILE → SYSTEM → Autosave: OFF, 1, 2, 5, 10 min, default 5) to `/projects/name.auto` (the project file only), while the transport is stopped and nothing has been pressed for 3 s (toast "AUTOSAVE…"). Save deletes it. After a crash or power-off: FILE → Restore autosave.
 - **Safe boot:** hold <kbd>Shift</kbd> at power-on and the project is not loaded automatically (toast "SAFE BOOT"). Use it for a project that crashes the tracker on load.
-- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt` on the card in the synth board (as soon as the card is available after the reboot); read it on a computer. The firmware version and the reason for the last reboot are in PROJ → SYS.
+- **Crash log:** if the tracker rebooted because of a crash, the watchdog or a brownout, the reason, firmware version and (if available) a backtrace are written to `/diag/crashlog.txt` on the card in the synth board (as soon as the card is available after the reboot); read it on a computer. The firmware version and the reason for the last reboot are in FILE → SYSTEM.
 - **Autoload:** at power-on, the last saved or loaded project is loaded. If it is corrupted, the `.bak` is used (toast "LOADED BACKUP"). If that fails too, the demo loads with the toast "AUTOLOAD: …". New disables autoload until the next save.
-- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume, Pan), 32 instruments, Preview, delay settings, tempo, scale, the chain and song mode. The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard and Fill parameters.
+- Saved: all patterns, track settings (including mute/solo, Program, Out, Instr, Volume, Pan), 32 instruments, delay settings, tempo, scale and the song (slots with their mutes). The project also stores the list of its samples and wavetables, while the WAVs themselves sit next to it in the project folder (see [SAMPLES](#samples) and [wavetables](#wavetables)). Old projects open with MIDI on all tracks. Not saved: undo, the clipboard, Fill parameters and the [SYSTEM](#system) settings (Preview included; older project files that still contain it open as usual).
 - **Compatibility:** the file now holds 16 tracks per pattern. Projects from older versions (8 tracks) open as usual, with tracks 9–16 empty. A file written by this firmware cannot be opened by older firmware: it will report a corrupted file (not a "newer version"). To go back to older firmware, keep a copy of the `.mtp` / `.bak` saved by it.
 
 | Path | Contents |
@@ -991,6 +1404,9 @@ Below the header are the **PROJECTS** and **SAMPLES** page tabs, as in TRACK and
 | `/samples/*.wav` | WAV library for importing into projects (subfolders allowed) |
 | `/wavetables/*.wav` | wavetable library for SYNTH (subfolders allowed) |
 | `/presets/TYPE/…/name.mti` | [instrument presets](#presets): folders CHIP, SAMPLE, FM, DRUM, SYNTH, each with up to 4 levels of your own folders |
+| `/presets/ARP/name.arp` | your own [arp](#arp) patterns (Capture), text |
+| `/presets/PRG/name.prg` | your own [chord progressions](#chords) (Capture), text |
+| `/presets/BAS/name.bas` | your own [bass patterns](#bass) (Capture), text |
 
 The `/projects`, `/midi`, `/samples`, `/wavetables` and `/presets` folders (with the type folders) are created automatically.
 
@@ -1036,6 +1452,32 @@ Import, Rename and Delete change the project (a `*` appears); save it so the cha
 
 > Import, Rename, Delete, Compact and Clear cache work only with playback stopped ("STOP PLAYBACK FIRST"): writing to the synth board's flash stops the audio. Load and New stop playback themselves. If the synth board does not answer, the page shows "SYNTH NOT ANSWERING"; "NO SAMPLE BANK" means the bank in the synth board's flash is not available.
 
+<a id="system"></a>
+
+### SYSTEM: device settings
+
+Settings of the device itself and diagnostics, the same for every project. The settings are stored in the board's memory, not in the project file; none of these rows marks the project as changed (`*`).
+
+| Parameter | Values | Scope |
+|---|---|---|
+| Phones | 0–100%, default 100% | device: live output level (headphones / speaker), attenuation only; not in Render WAV, the project's master is MIX → MAIN. Stored in the board's memory one second after a change |
+| Preview | ON / OFF, default ON | device: entering a note in GRID on an INT track sounds it immediately. Shared by all projects and stored in the board's memory like Phones; not saved with the project |
+| Theme | 17 themes, default CLASSIC | device: interface colors (see below) |
+| Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |
+| Firmware | build commit | display only: firmware version ("+" means built with local changes) |
+| Synth fw | version and protocol (`Pn`), NO SYNTH | display only: the synth board's firmware; "!" after it means its protocol does not match the tracker's (the status bar shows `SYNTH FW`); NO SYNTH — the board does not answer |
+| Update synth | CLICK / NO SYNTH | click, confirm: the synth board is flashed from `/firmware/teensy.hex` on its card (progress `SYNTH FW`) and reboots; the new version is shown when it answers again. The file gets there from the [Wi-Fi page](#wifi) or a computer |
+| Card | free / total GB, NO CARD, NO SYNTH | display only: the microSD card in the synth board |
+| Link | LOST n LATE n CRC n | display only: link counters since power-on: events lost, events that came too late to play on time, damaged frames |
+| Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot of the tracker (crashes are logged to crashlog.txt on the card in the synth board) |
+| Audio RAM | SEQ INTERNAL / PSRAM, free K | display only: where the sequencer lives (it should be in internal memory; in PSRAM it costs more) and the tracker's free internal RAM |
+| Battery | `3.92V 120mA 85%`, `4.05V CHG 820mA 64%`, NOT FOUND, --- | display only: battery voltage, current and charge from the [INA226](wiring.md#ina226-battery-monitor); CHG — charging; NOT FOUND — no sensor (the boot log says `battery: INA226 at 0x40` / `battery: INA226 not found`); --- — no reading yet. With the stock 0.1 Ω shunt the current tops out at about 820 mA, so while charging it shows ~820 mA |
+| CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the synth board's audio time broken down by stage (queue, events, voice management, voices by type, delay, reverb, PERF, master) is appended to /diag/cpuprof.txt on the card |
+
+<a id="themes"></a>
+
+**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like Phones: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast) and PAPER (light).
+
 <a id="wifi"></a>
 
 ### Wi-Fi: firmware without opening the case
@@ -1051,9 +1493,9 @@ FILE → **Wi-Fi firmware…** connects the tracker to your home network and ope
 The page has two sections; drag the file with the mouse into the drop zone or pick it with a click:
 
 - **Tracker (.bin):** the file `.pio/build/wt32/firmware.bin`. The tracker's screen shows "FIRMWARE n KB", then reboots after verifying the image. From PlatformIO, while the mode is open: `pio run -e wt32-ota -t upload`. If the upload is interrupted or the image is corrupted, the old firmware stays.
-- **Synth board (.hex):** the file `.pio/build/teensy41/firmware.hex`. It is saved on the synth board's card as `/firmware/teensy.hex` ("SYNTH FW n KB"), then the synth board checks it, flashes it ("SYNTH FW n%") and reboots; the page shows the new version when the board answers again. The same file can later be flashed again with PROJ → SYS → **Update synth**.
+- **Synth board (.hex):** the file `.pio/build/teensy41/firmware.hex`. It is saved on the synth board's card as `/firmware/teensy.hex` ("SYNTH FW n KB"), then the synth board checks it, flashes it ("SYNTH FW n%") and reboots; the page shows the new version when the board answers again. The same file can later be flashed again with FILE → SYSTEM → **Update synth**.
 
-**Synth board, first flash.** The very first firmware goes into the Teensy over its own USB with Teensy Loader, before assembly. After that it is updated from the tracker: PROJ → SYS → Update synth (from `/firmware/teensy.hex` on its card) or the Wi-Fi page.
+**Synth board, first flash.** The very first firmware goes into the Teensy over its own USB with Teensy Loader, before assembly. After that it is updated from the tracker: FILE → SYSTEM → Update synth (from `/firmware/teensy.hex` on its card) or the Wi-Fi page.
 
 > The page has no password: while Wi-Fi mode is open, anyone on the same network can flash the tracker and the synth board. Do not use this mode on other people's or public networks.
 
@@ -1095,16 +1537,16 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 - **Clock** (24 PPQN) is sent only during playback.
 - **Play (start):** Program Change for tracks with a Program set, then Start.
 - **Play (stop):** Note Off for all sounding notes, then Stop. Position goes to step 1.
-- **Shift+Play (pause):** Note Off and Stop. **Resume:** Song Position Pointer (position within the current pattern) and Continue.
+- **Shift+Play while playing (song restart):** Note Off and Stop, then Start, as stop + start.
 - Retriggering a note that is already sounding first sends its Note Off.
 
 <a id="sound"></a>
 
 ## Internal sound
 
-The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, stereo. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
+The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, mono instruments with per-track pan, stereo output. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
 
-Sound goes from the synth board to an external PCM5102A DAC and from it to a MAX97220 headphone amplifier; the display board's NS4168 amplifier and SPK connector are not used. The output is stereo: each INT track is placed with TRACK → Pan; delay and reverb are stereo.
+Sound goes from the synth board to an external PCM5102A DAC and from it to a MAX97220 headphone amplifier; the display board's NS4168 amplifier and SPK connector are not used. The signal is stereo: the DAC's L / R go to the amplifier's L / R. Old projects (all tracks at centre) sound the same on both channels.
 
 - DAC settings: SCK to GND (no MCLK), FMT, FLT, DEMP = L, XSMT = H.
 - The DAC's L / R are a line output (2.1 Vrms full scale, centred on ground): they can go to a mixer, audio interface or powered speakers — straight from the DAC or from the amplifier's headphone output.
@@ -1113,12 +1555,13 @@ Sound goes from the synth board to an external PCM5102A DAC and from it to a MAX
 
 Full wiring, settings and grounding notes — README, "Sound" section, and [wiring.md](wiring.md).
 
-- **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 40%), with soft limiting.
+- **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting.
+- **Pan:** each voice is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level (as before), hard left is +3 dB on the left and silence on the right. The delay and reverb sends are taken before pan (mono); the delay returns to the centre, the reverb in pseudo-stereo. The compressor is stereo-linked; the PERF effects, MAIN and the soft clip work on both channels.
 - **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 16 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track.
 - **CPU guard:** when the audio render nears its time budget (above 80 % on average, or one block over 100 %), the oldest voice fades out in 4 ms (releasing voices first) and the pool shrinks to the voices left; once the load drops below 65 % it grows back by one voice every 0.1 s. A heavy project thins out instead of crackling or restarting the device.
 - **Latency:** events reach the synth board and play about 4 ms after the sequencer step (a fixed delay that absorbs the link), plus the audio output buffer: the internal sound lags the MIDI tracks by about 10 ms, constantly, without jitter. MIDI tracks are not delayed.
 - **No synth board:** if it does not answer, the status bar shows `NO SYNTH`: INT tracks are silent, the card is unavailable, MIDI tracks keep playing. After the board comes back, the tracker sends it the sound state (`SYNC`).
-- **Sequencer:** RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI. Added: the [synth fx](#synthfx) SLD, VIB, ARP, VSL, OFS, CUT, slice selection SLC, locks of the FM, DRUM and SYNTH macros DEC, COL, SHP, SWP, CON, and filter locks FLT, RES. Track button LEDs also flash on INT notes. Mute, solo, stop and pause silence the sound the same way as MIDI notes.
+- **Sequencer:** RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI. Added: the [synth fx](#synthfx) SLD, VIB, ARP, VSL, OFS, CUT, slice selection SLC, locks of the FM, DRUM and SYNTH macros DEC, COL, SHP, SWP, CON, and filter locks FLT, RES. Mute, solo and stop silence the sound the same way as MIDI notes.
 - **Start:** Program Change is not sent to INT tracks; the instrument from PGM (back to Instr from TRACK), PBN and synth fx are reset.
 - **Load:** `CPU NN%` in the right corner of the [status bar](#screen).
 - Sample import, renaming and deletion, wavetable import, Compact and Clear cache are available only when stopped: there is no sound while the synth board writes to its flash.
@@ -1130,7 +1573,7 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | What | How many |
 |---|---|
 | Tracks / patterns / steps | 16 / 16 / 4–128 |
-| Song chain | 64 entries |
+| Song | 128 slots |
 | Undo | 8 steps (pattern snapshots) |
 | BPM / Swing | 20–300 / 50–75% |
 | fx per step | 2 |
@@ -1141,6 +1584,10 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | Samples | 128 per project, name up to 16 characters; cache in the synth board's flash about 6 MB (≈ 1 min at 44.1 kHz), 128 entries |
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048 |
 | Presets | `.mti` file 204 bytes (v2: 156, v1: 84), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
+| Arp patterns | up to 32 steps; 106 factory, up to 32 of your own listed, name up to 16 characters |
+| Chord progressions | up to 16 chords; 55 factory + RANDOM, 32 rhythms, up to 32 of your own listed |
+| Bass patterns | up to 32 steps; 48 factory, up to 32 of your own listed |
+| CHD | 36 types × 4 inversions |
 | Long press | 0.5 s |
 
-**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 40%, Preview ON.
+**Default project:** 120 BPM, C Chromatic, tracks TRK1–TRK16 on channels 1–16, volume 100, gate 50%, CC A 74, CC B 71, 16-step 1/16 patterns with no swing. All tracks are Out INT, track N uses instrument N, volume 100; instruments INS1–INS32 are FM TONE; master volume 100%.

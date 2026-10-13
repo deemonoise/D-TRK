@@ -35,13 +35,16 @@ struct Debounce {
 Debounce encBtn{pins::kEncSwBit};
 Debounce playBtn{pins::kPlayBit};
 Debounce shiftBtn{pins::kShiftBit};
+Debounce aBtn{pins::kBtnABit};
+Debounce bBtn{pins::kBtnBBit};
 uint32_t encDownAt = 0;
 bool longSent = false;
 
 // Releases must not be lost (a dropped one leaves fill / a punch-in effect on): they wait for room.
 void emit(InputType t, int8_t d = 0) {
   InputEvent e{t, d, shiftHeld};
-  const bool release = t == InputType::PlayRelease || t == InputType::TrackRelease || t == InputType::ShiftUp;
+  const bool release = t == InputType::PlayRelease || t == InputType::TrackRelease || t == InputType::ShiftUp ||
+                       t == InputType::AUp || t == InputType::BUp;
   xQueueSend(queue, &e, release ? pdMS_TO_TICKS(100) : 0);
 }
 
@@ -109,6 +112,13 @@ void task(void*) {
     const int pl = playBtn.update();
     if (pl == 1) emit(InputType::PlayPress);
     else if (pl == -1) emit(InputType::PlayRelease);
+
+    const int ab = aBtn.update();
+    if (ab == 1) emit(InputType::ADown);
+    else if (ab == -1) emit(InputType::AUp);
+    const int bb = bBtn.update();
+    if (bb == 1) emit(InputType::BDown);
+    else if (bb == -1) emit(InputType::BUp);
 
     const int e = encBtn.update();
     const uint32_t now = millis();

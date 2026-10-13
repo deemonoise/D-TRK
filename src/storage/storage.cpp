@@ -46,10 +46,10 @@ void freeProject(mt::Project* p) {
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
 static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() and project_io");
 static_assert(sizeof(mt::TrackCfg) == 22, "TrackCfg changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Pattern) == 4 + mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
+static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Instrument) == 380, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 476264, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 476636, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -59,13 +59,12 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.scaleRoot = live.scaleRoot;
   out.scaleType = live.scaleType;
   memcpy(out.tracks, live.tracks, sizeof(out.tracks));
-  memcpy(out.chain, live.chain, sizeof(out.chain));
-  out.chainLen = live.chainLen;
-  memcpy(out.chainTr, live.chainTr, sizeof(out.chainTr));
-  memcpy(out.chainRep, live.chainRep, sizeof(out.chainRep));
-  memcpy(out.chainScene, live.chainScene, sizeof(out.chainScene));
-  memcpy(out.scenes, live.scenes, sizeof(out.scenes));
-  out.songMode = live.songMode;
+  uint16_t held;
+  if (engine::savedMutes(held))  // the song plays: the user's mutes, not the slot's
+    for (int t = 0; t < mt::kTracks; ++t) out.tracks[t].mute = (held >> t) & 1;
+  memcpy(out.song, live.song, sizeof(out.song));
+  memcpy(out.songMute, live.songMute, sizeof(out.songMute));
+  out.songLen = live.songLen;
   memcpy(out.instruments, live.instruments, sizeof(out.instruments));
   out.masterVol = live.masterVol;
   out.preview = live.preview;
@@ -80,8 +79,8 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.compRel = live.compRel;
   out.scTrack = live.scTrack;
   out.scDepth = live.scDepth;
-  out.djFilter = live.djFilter;
   memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));
+  memcpy(out.perfDepth, live.perfDepth, sizeof(out.perfDepth));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));
@@ -110,11 +109,15 @@ bool writeLast(const char* name) {
   return ok;
 }
 
+bool transposeDropped = false;  // set by the last readFile, see songTransposeDropped()
+
 Result readFile(const char* path, mt::Project& out) {
   fs::File f = hw::sdFs().open(path, FILE_READ);
   if (!f) return Result::ReadFail;
   hw::FileSource src(f);
-  const mt::LoadErr e = mt::loadProject(src, out);
+  mt::LoadNotes notes;
+  const mt::LoadErr e = mt::loadProject(src, out, &notes);
+  transposeDropped = notes.songTransposeDropped;
   f.close();
   switch (e) {
     case mt::LoadErr::Ok: return Result::Ok;
@@ -514,6 +517,7 @@ namespace {
 Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
   if (!stopEngine()) return Result::EngineBusy;
   srcFolder[0] = 0;
+  transposeDropped = false;
   engine::lockProject();
   build(i, live);
   engine::unlockProject();
@@ -523,6 +527,8 @@ Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
   return Result::Ok;
 }
 }  // namespace
+
+bool songTransposeDropped() { return transposeDropped; }
 
 Result newProject(mt::Project& live, int tmpl) { return newBuilt(live, mt::templateBuild, tmpl); }
 

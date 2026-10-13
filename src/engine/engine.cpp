@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <atomic>
 #include <new>
+#include <string.h>
 #include "driver/gptimer.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
@@ -33,7 +34,6 @@ portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
 Status st{};
 // Track bits (16); 32-bit so the atomic is a plain s32c1i CAS on the ESP32, no lock in the
 // engine task (xtensa gcc reports is_always_lock_free false even for 32 bits, so no static_assert).
-std::atomic<uint32_t> activity{0};
 
 bool IRAM_ATTR onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void*) {
   BaseType_t woken = pdFALSE;
@@ -56,17 +56,16 @@ void handle(const Command& c) {
     case Cmd::SendProgram: seq->sendProgram(now, c.arg, midi); break;
     case Cmd::ReleaseTies: seq->releaseTies(now, midi); break;
     case Cmd::TrackOut: seq->trackOutChanged(now, c.arg, midi); break;
-    case Cmd::ChainEdit: seq->chainEdited(now, midi, c.arg >> 8, static_cast<mt::ChainOp>(c.arg & 0xFF)); break;
+    case Cmd::SongEdit: seq->songEdited(now, midi, c.arg >> 8, static_cast<mt::SongOp>(c.arg & 0xFF)); break;
+    case Cmd::SetSong: seq->setSong(now, midi, c.arg >> 15, c.arg & 0xFF); break;
     case Cmd::Fill: seq->setFill(c.arg != 0); break;
-    case Cmd::PerfOn: seq->perfOn(c.arg & 0xFF, static_cast<mt::PerfFx>(c.arg >> 8)); break;
-    case Cmd::PerfOff: seq->perfOff(c.arg); break;
   }
 }
 
 void publish() {
   const Status s{seq->playing(),       seq->paused(),       seq->heardPattern(),
-                 static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->loopCount(),
-                 static_cast<int8_t>(seq->heardSongPos()), seq->fill(),
+                 static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->heardLoop(),
+                 static_cast<int8_t>(seq->heardSongPos()), seq->fill(), seq->song(),
                  seq->heardStepTime(),  seq->stepDuration()};
   portENTER_CRITICAL(&statusMux);
   st = s;
@@ -79,10 +78,8 @@ void run(void*) {
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
     const uint64_t next = seq->process(nowUs(), midi);
-    const uint16_t act = seq->takeActivity();
+    publish();  // under the mutex: seqToPsram() / seqToInternal() may move seq
     xSemaphoreGive(projMutex);
-    if (act) activity.fetch_or(act, std::memory_order_relaxed);
-    publish();
 
     if (next != mt::kNever) {
       if (next <= nowUs() + 30) continue;  // due almost now: spin once more
@@ -109,6 +106,36 @@ void reserve() {
 }
 
 bool seqInternal() { return seq && esp_ptr_internal(seq); }
+
+namespace {
+
+bool seqWasInternal = false;  // seqToPsram() moved it out of internal RAM
+
+// The sequencer holds no pointers into itself (Project& and plain arrays): a byte copy moves it.
+bool moveSeq(uint32_t caps) {
+  void* nb = heap_caps_malloc(sizeof(mt::Sequencer), caps);
+  if (!nb) return false;
+  xSemaphoreTake(projMutex, portMAX_DELAY);
+  void* old = seq;
+  memcpy(nb, old, sizeof(mt::Sequencer));
+  seq = static_cast<mt::Sequencer*>(nb);
+  seqMem = esp_ptr_internal(nb) ? nb : nullptr;
+  xSemaphoreGive(projMutex);
+  heap_caps_free(old);
+  return true;
+}
+
+}  // namespace
+
+void seqToPsram() {
+  if (!seqInternal()) return;
+  seqWasInternal = moveSeq(MALLOC_CAP_SPIRAM);
+}
+
+void seqToInternal() {
+  if (!seqWasInternal || seqInternal()) return;
+  if (moveSeq(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) seqWasInternal = false;
+}
 
 void begin(mt::Project* p) {
   // ~50 KB: keep it out of PSRAM, the engine touches it on every event. reserve() took it at boot.
@@ -157,9 +184,9 @@ Status status() {
 
 uint8_t stepPhase(const Status& s) { return mt::stepPhase256(nowUs(), s.stepT, s.stepUs); }
 
-uint16_t takeActivity() { return static_cast<uint16_t>(activity.exchange(0, std::memory_order_relaxed)); }
 
 void lockProject() { xSemaphoreTake(projMutex, portMAX_DELAY); }
 void unlockProject() { xSemaphoreGive(projMutex); }
+bool savedMutes(uint16_t& bits) { return seq && seq->savedMutes(bits); }
 
 }  // namespace engine

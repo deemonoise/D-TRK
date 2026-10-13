@@ -38,10 +38,12 @@ LinkCounters linkCounters();
 // CPU profile (PROJ -> SYS): the synth board's render time per stage (mt::Synth::ProfStage) while
 // running. UI task, blocking (a link request each). profileStart leaves it off when the board does
 // not answer.
-constexpr int kProfStages = 11;
+constexpr int kProfStages = 18;
 struct Profile {
   uint32_t blocks;        // blocks rendered while it ran
   float us[kProfStages];  // average per block, us
+  float n[kProfStages];   // counts per block (mt::Synth::takeProfile), 0 = none
+  float peakUs;           // the slowest block (events, render, preview mix)
 };
 void profileStart();
 bool profileRunning();
@@ -55,6 +57,17 @@ void preview(uint8_t instr, uint8_t note);
 // SAMPLE instrument instr: plays slice (whatever its slice mode) at root, held holdMs (up to 25 s)
 // or until the next preview. UI task only.
 void previewSlice(uint8_t instr, uint8_t slice, uint8_t root, uint32_t holdMs);
+// PERF on the master (UI task): op 0 press fx, 1 release fx, 2 turn (int8 delta), 3 release all
+// (synth message 0xF6, see mt::Synth). Sent to the synth board, played there with the next block.
+// True = sent (a park there may still flush it, see parkCount()); false: the link queue was full,
+// it is lost.
+bool perf(uint8_t op, uint8_t val);
+// Changes with every synth park (each one resets the synth: PERF releases everything) and synth
+// board reboot. UI task polls it.
+uint32_t parkCount();
+// PERF ring buffer: the synth board holds one for good (allocated at its boot); on returns its
+// seconds, 0 = none (buffer effects silent). off: nothing to free here, returns 0.
+uint32_t perfBuffer(bool on);
 // Synth load since the previous call (status bar CPU readout), from its Status frames: block time
 // summed and longest, us, block count, and stalls (an audible gap). blocks == 0: no Status came.
 // UI task only.

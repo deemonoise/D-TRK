@@ -16,7 +16,8 @@ namespace link {
 constexpr uint32_t kPlayLatencyUs = 4000;
 constexpr uint32_t kStatusMs = 40;
 
-void begin(mt::SynthModel& model, mt::Synth& synth, SynthStream& out);
+// perfSec: seconds of PERF ring buffer attached to the synth (0 = none), told to the ESP in Hello.
+void begin(mt::SynthModel& model, mt::Synth& synth, SynthStream& out, uint8_t perfSec);
 void poll();
 // A reply (or Progress) frame of type t carrying a request's seq.
 void reply(mt::link::Msg t, uint8_t seq, const uint8_t* p, int n);

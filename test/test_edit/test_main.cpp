@@ -255,32 +255,77 @@ void test_copy_paste_drum_step_byte_exact() {
   TEST_ASSERT_EQUAL_MEMORY(&src.steps[2][3], &pat.steps[4][5], sizeof(Step));
 }
 
-void test_chain_insert_delete_move_all_fields() {
+void test_song_insert_into_empty() {
   static Project p;
   p.reset();
-  p.chainLen = 2;
-  p.chain[0] = 1; p.chainTr[0] = 3; p.chainRep[0] = 2; p.chainScene[0] = 1;
-  p.chain[1] = 4; p.chainTr[1] = -2; p.chainRep[1] = 5; p.chainScene[1] = 2;
-  TEST_ASSERT_TRUE(chainInsert(p, 1, 9));
-  TEST_ASSERT_EQUAL(3, p.chainLen);
-  TEST_ASSERT_EQUAL(9, p.chain[1]);
-  TEST_ASSERT_EQUAL(0, p.chainTr[1]);
-  TEST_ASSERT_EQUAL(1, p.chainRep[1]);
-  TEST_ASSERT_EQUAL(0, p.chainScene[1]);
-  TEST_ASSERT_EQUAL(4, p.chain[2]);
-  TEST_ASSERT_EQUAL(-2, p.chainTr[2]);
-  TEST_ASSERT_EQUAL(5, p.chainRep[2]);
-  TEST_ASSERT_EQUAL(2, p.chainScene[2]);
-  chainDelete(p, 0);
-  TEST_ASSERT_EQUAL(2, p.chainLen);
-  TEST_ASSERT_EQUAL(9, p.chain[0]);
-  TEST_ASSERT_EQUAL(-2, p.chainTr[1]);
-  TEST_ASSERT_EQUAL(1, p.chainRep[2]);  // the freed row is reset
-  TEST_ASSERT_EQUAL(0, p.chain[2]);
-  chainDelete(p, 5);  // past the end: nothing
-  TEST_ASSERT_EQUAL(2, p.chainLen);
-  p.chainLen = kChainMax;
-  TEST_ASSERT_FALSE(chainInsert(p, 0, 1));
+  TEST_ASSERT_TRUE(songInsert(p, 5, 3, 0x0101));  // `at` clamps to songLen
+  TEST_ASSERT_EQUAL(1, p.songLen);
+  TEST_ASSERT_EQUAL(3, p.song[0]);
+  TEST_ASSERT_EQUAL_HEX16(0x0101, p.songMute[0]);
+}
+
+void test_song_insert_middle_shifts() {
+  static Project p;
+  p.reset();
+  songInsert(p, 0, 1, 0x0001);
+  songInsert(p, 1, 2, 0x0002);
+  TEST_ASSERT_TRUE(songInsert(p, 1, 7, 0x8000));
+  TEST_ASSERT_EQUAL(3, p.songLen);
+  TEST_ASSERT_EQUAL(1, p.song[0]);
+  TEST_ASSERT_EQUAL(7, p.song[1]);
+  TEST_ASSERT_EQUAL_HEX16(0x8000, p.songMute[1]);
+  TEST_ASSERT_EQUAL(2, p.song[2]);
+  TEST_ASSERT_EQUAL_HEX16(0x0002, p.songMute[2]);
+}
+
+void test_song_insert_full_fails() {
+  static Project p;
+  p.reset();
+  for (int i = 0; i < kSongMax; ++i) TEST_ASSERT_TRUE(songInsert(p, i, i % kPatterns, i));
+  TEST_ASSERT_FALSE(songInsert(p, 0, 9, 0xFFFF));
+  TEST_ASSERT_EQUAL(kSongMax, p.songLen);
+  TEST_ASSERT_EQUAL(0, p.song[0]);
+  TEST_ASSERT_EQUAL_HEX16(0, p.songMute[0]);
+  TEST_ASSERT_EQUAL((kSongMax - 1) % kPatterns, p.song[kSongMax - 1]);
+  TEST_ASSERT_EQUAL_HEX16(kSongMax - 1, p.songMute[kSongMax - 1]);
+}
+
+void test_song_delete_middle_and_past_end() {
+  static Project p;
+  p.reset();
+  songInsert(p, 0, 1, 0x0001);
+  songInsert(p, 1, 2, 0x0002);
+  songInsert(p, 2, 3, 0x0004);
+  songDelete(p, 1);
+  TEST_ASSERT_EQUAL(2, p.songLen);
+  TEST_ASSERT_EQUAL(1, p.song[0]);
+  TEST_ASSERT_EQUAL(3, p.song[1]);
+  TEST_ASSERT_EQUAL_HEX16(0x0004, p.songMute[1]);
+  TEST_ASSERT_EQUAL(0, p.song[2]);  // the freed slot is zeroed
+  TEST_ASSERT_EQUAL_HEX16(0, p.songMute[2]);
+  songDelete(p, 2);  // past the end: nothing
+  songDelete(p, -1);
+  TEST_ASSERT_EQUAL(2, p.songLen);
+  TEST_ASSERT_EQUAL(3, p.song[1]);
+}
+
+void test_song_insert_clamps_pattern() {
+  static Project p;
+  p.reset();
+  TEST_ASSERT_TRUE(songInsert(p, 0, 99, 0));
+  TEST_ASSERT_EQUAL(kPatterns - 1, p.song[0]);
+}
+
+void test_pattern_track_mask() {
+  static Project p;
+  p.reset();
+  TEST_ASSERT_EQUAL_HEX16(0, patternTrackMask(p, 2));
+  p.patterns[2].length = 16;
+  p.patterns[2].steps[0][0].note = 60;
+  p.patterns[2].steps[5][15].note = kNoteOff;
+  p.patterns[2].steps[9][16].note = 60;  // past the length: ignored
+  TEST_ASSERT_EQUAL_HEX16((1 << 0) | (1 << 5), patternTrackMask(p, 2));
+  TEST_ASSERT_EQUAL_HEX16(0, patternTrackMask(p, 3));
 }
 
 int main(int, char**) {
@@ -301,6 +346,11 @@ int main(int, char**) {
   RUN_TEST(test_undo_drop_after_wrap);
   RUN_TEST(test_transpose_skips_drum_tracks);
   RUN_TEST(test_copy_paste_drum_step_byte_exact);
-  RUN_TEST(test_chain_insert_delete_move_all_fields);
+  RUN_TEST(test_song_insert_into_empty);
+  RUN_TEST(test_song_insert_middle_shifts);
+  RUN_TEST(test_song_insert_full_fails);
+  RUN_TEST(test_song_delete_middle_and_past_end);
+  RUN_TEST(test_song_insert_clamps_pattern);
+  RUN_TEST(test_pattern_track_mask);
   return UNITY_END();
 }

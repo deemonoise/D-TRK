@@ -87,6 +87,12 @@ void TransposeDialog::onInput(const hw::InputEvent& ev) {
         return;
       }
       break;
+    case InputType::EditTurn:  // A + turn: the same, entering the edit if needed
+      if (list_.sel() == kAmount && ev.shift && list_.holdEdit()) {
+        list_.edit(ev.delta * octave());
+        return;
+      }
+      break;
     default: break;
   }
   list_.onInput(ev);

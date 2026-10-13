@@ -39,6 +39,7 @@ Decoder dec;
 TimeSync clock;
 uint8_t txSeq = 0;
 uint32_t bootId = 0;
+uint8_t perfSec = 0;
 uint32_t lastStatus = 0;
 uint32_t lostTotal = 0;  // events lost on this side since boot (queue full)
 
@@ -68,6 +69,7 @@ void sendHello() {
 #endif
   h.bootId = bootId;
   h.modelSize = sizeof(mt::SynthModel);
+  h.perfSec = perfSec;
   send(Msg::Hello, h);
 }
 
@@ -158,6 +160,11 @@ void onPreviewSlice(Reader& r) {
   if (decode(r, m)) startPreview(m.instr, m.slice, m.root, m.holdMs > 25000 ? 25000 : m.holdMs);
 }
 
+void onPerf(Reader& r) {
+  Perf m;
+  if (decode(r, m)) pushNow(micros64() + kPlayLatencyUs, 3, 0xF6, m.op, m.val);
+}
+
 void onMeters(Reader& r) {
   Byte m;
   if (!decode(r, m)) return;
@@ -177,15 +184,21 @@ uint32_t cycleClock() { return ARM_DWT_CYCCNT; }
 // The synth's 32-bit sums wrap within seconds at 600 MHz: loop() folds them in here while it runs.
 bool profiling = false;
 uint64_t profCycles[mt::Synth::kProfStages] = {};
-uint32_t profBlocks = 0;
+uint32_t profCount[mt::Synth::kProfStages] = {};
+uint32_t profBlocks = 0, profPeak = 0;
 
 void foldProfile() {
-  uint32_t c[mt::Synth::kProfStages], blocks;
+  uint32_t c[mt::Synth::kProfStages], n[mt::Synth::kProfStages], blocks;
   __disable_irq();  // the audio interrupt adds to the sums
-  synth->takeProfile(c, blocks);
+  synth->takeProfile(c, n, blocks);
+  const uint32_t pk = out->takeProfPeak();
   __enable_irq();
-  for (int i = 0; i < mt::Synth::kProfStages; ++i) profCycles[i] += c[i];
+  for (int i = 0; i < mt::Synth::kProfStages; ++i) {
+    profCycles[i] += c[i];
+    profCount[i] += n[i];
+  }
   profBlocks += blocks;
+  if (pk > profPeak) profPeak = pk;
 }
 
 // Profile: Byte 1 starts (sums cleared), 0 stops; the reply carries the sums either way.
@@ -194,12 +207,17 @@ void onProfile(Reader& r) {
   if (!decode(r, m)) return;
   foldProfile();
   ProfileRep rep;
-  for (int i = 0; i < mt::Synth::kProfStages; ++i) rep.cycles[i] = profCycles[i];
+  for (int i = 0; i < mt::Synth::kProfStages; ++i) {
+    rep.cycles[i] = profCycles[i];
+    rep.count[i] = profCount[i];
+  }
   rep.blocks = profBlocks;
+  rep.peakCycles = profPeak;
   rep.running = m.v ? 1 : 0;
   rep.cyclesPerUs = F_CPU_ACTUAL / 1000000;
   memset(profCycles, 0, sizeof profCycles);
-  profBlocks = 0;
+  memset(profCount, 0, sizeof profCount);
+  profBlocks = profPeak = 0;
   profiling = m.v != 0;
   synth->setProfiler(profiling ? cycleClock : nullptr);
   reply(Msg::Profile, dec.seq(), rep);
@@ -215,6 +233,7 @@ void dispatch() {
     case Msg::PreviewNote: onPreviewNote(r); break;
     case Msg::PreviewSlice: onPreviewSlice(r); break;
     case Msg::PreviewStop: preview::stop(); break;
+    case Msg::Perf: onPerf(r); break;
     case Msg::Meters: onMeters(r); break;
     case Msg::Phones: onPhones(r); break;
     case Msg::Profile: onProfile(r); break;
@@ -249,13 +268,15 @@ void sendStatus() {
   for (int t = 0; t < mt::kTracks; ++t) s.trackPeak[t] = static_cast<uint8_t>(min(255.f, pk[t] * 100.f));
   s.lost = static_cast<uint16_t>(st.lost + lostTotal);
   lostTotal = 0;
+  s.parks = out->parks();
   s.scopeN = static_cast<uint16_t>(out->scopeRead(s.scope, Status::kScopeMax));
   send(Msg::Status, s);
 }
 
 }  // namespace
 
-void begin(mt::SynthModel& m, mt::Synth& s, SynthStream& o) {
+void begin(mt::SynthModel& m, mt::Synth& s, SynthStream& o, uint8_t perfSeconds) {
+  perfSec = perfSeconds;
   model = &m;
   synth = &s;
   out = &o;

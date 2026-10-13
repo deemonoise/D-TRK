@@ -44,7 +44,13 @@ void SynthStream::update() {
     while (const QEv* e = q_.peek()) {
       const int off = offsetIn(e->localUs, blockUs);
       if (off < 0) break;  // a later block
-      if (e->localUs < blockUs) late_++;
+      if (e->localUs < blockUs) {
+        late_++;
+        if (e->b[0] == 0xF6 && e->b[1] == 4) {  // PERF step clock: late at offset 0 would misplace the grid
+          q_.pop();
+          continue;
+        }
+      }
       if (!synth_->event(off, e->track, e->b, e->len)) lost_++;
       q_.pop();
     }
@@ -61,6 +67,7 @@ void SynthStream::update() {
   cycles_ += c;
   blocks_++;
   if (c > peakCycles_) peakCycles_ = c;
+  if (c > profPeak_) profPeak_ = c;
   if (c > kBlockCycles) stalls_++;
   uint16_t pk = outPeak_;
   for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
@@ -90,7 +97,10 @@ void SynthStream::update() {
 }
 
 void SynthStream::park(bool on) {
-  if (on) resetPending_ = true;
+  if (on) {
+    resetPending_ = true;
+    if (!parked_) ++parks_;
+  }
   parked_ = on;
 }
 

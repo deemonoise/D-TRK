@@ -89,6 +89,7 @@ void encode(const Hello& m, Writer& w) {
   w.bytes(m.fw, sizeof m.fw);
   w.u32(m.bootId);
   w.u32(m.modelSize);
+  w.u8(m.perfSec);
 }
 
 bool decode(Reader& r, Hello& m) {
@@ -97,6 +98,7 @@ bool decode(Reader& r, Hello& m) {
   m.fw[sizeof m.fw - 1] = 0;
   m.bootId = r.u32();
   m.modelSize = r.u32();
+  m.perfSec = r.left() > 0 ? r.u8() : 0;  // older firmware (protocol 1) ends here: still seen, then updated
   return r.ok();
 }
 
@@ -183,6 +185,7 @@ void encode(const Status& m, Writer& w) {
   w.u16(m.outPeak);
   w.bytes(m.trackPeak, sizeof m.trackPeak);
   w.u16(m.lost);
+  w.u8(m.parks);
   uint16_t n = m.scopeN > Status::kScopeMax ? Status::kScopeMax : m.scopeN;
   w.u16(n);
   w.bytes(m.scope, n);
@@ -196,6 +199,7 @@ bool decode(Reader& r, Status& m) {
   m.outPeak = r.u16();
   r.bytes(m.trackPeak, sizeof m.trackPeak);
   m.lost = r.u16();
+  m.parks = r.u8();
   m.scopeN = r.u16();
   if (m.scopeN > Status::kScopeMax) return false;
   r.bytes(m.scope, m.scopeN);
@@ -228,6 +232,17 @@ void encode(const Byte& m, Writer& w) { w.u8(m.v); }
 
 bool decode(Reader& r, Byte& m) {
   m.v = r.u8();
+  return r.ok();
+}
+
+void encode(const Perf& m, Writer& w) {
+  w.u8(m.op);
+  w.u8(m.val);
+}
+
+bool decode(Reader& r, Perf& m) {
+  m.op = r.u8();
+  m.val = r.u8();
   return r.ok();
 }
 
@@ -514,14 +529,18 @@ void encode(const ProfileRep& m, Writer& w) {
   w.u8(m.running);
   w.u32(m.blocks);
   w.u32(m.cyclesPerUs);
+  w.u32(m.peakCycles);
   for (uint64_t c : m.cycles) w.u64(c);
+  for (uint32_t c : m.count) w.u32(c);
 }
 
 bool decode(Reader& r, ProfileRep& m) {
   m.running = r.u8();
   m.blocks = r.u32();
   m.cyclesPerUs = r.u32();
+  m.peakCycles = r.u32();
   for (uint64_t& c : m.cycles) c = r.u64();
+  for (uint32_t& c : m.count) c = r.u32();
   return r.ok();
 }
 

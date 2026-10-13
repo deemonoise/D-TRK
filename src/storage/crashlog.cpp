@@ -118,10 +118,17 @@ bool appendCpuProfile(const char* head, const audio::Profile& pr) {
   if (!f) return false;
   constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
   f.print(head);
-  char line[64];
+  char line[80];
+  snprintf(line, sizeof(line), "  peak block %.0f us = %.1f %%\n", pr.peakUs, pr.peakUs * 100 / kBlockUs);
+  f.print(line);
+  // n: the stage's count per block (control updates, sounding voices), with the cost per one.
   for (int i = 0; i < audio::kProfStages; ++i) {
-    snprintf(line, sizeof(line), "  %-8s %7.1f us  %5.1f %%\n", mt::Synth::profName(i), pr.us[i], pr.us[i] * 100 / kBlockUs);
+    const int k = snprintf(line, sizeof(line), "  %-8s %7.1f us  %5.1f %%", mt::Synth::profName(i), pr.us[i],
+                           pr.us[i] * 100 / kBlockUs);
+    if (pr.n[i] > 0 && k > 0 && k < static_cast<int>(sizeof(line)))
+      snprintf(line + k, sizeof(line) - k, "  n %5.2f  %6.2f us each", pr.n[i], pr.us[i] / pr.n[i]);
     f.print(line);
+    f.print("\n");
   }
   f.close();
   return true;

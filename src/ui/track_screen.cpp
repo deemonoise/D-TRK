@@ -4,6 +4,7 @@
 #include <string.h>
 #include "app.h"
 #include "audio/audio.h"
+#include "fx_info.h"
 #include "name_edit.h"
 
 namespace ui {
@@ -42,15 +43,13 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
   params_[kVol] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u", cfg().vol); },
                    [this](int d) { cfg().vol = static_cast<uint8_t>(clampi(cfg().vol + d, 0, 127)); },
                    [this] { return !internal(); }};
-  // Pan: L64 .. C .. R63 (equal power, INT tracks only).
   params_[kPan] = {"Pan",
                    [this](char* o, int n) {
-                     const int v = cfg().pan;
-                     if (v < 0) snprintf(o, n, "L%d", -v);
-                     else if (v > 0) snprintf(o, n, "R%d", v);
-                     else snprintf(o, n, "C");
+                     char v[5];
+                     mt::fxFormat(mt::Fx::PAN, cfg().pan, v);
+                     snprintf(o, n, "%s", v);
                    },
-                   [this](int d) { cfg().pan = static_cast<int8_t>(clampi(cfg().pan + d, -64, 63)); },
+                   [this](int d) { cfg().pan = static_cast<uint8_t>(clampi(cfg().pan + d, 0, 127)); },
                    [this] { return !internal(); }};
   auto midiOnly = [this] { return internal(); };
   params_[kChannel] = {"Channel", [this](char* o, int n) { snprintf(o, n, "%u", cfg().channel + 1); },
@@ -82,6 +81,30 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                         patLenSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
                         patLenPat_ = app_.editPattern();
                       }};
+  // The track's speed in the edited pattern: 1/4 1/2 x1 x2 x4 (left to right).
+  params_[kSpeed] = {"Speed",
+                     [this](char* o, int n) {
+                       const mt::Pattern& pt = app_.project().patterns[app_.editPattern()];
+                       snprintf(o, n, "%s", mt::speedName(mt::toSpeed(pt.trackSpeed[app_.curTrack()])));
+                     },
+                     [this](int d) {
+                       static constexpr mt::TrackSpeed kOrder[] = {mt::TrackSpeed::Quarter, mt::TrackSpeed::Half,
+                                                                   mt::TrackSpeed::X1, mt::TrackSpeed::X2,
+                                                                   mt::TrackSpeed::X4};
+                       constexpr int kN = sizeof(kOrder) / sizeof(kOrder[0]);
+                       mt::Pattern& pt = app_.project().patterns[app_.editPattern()];
+                       uint8_t& v = pt.trackSpeed[app_.curTrack()];
+                       int i = 0;
+                       while (i < kN && kOrder[i] != mt::toSpeed(v)) ++i;
+                       if (i == kN) i = 2;  // x1
+                       const int ni = clampi(i + d, 0, kN - 1);
+                       if (kOrder[ni] == mt::toSpeed(v)) return;
+                       // Whole-pattern snapshot, once per run of Speed edits on one pattern (as Pat len).
+                       if (app_.editSeq() != speedSeq_ || app_.editPattern() != speedPat_) app_.pushUndo();
+                       v = static_cast<uint8_t>(kOrder[ni]);
+                       speedSeq_ = app_.editSeq() + 1;  // onEdit marks dirty next
+                       speedPat_ = app_.editPattern();
+                     }};
   params_[kHumanize] = {"Humanize",
                         [this](char* o, int n) {
                           if (cfg().humanize) snprintf(o, n, "%u", cfg().humanize);
@@ -149,6 +172,7 @@ void TrackScreen::leaveEdit() {
 
 void TrackScreen::onLeave() {
   leaveEdit();
+  panSel_ = -1;
   audio::setMeters(false);  // the level meters cost render time: only while MIX is shown
 }
 
@@ -180,6 +204,7 @@ void TrackScreen::editName(int delta) { editNameChar(cfg().name, kNameLen, nameP
 void TrackScreen::setMixer(bool on) {
   if (on == mixer_) return;
   leaveEdit();
+  panSel_ = -1;
   mixer_ = on;
   audio::setMeters(on);
   app_.invalidate();
@@ -206,11 +231,30 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     list_.edit(ev.delta);  // no x10 for characters
     return;
   }
-  if (const int ov = list_.onInput(ev)) {  // click (Shift+click) on the page bar: the next (previous) page
+  // A + turn on the name row: a character, Shift = the position.
+  if (ev.type == hw::InputType::EditTurn && page_ == kPgMain && list_.sel() == kName && list_.holdEdit()) {
+    if (ev.shift) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+    else list_.edit(ev.delta);
+    return;
+  }
+  if (const int ov = list_.onInput(ev)) {  // A + turn on the page bar: the previous / next page
     showPage(page_ + ov, true);
     return;
   }
   if (wasName && !nameEdit()) leaveEdit();
+}
+
+// B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
+void TrackScreen::onPage(int d) {
+  if (mixer_) return;
+  showPage(page_ + d, list_.barSelected());
+}
+
+// B: leaves the edit with the value kept (as the second click), a name edit gets fixNames(). MIX:
+// drops the pan bar selection.
+void TrackScreen::onBack() {
+  if (mixer_) panSel_ = -1;
+  else if (list_.editing()) leaveEdit();
 }
 
 void TrackScreen::onTouch(const TouchEvent& ev) {
@@ -270,7 +314,7 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
 
 int TrackScreen::firstTrack() const { return app_.curTrack() / kStrips * kStrips; }
 
-// Mutes, solos, the half's volumes and the master: the mixer redraws when they change (from here, the
+// Mutes, solos, the half's volumes and pans, the pan selection and the master: the mixer redraws when they change (from here, the
 // track buttons or another screen); the scope adds its own frames.
 uint32_t TrackScreen::mixSignature() const {
   const mt::Project& p = app_.project();
@@ -278,11 +322,12 @@ uint32_t TrackScreen::mixSignature() const {
   auto mix = [&](uint32_t v) { h = (h ^ v) * 16777619u; };
   mix(static_cast<uint32_t>(app_.curTrack()));
   mix(p.masterVol);
+  mix(static_cast<uint32_t>(panSel_));
   for (int t = 0; t < mt::kTracks; ++t) mix(p.tracks[t].mute | p.tracks[t].solo << 1 | static_cast<uint32_t>(p.tracks[t].out) << 2);
   for (int k = 0; k < kStrips; ++k) {
     const mt::TrackCfg& t = p.tracks[firstTrack() + k];
     const mt::Instrument& in = p.instruments[t.instr % mt::kInstruments];
-    mix(t.vol | in.send << 8 | in.rsend << 16);
+    mix(t.vol | in.send << 8 | in.rsend << 16 | static_cast<uint32_t>(t.pan) << 24);
   }
   return h;
 }
@@ -307,6 +352,17 @@ void TrackScreen::setVol(int track, int v) {
   app_.markDirty();
 }
 
+void TrackScreen::setPan(int track, int v) {
+  mt::TrackCfg& t = app_.project().tracks[track];
+  if (t.out != mt::TrackOut::Int) return;  // MIDI: no pan
+  v = clampi(v, 0, 127);
+  if (v == t.pan) return;
+  engine::lockProject();
+  t.pan = static_cast<uint8_t>(v);
+  engine::unlockProject();
+  app_.markDirty();
+}
+
 void TrackScreen::setMasterVol(int v) {
   v = clampi(v, 0, mt::kMasterVolMax);
   if (v == app_.project().masterVol) return;
@@ -326,13 +382,25 @@ void TrackScreen::toggleMuteSolo(int track, bool solo) {
 }
 
 void TrackScreen::mixerInput(const hw::InputEvent& ev) {
+  // The selected pan bar went away (another half, a MIDI output, a project load): MAIN again.
+  if (panSel_ >= 0 && (panSel_ / kStrips != firstTrack() / kStrips ||
+                       app_.project().tracks[panSel_].out != mt::TrackOut::Int))
+    panSel_ = -1;
+  if (ev.type == hw::InputType::EditTurn) {  // A + turn: master volume (or the selected pan), Shift = x10
+    const int d = ev.delta * (ev.shift ? 10 : 1);
+    if (panSel_ >= 0) setPan(panSel_, app_.project().tracks[panSel_].pan + d);
+    else setMasterVol(app_.project().masterVol + d);
+    return;
+  }
   if (ev.type != hw::InputType::EncTurn) return;
   if (ev.shift) {  // A / B: the same strip in the other half
+    panSel_ = -1;
     app_.setCurTrack((app_.curTrack() + kStrips) % mt::kTracks);
     app_.invalidate();
     return;
   }
-  setMasterVol(app_.project().masterVol + ev.delta);
+  if (panSel_ >= 0) setPan(panSel_, app_.project().tracks[panSel_].pan + ev.delta);
+  else setMasterVol(app_.project().masterVol + ev.delta);
 }
 
 bool TrackScreen::hitStrip(int x, int y, int& strip, Part& part) const {
@@ -349,6 +417,7 @@ bool TrackScreen::hitStrip(int x, int y, int& strip, Part& part) const {
   const int lx = (x - kStripX0) % kStripW;
   if (ly < kFaderY) part = Part::Name;
   else if (ly < kFaderY + kFaderH + 8) part = Part::Fader;
+  else if (ly >= kPanY - 2 && ly < kPanY + 16) part = Part::Pan;  // the text and the bar
   else if (ly >= kBtnY - 4 && ly < kBtnY + kBtnH + 4) part = lx < 3 + kBtnW + 1 ? Part::Mute : Part::Solo;
   else return false;
   return true;
@@ -372,6 +441,13 @@ void TrackScreen::mixerTouch(const TouchEvent& ev) {
   const int tr = firstTrack() + strip;
   if (ev.type == TouchType::Tap && (part == Part::Mute || part == Part::Solo)) {
     toggleMuteSolo(tr, part == Part::Solo);
+    return;
+  }
+  if (part == Part::Pan) {  // tap: select / drop the pan bar (INT tracks); the encoder turns it
+    if (ev.type == TouchType::Tap && app_.project().tracks[tr].out == mt::TrackOut::Int) {
+      panSel_ = panSel_ == tr ? -1 : tr;
+      app_.invalidate();
+    }
     return;
   }
   if (part == Part::Fader) setVol(tr, 127 - pos * 127 / kFaderH);
@@ -470,6 +546,17 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     else snprintf(buf, sizeof(buf), "MIDI");
     s.setTextColor(internal ? kText : kDim);
     s.drawString(buf, x + 6, y0 + kValY);
+    if (internal) {  // pan: "C" / "L12" / "R40" centred, the bar with a tick at the position under it
+      const bool sel = panSel_ == tr;
+      const int py = y0 + kPanY;
+      if (sel) s.fillRect(x + 1, py - 2, kStripW - 4, 18, kBeatBg);
+      mt::fxFormat(mt::Fx::PAN, t.pan, buf);
+      s.setTextColor(sel ? kCursor : (audible ? kText : kDim));
+      s.drawString(buf, x + (kStripW - 2 - static_cast<int>(strlen(buf)) * kCharW) / 2, py - 2);
+      const int bx = x + 4, bw = kStripW - 10, by = py + kPanBarDy;
+      s.fillRect(bx, by, bw, 2, kDim);
+      s.fillRect(bx + t.pan * (bw - 2) / 127, by - 1, 2, 4, sel ? kCursor : kText);
+    }
     const mt::Instrument& in = p.instruments[t.instr % mt::kInstruments];
     s.setTextColor(kDim);
     if (internal) snprintf(buf, sizeof(buf), "S%3u", in.send);

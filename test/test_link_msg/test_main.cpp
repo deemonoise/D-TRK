@@ -67,6 +67,7 @@ void test_hello() {
   strcpy(a.fw, "1.2.3-abc");
   a.bootId = 0xCAFEF00D;
   a.modelSize = 12345;
+  a.perfSec = 6;
   int n = put(a);
   Hello b;
   Reader r(buf, n);
@@ -75,7 +76,14 @@ void test_hello() {
   TEST_ASSERT_EQUAL_STRING("1.2.3-abc", b.fw);
   TEST_ASSERT_EQUAL_HEX32(0xCAFEF00D, b.bootId);
   TEST_ASSERT_EQUAL_UINT32(12345, b.modelSize);
-  checkTruncated<Hello>(n);
+  TEST_ASSERT_EQUAL_UINT8(6, b.perfSec);
+  // Without perfSec (protocol 1 firmware) it still decodes: the version screen can offer the update.
+  Hello old;
+  Reader ro(buf, n - 1);
+  TEST_ASSERT_TRUE(decode(ro, old));
+  TEST_ASSERT_EQUAL_HEX32(0xCAFEF00D, old.bootId);
+  TEST_ASSERT_EQUAL_UINT8(0, old.perfSec);
+  checkTruncated<Hello>(n - 1);
 }
 
 void test_time() {

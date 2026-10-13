@@ -11,6 +11,8 @@ namespace ui {
 // Instrument editor. Shift+turn (or a tap on the header arrows) = instrument -+1; entering the tab
 // selects the instrument of App::curTrack(). PREVIEW (tap, or a long press) plays C4 for 300 ms.
 // PRESET (tap, or Shift + long press): LOAD / SAVE menu, then the PresetBrowser over the list.
+// On the SMPL page that menu is SAMPLE: Chop, Add slice (Shift on the click: at a transient), Delete
+// slice, Clear slices (confirm), Load / Save preset; A tap / Shift + A tap = next / previous marker.
 // Name: click to edit, turn = character, Shift+turn = position.
 // Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
 // ADSR graph), the type's own (OSC / SMPL / FM / DRUM; SYNTH: OSC and MOD), FILT, LFO. The page is
@@ -35,6 +37,9 @@ class InstScreen : public Screen {
   bool buttonsBusy() const;
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
+  void onPage(int d) override;
+  void onBack() override;
+  void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && onEditor(); }
@@ -58,7 +63,7 @@ class InstScreen : public Screen {
                        kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
   static constexpr int kDrive = 0, kBit = 1, kSrr = 2, kFltMode = 3, kCutoff = 4, kReso = 5, kFEnv = 6, kFAtk = 7,
-                       kFDec = 8, kKeytrack = 9, kLfoSel = 10, kLfoWave = 11, kLfoSync = 12, kLfoTrig = 13,
+                       kFDec = 8, kKeytrack = 9, kLfoSel = 10, kLfoWave = 11, kLfoSync = 12, kLfoRetrig = 13,
                        kLfoRate = 14, kLfoDepth = 15, kLfoDest = 16, kTailRows = 17;
   // tail: FILT = [0, 10) (Drive, Bit crush, Downsample first: they are before the filter), LFO
   static constexpr int kFiltRows = 10;
@@ -107,8 +112,8 @@ class InstScreen : public Screen {
   void drawPageBar(LGFX_Sprite& s, int y);
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
   void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC page: frame / waveform of the selected osc
-  void initTail(Param* t, bool macros);  // t = &rows[type's row count]; macros: FM / DRUM LFO targets
-  void relabel();                        // DRUM macro labels of the current machine
+  void initTail(Param* t);  // t = &rows[type's row count]
+  void relabel();           // DRUM macro labels of the current machine
   void leaveEdit();
   void fixNames();  // empty name -> INSn
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }

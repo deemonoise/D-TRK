@@ -65,12 +65,18 @@ void test_project_reset_defaults() {
   delete p;
 }
 
-void test_project_reset_clears_song_mode() {
+void test_project_reset_clears_song() {
   Project* p = new Project();
-  TEST_ASSERT_FALSE(p->songMode);
-  p->songMode = true;
+  p->songLen = 3;
+  p->song[0] = 5;
+  p->song[kSongMax - 1] = 7;
+  p->songMute[2] = 0xABCD;
   p->reset();
-  TEST_ASSERT_FALSE(p->songMode);
+  TEST_ASSERT_EQUAL(0, p->songLen);
+  for (int i = 0; i < kSongMax; ++i) {
+    TEST_ASSERT_EQUAL(0, p->song[i]);
+    TEST_ASSERT_EQUAL_HEX16(0, p->songMute[i]);
+  }
   delete p;
 }
 
@@ -90,7 +96,7 @@ void test_reset_audio_defaults() {
   TEST_ASSERT_EQUAL(static_cast<int>(TrackOut::Int), static_cast<int>(p->tracks[3].out));
   TEST_ASSERT_EQUAL(3, p->tracks[3].instr);  // track N defaults to instrument N
   TEST_ASSERT_EQUAL(100, p->tracks[3].vol);
-  TEST_ASSERT_EQUAL(40, p->masterVol);
+  TEST_ASSERT_EQUAL(100, p->masterVol);
   TEST_ASSERT_TRUE(p->preview);
   TEST_ASSERT_EQUAL(3, p->dlyTime);
   TEST_ASSERT_EQUAL(50, p->dlyFb);
@@ -112,7 +118,7 @@ void test_reset_audio_defaults() {
   TEST_ASSERT_EQUAL(3, p->dlyTime);
   TEST_ASSERT_EQUAL(100, p->dlyLevel);
   TEST_ASSERT_EQUAL(100, p->instruments[2].vol);
-  TEST_ASSERT_EQUAL(40, p->masterVol);
+  TEST_ASSERT_EQUAL(100, p->masterVol);
   TEST_ASSERT_TRUE(p->trackInternal(3));
   delete p;
 }
@@ -227,20 +233,91 @@ void test_instr_set_type() {
 }
 
 void test_lfo_dest_step() {
+  using T = InstrType;
   const uint8_t vol = static_cast<uint8_t>(LfoDest::Vol), cut = static_cast<uint8_t>(LfoDest::Cutoff);
-  const uint8_t drv = static_cast<uint8_t>(LfoDest::Drive);
-  // FM / DRUM: every target in order, clamped at the ends.
-  TEST_ASSERT_EQUAL(1, lfoDestStep(0, 1, true));
-  TEST_ASSERT_EQUAL(cut, lfoDestStep(vol, 1, true));
-  TEST_ASSERT_EQUAL(drv, lfoDestStep(vol, 5, true));
-  TEST_ASSERT_EQUAL(drv, lfoDestStep(cut, 1, false));  // DRIVE on every type
-  TEST_ASSERT_EQUAL(0, lfoDestStep(2, -9, true));
+  const uint8_t drv = static_cast<uint8_t>(LfoDest::Drive), reso = static_cast<uint8_t>(LfoDest::Reso);
+  const uint8_t last = static_cast<uint8_t>(LfoDest::Rtrg4);  // last in the display order
+  // FM: every target in order, clamped at the ends.
+  TEST_ASSERT_EQUAL(1, lfoDestStep(0, 1, T::Fm));
+  TEST_ASSERT_EQUAL(cut, lfoDestStep(vol, 1, T::Fm));
+  TEST_ASSERT_EQUAL(reso, lfoDestStep(drv, 1, T::Chip));
+  TEST_ASSERT_EQUAL(0, lfoDestStep(2, -9, T::Fm));
+  TEST_ASSERT_EQUAL(last, lfoDestStep(0, 99, T::Fm));  // clamped at the end
   // CHIP / SAMPLE: the macro targets are skipped.
-  TEST_ASSERT_EQUAL(vol, lfoDestStep(0, 1, false));
-  TEST_ASSERT_EQUAL(cut, lfoDestStep(0, 2, false));
-  TEST_ASSERT_EQUAL(drv, lfoDestStep(0, 9, false));
-  TEST_ASSERT_EQUAL(0, lfoDestStep(vol, -1, false));
-  TEST_ASSERT_EQUAL(0, lfoDestStep(0, -1, false));
+  TEST_ASSERT_EQUAL(vol, lfoDestStep(0, 1, T::Chip));
+  TEST_ASSERT_EQUAL(cut, lfoDestStep(0, 2, T::Sample));
+  TEST_ASSERT_EQUAL(0, lfoDestStep(vol, -1, T::Chip));
+}
+
+void test_lfo_dest_valid() {
+  using T = InstrType;
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Duty), T::Chip));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), T::Synth));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), T::Sample));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Sub), T::Synth));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Noise), T::Fm));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Semi2), T::Chip));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Col), T::Drum));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Col), T::Chip));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Rtrg4), T::Sample));
+  TEST_ASSERT_FALSE(lfoDestValid(static_cast<uint8_t>(LfoDest::Count), T::Fm));
+  // Stepping skips targets of other types.
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Fine), 1, T::Fm));     // past DUTY..SEMI2
+  TEST_ASSERT_EQUAL(d(LfoDest::Duty), lfoDestStep(d(LfoDest::Fine), 1, T::Chip));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Duty), 1, T::Chip));  // past SUB..SEMI2
+  TEST_ASSERT_EQUAL(d(LfoDest::Sub), lfoDestStep(d(LfoDest::Fine), 1, T::Synth));   // past DUTY
+}
+
+// An LFO can't pick RTRG of itself; RATE / DEPTH of itself are fine.
+void test_lfo_dest_step_skips_self_retrig() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg3), lfoDestStep(d(LfoDest::Rtrg1), 1, InstrType::Fm, 1));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg2), lfoDestStep(d(LfoDest::Rtrg4), -1, InstrType::Fm, 2));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg1), lfoDestStep(d(LfoDest::Rtrg4), -2, InstrType::Fm, 2));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Semi2), 1, InstrType::Synth, 0));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg3), lfoDestStep(d(LfoDest::Rtrg3), 1, InstrType::Fm, 3));  // end, self skipped
+}
+
+void test_lfo_dest_names() {
+  TEST_ASSERT_EQUAL_STRING("PITCH", lfoDestName(0, InstrType::Fm));
+  TEST_ASSERT_EQUAL_STRING("COLOR", lfoDestName(static_cast<uint8_t>(LfoDest::Col), InstrType::Drum));
+  TEST_ASSERT_EQUAL_STRING("SHP2", lfoDestName(static_cast<uint8_t>(LfoDest::Col), InstrType::Synth));
+  TEST_ASSERT_EQUAL_STRING("RESO", lfoDestName(static_cast<uint8_t>(LfoDest::Reso), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("SEMI2", lfoDestName(static_cast<uint8_t>(LfoDest::Semi2), InstrType::Synth));
+  TEST_ASSERT_EQUAL_STRING("L2 RATE", lfoDestName(static_cast<uint8_t>(LfoDest::Rate2), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("L3 DEPTH", lfoDestName(static_cast<uint8_t>(LfoDest::Depth3), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("L4 RTRG", lfoDestName(static_cast<uint8_t>(LfoDest::Rtrg4), InstrType::Chip));
+  TEST_ASSERT_EQUAL_STRING("PITCH", lfoDestName(200, InstrType::Chip));  // out of range
+}
+
+// PAN: every type; the Dest list shows it between RVB and BIT (display order, not the enum's).
+void test_lfo_dest_pan() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_EQUAL_STRING("PAN", lfoDestName(d(LfoDest::Pan), InstrType::Synth));
+  for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
+    const auto it = static_cast<InstrType>(t);
+    TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Pan), it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Rvb), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Bit), lfoDestStep(d(LfoDest::Pan), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Bit), -1, it));
+  }
+  TEST_ASSERT_EQUAL(d(LfoDest::Rtrg4), lfoDestStep(d(LfoDest::Rtrg3), 1, InstrType::Chip));  // PAN not at the end
+}
+
+// Type change: a target the new type lacks becomes PITCH, on every LFO.
+void test_instr_set_type_fixes_lfo_dests() {
+  Instrument m;
+  instrSetType(m, InstrType::Synth);
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Sub);
+  m.lfo[0].dest = static_cast<uint8_t>(LfoDest::Reso);
+  m.lfo[1].dest = static_cast<uint8_t>(LfoDest::Duty);  // invalid on SYNTH already: kept until a type change
+  instrSetType(m, InstrType::Chip);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfoDest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Reso), m.lfo[0].dest);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Duty), m.lfo[1].dest);  // valid on CHIP
+  instrSetType(m, InstrType::Fm);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfo[1].dest);
 }
 
 void test_filter_defaults_off() {
@@ -335,7 +412,8 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(50, p.compRel);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(12, kLocks);  // + BIT, SRR
+  TEST_ASSERT_EQUAL(13, kLocks);  // + BIT, SRR, PAN
+  TEST_ASSERT_EQUAL(kLockSrr + 1, kLockPan);
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockFlt, static_cast<int>(Fx::FLT));  // lock order unchanged
 }
 
@@ -357,6 +435,44 @@ void test_lfo_sync_and_refs() {
   TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pitch), m.lfo[2].dest);
 }
 
+void test_track_speed_factors() {
+  TEST_ASSERT_EQUAL(1, speedMul(TrackSpeed::X1));
+  TEST_ASSERT_EQUAL(2, speedMul(TrackSpeed::X2));
+  TEST_ASSERT_EQUAL(4, speedMul(TrackSpeed::X4));
+  TEST_ASSERT_EQUAL(1, speedMul(TrackSpeed::Half));
+  TEST_ASSERT_EQUAL(2, speedDiv(TrackSpeed::Half));
+  TEST_ASSERT_EQUAL(4, speedDiv(TrackSpeed::Quarter));
+  TEST_ASSERT_EQUAL(1, speedDiv(TrackSpeed::X4));
+  TEST_ASSERT_EQUAL_STRING("x2", speedName(TrackSpeed::X2));
+  TEST_ASSERT_EQUAL_STRING("1/4", speedName(TrackSpeed::Quarter));
+}
+
+void test_track_step_at() {
+  Pattern pt;
+  pt.clear();
+  pt.length = 16;
+  // x1: as stepIndex today, with polymeter.
+  TEST_ASSERT_EQUAL(5, trackStepAt(pt, 0, 5, 0, 0));
+  pt.trackLen[0] = 3;
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 0, 5, 7, 0));
+  pt.trackLen[0] = 0;
+  // x2: two track steps per pattern step, wraps at the track length.
+  pt.trackSpeed[1] = static_cast<uint8_t>(TrackSpeed::X2);
+  TEST_ASSERT_EQUAL(10, trackStepAt(pt, 1, 5, 0, 0));
+  TEST_ASSERT_EQUAL(11, trackStepAt(pt, 1, 5, 0, 1));
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 1, 9, 0, 0));  // 18 % 16
+  // 1/2: plays on even counts, the whole track over two passes.
+  pt.trackSpeed[2] = static_cast<uint8_t>(TrackSpeed::Half);
+  TEST_ASSERT_EQUAL(2, trackStepAt(pt, 2, 4, 0, 0));
+  TEST_ASSERT_EQUAL(-1, trackStepAt(pt, 2, 5, 0, 0));  // not this pattern step
+  TEST_ASSERT_EQUAL(8, trackStepAt(pt, 2, 0, 1, 0));   // (16 + 0) / 2
+  TEST_ASSERT_EQUAL(15, trackStepAt(pt, 2, 14, 1, 0));
+  TEST_ASSERT_EQUAL(0, trackStepAt(pt, 2, 0, 2, 0));
+  // Bad stored value plays as x1.
+  pt.trackSpeed[3] = 99;
+  TEST_ASSERT_EQUAL(5, trackStepAt(pt, 3, 5, 0, 0));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_step_is_14_bytes_and_empty_by_default);
@@ -365,7 +481,7 @@ int main() {
   RUN_TEST(test_ticks_per_step);
   RUN_TEST(test_gate_percent_encoding);
   RUN_TEST(test_project_reset_defaults);
-  RUN_TEST(test_project_reset_clears_song_mode);
+  RUN_TEST(test_project_reset_clears_song);
   RUN_TEST(test_track_audible_mute_solo);
   RUN_TEST(test_reset_audio_defaults);
   RUN_TEST(test_instr_type_order);
@@ -381,6 +497,10 @@ int main() {
   RUN_TEST(test_drum_set_machine);
   RUN_TEST(test_instr_set_type);
   RUN_TEST(test_lfo_dest_step);
+  RUN_TEST(test_lfo_dest_valid);
+  RUN_TEST(test_lfo_dest_step_skips_self_retrig);
+  RUN_TEST(test_lfo_dest_names);
+  RUN_TEST(test_instr_set_type_fixes_lfo_dests);
   RUN_TEST(test_filter_defaults_off);
   RUN_TEST(test_synth_type_defaults);
   RUN_TEST(test_synth_type_order);
@@ -389,5 +509,8 @@ int main() {
   RUN_TEST(test_kit_defaults_and_drum_track);
   RUN_TEST(test_sound_fx_defaults);
   RUN_TEST(test_lfo_sync_and_refs);
+  RUN_TEST(test_track_speed_factors);
+  RUN_TEST(test_track_step_at);
+  RUN_TEST(test_lfo_dest_pan);
   return UNITY_END();
 }

@@ -69,6 +69,10 @@ constexpr const char* kTemplateDir = "/templates";
 Result saveTemplate(const mt::Project& live, const char* name);
 Result newFromTemplate(mt::Project& live, const char* name, int* missing = nullptr);
 
+// Legacy chain transposes were dropped by the song migration (mt::LoadNotes); set by the last file
+// read (load / save verify / upload check), false after newProject / newDemo.
+bool songTransposeDropped();
+
 // Boot: loads /last.txt straight into p (engine not running yet). False = p left reset.
 // *fromBak = true when the .mtp was unreadable and the .bak was loaded instead.
 // failed: set when the project named in /last.txt could not be loaded (demo is used instead).

@@ -24,8 +24,14 @@ bool saveProject(const Project& p, ByteSink& out);
 
 enum class LoadErr : uint8_t { Ok, BadMagic, BadVersion, Truncated, BadCrc, BadValue };
 
-// Resets out first. Values are clamped to valid ranges; unknown chunks are skipped.
-LoadErr loadProject(ByteSource& in, Project& out);
+// What a load changed in an old file (for a message to the user).
+struct LoadNotes {
+  bool songTransposeDropped = false;  // a legacy chain item had a transpose: the song has none
+};
+
+// Resets out first. Values are clamped to valid ranges; unknown chunks are skipped. Old song chunks
+// (PROJ chain, CHN2, SCNS) are migrated to the song when the file has no SNG3.
+LoadErr loadProject(ByteSource& in, Project& out, LoadNotes* notes = nullptr);
 
 // The sample (SMPL) and wavetable (WTBL) names of a project file, without loading it (~3 KB
 // instead of a whole Project). The CRC is checked like loadProject.

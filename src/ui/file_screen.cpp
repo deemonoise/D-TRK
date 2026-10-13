@@ -1,5 +1,7 @@
 #include "file_screen.h"
 #include "engine/engine.h"
+#include <Arduino.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -7,9 +9,15 @@
 #include "audio/audio.h"
 #include "link/bank_client.h"
 #include "esp_heap_caps.h"
+#include "hw/battery.h"
+#include "link/link.h"
+#include "link/synth_fw.h"
 #include "sample_set.h"
+#include "synth.h"
 #include "demos.h"
 #include "templates.h"
+#include "storage/crashlog.h"
+#include "storage/remote_fs.h"
 #include "storage/storage.h"
 
 namespace ui {
@@ -38,12 +46,13 @@ void FileScreen::onEnter() {
   autoAvail_ = storage::autosaveExists(app_.project().name);
   if (!enabled(sel_)) moveSel(1);
   audio::bankViewStale();
-  if (samples_) sampleMove(0);  // the bank may have changed
+  if (section_ == kSecSamples) sampleMove(0);  // the bank may have changed
+  sysList_.setEdit(false);
 }
 
 void FileScreen::onProjectReplaced() {
   audio::bankViewStale();
-  if (samples_) sampleMove(0);  // another sample list
+  if (section_ == kSecSamples) sampleMove(0);  // another sample list
 }
 
 void FileScreen::onLeave() {
@@ -82,7 +91,7 @@ void FileScreen::run(int a) {
   if (!enabled(a)) return;
   sel_ = a;
   switch (a) {
-    case kSectionSel: setSection(true); break;
+    case kSectionSel: return;  // switched by A + turn / a tap on the page bar
     case kSave: save(); break;
     case kSaveAs: {
       const char* cur = app_.project().name;
@@ -480,8 +489,12 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
     wifi_.onInput(ev);
     return;
   }
-  if (samples_ && !names_) {
+  if (section_ == kSecSamples && !names_) {
     samplesInput(ev);
+    return;
+  }
+  if (section_ == kSecSystem && !names_) {
+    systemInput(ev);
     return;
   }
   if (names_) {
@@ -500,9 +513,32 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
   }
   switch (ev.type) {
     case InputType::EncTurn: moveSel(ev.delta); break;
-    case InputType::EncClick: run(sel_); break;
+    case InputType::EncClick:
+      if (sel_ != kSectionSel) run(sel_);  // the section switch: A + turn
+      break;
+    case InputType::EditTurn:
+      if (sel_ == kSectionSel && ev.delta) setSection(section_ + ev.delta);
+      break;
     default: break;
   }
+}
+
+// B: the open dialog / keyboard gets its long press (close / cancel), else the file list closes;
+// SYSTEM: leaves the edit with the value kept.
+void FileScreen::onBack() {
+  const hw::InputEvent lp{hw::InputType::EncLong, 0, false};
+  if (kb_.isOpen()) kb_.onInput(lp);
+  else if (import_.isOpen()) import_.onInput(lp);
+  else if (render_.isOpen()) render_.onInput(lp);
+  else if (wifi_.isOpen()) wifi_.onInput(lp);
+  else if (names_) closeList();
+  else if (section_ == kSecSystem) sysList_.setEdit(false);
+}
+
+// B + Shift + turn: the previous / next section.
+void FileScreen::onPage(int d) {
+  if (kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() || names_) return;
+  setSection(section_ + d);
 }
 
 void FileScreen::onTouch(const TouchEvent& ev) {
@@ -524,11 +560,15 @@ void FileScreen::onTouch(const TouchEvent& ev) {
   }
   const int top = y0_ + kHeaderH + (names_ ? 0 : PageBar::kH);
   if (!names_ && ev.y >= y0_ + kHeaderH && ev.y < top) {
-    if (ev.type == TouchType::Tap) setSection(PageBar::at(ev.x, 2) == 1);
+    if (ev.type == TouchType::Tap) setSection(PageBar::at(ev.x, kSections));
     return;
   }
-  if (samples_ && !names_) {
+  if (section_ == kSecSamples && !names_) {
     samplesTouch(ev);
+    return;
+  }
+  if (section_ == kSecSystem && !names_) {
+    systemTouch(ev);
     return;
   }
   if (names_) {
@@ -572,8 +612,14 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
   const bool sd = hw::sdReady();
   drawHeader(s, y0);
   const int top = y0 + kHeaderH + (names_ ? 0 : PageBar::kH);
-  if (samples_ && !names_) {
+  if (section_ == kSecSamples && !names_) {
     drawSamples(s, top);
+    return;
+  }
+  if (section_ == kSecSystem && !names_) {
+    batSeqDrawn_ = app_.batterySeq();
+    profSecDrawn_ = profSecs();  // the CPU profile row shows this value
+    sysList_.draw(s, top);
     return;
   }
   if (names_) {
@@ -623,25 +669,33 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
     s.drawString(buf, 16, ty);
   }
   if (!names_) {
-    // Sections: a page bar; with the encoder focus on it, an outline (click = the other section).
-    static const char* const kNames[] = {"PROJECTS", "SAMPLES"};
+    // Sections: a page bar; with the encoder focus on it, an outline (A + turn = previous / next section).
+    static const char* const kNames[kSections] = {"PROJECTS", "SAMPLES", "SYSTEM"};
     const int by = y0 + kHeaderH;
-    PageBar::draw(s, by, kNames, 2, samples_ ? 1 : 0);
-    if (samples_ ? ssel_ == kSwitchRow : sel_ == kSectionSel) PageBar::drawFocus(s, by);
+    PageBar::draw(s, by, kNames, kSections, section_);
+    const bool focus = section_ == kSecSamples  ? ssel_ == kSwitchRow
+                       : section_ == kSecSystem ? sysList_.barSelected()
+                                                : sel_ == kSectionSel;
+    if (focus) PageBar::drawFocus(s, by);
   }
   s.setTextColor(sd ? kDim : kEditCursor);
   const char* sdText = sd ? "SD OK" : "NO SD CARD";
   s.drawString(sdText, kScreenW - 16 - static_cast<int>(strlen(sdText)) * kCharW, ty);
 }
 
-void FileScreen::setSection(bool samples) {
-  samples_ = samples;
+void FileScreen::setSection(int section) {
+  section_ = (section % kSections + kSections) % kSections;
   // Focus stays on the switch, so turning the encoder continues in the new section.
-  if (samples) {
-    ssel_ = kSwitchRow;
-    stop_ = 0;
-  } else {
-    sel_ = kSectionSel;
+  switch (section_) {
+    case kSecSamples:
+      ssel_ = kSwitchRow;
+      stop_ = 0;
+      break;
+    case kSecSystem:
+      sysList_.setEdit(false);
+      sysList_.selectBar();
+      break;
+    default: sel_ = kSectionSel; break;
   }
   app_.invalidate();
 }
@@ -684,7 +738,7 @@ void FileScreen::sampleRun(int row) {
   if (!sampleEnabled(row)) return;
   ssel_ = row;
   switch (row) {
-    case kSwitchRow: setSection(false); return;
+    case kSwitchRow: return;  // switched by A + turn / a tap on the page bar
     case kImportRow:
       if (!playbackBusy()) openWavList();
       return;
@@ -899,7 +953,12 @@ void FileScreen::samplesInput(const hw::InputEvent& ev) {
   using hw::InputType;
   switch (ev.type) {
     case InputType::EncTurn: sampleMove(ev.delta); break;
-    case InputType::EncClick: sampleRun(ssel_); break;
+    case InputType::EncClick:
+      if (ssel_ != kSwitchRow) sampleRun(ssel_);  // the section switch: A + turn
+      break;
+    case InputType::EditTurn:
+      if (ssel_ == kSwitchRow && ev.delta) setSection(section_ + ev.delta);
+      break;
     default: break;
   }
 }
@@ -981,6 +1040,237 @@ void FileScreen::drawSamples(LGFX_Sprite& s, int top) {
   s.setTextColor(kDim);
   if (stop_ > 0) s.drawString("^", kScreenW - 120, rowsTop + 4);
   if (stop_ + kSampleRows < total) s.drawString("v", kScreenW - 120, rowsTop + (kSampleRows - 1) * kRowH + 4);
+}
+
+// ---- SYSTEM ----
+
+// Device settings (App, NVS) and read-only diagnostics: no row is project data, none marks it dirty.
+void FileScreen::initSystem() {
+  // Live output level; the project's master is MAIN on TRACK / MIX.
+  sysParams_[kPhones] = {"Phones", [this](char* o, int n) { snprintf(o, n, "%d%%", app_.phones()); },
+                         [this](int d) { app_.setPhones(app_.phones() + d); }};
+  sysParams_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.preview() ? "ON" : "OFF"); },
+                          [this](int d) { app_.setPreview(d > 0); }};
+  sysParams_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
+                        [this](int d) { app_.setTheme(app_.theme() + d); }};
+  sysParams_[kAutosave] = {"Autosave",
+                           [this](char* o, int n) {
+                             if (app_.autosaveMin()) snprintf(o, n, "%d MIN", app_.autosaveMin());
+                             else snprintf(o, n, "OFF");
+                           },
+                           [this](int d) {
+                             static const int kSteps[] = {0, 1, 2, 5, 10};
+                             int i = 0;
+                             while (i < 4 && kSteps[i] < app_.autosaveMin()) ++i;
+                             i = clampi(i + (d > 0 ? 1 : -1), 0, 4);
+                             app_.setAutosaveMin(kSteps[i]);
+                           }};
+  // Read only: the firmware version and why the device last restarted (crash log: /diag/crashlog.txt).
+  sysParams_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); },
+                           [](int) {}};
+  // The synth board: its firmware ("NO SYNTH" while it does not answer; "!" = another protocol).
+  sysParams_[kSynthFw] = {"Synth fw",
+                          [](char* o, int n) {
+                            if (!audio::synthUp()) snprintf(o, n, "NO SYNTH");
+                            else snprintf(o, n, "%s P%u%s", audio::synthFw(), audio::synthProtocol(),
+                                          audio::versionOk() ? "" : " !");
+                          },
+                          [](int) {}};
+  // Click: flash the synth board with /firmware/teensy.hex from its card (Wi-Fi page puts it there).
+  sysParams_[kUpdSynth] = {"Update synth",
+                           [](char* o, int n) { snprintf(o, n, "%s", audio::synthUp() ? "CLICK" : "NO SYNTH"); },
+                           [](int) {}};
+  // The card in the synth board: size and free space.
+  sysParams_[kCard] = {"Card",
+                       [](char* o, int n) {
+                         uint32_t total = 0, free = 0;
+                         if (!audio::synthUp()) snprintf(o, n, "NO SYNTH");
+                         else if (!storage::remoteSpace(total, free)) snprintf(o, n, "NO CARD");
+                         else snprintf(o, n, "%lu.%lu / %lu.%lu GB FREE", static_cast<unsigned long>(free / 1024),
+                                       static_cast<unsigned long>(free % 1024 * 10 / 1024),
+                                       static_cast<unsigned long>(total / 1024),
+                                       static_cast<unsigned long>(total % 1024 * 10 / 1024));
+                       },
+                       [](int) {}};
+  // The link counters since boot: events lost / late on the synth, bad frames here.
+  sysParams_[kLink] = {"Link",
+                       [](char* o, int n) {
+                         const audio::LinkCounters c = audio::linkCounters();
+                         snprintf(o, n, "LOST %lu LATE %lu CRC %lu", static_cast<unsigned long>(c.lost + c.dropped),
+                                  static_cast<unsigned long>(c.late), static_cast<unsigned long>(c.crcErrors));
+                       },
+                       [](int) {}};
+  sysParams_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
+                            [](int) {}};
+  // Where the sequencer lives (PSRAM = it costs more) and the free internal RAM.
+  sysParams_[kAudioRam] = {"Audio RAM",
+                           [](char* o, int n) {
+                             const unsigned kb =
+                                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+                             snprintf(o, n, "SEQ %s, %uK FREE", engine::seqInternal() ? "INTERNAL" : "PSRAM", kb);
+                           },
+                           [](int) {}};
+  // Sensor voltage, current (CHG while charging) and the gauge's percent; redrawn per sample.
+  sysParams_[kBattery] = {"Battery",
+                          [this](char* o, int n) {
+                            hw::BatterySample b;
+                            if (!hw::batteryPresent()) {
+                              snprintf(o, n, "NOT FOUND");
+                              return;
+                            }
+                            if (!app_.batterySample(b)) {
+                              snprintf(o, n, "---");
+                              return;
+                            }
+                            const mt::BatteryGauge& g = app_.battery();
+                            const int ma = static_cast<int>(fabsf(b.amps) * 1000.f + 0.5f);
+                            char pct[8];
+                            if (g.percent() >= 0) snprintf(pct, sizeof(pct), "%d%%", g.percent());
+                            else snprintf(pct, sizeof(pct), "--%%");
+                            snprintf(o, n, "%.2fV %s%dmA %s", b.volts, g.charging() ? "CHG " : "", ma, pct);
+                          },
+                          [](int) {}};
+  // Click: start; play a while (on the screen to measure), click again: the time per stage of the
+  // audio render goes to /diag/cpuprof.txt.
+  sysParams_[kCpuProf] = {"CPU profile",
+                          [this](char* o, int n) {
+                            if (audio::profileRunning())
+                              snprintf(o, n, "RUNNING %lus, CLICK", static_cast<unsigned long>(profSecDrawn_));
+                            else
+                              snprintf(o, n, "CLICK TO START");
+                          },
+                          [](int) {}};
+  sysList_.setOnCancel([this] { app_.toast("CANCEL"); });
+  sysList_.setPageBar(true);
+  sysList_.setParams(sysParams_, kSysRows);
+  sysList_.setVisibleRows(kSysListRows);
+  sysList_.selectBar();
+}
+
+uint32_t FileScreen::profSecs() const { return (millis() - profStartMs_) / 1000; }
+
+// A + turn on the page bar: the previous / next section; a click on CPU profile starts / stops it,
+// on Update synth asks to flash the synth board.
+void FileScreen::systemInput(const hw::InputEvent& ev) {
+  if (ev.type == hw::InputType::EncClick && !sysList_.editing() &&
+      (sysList_.sel() == kCpuProf || sysList_.sel() == kUpdSynth)) {
+    sysAction(sysList_.sel());
+    return;
+  }
+  if (const int ov = sysList_.onInput(ev)) setSection(section_ + ov);
+}
+
+void FileScreen::systemTouch(const TouchEvent& ev) {
+  const int r = sysList_.rowAt(ev.y);
+  if (ev.type == TouchType::Tap && (r == kCpuProf || r == kUpdSynth)) {
+    sysList_.setEdit(false);
+    sysList_.setSel(r);
+    sysAction(r);
+    return;
+  }
+  sysList_.onTouch(ev);
+}
+
+void FileScreen::sysAction(int row) {
+  if (row == kUpdSynth) askUpdateSynth();
+  else toggleProfile();
+}
+
+void FileScreen::askUpdateSynth() {
+  app_.invalidate();
+  if (!audio::synthUp()) {
+    app_.toast("NO SYNTH");
+    return;
+  }
+  fs::File f = hw::sdFs().open(synthfw::kHexPath);
+  if (!f || f.isDirectory()) {
+    app_.toast(storage::remoteLastError() == mt::link::kErrNoCard ? "NO CARD IN THE SYNTH"
+                                                                   : "NO /FIRMWARE/TEENSY.HEX");
+    return;
+  }
+  const unsigned long kb = static_cast<unsigned long>((f.size() + 1023) / 1024);
+  f.close();
+  char title[48];
+  snprintf(title, sizeof(title), "UPDATE SYNTH (%lu KB)?", kb);
+  enum : int { kCancel, kUpdate };
+  const MenuItem items[] = {{"Cancel", kCancel}, {"Update", kUpdate}};
+  app_.menu().open(title, items, 2, [this](int id) {
+    if (id == kUpdate) updateSynth();
+  });
+}
+
+void FileScreen::updateSynth() {
+  const uint32_t oldBoot = slink::bootId();
+  uint8_t res = 0;
+  uint32_t bytes = 0;
+  const synthfw::Result r = synthfw::update(
+      synthfw::kHexPath, res, bytes,
+      [](uint32_t done, uint32_t total, void* a) { static_cast<App*>(a)->showProgress("SYNTH FW", done, total); },
+      &app_);
+  if (r != synthfw::Result::Ok) {
+    app_.endProgress();
+    char line[48];
+    snprintf(line, sizeof(line), "SYNTH FW: %s", r == synthfw::Result::NoSynth ? "NO ANSWER" : synthfw::rejectText(res));
+    app_.toast(line);
+    return;
+  }
+  app_.showBusy("SYNTH FW OK, RESTARTING");
+  const uint32_t t0 = millis();
+  bool back = false;
+  while (millis() - t0 < synthfw::kRebootWaitMs) {
+    if (synthfw::rebooted(oldBoot)) {
+      back = true;
+      break;
+    }
+    delay(100);
+  }
+  app_.endProgress();
+  char line[48];
+  if (back) snprintf(line, sizeof(line), "SYNTH FW %s", slink::synthFw());
+  else snprintf(line, sizeof(line), "SYNTH FW: NO ANSWER AFTER THE UPDATE");
+  app_.toast(line);
+}
+
+void FileScreen::toggleProfile() {
+  app_.invalidate();
+  if (!audio::profileRunning()) {
+    audio::profileStart();
+    if (!audio::profileRunning()) {
+      app_.toast("PROFILE: NO SYNTH");
+      return;
+    }
+    profStartMs_ = millis();
+    app_.toast("PROFILE: PLAY, THEN CLICK AGAIN");
+    return;
+  }
+  audio::Profile pr;
+  const uint32_t secs = profSecs();
+  if (!audio::profileStop(pr)) {
+    app_.toast("PROFILE: NOTHING RENDERED");
+    return;
+  }
+  float total = 0;
+  int top = 0;
+  for (int i = 0; i < audio::kProfStages; ++i) {
+    total += pr.us[i];
+    if (pr.us[i] > pr.us[top]) top = i;
+  }
+  constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
+  char line[96];
+  snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
+           static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
+  const bool saved = storage::appendCpuProfile(line, pr);
+  snprintf(line, sizeof(line), "%s %.0f%%, TOP %s %.0f%%", saved ? "SAVED" : "NO SD", total * 100 / kBlockUs,
+           mt::Synth::profName(top), pr.us[top] * 100 / kBlockUs);
+  app_.toast(line);
+}
+
+// SYSTEM: a new battery sample, and the running CPU profile's seconds.
+bool FileScreen::wantsRedraw(const engine::Status&) {
+  if (wifi_.wantsRedraw()) return true;
+  if (section_ != kSecSystem || names_ || kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen())
+    return false;
+  return app_.batterySeq() != batSeqDrawn_ || (audio::profileRunning() && profSecs() != profSecDrawn_);
 }
 
 }  // namespace ui

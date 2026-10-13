@@ -443,13 +443,29 @@ void test_stereo_header() {
   TEST_ASSERT_EQUAL_UINT32(44100 * 4, le32(f.data() + 28));     // byte rate
   TEST_ASSERT_EQUAL(4, f[32] | (f[33] << 8));                   // block align
   TEST_ASSERT_EQUAL_UINT32(20, le32(f.data() + kWavHeaderBytes - 4));
+}
+
+void test_header_stereo_round_trip() {
+  std::vector<uint8_t> f(kWavHeaderBytes);
+  wavHeader(f.data(), 500, 32000, 60, 0xCAFEF00D, 2);
+  for (int i = 0; i < 500 * 2; ++i) {
+    f.push_back(static_cast<uint8_t>(i));
+    f.push_back(static_cast<uint8_t>(i >> 8));
+  }
+  TEST_ASSERT_EQUAL_UINT32(f.size() - 8, le32(f.data() + 4));  // RIFF size
+  TEST_ASSERT_EQUAL_UINT32(128000, le32(f.data() + 28));       // byte rate
+  TEST_ASSERT_EQUAL(4, f[32] | (f[33] << 8));                  // block align
+  TEST_ASSERT_EQUAL_UINT32(2000, le32(f.data() + kWavHeaderBytes - 4));
   VecSource src(f);
   WavInfo w;
   TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
   TEST_ASSERT_EQUAL(2, w.channels);
-  TEST_ASSERT_EQUAL_UINT32(5, w.frames());
-  TEST_ASSERT_TRUE(w.hasCrc);
-  TEST_ASSERT_EQUAL_HEX32(0x1234, w.crc);
+  TEST_ASSERT_EQUAL(16, w.bits);
+  TEST_ASSERT_EQUAL_UINT32(32000, w.rate);
+  TEST_ASSERT_EQUAL_UINT32(500, w.frames());
+  TEST_ASSERT_EQUAL_UINT32(2000, w.dataBytes);
+  TEST_ASSERT_TRUE(w.hasCrc);  // mtcr frames match the stereo frame count
+  TEST_ASSERT_EQUAL_HEX32(0xCAFEF00D, w.crc);
 }
 
 int main() {
@@ -480,5 +496,6 @@ int main() {
   RUN_TEST(test_downsampler_48k);
   RUN_TEST(test_header_parses_back);
   RUN_TEST(test_stereo_header);
+  RUN_TEST(test_header_stereo_round_trip);
   return UNITY_END();
 }

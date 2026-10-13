@@ -85,7 +85,7 @@ void setup() {
   hw::inputBegin();
   engine::begin(project);
   app.begin(&lcd, project);
-  engine::post(engine::Cmd::ChainEdit, static_cast<uint16_t>(mt::ChainOp::Edit));  // song position display
+  engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));  // song position display
   // Engine not playing: the synth board brings the samples its bank lacks in from the project's folder
   // (BankSync). It may still be booting (its first boot builds the built-in wavetables): wait a while.
   int missing = 0;
@@ -105,7 +105,7 @@ void setup() {
     char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
     app.toast(msg);
-  } else if (fromBak || missing > 0 || folderFail) {
+  } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped()) {
     app.loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
 }

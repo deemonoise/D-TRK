@@ -42,7 +42,7 @@ void test_chunks_tile_the_model() {
 void test_copy_chunk_by_chunk_rebuilds_the_model() {
   Project p;
   p.bpm = 133;
-  p.djFilter = -20;
+  p.scDepth = 20;
   p.instruments[31].vol = 7;
   p.wavetableCount = 3;
   SynthModel m;
@@ -96,7 +96,8 @@ void test_project_only_fields_not_in_model() {
   Project b = a;
   b.patterns[2].steps[0][0].note = 60;
   b.perfMap[0] = 5;
-  b.songMode = true;
+  b.songLen = 3;
+  b.perfDepth[1] = 7;
   TEST_ASSERT_EQUAL(0, static_cast<int>(changed(a, b).size()));
 }
 

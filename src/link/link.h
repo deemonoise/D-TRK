@@ -43,6 +43,10 @@ const char* synthFw();
 uint16_t synthProtocol();
 // Changes whenever the synth board (re)boots; 0 before the first Hello.
 uint32_t bootId();
+// Seconds of PERF ring buffer the synth board holds (its Hello), 0 = none.
+uint8_t perfSeconds();
+// The synth's parks (each resets it) as its latest Status counts them, mod 256.
+uint8_t parks();
 
 // StateSet replies for the mirror pump (UI task).
 struct Reply {
