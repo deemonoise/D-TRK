@@ -30,7 +30,7 @@ WT32-SC01 Plus, Debug connector
   GND ───────────── PCF GND
   (INA226 SDA / SCL / VCC / GND — in parallel with the PCF, on the same wires)
 
-INA226 (address 0x40: A0, A1 to GND; ALE not needed)
+INA226 (address 0x40–0x4F, found automatically; A0, A1 as on the module; ALE not needed)
   IN+ ── LiPo +          IN− ── IP5306 B+
   VBS ── IN+             (if broken out: battery voltage)
   VCC ── 3.3 V           GND ── GND
@@ -68,7 +68,7 @@ PCM5102A                                 MAX97220
 | `board 3V3`                       | `INA VCC`                           | 3.3 V only, not 5 V                                         |
 | `board GND`                       | `INA GND`                           | common ground, which is also the battery negative           |
 | `Debug TXD0 (IO43) / RXD0 (IO44)` | `INA SDA / SCL`                     | in parallel with the PCF8575, the addresses don't overlap   |
-| `GND`                             | `INA A0, A1`                        | address 0x40; already so on most modules                    |
+| —                                 | `INA A0, A1`                        | leave as on the module: the firmware finds 0x40–0x4F itself |
 | `—`                               | `INA ALE`                           | leave unconnected                                           |
 | **MIDI OUT** |                                     |                                                             |
 | `board IO10`                      | `10 Ω → Tip`                        | MIDI DIN pin 5                                              |
@@ -119,7 +119,7 @@ The INA226 sits in the battery's positive wire, before the IP5306, and reports o
 - **Shunt.** Most modules carry an R100 (0.1 Ω): ±0.8 A range. The tracker draws ~0.3 A from the battery — enough. The IP5306 charges at up to ~2 A: the reading will clip at 0.8 A, but the sign (charging) is still visible. The shunt then dissipates up to ~0.4 W — it should be a 2512 package on the module. To measure the charge current too, replace the shunt with an R010 (0.01 Ω, ±8 A).
 - **IN+ and IN− wires** — same gauge as the battery wire: the full current, including charging, flows through them.
 - **VBS.** If the module has a VBS (or VBUS) pin, connect it to IN+ so the voltage is measured right at the battery. If not, the module measures at IN− — off by the shunt drop, which doesn't matter for the charge percentage.
-- **Address 0x40.** A0 and A1 to GND; modules usually already pull them down with resistors. The PCF8575 is at 0x20–0x27, no overlap.
+- **Address 0x40–0x4F.** Set by A0 and A1; modules ship with them strapped in any state (often 0x40 or 0x44). The firmware finds the INA226 itself by its manufacturer ID; the boot log says `battery: INA226 at 0x44`. The PCF8575 is at 0x20–0x27, no overlap.
 - **I2C pull-ups.** The module has its own 10 kΩ on SDA and SCL; together with the PCF8575's pull-ups this is fine.
 
 ## MIDI jack
