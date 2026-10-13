@@ -80,8 +80,8 @@ void Project::reset() {
   compRel = 50;
   scTrack = 0;
   scDepth = 64;
-  djFilter = 0;
-  for (int i = 0; i < kPerfButtons; ++i) perfMap[i] = static_cast<uint8_t>(i + 1);
+  memcpy(perfMap, kPerfDefaultMap, sizeof(perfMap));
+  perfDefaultDepths();
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};
@@ -91,6 +91,10 @@ void Project::reset() {
   memset(song, 0, sizeof(song));
   memset(songMute, 0, sizeof(songMute));
   songLen = 0;
+}
+
+void Project::perfDefaultDepths() {
+  for (int i = 0; i < kPerfButtons; ++i) perfDepth[i] = perfRange(static_cast<PerfFx>(perfMap[i])).def;
 }
 
 // Tables built on first use: powf is costly on the ESP32 and these run per voice at control rate.

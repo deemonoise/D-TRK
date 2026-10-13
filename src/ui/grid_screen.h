@@ -13,6 +13,7 @@ class GridScreen : public Screen {
  public:
   explicit GridScreen(App& app) : app_(app) {
     for (uint8_t& n : lastNote_) n = 60;
+    for (int8_t& h : perfHeld_) h = -1;
   }
   void onEnter() override;
   void onLeave() override;
@@ -23,10 +24,11 @@ class GridScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  void poll() override;  // PERF: the stop releases every held effect
   bool wantsRedraw(const engine::Status& st) override;
   // Track button N: false when App should handle it (Shift + N outside edit = mute).
   bool trackKey(int n, bool shift);
-  void trackRelease(int n);  // PERF: the held effect ends
+  void trackRelease(int n);  // PERF: the effect the button held ends
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
   bool buttonsBusy() const { return edit_ || rec_ || perf_; }
   void undo();  // with a toast; the next edit takes a fresh snapshot
@@ -83,7 +85,8 @@ class GridScreen : public Screen {
   uint8_t degreeNote(int button, bool octaveUp, int ref) const;  // scale degree in the octave of ref
   void setRec(bool on);
   void setPerf(bool on);
-  void perfRelease();
+  void perfTakeBuffer();  // PERF on: the ring buffer from PSRAM, a toast when there is none
+  void perfAllOff();  // every held PERF effect ends; release all is sent even with nothing held
   bool recordKey(int n, bool shift);  // REC while playing: button N into the heard step
   int heardTrackStep(int tr);  // the heard step of track tr (own length and speed); slow: the last one played
   void writeStep(const mt::Step& st);
@@ -111,7 +114,7 @@ class GridScreen : public Screen {
   // Lane mask as squares: one row of 8 (Overview column) or compact 2 x 4 (Detail NOTE field).
   void drawMask(LGFX_Sprite& s, int x, int y, uint8_t mask, bool audible, int cursorLane, bool compact);
   void drawPad(LGFX_Sprite& s, int y);
-  bool drawBadge(LGFX_Sprite& s, int y);
+  int drawBadge(LGFX_Sprite& s, int y);  // its width in px, 0 when neither REC nor PERF
   bool selected(int tr, int step) const;
 
   App& app_;
@@ -144,8 +147,13 @@ class GridScreen : public Screen {
   bool perf_ = false;
   uint32_t recLoop_ = UINT32_MAX;  // pass of the last REC undo snapshot
   int recPat_ = -1;                // and its pattern
-  int perfBtn_ = -1;   // button holding the punch-in effect
-  int perfTrack_ = 0;  // its track
+  // PERF: the held effects as the synth has them (toasts, the header) and what each button holds
+  // (PerfFx, -1 = nothing). Two buttons on the same effect: it ends with the last one.
+  mt::PerfStack perfStack_;
+  int8_t perfHeld_[mt::kPerfButtons];  // -1 in the constructor
+  // A PERF message lost in a full queue: release all is resent once nothing is held, until taken.
+  bool perfLost_ = false;
+  uint32_t perfParks_ = 0;  // audio::parkCount() last seen: a park resets the synth's PERF
 
   FillDialog fill_{app_};
   mt::FillSpec fillSpec_;  // RAM only, shared by the tracks

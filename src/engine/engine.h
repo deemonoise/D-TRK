@@ -9,10 +9,10 @@ namespace engine {
 // Post it while still holding lockProject(): the engine handles it before planning on the new song.
 // SetSong: arg = on << 15 | slot: SONG from that slot / LOOP (Sequencer::setSong).
 // TrackOut: arg = track, after TrackCfg::out changed (post ReleaseTies first): ends its sounding notes.
-// Fill: arg 1 = fill held, 0 = released. PerfOn: arg = track | mt::PerfFx << 8; PerfOff: arg = track.
+// Fill: arg 1 = fill held, 0 = released.
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
-  Fill, PerfOn, PerfOff, SetSong
+  Fill, SetSong
 };
 
 struct Command {

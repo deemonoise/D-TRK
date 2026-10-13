@@ -21,7 +21,10 @@ class Reverb {
   // size: comb lengths and feedback, damp: high loss in the combs, level: return; 0..127
   // (Project::rvb*). level 0 leaves both untouched. Silent input with both tails below -100 dB for
   // kQuietIdle samples: idle (no work, mix untouched) until the input is non-zero.
-  void process(const float* in, float* mixL, float* mixR, int n, uint8_t size, uint8_t damp, uint8_t level);
+  // freeze (PERF FREEZE): the combs loop the tail without loss (feedback 1, no damping) and ignore
+  // the input; it never goes idle meanwhile. Off again, the tail decays as usual.
+  void process(const float* in, float* mixL, float* mixR, int n, uint8_t size, uint8_t damp, uint8_t level,
+               bool freeze);
 
  private:
   float* buf_ = nullptr;

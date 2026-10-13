@@ -75,9 +75,11 @@ class ParamList {
   }
   bool barSelected() const { return bar_ && sel_ < 0; }
   bool editing() const { return edit_; }
-  void setEdit(bool on) {
+  bool holding() const { return hold_; }  // the edit is an A + turn one: A released ends it
+  // hold: restores a hold edit (rows rebuilt while A is held), so EditEnd still ends it.
+  void setEdit(bool on, bool hold = false) {
     edit_ = on;
-    hold_ = false;
+    hold_ = on && hold;
     dragAcc_ = 0;
   }
   // A + turn: enters the edit of the selected row if needed (hold edit). False = row not editable.

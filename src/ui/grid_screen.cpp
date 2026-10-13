@@ -70,15 +70,18 @@ void GridScreen::onEnter() {
   setEdit(false);
   cur();
   needVisible_ = true;
+  if (perf_) perfTakeBuffer();
 }
 
 void GridScreen::onLeave() {
-  perfRelease();
+  perfAllOff();
+  audio::perfBuffer(false);  // the other screens need the PSRAM (imports, renders)
   fill_.cancel();
   transpose_.cancel();
 }
 
 void GridScreen::onProjectReplaced() {
+  perfAllOff();  // the loaded project does not inherit the held effects
   fill_.abandon();
   transpose_.cancel();
 }
@@ -267,15 +270,39 @@ void GridScreen::setPerf(bool on) {
     edit_ = false;
     holdEdit_ = false;
   } else {
-    perfRelease();
+    perfAllOff();
+  }
+  if (on != perf_) {
+    if (on) perfTakeBuffer();
+    else audio::perfBuffer(false);
   }
   perf_ = on;
 }
 
-void GridScreen::perfRelease() {
-  if (perfBtn_ < 0) return;
-  engine::postWait(engine::Cmd::PerfOff, static_cast<uint16_t>(perfTrack_));
-  perfBtn_ = -1;
+// Takes the PERF ring buffer; without one the buffer effects are silent: say so.
+void GridScreen::perfTakeBuffer() {
+  if (audio::perfBuffer(true) == 0) app_.toast("PERF: NO MEMORY FOR REPEAT");
+}
+
+// Always sent: a press lost in a full queue must not leave the synth holding an effect.
+void GridScreen::perfAllOff() {
+  for (int8_t& h : perfHeld_) h = -1;
+  perfStack_.releaseAll();
+  perfLost_ = !audio::perf(3, 0);
+}
+
+// The transport stopped under held effects (Play, a stop from elsewhere) or the audio parked (the
+// synth released them): they end. A lost message: release all again once nothing is held.
+void GridScreen::poll() {
+  const uint32_t parks = audio::parkCount();
+  const bool parked = parks != perfParks_;
+  perfParks_ = parks;
+  if (perfStack_.count() > 0 && (parked || !app_.status().playing)) {
+    perfAllOff();
+    app_.invalidate();
+  } else if (perfLost_ && perfStack_.count() == 0) {
+    perfLost_ = !audio::perf(3, 0);
+  }
 }
 
 // The track step heard at the play position: trackStepAt, sub-step 0 on a fast track. A slow
@@ -413,7 +440,17 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
   cur();
   switch (ev.type) {
     case InputType::EncTurn:
-      if (edit_) editTurn(ev.delta, ev.shift);
+      if (perf_ && perfStack_.count() > 0) {  // the last pressed effect's depth; the cursor stays
+        const mt::PerfFx last = perfStack_.last();
+        int d = ev.delta * (ev.shift && mt::perfRange(last).coarse ? 10 : 1);
+        d = d < -127 ? -127 : d > 127 ? 127 : d;
+        perfStack_.turn(d);
+        if (!audio::perf(2, static_cast<uint8_t>(static_cast<int8_t>(d)))) perfLost_ = true;
+        char msg[40], val[12];
+        mt::perfValue(last, perfStack_.depth(last), val, sizeof(val));
+        snprintf(msg, sizeof(msg), "%s %s", mt::perfName(last), val);
+        app_.toast(msg);
+      } else if (edit_) editTurn(ev.delta, ev.shift);
       else if (!ev.shift) moveStep(ev.delta);
       else if (detail_) moveField(ev.delta);
       else moveTrack(ev.delta);
@@ -512,14 +549,27 @@ bool GridScreen::trackKey(int n, bool shift) {
   cur();
   const bool playing = app_.status().playing;
   if (rec_ && playing) return recordKey(n, shift);
-  if (perf_ && playing && !shift) {  // last pressed wins; Shift + N still mutes
-    perfRelease();
-    perfBtn_ = n;
-    perfTrack_ = track();
-    const uint8_t fx = n < mt::kPerfButtons ? app_.project().perfMap[n] : 0;  // PROJ -> PERF
-    engine::post(engine::Cmd::PerfOn, static_cast<uint16_t>(perfTrack_ | (fx << 8)));
-    char msg[32];
-    snprintf(msg, sizeof(msg), "PERF %s", fx ? mt::perfFxName(static_cast<mt::PerfFx>(fx)) : "---");
+  if (perf_ && playing && !shift) {  // button N holds its PROJ -> PERF effect; Shift + N still mutes
+    const uint8_t fx = n < mt::kPerfButtons ? app_.project().perfMap[n] : 0;
+    if (fx == 0 || fx >= static_cast<uint8_t>(mt::PerfFx::Count)) {
+      app_.toast("PERF ---");
+      return true;
+    }
+    const mt::PerfFx f = static_cast<mt::PerfFx>(fx);
+    perfHeld_[n] = static_cast<int8_t>(fx);
+    perfStack_.press(f);
+    if (!audio::perf(0, fx)) perfLost_ = true;
+    // The button's start value (PROJ -> PERF): a turn in the same audio block, so the default never sounds.
+    const mt::PerfRange r = mt::perfRange(f);
+    const int start = clampi(app_.project().perfDepth[n], r.lo, r.hi);
+    const int d = clampi(start - perfStack_.depth(f), -128, 127);
+    if (d != 0) {
+      perfStack_.turn(d);
+      if (!audio::perf(2, static_cast<uint8_t>(static_cast<int8_t>(d)))) perfLost_ = true;
+    }
+    char msg[40], val[12];
+    mt::perfValue(f, perfStack_.depth(f), val, sizeof(val));
+    snprintf(msg, sizeof(msg), "PERF %s %s", mt::perfName(f), val);
     app_.toast(msg);
     return true;
   }
@@ -535,7 +585,14 @@ bool GridScreen::trackKey(int n, bool shift) {
 }
 
 void GridScreen::trackRelease(int n) {
-  if (n == perfBtn_) perfRelease();
+  if (n < 0 || n >= mt::kPerfButtons || perfHeld_[n] < 0) return;
+  const int8_t fx = perfHeld_[n];
+  perfHeld_[n] = -1;
+  for (const int8_t h : perfHeld_)
+    if (h == fx) return;  // another button still holds it
+  perfStack_.release(static_cast<mt::PerfFx>(fx));
+  if (!audio::perf(1, static_cast<uint8_t>(fx))) perfLost_ = true;
+  app_.invalidate();  // the header loses its short name
 }
 
 bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
@@ -1003,8 +1060,10 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   const int n = len();
   char buf[12];
 
-  // Header: the visible half over the step numbers, track names coloured by mute/solo.
-  if (!drawBadge(s, gridY - kNamesH)) {
+  // Header: the visible half over the step numbers, track names coloured by mute/solo. The PERF
+  // badge grows with the held effects and covers the names it reaches.
+  const int badgeW = drawBadge(s, gridY - kNamesH);
+  if (!badgeW) {
     if (edit_) {
       snprintf(buf, sizeof(buf), "ST%d", editStep_);  // Edit step while editing
       s.setTextColor(kEditCursor);
@@ -1017,6 +1076,7 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   for (int col = 0; col < kOverviewTracks; ++col) {
     const int tr = firstTrack() + col;
     const mt::TrackCfg& t = p.tracks[tr];
+    if (kNumW + col * kColW + 4 < badgeW) continue;
     s.setTextColor(t.solo ? kCursor : (p.trackAudible(tr) ? kText : kDim));
     s.drawString(t.name, kNumW + col * kColW + 4, gridY - kNamesH);
   }
@@ -1081,8 +1141,10 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   char buf[16];
 
   // Header: track number over the step numbers, its name over NOTE / VEL, slots over the commands.
+  // The PERF badge grows with the held effects and covers the labels it reaches.
   s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
-  if (!drawBadge(s, gridY - kNamesH)) {
+  const int badgeW = drawBadge(s, gridY - kNamesH);
+  if (!badgeW) {
     if (edit_) {
       snprintf(buf, sizeof(buf), "ST%d", editStep_);  // Edit step while editing
       s.setTextColor(kEditCursor);
@@ -1091,12 +1153,16 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
     }
     s.drawString(buf, 2, gridY - kNamesH);
   }
-  s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
-  s.drawString(t.name, kNumW + 1, gridY - kNamesH);  // 8 chars fit 2 fields
+  if (kNumW + 1 >= badgeW) {
+    s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
+    s.drawString(t.name, kNumW + 1, gridY - kNamesH);  // 8 chars fit 2 fields
+  }
   s.setTextColor(kDim);
   for (int k = 0; k < mt::kFxSlots; ++k) {
+    const int x = kNumW + (kFx1 + 2 * k) * kFieldW + 4;
+    if (x < badgeW) continue;
     snprintf(buf, sizeof(buf), "FX%d", k + 1);
-    s.drawString(buf, kNumW + (kFx1 + 2 * k) * kFieldW + 4, gridY - kNamesH);
+    s.drawString(buf, x, gridY - kNamesH);
   }
 
   const int heard = st.playing || st.paused ? heardTrackStep(tr) : -1;  // the track's own step
@@ -1145,12 +1211,28 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   for (int k = 0; k < mt::kFxSlots; ++k) s.drawFastVLine(kNumW + (kFx1 + 2 * k) * kFieldW - 1, gridY - kNamesH, h, kDim);
 }
 
-// REC (red) / PERF (yellow) over the step numbers instead of the header text; false when neither.
-bool GridScreen::drawBadge(LGFX_Sprite& s, int y) {
-  if (!rec_ && !perf_) return false;
+// REC (red) / PERF (yellow) over the step numbers instead of the header text; 0 when neither.
+// PERF appends the held effects' short names in press order ("PERF RPT FLT CRS"), as many as the
+// header line holds (kCharW per char).
+int GridScreen::drawBadge(LGFX_Sprite& s, int y) {
+  if (!rec_ && !perf_) return 0;
+  char txt[kScreenW / kCharW + 1];
+  snprintf(txt, sizeof(txt), "%s", rec_ ? "REC" : "PERF");
+  if (perf_) {
+    int n = static_cast<int>(strlen(txt));
+    for (int i = 0; i < perfStack_.count(); ++i) {
+      const char* sh = mt::perfShort(perfStack_.at(i));
+      const int w = static_cast<int>(strlen(sh)) + 1;  // " RPT"
+      if (n + w >= static_cast<int>(sizeof(txt))) break;
+      txt[n++] = ' ';
+      memcpy(txt + n, sh, w - 1);
+      n += w - 1;
+      txt[n] = 0;
+    }
+  }
   s.setTextColor(rec_ ? kRed : kYellow);
-  s.drawString(rec_ ? "REC" : "PERF", 0, y);
-  return true;
+  s.drawString(txt, 0, y);
+  return static_cast<int>(strlen(txt)) * kCharW;
 }
 
 // 5 px squares at a 6 / 7 px pitch: filled = the lane hits; cursorLane >= 0 frames that lane.

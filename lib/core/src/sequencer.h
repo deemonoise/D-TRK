@@ -55,8 +55,8 @@ constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the 
 // without a note plays the next one (every `div` steps) until a note step that plays, OFF (note or
 // fx), a muted note step or a pattern change; it goes on over a loop of the same pattern, like TIE.
 //
-// Live: setFill() is the held fill (CND FIL / NFL), perfOn() a punch-in effect on a track until
-// perfOff() (or stop()). Both apply to steps planned from then on (at most the lookahead late).
+// Live: setFill() is the held fill (CND FIL / NFL); it applies to steps planned from then on (at most
+// the lookahead late).
 //
 // Pattern::trackSpeed: an xN track plays N of its steps per pattern step, squeezed evenly into the
 // slot up to the next (swung / grooved) pattern step; the groove accent of the pattern step applies to
@@ -121,11 +121,6 @@ class Sequencer {
   // Fill held: CND FIL steps play, NFL steps do not.
   void setFill(bool on) { fill_ = on; }
   bool fill() const { return fill_; }
-  void perfOn(int track, PerfFx fx);
-  void perfOff(int track);
-  PerfFx perf(int track) const { return track >= 0 && track < kTracks ? perf_[track] : PerfFx::None; }
-  // The fx a punch-in effect adds to a step (None for Mute, which silences the track).
-  static FxSlot perfSlot(PerfFx fx);
   // Position inside the heard step at now, 0 at its start .. 255 (live recording).
   uint8_t phase256(uint64_t now) const;
   uint64_t heardStepTime() const { return heardStepT_; }
@@ -153,7 +148,6 @@ class Sequencer {
     int8_t song, prevSong;  // songPos_ when played / before
     Tie ties[kTracks];
     StepArp arps[kTracks];
-    uint16_t perfMuted;   // perfMuted_ before: its first-muted-step release is undone with the step
     uint16_t condBits;    // condBits_ before
     uint16_t mutes;       // TrackCfg::mute bits before
     bool muteSet;         // the step's pass end started a slot or left the song (mutes written)
@@ -219,19 +213,18 @@ class Sequencer {
     return c;
   }
   // One track step of tr at t (a pattern step, or a sub-step of a fast track); tps: its ticks.
-  void playTrackStep(int tr, const Step& raw, uint64_t t, const ExpandCtx& c, uint16_t tps, int64_t earliest);
+  void playTrackStep(int tr, const Step& s, uint64_t t, const ExpandCtx& c, uint16_t tps, int64_t earliest);
   // skipStep for one track step at t: the controls go out at now.
-  void skipTrackStep(int tr, const Step& raw, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps);
-  // The step as it plays: the track's punch-in fx.
-  void adjustStep(Step& s, int track) const;
+  void skipTrackStep(int tr, const Step& s, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps);
   // The slot's mask into every track's mute; tracks it newly mutes go silent at t.
   void applyMute(int slot, uint64_t t);
   // Mutes from bits; tracks it newly mutes go silent at t (none when t is kNever).
   void writeMutes(uint16_t bits, uint64_t t);
   // Back to the mutes saved at the song start, if held.
   void restoreMutes(uint64_t t);
-  // Plays this step: not muted / solo-excluded, no perf Mute (whose first muted step ends its notes).
-  bool audible(int track, uint64_t t);
+  // Plays this step: not muted / solo-excluded, in the track mask.
+  bool audible(int track) const;
+  void pushPerfStep(int64_t earliest);
   void pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note, uint16_t tps,
                      bool nudge = true);
   int pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool nudge = true);
@@ -252,8 +245,6 @@ class Sequencer {
   bool song_ = false;      // setSong
   uint8_t songFrom_ = 0;   // setSong's slot
   bool fill_ = false;
-  PerfFx perf_[kTracks] = {};
-  uint16_t perfMuted_ = 0;  // perf Mute already ended the track's notes
   bool muteSet_ = false;    // applyMute wrote the mutes while the current step was planned
   bool muteHeld_ = false;   // savedMute_ holds the mutes from before the song
   uint16_t savedMute_ = 0;

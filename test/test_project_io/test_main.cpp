@@ -83,8 +83,9 @@ static void fillFull(Project& p) {
   p5.res = Resolution::SixteenthTriplet;
   p5.swing = 75;
   p5.groove = 3;
-  p.djFilter = -20;
-  p.perfMap[3] = static_cast<uint8_t>(PerfFx::RvbMax);
+  p.perfMap[3] = static_cast<uint8_t>(PerfFx::ReverbThrow);
+  p.perfDepth[3] = 70;
+  p.perfDepth[0] = 6;  // Repeat 1/32
   p.tracks[6].humanize = 40;
   for (int t = 0; t < kTracks; ++t)
     for (int s = 0; s < 128; s += 3) {
@@ -184,7 +185,7 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(x.song, y.song, x.songLen);
   TEST_ASSERT_EQUAL_UINT16_ARRAY(x.songMute, y.songMute, x.songLen);
   TEST_ASSERT_EQUAL_UINT8_ARRAY(x.perfMap, y.perfMap, kPerfButtons);
-  TEST_ASSERT_EQUAL(x.djFilter, y.djFilter);
+  TEST_ASSERT_EQUAL_INT8_ARRAY(x.perfDepth, y.perfDepth, kPerfButtons);
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg &c = x.tracks[t], &d = y.tracks[t];
     TEST_ASSERT_EQUAL(c.humanize, d.humanize);
@@ -1665,6 +1666,104 @@ void test_audi_sound_fx_defaults_and_clamps() {
   TEST_ASSERT_EQUAL(127, b.scDepth);
 }
 
+// ---- PERF map (PRF2, legacy PRFM), the old DJ filter byte ----
+
+static uint8_t pf(PerfFx f) { return static_cast<uint8_t>(f); }
+
+// Each button's depth is its effect's default (0 for None).
+static void assertDefaultDepths(const Project& p) {
+  for (int i = 0; i < kPerfButtons; ++i)
+    TEST_ASSERT_EQUAL_INT8(perfRange(static_cast<PerfFx>(p.perfMap[i])).def, p.perfDepth[i]);
+}
+
+// A new project: the default map at its effects' default depths.
+void test_new_project_perf_depths() {
+  Project p;
+  p.perfDepth[0] = 1;
+  p.reset();
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(kPerfDefaultMap, p.perfMap, kPerfButtons);
+  assertDefaultDepths(p);
+  TEST_ASSERT_EQUAL_INT8(4, p.perfDepth[0]);  // Repeat 1/16
+}
+
+// Old PRFM bytes (pre-2026-10-13 enum) are mapped to the new effects.
+void test_prfm_legacy_mapped() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "PRFM", {1, 2, 3, 4, 5, 6, 7, 8});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const uint8_t want[kPerfButtons] = {pf(PerfFx::Repeat),     pf(PerfFx::Repeat), pf(PerfFx::Filter),
+                                      pf(PerfFx::Filter),     pf(PerfFx::DelayThrow), pf(PerfFx::Crush),
+                                      pf(PerfFx::None),       pf(PerfFx::None)};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(want, b.perfMap, kPerfButtons);
+  assertDefaultDepths(b);
+}
+
+// PRF2 wins over PRFM in either chunk order; out-of-range PRF2 values are None.
+void test_prf2_wins_over_prfm() {
+  const std::vector<uint8_t> prf2 = {pf(PerfFx::Freeze), pf(PerfFx::Scratch), pf(PerfFx::Drive), 0,
+                                     pf(PerfFx::Downsample), pf(PerfFx::Reverse), 200, pf(PerfFx::Gate)};
+  const uint8_t want[kPerfButtons] = {pf(PerfFx::Freeze), pf(PerfFx::Scratch), pf(PerfFx::Drive), 0,
+                                      pf(PerfFx::Downsample), pf(PerfFx::Reverse), 0, pf(PerfFx::Gate)};
+  for (int order = 0; order < 2; ++order) {
+    std::vector<uint8_t> f = fileHeader();
+    if (order == 0) putChunk(f, "PRFM", {1, 2, 3, 4, 5, 6, 7, 8});
+    putChunk(f, "PRF2", prf2);
+    if (order == 1) putChunk(f, "PRFM", {1, 2, 3, 4, 5, 6, 7, 8});
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(want, b.perfMap, kPerfButtons);
+    assertDefaultDepths(b);  // an 8-byte PRF2: no depths
+  }
+  // A saved file holds PRF2, not PRFM.
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "PRF2"));
+  TEST_ASSERT_FALSE(hasChunk(out.buf, "PRFM"));
+}
+
+// PRF2 depths are clamped into their effect's range; None and unknown effects get 0.
+void test_prf2_depths_clamped() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "PRF2", {pf(PerfFx::Repeat), pf(PerfFx::Repeat), pf(PerfFx::Filter), pf(PerfFx::Filter),
+                       pf(PerfFx::Roll), 0, 200, pf(PerfFx::Crush),
+                       2, 100, static_cast<uint8_t>(-100), 30, 0, 9, 9, 7});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const int8_t want[kPerfButtons] = {2, 6, -64, 30, 1, 0, 0, 7};
+  TEST_ASSERT_EQUAL_INT8_ARRAY(want, b.perfDepth, kPerfButtons);
+  // Saved as 8 effects then 8 depths.
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(b, out));
+  size_t pos = 8;
+  while (pos + 8 <= out.buf.size() && memcmp(out.buf.data() + pos, "PRF2", 4) != 0)
+    pos += 8 + (out.buf[pos + 4] | (out.buf[pos + 5] << 8) | (out.buf[pos + 6] << 16) |
+                (static_cast<uint32_t>(out.buf[pos + 7]) << 24));
+  TEST_ASSERT_TRUE(pos + 8 + 2 * kPerfButtons <= out.buf.size());
+  TEST_ASSERT_EQUAL(2 * kPerfButtons, out.buf[pos + 4]);
+  TEST_ASSERT_EQUAL(pf(PerfFx::Filter), out.buf[pos + 8 + 2]);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(-64), out.buf[pos + 8 + kPerfButtons + 2]);
+}
+
+// AUDI byte 13 (the old DJ filter) is ignored on load and written neutral (64).
+void test_audi_dj_byte_ignored() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30, 1, 2, 3, 4, 5, 6, 7, 10});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(50, b.masterVol);
+  TEST_ASSERT_EQUAL(7, b.scDepth);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(b, out));
+  size_t pos = 8;
+  while (pos + 8 <= out.buf.size() && memcmp(out.buf.data() + pos, "AUDI", 4) != 0)
+    pos += 8 + (out.buf[pos + 4] | (out.buf[pos + 5] << 8) | (out.buf[pos + 6] << 16) |
+                (static_cast<uint32_t>(out.buf[pos + 7]) << 24));
+  TEST_ASSERT_TRUE(pos + 8 + 14 <= out.buf.size());
+  TEST_ASSERT_EQUAL(14, out.buf[pos + 4]);
+  TEST_ASSERT_EQUAL(64, out.buf[pos + 8 + 13]);
+}
+
 // Sample / wavetable names of a file without loading it; a bad CRC is reported.
 void test_read_file_names() {
   Project p;
@@ -1755,5 +1854,10 @@ int main() {
   RUN_TEST(test_tpan_garbage_clamped);
   RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
   RUN_TEST(test_read_file_names);
+  RUN_TEST(test_prfm_legacy_mapped);
+  RUN_TEST(test_prf2_wins_over_prfm);
+  RUN_TEST(test_prf2_depths_clamped);
+  RUN_TEST(test_new_project_perf_depths);
+  RUN_TEST(test_audi_dj_byte_ignored);
   return UNITY_END();
 }

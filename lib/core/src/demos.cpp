@@ -501,7 +501,7 @@ void buildAcid(Project& p) {
 }
 
 // ---- LOFI: 84 BPM, C major, Dm7 G7 Cmaj7 Am7. Swung dusty drums, crushed FM e-piano, vinyl
-// crackle on probability, humanize, a low-passed master ----
+// crackle on probability, humanize, low-passed keys and melody ----
 
 void buildLofi(Project& p) {
   name(p, "DEMO-LOFI");
@@ -517,8 +517,13 @@ void buildLofi(Project& p) {
   keys.crushBits = 45;
   keys.crushRate = 20;
   keys.rsend = 60;
-  ins(p, 2, InstrType::Synth, "MOOGISH");
-  ins(p, 3, InstrType::Chip, "MUSICBOX").send = 60;
+  keys.fltMode = static_cast<uint8_t>(FltMode::Lp);  // dark top: the old master low-pass of this demo
+  keys.cutoff = 107;                                 // ~5 kHz
+  ins(p, 2, InstrType::Synth, "MOOGISH");  // its own LP sits well below 5 kHz already
+  Instrument& box = ins(p, 3, InstrType::Chip, "MUSICBOX");
+  box.send = 60;
+  box.fltMode = static_cast<uint8_t>(FltMode::Lp);  // dark top, as the keys
+  box.cutoff = 107;
   Instrument& vinyl = ins(p, 4, InstrType::Chip, "NOIS HH");
   vinyl.decay = 6;
   vinyl.release = 6;
@@ -537,7 +542,6 @@ void buildLofi(Project& p) {
   p.rvbDamp = 100;
   p.rvbLevel = 70;
   p.compAmt = 35;
-  p.djFilter = -18;  // a gentle low-pass on the whole mix
 
   static const uint8_t kChord[4] = {50, 55, 60, 57};  // D3 G3 C4 A3: 7th chords in C major
   auto keys2 = [](Pattern& pt) {
@@ -955,10 +959,11 @@ void buildHouse(Project& p) {
   p.rvbSize = 85;
   p.rvbLevel = 75;
   p.compAmt = 40;
-  // PERF: filter down / up, delay and reverb throws, rolls, short decays, mute.
-  static const PerfFx kPerf[kPerfButtons] = {PerfFx::FltLow, PerfFx::FltHigh, PerfFx::DlyMax,  PerfFx::RvbMax,
-                                             PerfFx::Rat4,   PerfFx::RatUp,   PerfFx::DecShort, PerfFx::Mute};
+  // PERF: filter, repeat, roll, delay and reverb throws, gate, tape stop, freeze.
+  static const PerfFx kPerf[kPerfButtons] = {PerfFx::Filter, PerfFx::Repeat,   PerfFx::Roll,     PerfFx::DelayThrow,
+                                             PerfFx::ReverbThrow, PerfFx::Gate, PerfFx::TapeStop, PerfFx::Freeze};
   for (int i = 0; i < kPerfButtons; ++i) p.perfMap[i] = static_cast<uint8_t>(kPerf[i]);
+  p.perfDefaultDepths();
 
   static const uint8_t kRoot[4] = {53, 53, 58, 58};  // F3 F3 Bb3 Bb3: Fm7, Bbm7
   auto drums = [](Pattern& pt, bool clap) {

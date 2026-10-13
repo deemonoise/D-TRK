@@ -521,11 +521,12 @@ void InstScreen::syncParams() {
   // Same page in the new type's rows; outside the type page the row and edit state stay (Type edit).
   const int sel = list_.sel();
   const bool ed = list_.editing();
+  const bool hold = list_.holding();  // A + turn on Type: releasing A must still end the edit
   const bool bar = onEditor() ? editor_.barSelected() : list_.barSelected();
   showPage(physPage(), bar);
   if (page_ != kPgType && page_ != kPgType2 && !bar) {
     list_.setSel(sel);
-    list_.setEdit(ed);
+    list_.setEdit(ed, hold);
   }
 }
 

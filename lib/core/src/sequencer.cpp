@@ -63,7 +63,6 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   queued_ = -1;
   pos_ = 0;
   loop_ = 0;
-  perfMuted_ = 0;
   condBits_ = 0;
   restoreMutes(kNever);  // restart: saved again from the user's mutes
   if (songPos_ >= 0) applyMute(songPos_, now);
@@ -136,8 +135,6 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   heardPos_ = 0;
   loop_ = 0;
   heardLoop_ = 0;
-  for (PerfFx& f : perf_) f = PerfFx::None;
-  perfMuted_ = 0;
   restoreMutes(kNever);
   showStopped();
 }
@@ -304,8 +301,6 @@ bool Sequencer::rewind(uint64_t now) {
   heap_.removeIf([&](const SchedEvent& e) { return static_cast<int32_t>(e.tag - h.serial) >= 0; });
   memcpy(ties_, h.ties, sizeof(ties_));
   memcpy(arps_, h.arps, sizeof(arps_));
-  // A perf Mute's or slot mask's release went with the undone steps: replanning must push it again.
-  perfMuted_ = h.perfMuted;
   condBits_ = h.condBits;
   muteHeld_ = h.held;
   savedMute_ = h.saved;
@@ -414,7 +409,6 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.prevSong = static_cast<int8_t>(songPos_);
   memcpy(h.ties, ties_, sizeof(ties_));
   memcpy(h.arps, arps_, sizeof(arps_));
-  h.perfMuted = perfMuted_;
   h.condBits = condBits_;
   h.held = muteHeld_;
   h.saved = savedMute_;
@@ -437,6 +431,7 @@ void Sequencer::scheduleStep(uint64_t now) {
   const uint64_t slot = nextT > static_cast<int64_t>(t) ? static_cast<uint64_t>(nextT) - t : 0;
   // Nothing may land in the past; a shifted note keeps its gate.
   const int64_t earliest = static_cast<int64_t>(now > playStartT_ ? now : playStartT_);
+  pushPerfStep(earliest);
 
   for (int tr = 0; tr < kTracks; ++tr) {
     const TrackTiming tm = timing(pat, tr, su);
@@ -466,12 +461,10 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.muteSet = muteSet_;
 }
 
-void Sequencer::playTrackStep(int tr, const Step& raw, uint64_t t, const ExpandCtx& c, uint16_t tps,
+void Sequencer::playTrackStep(int tr, const Step& s, uint64_t t, const ExpandCtx& c, uint16_t tps,
                               int64_t earliest) {
   ExpandOut& ex = ex_;
-  Step s = raw;
-  adjustStep(s, tr);
-  const bool aud = audible(tr, t);
+  const bool aud = audible(tr);
   const bool hasFx = s.hasFx();
   if (!s.hasNote()) {
     // OFF ends a tie (and every INT voice); controls on OFF or on a step without a note still go out.
@@ -548,6 +541,26 @@ void Sequencer::playTrackStep(int tr, const Step& raw, uint64_t t, const ExpandC
   if (ex.offUs >= 0) pushOff(tr, atLeast(static_cast<int64_t>(t) + ex.offUs, earliest) + shift);
 }
 
+// PERF step clock (Synth 0xF6 4): on a 1/16 boundary of the pass (pos_ x ticks: every pass starts
+// on one, whatever its length), its index mod 64 at the unshifted time (the grid ignores swing),
+// to the first INT track. A boundary already past is skipped: a late
+// anchor would misplace the grid. Not counted in the step's first event (rewind keys on the
+// heard ones; a swung step's clock goes out before its notes).
+void Sequencer::pushPerfStep(int64_t earliest) {
+  constexpr uint32_t k16 = kPpqn / 4;
+  const uint32_t pt = static_cast<uint32_t>(pos_) * ticks();
+  if (pt % k16) return;
+  const uint64_t t = tickTime(stepTick_);
+  if (static_cast<int64_t>(t) < earliest) return;
+  for (int i = 0; i < kTracks; ++i)
+    if (internal(i)) {
+      const uint64_t keep = minT_;
+      push(t, 0xF6, 4, static_cast<uint8_t>((pt / k16) & 63), 0, false, 3, static_cast<uint8_t>(i));
+      minT_ = keep;
+      return;
+    }
+}
+
 // INT tracks: tells the synth a step starts (see Synth: 0xF5 0xF0), with the controls' time.
 // Sent before every step with a note (it ends the previous step's fx) and before synth fx.
 void Sequencer::pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note,
@@ -607,12 +620,10 @@ void Sequencer::skipStep(uint64_t now) {
   if (++pos_ >= pat.length) endOfPass();
 }
 
-void Sequencer::skipTrackStep(int tr, const Step& raw, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps) {
-  Step s = raw;
-  adjustStep(s, tr);
+void Sequencer::skipTrackStep(int tr, const Step& s, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps) {
   if (s.note == kNoteOff) pushOff(tr, t);
   else if (s.hasNote()) releaseTie(tr, t);
-  const bool aud = audible(tr, t);
+  const bool aud = audible(tr);
   // The arp follows the step as scheduleStep would have played it (its notes are dropped).
   StepArp& a = arps_[tr];
   bool stopArp = s.note == kNoteOff || (s.hasNote() && !aud);
@@ -653,72 +664,8 @@ void Sequencer::endOfPass() {
   reanchor(stepTick_);  // keeps tick distances small
 }
 
-void Sequencer::adjustStep(Step& s, int track) const {
-  const PerfFx pf = perf_[track];
-  if (pf == PerfFx::Fade && !internal(track)) {
-    // MIDI has no volume slide: the notes go out at half velocity (a drum step's velocity is note).
-    if (s.hasNote() && !p_.trackIsDrum(track)) {
-      const int v = (s.vel ? s.vel : p_.tracks[track].defVel) / 2;
-      s.vel = static_cast<uint8_t>(v < 1 ? 1 : v);
-    }
-    return;
-  }
-  const FxSlot f = perfSlot(pf);
-  if (f.cmd == Fx::None || (fxSynthOnly(f.cmd) && !internal(track))) return;
-  // The step's own fx stay; the same command or the first free slot takes it, else the last slot.
-  int slot = kFxSlots - 1;
-  for (int k = 0; k < kFxSlots; ++k)
-    if (s.fx[k].cmd == f.cmd) {
-      slot = k;
-      break;
-    }
-  if (s.fx[slot].cmd != f.cmd)
-    for (int k = 0; k < kFxSlots; ++k)
-      if (s.fx[k].cmd == Fx::None) {
-        slot = k;
-        break;
-      }
-  s.fx[slot] = f;
-}
-
-FxSlot Sequencer::perfSlot(PerfFx fx) {
-  switch (fx) {
-    case PerfFx::Rat2: return {Fx::RAT, 2};
-    case PerfFx::Rat4: return {Fx::RAT, 4};
-    case PerfFx::FltLow: return {Fx::FLT, 30};
-    case PerfFx::FltHigh: return {Fx::FLT, 120};
-    case PerfFx::DlyMax: return {Fx::DLY, 127};
-    case PerfFx::Crush: return {Fx::BIT, 100};  // about 5 bits
-    case PerfFx::Fade: return {Fx::VSL, static_cast<uint8_t>(-16)};
-    case PerfFx::DecShort: return {Fx::DCY, 20};
-    case PerfFx::Rat3: return {Fx::RAT, 3};
-    case PerfFx::Rat8: return {Fx::RAT, 8};
-    case PerfFx::RatUp: return {Fx::RAT, static_cast<uint8_t>(kRatUp << 4 | 8)};  // a roll building up
-    case PerfFx::RvbMax: return {Fx::RVB, 127};
-    case PerfFx::Srr: return {Fx::SRR, 90};
-    case PerfFx::Drive: return {Fx::DRV, 100};
-    default: return {Fx::None, 0};
-  }
-}
-
-void Sequencer::perfOn(int track, PerfFx fx) {
-  if (track < 0 || track >= kTracks || fx >= PerfFx::Count) return;
-  perf_[track] = fx;
-}
-
-void Sequencer::perfOff(int track) {
-  if (track >= 0 && track < kTracks) perf_[track] = PerfFx::None;
-}
-
-bool Sequencer::audible(int track, uint64_t t) {
-  const uint16_t bit = static_cast<uint16_t>(1u << track);
-  if (perf_[track] == PerfFx::Mute) {
-    if (!(perfMuted_ & bit)) pushOff(track, t);  // what still sounds ends with the first muted step
-    perfMuted_ |= bit;
-    return false;
-  }
-  perfMuted_ &= static_cast<uint16_t>(~bit);
-  return p_.trackAudible(track) && (mask_ & bit);
+bool Sequencer::audible(int track) const {
+  return p_.trackAudible(track) && (mask_ & static_cast<uint16_t>(1u << track));
 }
 
 void Sequencer::applyMute(int slot, uint64_t t) {
@@ -853,7 +800,8 @@ void Sequencer::dispatch(const SchedEvent& e, MidiSink& out) {
   const uint8_t kind = e.b[0] & 0xF0;
   const uint8_t ch = e.b[0] & 0x0F;
   const bool toSynth = internal(e.track);
-  if ((e.b[0] == 0xF5 || e.b[0] == 0xFF) && !toSynth) return;  // synth fx / release never reach MIDI
+  // synth fx / release / PERF step clock never reach MIDI
+  if ((e.b[0] == 0xF5 || e.b[0] == 0xF6 || e.b[0] == 0xFF) && !toSynth) return;
   if (kind == 0xB0 && toSynth) return;     // CC is MIDI only
   // INT voices are keyed by track (== the channel of INT events; an event planned before the
   // track became INT still has its MIDI channel).

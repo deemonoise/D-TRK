@@ -61,9 +61,12 @@ MT_HOT LfoMods lfoMods(const LfoCfg* cs, const float* out, uint8_t wraps, uint8_
   return r;
 }
 
+// Releases a full queue must not drop: note-offs, track start / all off, PERF release / release all
+// (a lost one leaves the effect held).
 bool isOff(const uint8_t* b, uint8_t len) {
   const uint8_t k = b[0] & 0xF0;
-  return k == 0x80 || (k == 0x90 && len >= 3 && b[2] == 0) || b[0] == 0xFF || b[0] == 0xFE;
+  return k == 0x80 || (k == 0x90 && len >= 3 && b[2] == 0) || b[0] == 0xFF || b[0] == 0xFE ||
+         (b[0] == 0xF6 && len >= 2 && (b[1] == 1 || b[1] == 3));
 }
 
 // Soft clip: 1.5x - 0.5x^3 inside [-1, 1], flat outside.
@@ -119,6 +122,11 @@ void Synth::reset() {
   delay_.clear();
   reverb_.clear();
   comp_.reset();
+  perf_.reset();
+  perfDs_ = perfRs_ = 0;
+  perfDry_ = 1;
+  perfDRet_ = perfRRet_ = 0;
+  rvbRan_ = false;
   for (int t = 0; t < kSynthTracks; ++t) startTrack(static_cast<uint8_t>(t));
 }
 
@@ -241,6 +249,10 @@ void Synth::apply(const Ev& e) {
   else if (e.b[0] == 0xFF) releaseTrack(e.track);
   else if (e.b[0] == 0xF5) {
     if (e.len >= 3) fx(e.track, e.b[1], e.b[2]);
+  }
+  else if (e.b[0] == 0xF6) {
+    if (e.len >= 3 && e.b[1] == 4) perf_.stepAt(e.b[2], e.off);  // step clock, at its sample
+    else if (e.len >= 3) perfMsg(e.b[1], e.b[2]);
   }
   else if (k == 0x90 && e.len >= 3) e.b[2] ? noteOn(e.track, e.b[1] & 127, e.b[2]) : noteOff(e.track, e.b[1] & 127);
   else if (k == 0x80 && e.len >= 2) noteOff(e.track, e.b[1] & 127);
@@ -1144,6 +1156,7 @@ MT_HOT LfoCfg Synth::lfoCfgOf(const Voice* v, const Instrument& m, int i) {
 // 0xFA: TEMPO LFOs with Retrig OFF restart with the transport (FREE ones keep running).
 void Synth::transportStart() {
   paused_ = false;
+  perf_.transportStart();
   for (int m = 0; m < kInstruments; ++m)
     for (int i = 0; i < kLfos; ++i)
       if (const uint8_t sync = lfoAt(p_.instruments[m], i).sync; lfoTempo(sync) && lfoFree(sync)) {
@@ -1151,6 +1164,16 @@ void Synth::transportStart() {
         instLfoRnd_[m][i] = rnd();
         instLfoOut_[m][i] = 0;  // no LFO -> LFO from the old run (a restart is not a wrap)
       }
+}
+
+// 0xF6 op val: PERF on the master (Synth's header). An effect out of range is ignored.
+void Synth::perfMsg(uint8_t op, uint8_t val) {
+  const PerfFx f = static_cast<PerfFx>(val);
+  const bool ok = f != PerfFx::None && f < PerfFx::Count;
+  if (op == 0 && ok) perf_.press(f);
+  else if (op == 1 && ok) perf_.release(f);
+  else if (op == 2) perf_.turn(static_cast<int8_t>(val));
+  else if (op == 3) perf_.releaseAll();
 }
 
 // Macros of an FM / DRUM / SYNTH voice: locks over the instrument's, then the LFO's macro target (l:
@@ -1309,24 +1332,6 @@ MT_HOT void Synth::renderChip(Voice& v, float* out, int n) {
 
 // Sample playback: 32.32 fixed point position, linear interpolation between frames. The loop
 // region [loopLo, loopHi) bounds the play direction's edge (for Off it is the whole region).
-// Master DJ filter (Project::djFilter): low-pass 20 kHz .. 100 Hz to the left, high-pass 20 Hz ..
-// 8 kHz to the right, a little resonance; one state per channel, cleared while it is off.
-MT_HOT void Synth::djFilter(float* l, float* r, int n) {
-  const int v = p_.djFilter;
-  if (v == 0) {
-    djL_.reset();
-    djR_.reset();
-    return;
-  }
-  const float a = v < 0 ? -v / 64.f : v / 63.f;
-  const float hz = v < 0 ? 20000.f * fastPow(100.f / 20000.f, a) : 20.f * fastPow(8000.f / 20.f, a);
-  const Svf::Mode md = v < 0 ? Svf::Mode::Lp : Svf::Mode::Hp;
-  djL_.set(md, hz, 0.9f);
-  djR_.set(md, hz, 0.9f);
-  for (int i = 0; i < n; ++i) l[i] = djL_.process(l[i]);
-  for (int i = 0; i < n; ++i) r[i] = djR_.process(r[i]);
-}
-
 MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   const int16_t* d = v.smp;
   const uint32_t last = v.smpLen - 1;
@@ -1486,9 +1491,44 @@ MT_HOT void Synth::renderCore() {
   nEv_ = 0;
   ctlLeft_ = kControl;
   mark(kProfMix);
-  delay_.process(send_, mixL_, mixR_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, p_.dlyLevel);
+  // PERF throws: the whole mix (mono, before delay / reverb) into the sends while held. The send
+  // gains ramp (kPerfRamp per sample): a cut mid-note would step the lines' input. The sidechain key
+  // track (keyAround) joins the mix after the comp: it is neither thrown nor ducked by a freeze.
+  if (const float ds = perf_.delaySend(), rs = perf_.reverbSend();
+      ds > 0.f || rs > 0.f || perfDs_ > 0.f || perfRs_ > 0.f)
+    for (int i = 0; i < kBlock; ++i) {
+      perfDs_ = perfDs_ < ds ? fminf(perfDs_ + kPerfRamp, ds) : fmaxf(perfDs_ - kPerfRamp, ds);
+      perfRs_ = perfRs_ < rs ? fminf(perfRs_ + kPerfRamp, rs) : fmaxf(perfRs_ - kPerfRamp, rs);
+      const float m = (mixL_[i] + mixR_[i]) * 0.5f;
+      send_[i] += m * perfDs_;
+      rsend_[i] += m * perfRs_;
+    }
+  // A throw / freeze (or its tail): its return at least kPerfRet, so a throw sounds with the
+  // project's level at 0. Delay: DELAY THROW; reverb: REVERB THROW or FREEZE. The floors move per
+  // block (fast up, slow down): no step in the returns.
+  const bool frozen = perf_.freeze();
+  auto floor = [](uint8_t& f, bool up) {
+    if (up) f = f + kPerfRetUp < kPerfRet ? f + kPerfRetUp : kPerfRet;
+    else if (f) --f;
+  };
+  floor(perfDRet_, perf_.delayTail() || perfDs_ > 0.f);
+  floor(perfRRet_, perf_.reverbTail() || frozen || perfRs_ > 0.f);
+  const uint8_t dl = p_.dlyLevel < perfDRet_ ? perfDRet_ : p_.dlyLevel;
+  const uint8_t rl = p_.rvbLevel < perfRRet_ ? perfRRet_ : p_.rvbLevel;
+  delay_.process(send_, mixL_, mixR_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, dl);
   mark(kProfDelay);
-  reverb_.process(rsend_, mixL_, mixR_, kBlock, p_.rvbSize, p_.rvbDamp, p_.rvbLevel);
+  // FREEZE: the live mix (and the delay) ducks under the frozen tail, ramped in and out.
+  if (const float g = perf_.freezeDry(); g != 1.f || perfDry_ != 1.f)
+    for (int i = 0; i < kBlock; ++i) {
+      perfDry_ = perfDry_ < g ? fminf(perfDry_ + kPerfRamp, g) : fmaxf(perfDry_ - kPerfRamp, g);
+      mixL_[i] *= perfDry_;
+      mixR_[i] *= perfDry_;
+    }
+  // The delay runs at level 0 too (its line stays live); the reverb rests there, so once its return
+  // closes the lines are cleared: a later throw must not replay a stale tail.
+  if (rvbRan_ && rl == 0) reverb_.clear();
+  rvbRan_ = rl > 0;
+  reverb_.process(rsend_, mixL_, mixR_, kBlock, p_.rvbSize, p_.rvbDamp, rl, frozen);
   mark(kProfReverb);
   comp_.process(mixL_, mixR_, scTrack >= 0 ? scL_ : nullptr, scTrack >= 0 ? scR_ : nullptr, kBlock, p_.compAmt,
                 p_.compRel, p_.scDepth);
@@ -1498,8 +1538,9 @@ MT_HOT void Synth::renderCore() {
       mixL_[i] += scL_[i];
       mixR_[i] += scR_[i];
     }
-  djFilter(mixL_, mixR_, kBlock);  // after the key track is back: the filter sweeps the whole mix
-  mark(kProfDj);
+  // After the key track is back: PERF works on the whole mix. A 1/16 step = kPpqn / 4 ticks.
+  perf_.process(mixL_, mixR_, kBlock, (kPpqn / 4) * tickSamples(), !paused_);
+  mark(kProfPerf);
   const uint8_t mv = p_.masterVol > kMasterVolMax ? kMasterVolMax : p_.masterVol;
   const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
   for (int i = 0; i < kBlock; ++i) mixL_[i] = softClip(mixL_[i] * g) * 32767.f;
@@ -1536,7 +1577,7 @@ void Synth::takeTrackPeaks(float out[kTracks]) {
 const char* Synth::profName(int stage) {
   static const char* const kNames[kProfStages] = {"queue", "events", "cache",  "instLfo", "ctlMod", "ctlFlt",
                                                   "ctlEng", "chip",  "sample", "fm",      "drum",   "synth",
-                                                  "mix",   "delay", "reverb", "comp",    "dj",     "master"};
+                                                  "mix",   "delay", "reverb", "comp",    "perf",   "master"};
   return stage >= 0 && stage < kProfStages ? kNames[stage] : "";
 }
 

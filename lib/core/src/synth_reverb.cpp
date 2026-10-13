@@ -47,25 +47,26 @@ MT_INLINE float allpass(float* line, int& idx, int len, float x) {
 }  // namespace
 
 MT_HOT void Reverb::process(const float* in, float* mixL, float* mixR, int n, uint8_t size, uint8_t damp,
-                            uint8_t level) {
+                            uint8_t level, bool freeze) {
   if (!buf_ || level == 0) return;
   bool input = false;
-  for (int i = 0; i < n && !input; ++i) input = in[i] != 0.f;
-  if (idle_ && !input) return;
+  for (int i = 0; i < n && !input && !freeze; ++i) input = in[i] != 0.f;
+  if (idle_ && !input) return;  // frozen and idle: the lines hold nothing to loop
   idle_ = false;
   const float sz = (size > 127 ? 127 : size) * (1.f / 127.f);
-  const float fb = 0.70f + 0.28f * sz;
-  const float d = (damp > 127 ? 127 : damp) * (0.4f / 127.f);
+  const float fb = freeze ? 1.f : 0.70f + 0.28f * sz;
+  const float d = freeze ? 0.f : (damp > 127 ? 127 : damp) * (0.4f / 127.f);
   const float wet = (level > 127 ? 127 : level) * (0.5f / 127.f);
-  // A size change moves the loop end (no glide); the write index wraps into the new length.
-  for (int c = 0; c < kCombs; ++c) {
+  // A size change moves the loop end (no glide); the write index wraps into the new length. Frozen:
+  // the lengths hold (the loop keeps its content).
+  for (int c = 0; c < kCombs && !freeze; ++c) {
     const int len = static_cast<int>(kCombLen[c] * (0.5f + 0.5f * sz));
     combLen_[c] = len < 1 ? 1 : len;
     if (combIdx_[c] >= combLen_[c]) combIdx_[c] = 0;
   }
   float peak = 0;
   for (int i = 0; i < n; ++i) {
-    const float x = in[i] * 0.25f;  // 4 combs summed
+    const float x = freeze ? 0.f : in[i] * 0.25f;  // 4 combs summed; frozen: no input (not even inf)
     float acc = 0;
     for (int c = 0; c < kCombs; ++c) {
       float* line = comb_[c];
@@ -85,7 +86,7 @@ MT_HOT void Reverb::process(const float* in, float* mixL, float* mixR, int n, ui
     const float ar = r < 0 ? -r : r;
     if (ar > peak) peak = ar;
   }
-  quiet_ = !input && peak < 1e-5f ? quiet_ + n : 0;
+  quiet_ = !input && !freeze && peak < 1e-5f ? quiet_ + n : 0;
   if (quiet_ >= kQuietIdle) {  // the tail has died out: drop the remains, rest until the next input
     for (int i = 0; i < kBufLen; ++i) buf_[i] = 0;
     for (float& s : store_) s = 0;

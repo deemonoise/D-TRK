@@ -1771,6 +1771,74 @@ void test_start_sends_transport_start_to_synth() {
   TEST_ASSERT_EQUAL(1, sink->times(0xFA).size());  // MIDI out: its own 0xFA only
 }
 
+static std::vector<SynRec> perfSteps() {
+  std::vector<SynRec> out;
+  for (const auto& r : sink->synKind(0xF6))
+    if (r.b[1] == 4) out.push_back(r);
+  return out;
+}
+
+// The PERF step clock: 0xF6 4 (1/16 index in the pass, mod 64) on every 1/16 boundary, on the first INT track,
+// at the unshifted step time (swing ignored); never on MIDI out.
+void test_perf_step_clock_to_synth() {
+  p->tracks[2].out = TrackOut::Int;
+  p->tracks[5].out = TrackOut::Int;
+  p->patterns[0].swing = 75;
+  seq->start(0, *sink);
+  run(0, 1000000);
+  const auto v = perfSteps();
+  TEST_ASSERT_TRUE(v.size() >= 6);
+  const uint64_t su = 625000ull * 24 / p->bpm;
+  for (size_t i = 0; i < v.size(); ++i) {
+    TEST_ASSERT_EQUAL(2, v[i].track);
+    TEST_ASSERT_EQUAL(3, v[i].len);
+    TEST_ASSERT_EQUAL(static_cast<int>(i % p->patterns[0].length), v[i].b[2]);
+    TEST_ASSERT_TRUE(v[i].t + 1 >= i * su && v[i].t <= i * su + 1);
+  }
+  for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(0xF6, r.b[0]);
+}
+
+// 1/32 resolution: one 1/16 boundary every 2 steps; no INT track: none.
+void test_perf_step_clock_resolution_and_midi_only() {
+  p->tracks[0].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::ThirtySecond;
+  seq->start(0, *sink);
+  run(0, 1000000);
+  const auto v = perfSteps();
+  TEST_ASSERT_TRUE(v.size() >= 6);
+  const uint64_t su = 625000ull * 24 / p->bpm;
+  const size_t pass = p->patterns[0].length / 2;  // sixteenths per pass
+  for (size_t i = 0; i < v.size(); ++i) {
+    TEST_ASSERT_EQUAL(static_cast<int>(i % pass), v[i].b[2]);
+    TEST_ASSERT_TRUE(v[i].t + 1 >= i * su && v[i].t <= i * su + 1);
+  }
+  tearDown();
+  setUp();
+  seq->start(0, *sink);
+  run(0, 1000000);
+  TEST_ASSERT_EQUAL(0, perfSteps().size());
+  for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(0xF6, r.b[0]);
+}
+
+// The clock is pass-relative: a 1/32 pattern of 13 steps (6.5 sixteenths) restarts it at 0 on
+// every pass (pattern steps 0, 2, .. 12 -> 0 .. 6); it never stops after a pass.
+void test_perf_step_clock_odd_pass() {
+  p->tracks[0].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::ThirtySecond;
+  p->patterns[0].length = 13;
+  seq->start(0, *sink);
+  const uint64_t su = 625000ull * 12 / p->bpm;  // one 1/32 step
+  run(0, 3 * 13 * su - su / 2);
+  const auto v = perfSteps();
+  TEST_ASSERT_EQUAL(3 * 7, v.size());
+  for (size_t i = 0; i < v.size(); ++i) {
+    const uint64_t pass = i / 7, k = i % 7;
+    TEST_ASSERT_EQUAL(static_cast<int>(k), v[i].b[2]);
+    const uint64_t want = (pass * 13 + 2 * k) * su;
+    TEST_ASSERT_TRUE(v[i].t + 1 >= want && v[i].t <= want + 1);
+  }
+}
+
 // Pause and resume reach the synth too (TEMPO LFOs with Retrig OFF hold while paused).
 void test_pause_resume_sent_to_synth() {
   p->tracks[2].out = TrackOut::Int;
@@ -1964,77 +2032,6 @@ void test_fill_gates_fil_steps() {
   TEST_ASSERT_EQUAL(2, sink->times(0x91, 62).size());
 }
 
-void test_perf_rat2_doubles_and_release_restores() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->start(0, *sink);
-  seq->perfOn(0, PerfFx::Rat2);
-  run(0, 260000);
-  TEST_ASSERT_EQUAL(2, sink->times(0x90, 60).size());
-  seq->perfOff(0);
-  run(260001, 1010000);  // 500 000 was planned with it (lookahead), 1 000 000 without
-  TEST_ASSERT_EQUAL(5, sink->times(0x90, 60).size());
-}
-
-void test_perf_keeps_step_fx_and_replaces_same_cmd() {
-  Step s;
-  s.note = 60;
-  s.fx[0] = {Fx::RAT, 3};
-  for (int k = 1; k < kFxSlots; ++k) s.fx[k] = {Fx::PRB, 100};
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0] = s;
-  seq->perfOn(0, PerfFx::Rat4);
-  seq->start(0, *sink);
-  run(0, 120000);
-  TEST_ASSERT_EQUAL(4, sink->times(0x90, 60).size());  // RAT 4 took the RAT slot
-  TEST_ASSERT_EQUAL(3, p->patterns[0].steps[0][0].fx[0].val);
-}
-
-void test_perf_mute_silences_track() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  p->patterns[0].steps[1][0].note = 62;
-  seq->perfOn(0, PerfFx::Mute);
-  seq->start(0, *sink);
-  run(0, 260000);
-  TEST_ASSERT_EQUAL(0, sink->times(0x90, 60).size());
-  TEST_ASSERT_EQUAL(1, sink->times(0x91, 62).size());
-}
-
-void test_perf_synth_fx_skipped_on_midi_track() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->perfOn(0, PerfFx::FltLow);
-  seq->start(0, *sink);
-  run(0, 10000);
-  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
-  TEST_ASSERT_EQUAL(0, sink->synKind(0xF5).size());
-}
-
-void test_perf_flt_on_int_track() {
-  p->tracks[0].out = TrackOut::Int;
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->perfOn(0, PerfFx::FltLow);
-  seq->start(0, *sink);
-  run(0, 10000);
-  bool flt = false;
-  for (const SynRec& r : sink->synKind(0xF5)) flt |= r.b[1] == static_cast<uint8_t>(Fx::FLT) && r.b[2] == 30;
-  TEST_ASSERT_TRUE(flt);
-}
-
-void test_stop_clears_perf() {
-  p->patterns[0].length = 4;
-  p->patterns[0].steps[0][0].note = 60;
-  seq->perfOn(0, PerfFx::Mute);
-  seq->start(0, *sink);
-  run(0, 10000);
-  seq->stop(10000, *sink);
-  seq->start(20000, *sink);
-  run(20000, 30000);
-  TEST_ASSERT_EQUAL(1, sink->times(0x90, 60).size());
-}
-
 void test_phase256_within_step() {
   p->patterns[0].length = 4;
   seq->start(0, *sink);
@@ -2168,22 +2165,6 @@ void test_step_arp_on_int_track_uses_track_voices() {
   for (const auto& r : sink->synKind(0xF5))
     if (r.b[1] == kSynthStep && r.t == 250000) noteStart = (r.b[2] & 0x80) != 0;
   TEST_ASSERT_TRUE(noteStart);
-}
-
-// A perf Mute's release is planned with the next step; a rewind (tempo change) replans it.
-void test_perf_mute_release_survives_rewind() {
-  Step& s = p->patterns[0].steps[0][0];
-  s.note = 60;
-  s.fx[0] = {Fx::TIE, 0};
-  seq->start(0, *sink);
-  run(0, 200000);
-  seq->perfOn(0, PerfFx::Mute);
-  run(200001, 260000);  // the step at 250 ms is planned with its release
-  p->bpm = 121;         // the next process rewinds and replans it
-  run(260001, 700000);
-  const auto off = sink->times(0x80, 60);
-  TEST_ASSERT_EQUAL(1, off.size());
-  TEST_ASSERT_TRUE(off[0] < 400000);
 }
 
 // 1:2 on step 0 and PRE on step 1: step 1 plays in the passes where step 0 played; NEI on track 2
@@ -2721,6 +2702,9 @@ int main() {
   RUN_TEST(test_send_program_int_track_uses_instrument);
   RUN_TEST(test_start_resets_int_tracks);
   RUN_TEST(test_start_sends_transport_start_to_synth);
+  RUN_TEST(test_perf_step_clock_to_synth);
+  RUN_TEST(test_perf_step_clock_resolution_and_midi_only);
+  RUN_TEST(test_perf_step_clock_odd_pass);
   RUN_TEST(test_pause_resume_sent_to_synth);
   RUN_TEST(test_track_out_change_releases_held_notes);
   RUN_TEST(test_int_track_synth_fx_before_note);
@@ -2733,12 +2717,6 @@ int main() {
   RUN_TEST(test_int_track_step_markers);
   RUN_TEST(test_track_length_polymeter);
   RUN_TEST(test_fill_gates_fil_steps);
-  RUN_TEST(test_perf_rat2_doubles_and_release_restores);
-  RUN_TEST(test_perf_keeps_step_fx_and_replaces_same_cmd);
-  RUN_TEST(test_perf_mute_silences_track);
-  RUN_TEST(test_perf_synth_fx_skipped_on_midi_track);
-  RUN_TEST(test_perf_flt_on_int_track);
-  RUN_TEST(test_stop_clears_perf);
   RUN_TEST(test_phase256_within_step);
   RUN_TEST(test_track_mask_silences_others);
   RUN_TEST(test_step_arp_plays_on_following_steps);
@@ -2747,7 +2725,6 @@ int main() {
   RUN_TEST(test_step_arp_updown_over_two_octaves);
   RUN_TEST(test_step_arp_survives_a_stall);
   RUN_TEST(test_step_arp_on_int_track_uses_track_voices);
-  RUN_TEST(test_perf_mute_release_survives_rewind);
   RUN_TEST(test_cnd_pre_follows_previous_condition);
   RUN_TEST(test_groove_shifts_and_accents);
   RUN_TEST(test_humanize_stays_within_range);

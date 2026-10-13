@@ -3,6 +3,7 @@
 #include "model.h"
 #include "synth_comp.h"
 #include "synth_delay.h"
+#include "synth_perf.h"
 #include "synth_reverb.h"
 #include "synth_voice.h"
 
@@ -37,7 +38,11 @@ static_assert(kLfos == 4, "LfoMods::depth initializer");
 // 0x90 note vel (vel 0 = off), 0x80 note, 0xE0 lsb msb (bend, +-2 semitones), 0xC0 prog (instrument),
 // 0xF5 cmd val (synth fx: cmd = Fx SLD..SLC, or kSynthStep), 0xFE (start: reset the track's runtime
 // state), 0xFF (all off: release every voice of the track), 0xFA / 0xFC / 0xFB (transport start /
-// pause / resume, any track: TEMPO LFOs with Retrig OFF back to phase 0 / hold / run on).
+// pause / resume, any track: TEMPO LFOs with Retrig OFF back to phase 0 / hold / run on; 0xFA also
+// restarts the PERF grid), 0xF6 op val (PERF on the master mix, any track; the UI sends it on
+// kPreviewTrack): op 0 press PerfFx val, 1 release PerfFx val, 2 turn the last pressed by
+// static_cast<int8_t>(val), 3 release all, 4 step clock: 1/16 step val (mod 64) of the grid starts
+// here (the sequencer sends it on the first INT track, see PerfBus::stepAt).
 //
 // Synth fx follow the step model of the sequencer: 0xF5 kSynthStep (ticks per step | 0x80 if the step
 // has a note) opens a step, then come the step's fx, then its notes. On a step with a note the fx apply
@@ -64,6 +69,10 @@ class Synth {
   void setDelayBuffer(int16_t* buf, uint32_t len) { delay_.setBuffer(buf, len); }
   // Reverb buffer (len floats >= Reverb::kBufLen, owned by the caller), nullptr = no reverb. Clears it.
   void setReverbBuffer(float* buf, int len) { reverb_.setBuffer(buf, len); }
+  // PERF ring buffer (frames stereo frames, 2 x frames int16, owned by the caller), nullptr = the
+  // buffer effects (REPEAT .. TAPE STOP) silent. clear: see PerfBus::setBuffer.
+  void setPerfBuffer(int16_t* buf, uint32_t frames, bool clear = true) { perf_.setBuffer(buf, frames, clear); }
+  const PerfBus& perf() const { return perf_; }  // what PERF holds (UI, tests); 0xF6 changes it
   // Queues a message for the next render(). offset: sample index inside that block, clamped to
   // 0..kBlock-1. False if dropped (bad track, empty or full queue; offs evict other messages).
   bool event(int offset, uint8_t track, const uint8_t* b, uint8_t len);
@@ -105,7 +114,7 @@ class Synth {
   // the voice stages = voices sounding at a block's start, summed over the blocks.
   enum ProfStage : uint8_t {
     kProfQueue, kProfEvents, kProfCache, kProfInstLfo, kProfCtlMod, kProfCtlFlt, kProfCtlEng, kProfChip,
-    kProfSample, kProfFm, kProfDrum, kProfSyn, kProfMix, kProfDelay, kProfReverb, kProfComp, kProfDj,
+    kProfSample, kProfFm, kProfDrum, kProfSyn, kProfMix, kProfDelay, kProfReverb, kProfComp, kProfPerf,
     kProfMaster, kProfStages
   };
   static const char* profName(int stage);
@@ -258,8 +267,18 @@ class Synth {
   float scL_[kBlock], scR_[kBlock];  // sidechain key: the voices of Project::scTrack (bypass the compressor)
   Reverb reverb_;
   Compressor comp_;
-  Svf djL_, djR_;  // master DJ filter
-  void djFilter(float* l, float* r, int n);
+  // PERF: the punch-in effects on the master, and the synth's side of throws / freeze. Ramps
+  // (per sample, kPerfRamp): the throw send gains and the dry gain under a freeze, so a press or
+  // release never clicks. perfDRet_ / perfRRet_: the delay / reverb return floor while its throw /
+  // freeze (or its tail) runs, up kPerfRetUp per block, back down 1 per block once the tail ends.
+  PerfBus perf_;
+  float perfDs_ = 0, perfRs_ = 0;  // throw send gains, 0..1
+  float perfDry_ = 1;              // live mix gain under a freeze
+  uint8_t perfDRet_ = 0, perfRRet_ = 0;  // 0..kPerfRet
+  bool rvbRan_ = false;  // the reverb ran last block (an effective level > 0)
+  static constexpr float kPerfRamp = 1.f / 64.f;
+  static constexpr uint8_t kPerfRet = 100, kPerfRetUp = 8;
+  void perfMsg(uint8_t op, uint8_t val);
   Delay delay_;
   float trackPeak_[kSynthTracks] = {};
   bool meters_ = false;
