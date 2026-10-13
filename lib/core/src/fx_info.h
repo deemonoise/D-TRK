@@ -12,7 +12,6 @@ void fxFormat(Fx f, uint8_t v, char out[5]);
 uint8_t fxStep(Fx f, uint8_t v, int delta);  // encoder step, clamped, signed-aware
 Fx fxNextCmd(Fx f, int delta);               // cycles every command, grouped (not the enum order)
 bool fxSynthOnly(Fx f);                      // SLD..SLC, DLY, DRV..ARM, BIT, SRR, LFO..LFR, PAN: INT tracks only
-bool fxDrumOnly(Fx f);
-const char* perfFxName(PerfFx f);            // toast text of a punch-in effect, "" for None                       // ACC: drum tracks only (KIT instrument), ignored elsewhere
+bool fxDrumOnly(Fx f);                       // ACC: drum tracks only (KIT instrument), ignored elsewhere
 
 }  // namespace mt

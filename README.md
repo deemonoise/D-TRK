@@ -33,16 +33,16 @@ Every instrument has an LP / BP / HP filter with an envelope, drive and 4 LFOs (
 ### Mix and effects
 
 - Mixer: faders, pan, sends, mute / solo, level meters, scope.
-- Delay and pseudo-stereo reverb on sends, master compressor with sidechain, DJ filter.
+- Delay and pseudo-stereo reverb on sends, master compressor with sidechain, PERF punch-in effects on the master (repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb throw, freeze).
 - Per-note lo-fi: bit depth and sample rate.
 - Each track goes to the internal synth or to external MIDI.
 
 ### Live performance and song
 
-- **Song** (SONG tab, Polyend-style): up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; SONG / LOOP switch on the fly, undo for song edits.
-- **PERF**: effects play while a button is held (retrigger, filter, delay / reverb max, crush, fade, mute), button assignment is configurable.
+- **Song** (SONG tab, Polyend-style): up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
+- **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb throw, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable.
 - **REC**: record notes from the track buttons while playing.
-- Fill on Shift + Play.
+- Shift + Play: the song from the SONG cursor on any tab; held while playing, fill.
 
 ### Files and extras
 
@@ -222,7 +222,7 @@ All types have these at the end of the INST list:
 - **ARP**: fx `ARM` sets the order (up, down, up-down, random) and the number of notes per step (1–8); ARP + CHD on the same step arpeggiates the chord.
 - **Chords** `CHD`: 36 types × 4 inversions, shown with the inversion digit (`MA7 `, `MA72`). Lowercase types (`tri 7th su2 su4 6th ad9 9th 7s4 a11`) are built on the project scale's degrees, `pwr` / `oct` are the fixed +7 / +12; UPPERCASE ones (`MAJ MIN DIM AUG SU2 SU4 MA7 MI7 DOM HDM DM7 MMA MA6 MI6 MA9 MI9 DO9 7S4 AD9 MD9 D7# D7b D13 M11 QRT`) are fixed intervals. Old projects keep their chords.
 - **4 LFOs** per instrument (INST → LFO), each with a free Hz rate or tempo sync (1/32 … 8 bars) and the phase retriggered on every note or free-running (Retrig ON / OFF); step fx `LFO` / `LFD` / `LFS` / `LFW` / `LFT` / `LFR` select an LFO, lock its depth / rate / wave / dest and restart its phase.
-- **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; **DJ filter** on the master (PROJ → FX).
+- **Lo-fi**: fx `BIT` (bit depth) and `SRR` (sample rate) per note; CRUSH / DOWNSAMPLE and the LP / HP filter on the whole mix as **PERF** effects.
 - Pattern **groove** (PROJ → SONG → Groove: MPC 54–66, SHUFFLE, PUSH, LAID BACK, DRUNK, BOOM BAP, HOUSE) and track **Humanize** (TRACK → NOTE); conditions `CND PRE / NEI`, volume ramp up/down on `RAT` (`4^`, `4v`).
 - **Step arp** `ARS` (INT and MIDI): the CHD notes (or ARP 0/x/y, or the note itself) across a range of 1–4 octaves play as separate notes on the track's following empty steps — every step or every N; until the next note, OFF or a pattern change. The fx list in GRID is grouped: notes and arp, timing, randomness, pitch and volume, sound, sample, sends, MIDI.
 - **Velocity**: Vel>Cut (filter cutoff) and Vel>Dec (DECAY macro) in INST → ENV.
@@ -241,20 +241,20 @@ Details (INST tab, preset browser, DRUM machine table, SYNTH and wavetables, fx 
 
 ## Song and live performance
 
-- **Song** (SONG tab): up to 128 slots, each with a pattern and the mutes of the 16 tracks; the mutes are applied when the slot starts. An A tap copies the slot below it (that is how repeats are made), a click or tap on a cell mutes the track in the slot, the track buttons do the same. Play on the SONG tab plays the song, on other tabs it loops the pattern; tapping `S03 P05` in the status bar toggles SONG / LOOP at the end of the pass.
+- **Song** (SONG tab): up to 128 slots, each with a pattern and the mutes of the 16 tracks; the mutes are applied when the slot starts. An A tap copies the slot below it (that is how repeats are made), a click or tap on a cell mutes the track in the slot, the track buttons do the same. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the SONG cursor on any tab (while playing, a short press restarts it from there); tapping `S03 P05` in the status bar toggles SONG / LOOP at the end of the pass.
 - **Per-track length** (TRACK → Pat len): the track loops its first N steps within the pattern (polymeter); in GRID the steps beyond are grey, and the boundary is marked with a line.
 - **Per-track speed** (TRACK → Speed): 1/4, 1/2, x1, x2, x4 per track and pattern — x2 / x4 loop the track 2 / 4 times faster (x2 at 1/16 = 1/32), 1/2 / 1/4 stretch it across pattern passes; works with Pat len.
 - **Fill generators** (GRID → Fill…, row Type): **ARP** (Virus-style arpeggiator, 106 rhythm patterns), **CHORDS** (a progression like `1 5 6 4`, `2MI7 5DOM 1MA7*2` or `1 b7 b6 5` in the project's key, 55 factory progressions + RANDOM, 32 rhythms, CLOSE voice leading by inversions) and **BASS** (a bass line whose notes are roles — root, 3rd, 5th, 7th, approach, walk — against a fixed root, the selected tracks' chords or the CHORDS progression; 48 factory patterns). Each writes notes and fx onto one track with live preview and undo; Capture saves your own patterns to `/presets/ARP`, `/presets/PRG`, `/presets/BAS`. More in the [manual](docs/manual.md#euclid).
-- **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press is pause, as before.
+- **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press starts the song from the SONG cursor.
 - **REC** (GRID menu): while playing, the track buttons write scale degrees into the playing step of the current track (on a drum track — lanes); Shift + N erases.
-- **PERF** (GRID menu): an effect while the button is held — 1 RAT 2, 2 RAT 4, 3 filter closed, 4 open, 5 delay, 6 short DECAY, 7 fade, 8 mute.
+- **PERF** (GRID or SONG menu, one shared mode): punch-in effects on the whole internal mix while a button is held, PO-33 style — repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb throw, reverb freeze. The encoder sets the depth while the button is held (Shift ×10), several buttons stack, Shift + N still mutes (in SONG too); INT sound only, live only. Default: 1 REPEAT, 2 ROLL, 3 FILTER, 4 GATE, 5 DELAY THROW, 6 REVERB THROW, 7 CRUSH, 8 TAPE STOP.
 
 More in the [manual](docs/manual.md#song).
 
 ## Mixer and render
 
 - **MIX** is a separate tab at the bottom, between INST and BANK: 8 strips for the half of the tracks under the cursor (volume fader, pan, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
-- Track volume from any screen: hold its button and turn the encoder (Shift ×10); a click while holding switches the turn to pan. Not in GRID edit mode, REC or PERF.
+- Track volume from any screen: hold its button and turn the encoder (Shift ×10); a click while holding switches the turn to pan. Not in GRID edit mode, REC or PERF (GRID or SONG).
 - **Pan** per INT track (L64…C…R63): TRACK → Pan, the MIX pan row (tap it, then turn), step fx `PAN`, LFO dest PAN (autopan; with Retrig ON chord notes spread across the field). The reverb returns in pseudo-stereo, the delay in the centre.
 - **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, stereo 16-bit 32 kHz, with delay / reverb / compressor and a 2 s tail. The file can be downloaded over Wi-Fi or imported back as a sample.
 - **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s; mono (L + R) / 2.
@@ -266,7 +266,7 @@ More in the [manual](docs/manual.md#render).
 
 - **Themes**: FILE → SYSTEM → Theme, 17 built-in themes (CLASSIC, AMBER, PHOSPHOR, NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE, GAMEBOY, C64, SYNTHWAVE, OCEAN, CONTRAST, PAPER). A device setting: stored in the board's memory, does not change the project.
 - **Pages** in TRACK (MAIN / NOTE / MIDI), PROJ (SONG / FX / COMP / PERF) and FILE (PROJECTS / SAMPLES / SYSTEM): tap a page tab, or put the encoder on the page tabs and hold A + turn, or B + Shift + turn; the list wraps around.
-- **PERF**: the effect of each button is configured in PROJ → PERF (RAT 2/3/4/8, ROLL UP, FILTER LOW/HIGH, DELAY/REVERB MAX, CRUSH, DOWNSAMPLE, DRIVE, SHORT DECAY, FADE, MUTE); pressing shows a toast with its name.
+- **PERF**: the effect of each button is configured in PROJ → PERF (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP, GATE, FILTER, CRUSH, DOWNSAMPLE, DRIVE, DELAY THROW, REVERB THROW, FREEZE or ---); each button also has a start Value (button 1 REPEAT 1/8, button 2 REPEAT 1/32); pressing starts there and shows a toast with its name and value (`PERF REPEAT 1/8`).
 - **Project templates** (FILE → New: EMPTY, 808 SET, 909 SET, FM SET, CHIPTUNE, MIDI 8 and your own from `/templates`, Save as template), **8 demo songs** (FILE → New → Demo songs: trance, chiptune, acid, lo-fi, synthwave, dub techno, IDM, house), **autosave** to `/projects/<name>.auto` (FILE → SYSTEM → Autosave, FILE → Restore autosave), **safe start** (hold Shift at power-on — no autoload), **crash log** `/projects/crashlog.txt` and the firmware version in FILE → SYSTEM.
 - **Wi-Fi page**: tabs per section, scrollable lists with a filter.
 - **MIX**: encoder — MAIN volume, Shift+turn — tracks A (1–8) / B (9–16); track volume — its button + encoder (click while holding — pan), a track's pan — tap its pan row and turn, mute — Shift+button, solo — tap. Each track has a level meter; at the bottom there is a scope with auto-gain and a level meter / CLIP.

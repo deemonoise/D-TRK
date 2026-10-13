@@ -70,10 +70,11 @@ void GridScreen::onEnter() {
   setEdit(false);
   cur();
   needVisible_ = true;
+  if (perf()) setRec(false);  // PERF may have been turned on in SONG
 }
 
+// App releases the PERF effects and keeps / frees the buffer.
 void GridScreen::onLeave() {
-  perfRelease();
   fill_.cancel();
   transpose_.cancel();
 }
@@ -266,17 +267,13 @@ void GridScreen::setPerf(bool on) {
     rec_ = false;
     edit_ = false;
     holdEdit_ = false;
-  } else {
-    perfRelease();
   }
-  perf_ = on;
+  app_.perf().setOn(on);
 }
 
-void GridScreen::perfRelease() {
-  if (perfBtn_ < 0) return;
-  engine::postWait(engine::Cmd::PerfOff, static_cast<uint16_t>(perfTrack_));
-  perfBtn_ = -1;
-}
+bool GridScreen::perf() const { return app_.perf().on(); }
+
+bool GridScreen::buttonsBusy() const { return edit_ || rec_ || perf(); }
 
 // The track step heard at the play position: trackStepAt, sub-step 0 on a fast track. A slow
 // track holds the step it played last (back to the last pattern step where c % D == 0, maybe in
@@ -413,6 +410,7 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
   cur();
   switch (ev.type) {
     case InputType::EncTurn:
+      if (app_.perf().turn(ev.delta, ev.shift)) break;  // the last pressed effect's depth; the cursor stays
       if (edit_) editTurn(ev.delta, ev.shift);
       else if (!ev.shift) moveStep(ev.delta);
       else if (detail_) moveField(ev.delta);
@@ -501,7 +499,7 @@ void GridScreen::onBack() {
   } else if (rec_) {
     setRec(false);
     app_.toast("REC OFF");
-  } else if (perf_) {
+  } else if (perf()) {
     setPerf(false);
     app_.toast("PERF OFF");
   }
@@ -512,17 +510,8 @@ bool GridScreen::trackKey(int n, bool shift) {
   cur();
   const bool playing = app_.status().playing;
   if (rec_ && playing) return recordKey(n, shift);
-  if (perf_ && playing && !shift) {  // last pressed wins; Shift + N still mutes
-    perfRelease();
-    perfBtn_ = n;
-    perfTrack_ = track();
-    const uint8_t fx = n < mt::kPerfButtons ? app_.project().perfMap[n] : 0;  // PROJ -> PERF
-    engine::post(engine::Cmd::PerfOn, static_cast<uint16_t>(perfTrack_ | (fx << 8)));
-    char msg[32];
-    snprintf(msg, sizeof(msg), "PERF %s", fx ? mt::perfFxName(static_cast<mt::PerfFx>(fx)) : "---");
-    app_.toast(msg);
-    return true;
-  }
+  // Button N holds its PROJ -> PERF effect while playing; Shift + N still mutes.
+  if (!shift && app_.perf().press(n)) return true;
   if (edit_) {
     if (drum()) toggleLane(n);  // lanes 1-8; the cursor stays
     else enterDegree(n, shift);
@@ -532,10 +521,6 @@ bool GridScreen::trackKey(int n, bool shift) {
   app_.setCurTrack(firstTrack() + n);  // button N = track N of the visible half
   cursorMoved();
   return true;
-}
-
-void GridScreen::trackRelease(int n) {
-  if (n == perfBtn_) perfRelease();
 }
 
 bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
@@ -708,7 +693,7 @@ void GridScreen::openMenu() {
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
-    add(perf_ ? "Perf: ON" : "Perf: OFF", kPerf, true);
+    add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
     add(detail_ ? "Overview" : "Detail view", kToggleView, true);
     add(follow_ ? "Follow: ON" : "Follow: OFF", kToggleFollow, true);
     add("Resample track", kResampleTrack, true);
@@ -949,8 +934,8 @@ void GridScreen::onMenu(int id) {
       app_.toast(rec_ ? "REC: BUTTONS WRITE WHILE PLAYING" : "REC OFF");
       break;
     case kPerf:
-      setPerf(!perf_);
-      app_.toast(perf_ ? "PERF: HOLD A BUTTON" : "PERF OFF");
+      setPerf(!perf());
+      app_.toast(perf() ? "PERF: HOLD A BUTTON" : "PERF OFF");
       break;
     default: break;
   }
@@ -1003,8 +988,10 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   const int n = len();
   char buf[12];
 
-  // Header: the visible half over the step numbers, track names coloured by mute/solo.
-  if (!drawBadge(s, gridY - kNamesH)) {
+  // Header: the visible half over the step numbers, track names coloured by mute/solo. The PERF
+  // badge grows with the held effects and covers the names it reaches.
+  const int badgeW = drawBadge(s, gridY - kNamesH);
+  if (!badgeW) {
     if (edit_) {
       snprintf(buf, sizeof(buf), "ST%d", editStep_);  // Edit step while editing
       s.setTextColor(kEditCursor);
@@ -1017,6 +1004,7 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   for (int col = 0; col < kOverviewTracks; ++col) {
     const int tr = firstTrack() + col;
     const mt::TrackCfg& t = p.tracks[tr];
+    if (kNumW + col * kColW + 4 < badgeW) continue;
     s.setTextColor(t.solo ? kCursor : (p.trackAudible(tr) ? kText : kDim));
     s.drawString(t.name, kNumW + col * kColW + 4, gridY - kNamesH);
   }
@@ -1081,8 +1069,10 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   char buf[16];
 
   // Header: track number over the step numbers, its name over NOTE / VEL, slots over the commands.
+  // The PERF badge grows with the held effects and covers the labels it reaches.
   s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
-  if (!drawBadge(s, gridY - kNamesH)) {
+  const int badgeW = drawBadge(s, gridY - kNamesH);
+  if (!badgeW) {
     if (edit_) {
       snprintf(buf, sizeof(buf), "ST%d", editStep_);  // Edit step while editing
       s.setTextColor(kEditCursor);
@@ -1091,12 +1081,16 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
     }
     s.drawString(buf, 2, gridY - kNamesH);
   }
-  s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
-  s.drawString(t.name, kNumW + 1, gridY - kNamesH);  // 8 chars fit 2 fields
+  if (kNumW + 1 >= badgeW) {
+    s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
+    s.drawString(t.name, kNumW + 1, gridY - kNamesH);  // 8 chars fit 2 fields
+  }
   s.setTextColor(kDim);
   for (int k = 0; k < mt::kFxSlots; ++k) {
+    const int x = kNumW + (kFx1 + 2 * k) * kFieldW + 4;
+    if (x < badgeW) continue;
     snprintf(buf, sizeof(buf), "FX%d", k + 1);
-    s.drawString(buf, kNumW + (kFx1 + 2 * k) * kFieldW + 4, gridY - kNamesH);
+    s.drawString(buf, x, gridY - kNamesH);
   }
 
   const int heard = st.playing || st.paused ? heardTrackStep(tr) : -1;  // the track's own step
@@ -1145,12 +1139,14 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   for (int k = 0; k < mt::kFxSlots; ++k) s.drawFastVLine(kNumW + (kFx1 + 2 * k) * kFieldW - 1, gridY - kNamesH, h, kDim);
 }
 
-// REC (red) / PERF (yellow) over the step numbers instead of the header text; false when neither.
-bool GridScreen::drawBadge(LGFX_Sprite& s, int y) {
-  if (!rec_ && !perf_) return false;
-  s.setTextColor(rec_ ? kRed : kYellow);
-  s.drawString(rec_ ? "REC" : "PERF", 0, y);
-  return true;
+// REC (red) / PERF (yellow) over the step numbers instead of the header text; 0 when neither.
+// PERF appends the held effects' short names in press order ("PERF RPT FLT CRS"), as many as the
+// header line holds (PerfPad::drawBadge).
+int GridScreen::drawBadge(LGFX_Sprite& s, int y) {
+  if (!rec_) return app_.perf().drawBadge(s, 0, y);
+  s.setTextColor(kRed);
+  s.drawString("REC", 0, y);
+  return 3 * kCharW;
 }
 
 // 5 px squares at a 6 / 7 px pitch: filled = the lane hits; cursorLane >= 0 frames that lane.

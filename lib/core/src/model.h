@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "hot.h"
+#include "perf_fx.h"
 
 namespace mt {
 
@@ -281,15 +282,6 @@ constexpr uint8_t kRatUp = 1, kRatDown = 2;
 // NEI / !NEI: the same for the track on the left (track 1: always false). Shown PRE, !PR, NEI, !NE.
 constexpr uint8_t kCndPre = 0x03, kCndNotPre = 0x04, kCndNei = 0x05, kCndNotNei = 0x06;
 
-// Punch-in effects held on the track buttons (PERF mode); Project::perfMap says which one each button
-// holds (saved: new values go before Count only). The sequencer adds them to the steps of the track
-// as they play (Sequencer::perfSlot).
-enum class PerfFx : uint8_t {
-  None, Rat2, Rat4, FltLow, FltHigh, DlyMax, Crush, Fade, Mute,
-  DecShort, Rat3, Rat8, RatUp, RvbMax, Srr, Drive, Count
-};
-constexpr int kPerfButtons = 8;
-
 // Synth message 0xF5 cmd val: cmd is an Fx (synth fx) or kSynthStep, a step start on the INT
 // track with val = ticks per step | 0x80 if the step has a note (sent by the sequencer).
 constexpr uint8_t kSynthStep = 0xF0;
@@ -444,11 +436,11 @@ struct Project {
   uint8_t compRel = 50;
   uint8_t scTrack = 0;
   uint8_t scDepth = 64;
-  // Master DJ filter on the internal sound: -64..-1 low-pass (closing towards -64), 0 off, 1..63
-  // high-pass (opening towards 63).
-  int8_t djFilter = 0;
   // PERF: the effect of track button 1..8 (PerfFx).
-  uint8_t perfMap[kPerfButtons] = {1, 2, 3, 4, 5, 6, 7, 8};
+  uint8_t perfMap[kPerfButtons] = {kPerfDefaultMap[0], kPerfDefaultMap[1], kPerfDefaultMap[2], kPerfDefaultMap[3],
+                                   kPerfDefaultMap[4], kPerfDefaultMap[5], kPerfDefaultMap[6], kPerfDefaultMap[7]};
+  // Each button's start depth (PerfStack depth), within perfRange() of its effect; 0 for None.
+  int8_t perfDepth[kPerfButtons] = {};
   ProjSample samples[kProjSamples];
   uint8_t sampleCount = 0;  // names unique ignoring case
   ProjWavetable wavetables[kProjWavetables];
@@ -459,6 +451,7 @@ struct Project {
 
   Project() { reset(); }
   void reset();
+  void perfDefaultDepths();  // perfDepth = the default of each button's effect
   bool anySolo() const;
   bool trackInternal(int t) const { return tracks[t].out == TrackOut::Int; }
   bool trackAudible(int t) const { return !tracks[t].mute && (!anySolo() || tracks[t].solo); }

@@ -12,6 +12,7 @@
 #include "inst_screen.h"
 #include "menu.h"
 #include "model.h"
+#include "perf_pad.h"
 #include "proj_screen.h"
 #include "screen.h"
 #include "song_screen.h"
@@ -41,6 +42,8 @@ class App {
   // Track shared by GRID and TRACK screens.
   int curTrack() const { return curTrack_; }
   void setCurTrack(int t) { curTrack_ = static_cast<uint8_t>(((t % mt::kTracks) + mt::kTracks) % mt::kTracks); }
+  // PERF, shared by GRID and SONG (the tabs that play it).
+  PerfPad& perf() { return perf_; }
 
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
@@ -121,9 +124,11 @@ class App {
   static constexpr int kTransX0 = 256, kTransX1 = 320;
 
   Screen* screen() { return screens_[static_cast<int>(tab_)]; }
+  static bool perfTab(Tab t) { return t == Tab::Grid || t == Tab::Song; }
   void onTouch(const TouchEvent& ev);
   void transport();
   void postSong(bool on);  // SetSong from the SONG cursor
+  void startSong();
   void trackKey(int n, bool shift);
   void trackRelease(int n);
   void fillDown();
@@ -156,6 +161,7 @@ class App {
   engine::Status status_{};
   TouchTracker touch_;
   Menu menu_;
+  PerfPad perf_{*this};
 
   GridScreen grid_{*this};
   TrackScreen track_{*this};

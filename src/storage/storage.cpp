@@ -49,7 +49,7 @@ static_assert(sizeof(mt::TrackCfg) == 22, "TrackCfg changed: update snapshot() a
 static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Instrument) == 380, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 476632, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 476640, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -79,8 +79,8 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.compRel = live.compRel;
   out.scTrack = live.scTrack;
   out.scDepth = live.scDepth;
-  out.djFilter = live.djFilter;
   memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));
+  memcpy(out.perfDepth, live.perfDepth, sizeof(out.perfDepth));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));

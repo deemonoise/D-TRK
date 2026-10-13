@@ -3192,6 +3192,281 @@ void test_reverb_makes_sides_differ() {
   TEST_ASSERT_TRUE(diff > 1000);
 }
 
+// PERF: nothing held, a perf buffer only records: the output is bit-exact to a synth without one.
+static int16_t perfBuf[2 * 32000], perfBuf2[2 * 32000];
+static float rvbBuf2[Reverb::kBufLen];
+
+static void perfSend(Synth& y, uint8_t op, uint8_t val) {
+  const uint8_t m[3] = {0xF6, op, val};
+  TEST_ASSERT_TRUE(y.event(0, kPreviewTrack, m, 3));
+}
+
+static void noteBoth(Synth& a, Synth& b, uint8_t type, uint8_t note) {
+  const uint8_t m[3] = {type, note, static_cast<uint8_t>(type == 0x90 ? 127 : 0)};
+  TEST_ASSERT_TRUE(a.event(0, 0, m, 3));
+  TEST_ASSERT_TRUE(b.event(0, 0, m, 3));
+}
+
+void test_perf_idle_bit_exact() {
+  Synth ref(*p);
+  s->setPerfBuffer(perfBuf, 32000);
+  noteBoth(*s, ref, 0x90, 48);
+  int16_t a[Synth::kBlock], b[Synth::kBlock];
+  for (int k = 0; k < 50; ++k) {
+    if (k == 25) noteBoth(*s, ref, 0x80, 48);
+    s->render(a);
+    ref.render(b);
+    TEST_ASSERT_EQUAL_INT16_ARRAY(b, a, Synth::kBlock);
+  }
+}
+
+// 0xF6 0 CRUSH presses it on the master; 0xF6 3 releases everything: past the 64-sample fade-out
+// the two synths match again.
+void test_perf_message_crush() {
+  Synth ref(*p);
+  s->setPerfBuffer(perfBuf, 32000);
+  noteBoth(*s, ref, 0x90, 48);
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::Crush));
+  int16_t a[Synth::kBlock], b[Synth::kBlock];
+  bool differ = false;
+  for (int k = 0; k < 10; ++k) {
+    s->render(a);
+    ref.render(b);
+    differ |= memcmp(a, b, sizeof(a)) != 0;
+  }
+  TEST_ASSERT_TRUE(differ);
+  perfSend(*s, 3, 0);
+  for (int k = 0; k < 2; ++k) {
+    s->render(a);
+    ref.render(b);
+  }
+  for (int k = 0; k < 10; ++k) {
+    s->render(a);
+    ref.render(b);
+    TEST_ASSERT_EQUAL_INT16_ARRAY(b, a, Synth::kBlock);
+  }
+}
+
+// REVERB THROW with the reverb return at 0: the throw lifts the return, so the thrown note leaves a
+// tail after it ends; without the throw there is none.
+static double throwTail(Synth& y, bool doThrow, int16_t* pbuf) {
+  y.setPerfBuffer(pbuf, 32000);
+  const uint8_t on[3] = {0x90, 60, 127}, off[3] = {0x80, 60, 0};
+  TEST_ASSERT_TRUE(y.event(0, 0, on, 3));
+  if (doThrow) perfSend(y, 0, static_cast<uint8_t>(PerfFx::ReverbThrow));
+  int16_t o[Synth::kBlock];
+  for (int k = 0; k < 10; ++k) y.render(o);  // 40 ms
+  if (doThrow) perfSend(y, 1, static_cast<uint8_t>(PerfFx::ReverbThrow));
+  TEST_ASSERT_TRUE(y.event(0, 0, off, 3));  // release 0: the dry note stops at once
+  for (int k = 0; k < 5; ++k) y.render(o);
+  double sum = 0;
+  for (int k = 0; k < 50; ++k) {  // 200 ms
+    y.render(o);
+    for (int i = 0; i < Synth::kBlock; ++i) sum += static_cast<double>(o[i]) * o[i];
+  }
+  return sqrt(sum / (50.0 * Synth::kBlock));
+}
+
+void test_reverb_throw_with_level_zero() {
+  p->rvbLevel = 0;
+  p->instruments[0].rsend = 0;
+  Synth ref(*p);
+  s->setReverbBuffer(rvbBuf, Reverb::kBufLen);
+  ref.setReverbBuffer(rvbBuf2, Reverb::kBufLen);
+  TEST_ASSERT_TRUE(throwTail(*s, true, perfBuf) > 10.0);
+  TEST_ASSERT_TRUE(throwTail(ref, false, perfBuf2) < 0.5);
+}
+
+static void renderBoth(Synth& a, Synth& b, int blocks, bool same) {
+  int16_t x[Synth::kBlock], y[Synth::kBlock];
+  bool differ = false;
+  for (int k = 0; k < blocks; ++k) {
+    a.render(x);
+    b.render(y);
+    if (same) TEST_ASSERT_EQUAL_INT16_ARRAY(y, x, Synth::kBlock);
+    differ |= memcmp(x, y, sizeof(x)) != 0;
+  }
+  if (!same) TEST_ASSERT_TRUE(differ);
+}
+
+// REPEAT 1/16 at 120 BPM: a 1/16 step is 4000 samples, so the output repeats every 4000 samples
+// (and not every 1000).
+void test_perf_repeat_loops_a_sixteenth() {
+  p->bpm = 120;
+  s->setPerfBuffer(perfBuf, 32000);
+  noteOn(0, 0, 48);
+  noteOn(0, 1, 55);  // two notes: the dry mix is far from 4000-periodic
+  renderMs(40);
+  send(0, kPreviewTrack, 0xF6, 0, static_cast<uint8_t>(PerfFx::Repeat));
+  static int16_t o[Synth::kBlock * 120];
+  for (int k = 0; k < 120; ++k) s->render(o + k * Synth::kBlock);
+  int same4000 = 0, same1000 = 0, n = 0;
+  for (int i = 1000; i < 11000; ++i, ++n) {  // o[i + 4000]: inside the 15360 rendered
+    same4000 += o[i] == o[i + 4000];
+    same1000 += o[i] == o[i + 1000];
+  }
+  TEST_ASSERT_TRUE(same4000 > n * 99 / 100);
+  TEST_ASSERT_TRUE(same1000 < n / 2);
+}
+
+// 0xF6 with an unknown op, effect None / out of range or a short message: nothing happens.
+void test_perf_bad_messages_ignored() {
+  Synth ref(*p);
+  s->setPerfBuffer(perfBuf, 32000);
+  noteBoth(*s, ref, 0x90, 48);
+  perfSend(*s, 0, 0);    // None
+  perfSend(*s, 0, 200);  // out of range
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::Count));
+  perfSend(*s, 9, static_cast<uint8_t>(PerfFx::Crush));  // unknown op
+  const uint8_t shortMsg[2] = {0xF6, 0};
+  TEST_ASSERT_TRUE(s->event(0, kPreviewTrack, shortMsg, 2));
+  renderBoth(*s, ref, 10, true);
+  TEST_ASSERT_EQUAL(0, s->perf().stack().count());
+}
+
+// 0xFA restarts the PERF grid; it advances one 1/16 per 4000 samples at 120 BPM.
+void test_perf_transport_start_resets_grid() {
+  p->bpm = 120;
+  for (int k = 0; k < 50; ++k) s->render(buf);
+  TEST_ASSERT_TRUE(fabs(s->perf().gridPos() - 50 * 128 / 4000.0) < 1e-3);
+  send(0, 0, 0xFA, 0, 0, 1);
+  s->render(buf);
+  TEST_ASSERT_TRUE(fabs(s->perf().gridPos() - 128 / 4000.0) < 1e-4);
+  send(0, 0, 0xFC, 0, 0, 1);  // paused: it stands still
+  s->render(buf);
+  TEST_ASSERT_TRUE(fabs(s->perf().gridPos() - 128 / 4000.0) < 1e-4);
+}
+
+// A full queue: a PERF release (0xF6 1) or release-all (0xF6 3) evicts a control like a note-off
+// (a dropped one would leave the effect stuck); a press (0xF6 0) is dropped.
+void test_queue_overflow_keeps_perf_releases() {
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::Crush));
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::Gate));
+  s->render(buf);
+  TEST_ASSERT_EQUAL(2, s->perf().stack().count());
+  for (int i = 0; i < Synth::kMaxEvents; ++i) send(10, 1, 0xE0, 0, 0x40);
+  const uint8_t press[3] = {0xF6, 0, static_cast<uint8_t>(PerfFx::Filter)};
+  TEST_ASSERT_FALSE(s->event(5, kPreviewTrack, press, 3));
+  const uint8_t rel[3] = {0xF6, 1, static_cast<uint8_t>(PerfFx::Crush)};
+  TEST_ASSERT_TRUE(s->event(5, kPreviewTrack, rel, 3));
+  s->render(buf);
+  TEST_ASSERT_EQUAL(1, s->perf().stack().count());
+  for (int i = 0; i < Synth::kMaxEvents; ++i) send(10, 1, 0xE0, 0, 0x40);
+  const uint8_t all[3] = {0xF6, 3, 0};
+  TEST_ASSERT_TRUE(s->event(5, kPreviewTrack, all, 3));
+  s->render(buf);
+  TEST_ASSERT_EQUAL(0, s->perf().stack().count());
+}
+
+// 0xF6 4 step: the step clock re-anchors the PERF grid at the message's sample offset.
+void test_perf_step_clock_reanchors_grid() {
+  p->bpm = 120;  // 4000 samples per 1/16
+  for (int k = 0; k < 50; ++k) s->render(buf);
+  TEST_ASSERT_TRUE(fabs(s->perf().gridPos() - 50 * 128 / 4000.0) < 1e-3);
+  send(32, 0, 0xF6, 4, 7);
+  s->render(buf);
+  TEST_ASSERT_TRUE(fabs(s->perf().gridPos() - (7 + (128 - 32) / 4000.0)) < 1e-4);
+  send(0, 0, 0xF6, 4, 70);  // mod 64
+  s->render(buf);
+  TEST_ASSERT_TRUE(fabs(s->perf().gridPos() - (6 + 128 / 4000.0)) < 1e-4);
+  TEST_ASSERT_EQUAL(0, s->perf().stack().count());
+}
+
+// The step clock with nothing held only moves the grid: off-grid clock events (swing-like offsets,
+// away from the notes) leave the output bit-exact to a synth without them.
+void test_perf_step_clock_idle_bit_exact() {
+  p->bpm = 120;
+  Synth ref(*p);
+  s->setPerfBuffer(perfBuf, 32000);
+  ref.setPerfBuffer(perfBuf2, 32000);
+  noteBoth(*s, ref, 0x90, 48);
+  int16_t a[Synth::kBlock], b[Synth::kBlock];
+  for (int k = 0; k < 120; ++k) {
+    if (k % 7 == 3) send(53 + k % 50, 0, 0xF6, 4, static_cast<uint8_t>(k / 7));
+    if (k == 60) noteBoth(*s, ref, 0x80, 48);
+    s->render(a);
+    ref.render(b);
+    TEST_ASSERT_EQUAL_INT16_ARRAY(b, a, Synth::kBlock);
+  }
+  TEST_ASSERT_TRUE(fabs(s->perf().gridPos() - ref.perf().gridPos()) > 1e-3);  // the clock moved it
+}
+
+// FREEZE ducks the live mix to freezeDry() (0.5 at the default depth), ramped; released, the mix
+// is back to the reference.
+void test_perf_freeze_ducks_mix() {
+  Synth ref(*p);
+  noteBoth(*s, ref, 0x90, 48);
+  renderBoth(*s, ref, 5, true);
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::Freeze));
+  int16_t x[Synth::kBlock], y[Synth::kBlock];
+  s->render(x);
+  ref.render(y);
+  TEST_ASSERT_TRUE(abs(x[0] - y[0]) <= 1 + abs(y[0]) / 50);  // ramped in, no step
+  double sx = 0, sy = 0;
+  for (int k = 0; k < 20; ++k) {
+    s->render(x);
+    ref.render(y);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      sx += static_cast<double>(x[i]) * x[i];
+      sy += static_cast<double>(y[i]) * y[i];
+    }
+  }
+  const double ratio = sqrt(sx / sy);
+  TEST_ASSERT_TRUE(ratio > 0.45 && ratio < 0.55);
+  perfSend(*s, 1, static_cast<uint8_t>(PerfFx::Freeze));
+  renderBoth(*s, ref, 1, false);  // ramping out
+  renderBoth(*s, ref, 10, true);
+}
+
+static int16_t dlyA[16000], dlyB[16000];
+
+// Both returns at 0, a throw of each: while its tail runs the thrown synth sounds different; once
+// the tails (4 s) and the floors' ramps are over, the project's levels (0) apply again and a new
+// note matches a synth that never threw.
+void test_perf_return_floor_decays() {
+  p->rvbLevel = 0;
+  p->dlyLevel = 0;
+  p->instruments[0].rsend = 127;
+  p->instruments[0].send = 127;
+  Synth ref(*p);
+  s->setPerfBuffer(perfBuf, 32000);
+  ref.setPerfBuffer(perfBuf2, 32000);
+  s->setReverbBuffer(rvbBuf, Reverb::kBufLen);
+  ref.setReverbBuffer(rvbBuf2, Reverb::kBufLen);
+  s->setDelayBuffer(dlyA, 16000);
+  ref.setDelayBuffer(dlyB, 16000);
+  noteBoth(*s, ref, 0x90, 48);
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::DelayThrow));
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::ReverbThrow));
+  renderBoth(*s, ref, 25, false);
+  perfSend(*s, 3, 0);
+  noteBoth(*s, ref, 0x80, 48);
+  renderBoth(*s, ref, kBlocksPerSec * 2, false);  // the tails sound
+  renderBoth(*s, ref, kBlocksPerSec * 3, false);  // 4 s tail + 100 blocks down
+  noteBoth(*s, ref, 0x90, 50);
+  renderBoth(*s, ref, 20, true);
+}
+
+// reset() mid-throw: nothing raised afterwards, the project's levels (0) apply at once.
+void test_perf_reset_drops_throw() {
+  p->rvbLevel = 0;
+  p->instruments[0].rsend = 127;
+  Synth ref(*p);
+  s->setPerfBuffer(perfBuf, 32000);
+  ref.setPerfBuffer(perfBuf2, 32000);
+  s->setReverbBuffer(rvbBuf, Reverb::kBufLen);
+  ref.setReverbBuffer(rvbBuf2, Reverb::kBufLen);
+  noteBoth(*s, ref, 0x90, 48);
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::ReverbThrow));
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::Crush));
+  renderBoth(*s, ref, 10, false);
+  s->reset();
+  ref.reset();
+  TEST_ASSERT_FALSE(s->perf().sendTail());
+  noteBoth(*s, ref, 0x90, 48);
+  renderBoth(*s, ref, 30, true);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -3398,5 +3673,17 @@ int main() {
   RUN_TEST(test_pan_legato_lock_ramps);
   RUN_TEST(test_pan_fx_mid_segment_lands_at_boundary);
   RUN_TEST(test_reverb_makes_sides_differ);
+  RUN_TEST(test_perf_idle_bit_exact);
+  RUN_TEST(test_perf_message_crush);
+  RUN_TEST(test_reverb_throw_with_level_zero);
+  RUN_TEST(test_perf_repeat_loops_a_sixteenth);
+  RUN_TEST(test_perf_bad_messages_ignored);
+  RUN_TEST(test_perf_transport_start_resets_grid);
+  RUN_TEST(test_queue_overflow_keeps_perf_releases);
+  RUN_TEST(test_perf_step_clock_reanchors_grid);
+  RUN_TEST(test_perf_step_clock_idle_bit_exact);
+  RUN_TEST(test_perf_freeze_ducks_mix);
+  RUN_TEST(test_perf_return_floor_decays);
+  RUN_TEST(test_perf_reset_drops_throw);
   return UNITY_END();
 }

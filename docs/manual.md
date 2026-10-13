@@ -37,9 +37,9 @@ A tracker with a built-in synthesizer on the WT32-SC01 Plus: 16 tracks, a bank o
 
 | Action | What it does |
 |--------|--------------|
-| <kbd>Play</kbd> | Start from the first step / stop. When paused, also restarts from the beginning. |
-| <kbd>Shift</kbd>+<kbd>Play</kbd> | Pause and resume: stopped → start, playing → pause, paused → resume from the same spot. During playback, pause triggers on releasing Play if it was held for less than 0.5 s. |
-| <kbd>Shift</kbd>+<kbd>Play</kbd>, hold | During playback: **fill** while Play is held (steps with [CND FIL](#cnd) play, steps with NFL don't). Releasing after 0.5 s only ends the fill, without pausing. |
+| <kbd>Play</kbd> | Start from the first step / stop. Stopped on the SONG tab with a non-empty song, plays the song from the slot under the SONG cursor; otherwise loops the current pattern (LOOP), see [SONG](#song). |
+| <kbd>Shift</kbd>+<kbd>Play</kbd> | **Song from the cursor**, on any tab: stopped → the song starts from the slot under the SONG cursor; playing → a short press (Play released within 0.5 s) starts the song from that slot again. Empty song: toast `SONG EMPTY`, nothing happens. There is no pause. |
+| <kbd>Shift</kbd>+<kbd>Play</kbd>, hold | During playback: **fill** while Play is held (steps with [CND FIL](#cnd) play, steps with NFL don't). Releasing after 0.5 s only ends the fill, the song does not restart. |
 | <kbd>Shift</kbd> | A modifier; does nothing on its own. While held, a yellow `SHIFT` replaces the FILE tab. |
 | Encoder turn | Moves the cursor or selects a row. In edit mode, changes the value. With Shift, a coarse step (usually ×10). |
 | Encoder click | Enter or leave edit mode, choose a menu item. With a track button held — switch that button's turn between volume and pan (see [Track buttons](#trackkeys)). |
@@ -55,7 +55,7 @@ Play works on any screen, even over an open menu. Tabs, pages, back and undo are
 
 ### Track buttons
 
-In GRID the buttons also record notes live (REC) and hold effects (PERF) — see [REC and PERF](#live).
+In GRID the buttons also record notes live (REC), and in GRID and SONG they hold effects (PERF) — see [REC and PERF](#live).
 
 A block of 8 buttons on the PCF8575 expander (the same module carries the encoder button, Play, Shift, A and B). There are 16 tracks, so the buttons work on the **visible half** — 1–8 or 9–16, the same one [Overview](#grid) shows. The half is not a mode: the cursor selects it. Move past track 8 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a track button) and the buttons switch to 9–16; move back and they return to 1–8. The GRID header shows which half is active: `1-8` or `9-16` on the left above the step numbers.
 
@@ -63,8 +63,8 @@ A block of 8 buttons on the PCF8575 expander (the same module carries the encode
 |--------|--------------|
 | <kbd>N</kbd> | Select track N of the visible half (in 9–16, button 1 is track 9): the GRID cursor moves to it, TRACK shows it. |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Mute / unmute the same track (N of the visible half), on any screen. The toast `TRACK n MUTE` / `TRACK n ON` shows the real number, 1–16. |
-| <kbd>N</kbd> on the [SONG](#song) tab | Mute / unmute track N in the selected song slot. The half is the one holding the current track, as in GRID and TRACK (not the SONG cursor column). |
-| Hold <kbd>N</kbd> + turn | Volume of track N (Volume, INT) on any screen, ×10 with <kbd>Shift</kbd>; toast `TRK5 VOL 100`. The turn does not reach the screen meanwhile. The press on its own works as usual (selects the track). Not active in GRID edit mode, REC or PERF — there the buttons play. On a MIDI track: `TRK5 MIDI`, nothing changes. |
+| <kbd>N</kbd> on the [SONG](#song) tab | Mute / unmute track N in the selected song slot. The half is the one holding the current track, as in GRID and TRACK (not the SONG cursor column). With [PERF](#live) on and the transport playing, N holds its effect instead; <kbd>Shift</kbd>+N still mutes. |
+| Hold <kbd>N</kbd> + turn | Volume of track N (Volume, INT) on any screen, ×10 with <kbd>Shift</kbd>; toast `TRK5 VOL 100`. The turn does not reach the screen meanwhile. The press on its own works as usual (selects the track). Not active in GRID edit mode, REC or PERF (GRID or SONG) — there the buttons play. On a MIDI track: `TRK5 MIDI`, nothing changes. |
 | Hold <kbd>N</kbd> + encoder click | Switch the held-button turn between volume and pan of track N (INT); toast `TRK5 PAN L12` / `TRK5 VOL 100`. Turning then changes the pan (×10 with <kbd>Shift</kbd>). Releasing the button returns to volume: every new hold starts on volume. While a track button is held, the click always goes to this toggle (in GRID outside edit mode it no longer turns edit mode on); only where the buttons are busy — GRID edit mode, REC, PERF and the sample editor in INST — the click keeps its usual meaning. |
 | <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on (FILE → SYSTEM). Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
 | <kbd>N</kbd> in the sample editor (INST, SMPL page) | Play a slice to the end: 1 — the selected slice (if no slice is selected, the first one), 2 — the one after it, and so on. Works with any Slices setting (OFF, NOTE, FX), at the original pitch. Toast "SLICE n"; no such slice — "NO SLICE n"; no slices at all — "NO SLICES". |
@@ -90,7 +90,7 @@ Two buttons: B under Shift (PCF8575 P16), A under Play (P17). Both are chord but
 | Hold <kbd>A</kbd> + <kbd>N</kbd> | Solo / unsolo track N of the visible half; toast `TRACK n SOLO` / `TRACK n ON`. |
 | Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ. |
-| <kbd>B</kbd> tap | Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker it steps back one level. In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. |
+| <kbd>B</kbd> tap | Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker it steps back one level. In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
 | Hold <kbd>B</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. While the song plays (SONG mode) a queue is ignored (toast `SONG MODE`). |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Switch to pattern N at once, also while the song plays. |
@@ -125,12 +125,12 @@ A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; t
 
 | Element | Meaning |
 |---------|---------|
-| `P05` | The pattern currently playing (LOOP mode). In SONG mode — `S03 P05`: third song slot, pattern 5; `S--` — the song has not been heard yet. During play or pause, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass — see [SONG](#song). |
+| `P05` | The pattern currently playing (LOOP mode). In SONG mode — `S03 P05`: third song slot, pattern 5; `S--` — the song has not been heard yet. During play, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass — see [SONG](#song). |
 | `*` | There are unsaved changes. |
 | `>P07` | Queued pattern: switches at the end of the pass. Not shown in SONG mode. |
 | `120 BPM` | Tempo. A tap enters tempo editing (red): encoder ±1, ±10 with Shift, range 20–300. Leave with a click, a tap on the work area or a tab change. |
 | `5/16` | Step / pattern length. |
-| `PLAY` | State: PLAY, PAUSE, STOP. A tap works like the Play button; with Shift, like Shift+Play. |
+| `PLAY` | State: PLAY, STOP. A tap works like the Play button; <kbd>Shift</kbd>+tap, like <kbd>Shift</kbd>+<kbd>Play</kbd> (the song from the SONG cursor). |
 | `L3` | Pattern pass counter. The CND condition uses it. Up to `L9999`, beyond that `L10K+`. While fill is held — `FILL`. |
 | `[=] 85%` | Battery charge from the [INA226](wiring.md#ina226-battery-monitor): the icon fills by level, a lightning bolt while charging. Green while charging, yellow at 20% and below, red at 10% and below, otherwise dim. Estimated from the voltage corrected for the load current and smoothed (~30 s); while discharging it only goes down (in the first minute after power-on it may move both ways). While charging it reads high and shows 100% before charging ends. Not shown without the sensor. At 10% (not while charging) a single toast `BATTERY LOW - SAVE`; it repeats only after a recharge. |
 | `CPU 42%` | Built-in synth load: the average time to compute an audio block over the last 0.5 s, as a % of the block duration (4 ms). Gray below 60%; yellow at 60–84% or if any block in those 0.5 s took longer than 4 ms (the DMA queue headroom covers that); red from 85% or for 2 s after an audio dropout (DMA ran empty — an audible click). While no audio is being computed, the last value is shown. |
@@ -227,22 +227,29 @@ Menu → **Select** sets a selection corner at the cell under the cursor. While 
 
 Two modes from the GRID context menu. They exclude each other and edit mode: turning one on turns the others off. The header above the step numbers shows `REC` (red) or `PERF` (yellow). They work during playback; when stopped, the buttons behave as usual.
 
+PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row menu too, and it is one shared mode — turned on in either menu it is on in both (turning it on in SONG leaves pattern edit; GRID turns REC off when you come back). In SONG with PERF on, button N holds its effect while playing, the encoder turns a held effect's depth instead of moving the cursor, and <kbd>Shift</kbd>+N mutes the track live. The SONG header shows the same `PERF …` badge in place of `n/128`.
+
 - **REC** — records from the track buttons into the current track. Button N writes scale degree N (in the octave of the track's last note) into the playing step; a press in the second half of a step lands in the next one. On a track with its own Speed this is the track's own step that is sounding. <kbd>Shift</kbd>+N erases that step's note. On a drum track button N sets lane N, <kbd>Shift</kbd>+N removes it. Each pattern pass is one undo step. Choose the track to record into by tapping its name (in REC this is not mute) or with <kbd>Shift</kbd>+turn. The recorded note sounds immediately if Preview is on.
-- **PERF** — an effect on the current track while the button is held; the press shows its name (`PERF FILTER LOW`). Which effect is on which button is set in [PROJ → PERF](#proj) and stored in the project. Release — the effect is removed. Pressing another button replaces the effect. <kbd>Shift</kbd>+N still mutes.
+- **PERF** (GRID and SONG) — punch-in effects on the whole internal mix while a button is held, PO-33 / EP-133 style. Which effect is on which button, and the Value it starts at, is set in [PROJ → PERF](#proj) and stored in the project: button 1 can hold REPEAT 1/8 and button 2 REPEAT 1/32. The press starts the effect at the button's Value and shows it (`PERF REPEAT 1/8`); turning the encoder while the button is held changes the depth (<kbd>Shift</kbd> ×10 on the wide ranges: FILTER, DRIVE, DELAY THROW, REVERB THROW, FREEZE). The turn is not remembered: every press starts at the button's Value (PROJ → PERF). Release — the effect is gone. <kbd>Shift</kbd>+N still mutes.
 
-| Effect | What it does | Output |
-|--------|--------------|--------|
-| RAT 2 / RAT 3 / RAT 4 / RAT 8 | retrigger (by default RAT 2 is button 1, RAT 4 is button 2) | both |
-| ROLL UP | RAT 8 with rising velocity — a "build-up" | both |
-| FILTER LOW / FILTER HIGH | FLT 30 / FLT 120 (buttons 3, 4) | INT |
-| DELAY MAX / REVERB MAX | DLY 127 (button 5) / RVB 127 | INT |
-| CRUSH / DOWNSAMPLE / DRIVE | BIT 100 (button 6) / SRR 90 / DRV 100 | INT |
-| SHORT DECAY | DEC 20 — short DECAY macro | INT |
-| FADE | fade VSL −16; on MIDI, half velocity (button 7) | both |
-| MUTE | track mute (button 8) | both |
-| --- | the button does nothing | |
+| Effect | What it does | Encoder | Default |
+|--------|--------------|---------|---------|
+| REPEAT | loops the mix from the last grid step boundary | 1/2, 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 — applies at the next loop | 1/16 |
+| ROLL | a repeat from 1/8, the loop halves every N loops down to 1/64 | N = 1…4 | 2 |
+| REVERSE | plays the buffer backwards from the press point, looping over the window | 1/4, 1/2, 1, 2 bars | 1 bar |
+| SCRATCH | the read head swings (sine) around the press point | period 1/4, 1/8, 1/16, 1/32 | 1/8 |
+| TAPE STOP | the speed falls to 0, then silence; release returns the live mix | 1/16, 1/8, 1/4, 1/2, 1 bar | 1/4 bar |
+| GATE | 50 % gate in phase with the grid | 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 | 1/16 |
+| FILTER | at OFF nothing happens; counter-clockwise closes a low-pass (20 kHz → 100 Hz), clockwise opens a high-pass (20 Hz → 8 kHz), with a little resonance | LP 64 … OFF … HP 63 | OFF |
+| CRUSH | bit depth | 2…12 bits | 6 |
+| DOWNSAMPLE | sample and hold | 16 kHz, 8 kHz, 4 kHz, 2 kHz, 1 kHz, 500 Hz | 8 kHz |
+| DRIVE | saturation, level compensated | 0…100 | 60 |
+| DELAY THROW | the whole mix into the [delay](#delay) send while held, the tail rings out | send 0…127 | 100 |
+| REVERB THROW | the same into the [reverb](#reverb) | send 0…127 | 100 |
+| FREEZE | the reverb frozen (feedback 1, input closed), the tail hangs; the encoder sets the live mix level under the frozen tail (DRY 0…100) | 0…100 | 50 |
+| --- | the button does nothing | | |
 
-The effect is added to steps as they play: the step's own fx stay, and the same command in the step is replaced. Steps already scheduled ahead (up to an eighth note) play as they were. Stop removes all effects; leaving GRID removes the held one.
+The header shows the held effects in press order by short name: `PERF RPT FLT CRS` (RPT ROL REV SCR TPS GAT FLT CRS DWN DRV DLY RVB FRZ). Several buttons held together stack. The buffer effects (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP) share one read head, so only the last pressed of them plays; release it and the previous still-held one returns. Everything else stacks freely. The encoder turns the last pressed held effect. Stop, PERF off or leaving the tab (GRID or SONG) releases everything. PERF touches INT sound only — MIDI tracks are not affected — and only live: Render WAV and Resample do not include it.
 
 <a id="resample"></a>
 
@@ -1191,7 +1198,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 ## PROJ: project and pattern
 
-Four pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ filter), **COMP** (compressor, sidechain), **PERF** (button effects). Device settings (Phones, Preview, theme, autosave, version) are in [FILE → SYSTEM](#system). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
+Four pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb), **COMP** (compressor, sidechain), **PERF** (button effects and their start values). Device settings (Phones, Preview, theme, autosave, version) are in [FILE → SYSTEM](#system). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
 
 | Parameter | Values | Scope |
 |---|---|---|
@@ -1210,15 +1217,15 @@ Four pages: **SONG** (tempo, scale, pattern, groove), **FX** (delay, reverb, DJ 
 | Dly level | 0–127, default 100 | project: echo volume; 0 turns the delay off (the rows above are grayed out) |
 | Reverb | 0–127, default 60 | project: [reverb](#reverb) size, i.e. tail length |
 | Rvb damp | 0–127, default 70 | project: high-frequency damping in the tail (higher is darker) |
-| Rvb level | 0–127, default 80 | project: reverb volume; 0 turns it off |
-| DJ filter | LP 64 … OFF … HP 63 | project: a filter on all internal sound, before the compressor. Turning left closes a low-pass (20 kHz → 100 Hz), turning right opens a high-pass (20 Hz → 8 kHz), with a little resonance. Handy for live tweaking. |
+| Rvb level | 0–127, default 80 | project: reverb volume; 0 = off, the tail is cleared |
 | **COMP** | | |
 | Comp | OFF, 1–127, default OFF | project: [compressor](#comp) on all internal sound; higher means a lower threshold (−6 … −30 dB) |
 | Comp rel | 20 ms … 1 s, default ≈ 90 ms | project: compressor release |
 | SC track | OFF, T1–T16, default OFF | project: sidechain key track: its sound ducks the whole mix |
 | SC depth | 0–127, default 64 | project: sidechain amount |
 | **PERF** | | |
-| Button 1 … Button 8 | [PERF](#live) effects or --- | project: what track button N holds in PERF mode |
+| Button 1 … Button 8 | one of the 13 [PERF](#live) effects or --- | project: what track button N holds in PERF mode; picking an effect sets its Value to the effect's default. New project: 1 REPEAT, 2 ROLL, 3 FILTER, 4 GATE, 5 DELAY THROW, 6 REVERB THROW, 7 CRUSH, 8 TAPE STOP. Old maps are converted: RAT → REPEAT, ROLL UP → ROLL, FILTER LOW / HIGH → FILTER, DELAY MAX / REVERB MAX → DELAY / REVERB THROW, CRUSH / SRR / DRIVE → CRUSH / DOWNSAMPLE / DRIVE, FADE / MUTE / SHORT DECAY → --- |
+| &nbsp;&nbsp;Value | the effect's encoder range (see [PERF](#live)), default the effect's default; --- without an effect | project: under each Button row, the depth a press of that button starts at (`1/8`, `LP 20`, `6 BIT`); <kbd>Shift</kbd> ×10 |
 
 <a id="reverb"></a>
 
@@ -1267,7 +1274,7 @@ Any pattern change clears TIE. The pass counter is reset.
 
 A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the 16 tracks. Repeats are equal slots in a row.
 
-- Header: `n/128` and the track numbers 1–16 above the columns.
+- Header: `n/128` and the track numbers 1–16 above the columns. With [PERF](#live) on, the yellow `PERF` badge with the held effects replaces `n/128` (and covers the track numbers it reaches).
 - Row: slot number, `Pxx`, then 16 cells:
   - filled: the track plays;
   - outline: the track is muted in this slot;
@@ -1280,7 +1287,7 @@ A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the
 
 | Input | Action |
 |---|---|
-| Turn | Row (in pattern edit: change the pattern). |
+| Turn | Row (in pattern edit: change the pattern). While a [PERF](#live) effect is held: its depth. |
 | <kbd>Shift</kbd>+turn | Column. |
 | Click on PAT | Pattern edit on / off; <kbd>Shift</kbd>+click in pattern edit cancels it (the old pattern returns). |
 | Click on a track cell | Mute / unmute that track in this slot. |
@@ -1288,11 +1295,11 @@ A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the
 | Tap on a cell | Move the cursor there; on a track cell, also toggle mute. |
 | Vertical drag starting on PAT of the selected row | Change the pattern. |
 | Other drag | Scroll. |
-| [Track button](#trackkeys) <kbd>N</kbd> | Mute / unmute track N in the selected slot. The half 1–8 / 9–16 is the one holding the current track (as in GRID and TRACK), not the cursor column. |
-| <kbd>Shift</kbd>+<kbd>N</kbd> | Live mute, as on every tab; lasts until the next slot starts. |
+| [Track button](#trackkeys) <kbd>N</kbd> | Mute / unmute track N in the selected slot. The half 1–8 / 9–16 is the one holding the current track (as in GRID and TRACK), not the cursor column. With [PERF](#live) on and the transport playing: hold its PERF effect (release ends it). |
+| <kbd>Shift</kbd>+<kbd>N</kbd> | Live mute, as on every tab (with PERF on too); lasts until the next slot starts. |
 | <kbd>A</kbd> tap | **Add**: a copy of the selected slot right below it, and the cursor moves to it (toast `SONG FULL` at 128). |
 | Long press / long tap | Row menu. |
-| <kbd>B</kbd> tap | Leave pattern edit. |
+| <kbd>B</kbd> tap | Leave pattern edit; otherwise PERF off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | Undo song edits (8 steps). |
 
 **Row menu:**
@@ -1303,17 +1310,19 @@ A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the
 - **Mutes ← live**: store the current track mutes in the slot.
 - **Clear mutes**.
 - **Clear song**, with confirmation.
+- **Perf: ON/OFF**: [PERF](#live), shared with the GRID menu.
 
 ### How the song plays
 
 - **Play on the SONG tab** plays the song from the selected slot. **Play on any other tab** loops the current pattern (LOOP). With an empty song, Play loops the pattern.
-- While the transport runs, switching tabs does not change the mode. Pause and continue keep the mode.
-- The status bar shows `S03 P05` in SONG (`S--` until the song is heard) and `P05` in LOOP. During play or pause, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass (stopped, the tap does nothing: Play picks the mode by tab), with toast `SONG` / `LOOP` (`SONG EMPTY` if the song has no slots). LOOP→SONG continues from the slot under the SONG cursor; SONG→LOOP keeps looping the heard pattern.
+- **<kbd>Shift</kbd>+<kbd>Play</kbd> on any tab** plays the song from the slot under the SONG cursor; while playing, a short <kbd>Shift</kbd>+<kbd>Play</kbd> starts the song from that slot again (held longer, it is [fill](#cnd)). <kbd>Shift</kbd>+tap on `PLAY` in the status bar does the same. Empty song: toast `SONG EMPTY`.
+- While the transport runs, switching tabs does not change the mode.
+- The status bar shows `S03 P05` in SONG (`S--` until the song is heard) and `P05` in LOOP. During play, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass (stopped, the tap does nothing: Play picks the mode by tab), with toast `SONG` / `LOOP` (`SONG EMPTY` if the song has no slots). LOOP→SONG continues from the slot under the SONG cursor; SONG→LOOP keeps looping the heard pattern.
 - After the last slot, slot 1 plays again.
-- **Mutes:** when a slot starts, all 16 track mutes are set from it. <kbd>Shift</kbd>+<kbd>N</kbd> during play changes a mute only until the next slot; the slot itself is not changed. In LOOP the slot mutes are not applied. When the song stops or switches to LOOP, the track mutes return to what they were before the song started (pause keeps the slot mutes); a saved project keeps those mutes too.
+- **Mutes:** when a slot starts, all 16 track mutes are set from it. <kbd>Shift</kbd>+<kbd>N</kbd> during play changes a mute only until the next slot; the slot itself is not changed. In LOOP the slot mutes are not applied. When the song stops or switches to LOOP, the track mutes return to what they were before the song started; a saved project keeps those mutes too.
 - Two equal adjacent slots play as a repeat: TIE and the CND counter continue. Repeats are made by duplicating slots (<kbd>A</kbd> tap).
 - Edits during play are picked up at the end of the pass. Inserting or deleting above the heard slot does not shift the position. Deleting the heard slot: the next one starts at the end of the pass.
-- The pattern queue (BANK tile tap, <kbd>B</kbd>+<kbd>N</kbd>) works only in LOOP; while the song plays (or is paused) it toasts `SONG MODE`. <kbd>B</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> and <kbd>Shift</kbd>+tap on a BANK tile (switch at once) still work.
+- The pattern queue (BANK tile tap, <kbd>B</kbd>+<kbd>N</kbd>) works only in LOOP; while the song plays it toasts `SONG MODE`. <kbd>B</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> and <kbd>Shift</kbd>+tap on a BANK tile (switch at once) still work.
 - When stopped, moving the SONG cursor makes that slot's pattern current, and GRID shows it.
 
 ### Old projects
@@ -1347,11 +1356,11 @@ A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the
 | DEMO-TRANCE | 138, A minor | supersaw hook, pads and bass pumped by the sidechain (key: the KICK track), ARS arpeggio on CHD chords, a breakdown with FLT locks opening the lead and a riser held by TIE, snare rolls with RAT ramps |
 | DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (transposed copies in patterns P06 and P07) |
 | DEMO-ACID | 128, A minor | a 303-style line with SLD slides, accents and a FLT lock on every step, the filter opening section by section; a 12-step polymeter section (track length), hats on probability (PRB), RES and DLY locks in the break |
-| DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, a low-passed master (DJ filter) |
+| DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, dark instruments with low cutoffs |
 | DEMO-SYNTHWAVE | 108, E minor | driving 16th bass pumped by the sidechain, a gated-reverb clap, a sync-pluck ARS arpeggio, a wavetable lead with VIB, tom fills |
 | DEMO-DUBTECHNO | 120, C minor | one FM CHORD (minor 9) stab through a long dark delay and a big reverb, its filter swept by a 4-bar synced LFO and FLT locks, DLY / RVB throws, a drone held by TIE |
 | DEMO-IDM | 110, D dorian | every part on its own track length (7, 5, 13, 9, 11, 6 steps against 16): the parts drift; CND 1:2 / 1:3, PRE and NEI conditions, PRB and NRN random notes, a 5/16 delay |
-| DEMO-HOUSE | 124, F minor | swung 909 with humanize, an offbeat FM bass, 7th-chord stabs, congas on probability, a choir breakdown with a clap roll; PERF buttons set for live play (filter down / up, delay and reverb throws, rolls, short decay, mute) |
+| DEMO-HOUSE | 124, F minor | swung 909 with humanize, an offbeat FM bass, 7th-chord stabs, congas on probability, a choir breakdown with a clap roll; PERF buttons set for live play (FILTER, REPEAT, ROLL, DELAY THROW, REVERB THROW, GATE, TAPE STOP, FREEZE) |
 
 A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the card, and from there it is an ordinary project to take apart and change.
 
@@ -1530,7 +1539,7 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 - **Clock** (24 PPQN) is sent only during playback.
 - **Play (start):** Program Change for tracks with a Program set, then Start.
 - **Play (stop):** Note Off for all sounding notes, then Stop. Position goes to step 1.
-- **Shift+Play (pause):** Note Off and Stop. **Resume:** Song Position Pointer (position within the current pattern) and Continue.
+- **Shift+Play while playing (song restart):** Note Off and Stop, then Start, as stop + start.
 - Retriggering a note that is already sounding first sends its Note Off.
 
 <a id="sound"></a>
@@ -1549,11 +1558,11 @@ Sound goes to an external PCM5102A DAC on GPIO 13 / 14 / 21 (BCK / LCK / DIN) an
 Full wiring, settings and grounding notes — README, "Sound" section, and [wiring.md](wiring.md).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting.
-- **Pan:** each voice is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level (as before), hard left is +3 dB on the left and silence on the right. The delay and reverb sends are taken before pan (mono); the delay returns to the centre, the reverb in pseudo-stereo. The compressor is stereo-linked; the DJ filter, MAIN and the soft clip work on both channels.
+- **Pan:** each voice is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level (as before), hard left is +3 dB on the left and silence on the right. The delay and reverb sends are taken before pan (mono); the delay returns to the centre, the reverb in pseudo-stereo. The compressor is stereo-linked; the PERF effects, MAIN and the soft clip work on both channels.
 - **Voices:** a shared pool of 24. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 8 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A ninth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track.
 - **CPU guard:** when the audio render nears its time budget (above 80 % on average, or one block over 100 %), the oldest voice fades out in 4 ms (releasing voices first) and the pool shrinks to the voices left; once the load drops below 65 % it grows back by one voice every 0.1 s. A heavy project thins out instead of crackling or restarting the device.
 - **Latency:** the internal sound lags the MIDI tracks by about 14 ms, constantly, without jitter. MIDI tracks are not delayed.
-- **Sequencer:** RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI. Added: the [synth fx](#synthfx) SLD, VIB, ARP, VSL, OFS, CUT, slice selection SLC, locks of the FM, DRUM and SYNTH macros DEC, COL, SHP, SWP, CON, and filter locks FLT, RES. Mute, solo, stop and pause silence the sound the same way as MIDI notes.
+- **Sequencer:** RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI. Added: the [synth fx](#synthfx) SLD, VIB, ARP, VSL, OFS, CUT, slice selection SLC, locks of the FM, DRUM and SYNTH macros DEC, COL, SHP, SWP, CON, and filter locks FLT, RES. Mute, solo and stop silence the sound the same way as MIDI notes.
 - **Start:** Program Change is not sent to INT tracks; the instrument from PGM (back to Instr from TRACK), PBN and synth fx are reset.
 - **Load:** `CPU NN%` in the right corner of the [status bar](#screen).
 - Sample import, renaming and deletion, wavetable import, Compact and Clear cache are available only when stopped: there is no sound while writing to flash.

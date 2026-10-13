@@ -59,8 +59,6 @@ void handle(const Command& c) {
     case Cmd::SongEdit: seq->songEdited(now, midi, c.arg >> 8, static_cast<mt::SongOp>(c.arg & 0xFF)); break;
     case Cmd::SetSong: seq->setSong(now, midi, c.arg >> 15, c.arg & 0xFF); break;
     case Cmd::Fill: seq->setFill(c.arg != 0); break;
-    case Cmd::PerfOn: seq->perfOn(c.arg & 0xFF, static_cast<mt::PerfFx>(c.arg >> 8)); break;
-    case Cmd::PerfOff: seq->perfOff(c.arg); break;
   }
 }
 

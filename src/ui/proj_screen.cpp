@@ -1,6 +1,7 @@
 #include "proj_screen.h"
 #include <Arduino.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
@@ -106,27 +107,40 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        noComp};
   params_[kScDepth] = {"SC depth", num(&mt::Project::scDepth), u7(&mt::Project::scDepth),
                        [this] { return app_.project().compAmt == 0 || app_.project().scTrack == 0; }};
-  params_[kDjFilter] = {"DJ filter",
-                        [this](char* o, int n) {
-                          const int v = app_.project().djFilter;
-                          if (v == 0) snprintf(o, n, "OFF");
-                          else snprintf(o, n, "%s %d", v < 0 ? "LP" : "HP", v < 0 ? -v : v);
-                        },
-                        [this](int d) {
-                          app_.project().djFilter = static_cast<int8_t>(clampi(app_.project().djFilter + d, -64, 63));
-                        }};
+  // PERF: Button N picks the effect (a new one starts at its default), Value its start depth.
   for (int b = 0; b < mt::kPerfButtons; ++b) {
     snprintf(perfLabels_[b], sizeof(perfLabels_[b]), "Button %d", b + 1);
-    params_[kPerf1 + b] = {perfLabels_[b],
-                           [this, b](char* o, int n) {
-                             const uint8_t f = app_.project().perfMap[b];
-                             snprintf(o, n, "%s", f ? mt::perfFxName(static_cast<mt::PerfFx>(f)) : "---");
-                           },
-                           [this, b](int d) {
-                             constexpr int kLast = static_cast<int>(mt::PerfFx::Count) - 1;
-                             app_.project().perfMap[b] = static_cast<uint8_t>(clampi(app_.project().perfMap[b] + d, 0, kLast));
-                           }};
+    params_[kPerf1 + 2 * b] = {perfLabels_[b],
+                               [this, b](char* o, int n) {
+                                 const uint8_t f = app_.project().perfMap[b];
+                                 snprintf(o, n, "%s", f ? mt::perfName(static_cast<mt::PerfFx>(f)) : "---");
+                               },
+                               [this, b](int d) {
+                                 constexpr int kLast = static_cast<int>(mt::PerfFx::Count) - 1;
+                                 mt::Project& p = app_.project();
+                                 const int f = clampi(p.perfMap[b] + d, 0, kLast);
+                                 if (f == p.perfMap[b]) return;
+                                 p.perfMap[b] = static_cast<uint8_t>(f);
+                                 p.perfDepth[b] = mt::perfRange(static_cast<mt::PerfFx>(f)).def;
+                               }};
+    params_[kPerf1 + 2 * b + 1] = {"  Value",
+                                   [this, b](char* o, int n) {
+                                     const mt::Project& p = app_.project();
+                                     if (p.perfMap[b]) mt::perfValue(static_cast<mt::PerfFx>(p.perfMap[b]), p.perfDepth[b], o, n);
+                                     else snprintf(o, n, "---");
+                                   },
+                                   [this, b](int d) {
+                                     mt::Project& p = app_.project();
+                                     const mt::PerfRange r = mt::perfRange(static_cast<mt::PerfFx>(p.perfMap[b]));
+                                     p.perfDepth[b] = static_cast<int8_t>(clampi(p.perfDepth[b] + d, r.lo, r.hi));
+                                   },
+                                   [this, b] { return app_.project().perfMap[b] == 0; }};
   }
+  // Shift+click cancel on PERF restores the effect and its depth together (a new effect resets the depth).
+  static_assert(offsetof(mt::Project, perfDepth) == offsetof(mt::Project, perfMap) + sizeof(mt::Project::perfMap),
+                "perfDepth follows perfMap");
+  list_.setEditScope([this]() -> void* { return page_ == kPgPerf ? app_.project().perfMap : nullptr; },
+                     sizeof(mt::Project::perfMap) + sizeof(mt::Project::perfDepth));
   // Every row is project data (device settings live on FILE > SYSTEM).
   list_.setOnEdit([this] { app_.markDirty(); });
   list_.setOnCancel([this] { app_.toast("CANCEL"); });

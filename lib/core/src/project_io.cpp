@@ -25,7 +25,7 @@ constexpr uint32_t kOldStepBytes = 6;  // PATN before 6 fx slots: note, vel, 2 x
 constexpr int kOldTracks = 8;          // PATN of the 8-track firmware
 constexpr size_t kToutSize = 3;
 // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
-// scTrack, scDepth, djFilter + 64.
+// scTrack, scDepth, then byte 13: the old DJ filter (+ 64), ignored on load and written 64.
 constexpr size_t kAudiSize = 14;
 constexpr size_t kAudiFxSize = 13;  // older files: up to scDepth
 constexpr size_t kAudiDlySize = 6;  // older files: up to dlyLevel
@@ -286,7 +286,6 @@ LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
     p.scTrack = b[11] <= kTracks ? b[11] : 0;
     p.scDepth = clampu(b[12], 0, 127);
   }
-  if (n >= kAudiSize) p.djFilter = static_cast<int8_t>(clampu(b[13], 0, 127) - 64);
   return in.skip(size - n) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
@@ -367,14 +366,33 @@ void migrateSong(const LegacySong& ls, Project& p, LoadNotes* notes) {
 
 // GROV: the patterns' groove (kPatterns bytes), then the tracks' humanize (kTracks bytes). Files
 // without it: groove OFF, no humanize.
-// PRFM: the PERF effect of each track button (PerfFx); files without it: the default 1..8.
-LoadErr readPrfm(CrcSource& in, uint32_t size, Project& p) {
-  uint8_t b[kPerfButtons];
-  if (size < sizeof(b)) return LoadErr::BadValue;
-  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
-  for (int i = 0; i < kPerfButtons; ++i) p.perfMap[i] = b[i] < static_cast<uint8_t>(PerfFx::Count) ? b[i] : 0;
-  return in.skip(size - sizeof(b)) ? LoadErr::Ok : LoadErr::Truncated;
+// PRF2: the PERF effect of each track button (PerfFx), then each button's start depth (int8, clamped
+// into its effect's range); an 8-byte PRF2 (no depths): the effects' defaults. Files without it:
+// PRFM, else kPerfDefaultMap. PRFM (legacy): the effect bytes in the pre-2026-10-13 enum, mapped by
+// perfFromLegacy(), at their defaults; a PRF2 wins in either chunk order (prf2 is set once one was read).
+LoadErr readPerf(CrcSource& in, uint32_t size, Project& p, bool legacy, bool& prf2) {
+  uint8_t b[2 * kPerfButtons];
+  const bool depths = !legacy && size >= sizeof(b);
+  const uint32_t n = depths ? sizeof(b) : kPerfButtons;
+  if (size < kPerfButtons) return LoadErr::BadValue;
+  if (!in.read(b, n)) return LoadErr::Truncated;
+  if (!legacy || !prf2) {
+    for (int i = 0; i < kPerfButtons; ++i)
+      p.perfMap[i] = legacy ? static_cast<uint8_t>(perfFromLegacy(b[i]))
+                            : (b[i] < static_cast<uint8_t>(PerfFx::Count) ? b[i] : 0);
+    p.perfDefaultDepths();
+    if (depths)
+      for (int i = 0; i < kPerfButtons; ++i) {
+        const PerfRange r = perfRange(static_cast<PerfFx>(p.perfMap[i]));
+        const int8_t d = static_cast<int8_t>(b[kPerfButtons + i]);
+        p.perfDepth[i] = d < r.lo ? r.lo : (d > r.hi ? r.hi : d);
+      }
+  }
+  if (!legacy) prf2 = true;
+  return in.skip(size - n) ? LoadErr::Ok : LoadErr::Truncated;
 }
+LoadErr readPrfm(CrcSource& in, uint32_t size, Project& p, bool& prf2) { return readPerf(in, size, p, true, prf2); }
+LoadErr readPrf2(CrcSource& in, uint32_t size, Project& p, bool& prf2) { return readPerf(in, size, p, false, prf2); }
 
 constexpr size_t kGrovSize = kPatterns + kTracks;
 LoadErr readGrov(CrcSource& in, uint32_t size, Project& p) {
@@ -587,7 +605,7 @@ bool saveProject(const Project& p, ByteSink& out) {
                                  p.rvbSize,   p.rvbDamp,
                                  p.rvbLevel,  p.compAmt,
                                  p.compRel,   p.scTrack,
-                                 p.scDepth,   static_cast<uint8_t>(p.djFilter + 64)};
+                                 p.scDepth,   64};  // byte 13: the old DJ filter, neutral for older firmware
   if (!o.chunk("AUDI", kAudiSize) || !o.write(au, sizeof(au))) return false;
 
   // Always written, empty or not.
@@ -643,7 +661,12 @@ bool saveProject(const Project& p, ByteSink& out) {
     for (int t = 0; t < kTracks; ++t) g[kPatterns + t] = p.tracks[t].humanize;
     if (!o.chunk("GROV", sizeof(g)) || !o.write(g, sizeof(g))) return false;
   }
-  if (!o.chunk("PRFM", kPerfButtons) || !o.write(p.perfMap, kPerfButtons)) return false;
+  {
+    uint8_t pf[2 * kPerfButtons];
+    memcpy(pf, p.perfMap, kPerfButtons);
+    memcpy(pf + kPerfButtons, p.perfDepth, kPerfButtons);
+    if (!o.chunk("PRF2", sizeof(pf)) || !o.write(pf, sizeof(pf))) return false;
+  }
 
   uint8_t c[12] = {'C', 'R', 'C', ' '};
   wr32(c + 4, 4);
@@ -705,6 +728,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
 
   LegacySong legacy;
   bool sng3 = false;
+  bool prf2 = false;  // a PRF2 chunk was read: PRFM no longer applies
   for (;;) {
     uint8_t ch[8];
     if (!in.raw().read(ch, 8)) return LoadErr::Truncated;
@@ -752,7 +776,8 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
     else if (memcmp(ch, "TSPD", 4) == 0) e = readTspd(in, size, out);
     else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);
-    else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out);
+    else if (memcmp(ch, "PRF2", 4) == 0) e = readPrf2(in, size, out, prf2);
+    else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out, prf2);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, legacy);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;

@@ -283,6 +283,7 @@ void SongScreen::openMenu() {
       {"Add", kAdd, room},           {ins, kInsert, room},
       {"Delete", kDelete, valid},    {"Mutes <- live", kMutesLive, valid},
       {"Clear mutes", kMutesClear, valid}, {"Clear song", kClear, valid},
+      {app_.perf().on() ? "Perf: ON" : "Perf: OFF", kPerf},
   };
   if (valid) snprintf(title, sizeof(title), "SLOT %02d: P%02u", row_ + 1, app_.project().song[row_] + 1u);
   else snprintf(title, sizeof(title), "SONG");
@@ -309,6 +310,13 @@ void SongScreen::onMenu(int id) {
       break;
     }
     case kClearConfirm: clearSong(); break;
+    case kPerf: {  // shared with GRID's menu; on leaves pattern edit
+      const bool on = !app_.perf().on();
+      if (on) patEdit_ = holdRow_ = false;
+      app_.perf().setOn(on);
+      app_.toast(on ? "PERF: HOLD A BUTTON" : "PERF OFF");
+      break;
+    }
     default: break;
   }
   app_.invalidate();
@@ -322,6 +330,7 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
   const int n = len();
   switch (ev.type) {
     case InputType::EncTurn:
+      if (app_.perf().turn(ev.delta, ev.shift)) break;  // a held PERF effect's depth; the cursor stays
       touched();
       if (ev.shift) setCol(col_ + ev.delta);
       else if (patEdit_) editPat(ev.delta);
@@ -366,8 +375,15 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
   }
 }
 
-// B: leave pattern edit, keeping the value.
-void SongScreen::onBack() { patEdit_ = holdRow_ = false; }
+// B: leave pattern edit, keeping the value; else PERF off.
+void SongScreen::onBack() {
+  if (patEdit_) {
+    patEdit_ = holdRow_ = false;
+  } else if (app_.perf().on()) {
+    app_.perf().setOn(false);
+    app_.toast("PERF OFF");
+  }
+}
 
 void SongScreen::onATap(bool) {
   patEdit_ = holdRow_ = false;
@@ -375,6 +391,7 @@ void SongScreen::onATap(bool) {
 }
 
 bool SongScreen::trackKey(int n, bool shift) {
+  if (!shift && app_.perf().press(n)) return true;  // PERF while playing; Shift + N still mutes
   if (shift || len() == 0 || n < 0 || n >= mt::kTrackButtons) return false;
   clampRow();
   patEdit_ = holdRow_ = false;  // a separate undo step from the pattern edit
@@ -445,15 +462,21 @@ void SongScreen::draw(LGFX_Sprite& s, int y0, int) {
   showRow(top_);  // the song may have shrunk
   char buf[16];
 
-  // Header: count, track numbers.
-  s.setTextColor(kText);
-  snprintf(buf, sizeof(buf), "%d/%d", n, mt::kSongMax);
-  s.drawString(buf, kNumX, y0 + 4);
+  // Header: count, track numbers. The PERF badge replaces the count, grows with the held effects
+  // and covers the numbers it reaches.
+  const int badgeR = app_.perf().drawBadge(s, kNumX, y0 + 4);
+  if (badgeR == kNumX) {
+    s.setTextColor(kText);
+    snprintf(buf, sizeof(buf), "%d/%d", n, mt::kSongMax);
+    s.drawString(buf, kNumX, y0 + 4);
+  }
   for (int t = 0; t < mt::kTracks; ++t) {
     snprintf(buf, sizeof(buf), "%d", t + 1);
     const int w = static_cast<int>(strlen(buf)) * kCharW;
+    const int x = cellX(t) + (kCellW - w) / 2;
+    if (x < badgeR + kCharW) continue;
     s.setTextColor(col_ == t + 1 ? kCursor : kDim);
-    s.drawString(buf, cellX(t) + (kCellW - w) / 2, y0 + 4);
+    s.drawString(buf, x, y0 + 4);
   }
   s.drawFastHLine(0, y0 + kHeadH - 1, kScreenW, kDim);
 

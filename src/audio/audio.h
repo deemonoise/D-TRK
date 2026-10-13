@@ -49,6 +49,16 @@ void previewBuffer(const int16_t* d, uint32_t frames, uint32_t rate);
 // out): keep the buffer allocated.
 bool previewStop();
 bool previewPlaying();
+// PERF (UI task): op 0 press fx, 1 release fx, 2 turn (int8 delta), 3 release all (synth message
+// 0xF6). Goes through the preview queue: applied with the next block. True = queued, not yet
+// applied (a park may still flush it, see parkCount()); false: the queue was full, it is lost.
+bool perf(uint8_t op, uint8_t val);
+// Audio parks so far (each one resets the synth: PERF releases everything). UI task polls it.
+uint32_t parkCount();
+// PERF ring buffer (UI task): on takes it from PSRAM (6 s, else 4 s, else 2 s) and hands it to the
+// synth, off takes it back and frees it. Held only while PERF is on in GRID / SONG: the screen
+// sprite, imports and renders need that PSRAM. Returns the seconds held, 0 = none (buffer effects silent).
+uint32_t perfBuffer(bool on);
 // Block render load since the previous call (status bar CPU readout): total render time, block
 // count and longest block, us, and stalls (the DMA ran dry: an audible gap; a single long block
 // is covered by the queued DMA blocks); resets them. blocks == 0: nothing rendered. UI task only.

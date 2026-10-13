@@ -6,7 +6,8 @@
 
 namespace ui {
 
-// Project settings on pages SONG, FX, COMP, PERF (the effect of each track button in PERF mode);
+// Project settings on pages SONG, FX, COMP, PERF (the effect and start value of each track button in
+// PERF mode);
 // length / resolution / swing apply to the heard pattern. Device settings and diagnostics are on
 // FILE > SYSTEM.
 class ProjScreen : public Screen {
@@ -22,7 +23,9 @@ class ProjScreen : public Screen {
  private:
   enum Row : int {
     kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
-    kRvbSize, kRvbDamp, kRvbLevel, kDjFilter, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1, kPerf8 = kPerf1 + 7, kRows
+    kRvbSize, kRvbDamp, kRvbLevel, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1,
+    kPerfLast = kPerf1 + 2 * mt::kPerfButtons - 1,  // Button N, then its start Value
+    kRows
   };
   // Pages: contiguous runs of rows.
   enum Page : int { kPgSong, kPgFx, kPgComp, kPgPerf, kPages };

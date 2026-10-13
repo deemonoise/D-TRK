@@ -287,13 +287,6 @@ void test_acc_lane_mask() {
   TEST_ASSERT_FALSE(fxSynthOnly(Fx::ACC));
 }
 
-void test_perf_names() {
-  TEST_ASSERT_EQUAL_STRING("RAT 2", perfFxName(PerfFx::Rat2));
-  TEST_ASSERT_EQUAL_STRING("MUTE", perfFxName(PerfFx::Mute));
-  TEST_ASSERT_EQUAL_STRING("", perfFxName(PerfFx::None));
-  TEST_ASSERT_EQUAL_STRING("", perfFxName(PerfFx::Count));
-}
-
 void test_cnd_pre_nei() {
   TEST_ASSERT_EQUAL_STRING("PRE", fmt(Fx::CND, kCndPre));
   TEST_ASSERT_EQUAL_STRING("!PR", fmt(Fx::CND, kCndNotPre));
@@ -340,7 +333,6 @@ int main() {
   RUN_TEST(test_cnd_order);
   RUN_TEST(test_cmd_cycle);
   RUN_TEST(test_step_arp_fx);
-  RUN_TEST(test_perf_names);
   RUN_TEST(test_cnd_pre_nei);
   RUN_TEST(test_rat_ramp);
   RUN_TEST(test_synth_fx_names_ranges);

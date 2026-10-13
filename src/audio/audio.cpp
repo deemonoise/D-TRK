@@ -115,6 +115,7 @@ TaskHandle_t task;
 std::atomic<bool> pauseReq{false};
 std::atomic<uint32_t> pauseGen{0};   // last request (UI)
 std::atomic<uint32_t> parkedGen{0};  // request the task parked for (audio task)
+std::atomic<uint32_t> parks{0};      // parks done (audio task), see parkCount()
 std::atomic<uint32_t> resumeGen{0};  // last request resumed or withdrawn (UI)
 SemaphoreHandle_t pausedSem, resumeSem;
 
@@ -141,6 +142,19 @@ uint32_t pvFrames, pvRate;
 std::atomic<uint32_t> pvReq{0}, pvAck{0};
 std::atomic<bool> pvPlaying{false};
 mt::OneShot oneshot;
+
+// PERF ring buffer (perfBuffer()): the UI sets pfData/pfFrames (nullptr = detach) and bumps pfReq;
+// the audio task attaches it and echoes pfReq in pfAck. A detached buffer is free once acknowledged.
+int16_t* pfData;
+uint32_t pfFrames;
+std::atomic<uint32_t> pfReq{0}, pfAck{0};
+
+void takePerfRequest() {
+  const uint32_t r = pfReq.load(std::memory_order_acquire);
+  if (r == pfAck.load(std::memory_order_relaxed)) return;
+  synth->setPerfBuffer(pfData, pfFrames, false);  // zeroed by the UI
+  pfAck.store(r, std::memory_order_release);
+}
 
 void takePreviewRequest() {
   const uint32_t r = pvReq.load(std::memory_order_acquire);
@@ -184,7 +198,13 @@ void drain(Ring& q) {
   while (const Ev* e = q.peek()) {
     const int off = mt::eventOffset(e->t, blockT);
     if (off < 0) break;  // a later block
-    if (e->t < blockT) lateEvents.fetch_add(1, std::memory_order_relaxed);
+    if (e->t < blockT) {
+      lateEvents.fetch_add(1, std::memory_order_relaxed);
+      if (e->b[0] == 0xF6 && e->b[1] == 4) {  // PERF step clock: late at offset 0 would misplace the grid
+        q.pop();
+        continue;
+      }
+    }
     if (&q == &uiQ && e->track == mt::kPreviewTrack && (e->b[0] & 0xF0) == 0x90) {
       if (previewOn) {
         const uint8_t m[3] = {0x80, previewNote, 0};
@@ -210,6 +230,7 @@ std::atomic<uint32_t> profPeak{0};  // the slowest block's cycles while profilin
 [[maybe_unused]] void renderSynth(int16_t* out) {
   const uint32_t q0 = synth->profNow();
   advanceClock();
+  takePerfRequest();
   drain(engineQ);
   drain(uiQ);
   if (synth->profiling()) synth->addProfile(mt::Synth::kProfQueue, synth->profNow() - q0);
@@ -637,6 +658,8 @@ void park() {
   synth->reset();
   while (engineQ.peek()) engineQ.pop();
   while (uiQ.peek()) uiQ.pop();
+  parks.fetch_add(1, std::memory_order_release);  // after the drain: a later UI message survives
+  takePerfRequest();  // the UI may wait on it while parked
   previewOn = false;
   oneshot.stop();
   pvPlaying.store(false, std::memory_order_relaxed);
@@ -906,6 +929,60 @@ void previewSlice(uint8_t instr, uint8_t slice, uint8_t root, uint32_t holdMs) {
   const Ev on{t, mt::kPreviewTrack, 3, {0x90, static_cast<uint8_t>(root & 127), 100},
               static_cast<uint8_t>(h > 255 ? 255 : h)};
   if (!uiQ.push(pg) || !uiQ.push(slc) || !uiQ.push(on)) lostEvents.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool perf(uint8_t op, uint8_t val) {
+  const Ev e{engine::nowUs(), mt::kPreviewTrack, 3, {0xF6, op, val}};
+  if (uiQ.push(e)) return true;
+  lostEvents.fetch_add(1, std::memory_order_relaxed);
+  return false;
+}
+
+uint32_t parkCount() { return parks.load(std::memory_order_acquire); }
+
+namespace {
+int16_t* pfOwned;      // the buffer the UI allocated (attached, or detach not yet acknowledged)
+uint32_t pfOwnedFrames;
+
+// Hands d to the audio task and waits (up to 50 ms) until it took it.
+bool sendPerfBuffer(int16_t* d, uint32_t frames) {
+  if (!task) return d == nullptr;  // no audio task: nothing reads the buffer
+  pfData = d;
+  pfFrames = frames;
+  const uint32_t r = pfReq.load(std::memory_order_relaxed) + 1;
+  pfReq.store(r, std::memory_order_release);
+  for (int i = 0; i < 25; ++i) {
+    if (pfAck.load(std::memory_order_acquire) == r) return true;
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+  return false;
+}
+}  // namespace
+
+uint32_t perfBuffer(bool on) {
+  if (on) {
+    if (pfOwned) return pfOwnedFrames / kRate;
+    // 6 s = 2 bars down to 80 BPM; less when PSRAM is short.
+    constexpr uint32_t kFrames[] = {6 * kRate, 4 * kRate, 2 * kRate};
+    for (const uint32_t frames : kFrames) {
+      auto* b = static_cast<int16_t*>(heap_caps_calloc(frames * 2, sizeof(int16_t), MALLOC_CAP_SPIRAM));
+      if (!b) continue;
+      sendPerfBuffer(b, frames);  // not taken in time: it still will be (next block or park)
+      pfOwned = b;
+      pfOwnedFrames = frames;
+      Serial.printf("audio: PERF buffer %u s, psram free %u KB\n", static_cast<unsigned>(frames / kRate),
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+      return frames / kRate;
+    }
+    Serial.println("audio: no PSRAM for the PERF buffer");
+    return 0;
+  }
+  if (!pfOwned) return 0;
+  if (!sendPerfBuffer(nullptr, 0)) return pfOwnedFrames / kRate;  // still read: free it next time
+  heap_caps_free(pfOwned);
+  pfOwned = nullptr;
+  pfOwnedFrames = 0;
+  return 0;
 }
 
 namespace {
