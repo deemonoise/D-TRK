@@ -56,8 +56,8 @@ bool perf(uint8_t op, uint8_t val);
 // Audio parks so far (each one resets the synth: PERF releases everything). UI task polls it.
 uint32_t parkCount();
 // PERF ring buffer (UI task): on takes it from PSRAM (6 s, else 4 s, else 2 s) and hands it to the
-// synth, off takes it back and frees it. Held only while PERF is on in GRID: the screen sprite,
-// imports and renders need that PSRAM. Returns the seconds held, 0 = none (buffer effects silent).
+// synth, off takes it back and frees it. Held only while PERF is on in GRID / SONG: the screen
+// sprite, imports and renders need that PSRAM. Returns the seconds held, 0 = none (buffer effects silent).
 uint32_t perfBuffer(bool on);
 // Block render load since the previous call (status bar CPU readout): total render time, block
 // count and longest block, us, and stalls (the DMA ran dry: an audible gap; a single long block

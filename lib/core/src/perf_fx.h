@@ -27,7 +27,7 @@ struct PerfRange {
 };
 PerfRange perfRange(PerfFx f);
 const char* perfName(PerfFx f);   // toast / PROJ text, "" for None and out of range
-const char* perfShort(PerfFx f);  // 3 letters for the GRID header
+const char* perfShort(PerfFx f);  // 3 letters for the GRID / SONG header
 void perfValue(PerfFx f, int depth, char* out, int n);  // toast value: "1/16", "LP 20", "6 BIT"
 PerfFx perfFromLegacy(uint8_t old);  // PRFM byte (pre-2026-10-13 enum) -> the new effect
 

@@ -9,7 +9,8 @@ namespace ui {
 // Song slots, one row each: "01  P03  [16 track cells]" (filled = plays, frame = muted, dot = no
 // data). Turn = row (in pattern edit: the pattern), Shift + turn = column, click = PAT: pattern edit /
 // track: mute, A = add a copy below, A + turn = pattern edit (B cancels), long = row menu. Track
-// buttons toggle the cursor slot's mutes. Every write is under engine::lockProject() + SongEdit.
+// buttons toggle the cursor slot's mutes; with PERF on (App::perf(), shared with GRID) they hold
+// its effects while playing. Every write is under engine::lockProject() + SongEdit.
 class SongScreen : public Screen {
  public:
   explicit SongScreen(App& app) : app_(app) {}
@@ -23,13 +24,15 @@ class SongScreen : public Screen {
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsRedraw(const engine::Status& st) override;
   int cursor() const;  // selected slot, 0 when the song is empty
-  // Track button N: toggles that track's mute in the cursor slot; false (App mutes live) on Shift
-  // or an empty song.
+  // Track button N: PERF on and playing: holds its effect; else toggles that track's mute in the
+  // cursor slot; false (App mutes live) on Shift or an empty song.
   bool trackKey(int n, bool shift);
   void undo();  // with a toast
 
  private:
-  enum MenuId : int { kAdd, kInsert, kDelete, kMutesLive, kMutesClear, kClear, kClearConfirm, kCancel };
+  enum MenuId : int {
+    kAdd, kInsert, kDelete, kMutesLive, kMutesClear, kClear, kClearConfirm, kCancel, kPerf
+  };
   static constexpr int kHeadH = 24, kRowH = 24;
   static constexpr int kRows = (kAreaH - kHeadH) / kRowH;  // 10
   static constexpr int kNumX = 4, kPatX = 30;

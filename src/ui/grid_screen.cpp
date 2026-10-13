@@ -70,18 +70,16 @@ void GridScreen::onEnter() {
   setEdit(false);
   cur();
   needVisible_ = true;
-  if (perf_) perfTakeBuffer();
+  if (perf()) setRec(false);  // PERF may have been turned on in SONG
 }
 
+// App releases the PERF effects and keeps / frees the buffer.
 void GridScreen::onLeave() {
-  perfAllOff();
-  audio::perfBuffer(false);  // the other screens need the PSRAM (imports, renders)
   fill_.cancel();
   transpose_.cancel();
 }
 
 void GridScreen::onProjectReplaced() {
-  perfAllOff();  // the loaded project does not inherit the held effects
   fill_.abandon();
   transpose_.cancel();
 }
@@ -269,41 +267,13 @@ void GridScreen::setPerf(bool on) {
     rec_ = false;
     edit_ = false;
     holdEdit_ = false;
-  } else {
-    perfAllOff();
   }
-  if (on != perf_) {
-    if (on) perfTakeBuffer();
-    else audio::perfBuffer(false);
-  }
-  perf_ = on;
+  app_.perf().setOn(on);
 }
 
-// Takes the PERF ring buffer; without one the buffer effects are silent: say so.
-void GridScreen::perfTakeBuffer() {
-  if (audio::perfBuffer(true) == 0) app_.toast("PERF: NO MEMORY FOR REPEAT");
-}
+bool GridScreen::perf() const { return app_.perf().on(); }
 
-// Always sent: a press lost in a full queue must not leave the synth holding an effect.
-void GridScreen::perfAllOff() {
-  for (int8_t& h : perfHeld_) h = -1;
-  perfStack_.releaseAll();
-  perfLost_ = !audio::perf(3, 0);
-}
-
-// The transport stopped under held effects (Play, a stop from elsewhere) or the audio parked (the
-// synth released them): they end. A lost message: release all again once nothing is held.
-void GridScreen::poll() {
-  const uint32_t parks = audio::parkCount();
-  const bool parked = parks != perfParks_;
-  perfParks_ = parks;
-  if (perfStack_.count() > 0 && (parked || !app_.status().playing)) {
-    perfAllOff();
-    app_.invalidate();
-  } else if (perfLost_ && perfStack_.count() == 0) {
-    perfLost_ = !audio::perf(3, 0);
-  }
-}
+bool GridScreen::buttonsBusy() const { return edit_ || rec_ || perf(); }
 
 // The track step heard at the play position: trackStepAt, sub-step 0 on a fast track. A slow
 // track holds the step it played last (back to the last pattern step where c % D == 0, maybe in
@@ -440,17 +410,8 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
   cur();
   switch (ev.type) {
     case InputType::EncTurn:
-      if (perf_ && perfStack_.count() > 0) {  // the last pressed effect's depth; the cursor stays
-        const mt::PerfFx last = perfStack_.last();
-        int d = ev.delta * (ev.shift && mt::perfRange(last).coarse ? 10 : 1);
-        d = d < -127 ? -127 : d > 127 ? 127 : d;
-        perfStack_.turn(d);
-        if (!audio::perf(2, static_cast<uint8_t>(static_cast<int8_t>(d)))) perfLost_ = true;
-        char msg[40], val[12];
-        mt::perfValue(last, perfStack_.depth(last), val, sizeof(val));
-        snprintf(msg, sizeof(msg), "%s %s", mt::perfName(last), val);
-        app_.toast(msg);
-      } else if (edit_) editTurn(ev.delta, ev.shift);
+      if (app_.perf().turn(ev.delta, ev.shift)) break;  // the last pressed effect's depth; the cursor stays
+      if (edit_) editTurn(ev.delta, ev.shift);
       else if (!ev.shift) moveStep(ev.delta);
       else if (detail_) moveField(ev.delta);
       else moveTrack(ev.delta);
@@ -538,7 +499,7 @@ void GridScreen::onBack() {
   } else if (rec_) {
     setRec(false);
     app_.toast("REC OFF");
-  } else if (perf_) {
+  } else if (perf()) {
     setPerf(false);
     app_.toast("PERF OFF");
   }
@@ -549,30 +510,8 @@ bool GridScreen::trackKey(int n, bool shift) {
   cur();
   const bool playing = app_.status().playing;
   if (rec_ && playing) return recordKey(n, shift);
-  if (perf_ && playing && !shift) {  // button N holds its PROJ -> PERF effect; Shift + N still mutes
-    const uint8_t fx = n < mt::kPerfButtons ? app_.project().perfMap[n] : 0;
-    if (fx == 0 || fx >= static_cast<uint8_t>(mt::PerfFx::Count)) {
-      app_.toast("PERF ---");
-      return true;
-    }
-    const mt::PerfFx f = static_cast<mt::PerfFx>(fx);
-    perfHeld_[n] = static_cast<int8_t>(fx);
-    perfStack_.press(f);
-    if (!audio::perf(0, fx)) perfLost_ = true;
-    // The button's start value (PROJ -> PERF): a turn in the same audio block, so the default never sounds.
-    const mt::PerfRange r = mt::perfRange(f);
-    const int start = clampi(app_.project().perfDepth[n], r.lo, r.hi);
-    const int d = clampi(start - perfStack_.depth(f), -128, 127);
-    if (d != 0) {
-      perfStack_.turn(d);
-      if (!audio::perf(2, static_cast<uint8_t>(static_cast<int8_t>(d)))) perfLost_ = true;
-    }
-    char msg[40], val[12];
-    mt::perfValue(f, perfStack_.depth(f), val, sizeof(val));
-    snprintf(msg, sizeof(msg), "PERF %s %s", mt::perfName(f), val);
-    app_.toast(msg);
-    return true;
-  }
+  // Button N holds its PROJ -> PERF effect while playing; Shift + N still mutes.
+  if (!shift && app_.perf().press(n)) return true;
   if (edit_) {
     if (drum()) toggleLane(n);  // lanes 1-8; the cursor stays
     else enterDegree(n, shift);
@@ -582,17 +521,6 @@ bool GridScreen::trackKey(int n, bool shift) {
   app_.setCurTrack(firstTrack() + n);  // button N = track N of the visible half
   cursorMoved();
   return true;
-}
-
-void GridScreen::trackRelease(int n) {
-  if (n < 0 || n >= mt::kPerfButtons || perfHeld_[n] < 0) return;
-  const int8_t fx = perfHeld_[n];
-  perfHeld_[n] = -1;
-  for (const int8_t h : perfHeld_)
-    if (h == fx) return;  // another button still holds it
-  perfStack_.release(static_cast<mt::PerfFx>(fx));
-  if (!audio::perf(1, static_cast<uint8_t>(fx))) perfLost_ = true;
-  app_.invalidate();  // the header loses its short name
 }
 
 bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
@@ -765,7 +693,7 @@ void GridScreen::openMenu() {
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
-    add(perf_ ? "Perf: ON" : "Perf: OFF", kPerf, true);
+    add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
     add(detail_ ? "Overview" : "Detail view", kToggleView, true);
     add(follow_ ? "Follow: ON" : "Follow: OFF", kToggleFollow, true);
     add("Resample track", kResampleTrack, true);
@@ -1006,8 +934,8 @@ void GridScreen::onMenu(int id) {
       app_.toast(rec_ ? "REC: BUTTONS WRITE WHILE PLAYING" : "REC OFF");
       break;
     case kPerf:
-      setPerf(!perf_);
-      app_.toast(perf_ ? "PERF: HOLD A BUTTON" : "PERF OFF");
+      setPerf(!perf());
+      app_.toast(perf() ? "PERF: HOLD A BUTTON" : "PERF OFF");
       break;
     default: break;
   }
@@ -1213,26 +1141,12 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
 
 // REC (red) / PERF (yellow) over the step numbers instead of the header text; 0 when neither.
 // PERF appends the held effects' short names in press order ("PERF RPT FLT CRS"), as many as the
-// header line holds (kCharW per char).
+// header line holds (PerfPad::drawBadge).
 int GridScreen::drawBadge(LGFX_Sprite& s, int y) {
-  if (!rec_ && !perf_) return 0;
-  char txt[kScreenW / kCharW + 1];
-  snprintf(txt, sizeof(txt), "%s", rec_ ? "REC" : "PERF");
-  if (perf_) {
-    int n = static_cast<int>(strlen(txt));
-    for (int i = 0; i < perfStack_.count(); ++i) {
-      const char* sh = mt::perfShort(perfStack_.at(i));
-      const int w = static_cast<int>(strlen(sh)) + 1;  // " RPT"
-      if (n + w >= static_cast<int>(sizeof(txt))) break;
-      txt[n++] = ' ';
-      memcpy(txt + n, sh, w - 1);
-      n += w - 1;
-      txt[n] = 0;
-    }
-  }
-  s.setTextColor(rec_ ? kRed : kYellow);
-  s.drawString(txt, 0, y);
-  return static_cast<int>(strlen(txt)) * kCharW;
+  if (!rec_) return app_.perf().drawBadge(s, 0, y);
+  s.setTextColor(kRed);
+  s.drawString("REC", 0, y);
+  return 3 * kCharW;
 }
 
 // 5 px squares at a 6 / 7 px pitch: filled = the lane hits; cursorLane >= 0 frames that lane.

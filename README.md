@@ -39,10 +39,10 @@ Every instrument has an LP / BP / HP filter with an envelope, drive and 4 LFOs (
 
 ### Live performance and song
 
-- **Song** (SONG tab, Polyend-style): up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; SONG / LOOP switch on the fly, undo for song edits.
+- **Song** (SONG tab, Polyend-style): up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
 - **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb throw, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable.
 - **REC**: record notes from the track buttons while playing.
-- Fill on Shift + Play.
+- Shift + Play: the song from the SONG cursor on any tab; held while playing, fill.
 
 ### Files and extras
 
@@ -241,20 +241,20 @@ Details (INST tab, preset browser, DRUM machine table, SYNTH and wavetables, fx 
 
 ## Song and live performance
 
-- **Song** (SONG tab): up to 128 slots, each with a pattern and the mutes of the 16 tracks; the mutes are applied when the slot starts. An A tap copies the slot below it (that is how repeats are made), a click or tap on a cell mutes the track in the slot, the track buttons do the same. Play on the SONG tab plays the song, on other tabs it loops the pattern; tapping `S03 P05` in the status bar toggles SONG / LOOP at the end of the pass.
+- **Song** (SONG tab): up to 128 slots, each with a pattern and the mutes of the 16 tracks; the mutes are applied when the slot starts. An A tap copies the slot below it (that is how repeats are made), a click or tap on a cell mutes the track in the slot, the track buttons do the same. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the SONG cursor on any tab (while playing, a short press restarts it from there); tapping `S03 P05` in the status bar toggles SONG / LOOP at the end of the pass.
 - **Per-track length** (TRACK → Pat len): the track loops its first N steps within the pattern (polymeter); in GRID the steps beyond are grey, and the boundary is marked with a line.
 - **Per-track speed** (TRACK → Speed): 1/4, 1/2, x1, x2, x4 per track and pattern — x2 / x4 loop the track 2 / 4 times faster (x2 at 1/16 = 1/32), 1/2 / 1/4 stretch it across pattern passes; works with Pat len.
 - **Fill generators** (GRID → Fill…, row Type): **ARP** (Virus-style arpeggiator, 106 rhythm patterns), **CHORDS** (a progression like `1 5 6 4`, `2MI7 5DOM 1MA7*2` or `1 b7 b6 5` in the project's key, 55 factory progressions + RANDOM, 32 rhythms, CLOSE voice leading by inversions) and **BASS** (a bass line whose notes are roles — root, 3rd, 5th, 7th, approach, walk — against a fixed root, the selected tracks' chords or the CHORDS progression; 48 factory patterns). Each writes notes and fx onto one track with live preview and undo; Capture saves your own patterns to `/presets/ARP`, `/presets/PRG`, `/presets/BAS`. More in the [manual](docs/manual.md#euclid).
-- **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press is pause, as before.
+- **Fill**: hold Shift + Play while playing — steps with `CND FIL` play, those with `NFL` are silent; a short press starts the song from the SONG cursor.
 - **REC** (GRID menu): while playing, the track buttons write scale degrees into the playing step of the current track (on a drum track — lanes); Shift + N erases.
-- **PERF** (GRID menu): punch-in effects on the whole internal mix while a button is held, PO-33 style — repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb throw, reverb freeze. The encoder sets the depth while the button is held (Shift ×10), several buttons stack; INT sound only, live only. Default: 1 REPEAT, 2 ROLL, 3 FILTER, 4 GATE, 5 DELAY THROW, 6 REVERB THROW, 7 CRUSH, 8 TAPE STOP.
+- **PERF** (GRID or SONG menu, one shared mode): punch-in effects on the whole internal mix while a button is held, PO-33 style — repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb throw, reverb freeze. The encoder sets the depth while the button is held (Shift ×10), several buttons stack, Shift + N still mutes (in SONG too); INT sound only, live only. Default: 1 REPEAT, 2 ROLL, 3 FILTER, 4 GATE, 5 DELAY THROW, 6 REVERB THROW, 7 CRUSH, 8 TAPE STOP.
 
 More in the [manual](docs/manual.md#song).
 
 ## Mixer and render
 
 - **MIX** is a separate tab at the bottom, between INST and BANK: 8 strips for the half of the tracks under the cursor (volume fader, pan, delay / reverb sends, M / S) and the MAIN strip — overall volume 0–200 % (moved here from PROJ).
-- Track volume from any screen: hold its button and turn the encoder (Shift ×10); a click while holding switches the turn to pan. Not in GRID edit mode, REC or PERF.
+- Track volume from any screen: hold its button and turn the encoder (Shift ×10); a click while holding switches the turn to pan. Not in GRID edit mode, REC or PERF (GRID or SONG).
 - **Pan** per INT track (L64…C…R63): TRACK → Pan, the MIX pan row (tap it, then turn), step fx `PAN`, LFO dest PAN (autopan; with Retrig ON chord notes spread across the field). The reverb returns in pseudo-stereo, the delay in the centre.
 - **FILE → Render WAV…**: a pattern or the whole song (ALL, solo tracks only, or STEMS — each track to its own file) to `/samples/render/<project>_P01.wav` / `_SONG.wav`, stereo 16-bit 32 kHz, with delay / reverb / compressor and a 2 s tail. The file can be downloaded over Wi-Fi or imported back as a sample.
 - **GRID → Resample track / pattern**: a pattern (the current track or all audible ones) into a new project sample `RS1`, `RS2`… — normalized to −1 dBFS, trailing silence trimmed, up to 60 s; mono (L + R) / 2.

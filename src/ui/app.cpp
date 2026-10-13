@@ -63,6 +63,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
+  if (perfTab(tab_)) perf_.attach();
   screen()->onEnter();
   dirty_ = true;
 }
@@ -72,7 +73,11 @@ void App::setTab(Tab t) {
   setBpmEdit(false);
   if (t == tab_) return;
   menu_.close();
+  if (perfTab(tab_)) perf_.allOff();  // leaving releases the held effects
   screen()->onLeave();
+  // GRID <-> SONG keeps the PERF buffer; any other tab frees it (its PSRAM is needed there).
+  if (perfTab(t)) perf_.attach();
+  else perf_.detach();
   tab_ = t;
   if (t == Tab::Track || t == Tab::Mix) track_.setMixer(t == Tab::Mix);  // one screen, two views
   screen()->onEnter();
@@ -84,9 +89,24 @@ void App::transport() {
     toast("WI-FI MODE");
     return;
   }
+  if (shift_) {
+    startSong();
+    return;
+  }
   // Stopped: the start plays the song from the SONG cursor on the SONG tab, else loops.
   if (!status_.playing && !status_.paused) postSong(tab_ == Tab::Song && p_->songLen > 0);
-  engine::post(shift_ ? engine::Cmd::TogglePlay : engine::Cmd::StartStop);
+  engine::post(engine::Cmd::StartStop);
+}
+
+// Shift + Play: the song from the SONG cursor, on any tab; playing, it starts again from there.
+void App::startSong() {
+  if (p_->songLen == 0) {
+    toast("SONG EMPTY");
+    return;
+  }
+  engine::post(engine::Cmd::Stop);
+  postSong(true);
+  engine::post(engine::Cmd::StartStop);
 }
 
 void App::postSong(bool on) {
@@ -324,6 +344,7 @@ void App::projectReplaced() {
   lastBpm_ = p_->bpm;
   // Let the sequencer re-read the song (stopped: no slot shown).
   engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
+  perf_.allOff();  // the loaded project does not inherit the held effects
   for (Screen* sc : screens_)
     if (sc) sc->onProjectReplaced();
   for (Screen* sc : screens_)
@@ -367,7 +388,8 @@ void App::trackKey(int n, bool shift) {
 }
 
 bool App::holdVolume() const {
-  return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) && !busy_;
+  return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) &&
+         !(tab_ == Tab::Song && perf_.on()) && !busy_;
 }
 
 // Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.
@@ -425,10 +447,11 @@ void App::holdToast(int track) {
 
 void App::trackRelease(int n) {
   if (n < 0 || n >= mt::kTrackButtons) return;
-  if (tab_ == Tab::Grid) grid_.trackRelease(n);
+  if (perfTab(tab_)) perf_.release(n);  // PERF: the effect the button held ends
 }
 
-// Shift + Play while playing: fill while held; a short press is still Shift + Play (pause) on release.
+// Shift + Play while playing: fill while held; a short press is still Shift + Play (song start) on
+// release.
 void App::fillDown() {
   fillHeld_ = true;
   fillDownMs_ = millis();
@@ -439,7 +462,7 @@ void App::fillUp() {
   if (!fillHeld_) return;
   fillHeld_ = false;
   engine::postWait(engine::Cmd::Fill, 0);
-  if (millis() - fillDownMs_ < hw::kLongPressMs) engine::post(engine::Cmd::TogglePlay);
+  if (millis() - fillDownMs_ < hw::kLongPressMs) startSong();
 }
 
 void App::setTheme(int i) {
@@ -651,6 +674,7 @@ void App::tick() {
     toast_[0] = 0;
     dirty_ = true;
   }
+  perf_.poll(status_.playing);
   screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
 

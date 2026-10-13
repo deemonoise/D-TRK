@@ -13,7 +13,6 @@ class GridScreen : public Screen {
  public:
   explicit GridScreen(App& app) : app_(app) {
     for (uint8_t& n : lastNote_) n = 60;
-    for (int8_t& h : perfHeld_) h = -1;
   }
   void onEnter() override;
   void onLeave() override;
@@ -24,13 +23,11 @@ class GridScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
-  void poll() override;  // PERF: the stop releases every held effect
   bool wantsRedraw(const engine::Status& st) override;
   // Track button N: false when App should handle it (Shift + N outside edit = mute).
   bool trackKey(int n, bool shift);
-  void trackRelease(int n);  // PERF: the effect the button held ends
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
-  bool buttonsBusy() const { return edit_ || rec_ || perf_; }
+  bool buttonsBusy() const;
   void undo();  // with a toast; the next edit takes a fresh snapshot
   bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen(); }  // Fill / Transpose preview
 
@@ -84,9 +81,8 @@ class GridScreen : public Screen {
   void enterDegree(int button, bool octaveUp);
   uint8_t degreeNote(int button, bool octaveUp, int ref) const;  // scale degree in the octave of ref
   void setRec(bool on);
-  void setPerf(bool on);
-  void perfTakeBuffer();  // PERF on: the ring buffer from PSRAM, a toast when there is none
-  void perfAllOff();  // every held PERF effect ends; release all is sent even with nothing held
+  void setPerf(bool on);  // the shared PERF (App::perf()); on turns REC and edit off
+  bool perf() const;
   bool recordKey(int n, bool shift);  // REC while playing: button N into the heard step
   int heardTrackStep(int tr);  // the heard step of track tr (own length and speed); slow: the last one played
   void writeStep(const mt::Step& st);
@@ -142,18 +138,11 @@ class GridScreen : public Screen {
   uint8_t lastNote_[mt::kTracks];  // set to 60 in the constructor
   int lane_ = 0;  // drum track, NOTE field in edit: the lane under the encoder
   // Live modes, exclusive with each other and with edit. REC: track buttons write into the heard
-  // step while playing (one undo snapshot per pass). PERF: a held button = punch-in effect.
+  // step while playing (one undo snapshot per pass). PERF (App::perf(), shared with SONG): a held
+  // button = punch-in effect.
   bool rec_ = false;
-  bool perf_ = false;
   uint32_t recLoop_ = UINT32_MAX;  // pass of the last REC undo snapshot
   int recPat_ = -1;                // and its pattern
-  // PERF: the held effects as the synth has them (toasts, the header) and what each button holds
-  // (PerfFx, -1 = nothing). Two buttons on the same effect: it ends with the last one.
-  mt::PerfStack perfStack_;
-  int8_t perfHeld_[mt::kPerfButtons];  // -1 in the constructor
-  // A PERF message lost in a full queue: release all is resent once nothing is held, until taken.
-  bool perfLost_ = false;
-  uint32_t perfParks_ = 0;  // audio::parkCount() last seen: a park resets the synth's PERF
 
   FillDialog fill_{app_};
   mt::FillSpec fillSpec_;  // RAM only, shared by the tracks
