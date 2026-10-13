@@ -66,7 +66,7 @@ The built-in display, touch panel and microSD slot are already routed on the boa
 | 13 | DAC BCK | PCM5102A module, see [Sound](#sound) |
 | 14 | DAC LCK (LRCK, WS) | |
 | 21 | DAC DIN | |
-| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, **A**, **B**, track buttons; INA226 battery monitor (0x40) on the same lines | Debug connector (TXD0 / RXD0), **required**, see below; INA226 — [docs/wiring.md](docs/wiring.md#ina226-battery-monitor) |
+| 43 / 44 | SDA / SCL of the PCF8575 module: encoder button, **Play**, **Shift**, **A**, **B**, track buttons; INA226 battery monitor (0x40–0x4F) on the same lines | Debug connector (TXD0 / RXD0), **required**, see below; INA226 — [docs/wiring.md](docs/wiring.md#ina226-battery-monitor) |
 | 3.3V | MIDI OUT | through a 33 Ω resistor to the Ring of the TRS jack |
 | GND | Common | encoder common pin, the other pins of the buttons, Sleeve of the TRS jack, DAC GND |
 

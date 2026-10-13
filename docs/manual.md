@@ -1462,7 +1462,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 | Firmware | build commit | display only: firmware version ("+" means built with local changes) |
 | Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot (crashes are logged to crashlog.txt) |
 | Audio RAM | INTERNAL / SYNTH IN PSRAM / SEQ IN PSRAM, RVB INT / PSRAM, free K | display only: the synth and sequencer should be in internal memory; in PSRAM, audio costs noticeably more CPU. The reverb buffer goes into internal memory if 24 KB remain free after it; while Wi-Fi is on it moves to PSRAM |
-| Battery | `3.92V 120mA 85%`, `4.05V CHG 820mA 64%`, NOT FOUND, --- | display only: battery voltage, current and charge from the [INA226](wiring.md#ina226-battery-monitor); CHG — charging; NOT FOUND — no sensor (the boot log says `battery: INA226 at 0x40` / `battery: INA226 not found`); --- — no reading yet. With the stock 0.1 Ω shunt the current tops out at about 820 mA, so while charging it shows ~820 mA |
+| Battery | `3.92V 120mA 85%`, `4.05V CHG 820mA 64%`, NOT FOUND, --- | display only: battery voltage, current and charge from the [INA226](wiring.md#ina226-battery-monitor); CHG — charging; NOT FOUND — no sensor (the boot log says `battery: INA226 at 0x44` (address 0x40–0x4F) / `battery: INA226 not found`); --- — no reading yet. With the stock 0.1 Ω shunt the current tops out at about 820 mA, so while charging it shows ~820 mA |
 | CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the audio time broken down by part (queue, events, voice management, voices by type, delay, reverb, master) is appended to /diag/cpuprof.txt |
 
 <a id="themes"></a>
