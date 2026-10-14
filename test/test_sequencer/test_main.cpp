@@ -129,6 +129,28 @@ void test_sixteenths_at_120() {
   TEST_ASSERT_EQUAL(62500, off[0]);
 }
 
+// A wakeup that is due both to send events and to plan a step sends first: planning a step takes
+// up to ~2 ms on the device, and an event waiting behind it reaches the synth late.
+void test_due_events_go_out_before_planning() {
+  struct LoopSink : FakeSink {
+    std::vector<uint32_t> offLoop;  // loopCount() when each NoteOff went out
+    void send(const uint8_t* b, uint8_t len) override {
+      FakeSink::send(b, len);
+      if ((b[0] & 0xF0) == 0x80) offLoop.push_back(seq->loopCount());
+    }
+  } ls;
+  p->patterns[0].length = 1;  // every planned step starts a pass: loopCount() counts the planning
+  p->patterns[0].steps[0][0].note = 60;
+  seq->start(0, ls);
+  seq->process(0, ls);  // plans steps 0..2 (two steps ahead)
+  const uint32_t planned = seq->loopCount();
+  ls.now = 125000;
+  seq->process(125000, ls);  // step 0's NoteOff (62.5 ms) is due and step 3 is to be planned
+  TEST_ASSERT_FALSE(ls.offLoop.empty());
+  TEST_ASSERT_EQUAL_UINT32(planned, ls.offLoop[0]);
+  TEST_ASSERT_TRUE(seq->loopCount() > planned);  // and the step was planned in the same call
+}
+
 void test_swing_delays_odd_steps() {
   p->patterns[0].swing = 75;
   p->patterns[0].steps[0][0].note = 60;
@@ -2596,6 +2618,7 @@ int main() {
   RUN_TEST(test_start_sends_start_then_clock);
   RUN_TEST(test_clock_24ppqn_at_120);
   RUN_TEST(test_sixteenths_at_120);
+  RUN_TEST(test_due_events_go_out_before_planning);
   RUN_TEST(test_swing_delays_odd_steps);
   RUN_TEST(test_queued_pattern_switches_at_loop_end);
   RUN_TEST(test_pause_silences_and_stops_output);
