@@ -90,10 +90,13 @@ class Synth {
   int activeVoices() const;
 
   // CPU guard: load = the last block's render time / the block's duration, after every block.
-  // Above kLoadHigh (smoothed) or kLoadPanic (that block) the oldest voice, releasing first, fades
-  // out (kStealMs) and the pool shrinks to the voices left; below kLoadLow it grows back by one
-  // every kCapUpBlocks, up to kVoices. Not called (tests, offline render): the whole pool.
-  static constexpr float kLoadHigh = 0.80f, kLoadPanic = 1.0f, kLoadLow = 0.65f;
+  // Above kLoadHigh (smoothed) the oldest voice, releasing first, fades out (kStealMs) and the
+  // pool shrinks to the voices left; below kLoadLow it grows back by one every kCapUpBlocks, up
+  // to kVoices. A late block alone is a spike the DMA buffers absorb (audio.cpp, kDmaBlocks): over
+  // kLoadPanic for kPanicBlocks blocks in a row, or over kLoadHard once, a voice fades the same
+  // way but the pool keeps its size. Not called (tests, offline render): the whole pool.
+  static constexpr float kLoadHigh = 0.80f, kLoadPanic = 1.0f, kLoadHard = 1.5f, kLoadLow = 0.65f;
+  static constexpr int kPanicBlocks = 2;
   static constexpr int kCapUpBlocks = 25;  // 100 ms
   static constexpr int kMinVoices = 4;     // never shed below
   void setLoad(float load);
@@ -255,6 +258,7 @@ class Synth {
   float load_ = 0;  // smoothed render load (setLoad)
   int cap_ = kVoices;
   int capUp_ = 0;
+  int over_ = 0;  // blocks in a row over kLoadPanic
   uint32_t age_ = 0;
   TrackRt rt_[kSynthTracks];
   Ev ev_[kMaxEvents];
