@@ -349,6 +349,10 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   if (state_ != State::Playing) return kNever;
   if (p_.bpm != bpm_) applyBpm(now);
 
+  // What is due goes out before planning: a step takes up to ~2 ms to plan on the device, and the
+  // synth renders an event's block ~2 ms after the event's time (audio.cpp, kLagUs).
+  emitDue(now, out);
+
   // Plan far enough ahead for the largest negative nudge at any resolution.
   // After a stall, steps already followed by another due step are skipped
   // rather than played together.
