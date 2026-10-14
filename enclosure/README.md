@@ -24,7 +24,7 @@ Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (g
    5     6     7     8
 ```
 
-The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier. At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
+The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier. At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. Wiring is in the [README](../docs/wiring.md#pcf8575-and-buttons) and [docs/wiring.md](../docs/wiring.md).
 
 PLA/PETG, 3 wall perimeters, 20–30 % infill.
 
@@ -144,7 +144,7 @@ The board's own Type-C (flashing) and the microSD slot are accessible only with 
 4. Snap the MX switches into the panel from above. The encoder goes in from below, secured with its nut from above.
 5. Fit the jack and the switch into the back-wall holes and tighten their nuts. Turn the switch so the long side of its body (7.9 mm) is vertical.
 6. In the bottom part: the IP5306 into its cradle with the Type-C jack towards the back wall, the battery on tape against the ridge under the module.
-7. Solder the power (see above); the controls and MIDI OUT per the table in the [root README](../README.md#wiring).
+7. Solder the power (see above); the controls and MIDI OUT per [docs/wiring.md](../docs/wiring.md).
 8. Check for ~5 V at the IP5306 output before connecting it to the board, then close the bottom part with 4 M3 × 10 screws.
 
 ## License

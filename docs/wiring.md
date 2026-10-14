@@ -103,7 +103,22 @@ PCM5102A                                 MAX97220
 
 The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, and P11 is free.
 
-10 nF capacitors from the encoder's A and B pins to GND are recommended for less bounce. They are not required: the firmware has a filter.
+## Encoder
+
+A regular mechanical EC11 with a push button (4 pulses per detent). The middle pin of the A–C–B row goes to GND, the outer ones to GPIO 11 and 12. If the value moves the wrong way when turning, swap A and B. A and B use the internal pull-ups (`INPUT_PULLUP`), no external resistors needed.
+
+10 nF capacitors from the encoder's A and B pins to GND are recommended for less bounce. They are not required: the firmware has the PCNT hardware filter and a 5 ms software debounce for the buttons.
+
+## PCF8575 and buttons
+
+The encoder button, Play, Shift, A, B and the 8 track buttons are on a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). Its pins have their own weak pull-ups; a button shorts its pin to GND. If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work.
+
+- The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`, `kBtnABit`, `kBtnBBit`): if a pin is damaged, a button can be moved to a free pin (number 0–15 = P00–P07, P10–P17).
+- 4.7 kΩ SDA/SCL pull-ups to 3.3 V are usually already on the module — check.
+- INT is not needed: the firmware polls the module every 5 ms. The detected address is printed to the USB log (`trackio: PCF8575 at 0x..`).
+- If the A0–A2 pads are not bridged anywhere and the module has no resistors to GND, the address floats and may "wander" — in that case bridge the pads to GND.
+- GPIO 43/44 are free because the log and flashing go through the native USB (`ARDUINO_USB_CDC_ON_BOOT=1`). At startup the ESP32 bootloader prints to TXD0 (GPIO 43) — this does not bother the module.
+- Safe boot (hold Shift at power-on) reads Shift from the expander before the autoload.
 
 ## Power: important
 
@@ -126,6 +141,8 @@ The INA226 sits in the battery's positive wire, before the IP5306, and reports o
 
 - TRS pinout **type A**: Tip = pin 5, Ring = pin 4. For type B devices (some Arturia, Novation) use an A→B adapter or swap the Tip and Ring wires.
 - For a 5-pin DIN: the same resistors on pin 5 and pin 4, GND on pin 2.
+- Non-inverted UART, 31250 baud, 3.3 V. Optionally, a 74HC14 buffer (two inverters in series) can be placed between GPIO10 and the 10 Ω resistor.
+- There is no MIDI input: the device is always the master and sends clock, Start/Stop/Continue.
 
 ## DAC and headphones
 
@@ -151,9 +168,19 @@ amp VCC, amp SHDN ── board 5V (or 3V3)
 - **Line out.** The DAC's L / R give 2.1 Vrms at full scale, centred on ground. Unlike the old SPK output, they can go to a mixer, audio interface or powered speakers — from the DAC before the amplifier, or from the amplifier's headphone output.
 - **Amplifier inputs** are differential: L+ / R+ to the DAC's L / R, L− / R− to the DAC's GND (AGND). Pin names on the module's silkscreen may differ.
 - **DirectDrive outputs** are ground-referenced, without coupling capacitors: the headphone jack's Sleeve goes to GND, and the jack may touch the case.
-- **Level.** 2.1 Vrms from the DAC is more than the MAX97220 can deliver: if it clips or is too loud, lower MAIN (MIX tab) or add a divider / potentiometer between the DAC and the amplifier.
+- **Level.** 2.1 Vrms from the DAC is more than the MAX97220 can deliver: if it clips or is too loud, lower Phones (FILE → SYSTEM) or add a divider / potentiometer between the DAC and the amplifier.
 - **Ground.** Short audio ground wires and one star point at the DAC's GND: the DAC, amplifier and jack grounds meet there, and a single wire runs to the board's GND. Otherwise the IP5306 boost converter may whine in the headphones.
-- Power up the first time with MAIN (MIX tab) at minimum and without wearing the headphones.
+- Power up the first time with Phones (FILE → SYSTEM) at minimum and without wearing the headphones.
+
+## Built-in peripherals (for reference)
+
+| Block | Pins |
+|---|---|
+| microSD (SPI) | CS 41, MOSI 40, CLK 39, MISO 38 |
+| FT6336U touch (I2C) | SDA 6, SCL 5, INT 7, RST 4 (shared with LCD) |
+| ST7796 display | 8080 bus, 8-bit (internal board routing) |
+
+GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound goes to the external DAC on GPIO 13/14/21. GPIO 43/44 (Debug connector) are used by the PCF8575 and the INA226.
 
 ## Which track button is which
 
