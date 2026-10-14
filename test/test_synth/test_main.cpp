@@ -455,15 +455,17 @@ void test_queue_overflow_keeps_note_offs() {
 struct FakeBank : SampleSource {
   mutable char asked[kSampleNameMax + 1] = {0};
   int16_t data[1000] = {0};
-  const int16_t* find(const char* name, uint32_t& frames, uint32_t& rate) const override {
+  bool find(const char* name, SampleData& o) const override {
     strncpy(asked, name, kSampleNameMax);
-    if (strcmp(name, "kick") != 0) return nullptr;
-    frames = 1000;
-    rate = 16000;
-    return data;
+    if (strcmp(name, "kick") != 0) return false;
+    o = SampleData();
+    o.key = 1;
+    o.frames = 1000;
+    o.rate = 16000;
+    o.whole = data;
+    return true;
   }
 };
-
 void test_sample_without_bank_is_silent() {
   p->instruments[0].type = InstrType::Sample;
   strcpy(p->instruments[0].sample, "kick");
@@ -1441,14 +1443,16 @@ void test_lfo_macro_dest_ignored_on_chip() {
 struct ArrayBank : SampleSource {
   int16_t data[400] = {0};
   uint32_t n = 100, rate = kSynthRate;
-  const int16_t* find(const char* name, uint32_t& frames, uint32_t& r) const override {
-    if (strcmp(name, "s") != 0) return nullptr;
-    frames = n;
-    r = rate;
-    return data;
+  bool find(const char* name, SampleData& o) const override {
+    if (strcmp(name, "s") != 0) return false;
+    o = SampleData();
+    o.key = 2;
+    o.frames = n;
+    o.rate = rate;
+    o.whole = data;
+    return true;
   }
-};
-static void freeBank() {
+};static void freeBank() {
   delete ab;
   ab = nullptr;
 }

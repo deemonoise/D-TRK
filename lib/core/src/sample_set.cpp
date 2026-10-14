@@ -36,6 +36,12 @@ struct UsedKeys {
         if (wt[i] == c) return true;
       return false;
     }
+    if (e.name[0] == 'h' && isSampleKey(e.name + 1)) {  // heads of a listed sample
+      const uint32_t c = static_cast<uint32_t>(strtoul(e.name + 1, nullptr, 16));
+      for (int i = 0; i < n; ++i)
+        if (crc[i] == c) return true;
+      return false;
+    }
     if (!isSampleKey(e.name)) return false;
     const uint32_t c = static_cast<uint32_t>(strtoul(e.name, nullptr, 16));
     for (int i = 0; i < n; ++i)
@@ -44,8 +50,10 @@ struct UsedKeys {
   }
 };
 
-// Bank entry that is only cache of data identified by its name.
-bool isKeyed(const char* name) { return isSampleKey(name) || isWtKey(name); }
+// Bank entry that is only cache of data identified by its name (heads included).
+bool isKeyed(const char* name) {
+  return isSampleKey(name) || isWtKey(name) || (name[0] == 'h' && isSampleKey(name + 1));
+}
 
 }  // namespace
 

@@ -106,7 +106,7 @@ The encoder click works as before; A is just a faster way to edit one value: hol
 | `13 / 14` | Link to the synth board: UART TX → Teensy RX1 (pin 0), RX ← Teensy TX1 (pin 1), 3 Mbaud |
 | `43 / 44` | PCF8575 and INA226 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
 
-The display board's built-in microSD slot and its NS4168 amplifier are not used: the card, the PCM5102A DAC and the headphone amplifier are on the synth board (see [Built-in sound](#sound)).
+The display board's built-in microSD slot and its NS4168 amplifier are not used: the card and the Audio Shield with the headphone jack are on the synth board (see [Built-in sound](#sound)).
 
 All buttons are on the PCF8575: track buttons on P00–P07, encoder button on P13, Play on P14, Shift on P15, B on P16, A on P17; each shorts its pin to GND. Without the expander the encoder button, Play, Shift, A and B do not work. Encoder A / B use the board's internal pull-ups. MIDI OUT is TRS type A, 3.3 V:
 
@@ -137,6 +137,7 @@ A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; t
 | `CPU 42%` | Synth board load: the average time to compute an audio block over the last 0.5 s, as a % of the block duration (128 samples, 2.9 ms). Gray below 60%; yellow at 60–84% or if any block in those 0.5 s took longer than a block; red from 85% or for 2 s after an audio dropout (an audible click). While no audio is being computed, the last value is shown. |
 | `NO SYNTH` | Red, in place of CPU: the synth board does not answer. INT tracks are silent and the card is unavailable; MIDI OUT still plays. |
 | `SYNTH FW` | Red, in place of CPU: the synth board's firmware protocol does not match the tracker's. A full-screen notice blocks the UI; a click or a tap on **UPDATE** opens a menu: **Update synth…** (flash from `/firmware/teensy.hex` on the synth card, as FILE → SYSTEM → Update synth) or **Wi-Fi firmware…** (see [below](#wifi)). |
+| `SD!` | Red, in place of `CPU` for 2 s (`SD! 42%`): a sample voice ran out of data (the synth board's card fell behind) and faded out for a moment. Playback goes on. Often: a slow card, many long samples pitched up. See [Samples and SD cards](#streaming). |
 | `SYNC` | Yellow, in place of CPU: the sound state (instruments, mixer, samples) is being sent to the synth board. Play waits for it for a moment. |
 
 Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar (battery and CPU) for 1.5 seconds.
@@ -253,7 +254,7 @@ PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row me
 | FREEZE | the reverb frozen (feedback 1, input closed), the tail hangs; the encoder sets the live mix level under the frozen tail (DRY 0…100) | 0…100 | 50 |
 | --- | the button does nothing | | |
 
-The header shows the held effects in press order by short name: `PERF RPT FLT CRS` (RPT ROL REV SCR TPS GAT FLT CRS DWN DRV DLY RVB FRZ). Several buttons held together stack. The buffer effects (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP) share one read head, so only the last pressed of them plays; release it and the previous still-held one returns. Everything else stacks freely. The encoder turns the last pressed held effect. Stop, PERF off or leaving the tab (GRID or SONG) releases everything. PERF touches INT sound only — MIDI tracks are not affected — and only live: Render WAV and Resample do not include it. The buffer effects play from a buffer on the synth board: 6 s with PSRAM on the Teensy, 1 s without it (toast `PERF: NO MEMORY FOR REPEAT` if there is none — then they are silent).
+The header shows the held effects in press order by short name: `PERF RPT FLT CRS` (RPT ROL REV SCR TPS GAT FLT CRS DWN DRV DLY RVB FRZ). Several buttons held together stack. The buffer effects (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP) share one read head, so only the last pressed of them plays; release it and the previous still-held one returns. Everything else stacks freely. The encoder turns the last pressed held effect. Stop, PERF off or leaving the tab (GRID or SONG) releases everything. PERF touches INT sound only — MIDI tracks are not affected — and only live: Render WAV and Resample do not include it. The buffer effects play from a 6 s buffer in the synth board's PSRAM; without PSRAM (or after it failed a check) there is none: toast `PERF: NO MEMORY FOR REPEAT`, and they are silent.
 
 <a id="resample"></a>
 
@@ -1419,38 +1420,56 @@ Samples belong to the project: each project has its own list (up to 128), and in
 | Where | What |
 |---|---|
 | `/projects/name.mtp` | the project and its sample list (name, length, checksum) |
-| `/projects/name/<sample>.wav` | project samples: mono, 16-bit, same sample rate as in flash (up to 44.1 kHz). Written by Save: missing and changed files are written, files of samples removed from the project are deleted. |
+| `/projects/name/<sample>.wav` | project samples: mono, 16-bit, same sample rate as in `/mt-store/` (up to 44.1 kHz). Written by Save: missing and changed files are written, files of samples removed from the project are deleted. |
 | `/samples/` | library: samples are imported into the project from here. Import does not copy the file; the sample gets into the project folder when you save. |
-| synth board's flash, sample bank | cache (about 6 MB, ≈ 1 min of mono at 44.1 kHz, up to 128 entries): samples play from here. Independent of the card and not erased by synth board updates (Update synth, Wi-Fi page). Identical data in different projects is stored once. |
+| `/mt-store/` on the synth board's card | where samples play from: one file per sample (named by its checksum), shared by all projects, so identical data in different projects is stored once. Import writes here, Load fills it from the project folder, Save copies from it to the folder. Do not edit by hand; Clear cache removes files no project in use needs. |
+| synth board's flash | wavetables and the first 100 ms of every sample (the start, the loop start, 25 ms at each slice), so a note starts at once while the rest loads from the card. Not erased by synth board updates (Update synth, Wi-Fi page). |
 
 Screen rows:
 
-- At the top: `FREE n / m KB CACHE k KB` and a bar showing used space. FREE is free space in the synth board's flash, CACHE is how much the samples of other projects take up (the cache). If there is not enough room for an import or load, the cache is evicted automatically, largest entries first, never touching the current project's samples; if it still does not fit, "BANK FULL".
+- At the top: `FREE n / m KB CACHE k KB` and a bar showing used space. It is about the synth board's flash, which now holds wavetables and sample starts: FREE is its free space, CACHE is how much other projects' entries take up. If there is not enough room in flash for an import or load, the cache is evicted automatically, largest entries first, never touching the current project's samples; if it still does not fit, "BANK FULL".
 - **Import WAV…**: a list of `.wav` files from `/samples`. Subfolders first (`name/`, select to enter), then files; in a subfolder the first row **\< Up (..)** goes up one level, and the path is shown in the header. Up to 4 levels of nesting; hidden files (macOS `._*`) are not shown. Selecting a file opens the keyboard with the sample name (defaults to the file name without extension, up to 16 characters A–Z a–z 0–9 \_ -). If the project already has that name, asks **Overwrite**. Import progress is shown in percent. When the list is full, "SAMPLE LIST FULL". **Play** on a file auditions it without importing: the first 8 seconds at the sample's volume with Vol at full (Master applies); Play again or moving the cursor stops it. Works during playback too; in this list the Play button does not start the transport (the button in the header does).
 - **Compact**: defragment flash by moving samples to the start so the free space becomes one block. Usually not needed: import and load compact on their own when gaps get in the way.
-- **Clear cache**: remove everything from flash that is not part of the current project (toast "CLEARED n"). Other projects' samples stay in their folders on the card and are pulled back in when those projects are loaded.
-- Project sample rows: name, duration, size. A red `MISSING` label means the data is not in flash and could not be taken from the folder: the voice is silent. Click or tap opens the **Rename** / **Delete** menu.
+- **Clear cache**: remove everything from flash and from `/mt-store/` that is not part of the current project (toast "CLEARED n"). Other projects' samples stay in their folders on the card and are pulled back in when those projects are loaded.
+- Project sample rows: name, duration, size. A red `MISSING` label means the data is not in `/mt-store/` and could not be taken from the folder: the voice is silent. Click or tap opens the **Rename** / **Delete** menu.
   - **Rename** changes the name in the project and in the instruments using it; a name already in use gives "NAME TAKEN". A MISSING sample cannot be renamed ("SAMPLE MISSING"): its file is looked up by name.
-  - **Delete** removes the sample from the project; if it is selected in an instrument or a KIT lane, it asks again (`USED BY INSn. DELETE?`). The data stays in flash as cache; the next Save deletes the file in the folder.
+  - **Delete** removes the sample from the project; if it is selected in an instrument or a KIT lane, it asks again (`USED BY INSn. DELETE?`). The data stays in `/mt-store/` and flash as cache until Clear cache; the next Save deletes the file in the folder.
 
 Import, Rename and Delete change the project (a `*` appears); save it so the changes reach the `.mtp` and the folder.
 
-**Loading.** Load and autoload at power-on check every sample of the project: if it is in flash, it is ready; if not, it is imported from `/projects/name/` with a progress bar (file name, bytes). If the file is missing, corrupted or contains different data (the WAV was changed on a computer), the sample stays in the list as MISSING, with the toast "N SAMPLES MISSING" at the end. To bring it back, put the correct file in the folder and load the project again, or import a WAV under the same name.
+**Loading.** Load and autoload at power-on check every sample of the project: if it is in `/mt-store/`, it is ready; if not, it is copied there from `/projects/name/` with a progress bar (file name, bytes). If the file is missing, corrupted or contains different data (the WAV was changed on a computer), the sample stays in the list as MISSING, with the toast "N SAMPLES MISSING" at the end. To bring it back, put the correct file in the folder and load the project again, or import a WAV under the same name.
 
 **Saving.** If the folder could not be written (card full, write error), toast "SAMPLES NOT SAVED". The `.mtp` file is saved anyway, but the project stays marked `*`: the next Save completes the folder. A MISSING sample leaves its file untouched on save; Save As to a new name copies such files from the old folder.
 
-**Moving a project** to another card or another tracker: copy `name.mtp` and the `name/` folder to `/projects` on a computer (take the card out of the synth board). On load, the samples are pulled into the synth board's flash automatically.
+**Moving a project** to another card or another tracker: copy `name.mtp` and the `name/` folder to `/projects` on a computer (take the card out of the synth board). On load, the samples are copied into `/mt-store/` automatically.
 
 **Old projects** (before per-project samples, when samples were shared by all projects): on load, the sample list is built from the instruments, but those samples lived in the old tracker's flash and are not on the synth board: they are MISSING. Import them again and save the project; from then on it moves like any other.
 
 | WAV | Support |
 |---|---|
-| Format | PCM 8, 16, 24-bit. Float and 32-bit are not supported ("UNSUPPORTED WAV"). |
+| Format | PCM 8, 16, 24-bit, float 32-bit. Other formats are not supported ("UNSUPPORTED WAV"). |
 | Channels | mono or stereo (stereo is mixed down to mono) |
 | Sample rate | any; above 44.1 kHz it is downsampled to 44.1 kHz, below that it is stored as is |
-| Size | as much as fits in the synth board's flash |
+| Size | up to the free space on the synth board's card |
 
-> Import, Rename, Delete, Compact and Clear cache work only with playback stopped ("STOP PLAYBACK FIRST"): writing to the synth board's flash stops the audio. Load and New stop playback themselves. If the synth board does not answer, the page shows "SYNTH NOT ANSWERING"; "NO SAMPLE BANK" means the bank in the synth board's flash is not available.
+> Import, Rename, Delete, Compact and Clear cache work only with playback stopped ("STOP PLAYBACK FIRST"): they write to the synth board's flash (sample starts, wavetables), which stops the audio. Load and New stop playback themselves. If the synth board does not answer, the page shows "SYNTH NOT ANSWERING"; "NO SAMPLE BANK" means the bank in the synth board's flash is not available.
+
+<a id="streaming"></a>
+
+### Samples and SD cards
+
+Samples play from the synth board's card as they go (streaming), so their length is limited only by the card. The first 100 ms of the start and the loop start, and 25 ms at every slice, are kept in the synth board's flash: a note starts at once, and the card has that long to deliver the rest. The sequencer also tells the synth board one step ahead where the next sample note will start (OFS included), so even a start in the middle of a long sample is ready in time.
+
+- **Up to 16 sample voices stream at once.** A 17th takes the place of the oldest one (it fades out in 4 ms, as when voices run out); meanwhile the new note plays from its start in flash.
+- **PSRAM** (an 8 MB chip on the first pad under the Teensy, CS0; optional): after a project loads, its samples are copied there in the background, shortest first, until it is full (about 7 MB; the rest holds the PERF buffer). A copied sample plays from memory and does not count towards the 16. The synth board tests the chip at power-on and checks it every 100 ms; if it fails, samples go on from the card until the next restart (FILE → SYSTEM → Samples: `PSRAM FAILED`) and the PERF buffer effects fall silent.
+- **Underrun:** if the card falls behind, that voice fades out for a moment and comes back when the data arrives; playback does not stop. The status bar shows `SD!`, FILE → SYSTEM → Samples counts them.
+- **Cards:** use a fast, known-good card. Known good: Kingston Canvas Select Plus. Measured with a good card: 16 voices from the card for 10 minutes at the original pitch — no underruns, the card stayed at least 25 ms ahead, synth board CPU 16 %; with PSRAM the margin is 30–37 ms; an octave up (16 voices) it drops to about 6 ms. Cheap cards (SmartBuy) can underrun with many long samples pitched up. FAT32, one partition (MBR).
+- **Taking the card out** while playing: samples keep playing as far as their starts in flash go, then fade; nothing hangs. Put the card back and they come back.
+- Old projects whose samples were in the synth board's flash are moved to the card (`/mt-store/`) on the first start after the update; then flash keeps only the starts.
+
+**Known issues:**
+
+- While a large file is written to the card (import, save, Wi-Fi upload, render), reading stalls for 150–430 ms: long samples playing at that moment can underrun (`SD!`).
 
 <a id="system"></a>
 
@@ -1468,6 +1487,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 | Synth fw | version and protocol (`Pn`), NO SYNTH | display only: the synth board's firmware; "!" after it means its protocol does not match the tracker's (the status bar shows `SYNTH FW`); NO SYNTH — the board does not answer |
 | Update synth | CLICK / NO SYNTH | click, confirm: the synth board is flashed from `/firmware/teensy.hex` on its card (progress `SYNTH FW`) and reboots; the new version is shown when it answers again. The file gets there from the [Wi-Fi page](#wifi) or a computer |
 | Card | free / total GB, NO CARD, NO SYNTH | display only: the microSD card in the synth board |
+| Samples | SD, SD+PSRAM n%, UNDERRUNS n, NO SYNTH | display only: where samples play from (the synth board's card; with PSRAM, `SD+PSRAM n%` while samples are being copied there and `SD+PSRAM` once done; `SD, PSRAM FAILED` — the chip failed a check, SD only until the synth board restarts) and how many times a sample voice ran out of data since it came up (see [Samples and SD cards](#streaming)) |
 | Link | LOST n LATE n CRC n | display only: link counters since power-on: events lost, events that came too late to play on time, damaged frames |
 | Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot of the tracker (crashes are logged to crashlog.txt on the card in the synth board) |
 | Audio RAM | SEQ INTERNAL / PSRAM, free K | display only: where the sequencer lives (it should be in internal memory; in PSRAM it costs more) and the tracker's free internal RAM |
@@ -1546,18 +1566,18 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 
 The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, mono instruments with per-track pan, stereo output. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
 
-Sound goes from the synth board to an external PCM5102A DAC and from it to a MAX97220 headphone amplifier; the display board's NS4168 amplifier and SPK connector are not used. The signal is stereo: the DAC's L / R go to the amplifier's L / R. Old projects (all tracks at centre) sound the same on both channels.
+Sound goes from the synth board to a Teensy Audio Shield Rev D (SGTL5000) and from its jack to the headphones; the display board's NS4168 amplifier and SPK connector are not used. The signal is stereo. Old projects (all tracks at centre) sound the same on both channels.
 
-- DAC settings: SCK to GND (no MCLK), FMT, FLT, DEMP = L, XSMT = H.
-- The DAC's L / R are a line output (2.1 Vrms full scale, centred on ground): they can go to a mixer, audio interface or powered speakers — straight from the DAC or from the amplifier's headphone output.
-- MAX97220: each channel's input is differential — "+" to the DAC's L / R, "−" to the DAC's GND; its outputs are ground-referenced, the jack's Sleeve goes to GND. Power 5 V or 3.3 V, SHDN to VCC.
-- The DAC's full scale is more than the amplifier can deliver: if it clips, lower MAIN or add a divider before the amplifier. Start at low volume.
+- Headphone volume is FILE → SYSTEM → Phones (the SGTL5000 codec's volume); the project master is MIX → MAIN.
+- No shield yet (not soldered): the synth runs but there is no sound — the firmware doesn't find the SGTL5000 and outputs plain I2S on pins 7 / 20 / 21.
+- The shield's headphone output uses a virtual ground: don't tie the jack's Sleeve to GND or the case. The shield's line out (LINE OUT) can go to a mixer or audio interface.
+- Start at low volume.
 
-Full wiring, settings and grounding notes — README, "Sound" section, and [wiring.md](wiring.md).
+Full wiring: README, "Sound" section, and [wiring.md](wiring.md).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting.
 - **Pan:** each voice is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level (as before), hard left is +3 dB on the left and silence on the right. The delay and reverb sends are taken before pan (mono); the delay returns to the centre, the reverb in pseudo-stereo. The compressor is stereo-linked; the PERF effects, MAIN and the soft clip work on both channels.
-- **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 16 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track.
+- **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 16 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track. Sample voices stream from the card, up to 16 at once (samples copied to PSRAM do not count), see [Samples and SD cards](#streaming).
 - **CPU guard:** when the audio render nears its time budget (above 80 % on average, or one block over 100 %), the oldest voice fades out in 4 ms (releasing voices first) and the pool shrinks to the voices left; once the load drops below 65 % it grows back by one voice every 0.1 s. A heavy project thins out instead of crackling or restarting the device.
 - **Latency:** events reach the synth board and play about 4 ms after the sequencer step (a fixed delay that absorbs the link), plus the audio output buffer: the internal sound lags the MIDI tracks by about 10 ms, constantly, without jitter. MIDI tracks are not delayed.
 - **No synth board:** if it does not answer, the status bar shows `NO SYNTH`: INT tracks are silent, the card is unavailable, MIDI tracks keep playing. After the board comes back, the tracker sends it the sound state (`SYNC`).
@@ -1581,7 +1601,9 @@ Full wiring, settings and grounding notes — README, "Sound" section, and [wiri
 | Project / track / instrument name | 16 / 8 / 8 characters |
 | MIDI import | 512 KB, 16,384 notes, 32 sources |
 | Instruments / voices | 32 / 32, of them up to 16 heavy (FM, DRUM, wavetable SYNTH) (POLY: up to 4 per track; fewer under the CPU guard) |
-| Samples | 128 per project, name up to 16 characters; cache in the synth board's flash about 6 MB (≈ 1 min at 44.1 kHz), 128 entries |
+| Sample voices streaming at once | 16 (samples in PSRAM do not count) |
+| Samples | 128 per project, name up to 16 characters |
+| Sample length | up to the card's free space (mono, 16-bit, up to 44.1 kHz after import) |
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048 |
 | Presets | `.mti` file 204 bytes (v2: 156, v1: 84), name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
 | Arp patterns | up to 32 steps; 106 factory, up to 32 of your own listed, name up to 16 characters |

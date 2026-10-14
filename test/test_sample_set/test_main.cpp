@@ -375,6 +375,23 @@ void test_clear_unused_keeps_legacy() {
   TEST_ASSERT_TRUE(b.find("old") >= 0);
 }
 
+void test_clear_unused_drops_heads_of_unlisted_samples() {
+  SampleBank b(*flash);
+  TEST_ASSERT_TRUE(b.mount());
+  static Project p;
+  p.reset();
+  char kept[kSampleNameMax + 1], gone[kSampleNameMax + 1];
+  kept[0] = gone[0] = 'h';
+  sampleKey(0x11111111u, kept + 1);
+  sampleKey(0x22222222u, gone + 1);
+  addLegacy(b, kept, 300, 1);
+  addLegacy(b, gone, 300, 2);
+  projSampleSet(p, "x", 0x11111111u, 1000);
+  TEST_ASSERT_EQUAL(1, bankClearUnused(b, p));
+  TEST_ASSERT_TRUE(b.find(kept) >= 0);
+  TEST_ASSERT_EQUAL(-1, b.find(gone));
+}
+
 void test_unused_bytes() {
   SampleBank b(*flash);
   TEST_ASSERT_TRUE(b.mount());
@@ -567,6 +584,7 @@ int main() {
   RUN_TEST(test_clear_unused);
   RUN_TEST(test_make_room_evicts_keyed_before_legacy);
   RUN_TEST(test_clear_unused_keeps_legacy);
+  RUN_TEST(test_clear_unused_drops_heads_of_unlisted_samples);
   RUN_TEST(test_unused_bytes);
   RUN_TEST(test_read_data);
   RUN_TEST(test_wt_key);

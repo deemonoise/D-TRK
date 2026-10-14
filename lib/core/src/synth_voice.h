@@ -3,6 +3,7 @@
 #include <new>
 #include <type_traits>
 #include "model.h"
+#include "sample_source.h"
 #include "synth_env.h"
 #include "synth_crush.h"
 #include "synth_drive.h"
@@ -107,6 +108,16 @@ struct Voice {
   // Sample resolved at note-on. Position and step are 32.32 fixed point frames.
   const int16_t* smp = nullptr;
   uint32_t smpLen = 0, smpRate = 0;
+  // Streaming (smp == nullptr): frames come from the heads and a StreamPool slot.
+  uint32_t srcKey = 0;                // SampleData::key
+  const SampleHead* heads = nullptr;  // SampleData::heads
+  uint8_t nHeads = 0;
+  bool stream = false;                // SampleData::streamable, no smp
+  bool psram = false;                 // smp points into PSRAM
+  int8_t slot = -1;                   // StreamPool slot, -1 = none (retried every control update)
+  bool under = false;                 // underrun: holding the last value
+  float hold = 0;                     // last interpolated value
+  float ug = 1;                       // underrun gain, 2 ms ramps
   int64_t pos = 0;
   int64_t step = 0;         // from inc, at control rate
   int8_t dir = 1;           // +1 forward, -1 backward

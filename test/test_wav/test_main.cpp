@@ -161,13 +161,6 @@ void test_list_before_data_skipped() {
   TEST_ASSERT_EQUAL_INT16(8, out[1]);
 }
 
-void test_float_unsupported() {
-  const std::vector<uint8_t> f = wav(fmtBody(3, 1, 32000, 32), {0, 0, 0, 0});
-  VecSource src(f);
-  WavInfo w;
-  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Unsupported), static_cast<int>(wavParse(src, w)));
-}
-
 void test_32bit_pcm_unsupported() {
   const std::vector<uint8_t> f = wav(fmtBody(1, 1, 32000, 32), {0, 0, 0, 0});
   VecSource src(f);
@@ -185,8 +178,8 @@ void test_extensible_pcm() {
   TEST_ASSERT_EQUAL_UINT32(1, w.frames());
 }
 
-void test_extensible_float_unsupported() {
-  const std::vector<uint8_t> f = wav(fmtBody(3, 1, 48000, 32, true), {0, 0, 0, 0});
+void test_extensible_float64_unsupported() {
+  const std::vector<uint8_t> f = wav(fmtBody(3, 1, 48000, 64, true), {0, 0, 0, 0, 0, 0, 0, 0});
   VecSource src(f);
   WavInfo w;
   TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Unsupported), static_cast<int>(wavParse(src, w)));
@@ -468,6 +461,63 @@ void test_header_stereo_round_trip() {
   TEST_ASSERT_EQUAL_HEX32(0xCAFEF00D, w.crc);
 }
 
+static std::vector<uint8_t> floatWav(uint16_t ch, const std::vector<float>& v, bool extensible) {
+  std::vector<uint8_t> data;
+  for (float f : v) {
+    uint32_t u;
+    memcpy(&u, &f, 4);
+    put32(data, u);
+  }
+  std::vector<uint8_t> w;
+  putId(w, "RIFF");
+  put32(w, 0);
+  putId(w, "WAVE");
+  chunk(w, "fmt ", fmtBody(3, ch, 48000, 32, extensible));
+  chunk(w, "data", data);
+  const uint32_t riff = static_cast<uint32_t>(w.size() - 8);
+  memcpy(w.data() + 4, &riff, 4);
+  return w;
+}
+
+void test_float32_mono_converts_and_clips() {
+  const auto w = floatWav(1, {0.f, 0.5f, -1.f, 2.f, NAN}, false);
+  VecSource src(w);
+  WavInfo info;
+  TEST_ASSERT_EQUAL(WavErr::Ok, wavParse(src, info));
+  TEST_ASSERT_TRUE(info.isFloat);
+  TEST_ASSERT_EQUAL(32, info.bits);
+  TEST_ASSERT_EQUAL_UINT32(5, info.frames());
+  int16_t out[5];
+  wavToMono(w.data() + info.dataOffset, 5, info, out);
+  TEST_ASSERT_EQUAL_INT16(0, out[0]);
+  TEST_ASSERT_EQUAL_INT16(16384, out[1]);
+  TEST_ASSERT_EQUAL_INT16(-32768, out[2]);
+  TEST_ASSERT_EQUAL_INT16(32767, out[3]);
+  TEST_ASSERT_EQUAL_INT16(0, out[4]);
+}
+
+void test_float32_stereo_extensible_downmixes() {
+  const auto w = floatWav(2, {0.5f, -0.5f, 0.25f, 0.25f}, true);
+  VecSource src(w);
+  WavInfo info;
+  TEST_ASSERT_EQUAL(WavErr::Ok, wavParse(src, info));
+  int16_t out[2];
+  wavToMono(w.data() + info.dataOffset, 2, info, out);
+  TEST_ASSERT_EQUAL_INT16(0, out[0]);
+  TEST_ASSERT_EQUAL_INT16(8192, out[1]);
+}
+
+void test_float64_still_unsupported() {
+  std::vector<uint8_t> w;
+  putId(w, "RIFF");
+  put32(w, 4 + 8 + 16);
+  putId(w, "WAVE");
+  chunk(w, "fmt ", fmtBody(3, 1, 48000, 64));
+  VecSource src(w);
+  WavInfo info;
+  TEST_ASSERT_EQUAL(WavErr::Unsupported, wavParse(src, info));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_mono16);
@@ -475,10 +525,9 @@ int main() {
   RUN_TEST(test_24bit);
   RUN_TEST(test_stereo_averaged);
   RUN_TEST(test_list_before_data_skipped);
-  RUN_TEST(test_float_unsupported);
   RUN_TEST(test_32bit_pcm_unsupported);
   RUN_TEST(test_extensible_pcm);
-  RUN_TEST(test_extensible_float_unsupported);
+  RUN_TEST(test_extensible_float64_unsupported);
   RUN_TEST(test_not_wav);
   RUN_TEST(test_truncated);
   RUN_TEST(test_smpl_root_after_data);
@@ -497,5 +546,8 @@ int main() {
   RUN_TEST(test_header_parses_back);
   RUN_TEST(test_stereo_header);
   RUN_TEST(test_header_stereo_round_trip);
+  RUN_TEST(test_float32_mono_converts_and_clips);
+  RUN_TEST(test_float32_stereo_extensible_downmixes);
+  RUN_TEST(test_float64_still_unsupported);
   return UNITY_END();
 }

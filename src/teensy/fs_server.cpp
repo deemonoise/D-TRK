@@ -12,17 +12,86 @@ namespace card {
 
 namespace {
 
+// The volume reads the card through this. SdFat's sector cache reads a sector into its buffer before
+// it takes the new sector number: a failed read left the old number on garbage, and the next
+// directory write put that garbage on the card. Single-sector reads (the cache) land in a bounce
+// buffer, copied over only when good; a failed transfer is ended and tried again.
+class SafeCard final : public FsBlockDevice {
+ public:
+  SdCard* c = nullptr;
+  bool fault = false;  // a read or write failed for good: the volume is mounted again before use
+
+  bool isBusy() override { return c->isBusy(); }
+  uint32_t sectorCount() override { return c->sectorCount(); }
+  bool syncDevice() override { return c->syncDevice(); }
+  bool readSector(uint32_t s, uint8_t* d) override {
+    for (int k = 0; k < kTries; ++k) {
+      if (c->readSector(s, bounce_)) {
+        memcpy(d, bounce_, sizeof bounce_);
+        return true;
+      }
+      c->syncDevice();
+    }
+    return failed();
+  }
+  bool readSectors(uint32_t s, uint8_t* d, size_t n) override {
+    for (int k = 0; k < kTries; ++k) {
+      if (c->readSectors(s, d, n)) return true;
+      c->syncDevice();
+    }
+    return failed();
+  }
+  bool writeSector(uint32_t s, const uint8_t* d) override {
+    for (int k = 0; k < kTries; ++k) {
+      if (c->writeSector(s, d)) return true;
+      c->syncDevice();
+    }
+    return failed();
+  }
+  bool writeSectors(uint32_t s, const uint8_t* d, size_t n) override {
+    for (int k = 0; k < kTries; ++k) {
+      if (c->writeSectors(s, d, n)) return true;
+      c->syncDevice();
+    }
+    return failed();
+  }
+
+ private:
+  static constexpr int kTries = 3;
+  bool failed() {
+    fault = true;
+    return false;
+  }
+  uint8_t bounce_[512] __attribute__((aligned(4)));
+};
+
 class SdBackend : public FsBackend {
  public:
   int16_t ready() override {
-    // mediaPresent remounts a card put back in; the folders are made on every new mount. Not while a
-    // file is open: its status command breaks the multi-block write SdFat keeps going between writes.
+    // A card put back in is remounted; the folders are made on every new mount. Polled before every
+    // card access: the status command at most every kCheckMs, after the open multi-sector transfer
+    // is ended (a status command inside one shifted the data that followed it).
+    constexpr uint32_t kCheckMs = 500;
+    if (mounted_ && !dev_.fault && millis() - checkAt_ < kCheckMs) return kErrOk;
     for (FsFile& f : files_)
-      if (f.isOpen()) return mounted_ ? kErrOk : kErrNoCard;
-    const bool in = began_ ? SD.mediaPresent() : SD.begin(BUILTIN_SDCARD);
+      if (f.isOpen() && !dev_.fault) return mounted_ ? kErrOk : kErrNoCard;
+    bool in;
+    if (!began_) {
+      in = SD.begin(BUILTIN_SDCARD);
+    } else {
+      if (SD.sdfs.card()) SD.sdfs.card()->syncDevice();
+      in = SD.mediaPresent();
+    }
     began_ = true;
-    if (in && !mounted_) {
-      makeFolders();
+    checkAt_ = millis();
+    const bool fresh = in && (!mounted_ || dev_.fault);
+    if (fresh) {
+      // SD.begin and the remount in mediaPresent mount on the bare card: mount again through
+      // SafeCard (a fault: the cache is dropped this way too).
+      dev_.c = SD.sdfs.card();
+      dev_.fault = false;
+      in = static_cast<FsVolume&>(SD.sdfs).begin(&dev_);
+      if (in) makeFolders();
       spaceValid_ = false;
     }
     mounted_ = in;
@@ -137,7 +206,9 @@ class SdBackend : public FsBackend {
       if (mt::presetTypeHas(static_cast<mt::InstrType>(t))) folder(mt::presetRoot(static_cast<mt::InstrType>(t)));
   }
 
+  SafeCard dev_;
   bool began_ = false, mounted_ = false;
+  uint32_t checkAt_ = 0;
   bool spaceValid_ = false;
   uint32_t spaceAt_ = 0, totalMb_ = 0, freeMb_ = 0;
   FsFile files_[kFsMaxOpen];

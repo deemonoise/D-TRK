@@ -235,6 +235,23 @@ bool SampleBank::remove(int i) {
   return false;
 }
 
+bool SampleBank::removeMany(const bool* drop) {
+  if (adding_) return false;
+  BankEntry old[kBankEntries];
+  const int n = n_;
+  int k = 0;
+  for (int i = 0; i < n; ++i) {
+    old[i] = e_[i];
+    if (!drop[i]) e_[k++] = e_[i];
+  }
+  if (k == n) return true;
+  n_ = k;
+  if (saveTable()) return true;
+  for (int i = 0; i < n; ++i) e_[i] = old[i];  // not stored: keep them
+  n_ = n;
+  return false;
+}
+
 bool SampleBank::rename(int i, const char* name) {
   if (i < 0 || i >= n_ || adding_ || !name[0] || strlen(name) > kSampleNameMax) return false;
   const int other = find(name);

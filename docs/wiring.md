@@ -1,17 +1,36 @@
-
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery monitor, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, and the synth board — a Teensy 4.1 with a PCM5102A DAC and a MAX97220 headphone amplifier. The display and touch are already routed on the board. The microSD card sits in the Teensy (FAT32 or exFAT); the board's own card slot is not used.
+Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery monitor, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, and the synth board, a Teensy 4.1. Sound comes from a Teensy Audio Shield Rev D (SGTL5000): you can add it later, everything else builds and tests without it. The display and touch are already routed on the board. The microSD card sits in the Teensy (FAT32 or exFAT); the WT32's own card slot is not used.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
+
+## Diagram
+
+![Tracker wiring: LiPo through the INA226, IP5306 and the switch to the 5 V bus; WT32-SC01 Plus with MIDI OUT, the encoder and the link to the Teensy 4.1; the PCF8575 with the buttons on the Debug connector; the Audio Shield dashed, for later.](img/wiring-1.svg)
+
+*Solid lines: solder now. Dashed: optional or later — the IO21 wire (spare), the PSRAM on the Teensy and the whole Audio Shield.*
+
+## Build order
+
+Each step can be checked before the next one, which makes mistakes easy to find.
+
+1.  **Power.** LiPo → INA226 (IN+ / IN−) → IP5306 → switch → board 5V. Until the INA226 is in, wire LiPo + straight to IP5306 B+. Check: the switch turns the board on and the screen lights up.
+2.  **Flash the WT32** over USB with the switch off: `pio run -e wt32 -t upload`.
+3.  **PCF8575 and buttons** on the Debug connector. Check: the serial monitor prints `trackio: PCF8575 at 0x..` and the buttons respond.
+4.  **Encoder** (IO11, IO12, GND) and **MIDI OUT** (IO10, 3V3, GND through the resistors). Check: the encoder changes values, a MIDI device hears notes.
+5.  **INA226** in the battery's positive wire, SDA / SCL in parallel with the PCF8575. Check: the status bar shows the charge percentage.
+6.  **Teensy 4.1.** Flash it over USB before assembly (see "Synth board"), cut the VUSB–VIN trace, solder VIN, GND and the link (IO13 → 0, IO14 → 1). Insert the card. Check: `NO SYNTH` is gone, FILE shows the card's files, samples import. No sound yet — that is expected.
+7.  **PSRAM** (optional): an 8 MB chip on the first pad under the Teensy (CS0, the one PJRC's startup code probes). Without it samples play straight from the card, but the PERF buffer is silent.
+8.  **Later: Audio Shield Rev D** — eight wires to the Teensy (see "Audio Shield"). After that you get sound in the headphones.
 
 ## Schematic
 
 ```
 LiPo 103450 + ── INA226 IN+ ─[shunt]─ INA226 IN− ── IP5306 B+   (IP5306 Type-C — charging)
 LiPo 103450 − ──────────────────────────────────── IP5306 B−
-IP5306 VOUT ──[switch]── board 5V              (VOUT/GND — pads of the desoldered USB-A)
-IP5306 GND ──────────── board GND              (common ground)
+IP5306 VOUT ──[switch]── 5V bus                 (VOUT/GND — pads of the desoldered USB-A)
+IP5306 GND ──────────── GND bus                 (common ground)
+5V bus ── WT32 5V, Teensy VIN                   GND bus ── WT32 GND, Teensy GND
 
 WT32-SC01 Plus, expansion connector (Extended IO)
   IO10 ──[10 Ω]──── MIDI Tip     (DIN 5)
@@ -21,7 +40,7 @@ WT32-SC01 Plus, expansion connector (Extended IO)
   IO12 ──────────── encoder B         encoder C (middle) ── GND
   IO13 ──────────── Teensy 0 (RX1)     link, UART TX
   IO14 ──────────── Teensy 1 (TX1)     link, UART RX
-  IO21 ──────────── Teensy 2           spare, not used yet
+  IO21 ──────────── Teensy 2           spare, not used yet (may be left out)
 
 WT32-SC01 Plus, Debug connector
   IO43 TXD0 ─────── PCF SDA
@@ -32,10 +51,10 @@ WT32-SC01 Plus, Debug connector
 
 INA226 (address 0x40: A0, A1 to GND; ALE not needed)
   IN+ ── LiPo +          IN− ── IP5306 B+
-  VBS ── IN+             (if broken out: battery voltage)
+  VBS ── IN+             (if present: battery voltage)
   VCC ── 3.3 V           GND ── GND
 
-PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
+PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 left open)
   P00 … P07 ── track button 1 … 8 ── GND
   P13 ──────── encoder shaft button ── GND
   P14 ──────── Play ── GND
@@ -44,95 +63,100 @@ PCF8575 (address 0x20–0x27, found automatically; INT not needed, A0–A2 open)
   P17 ──────── A ── GND
 
 Teensy 4.1 (synth board; VUSB–VIN trace on the back cut)
-  VIN ── board 5V                          GND ── board GND
-  21 (BCLK1) ── DAC BCK                    3V3 ── DAC VIN, DAC XSMT
-  20 (LRCLK1) ── DAC LCK                   microSD slot ── the card (FAT32 or exFAT)
-  7 (OUT1A) ── DAC DIN
+  VIN ── 5V bus                            GND ── GND bus
+  0 ── IO13,  1 ── IO14,  2 ── IO21        microSD slot ── card (FAT32 / exFAT)
+  underside: PSRAM 8 MB on the 1st pad, CS0 (optional)
 
-PCM5102A                                 MAX97220
-  VIN ── Teensy 3V3 (or 5 V)               VCC ── board 5V (or 3.3V);  SHDN ── VCC
-  GND ── star point ── Teensy GND          GND ── star point
-  SCK, FMT, FLT, DEMP ── GND (L)           IN L+ ── DAC L;   IN L− ── DAC GND
-  XSMT ── 3.3 V (H)                        IN R+ ── DAC R;   IN R− ── DAC GND
-  L / R ── line out, to the amplifier      OUT L / OUT R / GND ── jack Tip / Ring / Sleeve
+Audio Shield Rev D (later; on wires next to the Teensy, not stacked)
+  Teensy 7  (OUT1A)  ── shield 7  (TX, DIN)      Teensy 18 (SDA) ── shield 18
+  Teensy 20 (LRCLK1) ── shield 20 (LRCLK)        Teensy 19 (SCL) ── shield 19
+  Teensy 21 (BCLK1)  ── shield 21 (BCLK)         Teensy 3V3 ──── shield 3V3
+  Teensy 23 (MCLK1)  ── shield 23 (MCLK)         Teensy GND ──── shield GND
+  Teensy 8  (IN1)    ── shield 8  (RX, DOUT)   only for recording from MIC / LINE IN
+  the shield's microSD slot, the pot pad — not needed
+  the shield's headphone jack goes to the front panel
+  shield MIC / GND ── 9767 capsule (shielded wire, 33–100 pF at the capsule)
+  shield LINE IN L / R / GND ── LINE IN jack (PJ-392, front panel)
 ```
 
-*Every "GND" is a wire to the board's common GND; every "3.3 V" goes to the board's 3V3 pin. Encoder A and B use the board's internal pull-ups, and the PCF8575 pins have their own weak pull-ups, so the buttons and encoder need no external resistors. The PCF8575 is required: without it the encoder button, Play, Shift, A, B and the track buttons do not work.*
+*Every "GND" is a wire to the common GND, every "3.3 V" goes to the WT32's 3V3 pin (for the shield — to the Teensy's 3V3). Encoder inputs A and B use the board's internal pull-ups, and the PCF8575 pins have their own weak pull-ups, so the buttons and encoder need no external resistors. The PCF8575 is required: without it the encoder button, Play, Shift, A, B and the track buttons do not work.*
 
 ## Connection table
 
-| From                              | To                                  | Notes                                                       |
+| From                              | To                                  | Note                                                        |
 |-----------------------------------|-------------------------------------|-------------------------------------------------------------|
 | **Power** |                                     |                                                             |
-| `LiPo + / −`                      | `IP5306 B+ / B−`                    | 103450 battery with a protection board                      |
-| `IP5306 VOUT`                     | `switch → board 5V`                 | VOUT and GND are the pads of the desoldered USB-A port      |
-| `IP5306 GND`                      | `board GND`                         |                                                             |
+| `LiPo + / −`                      | `IP5306 B+ / B−`                    | 103450 battery with protection board; "+" through the INA226 |
+| `IP5306 VOUT`                     | `switch → 5V bus`                   | VOUT and GND are the pads of the module's desoldered USB-A  |
+| `IP5306 GND`                      | `GND bus`                           |                                                             |
+| `5V bus / GND`                    | `WT32 5V / GND`                     |                                                             |
 | **INA226 battery monitor** |                                     |                                                             |
 | `LiPo +`                          | `INA IN+`                           | the shunt sits in the battery's positive wire               |
-| `INA IN−`                         | `IP5306 B+`                         | current "+" = discharge, "−" = charging                     |
+| `INA IN−`                         | `IP5306 B+`                         | current "+" is discharge, "−" is charging                   |
 | `INA IN+`                         | `INA VBS`                           | if the pin exists; measures the battery voltage             |
-| `board 3V3`                       | `INA VCC`                           | 3.3 V only, not 5 V                                         |
-| `board GND`                       | `INA GND`                           | common ground, which is also the battery negative           |
-| `Debug TXD0 (IO43) / RXD0 (IO44)` | `INA SDA / SCL`                     | in parallel with the PCF8575, the addresses don't overlap   |
-| `GND`                             | `INA A0, A1`                        | address 0x40; already so on most modules                    |
+| `WT32 3V3`                        | `INA VCC`                           | 3.3 V only, not 5 V                                         |
+| `WT32 GND`                        | `INA GND`                           | common ground, also the battery negative                    |
+| `Debug TXD0 (IO43) / RXD0 (IO44)` | `INA SDA / SCL`                     | in parallel with the PCF8575, addresses don't overlap       |
+| `GND`                             | `INA A0, A1`                        | address 0x40; most modules already do this                  |
 | `—`                               | `INA ALE`                           | leave unconnected                                           |
 | **MIDI OUT** |                                     |                                                             |
-| `board IO10`                      | `10 Ω → Tip`                        | MIDI DIN pin 5                                              |
-| `board 3V3`                       | `33 Ω → Ring`                       | MIDI DIN pin 4                                              |
-| `board GND`                       | `Sleeve`                            | MIDI DIN pin 2, shield                                      |
+| `WT32 IO10`                       | `10 Ω → Tip`                        | MIDI DIN pin 5                                              |
+| `WT32 3V3`                        | `33 Ω → Ring`                       | MIDI DIN pin 4                                              |
+| `WT32 GND`                        | `Sleeve`                            | MIDI DIN pin 2, shield                                      |
 | **EC11 encoder** |                                     |                                                             |
-| `board IO11 / IO12`               | `encoder A / B`                     | outer pins of the group of three; turns the wrong way — swap them |
-| `board GND`                       | `encoder C`                         | middle pin of the group of three                            |
-| **Teensy 4.1 synth board** |                                     |                                                             |
-| `board 5V`                        | `Teensy VIN`                        | after the switch; cut the VUSB–VIN trace on the Teensy's back first |
-| `board GND`                       | `Teensy GND`                        |                                                             |
-| `board IO13`                      | `Teensy 0 (RX1)`                    | link: 3 Mbaud UART, both sides 3.3 V                        |
-| `board IO14`                      | `Teensy 1 (TX1)`                    | link                                                        |
-| `board IO21`                      | `Teensy 2`                          | spare, not used by the firmware yet                         |
-| **PCM5102A DAC** |                                     |                                                             |
-| `Teensy 21 / 20 / 7`              | `DAC BCK / LCK / DIN`               | BCLK1 / LRCLK1 / OUT1A; LCK is also labelled LRCK or WS     |
-| `Teensy 3V3 (or board 5V)`        | `DAC VIN`                           | the module has its own LDO                                  |
-| `Teensy GND`                      | `DAC GND`                           | star point of the audio ground                              |
-| `GND`                             | `DAC SCK, FMT, FLT, DEMP`           | L: no MCLK (PLL from BCK), I2S, normal latency, de-emphasis off |
-| `3.3 V`                           | `DAC XSMT`                          | H: unmuted                                                  |
-| **MAX97220 headphone amplifier** |                                     |                                                             |
-| `DAC L / R`                       | `amp IN L+ / IN R+`                 | names on the silkscreen may differ                          |
-| `DAC GND`                         | `amp IN L− / IN R−`                 | differential inputs: "−" to the DAC's ground                |
-| `board 5V (or 3V3)`               | `amp VCC`                           | 5V = IP5306 output after the switch                         |
-| `DAC GND`                         | `amp GND`                           | to the star point                                           |
-| `amp VCC`                         | `amp SHDN`                          | if broken out: VCC = running                                |
-| `amp OUT L / OUT R / GND`         | `jack Tip / Ring / Sleeve`          | DirectDrive: no output capacitors, Sleeve to GND is normal  |
+| `WT32 IO11 / IO12`                | `encoder A / B`                     | the outer pins of the three; turns backwards — swap them    |
+| `WT32 GND`                        | `encoder C`                         | the middle pin of the three                                 |
 | **PCF8575 and buttons (required)** |                                     |                                                             |
-| `board 3V3`                       | `PCF VCC`                           | 3.3 V only, not 5 V                                         |
-| `board GND`                       | `PCF GND`                           | do not solder A0, A1, A2: the firmware finds the address 0x20–0x27 itself |
-| `Debug TXD0 (IO43) / RXD0 (IO44)` | `PCF SDA / SCL`                     | Debug connector; 3V3 and GND can be taken from it too       |
+| `WT32 3V3`                        | `PCF VCC`                           | 3.3 V only, not 5 V                                         |
+| `WT32 GND`                        | `PCF GND`                           | leave A0, A1, A2 open: the firmware finds address 0x20–0x27 |
+| `Debug TXD0 (IO43) / RXD0 (IO44)` | `PCF SDA / SCL`                     | Debug connector; 3V3 and GND can come from it too           |
 | `—`                               | `PCF INT`                           | leave unconnected: the module is polled every 5 ms          |
 | `PCF P00 … P07`                   | `track button 1 … 8`                | the button's other pin goes to GND                          |
 | `PCF P13`                         | `encoder shaft button`              | other pin to GND                                            |
 | `PCF P14`                         | `Play button`                       | other pin to GND                                            |
 | `PCF P15`                         | `Shift button`                      | other pin to GND                                            |
-| `PCF P16 / P17`                   | `button B / A`                      | other pin to GND                                            |
+| `PCF P16 / P17`                   | `B / A button`                      | other pin to GND                                            |
+| **Teensy 4.1 synth board** |                                     |                                                             |
+| `5V bus`                          | `Teensy VIN`                        | after the switch; first cut the VUSB–VIN trace on the back of the Teensy |
+| `GND bus`                         | `Teensy GND`                        |                                                             |
+| `WT32 IO13`                       | `Teensy 0 (RX1)`                    | link: UART 3 Mbaud, 3.3 V on both sides                     |
+| `WT32 IO14`                       | `Teensy 1 (TX1)`                    | link                                                        |
+| `WT32 IO21`                       | `Teensy 2`                          | spare, not used by the firmware yet; may be left out        |
+| `microSD card`                    | `Teensy slot`                       | FAT32 or exFAT, MBR partitioning (GPT is not read)          |
+| `PSRAM 8 MB`                      | `Teensy underside, 1st pad (CS0)`   | optional: sample cache and the PERF buffer                  |
+| **Audio Shield Rev D (later)** |                                     |                                                             |
+| `Teensy 7 / 20 / 21 / 23`         | `shield 7 / 20 / 21 / 23`           | I2S: data / LRCLK / BCLK / MCLK; MCLK is required           |
+| `Teensy 18 / 19`                  | `shield 18 / 19`                    | I2C control of the SGTL5000 (address 0x0A)                  |
+| `Teensy 3V3 / GND`                | `shield 3V3 / GND`                  | from the Teensy's regulator, not from the 5V bus            |
+| `Teensy 8`                        | `shield 8`                          | I2S input (codec ADC): only needed for recording            |
+| `9767 capsule (+ / −)`            | `shield MIC / GND`                  | shielded wire, shield to GND at the Audio Shield end        |
+| `LINE IN tip / ring / sleeve`     | `shield LINE IN L / R / GND`        | PJ-392 jack in the front panel                              |
+| `—`                               | `the shield's microSD slot`         | leave unconnected: the shield's card is not used            |
 
-The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, and P11 is free.
+Pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read as pressed, so track button 1 moved to P12 and P11 is free.
 
-10 nF capacitors from the encoder's A and B pins to GND are recommended for less bounce. They are not required: the firmware has a filter.
+10 nF capacitors from encoder pins A and B to GND are recommended — less bounce. Not required: the firmware has a filter.
 
 ## Power: important
 
 - The switch sits after the IP5306, so the battery charges through the module's Type-C even with the tracker switched off.
 - **Flash firmware only with the switch off.** Otherwise two sources meet on the 5V line: the computer's USB and the IP5306.
 - Never connect the battery directly to the board's 5V or 3V3 — only through the IP5306.
-- The battery, IP5306 and board negatives form the common ground; everything else in the diagram connects to it as well.
+- The battery, IP5306, WT32 and Teensy negatives form the common ground; everything else in the diagram connects to it as well.
 - **Cut the VUSB–VIN trace** on the back of the Teensy (between the two pads marked VUSB and VIN). Otherwise the computer's USB on the Teensy and the IP5306 feed each other through the 5V line.
 
 ## Synth board (Teensy 4.1)
 
-The Teensy runs the internal synth, the microSD card and the sample bank (in its flash); the tracker talks to it over the link (IO13 / IO14). Its USB stays inside the case, so:
+The Teensy runs the built-in synth, the microSD card and the sample bank; the tracker talks to it over the link (IO13 / IO14). Its USB stays inside the case, so:
 
-- **Flash it once before assembly:** `pio run -e teensy41 -t upload` (Teensy Loader opens; press the button on the Teensy if asked). With the VUSB–VIN trace already cut, USB carries data only: switch the tracker on so the Teensy runs from the board's 5V.
-- Later updates go from the tracker: put `teensy.hex` (`.pio/build/teensy41/firmware.hex`) into `/firmware/` on the card and use PROJ → SYS → Update synth, or upload it on the Wi-Fi page (FILE → Wi-Fi firmware..., section "Synth board"). The Teensy checks the image before replacing its firmware.
-- The card goes into the Teensy's slot; the case has an opening for it, so it can be changed without opening the case. FAT32 or exFAT.
-- Check the link without the rest of the firmware: `wt32-echo` on the board and `teensy41-echo` on the Teensy; the board's serial monitor shows the byte rate and mismatches (0 expected).
+- **Flash it once before assembly:** `pio run -e teensy41 -t upload` (Teensy Loader opens; press the button on the Teensy if it asks). If the VUSB–VIN trace is already cut, USB carries data only: switch the tracker on so the Teensy is powered from the 5V bus.
+- Later updates go through the tracker: put `teensy.hex` (`.pio/build/teensy41/firmware.hex`) into `/firmware/` on the card and choose FILE → SYSTEM → Update synth, or upload it on the Wi-Fi page (FILE → Wi-Fi firmware..., "Synth board" section). The Teensy checks the image before replacing its firmware.
+- The WT32 and Teensy firmware must come from the same commit: the link carries a protocol version, and on a mismatch `SYNTH FW` lights up in place of CPU and the **UPDATE** button offers to reflash the Teensy from the card.
+- The card goes into the Teensy's slot; the case has a slot for it, so you can swap it without opening the case. FAT32 or exFAT with MBR partitioning — that is how cards come from the shop; GPT (which macOS Disk Utility may create) is not read.
+- **PSRAM** is an APS6404L chip (8 MB) under the Teensy, on the **first** pad (CS0) — the standard PJRC layout; the Teensy startup code finds it and maps it. A chip on the second pad (CS1) alone is not used. The firmware tests it at boot and copies the project's samples into it; it also holds the PERF buffer (6 s). Without PSRAM samples are read from the card on the fly — it works, it just depends more on the card; the buffer-based PERF effects are silent. The Teensy log prints `psram off: ...` when the chip is missing or fails the test.
+- **Without the Audio Shield** the synth runs, but there is no sound: the firmware doesn't find the SGTL5000 and sends plain I2S to pins 7 / 20 / 21. Import, the bank, the link and the tests can all be checked anyway.
+- To test the link without the rest of the firmware: flash `wt32-echo` to the board and `teensy41-echo` to the Teensy; the board's serial monitor shows the speed and errors (0 expected).
+- If the Teensy hangs (for example on a failing card), the watchdog restarts it after 8 s; the tracker picks it up again by itself.
 
 ## INA226 battery monitor
 
@@ -149,33 +173,44 @@ The INA226 sits in the battery's positive wire, before the IP5306, and reports o
 - TRS pinout **type A**: Tip = pin 5, Ring = pin 4. For type B devices (some Arturia, Novation) use an A→B adapter or swap the Tip and Ring wires.
 - For a 5-pin DIN: the same resistors on pin 5 and pin 4, GND on pin 2.
 
-## DAC and headphones
+## Audio Shield Rev D (later)
+
+The shield sits next to the Teensy on wires (in its own slots in the case), with its headphone jack poking out of the front panel next to the card slot. The firmware picks up the shield and the headphone volume by itself: at boot it looks for the SGTL5000 on I2C (address 0x0A), and FILE → SYSTEM → Phones sets the volume.
 
 ```
-Teensy 21 ─── DAC BCK
-Teensy 20 ─── DAC LCK
-Teensy 7 ──── DAC DIN
-
-DAC L ──────── amp IN L+          amp OUT L ── Tip    (left)
-DAC R ──────── amp IN R+          amp OUT R ── Ring   (right)
-DAC GND ─┬──── amp IN L−          amp GND ──── Sleeve
-         ├──── amp IN R−
-         ├──── amp GND
-         └──── Teensy GND         (star point at the DAC's GND)
-
-DAC SCK, FMT, FLT, DEMP ── GND     DAC XSMT ── 3.3 V     DAC VIN ── Teensy 3V3 (or 5 V)
-amp VCC, amp SHDN ── board 5V (or 3V3)
+Teensy 7  ─── shield 7   (I2S data, OUT1A)
+Teensy 20 ─── shield 20  (LRCLK)
+Teensy 21 ─── shield 21  (BCLK)
+Teensy 23 ─── shield 23  (MCLK)
+Teensy 18 ─── shield 18  (SDA)
+Teensy 19 ─── shield 19  (SCL)
+Teensy 3V3 ── shield 3V3
+Teensy GND ── shield GND
 ```
 
-*The board's NS4168 amplifier and the SPK connector (GPIO 35/36/37) are not used. The signal is stereo, left on L and right on R (tracks panned to the centre sound the same on both): 44.1 kHz, 16-bit samples in 32-bit slots (BCK = 64 fs). The Teensy's MCLK (pin 23) is not connected.*
+- The shield's pin labels are Teensy pin numbers: solder number to number.
+- Keep the wires short (under 10 cm), MCLK and BCLK away from the IO13 / IO14 link. Run a separate ground wire next to the I2S lines.
+- Pin 8 (I2S input) is only needed for recording from MIC / LINE IN. Leave the shield's microSD slot (pins 10–13) and the pot pad unconnected: the card lives only in the Teensy, don't give pins 10–13 to the shield.
+- The shield's headphone output uses a virtual ground (HP_VGND): do **not** tie the jack's Sleeve to GND or to the case; the shield's own jack is already wired that way.
+- The shield's line out (LINE OUT L / R) can go to a second jack — same signal, not affected by Phones.
+- First power-up with Phones and MAIN (MIX tab) at minimum and without the headphones on.
 
-- **DAC settings.** SCK to GND (no MCLK: the PLL takes the clock from BCK), FMT = L (I2S), FLT = L (normal latency), DEMP = L (de-emphasis off), XSMT = H (unmuted). On the purple GY-PCM5102 modules these are solder pads on the back — check your module's silkscreen.
-- **Line out.** The DAC's L / R give 2.1 Vrms at full scale, centred on ground. Unlike the old SPK output, they can go to a mixer, audio interface or powered speakers — from the DAC before the amplifier, or from the amplifier's headphone output.
-- **Amplifier inputs** are differential: L+ / R+ to the DAC's L / R, L− / R− to the DAC's GND (AGND). Pin names on the module's silkscreen may differ.
-- **DirectDrive outputs** are ground-referenced, without coupling capacitors: the headphone jack's Sleeve goes to GND, and the jack may touch the case.
-- **Level.** 2.1 Vrms from the DAC is more than the MAX97220 can deliver: if it clips or is too loud, lower MAIN (MIX tab) or add a divider / potentiometer between the DAC and the amplifier.
-- **Ground.** Short audio ground wires and one star point at the DAC's GND: the DAC, amplifier and jack grounds meet there, and a single wire runs to the Teensy's GND. Otherwise the IP5306 boost converter may whine in the headphones.
-- Power up the first time with MAIN (MIX tab) at minimum and without wearing the headphones.
+### Microphone and line input
+
+For recording samples. Both inputs go to the SGTL5000 ADC and to the Teensy on pin 8; only one works at a time — the firmware selects it. The capsule and the jack sit on tabs of the case bottom (MIC on the back between MIDI and the power switch, on one tab with the switch; LINE IN on the front to the right of PHONES, on one tab with it), so they are soldered before the top goes on.
+
+```
+9767 capsule  + ─── shield MIC      (inner conductor of a shielded wire)
+              − ─── shield GND      (the lead tied to the capsule can; shield to GND at the Audio Shield end only)
+              33–100 pF across the leads — right at the capsule
+PJ-392 LINE IN  Tip ── shield LINE IN L    Ring ── LINE IN R    Sleeve ── GND
+```
+
+- **Capsule** — electret, 2 leads, ⌀9.7 mm (generic "9767", Kingstate KECG2742, PUI POM-2244P). The shield powers it (MIC_BIAS through a resistor on the board), no amplifier module needed. The minus is the lead connected by a trace to the metal can.
+- **MIC wire** — shielded (thin coax, a headset cable), about 13 cm to the shield, away from the IP5306 inductor and the button wires. The signal is in millivolts and amplified up to +40 dB — an unshielded wire picks up hum and whine.
+- **33–100 pF capacitor** across the capsule leads kills RF from the WT32 Wi-Fi: without it the transistor inside the capsule detects it and the recording buzzes.
+- **Fitting** — wrap the capsule in foam tape (0.75 mm per side) and push it into the cup to the stop; put a disc of acoustic cloth or thin foam between the capsule and the grille. The foam decouples the capsule from the case, otherwise button clicks get into the recording.
+- **LINE IN** — PJ-392 jack with an M6 nut in the tab; level up to ~1 V (line out, phone). Labels tell LINE IN from PHONES.
 
 ## Which track button is which
 
@@ -185,11 +220,12 @@ amp VCC, amp SHDN ── board 5V (or 3V3)
 
 ## Before powering up
 
-1.  Continuity check: the board's 5V and GND are not shorted; the switch in the "off" position breaks VOUT.
-2.  Teensy: the VUSB–VIN trace is cut (no continuity between the pads); VIN goes to the board's 5V, GND to GND; GPIO 13, 14, 21 go to Teensy pins 0, 1, 2 and are not shorted to each other, to GND or to 3.3 V. DAC: XSMT reads 3.3 V; SCK, FMT, FLT, DEMP read GND; BCK / LCK / DIN go to Teensy 21 / 20 / 7. Amplifier: IN L− and IN R− ring to the DAC's GND, SHDN (if broken out) to VCC.
-3.  A0, A1, A2 on the module can be left alone. If the module is found only sometimes (the address "floats"), bridge all three pads to GND.
-4.  Check whether the module has pull-up resistors on SDA and SCL (usually 4.7–10 kΩ to VCC). If not, add 4.7 kΩ from each line to 3.3 V.
-5.  Power the module only from 3.3 V, not 5 V: otherwise 5 V reaches the board's GPIOs.
-6.  Check that TXD0 and RXD0 are not shorted to each other or to GND. Do not touch GPIO 1, 2, 42: they are used by the built-in RS485.
-7.  INA226: IN+ rings to the battery positive, IN− to the IP5306 B+; between IN+ and IN− you read the shunt (a fraction of an ohm), not an open circuit. The module's VCC goes to 3.3 V, not 5 V.
-8.  After flashing, open the serial monitor: the line `trackio: PCF8575 not found` means the module is not responding — check SDA/SCL and power (without the module the encoder button, Play, Shift, A and B do not work either); `trackio: PCF8575 at 0x..` means it was found. The status bar shows `NO SYNTH` while the Teensy does not answer: check its power and the link wires (IO13 → pin 0, IO14 → pin 1).
+1.  Continuity check: the bus 5V and GND are not shorted; the switch in the "off" position breaks VOUT.
+2.  Teensy: the VUSB–VIN trace is cut (the pads don't beep); VIN goes to the 5V bus, GND to GND; IO13, IO14 (and IO21, if soldered) go to Teensy pins 0, 1, 2 and are not shorted to each other, to GND or to 3.3 V.
+3.  PCF8575: A0, A1, A2 can be left as they are. If the module is found only sometimes (the address "floats"), bridge all three pads to GND.
+4.  Check whether the PCF8575 has SDA and SCL pull-up resistors (usually 4.7–10 kΩ to VCC). If not and there is no INA226 either, add 4.7 kΩ from each line to 3.3 V.
+5.  Power the PCF8575 and the INA226 from 3.3 V only, not 5 V: otherwise 5 V reaches the board's GPIOs.
+6.  Check that TXD0 and RXD0 are not shorted to each other or to GND. Don't touch GPIO 1, 2, 42: they are used by the built-in RS485.
+7.  INA226: IN+ beeps to the battery positive, IN− to IP5306 B+; between IN+ and IN− you read the shunt resistance (a fraction of an ohm), not an open circuit.
+8.  Shield (when you have it): the shield's 3V3 goes to the Teensy's 3V3, not to the 5V bus; pins 7, 20, 21, 23, 18, 19 are not shorted to each other or to GND.
+9.  After flashing, open the serial monitor: `trackio: PCF8575 not found` means the module doesn't answer — check SDA/SCL and power (without it the encoder button, Play, Shift, A and B don't work either); `trackio: PCF8575 at 0x..` means it was found. The status bar shows `NO SYNTH` while the Teensy doesn't answer: check its power and the link wires (IO13 → pin 0, IO14 → pin 1). `SYNTH FW` means the WT32 and Teensy firmware versions differ.

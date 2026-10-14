@@ -27,6 +27,14 @@ constexpr uint64_t kNever = UINT64_MAX;
 // What changed in Project.song / songMute / songLen (see Sequencer::songEdited).
 enum class SongOp : uint8_t { Edit, Insert, Delete };
 constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the next note starts
+// The prefetch hint (kSynthHint) of a SAMPLE step goes one step ahead of it, at most kHintLeadUs
+// (the board's slot holds ~70 ms; an earlier hint only waits), never before earliest.
+constexpr uint32_t kHintLeadUs = 150000;
+inline uint64_t hintTime(uint64_t t, uint32_t stepUs, int64_t earliest) {
+  const uint64_t lead = stepUs < kHintLeadUs ? stepUs : kHintLeadUs;
+  const int64_t h = t > lead ? static_cast<int64_t>(t - lead) : 0;
+  return static_cast<uint64_t>(h < earliest ? earliest : h);
+}
 
 // Hardware-free sequencer. The caller passes the current time in us and calls
 // process() again no later than the time it returns.
@@ -225,6 +233,8 @@ class Sequencer {
   // Plays this step: not muted / solo-excluded, in the track mask.
   bool audible(int track) const;
   void pushPerfStep(int64_t earliest);
+  void pushHint(const Step& s, const ExpandOut& ex, int first, uint64_t t, int64_t earliest, uint8_t track,
+                uint32_t stepUs);
   void pushStepStart(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool note, uint16_t tps,
                      bool nudge = true);
   int pushControls(const ExpandOut& ex, uint64_t t, int64_t earliest, uint8_t track, bool nudge = true);

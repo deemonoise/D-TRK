@@ -10,6 +10,7 @@
 #include "preview_stream.h"
 #include "render.h"
 #include "render_link.h"
+#include "stream.h"
 #include "sample_set.h"
 #include "synth.h"
 #include "wav.h"
@@ -81,6 +82,7 @@ void finish() {
   buf = nullptr;
   bufFrames = 0;
   running = false;
+  stream::pool().sync = nullptr;
   out->park(false);
   card::spaceChanged();
 }
@@ -149,6 +151,7 @@ RenderResult start(Reader& r) {
   }
   preview::stop();
   out->park(true);  // the interrupt leaves the synth alone from the next block on
+  stream::pool().sync = &stream::reader();  // a missed block loads at once: the render equals a RAM one
   synth->reset();
   feeder->reset();
   bufFrames = 0;

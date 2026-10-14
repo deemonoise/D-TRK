@@ -13,6 +13,7 @@
 #include "link/link.h"
 #include "link/synth_fw.h"
 #include "sample_set.h"
+#include "stream_info.h"
 #include "synth.h"
 #include "demos.h"
 #include "templates.h"
@@ -1092,6 +1093,18 @@ void FileScreen::initSystem() {
                                        static_cast<unsigned long>(total % 1024 * 10 / 1024));
                        },
                        [](int) {}};
+  // Samples: where they play from (the synth board's SD, plus PSRAM copies) and the voices that ran out
+  // of data since it came up (an underrun: that voice faded out for a moment).
+  sysParams_[kSamples] = {"Samples",
+                          [](char* o, int n) {
+                            if (!audio::synthUp()) {
+                              snprintf(o, n, "NO SYNTH");
+                              return;
+                            }
+                            const audio::StreamInfo s = audio::streamInfo();
+                            mt::streamLine(o, n, s.psram, s.psramFill, s.underruns);
+                          },
+                          [](int) {}};
   // The link counters since boot: events lost / late on the synth, bad frames here.
   sysParams_[kLink] = {"Link",
                        [](char* o, int n) {

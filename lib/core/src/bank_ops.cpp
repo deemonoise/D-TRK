@@ -109,20 +109,23 @@ struct FileFrames final : WtFrameReader {
 
 // ---- sources ----
 
-const int16_t* BankSampleSource::find(const char* name, uint32_t& frames, uint32_t& rate) const {
+bool BankSampleSource::find(const char* name, SampleData& out) const {
   // projSampleBank without snprintf.
   const int k = projSampleFind(m_, name);
-  if (k < 0) return nullptr;
+  if (k < 0) return false;
   const ProjSample& ps = m_.samples[k];
   char key[kSampleNameMax + 1];
   hexKey(ps.crc, key);
   int i = b_.find(key);
   if (i >= 0 && b_.entry(i)->frames != ps.frames) i = -1;
   const int16_t* d = b_.data(i);
-  if (!d) return nullptr;
-  frames = b_.entry(i)->frames;
-  rate = b_.entry(i)->rate;
-  return d;
+  if (!d) return false;
+  out = SampleData();
+  out.key = ps.crc;
+  out.frames = b_.entry(i)->frames;
+  out.rate = b_.entry(i)->rate;
+  out.whole = d;
+  return true;
 }
 
 const int16_t* BankWtSource::findWt(const char* name) const { return b_.data(bankWtIndex(b_, m_, name)); }
@@ -259,8 +262,9 @@ BankResult BankJob::startImport(const char* path, bool wt, const SynthModel& m, 
   return BankResult::Running;
 }
 
-BankResult BankJob::startSync(const char* project, const SynthModel& m) {
+BankResult BankJob::startSync(const char* project, const SynthModel& m, bool samples) {
   begin(Kind::Sync, m);
+  samples_ = samples;
   strncpy(project_, project, kSampleNameMax);
   project_[kSampleNameMax] = 0;
   nS_ = m.sampleCount < kProjSamples ? m.sampleCount : kProjSamples;
@@ -268,8 +272,8 @@ BankResult BankJob::startSync(const char* project, const SynthModel& m) {
   return BankResult::Running;
 }
 
-BankResult BankJob::startSave(const char* project, const SynthModel& m) {
-  startSync(project, m);
+BankResult BankJob::startSave(const char* project, const SynthModel& m, bool samples) {
+  startSync(project, m, samples);
   kind_ = Kind::Save;
   if (!projectBaseValid(project_)) return finish(BankResult::OpenFail);
   return BankResult::Running;
@@ -348,6 +352,10 @@ BankResult BankJob::nextItem() {
   while (item_ < count_) {
     const bool wt = item_ >= nS_;
     const int i = wt ? item_ - nS_ : item_;
+    if (!wt && !samples_) {  // the store's business
+      ++item_;
+      continue;
+    }
     const int j = wt ? projWtBank(*m_, b_, i) : projSampleBank(*m_, b_, i);
     if (kind_ == Kind::Sync) {
       if (j >= 0) {

@@ -24,7 +24,17 @@ struct ReadFile : ByteSource {
   virtual bool seek(uint32_t pos) = 0;
 };
 // A file being written: ByteSink write takes exactly n bytes or fails.
-struct WriteFile : ByteSink {};
+struct WriteFile : ByteSink {
+  // Room for bytes in one contiguous run if the card can (SdFat preAllocate); a hint.
+  virtual bool reserve(uint32_t bytes) {
+    (void)bytes;
+    return true;
+  }
+  virtual bool seek(uint32_t pos) {  // rewrite from pos (the size stays the largest written)
+    (void)pos;
+    return false;
+  }
+};
 
 struct BankDisk {
   virtual bool ready() = 0;  // a card is in and mounted
@@ -44,7 +54,7 @@ struct BankDisk {
 class BankSampleSource final : public SampleSource {
  public:
   BankSampleSource(const SampleBank& b, const SynthModel& m) : b_(b), m_(m) {}
-  const int16_t* find(const char* name, uint32_t& frames, uint32_t& rate) const override;
+  bool find(const char* name, SampleData& out) const override;
 
  private:
   const SampleBank& b_;
@@ -115,8 +125,9 @@ class BankJob {
   }
 
   BankResult startImport(const char* path, bool wt, const SynthModel& m, const uint32_t* knownCrc = nullptr);
-  BankResult startSync(const char* project, const SynthModel& m);
-  BankResult startSave(const char* project, const SynthModel& m);
+  // samples false: only the wavetables (the samples live in the store, StoreJob).
+  BankResult startSync(const char* project, const SynthModel& m, bool samples = true);
+  BankResult startSave(const char* project, const SynthModel& m, bool samples = true);
   // Running until the job is over, then its result (again on every call until the next start).
   BankResult step();
   bool busy() const { return kind_ != Kind::None && !over_; }
@@ -169,6 +180,7 @@ class BankJob {
   // Sync / save items: samples first, then wavetables.
   int item_ = 0, count_ = 0, nS_ = 0;
   bool itemOpen_ = false;  // item_ has a sub-operation started
+  bool samples_ = true;    // sync / save: the sample items too
   uint8_t missS_[kProjSamples / 8] = {}, missW_[kProjWavetables / 8] = {};
   int missing_ = 0, failed_ = 0;
   ImportOut out_;

@@ -10,6 +10,7 @@
 #include "link_server.h"
 #include "preview_stream.h"
 #include "render_server.h"
+#include "wdog.h"
 extern "C" {
 #include "FlashTxx.h"
 }
@@ -190,6 +191,7 @@ FASTRUN __attribute__((noinline)) void moveAndReboot(uint32_t size) {
   static uint8_t buf[kPage];
   __asm__ volatile("msr basepri, %0" ::"r"(16u) : "memory");
   for (uint32_t off = 0; off < size; off += kPage) {
+    wdog::feed();  // a whole image takes longer than the watchdog's timeout
     const uint32_t dst = kBase + off;
     if ((dst & (kSector - 1)) == 0) {
       const uint32_t* p = reinterpret_cast<const uint32_t*>(dst);
@@ -204,6 +206,7 @@ FASTRUN __attribute__((noinline)) void moveAndReboot(uint32_t size) {
     eepromemu_flash_write(reinterpret_cast<void*>(dst), buf, kPage);
   }
   for (uint32_t a = kBase + (size + kSector - 1) / kSector * kSector; a < kOtaBase; a += kSector) {
+    wdog::feed();
     const uint32_t* p = reinterpret_cast<const uint32_t*>(a);
     for (uint32_t i = 0; i < kSector / 4; ++i)
       if (p[i] != 0xFFFFFFFFu) {

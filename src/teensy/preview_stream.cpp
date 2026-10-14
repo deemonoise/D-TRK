@@ -1,11 +1,13 @@
 #include "preview_stream.h"
 #include <Arduino.h>
+#include <Audio.h>
 #include <SD.h>
 #include "audio_out.h"
 #include "bank_ops.h"
 #include "fs_server.h"
 #include "link_server.h"
 #include "model.h"
+#include "stream.h"
 #include "stream_ring.h"
 #include "wav.h"
 
@@ -24,11 +26,15 @@ class Src final : public mt::ByteSource {
 };
 
 constexpr uint32_t kChunk = 512;     // input frames per card read
+// A load once the ring (3072 frames on its slot) has this much room: less than kChunk's worst case
+// output (6x up), so fill() reads fewer frames then (rs.inFor bounds it).
+constexpr uint32_t kFillMin = 2 * kChunk;
 constexpr uint32_t kRawBytes = 6144;  // up to 512 stereo 24 bit frames (more channels: fewer frames)
 
 mt::SynthModel* model = nullptr;
 SynthStream* out = nullptr;
-mt::StreamRing ring;
+mt::StreamRing ring;  // its memory is a pool slot while a preview plays
+int slot = -1;
 mt::LinearResampler rs;
 mt::WavInfo info;
 Src src;
@@ -104,6 +110,31 @@ void ended() {
   if (const uint32_t u = ring.takeUnderruns()) link::log("preview: %lu underruns", static_cast<unsigned long>(u));
 }
 
+// After ring.stop(): the slot back to the pool, the ring without memory.
+void releaseSlot() {
+  if (slot < 0) return;
+  ring.setBuffer(nullptr, 0);
+  AudioNoInterrupts();
+  stream::pool().release(slot);
+  AudioInterrupts();
+  slot = -1;
+}
+
+// The scheduler's consumer: the ring's reserve, a load when a chunk fits.
+class RingConsumer final : public mt::StreamConsumer {
+ public:
+  bool needs(uint32_t& r) override {
+    if (!ring.playing() || !left) {
+      r = UINT32_MAX;
+      return false;
+    }
+    r = static_cast<uint32_t>(static_cast<uint64_t>(ring.avail()) * 1000000 / 44100);
+    return ring.space() >= kFillMin;
+  }
+  void load() override { fill(); }
+};
+RingConsumer cons;
+
 }  // namespace
 
 void begin(mt::SynthModel& m, SynthStream& o) {
@@ -125,10 +156,19 @@ int handle(Msg, const uint8_t* p, int n, uint8_t* o) {
     const BankResult e = open(q.path, m.frames, m.rate);
     m.result = code(e);
     if (e == BankResult::Ok) {
-      ring.reset();
-      for (int i = 0; i < 64 && left && ring.space() > kChunk * 6 + 2; ++i) fill();  // a head start
-      ring.start();
-      streaming = true;
+      AudioNoInterrupts();
+      slot = stream::pool().acquire(mt::kPreviewKey, 0, 0, nullptr, 0, mt::SampleRegion(), mt::SlotOwner::Preview);
+      AudioInterrupts();
+      if (slot < 0) {
+        closeFile();
+        m.result = code(BankResult::Busy);
+      } else {
+        ring.setBuffer(stream::pool().slotRef(slot).buf, mt::kSlotBlocks * mt::kStreamBlock);
+        ring.reset();
+        for (int i = 0; i < 8 && left && ring.space() >= kFillMin; ++i) fill();  // a head start
+        ring.start();
+        streaming = true;
+      }
     }
   }
   Writer w(o, kMaxPayload);
@@ -140,16 +180,19 @@ void stop() {
   ring.stop();
   closeFile();
   ended();
+  releaseSlot();
 }
 
 void step() {
   if (!ring.playing()) {
     closeFile();  // played to its end
     ended();
+    releaseSlot();
     return;
   }
   out->setPreviewGain((model->masterVol > mt::kMasterVolMax ? mt::kMasterVolMax : model->masterVol) * 0.01f);
-  fill();
 }
+
+mt::StreamConsumer* consumer() { return &cons; }
 
 }  // namespace preview

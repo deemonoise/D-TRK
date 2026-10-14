@@ -200,6 +200,8 @@ class App {
   uint16_t cpuColor_ = kDim;  // its color: kDim / kYellow / kRed
   uint32_t cpuAt_ = 0;       // last load taken
   uint32_t cpuRedUntil_ = 0;  // millis() until which the CPU readout stays red (audio stall)
+  uint32_t sdRedUntil_ = 0;   // millis() until which the CPU field shows SD! (a sample voice underran)
+  bool sdShown_ = false;      // the CPU field shows SD!
   enum class Synth : uint8_t { Ok, Sync, Down, Mismatch };
   Synth synth_ = Synth::Ok;  // the synth board as the status bar shows it
   int8_t playWait_ = -1;     // a start (engine::Cmd) held back until the synth is synced, -1 = none

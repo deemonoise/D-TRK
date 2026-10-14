@@ -1,6 +1,7 @@
 #include <math.h>
 #include <string.h>
 #include <unity.h>
+#include <vector>
 #include "onset.h"
 #include "slices.h"
 
@@ -158,6 +159,46 @@ void test_chop_transients_keeps_strongest() {
   for (int i = 1; i < m.sliceCount; ++i) TEST_ASSERT_TRUE(m.slices[i - 1] < m.slices[i]);
 }
 
+static std::vector<int16_t> clicks(uint32_t n, uint32_t every) {
+  std::vector<int16_t> v(n, 0);
+  uint32_t x = 3;
+  for (uint32_t i = 0; i < n; ++i) {
+    x = x * 1664525u + 1013904223u;
+    const uint32_t ph = i % every;
+    const int amp = ph < 2000 ? 20000 - static_cast<int>(ph) * 10 : 30;
+    v[i] = static_cast<int16_t>((static_cast<int>(x >> 16) - 32768) * amp / 32768);
+  }
+  return v;
+}
+
+void test_scan_in_pieces_equals_detect() {
+  const auto d = clicks(200000, 7919);
+  Onset a[kMaxOnsets], b[kMaxOnsets];
+  const int na = detectOnsets(d.data(), 200000, 44100, a, kMaxOnsets);
+  TEST_ASSERT_TRUE(na > 10);
+  OnsetScan s(200000, 44100, kMaxOnsets);
+  uint32_t at = 0, piece = 1;
+  while (at < 200000) {  // ragged pieces: 1, 2, 3, ... frames up to 997
+    const uint32_t n = at + piece <= 200000 ? piece : 200000 - at;
+    s.feed(d.data() + at, n);
+    at += n;
+    piece = piece % 997 + 1;
+  }
+  TEST_ASSERT_EQUAL(na, s.finish(b));
+  for (int i = 0; i < na; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(a[i].pos, b[i].pos);
+    TEST_ASSERT_EQUAL_UINT16(a[i].strength, b[i].strength);
+  }
+}
+
+void test_scan_short_input_finds_nothing() {
+  OnsetScan s(100, 44100, kMaxOnsets);
+  int16_t z[100] = {};
+  s.feed(z, 100);
+  Onset o[1];
+  TEST_ASSERT_EQUAL(0, s.finish(o));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_silence_has_no_onsets);
@@ -171,5 +212,7 @@ int main() {
   RUN_TEST(test_chop_transients_threshold);
   RUN_TEST(test_chop_transients_inside_region_only);
   RUN_TEST(test_chop_transients_keeps_strongest);
+  RUN_TEST(test_scan_in_pieces_equals_detect);
+  RUN_TEST(test_scan_short_input_finds_nothing);
   return UNITY_END();
 }

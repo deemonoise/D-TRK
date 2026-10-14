@@ -31,14 +31,19 @@ class LinearResampler {
 // start() / stop() only from the producer, which the consumer may interrupt but not the reverse.
 class StreamRing {
  public:
-  static constexpr uint32_t kLen = 8192;  // 16 KB
+  // The ring's memory (a pool slot on the synth board); only while stopped. nullptr: plays nothing.
+  void setBuffer(int16_t* buf, uint32_t len) {
+    buf_ = buf;
+    len_ = buf ? len : 0;
+  }
+  uint32_t len() const { return len_; }
 
   void stop() { active_.store(false); }  // the consumer reads nothing after this returns
   void reset();                          // empty, not finished; stop() first
   void start() { active_.store(true); }  // after reset() and the first write()s
   bool playing() const { return active_.load(); }
 
-  uint32_t space() const { return kLen - avail(); }
+  uint32_t space() const { return len_ - avail(); }
   uint32_t avail() const { return w_.load() - r_.load(); }
   void write(const int16_t* d, uint32_t n);  // n <= space()
   void finish() { done_.store(true); }       // no more data: the consumer stops once it is played
@@ -50,7 +55,8 @@ class StreamRing {
   uint32_t takeUnderruns() { return underruns_.exchange(0); }
 
  private:
-  int16_t buf_[kLen];
+  int16_t* buf_ = nullptr;
+  uint32_t len_ = 0;
   std::atomic<uint32_t> w_{0}, r_{0};  // free-running counters
   std::atomic<bool> active_{false}, done_{false};
   std::atomic<uint32_t> underruns_{0};

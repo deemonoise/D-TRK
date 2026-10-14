@@ -30,12 +30,13 @@ void StreamRing::reset() {
 
 void StreamRing::write(const int16_t* d, uint32_t n) {
   uint32_t w = w_.load();
-  for (uint32_t i = 0; i < n; ++i, ++w) buf_[w % kLen] = d[i];
+  for (uint32_t i = 0; i < n; ++i, ++w) buf_[w % len_] = d[i];
   w_.store(w);
 }
 
 void StreamRing::mix(int16_t* l, int16_t* rt, int n, float gain) {
   if (!active_.load()) return;
+  if (!len_) return;
   uint32_t r = r_.load();
   const uint32_t have = w_.load() - r;
   const int m = have < static_cast<uint32_t>(n) ? static_cast<int>(have) : n;
@@ -45,7 +46,7 @@ void StreamRing::mix(int16_t* l, int16_t* rt, int n, float gain) {
     o = static_cast<int16_t>(v > 32767 ? 32767 : (v < -32768 ? -32768 : v));
   };
   for (int i = 0; i < m; ++i, ++r) {
-    const int32_t x = (buf_[r % kLen] * g) >> 15;
+    const int32_t x = (buf_[r % len_] * g) >> 15;
     add(l[i], x);
     if (rt) add(rt[i], x);
   }

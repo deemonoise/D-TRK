@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = 2
+PROTOCOL = 3
 MAX_PAYLOAD = 512
 
 # lib/core/src/link_msg.h, enum class Msg (append only).
@@ -40,7 +40,7 @@ MSG = {name: i + 1 for i, name in enumerate(
     "RenderStart RenderBlocks RenderEnd "
     "Meters Phones Profile "
     "Status Progress FwFromFile Log "
-    "FsRmdir WtFrame Perf".split())}
+    "FsRmdir WtFrame Perf Debug".split())}
 MSG_NAME = {v: k for k, v in MSG.items()}
 
 # lib/core/src/link_msg.h, kErr*.
@@ -145,12 +145,18 @@ def parse_list(p):
     return bool(more), out
 
 
+PSRAM_STATE = ["off", "on", "FAILED"]
+
+
 def parse_status(p):
     cpu, stalls, late, voices, out_peak = struct.unpack("<BHHBH", p[:8])
     peaks = list(p[8:24])
     lost, parks, scope_n = struct.unpack("<HBH", p[24:29])
+    i = 29 + scope_n  # protocol 3: the stream fields after the scope
+    smp, under, reserve, psram, fill = struct.unpack("<BHHBB", p[i:i + 7])
     return dict(cpu=cpu, stalls=stalls, late=late, voices=voices, out=out_peak, lost=lost,
-                parks=parks, peaks=peaks, scope=scope_n)
+                parks=parks, peaks=peaks, scope=scope_n, smp=smp, under=under, reserve=reserve,
+                psram=PSRAM_STATE[psram] if psram < len(PSRAM_STATE) else psram, fill=fill)
 
 
 class Link:
@@ -291,6 +297,25 @@ def cmd_notes(link, args):
         print_status(parse_status(s))
 
 
+def cmd_hint(link, args):
+    """A prefetch hint (0xF4 note ofs) on a track, then after --lead ms the note with that OFS: as the
+    sequencer sends them. The board logs 'hint: ... -> slot N' (desk build)."""
+    cmd_hello(link, args)
+    time.sleep(0.3)  # a few Time samples for the offset
+    t = now_us()
+    lead = args.lead * 1000
+    evs = [(t, args.track, [0xF4, args.note, args.ofs])]
+    if args.ofs:
+        evs.append((t + lead, args.track, [0xF5, 20, args.ofs]))  # Fx::OFS = 20
+    evs += [(t + lead, args.track, [0x90 | args.track, args.note, 100]),
+            (t + lead + args.ms * 1000, args.track, [0x80 | args.track, args.note, 0])]
+    link.send("Ev", ev_batch(evs))
+    time.sleep((lead + args.ms * 1000) / 1e6 + 0.5)
+    s = link.wait("Status", 0.5)
+    if s:
+        print_status(parse_status(s))
+
+
 def peaks_for(link, secs):
     """Output peak of every 0.1 s for secs (each Status holds the peak of its own ~40 ms)."""
     end, out, top, start = time.monotonic() + secs, [], 0, time.monotonic()
@@ -333,9 +358,11 @@ def cmd_perf(link, args):
 
 def print_status(s):
     peaks = " ".join("%3d" % v for v in s["peaks"])
-    print("cpu %3d%%  voices %2d  out %5d  late %d  stalls %d  lost %d  parks %d  | %s" %
-          (s["cpu"], s["voices"], s["out"], s["late"], s["stalls"], s["lost"], s["parks"], peaks),
-          flush=True)
+    res = "-" if s["reserve"] == 0xFFFF else "%d ms" % s["reserve"]
+    print("cpu %3d%%  voices %2d  out %5d  late %d  stalls %d  lost %d  parks %d  smp %2d under %d res %s "
+          "psram %s %d%%  | %s" %
+          (s["cpu"], s["voices"], s["out"], s["late"], s["stalls"], s["lost"], s["parks"], s["smp"], s["under"],
+           res, s["psram"], s["fill"], peaks), flush=True)
 
 
 def cmd_status(link, args):
@@ -351,6 +378,58 @@ def cmd_status(link, args):
             last = time.monotonic()
             print_status(parse_status(p))
     print("frames with bad CRC / COBS: %d" % link.errors)
+
+
+def debug_payload(op, a=0, b=0, secs=0):
+    return struct.pack("<BBBH", op, a, b, secs)
+
+
+def cmd_psram_fault(link, args):
+    """Debug PsramFault: the next watchdog check reads back a flipped bit (desk build). Then Status for
+    secs: psram FAILED, the voices go on from SD."""
+    cmd_hello(link, args)
+    link.send("Debug", debug_payload(1))
+    cmd_status(link, args)
+
+
+def cmd_hang(link, args):
+    """Debug Hang (desk build): loop() stops; the watchdog resets the board after 8 s. Reconnect and
+    LD hello: a new boot id, "boot: the watchdog reset the board" in the log."""
+    cmd_hello(link, args)
+    link.send("Debug", debug_payload(4))
+    time.sleep(1.0)
+
+
+def cmd_bench_stream(link, args):
+    """Debug StreamBench (desk build): the 16 longest /mt-store files held on tracks 0..15 at the root
+    (+ --semis), --secs long; the board logs a line a second and a summary. --sd: no PSRAM copies;
+    --setup: samples and instruments only (for 'hint'); --fault-at S: PsramFault S s into the measurement;
+    --heavy: the 8 longest files, two notes each, on tracks 0..7 + 16 heavy voices (DRUM / FM TONE) on 8..15;
+    --wt (with --heavy): the heavy voices are wavetable SYNTH; --fx: drive / delay / reverb 100 on every voice, comp.
+    Ctrl-C stops the bench."""
+    cmd_hello(link, args)
+    flags = ((1 if args.sd else 0) | (2 if args.setup else 0) | (4 if args.heavy else 0) | (8 if args.wt else 0)
+             | (16 if args.fx else 0))
+    link.send("Debug", debug_payload(2, args.semis, flags, args.secs))
+    if args.setup:
+        time.sleep(2.0)
+        return
+    t0 = time.monotonic()
+    end = t0 + args.secs + 4
+    last = 0
+    fault = args.fault_at is not None
+    try:
+        while time.monotonic() < end:
+            if fault and time.monotonic() - t0 >= args.fault_at + 2:  # + the bench's 2 s settling
+                link.send("Debug", debug_payload(1))
+                fault = False
+            p = link.wait("Status", 1.0)
+            if p and time.monotonic() - last >= 5:
+                last = time.monotonic()
+                print_status(parse_status(p))
+    except KeyboardInterrupt:
+        link.send("Debug", debug_payload(3))
+        time.sleep(0.5)
 
 
 def fs_check(err, what):
@@ -692,7 +771,7 @@ def cmd_selftest(args):
     assert parse_hello(hello_payload())[0] == PROTOCOL
     assert MSG["FsOpen"] == 7 and MSG["Log"] == 37 and MSG["FsRmdir"] == 38 and MSG["WtFrame"] == 39
     assert MSG["Perf"] == 40 and parse_hello(hello_payload())[4] == 0
-    st = parse_status(struct.pack("<BHHBH", 50, 1, 2, 3, 400) + bytes(16) + struct.pack("<HBH", 4, 7, 0))
+    st = parse_status(struct.pack("<BHHBH", 50, 1, 2, 3, 400) + bytes(16) + struct.pack("<HBH", 4, 7, 0) + bytes(7))
     assert st["parks"] == 7 and st["lost"] == 4 and st["scope"] == 0
     assert MSG["BankSync"] == 16 and MSG["BankIndex"] == 20 and MSG["Progress"] == 35
     idx = struct.pack("<BBIIII", 0, 3, 5000, 4000, 100, 7) + bytes(20) + bytes([0xFF, 2]) + struct.pack("<HH", 44100, 0)
@@ -700,6 +779,12 @@ def cmd_selftest(args):
     assert b["count"] == 3 and b["free"] == 4000 and b["builtins"] == 0xFF and b["rates"] == [44100, 0]
     page = bytes([1, 2]) + struct.pack("<BI", 1, 0) + fs_str("wt") + struct.pack("<BI", 0, 1234) + fs_str("kick.wav")
     assert parse_list(page) == (True, [(True, 0, "wt"), (False, 1234, "kick.wav")])
+    assert PROTOCOL == 3 and MSG["Debug"] == 41
+    st = struct.pack("<BHHBH", 50, 0, 0, 20, 1000) + bytes(16) + struct.pack("<HBH", 0, 0, 2) + b"\x01\x02" + \
+        struct.pack("<BHHBB", 14, 3, 41, 1, 57)
+    s = parse_status(st)
+    assert s["smp"] == 14 and s["under"] == 3 and s["reserve"] == 41 and s["psram"] == "on" and s["fill"] == 57
+    assert debug_payload(2, 12, 1, 600) == bytes([2, 12, 1]) + struct.pack("<H", 600)
     print("selftest ok")
 
 
@@ -740,6 +825,24 @@ def main():
     pf.add_argument("fx", type=int, nargs="?", default=1, help="mt::PerfFx: 1 REPEAT, 2 ROLL, 13 FREEZE...")
     pf.add_argument("--depth", type=int, default=0, help="turn the depth by this much after the press")
     pf.add_argument("--hold", type=float, default=4.0)
+    hn = sub.add_parser("hint")
+    hn.add_argument("track", type=int)
+    hn.add_argument("note", type=int, nargs="?", default=60)
+    hn.add_argument("--ofs", type=int, default=0)
+    hn.add_argument("--lead", type=int, default=125, help="ms from the hint to the note")
+    hn.add_argument("--ms", type=int, default=1000)
+    sub.add_parser("hang")
+    pz = sub.add_parser("psram-fault")
+    pz.add_argument("secs", type=float, nargs="?", default=3.0)
+    bs = sub.add_parser("bench-stream")
+    bs.add_argument("--semis", type=int, default=0)
+    bs.add_argument("--secs", type=int, default=60)
+    bs.add_argument("--sd", action="store_true", help="no PSRAM copies: every voice streams")
+    bs.add_argument("--setup", action="store_true", help="samples and instruments only, no notes")
+    bs.add_argument("--heavy", action="store_true", help="+ 16 heavy voices (DRUM / FM TONE) on tracks 8..15")
+    bs.add_argument("--wt", action="store_true", help="with --heavy: the heavy voices are wavetable SYNTH")
+    bs.add_argument("--fx", action="store_true", help="drive / delay / reverb sends 100 on every voice, comp on")
+    bs.add_argument("--fault-at", type=int, default=None, help="PsramFault this many s into the measurement")
     up = sub.add_parser("update")
     up.add_argument("hex")
     up.add_argument("--force", action="store_true")
@@ -750,7 +853,8 @@ def main():
         return cmd_selftest(args)
     link = Link(args.port or find_port())
     {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank, "perf": cmd_perf, "update": cmd_update,
-     "card": cmd_card, "model": cmd_model, "pnote": cmd_pnote, "preview": cmd_preview, "render": cmd_render}[args.cmd](link, args)
+     "card": cmd_card, "model": cmd_model, "pnote": cmd_pnote, "preview": cmd_preview, "render": cmd_render,
+     "hint": cmd_hint, "psram-fault": cmd_psram_fault, "hang": cmd_hang, "bench-stream": cmd_bench_stream}[args.cmd](link, args)
     link.alive = False
 
 

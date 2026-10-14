@@ -5,17 +5,24 @@
 #include "audio_out.h"
 #include "bank.h"
 #include "clock.h"
+#include "codec.h"
 #include "fs_server.h"
 #include "fw_update.h"
 #include "link_fs.h"
 #include "link_msg.h"
 #include "preview_stream.h"
+#include "psram.h"
 #include "render_server.h"
 #include "sample_tools.h"
+#include "stream.h"
 #include "synth.h"
 #include "synth_model.h"
 #include "model.h"
 #include "time_sync.h"
+#include "wdog.h"
+#if defined(LINK_DESK) && !defined(AUDIO_BENCH_MAX)
+#include "stream_bench.h"
+#endif
 
 using namespace mt::link;
 
@@ -81,10 +88,13 @@ void onHello(Reader& r) {
   preview::stop();
   render::reset();  // a render it was feeding is over
   bank::reset();
+  tools::reset();
   fw::reset();
   if (h.modelSize && h.modelSize != sizeof(mt::SynthModel))
     log("model size mismatch: esp %lu, synth %u", static_cast<unsigned long>(h.modelSize), sizeof(mt::SynthModel));
   sendHello();
+  if (wdog::resetByWatchdog())
+    log("boot: the watchdog reset the board (loop() hung for %lu s)", static_cast<unsigned long>(wdog::kTimeoutMs / 1000));
 }
 
 void onTime(Reader& r) {
@@ -97,6 +107,11 @@ void onEv(Reader& r) {
   if (!decode(r, b) || !clock.valid()) return;
   for (int i = 0; i < b.n; ++i) {
     const Ev& e = b.ev[i];
+    // A hint is for now (the loader), not for its time: queued, it would hold the FIFO until then.
+    if (e.len == 3 && e.b[0] == mt::kSynthHint) {
+      stream::hint(e.track, e.b[1], e.b[2]);
+      continue;
+    }
     QEv q{clock.toLocal(e.tUs) + kPlayLatencyUs, e.track, e.len, {e.b[0], e.b[1], e.b[2]}};
     if (!out->queue().push(q)) lostTotal++;
   }
@@ -174,7 +189,9 @@ void onMeters(Reader& r) {
 
 void onPhones(Reader& r) {
   Byte m;
-  if (decode(r, m)) out->setPhones(m.v);
+  if (!decode(r, m)) return;
+  if (codec::present()) codec::phones(m.v);  // the shield's headphone volume; the line out stays full
+  else out->setPhones(m.v);
 }
 
 static_assert(ProfileRep::kStages == mt::Synth::kProfStages, "profile stages");
@@ -223,6 +240,31 @@ void onProfile(Reader& r) {
   reply(Msg::Profile, dec.seq(), rep);
 }
 
+// Desk tools; a non-desk build ignores them (nothing to inject faults into from the ESP).
+FLASHMEM void onDebug(Reader& r) {
+#ifdef LINK_DESK
+  Debug d;
+  if (!decode(r, d)) return;
+  switch (static_cast<DebugOp>(d.op)) {
+    case DebugOp::PsramFault:
+      psram::injectFault();
+      link::log("psram: fault injected, the next watchdog check fails");
+      break;
+#if defined(LINK_DESK) && !defined(AUDIO_BENCH_MAX)
+    case DebugOp::StreamBench: sbench::start(d.a, d.b, d.secs); break;
+    case DebugOp::StreamBenchStop: sbench::stop(); break;
+#endif
+    case DebugOp::Hang:
+      link::log("debug: hanging loop() until the watchdog resets the board");
+      link::flushOut();
+      for (;;) {
+      }
+  }
+#else
+  (void)r;
+#endif
+}
+
 void dispatch() {
   Reader r(dec.payload(), dec.size());
   switch (static_cast<Msg>(dec.type())) {
@@ -237,13 +279,14 @@ void dispatch() {
     case Msg::Meters: onMeters(r); break;
     case Msg::Phones: onPhones(r); break;
     case Msg::Profile: onProfile(r); break;
+    case Msg::Debug: onDebug(r); break;
     default: {
       static uint8_t out[kMaxPayload];
       const Msg t = static_cast<Msg>(dec.type());
       int n = -1;
       if (isFsRequest(t)) n = card::handle(t, dec.seq(), dec.payload(), dec.size(), out);
       else if (bank::isRequest(t)) n = bank::handle(t, dec.seq(), dec.payload(), dec.size(), out);
-      else if (tools::isRequest(t)) n = tools::handle(t, dec.payload(), dec.size(), out);
+      else if (tools::isRequest(t)) n = tools::handle(t, dec.seq(), dec.payload(), dec.size(), out);
       else if (preview::isRequest(t)) n = preview::handle(t, dec.payload(), dec.size(), out);
       else if (render::isRequest(t)) n = render::handle(t, dec.seq(), dec.payload(), dec.size(), out);
       else if (fw::isRequest(t)) n = fw::handle(t, dec.seq(), dec.payload(), dec.size(), out);
@@ -269,6 +312,12 @@ void sendStatus() {
   s.lost = static_cast<uint16_t>(st.lost + lostTotal);
   lostTotal = 0;
   s.parks = out->parks();
+  const stream::Stats ss = stream::takeStats(0);
+  s.streamVoices = ss.voices;
+  s.underruns = ss.underruns;
+  s.minReserveMs = ss.minReserveMs;
+  s.psram = static_cast<uint8_t>(psram::state());  // Off, On, Failed = 0, 1, 2
+  s.psramFill = psram::fillPct();
   s.scopeN = static_cast<uint16_t>(out->scopeRead(s.scope, Status::kScopeMax));
   send(Msg::Status, s);
 }
@@ -299,6 +348,7 @@ void reply(Msg t, uint8_t seq, const uint8_t* p, int n) {
 void flushOut() { port.flush(); }
 
 void statusIfDue() {
+  wdog::feed();  // the long one-go parts (compacting, a render into the bank) come through here
   const uint32_t now = millis();
   if (now - lastStatus >= kStatusMs) {
     lastStatus = now;

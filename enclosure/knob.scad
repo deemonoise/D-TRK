@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: 2026 deemonoise
 // SPDX-License-Identifier: CERN-OHL-S-2.0
 // Source location: https://github.com/deemonoise/D-TRK
-// Кноб энкодера EC11 (D-вал) с накаткой, фаской 3 мм и насечками на ней. Все размеры в мм.
+// Кноб энкодера EC11 (D-вал или шлицевой) с накаткой, фаской 3 мм и насечками на ней. Все размеры в мм.
 // Снизу выборка под гайку и резьбовую втулку — низ кноба висит над панелью на `gap`.
 // Рендер: openscad -o stl/knob.stl knob.scad   (печать верхом на стол, без поддержек)
+//         openscad -o stl/knob_spline.stl -D 'shaft="spline"' knob.scad
 
 part = "print";   // "print" — для печати, "view" — как стоит на панели
+shaft = "D";      // вал энкодера: "D" — с лыской, "spline" — шлицевой (накатка)
 
 $fn = 96;
 
@@ -23,6 +25,9 @@ cham_n   = knurl_n; // насечек на фаске (радиальные V-к
 shaft_d   = 6.0;    // ⌀ вала
 shaft_dd  = 4.5;    // D-вал: от лыски до противоположной стороны
 flat_l    = 10;     // длина лыски от конца вала
+spline_n  = 18;     // шлицевой вал: зубьев
+spline_dr = 5.4;    //   ⌀ по впадинам
+spline_l  = 7;      //   длина накатки от конца вала
 shaft_clr = 0.15;   // зазор посадки (на диаметр); туго — увеличить
 shaft_l   = 20;     // от опорной плоскости корпуса энкодера до конца вала
 bush_d    = 7;      // резьбовая втулка M7
@@ -49,6 +54,8 @@ bore_h     = knob_h - skin;
 
 echo(str("Кноб: ⌀", knob_d, " x ", knob_h, " мм, зазор до панели ", gap,
          " мм, вал в кнобе ", bore_h - bush_cav_h, " мм"));
+assert(shaft == "D" || shaft == "spline", "shaft: \"D\" или \"spline\"");
+assert(shaft != "spline" || spline_l <= bore_h - bush_cav_h, "накатка длиннее вала в кнобе");
 assert(bore_h - bush_cav_h >= 5, "вал заходит в кноб меньше 5 мм");
 assert((knob_d - nut_cav_d) / 2 - knurl_dp >= 1.2, "стенка у гайки тоньше 1,2 мм");
 
@@ -60,6 +67,11 @@ module d_profile(d, dd) {
         circle(d = d);
         translate([-d/2, -d/2]) square([d, dd]);   // лыска сверху по +Y
     }
+}
+
+// отверстие под шлицевой вал: зубья кноба входят во впадины вала (треугольный профиль)
+module spline_profile(d, dr, n) {
+    polygon([for (i = [0 : 2*n - 1]) (i % 2 ? d : dr) / 2 * [cos(i * 180 / n), sin(i * 180 / n)]]);
 }
 
 knurl_p = PI * knob_d / knurl_n;                         // шаг по окружности
@@ -108,8 +120,10 @@ module knob() {
         translate([0, 0, -0.01]) cylinder(d = bush_cav_d, h = bush_cav_h + 0.01);
         // вал: круглая часть, выше — D
         translate([0, 0, -0.01]) cylinder(d = shaft_d + shaft_clr, h = bore_h - flat_l + 0.01);
-        translate([0, 0, bore_h - flat_l - 0.01])
-            linear_extrude(flat_l + 0.01) d_profile(shaft_d + shaft_clr, shaft_dd + shaft_clr);
+        top_l = shaft == "spline" ? spline_l : flat_l;
+        translate([0, 0, bore_h - top_l - 0.01]) linear_extrude(top_l + 0.01)
+            if (shaft == "spline") spline_profile(shaft_d + shaft_clr, spline_dr + shaft_clr, spline_n);
+            else d_profile(shaft_d + shaft_clr, shaft_dd + shaft_clr);
     }
 }
 

@@ -63,8 +63,16 @@ struct StatusAgg {
   uint32_t stalls;
   uint16_t outPeak;    // 0..32767
   uint8_t trackPeak[16];  // 100 = full scale
+  uint32_t underruns;     // voices that ran out of data
+  uint16_t minReserveMs;  // lowest, 0xFFFF = none
 };
 StatusAgg takeStatus();
+// Sample streaming as the newest Status tells it, and the underruns since the synth board came up.
+struct StreamInfo {
+  uint8_t voices, psram, psramFill;
+  uint32_t underruns;
+};
+StreamInfo streamInfo();
 // The newest scope from Status (meters on): n samples, int8, every 2nd output sample.
 int scope(int8_t* out, int cap);
 

@@ -9,13 +9,15 @@ class Synth;
 }
 class SynthStream;
 
-// The sample bank in program flash (flash_bank.h) and its jobs on the card (lib/core bank_ops):
-// the synth's samples and wavetables, BankSync / AssetsSave / BankImport / SampleInfo / BankIndex /
-// BankClear / WtFrame requests from the ESP. loop() only.
+// The sample store on the card (lib/core sample_store: the synth's samples, streamed) and the bank in
+// program flash (flash_bank.h: wavetables, heads, legacy samples until migrated) with their jobs:
+// BankSync / AssetsSave / BankImport / SampleInfo / BankIndex / BankClear / WtFrame requests from the
+// ESP. loop() only.
 namespace bank {
 
 // Mounts the bank and adds the built-in wavetables it lacks (first boot: several seconds), then
 // hands the synth its sources. Before the delay line takes the RAM2 heap (needs a 96 KB table).
+// Samples still in the bank (from before the store) start moving to the store in the background.
 void begin(mt::SynthModel& model, mt::Synth& synth, SynthStream& out);
 // One line about the bank for the link log (after link::begin).
 void logState();
@@ -26,21 +28,26 @@ bool isRequest(mt::link::Msg t);
 // retried) gets a Progress while it runs, its reply again after it ended; another bank job request
 // while one runs gets Busy.
 int handle(mt::link::Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out);
-// The bank data of project sample index for the editor tools; nullptr while not cached, without a
-// bank or while a job changes the bank. gen: the bank generation (the data may differ when it does).
-const int16_t* sampleData(int index, uint32_t& frames, uint32_t& rate, uint32_t& gen);
+// Project sample index for the editor tools: its store crc, frames and rate, and whole = all its
+// frames in memory (the PSRAM copy, or a legacy flash bank entry), nullptr when they are only on the
+// card (/mt-store/<crc>.wav). False when the sample is in neither (or a job changes the bank).
+bool sampleAccess(int index, uint32_t& crc, uint32_t& frames, uint32_t& rate, const int16_t*& whole);
+// The flash bank (heads "h" + crc, wavetables, legacy samples); changes only with the synth parked.
+const mt::SampleBank& flash();
 
-// For a render into the cache (render_server, the output parked by it): Ok, NoBank or Busy (a job
-// runs).
+// For a render into the store (render_server, the output parked by it): Ok, NoSd or Busy (a job
+// uses the card).
 mt::BankResult writable();
-// mt::bankWriteFrames on the bank; keep gets the long parts' progress (the caller's Progress).
+// mt::storeWriteFrames on the card, the new file registered for streaming; keep gets the progress
+// (the caller's Progress).
 mt::BankResult writeFrames(uint32_t frames, uint32_t rate, mt::FrameFill fill, void* ctx, mt::ImportOut& out,
                            mt::BankProgress keep, void* keepCtx);
 
 // The ESP (re)started: its seqs start over, so the last reply is no longer one to repeat.
 void reset();
 
-// The running job's next piece (about kStepBytes of card I/O), then its reply when it ends.
-void step();
+// The running job's next piece (about kStepBytes of card I/O), then its reply when it ends. False: no
+// job runs. The stream scheduler calls it as background work (registered by begin()).
+bool bgStep();
 
 }  // namespace bank

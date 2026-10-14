@@ -397,6 +397,29 @@ void test_remove_bad_index() {
   TEST_ASSERT_EQUAL_UINT32(g, b.generation());
 }
 
+void test_remove_many_in_one_save() {
+  SampleBank b(*flash);
+  TEST_ASSERT_TRUE(b.mount());
+  int16_t d[100] = {};
+  for (const char* n : {"a", "b", "c", "d"}) {
+    TEST_ASSERT_TRUE(b.begin(n, 100, 44100, 60));
+    TEST_ASSERT_TRUE(b.write(d, 100));
+    TEST_ASSERT_TRUE(b.commit());
+  }
+  const uint32_t gen = b.generation();
+  bool drop[kBankEntries] = {};
+  drop[b.find("b")] = true;
+  drop[b.find("d")] = true;
+  TEST_ASSERT_TRUE(b.removeMany(drop));
+  TEST_ASSERT_EQUAL(2, b.count());
+  TEST_ASSERT_TRUE(b.find("a") >= 0);
+  TEST_ASSERT_EQUAL(-1, b.find("b"));
+  TEST_ASSERT_TRUE(b.generation() != gen);
+  SampleBank again(*flash);
+  TEST_ASSERT_TRUE(again.mount());
+  TEST_ASSERT_EQUAL(2, again.count());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_mount_formats_empty);
@@ -416,5 +439,6 @@ int main() {
   RUN_TEST(test_replace_takes_name_in_one_save);
   RUN_TEST(test_generation_changes_on_every_change);
   RUN_TEST(test_remove_bad_index);
+  RUN_TEST(test_remove_many_in_one_save);
   return UNITY_END();
 }

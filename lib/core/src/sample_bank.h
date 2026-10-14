@@ -53,6 +53,9 @@ class SampleBank {
   // True if begin would find room for frames now (table slot, size limit, a hole large enough).
   bool fits(uint32_t frames) const;
   bool remove(int i);
+  // Removes every entry i with drop[i] (drop has count() items) in one table save. False if nothing
+  // was stored (then nothing changes).
+  bool removeMany(const bool* drop);
   // New name for entry i (the entry is re-sorted). False on a bad name, one taken by another
   // entry (ignoring case) or a failed table save (then nothing changes).
   bool rename(int i, const char* name);

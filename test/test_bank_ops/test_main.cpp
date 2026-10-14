@@ -9,6 +9,8 @@
 #include <vector>
 #include "bank_ops.h"
 #include "sample_set.h"
+#include "sample_store.h"
+#include "wave_peaks.h"
 #include "wt_builtin.h"
 #include "wt_file.h"
 #include "wt_mip.h"
@@ -62,6 +64,7 @@ struct PosixRead final : ReadFile {
 struct PosixWrite final : WriteFile {
   FILE* f = nullptr;
   bool write(const void* d, size_t n) override { return fwrite(d, 1, n, f) == n; }
+  bool seek(uint32_t pos) override { return fseek(f, static_cast<long>(pos), SEEK_SET) == 0; }
 };
 struct PosixDisk final : BankDisk {
   std::string root;
@@ -358,14 +361,16 @@ void test_sample_source() {
   TEST_ASSERT_EQUAL(BankResult::Ok, run(j));
   projSampleSet(*proj, "HAT", j.imported().crc, j.imported().frames);
   BankSampleSource s(*bank, *proj);
-  uint32_t fr = 0, rate = 0;
-  const int16_t* d = s.find("hat", fr, rate);
-  TEST_ASSERT_NOT_NULL(d);
-  TEST_ASSERT_EQUAL_UINT32(2000, fr);
-  TEST_ASSERT_EQUAL_UINT32(32000, rate);
-  TEST_ASSERT_NULL(s.find("NONE", fr, rate));
+  SampleData d;
+  TEST_ASSERT_TRUE(s.find("hat", d));
+  TEST_ASSERT_NOT_NULL(d.whole);
+  TEST_ASSERT_EQUAL_UINT32(j.imported().crc, d.key);
+  TEST_ASSERT_EQUAL_UINT32(2000, d.frames);
+  TEST_ASSERT_EQUAL_UINT32(32000, d.rate);
+  TEST_ASSERT_FALSE(d.streamable);
+  TEST_ASSERT_EQUAL(0, d.nHeads);
+  TEST_ASSERT_FALSE(s.find("NONE", d));
 }
-
 struct FillCtx {
   int calls = 0;
 };
@@ -420,6 +425,185 @@ void test_cancel_drops_half_entry() {
   TEST_ASSERT_EQUAL(1, bank->count());
 }
 
+// ---- StoreJob ----
+
+static BankResult runStore(StoreJob& j) {
+  BankResult r;
+  int guard = 0;
+  while ((r = j.step()) == BankResult::Running) TEST_ASSERT_TRUE(++guard < 1000000);
+  return r;
+}
+static std::vector<uint8_t> readAll(const char* path) {
+  std::vector<uint8_t> v;
+  FILE* f = fopen(disk->full(path).c_str(), "rb");
+  if (!f) return v;
+  uint8_t b[4096];
+  size_t n;
+  while ((n = fread(b, 1, sizeof b, f)) > 0) v.insert(v.end(), b, b + n);
+  fclose(f);
+  return v;
+}
+
+void test_store_import_writes_canonical_file() {
+  const auto d = ramp(3000, 3);
+  writePlainWav("/a.wav", d, 1, 32000);
+  StoreJob j(*disk);
+  TEST_ASSERT_EQUAL(BankResult::Ok, j.startImport("/a.wav"));
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  const uint32_t crc = sampleCrc(d.data(), 3000, 0);
+  TEST_ASSERT_EQUAL_HEX32(crc, j.imported().crc);
+  TEST_ASSERT_EQUAL_UINT32(3000, j.imported().frames);
+  TEST_ASSERT_EQUAL_UINT32(32000, j.imported().rate);
+  TEST_ASSERT_TRUE(storeFileCurrent(*disk, crc, 3000));
+  char p[kStorePathMax];
+  storePath(crc, p);
+  const auto f = readAll(p);
+  TEST_ASSERT_EQUAL_UINT32(kStoreDataOffset + 6000, f.size());
+  TEST_ASSERT_EQUAL_MEMORY(d.data(), f.data() + kStoreDataOffset, 6000);
+  storePeaksPath(crc, p);
+  const auto pk = readAll(p);
+  TEST_ASSERT_EQUAL_UINT32(2 * 12, pk.size());  // ceil(3000 / 256) pairs
+  TEST_ASSERT_EQUAL_INT8(3000 >> 8, static_cast<int8_t>(pk[0]));
+  TEST_ASSERT_EQUAL_INT8((3000 + 255 * 7) >> 8, static_cast<int8_t>(pk[1]));
+  TEST_ASSERT_FALSE(disk->exists(kStoreTmp));
+}
+
+void test_store_import_stereo_48k_downmixes_and_downsamples() {
+  writePlainWav("/s.wav", ramp(9600, 1), 2, 48000);  // 4800 stereo frames
+  StoreJob j(*disk);
+  TEST_ASSERT_EQUAL(BankResult::Ok, j.startImport("/s.wav"));
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_EQUAL_UINT32(44100, j.imported().rate);
+  TEST_ASSERT_UINT32_WITHIN(2, 4410, j.imported().frames);
+  TEST_ASSERT_TRUE(storeFileCurrent(*disk, j.imported().crc, j.imported().frames));
+}
+
+void test_store_import_again_keeps_one_file() {
+  writePlainWav("/a.wav", ramp(1000, 2), 1, 44100);
+  StoreJob j(*disk);
+  j.startImport("/a.wav");
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  const uint32_t crc = j.imported().crc;
+  j.startImport("/a.wav");
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_EQUAL_HEX32(crc, j.imported().crc);
+  TEST_ASSERT_FALSE(disk->exists(kStoreTmp));
+}
+
+void test_store_import_known_crc_skips_reading() {
+  writePlainWav("/a.wav", ramp(1000, 2), 1, 44100);
+  StoreJob j(*disk);
+  j.startImport("/a.wav");
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  const uint32_t crc = j.imported().crc;
+  TEST_ASSERT_EQUAL(BankResult::Ok, j.startImport("/a.wav", &crc));
+  TEST_ASSERT_FALSE(j.busy() && j.done() > 0);
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_EQUAL_HEX32(crc, j.imported().crc);
+}
+
+void test_store_sync_takes_project_files() {
+  disk->mkdir("/projects/P");
+  const auto a = ramp(2000, 4), b = ramp(1500, 6);
+  writePlainWav("/projects/P/KICK.wav", a, 1, 44100);
+  writePlainWav("/projects/P/SNARE.wav", b, 1, 44100);
+  projSampleSet(*proj, "KICK", sampleCrc(a.data(), 2000, 0), 2000);
+  projSampleSet(*proj, "SNARE", 0xDEADBEEFu, 1500);  // the folder holds other data
+  projSampleSet(*proj, "HAT", 0x12345678u, 100);     // no file
+  StoreJob j(*disk);
+  TEST_ASSERT_EQUAL(BankResult::Ok, j.startSync("P", *proj));
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_TRUE(storeFileCurrent(*disk, sampleCrc(a.data(), 2000, 0), 2000));
+  TEST_ASSERT_EQUAL(2, j.missing());
+  TEST_ASSERT_FALSE(j.sampleMissing(projSampleFind(*proj, "KICK")));
+  TEST_ASSERT_TRUE(j.sampleMissing(projSampleFind(*proj, "SNARE")));
+  TEST_ASSERT_TRUE(j.sampleMissing(projSampleFind(*proj, "HAT")));
+  TEST_ASSERT_FALSE(disk->exists(kStoreTmp));
+}
+
+void test_store_sync_without_project_marks_missing() {
+  projSampleSet(*proj, "KICK", 0x11111111u, 100);
+  StoreJob j(*disk);
+  TEST_ASSERT_EQUAL(BankResult::Ok, j.startSync("", *proj));
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_EQUAL(1, j.missing());
+}
+
+void test_store_save_copies_into_project() {
+  const auto a = ramp(2500, 5);
+  writePlainWav("/a.wav", a, 1, 22050);
+  StoreJob j(*disk);
+  j.startImport("/a.wav");
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  const uint32_t crc = j.imported().crc;
+  projSampleSet(*proj, "PAD", crc, 2500);
+  projSampleSet(*proj, "GONE", 0x22222222u, 10);  // not in the store
+  TEST_ASSERT_EQUAL(BankResult::Ok, j.startSave("Q", *proj));  // a new project: its folder is made
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_EQUAL(1, j.missing());
+  TEST_ASSERT_TRUE(bankFileCurrent(*disk, "/projects/Q/PAD.wav", crc, 2500));
+  TEST_ASSERT_FALSE(disk->exists("/projects/Q/PAD.wav.tmp"));
+}
+
+struct Added {
+  std::vector<uint32_t> crc;
+};
+static void onAdded(uint32_t crc, void* ctx) { static_cast<Added*>(ctx)->crc.push_back(crc); }
+
+void test_store_reports_added_files() {
+  writePlainWav("/a.wav", ramp(700, 8), 1, 44100);
+  Added got;
+  StoreJob j(*disk);
+  j.setOnAdded(onAdded, &got);
+  j.startImport("/a.wav");
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_EQUAL(1, got.crc.size());
+  TEST_ASSERT_EQUAL_HEX32(j.imported().crc, got.crc[0]);
+}
+
+void test_store_migrates_bank_samples() {
+  const auto a = ramp(3000, 9);
+  writePlainWav("/a.wav", a, 1, 32000);
+  BankJob bj(*bank, *disk);  // the old way: into the flash bank
+  bj.startImport("/a.wav", false, *proj);
+  TEST_ASSERT_EQUAL(BankResult::Ok, run(bj));
+  const uint32_t crc = bj.imported().crc;
+  StoreJob j(*disk);
+  TEST_ASSERT_EQUAL(BankResult::Ok, j.startMigrate(*bank));
+  TEST_ASSERT_EQUAL(BankResult::Ok, runStore(j));
+  TEST_ASSERT_TRUE(storeFileCurrent(*disk, crc, 3000));
+  const int before = bank->count();
+  TEST_ASSERT_EQUAL(1, bankDropMigrated(*bank, *disk));
+  TEST_ASSERT_EQUAL(before - 1, bank->count());
+  char key[kSampleNameMax + 1];
+  sampleKey(crc, key);
+  TEST_ASSERT_EQUAL(-1, bank->find(key));
+}
+
+void test_sync_wavetables_only_leaves_samples() {
+  disk->mkdir("/projects/P");
+  const auto a = ramp(2000, 4);
+  writePlainWav("/projects/P/KICK.wav", a, 1, 44100);
+  projSampleSet(*proj, "KICK", sampleCrc(a.data(), 2000, 0), 2000);
+  BankJob j(*bank, *disk);
+  TEST_ASSERT_EQUAL(BankResult::Running, j.startSync("P", *proj, false));
+  TEST_ASSERT_EQUAL(BankResult::Ok, run(j));
+  TEST_ASSERT_EQUAL(0, j.missing());  // samples are not its business
+  char key[kSampleNameMax + 1];
+  sampleKey(sampleCrc(a.data(), 2000, 0), key);
+  TEST_ASSERT_EQUAL(-1, bank->find(key));
+}
+
+void test_store_write_frames() {
+  FillCtx c;
+  ImportOut o;
+  TEST_ASSERT_EQUAL(BankResult::Ok, storeWriteFrames(*disk, 5000, 44100, fillRamp, &c, o));
+  std::vector<int16_t> want(5000);
+  for (int i = 0; i < 5000; ++i) want[i] = static_cast<int16_t>(i * 3);
+  TEST_ASSERT_EQUAL_HEX32(sampleCrc(want.data(), 5000, 0), o.crc);
+  TEST_ASSERT_TRUE(storeFileCurrent(*disk, o.crc, 5000));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_import_sample);
@@ -433,5 +617,16 @@ int main(int, char**) {
   RUN_TEST(test_write_frames);
   RUN_TEST(test_builtins);
   RUN_TEST(test_cancel_drops_half_entry);
+  RUN_TEST(test_store_import_writes_canonical_file);
+  RUN_TEST(test_store_import_stereo_48k_downmixes_and_downsamples);
+  RUN_TEST(test_store_import_again_keeps_one_file);
+  RUN_TEST(test_store_import_known_crc_skips_reading);
+  RUN_TEST(test_store_sync_takes_project_files);
+  RUN_TEST(test_store_sync_without_project_marks_missing);
+  RUN_TEST(test_store_save_copies_into_project);
+  RUN_TEST(test_store_reports_added_files);
+  RUN_TEST(test_store_migrates_bank_samples);
+  RUN_TEST(test_sync_wavetables_only_leaves_samples);
+  RUN_TEST(test_store_write_frames);
   return UNITY_END();
 }

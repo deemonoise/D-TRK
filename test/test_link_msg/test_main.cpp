@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <string.h>
 #include "link_msg.h"
+#include "model.h"
 
 using namespace mt::link;
 
@@ -173,6 +174,11 @@ void test_status_with_and_without_scope() {
   a.outPeak = 32767;
   for (int i = 0; i < 16; ++i) a.trackPeak[i] = static_cast<uint8_t>(i * 10);
   a.lost = 2;
+  a.streamVoices = 14;
+  a.underruns = 3;
+  a.minReserveMs = 41;
+  a.psram = 1;
+  a.psramFill = 57;
   int n = put(a);
   Status b;
   Reader r(buf, n);
@@ -185,6 +191,11 @@ void test_status_with_and_without_scope() {
   TEST_ASSERT_EQUAL_MEMORY(a.trackPeak, b.trackPeak, 16);
   TEST_ASSERT_EQUAL(2, b.lost);
   TEST_ASSERT_EQUAL(0, b.scopeN);
+  TEST_ASSERT_EQUAL(14, b.streamVoices);
+  TEST_ASSERT_EQUAL(3, b.underruns);
+  TEST_ASSERT_EQUAL(41, b.minReserveMs);
+  TEST_ASSERT_EQUAL(1, b.psram);
+  TEST_ASSERT_EQUAL(57, b.psramFill);
   checkTruncated<Status>(n);
 
   a.scopeN = Status::kScopeMax;
@@ -195,6 +206,30 @@ void test_status_with_and_without_scope() {
   TEST_ASSERT_TRUE(decode(r2, b));
   TEST_ASSERT_EQUAL(Status::kScopeMax, b.scopeN);
   TEST_ASSERT_EQUAL_MEMORY(a.scope, b.scope, a.scopeN);
+  TEST_ASSERT_EQUAL(41, b.minReserveMs);  // after the scope: still in place
+  TEST_ASSERT_EQUAL(57, b.psramFill);
+}
+
+void test_debug() {
+  Debug a;
+  a.op = static_cast<uint8_t>(DebugOp::StreamBench);
+  a.a = 12;
+  a.b = kBenchSdOnly;
+  a.secs = 600;
+  const int n = put(a);
+  Debug b;
+  Reader r(buf, n);
+  TEST_ASSERT_TRUE(decode(r, b));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(DebugOp::StreamBench), b.op);
+  TEST_ASSERT_EQUAL(12, b.a);
+  TEST_ASSERT_EQUAL(kBenchSdOnly, b.b);
+  TEST_ASSERT_EQUAL(600, b.secs);
+  checkTruncated<Debug>(n);
+}
+
+void test_protocol_3_and_debug_id() {
+  TEST_ASSERT_EQUAL(3, kProtocol);
+  TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
 }
 
 void test_progress() {
@@ -601,6 +636,22 @@ void test_fw_messages() {
   checkTruncated<FwRep>(n);
 }
 
+void test_ev_batch_carries_a_hint() {
+  EvBatch a;
+  a.n = 2;
+  a.ev[0] = {1000, 2, 3, {mt::kSynthHint, 62, 0x40}};
+  a.ev[1] = {126000, 2, 3, {0x92, 62, 100}};
+  const int n = put(a);
+  EvBatch b;
+  Reader r(buf, n);
+  TEST_ASSERT_TRUE(decode(r, b));
+  TEST_ASSERT_EQUAL(2, b.n);
+  TEST_ASSERT_EQUAL_UINT64(1000, b.ev[0].tUs);
+  TEST_ASSERT_EQUAL_UINT8(mt::kSynthHint, b.ev[0].b[0]);
+  TEST_ASSERT_EQUAL_UINT8(0x40, b.ev[0].b[2]);
+  TEST_ASSERT_EQUAL_UINT64(126000, b.ev[1].tUs);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_writer_reader_primitives);
@@ -622,5 +673,8 @@ int main(int, char**) {
   RUN_TEST(test_profile_rep);
   RUN_TEST(test_render_messages);
   RUN_TEST(test_fw_messages);
+  RUN_TEST(test_ev_batch_carries_a_hint);
+  RUN_TEST(test_debug);
+  RUN_TEST(test_protocol_3_and_debug_id);
   return UNITY_END();
 }

@@ -2591,6 +2591,50 @@ void test_speed_half_pause_resume_continues() {
   TEST_ASSERT_EQUAL(1125000, on62[0]);  // pass 1, pos 1 (count 4)
 }
 
+void test_hint_time_one_step_ahead() {
+  TEST_ASSERT_EQUAL_UINT64(1000000 - 125000, hintTime(1000000, 125000, 0));
+  TEST_ASSERT_EQUAL_UINT64(1000000 - kHintLeadUs, hintTime(1000000, 500000, 0));  // slow: capped
+  TEST_ASSERT_EQUAL_UINT64(950000, hintTime(1000000, 125000, 950000));            // never in the past
+  TEST_ASSERT_EQUAL_UINT64(0, hintTime(100000, 125000, 0));                      // no wrap below zero
+}
+
+void test_int_sample_steps_send_a_hint_one_step_ahead() {
+  p->tracks[2].out = TrackOut::Int;
+  p->tracks[2].instr = 0;
+  instrSetType(p->instruments[0], InstrType::Sample);
+  p->patterns[0].steps[2][0].note = 60;
+  Step& s2 = p->patterns[0].steps[2][2];
+  s2.note = 62;
+  s2.fx[0].cmd = Fx::OFS;
+  s2.fx[0].val = 0x40;
+  p->tracks[4].out = TrackOut::Int;  // a CHIP instrument: no hint
+  p->tracks[4].instr = 1;
+  instrSetType(p->instruments[1], InstrType::Chip);
+  p->patterns[0].steps[4][2].note = 64;
+  p->patterns[0].steps[3][2].note = 65;  // a MIDI track: never a hint
+  seq->start(0, *sink);
+  run(0, 400000);
+  const auto h = sink->synKind(kSynthHint);
+  TEST_ASSERT_EQUAL(2, h.size());
+  const uint64_t stepUs = 60000000ull / p->bpm / 4;
+  const auto on = sink->synKind(0x90);
+  const SynRec* h62 = nullptr;
+  const SynRec* on62 = nullptr;
+  for (const auto& r : h)
+    if (r.b[1] == 62) h62 = &r;
+  for (const auto& r : on)
+    if (r.b[1] == 62) on62 = &r;
+  TEST_ASSERT_NOT_NULL(h62);
+  TEST_ASSERT_NOT_NULL(on62);
+  TEST_ASSERT_EQUAL(2, h62->track);
+  TEST_ASSERT_EQUAL(3, h62->len);
+  TEST_ASSERT_EQUAL_UINT8(0x40, h62->b[2]);
+  TEST_ASSERT_EQUAL_UINT64(on62->t - (stepUs < kHintLeadUs ? stepUs : kHintLeadUs), h62->t);
+  for (const auto& r : h)
+    if (r.b[1] == 60) TEST_ASSERT_EQUAL_UINT8(0, r.b[2]);  // no OFS: the start
+  for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(kSynthHint, r.b[0]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -2749,5 +2793,7 @@ int main() {
   RUN_TEST(test_speed_x2_int_step_marker_ticks);
   RUN_TEST(test_speed_x2_step_arp_on_sub_steps);
   RUN_TEST(test_speed_half_rewind_across_pass_end);
+  RUN_TEST(test_hint_time_one_step_ahead);
+  RUN_TEST(test_int_sample_steps_send_a_hint_one_step_ahead);
   return UNITY_END();
 }

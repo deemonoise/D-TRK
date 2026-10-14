@@ -8,6 +8,7 @@ uint16_t rd16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8
 uint32_t rd32(const uint8_t* p) { return rd16(p) | (static_cast<uint32_t>(rd16(p + 2)) << 16); }
 
 constexpr uint16_t kFmtPcm = 1;
+constexpr uint16_t kFmtFloat = 3;
 constexpr uint16_t kFmtExtensible = 0xFFFE;
 
 // ByteSource with a position counter.
@@ -36,8 +37,10 @@ WavErr parseFmt(Reader& r, uint32_t size, WavInfo& w) {
   w.channels = rd16(b + 2);
   w.rate = rd32(b + 4);
   w.bits = rd16(b + 14);
-  if (format != kFmtPcm || w.channels == 0 || w.rate == 0) return WavErr::Unsupported;
-  if (w.bits != 8 && w.bits != 16 && w.bits != 24) return WavErr::Unsupported;
+  const bool fl = format == kFmtFloat && w.bits == 32;
+  if ((format != kFmtPcm && !fl) || w.channels == 0 || w.rate == 0) return WavErr::Unsupported;
+  if (!fl && w.bits != 8 && w.bits != 16 && w.bits != 24) return WavErr::Unsupported;
+  w.isFloat = fl;
   return WavErr::Ok;
 }
 
@@ -187,6 +190,13 @@ void wavToMono(const uint8_t* raw, uint32_t frames, const WavInfo& w, int16_t* o
       switch (bps) {
         case 1: sum += (static_cast<int32_t>(raw[0]) - 128) * 256; break;
         case 2: sum += static_cast<int16_t>(rd16(raw)); break;
+        case 4: {  // float 32, -1..1
+          float f;
+          memcpy(&f, raw, 4);
+          const float x = f * 32768.f;
+          sum += x != x ? 0 : (x >= 32767.f ? 32767 : (x <= -32768.f ? -32768 : static_cast<int32_t>(x)));
+          break;
+        }
         default: sum += static_cast<int16_t>(rd16(raw + 1)); break;
       }
     }

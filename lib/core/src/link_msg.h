@@ -5,7 +5,7 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 2;
+constexpr uint16_t kProtocol = 3;
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -20,6 +20,7 @@ enum class Msg : uint8_t {
   FsRmdir,
   WtFrame,
   Perf,
+  Debug,
 };
 
 // Fs* replies: err first, 0 = ok.
@@ -125,6 +126,12 @@ struct Status {
   uint8_t parks = 0;    // synth parks since boot (mod 256): each one resets the synth, PERF included
   uint16_t scopeN = 0;  // 0 while the meters are off; the newest output, every 2nd sample, >> 8
   int8_t scope[kScopeMax];
+  // Sample streaming, since the previous Status (after the scope: protocol 3).
+  uint8_t streamVoices = 0;        // pool slots voices hold now
+  uint16_t underruns = 0;          // voices that ran out of data
+  uint16_t minReserveMs = 0xFFFF;  // lowest reserve of a streaming voice, 0xFFFF = none streamed
+  uint8_t psram = 0;               // 0 off (no chip / self-test), 1 on, 2 failed (watchdog)
+  uint8_t psramFill = 0;           // % of the planned whole-sample copies made
 };
 
 // A long request on the synth board is still running: op = its type, done / total in work units,
@@ -135,6 +142,19 @@ struct Progress {
   uint8_t op = 0;
   uint32_t done = 0, total = 0;
   uint8_t item = kNoItem;
+};
+
+// Desk tools (link_desk.py; the synth board's desk build acts on them, others ignore them).
+enum class DebugOp : uint8_t { PsramFault = 1, StreamBench = 2, StreamBenchStop = 3, Hang = 4 };
+constexpr uint8_t kBenchSdOnly = 1;     // StreamBench b: no PSRAM copies, every voice streams
+constexpr uint8_t kBenchSetupOnly = 2;  // StreamBench b: samples and instruments, no notes
+constexpr uint8_t kBenchHeavy = 4;      // StreamBench b: 16 stream voices on 8 tracks + kFmVoiceMax heavy on 8
+constexpr uint8_t kBenchWt = 8;         // StreamBench b, with kBenchHeavy: the heavy voices are wavetable SYNTH
+constexpr uint8_t kBenchFx = 16;        // StreamBench b: drive, delay, reverb sends 100 on every voice, comp on
+struct Debug {
+  uint8_t op = 0;
+  uint8_t a = 0, b = 0;  // StreamBench: a = semitones above the root, b = kBench* flags
+  uint16_t secs = 0;     // StreamBench: how long the notes hold
 };
 
 // Meters (MIX shown: track peaks + scope in Status), Phones (output level 0..100 %).
@@ -359,6 +379,7 @@ void encode(const Ack& m, Writer& w);
 void encode(const Nack& m, Writer& w);
 void encode(const Status& m, Writer& w);
 void encode(const Progress& m, Writer& w);
+void encode(const Debug& m, Writer& w);
 void encode(const Log& m, Writer& w);
 void encode(const Byte& m, Writer& w);
 void encode(const Perf& m, Writer& w);
@@ -398,6 +419,7 @@ bool decode(Reader& r, Ack& m);
 bool decode(Reader& r, Nack& m);
 bool decode(Reader& r, Status& m);
 bool decode(Reader& r, Progress& m);
+bool decode(Reader& r, Debug& m);
 bool decode(Reader& r, Log& m);
 bool decode(Reader& r, Byte& m);
 bool decode(Reader& r, Perf& m);

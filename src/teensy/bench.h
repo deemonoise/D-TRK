@@ -6,7 +6,8 @@ class Synth;
 }
 class SynthStream;
 
-// Voice pool bench (teensy41-bench, -DAUDIO_BENCH_POOL): see bench.cpp. begin() from setup() after
+// Voice pool bench (teensy41-bench, -DAUDIO_BENCH_POOL): see bench.cpp; the voice ceiling bench
+// (teensy41-bench-max, also -DAUDIO_BENCH_MAX): see bench_max.cpp. begin() from setup() after
 // link::begin, step() from loop().
 namespace bench {
 

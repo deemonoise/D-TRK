@@ -1,7 +1,9 @@
 #include "synth.h"
 #include "fastmath.h"
 #include "hot.h"
+#include "sample_region.h"
 #include "slices.h"
+#include "stream_loader.h"
 #include "synth_drum_machines.h"
 #include "synth_fm_machines.h"
 #include "scale.h"
@@ -19,6 +21,7 @@ constexpr float kNoiseMaxSteps = 8.f;  // per output sample (high notes)
 
 constexpr uint16_t kDrumReleaseMs = 3;  // one-shot gate env: fade on all-off instead of a click
 constexpr uint16_t kChokeMs = 3;        // a SAMPLE note fading the track's older samples
+constexpr float kUnderStep = 1.f / 88;  // underrun fade: 2 ms at 44.1 kHz
 
 // FM params cache tolerance (Synth::controlFm).
 constexpr float kFmCacheMacro = 0.5f;   // macro units (0..127)
@@ -113,7 +116,10 @@ Synth::Synth(const SynthModel& p) : p_(p) {
 }
 
 void Synth::reset() {
-  for (auto& v : voices_) v = Voice();
+  for (auto& v : voices_) {
+    dropSlot(v);
+    v = Voice();
+  }
   age_ = 0;
   nEv_ = 0;
   load_ = 0;
@@ -186,6 +192,7 @@ void Synth::startTrack(uint8_t track) {
 
 bool Synth::event(int offset, uint8_t track, const uint8_t* b, uint8_t len) {
   if (track >= kSynthTracks || len == 0 || len > 3) return false;
+  if (b[0] == kSynthHint) return false;  // the board's loader takes hints (link_server), not the voices
   if (nEv_ == kMaxEvents) {
     if (!isOff(b, len)) return false;
     int victim = -1;
@@ -540,6 +547,31 @@ MT_HOT const Instrument& Synth::instrOf(const Voice& v) const {
   return laneScratch_;
 }
 
+int Synth::prefetch(uint8_t track, uint8_t note, uint8_t ofs) {
+  if (!pool_ || !bank_ || track >= kTracks) return -1;
+  const Instrument& m = p_.instruments[trackInstr(track)];
+  if (m.type != InstrType::Sample) return -1;
+  char name[kSampleNameMax + 1];  // the UI may be editing it
+  for (int i = 0; i < kSampleNameMax; ++i) name[i] = m.sample[i];
+  name[kSampleNameMax] = 0;
+  SampleData d;
+  if (!bank_->find(name, d) || !d.streamable || d.whole || !d.frames) return -1;
+  // As the note-on picks the slice: NOTE maps note - root, FX takes SLC (not in the hint: the
+  // slice's head covers its start).
+  int slice = -1;
+  const int cnt = m.sliceCount > kMaxSlices ? kMaxSlices : m.sliceCount;
+  if (cnt) {
+    if (m.sliceMode == static_cast<uint8_t>(SliceMode::Note)) {
+      slice = note - m.root;
+      if (slice < 0 || slice >= cnt) return -1;
+    } else if (m.sliceMode == static_cast<uint8_t>(SliceMode::Fx)) {
+      return -1;
+    }
+  }
+  const SampleRegion g = sampleRegion(m, slice, d.frames, ofs);
+  return pool_->acquire(d.key, d.frames, d.rate, d.heads, d.nHeads, g, SlotOwner::Prefetch);
+}
+
 void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   uint8_t ii = trackInstr(track);
   bool kitLane = false;  // a KIT lane: mono per lane (choke on the same note), poly across lanes
@@ -568,15 +600,14 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   }
   const Instrument& m = *mp;
   const bool sample = m.type == InstrType::Sample;
-  const int16_t* smp = nullptr;
-  uint32_t frames = 0, rate = 0;
+  SampleData sd;
   if (sample) {
     // The UI may be editing the name: copy it first.
     char name[kSampleNameMax + 1];
     for (int i = 0; i < kSampleNameMax; ++i) name[i] = m.sample[i];
     name[kSampleNameMax] = 0;
-    if (bank_) smp = bank_->find(name, frames, rate);
-    if (!smp || frames == 0 || rate == 0) return;
+    if (!bank_ || !bank_->find(name, sd) || sd.frames == 0 || sd.rate == 0) return;
+    if (!sd.whole && !sd.streamable && !sd.nHeads) return;
   }
   TrackRt& r = rt_[track];
   // Slices: NOTE maps note - root to a slice (none = silent), FX takes SLC (none = whole region).
@@ -659,17 +690,25 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // A KIT lane re-hit restarts its sound.
   const bool overlap = legato && !wasReleasing && !drum && !prevDrum && !kitLane;
   // Legato on the same sample keeps playing from where it is.
-  const bool restartSmp = sample && (!overlap || !v.sample || v.smp != smp || v.slice != slice);
+  const bool restartSmp = sample && (!overlap || !v.sample || v.smp != sd.whole || v.srcKey != sd.key ||
+                                     v.slice != slice);
+  // A slot of another sample (or of none) goes back to the pool.
+  if (v.slot >= 0 && (!sample || v.srcKey != sd.key || !(!sd.whole && sd.streamable))) dropSlot(v);
   v.note = note;
   v.instr = ii;
   v.lane = kitLane && mp == &scratch;
   v.laneIdx = static_cast<uint8_t>(laneIdx);
   v.sample = sample;
   v.gen = r.gen;
-  v.smp = smp;
+  v.smp = sd.whole;
+  v.psram = sd.psram && sd.whole;
+  v.srcKey = sd.key;
+  v.heads = sd.heads;
+  v.nHeads = sd.nHeads;
+  v.stream = !sd.whole && sd.streamable;
   v.slice = static_cast<int8_t>(slice);
-  v.smpLen = frames;
-  v.smpRate = rate;
+  v.smpLen = sd.frames;
+  v.smpRate = sd.rate;
   v.gain = vel * (1.f / 127.f);
   v.vel = vel;
   v.arpK = UINT32_MAX;
@@ -780,46 +819,61 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   control(v, 0);
 }
 
-void Synth::startSample(Voice& v, const Instrument& m) const {
-  const uint32_t len = v.smpLen;
-  uint32_t from, to, lf;
-  // A slice plays [from, to) of its own once: the loop is ignored.
-  const bool sliced = v.slice >= 0 && sliceRegion(m, v.slice, len, from, to);
-  if (!sliced) {
-    from = static_cast<uint32_t>(static_cast<uint64_t>(m.start) * len / 0xFFFF);
-    to = static_cast<uint32_t>(static_cast<uint64_t>(m.end) * len / 0xFFFF);
-    if (from >= len) from = len - 1;
-    if (to > len) to = len;
-    if (to <= from) to = from + 1;
+void Synth::startSample(Voice& v, const Instrument& m) {
+  const SampleRegion g = sampleRegion(m, v.slice, v.smpLen, v.ofs);
+  v.from = g.from;
+  v.to = g.to;
+  v.loopMode = g.loopMode;
+  v.dir = g.dir;
+  v.loopLo = g.loopLo;
+  v.loopHi = g.loopHi;
+  v.pos = g.pos;
+  if (v.stream) startSlot(v, g);
+}
+
+// The voice's region and position now (a slot taken mid-note plans from here).
+static SampleRegion regionOf(const Voice& v) {
+  SampleRegion g;
+  g.from = v.from;
+  g.to = v.to;
+  g.loopLo = v.loopLo;
+  g.loopHi = v.loopHi;
+  g.loopMode = v.loopMode;
+  g.pos = v.pos;
+  g.dir = v.dir;
+  return g;
+}
+
+void Synth::startSlot(Voice& v, const SampleRegion& g) {
+  v.under = false;
+  v.ug = 1;
+  v.hold = 0;
+  if (!pool_) return;
+  if (v.slot >= 0) {
+    // The same sample again (legato restart, retrigger): keep the slot and its blocks.
+    if (pool_->slot(v.slot).key == v.srcKey) {
+      pool_->publish(v.slot, g.pos, g.dir < 0 ? -1 : 1);
+      return;
+    }
+    dropSlot(v);
   }
-  const uint32_t span = to - from;
-  if (sliced) {
-    lf = from;
-  } else {
-    lf = from + static_cast<uint32_t>(static_cast<uint64_t>(m.loopStart) * span / 0xFFFF);
-    if (lf >= to) lf = to - 1;
+  v.slot = static_cast<int8_t>(
+      pool_->acquire(v.srcKey, v.smpLen, v.smpRate, v.heads, v.nHeads, g, SlotOwner::Voice));
+  if (v.slot >= 0) return;
+  // No slot: the oldest streaming voice fades out (kStealMs) and frees one; this voice plays its
+  // head meanwhile and retries in control().
+  Voice* old = nullptr;
+  for (auto& x : voices_)
+    if (x.on && &x != &v && x.slot >= 0 && !x.stolen && (!old || x.age < old->age)) old = &x;
+  if (old) {
+    old->env.fade(kStealMs);
+    old->stolen = true;
   }
-  v.from = from;
-  v.to = to;
-  v.loopMode = sliced ? static_cast<uint8_t>(LoopMode::Off)
-                      : (m.loop < static_cast<uint8_t>(LoopMode::Count) ? m.loop : 0);
-  const uint32_t ofs = static_cast<uint32_t>(static_cast<uint64_t>(v.ofs) * span / 256);
-  if (m.reverse) {
-    // Reverse plays the region mirrored: the loop is [from, to - (lf - from)) walked downwards.
-    v.dir = -1;
-    v.loopLo = from;
-    v.loopHi = to - (lf - from);
-    v.pos = static_cast<int64_t>(to - 1 - ofs) << 32;
-  } else {
-    v.dir = 1;
-    v.loopLo = lf;
-    v.loopHi = to;
-    v.pos = static_cast<int64_t>(from + ofs) << 32;
-  }
-  if (v.loopMode == static_cast<uint8_t>(LoopMode::Off)) {
-    v.loopLo = from;
-    v.loopHi = to;
-  }
+}
+
+void Synth::dropSlot(Voice& v) {
+  if (v.slot >= 0 && pool_) pool_->release(v.slot);
+  v.slot = -1;
 }
 
 // Samples on the pattern tracks play until OFF / CUT / a choke (not on the preview track).
@@ -960,6 +1014,15 @@ MT_HOT void Synth::control(Voice& v, int dt) {
     return;
   }
   if (v.sample) {
+    if (v.psram && pool_ && !pool_->psramOk) {  // PSRAM failed: the rest streams
+      v.smp = nullptr;
+      v.psram = false;
+      v.stream = true;
+      startSlot(v, regionOf(v));
+    } else if (v.stream && v.slot < 0 && pool_) {  // no slot yet (all taken at note-on): retry
+      v.slot = static_cast<int8_t>(pool_->acquire(v.srcKey, v.smpLen, v.smpRate, v.heads, v.nHeads,
+                                                  regionOf(v), SlotOwner::Voice));
+    }
     // Frames per output sample; the root note plays at the sample's own rate.
     const uint8_t root = m.root > 127 ? 127 : m.root;
     const float semis = pitch - root;
@@ -1293,7 +1356,11 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
     v.env = env;
     if ((v.fm && v.fmv().done()) || (v.drum && v.drv().done())) v.env.kill();
   } else if (v.sample) {
-    renderSample(v, dst, n);
+    if (v.smp) {
+      renderSample(v, dst, n);
+    } else if ((v.stream || v.nHeads) && pool_) {
+      renderStream(v, dst, n);
+    }
   } else {
     renderChip(v, dst, n);
   }
@@ -1374,6 +1441,104 @@ MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   v.env = env;
   v.pos = pos;
   v.dir = step >= 0 ? 1 : -1;
+}
+
+bool Synth::frameRun(Voice& v, uint32_t idx, int64_t step, FrameRun& r) {
+  for (int h = 0; h < v.nHeads; ++h) {
+    const SampleHead& x = v.heads[h];
+    if (idx >= x.frame && idx - x.frame < x.len) {
+      r = {x.d, x.frame, x.frame + x.len};
+      return true;
+    }
+  }
+  if (v.slot < 0 || !pool_) return false;
+  const uint32_t b = idx / kStreamBlock;
+  const int16_t* d = pool_->block(v.slot, b);
+  if (!d && pool_->sync) {  // offline render: load it now, planned from this frame
+    pool_->publish(v.slot, static_cast<int64_t>(idx) << 32, step);
+    if (streamLoad(*pool_, v.slot, *pool_->sync)) d = pool_->block(v.slot, b);
+  }
+  if (!d) return false;
+  r.d = d;
+  r.lo = b * kStreamBlock;
+  r.hi = r.lo + kStreamBlock < v.smpLen ? r.lo + kStreamBlock : v.smpLen;
+  return true;
+}
+
+// renderSample with frames from the heads / the pool. A missing frame holds the last value and fades
+// it out in 2 ms (position goes on); data back fades in. With data all along it is renderSample to the
+// bit: s * ug with ug == 1 is s.
+MT_HOT void Synth::renderStream(Voice& v, float* out, int n) {
+  const uint32_t last = v.smpLen - 1;
+  const int64_t lo = static_cast<int64_t>(v.loopLo) << 32, hi = static_cast<int64_t>(v.loopHi) << 32;
+  const int64_t one = int64_t(1) << 32;
+  const float amp = v.amp * (kSampleGain / 32768.f);
+  const uint8_t mode = v.loopMode;
+  int64_t pos = v.pos;
+  int64_t step = v.dir > 0 ? v.step : -v.step;
+  Env env = v.env;
+  float ug = v.ug, hold = v.hold;
+  bool under = v.under;
+  FrameRun run{nullptr, 1, 0};
+  for (int i = 0; i < n; ++i) {
+    const uint32_t idx = static_cast<uint32_t>(pos >> 32);
+    const uint32_t nx = idx < last ? idx + 1 : last;
+    bool ok = (idx >= run.lo && idx < run.hi) || frameRun(v, idx, step, run);
+    int32_t a = 0, b = 0;
+    if (ok) {
+      a = run.d[idx - run.lo];
+      if (nx >= run.lo && nx < run.hi) {
+        b = run.d[nx - run.lo];
+      } else {
+        // A sync load for nx may reuse the way run points to (a block behind the play direction):
+        // the next frame looks its run up again.
+        FrameRun r2;
+        ok = frameRun(v, nx, step, r2);
+        if (ok) b = r2.d[nx - r2.lo];
+        run = {nullptr, 1, 0};
+      }
+    }
+    float s;
+    if (ok) {
+      s = a + (b - a) * (static_cast<uint32_t>(pos) * 2.3283064e-10f);
+      hold = s;
+      under = false;
+      if (ug < 1.f) ug = ug + kUnderStep < 1.f ? ug + kUnderStep : 1.f;
+    } else {
+      if (!under) {
+        under = true;
+        pool_->underruns = pool_->underruns + 1;
+      }
+      s = hold;
+      if (ug > 0.f) ug = ug - kUnderStep > 0.f ? ug - kUnderStep : 0.f;
+    }
+    out[i] += s * ug * env.next() * amp;
+    pos += step;
+    if (step >= 0 ? pos < hi : pos >= lo) continue;
+    if (mode == static_cast<uint8_t>(LoopMode::Forward)) {
+      const int64_t span = hi - lo;
+      if (step >= 0) {
+        if (pos >= hi) pos = lo + (pos - lo) % span;
+      } else {
+        if (pos < lo) pos = hi - 1 - (hi - 1 - pos) % span;
+      }
+    } else if (mode == static_cast<uint8_t>(LoopMode::PingPong)) {
+      pos = step >= 0 ? 2 * (hi - one) - pos : 2 * lo - pos;
+      step = -step;
+      if (pos < lo) pos = lo;
+      if (pos >= hi) pos = hi - 1;
+    } else {
+      env.kill();
+      break;
+    }
+  }
+  v.env = env;
+  v.pos = pos;
+  v.dir = step >= 0 ? 1 : -1;
+  v.ug = ug;
+  v.hold = hold;
+  v.under = under;
+  if (v.slot >= 0) pool_->publish(v.slot, pos, step);
 }
 
 // x x (gl, gr) added into l / r. Ramping (a step non-zero): each gain steps before its sample, gl /
@@ -1486,7 +1651,10 @@ MT_HOT void Synth::renderCore() {
       if (clk) mark(voiceStage(v));
       // Freed once the note has ended and its filter has rung out: cutting a resonant filter
       // mid-ring clicks.
-      if (v.env.idle() && !(v.fltOn && v.flt.ringing())) v.on = false;
+      if (v.env.idle() && !(v.fltOn && v.flt.ringing())) {
+        v.on = false;
+        dropSlot(v);
+      }
     }
     pos = end;
   }

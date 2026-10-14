@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
 #include "model.h"
+#include "sample_source.h"
+#include "stream_pool.h"
 #include "synth_comp.h"
 #include "synth_delay.h"
 #include "synth_perf.h"
@@ -14,10 +16,6 @@ constexpr int kSynthTracks = kTracks + 1;
 constexpr uint8_t kPreviewTrack = kTracks;
 constexpr uint8_t kPreviewVol = 100;  // track volume of the preview track
 
-// Sample data for SAMPLE instruments: mono int16 frames at rate Hz, or nullptr if absent.
-struct SampleSource {
-  virtual const int16_t* find(const char* name, uint32_t& frames, uint32_t& rate) const = 0;
-};
 
 // Mip-mapped wavetables (wt_mip.h layout) for SYNTH instruments: a built-in "*NAME" or a name of
 // the project's list; nullptr if absent.
@@ -63,6 +61,14 @@ class Synth {
   explicit Synth(const SynthModel& p);
   // Sample source for SAMPLE instruments; nullptr = sampler silent.
   void setBank(const SampleSource* b) { bank_ = b; }
+  // Streamed samples (SampleData without whole) play from this pool; nullptr: such samples are silent.
+  void setPool(StreamPool* p) { pool_ = p; }
+  // Prefetch hint (kSynthHint note ofs, from the link ahead of the step): takes a Prefetch slot where
+  // the track's next SAMPLE note-on would start, so the loader fills it before the note. loop() with
+  // the audio interrupt masked (StreamPool::acquire). Reads the project's instrument, not the
+  // interrupt's cache. The slot, or -1: nothing to load (not a streamed sample, a whole copy, FX
+  // slices, no slot free).
+  int prefetch(uint8_t track, uint8_t note, uint8_t ofs);
   // Wavetables for SYNTH instruments, resolved at note-on; nullptr = WT oscillators silent.
   void setWavetables(const WtSource* w) { wt_ = w; }
   // Delay line (len samples, owned by the caller), nullptr = no delay. Clears it.
@@ -206,8 +212,17 @@ class Synth {
   static uint8_t machineOf(const Instrument& m);
   float rnd();
   void renderVoice(Voice& v, float* out, int n);
-  void startSample(Voice& v, const Instrument& m) const;
+  void startSample(Voice& v, const Instrument& m);
   static void renderSample(Voice& v, float* out, int n);
+  struct FrameRun {
+    const int16_t* d;  // frame i is d[i - lo]
+    uint32_t lo, hi;
+  };
+  // Frames around idx from the heads / v's slot; a sync pool loads a miss, planned from idx along step.
+  bool frameRun(Voice& v, uint32_t idx, int64_t step, FrameRun& r);
+  void renderStream(Voice& v, float* out, int n);
+  void startSlot(Voice& v, const SampleRegion& g);
+  void dropSlot(Voice& v);
   static void renderChip(Voice& v, float* out, int n);
   uint8_t trackInstr(uint8_t track) const;
   // The voice's instrument: a KIT sampler lane's, built into laneScratch_ (valid until the next
@@ -235,6 +250,7 @@ class Synth {
 
   const SynthModel& p_;
   const SampleSource* bank_ = nullptr;
+  StreamPool* pool_ = nullptr;
   const WtSource* wt_ = nullptr;
   mutable Instrument laneScratch_;  // instrOf: KIT sampler lane
   // The project sits in PSRAM: a cache miss there costs ~1 us on the ESP32-S3 and the UI's frame

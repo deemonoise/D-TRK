@@ -31,7 +31,7 @@ uint8_t phones = 100;
 
 // Status figures, split between the readers (CPU readout, scope peak, meters) so each takes its own.
 struct Acc {
-  uint32_t frames = 0, cpuSum = 0, cpuPeak = 0, stalls = 0;
+  uint32_t frames = 0, cpuSum = 0, cpuPeak = 0, stalls = 0, underruns = 0;
   uint16_t outPeak = 0;
   uint8_t trackPeak[16] = {};
 } load, peak, tracks;
@@ -43,6 +43,7 @@ void absorb() {
   load.cpuSum += a.cpuSum;
   if (a.cpuPeak > load.cpuPeak) load.cpuPeak = a.cpuPeak;
   load.stalls += a.stalls;
+  load.underruns += a.underruns;
   if (a.outPeak > peak.outPeak) peak.outPeak = a.outPeak;
   for (int t = 0; t < 16; ++t)
     if (a.trackPeak[t] > tracks.trackPeak[t]) tracks.trackPeak[t] = a.trackPeak[t];
@@ -126,6 +127,11 @@ LinkCounters linkCounters() {
   return {c.lost, c.late, c.crcErrors, c.retries, c.dropped};
 }
 
+StreamInfo streamInfo() {
+  const slink::StreamInfo s = slink::streamInfo();
+  return {s.voices, s.psram, s.psramFill, s.underruns};
+}
+
 static_assert(kProfStages == ProfileRep::kStages, "profile stages");
 
 namespace {
@@ -190,13 +196,14 @@ uint32_t perfBuffer(bool on) { return on ? slink::perfSeconds() : 0; }
 
 Load takeLoad() {
   absorb();
-  Load l{0, 0, 0, 0};
+  Load l{0, 0, 0, 0, 0};
   if (load.frames) {
     // One Status per window: its average load stands for that window's blocks.
     l.blocks = load.frames;
     l.sumUs = load.cpuSum * kBlockUs / 100;
     l.peakUs = load.cpuPeak * kBlockUs / 100;
     l.stalls = load.stalls;
+    l.underruns = load.underruns;
   }
   load = Acc();
   return l;

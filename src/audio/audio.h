@@ -69,12 +69,19 @@ uint32_t parkCount();
 // seconds, 0 = none (buffer effects silent). off: nothing to free here, returns 0.
 uint32_t perfBuffer(bool on);
 // Synth load since the previous call (status bar CPU readout), from its Status frames: block time
-// summed and longest, us, block count, and stalls (an audible gap). blocks == 0: no Status came.
-// UI task only.
+// summed and longest, us, block count, stalls (an audible gap) and underruns (a sample voice ran out of
+// data). blocks == 0: no Status came. UI task only.
 struct Load {
-  uint32_t sumUs, blocks, peakUs, stalls;
+  uint32_t sumUs, blocks, peakUs, stalls, underruns;
 };
 Load takeLoad();
+// Sample streaming (FILE -> SYSTEM): pool slots in use, PSRAM (Status::psram 0 off, 1 on, 2 failed) and
+// its fill %, underruns since the synth board came up.
+struct StreamInfo {
+  uint8_t voices, psram, psramFill;
+  uint32_t underruns;
+};
+StreamInfo streamInfo();
 
 // Output scope (MIX tab): the last n (<= kScopeLen) samples of the synth's output, oldest first
 // (sent at half the rate and 8 bits, each repeated twice), and the peak since the last call

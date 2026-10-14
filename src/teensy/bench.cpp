@@ -9,7 +9,7 @@
 // link::log (Log frames + USB Serial). Then the bench stops (all notes off).
 // It overwrites the top 18 instruments and every track's out / instrument; the ESP's state mirror
 // is not applied in a bench build (link_server.cpp), so the bench keeps its sounds.
-#ifdef AUDIO_BENCH_POOL
+#if defined(AUDIO_BENCH_POOL) && !defined(AUDIO_BENCH_MAX)  // bench_max.cpp: its own bench::
 #include "bench.h"
 #include <Arduino.h>
 #include "audio_out.h"

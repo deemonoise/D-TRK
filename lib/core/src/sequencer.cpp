@@ -494,6 +494,7 @@ void Sequencer::playTrackStep(int tr, const Step& s, uint64_t t, const ExpandCtx
   if (ex.offUs >= 0) arps_[tr].n = 0;
   pushStepStart(ex, t, earliest, static_cast<uint8_t>(tr), true, tps);
   int i = pushControls(ex, t, earliest, static_cast<uint8_t>(tr));  // index of the first NoteOn
+  pushHint(s, ex, i, t, earliest, static_cast<uint8_t>(tr), c.stepUs);
   uint64_t shift = 0;
   auto at = [&](const StepEvent& e) {
     const int64_t et = static_cast<int64_t>(t) + e.offsetUs;
@@ -559,6 +560,20 @@ void Sequencer::pushPerfStep(int64_t earliest) {
       minT_ = keep;
       return;
     }
+}
+
+// INT track with a SAMPLE instrument (its configured one: a PGM on the step is not followed): tells
+// the synth where the note will start, one step ahead (see kSynthHint). Ahead of the step's events,
+// so not counted in its first event (as pushPerfStep).
+void Sequencer::pushHint(const Step& s, const ExpandOut& ex, int first, uint64_t t, int64_t earliest,
+                         uint8_t track, uint32_t stepUs) {
+  if (!internal(track) || first >= ex.count || ex.ev[first].kind != EvKind::NoteOn) return;
+  const uint8_t ii = p_.tracks[track].instr;
+  if (ii >= kInstruments || p_.instruments[ii].type != InstrType::Sample) return;
+  const FxSlot* o = s.find(Fx::OFS);
+  const uint64_t keep = minT_;
+  push(hintTime(t, stepUs, earliest), kSynthHint, ex.ev[first].note, o ? o->val : 0, 0, false, 3, track);
+  minT_ = keep;
 }
 
 // INT tracks: tells the synth a step starts (see Synth: 0xF5 0xF0), with the controls' time.
@@ -801,7 +816,7 @@ void Sequencer::dispatch(const SchedEvent& e, MidiSink& out) {
   const uint8_t ch = e.b[0] & 0x0F;
   const bool toSynth = internal(e.track);
   // synth fx / release / PERF step clock never reach MIDI
-  if ((e.b[0] == 0xF5 || e.b[0] == 0xF6 || e.b[0] == 0xFF) && !toSynth) return;
+  if ((e.b[0] == 0xF5 || e.b[0] == 0xF6 || e.b[0] == 0xFF || e.b[0] == kSynthHint) && !toSynth) return;
   if (kind == 0xB0 && toSynth) return;     // CC is MIDI only
   // INT voices are keyed by track (== the channel of INT events; an event planned before the
   // track became INT still has its MIDI channel).

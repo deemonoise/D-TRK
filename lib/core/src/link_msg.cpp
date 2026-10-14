@@ -189,6 +189,11 @@ void encode(const Status& m, Writer& w) {
   uint16_t n = m.scopeN > Status::kScopeMax ? Status::kScopeMax : m.scopeN;
   w.u16(n);
   w.bytes(m.scope, n);
+  w.u8(m.streamVoices);
+  w.u16(m.underruns);
+  w.u16(m.minReserveMs);
+  w.u8(m.psram);
+  w.u8(m.psramFill);
 }
 
 bool decode(Reader& r, Status& m) {
@@ -203,6 +208,11 @@ bool decode(Reader& r, Status& m) {
   m.scopeN = r.u16();
   if (m.scopeN > Status::kScopeMax) return false;
   r.bytes(m.scope, m.scopeN);
+  m.streamVoices = r.u8();
+  m.underruns = r.u16();
+  m.minReserveMs = r.u16();
+  m.psram = r.u8();
+  m.psramFill = r.u8();
   return r.ok();
 }
 
@@ -218,6 +228,21 @@ bool decode(Reader& r, Progress& m) {
   m.done = r.u32();
   m.total = r.u32();
   m.item = r.u8();
+  return r.ok();
+}
+
+void encode(const Debug& m, Writer& w) {
+  w.u8(m.op);
+  w.u8(m.a);
+  w.u8(m.b);
+  w.u16(m.secs);
+}
+
+bool decode(Reader& r, Debug& m) {
+  m.op = r.u8();
+  m.a = r.u8();
+  m.b = r.u8();
+  m.secs = r.u16();
   return r.ok();
 }
 

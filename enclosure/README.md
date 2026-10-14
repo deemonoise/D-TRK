@@ -11,7 +11,8 @@ Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (g
 | `stl/case_top.stl` | 1 | face down on the bed, no supports |
 | `stl/case_bottom.stl` | 1 | bottom down on the bed, no supports |
 | `stl/clamp2.stl` | 1 plate (4 clamps) | flat, pins up |
-| `stl/knob.stl` | 1 | top down on the bed, no supports ([knob.scad](knob.scad)) |
+| `stl/knob.stl` or `stl/knob_spline.stl` | 1 | top down on the bed, no supports ([knob.scad](knob.scad)); the first fits a D-shaft, the second a splined one |
+| `stl/keycap_test.stl`, then `stl/keycap.stl` | 1; one per MX | top down on the bed, no supports ([keycap.scad](keycap.scad)); find the cross clearance first |
 
 **Version with track buttons** (`case8_*`): overall size 98.4 × 164.4 × 31 mm; print `stl/case8_top.stl` and `stl/case8_bottom.stl` instead of `case_*`, the clamps are the same. Under the screen there is a 4 × 4 MX grid at 19 mm pitch:
 
@@ -24,7 +25,9 @@ Overall size ~98.4 × 105.4 × 31 mm. On top: the whole WT32-SC01 Plus module (g
    5     6     7     8
 ```
 
-The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons has fences for the PCF8575, the PCM5102A DAC and the MAX97220 amplifier, and a bay for the Teensy 4.1 synth board between the DAC and the amplifier: two rails under the middle of the board (clear of the pin rows, room for wire tails underneath), fences on three sides, its microSD end against the front wall. The front wall has a slot to the Teensy's card with a finger notch, so the card can be changed without opening the case (not printed yet). At the back (left to right, seen from behind): power switch, MIDI, PHONES, Type-C (switch and MIDI as in the two-button version); the labels are engraved above the jacks. Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
+The encoder sits in the centre of a 2 × 2 block with a ⌀30 knob (`knob.stl`): 4.5 mm to the neighbouring 18 mm keycaps. The floor under the buttons holds the Teensy 4.1 synth board and, next to it, the Audio Shield Rev D (on wires); the PCF8575 fence sits behind the shield. No glue: the boards slide in along grooves — a ledge under each edge, a lip over it. The Teensy goes in from the back, microSD end towards the front wall; lipped grooves only along the front 30 mm (no wires there), the wired part rests on two rails between the pin rows, and a stop on the top half behind the USB keeps it from sliding back. The shield goes in from the back, headphone jack into the front wall, grooves along its full length, with a wedge latch behind the rear edge (it passes with 0.1 mm interference; the lip stops it coming back). The front wall has a slot to the Teensy's card with a finger notch (change the card without opening the case) and the headphone jack labelled PHONES. At the back (left to right, seen from behind): power switch, MIC, MIDI, Type-C; the MIDI and MIC labels are engraved above them. Wiring is in the [README](../README.md#buttons-on-the-pcf8575-required) and [docs/wiring.md](../docs/wiring.md).
+
+`case8_*` has two tabs on the bottom half: a tab is a piece of wall rising above the joint; the top goes on from above and the tab enters a cutout in its wall, with grooves on the inner half of the wall at both sides of the cutout taking the tab's ridges. Everything on the tabs is fitted and soldered while the top is off. The front tab (x 60.5…87, up to z = 10.5) carries PHONES and LINE IN at the same height: the hole for the shield's headphone plug and a PJ-392 jack with its M6 nut, ribs down to the floor at both sides of the PJ-392 body. The back tab (x 50.4…79, up to z = 13.5) carries the microphone and the power switch: a grille of 7 ⌀1.2 holes, and inside a ⌀11.2 × 7.5 cup on a pedestal down to the floor for a 9767 capsule (⌀9.7 × 6.7) wrapped in 0.75 mm foam tape (a disc of acoustic cloth between the capsule and the grille); to its right, the switch on its nut. In `case8_*` MIDI is on the top half between Type-C and the microphone (x = 43.5). The labels are on the top half above the cutouts.
 
 PLA/PETG, 3 wall perimeters, 20–30 % infill.
 
@@ -62,11 +65,15 @@ For the track-button version, add `-D trk=true` and write to `stl/case8_*.stl`. 
 | Module | Variables | Default |
 |---|---|---|
 | PCF8575 | `pcf_w`, `pcf_d` (centre `pcf_x`, `pcf_y`) | 32 × 20 |
-| PCM5102A | `dac_w`, `dac_d` (centre `dac_x`, `dac_y`) | 18 × 38 (black "PCM5102 audio DAC v2", from a photo; headers along Y, pins up to 51 mm) |
-| MAX97220 | `amp_w`, `amp_d` (centre `amp_x`, `amp_y`) | 30 × 23 (from the listing) |
-| Teensy 4.1 | `teensy_w`, `teensy_d` (centre `teensy_x`; the card's overhang `teensy_sd_out` and height above the board `teensy_sd_z`) | 18 × 61; card 2.5 mm past the board, its axis 1 mm above it (measure) |
+| Teensy 4.1 | `teensy_w`, `teensy_d` (centre `teensy_x`; the card's overhang `teensy_sd_out` and height above the board `teensy_sd_z`, the USB overhang `teensy_usb_out`) | 18 × 61; card 2.5 mm past the board, its axis 1 mm above it, USB 0.8 mm past the board (measure) |
+| Audio Shield Rev D | `aud_w`, `aud_d` (left edge `aud_x0`); jack axis from the left edge `aud_jack_dx` (top view, jack towards you), above the board `aud_jack_z`, overhang `aud_jack_out` | 36.83 × 35.56 from the PJRC footprint; jack 31.7, 2.5 and 0.5 (measure) |
+| Grooves | `rail_gap` (gap above the board), `rail_clr` (gap to the groove wall), `snap_h` (wedge height) | 0.15, 0.15 and 0.25 |
+| MIC capsule | `mic_cup_d` (cup bore: capsule ⌀ + 2 × wrap), `mic_cup_h` (depth); centre `mic_x`, axis `mic_z` | 11.2 and 7.5; 57 and 9 |
+| LINE IN and tabs | `lin_x` (axis at the PHONES height), `tab_f_top`, `tab_b_top` (top of the front and back tabs; the edges follow the jacks), `tab_clr` (gap in the cutout) | 81; 10.5 and 13.5; 0.2 |
 
-There are ~15 mm above the modules to the bottom of the switches and the encoder: leave out pin headers (or use right-angle ones) and solder wires straight to the pads. The DAC's right-angle headers can stay: no Dupont housings, solder the wires to the pins (they can be trimmed to 3 mm). If a module does not fit the bay, `case.scad` stops with "модуль вне отсека" (module outside the bay).
+If a tab is tight in the top's cutout, increase `tab_clr`. The boards sit tight in the grooves. If one does not go in, increase `rail_gap` or `rail_clr`; if it rattles or the latch does not hold, decrease `rail_gap` and increase `snap_h`. In the track-button version the IP5306 is on grooves too: it slides in from the front, Type-C into the rear wall, with a latch in front of its front edge; fit it before the battery.
+
+There are ~15 mm above the modules to the bottom of the switches and the encoder: leave out pin headers (or use right-angle ones) and solder wires straight to the pads. There are 3 mm under the Teensy and 2 mm under the shield for solder tails. If a module or a board does not fit the bay, `case.scad` stops with "модуль вне отсека" or "плата вне отсека" (module / board outside the bay).
 
 `part="assembly"` (the default) is an assembly with component mock-ups for checking in OpenSCAD.
 
@@ -74,7 +81,7 @@ The most critical part is the top: print `case_top.stl` first and test-fit the m
 
 ## Encoder knob
 
-[knob.scad](knob.scad): ⌀30 × 18 mm, flat top with a 3 mm × 45° chamfer carrying radial notches (36 V-grooves, `chamfer`, `cham_n`), diamond knurling (two opposing helical grooves, pitch ~2.6 mm — 36 of them on ⌀30, 30° to the axis), fits a D-shaft. The underside is recessed for the nut and threaded bushing, so the knob floats 1 mm above the panel (0.5 mm with the encoder button pressed). The shaft goes 12.5 mm into the knob.
+[knob.scad](knob.scad): ⌀30 × 18 mm, flat top with a 3 mm × 45° chamfer carrying radial notches (36 V-grooves, `chamfer`, `cham_n`), diamond knurling (two opposing helical grooves, pitch ~2.6 mm — 36 of them on ⌀30, 30° to the axis), fits a D-shaft (`knob.stl`) or a splined shaft (`knob_spline.stl`, `shaft="spline"`: 18 teeth along the top 7 mm of the shaft, a round bore below). The underside is recessed for the nut and threaded bushing, so the knob floats 1 mm above the panel (0.5 mm with the encoder button pressed). The shaft goes 12.5 mm into the knob.
 
 Both cases use `knob.stl` (⌀30): in the track-button case the encoder takes a 2 × 2 block of the MX grid.
 
@@ -85,6 +92,7 @@ Measure the encoder:
 | Shaft from the encoder body's seating plane to the tip | `shaft_l` | 20 |
 | Shaft ⌀ and size across the flat | `shaft_d`, `shaft_dd` | 6 and 4.5 |
 | Flat length | `flat_l` | 10 |
+| Splined shaft: teeth, root ⌀, knurl length | `spline_n`, `spline_dr`, `spline_l` | 18, 5.4 and 7 |
 | Bushing: ⌀ and height | `bush_d`, `bush_l` | 7 and 7 |
 | Nut: across flats and height, washer | `nut_af`, `nut_h`, `washer_t` | 10, 2, 0.5 |
 | Button travel | `push` | 0.5 |
@@ -93,6 +101,21 @@ The knob height depends on `shaft_l`. If it is tight on the shaft, increase `sha
 
 ```
 $OS -o stl/knob.stl knob.scad
+$OS -o stl/knob_spline.stl -D 'shaft="spline"' knob.scad
+```
+
+## Keycaps
+
+[keycap.scad](keycap.scad): 1u for an MX stem (Outemu, Cherry, Gateron), flat top — printed top down on the bed with no supports, the stem growing up from the ceiling. 18 × 18 × 7.4 mm, top 12.7 × 12.7, a 0.6 mm chamfer on the top edge (it sits on the bed — against elephant's foot), 1.5 mm walls. Legend: `legend`, engraved 0.6 mm into the top face.
+
+Print the test plate `keycap_test.stl` first, with the same filament and settings: 6 stems with a cross socket, clearance per side 0.05…0.30 mm (the number next to a stem is in hundredths of a mm). Try each on a switch, pick the one that goes on firmly without force and does not wobble, and put it in `cross_clr`. Default 0.10 — fitted for ABS GF on Outemu MX Brown (0.15 already wobbles). The switch cross is nominally 4.0 × 1.17 (`cross_l`, `cross_w`) — Outemu can be slightly thicker, measure it.
+
+ABS GF: hardened nozzle, 0.12–0.16 layers, 3–4 perimeters, minimal cooling, enclosed chamber. No acetone smoothing — the fibres come up to the surface.
+
+```
+$OS -o stl/keycap_test.stl -D 'part="test"' keycap.scad
+$OS -o stl/keycap.stl keycap.scad
+$OS -o stl/keycap_play.stl -D 'legend="PLAY"' keycap.scad
 ```
 
 ## Hardware and materials
@@ -110,7 +133,7 @@ Full parts list for both versions: [docs/bom.md](../docs/bom.md).
 - INA226 module (battery monitor, R100 or R010 shunt).
 - 2 MX switches (12 for the track-button version), EC11 encoder with push button, keycaps.
 - PCF8575 module — in both versions: without it the encoder button, Play and Shift do not work.
-- Track-button version: PCM5102A DAC, MAX97220 amplifier, a second PJ-392 jack (headphones).
+- Track-button version: Teensy Audio Shield Rev D (SGTL5000, headphone jack on the board), a ⌀9.7 mm electret capsule and a PJ-392 jack (LINE IN).
 
 ## Power
 
@@ -143,7 +166,7 @@ The board's own Type-C (flashing) is accessible only with the lid off; its micro
 2. Insert the module screen-down into the pocket of the top part, until it rests against the lip.
 3. Put the clamps' pins into the holes of the module's corner bosses and screw the clamps to the posts with M3 screws.
 4. Snap the MX switches into the panel from above. The encoder goes in from below, secured with its nut from above.
-5. Fit the jack and the switch into the back-wall holes and tighten their nuts. Turn the switch so the long side of its body (7.9 mm) is vertical.
+5. Fit the jack and the switch into the back-wall holes and tighten their nuts (in `case8_*` the switch goes into the back tab of the bottom half). Turn the switch so the long side of its body (7.9 mm) is vertical.
 6. In the bottom part: the IP5306 into its cradle with the Type-C jack towards the back wall, the battery on tape against the ridge under the module.
 7. Solder the power (see above); the controls and MIDI OUT per the table in the [root README](../README.md#wiring).
 8. Check for ~5 V at the IP5306 output before connecting it to the board, then close the bottom part with 4 M3 × 10 screws.

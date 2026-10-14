@@ -45,7 +45,13 @@ portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 Hello hello;
 bool helloSeen = false;
 uint32_t lastStatusMs = 0;
-StatusAgg agg = {};
+StatusAgg emptyAgg() {
+  StatusAgg a = {};
+  a.minReserveMs = 0xFFFF;
+  return a;
+}
+StatusAgg agg = emptyAgg();
+StreamInfo stream = {};
 int8_t scopeBuf[Status::kScopeMax];
 int scopeN = 0;
 uint32_t lostTotal = 0, lateTotal = 0;
@@ -119,6 +125,12 @@ void onStatus(Reader& r) {
   lostTotal += s.lost;
   lateTotal += s.late;
   parkCount = s.parks;
+  agg.underruns += s.underruns;
+  if (s.minReserveMs < agg.minReserveMs) agg.minReserveMs = s.minReserveMs;
+  stream.voices = s.streamVoices;
+  stream.psram = s.psram;
+  stream.psramFill = s.psramFill;
+  stream.underruns += s.underruns;
   scopeN = s.scopeN;
   memcpy(scopeBuf, s.scope, s.scopeN);
   portEXIT_CRITICAL(&mux);
@@ -148,6 +160,8 @@ void dispatch(const Decoder& d) {
       Hello h;
       if (!decode(r, h)) return;
       portENTER_CRITICAL(&mux);
+      // A new boot of the synth board: its underruns count from zero again.
+      if (!helloSeen || h.bootId != hello.bootId) stream.underruns = 0;
       hello = h;
       helloSeen = true;
       lastStatusMs = millis();
@@ -373,9 +387,16 @@ bool takeReply(Reply& r) { return replyQ && xQueueReceive(replyQ, &r, 0) == pdTR
 StatusAgg takeStatus() {
   portENTER_CRITICAL(&mux);
   const StatusAgg a = agg;
-  agg = {};
+  agg = emptyAgg();
   portEXIT_CRITICAL(&mux);
   return a;
+}
+
+StreamInfo streamInfo() {
+  portENTER_CRITICAL(&mux);
+  const StreamInfo i = stream;
+  portEXIT_CRITICAL(&mux);
+  return i;
 }
 
 int scope(int8_t* out, int cap) {

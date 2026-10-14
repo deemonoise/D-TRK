@@ -713,9 +713,9 @@ void App::tick() {
 }
 
 // Average audio load over the last window: total render time / total block duration. Red when
-// the audio stalled (an audible gap; held kCpuRedMs to be seen) or the average is >= 85 %, yellow
-// when a block overran its period (covered by the DMA queue) or the average is >= 60 %. A window
-// without blocks (audio parked) keeps the last value.
+// the audio stalled (an audible gap; held kCpuRedMs to be seen), a sample voice underran (SD!, held
+// as long) or the average is >= 85 %, yellow when a block overran its period (covered by the DMA
+// queue) or the average is >= 60 %. A window without blocks (audio parked) keeps the last value.
 void App::pollCpu(uint32_t now) {
   if (now - cpuAt_ < kCpuMs) return;
   cpuAt_ = now;
@@ -724,11 +724,14 @@ void App::pollCpu(uint32_t now) {
   constexpr uint32_t kBlockUs = audio::kBlock * 1000000u / audio::kRate;
   const int pct = static_cast<int>(static_cast<uint64_t>(l.sumUs) * 100 / (static_cast<uint64_t>(l.blocks) * kBlockUs));
   if (l.stalls) cpuRedUntil_ = now + kCpuRedMs;
-  const bool red = static_cast<int32_t>(cpuRedUntil_ - now) > 0 || pct >= 85;
+  if (l.underruns) sdRedUntil_ = now + kCpuRedMs;
+  const bool sd = static_cast<int32_t>(sdRedUntil_ - now) > 0;
+  const bool red = static_cast<int32_t>(cpuRedUntil_ - now) > 0 || pct >= 85 || sd;
   const uint16_t color = red ? kRed : ((l.peakUs > kBlockUs || pct >= 60) ? kYellow : kDim);
-  if (pct != cpu_ || color != cpuColor_) {
+  if (pct != cpu_ || color != cpuColor_ || sd != sdShown_) {
     cpu_ = pct;
     cpuColor_ = color;
+    sdShown_ = sd;
     dirty_ = true;
   }
 }
@@ -901,7 +904,8 @@ void App::drawStatus() {
     spr_->drawString("SYNC", 416, 4);
     return;
   }
-  snprintf(buf, sizeof(buf), "CPU %3d%%", cpu_ > 999 ? 999 : cpu_);
+  // SD!: a sample voice ran out of data (the card fell behind) in the last kCpuRedMs.
+  snprintf(buf, sizeof(buf), "%s %3d%%", sdShown_ ? "SD!" : "CPU", cpu_ > 999 ? 999 : cpu_);
   spr_->setTextColor(cpuColor_);
   spr_->drawString(buf, 416, 4);
 }

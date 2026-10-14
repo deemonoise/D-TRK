@@ -1,7 +1,15 @@
 #include "sample_tools.h"
+#include <Arduino.h>
+#include <SD.h>
+#include <new>
+#include <string.h>
 #include "bank.h"
 #include "bank_ops.h"
+#include "fs_server.h"
+#include "link_server.h"
 #include "onset.h"
+#include "sample_store.h"
+#include "stream.h"
 #include "wave_peaks.h"
 
 using namespace mt::link;
@@ -11,11 +19,14 @@ namespace tools {
 
 namespace {
 
+constexpr uint32_t kProgressMs = 200;
+constexpr int kPeakCols = 8;          // WavePeaks columns a background portion (with an overview)
+constexpr uint32_t kScanFrames = 1024;  // Onsets: frames fed a background portion (2 KB)
+
 // Onsets of the last sample asked for: the ESP fetches them in pieces (and retries).
-mt::Onset onsets[mt::kMaxOnsets];
+DMAMEM mt::Onset onsets[mt::kMaxOnsets];
 int nOnsets = -1;  // -1 = none computed
-const int16_t* onsData = nullptr;
-uint32_t onsFrames = 0, onsGen = 0;
+uint32_t onsCrc = 0, onsFrames = 0;
 
 template <class M>
 int put(const M& m, uint8_t* p) {
@@ -26,59 +37,252 @@ int put(const M& m, uint8_t* p) {
 
 uint8_t res(BankResult r) { return static_cast<uint8_t>(r); }
 
-int peaks(Reader& r, uint8_t* p) {
-  static WavePeaksRep m;
-  m = WavePeaksRep();
-  WavePeaksReq q;
-  if (!decode(r, q) || q.cols > WavePeaksRep::kMaxCols || !q.width) {
-    m.result = res(BankResult::ReadFail);
-    return put(m, p);
+// A store sample's overview (<crc>.pk) and frames (<crc>.wav) through SdFat files.
+class StoreReader final : public mt::PeakReader {
+ public:
+  FsFile wav, pk;
+  bool open(uint32_t crc) {
+    close();
+    if (!card::ready()) return false;
+    char path[mt::kStorePathMax];
+    mt::storePath(crc, path);
+    wav = SD.sdfs.open(path, O_RDONLY);
+    mt::storePeaksPath(crc, path);
+    pk = SD.sdfs.open(path, O_RDONLY);
+    return wav.isOpen();
   }
-  uint32_t frames, rate, gen;
-  const int16_t* d = bank::sampleData(q.index, frames, rate, gen);
-  if (!d) {
-    m.result = res(BankResult::OpenFail);
-    return put(m, p);
+  void close() {
+    if (wav) wav.close();
+    if (pk) pk.close();
   }
-  m.cols = q.cols;
-  mt::wavePeaks(d, frames, q.col0, q.span, q.width, q.cols, m.mn, m.mx);
-  return put(m, p);
+  bool pairs(uint32_t first, uint32_t n, int8_t* out) override {
+    if (pk) return pk.seekSet(static_cast<uint64_t>(first) * 2) && pk.read(out, n * 2) == static_cast<int>(n * 2);
+    // No overview: the blocks' frames (slow; one column a portion then).
+    DMAMEM static int16_t blk[mt::kPeakBlock];
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t at = (first + i) * mt::kPeakBlock;
+      const uint32_t len = at + mt::kPeakBlock <= total ? mt::kPeakBlock : (at < total ? total - at : 0);
+      if (!len || !frames(at, len, blk)) return false;
+      mt::peakOverview(blk, len, out + 2 * i);
+    }
+    return true;
+  }
+  bool frames(uint32_t first, uint32_t n, int16_t* out) override {
+    return wav.seekSet(mt::kStoreDataOffset + static_cast<uint64_t>(first) * 2) &&
+           wav.read(out, n * 2) == static_cast<int>(n * 2);
+  }
+  uint32_t total = 0;
+};
+StoreReader rd;
+
+// The request being answered later (one at a time: a new one replaces it, the ESP gave up on it).
+enum class Task : uint8_t { None, Peaks, Onsets };
+Task task = Task::None;
+uint8_t taskType = 0, taskSeq = 0;
+uint32_t lastProgress = 0;
+// The last deferred reply, for a retry of it.
+bool answered = false;
+uint8_t ansType = 0, ansSeq = 0;
+int ansLen = 0;
+DMAMEM uint8_t ansBuf[kMaxPayload];
+
+WavePeaksReq peaksQ;
+DMAMEM WavePeaksRep peaksM;
+int peaksDone = 0;
+uint32_t peaksFrames = 0;
+
+OnsetsReq onsQ;
+alignas(mt::OnsetScan) DMAMEM uint8_t scanMem[sizeof(mt::OnsetScan)];
+mt::OnsetScan* scan = nullptr;
+uint32_t scanAt = 0;
+uint32_t scanCrc = 0, scanFrames = 0;
+
+void endTask() {
+  task = Task::None;
+  rd.close();
+  if (scan) {
+    scan->~OnsetScan();
+    scan = nullptr;
+  }
 }
 
-int onsetList(Reader& r, uint8_t* p) {
+void answerTask(const uint8_t* p, int n) {
+  answered = true;
+  ansType = taskType;
+  ansSeq = taskSeq;
+  ansLen = n;
+  memcpy(ansBuf, p, n);
+  link::reply(static_cast<Msg>(taskType), taskSeq, p, n);
+  endTask();
+}
+
+void progress(uint32_t done, uint32_t total) {
+  Progress pr;
+  pr.op = taskType;
+  pr.done = done;
+  pr.total = total;
+  link::reply(Msg::Progress, taskSeq, pr);
+}
+
+int onsetPiece(uint8_t skip, uint8_t* p) {
   static OnsetsRep m;
   m = OnsetsRep();
-  OnsetsReq q;
-  if (!decode(r, q)) {
-    m.result = res(BankResult::ReadFail);
-    return put(m, p);
-  }
-  uint32_t frames, rate, gen;
-  const int16_t* d = bank::sampleData(q.index, frames, rate, gen);
-  if (!d) {
-    m.result = res(BankResult::OpenFail);
-    return put(m, p);
-  }
-  if (nOnsets < 0 || d != onsData || frames != onsFrames || gen != onsGen) {
-    nOnsets = mt::detectOnsets(d, frames, rate, onsets, mt::kMaxOnsets);
-    onsData = d;
-    onsFrames = frames;
-    onsGen = gen;
-  }
   m.total = static_cast<uint8_t>(nOnsets);
-  for (int i = q.skip; i < nOnsets && m.n < OnsetsRep::kMax; ++i, ++m.n) {
+  for (int i = skip; i < nOnsets && m.n < OnsetsRep::kMax; ++i, ++m.n) {
     m.pos[m.n] = onsets[i].pos;
     m.strength[m.n] = onsets[i].strength;
   }
   return put(m, p);
 }
 
+int peaks(Reader& r, uint8_t* p) {
+  peaksM = WavePeaksRep();
+  WavePeaksReq q;
+  if (!decode(r, q) || q.cols > WavePeaksRep::kMaxCols || !q.width) {
+    peaksM.result = res(BankResult::ReadFail);
+    return put(peaksM, p);
+  }
+  uint32_t crc, frames, rate;
+  const int16_t* whole;
+  if (!bank::sampleAccess(q.index, crc, frames, rate, whole)) {
+    peaksM.result = res(BankResult::OpenFail);
+    return put(peaksM, p);
+  }
+  peaksM.cols = q.cols;
+  if (whole) {
+    mt::wavePeaks(whole, frames, q.col0, q.span, q.width, q.cols, peaksM.mn, peaksM.mx);
+    return put(peaksM, p);
+  }
+  if (!rd.open(crc)) {
+    peaksM.cols = 0;
+    peaksM.result = res(BankResult::OpenFail);
+    return put(peaksM, p);
+  }
+  rd.total = frames;
+  peaksQ = q;
+  peaksDone = 0;
+  peaksFrames = frames;
+  task = Task::Peaks;
+  return -1;
+}
+
+int onsetList(Reader& r, uint8_t* p) {
+  OnsetsReq q;
+  if (!decode(r, q)) {
+    static OnsetsRep m;
+    m = OnsetsRep();
+    m.result = res(BankResult::ReadFail);
+    return put(m, p);
+  }
+  uint32_t crc, frames, rate;
+  const int16_t* whole;
+  if (!bank::sampleAccess(q.index, crc, frames, rate, whole)) {
+    static OnsetsRep m;
+    m = OnsetsRep();
+    m.result = res(BankResult::OpenFail);
+    return put(m, p);
+  }
+  if (nOnsets >= 0 && crc == onsCrc && frames == onsFrames) return onsetPiece(q.skip, p);
+  if (whole) {
+    nOnsets = mt::detectOnsets(whole, frames, rate, onsets, mt::kMaxOnsets);
+    onsCrc = crc;
+    onsFrames = frames;
+    return onsetPiece(q.skip, p);
+  }
+  if (!rd.open(crc)) {
+    static OnsetsRep m;
+    m = OnsetsRep();
+    m.result = res(BankResult::OpenFail);
+    return put(m, p);
+  }
+  rd.total = frames;
+  onsQ = q;
+  scan = new (scanMem) mt::OnsetScan(frames, rate, mt::kMaxOnsets);
+  scanAt = 0;
+  scanCrc = crc;
+  scanFrames = frames;
+  task = Task::Onsets;
+  return -1;
+}
+
+// One portion of the running task: a few WavePeaks columns, or 2 KB of frames for the onset scan.
+bool taskStep() {
+  if (task == Task::None) return false;
+  uint8_t p[kMaxPayload];
+  if (task == Task::Peaks) {
+    const int left = peaksQ.cols - peaksDone;
+    const int k = left < (rd.pk ? kPeakCols : 1) ? left : (rd.pk ? kPeakCols : 1);
+    if (k > 0 && !mt::wavePeaksRead(rd, peaksFrames, peaksQ.col0 + peaksDone, peaksQ.span, peaksQ.width, k,
+                                    peaksM.mn + peaksDone, peaksM.mx + peaksDone)) {
+      peaksM = WavePeaksRep();
+      peaksM.result = res(BankResult::ReadFail);
+      answerTask(p, put(peaksM, p));
+      return true;
+    }
+    peaksDone += k;
+    if (peaksDone >= peaksQ.cols) {
+      answerTask(p, put(peaksM, p));
+      return true;
+    }
+  } else {
+    DMAMEM static int16_t buf[kScanFrames];
+    const uint32_t n = scanFrames - scanAt < kScanFrames ? scanFrames - scanAt : kScanFrames;
+    if (n && !rd.frames(scanAt, n, buf)) {
+      static OnsetsRep m;
+      m = OnsetsRep();
+      m.result = res(BankResult::ReadFail);
+      answerTask(p, put(m, p));
+      return true;
+    }
+    scan->feed(buf, n);
+    scanAt += n;
+    if (scanAt >= scanFrames) {
+      nOnsets = scan->finish(onsets);
+      onsCrc = scanCrc;
+      onsFrames = scanFrames;
+      answerTask(p, onsetPiece(onsQ.skip, p));
+      return true;
+    }
+  }
+  const uint32_t now = millis();
+  if (now - lastProgress >= kProgressMs) {
+    lastProgress = now;
+    if (task == Task::Peaks) progress(static_cast<uint32_t>(peaksDone), peaksQ.cols);
+    else progress(scanAt, scanFrames);
+  }
+  return true;
+}
+
+struct Bg final : mt::BgWork {
+  bool step() override { return taskStep(); }
+} bgWork;
+
 }  // namespace
+
+void begin() { stream::addBackground(&bgWork); }
+
+void reset() {
+  endTask();
+  answered = false;
+}
 
 bool isRequest(Msg t) { return t == Msg::WavePeaks || t == Msg::Onsets; }
 
-int handle(Msg t, const uint8_t* p, int n, uint8_t* out) {
+int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out) {
+  const uint8_t type = static_cast<uint8_t>(t);
+  if (task != Task::None && taskType == type && taskSeq == seq) {  // a retry of the running one
+    progress(0, 0);
+    return -1;
+  }
+  if (answered && ansType == type && ansSeq == seq) {  // a retry: its reply got lost
+    memcpy(out, ansBuf, ansLen);
+    return ansLen;
+  }
+  endTask();
   Reader r(p, n);
+  taskType = type;
+  taskSeq = seq;
+  lastProgress = millis();
   return t == Msg::WavePeaks ? peaks(r, out) : onsetList(r, out);
 }
 

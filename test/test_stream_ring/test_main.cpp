@@ -4,10 +4,12 @@
 using namespace mt;
 
 static StreamRing ring;
+static int16_t ringBuf[8192];
 static int16_t in[20000], out[40000];
 
 void setUp() {
   ring.stop();
+  ring.setBuffer(ringBuf, 8192);
   ring.reset();
 }
 void tearDown() {}
@@ -49,7 +51,7 @@ void test_resampler_48k_length_and_bound() {
 void test_ring_plays_then_stops_when_finished() {
   for (int i = 0; i < 300; ++i) in[i] = 1000;
   ring.write(in, 300);
-  TEST_ASSERT_EQUAL_UINT32(StreamRing::kLen - 300, ring.space());
+  TEST_ASSERT_EQUAL_UINT32(ring.len() - 300, ring.space());
   ring.finish();
   ring.start();
   int16_t blk[128];
@@ -123,6 +125,36 @@ void test_ring_mixes_into_both_channels() {
   TEST_ASSERT_EQUAL_UINT32(0, ring.avail());  // one read for both
 }
 
+void test_ring_external_buffer_wraps() {
+  static int16_t small[3072];
+  ring.stop();
+  ring.setBuffer(small, 3072);
+  ring.reset();
+  TEST_ASSERT_EQUAL_UINT32(3072, ring.space());
+  int16_t blk[128];
+  int next = 0;
+  ring.start();
+  for (int round = 0; round < 60; ++round) {  // 60 x 128 frames: the ring wraps twice
+    for (int i = 0; i < 128; ++i) in[i] = static_cast<int16_t>(round * 128 + i);
+    ring.write(in, 128);
+    for (auto& v : blk) v = 0;
+    ring.mix(blk, 128, 1.f);
+    for (int i = 0; i < 128; ++i, ++next) TEST_ASSERT_EQUAL_INT16(next, blk[i]);
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, ring.takeUnderruns());
+}
+
+void test_ring_without_buffer_is_silent() {
+  ring.stop();
+  ring.setBuffer(nullptr, 0);
+  ring.reset();
+  TEST_ASSERT_EQUAL_UINT32(0, ring.space());
+  ring.start();
+  int16_t blk[16] = {7};
+  ring.mix(blk, 16, 1.f);
+  TEST_ASSERT_EQUAL_INT16(7, blk[0]);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_resampler_same_rate_passes_through);
@@ -133,5 +165,7 @@ int main(int, char**) {
   RUN_TEST(test_ring_wraps_and_saturates);
   RUN_TEST(test_stopped_ring_adds_nothing);
   RUN_TEST(test_ring_mixes_into_both_channels);
+  RUN_TEST(test_ring_external_buffer_wraps);
+  RUN_TEST(test_ring_without_buffer_is_silent);
   return UNITY_END();
 }

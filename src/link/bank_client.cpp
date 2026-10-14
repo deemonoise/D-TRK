@@ -108,6 +108,17 @@ bool shortCall(Msg t, const Req& q, uint8_t* reply, int& len, uint32_t timeoutMs
   return w.ok() && slink::request(t, p, w.size(), t, reply, len, timeoutMs) && len > 0;
 }
 
+// An editor tool request (WavePeaks / Onsets): the synth board answers at once when the sample is in
+// its memory, else when its card read is done (Progress meanwhile, so no fixed timeout).
+template <class Req>
+bool toolCall(Msg t, const Req& q, uint8_t* reply, int& len) {
+  uint8_t p[kMaxPayload];
+  Writer w(p, sizeof p);
+  encode(q, w);
+  len = 0;
+  return w.ok() && slink::requestLong(t, p, w.size(), reply, len) && len > 0;
+}
+
 BankResult importRaw(const char* path, uint8_t kind, const uint32_t* knownCrc, BankImportRep& rep, BankProgressFn cb,
                      void* ctx) {
   if (!engineIdle()) return BankResult::Busy;
@@ -335,7 +346,7 @@ BankResult wavePeaks(int index, uint32_t col0, uint32_t span, int width, int col
     q.cols = static_cast<uint8_t>(cols - done < WavePeaksRep::kMaxCols ? cols - done : WavePeaksRep::kMaxCols);
     uint8_t reply[kMaxPayload];
     int len = 0;
-    if (!shortCall(Msg::WavePeaks, q, reply, len)) return BankResult::Link;
+    if (!toolCall(Msg::WavePeaks, q, reply, len)) return BankResult::Link;
     Reader rd(reply, len);
     if (!decode(rd, rep)) return result(reply[0]);
     if (rep.result != 0) return result(rep.result);
@@ -359,8 +370,8 @@ int onsets(int index, mt::Onset* out, int max, BankResult* err) {
     q.skip = static_cast<uint8_t>(n);
     uint8_t reply[kMaxPayload];
     int len = 0;
-    // The first piece may wait for the detection on the whole sample.
-    if (!shortCall(Msg::Onsets, q, reply, len, n ? 300 : 1000)) {
+    // The first piece waits for the detection on the whole sample (read from the card).
+    if (!toolCall(Msg::Onsets, q, reply, len)) {
       r = BankResult::Link;
       break;
     }
