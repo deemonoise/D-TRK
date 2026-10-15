@@ -1861,6 +1861,80 @@ void test_perf_step_clock_odd_pass() {
   }
 }
 
+static std::vector<SynRec> songClocks() {
+  std::vector<SynRec> out;
+  for (const auto& r : sink->synKind(0xF6))
+    if (r.b[1] == 5) out.push_back(r);
+  return out;
+}
+
+// The song clock (0xF6 5, trance gates): the 1/16 count since start, mod 64, not restarted per pass
+// (a 12-step pattern: 0..35 over 3 passes), on the first INT track at the unshifted time.
+void test_song_clock_absolute_across_passes() {
+  p->tracks[1].out = TrackOut::Int;
+  p->tracks[4].out = TrackOut::Int;
+  p->patterns[0].length = 12;
+  p->patterns[0].swing = 70;
+  seq->start(0, *sink);
+  const uint64_t su = 625000ull * 24 / p->bpm;
+  run(0, 6 * 12 * su - su / 2);
+  const auto v = songClocks();
+  TEST_ASSERT_EQUAL(72, v.size());
+  for (size_t i = 0; i < v.size(); ++i) {
+    TEST_ASSERT_EQUAL(1, v[i].track);
+    TEST_ASSERT_EQUAL(static_cast<int>(i % 64), v[i].b[2]);
+    TEST_ASSERT_TRUE(v[i].t + 1 >= i * su && v[i].t <= i * su + 1);
+  }
+}
+
+// 1/32 and 13 steps (6.5 sixteenths): a clock every other step counted from the start, so passes 2,
+// 4 .. begin between two clocks.
+void test_song_clock_odd_pass() {
+  p->tracks[0].out = TrackOut::Int;
+  p->patterns[0].res = Resolution::ThirtySecond;
+  p->patterns[0].length = 13;
+  seq->start(0, *sink);
+  const uint64_t su = 625000ull * 12 / p->bpm;
+  run(0, 4 * 13 * su - su / 2);
+  const auto v = songClocks();
+  TEST_ASSERT_EQUAL(26, v.size());
+  for (size_t i = 0; i < v.size(); ++i) {
+    TEST_ASSERT_EQUAL(static_cast<int>(i), v[i].b[2]);
+    TEST_ASSERT_TRUE(v[i].t + 1 >= 2 * i * su && v[i].t <= 2 * i * su + 1);
+  }
+}
+
+// Pause rewinds the unheard steps with the count; resume goes on from there (no gap, no repeat).
+// Stop tells the synth (0xFD: gates bypassed); start begins at 0 again.
+void test_song_clock_pause_resume_stop() {
+  p->tracks[2].out = TrackOut::Int;
+  const uint64_t su = 625000ull * 24 / p->bpm;
+  seq->start(0, *sink);
+  run(0, 5 * su + su / 2);
+  sink->now = 5 * su + su / 2;
+  seq->pause(sink->now, *sink);
+  sink->now = 10 * su;
+  seq->resume(sink->now, *sink);
+  run(10 * su, 14 * su);
+  auto v = songClocks();
+  TEST_ASSERT_TRUE(v.size() >= 9);
+  for (size_t i = 0; i < v.size(); ++i) TEST_ASSERT_EQUAL(static_cast<int>(i), v[i].b[2]);
+  TEST_ASSERT_EQUAL(0, sink->synKind(0xFD).size());
+  sink->now = 14 * su;
+  seq->stop(sink->now, *sink);
+  const auto fd = sink->synKind(0xFD);
+  TEST_ASSERT_EQUAL(1, fd.size());
+  TEST_ASSERT_EQUAL(2, fd[0].track);
+  TEST_ASSERT_EQUAL(1, fd[0].len);
+  sink->log.clear();
+  sink->syn.clear();
+  seq->start(20 * su, *sink);
+  run(20 * su, 21 * su);
+  v = songClocks();
+  TEST_ASSERT_TRUE(v.size() >= 1);
+  TEST_ASSERT_EQUAL(0, v[0].b[2]);
+}
+
 // Pause and resume reach the synth too (TEMPO LFOs with Retrig OFF hold while paused).
 void test_pause_resume_sent_to_synth() {
   p->tracks[2].out = TrackOut::Int;
@@ -2728,6 +2802,9 @@ int main() {
   RUN_TEST(test_perf_step_clock_to_synth);
   RUN_TEST(test_perf_step_clock_resolution_and_midi_only);
   RUN_TEST(test_perf_step_clock_odd_pass);
+  RUN_TEST(test_song_clock_absolute_across_passes);
+  RUN_TEST(test_song_clock_odd_pass);
+  RUN_TEST(test_song_clock_pause_resume_stop);
   RUN_TEST(test_pause_resume_sent_to_synth);
   RUN_TEST(test_track_out_change_releases_held_notes);
   RUN_TEST(test_int_track_synth_fx_before_note);

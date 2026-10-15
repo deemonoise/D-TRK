@@ -40,13 +40,18 @@ class PerfBus {
   // Throws and freeze, read by the synth for this block (before delay / reverb).
   float delaySend() const;   // 0..1, x the mono mix into the delay send
   float reverbSend() const;  // 0..1
+  float modSend() const;     // 0..1, MOD THROW: x the mono mix into the MOD bus
+  // TAPE WOBBLE: the delay's wear while held (0..127, the delay forced to TAPE), -1 when not held.
+  int tapeWobble() const { return stack_.held(PerfFx::TapeWobble) ? stack_.depth(PerfFx::TapeWobble) : -1; }
   bool freeze() const { return stack_.held(PerfFx::Freeze); }
   float freezeDry() const;   // live mix gain under a frozen reverb, 0..1
   // The return levels stay up for a while after a throw / freeze ends (its tail): the delay's after
-  // DELAY THROW, the reverb's after REVERB THROW or FREEZE. Updated by process().
+  // DELAY THROW, the reverb's after REVERB THROW or FREEZE, the MOD bus's after MOD THROW. Updated by
+  // process().
   bool delayTail() const { return dTail_ > 0; }
   bool reverbTail() const { return rTail_ > 0; }
-  bool sendTail() const { return dTail_ > 0 || rTail_ > 0; }
+  bool modTail() const { return mTail_ > 0; }
+  bool sendTail() const { return dTail_ > 0 || rTail_ > 0 || mTail_ > 0; }
   // Back to rest at once (audio park): nothing held, no tails, heads, fades and effect state
   // cleared. The ring content and the grid stay.
   void reset();
@@ -103,7 +108,7 @@ class PerfBus {
   uint32_t fresh_ = 0;           // frames before w_ written without a pause (live, in order)
   double gridPos_ = 0;           // steps since transportStart, modulo kGridWrap (no float drift)
   int syncStep_ = -1, syncOff_ = 0;  // pending stepAt(), -1 none
-  uint32_t dTail_ = 0, rTail_ = 0;  // samples left of the delay / reverb send tails
+  uint32_t dTail_ = 0, rTail_ = 0, mTail_ = 0;  // samples left of the delay / reverb / MOD send tails
   float fade_[kTones] = {};
   // Buffer stage: the playing head and the one it crossfades from (xf_ samples left, linear).
   Head head_, out_;

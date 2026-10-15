@@ -365,14 +365,15 @@ bool App::doUndo() {
 }
 
 // Button n (0-7) addresses track n of the half holding the cursor (1-8 or 9-16). Grid takes
-// selection and note entry, the sample editor plays slices (button index); Shift + N mutes on
-// every other screen too.
+// selection and note entry, the sample editor plays slices (button index), TRACK INS toggles the
+// trance gate steps being edited; Shift + N mutes on every other screen too.
 void App::trackKey(int n, bool shift) {
   if (n < 0 || n >= mt::kTrackButtons) return;
   const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (tab_ == Tab::Grid && grid_.trackKey(n, shift)) return;
   if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
   if (tab_ == Tab::Song && song_.trackKey(n, shift)) return;
+  if (tab_ == Tab::Track && track_.trackKey(n, shift)) return;  // the trance gate's Steps editor
   if (!shift) {
     setCurTrack(track);
     return;
@@ -389,7 +390,7 @@ void App::trackKey(int n, bool shift) {
 
 bool App::holdVolume() const {
   return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) &&
-         !(tab_ == Tab::Song && perf_.on()) && !busy_;
+         !(tab_ == Tab::Song && perf_.on()) && !(tab_ == Tab::Track && track_.buttonsBusy()) && !busy_;
 }
 
 // Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.

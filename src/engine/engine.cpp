@@ -78,7 +78,7 @@ void run(void*) {
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
     const uint64_t next = seq->process(nowUs(), midi);
-    publish();  // under the mutex: seqToPsram() / seqToInternal() may move seq
+    publish();  // under the mutex: core_ram may move seq (moveSeq)
     xSemaphoreGive(projMutex);
 
     if (next != mt::kNever) {
@@ -101,46 +101,25 @@ uint64_t nowUs() {
   return v;
 }
 
-void reserve() {
-  if (!seqMem) seqMem = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-}
+void reserve(void* mem) { seqMem = mem; }
 
 bool seqInternal() { return seq && esp_ptr_internal(seq); }
 
-namespace {
-
-bool seqWasInternal = false;  // seqToPsram() moved it out of internal RAM
-
 // The sequencer holds no pointers into itself (Project& and plain arrays): a byte copy moves it.
-bool moveSeq(uint32_t caps) {
-  void* nb = heap_caps_malloc(sizeof(mt::Sequencer), caps);
-  if (!nb) return false;
+void* moveSeq(void* dst) {
   xSemaphoreTake(projMutex, portMAX_DELAY);
   void* old = seq;
-  memcpy(nb, old, sizeof(mt::Sequencer));
-  seq = static_cast<mt::Sequencer*>(nb);
-  seqMem = esp_ptr_internal(nb) ? nb : nullptr;
+  memcpy(dst, old, sizeof(mt::Sequencer));
+  seq = static_cast<mt::Sequencer*>(dst);
   xSemaphoreGive(projMutex);
-  heap_caps_free(old);
-  return true;
-}
-
-}  // namespace
-
-void seqToPsram() {
-  if (!seqInternal()) return;
-  seqWasInternal = moveSeq(MALLOC_CAP_SPIRAM);
-}
-
-void seqToInternal() {
-  if (!seqWasInternal || seqInternal()) return;
-  if (moveSeq(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) seqWasInternal = false;
+  return old;
 }
 
 void begin(mt::Project* p) {
-  // ~50 KB: keep it out of PSRAM, the engine touches it on every event. reserve() took it at boot.
-  reserve();
-  seq = seqMem ? new (seqMem) mt::Sequencer(*p) : new mt::Sequencer(*p);
+  // ~34 KB: keep it out of PSRAM, the engine touches it on every event. reserve() handed it over at boot.
+  // Its cold part (step history, MIDI-out note table, ~17 KB) in PSRAM: touched once per step / note.
+  void* cold = heap_caps_malloc(mt::Sequencer::coldBytes(), MALLOC_CAP_SPIRAM);
+  seq = seqMem ? new (seqMem) mt::Sequencer(*p, cold) : new mt::Sequencer(*p, cold);
   seq->seed(esp_random());
   midi.uart.begin();
   cmds = xQueueCreate(16, sizeof(Command));

@@ -1,9 +1,15 @@
 #pragma once
 #include <stdint.h>
+#include <atomic>
 #include "model.h"
 #include "synth_comp.h"
+#include "synth_crush.h"
 #include "synth_delay.h"
+#include "synth_drive.h"
+#include "synth_eq.h"
+#include "synth_modfx.h"
 #include "synth_perf.h"
+#include "synth_shimmer.h"
 #include "synth_reverb.h"
 #include "synth_voice.h"
 
@@ -42,7 +48,22 @@ static_assert(kLfos == 4, "LfoMods::depth initializer");
 // restarts the PERF grid), 0xF6 op val (PERF on the master mix, any track; the UI sends it on
 // kPreviewTrack): op 0 press PerfFx val, 1 release PerfFx val, 2 turn the last pressed by
 // static_cast<int8_t>(val), 3 release all, 4 step clock: 1/16 step val (mod 64) of the grid starts
-// here (the sequencer sends it on the first INT track, see PerfBus::stepAt).
+// here (the sequencer sends it on the first INT track, see PerfBus::stepAt), 5 song clock: 1/16
+// step val (mod 64) since play starts here (the trance gate's position, see gatePos), 0xF7 t (on
+// kPreviewTrack): the preview track plays through pattern track t's insert (t >= kTracks: none),
+// 0xFD (any track): the transport stopped (trance gates bypassed until the next 0xFA).
+//
+// Each track is a channel strip (TrackStrip): its voices add into one mono signal, which goes through
+// the insert (drive, then bit / sample-rate crush, then the trance gate; TrackCfg), the fader
+// (TrackCfg::vol), the sends and the pan. The strip takes the locks and LFO targets of the track's
+// newest voice (DRV, BIT, SRR, DTY, GTE, PAN, DLY, RVB, MOD): one value for the whole track, a KIT
+// shares the KIT's delay / reverb sends (the MOD send is the track's).
+//
+// Master chain (renderCore): PERF throws -> MOD bus (ModFx, Project::mod*: the tracks' MOD sends ->
+// a stereo return into the mix) -> delay (Project::dlyMode, dlyChar) -> freeze duck -> reverb (SHIMMER:
+// the pitch shifter in its feedback) -> compressor -> + sidechain key -> master EQ (eqLow / eqHigh)
+// -> PERF -> master gain, soft clip. The defaults (OFF, DIGITAL, PLAIN, flat) are bit-exact to the
+// chain before them.
 //
 // Synth fx follow the step model of the sequencer: 0xF5 kSynthStep (ticks per step | 0x80 if the step
 // has a note) opens a step, then come the step's fx, then its notes. On a step with a note the fx apply
@@ -69,6 +90,17 @@ class Synth {
   void setDelayBuffer(int16_t* buf, uint32_t len) { delay_.setBuffer(buf, len); }
   // Reverb buffer (len floats >= Reverb::kBufLen, owned by the caller), nullptr = no reverb. Clears it.
   void setReverbBuffer(float* buf, int len) { reverb_.setBuffer(buf, len); }
+  // Shimmer line (len int16 >= PitchShift::kLen) and its feedback block (wet: kBlock floats), both
+  // owned by the caller, next to the reverb buffer; nullptr = rvbMode SHIMMER sounds PLAIN. Clears it.
+  void setShimmerBuffer(int16_t* buf, uint32_t len, float* wet) {
+    shimmer_.setBuffer(buf, len);
+    shimWet_ = wet;
+    shimOn_ = buf && wet && len >= PitchShift::kLen;
+    shimRan_ = false;
+  }
+  // MOD bus line (len int16 >= ModFx::kLineLen, owned by the caller, next to the reverb buffer),
+  // nullptr = CHORUS / ENSEMBLE / FLANGER silent (PHASER runs). Resets the MOD bus.
+  void setModBuffer(int16_t* buf, uint32_t len) { modfx_.setBuffer(buf && len >= ModFx::kLineLen ? buf : nullptr); }
   // PERF ring buffer (frames stereo frames, 2 x frames int16, owned by the caller), nullptr = the
   // buffer effects (REPEAT .. TAPE STOP) silent. clear: see PerfBus::setBuffer.
   void setPerfBuffer(int16_t* buf, uint32_t frames, bool clear = true) { perf_.setBuffer(buf, frames, clear); }
@@ -88,6 +120,38 @@ class Synth {
   void render(int16_t* out);
 
   int activeVoices() const;
+
+  // A track's channel strip (see the class comment). Gains: pan x fader, current, per-sample steps
+  // of the ramp, targets reached at the next control update; panSet false: the next refresh snaps.
+  struct TrackStrip {
+    float gl = 1, gr = 1, dgl = 0, dgr = 0, tgl = 1, tgr = 1;
+    bool panSet = false;
+    float fader = 1;  // TrackCfg::vol / 127
+    // The newest voice's send levels x fader: current, per-sample steps, targets (ramped like the
+    // gains, landing at the next control update).
+    float send = 0, rsend = 0, dsend = 0, drsend = 0, tsend = 0, trsend = 0;
+    float msend = 0, dmsend = 0, tmsend = 0;  // the MOD send, the same way
+    // Drive: a change (amount, model) crossfades from drvOld (the settings before it, its state
+    // running on) to drive over kControl samples; drvFade 1 = settled (drvOld unused).
+    ModelDrive drive, drvOld;
+    float drvFade = 1;
+    Crush crush;
+    // Trance gate: gain g moves toward the step's target (1 open, floor closed) by up / down per
+    // sample. on: depth > 0 (still runs while g ramps back to 1). len: the open part of a step.
+    struct Gate {
+      float g = 1, up = 1, down = 1, floor = 1, len = 1, steps = 1;  // steps: 1/16 per gate step
+      uint16_t mask = 0;
+      uint16_t ad = 0xFFFF;  // gateAtk | gateRel << 8 that up / down were made for
+      bool on = false;
+    } gate;
+  };
+  const TrackStrip& strip(uint8_t track) const { return strips_[track < kSynthTracks ? track : 0]; }
+  // Trance gate position in 1/16 steps since play (0 .. 64, wraps), as of the last block; -1 while
+  // the transport is stopped (gates bypassed). Read by the UI without a lock.
+  float gatePos() const { return gateOut_; }
+  // Envelope follower of pattern track t (TrackCfg::fol*): its envelope 0..1 as of the last control
+  // update (0 = off or silent source). Read by the UI without a lock.
+  float followerLevel(uint8_t t) const { return t < kTracks ? folEnv_[t] : 0.f; }
 
   // CPU guard: load = the last block's render time / the block's duration, after every block.
   // Above kLoadHigh (smoothed) the oldest voice, releasing first, fades out (kStealMs) and the
@@ -113,16 +177,31 @@ class Synth {
   // Profiling (PROJ -> SYS -> CPU profile): cycles spent per stage, summed until takeProfile().
   // clock = a cycle counter; nullptr (the default) = off, no cost. cache = cacheInstruments(). Control: instLfo = the shared
   // LFOs, ctlMod / ctlFlt / ctlEng = a voice's update up to the filter, the filter, the engine's.
-  // mix = clearing the buses and the segment loop. Counts (takeProfile): ctlMod = control updates,
+  // mix = clearing the buses and the segment loop; strip = the tracks' strips. Counts (takeProfile): ctlMod = control updates,
   // the voice stages = voices sounding at a block's start, summed over the blocks.
   enum ProfStage : uint8_t {
     kProfQueue, kProfEvents, kProfCache, kProfInstLfo, kProfCtlMod, kProfCtlFlt, kProfCtlEng, kProfChip,
     kProfSample, kProfFm, kProfDrum, kProfSyn, kProfMix, kProfDelay, kProfReverb, kProfComp, kProfPerf,
-    kProfMaster, kProfStages
+    kProfMaster, kProfStrip, kProfMod, kProfShim, kProfEq, kProfStages
   };
   static const char* profName(int stage);
-  void setProfiler(uint32_t (*clock)()) { clock_ = clock; }
+  // Any task: arms (or, nullptr, stops) the profiler. It takes effect at the start of the next block
+  // (syncProfiler), never inside one: a block that began without the clock has no valid last mark.
+  // Each arming clears the sums, counts and blocks when it takes effect.
+  void setProfiler(uint32_t (*clock)()) {
+    clockReq_.store(clock, std::memory_order_relaxed);
+    profReq_.fetch_add(1, std::memory_order_release);
+  }
+  // Audio task, at a block's start (renderCore calls it too; idempotent): applies a pending
+  // setProfiler. True = profiling (re)started with this block (the caller resets its own peaks).
+  MT_INLINE bool syncProfiler() {  // per block: a new setProfiler call (rare) out of line
+    return profReq_.load(std::memory_order_acquire) != profSeen_ && applyProfiler();
+  }
+  bool applyProfiler();
+  // The clock in effect for the current block (audio task).
   bool profiling() const { return clock_ != nullptr; }
+  // Requested state (any task): what the last setProfiler asked for.
+  bool profilerArmed() const { return clockReq_.load(std::memory_order_relaxed) != nullptr; }
   void addProfile(int stage, uint32_t cycles) { prof_[stage] += cycles; }
   // Copies the sums, counts (and the blocks rendered) and clears them.
   void takeProfile(uint32_t out[kProfStages], uint32_t count[kProfStages], uint32_t& blocks);
@@ -213,7 +292,8 @@ class Synth {
   uint8_t trackInstr(uint8_t track) const;
   // The voice's instrument: a KIT sampler lane's, built into laneScratch_ (valid until the next
   // call), else inst(v.instr).
-  const Instrument& instrOf(const Voice& v) const;
+  MT_INLINE const Instrument& instrOf(const Voice& v) const { return v.lane ? laneOf(v) : inst(v.instr); }
+  const Instrument& laneOf(const Voice& v) const;  // builds the lane (flash)
   // Instrument i: its copy in internal RAM if cached, else the project's.
   MT_INLINE const Instrument& inst(uint8_t i) const {
     const int s = i < kInstruments ? instSlot_[i] : -1;
@@ -228,9 +308,23 @@ class Synth {
   void cacheLfos(int m);  // instrument m's LFO settings into instLfoCfg_ / instShared_
   uint8_t trackVol(uint8_t track) const;
   uint8_t trackPan(uint8_t track) const;
-  // Pan gains towards pan (0..127): the ramp reaches them in len samples (the next control update);
-  // a voice without panSet snaps.
-  static void setPanTarget(Voice& v, uint8_t pan, int len);
+  // The insert settings of a runtime track: its TrackCfg, the preview track's previewIns_ one, or
+  // nullptr (no insert).
+  const TrackCfg* insertCfg(uint8_t track) const;
+  // The strip's values from the track's newest voice nv (-1: none, the next refresh snaps); the pan
+  // ramp reaches its target in len samples (the next control update).
+  void refreshStrip(uint8_t track, int nv, int len);
+  // The strip of track over the segment trk_[0..n) at block position pos: insert, sends,
+  // peak, pan into the mix (or the sidechain bus).
+  void runStrip(uint8_t track, int pos, int n, int scTrack, bool keyAround);
+  // Envelope followers, at each control boundary before the voices' updates: the sources' levels
+  // over the last segment (srcPk_) into the destination tracks' envelopes and their targets.
+  void updateFollowers();
+  // The trance gate's gain target at gate position p (in gate steps).
+  float gateTarget(const TrackStrip::Gate& g, float p) const;
+  void gateSlopes(TrackStrip::Gate& g, uint16_t ad);
+  void snapStrip(TrackStrip& s);
+  void runGate(TrackStrip::Gate& g, float* x, int n);
   // The block through the master chain into mixL_ / mixR_ (master gain and soft clip applied).
   void renderCore();
 
@@ -268,17 +362,31 @@ class Synth {
   float mixL_[kBlock], mixR_[kBlock];
   float send_[kBlock];   // delay send bus (mono, pre-pan)
   float rsend_[kBlock];  // reverb send bus (mono, pre-pan)
-  float scL_[kBlock], scR_[kBlock];  // sidechain key: the voices of Project::scTrack (bypass the compressor)
+  float msend_[kBlock];  // MOD send bus (mono, pre-pan)
+  float* shimWet_ = nullptr;  // SHIMMER: the reverb's last block (kBlock, mono, before the level)
+  float scL_[kBlock], scR_[kBlock];  // sidechain key: the strip of Project::scTrack (bypasses the compressor)
+  // Channel strips: one control segment of each track's mono sum, the tracks touched by an event
+  // since their last refresh (bit = track), the preview track's insert (0xF7).
+  float trk_[kControl];  // the mono sum of the track being rendered (renderCore -> runStrip)
+  TrackStrip strips_[kSynthTracks];
+  uint32_t stripDirty_ = 0;
+  uint8_t previewIns_ = kTracks;
+  static_assert(kSynthTracks <= 32, "stripDirty_ / hot masks are uint32_t");
   Reverb reverb_;
   Compressor comp_;
+  ModFx modfx_;  // its 2 KB line in the reverb block (setModBuffer)
+  MasterEq eq_;
+  Shimmer shimmer_;
+  bool shimOn_ = false;   // a shimmer buffer is set
+  bool shimRan_ = false;  // the shimmer ran last block (shimWet_ holds that block's reverb)
   // PERF: the punch-in effects on the master, and the synth's side of throws / freeze. Ramps
   // (per sample, kPerfRamp): the throw send gains and the dry gain under a freeze, so a press or
   // release never clicks. perfDRet_ / perfRRet_: the delay / reverb return floor while its throw /
   // freeze (or its tail) runs, up kPerfRetUp per block, back down 1 per block once the tail ends.
   PerfBus perf_;
-  float perfDs_ = 0, perfRs_ = 0;  // throw send gains, 0..1
+  float perfDs_ = 0, perfRs_ = 0, perfMs_ = 0;  // throw send gains (delay, reverb, MOD), 0..1
   float perfDry_ = 1;              // live mix gain under a freeze
-  uint8_t perfDRet_ = 0, perfRRet_ = 0;  // 0..kPerfRet
+  uint8_t perfDRet_ = 0, perfRRet_ = 0, perfMRet_ = 0;  // 0..kPerfRet
   bool rvbRan_ = false;  // the reverb ran last block (an effective level > 0)
   static constexpr float kPerfRamp = 1.f / 64.f;
   static constexpr uint8_t kPerfRet = 100, kPerfRetUp = 8;
@@ -286,7 +394,10 @@ class Synth {
   Delay delay_;
   float trackPeak_[kSynthTracks] = {};
   bool meters_ = false;
-  uint32_t (*clock_)() = nullptr;
+  uint32_t (*clock_)() = nullptr;                   // in effect (audio task only)
+  std::atomic<uint32_t (*)()> clockReq_{nullptr};   // requested by setProfiler
+  std::atomic<uint32_t> profReq_{0};                // setProfiler calls
+  uint32_t profSeen_ = 0;                           // the last applied profReq_
   uint32_t prof_[kProfStages] = {};
   uint32_t profN_[kProfStages] = {};
   uint32_t profBlocks_ = 0;
@@ -310,6 +421,29 @@ class Synth {
   float instLfoOut_[kInstruments][kLfos] = {};
   uint8_t instLfoWrap_[kInstruments] = {};
   bool paused_ = false;  // transport paused (0xFC .. 0xFB / 0xFA): TEMPO ones hold
+  // Song clock for the trance gates: 1/16 steps since play (wraps at 64, a multiple of every gate
+  // cycle); 0xFA zeroes it, 0xF6 5 re-anchors it, it free-runs per segment while running and not
+  // paused. running_: between 0xFA and 0xFD (stop). Kept by reset() (audio park mid-play).
+  double gatePos_ = 0;
+  bool running_ = false;
+  volatile float gateOut_ = -1;  // gatePos()
+  float sp16_ = 1;  // samples per 1/16 step, this block
+  float gateSp16_ = 0;     // sp16_ of gateCtlInc_
+  double gateCtlInc_ = 0;  // kControl / gateSp16_
+  // Envelope followers (TrackCfg::fol*, see updateFollowers). srcPk_: a source track's peak after its
+  // insert, before its fader, since the last boundary (tracks of folSrcMask_). Per destination track:
+  // folEnv_ the envelope, folMod_ = folAmt / 64 x envelope, folLa_ the control() target (an LfoDest,
+  // -1 = none). folVoice_: tracks whose voices take it (control: la, or the LFO mods for L1..L4
+  // RATE / DEPTH), folVolMask_: tracks whose fader it moves (refreshStrip). folKey_ / folK_: cached
+  // attack / release coefficients (folCoef).
+  float srcPk_[kSynthTracks] = {};
+  volatile float folEnv_[kTracks] = {};
+  float folMod_[kTracks] = {};
+  int8_t folLa_[kTracks] = {};
+  uint32_t folSrcMask_ = 0, folVoice_ = 0, folVolMask_ = 0;
+  bool folIdle_ = false;  // the last updateFollowers found no source: all envelopes, mods and masks 0
+  uint16_t folKey_[kTracks];
+  float folK_[kTracks][2] = {};
   bool fmCache_ = true;
   uint32_t fmCalls_ = 0;
   uint32_t drumCalls_ = 0;

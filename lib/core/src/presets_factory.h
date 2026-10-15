@@ -22,7 +22,8 @@ struct FactoryPreset {
 
 int factoryCount(InstrType t);
 const FactoryPreset& factoryPreset(InstrType t, int i);  // 0 <= i < factoryCount(t)
-// Instrument{} + type + name + fill.
+// Instrument{} + type + name + fill. drive / crushBits / crushRate / driveModel are the track insert
+// the preset recommends (takePresetInsert copies them to the track it is loaded onto).
 // KIT: the lanes' notes (60 + k) and volumes; no instruments (see factoryBuildKit).
 void factoryBuild(InstrType t, int i, Instrument& out);
 
@@ -30,8 +31,8 @@ void factoryBuild(InstrType t, int i, Instrument& out);
 // the kit itself is in INS25..32.
 int factoryKitBlock(int kitSlot);
 // KIT preset i into p.instruments[kitSlot], its drums into the block from factoryKitBlock (lane k ->
-// block + k, transposed down by k to sound at its own pitch on note 60 + k). Slots past the kit's
-// drums are left as they are.
+// block + k, transposed down by k to sound at its own pitch on note 60 + k), without their insert
+// recommendation (a lane has no insert of its own). Slots past the kit's drums are left as they are.
 void factoryBuildKit(int i, Project& p, int kitSlot);
 
 }  // namespace mt

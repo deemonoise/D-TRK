@@ -93,13 +93,15 @@ MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
     m0 = fastExp2(p.pitchEnv * pitchE_ * (1.f / 12.f));
     m1 = fastExp2(p.pitchEnv * pitchE_ * fastPow(pk, static_cast<float>(span)) * (1.f / 12.f));
   }
+  // No '/' per tick (a __divsf3 call each on the S3): kControl spans divide exactly by a multiply.
+  const float invSpan = span == 32 ? 1.f / 32 : 1.f / static_cast<float>(span);
   for (int k = 0; k < kDrumTones; ++k) {
     const float hz = p.toneHz[k];
     toneLvl_[k] = hz > 0 ? p.toneLvl[k] : 0;
     float h0 = hz * m0, h1 = hz * m1;
     h0 = h0 < kMaxHz ? h0 : kMaxHz;
     h1 = h1 < kMaxHz ? h1 : kMaxHz;
-    const float i0 = h0 * kIncPerHz, di = (h1 - h0) * kIncPerHz / span;
+    const float i0 = h0 * kIncPerHz, di = (h1 - h0) * kIncPerHz * invSpan;
     toneInc_[k] = static_cast<uint32_t>(static_cast<int32_t>(i0));  // < 2^31
     toneDInc_[k] = static_cast<int32_t>(di < 0 ? di - 0.5f : di + 0.5f);
   }
@@ -111,7 +113,9 @@ MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
   // Metal: normalised by the nonzero weights (fixed per machine), filters set only when it sounds.
   int count = 0;
   for (int k = 0; k < kDrumMetal; ++k) count += p.metalW[k] != 0;
-  const float norm = count ? 1.f / count : 0;
+  static_assert(kDrumMetal == 6, "kInvCount");
+  static constexpr float kInvCount[kDrumMetal + 1] = {0, 1.f, 1.f / 2, 1.f / 3, 1.f / 4, 1.f / 5, 1.f / 6};
+  const float norm = kInvCount[count];  // = 1 / count, rounded alike
   bool any = false;
   for (int k = 0; k < kDrumMetal; ++k) {
     const float hz = p.metalHz[k] < kMaxHz ? p.metalHz[k] : kMaxHz;
@@ -128,7 +132,7 @@ MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
     bp2On_ = bpOn_ && p.metalBp2 > 0;
     if (bpOn_) bp1_.set(Svf::Mode::Bp, p.metalBp1, p.metalQ);
     if (bp2On_) bp2_.set(Svf::Mode::Bp, p.metalBp2, p.metalQ);
-    bpGain_ = 1.f / (p.metalQ > 0.5f ? p.metalQ : 0.5f);  // Svf band-pass peak = q
+    bpGain_ = fastRcp(p.metalQ > 0.5f ? p.metalQ : 0.5f);  // Svf band-pass peak = q
     hpOn_ = p.metalHp > 0;
     if (hpOn_) hp_.set(Svf::Mode::Hp, p.metalHp, 0.707f);
   }
@@ -146,7 +150,7 @@ MT_HOT void DrumVoice::control(const DrumParams& p, int span) {
       // Svf band-pass: peak q, bandwidth hz / q, so white noise keeps pi hz q / rate of its power.
       const float hz = p.noiseHz < 20.f ? 20.f : (p.noiseHz > kMaxHz ? kMaxHz : p.noiseHz);
       const float q = p.noiseQ < 0.5f ? 0.5f : p.noiseQ;
-      noiseGain_ = kBpNoise * fastPow(kSynthRate / (3.14159265f * hz * q), 0.5f);
+      noiseGain_ = kBpNoise * fastPow(kSynthRate * fastRcp(3.14159265f * hz * q), 0.5f);
     }
   }
 
@@ -246,7 +250,7 @@ MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp) {
 MT_HOT bool DrumVoice::done() const {
   if (fresh_ || burstsLeft_) return false;
   // Drive raises quiet parts by up to driveGain_ (tanh is linear near 0).
-  const float off = kOff / driveGain_;
+  const float off = kOff * fastRcp(driveGain_);  // driveGain_ 1..8
   const float t = toneE_ * (fabsf(toneLvl_[0]) + fabsf(toneLvl_[1]));
   const float m = metalOn_ ? metalE_ * metalLvl_ + accE_ * metalAcc_ : 0;
   const float nz = noiseE_ * noiseLvl_ * noiseGain_;

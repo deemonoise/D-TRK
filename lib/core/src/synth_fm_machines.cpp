@@ -1,5 +1,6 @@
 #include "synth_fm_machines.h"
 #include <math.h>
+#include "fastmath.h"
 #include "synth_osc.h"
 
 namespace mt {
@@ -10,9 +11,9 @@ constexpr float kFbMax = 1.7f;     // carrier feedback peak, rad: above ~2 the s
 
 float u(float v) { return v <= 0 ? 0 : (v >= 127 ? 1 : v * (1.f / 127.f)); }
 float lerp(float a, float b, float x) { return a + (b - a) * x; }
-float expMap(float lo, float hi, float x) { return lo * powf(hi / lo, x); }
+float expMap(float lo, float hi, float x) { return lo * fastPow(hi / lo, x); }
 float decayMs(float d) { return expMap(5.f, 4000.f, u(d)); }  // as fmDecayMs, fractional
-float toC4(float pitch) { return exp2f((pitch - 60.f) * (1.f / 12.f)); }
+float toC4(float pitch) { return fastExp2((pitch - 60.f) * (1.f / 12.f)); }
 // Interpolated entry of a table at x 0..1.
 float tableAt(const float* t, int n, float x) {
   const float pos = x * (n - 1);
@@ -29,7 +30,7 @@ float within(float ms, float ampMs) {
 // Pitch sweep, semitones, capped so that topHz x the sweep stays below kTopHz.
 float sweepCap(float semis, float topHz) {
   if (topHz <= 0) return semis;
-  const float cap = 12.f * log2f(kTopHz / topHz);
+  const float cap = 12.f * fastLog2(kTopHz / topHz);
   return semis < cap ? semis : (cap > 0 ? cap : 0);
 }
 // Carrier feedback of an operator at hz: less at high pitch (aliasing).
@@ -169,7 +170,7 @@ void chord(const float* m, float pitch, FmParams& p) {
   p.hz = noteHz(pitch);
   const float held = fbHeld(c, w);
   for (int i = 0; i < kFmOps; ++i) {
-    const float ratio = exp2f(iv[i] * (1.f / 12.f));
+    const float ratio = fastExp2(iv[i] * (1.f / 12.f));
     p.op[i] = carrier(ratio, 0.3f, 0, fbLimit(p.hz * ratio) * held);
   }
   p.fbEnv = fbEnvOf(c, w);

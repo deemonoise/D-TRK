@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <new>
 #include "audio/audio.h"
+#include "core_ram.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "hw/input.h"
@@ -9,13 +10,16 @@
 #include "hw/sdcard.h"
 #include "hw/trackio.h"
 #include "model.h"
+#include "net/wifi.h"
 #include "storage/crashlog.h"
 #include "storage/storage.h"
 #include "ui/app.h"
 
 static LGFX lcd;
 static mt::Project* project;
-static ui::App app;
+// The UI state (~50 KB) in PSRAM: nothing in it is real-time, and internal RAM is short (synth,
+// sequencer, reverb, Wi-Fi). Constructed in setup().
+static ui::App* app = nullptr;
 
 // Simple 808 beat so Play produces something right after flashing. DRUM machines play their own
 // pitch at C-4.
@@ -42,8 +46,10 @@ void setup() {
   Serial.begin(115200);
   // Before anything else: the synth and the sequencer need large blocks of internal RAM (in PSRAM
   // the audio costs far more); the SD card, the screen and Wi-Fi fragment it later.
-  audio::reserve();
-  engine::reserve();
+  net::prime();
+  core_ram::reserve();
+  void* uiMem = heap_caps_malloc(sizeof(ui::App), MALLOC_CAP_SPIRAM);
+  app = uiMem ? new (uiMem) ui::App() : new ui::App();
   void* mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_SPIRAM);
   if (!mem) mem = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_8BIT);
   if (!mem) {
@@ -71,32 +77,32 @@ void setup() {
   hw::inputBegin();
   engine::begin(project);
   audio::begin(project);
-  app.begin(&lcd, project);
+  app->begin(&lcd, project);
   engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));  // song position display
   // Bank mounted by audio::begin, engine not playing: bring in the samples the cache lacks.
   int missing = 0;
-  const bool folderFail = loaded && storage::pullSamples(*project, &missing, ui::App::syncProgress, &app) ==
+  const bool folderFail = loaded && storage::pullSamples(*project, &missing, ui::App::syncProgress, app) ==
                                         storage::Result::SamplesNotSaved;
   // One toast: autoload error (nothing loaded), or backup / missing samples / folder not written.
   if (safeBoot) {
-    app.toast("SAFE BOOT: NOTHING LOADED");
+    app->toast("SAFE BOOT: NOTHING LOADED");
   } else if (autoErr != storage::Result::Ok) {
     char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
-    app.toast(msg);
+    app->toast(msg);
   } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped()) {
-    app.loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
+    app->loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
 #ifdef WT_BENCH
   audio::wtBench();
-  app.toast("WT BENCH: /midi/bench.mid");
+  app->toast("WT BENCH: /midi/bench.mid");
 #endif
 }
 
 void loop() {
   hw::InputEvent ev;
-  while (hw::inputPoll(ev, 0)) app.onInput(ev);
-  app.tick();
+  while (hw::inputPoll(ev, 0)) app->onInput(ev);
+  app->tick();
   audio::pollLog();
   vTaskDelay(1);
 }

@@ -12,6 +12,7 @@ bool preset(const char* name, Instrument& out) {
     for (int i = 0; i < factoryCount(type); ++i)
       if (strcmp(factoryPreset(type, i).name, name) == 0) {
         factoryBuild(type, i, out);
+        clearInsert(out);  // a template's tracks start with no insert
         return true;
       }
   }

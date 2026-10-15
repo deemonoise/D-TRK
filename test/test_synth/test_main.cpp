@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <unity.h>
 #include "scale.h"
@@ -106,6 +107,46 @@ void test_track_peaks() {
   s->render(buf);
   s->takeTrackPeaks(pk);
   TEST_ASSERT_EQUAL_FLOAT(0.f, pk[2]);
+}
+
+// Profiler: a setProfiler while a block renders (another task) takes effect at the next block's
+// start; the block in flight keeps its clock, so no stage gets a stale-mark delta.
+static uint32_t profA = 0, profB = 0;
+static int profACalls = 0;
+static uint32_t clockB() { return profB += 1; }
+static uint32_t clockA() {
+  if (++profACalls == 3) s->setProfiler(clockB);  // re-armed mid-block
+  return profA += 1;
+}
+
+void test_profiler_arms_at_block_start() {
+  noteOn(0, 2, 60);
+  s->render(buf);
+  profB = 1000000000u;
+  s->setProfiler(clockA);
+  TEST_ASSERT_TRUE(s->profilerArmed());
+  TEST_ASSERT_FALSE(s->profiling());  // not before the next block
+  uint32_t c[Synth::kProfStages], n[Synth::kProfStages], blocks = 0;
+  s->render(buf);  // clockA all through, though clockB was asked for inside it
+  s->takeProfile(c, n, blocks);
+  TEST_ASSERT_EQUAL_UINT32(1, blocks);
+  uint32_t sum = 0;
+  for (int i = 0; i < Synth::kProfStages; ++i) sum += c[i];
+  TEST_ASSERT_TRUE(sum > 0 && sum <= static_cast<uint32_t>(profACalls));
+  const int aCalls = profACalls;
+  s->render(buf);  // clockB from this block's start: its sums start from 0
+  TEST_ASSERT_EQUAL(aCalls, profACalls);
+  s->takeProfile(c, n, blocks);
+  TEST_ASSERT_EQUAL_UINT32(1, blocks);
+  sum = 0;
+  for (int i = 0; i < Synth::kProfStages; ++i) sum += c[i];
+  TEST_ASSERT_TRUE(sum > 0 && sum < 10000u);
+  s->setProfiler(nullptr);
+  TEST_ASSERT_TRUE(s->profiling());  // still on until the next block
+  s->render(buf);
+  TEST_ASSERT_FALSE(s->profiling());
+  s->takeProfile(c, n, blocks);
+  TEST_ASSERT_EQUAL_UINT32(0, blocks);
 }
 
 void test_note_on_lands_on_its_sample() {
@@ -2607,7 +2648,7 @@ void test_drive_zero_is_bit_identical() {
   int16_t ref[Synth::kBlock * 4];
   for (int k = 0; k < 4; ++k) s->render(ref + k * Synth::kBlock);
   s->reset();
-  p->instruments[0].drive = 0;
+  p->tracks[0].drive = 0;
   p->instruments[0].rsend = 0;
   p->instruments[0].velCut = 63;  // no filter: nothing to move
   noteOn(0, 0, 60);
@@ -2619,9 +2660,9 @@ void test_drive_zero_is_bit_identical() {
 void test_drive_changes_waveform() {
   p->instruments[0].vol = 60;
   const float clean = noteRms(60, 100, 20);
-  p->instruments[0].drive = 127;
+  p->tracks[0].drive = 127;
   const float driven = noteRms(60, 100, 20);
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).drive.on());
+  TEST_ASSERT_TRUE(s->strip(0).drive.on());
   TEST_ASSERT_TRUE(driven > clean * 1.3f);  // the saw squares up
 }
 
@@ -2631,12 +2672,12 @@ void test_drv_lock_on_note_step() {
   noteOn(0, 0, 60);
   noteOn(0, 1, 60);
   s->render(buf);
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).drive.on());
-  TEST_ASSERT_FALSE(s->voice(s->trackVoice(1)).drive.on());
+  TEST_ASSERT_TRUE(s->strip(0).drive.on());
+  TEST_ASSERT_FALSE(s->strip(1).drive.on());
   stepStart(0, 0, 24, false);  // without a note: the sounding voice
   fx(0, 0, Fx::DRV, 0);
   s->render(buf);
-  TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).drive.on());
+  TEST_ASSERT_FALSE(s->strip(0).drive.on());
 }
 
 void test_lfo_drive_dest() {
@@ -2649,11 +2690,166 @@ void test_lfo_drive_dest() {
   bool on = false, off = false;
   for (int k = 0; k < kBlocksPerSec; ++k) {
     s->render(buf);
-    const bool d = s->voice(s->trackVoice(0)).drive.on();
+    const bool d = s->strip(0).drive.on();
     on |= d;
     off |= !d;
   }
   TEST_ASSERT_TRUE(on && off);
+}
+
+// ---- track strip: insert, fader, sends ----
+
+// Two notes on one driven track distort as a sum (intermodulation): not the same as each on its own
+// driven track.
+void test_strip_drive_acts_on_track_sum() {
+  p->tracks[0].drive = p->tracks[1].drive = 127;
+  p->tracks[0].vol = p->tracks[1].vol = 40;
+  noteOn(0, 0, 60);
+  noteOn(0, 0, 67);
+  int16_t one[Synth::kBlock * 4];
+  for (int k = 0; k < 4; ++k) s->render(one + k * Synth::kBlock);
+  s->reset();
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 67);
+  int16_t two[Synth::kBlock * 4];
+  for (int k = 0; k < 4; ++k) s->render(two + k * Synth::kBlock);
+  long diff = 0;
+  for (int i = 0; i < Synth::kBlock * 4; ++i) diff += abs(one[i] - two[i]);
+  TEST_ASSERT_TRUE(diff > 1000);
+}
+
+// The fader comes after the drive: turning the track down scales the driven signal linearly
+// (before, the voice amp fed the drive and a quieter track distorted less).
+void test_strip_fader_after_drive() {
+  p->tracks[0].drive = 127;
+  p->instruments[0].vol = 60;
+  p->tracks[0].vol = 40;
+  const float loud = noteRms(60, 100, 20);
+  p->tracks[0].vol = 10;
+  const float quiet = noteRms(60, 100, 20);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.f / 40.f, quiet / loud);
+}
+
+void test_strip_fader_in_pan_gains() {
+  p->tracks[0].vol = 64;
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_EQUAL_FLOAT(64.f / 127.f, s->strip(0).gl);
+  TEST_ASSERT_EQUAL_FLOAT(64.f / 127.f, s->strip(0).gr);
+}
+
+void test_strip_crush_from_track() {
+  p->tracks[2].crushBits = 100;
+  noteOn(0, 2, 60);
+  noteOn(0, 3, 60);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->strip(2).crush.on());
+  TEST_ASSERT_FALSE(s->strip(3).crush.on());
+  stepStart(0, 2, 24, false);  // a step without a note locks the sounding voice: off
+  fx(0, 2, Fx::BIT, 0);
+  s->render(buf);
+  TEST_ASSERT_FALSE(s->strip(2).crush.on());
+}
+
+// The instrument's own drive / crush no longer sound: only the track's.
+void test_strip_ignores_instrument_drive() {
+  p->instruments[0].drive = 127;
+  p->instruments[0].crushBits = 127;
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_FALSE(s->strip(0).drive.on());
+  TEST_ASSERT_FALSE(s->strip(0).crush.on());
+}
+
+// A KIT lane that plays another instrument sends with the KIT's levels: one send for the track.
+void test_strip_kit_shares_kit_send() {
+  kitSetup(0, 0);
+  Instrument& k = p->instruments[0];
+  k.send = 0;
+  k.rsend = 64;
+  k.kit[1].instr = 5;
+  k.kit[1].note = 61;
+  p->instruments[5].send = 127;
+  p->instruments[5].rsend = 0;
+  noteOn(0, 0, 61);
+  s->render(buf);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, s->strip(0).send);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 64.f / 127.f, s->strip(0).rsend);
+}
+
+// The preview track plays through the insert 0xF7 names; kTracks: none.
+void test_strip_preview_insert() {
+  p->tracks[3].drive = 100;
+  send(0, kPreviewTrack, 0xF7, 3, 0, 2);
+  noteOn(0, kPreviewTrack, 60);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->strip(kPreviewTrack).drive.on());
+  send(0, kPreviewTrack, 0xF7, kTracks, 0, 2);
+  s->render(buf);
+  s->render(buf);
+  TEST_ASSERT_FALSE(s->strip(kPreviewTrack).drive.on());
+}
+
+// ---- drive models (TrackCfg::driveModel, fx DTY) ----
+
+void test_strip_drive_model_from_track() {
+  p->instruments[0].vol = 60;
+  p->tracks[0].drive = 100;
+  const float tanhRms = noteRms(60, 100, 20);
+  TEST_ASSERT_EQUAL(ModelDrive::kTanh, s->strip(0).drive.model());
+  p->tracks[0].driveModel = static_cast<uint8_t>(DriveModel::Fold);
+  const float foldRms = noteRms(60, 100, 20);
+  TEST_ASSERT_EQUAL(ModelDrive::kFold, s->strip(0).drive.model());
+  TEST_ASSERT_TRUE(fabsf(foldRms - tanhRms) > tanhRms * 0.02f);
+  p->tracks[0].driveModel = 77;  // unknown: TANH
+  noteRms(60, 100, 2);
+  TEST_ASSERT_EQUAL(ModelDrive::kTanh, s->strip(0).drive.model());
+}
+
+// DTY locks this step's note-ons (or the sounding voices on a step without a note); the next note
+// without the lock goes back to the track's model.
+void test_dty_lock_then_revert() {
+  p->tracks[0].drive = p->tracks[1].drive = 90;
+  p->tracks[0].driveModel = p->tracks[1].driveModel = static_cast<uint8_t>(DriveModel::Asym);
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::DTY, static_cast<uint8_t>(DriveModel::Clip));
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(ModelDrive::kClip, s->strip(0).drive.model());
+  TEST_ASSERT_EQUAL(ModelDrive::kAsym, s->strip(1).drive.model());
+  stepStart(0, 0, 24, false);  // without a note: the sounding voice
+  fx(0, 0, Fx::DTY, static_cast<uint8_t>(DriveModel::Rect));
+  s->render(buf);
+  TEST_ASSERT_EQUAL(ModelDrive::kRect, s->strip(0).drive.model());
+  stepStart(0, 0, 24, true);
+  noteOn(0, 0, 64);  // the newest voice, no lock
+  s->render(buf);
+  TEST_ASSERT_EQUAL(ModelDrive::kAsym, s->strip(0).drive.model());
+}
+
+// The preview track takes the model of the track 0xF7 names.
+void test_strip_preview_drive_model() {
+  p->tracks[3].drive = 100;
+  p->tracks[3].driveModel = static_cast<uint8_t>(DriveModel::Rect);
+  send(0, kPreviewTrack, 0xF7, 3, 0, 2);
+  noteOn(0, kPreviewTrack, 60);
+  s->render(buf);
+  TEST_ASSERT_EQUAL(ModelDrive::kRect, s->strip(kPreviewTrack).drive.model());
+}
+
+// The newest voice's DLY lock is the track's send; an older voice's lock is not.
+void test_strip_send_from_newest_voice() {
+  p->instruments[0].send = 20;
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::DLY, 127);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.f, s->strip(0).send);
+  stepStart(0, 0, 24, true);
+  noteOn(0, 0, 64);  // newer, no lock
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.f / 127.f, s->strip(0).send);
 }
 
 // LFO 1 on dest: square, full depth, fast; returns {min, max} of f(voice) over one second.
@@ -2692,11 +2888,11 @@ void test_lfo_rsend_dest() {
 
 void test_lfo_crush_dests() {
   float lo, hi;
-  lfoSweep(LfoDest::Bit, [](const Voice& v) { return v.crush.on() ? 1.f : 0.f; }, lo, hi);
+  lfoSweep(LfoDest::Bit, [](const Voice& v) { return v.bits ? 1.f : 0.f; }, lo, hi);
   TEST_ASSERT_TRUE(lo == 0 && hi == 1);
   tearDown();
   setUp();
-  lfoSweep(LfoDest::Srr, [](const Voice& v) { return v.crush.on() ? 1.f : 0.f; }, lo, hi);
+  lfoSweep(LfoDest::Srr, [](const Voice& v) { return v.srr ? 1.f : 0.f; }, lo, hi);
   TEST_ASSERT_TRUE(lo == 0 && hi == 1);
 }
 
@@ -3204,8 +3400,8 @@ void test_pan_fx_mid_segment_lands_at_boundary() {
     l += abs(lr[2 * i]);
   }
   TEST_ASSERT_TRUE(l > 0);
-  const Voice& v = s->voice(s->trackVoice(0));
-  TEST_ASSERT_TRUE(v.gr == 0.f && v.dgl == 0.f && v.dgr == 0.f);
+  const Synth::TrackStrip& st = s->strip(0);
+  TEST_ASSERT_TRUE(st.gr == 0.f && st.dgl == 0.f && st.dgr == 0.f);
 }
 
 // The reverb is pseudo-stereo: a centred note gets different L and R tails.
@@ -3496,6 +3692,529 @@ void test_perf_reset_drops_throw() {
   renderBoth(*s, ref, 30, true);
 }
 
+// ---- trance gate (TrackCfg::gate*, fx GTE, song clock 0xF6 5) ----
+// 150 BPM: a 1/16 step = 3200 samples = 25 blocks.
+
+static void gateSetup(uint16_t mask, uint8_t depth = 127) {
+  p->bpm = 150;
+  TrackCfg& c = p->tracks[0];
+  c.gateMask = mask;
+  c.gateDepth = depth;
+  c.gateAtk = 0;
+  c.gateRel = 0;
+}
+static void transport(uint8_t m) { send(0, 0, m, 0, 0, 1); }
+static const Synth::TrackStrip::Gate& gate0() { return s->strip(0).gate; }
+static void blocks(int n) {
+  for (int k = 0; k < n; ++k) s->render(buf);
+}
+static bool bufSilent() {
+  for (int i = 0; i < Synth::kBlock; ++i)
+    if (buf[i] != 0) return false;
+  return true;
+}
+
+// Depth 0 (running), and any depth while stopped: bit-exact to no gate.
+void test_gate_off_bit_exact() {
+  int16_t ref[Synth::kBlock * 8];
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 8; ++k) s->render(ref + k * Synth::kBlock);
+  for (int pass = 0; pass < 2; ++pass) {
+    Synth t(*p);
+    if (pass == 0) {
+      gateSetup(0x0000, 0);
+      const uint8_t m = 0xFA;
+      t.event(0, 0, &m, 1);
+    } else {
+      gateSetup(0x0000, 127);  // never started
+    }
+    const uint8_t on[3] = {0x90, 60, 127};
+    t.event(0, 0, on, 3);
+    int16_t out[Synth::kBlock];
+    for (int k = 0; k < 8; ++k) {
+      t.render(out);
+      TEST_ASSERT_EQUAL_INT16_ARRAY(ref + k * Synth::kBlock, out, Synth::kBlock);
+    }
+    TEST_ASSERT_EQUAL_FLOAT(1.f, t.strip(0).gate.g);
+    p->bpm = 120;
+  }
+}
+
+// Mask bit i opens 1/16 step i + 1; closed steps at 1 - depth / 127.
+void test_gate_mask_positions() {
+  gateSetup(0x0001);
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  blocks(12);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+  TEST_ASSERT_FALSE(bufSilent());
+  blocks(25);  // step 2
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);
+  TEST_ASSERT_TRUE(bufSilent());
+  blocks(15 * 25);  // step 1 of the next bar
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 16.48f, s->gatePos());
+  p->tracks[0].gateDepth = 64;
+  blocks(25);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.f - 64.f / 127.f, gate0().g);
+}
+
+// Rates: 1/32 halves the gate step, 1/8 doubles it.
+void test_gate_rates() {
+  gateSetup(0x0001);
+  p->tracks[0].gateRate = static_cast<uint8_t>(GateRate::R8);
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  blocks(37);  // 1/16 step 2: still the first 1/8
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+  blocks(25);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);
+  p->tracks[0].gateRate = static_cast<uint8_t>(GateRate::R32);
+  transport(0xFA);
+  blocks(20);  // the second 1/32
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);
+}
+
+// 0xFA restarts the gate at step 1.
+void test_gate_transport_start_restarts() {
+  gateSetup(0x0001);
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  blocks(37);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);
+  transport(0xFA);
+  blocks(1);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 128.f / 3200.f, s->gatePos());
+}
+
+// 0xF6 5 idx re-anchors the song clock at its sample.
+void test_gate_song_clock_reanchors() {
+  gateSetup(0x0001);
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  blocks(2);
+  send(64, 0, 0xF6, 5, 1);
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f + 64.f / 3200.f, s->gatePos());
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);
+  for (int i = 0; i < 32; ++i) TEST_ASSERT_NOT_EQUAL(0, buf[i]);  // open before the clock
+  send(0, 0, 0xF6, 5, 64 + 16);  // mod 64
+  s->render(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 16.04f, s->gatePos());
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+}
+
+// Paused: the position (and so the gain) holds; resume runs on.
+void test_gate_pause_holds() {
+  gateSetup(0x0001);
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  blocks(10);
+  transport(0xFC);
+  blocks(1);
+  const float at = s->gatePos();
+  blocks(40);
+  TEST_ASSERT_EQUAL_FLOAT(at, s->gatePos());
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+  transport(0xFB);
+  blocks(1);
+  TEST_ASSERT_TRUE(s->gatePos() > at);
+}
+
+// Stop (0xFD): the gate bypasses, its gain ramps back to 1; the position reads -1.
+void test_gate_stop_bypasses() {
+  gateSetup(0x0000);
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  blocks(2);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);
+  TEST_ASSERT_TRUE(bufSilent());
+  transport(0xFD);
+  blocks(1);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+  TEST_ASSERT_FALSE(bufSilent());
+  TEST_ASSERT_EQUAL_FLOAT(-1.f, s->gatePos());
+}
+
+// Length 100 % merges adjacent open steps; below it the gate closes inside each step.
+void test_gate_length() {
+  gateSetup(0x0003);
+  p->tracks[0].gateAtk = 127;  // 50 ms: a dip would still show a block later
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  blocks(26);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+  p->tracks[0].gateLen = 99;
+  transport(0xFA);
+  blocks(26);  // closed for the last 1 % of step 1, reopening slowly
+  TEST_ASSERT_TRUE(gate0().g < 0.2f);
+  p->tracks[0].gateLen = 50;
+  p->tracks[0].gateAtk = 0;
+  transport(0xFA);
+  blocks(20);  // 80 % into step 1
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);
+}
+
+// The gain ramps at most 1 / attack samples per sample: no click on an edge.
+void test_gate_ramp_slope() {
+  gateSetup(0x0002);
+  p->tracks[0].gateAtk = 127;  // 50 ms = 1600 samples
+  transport(0xFA);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().g);  // snapped closed at the note-on
+  blocks(25);  // 128 samples into step 2
+  TEST_ASSERT_FLOAT_WITHIN(2e-3f, 128.f / 1600.f, gate0().g);
+  blocks(12);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+}
+
+// GTE locks the depth through the newest voice; the next note without it takes the track's.
+void test_gte_lock_then_revert() {
+  gateSetup(0x0000, 0);
+  transport(0xFA);
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::GTE, 127);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_TRUE(gate0().on);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, gate0().floor);
+  TEST_ASSERT_TRUE(bufSilent());
+  stepStart(0, 0, 24, true);
+  noteOn(0, 0, 64);
+  blocks(2);
+  TEST_ASSERT_FALSE(gate0().on);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gate0().g);
+}
+
+// The preview track takes the gate of the track 0xF7 names.
+void test_gate_preview_track() {
+  p->tracks[3].gateDepth = 100;
+  send(0, kPreviewTrack, 0xF7, 3, 0, 2);
+  noteOn(0, kPreviewTrack, 60);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->strip(kPreviewTrack).gate.on);
+}
+
+// ---- envelope follower (TrackCfg::fol*) ----
+
+// Track dst follows track src (1-based in TrackCfg): target, amount, instant attack, release rel.
+static void folSetup(int dst, int src, LfoDest dest, int8_t amt, uint8_t rel = 0) {
+  TrackCfg& c = p->tracks[dst];
+  c.folSrc = static_cast<uint8_t>(src + 1);
+  c.folDest = static_cast<uint8_t>(dest);
+  c.folAmt = amt;
+  c.folAtk = 0;
+  c.folRel = rel;
+}
+// Instrument i low-passed, cutoff 127; track t plays it.
+static void folFilter(int t, int i) {
+  p->tracks[t].instr = static_cast<uint8_t>(i);
+  p->instruments[i].fltMode = static_cast<uint8_t>(FltMode::Lp);
+  p->instruments[i].cutoff = 127;
+}
+static float folOct(uint8_t t) {
+  const int v = s->trackVoice(t);
+  TEST_ASSERT_TRUE(v >= 0);
+  return s->voice(v).octKey;
+}
+constexpr float kOctOpen = 9.451211f;  // cutoff 127
+
+// A silent source: the output is bit-exact to no follower.
+void test_fol_silent_source_bit_exact() {
+  folFilter(1, 1);
+  int16_t ref[Synth::kBlock * 8];
+  noteOn(0, 1, 60);
+  for (int k = 0; k < 8; ++k) s->render(ref + k * Synth::kBlock);
+  folSetup(1, 5, LfoDest::Cutoff, -64);
+  Synth t(*p);
+  const uint8_t on[3] = {0x90, 60, 127};
+  t.event(0, 1, on, 3);
+  int16_t out[Synth::kBlock];
+  for (int k = 0; k < 8; ++k) {
+    t.render(out);
+    TEST_ASSERT_EQUAL_INT16_ARRAY(ref + k * Synth::kBlock, out, Synth::kBlock);
+  }
+  TEST_ASSERT_EQUAL_FLOAT(0.f, t.followerLevel(1));
+}
+
+// The kick (track 0) closes the bass's (track 1) cutoff, which recovers after the release.
+void test_fol_cutoff_ducks_and_recovers() {
+  folFilter(1, 1);
+  folSetup(1, 0, LfoDest::Cutoff, -64, 20);
+  noteOn(0, 1, 48);
+  blocks(2);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, kOctOpen, folOct(1));
+  noteOn(0, 0, 60);
+  blocks(2);
+  TEST_ASSERT_TRUE(s->followerLevel(1) > 0.5f);
+  TEST_ASSERT_TRUE(folOct(1) < kOctOpen - 2.f);
+  noteOff(0, 0, 60);
+  blocks(kBlocksPerSec / 2);
+  TEST_ASSERT_TRUE(s->followerLevel(1) < 0.01f);
+  TEST_ASSERT_TRUE(folOct(1) > kOctOpen - 0.1f);
+}
+
+// Amount + opens: a closed cutoff rises with the source.
+void test_fol_positive_amount_opens() {
+  folFilter(1, 1);
+  p->instruments[1].cutoff = 20;
+  folSetup(1, 0, LfoDest::Cutoff, 63);
+  noteOn(0, 1, 48);
+  blocks(2);
+  const float closed = folOct(1);
+  noteOn(0, 0, 60);
+  blocks(2);
+  TEST_ASSERT_TRUE(folOct(1) > closed + 2.f);
+}
+
+// Vol: the strip's fader ducks (gains and sends), the voice stays as it was.
+void test_fol_vol_ducks_strip() {
+  p->instruments[1].send = 127;
+  p->tracks[1].instr = 1;
+  folSetup(1, 0, LfoDest::Vol, -64);
+  noteOn(0, 1, 48);
+  blocks(2);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, s->strip(1).fader);
+  const float send = s->strip(1).send, tgl = s->strip(1).tgl;
+  const float amp = s->voice(s->trackVoice(1)).amp;
+  noteOn(0, 0, 60);
+  blocks(2);
+  const float l = s->followerLevel(1);
+  TEST_ASSERT_TRUE(l > 0.5f);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f - l, s->strip(1).fader);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, send * (1.f - l), s->strip(1).send);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, (1.f - l) * tgl, s->strip(1).tgl);
+  TEST_ASSERT_EQUAL_FLOAT(amp, s->voice(s->trackVoice(1)).amp);
+}
+
+// The duck ramps over the segment: no step inside the strip's gains.
+void test_fol_vol_ramped() {
+  folSetup(1, 0, LfoDest::Vol, -64);
+  noteOn(0, 1, 48);
+  blocks(2);
+  noteOn(0, 0, 60);
+  s->render(buf);  // the follower sees the kick from the next boundary on
+  const Synth::TrackStrip& st = s->strip(1);
+  TEST_ASSERT_TRUE(st.tgl < st.gl || st.dgl == 0.f);  // landed at the boundary, or ramping down
+  float prev = 1e9f;
+  for (int k = 0; k < 4; ++k) {  // a ramp per segment, landing exactly
+    s->render(buf);
+    TEST_ASSERT_TRUE(st.gl <= prev + 1e-6f);
+    prev = st.gl;
+  }
+}
+
+// Attack / release: the envelope reaches ~63 % in its time (1 ms segments).
+void test_fol_attack_release_times() {
+  folSetup(1, 0, LfoDest::Cutoff, -64, 70);
+  p->tracks[1].folAtk = 50;
+  noteOn(0, 1, 48);
+  noteOn(0, 0, 60);
+  blocks(kBlocksPerSec);  // settled
+  const float top = s->followerLevel(1);
+  TEST_ASSERT_TRUE(top > 0.5f);
+  noteOff(0, 0, 60);
+  const int relMs = envTimeMs(70);
+  blocks(relMs / 4);  // 4 ms per block
+  TEST_ASSERT_FLOAT_WITHIN(0.06f * top, 0.37f * top, s->followerLevel(1));
+  blocks(kBlocksPerSec * 2);
+  noteOn(0, 0, 60);
+  const int atkMs = envTimeMs(50);
+  blocks(atkMs / 4);
+  TEST_ASSERT_FLOAT_WITHIN(0.08f * top, 0.63f * top, s->followerLevel(1));
+}
+
+// Source / destination order does not matter: track 5 <- 1 and track 1 <- 5 give the same envelope.
+void test_fol_order_independent() {
+  folSetup(5, 1, LfoDest::Cutoff, -64, 40);
+  noteOn(0, 1, 60);
+  noteOn(0, 5, 48);
+  float a[20];
+  for (float& x : a) {
+    s->render(buf);
+    x = s->followerLevel(5);
+  }
+  s->reset();
+  p->tracks[5].folSrc = 0;
+  folSetup(1, 5, LfoDest::Cutoff, -64, 40);
+  noteOn(0, 5, 60);
+  noteOn(0, 1, 48);
+  for (float x : a) {
+    s->render(buf);
+    TEST_ASSERT_EQUAL_FLOAT(x, s->followerLevel(1));
+  }
+}
+
+// The detector is pre-fader: a key at fader 0 still drives; self-follow on Vol does not feed back.
+void test_fol_ghost_key_and_self_vol() {
+  folSetup(1, 0, LfoDest::Cutoff, -64);
+  p->tracks[0].vol = 0;
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 48);
+  blocks(2);
+  const float l = s->followerLevel(1);
+  TEST_ASSERT_TRUE(l > 0.5f);
+  s->reset();
+  p->tracks[0].vol = 127;
+  folSetup(0, 0, LfoDest::Vol, -64);
+  noteOn(0, 0, 60);
+  blocks(2);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, l, s->followerLevel(0));
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f - l, s->strip(0).fader);
+}
+
+// Strip targets through the newest voice (Pan), LFO targets through the LFO mods (L1 DEPTH).
+void test_fol_pan_and_lfo_depth() {
+  folSetup(1, 0, LfoDest::Pan, 63);
+  noteOn(0, 1, 48);
+  noteOn(0, 0, 60);
+  blocks(2);
+  TEST_ASSERT_TRUE(s->strip(1).tgr > s->strip(1).tgl * 2.f);
+  s->reset();
+  folFilter(1, 1);
+  Instrument& m = p->instruments[1];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 0;
+  m.lfoDepth = -64;
+  p->tracks[1].folSrc = 0;
+  noteOn(0, 1, 48);
+  blocks(2);
+  const float lfoOnly = folOct(1);
+  s->reset();
+  folSetup(1, 0, LfoDest::Depth1, -64);
+  noteOn(0, 1, 48);
+  noteOn(0, 0, 60);
+  blocks(2);
+  TEST_ASSERT_TRUE(folOct(1) > lfoOnly + 1.f);  // the LFO's depth shrinks with the source
+}
+
+// Off: amount 0, a MIDI source, a source out of range; the preview track neither follows nor drives.
+void test_fol_off_cases_and_preview() {
+  folSetup(1, 0, LfoDest::Vol, 0);
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 48);
+  blocks(2);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, s->strip(1).fader);
+  p->tracks[1].folAmt = -64;
+  p->tracks[0].out = TrackOut::Midi;
+  blocks(2);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, s->strip(1).fader);
+  p->tracks[0].out = TrackOut::Int;
+  p->tracks[1].folSrc = kTracks + 1;
+  blocks(2);
+  TEST_ASSERT_EQUAL_FLOAT(1.f, s->strip(1).fader);
+  s->reset();
+  folSetup(1, 0, LfoDest::Vol, -64);
+  send(0, kPreviewTrack, 0xF7, 1, 0, 2);  // preview through track 1's insert
+  noteOn(0, kPreviewTrack, 48);
+  noteOn(0, 0, 60);
+  blocks(2);
+  TEST_ASSERT_EQUAL_FLOAT(kPreviewVol / 127.f, s->strip(kPreviewTrack).fader);
+}
+
+// A KIT destination: the follower acts on its lanes' voices (sampler lanes: cutoff of the lane).
+void test_fol_kit_track_strip() {
+  kitSetup(1, 2);
+  folSetup(1, 0, LfoDest::Vol, -64);
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  blocks(2);
+  TEST_ASSERT_TRUE(s->strip(1).fader < 0.5f);
+}
+
+
+// ---- strip ramps when a new note's locks take over a sounding track ----
+
+// A new note with a DRV lock while an older note sounds: the track sum's drive crossfades over a
+// control period instead of stepping (0 -> 127 would jump the older note's waveform at once).
+void test_strip_drive_lock_crossfades() {
+  p->instruments[0].wave = static_cast<uint8_t>(Wave::Triangle);
+  p->instruments[0].rsend = 0;
+  p->instruments[0].send = 0;
+  p->tracks[0].vol = 30;
+  noteOn(0, 0, 36);
+  for (int k = 0; k < 20; ++k) s->render(buf);
+  int base = 0;
+  int16_t prev = buf[Synth::kBlock - 1];
+  for (int k = 0; k < 4; ++k) {
+    s->render(buf);
+    base = maxStep(buf, prev) > base ? maxStep(buf, prev) : base;
+    prev = buf[Synth::kBlock - 1];
+  }
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::DRV, 127);
+  noteOn(0, 0, 36, 1);
+  s->render(buf);
+  const int jump = maxStep(buf, prev);
+  char msg[64];
+  snprintf(msg, sizeof(msg), "jump %d base %d peak %d", jump, base, peakOf(buf));
+  TEST_ASSERT_TRUE_MESSAGE(jump < base * 4 + 50, msg);
+  TEST_ASSERT_TRUE(s->strip(0).drive.on());
+}
+
+// A new note with a DLY lock while an older note sounds: the send ramps in over a control period
+// (R carries only the echo: the dry track is hard left).
+void test_strip_send_lock_ramps() {
+  p->instruments[0].wave = static_cast<uint8_t>(Wave::Triangle);
+  p->instruments[0].rsend = 0;
+  p->instruments[0].send = 0;
+  p->tracks[0].vol = 30;
+  p->tracks[0].pan = 0;
+  p->rvbLevel = 0;
+  delaySetup(0);
+  noteOn(0, 0, 36);
+  for (int k = 0; k < 20; ++k) s->renderStereo(lr);
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::DLY, 127);
+  noteOn(0, 0, 36, 1);
+  static int16_t r[Synth::kBlock * 100];
+  for (int k = 0; k < 100; ++k) {
+    s->renderStereo(lr);
+    for (int i = 0; i < Synth::kBlock; ++i) r[k * Synth::kBlock + i] = lr[2 * i + 1];
+  }
+  int st = 0;
+  while (st < Synth::kBlock * 100 && r[st] == 0) ++st;
+  TEST_ASSERT_TRUE(st < Synth::kBlock * 90);
+  int peak = 0;
+  for (int i = st; i < st + 4000; ++i) peak = abs(r[i]) > peak ? abs(r[i]) : peak;
+  int jump = 0, base = 0;  // base: the echo's own largest step once the send has landed
+  for (int i = st; i < st + 64; ++i) jump = abs(r[i] - r[i - 1]) > jump ? abs(r[i] - r[i - 1]) : jump;
+  for (int i = st + 200; i < st + 4000; ++i) base = abs(r[i] - r[i - 1]) > base ? abs(r[i] - r[i - 1]) : base;
+  char msg[64];
+  snprintf(msg, sizeof(msg), "jump %d base %d peak %d", jump, base, peak);
+  TEST_ASSERT_TRUE_MESSAGE(peak > 500 && jump < base * 3 + 10, msg);
+}
+
+// A note whose envelope has ended but whose filter still rings is still sounding: a new note on
+// the track ramps the pan (no snap that cuts the tail out of L at once).
+void test_ringing_tail_keeps_strip() {
+  Instrument& m = p->instruments[0];
+  m.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  m.cutoff = 40;
+  m.reso = 120;
+  m.release = 10;
+  p->tracks[0].vol = 40;
+  p->tracks[0].pan = 0;
+  noteOn(0, 0, 36);
+  for (int k = 0; k < 10; ++k) s->renderStereo(lr);
+  noteOff(0, 0, 36);
+  for (int k = 0; k < 3; ++k) s->renderStereo(lr);
+  bool tail = false;
+  for (int i = 0; i < kVoices; ++i) tail |= s->voice(i).on && s->voice(i).env.idle();
+  TEST_ASSERT_TRUE(tail);  // envelope over, filter ringing
+  const int16_t last = lr[2 * (Synth::kBlock - 1)];
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::PAN, 127);
+  noteOn(0, 0, 60);
+  s->renderStereo(lr);
+  char msg[64];
+  snprintf(msg, sizeof(msg), "last %d first %d", last, lr[0]);
+  TEST_ASSERT_TRUE_MESSAGE(abs(lr[0] - last) < abs(last) / 4 + 20, msg);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -3665,6 +4384,31 @@ int main() {
   RUN_TEST(test_drive_changes_waveform);
   RUN_TEST(test_drv_lock_on_note_step);
   RUN_TEST(test_lfo_drive_dest);
+  RUN_TEST(test_strip_drive_acts_on_track_sum);
+  RUN_TEST(test_strip_fader_after_drive);
+  RUN_TEST(test_strip_fader_in_pan_gains);
+  RUN_TEST(test_strip_crush_from_track);
+  RUN_TEST(test_strip_ignores_instrument_drive);
+  RUN_TEST(test_strip_kit_shares_kit_send);
+  RUN_TEST(test_strip_preview_insert);
+  RUN_TEST(test_strip_drive_model_from_track);
+  RUN_TEST(test_dty_lock_then_revert);
+  RUN_TEST(test_strip_preview_drive_model);
+  RUN_TEST(test_gate_off_bit_exact);
+  RUN_TEST(test_gate_mask_positions);
+  RUN_TEST(test_gate_rates);
+  RUN_TEST(test_gate_transport_start_restarts);
+  RUN_TEST(test_gate_song_clock_reanchors);
+  RUN_TEST(test_gate_pause_holds);
+  RUN_TEST(test_gate_stop_bypasses);
+  RUN_TEST(test_gate_length);
+  RUN_TEST(test_gate_ramp_slope);
+  RUN_TEST(test_gte_lock_then_revert);
+  RUN_TEST(test_gate_preview_track);
+  RUN_TEST(test_strip_send_from_newest_voice);
+  RUN_TEST(test_strip_drive_lock_crossfades);
+  RUN_TEST(test_strip_send_lock_ramps);
+  RUN_TEST(test_ringing_tail_keeps_strip);
   RUN_TEST(test_lfo_send_dests);
   RUN_TEST(test_lfo_rsend_dest);
   RUN_TEST(test_lfo_crush_dests);
@@ -3717,5 +4461,17 @@ int main() {
   RUN_TEST(test_perf_freeze_ducks_mix);
   RUN_TEST(test_perf_return_floor_decays);
   RUN_TEST(test_perf_reset_drops_throw);
+  RUN_TEST(test_fol_silent_source_bit_exact);
+  RUN_TEST(test_fol_cutoff_ducks_and_recovers);
+  RUN_TEST(test_fol_positive_amount_opens);
+  RUN_TEST(test_fol_vol_ducks_strip);
+  RUN_TEST(test_fol_vol_ramped);
+  RUN_TEST(test_fol_attack_release_times);
+  RUN_TEST(test_fol_order_independent);
+  RUN_TEST(test_fol_ghost_key_and_self_vol);
+  RUN_TEST(test_fol_pan_and_lfo_depth);
+  RUN_TEST(test_fol_off_cases_and_preview);
+  RUN_TEST(test_fol_kit_track_strip);
+  RUN_TEST(test_profiler_arms_at_block_start);
   return UNITY_END();
 }

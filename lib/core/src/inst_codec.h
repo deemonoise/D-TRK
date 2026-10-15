@@ -7,8 +7,10 @@ namespace mt {
 
 // Instrument records shared by .mtp (INST, FMIN, FLTR, SLCE chunks) and .mti presets. Little-endian.
 // Unpack clamps every value to its valid range.
-constexpr size_t kInstRecSize = 48;  // 47 bytes of fields + 1 reserved
+constexpr size_t kInstRecSize = 48;  // 47 bytes of fields + driveModel at 47 (once reserved)
 constexpr size_t kFmRecSize = 16;    // drive, rsend, velCut, velMac at 10..13, crushBits, crushRate at 14, 15
+// drive, crushBits, crushRate (FM record) and driveModel (INST record): a preset's recommended track
+// insert; 0 in a project (see Instrument::drive).
 constexpr size_t kFltRecSize = 8;    // filter, delay send
 constexpr size_t kSliceRecSize = 8 + 2 * kMaxSlices;  // modes, count, 3 reserved, positions
 constexpr size_t kSynRecSize = 48;  // SYNTH: 41 bytes of fields + reserved

@@ -416,6 +416,40 @@ void test_bus_throw_sends_and_tail() {
   TEST_ASSERT_FALSE(b.delayTail());
 }
 
+// MOD THROW (feature 5): the mix into the MOD bus while held, its return held up for a tail like
+// the delay's. TAPE WOBBLE: the delay's wear (depth, default 127) while held, -1 otherwise. Neither
+// touches the mix.
+void test_bus_mod_throw_and_tape_wobble() {
+  TEST_ASSERT_EQUAL_STRING("MOD THROW", perfName(PerfFx::ModThrow));
+  TEST_ASSERT_EQUAL_STRING("TAPE WOBBLE", perfName(PerfFx::TapeWobble));
+  TEST_ASSERT_EQUAL_STRING("MOD", perfShort(PerfFx::ModThrow));
+  TEST_ASSERT_EQUAL_STRING("WOB", perfShort(PerfFx::TapeWobble));
+  TEST_ASSERT_EQUAL(127, perfRange(PerfFx::TapeWobble).def);
+  TEST_ASSERT_FALSE(perfBuffered(PerfFx::ModThrow));
+  sine(440.f);
+  PerfBus b;
+  TEST_ASSERT_EQUAL_FLOAT(0.f, b.modSend());
+  TEST_ASSERT_EQUAL(-1, b.tapeWobble());
+  b.press(PerfFx::ModThrow);
+  b.press(PerfFx::TapeWobble);
+  TEST_ASSERT_EQUAL_FLOAT(100.f / 127.f, b.modSend());
+  TEST_ASSERT_EQUAL(127, b.tapeWobble());
+  run(b, 0, kBlock);
+  TEST_ASSERT_EQUAL_MEMORY(inL, outL, kBlock * sizeof(float));
+  TEST_ASSERT_TRUE(b.modTail());
+  TEST_ASSERT_TRUE(b.sendTail());
+  TEST_ASSERT_FALSE(b.delayTail());
+  b.release(PerfFx::ModThrow);
+  b.release(PerfFx::TapeWobble);
+  TEST_ASSERT_EQUAL(-1, b.tapeWobble());
+  float x[kBlock] = {}, y[kBlock] = {};
+  for (int i = 0; i < 1000; ++i) b.process(x, y, kBlock, kSps, true);
+  TEST_ASSERT_FALSE(b.modTail());
+  b.press(PerfFx::ModThrow);
+  b.reset();
+  TEST_ASSERT_FALSE(b.modTail());
+}
+
 // reset(): nothing held, no tails, the tone effects cut (no fade-out): the next block is bit-exact.
 void test_bus_reset_to_rest() {
   sine(440.f);
@@ -956,6 +990,7 @@ int main() {
   RUN_TEST(test_names_and_short_names);
   RUN_TEST(test_defaults_and_ranges);
   RUN_TEST(test_values);
+  RUN_TEST(test_bus_mod_throw_and_tape_wobble);
   RUN_TEST(test_legacy_map);
   RUN_TEST(test_stack_press_turn_release);
   RUN_TEST(test_stack_last_pressed_gets_the_encoder);

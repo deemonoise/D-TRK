@@ -7,7 +7,7 @@ namespace mt {
 // holds. File format: PRF2 bytes, append only.
 enum class PerfFx : uint8_t {
   None, Repeat, Roll, Reverse, Scratch, TapeStop, Gate, Filter, Crush, Downsample, Drive, DelayThrow,
-  ReverbThrow, Freeze, Count
+  ReverbThrow, Freeze, ModThrow, TapeWobble, Count
 };
 constexpr int kPerfButtons = 8;
 // A new project's track buttons 1..8.

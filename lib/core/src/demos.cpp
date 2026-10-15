@@ -15,6 +15,7 @@ Instrument& ins(Project& p, int i, InstrType t, const char* name) {
   for (int k = 0; k < factoryCount(t); ++k)
     if (strcmp(factoryPreset(t, k).name, name) == 0) {
       factoryBuild(t, k, p.instruments[i]);
+      clearInsert(p.instruments[i]);  // the tracks' inserts are set by the demo itself
       break;
     }
   return p.instruments[i];
@@ -214,6 +215,10 @@ void buildTrance(Project& p) {
   track(p, kDrums, "DRUMS", 1, 100);
   track(p, kBass, "BASS", 2, 105);
   track(p, kPad, "PAD", 3, 72);
+  TrackCfg& padTrk = p.tracks[kPad];  // the classic chopped pad: a 1/16 trance gate
+  padTrk.gateMask = 0xBBBB;           // XX.X
+  padTrk.gateDepth = 110;
+  padTrk.gateLen = 80;
   track(p, kLead, "LEAD", 4, 90, 128);  // ~300 %: the hook's notes join
   track(p, kArp, "ARP", 5, 62);
   track(p, kFx, "RISER", 6, 85);
@@ -290,6 +295,7 @@ void buildTrance(Project& p) {
 
   Pattern& brk = pat(p, 3, 64);
   pad(brk);
+  for (int at = 0; at < 64; at += 8) fx(brk, kPad, at, Fx::GTE, 0);  // the breakdown's pad flows (GTE OFF)
   hook(brk);
   for (int b = 0; b < 4; ++b)  // the hook's filter opens up over the breakdown
     for (int k = 0; k < 6; ++k) {
@@ -438,10 +444,11 @@ void buildAcid(Project& p) {
   kit(p, 0, "909", 16, kKit, 5);
   Instrument& acid = ins(p, 1, InstrType::Synth, "ACID");
   acid.send = 30;
-  acid.drive = 30;
   ins(p, 2, InstrType::Synth, "STAB").send = 70;
   track(p, kDrums, "909", 0, 125);
   track(p, kAcid, "ACID", 1, 78, 60);
+  p.tracks[kAcid].drive = 30;
+  p.tracks[kAcid].driveModel = static_cast<uint8_t>(DriveModel::Clip);  // the 303 into a hard-clip pedal
   track(p, kStab, "STAB", 2, 70);
   p.dlyTime = 3;
   p.dlyFb = 60;
@@ -514,8 +521,6 @@ void buildLofi(Project& p) {
   enum { kBd, kSd, kHh, kRim };
   kit(p, 0, "DUSTY", 16, kKit, 4);
   Instrument& keys = ins(p, 1, InstrType::Fm, "EP SOFT");
-  keys.crushBits = 45;
-  keys.crushRate = 20;
   keys.rsend = 60;
   keys.fltMode = static_cast<uint8_t>(FltMode::Lp);  // dark top: the old master low-pass of this demo
   keys.cutoff = 107;                                 // ~5 kHz
@@ -535,6 +540,10 @@ void buildLofi(Project& p) {
   track(p, kVinyl, "VINYL", 4, 80);
   p.tracks[kDrums].humanize = 25;
   p.tracks[kKeys].humanize = 30;
+  p.tracks[kDrums].crushBits = 80;  // the dusty kit: crushed on its track
+  p.tracks[kDrums].crushRate = 40;
+  p.tracks[kKeys].crushBits = 45;
+  p.tracks[kKeys].crushRate = 20;
   p.dlyTime = 6;  // 3/8
   p.dlyFb = 45;
   p.dlyTone = 60;
@@ -708,6 +717,7 @@ void buildSynthwave(Project& p) {
 
   Pattern& brk = pat(p, 3, 64);
   pad(brk);
+  for (int at = 0; at < 64; at += 8) fx(brk, kPad, at, Fx::GTE, 0);  // the breakdown's pad flows (GTE OFF)
   arp(brk, 0);
   melody(brk);
   fill(brk);
@@ -956,12 +966,21 @@ void buildHouse(Project& p) {
   p.tracks[kPerc].humanize = 25;
   p.dlyTime = 3;
   p.dlyFb = 45;
+  p.dlyMode = static_cast<uint8_t>(DlyMode::Tape);  // the stab's echoes wobble and darken
+  p.dlyChar = 50;
   p.rvbSize = 85;
   p.rvbLevel = 75;
   p.compAmt = 40;
-  // PERF: filter, repeat, roll, delay and reverb throws, gate, tape stop, freeze.
+  // MOD bus: a slow ENSEMBLE widens the choir and the stabs; kick, bass, congas stay dry.
+  p.modType = static_cast<uint8_t>(ModType::Ensemble);
+  p.modRate = 25;
+  p.modDepth = 70;
+  p.modLevel = 100;
+  p.tracks[kPad].modSend = 100;
+  p.tracks[kStab].modSend = 55;
+  // PERF: filter, repeat, roll, delay and reverb throws, MOD throw, tape stop, freeze.
   static const PerfFx kPerf[kPerfButtons] = {PerfFx::Filter, PerfFx::Repeat,   PerfFx::Roll,     PerfFx::DelayThrow,
-                                             PerfFx::ReverbThrow, PerfFx::Gate, PerfFx::TapeStop, PerfFx::Freeze};
+                                             PerfFx::ReverbThrow, PerfFx::ModThrow, PerfFx::TapeStop, PerfFx::Freeze};
   for (int i = 0; i < kPerfButtons; ++i) p.perfMap[i] = static_cast<uint8_t>(kPerf[i]);
   p.perfDefaultDepths();
 

@@ -33,6 +33,10 @@ struct LoadNotes {
 // (PROJ chain, CHN2, SCNS) are migrated to the song when the file has no SNG3.
 LoadErr loadProject(ByteSource& in, Project& out, LoadNotes* notes = nullptr);
 
+// One TINS record of len bytes (drive, crushBits, crushRate, driveModel, the gate's fields, ...):
+// assigns the fields it holds, clamped; the others keep their values (an older, shorter record leaves the defaults).
+void readTinsRecord(const uint8_t* b, uint32_t len, TrackCfg& c);
+
 // The sample (SMPL) and wavetable (WTBL) names of a project file, without loading it (~3 KB
 // instead of a whole Project). The CRC is checked like loadProject.
 struct ProjectFileNames {

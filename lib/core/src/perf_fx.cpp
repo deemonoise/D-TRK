@@ -1,5 +1,6 @@
 #include "perf_fx.h"
 #include <stdio.h>
+#include "hot.h"
 
 namespace mt {
 
@@ -22,10 +23,13 @@ const PerfRange kRanges[] = {
     {0, 127, 100, true},   // DelayThrow
     {0, 127, 100, true},   // ReverbThrow
     {0, 100, 50, true},    // Freeze
+    {0, 127, 100, true},   // ModThrow
+    {0, 127, 127, true},   // TapeWobble: the delay's wear
 };
 const char* const kNames[] = {"REPEAT", "ROLL",  "REVERSE",     "SCRATCH",      "TAPE STOP", "GATE",  "FILTER",
-                              "CRUSH",  "DOWNSAMPLE", "DRIVE", "DELAY THROW", "REVERB THROW", "FREEZE"};
-const char* const kShorts[] = {"RPT", "ROL", "REV", "SCR", "TPS", "GAT", "FLT", "CRS", "DWN", "DRV", "DLY", "RVB", "FRZ"};
+                              "CRUSH",  "DOWNSAMPLE", "DRIVE", "DELAY THROW", "REVERB THROW", "FREEZE",
+                              "MOD THROW", "TAPE WOBBLE"};
+const char* const kShorts[] = {"RPT", "ROL", "REV", "SCR", "TPS", "GAT", "FLT", "CRS", "DWN", "DRV", "DLY", "RVB", "FRZ", "MOD", "WOB"};
 static_assert(sizeof(kRanges) / sizeof(kRanges[0]) == kN - 1, "perf ranges");
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN - 1, "perf names");
 static_assert(sizeof(kShorts) / sizeof(kShorts[0]) == kN - 1, "perf short names");
@@ -48,10 +52,10 @@ static_assert(sizeof(kRepeatLbl) / sizeof(kRepeatLbl[0]) == 7 && sizeof(kGateLbl
                   sizeof(kTapeLbl) / sizeof(kTapeLbl[0]) == 5 && sizeof(kDownLbl) / sizeof(kDownLbl[0]) == 6,
               "perf lists match the ranges");
 
-bool valid(PerfFx f) { return f > PerfFx::None && f < PerfFx::Count; }
+MT_INLINE bool valid(PerfFx f) { return f > PerfFx::None && f < PerfFx::Count; }
 
 // Depth clamped into f's range, as an index from lo.
-int at(PerfFx f, int depth) {
+MT_INLINE int at(PerfFx f, int depth) {
   const PerfRange r = perfRange(f);
   return (depth < r.lo ? r.lo : (depth > r.hi ? r.hi : depth)) - r.lo;
 }
@@ -84,7 +88,7 @@ void perfValue(PerfFx f, int depth, char* out, int n) {
     case PerfFx::Crush: snprintf(out, n, "%d BIT", d); break;
     case PerfFx::Downsample: snprintf(out, n, "%s", kDownLbl[i]); break;
     case PerfFx::Freeze: snprintf(out, n, "DRY %d", d); break;
-    default: snprintf(out, n, "%d", d); break;  // Drive, the throws
+    default: snprintf(out, n, "%d", d); break;  // Drive, the throws, TAPE WOBBLE (wear)
   }
 }
 
@@ -97,6 +101,7 @@ PerfFx perfFromLegacy(uint8_t old) {
   return old < sizeof(kMap) / sizeof(kMap[0]) ? kMap[old] : PerfFx::None;
 }
 
+// PerfBus reads these per block / seam while held: one call each, in flash.
 float perfRepeatSteps(int depth) { return kRepeatSteps[at(PerfFx::Repeat, depth)]; }
 float perfGateSteps(int depth) { return kGateSteps[at(PerfFx::Gate, depth)]; }
 float perfReverseSteps(int depth) { return kReverseSteps[at(PerfFx::Reverse, depth)]; }
@@ -104,7 +109,7 @@ float perfScratchSteps(int depth) { return kScratchSteps[at(PerfFx::Scratch, dep
 float perfTapeSteps(int depth) { return kTapeSteps[at(PerfFx::TapeStop, depth)]; }
 int perfDownHz(int depth) { return kDownHz[at(PerfFx::Downsample, depth)]; }
 
-int PerfStack::find(PerfFx f) const {
+MT_HOT int PerfStack::find(PerfFx f) const {
   for (int i = 0; i < n_; ++i)
     if (slot_[i].fx == f) return i;
   return -1;

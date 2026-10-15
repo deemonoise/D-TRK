@@ -140,7 +140,7 @@ void PerfBus::setBuffer(int16_t* buf, uint32_t frames, bool clear) {
 
 void PerfBus::reset() {
   stack_.releaseAll();
-  dTail_ = rTail_ = 0;
+  dTail_ = rTail_ = mTail_ = 0;
   fresh_ = 0;  // the next capture does not reach back across the park
   head_ = Head{};
   out_ = Head{};
@@ -160,6 +160,10 @@ float PerfBus::delaySend() const {
 
 float PerfBus::reverbSend() const {
   return stack_.held(PerfFx::ReverbThrow) ? stack_.depth(PerfFx::ReverbThrow) / 127.f : 0.f;
+}
+
+float PerfBus::modSend() const {
+  return stack_.held(PerfFx::ModThrow) ? stack_.depth(PerfFx::ModThrow) / 127.f : 0.f;
 }
 
 float PerfBus::freezeDry() const {
@@ -200,7 +204,7 @@ bool PerfBus::writeBlocked(uint32_t w, int n) const {
   return d < static_cast<uint32_t>(n);
 }
 
-float PerfBus::loopLen(float steps, float samplesPerStep) const {
+MT_HOT float PerfBus::loopLen(float steps, float samplesPerStep) const {
   // At least kXfade + 1 frames: with the carried overshoot (< 1) every loop lasts > kXfade
   // samples, so a seam never lands inside the previous seam's crossfade. (Switches come between
   // blocks; two within kXfade samples - blocks shorter than 2 ms - drop the older source.)
@@ -209,7 +213,7 @@ float PerfBus::loopLen(float steps, float samplesPerStep) const {
   return len > max ? max : (len < kMin ? kMin : len);
 }
 
-uint32_t PerfBus::intact(const Head& h, uint32_t wEnd) const {
+MT_HOT uint32_t PerfBus::intact(const Head& h, uint32_t wEnd) const {
   // Behind base: back to the writer (which has overwritten everything after it) and no further
   // than what was recorded without a pause before the press.
   const uint32_t d = (h.base + frames_ - wEnd) % frames_;
@@ -394,6 +398,7 @@ MT_HOT void PerfBus::process(float* l, float* r, int n, float samplesPerStep, bo
   dTail_ = stack_.held(PerfFx::DelayThrow) ? kTail : (dTail_ > un ? dTail_ - un : 0);
   rTail_ = stack_.held(PerfFx::ReverbThrow) || stack_.held(PerfFx::Freeze) ? kTail
                                                                            : (rTail_ > un ? rTail_ - un : 0);
+  mTail_ = stack_.held(PerfFx::ModThrow) ? kTail : (mTail_ > un ? mTail_ - un : 0);
   // Grid: a double wrapped at kGridWrap steps (one add per block); the gate reads it as float.
   // Not running it stands still (and GATE with it). The synth passes "not paused" (it does not
   // know stop); the UI releases everything on stop.

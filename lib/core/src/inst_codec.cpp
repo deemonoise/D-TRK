@@ -38,6 +38,7 @@ void packInst(const Instrument& m, uint8_t* b) {
   b[43] = m.loop;
   wr16(b + 44, m.loopStart);
   b[46] = m.reverse ? 1 : 0;
+  b[47] = m.driveModel;  // once reserved (0 = TANH)
 }
 
 void packFm(const Instrument& m, uint8_t* b) {
@@ -97,6 +98,7 @@ void unpackInst(const uint8_t* b, Instrument& m) {
   m.loop = b[43] < static_cast<int>(LoopMode::Count) ? b[43] : 0;
   m.loopStart = rd16(b + 44);
   m.reverse = b[46] != 0;
+  m.driveModel = b[47] < static_cast<uint8_t>(DriveModel::Count) ? b[47] : 0;
 }
 
 void packFlt(const Instrument& m, uint8_t* b) {

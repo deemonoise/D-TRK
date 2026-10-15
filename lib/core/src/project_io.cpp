@@ -24,9 +24,20 @@ constexpr size_t kPatHeader = 4;
 constexpr uint32_t kOldStepBytes = 6;  // PATN before 6 fx slots: note, vel, 2 x (cmd, val)
 constexpr int kOldTracks = 8;          // PATN of the 8-track firmware
 constexpr size_t kToutSize = 3;
+// TINS: count, record size, then a record per track: drive, crushBits, crushRate, driveModel,
+// gateMask lo, hi, gateRate, gateDepth, gateLen, gateAtk, gateRel, modSend. Later fields go at a record's end;
+// readers take what they know of a longer record, and a shorter one leaves the fields it lacks at
+// their defaults.
+constexpr size_t kTinsRec = 12;
+// TFOL (envelope followers): count, record size, then a record per track: folSrc, folDest, folAmt,
+// folAtk, folRel. Same rules as TINS (a second follower per track would append fields).
+constexpr size_t kTfolRec = 5;
 // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
-// scTrack, scDepth, then byte 13: the old DJ filter (+ 64), ignored on load and written 64.
-constexpr size_t kAudiSize = 14;
+// scTrack, scDepth, then byte 13: the old DJ filter (+ 64), ignored on load and written 64, then the
+// master / send fx: dlyMode, dlyChar, rvbMode, rvbShim, modType, modRate, modDepth, modFb, modLevel,
+// eqLow, eqHigh, shimInt. Each of those bytes is read when present (older files: the defaults).
+constexpr size_t kAudiSize = 26;
+constexpr size_t kAudiMfx = 14;     // the first master / send fx byte
 constexpr size_t kAudiFxSize = 13;  // older files: up to scDepth
 constexpr size_t kAudiDlySize = 6;  // older files: up to dlyLevel
 constexpr size_t kAudiMinSize = 2;  // older files: masterVol, preview
@@ -217,6 +228,78 @@ LoadErr readTpan(CrcSource& in, uint32_t size, Project& p) {
   return readRecords(in, size, 1, kTracks, [&](int t, const uint8_t* b) { p.tracks[t].pan = clampu(b[0], 0, 127); });
 }
 
+// TINS (see kTinsRec); tracks it lacks stay off (reset()).
+LoadErr readTins(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kTracks ? h[0] : kTracks;
+  const uint32_t take = rec < kTinsRec ? rec : kTinsRec;
+  for (int t = 0; t < n; ++t) {
+    uint8_t b[kTinsRec] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    readTinsRecord(b, take, p.tracks[t]);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// TFOL (see kTfolRec); tracks it lacks (and files without it) keep the followers off.
+LoadErr readTfol(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kTracks ? h[0] : kTracks;
+  const uint32_t take = rec < kTfolRec ? rec : kTfolRec;
+  for (int t = 0; t < n; ++t) {
+    uint8_t b[kTfolRec] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    TrackCfg& c = p.tracks[t];
+    if (take > 0) c.folSrc = b[0] <= kTracks ? b[0] : 0;  // out of range: off
+    if (take > 1) c.folDest = b[1] < static_cast<uint8_t>(LfoDest::Count) ? b[1] : static_cast<uint8_t>(LfoDest::Cutoff);
+    if (take > 2) {
+      const int a = static_cast<int8_t>(b[2]);
+      c.folAmt = static_cast<int8_t>(a < -64 ? -64 : (a > 63 ? 63 : a));
+    }
+    if (take > 3) c.folAtk = clampu(b[3], 0, 127);
+    if (take > 4) c.folRel = clampu(b[4], 0, 127);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+}  // namespace
+
+void readTinsRecord(const uint8_t* b, uint32_t len, TrackCfg& c) {
+  if (len > 0) c.drive = clampu(b[0], 0, 127);
+  if (len > 1) c.crushBits = clampu(b[1], 0, 127);
+  if (len > 2) c.crushRate = clampu(b[2], 0, 127);
+  if (len > 3) c.driveModel = b[3] < static_cast<uint8_t>(DriveModel::Count) ? b[3] : 0;  // unknown: TANH
+  if (len > 4) c.gateMask = static_cast<uint16_t>((c.gateMask & 0xFF00) | b[4]);
+  if (len > 5) c.gateMask = static_cast<uint16_t>((c.gateMask & 0x00FF) | b[5] << 8);
+  if (len > 6) c.gateRate = b[6] < static_cast<uint8_t>(GateRate::Count) ? b[6] : 1;  // unknown: 1/16
+  if (len > 7) c.gateDepth = clampu(b[7], 0, 127);
+  if (len > 8) c.gateLen = clampu(b[8], 1, 100);
+  if (len > 9) c.gateAtk = clampu(b[9], 0, 127);
+  if (len > 10) c.gateRel = clampu(b[10], 0, 127);
+  if (len > 11) c.modSend = clampu(b[11], 0, 127);
+}
+
+namespace {
+
+// A file older than TINS: the drive / crush were the instruments'. Each track takes its
+// instrument's; a KIT track the KIT's own, not its lane instruments' (user decision 1b).
+void migrateInsert(Project& p) {
+  for (TrackCfg& c : p.tracks) {
+    const Instrument& m = p.instruments[c.instr % kInstruments];
+    c.drive = m.drive;
+    c.crushBits = m.crushBits;
+    c.crushRate = m.crushRate;
+  }
+}
+
 LoadErr readInst(CrcSource& in, uint32_t size, Project& p) {
   return readRecords(in, size, kInstRecSize, kInstruments,
                      [&](int i, const uint8_t* b) { unpackInst(b, p.instruments[i]); });
@@ -286,6 +369,15 @@ LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
     p.scTrack = b[11] <= kTracks ? b[11] : 0;
     p.scDepth = clampu(b[12], 0, 127);
   }
+  auto mode = [](uint8_t v, auto count) { return v < static_cast<uint8_t>(count) ? v : 0; };  // unknown: 0
+  uint8_t* const mfx[] = {&p.dlyMode, &p.dlyChar, &p.rvbMode, &p.rvbShim, &p.modType, &p.modRate,
+                          &p.modDepth, &p.modFb, &p.modLevel, &p.eqLow, &p.eqHigh, &p.shimInt};
+  static_assert(sizeof(mfx) / sizeof(mfx[0]) == kAudiSize - kAudiMfx, "AUDI layout");
+  for (uint32_t i = kAudiMfx; i < n; ++i) *mfx[i - kAudiMfx] = clampu(b[i], 0, 127);
+  p.dlyMode = mode(p.dlyMode, DlyMode::Count);
+  p.rvbMode = mode(p.rvbMode, RvbMode::Count);
+  p.modType = mode(p.modType, ModType::Count);
+  p.shimInt = mode(p.shimInt, ShimInt::Count);
   return in.skip(size - n) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
@@ -598,6 +690,22 @@ bool saveProject(const Project& p, ByteSink& out) {
   if (!o.chunk("TPAN", 1 + kTracks) || !o.write(&count, 1)) return false;
   for (const TrackCfg& c : p.tracks)
     if (!o.write(&c.pan, 1)) return false;
+  const uint8_t th[2] = {static_cast<uint8_t>(kTracks), static_cast<uint8_t>(kTinsRec)};
+  if (!o.chunk("TINS", 2 + kTracks * kTinsRec) || !o.write(th, 2)) return false;
+  for (const TrackCfg& c : p.tracks) {
+    const uint8_t b[kTinsRec] = {c.drive,     c.crushBits, c.crushRate,
+                                 c.driveModel, static_cast<uint8_t>(c.gateMask & 0xFF),
+                                 static_cast<uint8_t>(c.gateMask >> 8), c.gateRate,
+                                 c.gateDepth, c.gateLen, c.gateAtk, c.gateRel, c.modSend};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  const uint8_t fh[2] = {static_cast<uint8_t>(kTracks), static_cast<uint8_t>(kTfolRec)};
+  if (!o.chunk("TFOL", 2 + kTracks * kTfolRec) || !o.write(fh, 2)) return false;
+  for (const TrackCfg& c : p.tracks) {
+    const uint8_t b[kTfolRec] = {c.folSrc, c.folDest, static_cast<uint8_t>(c.folAmt), c.folAtk, c.folRel};
+    if (!o.write(b, sizeof(b))) return false;
+  }
 
   const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0),
                                  p.dlyTime,   p.dlyFb,
@@ -605,7 +713,13 @@ bool saveProject(const Project& p, ByteSink& out) {
                                  p.rvbSize,   p.rvbDamp,
                                  p.rvbLevel,  p.compAmt,
                                  p.compRel,   p.scTrack,
-                                 p.scDepth,   64};  // byte 13: the old DJ filter, neutral for older firmware
+                                 p.scDepth,   64,  // byte 13: the old DJ filter, neutral for older firmware
+                                 p.dlyMode,   p.dlyChar,
+                                 p.rvbMode,   p.rvbShim,
+                                 p.modType,   p.modRate,
+                                 p.modDepth,  p.modFb,
+                                 p.modLevel,  p.eqLow,
+                                 p.eqHigh,    p.shimInt};
   if (!o.chunk("AUDI", kAudiSize) || !o.write(au, sizeof(au))) return false;
 
   // Always written, empty or not.
@@ -729,6 +843,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
   LegacySong legacy;
   bool sng3 = false;
   bool prf2 = false;  // a PRF2 chunk was read: PRFM no longer applies
+  bool tins = false;  // a TINS chunk was read: no insert migration
   for (;;) {
     uint8_t ch[8];
     if (!in.raw().read(ch, 8)) return LoadErr::Truncated;
@@ -740,6 +855,8 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       if (rd32(v) != in.crc()) return LoadErr::BadCrc;
       if (!sng3 && legacy.n > 0) migrateSong(legacy, out, notes);
       for (Instrument& m : out.instruments) fixInstrument(m);
+      if (!tins) migrateInsert(out);
+      for (Instrument& m : out.instruments) clearInsert(m);  // the tracks' now
       for (Pattern& pt : out.patterns)  // a PATN after its TLEN may have shortened the pattern
         for (uint8_t& n : pt.trackLen)
           if (n > pt.length) n = pt.length;
@@ -762,6 +879,11 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "SLCE", 4) == 0) e = readSlce(in, size, out);
     else if (memcmp(ch, "TOUT", 4) == 0) e = readTout(in, size, out);
     else if (memcmp(ch, "TPAN", 4) == 0) e = readTpan(in, size, out);
+    else if (memcmp(ch, "TINS", 4) == 0) {
+      tins = true;
+      e = readTins(in, size, out);
+    }
+    else if (memcmp(ch, "TFOL", 4) == 0) e = readTfol(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);

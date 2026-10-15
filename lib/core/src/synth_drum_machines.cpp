@@ -1,5 +1,6 @@
 #include "synth_drum_machines.h"
 #include <math.h>
+#include "fastmath.h"
 #include "synth_osc.h"
 
 namespace mt {
@@ -7,7 +8,7 @@ namespace {
 
 float u(float v) { return v <= 0 ? 0 : (v >= 127 ? 1 : v * (1.f / 127.f)); }
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
-float expMap(float lo, float hi, float t) { return lo * powf(hi / lo, t); }
+float expMap(float lo, float hi, float t) { return lo * fastPow(hi / lo, t); }
 
 // TR-808 metal oscillators; the 909 set is an inharmonic stand-in (the originals are samples),
 // design table (263 / 400 / 421 / 474 / 587 / 845 Hz) x 2.
@@ -44,7 +45,7 @@ struct Mac {
 
 // spread stretches the set around its centre: lowest x 1 / spread, highest x spread.
 void metal(DrumParams& o, const float* set, float scale, float spread) {
-  for (int k = 0; k < kDrumMetal; ++k) o.metalHz[k] = set[k] * scale * powf(spread, (k - 2.5f) / 2.5f);
+  for (int k = 0; k < kDrumMetal; ++k) o.metalHz[k] = set[k] * scale * fastPow(spread, (k - 2.5f) / 2.5f);
 }
 
 void kick(DrumParams& o, const Mac& m, float hz, float click, float clickMs, float sweep, float tLo,
@@ -138,7 +139,7 @@ const char* drumMacroName(uint8_t m, int k) {
 
 void drumMachine(uint8_t machine, const float mac[kFmMacros], float pitch, DrumParams& o) {
   o = DrumParams();
-  const float r = exp2f((pitch - 60.f) * (1.f / 12.f));
+  const float r = fastExp2((pitch - 60.f) * (1.f / 12.f));
   Mac m;
   m.dec = u(mac[kMacDec]);
   m.dMs = expMap(5, 4000, m.dec);  // as fmDecayMs, fractional
@@ -153,7 +154,7 @@ void drumMachine(uint8_t machine, const float mac[kFmMacros], float pitch, DrumP
     case DrumMachine::Cp8: clap(o, m, 600, 2500, 3); break;
     case DrumMachine::Rs8: rim(o, m, 500 * r, 1700 * r, 120, 5, 5000, 3); break;
     case DrumMachine::Cl8:
-      o.toneHz[0] = 2500.f * r * exp2f((m.col - 0.5f) * 2.f);  // TONE: +-1 octave
+      o.toneHz[0] = 2500.f * r * fastExp2((m.col - 0.5f) * 2.f);  // TONE: +-1 octave
       o.toneLvl[0] = 1;
       o.toneMs = expMap(10, 120, m.dec);
       o.drive = m.shp;

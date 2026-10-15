@@ -1,4 +1,5 @@
 #include "synth_syn.h"
+#include "fastmath.h"
 #include "hot.h"
 #include <math.h>
 
@@ -11,7 +12,7 @@ float wtLevelPos(float hz) {
 
 MT_HOT void WtOsc::setLevel(float hz) {
   // floor(wtLevelPos(hz)) without log2f (control rate, every SYNTH voice): halvings are exact.
-  float x = hz * kWtHarm / 8000.f;
+  float x = hz * kWtHarm * (1.f / 8000.f);  // no __divsf3
   int k = 0;
   while (k < kWtLevels - 1 && x >= 2.f) {
     x *= 0.5f;
@@ -39,7 +40,7 @@ MT_HOT void SynVoice::control(const SynParams& p, int n) {
     shapeStep_[0] = shapeStep_[1] = mixStep_ = 0;
     return;
   }
-  const float inv = n > 0 ? 1.f / n : 1.f;
+  const float inv = n == 32 ? 1.f / 32 : (n > 0 ? 1.f / n : 1.f);  // kControl: no __divsf3
   for (int k = 0; k < 2; ++k) shapeStep_[k] = (p.shape[k] - shape_[k]) * inv;
   mixStep_ = (p.mix - mix_) * inv;
 }
@@ -50,13 +51,14 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
   // Below Nyquist: the BL oscillators wrap their phase once per sample (WtOsc::step clamps alike).
   const float hzDt = p_.hz[k] * (1.f / kSynthRate);
   const float dt = hzDt < kMaxDt ? hzDt : kMaxDt;  // no fminf: a flash call
+  const float inv = dt > 1e-30f ? fastRcp(dt) : 0.f;  // the edge distances: no '/' per wrap
   float s = shape_[k];
   const float ds = shapeStep_[k];
   switch (static_cast<SynOsc>(p_.mode[k])) {
     case SynOsc::Square: {
       BlOsc& o = bl_[k];
       for (int i = 0; i < n; ++i, s += ds) {
-        const BlOut r = o.square(dt, 0.5f + 0.45f * s, sync ? sync[i] : -1.f);
+        const BlOut r = o.square(dt, inv, 0.5f + 0.45f * s, sync ? sync[i] : -1.f);
         dst[i] = r.v;
         if (wrap) wrap[i] = r.wrap;
       }
@@ -65,7 +67,7 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
     case SynOsc::Tri: {
       BlOsc& o = bl_[k];
       for (int i = 0; i < n; ++i) {
-        const BlOut r = o.tri(dt);
+        const BlOut r = o.tri(dt, inv);
         dst[i] = r.v;
         if (wrap) wrap[i] = r.wrap;
       }
@@ -85,18 +87,17 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
         break;
       }
       // Master of a sync: where the phase wrapped in this step.
-      const float invDt = dt > 0 ? 1.f / dt : 0.f;
       for (int i = 0; i < n; ++i, s += ds) {
         const uint32_t before = o.ph;
         dst[i] = o.next(tab, dph, s * fs);
-        wrap[i] = o.ph < before ? o.phase() * invDt : -1.f;
+        wrap[i] = o.ph < before ? o.phase() * inv : -1.f;
       }
       break;
     }
     default: {
       BlOsc& o = bl_[k];
       for (int i = 0; i < n; ++i) {
-        const BlOut r = o.saw(dt, sync ? sync[i] : -1.f);
+        const BlOut r = o.saw(dt, inv, sync ? sync[i] : -1.f);
         dst[i] = r.v;
         if (wrap) wrap[i] = r.wrap;
       }
@@ -108,8 +109,9 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
 MT_HOT void SynVoice::render(float* out, int n, float amp) {
   constexpr int kChunk = 32;
   const float g = amp * kSynGain;
-  const float subHz = p_.hz[0] * (1.f / kSynthRate) / (p_.subOct >= 2 ? 4.f : 2.f);
+  const float subHz = p_.hz[0] * (1.f / kSynthRate) * (p_.subOct >= 2 ? 0.25f : 0.5f);  // exact
   const float subDt = subHz < kMaxDt ? subHz : kMaxDt;  // no fminf: a flash call
+  const float subInv = subDt > 1e-30f ? fastRcp(subDt) : 0.f;
   // An oscillator out of the mix for the whole block is skipped (osc 1 still runs as a sync master).
   const float mixEnd = mix_ + mixStep_ * n;
   const bool need1 = mix_ < 1.f || mixEnd < 1.f || p_.sync;
@@ -126,7 +128,7 @@ MT_HOT void SynVoice::render(float* out, int n, float amp) {
     for (int i = 0; i < m; ++i, mx += dm) a[i] += (b[i] - a[i]) * mx;
     if (p_.sub > 0) {
       const float sg = p_.sub;
-      for (int i = 0; i < m; ++i) a[i] += sub_.square(subDt, 0.5f, -1).v * sg;
+      for (int i = 0; i < m; ++i) a[i] += sub_.square(subDt, subInv, 0.5f, -1).v * sg;
     }
     if (p_.noise > 0) {
       const float ng = p_.noise * (1.f / 2147483648.f);

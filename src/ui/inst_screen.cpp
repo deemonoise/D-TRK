@@ -336,26 +336,6 @@ void InstScreen::buildLanes(bool keep) {
 }
 
 void InstScreen::initTail(Param* t) {
-  t[kDrive] = {"Drive",
-               [this](char* o, int n) {
-                 if (inst().drive) snprintf(o, n, "%u", inst().drive);
-                 else snprintf(o, n, "OFF");
-               },
-               [this](int d) { inst().drive = static_cast<uint8_t>(clampi(inst().drive + d, 0, 127)); }};
-  // Lo-fi after the drive (fx BIT / SRR lock them per step).
-  t[kBit] = {"Bit crush",
-             [this](char* o, int n) {
-               const int b = inst().crushBits;
-               if (b) snprintf(o, n, "%d  (%d BIT)", b, 16 - (b * 14 + 63) / 127);
-               else snprintf(o, n, "OFF");
-             },
-             [this](int d) { inst().crushBits = static_cast<uint8_t>(clampi(inst().crushBits + d, 0, 127)); }};
-  t[kSrr] = {"Downsample",
-             [this](char* o, int n) {
-               if (inst().crushRate) snprintf(o, n, "%u", inst().crushRate);
-               else snprintf(o, n, "OFF");
-             },
-             [this](int d) { inst().crushRate = static_cast<uint8_t>(clampi(inst().crushRate + d, 0, 127)); }};
   auto off = [this] { return inst().fltMode == static_cast<uint8_t>(mt::FltMode::Off); };
   auto noEnv = [this, off] { return off() || inst().fenv == 0; };
   t[kFltMode] = {"Filter",
@@ -694,7 +674,10 @@ bool InstScreen::trackKey(int n, bool shift) {
 }
 
 void InstScreen::preview() {
-  audio::preview(static_cast<uint8_t>(instr_), onEditor() ? editor_.previewNote() : kPreviewNote);
+  // Through the current track's insert when that track plays this instrument.
+  const int t = app_.curTrack();
+  const uint8_t ins = app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
+  audio::preview(static_cast<uint8_t>(instr_), onEditor() ? editor_.previewNote() : kPreviewNote, ins);
 }
 
 void InstScreen::onInput(const hw::InputEvent& ev) {

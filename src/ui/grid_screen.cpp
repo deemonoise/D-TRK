@@ -220,7 +220,7 @@ void GridScreen::previewNote(uint8_t note) {
   const mt::Project& p = app_.project();
   const mt::TrackCfg& t = p.tracks[track()];
   if (!app_.preview() || t.out != mt::TrackOut::Int || note > 127) return;
-  audio::preview(t.instr < mt::kInstruments ? t.instr : 0, note);
+  audio::preview(t.instr < mt::kInstruments ? t.instr : 0, note, static_cast<uint8_t>(track()));
 }
 
 // Drum track: flips the lane's bit; an empty (or OFF) step becomes a note step at the track's velocity.

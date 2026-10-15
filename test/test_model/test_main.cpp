@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include <unity.h>
 #include "model.h"
@@ -298,11 +299,25 @@ void test_lfo_dest_pan() {
   for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) {
     const auto it = static_cast<InstrType>(t);
     TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Pan), it));
-    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Rvb), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::ModSend), lfoDestStep(d(LfoDest::Rvb), 1, it));
+    TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::ModSend), 1, it));
     TEST_ASSERT_EQUAL(d(LfoDest::Bit), lfoDestStep(d(LfoDest::Pan), 1, it));
     TEST_ASSERT_EQUAL(d(LfoDest::Pan), lfoDestStep(d(LfoDest::Bit), -1, it));
   }
   TEST_ASSERT_EQUAL(d(LfoDest::Rtrg4), lfoDestStep(d(LfoDest::Rtrg3), 1, InstrType::Chip));  // PAN not at the end
+}
+
+// MOD send (feature 5): lock bit 15, LFO / follower target ModSend after PAN in the enum, shown
+// between RVB and PAN; every type; TrackCfg::modSend 0 by default.
+void test_mod_send_lock_and_dest() {
+  TEST_ASSERT_EQUAL(kLockGte + 1, kLockMod);
+  TEST_ASSERT_EQUAL(15, kLockMod);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pan) + 1, static_cast<int>(LfoDest::ModSend));
+  const uint8_t m = static_cast<uint8_t>(LfoDest::ModSend);
+  TEST_ASSERT_EQUAL_STRING("MOD", lfoDestName(m, InstrType::Fm));
+  for (int t = 0; t < static_cast<int>(InstrType::Count); ++t) TEST_ASSERT_TRUE(lfoDestValid(m, static_cast<InstrType>(t)));
+  TEST_ASSERT_EQUAL(m, folDestStep(static_cast<uint8_t>(LfoDest::Rvb), 1, InstrType::Chip));
+  TEST_ASSERT_EQUAL(0, TrackCfg().modSend);
 }
 
 // Type change: a target the new type lacks becomes PITCH, on every LFO.
@@ -412,8 +427,12 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(50, p.compRel);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(13, kLocks);  // + BIT, SRR, PAN
+  TEST_ASSERT_EQUAL(16, kLocks);  // + BIT, SRR, PAN, DTY, GTE, MOD
   TEST_ASSERT_EQUAL(kLockSrr + 1, kLockPan);
+  TEST_ASSERT_EQUAL(kLockPan + 1, kLockDty);
+  TEST_ASSERT_EQUAL(kLockDty + 1, kLockGte);
+  TEST_ASSERT_EQUAL(0, TrackCfg().driveModel);
+  TEST_ASSERT_EQUAL(5, static_cast<int>(DriveModel::Count));
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::DCY) + kLockFlt, static_cast<int>(Fx::FLT));  // lock order unchanged
 }
 
@@ -473,8 +492,60 @@ void test_track_step_at() {
   TEST_ASSERT_EQUAL(5, trackStepAt(pt, 3, 5, 0, 0));
 }
 
+// Trance gate defaults: off (depth 0), 8ths at 1/16, full length, ~1 ms / ~4 ms ramps.
+void test_gate_defaults_and_presets() {
+  const TrackCfg c;
+  TEST_ASSERT_EQUAL_HEX16(0x5555, c.gateMask);
+  TEST_ASSERT_EQUAL(static_cast<int>(GateRate::R16), c.gateRate);
+  TEST_ASSERT_EQUAL(0, c.gateDepth);
+  TEST_ASSERT_EQUAL(100, c.gateLen);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, 1.f, gateMs(c.gateAtk));
+  TEST_ASSERT_FLOAT_WITHIN(0.1f, 4.f, gateMs(c.gateRel));
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.5f, gateMs(0));
+  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 50.f, gateMs(127));
+  TEST_ASSERT_EQUAL_FLOAT(0.5f, gateSixteenths(0));
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gateSixteenths(1));
+  TEST_ASSERT_EQUAL_FLOAT(2.f, gateSixteenths(2));
+  TEST_ASSERT_EQUAL_FLOAT(1.f, gateSixteenths(9));  // unknown: 1/16
+  TEST_ASSERT_EQUAL(0, gatePresetOf(0x5555));
+  TEST_ASSERT_EQUAL(-1, gatePresetOf(0x0001));
+  for (int i = 0; i < kGatePresets; ++i) {
+    TEST_ASSERT_EQUAL(i, gatePresetOf(kGatePreset[i].mask));  // masks unique
+    TEST_ASSERT_TRUE(strlen(kGatePreset[i].name) <= 10);
+  }
+}
+
+// Envelope follower (TrackCfg::fol*): off by default, CUTOFF, release 70; the target list skips the
+// RTRG targets; the level is dB -48..0 of the peak x 0.25; the coefficient reaches 63 % in its time.
+void test_follower_defaults_and_helpers() {
+  TrackCfg c;
+  TEST_ASSERT_EQUAL(0, c.folSrc);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Cutoff), c.folDest);
+  TEST_ASSERT_EQUAL(0, c.folAmt);
+  TEST_ASSERT_EQUAL(0, c.folAtk);
+  TEST_ASSERT_EQUAL(70, c.folRel);
+  const auto r1 = static_cast<uint8_t>(LfoDest::Rtrg1), d4 = static_cast<uint8_t>(LfoDest::Depth4);
+  TEST_ASSERT_EQUAL(d4, folDestStep(d4, 1, InstrType::Chip));       // RTRG skipped: the end stays
+  TEST_ASSERT_EQUAL(d4, folDestStep(d4, 5, InstrType::Chip));
+  TEST_ASSERT_NOT_EQUAL(r1, folDestStep(static_cast<uint8_t>(LfoDest::Pitch), 40, InstrType::Synth));
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Cutoff),
+                    folDestStep(static_cast<uint8_t>(LfoDest::Vol), 1, InstrType::Chip));
+  TEST_ASSERT_EQUAL_FLOAT(0.f, folLevel(0.f));
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f, folLevel(4.f));     // 0 dBFS after x 0.25
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f, folLevel(10.f));    // clamped
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.5f, folLevel(4.f * 0.0630957f));  // -24 dB
+  TEST_ASSERT_EQUAL_FLOAT(0.f, folLevel(4.f * 0.003f));  // below -48 dB
+  TEST_ASSERT_EQUAL_FLOAT(1.f, folCoef(0));  // instant
+  // n segments of 1 ms with coefficient c reach 1 - (1 - c)^n: ~63 % at envTimeMs(v).
+  const uint8_t v = 70;
+  const int ms = envTimeMs(v);
+  const float reach = 1.f - powf(1.f - folCoef(v), static_cast<float>(ms));
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.632f, reach);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_gate_defaults_and_presets);
   RUN_TEST(test_step_is_14_bytes_and_empty_by_default);
   RUN_TEST(test_fx_in_last_slot);
   RUN_TEST(test_find_fx);
@@ -512,5 +583,7 @@ int main() {
   RUN_TEST(test_track_speed_factors);
   RUN_TEST(test_track_step_at);
   RUN_TEST(test_lfo_dest_pan);
+  RUN_TEST(test_mod_send_lock_and_dest);
+  RUN_TEST(test_follower_defaults_and_helpers);
   return UNITY_END();
 }

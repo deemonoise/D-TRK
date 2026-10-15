@@ -38,9 +38,12 @@
 // *FORMANT mixed, LFO on SHP1, sub, LP filter) and plays a 2-note chord per track every 2 s: 16 voices.
 // With -DAUDIO_BENCH_SYN_N=8 one note per track (8 voices). Same Serial line. It overwrites
 // instruments 8..15 and every track's out / instrument, like the FM bench.
-// FX bench: -DAUDIO_BENCH_FX is the DRUM bench with drive 100 and reverb send 100 on every bench
-// instrument, reverb level 100, compressor 100 keyed by track 1. Compare in PROJ while it runs:
-// Rvb level 0 = no reverb, Comp OFF = no compressor (the status-bar CPU figure).
+// FX bench: -DAUDIO_BENCH_FX is the DRUM bench with drive 100 and reverb / delay / MOD sends on every
+// bench instrument / track, reverb level 100 in SHIMMER (+12), delay TAPE (wear 100), MOD bus
+// ENSEMBLE, master EQ (low +6 dB, high -3 dB), compressor 100 keyed by track 1. Compare in PROJ
+// while it runs: Rvb level 0 = no reverb, Rvb mode PLAIN = no shimmer, Mod type OFF / PHASER, Dly
+// mode DIGITAL, EQ flat (64 / 64), Comp OFF (the status-bar CPU figure; the CPU profile splits
+// mod / shim / eq / delay / reverb).
 // Pool bench: -DAUDIO_BENCH_POOL with -DMT_VOICES=N -DMT_HEAVY_MAX=H (envs wt32-pool24 /
 // wt32-pool32): first 16 CHIP voices alone (their cost per voice), then the whole N-voice pool
 // with 8, 10, H heavy voices (DRUM and FM HAT on alternate tracks, retriggered every 16th), the
@@ -121,8 +124,9 @@ SemaphoreHandle_t pausedSem, resumeSem;
 
 mt::Synth* synth;
 void* synthMem = nullptr;  // reserve()
-bool reverbInt = false;    // the reverb buffer is in internal RAM
-float* reverbBuf = nullptr;  // the reverb buffer (internal or PSRAM)
+bool reverbInt = false;     // the reverb buffers are in internal RAM
+float* reverbBuf = nullptr;  // the reverb and shimmer feedback floats (internal or PSRAM)
+int16_t* lineBuf = nullptr;  // the shimmer and MOD lines (same RAM as reverbBuf)
 Ring engineQ;  // engine task -> audio task
 Ring uiQ;      // UI task (preview) -> audio task
 uint64_t blockT;  // start of the block being rendered, engine time
@@ -200,7 +204,8 @@ void drain(Ring& q) {
     if (off < 0) break;  // a later block
     if (e->t < blockT) {
       lateEvents.fetch_add(1, std::memory_order_relaxed);
-      if (e->b[0] == 0xF6 && e->b[1] == 4) {  // PERF step clock: late at offset 0 would misplace the grid
+      // PERF step / song clock: late at offset 0 would misplace the grid / the trance gates
+      if (e->b[0] == 0xF6 && (e->b[1] == 4 || e->b[1] == 5)) {
         q.pop();
         continue;
       }
@@ -228,6 +233,7 @@ void drain(Ring& q) {
 std::atomic<uint32_t> profPeak{0};  // the slowest block's cycles while profiling
 
 [[maybe_unused]] void renderSynth(int16_t* out) {
+  if (synth->syncProfiler()) profPeak.store(0, std::memory_order_relaxed);  // armed: from this block
   const uint32_t q0 = synth->profNow();
   advanceClock();
   takePerfRequest();
@@ -424,8 +430,23 @@ void benchDrumBegin() {
   }
 #ifdef AUDIO_BENCH_FX
   for (int i = kBenchChipInstr; i < kBenchDrumInstr + kBenchTracks; ++i) {
-    project->instruments[i].drive = 100;
     project->instruments[i].rsend = 100;
+  }
+  for (int i = kBenchChipInstr; i < kBenchDrumInstr + kBenchTracks; ++i) project->instruments[i].send = 60;
+  for (auto& c : project->tracks) {
+    c.drive = 100;
+    c.modSend = 90;
+  }
+  project->dlyMode = static_cast<uint8_t>(mt::DlyMode::Tape);
+  project->dlyChar = 100;
+  project->rvbMode = static_cast<uint8_t>(mt::RvbMode::Shimmer);
+  project->rvbShim = 80;
+  project->modType = static_cast<uint8_t>(mt::ModType::Ensemble);
+  project->eqLow = 96;
+  project->eqHigh = 48;
+  {
+    const uint8_t ins[2] = {0xF7, 0};  // the preview track's notes through track 1's insert
+    synth->event(0, mt::kPreviewTrack, ins, 2);
   }
   project->rvbLevel = 100;
   project->compAmt = 100;
@@ -584,10 +605,11 @@ void benchPoolBegin() {
   chip.reso = 100;
   chip.fenv = 40;
   chip.fDec = 0;
-  for (int i = kPoolHeavyInstr; i <= kPoolChipInstr; ++i) {
-    project->instruments[i].drive = 100;
-    project->instruments[i].rsend = 100;
-  }
+  for (int i = kPoolHeavyInstr; i <= kPoolChipInstr; ++i) project->instruments[i].rsend = 100;
+  // Drive on every track's insert (and the preview track's, through track 1's).
+  for (auto& c : project->tracks) c.drive = 100;
+  const uint8_t ins[2] = {0xF7, 0};
+  synth->event(0, mt::kPreviewTrack, ins, 2);
   project->rvbLevel = 100;
   project->compAmt = 100;
   project->scTrack = 1;
@@ -781,31 +803,57 @@ bool initI2s() {
 
 }  // namespace
 
-void reserve() {
-  if (!synthMem) synthMem = heap_caps_malloc(sizeof(mt::Synth), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-}
+void reserve(void* mem) { synthMem = mem; }
 
 bool synthInternal() { return synth && esp_ptr_internal(synth); }
 
 bool reverbInternal() { return reverbInt; }
 
 namespace {
-constexpr size_t kRvBytes = mt::Reverb::kBufLen * sizeof(float);
+// Two blocks, so they fit the gaps a Wi-Fi session leaves in internal RAM: the reverb's floats and
+// the shimmer's feedback block (floats), then the shimmer's int16 line and the MOD bus line.
+constexpr size_t kRvFloatBytes = (mt::Reverb::kBufLen + mt::Synth::kBlock) * sizeof(float);
+constexpr size_t kRvLineBytes = (mt::PitchShift::kLen + mt::ModFx::kLineLen) * sizeof(int16_t);
+constexpr size_t kRvBytes = kRvFloatBytes + kRvLineBytes;
+
+// Hands the blocks to the synth (audio task parked or not started).
+void attachReverb(float* b, int16_t* l) {
+  synth->setReverbBuffer(b, mt::Reverb::kBufLen);
+  float* wet = b ? b + mt::Reverb::kBufLen : nullptr;
+  synth->setShimmerBuffer(b ? l : nullptr, mt::PitchShift::kLen, wet);
+  synth->setModBuffer(b ? l + mt::PitchShift::kLen : nullptr, mt::ModFx::kLineLen);
+}
 // Internal RAM left free with the reverb in it: the SD card and short work buffers (a few KB each).
 // Wi-Fi needs far more, but the Wi-Fi dialog moves the reverb to PSRAM first.
 constexpr size_t kRvKeepFree = 24 * 1024;
 
-// Swaps the reverb onto a new zeroed buffer with the audio task parked (the tail is lost).
+// Both zeroed blocks in `caps`, or none (false).
+bool allocReverb(uint32_t caps, float*& b, int16_t*& l) {
+  b = static_cast<float*>(heap_caps_malloc(kRvFloatBytes, caps));  // the bigger one first
+  l = b ? static_cast<int16_t*>(heap_caps_malloc(kRvLineBytes, caps)) : nullptr;
+  if (!l) {
+    heap_caps_free(b);
+    b = nullptr;
+    return false;
+  }
+  memset(b, 0, kRvFloatBytes);
+  memset(l, 0, kRvLineBytes);
+  return true;
+}
+
+// Swaps the reverb onto new zeroed blocks with the audio task parked (the tail is lost).
 bool moveReverb(uint32_t caps) {
-  auto* nb = static_cast<float*>(heap_caps_malloc(kRvBytes, caps));
-  if (!nb) return false;
-  memset(nb, 0, kRvBytes);
+  float* nb;
+  int16_t* nl;
+  if (!allocReverb(caps, nb, nl)) return false;
   {
     Paused parked;
-    synth->setReverbBuffer(nb, mt::Reverb::kBufLen);
+    attachReverb(nb, nl);
   }
   heap_caps_free(reverbBuf);
+  heap_caps_free(lineBuf);
   reverbBuf = nb;
+  lineBuf = nl;
   reverbInt = esp_ptr_internal(nb);
   return true;
 }
@@ -821,19 +869,29 @@ void reverbToInternal() {
   moveReverb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
+// The synth holds no pointers into itself (its buffers, bank and project are outside): with the
+// audio task parked (it reads `synth` only while running) a byte copy moves it.
+void* moveSynth(void* dst) {
+  if (!synth || !dst) return nullptr;
+  void* old = synth;
+  Paused parked;
+  if (!parked.ok) return nullptr;
+  memcpy(dst, old, sizeof(mt::Synth));
+  synth = static_cast<mt::Synth*>(dst);
+  return old;
+}
+
 static_assert(kProfStages == mt::Synth::kProfStages, "profile stages");
 
 static uint32_t cycles() { return esp_cpu_get_cycle_count(); }
 
 void profileStart() {
   if (!synth) return;
-  uint32_t sink[kProfStages], sinkN[kProfStages], blocks;
-  synth->takeProfile(sink, sinkN, blocks);  // clear (a block in flight may land either side)
-  profPeak.store(0, std::memory_order_relaxed);
+  // Takes effect at the next block's start, which clears the sums and the peak (audio task).
   synth->setProfiler(cycles);
 }
 
-bool profileRunning() { return synth && synth->profiling(); }
+bool profileRunning() { return synth && synth->profilerArmed(); }
 
 bool profileStop(Profile& out) {
   if (!synth) return false;
@@ -854,8 +912,7 @@ bool profileStop(Profile& out) {
 
 void begin(mt::Project* p) {
   project = p;
-  // Internal RAM: the synth state is touched on every sample. reserve() took it at boot.
-  reserve();
+  // Internal RAM: the synth state is touched on every sample. reserve() handed it over at boot.
   if (!synthMem) Serial.println("audio: no internal RAM for the synth, PSRAM (slower)");
   synth = synthMem ? new (synthMem) mt::Synth(*p) : new mt::Synth(*p);
   bankSetProject(p);
@@ -868,17 +925,19 @@ void begin(mt::Project* p) {
     synth->setDelayBuffer(line, kDelayLen);
   else
     Serial.println("audio: no PSRAM for the delay line");
-  // Reverb: 6398 floats (25 KB), read and written every sample: internal RAM when there is room,
-  // else PSRAM (slower through the cache); none = no reverb.
+  // Reverb: 6398 floats (25 KB) + the shimmer line (4 KB) + the MOD line (2 KB), read and written every sample: internal
+  // RAM when there is room, else PSRAM (slower through the cache); none = no reverb.
   // Keeps kRvKeepFree of internal RAM free.
   float* rvMem = nullptr;
-  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) >= kRvBytes + kRvKeepFree)
-    rvMem = static_cast<float*>(heap_caps_malloc(kRvBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-  if (!rvMem) rvMem = static_cast<float*>(heap_caps_malloc(kRvBytes, MALLOC_CAP_SPIRAM));
+  int16_t* rvLine = nullptr;
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kRvBytes + kRvKeepFree ||
+      !allocReverb(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT, rvMem, rvLine))
+    allocReverb(MALLOC_CAP_SPIRAM, rvMem, rvLine);
   reverbInt = rvMem && esp_ptr_internal(rvMem);
   reverbBuf = rvMem;
-  if (auto* rv = rvMem)
-    synth->setReverbBuffer(rv, mt::Reverb::kBufLen);
+  lineBuf = rvLine;
+  if (rvMem)
+    attachReverb(rvMem, rvLine);
   else
     Serial.println("audio: no PSRAM for the reverb");
 #ifdef AUDIO_BENCH
@@ -914,21 +973,24 @@ void post(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) {
   if (!engineQ.push(e)) lostEvents.fetch_add(1, std::memory_order_relaxed);
 }
 
-void preview(uint8_t instr, uint8_t note) {
+void preview(uint8_t instr, uint8_t note, uint8_t track) {
   const uint64_t t = engine::nowUs();
+  const Ev ins{t, mt::kPreviewTrack, 2, {0xF7, track, 0}};
   const Ev pg{t, mt::kPreviewTrack, 2, {0xC0, static_cast<uint8_t>(instr & 15), 0}};
   const Ev on{t, mt::kPreviewTrack, 3, {0x90, static_cast<uint8_t>(note & 127), 100}};
-  if (!uiQ.push(pg) || !uiQ.push(on)) lostEvents.fetch_add(1, std::memory_order_relaxed);
+  if (!uiQ.push(ins) || !uiQ.push(pg) || !uiQ.push(on)) lostEvents.fetch_add(1, std::memory_order_relaxed);
 }
 
 void previewSlice(uint8_t instr, uint8_t slice, uint8_t root, uint32_t holdMs) {
   const uint64_t t = engine::nowUs();
   const uint32_t h = holdMs / 100 + 1;
+  // No insert: previewIns_ is sticky, a slice must not play through the last preview's track.
+  const Ev ins{t, mt::kPreviewTrack, 2, {0xF7, mt::kTracks, 0}};
   const Ev pg{t, mt::kPreviewTrack, 2, {0xC0, static_cast<uint8_t>(instr & 15), 0}};
   const Ev slc{t, mt::kPreviewTrack, 3, {0xF5, static_cast<uint8_t>(mt::Fx::SLC), slice}};
   const Ev on{t, mt::kPreviewTrack, 3, {0x90, static_cast<uint8_t>(root & 127), 100},
               static_cast<uint8_t>(h > 255 ? 255 : h)};
-  if (!uiQ.push(pg) || !uiQ.push(slc) || !uiQ.push(on)) lostEvents.fetch_add(1, std::memory_order_relaxed);
+  if (!uiQ.push(ins) || !uiQ.push(pg) || !uiQ.push(slc) || !uiQ.push(on)) lostEvents.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool perf(uint8_t op, uint8_t val) {
@@ -1027,6 +1089,10 @@ void trackPeaks(float out[16]) {
   if (synth) synth->takeTrackPeaks(out);
   else for (int t = 0; t < mt::kTracks; ++t) out[t] = 0;
 }
+
+float gatePos() { return synth ? synth->gatePos() : -1.f; }
+
+float followerLevel(int t) { return synth && t >= 0 ? synth->followerLevel(static_cast<uint8_t>(t)) : 0.f; }
 
 void setPhones(uint8_t pct) {
   const int32_t v = pct > 100 ? 100 : pct;

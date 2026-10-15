@@ -46,7 +46,7 @@ void test_fx_entries() {
   TEST_ASSERT_EQUAL_STRING("SRR", fxName(Fx::SRR));
   TEST_ASSERT_TRUE(fxSynthOnly(Fx::BIT));
   TEST_ASSERT_TRUE(fxSynthOnly(Fx::SRR));
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::DRV, 1) == Fx::BIT);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::DTY, 1) == Fx::BIT);  // DRV, DTY, BIT
 }
 
 int main() {

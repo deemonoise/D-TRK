@@ -67,7 +67,14 @@ constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the 
 // pattern length while it plays shifts a /D track's phase (the count is pass * length + pos).
 class Sequencer {
  public:
-  explicit Sequencer(Project& p) : p_(p), bpm_(clampBpm(p.bpm)) {}
+  // cold: coldBytes() of memory for the step history and the MIDI-out note table (touched once per
+  // step / note: PSRAM is fine), owned by the caller and outliving the Sequencer; nullptr = its own
+  // (heap). The object itself holds the per-event state (event heap, INT note table).
+  explicit Sequencer(Project& p, void* cold = nullptr);
+  ~Sequencer();
+  Sequencer(const Sequencer&) = delete;
+  Sequencer& operator=(const Sequencer&) = delete;
+  static size_t coldBytes();
 
   void start(uint64_t now, MidiSink& out);
   void pause(uint64_t now, MidiSink& out);
@@ -139,6 +146,7 @@ class Sequencer {
     uint64_t t;      // step time incl. swing
     uint64_t first;  // earliest event it pushed (t if none)
     uint64_t tick;
+    uint64_t gateTick;  // gateTick_ before
     uint32_t serial;
     uint32_t loop;
     uint8_t pos, pat;  // what played
@@ -155,6 +163,7 @@ class Sequencer {
     uint16_t saved;       // savedMute_ before
   };
   static constexpr int kHist = 16;           // covers every scheduled but unheard step
+  static_assert((kHist & (kHist - 1)) == 0, "hist ring");
   static constexpr uint16_t kLookTicks = 48;  // the largest nudge: -50 % of a quarter
   static constexpr uint64_t kTickNs = 625000000ull;  // one 96 PPQN tick is kTickNs / bpm ns
 
@@ -193,7 +202,7 @@ class Sequencer {
     for (StepArp& a : arps_) a.n = 0;
   }
   void silence(uint64_t now, MidiSink& out);
-  // Transport message (0xFA start, 0xFC pause, 0xFB resume) to the synth, on the first INT track; none
+  // Transport message (0xFA start, 0xFC pause, 0xFB resume, 0xFD stop) to the synth, on the first INT track; none
   // without INT tracks. TEMPO LFOs with Retrig OFF follow it.
   void synthTransport(uint64_t now, MidiSink& out, uint8_t msg);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
@@ -233,9 +242,18 @@ class Sequencer {
   void dispatch(const SchedEvent& e, MidiSink& out);
   uint32_t newId();
 
+  // Rarely touched, kept out of the object (see the constructor).
+  struct Cold {
+    Sched hist[kHist];  // a ring: hist(0) newest
+    Voices voices;      // MIDI-out tracks' sounding notes
+  };
+  Sched& hist(int i) { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
+  const Sched& hist(int i) const { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
+
   Project& p_;
+  Cold* cold_;
+  bool ownCold_;
   EventHeap heap_;
-  Voices voices_;
   VoicesN<kTracks> intVoices_;  // INT tracks: channel = track number
   Rng rng_;
   State state_ = State::Stopped;
@@ -259,13 +277,16 @@ class Sequencer {
   uint64_t anchorRem_ = 0;  // < 1000 * bpm_
   uint64_t anchorTick_ = 0;
   uint64_t stepTick_ = 0;   // tick of the next step to schedule
+  // Ticks since start() to the next step (not pass-relative, not reset by resume): the song clock
+  // of the trance gates (Synth 0xF6 5), rewound with the steps.
+  uint64_t gateTick_ = 0;
   uint64_t clockTick_ = 0;  // tick of the next MIDI clock
   uint64_t playStartT_ = 0;
   uint32_t stepSerial_ = 1;  // serial of the next step to schedule
   uint32_t selSerial_ = 0;   // stepSerial_ at the last selectPattern
   uint32_t tag_ = 0;         // tag for pushed events
   uint64_t minT_ = 0;        // earliest event of the step being scheduled
-  Sched hist_[kHist] = {};   // newest first
+  uint8_t histHead_ = 0;  // hist(i) = cold_->hist[(histHead_ + i) % kHist], newest first
   uint8_t histN_ = 0;
   uint8_t heardPos_ = 0;
   uint32_t heardLoop_ = 0;

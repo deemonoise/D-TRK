@@ -3,6 +3,7 @@
 #include <string.h>
 #include "app.h"
 #include "audio/audio.h"
+#include "core_ram.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "net/web.h"
@@ -22,7 +23,7 @@ bool WifiDialog::open() {
   }
   app_.lockTransport(true);
   audio::reverbToPsram();  // Wi-Fi needs the internal RAM
-  engine::seqToPsram();
+  core_ram::toPsram();
   open_ = true;
   logCount_ = 0;
   {
@@ -52,7 +53,7 @@ void WifiDialog::close() {
   const bool served = net::webRunning();
   net::webEnd();
   net::off();
-  engine::seqToInternal();  // first: the engine touches it on every event
+  core_ram::toInternal();  // first: the biggest block, touched on every sample
   audio::reverbToInternal();
   app_.lockTransport(false);
   open_ = false;

@@ -60,6 +60,9 @@ constexpr Info kInfo[] = {
     {"LFT", "LFO DEST", 0, static_cast<int16_t>(LfoDest::Count) - 1, 0, false},  // LFT: dest lock
     {"LFR", "LFO RESET", 0, 255, 0, false},            // LFR: phase restart at val / 256
     {"PAN", "PAN", 0, 127, 64, false},                 // PAN: track pan lock, 64 = centre
+    {"DTY", "DRIVE TYPE", 0, static_cast<int16_t>(DriveModel::Count) - 1, 0, false},  // DTY: drive model lock
+    {"GTE", "TRANCE GATE", 0, 127, 127, false},  // GTE: trance gate depth lock, 0 = off
+    {"MOD", "MOD SEND", 0, 127, 64, false},      // MOD: MOD bus send lock
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -106,10 +109,10 @@ constexpr Fx kOrder[] = {
     Fx::RAT, Fx::NDG, Fx::GAT, Fx::TIE, Fx::OFF, Fx::CUT,
     Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN,
     Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
-    Fx::FLT, Fx::RES, Fx::DRV, Fx::BIT, Fx::SRR, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
+    Fx::FLT, Fx::RES, Fx::DRV, Fx::DTY, Fx::BIT, Fx::SRR, Fx::GTE, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
     Fx::LFO, Fx::LFD, Fx::LFS, Fx::LFW, Fx::LFT, Fx::LFR,
     Fx::OFS, Fx::SLC,
-    Fx::DLY, Fx::RVB, Fx::PAN,
+    Fx::DLY, Fx::RVB, Fx::MOD, Fx::PAN,
     Fx::CHN, Fx::CCA, Fx::CCB, Fx::PGM,
 };
 constexpr int kOrderN = sizeof(kOrder) / sizeof(kOrder[0]);
@@ -157,11 +160,21 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::LFT: {
       static const char* const kD[] = {"PIT", "DEC", "COL", "SHP", "SWP", "CON", "VOL", "CUT", "DRV", "RES", "FEN",
                                        "DLY", "RVB", "BIT", "SRR", "FIN", "DUT", "SUB", "NOI", "SM2", "RA1", "RA2",
-                                       "RA3", "RA4", "DP1", "DP2", "DP3", "DP4", "RG1", "RG2", "RG3", "RG4", "PAN"};
+                                       "RA3", "RA4", "DP1", "DP2", "DP3", "DP4", "RG1", "RG2", "RG3", "RG4", "PAN", "MOD"};
       static_assert(sizeof(kD) / sizeof(kD[0]) == static_cast<int>(LfoDest::Count), "LFT names");
       snprintf(out, 5, "%s", kD[v < static_cast<uint8_t>(LfoDest::Count) ? v : 0]);
       return;
     }
+    case Fx::DTY: {
+      static const char* const kM[] = {"TNH", "CLP", "FLD", "RCT", "ASY"};
+      static_assert(sizeof(kM) / sizeof(kM[0]) == static_cast<int>(DriveModel::Count), "DTY names");
+      snprintf(out, 5, "%s", kM[v < static_cast<uint8_t>(DriveModel::Count) ? v : 0]);
+      return;
+    }
+    case Fx::GTE:
+      if (v == 0) snprintf(out, 5, "OFF");
+      else snprintf(out, 5, "%3u", v);
+      return;
     case Fx::PAN:  // "C", "L64" .. "R63"
       if (v == 64) snprintf(out, 5, "C");
       else snprintf(out, 5, "%c%d", v < 64 ? 'L' : 'R', v < 64 ? 64 - v : v - 64);
@@ -229,7 +242,8 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
 
 bool fxSynthOnly(Fx f) {
   return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR ||
-         (f >= Fx::LFO && f <= Fx::LFR) || f == Fx::PAN;
+         (f >= Fx::LFO && f <= Fx::LFR) || f == Fx::PAN || f == Fx::DTY || f == Fx::GTE ||
+         f == Fx::MOD;
 }
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }

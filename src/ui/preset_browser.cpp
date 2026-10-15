@@ -51,6 +51,8 @@ void PresetBrowser::open(Mode mode, int instr) {
   mode_ = mode;
   instr_ = instr;
   backup_ = inst();
+  track_ = app_.curTrack();
+  trackBackup_ = app_.project().tracks[track_];
   block_ = mt::factoryKitBlock(instr_);
   blockChanged_ = false;
   if (blockBackup_) memcpy(blockBackup_, &app_.project().instruments[block_], mt::kKitLanes * sizeof(mt::Instrument));
@@ -72,6 +74,11 @@ void PresetBrowser::close(bool keep) {
   if (mode_ == Mode::Load && !keep && changed_) {
     engine::lockProject();
     inst() = backup_;
+    mt::TrackCfg& c = app_.project().tracks[track_];
+    c.drive = trackBackup_.drive;
+    c.crushBits = trackBackup_.crushBits;
+    c.crushRate = trackBackup_.crushRate;
+    c.driveModel = trackBackup_.driveModel;
     if (blockChanged_)
       memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
     engine::unlockProject();
@@ -206,12 +213,18 @@ void PresetBrowser::apply(const mt::Instrument& src) {
     blockChanged_ = false;
   }
   mt::applyPreset(inst(), src, found);
+  mt::takePresetInsert(app_.project(), instr_, track_);  // the track playing it takes its insert
   engine::unlockProject();
   if (inst().type == mt::InstrType::Synth) resolveTables();
   app_.markDirty();
   seqAfter_ = app_.editSeq();
   changed_ = true;
-  audio::preview(static_cast<uint8_t>(instr_), kPreviewNote);
+  audio::preview(static_cast<uint8_t>(instr_), kPreviewNote, previewInsert());
+}
+
+uint8_t PresetBrowser::previewInsert() const {
+  const int t = track_;
+  return app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
 }
 
 void PresetBrowser::applyKit(int index) {
@@ -220,12 +233,13 @@ void PresetBrowser::applyKit(int index) {
   if (blockChanged_)
     memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
   mt::factoryBuildKit(index, app_.project(), instr_);
+  mt::takePresetInsert(app_.project(), instr_, track_);  // the KIT track takes the kit's insert
   engine::unlockProject();
   blockChanged_ = true;
   app_.markDirty();
   seqAfter_ = app_.editSeq();
   changed_ = true;
-  audio::preview(static_cast<uint8_t>(instr_), kPreviewNote);
+  audio::preview(static_cast<uint8_t>(instr_), kPreviewNote, previewInsert());
 }
 
 void PresetBrowser::resolveTables() {
@@ -371,6 +385,7 @@ void PresetBrowser::onMenu(int id) {
       // The file name may be longer than an instrument's: the preset keeps its first 8 chars.
       mt::Instrument m = inst();
       strlcpy(m.name, pending_, sizeof(m.name));
+      mt::presetInsertForSave(app_.project(), instr_, track_, m);  // the track's insert, recommended
       app_.showBusy("SAVING...");
       const storage::Result r = storage::savePreset(dir_, pending_, m);
       if (r != storage::Result::Ok) {
