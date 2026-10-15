@@ -3,7 +3,7 @@
 
 namespace hw {
 
-// INA226 in the battery positive wire (LiPo+ -> IN+, IN- -> IP5306 B+), I2C 0x40 on the
+// INA226 in the battery positive wire (LiPo+ -> IN+, IN- -> IP5306 B+), I2C 0x40..0x4F on the
 // expander bus. Read by the trackio task, the only owner of Wire; readers on any core.
 struct BatterySample {
   float volts;   // bus voltage at IN+ (battery terminal)

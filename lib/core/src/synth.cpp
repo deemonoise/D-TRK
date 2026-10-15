@@ -127,6 +127,7 @@ void Synth::reset() {
   capUp_ = 0;
   rng_ = kRngSeed;  // a render repeats exactly
   drumResetNoise();
+  over_ = 0;
   delay_.clear();
   reverb_.clear();
   comp_.reset();
@@ -140,7 +141,9 @@ void Synth::reset() {
 
 MT_HOT void Synth::setLoad(float load) {
   load_ += (load - load_) * 0.25f;
-  if (load_ <= kLoadHigh && load <= kLoadPanic) {
+  over_ = load > kLoadPanic ? over_ + 1 : 0;
+  const bool high = load_ > kLoadHigh;
+  if (!high && over_ < kPanicBlocks && load <= kLoadHard) {
     if (load_ < kLoadLow && cap_ < kVoices && ++capUp_ >= kCapUpBlocks) {
       ++cap_;
       capUp_ = 0;
@@ -165,7 +168,7 @@ MT_HOT void Synth::setLoad(float load) {
   if (live <= kMinVoices || victim < 0) return;
   voices_[victim].env.fade(kStealMs);
   voices_[victim].stolen = true;
-  cap_ = live - 1;
+  if (high) cap_ = live - 1;
 }
 
 void Synth::startTrack(uint8_t track) {

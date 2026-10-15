@@ -4,6 +4,16 @@ Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery mo
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
+## Architecture
+
+The device is two boards connected by a UART link:
+
+- **WT32-SC01 Plus (ESP32-S3)** — the tracker: sequencer, UI (display, touch, encoder, buttons), MIDI OUT, Wi-Fi firmware page.
+- **Teensy 4.1 — the synth board**: the synthesizer engine (`mt::Synth` from `lib/core` inside a Teensy Audio Library `AudioStream`, 44.1 kHz stereo, 32 voices, up to 16 of them "heavy" — FM / DRUM / SYNTH WT), the only microSD card (SdFat, FAT32 or exFAT), the sample store on that card (samples stream from it), the bank in its program flash (wavetables, sample starts), optional 8 MB PSRAM on the CS0 pad (sample cache, PERF buffer; without it the PERF buffer effects are off), the Teensy Audio Shield Rev D (SGTL5000, headphones).
+- **Link**: ESP `UART_NUM_2` (GPIO TX 13 / RX 14) ↔ Teensy `Serial1` (RX1 0 / TX1 1), 3 Mbaud, COBS frames with CRC16, protocol version 2. Synth events carry a timestamp and are played 4 ms after they are sent; the sound state is mirrored by diffing a `SynthModel` (the base struct of `Project`); files go through a remote `fs::FS` served by the Teensy.
+
+The status bar shows the synth board's state in the CPU field: `NO SYNTH` (no answer: the sequencer and MIDI OUT work, files and internal sound do not), `SYNTH FW` (protocol version mismatch — update the synth board), `SYNC` (sending the sound state), otherwise `CPU NN%` of the synth board. FILE → SYSTEM: Synth fw (version), Update synth (from `/firmware/teensy.hex` on the card), Card, Link (counters), CPU profile.
+
 ## Diagram
 
 ![Tracker wiring: LiPo through the INA226, IP5306 and the switch to the 5 V bus; WT32-SC01 Plus with MIDI OUT, the encoder and the link to the Teensy 4.1; the PCF8575 with the buttons on the Debug connector; the Audio Shield dashed, for later.](img/wiring-1.svg)
@@ -49,7 +59,7 @@ WT32-SC01 Plus, Debug connector
   GND ───────────── PCF GND
   (INA226 SDA / SCL / VCC / GND — in parallel with the PCF, on the same wires)
 
-INA226 (address 0x40: A0, A1 to GND; ALE not needed)
+INA226 (address 0x40–0x4F, found automatically; A0, A1 as on the module; ALE not needed)
   IN+ ── LiPo +          IN− ── IP5306 B+
   VBS ── IN+             (if present: battery voltage)
   VCC ── 3.3 V           GND ── GND
@@ -95,9 +105,9 @@ Audio Shield Rev D (later; on wires next to the Teensy, not stacked)
 | `INA IN−`                         | `IP5306 B+`                         | current "+" is discharge, "−" is charging                   |
 | `INA IN+`                         | `INA VBS`                           | if the pin exists; measures the battery voltage             |
 | `WT32 3V3`                        | `INA VCC`                           | 3.3 V only, not 5 V                                         |
-| `WT32 GND`                        | `INA GND`                           | common ground, also the battery negative                    |
-| `Debug TXD0 (IO43) / RXD0 (IO44)` | `INA SDA / SCL`                     | in parallel with the PCF8575, addresses don't overlap       |
-| `GND`                             | `INA A0, A1`                        | address 0x40; most modules already do this                  |
+| `WT32 GND`                        | `INA GND`                           | common ground, which is also the battery negative           |
+| `Debug TXD0 (IO43) / RXD0 (IO44)` | `INA SDA / SCL`                     | in parallel with the PCF8575, the addresses don't overlap   |
+| —                                 | `INA A0, A1`                        | leave as on the module: the firmware finds 0x40–0x4F itself |
 | `—`                               | `INA ALE`                           | leave unconnected                                           |
 | **MIDI OUT** |                                     |                                                             |
 | `WT32 IO10`                       | `10 Ω → Tip`                        | MIDI DIN pin 5                                              |
@@ -135,7 +145,22 @@ Audio Shield Rev D (later; on wires next to the Teensy, not stacked)
 
 Pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read as pressed, so track button 1 moved to P12 and P11 is free.
 
-10 nF capacitors from encoder pins A and B to GND are recommended — less bounce. Not required: the firmware has a filter.
+## Encoder
+
+A regular mechanical EC11 with a push button (4 pulses per detent). The middle pin of the A–C–B row goes to GND, the outer ones to GPIO 11 and 12. If the value moves the wrong way when turning, swap A and B. A and B use the internal pull-ups (`INPUT_PULLUP`), no external resistors needed.
+
+10 nF capacitors from the encoder's A and B pins to GND are recommended for less bounce. They are not required: the firmware has the PCNT hardware filter and a 5 ms software debounce for the buttons.
+
+## PCF8575 and buttons
+
+The encoder button, Play, Shift, A, B and the 8 track buttons are on a PCF8575 expander on I2C (port 0; port 1 is used by the touch panel). Its pins have their own weak pull-ups; a button shorts its pin to GND. If the module does not respond at startup, the firmware still runs, but only the touchscreen and encoder rotation work.
+
+- The pin mapping is set in `src/hw/pins.h` (`kTrackBtnBit`, `kEncSwBit`, `kPlayBit`, `kShiftBit`, `kBtnABit`, `kBtnBBit`): if a pin is damaged, a button can be moved to a free pin (number 0–15 = P00–P07, P10–P17).
+- 4.7 kΩ SDA/SCL pull-ups to 3.3 V are usually already on the module — check.
+- INT is not needed: the firmware polls the module every 5 ms. The detected address is printed to the USB log (`trackio: PCF8575 at 0x..`).
+- If the A0–A2 pads are not bridged anywhere and the module has no resistors to GND, the address floats and may "wander" — in that case bridge the pads to GND.
+- GPIO 43/44 are free because the log and flashing go through the native USB (`ARDUINO_USB_CDC_ON_BOOT=1`). At startup the ESP32 bootloader prints to TXD0 (GPIO 43) — this does not bother the module.
+- Safe boot (hold Shift at power-on) reads Shift from the expander before the autoload.
 
 ## Power: important
 
@@ -165,13 +190,15 @@ The INA226 sits in the battery's positive wire, before the IP5306, and reports o
 - **Shunt.** Most modules carry an R100 (0.1 Ω): ±0.8 A range. The tracker draws ~0.3 A from the battery — enough. The IP5306 charges at up to ~2 A: the reading will clip at 0.8 A, but the sign (charging) is still visible. The shunt then dissipates up to ~0.4 W — it should be a 2512 package on the module. To measure the charge current too, replace the shunt with an R010 (0.01 Ω, ±8 A).
 - **IN+ and IN− wires** — same gauge as the battery wire: the full current, including charging, flows through them.
 - **VBS.** If the module has a VBS (or VBUS) pin, connect it to IN+ so the voltage is measured right at the battery. If not, the module measures at IN− — off by the shunt drop, which doesn't matter for the charge percentage.
-- **Address 0x40.** A0 and A1 to GND; modules usually already pull them down with resistors. The PCF8575 is at 0x20–0x27, no overlap.
+- **Address 0x40–0x4F.** Set by A0 and A1; modules ship with them strapped in any state (often 0x40 or 0x44). The firmware finds the INA226 itself by its manufacturer ID; the boot log says `battery: INA226 at 0x44`. The PCF8575 is at 0x20–0x27, no overlap.
 - **I2C pull-ups.** The module has its own 10 kΩ on SDA and SCL; together with the PCF8575's pull-ups this is fine.
 
 ## MIDI jack
 
 - TRS pinout **type A**: Tip = pin 5, Ring = pin 4. For type B devices (some Arturia, Novation) use an A→B adapter or swap the Tip and Ring wires.
 - For a 5-pin DIN: the same resistors on pin 5 and pin 4, GND on pin 2.
+- Non-inverted UART, 31250 baud, 3.3 V. Optionally, a 74HC14 buffer (two inverters in series) can be placed between GPIO10 and the 10 Ω resistor.
+- There is no MIDI input: the device is always the master and sends clock, Start/Stop/Continue.
 
 ## Audio Shield Rev D (later)
 
@@ -211,6 +238,16 @@ PJ-392 LINE IN  Tip ── shield LINE IN L    Ring ── LINE IN R    Sleeve �
 - **33–100 pF capacitor** across the capsule leads kills RF from the WT32 Wi-Fi: without it the transistor inside the capsule detects it and the recording buzzes.
 - **Fitting** — wrap the capsule in foam tape (0.75 mm per side) and push it into the cup to the stop; put a disc of acoustic cloth or thin foam between the capsule and the grille. The foam decouples the capsule from the case, otherwise button clicks get into the recording.
 - **LINE IN** — PJ-392 jack with an M6 nut in the tab; level up to ~1 V (line out, phone). Labels tell LINE IN from PHONES.
+
+## Built-in peripherals (for reference)
+
+| Block | Pins |
+|---|---|
+| microSD (SPI) | CS 41, MOSI 40, CLK 39, MISO 38 — not used (the card is in the Teensy), reserve |
+| FT6336U touch (I2C) | SDA 6, SCL 5, INT 7, RST 4 (shared with LCD) |
+| ST7796 display | 8080 bus, 8-bit (internal board routing) |
+
+GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound comes from the synth board's Audio Shield; GPIO 13 / 14 / 21 carry the link to the Teensy. GPIO 43/44 (Debug connector) are used by the PCF8575 and the INA226.
 
 ## Which track button is which
 

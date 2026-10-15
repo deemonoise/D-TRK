@@ -227,9 +227,10 @@ void test_guard_sheds_one_voice_per_block_down_to_min() {
   TEST_ASSERT_EQUAL(kVoices < 2 * kTracks ? kVoices : 2 * kTracks, full);
   s->setLoad(0.5f);
   TEST_ASSERT_EQUAL(full, liveVoices());  // under the limit: nothing happens
-  s->setLoad(1.2f);  // one block over budget
+  s->setLoad(1.2f);  // one block over budget: the DMA absorbs it
+  TEST_ASSERT_EQUAL(full, liveVoices());
+  s->setLoad(1.2f);  // the second in a row
   TEST_ASSERT_EQUAL(full - 1, liveVoices());
-  TEST_ASSERT_EQUAL(full - 1, s->voiceCap());
   for (int k = 0; k < 100; ++k) {
     s->setLoad(1.2f);
     render1(buf);
@@ -242,7 +243,7 @@ void test_guard_sheds_releasing_first_then_oldest() {
   fillVoices();
   noteOff(0, 5, 75);  // a releasing voice
   render1(buf);
-  s->setLoad(1.2f);
+  s->setLoad(1.6f);
   for (int i = 0; i < kVoices; ++i) {
     const Voice& v = s->voice(i);
     if (v.stolen) TEST_ASSERT_TRUE(v.track == 5 && v.note == 75);
@@ -252,7 +253,7 @@ void test_guard_sheds_releasing_first_then_oldest() {
     const Voice& v = s->voice(i);
     if (v.on && !v.stolen && (oldest < 0 || v.age < s->voice(oldest).age)) oldest = i;
   }
-  s->setLoad(1.2f);
+  s->setLoad(1.6f);
   TEST_ASSERT_TRUE(s->voice(oldest).stolen);
   int stolen = 0;
   for (int i = 0; i < kVoices; ++i) stolen += s->voice(i).stolen;
@@ -276,6 +277,34 @@ void test_guard_cap_limits_new_notes_and_recovers() {
   // Light load: one voice back every kCapUpBlocks, up to the whole pool.
   for (int k = 0; k < Synth::kCapUpBlocks * (kVoices + 4); ++k) s->setLoad(0.2f);
   TEST_ASSERT_EQUAL(kVoices, s->voiceCap());
+}
+
+void test_guard_ignores_single_spikes() {
+  fillVoices();
+  const int full = liveVoices();
+  for (int k = 0; k < 50; ++k) {
+    s->setLoad(1.3f);  // a late block now and then, the average well under kLoadHigh
+    s->setLoad(0.4f);
+    s->setLoad(0.4f);
+  }
+  TEST_ASSERT_EQUAL(full, liveVoices());
+  TEST_ASSERT_EQUAL(kVoices, s->voiceCap());
+}
+
+void test_guard_hard_spike_sheds_at_once() {
+  fillVoices();
+  const int full = liveVoices();
+  s->setLoad(1.6f);  // over kLoadHard: no second block needed
+  TEST_ASSERT_EQUAL(full - 1, liveVoices());
+}
+
+void test_guard_panic_keeps_the_cap() {
+  fillVoices();
+  const int full = liveVoices();
+  s->setLoad(1.2f);
+  s->setLoad(1.2f);  // two in a row, the smoothed load still under kLoadHigh
+  TEST_ASSERT_EQUAL(full - 1, liveVoices());
+  TEST_ASSERT_EQUAL(kVoices, s->voiceCap());  // a new note still finds a free voice
 }
 
 void test_guard_smoothed_load_sheds_without_a_spike() {
@@ -3516,6 +3545,9 @@ int main() {
   RUN_TEST(test_guard_sheds_one_voice_per_block_down_to_min);
   RUN_TEST(test_guard_sheds_releasing_first_then_oldest);
   RUN_TEST(test_guard_cap_limits_new_notes_and_recovers);
+  RUN_TEST(test_guard_ignores_single_spikes);
+  RUN_TEST(test_guard_hard_spike_sheds_at_once);
+  RUN_TEST(test_guard_panic_keeps_the_cap);
   RUN_TEST(test_guard_smoothed_load_sheds_without_a_spike);
   RUN_TEST(test_guard_reset_restores_pool);
   RUN_TEST(test_sixteen_voices_soft_clip);

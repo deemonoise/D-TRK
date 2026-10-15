@@ -6,7 +6,8 @@
 namespace hw {
 namespace {
 
-constexpr uint8_t kAddr = 0x40;          // A1 = A0 = GND
+// INA226 answers at 0x40..0x4F by A1/A0 straps; modules ship with them in any state.
+constexpr uint8_t kFirstAddr = 0x40, kLastAddr = 0x4F;
 constexpr uint8_t kRegConfig = 0x00, kRegShunt = 0x01, kRegBus = 0x02, kRegMfgId = 0xFE;
 constexpr uint16_t kMfgId = 0x5449;      // "TI"
 // AVG 16, bus and shunt conversion 1.1 ms, continuous shunt + bus: ~35 ms per averaged sample.
@@ -21,6 +22,7 @@ constexpr uint32_t kFirstReadMs = 50;  // > one averaged conversion (~35 ms) aft
 
 // Set once in batteryProbe; atomic because the UI reads it from another core.
 std::atomic<bool> present{false};
+uint8_t addr = kFirstAddr;  // set by batteryProbe, then read only by the trackio task
 // Touched only by the trackio task (batteryPoll).
 uint32_t lastPollMs = 0;
 bool polled = false;
@@ -31,7 +33,7 @@ BatterySample sample{};
 bool valid = false;
 
 bool writeReg(uint8_t reg, uint16_t value) {
-  Wire.beginTransmission(kAddr);
+  Wire.beginTransmission(addr);
   Wire.write(reg);
   Wire.write(static_cast<uint8_t>(value >> 8));
   Wire.write(static_cast<uint8_t>(value & 0xFF));
@@ -40,10 +42,10 @@ bool writeReg(uint8_t reg, uint16_t value) {
 
 // Pointer byte, then 2 bytes big-endian.
 bool readReg(uint8_t reg, uint16_t& value) {
-  Wire.beginTransmission(kAddr);
+  Wire.beginTransmission(addr);
   Wire.write(reg);
   if (Wire.endTransmission() != 0) return false;
-  if (Wire.requestFrom(kAddr, static_cast<uint8_t>(2)) != 2) return false;
+  if (Wire.requestFrom(addr, static_cast<uint8_t>(2)) != 2) return false;
   const uint8_t hi = Wire.read();
   const uint8_t lo = Wire.read();
   value = static_cast<uint16_t>(hi << 8 | lo);
@@ -60,10 +62,17 @@ void publish(const BatterySample& next) {
 }  // namespace
 
 bool batteryProbe() {
-  uint16_t id = 0;
-  const bool ok = readReg(kRegMfgId, id) && id == kMfgId && writeReg(kRegConfig, kConfig);
+  // The first address whose manufacturer ID reads "TI".
+  bool ok = false;
+  for (addr = kFirstAddr; addr <= kLastAddr; ++addr) {
+    uint16_t id = 0;
+    if (readReg(kRegMfgId, id) && id == kMfgId) {
+      ok = writeReg(kRegConfig, kConfig);
+      break;
+    }
+  }
   present.store(ok, std::memory_order_relaxed);
-  if (ok) Serial.printf("battery: INA226 at 0x%02X\n", kAddr);
+  if (ok) Serial.printf("battery: INA226 at 0x%02X\n", addr);
   else Serial.println("battery: INA226 not found");
   return ok;
 }

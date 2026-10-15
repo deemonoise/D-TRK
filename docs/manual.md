@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song of up to 128 slots, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, 808 / 909 drum machines, a wavetable synth, a sampler, chiptune) through the synth board's stereo audio output (an external DAC), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
+A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song of up to 128 slots, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, analog-style drum machines, a wavetable synth, a sampler, chiptune) through the synth board's stereo audio output (the Audio Shield), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -57,7 +57,7 @@ Play works on any screen, even over an open menu. Tabs, pages, back and undo are
 
 In GRID the buttons also record notes live (REC), and in GRID and SONG they hold effects (PERF) — see [REC and PERF](#live).
 
-A block of 8 buttons on the PCF8575 expander (the same module carries the encoder button, Play, Shift, A and B). There are 16 tracks, so the buttons work on the **visible half** — 1–8 or 9–16, the same one [Overview](#grid) shows. The half is not a mode: the cursor selects it. Move past track 8 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a track button) and the buttons switch to 9–16; move back and they return to 1–8. The GRID header shows which half is active: `1-8` or `9-16` on the left above the step numbers.
+A block of 8 buttons. There are 16 tracks, so the buttons work on the **visible half** — 1–8 or 9–16, the same one [Overview](#grid) shows. The half is not a mode: the cursor selects it. Move past track 8 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a track button) and the buttons switch to 9–16; move back and they return to 1–8. The GRID header shows which half is active: `1-8` or `9-16` on the left above the step numbers.
 
 | Action | What it does |
 |--------|--------------|
@@ -77,7 +77,7 @@ Degree entry and slices in the sample editor don't depend on the half — there 
 
 ### Buttons A and B
 
-Two buttons: B under Shift (PCF8575 P16), A under Play (P17). Both are chord buttons: hold one and turn the encoder or press another button. A short press on its own (a tap) counts on release and only if nothing else happened while the button was held. If both are held, B wins.
+Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and turn the encoder or press another button. A short press on its own (a tap) counts on release and only if nothing else happened while the button was held. If both are held, B wins.
 
 | Action | What it does |
 |--------|--------------|
@@ -99,22 +99,9 @@ The encoder click works as before; A is just a faster way to edit one value: hol
 
 ### Wiring
 
-| GPIO | Function |
-|------|----------|
-| `10` | MIDI TX (UART, 31250 baud) |
-| `11 / 12` | Encoder A / B (EC11) |
-| `13 / 14` | Link to the synth board: UART TX → Teensy RX1 (pin 0), RX ← Teensy TX1 (pin 1), 3 Mbaud |
-| `43 / 44` | PCF8575 and INA226 SDA / SCL, Debug connector (TXD0 / RXD0; required, schematic in the README) |
+The pinout, the soldering diagram and the checks before power-up are in [wiring.md](wiring.md); the link to the synth board is there too. All buttons sit on one I2C expander: without it the encoder button, Play, Shift, A, B and the track buttons do not work. There is no MIDI input: the device is always the clock master.
 
 The display board's built-in microSD slot and its NS4168 amplifier are not used: the card and the Audio Shield with the headphone jack are on the synth board (see [Built-in sound](#sound)).
-
-All buttons are on the PCF8575: track buttons on P00–P07, encoder button on P13, Play on P14, Shift on P15, B on P16, A on P17; each shorts its pin to GND. Without the expander the encoder button, Play, Shift, A and B do not work. Encoder A / B use the board's internal pull-ups. MIDI OUT is TRS type A, 3.3 V:
-
-- +3.3 V → 33 Ω → Ring (DIN pin 4)
-- GPIO10 → 10 Ω → Tip (DIN pin 5)
-- GND → Sleeve (DIN pin 2)
-
-A 74HC14 buffer (two inverters in series) is optional. There is no MIDI input; the device is always the clock master.
 
 <a id="screen"></a>
 
@@ -235,7 +222,7 @@ Two modes from the GRID context menu. They exclude each other and edit mode: tur
 PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row menu too, and it is one shared mode — turned on in either menu it is on in both (turning it on in SONG leaves pattern edit; GRID turns REC off when you come back). In SONG with PERF on, button N holds its effect while playing, the encoder turns a held effect's depth instead of moving the cursor, and <kbd>Shift</kbd>+N mutes the track live. The SONG header shows the same `PERF …` badge in place of `n/128`.
 
 - **REC** — records from the track buttons into the current track. Button N writes scale degree N (in the octave of the track's last note) into the playing step; a press in the second half of a step lands in the next one. On a track with its own Speed this is the track's own step that is sounding. <kbd>Shift</kbd>+N erases that step's note. On a drum track button N sets lane N, <kbd>Shift</kbd>+N removes it. Each pattern pass is one undo step. Choose the track to record into by tapping its name (in REC this is not mute) or with <kbd>Shift</kbd>+turn. The recorded note sounds immediately if Preview is on.
-- **PERF** (GRID and SONG) — punch-in effects on the whole internal mix while a button is held, PO-33 / EP-133 style. Which effect is on which button, and the Value it starts at, is set in [PROJ → PERF](#proj) and stored in the project: button 1 can hold REPEAT 1/8 and button 2 REPEAT 1/32. The press starts the effect at the button's Value and shows it (`PERF REPEAT 1/8`); turning the encoder while the button is held changes the depth (<kbd>Shift</kbd> ×10 on the wide ranges: FILTER, DRIVE, DELAY THROW, REVERB THROW, FREEZE). The turn is not remembered: every press starts at the button's Value (PROJ → PERF). Release — the effect is gone. <kbd>Shift</kbd>+N still mutes.
+- **PERF** (GRID and SONG) — punch-in effects on the whole internal mix while a button is held. Which effect is on which button, and the Value it starts at, is set in [PROJ → PERF](#proj) and stored in the project: button 1 can hold REPEAT 1/8 and button 2 REPEAT 1/32. The press starts the effect at the button's Value and shows it (`PERF REPEAT 1/8`); turning the encoder while the button is held changes the depth (<kbd>Shift</kbd> ×10 on the wide ranges: FILTER, DRIVE, DELAY THROW, REVERB THROW, FREEZE). The turn is not remembered: every press starts at the button's Value (PROJ → PERF). Release — the effect is gone. <kbd>Shift</kbd>+N still mutes.
 
 | Effect | What it does | Encoder | Default |
 |--------|--------------|---------|---------|
@@ -442,7 +429,7 @@ CND first, then PRB. If any condition fails, the whole step is silent, including
 
 ## Fill, Euclid, arp, chords and bass
 
-Quick track filling, like Fill on the Polyend Tracker: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog. The first row, **Type**, switches the dialog between filling (`FILL`), the [arpeggio generator](#arp) (`ARP`), the [chord generator](#chords) (`CHORDS`) and the [bass generator](#bass) (`BASS`).
+Quick track filling: notes, velocity or any FX slot on every N-th step, in a Euclidean rhythm or at random. Open it in GRID: long tap on a cell (or long encoder press) → **Fill…**. With a selection, the selection is filled (all its tracks); without one, the track under the cursor for its length (a track's own length is respected). **What** to fill is taken from the column under the cursor: NOTE, VEL or an FX slot (in Detail view); you can change it in the dialog. The first row, **Type**, switches the dialog between filling (`FILL`), the [arpeggio generator](#arp) (`ARP`), the [chord generator](#chords) (`CHORDS`) and the [bass generator](#bass) (`BASS`).
 
 | Row | Values | Meaning |
 |-----|--------|---------|
@@ -572,7 +559,7 @@ Example: `X x~ x . X x~ X x`: 8 steps, an accent, a slide note, a note, a rest, 
 
 TRIPLET, PSY TRIPL and TE HYPNO3 are 12 steps long (over 16 steps they make a polyrhythm), the rest 16.
 
-**VIRUS** — the 64 arpeggiator patterns of the Access Virus B / Indigo (OS 4.90), taken from the AudioXL Arpeggiator, with exact velocity, gate and nudge per step. Each is 32 steps (one Virus cell = 2 steps), so at Rate ×1 on a 1/16 track it plays like the Virus at Arp Clock 1/8. For the original 1/16 tempo set the Dest track's Speed to x2 ([TRACK → Speed](#track)). The triplet and 1/64 patterns (35, 38–42, 51, 56, 64) are placed with NDG; Swing adds to it (clamped to ±50). Events that fell into the same step were merged (the louder one kept), so VIRUS 35, 37 and 40 are noticeably thinner than the originals. VIRUS sounds best at Rate ×1 (use track Speed for tempo): at Rate ×2 and up nudges over ±25 % hit the NDG limit of ±50 and long gates can reach the GAT maximum of 800 %.
+**VIRUS** — the 64 arpeggiator patterns of the Access Virus B / Indigo (OS 4.90), with exact velocity, gate and nudge per step. Each is 32 steps (one Virus cell = 2 steps), so at Rate ×1 on a 1/16 track it plays like the Virus at Arp Clock 1/8. For the original 1/16 tempo set the Dest track's Speed to x2 ([TRACK → Speed](#track)). The triplet and 1/64 patterns (35, 38–42, 51, 56, 64) are placed with NDG; Swing adds to it (clamped to ±50). Events that fell into the same step were merged (the louder one kept), so VIRUS 35, 37 and 40 are noticeably thinner than the originals. VIRUS sounds best at Rate ×1 (use track Speed for tempo): at Rate ×2 and up nudges over ±25 % hit the NDG limit of ±50 and long gates can reach the GAT maximum of 800 %.
 
 - Dest is a [drum track](#drumtrack): nothing is written, the Dest row is red.
 - Slides (SLD) sound only on INT tracks; on a MIDI track SLD is written but does nothing (grey).
@@ -954,7 +941,7 @@ Up to 32 slices per instrument. Slice n plays from its marker to the next slice;
 
 ### FM
 
-**FM** — 8 machines in the style of Model:Cycles: KICK, SNARE, METAL, PERC, TONE, CHORD, CLAP, HAT. Instead of operators there are 5 macros: DECAY (length), COLOR (brightness / index), SHAPE (timbre variant; for CHORD — the chord type), SWEEP and CONTOUR (pitch or index envelope). Drums play one-shot (note length and ADSR don't matter, a new note cuts off the previous one); TONE and CHORD hold the note (attack / sustain / release from the ADSR). TONE can be POLY; the other machines are mono per track. The LFO is on the shared [FILT and LFO](#filter) pages; for FM it can also drive the macros.
+**FM** — 8 machines: KICK, SNARE, METAL, PERC, TONE, CHORD, CLAP, HAT. Instead of operators there are 5 macros: DECAY (length), COLOR (brightness / index), SHAPE (timbre variant; for CHORD — the chord type), SWEEP and CONTOUR (pitch or index envelope). Drums play one-shot (note length and ADSR don't matter, a new note cuts off the previous one); TONE and CHORD hold the note (attack / sustain / release from the ADSR). TONE can be POLY; the other machines are mono per track. The LFO is on the shared [FILT and LFO](#filter) pages; for FM it can also drive the macros.
 
 P-lock: fx `DEC`, `COL`, `SHP`, `SWP`, `CON` (0–127) set a macro for the note on their step; on a step without a note — for the sounding note until the next one (see [synth fx](#synthfx)).
 
@@ -984,16 +971,16 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 
 <a id="drum"></a>
 
-### DRUM (808 / 909)
+### DRUM
 
-**DRUM** — 16 "analog" machines in the spirit of the TR-808 and TR-909, with their own synthesis (tones with a pitch envelope, a click, "metal" from 6 squares, filtered noise, drive). The same 5 macro slots as FM and the same `DEC`, `COL`, `SHP`, `SWP`, `CON` locks, but each machine has its own slot names (table below). A slot that does nothing is shown as a gray "-". All values are 0–127; DECAY is a number too — its range differs between machines.
+**DRUM** — 16 "analog" machines in two sets (names ending in 8 and in 9), with their own synthesis (tones with a pitch envelope, a click, "metal" from 6 squares, filtered noise, drive). The same 5 macro slots as FM and the same `DEC`, `COL`, `SHP`, `SWP`, `CON` locks, but each machine has its own slot names (table below). A slot that does nothing is shown as a gray "-". All values are 0–127; DECAY is a number too — its range differs between machines.
 
 - All machines are one-shot and mono per track: a new note cuts off the previous one without a click (choke); note length and note-off don't matter. Attack, Decay, Sustain, Release, Mode and Glide are gray.
 - **Note** C-4 plays the machine's base pitch, other notes are relative to it (tones and metal; clap noise does not depend on the note). Transpose and Fine work as for CHIP.
 - Closed / open hat — short and long DECAY (for example, a `DEC` lock); on the same track they cut each other off.
 - Changing the machine sets its default macro values. When switching Type to FM or DRUM, the machine and macros are reset as well: the slots mean different things in each.
 - FM, DRUM and SYNTH with a wavetable (at least one oscillator in WT mode) together play no more than 16 voices: a seventeenth steals the oldest of them (releasing ones first); CHIP, SAMPLE and SYNTH without WT are not affected.
-- The timbres are approximations. On the 909 the hats and cymbals are samples in the original; here they are synthesized: a different inharmonic frequency set and more noise.
+- Hats and cymbals are fully synthesized: an inharmonic set of squares plus noise.
 
 | Machine | Pitch at C-4 | DECAY | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|
@@ -1004,15 +991,15 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 | RS8 | 500 + 1700 Hz | 10–120 ms | TONE: tone balance | NOISE: noise click | SWEEP: up to 5 st | \- |
 | CL8 | 2.5 kHz | 10–120 ms | TONE: ±1 octave | DRIVE | SWEEP: up to 3 st | \- |
 | CB8 | 540 + 800 Hz (squares) | decay | FREQ: BP 1.5–4 kHz | BAL: 540 ↔ 800 Hz | ACCENT: peak at the start of the hit | \- |
-| HH8 | 808 metal (205–800 Hz) | 20 ms … 2 s | HP: 4–12 kHz | NOISE: metal ↔ noise | SPREAD: frequency spread ×0.8–1.25 | N.DEC: noise length 0.3–1.5 × DECAY |
-| CY8 | 808 metal × 0.7 | 0.3–4 s | HP: 2–8 kHz | NOISE | SPREAD | N.DEC |
+| HH8 | metal, set 8 (205–800 Hz) | 20 ms … 2 s | HP: 4–12 kHz | NOISE: metal ↔ noise | SPREAD: frequency spread ×0.8–1.25 | N.DEC: noise length 0.3–1.5 × DECAY |
+| CY8 | metal, set 8 × 0.7 | 0.3–4 s | HP: 2–8 kHz | NOISE | SPREAD | N.DEC |
 | BD9 | 50 Hz | decay, 5 ms … 4 s | ATTACK: beater click | DRIVE | SWEEP: up to 24 st | TIME: 10–80 ms |
 | SD9 | 190 + 345 Hz, noise HP 1 kHz | tone decay | TONE | SNAPPY | SWEEP: up to 7 st | N.DEC |
 | TOM9 | 120 Hz | tone decay | NOISE | DRIVE | SWEEP: up to 12 st | TIME: 10–200 ms |
 | CP9 | noise, BP | tail | FREQ: 800–3000 Hz | SPREAD: 4 claps | Q | TAIL |
 | RS9 | 1700 + 3400 Hz | 10–80 ms | TONE | NOISE | SWEEP: up to 5 st | \- |
-| HH9 | 909 metal | 20 ms … 2 s | HP: 6–14 kHz | NOISE | SPREAD | N.DEC |
-| CY9 | 909 metal × 0.6 | 0.4–4 s | HP: 3–10 kHz | RIDE/CR: ride (lower metal) → crash (brighter noise) | SPREAD | N.DEC |
+| HH9 | metal, set 9 | 20 ms … 2 s | HP: 6–14 kHz | NOISE | SPREAD | N.DEC |
+| CY9 | metal, set 9 × 0.6 | 0.4–4 s | HP: 3–10 kHz | RIDE/CR: ride (lower metal) → crash (brighter noise) | SPREAD | N.DEC |
 
 Columns 2–5 are the COLOR, SHAPE, SWEEP, CONTOUR slots (locks `COL`, `SHP`, `SWP`, `CON`); the first slot is always DECAY (`DEC`). "st" means semitones. In the LFO dest list for DRUM the slots use the generic names DECAY…CONTOUR.
 
@@ -1020,7 +1007,7 @@ Columns 2–5 are the COLOR, SHAPE, SWEEP, CONTOUR slots (locks `COL`, `SHP`, `S
 
 ### SYNTH: oscillators and wavetables
 
-**SYNTH** — an "analog" synthesizer: 2 oscillators, a sub-oscillator, noise, hard sync and a dedicated envelope on SHAPE, followed by the shared ADSR, [filter and LFO](#filter). Each oscillator's mode: **SAW**, **SQR**, **TRI** — classic alias-free waveforms (PolyBLEP), or **WT** — a wavetable (64 frames of 256 points, the frame position is SHAPE). The amplitude envelope is Attack, Decay, Sustain, Release from the ENV page; Mode (POLY / MONO) and Glide work as for CHIP. A SYNTH with a wavetable (at least one oscillator in WT) shares the limit of 8 "heavy" voices with FM and DRUM; a SYNTH using only SAW / SQR / TRI is light and has the whole pool of 16 available.
+**SYNTH** — an "analog" synthesizer: 2 oscillators, a sub-oscillator, noise, hard sync and a dedicated envelope on SHAPE, followed by the shared ADSR, [filter and LFO](#filter). Each oscillator's mode: **SAW**, **SQR**, **TRI** — classic alias-free waveforms (PolyBLEP), or **WT** — a wavetable (64 frames of 256 points, the frame position is SHAPE). The amplitude envelope is Attack, Decay, Sustain, Release from the ENV page; Mode (POLY / MONO) and Glide work as for CHIP. A SYNTH with a wavetable (at least one oscillator in WT) shares the limit of 8 "heavy" voices with FM and DRUM; a SYNTH using only SAW / SQR / TRI is light and has the whole pool of 24 available.
 
 SYNTH has 6 pages: **MAIN**, **ENV**, **OSC**, **MOD**, **FILT**, **LFO**. When Type is changed to another type, the MOD page becomes the type page.
 
@@ -1088,8 +1075,8 @@ A table is 64 frames of 256 points (one period per frame). In the synth board's 
 
 - **Library on the card:** `/wavetables` (created automatically), subfolders up to 4 levels are allowed. Files are copied on a computer: take the card out of the synth board. Importing does not copy the file: the table goes into the project folder when you save.
 - **Formats:** WAV PCM 8 / 16 / 24 bit, mono or stereo (mixed down to mono); the sample rate in the header doesn't matter. The frame layout is detected by length:
-  - **WaveEdit** and similar — frames of 256 points, up to 64 frames (up to 16,384 samples);
-  - **Serum / Vital** — frames of 2048 points (or the size from the `clm` chunk), up to 256 frames; each frame is reduced to 256 points.
+  - frames of 256 points, up to 64 frames (up to 16,384 samples);
+  - frames of 2048 points (or the size from the `clm` chunk), up to 256 frames; each frame is reduced to 256 points.
 
   More than 64 frames — 64 are taken evenly; fewer — the missing frames are smoothly interpolated. DC offset is removed from each frame, and the table is peak-normalized. If the length fits no layout — "UNSUPPORTED WAV"; silence — "NOT A WAV FILE".
 - **Name** of the table — the file name without extension (up to 16 characters, A–Z a–z 0–9 \_ -). If the project already has a table with this name and different data, the new one gets a suffix `-2`, `-3`…; the same data under the same name — the existing one is used. Up to 32 tables per project ("TABLE LIST FULL").
@@ -1124,7 +1111,7 @@ The FILT and LFO pages exist for all types. Voice chain: sound → **Drive** →
 | Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64; RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE ±64 steps; FINE ±1 semitone; DUTY ±49%; SEMI2 ±24 semitones; L1–L4 RATE ×/÷16; L1–L4 DEPTH 0…×2. |
 | Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, PAN, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); DUTY — only for CHIP; SUB, NOISE and SEMI2 (oscillator 2) — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample, Sub, Noise; FINE — fine pitch; DUTY — the PULSE Duty; PAN — autopan (see below); L1–L4 — another LFO of the instrument (see below). |
 
-- The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, like on a 303.
+- The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, as on a classic acid bass.
 - **PAN** (INT tracks): shifts the voice's pan by up to ±64 around the track's Pan (or the step's PAN lock) at full depth, limited to hard left / hard right. Retrig ON — each note has its own phase (chord notes spread across the field); Retrig OFF — one shared autopan for all voices.
 - LFOs can be controlled from steps: fx `LFO`, `LFD`, `LFS`, `LFW`, `LFT`, `LFR` (see the [fx table](#fx)).
 - Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz.
@@ -1360,12 +1347,12 @@ A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the
 |---|---|---|
 | DEMO-TRANCE | 138, A minor | supersaw hook, pads and bass pumped by the sidechain (key: the KICK track), ARS arpeggio on CHD chords, a breakdown with FLT locks opening the lead and a riser held by TIE, snare rolls with RAT ramps |
 | DEMO-CHIPTUNE | 150, C major | CHIP only: chords from the ARP fx, an octave-bouncing triangle bass, a noise kit, VIB on long notes, a bridge, and the last chorus a tone up (transposed copies in patterns P06 and P07) |
-| DEMO-ACID | 128, A minor | a 303-style line with SLD slides, accents and a FLT lock on every step, the filter opening section by section; a 12-step polymeter section (track length), hats on probability (PRB), RES and DLY locks in the break |
+| DEMO-ACID | 128, A minor | an acid line with SLD slides, accents and a FLT lock on every step, the filter opening section by section; a 12-step polymeter section (track length), hats on probability (PRB), RES and DLY locks in the break |
 | DEMO-LOFI | 84, C major | swing, humanize, FM e-piano 7th chords through bit crush and SRR, vinyl crackle from PRB + NRN noise hits, dark instruments with low cutoffs |
 | DEMO-SYNTHWAVE | 108, E minor | driving 16th bass pumped by the sidechain, a gated-reverb clap, a sync-pluck ARS arpeggio, a wavetable lead with VIB, tom fills |
 | DEMO-DUBTECHNO | 120, C minor | one FM CHORD (minor 9) stab through a long dark delay and a big reverb, its filter swept by a 4-bar synced LFO and FLT locks, DLY / RVB throws, a drone held by TIE |
 | DEMO-IDM | 110, D dorian | every part on its own track length (7, 5, 13, 9, 11, 6 steps against 16): the parts drift; CND 1:2 / 1:3, PRE and NEI conditions, PRB and NRN random notes, a 5/16 delay |
-| DEMO-HOUSE | 124, F minor | swung 909 with humanize, an offbeat FM bass, 7th-chord stabs, congas on probability, a choir breakdown with a clap roll; PERF buttons set for live play (FILTER, REPEAT, ROLL, DELAY THROW, REVERB THROW, GATE, TAPE STOP, FREEZE) |
+| DEMO-HOUSE | 124, F minor | swung drum machine with humanize, an offbeat FM bass, 7th-chord stabs, congas on probability, a choir breakdown with a clap roll; PERF buttons set for live play (FILTER, REPEAT, ROLL, DELAY THROW, REVERB THROW, GATE, TAPE STOP, FREEZE) |
 
 A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the card, and from there it is an ordinary project to take apart and change.
 
@@ -1491,7 +1478,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 | Link | LOST n LATE n CRC n | display only: link counters since power-on: events lost, events that came too late to play on time, damaged frames |
 | Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot of the tracker (crashes are logged to crashlog.txt on the card in the synth board) |
 | Audio RAM | SEQ INTERNAL / PSRAM, free K | display only: where the sequencer lives (it should be in internal memory; in PSRAM it costs more) and the tracker's free internal RAM |
-| Battery | `3.92V 120mA 85%`, `4.05V CHG 820mA 64%`, NOT FOUND, --- | display only: battery voltage, current and charge from the [INA226](wiring.md#ina226-battery-monitor); CHG — charging; NOT FOUND — no sensor (the boot log says `battery: INA226 at 0x40` / `battery: INA226 not found`); --- — no reading yet. With the stock 0.1 Ω shunt the current tops out at about 820 mA, so while charging it shows ~820 mA |
+| Battery | `3.92V 120mA 85%`, `4.05V CHG 820mA 64%`, NOT FOUND, --- | display only: battery voltage, current and charge from the [INA226](wiring.md#ina226-battery-monitor); CHG — charging; NOT FOUND — no sensor (the boot log says `battery: INA226 at 0x44` (address 0x40–0x4F) / `battery: INA226 not found`); --- — no reading yet. With the stock 0.1 Ω shunt the current tops out at about 820 mA, so while charging it shows ~820 mA |
 | CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the synth board's audio time broken down by stage (queue, events, voice management, voices by type, delay, reverb, PERF, master) is appended to /diag/cpuprof.txt on the card |
 
 <a id="themes"></a>
@@ -1564,7 +1551,7 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 
 ## Internal sound
 
-The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), 808 / 909 machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, mono instruments with per-track pan, stereo output. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
+The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), analog-style drum machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, mono instruments with per-track pan, stereo output. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
 
 Sound goes from the synth board to a Teensy Audio Shield Rev D (SGTL5000) and from its jack to the headphones; the display board's NS4168 amplifier and SPK connector are not used. The signal is stereo. Old projects (all tracks at centre) sound the same on both channels.
 
@@ -1573,7 +1560,7 @@ Sound goes from the synth board to a Teensy Audio Shield Rev D (SGTL5000) and fr
 - The shield's headphone output uses a virtual ground: don't tie the jack's Sleeve to GND or the case. The shield's line out (LINE OUT) can go to a mixer or audio interface.
 - Start at low volume.
 
-Full wiring: README, "Sound" section, and [wiring.md](wiring.md).
+Full wiring: [wiring.md](wiring.md#audio-shield-rev-d-later).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting.
 - **Pan:** each voice is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level (as before), hard left is +3 dB on the left and silence on the right. The delay and reverb sends are taken before pan (mono); the delay returns to the centre, the reverb in pseudo-stereo. The compressor is stereo-linked; the PERF effects, MAIN and the soft clip work on both channels.
