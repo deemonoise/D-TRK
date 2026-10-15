@@ -177,9 +177,10 @@ void post(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) {
   slink::postEvent(t, track, b, len);
 }
 
-void preview(uint8_t instr, uint8_t note) {
+void preview(uint8_t instr, uint8_t note, uint8_t track) {
   pump();  // an edit just made goes out ahead of the preview
-  slink::send(Msg::PreviewNote, PreviewNote{static_cast<uint8_t>(instr & 15), static_cast<uint8_t>(note & 127), 0});
+  slink::send(Msg::PreviewNote,
+              PreviewNote{static_cast<uint8_t>(instr & 15), static_cast<uint8_t>(note & 127), 0, track});
 }
 
 void previewSlice(uint8_t instr, uint8_t slice, uint8_t root, uint32_t holdMs) {
@@ -234,6 +235,10 @@ void trackPeaks(float out[16]) {
     tracks.trackPeak[t] = 0;
   }
 }
+
+float gatePos() { return slink::stripInfo().gatePos; }
+
+float followerLevel(int t) { return t >= 0 && t < 16 ? slink::stripInfo().follower[t] : 0.f; }
 
 void setMeters(bool on) {
   meters = on;

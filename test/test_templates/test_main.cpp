@@ -73,8 +73,24 @@ void test_strip_keeps_sound_drops_notes() {
   TEST_ASSERT_EQUAL_STRING("untitled", p.name);
 }
 
+
+// Factory presets carry a recommended insert; a built project's instruments keep none (the tracks
+// hold the insert, set by the build itself).
+void test_template_instruments_no_insert() {
+  for (int i = 0; i < templateCount(); ++i) {
+    templateBuild(i, p);
+    for (const Instrument& m : p.instruments) {
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.drive, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.crushBits, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.crushRate, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.driveModel, m.name);
+    }
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_template_instruments_no_insert);
   RUN_TEST(test_names_and_empty);
   RUN_TEST(test_every_template_fills_its_instruments);
   RUN_TEST(test_808_kit_lanes_play_drum_instruments);

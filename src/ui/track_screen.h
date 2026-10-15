@@ -8,6 +8,10 @@ namespace ui {
 
 // Settings of App::curTrack(). MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
 // Name: click to edit, turn = character, Shift+turn = position.
+// INS page, Steps (the trance gate's 16-step mask): click = edit; turn = cursor, Shift + turn =
+// rotate the mask, A + turn = toggle at the cursor and step on, a tap on a cell or track button 1-8
+// (the cursor's half: steps 1-8 / 9-16) = toggle; click / B = done, cancel = the mask as it was.
+// While playing, the gate's current step is highlighted.
 // MIXER view (the MIX tab, setMixer): 8 strips of the half holding the cursor (A = 1-8, B = 9-16, as
 // GRID's Overview), the master strip MAIN and the output scope below. Strip: name, volume fader
 // (INT), pan bar (INT), delay / reverb send of its instrument (read only), M / S. Turn = master
@@ -29,12 +33,20 @@ class TrackScreen : public Screen {
   bool wantsRedraw(const engine::Status& st) override;
   // MIX tab (true) or TRACK tab (false): the mixer view or the track settings.
   void setMixer(bool on);
+  // Track buttons while the Steps row is edited: toggle a step of the cursor's half (Shift: not taken).
+  bool trackKey(int n, bool shift);
+  bool buttonsBusy() const { return !mixer_ && stepsEdit(); }
 
  private:
-  // Rows in page order: MAIN, NOTE, MIDI (contiguous runs, see kPageFirst).
-  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kVel, kGate, kPatLen, kSpeed, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
-  enum Page : int { kPgMain, kPgNote, kPgMidi, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kName, kVel, kChannel, kRows};
+  // Rows in page order: MAIN, INS (the INT track's insert chain, then its MOD send), FOL (its envelope follower), NOTE,
+  // MIDI (contiguous runs, see
+  // kPageFirst).
+  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kDrive, kDriveType, kBitCrush, kDownsample,
+                   kTrance, kTrPattern, kTrSteps, kTrRate, kTrLen, kTrAtk, kTrRel, kModSend,
+                   kFolSrc, kFolDest, kFolAmt, kFolAtk, kFolRel, kVel,
+                   kGate, kPatLen, kSpeed, kHumanize, kChannel, kCcA, kCcB, kProgram, kRows };
+  enum Page : int { kPgMain, kPgIns, kPgFol, kPgNote, kPgMidi, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kName, kDrive, kFolSrc, kVel, kChannel, kRows};
   static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
   static constexpr int kHeaderH = 28;
   static constexpr int kArrowW = 96;  // header hit area on each side
@@ -46,6 +58,25 @@ class TrackScreen : public Screen {
   void leaveEdit();
   void fixNames();  // empty name -> TRKn
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
+  // The trance gate's Steps row (list index on the INS page) and its editor.
+  static constexpr int kStepsRow = kTrSteps - kDrive;
+  static constexpr int kCellPitch = 15, kCellW = 12, kGroupGap = 4;
+  bool stepsEdit() const { return page_ == kPgIns && list_.editing() && list_.sel() == kStepsRow; }
+  static int cellX(int i) { return ParamList::kValueX + i * kCellPitch + (i / 4) * kGroupGap; }
+  void syncSteps();          // notes the mask when a Steps edit begins (cancel restores it)
+  void toggleStep(int i);    // takes the lock
+  void rotateSteps(int d);   // takes the lock
+  int gateStep();            // the gate's current step while playing, -1 = none
+  void drawSteps(LGFX_Sprite& s);
+  int gateCur_ = 0;
+  bool stepsActive_ = false;
+  uint16_t stepsOrig_ = 0;
+  int shownGateStep_ = -1;
+  // FOL page: the follower's envelope as a bar in the header (redrawn when it moves a pixel).
+  static constexpr int kFolBarW = 64;
+  int folBarPx() const;
+  void drawFolBar(LGFX_Sprite& s, int y0);
+  int shownFolPx_ = -1;
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
   void setPageRows(int page, bool bar);  // the list only: safe in the constructor
   int page_ = kPgMain;

@@ -38,7 +38,7 @@ LinkCounters linkCounters();
 // CPU profile (PROJ -> SYS): the synth board's render time per stage (mt::Synth::ProfStage) while
 // running. UI task, blocking (a link request each). profileStart leaves it off when the board does
 // not answer.
-constexpr int kProfStages = 18;
+constexpr int kProfStages = 22;
 struct Profile {
   uint32_t blocks;        // blocks rendered while it ran
   float us[kProfStages];  // average per block, us
@@ -52,8 +52,9 @@ bool profileStop(Profile& out);
 // Event for an INT track, stamped with its scheduled engine::nowUs() time (at or before now). Called from the engine task only
 // (lock-free single-producer queue); a full queue drops the event.
 void post(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len);
-// Plays note with instrument instr for 300 ms on the synth's preview track. UI task only.
-void preview(uint8_t instr, uint8_t note);
+// Plays note with instrument instr for 300 ms on the synth's preview track, through the insert of
+// pattern track `track` (>= mt::kTracks: none). UI task only.
+void preview(uint8_t instr, uint8_t note, uint8_t track = 0xFF);
 // SAMPLE instrument instr: plays slice (whatever its slice mode) at root, held holdMs (up to 25 s)
 // or until the next preview. UI task only.
 void previewSlice(uint8_t instr, uint8_t slice, uint8_t root, uint32_t holdMs);
@@ -92,6 +93,11 @@ int16_t scopePeak();
 // Level meters (MIX): each pattern track's peak since the last call (1.0 = full scale at MAIN 100 %).
 void trackPeaks(float out[16]);
 void setMeters(bool on);  // MIX shown: measure them (costs the synth some render time)
+// The trance gates' song clock: 1/16 steps since play (0 .. 64), -1 while stopped (TRACK INS
+// playhead), as the synth board's newest Status tells it.
+float gatePos();
+// Envelope follower of pattern track t (TRACK FOL bar): 0..1, 0 = off, as the newest Status tells it.
+float followerLevel(int t);
 // Phones: live output level 0..100 % (attenuation only), applied on the synth board after the scope.
 // A device setting: Render WAV and the project's master do not see it.
 void setPhones(uint8_t pct);

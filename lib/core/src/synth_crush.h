@@ -8,17 +8,14 @@ namespace mt {
 // Lo-fi per voice: bit depth and sample-rate reduction (fx BIT / SRR), after the drive, before the
 // filter. bits 0 = off .. 127 = 2 bits; rate 0 = off .. 127 = holds each sample ~64 samples.
 struct Crush {
-  void set(uint8_t bits, uint8_t rate) {  // per control update
+  // Per control update: the unchanged case inline, a change out of line (synth_crush.cpp, flash).
+  MT_INLINE void set(uint8_t bits, uint8_t rate) {
     bits = bits > 127 ? 127 : bits;
     rate = rate > 127 ? 127 : rate;
     if (bits == bits_ && rate == rate_) return;
-    bits_ = bits;
-    rate_ = rate;
-    // 16 bits at 1 down to 2 at 127; the signal is about +-1 at full scale.
-    const int b = 16 - (bits_ * 14 + 63) / 127;
-    step_ = bits_ ? 2.f / static_cast<float>(1 << (b > 1 ? b - 1 : 0)) : 0.f;
-    inc_ = 1.f / (1.f + static_cast<float>(rate_) * rate_ / 256.f);
+    change(bits, rate);
   }
+  void change(uint8_t bits, uint8_t rate);
   bool on() const { return bits_ || rate_; }
   void reset() {
     phase_ = 1.f;
@@ -40,7 +37,7 @@ struct Crush {
       x = held_;
     }
     if (bits_) {  // floor(x / step + 0.5) x step, no floorf (a flash call per sample on the ESP32)
-      const float y = x / step_ + 0.5f;
+      const float y = x * rstep_ + 0.5f;  // step_ is a power of two: x * rstep_ == x / step_
       int i = static_cast<int>(y);
       if (static_cast<float>(i) > y) --i;
       x = static_cast<float>(i) * step_;
@@ -50,7 +47,7 @@ struct Crush {
 
  private:
   uint8_t bits_ = 0, rate_ = 0;
-  float step_ = 0, inc_ = 1, phase_ = 1, held_ = 0;
+  float step_ = 0, rstep_ = 0, inc_ = 1, phase_ = 1, held_ = 0;
 };
 
 }  // namespace mt

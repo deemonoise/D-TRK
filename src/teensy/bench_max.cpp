@@ -1,7 +1,8 @@
 // Voice ceiling bench (env teensy41-bench-max, -DAUDIO_BENCH_MAX with a raised MT_VOICES / MT_HEAVY_MAX):
 // how many voices of each kind fit before the CPU guard (Synth::setLoad, kLoadHigh) starts shedding.
-// Every voice sends to the delay and the reverb at 100 with drive 100; delay feedback 100, reverb and
-// delay level 100, compressor on. Step 0: no voices (the effects' own cost). Then ladders of 4 more
+// Every voice sends to the delay and the reverb at 100, every track's insert drives at 100 and sends
+// to the MOD bus (ENSEMBLE); delay TAPE (feedback, wear, level 100), reverb SHIMMER (level 100),
+// master EQ and compressor on. Step 0: no voices (the effects' own cost). Then ladders of 4 more
 // voices per step: CHIP saw through a resonant LP with an envelope, FM TONE and wavetable SYNTH chords
 // (held, kPolyPerTrack per track), DRUM retriggered every 16th at 120 BPM (one voice per track), and
 // 16 wavetable SYNTH voices plus a growing CHIP pool. A ladder stops at its first step over budget:
@@ -238,9 +239,25 @@ void summary() {
 }
 
 void setFx(mt::Instrument& in) {
-  in.drive = 100;
   in.rsend = 100;
   in.send = 100;
+}
+
+// The master / send fx all on (as AUDIO_BENCH_FX on main): drive 100 and a MOD send on every track's
+// insert, delay TAPE (wear 100), reverb SHIMMER (+12), MOD bus ENSEMBLE, master EQ (low +6 dB,
+// high -3 dB).
+void masterFx(mt::SynthModel& m) {
+  for (auto& c : m.tracks) {
+    c.drive = 100;
+    c.modSend = 90;
+  }
+  m.dlyMode = static_cast<uint8_t>(mt::DlyMode::Tape);
+  m.dlyChar = 100;
+  m.rvbMode = static_cast<uint8_t>(mt::RvbMode::Shimmer);
+  m.rvbShim = 80;
+  m.modType = static_cast<uint8_t>(mt::ModType::Ensemble);
+  m.eqLow = 96;
+  m.eqHigh = 48;
 }
 
 }  // namespace
@@ -304,6 +321,7 @@ void begin(mt::SynthModel& m, mt::Synth& s, SynthStream& out) {
   m.rvbLevel = 100;
   m.compAmt = 100;
   m.scTrack = 1;
+  masterFx(m);
   link::log("max bench: voices %d, heavy %d; ladders of +%d voices, 4 s per step, from 15 s after boot",
             mt::kVoices, mt::kFmVoiceMax, kStep);
   out.setBlockHook(tick);  // the first step after kBootBlocks

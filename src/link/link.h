@@ -73,6 +73,13 @@ struct StreamInfo {
   uint32_t underruns;
 };
 StreamInfo streamInfo();
+// Track strips as the newest Status tells them: the trance gates' song clock in sixteenths
+// (0 .. 64, -1 while stopped) and each track's envelope follower 0..1.
+struct StripInfo {
+  float gatePos;
+  float follower[16];
+};
+StripInfo stripInfo();
 // The newest scope from Status (meters on): n samples, int8, every 2nd output sample.
 int scope(int8_t* out, int cap);
 

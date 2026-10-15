@@ -23,8 +23,10 @@ class Reverb {
   // kQuietIdle samples: idle (no work, mix untouched) until the input is non-zero.
   // freeze (PERF FREEZE): the combs loop the tail without loss (feedback 1, no damping) and ignore
   // the input; it never goes idle meanwhile. Off again, the tail decays as usual.
+  // wetOut (optional, n floats): the mono path before the level (the shimmer's feedback source);
+  // left untouched when the reverb does not run (the caller zeroes it).
   void process(const float* in, float* mixL, float* mixR, int n, uint8_t size, uint8_t damp, uint8_t level,
-               bool freeze);
+               bool freeze, float* wetOut = nullptr);
 
  private:
   float* buf_ = nullptr;

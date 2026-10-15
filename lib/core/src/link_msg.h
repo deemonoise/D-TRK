@@ -5,7 +5,7 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 3;
+constexpr uint16_t kProtocol = 4;
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -132,6 +132,11 @@ struct Status {
   uint16_t minReserveMs = 0xFFFF;  // lowest reserve of a streaming voice, 0xFFFF = none streamed
   uint8_t psram = 0;               // 0 off (no chip / self-test), 1 on, 2 failed (watchdog)
   uint8_t psramFill = 0;           // % of the planned whole-sample copies made
+  // Track strips (protocol 4): the trance gates' song clock in 1/256 sixteenths (0 .. 64 x 256),
+  // kGateStopped while stopped; each track's envelope follower, 0..255 = 0..1.
+  static constexpr uint16_t kGateStopped = 0xFFFF;
+  uint16_t gatePos = kGateStopped;
+  uint8_t follower[16] = {};
 };
 
 // A long request on the synth board is still running: op = its type, done / total in work units,
@@ -167,10 +172,12 @@ struct Perf {
   uint8_t op = 0, val = 0;
 };
 
-// Plays note with instrument instr on the synth's preview track for holdMs (0 = the default 300 ms).
+// Plays note with instrument instr on the synth's preview track for holdMs (0 = the default 300 ms),
+// through the insert of pattern track `track` (>= 16: none; protocol 4).
 struct PreviewNote {
   uint8_t instr = 0, note = 60;
   uint32_t holdMs = 0;
+  uint8_t track = 0xFF;
 };
 // SAMPLE instrument instr: slice at root, held holdMs (up to 25 s) or until the next preview.
 struct PreviewSlice {
@@ -356,7 +363,7 @@ struct FwRep {
 // reply: the render cycles and counts per Synth::ProfStage summed since the start, the blocks
 // rendered, the slowest block (events, render, preview mix) and the cycles per us to convert them.
 struct ProfileRep {
-  static constexpr int kStages = 18;  // Synth::kProfStages
+  static constexpr int kStages = 22;  // Synth::kProfStages
   uint8_t running = 0;
   uint32_t blocks = 0;
   uint32_t cyclesPerUs = 0;

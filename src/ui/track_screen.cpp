@@ -52,6 +52,128 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                    [this](int d) { cfg().pan = static_cast<uint8_t>(clampi(cfg().pan + d, 0, 127)); },
                    [this] { return !internal(); }};
   auto midiOnly = [this] { return internal(); };
+  // The insert chain (INT): drive and its curve, then the lo-fi (fx DRV / DTY / BIT / SRR lock them
+  // per step).
+  auto offOr = [](uint8_t v, char* o, int n) {
+    if (v) snprintf(o, n, "%u", v);
+    else snprintf(o, n, "OFF");
+  };
+  params_[kDrive] = {"Drive", [this, offOr](char* o, int n) { offOr(cfg().drive, o, n); },
+                     [this](int d) { cfg().drive = static_cast<uint8_t>(clampi(cfg().drive + d, 0, 127)); },
+                     [this] { return !internal(); }};
+  // The drive's curve: grey while the drive is off (drive 0 bypasses every type).
+  params_[kDriveType] = {"Drive type",
+                         [this](char* o, int n) {
+                           static const char* const kNames[] = {"TANH", "CLIP", "FOLD", "RECT", "ASYM"};
+                           static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::DriveModel::Count),
+                                         "Drive type names");
+                           const uint8_t m = cfg().driveModel;
+                           snprintf(o, n, "%s", kNames[m < static_cast<uint8_t>(mt::DriveModel::Count) ? m : 0]);
+                         },
+                         [this](int d) {
+                           const int m = cfg().driveModel < static_cast<uint8_t>(mt::DriveModel::Count) ? cfg().driveModel : 0;
+                           cfg().driveModel = static_cast<uint8_t>(
+                               clampi(m + d, 0, static_cast<int>(mt::DriveModel::Count) - 1));
+                         },
+                         [this] { return !internal() || cfg().drive == 0; }};
+  params_[kBitCrush] = {"Bit crush",
+                        [this](char* o, int n) {
+                          const int b = cfg().crushBits;
+                          if (b) snprintf(o, n, "%d  (%d BIT)", b, 16 - (b * 14 + 63) / 127);
+                          else snprintf(o, n, "OFF");
+                        },
+                        [this](int d) { cfg().crushBits = static_cast<uint8_t>(clampi(cfg().crushBits + d, 0, 127)); },
+                        [this] { return !internal(); }};
+  params_[kDownsample] = {"Downsample", [this, offOr](char* o, int n) { offOr(cfg().crushRate, o, n); },
+                          [this](int d) { cfg().crushRate = static_cast<uint8_t>(clampi(cfg().crushRate + d, 0, 127)); },
+                          [this] { return !internal(); }};
+  // Trance gate (INT): depth (OFF = bypass), then its pattern; the rows below dim while it is OFF.
+  auto gateDim = [this] { return !internal() || cfg().gateDepth == 0; };
+  params_[kTrance] = {"Trance", [this, offOr](char* o, int n) { offOr(cfg().gateDepth, o, n); },
+                      [this](int d) { cfg().gateDepth = static_cast<uint8_t>(clampi(cfg().gateDepth + d, 0, 127)); },
+                      [this] { return !internal(); }};
+  params_[kTrPattern] = {"Pattern",
+                         [this](char* o, int n) {
+                           const int i = mt::gatePresetOf(cfg().gateMask);
+                           snprintf(o, n, "%s", i < 0 ? "USER" : mt::kGatePreset[i].name);
+                         },
+                         [this](int d) {
+                           const int i = mt::gatePresetOf(cfg().gateMask);
+                           constexpr int kLast = mt::kGatePresets - 1;
+                           const int ni = i < 0 ? (d > 0 ? 0 : kLast) : clampi(i + d, 0, kLast);
+                           cfg().gateMask = mt::kGatePreset[ni].mask;
+                         },
+                         gateDim};
+  // Drawn as cells (drawSteps); edit = the cursor (drag), the input goes through onInput.
+  params_[kTrSteps] = {"Steps", [](char* o, int) { o[0] = 0; },
+                       [this](int d) { gateCur_ = clampi(gateCur_ + d, 0, 15); }, gateDim};
+  params_[kTrRate] = {"Rate",
+                      [this](char* o, int n) {
+                        static const char* const kNames[] = {"1/32", "1/16", "1/8"};
+                        static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::GateRate::Count),
+                                      "Rate names");
+                        const uint8_t r = cfg().gateRate;
+                        snprintf(o, n, "%s", kNames[r < static_cast<uint8_t>(mt::GateRate::Count) ? r : 1]);
+                      },
+                      [this](int d) {
+                        const int r = cfg().gateRate < static_cast<uint8_t>(mt::GateRate::Count) ? cfg().gateRate : 1;
+                        cfg().gateRate =
+                            static_cast<uint8_t>(clampi(r + d, 0, static_cast<int>(mt::GateRate::Count) - 1));
+                      },
+                      gateDim};
+  params_[kTrLen] = {"Length", [this](char* o, int n) { snprintf(o, n, "%u%%", cfg().gateLen); },
+                     [this](int d) { cfg().gateLen = static_cast<uint8_t>(clampi(cfg().gateLen + d, 1, 100)); },
+                     gateDim};
+  auto ms = [](uint8_t v, char* o, int n) {
+    const float m = mt::gateMs(v);
+    if (m < 10.f) snprintf(o, n, "%.1f ms", static_cast<double>(m));
+    else snprintf(o, n, "%d ms", static_cast<int>(m + 0.5f));
+  };
+  params_[kTrAtk] = {"Attack", [this, ms](char* o, int n) { ms(cfg().gateAtk, o, n); },
+                     [this](int d) { cfg().gateAtk = static_cast<uint8_t>(clampi(cfg().gateAtk + d, 0, 127)); },
+                     gateDim};
+  params_[kTrRel] = {"Release", [this, ms](char* o, int n) { ms(cfg().gateRel, o, n); },
+                     [this](int d) { cfg().gateRel = static_cast<uint8_t>(clampi(cfg().gateRel + d, 0, 127)); },
+                     gateDim};
+  // The MOD send bus (PROJ > MOD): post-fader like the instrument's delay / reverb sends; fx MOD
+  // locks it per step. Grey while the bus is OFF.
+  params_[kModSend] = {"Mod send", [this](char* o, int n) { snprintf(o, n, "%u", cfg().modSend); },
+                       [this](int d) { cfg().modSend = static_cast<uint8_t>(clampi(cfg().modSend + d, 0, 127)); },
+                       [this] { return !internal() || app_.project().modType == 0; }};
+  // Envelope follower (INT): this track's target follows the level of track Source (OFF = off).
+  auto folDim = [this] { return !internal() || cfg().folSrc == 0; };
+  params_[kFolSrc] = {"Source",
+                      [this](char* o, int n) {
+                        const int src = cfg().folSrc;
+                        if (src < 1 || src > mt::kTracks) snprintf(o, n, "OFF");
+                        else snprintf(o, n, "%d %s", src, app_.project().tracks[src - 1].name);
+                      },
+                      [this](int d) { cfg().folSrc = static_cast<uint8_t>(clampi(cfg().folSrc + d, 0, mt::kTracks)); },
+                      [this] { return !internal(); }};
+  params_[kFolDest] = {"Target",
+                       [this](char* o, int n) {
+                         const mt::InstrType ty = app_.project().instruments[cfg().instr % mt::kInstruments].type;
+                         snprintf(o, n, "%s", mt::lfoDestName(cfg().folDest, ty));
+                       },
+                       [this](int d) {
+                         const mt::InstrType ty = app_.project().instruments[cfg().instr % mt::kInstruments].type;
+                         cfg().folDest = mt::folDestStep(cfg().folDest, d, ty);
+                       },
+                       folDim};
+  params_[kFolAmt] = {"Amount", [this](char* o, int n) { snprintf(o, n, "%+d", cfg().folAmt); },
+                      [this](int d) { cfg().folAmt = static_cast<int8_t>(clampi(cfg().folAmt + d, -64, 63)); },
+                      folDim};
+  auto envMs = [](uint8_t v, char* o, int n) {
+    const int m = mt::envTimeMs(v);
+    if (m >= 1000) snprintf(o, n, "%.1f s", m / 1000.0);
+    else snprintf(o, n, "%d ms", m);
+  };
+  params_[kFolAtk] = {"Attack", [this, envMs](char* o, int n) { envMs(cfg().folAtk, o, n); },
+                      [this](int d) { cfg().folAtk = static_cast<uint8_t>(clampi(cfg().folAtk + d, 0, 127)); },
+                      folDim};
+  params_[kFolRel] = {"Release", [this, envMs](char* o, int n) { envMs(cfg().folRel, o, n); },
+                      [this](int d) { cfg().folRel = static_cast<uint8_t>(clampi(cfg().folRel + d, 0, 127)); },
+                      folDim};
   params_[kChannel] = {"Channel", [this](char* o, int n) { snprintf(o, n, "%u", cfg().channel + 1); },
                        [this](int d) { cfg().channel = static_cast<uint8_t>(clampi(cfg().channel + d, 0, 15)); },
                        midiOnly};
@@ -136,6 +258,12 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
   // back through their edit(), which also sends what they send (program, output).
   list_.setEditScope([this]() -> void* { return nameEdit() ? cfg().name : nullptr; }, sizeof(mt::TrackCfg::name));
   list_.setOnCancel([this] {
+    if (stepsActive_) {  // the Steps edit: its toggles went straight into the mask
+      engine::lockProject();
+      cfg().gateMask = stepsOrig_;
+      engine::unlockProject();
+      stepsActive_ = false;
+    }
     namePos_ = 0;
     fixNames();
     app_.toast("CANCEL");
@@ -216,6 +344,26 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     mixerInput(ev);
     return;
   }
+  syncSteps();
+  // Steps editor: turn = cursor, Shift + turn = rotate, A + turn = toggle and step on.
+  if (page_ == kPgIns && list_.sel() == kStepsRow) {
+    if (stepsEdit() && ev.type == hw::InputType::EncTurn) {
+      if (ev.shift) rotateSteps(ev.delta);
+      else gateCur_ = clampi(gateCur_ + ev.delta, 0, 15);
+      return;
+    }
+    if (ev.type == hw::InputType::EditTurn) {
+      if (list_.holdEdit()) {
+        syncSteps();
+        const int dir = ev.delta > 0 ? 1 : -1;
+        for (int k = 0; k < (ev.delta > 0 ? ev.delta : -ev.delta); ++k) {
+          toggleStep(gateCur_);
+          gateCur_ = clampi(gateCur_ + dir, 0, 15);
+        }
+      }
+      return;
+    }
+  }
   const bool wasName = nameEdit();
   if (ev.type == hw::InputType::EncTurn && ev.shift) {
     if (wasName) {
@@ -241,7 +389,72 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     showPage(page_ + ov, true);
     return;
   }
+  syncSteps();
   if (wasName && !nameEdit()) leaveEdit();
+}
+
+void TrackScreen::syncSteps() {
+  const bool on = stepsEdit();
+  if (on && !stepsActive_) stepsOrig_ = cfg().gateMask;
+  stepsActive_ = on;
+}
+
+void TrackScreen::toggleStep(int i) {
+  engine::lockProject();
+  cfg().gateMask = static_cast<uint16_t>(cfg().gateMask ^ (1u << (i & 15)));
+  engine::unlockProject();
+  app_.markDirty();
+}
+
+// Rotates the mask: +1 moves every step one later (step 16 wraps to 1).
+void TrackScreen::rotateSteps(int d) {
+  const int r = ((d % 16) + 16) % 16;
+  if (!r) return;
+  engine::lockProject();
+  const uint32_t m = cfg().gateMask;
+  cfg().gateMask = static_cast<uint16_t>((m << r | m >> (16 - r)) & 0xFFFF);
+  engine::unlockProject();
+  app_.markDirty();
+}
+
+bool TrackScreen::trackKey(int n, bool shift) {
+  followTrack();
+  syncSteps();
+  if (shift || mixer_ || !stepsEdit() || n < 0 || n >= 8) return false;
+  gateCur_ = (gateCur_ / 8) * 8 + n;
+  toggleStep(gateCur_);
+  return true;
+}
+
+int TrackScreen::gateStep() {
+  const mt::TrackCfg& c = cfg();
+  const float gp = audio::gatePos();
+  if (gp < 0 || c.gateDepth == 0 || !internal()) return -1;
+  return static_cast<int>(gp / mt::gateSixteenths(c.gateRate)) & 15;
+}
+
+// The Steps row's cells (4 groups of 4): filled = open; the cursor while editing, the playhead.
+void TrackScreen::drawSteps(LGFX_Sprite& s) {
+  const int y = list_.rowY(kStepsRow);
+  if (list_.rowAt(y + 1) != kStepsRow) return;  // scrolled out
+  const mt::TrackCfg& c = cfg();
+  const bool edit = stepsEdit();
+  const bool dim = !internal() || c.gateDepth == 0;
+  const uint16_t col = edit ? kEditCursor : (dim ? kDim : kText);
+  const int play = gateStep();
+  shownGateStep_ = play;
+  const int cy = y + (ParamList::kRowH - kCellW) / 2;
+  for (int i = 0; i < 16; ++i) {
+    const int x = cellX(i);
+    const bool on = (c.gateMask >> i) & 1;
+    if (i == play) s.fillRect(x - 1, cy - 1, kCellW + 2, kCellW + 2, kCursor);
+    if (on) s.fillRect(x, cy, kCellW, kCellW, col);
+    else {
+      if (i == play) s.fillRect(x, cy, kCellW, kCellW, kBg);
+      s.drawRect(x, cy, kCellW, kCellW, col);
+    }
+    if (edit && i == gateCur_) s.fillRect(x, cy + kCellW + 2, kCellW, 2, kCursor);
+  }
 }
 
 // B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
@@ -278,8 +491,21 @@ void TrackScreen::onTouch(const TouchEvent& ev) {
     namePos_ = (ev.x - ParamList::kValueX) / kCharW;
     return;
   }
+  // Tap on a cell of the Steps row being edited: toggles it.
+  syncSteps();
+  if (ev.type == TouchType::Tap && stepsEdit() && list_.rowAt(ev.y) == kStepsRow && ev.x >= cellX(0) &&
+      ev.x < cellX(15) + kCellPitch) {
+    for (int i = 15; i >= 0; --i)
+      if (ev.x >= cellX(i)) {
+        gateCur_ = i;
+        toggleStep(i);
+        break;
+      }
+    return;
+  }
   const bool wasName = nameEdit();
   list_.onTouch(ev);
+  syncSteps();
   if (wasName && !nameEdit()) leaveEdit();
 }
 
@@ -300,7 +526,7 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   s.setTextColor(kText);
   s.drawString(buf, (kScreenW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
 
-  static const char* const kNames[kPages] = {"MAIN", "NOTE", "MIDI"};
+  static const char* const kNames[kPages] = {"MAIN", "INS", "FOL", "NOTE", "MIDI"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
@@ -308,6 +534,25 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
     const int uy = list_.rowY(kName) + (ParamList::kRowH + kCharH) / 2;
     s.fillRect(ParamList::kValueX + namePos_ * kCharW, uy, kCharW, 2, kEditCursor);
   }
+  if (page_ == kPgIns) drawSteps(s);
+  if (page_ == kPgFol) drawFolBar(s, y0);
+}
+
+int TrackScreen::folBarPx() const {
+  const int t = app_.curTrack();
+  const mt::TrackCfg& c = app_.project().tracks[t];
+  if (c.out != mt::TrackOut::Int || c.folSrc == 0) return -1;
+  const float l = audio::followerLevel(t);
+  return clampi(static_cast<int>(l * kFolBarW + 0.5f), 0, kFolBarW);
+}
+
+// Right of the title: the envelope 0..1, grey frame (empty while the follower is off).
+void TrackScreen::drawFolBar(LGFX_Sprite& s, int y0) {
+  const int px = folBarPx();
+  shownFolPx_ = px;
+  const int x = kScreenW - 44 - kFolBarW, y = y0 + (kHeaderH - 4) / 2 - 4;
+  s.drawRect(x - 1, y - 1, kFolBarW + 2, 10, kDim);
+  if (px > 0) s.fillRect(x, y, px, 8, kCursor);
 }
 
 // ---- MIXER ----
@@ -333,7 +578,10 @@ uint32_t TrackScreen::mixSignature() const {
 }
 
 bool TrackScreen::wantsRedraw(const engine::Status&) {
-  if (!mixer_) return false;
+  if (!mixer_) {
+    if (page_ == kPgFol) return folBarPx() != shownFolPx_;  // the follower's bar moved
+    return page_ == kPgIns && gateStep() != shownGateStep_;  // the gate's playhead moved
+  }
   const uint32_t sig = mixSignature();
   const bool scope = millis() - scopeMs_ >= kScopeMs;
   if (sig == mixSig_ && !scope) return false;

@@ -3,6 +3,7 @@
 #include <string.h>
 #include "app.h"
 #include "audio/audio.h"
+#include "core_ram.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "net/web.h"
@@ -21,7 +22,7 @@ bool WifiDialog::open() {
     return false;
   }
   app_.lockTransport(true);
-  engine::seqToPsram();  // Wi-Fi needs the internal RAM
+  core_ram::toPsram();  // Wi-Fi needs the internal RAM
   open_ = true;
   logCount_ = 0;
   {
@@ -49,7 +50,7 @@ void WifiDialog::close() {
   nets_ = nullptr;
   net::webEnd();
   net::off();
-  engine::seqToInternal();
+  core_ram::toInternal();
   app_.lockTransport(false);
   open_ = false;
 }

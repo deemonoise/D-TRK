@@ -1,5 +1,6 @@
 #include "sequencer.h"
 #include <string.h>
+#include <new>
 #include "fx_info.h"
 #include "groove.h"
 #include "record.h"
@@ -21,6 +22,18 @@ uint32_t Sequencer::newId() {
   if (nextId_ == 0) nextId_ = 1;
   return id;
 }
+
+Sequencer::Sequencer(Project& p, void* cold)
+    : p_(p), cold_(static_cast<Cold*>(cold)), ownCold_(cold == nullptr), bpm_(clampBpm(p.bpm)) {
+  if (ownCold_) cold_ = new Cold();
+  else new (cold_) Cold();  // zeroed
+}
+
+Sequencer::~Sequencer() {
+  if (ownCold_) delete cold_;
+}
+
+size_t Sequencer::coldBytes() { return sizeof(Cold); }
 
 uint64_t Sequencer::tickTime(uint64_t tick) const {
   const int64_t x = static_cast<int64_t>(anchorRem_) + span(tick);
@@ -80,6 +93,7 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   const uint8_t s = 0xFA;
   out.send(&s, 1);
   anchorTick_ = stepTick_ = clockTick_ = 0;
+  gateTick_ = 0;
   anchorAt(now);
   state_ = State::Playing;
 }
@@ -130,6 +144,7 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   if (state_ == State::Playing) silence(now, out);
   const uint8_t s = 0xFC;
   out.send(&s, 1);
+  synthTransport(now, out, 0xFD);  // the trance gates bypass while stopped
   state_ = State::Stopped;
   pos_ = 0;
   heardPos_ = 0;
@@ -245,8 +260,8 @@ void Sequencer::songEdited(uint64_t now, MidiSink& out, int at, SongOp op) {
   songPos_ = remap(songPos_);
   heardSong_ = remap(heardSong_);
   for (int i = 0; i < histN_; ++i) {
-    hist_[i].song = static_cast<int8_t>(remap(hist_[i].song));
-    hist_[i].prevSong = static_cast<int8_t>(remap(hist_[i].prevSong));
+    hist(i).song = static_cast<int8_t>(remap(hist(i).song));
+    hist(i).prevSong = static_cast<int8_t>(remap(hist(i).prevSong));
   }
 }
 
@@ -258,7 +273,7 @@ void Sequencer::trackOutChanged(uint64_t now, int track, MidiSink& out) {
   const uint8_t tr = static_cast<uint8_t>(track);
   if (internal(track)) {
     const uint8_t ch = p_.tracks[track].channel & 15;
-    voices_.releaseChannel(ch, [&](uint8_t note) {
+    cold_->voices.releaseChannel(ch, [&](uint8_t note) {
       const uint8_t m[3] = {static_cast<uint8_t>(0x80 | ch), note, 0};
       out.send(m, 3);
     });
@@ -295,9 +310,9 @@ void Sequencer::applyBpm(uint64_t now) {
 // and its tie releases are the caller's job.
 bool Sequencer::rewind(uint64_t now) {
   int k = -1;
-  while (k + 1 < histN_ && hist_[k + 1].first > now) ++k;
+  while (k + 1 < histN_ && hist(k + 1).first > now) ++k;
   if (k < 0) return false;
-  const Sched h = hist_[k];
+  const Sched h = hist(k);
   heap_.removeIf([&](const SchedEvent& e) { return static_cast<int32_t>(e.tag - h.serial) >= 0; });
   memcpy(ties_, h.ties, sizeof(ties_));
   memcpy(arps_, h.arps, sizeof(arps_));
@@ -305,14 +320,15 @@ bool Sequencer::rewind(uint64_t now) {
   muteHeld_ = h.held;
   savedMute_ = h.saved;
   for (int i = 0; i <= k; ++i)
-    if (hist_[i].muteSet) {
+    if (hist(i).muteSet) {
       for (int tr = 0; tr < kTracks; ++tr) p_.tracks[tr].mute = (h.mutes >> tr) & 1;
       break;
     }
   songPos_ = h.prevSong;  // a song advance among the undone steps is decided again
   stepTick_ = h.tick;
+  gateTick_ = h.gateTick;
   stepSerial_ = h.serial;
-  for (int i = k + 1; i < histN_; ++i) hist_[i - k - 1] = hist_[i];
+  histHead_ = static_cast<uint8_t>((histHead_ + k + 1) & (kHist - 1));  // drop the k + 1 newest
   histN_ -= k + 1;
   if (static_cast<int32_t>(selSerial_ - h.serial) > 0) {
     loop_ = 0;
@@ -368,12 +384,12 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   emitDue(now, out);
 
   for (int i = 0; i < histN_; ++i) {
-    if (hist_[i].t <= now) {
-      heardPos_ = hist_[i].pos;
-      heardLoop_ = hist_[i].posLoop;
-      heardPat_ = hist_[i].pat;
-      heardSong_ = hist_[i].song;
-      heardStepT_ = hist_[i].t;
+    if (hist(i).t <= now) {
+      heardPos_ = hist(i).pos;
+      heardLoop_ = hist(i).posLoop;
+      heardPat_ = hist(i).pat;
+      heardSong_ = hist(i).song;
+      heardStepT_ = hist(i).t;
       break;
     }
   }
@@ -401,10 +417,11 @@ Sequencer::TrackTiming Sequencer::timing(const Pattern& pt, int tr, uint32_t su)
 }
 
 void Sequencer::scheduleStep(uint64_t now) {
-  for (int i = kHist - 1; i > 0; --i) hist_[i] = hist_[i - 1];
+  histHead_ = static_cast<uint8_t>((histHead_ - 1) & (kHist - 1));  // the oldest drops off a full ring
   if (histN_ < kHist) ++histN_;
-  Sched& h = hist_[0];
+  Sched& h = hist(0);
   h.tick = stepTick_;
+  h.gateTick = gateTick_;
   h.serial = stepSerial_;
   h.loop = loop_;
   h.prevPos = pos_;
@@ -460,6 +477,7 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.song = static_cast<int8_t>(songPos_);
   ++stepSerial_;
   stepTick_ += ticks();
+  gateTick_ += ticks();
   if (++pos_ >= pat.length) endOfPass();
   h.first = minT_ == kNever ? t : minT_;
   h.muteSet = muteSet_;
@@ -548,19 +566,23 @@ void Sequencer::playTrackStep(int tr, const Step& s, uint64_t t, const ExpandCtx
 
 // PERF step clock (Synth 0xF6 4): on a 1/16 boundary of the pass (pos_ x ticks: every pass starts
 // on one, whatever its length), its index mod 64 at the unshifted time (the grid ignores swing),
-// to the first INT track. A boundary already past is skipped: a late
+// to the first INT track. Song clock (0xF6 5): the same on a 1/16 boundary since start()
+// (gateTick_: continuous across passes and song slots). A boundary already past is skipped: a late
 // anchor would misplace the grid. Not counted in the step's first event (rewind keys on the
 // heard ones; a swung step's clock goes out before its notes).
 void Sequencer::pushPerfStep(int64_t earliest) {
   constexpr uint32_t k16 = kPpqn / 4;
   const uint32_t pt = static_cast<uint32_t>(pos_) * ticks();
-  if (pt % k16) return;
+  const bool perf = pt % k16 == 0, song = gateTick_ % k16 == 0;
+  if (!perf && !song) return;
   const uint64_t t = tickTime(stepTick_);
   if (static_cast<int64_t>(t) < earliest) return;
   for (int i = 0; i < kTracks; ++i)
     if (internal(i)) {
       const uint64_t keep = minT_;
-      push(t, 0xF6, 4, static_cast<uint8_t>((pt / k16) & 63), 0, false, 3, static_cast<uint8_t>(i));
+      const uint8_t tr = static_cast<uint8_t>(i);
+      if (perf) push(t, 0xF6, 4, static_cast<uint8_t>((pt / k16) & 63), 0, false, 3, tr);
+      if (song) push(t, 0xF6, 5, static_cast<uint8_t>((gateTick_ / k16) & 63), 0, false, 3, tr);
       minT_ = keep;
       return;
     }
@@ -636,6 +658,7 @@ void Sequencer::skipStep(uint64_t now) {
     }
   }
   stepTick_ += ticks();
+  gateTick_ += ticks();
   if (++pos_ >= pat.length) endOfPass();
 }
 
@@ -758,7 +781,7 @@ void Sequencer::arpStep(int track, uint64_t t, int64_t earliest, bool aud, uint3
 
 void Sequencer::silence(uint64_t now, MidiSink& out) {
   heap_.clear();
-  voices_.releaseAll([&](uint8_t ch, uint8_t note) {
+  cold_->voices.releaseAll([&](uint8_t ch, uint8_t note) {
     const uint8_t m[3] = {static_cast<uint8_t>(0x80 | ch), note, 0};
     out.send(m, 3);
   });
@@ -826,10 +849,10 @@ void Sequencer::dispatch(const SchedEvent& e, MidiSink& out) {
   // track became INT still has its MIDI channel).
   const uint8_t key = toSynth ? e.track : ch;
   auto noteOn = [&](uint8_t n, uint32_t id) {
-    return toSynth ? intVoices_.noteOn(key, n, id) : voices_.noteOn(key, n, id);
+    return toSynth ? intVoices_.noteOn(key, n, id) : cold_->voices.noteOn(key, n, id);
   };
   auto noteOff = [&](uint8_t n, uint32_t id) {
-    return toSynth ? intVoices_.noteOff(key, n, id) : voices_.noteOff(key, n, id);
+    return toSynth ? intVoices_.noteOff(key, n, id) : cold_->voices.noteOff(key, n, id);
   };
   auto send = [&](const uint8_t* b, uint8_t len) {
     if (toSynth) {

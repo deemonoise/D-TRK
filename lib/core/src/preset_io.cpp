@@ -65,4 +65,37 @@ void applyPreset(Instrument& dst, const Instrument& src, bool sampleFound) {
   }
 }
 
+namespace {
+
+bool playsInstr(const Project& p, int instr, int track) {
+  if (track < 0 || track >= kTracks) return false;
+  const TrackCfg& c = p.tracks[track];
+  return c.out == TrackOut::Int && c.instr % kInstruments == instr;
+}
+
+}  // namespace
+
+void takePresetInsert(Project& p, int instr, int track) {
+  if (instr < 0 || instr >= kInstruments) return;
+  Instrument& m = p.instruments[instr];
+  if (playsInstr(p, instr, track)) {
+    TrackCfg& c = p.tracks[track];
+    c.drive = m.drive;
+    c.crushBits = m.crushBits;
+    c.crushRate = m.crushRate;
+    c.driveModel = m.driveModel;
+  }
+  clearInsert(m);
+}
+
+void presetInsertForSave(const Project& p, int instr, int track, Instrument& m) {
+  clearInsert(m);
+  if (!playsInstr(p, instr, track)) return;
+  const TrackCfg& c = p.tracks[track];
+  m.drive = c.drive;
+  m.crushBits = c.crushBits;
+  m.crushRate = c.crushRate;
+  m.driveModel = c.driveModel;
+}
+
 }  // namespace mt

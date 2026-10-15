@@ -45,11 +45,11 @@ void freeProject(mt::Project* p) {
 // If one of these fires, a field was added/removed: update snapshot() below and
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
 static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() and project_io");
-static_assert(sizeof(mt::TrackCfg) == 22, "TrackCfg changed: update snapshot() and project_io");
+static_assert(sizeof(mt::TrackCfg) == 40, "TrackCfg changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Instrument) == 380, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 476636, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 476936, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -86,6 +86,18 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));
   out.wavetableCount = live.wavetableCount;
   out.hasSampleList = live.hasSampleList;
+  out.dlyMode = live.dlyMode;
+  out.dlyChar = live.dlyChar;
+  out.rvbMode = live.rvbMode;
+  out.rvbShim = live.rvbShim;
+  out.modType = live.modType;
+  out.modRate = live.modRate;
+  out.modDepth = live.modDepth;
+  out.modFb = live.modFb;
+  out.modLevel = live.modLevel;
+  out.eqLow = live.eqLow;
+  out.eqHigh = live.eqHigh;
+  out.shimInt = live.shimInt;
   engine::unlockProject();
   for (int i = 0; i < mt::kPatterns; ++i) {
     engine::lockProject();

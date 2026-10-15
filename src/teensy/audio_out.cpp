@@ -46,7 +46,8 @@ void SynthStream::update() {
       if (off < 0) break;  // a later block
       if (e->localUs < blockUs) {
         late_++;
-        if (e->b[0] == 0xF6 && e->b[1] == 4) {  // PERF step clock: late at offset 0 would misplace the grid
+        // PERF step / song clock: late at offset 0 would misplace the grid / the trance gates
+        if (e->b[0] == 0xF6 && (e->b[1] == 4 || e->b[1] == 5)) {
           q_.pop();
           continue;
         }

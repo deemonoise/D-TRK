@@ -104,6 +104,51 @@ void test_every_used_track_has_its_instruments() {
   }
 }
 
+// A demo shows a drive model other than TANH off: a driven track on CLIP or FOLD.
+void test_a_demo_uses_a_drive_model() {
+  bool seen = false;
+  for (int i = 0; i < demoCount(); ++i) {
+    demoBuild(i, p);
+    for (const TrackCfg& c : p.tracks)
+      seen |= c.drive > 0 && (c.driveModel == static_cast<uint8_t>(DriveModel::Clip) ||
+                              c.driveModel == static_cast<uint8_t>(DriveModel::Fold));
+  }
+  TEST_ASSERT_TRUE(seen);
+}
+
+// A demo shows the trance gate: a track with the gate on, and a GTE lock.
+void test_a_demo_uses_the_trance_gate() {
+  bool gate = false, gte = false;
+  for (int i = 0; i < demoCount(); ++i) {
+    demoBuild(i, p);
+    for (const TrackCfg& c : p.tracks) gate |= c.out == TrackOut::Int && c.gateDepth > 0;
+    for (const Pattern& pt : p.patterns)
+      for (const auto& tr : pt.steps)
+        for (const Step& st : tr)
+          for (const FxSlot& f : st.fx) gte |= f.cmd == Fx::GTE;
+  }
+  TEST_ASSERT_TRUE(gate);
+  TEST_ASSERT_TRUE(gte);
+}
+
+// A demo shows the master / send fx: the MOD bus on with a track sending to it, the TAPE delay, and
+// a PERF button on MOD THROW or TAPE WOBBLE.
+void test_a_demo_uses_the_master_fx() {
+  bool mod = false, tape = false, perf = false;
+  for (int i = 0; i < demoCount(); ++i) {
+    demoBuild(i, p);
+    bool send = false;
+    for (const TrackCfg& c : p.tracks) send |= c.out == TrackOut::Int && c.modSend > 0;
+    mod |= p.modType != static_cast<uint8_t>(ModType::Off) && p.modLevel > 0 && send;
+    tape |= p.dlyMode == static_cast<uint8_t>(DlyMode::Tape) && p.dlyLevel > 0;
+    for (uint8_t f : p.perfMap)
+      perf |= f == static_cast<uint8_t>(PerfFx::ModThrow) || f == static_cast<uint8_t>(PerfFx::TapeWobble);
+  }
+  TEST_ASSERT_TRUE(mod);
+  TEST_ASSERT_TRUE(tape);
+  TEST_ASSERT_TRUE(perf);
+}
+
 // Each old chain row became `rep` slots: the slot count is the sum of the old repeats.
 void test_song_slots_expand_repeats() {
   static const int kSlots[] = {14, 11, 36, 9, 9, 15, 11, 16};
@@ -176,12 +221,17 @@ void test_save_load_round_trip() {
 void test_songs_render_clean() {
   static int16_t line[2 * 2 * kSynthRate];  // 2 s, L and R
   static float rv[Reverb::kBufLen];
+  static int16_t shim[PitchShift::kLen];
+  static int16_t mod[ModFx::kLineLen];
+  static float wet[Synth::kBlock];
   static BuiltinWt wt;
   for (int i = 0; i < demoCount(); ++i) {
     demoBuild(i, p);
     Synth* synth = new Synth(p);
     synth->setDelayBuffer(line, 2 * kSynthRate);
     synth->setReverbBuffer(rv, Reverb::kBufLen);
+    synth->setShimmerBuffer(shim, PitchShift::kLen, wet);
+    synth->setModBuffer(mod, ModFx::kLineLen);
     synth->setWavetables(&wt);
     RenderSpec spec;
     spec.mode = RenderSpec::Mode::Song;
@@ -203,10 +253,29 @@ void test_songs_render_clean() {
   }
 }
 
+
+// Factory presets carry a recommended insert; a built project's instruments keep none (the tracks
+// hold the insert, set by the build itself).
+void test_demo_instruments_no_insert() {
+  for (int i = 0; i < demoCount(); ++i) {
+    demoBuild(i, p);
+    for (const Instrument& m : p.instruments) {
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.drive, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.crushBits, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.crushRate, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.driveModel, m.name);
+    }
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_demo_instruments_no_insert);
   RUN_TEST(test_names_are_project_file_names);
   RUN_TEST(test_every_used_track_has_its_instruments);
+  RUN_TEST(test_a_demo_uses_a_drive_model);
+  RUN_TEST(test_a_demo_uses_the_trance_gate);
+  RUN_TEST(test_a_demo_uses_the_master_fx);
   RUN_TEST(test_song_slots_expand_repeats);
   RUN_TEST(test_chip_transposed_copies);
   RUN_TEST(test_save_load_round_trip);

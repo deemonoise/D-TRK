@@ -353,7 +353,7 @@ void test_demo_render_unchanged_by_split() {
   int16_t peak = 0;
   const uint32_t h = demoRenderHash(&blocks, &peak);
   TEST_ASSERT_TRUE(peak > 1000);
-  TEST_ASSERT_EQUAL_HEX32(0x066F5DE1u, h);
+  TEST_ASSERT_EQUAL_HEX32(0x41EA915Du, h);
 }
 
 // The synth boards render on one synth, reset between renders: drum noise and LFO Random included,

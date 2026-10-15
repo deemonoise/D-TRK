@@ -319,13 +319,68 @@ void test_pan_fx() {
   TEST_ASSERT_EQUAL(127, fxStep(Fx::PAN, 120, 50));
   TEST_ASSERT_EQUAL(0, fxStep(Fx::PAN, 5, -50));
   TEST_ASSERT_TRUE(fxSynthOnly(Fx::PAN));
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::RVB, 1) == Fx::PAN);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::MOD, 1) == Fx::PAN);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::PAN, 1) == Fx::CHN);
   TEST_ASSERT_EQUAL_STRING("PAN", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Pan)));
 }
 
+// MOD: the MOD bus send lock, 0..127, INT tracks only, after GTE; between RVB and PAN in the list.
+void test_mod_fx() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::GTE) + 1, static_cast<int>(Fx::MOD));
+  TEST_ASSERT_EQUAL_STRING("MOD", fxName(Fx::MOD));
+  TEST_ASSERT_EQUAL_STRING("MOD SEND", fxLongName(Fx::MOD));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::MOD));
+  TEST_ASSERT_EQUAL_STRING(" 90", fmt(Fx::MOD, 90));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::MOD, 120, 20));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::MOD, 3, -5));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::MOD));
+  TEST_ASSERT_FALSE(fxDrumOnly(Fx::MOD));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::RVB, 1) == Fx::MOD);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::PAN, -1) == Fx::MOD);
+  TEST_ASSERT_EQUAL_STRING("MOD", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::ModSend)));
+}
+
+// DTY: the track insert's drive model lock, TNH CLP FLD RCT ASY, INT tracks only, after DRV; stored
+// after PAN.
+void test_dty_fx() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::PAN) + 1, static_cast<int>(Fx::DTY));
+  TEST_ASSERT_EQUAL_STRING("DTY", fxName(Fx::DTY));
+  TEST_ASSERT_EQUAL_STRING("DRIVE TYPE", fxLongName(Fx::DTY));
+  TEST_ASSERT_EQUAL(0, fxDefault(Fx::DTY));
+  TEST_ASSERT_EQUAL_STRING("TNH", fmt(Fx::DTY, 0));
+  TEST_ASSERT_EQUAL_STRING("CLP", fmt(Fx::DTY, 1));
+  TEST_ASSERT_EQUAL_STRING("FLD", fmt(Fx::DTY, 2));
+  TEST_ASSERT_EQUAL_STRING("RCT", fmt(Fx::DTY, 3));
+  TEST_ASSERT_EQUAL_STRING("ASY", fmt(Fx::DTY, 4));
+  TEST_ASSERT_EQUAL_STRING("TNH", fmt(Fx::DTY, 9));  // unknown: TANH
+  TEST_ASSERT_EQUAL(static_cast<int>(DriveModel::Count) - 1, fxStep(Fx::DTY, 3, 5));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::DTY, 1, -3));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::DTY));
+  TEST_ASSERT_FALSE(fxDrumOnly(Fx::DTY));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::DRV, 1) == Fx::DTY);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::DTY, 1) == Fx::BIT);
+}
+
+// GTE: the trance gate's depth lock, OFF / 1..127, INT tracks only, after SRR; stored after DTY.
+void test_gte_fx() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::DTY) + 1, static_cast<int>(Fx::GTE));
+  TEST_ASSERT_EQUAL_STRING("GTE", fxName(Fx::GTE));
+  TEST_ASSERT_EQUAL_STRING("TRANCE GATE", fxLongName(Fx::GTE));
+  TEST_ASSERT_EQUAL(127, fxDefault(Fx::GTE));
+  TEST_ASSERT_EQUAL_STRING("OFF", fmt(Fx::GTE, 0));
+  TEST_ASSERT_EQUAL_STRING(" 64", fmt(Fx::GTE, 64));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::GTE, 120, 20));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::GTE, 3, -5));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::GTE));
+  TEST_ASSERT_FALSE(fxDrumOnly(Fx::GTE));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::SRR, 1) == Fx::GTE);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::GTE, 1) == Fx::DCY);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_dty_fx);
+  RUN_TEST(test_gte_fx);
   RUN_TEST(test_long_names);
   RUN_TEST(test_names_and_defaults);
   RUN_TEST(test_format);
@@ -347,5 +402,6 @@ int main() {
   RUN_TEST(test_arm_format_and_step);
   RUN_TEST(test_lfo_fx);
   RUN_TEST(test_pan_fx);
+  RUN_TEST(test_mod_fx);
   return UNITY_END();
 }

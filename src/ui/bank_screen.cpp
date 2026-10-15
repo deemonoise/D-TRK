@@ -86,7 +86,7 @@ void BankScreen::openMenu(int idx) {
   copyFrom_ = -1;
   const MenuItem items[] = {
       {"Copy to...", kCopyTo}, {"Clear", kClear},     {"Length 16", kLen16},
-      {"Length 32", kLen32},   {"Length 64", kLen64},
+      {"Length 32", kLen32},   {"Length 64", kLen64},  {"Length 128", kLen128},
   };
   char title[28];
   snprintf(title, sizeof(title), "PATTERN %02d", idx + 1);
@@ -120,9 +120,10 @@ void BankScreen::onMenu(int id) {
     case kLen16:
     case kLen32:
     case kLen64:
+    case kLen128:
       snapshot(pat);
       engine::lockProject();
-      p.patterns[pat].length = id == kLen16 ? 16 : (id == kLen32 ? 32 : 64);
+      p.patterns[pat].length = id == kLen16 ? 16 : id == kLen32 ? 32 : id == kLen64 ? 64 : 128;
       p.patterns[pat].fitTrackLen();
       engine::unlockProject();
       releaseTiesIfHeard(pat);

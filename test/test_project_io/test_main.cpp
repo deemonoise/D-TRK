@@ -259,12 +259,12 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(m.fDec, n.fDec);
     TEST_ASSERT_EQUAL(m.keytrack, n.keytrack);
     TEST_ASSERT_EQUAL(m.send, n.send);
-    TEST_ASSERT_EQUAL(m.drive, n.drive);
+    TEST_ASSERT_EQUAL(0, n.drive);  // the track insert's now: zeroed on load
     TEST_ASSERT_EQUAL(m.rsend, n.rsend);
     TEST_ASSERT_EQUAL(m.velCut, n.velCut);
     TEST_ASSERT_EQUAL(m.velMac, n.velMac);
-    TEST_ASSERT_EQUAL(m.crushBits, n.crushBits);
-    TEST_ASSERT_EQUAL(m.crushRate, n.crushRate);
+    TEST_ASSERT_EQUAL(0, n.crushBits);
+    TEST_ASSERT_EQUAL(0, n.crushRate);
     TEST_ASSERT_EQUAL(m.sliceMode, n.sliceMode);
     TEST_ASSERT_EQUAL(m.chopMode, n.chopMode);
     TEST_ASSERT_EQUAL(m.chopN, n.chopN);
@@ -1622,6 +1622,189 @@ void test_tpan_garbage_clamped() {
   TEST_ASSERT_EQUAL(64, b.tracks[2].pan);
 }
 
+// TINS: the tracks' insert settings round trip; the instruments' old fields load as 0.
+void test_tins_round_trip() {
+  a.tracks[2].drive = 90;
+  a.tracks[2].crushBits = 30;
+  a.tracks[2].crushRate = 7;
+  a.tracks[15].drive = 127;
+  a.tracks[2].driveModel = static_cast<uint8_t>(DriveModel::Fold);
+  a.tracks[9].driveModel = static_cast<uint8_t>(DriveModel::Asym);
+  a.instruments[0].drive = 50;  // a file with TINS: no migration
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TINS"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(a.tracks[t].drive, b.tracks[t].drive);
+    TEST_ASSERT_EQUAL(a.tracks[t].crushBits, b.tracks[t].crushBits);
+    TEST_ASSERT_EQUAL(a.tracks[t].crushRate, b.tracks[t].crushRate);
+    TEST_ASSERT_EQUAL(a.tracks[t].driveModel, b.tracks[t].driveModel);
+  }
+  TEST_ASSERT_EQUAL(0, b.instruments[0].drive);
+}
+
+// Longer records (a newer firmware's fields) read the known part; values clamped; tracks the chunk
+// lacks stay off; a record size 0 or a short chunk is bad.
+void test_tins_longer_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TRKS", trks(kTracks, kTracks));
+  putChunk(f, "TINS", {2, 5, 10, 20, 30, 99, 99, 200, 1, 2, 3, 4});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(10, b.tracks[0].drive);
+  TEST_ASSERT_EQUAL(20, b.tracks[0].crushBits);
+  TEST_ASSERT_EQUAL(30, b.tracks[0].crushRate);
+  TEST_ASSERT_EQUAL(0, b.tracks[0].driveModel);  // 99: unknown model -> TANH
+  TEST_ASSERT_EQUAL(127, b.tracks[1].drive);
+  TEST_ASSERT_EQUAL(1, b.tracks[1].crushBits);
+  TEST_ASSERT_EQUAL(2, b.tracks[1].crushRate);
+  TEST_ASSERT_EQUAL(3, b.tracks[1].driveModel);
+  TEST_ASSERT_EQUAL(0, b.tracks[2].drive);
+  f = fileHeader();
+  putChunk(f, "TINS", {1, 1, 40});  // an older, shorter record: drive only
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(40, b.tracks[0].drive);
+  TEST_ASSERT_EQUAL(0, b.tracks[0].crushBits);
+  f = fileHeader();
+  putChunk(f, "TINS", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "TINS", {2, 3, 1, 2, 3});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+// A feature-1 file: 3-byte records, no model -> TANH (sounds as it did).
+void test_tins_three_byte_records() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TINS", {2, 3, 50, 0, 0, 60, 1, 2});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(50, b.tracks[0].drive);
+  TEST_ASSERT_EQUAL(60, b.tracks[1].drive);
+  TEST_ASSERT_EQUAL(2, b.tracks[1].crushRate);
+  TEST_ASSERT_EQUAL(0, b.tracks[0].driveModel);
+  TEST_ASSERT_EQUAL(0, b.tracks[1].driveModel);
+}
+
+// A record assigns only the fields it holds: the rest keep their (default) values, not 0.
+void test_tins_record_assigns_present_fields_only() {
+  TrackCfg c;
+  c.drive = 11;
+  c.crushBits = 22;
+  c.crushRate = 33;
+  c.driveModel = 2;
+  const uint8_t r[] = {40, 200, 7, 4, 99};
+  readTinsRecord(r, 1, c);
+  TEST_ASSERT_EQUAL(40, c.drive);
+  TEST_ASSERT_EQUAL(22, c.crushBits);
+  TEST_ASSERT_EQUAL(33, c.crushRate);
+  TEST_ASSERT_EQUAL(2, c.driveModel);
+  readTinsRecord(r, 3, c);
+  TEST_ASSERT_EQUAL(127, c.crushBits);  // clamped
+  TEST_ASSERT_EQUAL(7, c.crushRate);
+  TEST_ASSERT_EQUAL(2, c.driveModel);
+  readTinsRecord(r, 4, c);
+  TEST_ASSERT_EQUAL(4, c.driveModel);
+  TEST_ASSERT_EQUAL_HEX16(0x5555, c.gateMask);  // not in a 4-byte record: the default
+  const uint8_t bad[] = {0, 0, 0, static_cast<uint8_t>(DriveModel::Count)};
+  readTinsRecord(bad, 4, c);
+  TEST_ASSERT_EQUAL(0, c.driveModel);
+}
+
+// The trance gate fields after driveModel: mask lo, hi, rate, depth, len, attack, release. A
+// 4-byte (feature 2) record keeps the gate's defaults (mask 0x5555, off); values clamped; a
+// longer record's tail is skipped.
+void test_tins_gate_fields() {
+  a.tracks[1].gateMask = 0xA5C3;
+  a.tracks[1].gateRate = static_cast<uint8_t>(GateRate::R8);
+  a.tracks[1].gateDepth = 99;
+  a.tracks[1].gateLen = 40;
+  a.tracks[1].gateAtk = 3;
+  a.tracks[1].gateRel = 120;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL_HEX16(a.tracks[t].gateMask, b.tracks[t].gateMask);
+    TEST_ASSERT_EQUAL(a.tracks[t].gateRate, b.tracks[t].gateRate);
+    TEST_ASSERT_EQUAL(a.tracks[t].gateDepth, b.tracks[t].gateDepth);
+    TEST_ASSERT_EQUAL(a.tracks[t].gateLen, b.tracks[t].gateLen);
+    TEST_ASSERT_EQUAL(a.tracks[t].gateAtk, b.tracks[t].gateAtk);
+    TEST_ASSERT_EQUAL(a.tracks[t].gateRel, b.tracks[t].gateRel);
+  }
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TINS", {1, 4, 50, 0, 0, 2});  // feature 2
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const TrackCfg d;
+  TEST_ASSERT_EQUAL(2, b.tracks[0].driveModel);
+  TEST_ASSERT_EQUAL_HEX16(0x5555, b.tracks[0].gateMask);
+  TEST_ASSERT_EQUAL(d.gateRate, b.tracks[0].gateRate);
+  TEST_ASSERT_EQUAL(0, b.tracks[0].gateDepth);
+  TEST_ASSERT_EQUAL(100, b.tracks[0].gateLen);
+  TEST_ASSERT_EQUAL(d.gateAtk, b.tracks[0].gateAtk);
+  TEST_ASSERT_EQUAL(d.gateRel, b.tracks[0].gateRel);
+  f = fileHeader();
+  putChunk(f, "TINS", {2, 12, 0, 0, 0, 0, 0x34, 0x12, 9, 200, 0, 255, 255, 77,
+                       0, 0, 0, 0, 0xFF, 0x00, 0, 5, 101, 6, 7, 77});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL_HEX16(0x1234, b.tracks[0].gateMask);
+  TEST_ASSERT_EQUAL(static_cast<int>(GateRate::R16), b.tracks[0].gateRate);  // unknown rate
+  TEST_ASSERT_EQUAL(127, b.tracks[0].gateDepth);
+  TEST_ASSERT_EQUAL(1, b.tracks[0].gateLen);
+  TEST_ASSERT_EQUAL(127, b.tracks[0].gateAtk);
+  TEST_ASSERT_EQUAL(127, b.tracks[0].gateRel);
+  TEST_ASSERT_EQUAL_HEX16(0x00FF, b.tracks[1].gateMask);
+  TEST_ASSERT_EQUAL(0, b.tracks[1].gateRate);
+  TEST_ASSERT_EQUAL(5, b.tracks[1].gateDepth);
+  TEST_ASSERT_EQUAL(100, b.tracks[1].gateLen);
+  TEST_ASSERT_EQUAL(6, b.tracks[1].gateAtk);
+  TEST_ASSERT_EQUAL(7, b.tracks[1].gateRel);
+  TEST_ASSERT_EQUAL(77, b.tracks[0].modSend);  // byte 11 (feature 5)
+  TEST_ASSERT_EQUAL(77, b.tracks[1].modSend);
+}
+
+// A file without TINS (older firmware): each track takes the drive / crush of its instrument, a KIT
+// track the KIT's own (not its lane instruments'); then the instruments' fields are 0.
+void test_no_tins_migrates_instrument_insert() {
+  a.instruments[1].drive = 40;
+  a.instruments[1].crushBits = 20;
+  a.tracks[0].instr = 1;
+  a.tracks[5].instr = 1;
+  Instrument& k = a.instruments[2];
+  instrSetType(k, InstrType::Kit);
+  k.drive = 10;
+  k.kit[3].instr = 3;
+  a.instruments[3].drive = 70;
+  a.instruments[3].crushRate = 33;
+  a.tracks[6].instr = 2;
+  a.tracks[7].instr = 4;  // a clean instrument
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"TINS"});
+  b.tracks[7].drive = 99;  // the load resets it first
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(40, b.tracks[0].drive);
+  TEST_ASSERT_EQUAL(20, b.tracks[0].crushBits);
+  TEST_ASSERT_EQUAL(40, b.tracks[5].drive);
+  TEST_ASSERT_EQUAL(10, b.tracks[6].drive);  // the KIT's own, not lane 3's 70
+  TEST_ASSERT_EQUAL(0, b.tracks[6].crushBits);
+  TEST_ASSERT_EQUAL(0, b.tracks[6].crushRate);
+  TEST_ASSERT_EQUAL(0, b.tracks[7].drive);
+  for (const Instrument& m : b.instruments) {
+    TEST_ASSERT_EQUAL(0, m.drive);
+    TEST_ASSERT_EQUAL(0, m.crushBits);
+    TEST_ASSERT_EQUAL(0, m.crushRate);
+  }
+}
+
 void test_tspd_absent_without_speeds_and_bad_values() {
   a.reset();
   a.patterns[1].steps[0][0].note = 60;
@@ -1668,6 +1851,117 @@ void test_audi_sound_fx_defaults_and_clamps() {
   TEST_ASSERT_EQUAL(127, b.compAmt);
   TEST_ASSERT_EQUAL(0, b.scTrack);  // no such track: off
   TEST_ASSERT_EQUAL(127, b.scDepth);
+}
+
+// AUDI bytes 14..25 (master / send fx): dlyMode, dlyChar, rvbMode, rvbShim, modType, modRate,
+// modDepth, modFb, modLevel, eqLow, eqHigh, shimInt. Round trip; a 14-byte AUDI keeps the defaults
+// (OFF / flat); unknown modes load as 0, values clamped; a longer AUDI's tail is skipped.
+void test_audi_master_fx_round_trip() {
+  a.dlyMode = 1;
+  a.dlyChar = 99;
+  a.rvbMode = 1;
+  a.rvbShim = 77;
+  a.modType = 4;
+  a.modRate = 12;
+  a.modDepth = 34;
+  a.modFb = 56;
+  a.modLevel = 78;
+  a.eqLow = 10;
+  a.eqHigh = 120;
+  a.shimInt = 2;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(1, b.dlyMode);
+  TEST_ASSERT_EQUAL(99, b.dlyChar);
+  TEST_ASSERT_EQUAL(1, b.rvbMode);
+  TEST_ASSERT_EQUAL(77, b.rvbShim);
+  TEST_ASSERT_EQUAL(4, b.modType);
+  TEST_ASSERT_EQUAL(12, b.modRate);
+  TEST_ASSERT_EQUAL(34, b.modDepth);
+  TEST_ASSERT_EQUAL(56, b.modFb);
+  TEST_ASSERT_EQUAL(78, b.modLevel);
+  TEST_ASSERT_EQUAL(10, b.eqLow);
+  TEST_ASSERT_EQUAL(120, b.eqHigh);
+  TEST_ASSERT_EQUAL(2, b.shimInt);
+}
+
+void test_audi_master_fx_old_and_garbage() {
+  const Project d;
+  TEST_ASSERT_EQUAL(0, d.dlyMode);
+  TEST_ASSERT_EQUAL(0, d.rvbMode);
+  TEST_ASSERT_EQUAL(0, d.modType);
+  TEST_ASSERT_EQUAL(64, d.eqLow);
+  TEST_ASSERT_EQUAL(64, d.eqHigh);
+  TEST_ASSERT_EQUAL(0, d.shimInt);
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30, 1, 2, 3, 4, 5, 6, 7, 64});  // 14 bytes: older firmware
+  finish(f);
+  b.modType = 3;  // the load resets it first
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(d.dlyMode, b.dlyMode);
+  TEST_ASSERT_EQUAL(d.dlyChar, b.dlyChar);
+  TEST_ASSERT_EQUAL(d.rvbShim, b.rvbShim);
+  TEST_ASSERT_EQUAL(0, b.modType);
+  TEST_ASSERT_EQUAL(d.modRate, b.modRate);
+  TEST_ASSERT_EQUAL(d.modLevel, b.modLevel);
+  TEST_ASSERT_EQUAL(64, b.eqLow);
+  TEST_ASSERT_EQUAL(0, b.shimInt);
+  f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30, 1, 2, 3, 4, 5, 6, 7, 64,  //
+                       9, 200, 9, 200, 9, 200, 200, 200, 200, 200, 200, 9, 1, 2, 3});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.dlyMode);  // unknown: DIGITAL
+  TEST_ASSERT_EQUAL(127, b.dlyChar);
+  TEST_ASSERT_EQUAL(0, b.rvbMode);
+  TEST_ASSERT_EQUAL(127, b.rvbShim);
+  TEST_ASSERT_EQUAL(0, b.modType);
+  TEST_ASSERT_EQUAL(127, b.modRate);
+  TEST_ASSERT_EQUAL(127, b.modDepth);
+  TEST_ASSERT_EQUAL(127, b.modFb);
+  TEST_ASSERT_EQUAL(127, b.modLevel);
+  TEST_ASSERT_EQUAL(127, b.eqLow);
+  TEST_ASSERT_EQUAL(127, b.eqHigh);
+  TEST_ASSERT_EQUAL(0, b.shimInt);
+  // A partial tail (up to modType): the rest keep the defaults.
+  f = fileHeader();
+  putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30, 1, 2, 3, 4, 5, 6, 7, 64, 2, 5, 1, 6, 2});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(2, b.dlyMode);
+  TEST_ASSERT_EQUAL(5, b.dlyChar);
+  TEST_ASSERT_EQUAL(1, b.rvbMode);
+  TEST_ASSERT_EQUAL(6, b.rvbShim);
+  TEST_ASSERT_EQUAL(2, b.modType);
+  TEST_ASSERT_EQUAL(d.modRate, b.modRate);
+  TEST_ASSERT_EQUAL(64, b.eqHigh);
+}
+
+// TINS byte 11: the track's MOD send. Round trip; an 11-byte (feature 3) record keeps 0.
+void test_tins_mod_send() {
+  a.tracks[3].modSend = 90;
+  a.tracks[15].modSend = 127;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int t = 0; t < kTracks; ++t) TEST_ASSERT_EQUAL(a.tracks[t].modSend, b.tracks[t].modSend);
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TINS", {1, 11, 50, 0, 0, 2, 0x55, 0x55, 1, 0, 100, 0, 0});
+  finish(f);
+  b.tracks[0].modSend = 9;  // the load resets it first
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(50, b.tracks[0].drive);
+  TEST_ASSERT_EQUAL(0, b.tracks[0].modSend);
+  TrackCfg c;
+  c.modSend = 5;
+  const uint8_t r[12] = {0, 0, 0, 0, 0, 0, 1, 0, 100, 0, 0, 200};
+  readTinsRecord(r, 11, c);
+  TEST_ASSERT_EQUAL(5, c.modSend);  // not in the record
+  readTinsRecord(r, 12, c);
+  TEST_ASSERT_EQUAL(127, c.modSend);  // clamped
 }
 
 // ---- PERF map (PRF2, legacy PRFM), the old DJ filter byte ----
@@ -1763,8 +2057,8 @@ void test_audi_dj_byte_ignored() {
   while (pos + 8 <= out.buf.size() && memcmp(out.buf.data() + pos, "AUDI", 4) != 0)
     pos += 8 + (out.buf[pos + 4] | (out.buf[pos + 5] << 8) | (out.buf[pos + 6] << 16) |
                 (static_cast<uint32_t>(out.buf[pos + 7]) << 24));
-  TEST_ASSERT_TRUE(pos + 8 + 14 <= out.buf.size());
-  TEST_ASSERT_EQUAL(14, out.buf[pos + 4]);
+  TEST_ASSERT_TRUE(pos + 8 + 26 <= out.buf.size());
+  TEST_ASSERT_EQUAL(26, out.buf[pos + 4]);
   TEST_ASSERT_EQUAL(64, out.buf[pos + 8 + 13]);
 }
 
@@ -1788,6 +2082,69 @@ void test_read_file_names() {
   out.buf[20] ^= 0xFF;  // inside a chunk
   VecSource bad(out.buf);
   TEST_ASSERT_TRUE(readProjectFileNames(bad, n) != LoadErr::Ok);
+}
+
+// TFOL: the envelope followers round trip; a file without TFOL has them off.
+void test_tfol_round_trip_and_missing() {
+  a.tracks[1].folSrc = 1;
+  a.tracks[1].folDest = static_cast<uint8_t>(LfoDest::Vol);
+  a.tracks[1].folAmt = -64;
+  a.tracks[1].folAtk = 5;
+  a.tracks[1].folRel = 90;
+  a.tracks[15].folSrc = 16;  // self-follow
+  a.tracks[15].folAmt = 63;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TFOL"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(a.tracks[t].folSrc, b.tracks[t].folSrc);
+    TEST_ASSERT_EQUAL(a.tracks[t].folDest, b.tracks[t].folDest);
+    TEST_ASSERT_EQUAL(a.tracks[t].folAmt, b.tracks[t].folAmt);
+    TEST_ASSERT_EQUAL(a.tracks[t].folAtk, b.tracks[t].folAtk);
+    TEST_ASSERT_EQUAL(a.tracks[t].folRel, b.tracks[t].folRel);
+  }
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TRKS", trks(kTracks, kTracks));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.tracks[1].folSrc);
+  TEST_ASSERT_EQUAL(0, b.tracks[1].folAmt);
+}
+
+// Longer records read the known part; a short one keeps the defaults of what it lacks; a source out
+// of range is off, an unknown target CUTOFF, values clamped; record size 0 or a short chunk is bad.
+void test_tfol_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TFOL", {3, 7, 2, static_cast<uint8_t>(LfoDest::Pan), 0x9C, 200, 3, 9, 9,  // amt -100
+                       40, 99, 10, 1, 2, 0, 0, 1, 2, 3, 4, 5, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(2, b.tracks[0].folSrc);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Pan), b.tracks[0].folDest);
+  TEST_ASSERT_EQUAL(-64, b.tracks[0].folAmt);
+  TEST_ASSERT_EQUAL(127, b.tracks[0].folAtk);
+  TEST_ASSERT_EQUAL(3, b.tracks[0].folRel);
+  TEST_ASSERT_EQUAL(0, b.tracks[1].folSrc);  // 40: out of range
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Cutoff), b.tracks[1].folDest);  // 99: unknown
+  TEST_ASSERT_EQUAL(1, b.tracks[2].folSrc);
+  f = fileHeader();
+  putChunk(f, "TFOL", {1, 2, 4, static_cast<uint8_t>(LfoDest::Vol)});  // an older, shorter record
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(4, b.tracks[0].folSrc);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Vol), b.tracks[0].folDest);
+  TEST_ASSERT_EQUAL(0, b.tracks[0].folAmt);
+  TEST_ASSERT_EQUAL(70, b.tracks[0].folRel);
+  f = fileHeader();
+  putChunk(f, "TFOL", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "TFOL", {2, 5, 1, 2, 3, 4, 5});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
 int main() {
@@ -1856,6 +2213,14 @@ int main() {
   RUN_TEST(test_tspd_absent_without_speeds_and_bad_values);
   RUN_TEST(test_tpan_round_trip_and_default);
   RUN_TEST(test_tpan_garbage_clamped);
+  RUN_TEST(test_tins_round_trip);
+  RUN_TEST(test_tfol_round_trip_and_missing);
+  RUN_TEST(test_tfol_records_and_garbage);
+  RUN_TEST(test_tins_gate_fields);
+  RUN_TEST(test_tins_longer_records_and_garbage);
+  RUN_TEST(test_tins_three_byte_records);
+  RUN_TEST(test_tins_record_assigns_present_fields_only);
+  RUN_TEST(test_no_tins_migrates_instrument_insert);
   RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
   RUN_TEST(test_read_file_names);
   RUN_TEST(test_prfm_legacy_mapped);
@@ -1863,5 +2228,8 @@ int main() {
   RUN_TEST(test_prf2_depths_clamped);
   RUN_TEST(test_new_project_perf_depths);
   RUN_TEST(test_audi_dj_byte_ignored);
+  RUN_TEST(test_audi_master_fx_round_trip);
+  RUN_TEST(test_audi_master_fx_old_and_garbage);
+  RUN_TEST(test_tins_mod_send);
   return UNITY_END();
 }

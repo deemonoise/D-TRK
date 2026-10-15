@@ -84,6 +84,18 @@ void Project::reset() {
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};
   wavetableCount = 0;
   hasSampleList = false;
+  dlyMode = 0;
+  dlyChar = 40;
+  rvbMode = 0;
+  rvbShim = 60;
+  modType = 0;
+  modRate = 30;
+  modDepth = 64;
+  modFb = 40;
+  modLevel = 100;
+  eqLow = 64;
+  eqHigh = 64;
+  shimInt = 0;
   for (auto& p : patterns) p.clear();
   memset(song, 0, sizeof(song));
   memset(songMute, 0, sizeof(songMute));
@@ -113,8 +125,9 @@ uint16_t fmDecayMs(uint8_t v) {
 
 MT_HOT float lfoSyncHz(uint8_t div, uint16_t bpm) {
   // Beats (quarters) per LFO cycle.
-  MT_DATA static const float kBeats[kLfoSyncSteps] = {0.125f, 1.f / 6, 0.25f, 1.f / 3, 0.5f, 2.f / 3, 1, 2, 4, 8, 16, 32};
-  return (bpm ? bpm : 120) / 60.f / kBeats[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
+  // Cycles per beat (1 / beats per cycle): per control with a synced LFO, no __divsf3.
+  MT_DATA static const float kPerBeat[kLfoSyncSteps] = {8, 6, 4, 3, 2, 1.5f, 1, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f};
+  return (bpm ? bpm : 120) * (1.f / 60.f) * kPerBeat[div < kLfoSyncSteps ? div : kLfoSyncSteps - 1];
 }
 
 const char* lfoSyncName(uint8_t div) {
@@ -172,15 +185,16 @@ float cutoffHz(float v) {
   return 20.f * powf(700.f, v / 127.f);
 }
 
-float resoQ(float v) {
+float resoQ(float v) {  // per control with an LFO on RESO: no powf
   v = v < 0 ? 0 : (v > 127 ? 127 : v);
-  return 0.5f * powf(40.f, v / 127.f);
+  return 0.5f * fastExp2(v * (5.32192809f / 127.f));  // 0.5 x 40^(v / 127)
 }
 
 MT_HOT float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec) {
-  const uint32_t a = static_cast<uint32_t>(envTimeMs(fAtk) * kSynthRate / 1000.f);
+  // x kSynthRate / 1000: a constant, no __divsf3.
+  const uint32_t a = static_cast<uint32_t>(envTimeMs(fAtk) * (kSynthRate / 1000.f));
   if (t < a) return static_cast<float>(t) / a;
-  const float d = envTimeMs(fDec) * kSynthRate / 1000.f;
+  const float d = envTimeMs(fDec) * (kSynthRate / 1000.f);
   if (d <= 0) return 1.f;
   return fastExp(-6.9077553f * (t - a) / d);  // ln(1000): -60 dB at d
 }
@@ -242,11 +256,11 @@ bool lfoDestValid(uint8_t dest, InstrType t) {
   return true;
 }
 
-// The Dest list order: the enum's, with PAN (appended for the file format) next to the sends.
+// The Dest list order: the enum's, with PAN and MOD (appended for the file format) next to the sends.
 constexpr LfoDest kDestOrder[] = {
     LfoDest::Pitch, LfoDest::Dec,    LfoDest::Col,    LfoDest::Shp,    LfoDest::Swp,    LfoDest::Con,
     LfoDest::Vol,   LfoDest::Cutoff, LfoDest::Drive,  LfoDest::Reso,   LfoDest::Fenv,   LfoDest::Dly,
-    LfoDest::Rvb,   LfoDest::Pan,    LfoDest::Bit,    LfoDest::Srr,    LfoDest::Fine,   LfoDest::Duty,
+    LfoDest::Rvb,   LfoDest::ModSend, LfoDest::Pan,  LfoDest::Bit,    LfoDest::Srr,    LfoDest::Fine,   LfoDest::Duty,
     LfoDest::Sub,   LfoDest::Noise,  LfoDest::Semi2,  LfoDest::Rate1,  LfoDest::Rate2,  LfoDest::Rate3,
     LfoDest::Rate4, LfoDest::Depth1, LfoDest::Depth2, LfoDest::Depth3, LfoDest::Depth4, LfoDest::Rtrg1,
     LfoDest::Rtrg2, LfoDest::Rtrg3,  LfoDest::Rtrg4};
@@ -275,7 +289,7 @@ const char* lfoDestName(uint8_t dest, InstrType t) {
       "PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP", "CONTOUR", "VOL", "CUTOFF", "DRIVE",
       "RESO", "FENV", "DLY", "RVB", "BIT", "SRR", "FINE", "DUTY", "SUB", "NOISE", "SEMI2",
       "L1 RATE", "L2 RATE", "L3 RATE", "L4 RATE", "L1 DEPTH", "L2 DEPTH", "L3 DEPTH", "L4 DEPTH",
-      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN"};
+      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD"};
   static const char* const kSyn[] = {"SHP1", "SHP2", "MIX", "DET", "SENV"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");
   if (dest >= static_cast<uint8_t>(LfoDest::Count)) dest = 0;
@@ -284,10 +298,76 @@ const char* lfoDestName(uint8_t dest, InstrType t) {
   return kNames[dest];
 }
 
+uint8_t folDestStep(uint8_t dest, int d, InstrType t) {
+  auto rtrg = [](uint8_t x) {
+    return x >= static_cast<uint8_t>(LfoDest::Rtrg1) && x <= static_cast<uint8_t>(LfoDest::Rtrg4);
+  };
+  const int step = d > 0 ? 1 : -1;
+  for (int i = 0; i < (d > 0 ? d : -d); ++i) {
+    uint8_t n = dest;
+    do {
+      const uint8_t m = lfoDestStep(n, step, t);
+      if (m == n) return dest;  // the end of the list: stay on the last real target
+      n = m;
+    } while (rtrg(n));
+    dest = n;
+  }
+  return dest;
+}
+
+// The follower / gate helpers (updateFollowers, a gate ATK / REL change): per control update or per
+// change, in flash; fastmath's inline exp / log (no newlib call), accurate to float precision.
+float folLevel(float pk) {
+  const float x = pk * 0.25f;
+  if (x < 0.00398f) return 0.f;  // -48 dB
+  const float l = (6.0205999f * fastLog2(x) + 48.f) * (1.f / 48.f);
+  return l < 0.f ? 0.f : (l > 1.f ? 1.f : l);
+}
+
+namespace {
+constexpr float kFolStepMs = 32.f * 1000.f / kSynthRate;  // Synth::kControl samples
+}
+float folStepMs() { return kFolStepMs; }
+
+float folCoef(uint8_t v) {
+  const uint16_t ms = envTimeMs(v);
+  return ms == 0 ? 1.f : 1.f - fastExp(-kFolStepMs * fastRcp(static_cast<float>(ms)));  // no __divsf3
+}
+
 bool Project::anySolo() const {
   for (const auto& t : tracks)
     if (t.solo) return true;
   return false;
+}
+
+float gateMs(uint8_t v) {
+  const float x = (v > 127 ? 127 : v) * (1.f / 127.f);
+  return 0.5f * fastExp(x * 4.6051702f);  // 0.5 x 100^x
+}
+
+const GatePreset kGatePreset[kGatePresets] = {
+    {"8THS", 0x5555},        // x.x.x.x.x.x.x.x.
+    {"OFFBEAT", 0xAAAA},     // .x.x.x.x.x.x.x.x
+    {"16THS", 0xFFFF},       // xxxxxxxxxxxxxxxx
+    {"QUARTERS", 0x1111},    // x...x...x...x...
+    {"OFF 4THS", 0x4444},    // ..x...x...x...x.
+    {"X.XX", 0xDDDD},        // x.xxx.xxx.xxx.xx
+    {"XX.X", 0xBBBB},        // xx.xxx.xxx.xxx.x
+    {"3-3-2", 0x4949},       // x..x..x.x..x..x.
+    {"3-3-2 FILL", 0xDBDB},  // xx.xx.xxxx.xx.xx
+    {"HALF BAR", 0x00FF},    // xxxxxxxx........
+    {"PAIRS", 0x3333},       // xx..xx..xx..xx..
+    {"SKIP", 0x52A5},        // x.x..x.x.x..x.x.
+    {"SYNCOPE", 0x2449},     // x..x..x...x..x..
+    {"STUTTER", 0x3CCF},     // xxxx..xx..xxxx..
+    {"BUILD", 0xF511},       // x...x...x.x.xxxx
+    {"GALLOP", 0x5D5D},      // x.xxx.x.x.xxx.x.
+};
+
+int gatePresetOf(uint16_t mask) {
+  for (int i = 0; i < kGatePresets; ++i)
+    if (kGatePreset[i].mask == mask) return i;
+  return -1;
 }
 
 }  // namespace mt

@@ -63,7 +63,7 @@ MT_HOT bool fmCarrier(FmAlg a, int op) {
 
 MT_HOT float fmMaxIndex(float hz) {
   if (hz <= 0) return 8;
-  const float m = 12000.f / hz - 1.f;
+  const float m = 12000.f * fastRcp(hz < 1e-30f ? 1e-30f : hz) - 1.f;  // per modulator per tick: no __divsf3
   return m < 0.2f ? 0.2f : (m > 8.f ? 8.f : m);
 }
 
@@ -150,7 +150,7 @@ MT_HOT void FmVoice::ampPair(const FmParams& p, uint32_t t0, int span, float& a0
 MT_HOT void FmVoice::control(const FmParams& p, int span) {
   alg_ = p.alg;
   oneShot_ = p.oneShot;
-  const float inv = span > 0 ? 1.f / span : 0;
+  const float inv = span == 32 ? 1.f / 32 : (span > 0 ? 1.f / span : 0);  // kControl: no __divsf3
   // Pitch sweep: the bend at t0 is the previous tick's bend at t1 (cached), one exp2f per tick.
   float bend0 = 1, bend1 = 1;
   if (p.pitchEnv != 0) {

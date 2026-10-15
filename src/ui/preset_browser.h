@@ -18,7 +18,10 @@ class App;
 // /presets/<TYPE>; ".." goes up. A preset of another type changes the instrument's type; a factory
 // KIT also writes its drums into INS25..32 (INS17..24 for a kit there). Selecting a preset applies it
 // at once and plays C4; OK keeps it, CANCEL (or EncLong) puts the instrument (and the drum block)
-// back. DEL removes a user preset (menu confirm). Save: the instrument's type root, user folders
+// back. A preset's recommended insert (drive, bits, rate, drive model) overwrites the current track's
+// insert when that track plays the instrument (not for a KIT lane's instrument: the KIT track keeps
+// its insert); CANCEL puts it back too. Save stores that track's insert as the recommendation.
+// DEL removes a user preset (menu confirm). Save: the instrument's type root, user folders
 // only; SAVE asks the name (keyboard) and confirms an overwrite, a click on a file saves over it;
 // +DIR makes a folder.
 class PresetBrowser {
@@ -59,6 +62,8 @@ class PresetBrowser {
   void moveSel(int d);
   void apply(const mt::Instrument& src);  // applyPreset under lockProject, markDirty, preview
   void applyKit(int index);  // factory KIT: the kit + its drums in INS block_.., preview
+  // The preview's insert: the current track when it plays instr_, else none (mt::kTracks).
+  uint8_t previewInsert() const;
   void resolveTables();  // SYNTH: imports tables missing from the project from /wavetables
   void askName();       // Save: keyboard
   void saveAs(const char* name);
@@ -85,6 +90,8 @@ class PresetBrowser {
   int picked_ = -1;  // entry applied last (Load), -1 after a new listing
   int y0_ = kAreaY;
   mt::Instrument backup_;
+  int track_ = 0;              // the current track on open: takes the preset's insert (takePresetInsert)
+  mt::TrackCfg trackBackup_;   // its insert on open (Load), restored by CANCEL
   mt::Instrument* blockBackup_ = nullptr;  // PSRAM, kKitLanes, Load while open: INS block_.. on open
   int block_ = 0;                          // factoryKitBlock(instr_)
   bool blockChanged_ = false;              // a factory KIT wrote its drums there

@@ -10,6 +10,8 @@
 #include "groove.h"
 #include "names.h"
 #include "scale.h"
+#include "synth_eq.h"
+#include "synth_fxutil.h"
 
 namespace ui {
 namespace {
@@ -68,19 +70,68 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
   auto num = [this](uint8_t mt::Project::*f) {
     return [this, f](char* o, int n) { snprintf(o, n, "%u", app_.project().*f); };
   };
-  auto noDelay = [this] { return app_.project().dlyLevel == 0; };
+  // A mode row: 0 .. count - 1, clamped, shown by name.
+  auto mode = [this](uint8_t mt::Project::*f, int count) {
+    return [this, f, count](int d) { app_.project().*f = static_cast<uint8_t>(clampi(app_.project().*f + d, 0, count - 1)); };
+  };
+  auto named = [this](uint8_t mt::Project::*f, const char* const* names, int count) {
+    return [this, f, names, count](char* o, int n) {
+      const uint8_t v = app_.project().*f;
+      snprintf(o, n, "%s", names[v < count ? v : 0]);
+    };
+  };
+  // Greyed-out tests read the live project: P() inside a [this] lambda.
+  auto noDelay = [this] { return P().dlyLevel == 0; };
+  static const char* const kDlyModes[] = {"DIGITAL", "TAPE", "PING-PONG"};
+  static_assert(sizeof(kDlyModes) / sizeof(kDlyModes[0]) == static_cast<int>(mt::DlyMode::Count), "delay modes");
   params_[kDlyTime] = {"Delay", [this](char* o, int n) { snprintf(o, n, "%u/16", app_.project().dlyTime); },
                        [this](int d) {
                          app_.project().dlyTime = static_cast<uint8_t>(clampi(app_.project().dlyTime + d, 1, mt::kDlyTimeMax));
                        },
                        noDelay};
+  params_[kDlyMode] = {"Dly mode", named(&mt::Project::dlyMode, kDlyModes, 3),
+                       mode(&mt::Project::dlyMode, static_cast<int>(mt::DlyMode::Count)), noDelay};
   params_[kDlyFb] = {"Feedback", num(&mt::Project::dlyFb), u7(&mt::Project::dlyFb), noDelay};
   params_[kDlyTone] = {"Tone", num(&mt::Project::dlyTone), u7(&mt::Project::dlyTone), noDelay};
+  // TAPE: Wear (wow / flutter, saturation, thinner repeats); PING-PONG: Width (draw() sets the label).
+  params_[kDlyChar] = {"Wear", num(&mt::Project::dlyChar), u7(&mt::Project::dlyChar), [this] {
+                         return P().dlyLevel == 0 || P().dlyMode == static_cast<uint8_t>(mt::DlyMode::Digital);
+                       }};
   params_[kDlyLevel] = {"Dly level", num(&mt::Project::dlyLevel), u7(&mt::Project::dlyLevel)};
-  auto noReverb = [this] { return app_.project().rvbLevel == 0; };
+  auto noReverb = [this] { return P().rvbLevel == 0; };
+  auto noShim = [this] { return P().rvbLevel == 0 || P().rvbMode != static_cast<uint8_t>(mt::RvbMode::Shimmer); };
+  static const char* const kRvbModes[] = {"PLAIN", "SHIMMER"};
+  static const char* const kShimInts[] = {"+12", "+7", "+24"};
+  static_assert(sizeof(kRvbModes) / sizeof(kRvbModes[0]) == static_cast<int>(mt::RvbMode::Count), "reverb modes");
+  static_assert(sizeof(kShimInts) / sizeof(kShimInts[0]) == static_cast<int>(mt::ShimInt::Count), "shimmer intervals");
   params_[kRvbSize] = {"Reverb", num(&mt::Project::rvbSize), u7(&mt::Project::rvbSize), noReverb};
+  params_[kRvbMode] = {"Rvb mode", named(&mt::Project::rvbMode, kRvbModes, 2),
+                       mode(&mt::Project::rvbMode, static_cast<int>(mt::RvbMode::Count)), noReverb};
   params_[kRvbDamp] = {"Rvb damp", num(&mt::Project::rvbDamp), u7(&mt::Project::rvbDamp), noReverb};
+  params_[kRvbShim] = {"Shimmer", num(&mt::Project::rvbShim), u7(&mt::Project::rvbShim), noShim};
+  params_[kShimInt] = {"Shim int", named(&mt::Project::shimInt, kShimInts, 3),
+                       mode(&mt::Project::shimInt, static_cast<int>(mt::ShimInt::Count)), noShim};
   params_[kRvbLevel] = {"Rvb level", num(&mt::Project::rvbLevel), u7(&mt::Project::rvbLevel)};
+  // MOD bus: the tracks' Mod send (TRACK) into one effect, its stereo return into the mix.
+  static const char* const kModTypes[] = {"OFF", "CHORUS", "ENSEMBLE", "FLANGER", "PHASER"};
+  static_assert(sizeof(kModTypes) / sizeof(kModTypes[0]) == static_cast<int>(mt::ModType::Count), "mod types");
+  auto noMod = [this] { return P().modType == 0 || P().modLevel == 0; };
+  params_[kModType] = {"Mod type", named(&mt::Project::modType, kModTypes, 5),
+                       mode(&mt::Project::modType, static_cast<int>(mt::ModType::Count))};
+  params_[kModRate] = {"Mod rate",
+                       [this](char* o, int n) {
+                         const float hz = mt::fxRateHz(app_.project().modRate);
+                         snprintf(o, n, hz < 1.f ? "%.2f Hz" : "%.1f Hz", hz);
+                       },
+                       u7(&mt::Project::modRate), noMod};
+  params_[kModDepth] = {"Mod depth", num(&mt::Project::modDepth), u7(&mt::Project::modDepth), noMod};
+  params_[kModFb] = {"Mod fb", num(&mt::Project::modFb), u7(&mt::Project::modFb), [this] {
+                       const uint8_t t = P().modType;
+                       return P().modLevel == 0 || (t != static_cast<uint8_t>(mt::ModType::Flanger) &&
+                                                    t != static_cast<uint8_t>(mt::ModType::Phaser));
+                     }};
+  params_[kModLevel] = {"Mod level", num(&mt::Project::modLevel), u7(&mt::Project::modLevel),
+                        [this] { return P().modType == 0; }};
   // Master compressor: Comp 0 = off; SC track ducks the mix to that track (e.g. the kick).
   auto noComp = [this] { return app_.project().compAmt == 0; };
   params_[kCompAmt] = {"Comp",
@@ -107,6 +158,16 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        noComp};
   params_[kScDepth] = {"SC depth", num(&mt::Project::scDepth), u7(&mt::Project::scDepth),
                        [this] { return app_.project().compAmt == 0 || app_.project().scTrack == 0; }};
+  // Master EQ: low shelf 120 Hz, high shelf 5 kHz, -12..+12 dB (64 = flat); opposite settings tilt.
+  auto db = [this](uint8_t mt::Project::*f) {
+    return [this, f](char* o, int n) {
+      const uint8_t v = app_.project().*f;
+      if (v == 64) snprintf(o, n, "0 dB");
+      else snprintf(o, n, "%+.1f dB", mt::MasterEq::db(v));
+    };
+  };
+  params_[kEqLow] = {"EQ low", db(&mt::Project::eqLow), u7(&mt::Project::eqLow)};
+  params_[kEqHigh] = {"EQ high", db(&mt::Project::eqHigh), u7(&mt::Project::eqHigh)};
   // PERF: Button N picks the effect (a new one starts at its default), Value its start depth.
   for (int b = 0; b < mt::kPerfButtons; ++b) {
     snprintf(perfLabels_[b], sizeof(perfLabels_[b]), "Button %d", b + 1);
@@ -156,6 +217,8 @@ void ProjScreen::showPage(int page, bool bar) {
   if (bar) list_.selectBar();
   else list_.setSel(0);
 }
+
+const mt::Project& ProjScreen::P() { return app_.project(); }
 
 mt::Pattern& ProjScreen::pat() { return app_.project().patterns[app_.editPattern()]; }
 
@@ -210,7 +273,8 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  static const char* const kNames[kPages] = {"SONG", "FX", "COMP", "PERF"};
+  static const char* const kNames[kPages] = {"SONG", "DLY", "RVB", "MOD", "MSTR", "PERF"};
+  params_[kDlyChar].label = app_.project().dlyMode == static_cast<uint8_t>(mt::DlyMode::PingPong) ? "Width" : "Wear";
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);

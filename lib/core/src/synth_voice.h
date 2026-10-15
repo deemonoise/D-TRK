@@ -5,8 +5,6 @@
 #include "model.h"
 #include "sample_source.h"
 #include "synth_env.h"
-#include "synth_crush.h"
-#include "synth_drive.h"
 #include "synth_drum.h"
 #include "synth_filter.h"
 #include "synth_fm.h"
@@ -76,17 +74,17 @@ struct Voice {
   // Control-rate values, refreshed every Synth::kControl samples.
   float inc = 0;            // CHIP: phase increment; SAMPLE: frames per output sample
   float duty = 0.5f;        // pulse width incl. PWM
-  float amp = 0;            // gain * instrument vol * track vol
-  float send = 0;           // delay send 0..1: DLY lock or Instrument::send
-  float rsend = 0;          // reverb send 0..1: RVB lock or Instrument::rsend
-  // Pan gains (Synth::setPanTarget): current L / R, the per-sample steps of the ramp to the target
-  // (tgl, tgr) reached at the next control update. panSet false: the next update snaps (note-on).
-  float gl = 1, gr = 1;
-  float dgl = 0, dgr = 0;
-  float tgl = 1, tgr = 1;
-  bool panSet = false;
-  Drive drive;              // DRV lock or Instrument::drive, + LFO
-  Crush crush;              // BIT / SRR locks (0 = off)
+  float amp = 0;            // gain * instrument vol (the track's fader is in its strip)
+  // What this voice asks of its track's strip (Synth::TrackStrip reads the newest voice), per
+  // control update: locks, else the track's values, + LFO.
+  float send = 0;           // delay send 0..1: DLY lock or the track instrument's send
+  float rsend = 0;          // reverb send 0..1: RVB lock or the track instrument's rsend
+  float msend = 0;          // MOD bus send 0..1: MOD lock or TrackCfg::modSend
+  uint8_t pan = 64;         // PAN lock or TrackCfg::pan
+  uint8_t drive = 0;        // DRV lock or TrackCfg::drive
+  uint8_t bits = 0, srr = 0;  // BIT / SRR locks or TrackCfg::crushBits / crushRate
+  uint8_t dmodel = 0;       // DTY lock or TrackCfg::driveModel
+  uint8_t gdepth = 0;       // GTE lock or TrackCfg::gateDepth (trance gate)
   // Control-rate math caches (exp2f is costly on the ESP32): the input of the last call and its
   // result. The functions are pure, so a reused voice keeps valid entries.
   float hzKey[2] = {-1e9f, -1e9f}, hzVal[2] = {0, 0};  // noteHz: CHIP / SYNTH osc 1, SYNTH osc 2

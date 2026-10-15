@@ -44,7 +44,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   for (int k = 0; k < kFmMacros; ++k) SAME(macro[k]);
   SAME(lfoWave); SAME(lfoRate); SAME(lfoDepth); SAME(lfoDest);
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack); SAME(send);
-  SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate);
+  SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate); SAME(driveModel);
   SAME(sliceMode); SAME(chopMode); SAME(chopN); SAME(chopThresh); SAME(sliceCount);
   for (int k = 0; k < kMaxSlices; ++k) SAME(slices[k]);
   for (int k = 0; k < 2; ++k) {
@@ -76,6 +76,7 @@ static Instrument sample() {
   m.velMac = 33;
   m.crushBits = 90;
   m.crushRate = 40;
+  m.driveModel = static_cast<uint8_t>(DriveModel::Fold);
   return m;
 }
 
@@ -466,6 +467,106 @@ void test_lfo_free_flag_roundtrip() {
   TEST_ASSERT_FALSE(lfoTempo(b.lfoSync));
 }
 
+
+// The recommended insert's drive model: INST record byte 47 (once reserved, 0 = TANH); an unknown
+// model loads as TANH.
+void test_drive_model_byte() {
+  Instrument a = sample();
+  a.driveModel = static_cast<uint8_t>(DriveModel::Asym);
+  uint8_t r[kInstRecSize];
+  packInst(a, r);
+  TEST_ASSERT_EQUAL(static_cast<int>(DriveModel::Asym), r[47]);
+  Instrument b;
+  unpackInst(r, b);
+  TEST_ASSERT_EQUAL(static_cast<int>(DriveModel::Asym), b.driveModel);
+  r[47] = static_cast<uint8_t>(DriveModel::Count);
+  unpackInst(r, b);
+  TEST_ASSERT_EQUAL(0, b.driveModel);
+}
+
+Project proj;
+
+// Loading a preset onto a track: its recommended insert overwrites the track's insert when the
+// track (INT) plays that instrument; the project's instrument keeps no insert.
+void test_take_preset_insert() {
+  proj.reset();
+  proj.tracks[2].instr = 5;
+  proj.tracks[2].out = TrackOut::Int;
+  proj.tracks[2].drive = 99;
+  proj.tracks[2].crushBits = 99;
+  proj.tracks[2].crushRate = 99;
+  proj.tracks[2].driveModel = static_cast<uint8_t>(DriveModel::Rect);
+  proj.tracks[2].gateDepth = 77;  // not part of the recommendation
+  Instrument& m = proj.instruments[5];
+  m.drive = 40;
+  m.crushBits = 70;
+  m.crushRate = 0;
+  m.driveModel = static_cast<uint8_t>(DriveModel::Clip);
+  takePresetInsert(proj, 5, 2);
+  TEST_ASSERT_EQUAL(40, proj.tracks[2].drive);
+  TEST_ASSERT_EQUAL(70, proj.tracks[2].crushBits);
+  TEST_ASSERT_EQUAL(0, proj.tracks[2].crushRate);
+  TEST_ASSERT_EQUAL(static_cast<int>(DriveModel::Clip), proj.tracks[2].driveModel);
+  TEST_ASSERT_EQUAL(77, proj.tracks[2].gateDepth);
+  TEST_ASSERT_EQUAL(0, m.drive);
+  TEST_ASSERT_EQUAL(0, m.crushBits);
+  TEST_ASSERT_EQUAL(0, m.crushRate);
+  TEST_ASSERT_EQUAL(0, m.driveModel);
+}
+
+// A track that does not play the instrument (e.g. a KIT track while a lane's instrument gets the
+// preset), a MIDI track or no track (-1): the track insert stays, the instrument's is dropped.
+void test_take_preset_insert_other_track() {
+  proj.reset();
+  proj.tracks[0].instr = 1;
+  proj.tracks[0].out = TrackOut::Int;
+  proj.tracks[0].drive = 12;
+  proj.tracks[1].instr = 5;
+  proj.tracks[1].out = TrackOut::Midi;
+  proj.tracks[1].drive = 13;
+  for (int t : {0, 1, -1}) {
+    proj.instruments[5].drive = 60;
+    proj.instruments[5].driveModel = 2;
+    takePresetInsert(proj, 5, t);
+    TEST_ASSERT_EQUAL(0, proj.instruments[5].drive);
+    TEST_ASSERT_EQUAL(0, proj.instruments[5].driveModel);
+  }
+  TEST_ASSERT_EQUAL(12, proj.tracks[0].drive);
+  TEST_ASSERT_EQUAL(13, proj.tracks[1].drive);
+}
+
+// Saving a preset from a track: the track's insert is the preset's recommendation (no track
+// playing the instrument: none), so loading it back onto a track restores the insert.
+void test_preset_insert_for_save_roundtrip() {
+  proj.reset();
+  proj.tracks[3].instr = 7;
+  proj.tracks[3].out = TrackOut::Int;
+  proj.tracks[3].drive = 50;
+  proj.tracks[3].crushBits = 20;
+  proj.tracks[3].crushRate = 10;
+  proj.tracks[3].driveModel = static_cast<uint8_t>(DriveModel::Fold);
+  Instrument m = proj.instruments[7];
+  presetInsertForSave(proj, 7, 3, m);
+  TEST_ASSERT_EQUAL(50, m.drive);
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(m, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  proj.tracks[3].drive = proj.tracks[3].crushBits = proj.tracks[3].crushRate = proj.tracks[3].driveModel = 0;
+  applyPreset(proj.instruments[7], b, true);
+  takePresetInsert(proj, 7, 3);
+  TEST_ASSERT_EQUAL(50, proj.tracks[3].drive);
+  TEST_ASSERT_EQUAL(20, proj.tracks[3].crushBits);
+  TEST_ASSERT_EQUAL(10, proj.tracks[3].crushRate);
+  TEST_ASSERT_EQUAL(static_cast<int>(DriveModel::Fold), proj.tracks[3].driveModel);
+  Instrument n = proj.instruments[7];
+  n.drive = 33;
+  presetInsertForSave(proj, 7, 0, n);  // track 0 plays another instrument
+  TEST_ASSERT_EQUAL(0, n.drive);
+  TEST_ASSERT_EQUAL(0, n.driveModel);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -486,5 +587,9 @@ int main() {
   RUN_TEST(test_lfo_free_flag_roundtrip);
   RUN_TEST(test_lfo_sync_bits);
   RUN_TEST(test_lfo_dest_out_of_range);
+  RUN_TEST(test_drive_model_byte);
+  RUN_TEST(test_take_preset_insert);
+  RUN_TEST(test_take_preset_insert_other_track);
+  RUN_TEST(test_preset_insert_for_save_roundtrip);
   return UNITY_END();
 }

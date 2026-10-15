@@ -47,7 +47,7 @@ MT_INLINE float allpass(float* line, int& idx, int len, float x) {
 }  // namespace
 
 MT_HOT void Reverb::process(const float* in, float* mixL, float* mixR, int n, uint8_t size, uint8_t damp,
-                            uint8_t level, bool freeze) {
+                            uint8_t level, bool freeze, float* wetOut) {
   if (!buf_ || level == 0) return;
   bool input = false;
   for (int i = 0; i < n && !input && !freeze; ++i) input = in[i] != 0.f;
@@ -79,6 +79,7 @@ MT_HOT void Reverb::process(const float* in, float* mixL, float* mixR, int n, ui
     acc = allpass(ap_[0], apIdx_[0], kApLen[0], acc);
     const float l = allpass(ap_[1], apIdx_[1], kApLen[1], acc);
     mixL[i] += l * wet;
+    if (wetOut) wetOut[i] = l;
     const float al = l < 0 ? -l : l;
     if (al > peak) peak = al;
     const float r = allpass(apR_, apRIdx_, kApRLen, acc);

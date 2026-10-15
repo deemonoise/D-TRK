@@ -39,6 +39,16 @@ constexpr uint32_t kRam2Reserve = 64 * 1024;
 mt::SynthModel model;
 mt::Synth synth(model);
 float reverbBuf[mt::Reverb::kBufLen];
+// The shimmer's feedback block, its line and the MOD bus line: read and written every sample (RAM1).
+// The ceiling bench's raised voice pool leaves RAM1 short: there they go to RAM2 (cached, 6.5 KB).
+#ifdef AUDIO_BENCH_MAX
+#define MT_FX_LINE DMAMEM
+#else
+#define MT_FX_LINE
+#endif
+MT_FX_LINE float shimWet[mt::Synth::kBlock];
+MT_FX_LINE int16_t shimLine[mt::PitchShift::kLen];
+MT_FX_LINE int16_t modLine[mt::ModFx::kLineLen];
 
 SynthStream out;
 AudioOutputI2S i2s;
@@ -120,6 +130,9 @@ void setup() {
   const uint8_t perfSec = allocPerf();
   const uint32_t delayLen = allocDelay();
   synth.setReverbBuffer(reverbBuf, mt::Reverb::kBufLen);
+  memset(shimWet, 0, sizeof shimWet);  // DMAMEM (bench) is not zeroed at boot; the lines are cleared
+  synth.setShimmerBuffer(shimLine, mt::PitchShift::kLen, shimWet);
+  synth.setModBuffer(modLine, mt::ModFx::kLineLen);
   AudioMemory(12);
   out.begin(&synth);
   const bool shield = codec::begin();

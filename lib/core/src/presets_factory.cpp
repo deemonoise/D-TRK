@@ -459,6 +459,7 @@ void factoryBuildKit(int i, Project& p, int kitSlot) {
     for (int j = 0; j < factoryCount(dr.type); ++j)
       if (strcmp(factoryPreset(dr.type, j).name, dr.name) == 0) {
         factoryBuild(dr.type, j, d);
+        clearInsert(d);  // behind a lane: no track insert takes the drum's recommendation
         d.transpose = static_cast<int8_t>(d.transpose - k);
         kit.kit[k].instr = static_cast<uint8_t>(first + k);
         break;

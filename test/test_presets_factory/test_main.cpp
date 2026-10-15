@@ -93,6 +93,54 @@ void test_valid_values() {
   }
 }
 
+// A preset's drive / crush are the track insert it recommends (copied to the track on load): the
+// factory set keeps the values these presets had before the insert moved to the track.
+void test_recommended_insert() {
+  struct R { InstrType t; const char* name; uint8_t drive, bits, rate; };
+  const R want[] = {
+      {InstrType::Chip, "GRIT BAS", 40, 70, 0},  {InstrType::Fm, "KICK PNC", 40, 0, 0},
+      {InstrType::Fm, "CHRD 5TH", 25, 0, 0},     {InstrType::Drum, "BD808 D", 45, 0, 0},
+      {InstrType::Drum, "BD909 H", 30, 0, 0},    {InstrType::Drum, "BD DUSTY", 0, 85, 30},
+      {InstrType::Drum, "SD DUSTY", 0, 90, 40},  {InstrType::Drum, "HH DUSTY", 0, 80, 50},
+      {InstrType::Drum, "CP DUSTY", 0, 0, 60},   {InstrType::Drum, "RIM BIT", 0, 110, 0},
+      {InstrType::Drum, "BD DIST", 60, 0, 0},    {InstrType::Drum, "BD RUMBL", 35, 0, 0},
+      {InstrType::Drum, "SD NOISE", 60, 0, 0},   {InstrType::Drum, "HH HARSH", 60, 0, 0},
+      {InstrType::Synth, "REESE", 25, 0, 0},     {InstrType::Synth, "FM GROWL", 45, 0, 0},
+      {InstrType::Synth, "CHIPPLK", 0, 60, 0},   {InstrType::Synth, "ROBOT", 0, 60, 60},
+      {InstrType::Chip, "SUB SINE", 0, 0, 0},
+  };
+  for (const R& r : want) {
+    bool found = false;
+    for (int i = 0; i < factoryCount(r.t); ++i) {
+      if (strcmp(factoryPreset(r.t, i).name, r.name) != 0) continue;
+      Instrument m;
+      factoryBuild(r.t, i, m);
+      TEST_ASSERT_EQUAL_MESSAGE(r.drive, m.drive, r.name);
+      TEST_ASSERT_EQUAL_MESSAGE(r.bits, m.crushBits, r.name);
+      TEST_ASSERT_EQUAL_MESSAGE(r.rate, m.crushRate, r.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.driveModel, r.name);
+      found = true;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(found, r.name);
+  }
+}
+
+// A factory KIT's drums sit in project instruments behind KIT lanes: no track insert takes them, so
+// they keep no insert (BD DIST's drive is dropped there).
+void test_kit_drums_no_insert() {
+  static Project p;
+  for (int i = 0; i < factoryCount(InstrType::Kit); ++i) {
+    p.reset();
+    factoryBuildKit(i, p, 0);
+    for (const Instrument& m : p.instruments) {
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.drive, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.crushBits, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.crushRate, m.name);
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.driveModel, m.name);
+    }
+  }
+}
+
 void test_build_resets_target() {
   Instrument m;
   strcpy(m.sample, "JUNK");
@@ -215,6 +263,8 @@ int main() {
   RUN_TEST(test_names_unique_and_short);
   RUN_TEST(test_categories_grouped);
   RUN_TEST(test_valid_values);
+  RUN_TEST(test_recommended_insert);
+  RUN_TEST(test_kit_drums_no_insert);
   RUN_TEST(test_build_resets_target);
   RUN_TEST(test_synth_presets_builtin_tables);
   RUN_TEST(test_chord_preset_is_maj7);

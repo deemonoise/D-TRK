@@ -207,20 +207,40 @@ FLASHMEM void heavyInstruments() {
   w.vol = 30;
 }
 
-// kBenchFx: every bench instrument through drive, delay and reverb at 100, delay feedback and both
-// returns 100, compressor on (as bench_max.cpp).
+// kBenchFx: every bench instrument into delay and reverb at 100, every track's insert through drive
+// 100 and a MOD send (ENSEMBLE), delay TAPE (feedback, wear, level 100), reverb SHIMMER, master EQ,
+// compressor on (as bench_max.cpp).
 FLASHMEM void fxOn() {
   for (int i = kWtInstr; i < kBenchInstr + kN; ++i) {
     mt::Instrument& in = model->instruments[i];
-    in.drive = 100;
     in.send = 100;
     in.rsend = 100;
   }
+  for (auto& c : model->tracks) {
+    c.drive = 100;
+    c.modSend = 90;
+  }
+  model->dlyMode = static_cast<uint8_t>(mt::DlyMode::Tape);
+  model->dlyChar = 100;
+  model->rvbMode = static_cast<uint8_t>(mt::RvbMode::Shimmer);
+  model->rvbShim = 80;
+  model->modType = static_cast<uint8_t>(mt::ModType::Ensemble);
+  model->eqLow = 96;
+  model->eqHigh = 48;
   model->dlyFb = 100;
   model->dlyLevel = 100;
   model->rvbLevel = 100;
   model->compAmt = 100;
   model->scTrack = 1;
+}
+
+// Without kBenchFx: the track inserts and the master fx modes off again (an earlier fx run set them).
+FLASHMEM void fxOff() {
+  for (auto& c : model->tracks) c.drive = c.modSend = 0;
+  model->dlyMode = static_cast<uint8_t>(mt::DlyMode::Digital);
+  model->rvbMode = static_cast<uint8_t>(mt::RvbMode::Plain);
+  model->modType = static_cast<uint8_t>(mt::ModType::Off);
+  model->eqLow = model->eqHigh = 64;
 }
 
 }  // namespace
@@ -264,6 +284,7 @@ FLASHMEM void start(uint8_t semis, uint8_t flags, uint16_t secs) {
   wt = heavy && (flags & mt::link::kBenchWt);
   if (heavy) heavyInstruments();
   if (flags & mt::link::kBenchFx) fxOn();
+  else fxOff();
   for (int t = 0; t < (heavy ? mt::kTracks : kN); ++t) {
     model->tracks[t].out = mt::TrackOut::Int;
     if (heavy && t >= kSmpTracks)
@@ -280,7 +301,7 @@ FLASHMEM void start(uint8_t semis, uint8_t flags, uint16_t secs) {
   link::log("sbench: %d samples, %lu..%lu frames, %s%s%s", n, static_cast<unsigned long>(f[n - 1].frames),
             static_cast<unsigned long>(f[0].frames), (flags & mt::link::kBenchSdOnly) ? "SD only" : "PSRAM allowed",
             !heavy ? "" : wt ? ", heavy: 16 stream voices on tracks 0..7 + WT SYNTH on 8..15" : ", heavy: 16 stream voices on tracks 0..7 + DRUM / FM TONE on 8..15",
-            (flags & mt::link::kBenchFx) ? ", fx: drive / delay / reverb 100, comp" : "");
+            (flags & mt::link::kBenchFx) ? ", fx: drive / MOD / tape delay / shimmer reverb / EQ, comp" : "");
   if (flags & mt::link::kBenchSetupOnly) {
     psram::hold(false);  // only the plan of this rescan was held
     return;

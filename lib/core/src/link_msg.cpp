@@ -194,6 +194,8 @@ void encode(const Status& m, Writer& w) {
   w.u16(m.minReserveMs);
   w.u8(m.psram);
   w.u8(m.psramFill);
+  w.u16(m.gatePos);
+  w.bytes(m.follower, sizeof m.follower);
 }
 
 bool decode(Reader& r, Status& m) {
@@ -213,6 +215,8 @@ bool decode(Reader& r, Status& m) {
   m.minReserveMs = r.u16();
   m.psram = r.u8();
   m.psramFill = r.u8();
+  m.gatePos = r.u16();
+  r.bytes(m.follower, sizeof m.follower);
   return r.ok();
 }
 
@@ -275,12 +279,14 @@ void encode(const PreviewNote& m, Writer& w) {
   w.u8(m.instr);
   w.u8(m.note);
   w.u32(m.holdMs);
+  w.u8(m.track);
 }
 
 bool decode(Reader& r, PreviewNote& m) {
   m.instr = r.u8();
   m.note = r.u8();
   m.holdMs = r.u32();
+  m.track = r.u8();
   return r.ok();
 }
 

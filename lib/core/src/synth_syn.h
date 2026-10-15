@@ -21,18 +21,25 @@ struct BlOsc {
   void reset() { t = 0, prev = 0, corr = 0, triv = -1; }
   // sync: master wrap distance (BlOut::wrap) or -1. pw 0..1. Inlined into the block loops: a
   // call per sample (windowed register spills on the ESP32) cost more than the oscillator.
-  MT_INLINE BlOut saw(float dt, float sync);
-  MT_INLINE BlOut square(float dt, float pw, float sync);
-  MT_INLINE BlOut tri(float dt);  // no sync
+  // inv = 1 / dt, computed once per block by the caller (0 for dt 0): the edge distances multiply
+  // by it (a float '/' is a __divsf3 call on the S3, two or three per period).
+  MT_INLINE BlOut saw(float dt, float inv, float sync);
+  MT_INLINE BlOut square(float dt, float inv, float pw, float sync);
+  MT_INLINE BlOut tri(float dt, float inv);  // no sync
+  // Convenience (tests): inv from dt per call.
+  BlOut saw(float dt, float sync) { return saw(dt, rcp(dt), sync); }
+  BlOut square(float dt, float pw, float sync) { return square(dt, rcp(dt), pw, sync); }
+  BlOut tri(float dt) { return tri(dt, rcp(dt)); }
+  static float rcp(float dt) { return dt > 0.f ? 1.f / dt : 0.f; }
 
  private:
   static MT_INLINE float fracf(float x) { return x - static_cast<int>(x); }
   // Own square edges in phase interval (a, b], b - a <= 1.
-  MT_INLINE void edges(float a, float b, float dt, float pw) {
-    if (a < pw && b >= pw) blep(-2.f, (b - pw) / dt);
+  MT_INLINE void edges(float a, float b, float inv, float pw) {
+    if (a < pw && b >= pw) blep(-2.f, (b - pw) * inv);
     if (b >= 1.f) {
-      blep(2.f, (b - 1.f) / dt);
-      if (b - 1.f >= pw) blep(-2.f, (b - 1.f - pw) / dt);
+      blep(2.f, (b - 1.f) * inv);
+      if (b - 1.f >= pw) blep(-2.f, (b - 1.f - pw) * inv);
     }
   }
   // Step h at distance x (0..1) before sample n: corrections for n - 1 (prev) and n (corr).
@@ -129,19 +136,19 @@ class SynVoice {
   bool snap_ = true;  // next control() jumps to its values (after trigger)
 };
 
-MT_INLINE BlOut BlOsc::saw(float dt, float sync) {
+MT_INLINE BlOut BlOsc::saw(float dt, float inv, float sync) {
   float wrap = -1;
   float tn = t + dt;
   if (sync >= 0) {
     // Reset at distance sync before sample n: the value just before the reset jumps to -1.
     const float te = tn - sync * dt;  // phase at the reset (unwrapped)
-    if (te >= 1.f) blep(-2.f, (te - 1.f) / dt + sync);  // own wrap first
+    if (te >= 1.f) blep(-2.f, (te - 1.f) * inv + sync);  // own wrap first
     const float before = 2.f * fracf(te) - 1.f;
     blep(-1.f - before, sync);
     tn = sync * dt;
   } else if (tn >= 1.f) {
     tn -= 1.f;
-    wrap = tn / dt;
+    wrap = tn * inv;
     blep(-2.f, wrap);
   }
   t = tn;
@@ -151,23 +158,23 @@ MT_INLINE BlOut BlOsc::saw(float dt, float sync) {
   return r;
 }
 
-MT_INLINE BlOut BlOsc::square(float dt, float pw, float sync) {
+MT_INLINE BlOut BlOsc::square(float dt, float inv, float pw, float sync) {
   float wrap = -1;
   const float t0 = t;
   float tn = t + dt;
   if (sync >= 0) {
     const float te = tn - sync * dt;
-    edges(t0, te, dt, pw);
+    edges(t0, te, inv, pw);
     const float fe = fracf(te);
     const float before = fe < pw ? 1.f : -1.f;
     blep(1.f - before, sync);  // reset to phase 0 = high
     tn = sync * dt;
-    if (tn >= pw) blep(-2.f, (tn - pw) / dt);
+    if (tn >= pw) blep(-2.f, (tn - pw) * inv);
   } else {
-    edges(t0, tn, dt, pw);
+    edges(t0, tn, inv, pw);
     if (tn >= 1.f) {
       tn -= 1.f;
-      wrap = tn / dt;
+      wrap = tn * inv;
     }
   }
   t = tn;
@@ -177,8 +184,8 @@ MT_INLINE BlOut BlOsc::square(float dt, float pw, float sync) {
   return r;
 }
 
-MT_INLINE BlOut BlOsc::tri(float dt) {
-  const BlOut q = square(dt, 0.5f, -1);
+MT_INLINE BlOut BlOsc::tri(float dt, float inv) {
+  const BlOut q = square(dt, inv, 0.5f, -1);
   triv = triv * 0.9995f + q.v * 4.f * dt;
   return {triv, q.wrap};
 }

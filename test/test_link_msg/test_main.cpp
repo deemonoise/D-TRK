@@ -179,6 +179,8 @@ void test_status_with_and_without_scope() {
   a.minReserveMs = 41;
   a.psram = 1;
   a.psramFill = 57;
+  a.gatePos = 63 * 256 + 128;
+  for (int i = 0; i < 16; ++i) a.follower[i] = static_cast<uint8_t>(255 - i);
   int n = put(a);
   Status b;
   Reader r(buf, n);
@@ -196,6 +198,8 @@ void test_status_with_and_without_scope() {
   TEST_ASSERT_EQUAL(41, b.minReserveMs);
   TEST_ASSERT_EQUAL(1, b.psram);
   TEST_ASSERT_EQUAL(57, b.psramFill);
+  TEST_ASSERT_EQUAL(63 * 256 + 128, b.gatePos);
+  TEST_ASSERT_EQUAL_MEMORY(a.follower, b.follower, 16);
   checkTruncated<Status>(n);
 
   a.scopeN = Status::kScopeMax;
@@ -208,6 +212,7 @@ void test_status_with_and_without_scope() {
   TEST_ASSERT_EQUAL_MEMORY(a.scope, b.scope, a.scopeN);
   TEST_ASSERT_EQUAL(41, b.minReserveMs);  // after the scope: still in place
   TEST_ASSERT_EQUAL(57, b.psramFill);
+  TEST_ASSERT_EQUAL_MEMORY(a.follower, b.follower, 16);
 }
 
 void test_debug() {
@@ -227,8 +232,8 @@ void test_debug() {
   checkTruncated<Debug>(n);
 }
 
-void test_protocol_3_and_debug_id() {
-  TEST_ASSERT_EQUAL(3, kProtocol);
+void test_protocol_4_and_debug_id() {
+  TEST_ASSERT_EQUAL(4, kProtocol);
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
 }
 
@@ -486,13 +491,14 @@ void test_small_messages() {
   TEST_ASSERT_EQUAL(77, b.v);
   checkTruncated<Byte>(n);
 
-  n = put(PreviewNote{5, 61, 1234});
+  n = put(PreviewNote{5, 61, 1234, 7});
   PreviewNote pn;
   Reader r2(buf, n);
   TEST_ASSERT_TRUE(decode(r2, pn));
   TEST_ASSERT_EQUAL(5, pn.instr);
   TEST_ASSERT_EQUAL(61, pn.note);
   TEST_ASSERT_EQUAL_UINT32(1234, pn.holdMs);
+  TEST_ASSERT_EQUAL(7, pn.track);
   checkTruncated<PreviewNote>(n);
 
   n = put(PreviewSlice{3, 9, 48, 25000});
@@ -675,6 +681,6 @@ int main(int, char**) {
   RUN_TEST(test_fw_messages);
   RUN_TEST(test_ev_batch_carries_a_hint);
   RUN_TEST(test_debug);
-  RUN_TEST(test_protocol_3_and_debug_id);
+  RUN_TEST(test_protocol_4_and_debug_id);
   return UNITY_END();
 }

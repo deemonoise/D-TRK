@@ -89,6 +89,11 @@ void ip(char* buf, int cap) {
   strlcpy(buf, WiFi.localIP().toString().c_str(), cap);
 }
 
+void prime() {
+  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_OFF);
+}
+
 void off() {
   connecting = false;
   failed = false;

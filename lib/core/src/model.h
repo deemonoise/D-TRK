@@ -86,18 +86,25 @@ static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field"
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
-// send, the drive, the reverb send, the bit / sample-rate reduction, the pan.
-enum LockBit : uint8_t { kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLockPan, kLocks };
+// send, the drive, the reverb send, the bit / sample-rate reduction, the pan, the drive model, the
+// trance gate's depth, the MOD send (the last bit: lockMask is full).
+enum LockBit : uint8_t {
+  kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLockPan, kLockDty, kLockGte,
+  kLockMod, kLocks
+};
 static_assert(kLocks <= 16, "lockMask is a uint16_t");
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
+// TrackCfg::driveModel, fx DTY: the curve of the track insert's drive (see ModelDrive, synth_drive.h).
+// Stored in files: new models before Count only; a value >= Count loads as Tanh.
+enum class DriveModel : uint8_t { Tanh, Clip, Fold, Rect, Asym, Count };
 // Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2: SYNTH (osc 2);
 // RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Pan: the track's
-// pan (+-64 at full depth). Stored in files: new targets before Count only (the Dest list shows them
+// pan (+-64 at full depth). ModSend: the track's MOD send (TrackCfg::modSend). Stored in files: new targets before Count only (the Dest list shows them
 // in its own order, see lfoDestStep).
 enum class LfoDest : uint8_t {
   Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive,
   Reso, Fenv, Dly, Rvb, Bit, Srr, Fine, Duty, Sub, Noise, Semi2,
-  Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4, Pan,
+  Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4, Pan, ModSend,
   Count
 };
 
@@ -124,6 +131,13 @@ static_assert(kLfos * kLfoLocks <= 16, "LFO lock mask is a uint16_t");
 // Internal synth instrument. One-byte fields: the audio task reads them without a lock.
 constexpr uint8_t kMasterVolMax = 200;  // master volume %, above 100 = up to +6 dB
 constexpr uint8_t kDlyTimeMax = 16;     // delay time, sixteenths
+// Master / send fx modes (SynthModel::dlyMode, rvbMode, modType, shimInt). Stored in files: new values
+// before Count only. DlyMode = DelayMode (synth_delay.h), ModType = ModFxType (synth_modfx.h),
+// ShimInt = PitchShift::Interval (synth_shimmer.h).
+enum class DlyMode : uint8_t { Digital, Tape, PingPong, Count };
+enum class RvbMode : uint8_t { Plain, Shimmer, Count };
+enum class ModType : uint8_t { Off, Chorus, Ensemble, Flanger, Phaser, Count };
+enum class ShimInt : uint8_t { Oct, Fifth, TwoOct, Count };
 
 struct Instrument {
   char name[9] = {0};
@@ -168,9 +182,13 @@ struct Instrument {
   uint8_t fAtk = 0, fDec = 40;  // envTimeMs; fDec 0 = hold
   uint8_t keytrack = 0;         // 0..127 = 0..100 %
   uint8_t send = 0;             // delay send 0..127 (every type)
-  uint8_t drive = 0;            // tanh drive before the filter, 0..127 (0 = off), every type
-  uint8_t crushBits = 0;        // bit crush after the drive, 0 = off .. 127 = 2 bits (fx BIT locks it)
-  uint8_t crushRate = 0;        // sample-rate reduction, 0 = off .. 127 (fx SRR locks it)
+  // Track insert recommendation. In a preset (.mti, factory): the insert it recommends, with
+  // driveModel below; loading the preset onto a track copies them into the track's insert
+  // (takePresetInsert, preset_io.h). In a project: unused and 0 (the track insert, TrackCfg::drive ..,
+  // is what plays); a project file without TINS migrates them to its tracks (see loadProject).
+  uint8_t drive = 0;
+  uint8_t crushBits = 0;
+  uint8_t crushRate = 0;
   uint8_t rsend = 0;            // reverb send 0..127 (every type)
   int8_t velCut = 0;            // velocity -> cutoff, -64..63 (+-6 octaves at full depth and velocity)
   int8_t velMac = 0;            // velocity -> DECAY macro, -64..63 (FM / DRUM / SYNTH)
@@ -187,7 +205,10 @@ struct Instrument {
   uint8_t synEAtk = 0, synEDec = 40;
   LfoCfg lfo[kLfos - 1];   // LFO 2..4 (LFO 1 is lfoWave .. lfoSync above; see lfoRef)
   KitLane kit[kKitLanes];  // KIT: the lanes (see kitSetDefaults)
+  uint8_t driveModel = 0;  // DriveModel of the recommended insert (see drive above); 0 in a project
 };
+// Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
+MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }
 
 // Envelope stage time: 0 -> 0 ms, 1..127 -> 1..10000 ms exponentially.
 uint16_t envTimeMs(uint8_t v);
@@ -240,6 +261,16 @@ bool lfoDestValid(uint8_t dest, InstrType t);
 uint8_t lfoDestStep(uint8_t dest, int d, InstrType t, int self = -1);
 // Display name of the target: SYNTH names its macros SHP1..SENV; out of range = PITCH.
 const char* lfoDestName(uint8_t dest, InstrType t);
+// Envelope follower target d steps from dest: lfoDestStep without L1..L4 RTRG (a restart is an edge,
+// not a level).
+uint8_t folDestStep(uint8_t dest, int d, InstrType t);
+// Follower detector: a track's peak (1.0 = full scale at MAIN 100 % x 4, as the meters) -> 0..1 over
+// -48..0 dBFS of pk x 0.25.
+float folLevel(float pk);
+// One-pole coefficient per follower step (folStepMs: one Synth control update, 32 samples) for
+// time v (envTimeMs: the envelope reaches ~63 % in it); 0 = instant (1).
+float folCoef(uint8_t v);
+float folStepMs();  // 32 samples at kSynthRate: 1 ms at 32 kHz, 0.726 ms at 44.1 kHz
 
 // Values are stored in project files: new commands go before Count only.
 // SLD..SLC act on INT tracks only (synth fx, see fxSynthOnly). DCY..CON lock FM / DRUM / SYNTH macros
@@ -253,7 +284,7 @@ const char* lfoDestName(uint8_t dest, InstrType t);
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
-  LFO, LFD, LFS, LFW, LFT, LFR, PAN, Count
+  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, Count
 };
 // LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
@@ -261,10 +292,13 @@ enum class Fx : uint8_t {
 // note-ons, or the sounding voices on a step without a note. LFR restarts its phase at val / 256: the
 // instrument's (Retrig OFF; the rate lock does not apply to that shared phase), and the step's
 // note-ons' or the sounding voices' (Retrig ON). INT tracks only.
-// BIT, SRR lock the voice's bit-depth / sample-rate reduction (kLockBit / kLockSrr, 0 = off; no
-// instrument setting), INT tracks only.
-// DRV, RVB lock the drive / reverb send (kLockDrv / kLockRvb), INT tracks only.
+// BIT, SRR lock the track insert's bit-depth / sample-rate reduction (kLockBit / kLockSrr, 0 = off),
+// INT tracks only.
+// DRV, RVB lock the track insert's drive / the reverb send (kLockDrv / kLockRvb), INT tracks only.
 // PAN locks the track's pan (kLockPan): 0..127, 64 = centre, shown L64 .. C .. R63, INT tracks only.
+// DTY locks the track insert's drive model (kLockDty, DriveModel: TNH CLP FLD RCT ASY), INT tracks only.
+// GTE locks the trance gate's depth (kLockGte, TrackCfg::gateDepth: 0 = OFF, 1..127), INT tracks only.
+// MOD locks the MOD bus send (kLockMod, TrackCfg::modSend), INT tracks only.
 // ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
 // kArmDefault (UP, 3) is the plain ARP. INT tracks only.
 // ARS (step arp, the sequencer's): (octaves - 1) << 6 | mode << 4 | steps per note (1..kArmRateMax),
@@ -393,6 +427,23 @@ inline int trackStepAt(const Pattern& pt, int track, int pos, uint32_t pass, int
   return (pos * speedMul(s) + sub) % len;
 }
 
+// Trance gate (TrackCfg::gate*). Rate: the length of a gate step (stored in files: new rates before
+// Count only, a value >= Count loads as 1/16). gateSixteenths: that length in 1/16 steps.
+enum class GateRate : uint8_t { R32, R16, R8, Count };
+inline float gateSixteenths(uint8_t r) { return r == 0 ? 0.5f : (r == 2 ? 2.f : 1.f); }
+// Attack / release 0..127 -> 0.5 .. 50 ms (exponential); the defaults are ~1 ms / ~4 ms.
+constexpr uint8_t kGateAtkDefault = 19, kGateRelDefault = 57;
+float gateMs(uint8_t v);
+// The gate presets the TRACK page's Pattern row copies into gateMask (bit i = step i + 1).
+struct GatePreset {
+  const char* name;
+  uint16_t mask;
+};
+constexpr int kGatePresets = 16;
+extern const GatePreset kGatePreset[kGatePresets];
+// The preset holding mask, -1 = none (USER).
+int gatePresetOf(uint16_t mask);
+
 struct TrackCfg {
   char name[9] = {0};
   uint8_t channel = 0;  // 0..15
@@ -408,6 +459,33 @@ struct TrackCfg {
   uint8_t vol = 100;  // 0..127, INT tracks
   uint8_t pan = 64;   // 0..127, 64 = centre, INT tracks
   uint8_t humanize = 0;  // 0..100: random timing (up to +-10 % of a step) and velocity (+-20) per step
+  // Insert chain of the INT track (Synth: the track's mono sum, before the fader and the pan):
+  // drive, then bit crush and sample-rate reduction, 0..127 each (0 = off). Fx DRV / BIT / SRR
+  // lock them per step, LFO targets Drive / Bit / Srr move them.
+  uint8_t drive = 0;
+  uint8_t crushBits = 0;
+  uint8_t crushRate = 0;
+  uint8_t driveModel = 0;  // DriveModel (fx DTY locks it); drive 0 is off for every model
+  // Trance gate (insert, after the crush): a 16-step on / off mask (bit i = step i + 1) on the song
+  // clock at gateRate (GateRate), the closed steps at 1 - depth / 127 (0 = off; fx GTE locks it),
+  // open for gateLen % of a step, ramps gateAtk / gateRel (gateMs). Bypassed while stopped.
+  uint16_t gateMask = 0x5555;
+  uint8_t gateRate = 1;  // GateRate
+  uint8_t gateDepth = 0;
+  uint8_t gateLen = 100;  // 1..100 %
+  uint8_t gateAtk = kGateAtkDefault;
+  uint8_t gateRel = kGateRelDefault;
+  // Envelope follower (Synth): the level of track folSrc (1..kTracks, 0 = off; after its insert,
+  // before its fader) moves this track's target folDest (LfoDest, folDestStep) by folAmt (-64..63, LFO
+  // depth units), envelope attack / release folAtk / folRel (envTimeMs, folCoef). INT tracks only.
+  uint8_t folSrc = 0;
+  uint8_t folDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  int8_t folAmt = 0;
+  uint8_t folAtk = 0;
+  uint8_t folRel = 70;
+  // MOD send (Synth's MOD bus, SynthModel::mod*): 0..127, after the fader like the delay / reverb sends.
+  // Fx MOD locks it, LFO / follower target ModSend moves it. INT tracks only; a KIT shares one.
+  uint8_t modSend = 0;
 };
 
 // Everything the synth reads from the project: the sound state the ESP mirrors to the synth board
@@ -433,6 +511,23 @@ struct SynthModel {
   uint8_t compRel = 50;
   uint8_t scTrack = 0;
   uint8_t scDepth = 64;
+  // Master / send fx (feature 5), saved in AUDI bytes 14..25. Delay mode (DlyMode) and its character
+  // dlyChar (TAPE: wear, PING-PONG: width); reverb mode (RvbMode), shimmer amount and interval
+  // (ShimInt: +12 / +7 / +24); MOD bus effect (ModType), rate (0.05..8 Hz exp), depth, feedback
+  // (FLANGER / PHASER), return level; master EQ low / high shelf (0..127, 64 = flat, -12..+12 dB).
+  // The defaults (DIGITAL, PLAIN, OFF, flat) sound as before the feature.
+  uint8_t dlyMode = 0;
+  uint8_t dlyChar = 40;
+  uint8_t rvbMode = 0;
+  uint8_t rvbShim = 60;
+  uint8_t modType = 0;
+  uint8_t modRate = 30;
+  uint8_t modDepth = 64;
+  uint8_t modFb = 40;
+  uint8_t modLevel = 100;
+  uint8_t eqLow = 64;
+  uint8_t eqHigh = 64;
+  uint8_t shimInt = 0;
   TrackCfg tracks[kTracks];
   Instrument instruments[kInstruments];
   ProjSample samples[kProjSamples];

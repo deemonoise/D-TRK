@@ -52,6 +52,7 @@ StatusAgg emptyAgg() {
 }
 StatusAgg agg = emptyAgg();
 StreamInfo stream = {};
+StripInfo strip = {-1.f, {}};
 int8_t scopeBuf[Status::kScopeMax];
 int scopeN = 0;
 uint32_t lostTotal = 0, lateTotal = 0;
@@ -131,6 +132,8 @@ void onStatus(Reader& r) {
   stream.psram = s.psram;
   stream.psramFill = s.psramFill;
   stream.underruns += s.underruns;
+  strip.gatePos = s.gatePos == Status::kGateStopped ? -1.f : s.gatePos * (1.f / 256.f);
+  for (int t = 0; t < 16; ++t) strip.follower[t] = s.follower[t] * (1.f / 255.f);
   scopeN = s.scopeN;
   memcpy(scopeBuf, s.scope, s.scopeN);
   portEXIT_CRITICAL(&mux);
@@ -395,6 +398,13 @@ StatusAgg takeStatus() {
 StreamInfo streamInfo() {
   portENTER_CRITICAL(&mux);
   const StreamInfo i = stream;
+  portEXIT_CRITICAL(&mux);
+  return i;
+}
+
+StripInfo stripInfo() {
+  portENTER_CRITICAL(&mux);
+  const StripInfo i = strip;
   portEXIT_CRITICAL(&mux);
   return i;
 }

@@ -6,7 +6,8 @@
 
 namespace ui {
 
-// Project settings on pages SONG, FX, COMP, PERF (the effect and start value of each track button in
+// Project settings on pages SONG, DLY (send delay), RVB (reverb, shimmer), MOD (the MOD send bus),
+// MSTR (compressor, sidechain, master EQ), PERF (the effect and start value of each track button in
 // PERF mode);
 // length / resolution / swing apply to the heard pattern. Device settings and diagnostics are on
 // FILE > SYSTEM.
@@ -22,20 +23,24 @@ class ProjScreen : public Screen {
 
  private:
   enum Row : int {
-    kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove, kDlyTime, kDlyFb, kDlyTone, kDlyLevel,
-    kRvbSize, kRvbDamp, kRvbLevel, kCompAmt, kCompRel, kScTrack, kScDepth, kPerf1,
+    kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove,
+    kDlyTime, kDlyMode, kDlyFb, kDlyTone, kDlyChar, kDlyLevel,
+    kRvbSize, kRvbMode, kRvbDamp, kRvbShim, kShimInt, kRvbLevel,
+    kModType, kModRate, kModDepth, kModFb, kModLevel,
+    kCompAmt, kCompRel, kScTrack, kScDepth, kEqLow, kEqHigh, kPerf1,
     kPerfLast = kPerf1 + 2 * mt::kPerfButtons - 1,  // Button N, then its start Value
     kRows
   };
   // Pages: contiguous runs of rows.
-  enum Page : int { kPgSong, kPgFx, kPgComp, kPgPerf, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kBpm, kDlyTime, kCompAmt, kPerf1, kRows};
+  enum Page : int { kPgSong, kPgDly, kPgRvb, kPgMod, kPgMstr, kPgPerf, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kBpm, kDlyTime, kRvbSize, kModType, kCompAmt, kPerf1, kRows};
   char perfLabels_[8][10] = {};  // "Button 1".. (Param labels must outlive the list)
   static constexpr int kHeaderH = 28;
   static constexpr int kListRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
   static constexpr uint32_t kBpmSettleMs = 300;
 
   mt::Pattern& pat();
+  const mt::Project& P();
   void snapPattern();
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
   int bpm();  // local target while it is ahead of the engine, else p.bpm

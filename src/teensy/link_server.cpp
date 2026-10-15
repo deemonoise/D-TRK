@@ -155,9 +155,12 @@ bool pushNow(uint64_t at, uint8_t len, uint8_t b0, uint8_t b1, uint8_t b2) {
 }
 
 // Like the old audio task: a new preview ends the previous one, then program, (slice), note-on.
-void startPreview(uint8_t instr, int slice, uint8_t note, uint32_t holdMs) {
+// insTrack: the pattern track whose insert the preview plays through (>= kTracks: none; the synth
+// keeps it until the next 0xF7, so every preview sets it).
+void startPreview(uint8_t instr, int slice, uint8_t note, uint32_t holdMs, uint8_t insTrack) {
   const uint64_t at = micros64() + kPlayLatencyUs;
   if (previewOffUs) pushNow(at, 3, 0x80, previewNote, 0);
+  pushNow(at, 2, 0xF7, insTrack < mt::kTracks ? insTrack : mt::kTracks, 0);
   pushNow(at, 2, 0xC0, instr, 0);
   if (slice >= 0) pushNow(at, 3, 0xF5, static_cast<uint8_t>(mt::Fx::SLC), static_cast<uint8_t>(slice));
   pushNow(at, 3, 0x90, static_cast<uint8_t>(note & 127), 100);
@@ -167,12 +170,12 @@ void startPreview(uint8_t instr, int slice, uint8_t note, uint32_t holdMs) {
 
 void onPreviewNote(Reader& r) {
   PreviewNote m;
-  if (decode(r, m)) startPreview(m.instr, -1, m.note, m.holdMs);
+  if (decode(r, m)) startPreview(m.instr, -1, m.note, m.holdMs, m.track);
 }
 
 void onPreviewSlice(Reader& r) {
   PreviewSlice m;
-  if (decode(r, m)) startPreview(m.instr, m.slice, m.root, m.holdMs > 25000 ? 25000 : m.holdMs);
+  if (decode(r, m)) startPreview(m.instr, m.slice, m.root, m.holdMs > 25000 ? 25000 : m.holdMs, mt::kTracks);
 }
 
 void onPerf(Reader& r) {
@@ -318,6 +321,10 @@ void sendStatus() {
   s.minReserveMs = ss.minReserveMs;
   s.psram = static_cast<uint8_t>(psram::state());  // Off, On, Failed = 0, 1, 2
   s.psramFill = psram::fillPct();
+  const float gp = synth->gatePos();
+  s.gatePos = gp < 0 ? Status::kGateStopped : static_cast<uint16_t>(min(64.f * 256.f - 1.f, gp * 256.f));
+  for (int t = 0; t < mt::kTracks; ++t)
+    s.follower[t] = static_cast<uint8_t>(min(255.f, synth->followerLevel(static_cast<uint8_t>(t)) * 255.f + 0.5f));
   s.scopeN = static_cast<uint16_t>(out->scopeRead(s.scope, Status::kScopeMax));
   send(Msg::Status, s);
 }
