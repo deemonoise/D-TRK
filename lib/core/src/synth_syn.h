@@ -111,6 +111,8 @@ struct SynParams {
   float sub = 0;                        // 0..1
   uint8_t subOct = 1;                   // 1 or 2 octaves below osc 1
   float noise = 0;                      // 0..1
+  float fold = 0;                       // 0..1: wavefolder on the oscillator mix
+  float ring = 0;                       // 0..1: crossfade of the mix to osc 1 x osc 2
 };
 
 // Output level: matches CHIP / FM at the same settings (was 0.5, about 6 dB quieter).
@@ -127,6 +129,8 @@ class SynVoice {
   // Oscillator k over n samples into dst; shape ramps from shape_[k]. sync: osc 1 wraps per
   // sample (or nullptr); wrap: this oscillator's wraps (or nullptr).
   void oscBlock(int k, float* dst, const float* sync, float* wrap, int n);
+  // Wavefolder over a chunk of the oscillator mix (naive); lim: pitch limit of osc 1 (0..1].
+  void foldBlock(float* a, int m, float lim);
   SynParams p_;
   float shape_[2] = {0, 0}, shapeStep_[2] = {0, 0};
   float mix_ = 0, mixStep_ = 0;
@@ -134,6 +138,7 @@ class SynVoice {
   WtOsc wt_[2];
   uint32_t noise_ = 0x12345678u;
   bool snap_ = true;  // next control() jumps to its values (after trigger)
+  float fold_ = 0, foldStep_ = 0, ring_ = 0, ringStep_ = 0;
 };
 
 MT_INLINE BlOut BlOsc::saw(float dt, float inv, float sync) {

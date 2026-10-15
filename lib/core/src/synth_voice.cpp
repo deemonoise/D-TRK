@@ -2,8 +2,34 @@
 
 namespace mt {
 
+int enforceBudget(Voice (&v)[kVoices], int pick, int cost, int budget) {
+  cost = cost < 0 ? 0 : (cost > UINT16_MAX ? UINT16_MAX : cost);
+  if (budget >= kVoiceBudgetOff) return cost;  // no limit: no scan
+  int used = 0;
+  for (int i = 0; i < kVoices; ++i)
+    if (v[i].on && !v[i].stolen && i != pick) used += v[i].cost;  // the pick gives its cost back
+  while (used + cost > budget) {
+    int victim = -1;
+    bool victimRel = false;
+    for (int i = 0; i < kVoices; ++i) {
+      const Voice& x = v[i];
+      if (!x.on || x.stolen || !x.cost || i == pick) continue;
+      const bool rel = x.env.stage() == Env::Stage::Release || x.env.idle();
+      if (victim < 0 || (rel && !victimRel) || (rel == victimRel && x.age < v[victim].age)) {
+        victim = i;
+        victimRel = rel;
+      }
+    }
+    if (victim < 0) break;
+    v[victim].env.fade(kStealMs);
+    v[victim].stolen = true;
+    used -= v[victim].cost;
+  }
+  return cost;
+}
+
 int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato, bool heavy,
-               int polyMax, int cap) {
+               int polyMax, int cap, int cost, int budget) {
   legato = false;
   int pick = -1;
   int trackCount = 0, trackOldest = -1, trackNewest = -1, freeIdx = -1, oldest = -1, oldestRel = -1;
@@ -56,10 +82,12 @@ int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCount
     }
     legato = false;
   }
+  cost = enforceBudget(v, pick, cost, budget);
   Voice& p = v[pick];
   p.on = true;
   p.track = track;
   p.stolen = false;
+  p.cost = static_cast<uint16_t>(cost);  // clamped by enforceBudget
   p.age = ++ageCounter;
   return pick;
 }

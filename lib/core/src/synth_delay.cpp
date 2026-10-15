@@ -148,9 +148,9 @@ MT_HOT void Delay::digital(const float* send, float* mixL, float* mixR, int n, u
   w_ = w;
 }
 
-// TAPE: the next segment's glide, Wear and LFOs (per kFxSeg samples, ~1 kHz: flash); the read
+// TAPE: the next segment's glide, Wear and LFOs (per kFxSeg samples, ~1 kHz: hot); the read
 // offset ramps from offQ (the last segment's end) by dQ per sample.
-void Delay::tapeSegment(float target, float lim, float wearT, int32_t& offQ, int32_t& dQ, float& hpA,
+MT_HOT void Delay::tapeSegment(float target, float lim, float wearT, int32_t& offQ, int32_t& dQ, float& hpA,
                         float& satK) {
   constexpr float kQ = static_cast<float>(1 << kOffFrac);
   const float glide = kGlideK;

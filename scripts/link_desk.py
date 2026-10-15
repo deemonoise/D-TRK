@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = 3
+PROTOCOL = 7
 MAX_PAYLOAD = 512
 
 # lib/core/src/link_msg.h, enum class Msg (append only).
@@ -146,6 +146,12 @@ def parse_list(p):
 
 
 PSRAM_STATE = ["off", "on", "FAILED"]
+STACK_UNKNOWN = 0xFFFFFFFF  # Status stackFree: not measured
+
+
+def stack_text(v):
+    """Status stackFree: KB never touched, "-" not measured, "0!" the stack reached its guard."""
+    return "-" if v == STACK_UNKNOWN else "0!" if v == 0 else "%.1fK" % (v / 1024)
 
 
 def parse_status(p):
@@ -154,9 +160,11 @@ def parse_status(p):
     lost, parks, scope_n = struct.unpack("<HBH", p[24:29])
     i = 29 + scope_n  # protocol 3: the stream fields after the scope
     smp, under, reserve, psram, fill = struct.unpack("<BHHBB", p[i:i + 7])
+    i += 7 + 2 + 16  # protocol 4: gate position, followers; protocol 5: the stack low-water mark
+    stack = struct.unpack("<I", p[i:i + 4])[0] if len(p) >= i + 4 else STACK_UNKNOWN
     return dict(cpu=cpu, stalls=stalls, late=late, voices=voices, out=out_peak, lost=lost,
                 parks=parks, peaks=peaks, scope=scope_n, smp=smp, under=under, reserve=reserve,
-                psram=PSRAM_STATE[psram] if psram < len(PSRAM_STATE) else psram, fill=fill)
+                psram=PSRAM_STATE[psram] if psram < len(PSRAM_STATE) else psram, fill=fill, stack=stack)
 
 
 class Link:
@@ -360,9 +368,9 @@ def print_status(s):
     peaks = " ".join("%3d" % v for v in s["peaks"])
     res = "-" if s["reserve"] == 0xFFFF else "%d ms" % s["reserve"]
     print("cpu %3d%%  voices %2d  out %5d  late %d  stalls %d  lost %d  parks %d  smp %2d under %d res %s "
-          "psram %s %d%%  | %s" %
+          "psram %s %d%%  stack %s  | %s" %
           (s["cpu"], s["voices"], s["out"], s["late"], s["stalls"], s["lost"], s["parks"], s["smp"], s["under"],
-           res, s["psram"], s["fill"], peaks), flush=True)
+           res, s["psram"], s["fill"], stack_text(s["stack"]), peaks), flush=True)
 
 
 def cmd_status(link, args):
@@ -696,7 +704,7 @@ def cmd_pnote(link, args):
     time.sleep(0.2)
     while link.wait("Status", 0.01) is not None:
         pass
-    link.send("PreviewNote", struct.pack("<BBI", args.instr, args.note, args.ms))
+    link.send("PreviewNote", struct.pack("<BBIB", args.instr, args.note, args.ms, 0xFF))
     print("out peak per 0.1 s:", " ".join("%d" % (v // 100) for v in peaks_for(link, args.ms / 1000 + 0.5)))
 
 
@@ -779,11 +787,14 @@ def cmd_selftest(args):
     assert b["count"] == 3 and b["free"] == 4000 and b["builtins"] == 0xFF and b["rates"] == [44100, 0]
     page = bytes([1, 2]) + struct.pack("<BI", 1, 0) + fs_str("wt") + struct.pack("<BI", 0, 1234) + fs_str("kick.wav")
     assert parse_list(page) == (True, [(True, 0, "wt"), (False, 1234, "kick.wav")])
-    assert PROTOCOL == 3 and MSG["Debug"] == 41
+    assert PROTOCOL == 7 and MSG["Debug"] == 41
     st = struct.pack("<BHHBH", 50, 0, 0, 20, 1000) + bytes(16) + struct.pack("<HBH", 0, 0, 2) + b"\x01\x02" + \
-        struct.pack("<BHHBB", 14, 3, 41, 1, 57)
+        struct.pack("<BHHBB", 14, 3, 41, 1, 57) + struct.pack("<H", 0xFFFF) + bytes(16) + struct.pack("<I", 11800)
     s = parse_status(st)
     assert s["smp"] == 14 and s["under"] == 3 and s["reserve"] == 41 and s["psram"] == "on" and s["fill"] == 57
+    assert s["stack"] == 11800 and stack_text(11800) == "11.5K"
+    assert stack_text(STACK_UNKNOWN) == "-" and stack_text(0) == "0!"
+    assert parse_status(st[:-4])["stack"] == STACK_UNKNOWN  # protocol 4 payload: not measured
     assert debug_payload(2, 12, 1, 600) == bytes([2, 12, 1]) + struct.pack("<H", 600)
     print("selftest ok")
 

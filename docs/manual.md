@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song of up to 128 slots, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, analog-style drum machines, a wavetable synth, a sampler, chiptune) through the synth board's stereo audio output (the Audio Shield), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
+A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song of up to 128 slots, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, analog-style drum machines, a wavetable synth, a macro oscillator, a sampler, chiptune) through the synth board's stereo audio output (the Audio Shield), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -311,13 +311,13 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `LFD` | −64…+63 | INT | Depth lock of the selected LFO (turns the LFO on even if the instrument's Depth is 0). |
 | `LFS` | 0–127 | INT | Rate lock of the selected LFO: in FREE — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS); not applied to a Retrig OFF LFO (its phase is the instrument's). |
 | `LFW` | SIN, TRI, SAW, SQR, RND | INT | Wave lock of the selected LFO. |
-| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV, RES, FEN, DLY, RVB, PAN, BIT, SRR, FIN, DUT, SUB, NOI, SM2, RA1–RA4, DP1–DP4, RG1–RG4, MOD | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
+| `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV, RES, FEN, DLY, RVB, PAN, BIT, SRR, FIN, DUT, SUB, NOI, SM2, FLD, RNG, RA1–RA4, DP1–DP4, RG1–RG4, MOD | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
 | `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): Retrig OFF — the instrument's shared phase, Retrig ON — the step's notes or the sounding notes. |
-| `DEC` | 0–127 | INT | FM, DRUM, SYNTH: the DECAY macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP1). |
-| `COL` | 0–127 | INT | FM, DRUM, SYNTH: the COLOR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP2). |
-| `SHP` | 0–127 | INT | FM, DRUM, SYNTH: the SHAPE macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — MIX). |
-| `SWP` | 0–127 | INT | FM, DRUM, SYNTH: the SWEEP macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — DET). |
-| `CON` | 0–127 | INT | FM, DRUM, SYNTH: the CONTOUR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SENV). |
+| `DEC` | 0–127 | INT | FM, DRUM, SYNTH, MACRO, STRING: the DECAY macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP1, for MACRO — TIMBRE, for STRING — DAMP). |
+| `COL` | 0–127 | INT | FM, DRUM, SYNTH, MACRO, STRING: the COLOR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SHP2, for MACRO — COLOR, for STRING — BRIGHT). |
+| `SHP` | 0–127 | INT | FM, DRUM, SYNTH, MACRO, STRING: the SHAPE macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — MIX, for MACRO — ENV>TMB, for STRING — STRUCT). |
+| `SWP` | 0–127 | INT | FM, DRUM, SYNTH, STRING: the SWEEP macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — DET, for STRING — POS). |
+| `CON` | 0–127 | INT | FM, DRUM, SYNTH, STRING: the CONTOUR macro for the step's note (for DRUM — the machine slot with the same number, for SYNTH — SENV, for STRING — EXC). |
 | **Sample** | | | |
 | `OFS` | 0–255 | INT | Starts the sample at value/256 of the Start–End region. SAMPLE only. |
 | `SLC` | 0–31 | INT | Sample slice for the step's note: 0 — the first slice, 31 — the 32nd. SAMPLE with Slices = FX only (see [slices](#slices)). |
@@ -362,7 +362,7 @@ SLD, VIB, ARP, VSL, OFS, CUT, DEC, COL, SHP, SWP, CON, FLT, RES, SLC, DLY, DRV, 
 - **CUT:** tick length is taken from the tempo (tick = 1/96 of a quarter note) and doesn't depend on the resolution. If CUT is shorter than the gate, the note is cut earlier.
 - **OFS** works only on SAMPLE and only at the start of a note; with Reverse it counts from the end. If the note plays a slice, OFS counts within the slice.
 - **SLC** works only on SAMPLE with Slices = FX and only at the start of a note, like OFS: the first note-on of the step plays the chosen slice at the note's pitch (with a chord or RAT, the other notes play the whole region). Without SLC, or if the number is not less than the number of slices, the whole Start–End region plays. On a step without a note SLC does nothing.
-- **DEC, COL, SHP, SWP, CON** (macro p-locks) work only on [FM](#fm), [DRUM](#drum) and [SYNTH](#synth); they are ignored on CHIP and SAMPLE. On a step with a note, the value replaces the instrument's macro for that note; on a step without a note, for the track's sounding note until the next note. The next step doesn't inherit the lock. For TONE and CHORD the envelope decay is fixed at the start of the note: DEC on a step without a note (and LFO on DECAY) doesn't change the length of a note already sounding.
+- **DEC, COL, SHP, SWP, CON** (macro p-locks) work only on [FM](#fm), [DRUM](#drum), [SYNTH](#synth), [MACRO](#macro) and [STRING](#string) (on MACRO only DEC, COL, SHP); they are ignored on CHIP and SAMPLE. On a step with a note, the value replaces the instrument's macro for that note; on a step without a note, for the track's sounding note until the next note. The next step doesn't inherit the lock. For TONE and CHORD the envelope decay is fixed at the start of the note: DEC on a step without a note (and LFO on DECAY) doesn't change the length of a note already sounding.
 - **FLT, RES** (filter p-locks) work on all types, but only when Filter is not OFF. The value replaces the instrument's Cutoff or Reso: on a step with a note — for that note; on a step without a note — for the track's sounding voices until the next note. The filter envelope, Key track and LFO CUTOFF are added to the lock value.
 - **LFD, LFS, LFW, LFT** (LFO p-locks) work like FLT: on a step with a note — for that note; on a step without a note — for the track's sounding voices until the next note. One LFO per step can be locked — the one picked by `LFO`.
 - **DLY** (delay send p-lock) works the same way: on a step with a note — the send from that step; on a step without a note — the send of the track's sounding notes until the next note. Handy for echo "throws" on individual hits: instrument Dly send at 0, `DLY 127` on the steps you want.
@@ -820,7 +820,7 @@ A separate tab at the bottom of the screen, between INST and BANK: tap **MIX**. 
 
 32 instruments per project, INS1–INS32 (projects saved before 32 open with INS17–INS32 at their defaults). The instrument for a track is chosen in TRACK → Instr (with Out = INT) or with fx PGM. When you enter the tab, the current track's instrument opens.
 
-Parameters are spread over 5 pages (6 for SYNTH). Below the header are the page tabs: **MAIN**, **ENV**, the type page (**OSC** for CHIP, **SMPL** for SAMPLE, **FM**, **DRUM**; SYNTH has two — **OSC** and **MOD**), **FILT**, **LFO**. The current page is highlighted.
+Parameters are spread over 5 pages (6 for SYNTH). Below the header are the page tabs: **MAIN**, **ENV**, the type page (**OSC** for CHIP and MACRO, **SMPL** for SAMPLE, **FM**, **DRUM**, **RES** for STRING; SYNTH has two — **OSC** and **MOD**), **FILT**, **LFO**. The current page is highlighted.
 
 | Input | Action |
 |---|---|
@@ -839,9 +839,9 @@ The page is remembered when you switch instruments and when you change Type: for
 | Page | Rows |
 |---|---|
 | MAIN | Name, Type, Volume, Transpose, Fine, Mode, Glide, Dly send, Rvb send |
-| ENV | Attack, Decay, Sustain, Release, Vel\>Cut, Vel\>Dec and an ADSR graph on the right |
-| OSC / SMPL / FM / DRUM | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) and [DRUM](#drum) — Machine and 5 macros; [SYNTH](#synth) — oscillators and tables |
-| MOD (SYNTH only) | Sub, Sub oct, Noise, Env\>Shp, Env atk, Env dec |
+| ENV | Attack, Decay, Sustain, Release, Vel\>Cut, Vel\>Dec (for MACRO — Vel\>Tmb, for STRING — Vel\>Dmp) and an ADSR graph on the right |
+| OSC / SMPL / FM / DRUM / RES | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) and [DRUM](#drum) — Machine and 5 macros; [SYNTH](#synth) — oscillators and tables; [MACRO](#macro) — Model, Timbre, Color, Env\>Tmb; [STRING](#string) — Model, Damp, Bright, Struct, Position, Excite |
+| MOD (SYNTH only) | Sub, Sub oct, Noise, Ring, Fold, Env\>Shp, Env atk, Env dec |
 | FILT | Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — [filter](#filter) |
 | LFO | LFO (1–4), Wave, Sync, Retrig, Rate, Depth, Dest |
 
@@ -850,7 +850,7 @@ The page is remembered when you switch instruments and when you change Type: for
 | Parameter | Values | Default |
 |---|---|---|
 | Name | up to 8 characters, edited like a track name; empty becomes INSn | INS1…INS32 |
-| Type | FM / SYNTH / DRUM / SAMPLE / CHIP / KIT | FM |
+| Type | FM / SYNTH / MACRO / STRING / DRUM / SAMPLE / CHIP / KIT | FM |
 | Volume | 0–127 | 100 |
 | Transpose | −24…+24 semitones | 0 |
 | Fine | −50…+50 cents | 0 |
@@ -859,7 +859,7 @@ The page is remembered when you switch instruments and when you change Type: for
 | Dly send | 0–127, all types | 0 |
 | Rvb send | 0–127, all types (for KIT — for the whole kit) | 0 |
 | Vel\>Cut (ENV) | −64…+63; gray without a filter | 0 |
-| Vel\>Dec (ENV) | −64…+63; FM, DRUM, SYNTH | 0 |
+| Vel\>Dec (ENV) | −64…+63; FM, DRUM, SYNTH, MACRO (called Vel\>Tmb), STRING (Vel\>Dmp) | 0 |
 | Attack / Decay / Release (ENV) | 0 ms … 10 s (exponential scale, 128 values) | 0 / 18 ms / 9 ms |
 | Sustain (ENV) | 0–100% | 79% |
 
@@ -867,7 +867,7 @@ The page is remembered when you switch instruments and when you change Type: for
 
 **Rvb send** — send to the shared [reverb](#reverb); for steps, use fx RVB.
 
-**Velocity.** Vel\>Cut shifts the filter cutoff by note velocity: at +63 a note with velocity 127 is opened ≈ 6 octaves higher, and one with velocity 1 the same amount lower; velocity 64 changes nothing. Vel\>Dec shifts the DECAY macro (for SYNTH, the first macro, SHP1) the same way by ±63 steps. 0 means off.
+**Velocity.** Vel\>Cut shifts the filter cutoff by note velocity: at +63 a note with velocity 127 is opened ≈ 6 octaves higher, and one with velocity 1 the same amount lower; velocity 64 changes nothing. Vel\>Dec shifts the DECAY macro (for SYNTH, the first macro, SHP1; for MACRO, TIMBRE — the row is called Vel\>Tmb) the same way by ±63 steps. 0 means off.
 
 **Glide** — portamento between overlapping notes in MONO (legato). For individual steps there is fx [SLD](#synthfx).
 
@@ -1004,7 +1004,7 @@ Base pitch at C-4: KICK 55 Hz, SNARE 180 Hz, PERC 200 Hz, METAL 400 Hz, HAT 3.5 
 - **Note** C-4 plays the machine's base pitch, other notes are relative to it (tones and metal; clap noise does not depend on the note). Transpose and Fine work as for CHIP.
 - Closed / open hat — short and long DECAY (for example, a `DEC` lock); on the same track they cut each other off.
 - Changing the machine sets its default macro values. When switching Type to FM or DRUM, the machine and macros are reset as well: the slots mean different things in each.
-- FM, DRUM and SYNTH with a wavetable (at least one oscillator in WT mode) together play no more than 16 voices: a seventeenth steals the oldest of them (releasing ones first); CHIP, SAMPLE and SYNTH without WT are not affected.
+- FM, DRUM, MACRO, STRING and SYNTH with a wavetable (at least one oscillator in WT mode) together play no more than 16 voices: a seventeenth steals the oldest of them (releasing ones first); CHIP, SAMPLE and SYNTH without WT are not affected.
 - Hats and cymbals are fully synthesized: an inharmonic set of squares plus noise.
 
 | Machine | Pitch at C-4 | DECAY | 2 | 3 | 4 | 5 |
@@ -1032,7 +1032,7 @@ Columns 2–5 are the COLOR, SHAPE, SWEEP, CONTOUR slots (locks `COL`, `SHP`, `S
 
 ### SYNTH: oscillators and wavetables
 
-**SYNTH** — an "analog" synthesizer: 2 oscillators, a sub-oscillator, noise, hard sync and a dedicated envelope on SHAPE, followed by the shared ADSR, [filter and LFO](#filter). Each oscillator's mode: **SAW**, **SQR**, **TRI** — classic alias-free waveforms (PolyBLEP), or **WT** — a wavetable (64 frames of 256 points, the frame position is SHAPE). The amplitude envelope is Attack, Decay, Sustain, Release from the ENV page; Mode (POLY / MONO) and Glide work as for CHIP. A SYNTH with a wavetable (at least one oscillator in WT) shares the limit of 16 "heavy" voices with FM and DRUM; a SYNTH using only SAW / SQR / TRI is light and has the whole pool of 32 available.
+**SYNTH** — an "analog" synthesizer: 2 oscillators, a sub-oscillator, noise, hard sync, a ring modulator, a wavefolder and a dedicated envelope on SHAPE, followed by the shared ADSR, [filter and LFO](#filter). Each oscillator's mode: **SAW**, **SQR**, **TRI** — classic alias-free waveforms (PolyBLEP), or **WT** — a wavetable (64 frames of 256 points, the frame position is SHAPE). The amplitude envelope is Attack, Decay, Sustain, Release from the ENV page; Mode (POLY / MONO) and Glide work as for CHIP. A SYNTH with a wavetable (at least one oscillator in WT) shares the limit of 16 "heavy" voices with FM, DRUM and MACRO; a SYNTH using only SAW / SQR / TRI is light and has the whole pool of 32 available.
 
 SYNTH has 6 pages: **MAIN**, **ENV**, **OSC**, **MOD**, **FILT**, **LFO**. When Type is changed to another type, the MOD page becomes the type page.
 
@@ -1050,6 +1050,8 @@ SYNTH has 6 pages: **MAIN**, **ENV**, **OSC**, **MOD**, **FILT**, **LFO**. When 
 | Sub | 0–127 | 0 | Sub-oscillator level: a square below osc 1. 0 — off (Sub oct is gray). |
 | Sub oct | −1 / −2 | −1 | How many octaves the sub is below osc 1. |
 | Noise | 0–127 | 0 | White noise level. |
+| Ring  | OFF, 1–127 | OFF | Ring modulator: crossfades the oscillator mix towards the product osc 1 × osc 2 (127 — the product only): bell-like, metallic tones. Turns both oscillators on even at Mix 0%. LFO dest RING. |
+| Fold  | OFF, 1–127 | OFF | Wavefolder after Mix and Ring (Sub and Noise stay clean): up to ~4 folds, adds bright harmonics. From ≈1 kHz on osc 1 it weakens and is gone by ≈5 kHz, so high notes don't alias. LFO dest FOLD. |
 | Env\>Shp | −64…+63 | 0 | Macro **SENV**: envelope depth on SHAPE of both oscillators (± the full range at its peak). 0 — no envelope (Env atk and Env dec are gray). |
 | Env atk | 0 ms … 10 s | 0 ms | SHAPE envelope rise. |
 | Env dec | HOLD, 1 ms … 10 s | 18 ms | SHAPE envelope decay. HOLD — stays at the peak. |
@@ -1067,6 +1069,77 @@ On the right of the OSC page is the waveform of the oscillator under the cursor 
 | `CON` | SENV | SENV | SHAPE envelope depth (64 = 0) |
 
 A lock on a step with a note applies to that note; on a step without a note — to the track's sounding note until the next note. An LFO on SHP1 / SHP2 gives PWM or wavetable "scanning".
+
+<a id="macro"></a>
+
+### MACRO
+
+**MACRO** — a macro oscillator: one oscillator with a choice of 8 **models** and two controls, **TIMBRE** and **COLOR**, whose meaning depends on the model. Then come the shared ADSR, [filter and LFO](#filter); Mode (POLY / MONO) and Glide work as for SYNTH. MACRO is a "heavy" voice: together with FM, DRUM and SYNTH with a wavetable it shares the limit of 16 heavy voices.
+
+MACRO has 5 pages: **MAIN**, **ENV**, **OSC**, **FILT**, **LFO**.
+
+| Parameter | Values | Default | Meaning |
+|---|---|---|---|
+| Model | SAW+, MORPH, SAW/SQR, FOLD, VOSIM, VOWEL, FM, FB FM | — | The model (table below). A change applies from the next note. |
+| Timbre | 0–127 | 64 | Macro **TIMBRE**. |
+| Color | 0–127 | 64 | Macro **COLOR**. |
+| Env\>Tmb | −64…+63, OFF at 0 | OFF | Macro **ENV>TMB**: depth of an AD envelope on TIMBRE (± the full range at its peak). OFF (64 in a lock) — no envelope (Env atk and Env dec are gray). |
+| Env atk | 0 ms … 10 s | 0 ms | TIMBRE envelope rise. |
+| Env dec | HOLD, 1 ms … 10 s | 18 ms | TIMBRE envelope decay. HOLD — stays at the peak. |
+
+| Model | TIMBRE | COLOR |
+|---|---|---|
+| SAW+ | width of a flat notch at the start of the saw ramp (up to 3/8 of the period) | depth of the notch |
+| MORPH | triangle → saw → square → narrowing pulse | darker low-pass plus overdrive (the overdrive fades out above ≈ 830 Hz) |
+| SAW/SQR | shape of both waves: the saw's notch and the square's pulse width | saw ↔ square balance |
+| FOLD | fold amount (weakens from ≈ 1 kHz, gone by ≈ 5 kHz) | sine fold ↔ triangle fold |
+| VOSIM | frequency of formant 1 | frequency of formant 2 |
+| VOWEL | the vowel (9 vowels, neighbours blended); each note starts with a short consonant | formant shift ×0.78 … ×2.78 |
+| FM | modulation index (2 operators) | frequency ratio, in musical steps |
+| FB FM | modulation index with feedback (weaker on high notes) | frequency ratio |
+
+The TIMBRE envelope and the oscillator phase restart on every new note except legato (MONO with overlap).
+
+**Macros and p-locks.** MACRO uses the first three macro slots of FM, DRUM and SYNTH, so the fx locks `DEC`, `COL`, `SHP` and the LFO destinations work:
+
+| fx | MACRO macro | LFO dest | What it changes |
+|---|---|---|---|
+| `DEC` | TIMBRE | TIMBRE | TIMBRE of the model |
+| `COL` | COLOR | COLOR | COLOR of the model |
+| `SHP` | ENV>TMB | ENV>TMB | TIMBRE envelope depth (64 = 0) |
+
+`SWP` and `CON` do nothing on MACRO. Vel\>Tmb on the ENV page moves TIMBRE by note velocity, like Vel\>Dec on the other types.
+
+<a id="string"></a>
+
+### STRING
+
+**STRING** — a physical-model resonator: a string or a set of tuned modes, struck by a built-in exciter (a click or a short noise burst) at each note. There are 2 **models**: **STRING** — a plucked string (a delay line with damping and stiffness), **MODAL** — 6 tuned resonant modes (bars, bells, plates). Then come the shared ADSR, [filter and LFO](#filter); Mode (POLY / MONO) and Glide work as for SYNTH. STRING is a heavy voice: together with FM, DRUM, MACRO and SYNTH with a wavetable it shares the limit of 16 heavy voices, and on the synth board it is among the most expensive types (see [voice pool by cost](#sound)).
+
+STRING has 5 pages: **MAIN**, **ENV**, **RES**, **FILT**, **LFO**.
+
+| Parameter | Values | Default | Meaning |
+|---|---|---|---|
+| Model | STRING, MODAL | STRING | The model. A change applies from the next note. |
+| Damp | 0.05 s … 10 s | 1.4 s | Macro **DAMP**: decay time of the resonance (to −60 dB), exponential over 0–127. |
+| Bright | 0–127 | 64 | Macro **BRIGHT**: brightness of the strike and of the ring; lower values dampen the high partials faster. |
+| Struct | 0–127 | 0 | Macro **STRUCT**: 0 — harmonic partials; higher — stiffer, inharmonic (STRING: a stiff string; MODAL: bar → bell / plate). |
+| Position | 0–100% | 24% | Macro **POS**: where the string or bar is struck; 50% — the middle, where the even partials vanish. |
+| Excite | CLICK, 0.5 … 20.5 ms | 0.6 ms | Macro **EXC**: CLICK (0) — a single impulse; higher — a noise burst of that length (a softer, breathier strike). |
+
+The resonance decays by itself: with Sustain 127 the length of a note is set by Damp, and the ADSR shapes it on top (Release fades a held ring sooner). Once the ring has died away (−80 dB) the voice is freed even if the note is still held. A new note on a voice that still sounds strikes the running resonance again instead of restarting it. The lowest playable note is ≈ 21.5 Hz; lower notes hold that pitch.
+
+**Macros and p-locks.** STRING uses all five macro slots of FM, DRUM and SYNTH, so the fx locks `DEC` … `CON` and the LFO destinations work:
+
+| fx | STRING macro | LFO dest | What it changes |
+|---|---|---|---|
+| `DEC` | DAMP | DAMP | decay time |
+| `COL` | BRIGHT | BRIGHT | brightness |
+| `SHP` | STRUCT | STRUCT | stiffness / inharmonicity |
+| `SWP` | POS | POS | strike position |
+| `CON` | EXC | EXC | exciter: click or burst length |
+
+Vel\>Dmp on the ENV page moves DAMP by note velocity (harder notes ring longer), like Vel\>Dec on the other types. The **COMB** filter is not available on STRING (the resonator uses the voice's delay line): the FILT page skips it, and switching Type to STRING turns COMB into OFF.
 
 <a id="wavetables"></a>
 
@@ -1114,29 +1187,41 @@ A table is 64 frames of 256 points (one period per frame). In the synth board's 
 
 ### Filter and LFO
 
-The FILT and LFO pages exist for all types. The filter is a 12 dB/oct SVF after the whole voice (for FM and DRUM — after their own sound). Drive, Bit crush and Downsample are not here but in the [track insert](#insert) (TRACK → INS), after the filter.
+The FILT and LFO pages exist for all types. The filter comes after the whole voice (for FM and DRUM — after their own sound); its mode sets the slope and what Cutoff and Reso do ([modes](#filtmodes)). Drive, Bit crush and Downsample are not here but in the [track insert](#insert) (TRACK → INS), after the filter.
 
 | Parameter | Values | Default | Meaning |
 |---|---|---|---|
-| Filter | OFF, LP, BP, HP | OFF | Mode. OFF — bypass: the sound is as without a filter, the other filter rows are gray. |
-| Cutoff | 20 Hz … 14 kHz (128 values, exponential) | 14 kHz | Cutoff frequency. Lock — fx `FLT`. |
-| Reso | 0–127 | 0 | Resonance (Q 0.5–20). High resonance is loud — lower the Volume. Lock — fx `RES`. |
+| Filter | OFF, LP, BP, HP, LADDER, MS20, COMB, FORMANT | OFF | Mode, see [the table below](#filtmodes). OFF — bypass: the sound is as without a filter, the other filter rows are gray. COMB is not available on [STRING](#string). |
+| Cutoff | 20 Hz … 14 kHz (128 values, exponential); FORMANT: A, A\>E, E … U | 14 kHz | Cutoff frequency; COMB — the comb's pitch, FORMANT — the vowel. Lock — fx `FLT`. |
+| Reso | 0–127 | 0 | Resonance (LP / BP / HP: Q 0.5–20; other modes — the table below). High resonance is loud — lower the Volume. Lock — fx `RES`. |
 | Flt env | −64…+63 | 0 | Filter envelope depth: ±6 octaves at its peak. 0 — no envelope (attack and decay are gray). |
 | Flt attack | 0 ms … 10 s | 0 ms | Envelope rise. |
 | Flt decay | HOLD, 1 ms … 10 s | 18 ms | Envelope decay (exponential). HOLD — the envelope stays at the peak. |
-| Key track | 0–100% | 0% | Cutoff follows the note from C-4: 100% — one octave per octave. |
+| Key track | 0–100% | 0% | Cutoff follows the note from C-4: 100% — one octave per octave (COMB at 100% is tuned to the note). Gray for FORMANT: no effect. |
 | LFO | 1–4 | 1 | Which of the instrument's four LFOs the rows below edit; the number in brackets is how many are on. All four run at once; their effects on the same destination add up (VOL — multiplies). |
 | Wave | SINE, TRI, SAW, SQR, RND | SINE | LFO shape; RND — a random value each period. |
 | Sync | FREE / TEMPO | FREE | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
 | Retrig | ON / OFF | ON | ON — the LFO phase restarts on every new note (except legato). OFF — one phase per instrument, shared by all its voices and all tracks playing it: a note lands in the running phase. With FREE the LFO runs continuously; with TEMPO it restarts when playback starts, so a 1 BAR LFO always begins at the start of the bar and every run sounds the same. RND with OFF gives one shared value per period. |
 | Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in FREE — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
-| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64; RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE ±64 steps; FINE ±1 semitone; DUTY ±49%; SEMI2 ±24 semitones; L1–L4 RATE ×/÷16; L1–L4 DEPTH 0…×2. |
-| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, PAN, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG, MOD | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); DUTY — only for CHIP; SUB, NOISE and SEMI2 (oscillator 2) — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample (track insert), Sub, Noise; DRIVE, BIT, SRR, DLY, RVB, PAN act on the whole track by the newest note (see [fx](#trackfx)); FINE — fine pitch; DUTY — the PULSE Duty; PAN — the track's pan (see below); MOD — the track's Mod send (send to the [MOD bus](#modbus), on the whole track); L1–L4 — another LFO of the instrument (see below). |
+| Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64; RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE, FOLD, RING ±64 steps; FINE ±1 semitone; DUTY ±49%; SEMI2 ±24 semitones; L1–L4 RATE ×/÷16; L1–L4 DEPTH 0…×2. |
+| Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, PAN, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, FOLD, RING, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG, MOD | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM and SYNTH (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV); MACRO has only the first three, called TIMBRE, COLOR, ENV>TMB; STRING has all five, called DAMP, BRIGHT, STRUCT, POS, EXC; DUTY — only for CHIP; SUB, NOISE, SEMI2 (oscillator 2), FOLD and RING — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE, FOLD, RING shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample (track insert), Sub, Noise, Fold, Ring; DRIVE, BIT, SRR, DLY, RVB, PAN act on the whole track by the newest note (see [fx](#trackfx)); FINE — fine pitch; DUTY — the PULSE Duty; PAN — the track's pan (see below); MOD — the track's Mod send (send to the [MOD bus](#modbus), on the whole track); L1–L4 — another LFO of the instrument (see below). |
 
 - The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, as on a classic acid bass.
 - **PAN** (INT tracks): shifts the track's pan by up to ±64 around the track's Pan (or the step's PAN lock) at full depth, limited to hard left / hard right. There is one pan per track and it comes from the LFO of the newest sounding note, so chord notes do not spread across the field; Retrig ON restarts the phase with each new note.
 - LFOs can be controlled from steps: fx `LFO`, `LFD`, `LFS`, `LFW`, `LFT`, `LFR` (see the [fx table](#fx)).
-- Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz.
+- Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz (FORMANT — without Key track).
+
+<a id="filtmodes"></a>**Filter modes.**
+
+| Mode | What it is | Cutoff | Reso |
+|---|---|---|---|
+| LP, BP, HP | 12 dB/oct SVF: low-pass, band-pass, high-pass | cutoff frequency | Q 0.5–20 |
+| LADDER | 24 dB/oct low-pass, a four-pole ladder: deep, round, saturates when pushed | cutoff frequency | resonance; from ≈121 the filter self-oscillates (a sine at the cutoff) |
+| MS20 | 12 dB/oct low-pass in the Korg-35 style with saturation in the feedback: aggressive, "screams" at high Reso | cutoff frequency | resonance; self-oscillates from ≈121 |
+| COMB | tuned comb: a metallic tone at the cutoff and its harmonics | the comb's pitch, from 86 Hz (lower values stay at 86 Hz); Key track 100% tunes it to the note | feedback: 0 — no comb, higher — a longer, more pitched ring |
+| FORMANT | three band-passes that "say" a vowel | the vowel A → E → I → O → U across the range (screen: A, A\>E, E … U); Flt env, Vel\>Cut and LFO CUTOFF sweep it ("wah-yah"); Key track has no effect | vowel sharpness |
+
+Self-oscillation (LADDER, MS20) sounds without any input: after the amp envelope ends it fades out in ≈50 ms, and any LADDER / MS20 tail lasts 2 s at most.
 
 **LFO to LFO.** An LFO can modulate another LFO of the same instrument. **L1–L4 RATE** speeds up / slows down the target: its rate × 2^(±4), ≈ ×/÷16 at full depth, in FREE and TEMPO. **L1–L4 DEPTH** scales the target's depth: × (1 + value), limited to 0…2 — −64 silences the target, +63 nearly doubles it. **L1–L4 RTRG** restarts the target at phase 0 on each cycle of the source (RND gets a new value); only depth ≠ 0 matters, its amount doesn't. An LFO can't pick its own RTRG. Modulation reaches the target with a 1 ms lag, so any routing works, loops included. A Retrig OFF target (one phase per instrument) takes RATE and RTRG only from Retrig OFF LFOs — a per-voice LFO has no single phase to give; DEPTH works from any LFO. While playback is stopped, a TEMPO + Retrig OFF target holds and ignores restarts.
 
@@ -1169,7 +1254,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 **Recommended insert.** A preset also stores the track insert it was designed with: Drive, Drive type, Bit crush, Downsample. Load (a factory or your own preset) **overwrites** the current track's [insert](#insert) with them if that track plays this instrument (already while auditioning; CANCEL restores the insert too). A preset without a recommendation (Drive and lo-fi off) turns the track insert off. Save writes the current track's insert into the preset (if that track plays this instrument; otherwise — without an insert), so the preset loads with the same sound. Factory presets with drive and lo-fi (GRIT BAS, KICK PNC, BD808 D, BD909 H, BD DIST, SD NOISE, HH HARSH, the LOFI drums, REESE, FM GROWL, CHIPPLK, ROBOT and others) recommend their former Drive / Bit crush / Downsample. A factory KIT applies the kit's own insert to its track (off on the factory kits), and the drums in its lanes carry no insert. A preset loaded into the instrument of a KIT lane does **not change** the KIT track's insert (a lane has no insert of its own; the preset's recommendation is dropped). Templates and demo songs set the track inserts themselves.
 
-**Browser header:** the path and three buttons (Save: the type, then the path inside the type folder). Load always opens at the top: a `[FACTORY]` row, then a folder per type (FM, SYNTH, DRUM, SAMPLE, CHIP) with your own folders (`name/`) and files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, by type (including KIT) and category; they cannot be changed or deleted. A preset of another type changes the instrument's type. Save opens in the folder of the instrument's type.
+**Browser header:** the path and three buttons (Save: the type, then the path inside the type folder). Load always opens at the top: a `[FACTORY]` row, then a folder per type (FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP) with your own folders (`name/`) and files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, by type (including KIT) and category; they cannot be changed or deleted. A preset of another type changes the instrument's type. Save opens in the folder of the instrument's type.
 
 | Input | Load | Save |
 |---|---|---|
@@ -1204,6 +1289,13 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 | SYNTH | LEAD | LEAD, SYNCLD |
 | SYNTH | PAD | PAD, PWMSTR, WTSWEEP |
 | SYNTH | KEYS | PLUCK, BELL |
+| MACRO | BASS | MORPHBAS, FB GRIT |
+| MACRO | LEAD | NOTCHSAW, SQRSAW, FOLDLEAD |
+| MACRO | PAD | VOSIMPAD |
+| MACRO | VOX | TALKER |
+| MACRO | KEYS | FM BELL |
+| STRING | PLUCK | NYLON, HARP, PIZZ |
+| STRING | KEYS | MARIMBA, BELL, KALIMBA |
 | KIT | DRUM | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT |
 | KIT | FM | FM KIT, FM PUNCH, FM PERC |
 | KIT | CHIP | CHIP KIT |
@@ -1590,7 +1682,7 @@ Subfolders: the list shows folders first (`name/`), then files. Click a folder t
 
 ## Internal sound
 
-The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), analog-style drum machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, mono instruments with per-track pan, stereo output. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
+The built-in synthesizer: FM machines ([FM](#fm)), oscillators and wavetables ([SYNTH](#synth)), a macro oscillator ([MACRO](#macro)), a string / modal resonator ([STRING](#string)), analog-style drum machines ([DRUM](#drum)), a sampler (SAMPLE) and chiptune (CHIP), all with a [filter and LFO](#filter); 32 voices shared by all tracks, 44.1 kHz, mono instruments with per-track pan, stereo output. It runs on the synth board (Teensy 4.1), which the tracker drives over a UART link (3 Mbaud). A track plays through it if TRACK → Out is set to **INT**; the instrument is set with TRACK → Instr or the PGM fx.
 
 Sound goes from the synth board to a Teensy Audio Shield Rev D (SGTL5000) and from its jack to the headphones; the display board's NS4168 amplifier and SPK connector are not used. The signal is stereo.
 
@@ -1603,11 +1695,12 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d-later).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting. Track Volume comes after its [insert](#insert) (Drive, Bit crush, Downsample).
 - **Pan:** the track's mono sum is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level, hard left is +3 dB on the left and silence on the right. The delay, reverb and MOD bus sends are taken before pan (mono); the delay returns to the centre (PING-PONG — alternating sides), the reverb in pseudo-stereo, the MOD bus in stereo. The compressor is stereo-linked; the PERF effects, MAIN and the soft clip work on both channels.
-- **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM and SYNTH with a WT oscillator together: no more than 16 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track. Sample voices stream from the card, up to 16 at once (samples copied to PSRAM do not count), see [Samples and SD cards](#streaming).
+- **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM, MACRO and SYNTH with a WT oscillator together: no more than 16 voices; SYNTH using only SAW / SQR / TRI does not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track. Sample voices stream from the card, up to 16 at once (samples copied to PSRAM do not count), see [Samples and SD cards](#streaming).
 - **CPU guard:** when the audio render nears its time budget (above 80 % on average, or one block over 100 %), the oldest voice fades out in 4 ms (releasing voices first) and the pool shrinks to the voices left; once the load drops below 65 % it grows back by one voice every 0.1 s. A heavy project thins out instead of crackling or restarting the device.
+- **Voice pool by cost (Teensy synth board):** every note is priced at note-on by its engine and settings (CHIP and samples are cheapest; wavetable SYNTH with fold, ring and LADDER, DRUM, STRING and the heavier MACRO models cost two to three times more). The summed price of the sounding voices stays under about 65 % of the CPU (the effects and track strips take the rest, about 73 % in all): a note that does not fit fades out the oldest voices in 4 ms (releasing ones first), as many as needed, and always plays. A dense project thins out before the load gets near the CPU guard, which stays as the backstop. The price is fixed when the note starts: an LFO moving fold or cutoff later does not change it. The ESP32-S3 has no such budget.
 - **Latency:** events reach the synth board and play about 4 ms after the sequencer step (a fixed delay that absorbs the link), plus the audio output buffer: the internal sound lags the MIDI tracks by about 10 ms, constantly, without jitter. MIDI tracks are not delayed.
 - **No synth board:** if it does not answer, the status bar shows `NO SYNTH`: INT tracks are silent, the card is unavailable, MIDI tracks keep playing. After the board comes back, the tracker sends it the sound state (`SYNC`).
-- **Sequencer:** RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI. Added: the [synth fx](#synthfx) SLD, VIB, ARP, VSL, OFS, CUT, slice selection SLC, locks of the FM, DRUM and SYNTH macros DEC, COL, SHP, SWP, CON, and filter locks FLT, RES. Mute, solo and stop silence the sound the same way as MIDI notes.
+- **Sequencer:** RAT, GAT, PRB, TIE, NDG, CHD, STR, CND, VRN, NRN work as on MIDI. Added: the [synth fx](#synthfx) SLD, VIB, ARP, VSL, OFS, CUT, slice selection SLC, locks of the FM, DRUM, SYNTH, MACRO and STRING macros DEC, COL, SHP, SWP, CON, and filter locks FLT, RES. Mute, solo and stop silence the sound the same way as MIDI notes.
 - **Start:** Program Change is not sent to INT tracks; the instrument from PGM (back to Instr from TRACK), PBN and synth fx are reset.
 - **Load:** `CPU NN%` in the right corner of the [status bar](#screen).
 - Sample import, renaming and deletion, wavetable import, Compact and Clear cache are available only when stopped: there is no sound while the synth board writes to its flash.
@@ -1626,12 +1719,12 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d-later).
 | Files in a list | 128 |
 | Project / track / instrument name | 16 / 8 / 8 characters |
 | MIDI import | 512 KB, 16,384 notes, 32 sources |
-| Instruments / voices | 32 / 32, of them up to 16 heavy (FM, DRUM, wavetable SYNTH) (POLY: up to 4 per track; fewer under the CPU guard) |
+| Instruments / voices | 32 / 32, of them up to 16 heavy (FM, DRUM, MACRO, STRING, wavetable SYNTH) (POLY: up to 4 per track; fewer under the CPU guard) |
 | Sample voices streaming at once | 16 (samples in PSRAM do not count) |
 | Samples | 128 per project, name up to 16 characters |
 | Sample length | up to the card's free space (mono, 16-bit, up to 44.1 kHz after import) |
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048 |
-| Presets | `.mti` file 204 bytes, name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 145 factory |
+| Presets | `.mti` file 204 bytes, name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 153 factory |
 | Arp patterns | up to 32 steps; 106 factory, up to 32 of your own listed, name up to 16 characters |
 | Chord progressions | up to 16 chords; 55 factory + RANDOM, 32 rhythms, up to 32 of your own listed |
 | Bass patterns | up to 32 steps; 48 factory, up to 32 of your own listed |

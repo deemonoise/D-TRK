@@ -2,6 +2,7 @@
 #include <math.h>
 #include <string.h>
 #include <unity.h>
+#include "inst_codec.h"
 #include "model.h"
 
 using namespace mt;
@@ -127,10 +128,118 @@ void test_reset_audio_defaults() {
 void test_instr_type_order() {
   TEST_ASSERT_TRUE(instrTypeAt(0) == InstrType::Fm);
   TEST_ASSERT_TRUE(instrTypeAt(1) == InstrType::Synth);
-  TEST_ASSERT_TRUE(instrTypeAt(2) == InstrType::Drum);
-  TEST_ASSERT_TRUE(instrTypeAt(3) == InstrType::Sample);
-  TEST_ASSERT_TRUE(instrTypeAt(4) == InstrType::Chip);
+  TEST_ASSERT_TRUE(instrTypeAt(2) == InstrType::Macro);
+  TEST_ASSERT_TRUE(instrTypeAt(3) == InstrType::String);
+  TEST_ASSERT_TRUE(instrTypeAt(4) == InstrType::Drum);
+  TEST_ASSERT_TRUE(instrTypeAt(5) == InstrType::Sample);
+  TEST_ASSERT_TRUE(instrTypeAt(6) == InstrType::Chip);
+  TEST_ASSERT_TRUE(instrTypeAt(7) == InstrType::Kit);
+  TEST_ASSERT_EQUAL(6, static_cast<int>(InstrType::Macro));  // stored in files: appended after Kit
+  TEST_ASSERT_EQUAL(7, static_cast<int>(InstrType::String));  // appended after Macro
+  TEST_ASSERT_EQUAL(8, static_cast<int>(InstrType::Count));
   for (int k = 0; k < static_cast<int>(InstrType::Count); ++k) TEST_ASSERT_EQUAL(k, instrTypePos(instrTypeAt(k)));
+}
+
+void test_macro_type() {
+  Instrument m;
+  m.machine = 9;
+  instrSetType(m, InstrType::Macro);
+  TEST_ASSERT_TRUE(m.type == InstrType::Macro);
+  TEST_ASSERT_EQUAL(0, m.machine);  // >= MacroModel::Count
+  const uint8_t def[kFmMacros] = {64, 64, 64, 0, 0};  // TIMBRE, COLOR, ENV>TMB off
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(def, m.macro, kFmMacros);
+  m.machine = 7;
+  instrSetType(m, InstrType::Macro);
+  TEST_ASSERT_EQUAL(7, m.machine);
+  m.machine = 8;
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(0, m.machine);
+  m.machine = 7;
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(7, m.machine);
+}
+
+void test_macro_model_names() {
+  const char* const want[] = {"SAW+", "MORPH", "SAW/SQR", "FOLD", "VOSIM", "VOWEL", "FM", "FB FM"};
+  TEST_ASSERT_EQUAL(8, static_cast<int>(MacroModel::Count));
+  for (int k = 0; k < 8; ++k) TEST_ASSERT_EQUAL_STRING(want[k], macroModelName(static_cast<uint8_t>(k)));
+  TEST_ASSERT_EQUAL_STRING("SAW+", macroModelName(8));  // out of range
+}
+
+void test_macro_lfo_dests() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  constexpr InstrType T = InstrType::Macro;
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Dec), T));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Col), T));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Shp), T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Swp), T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Con), T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sub), T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Fold), T));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Cutoff), T));
+  TEST_ASSERT_EQUAL_STRING("TIMBRE", lfoDestName(d(LfoDest::Dec), T));
+  TEST_ASSERT_EQUAL_STRING("COLOR", lfoDestName(d(LfoDest::Col), T));
+  TEST_ASSERT_EQUAL_STRING("ENV>TMB", lfoDestName(d(LfoDest::Shp), T));
+  TEST_ASSERT_EQUAL_STRING("CUTOFF", lfoDestName(d(LfoDest::Cutoff), T));
+}
+
+void test_string_type() {
+  Instrument m;
+  m.machine = 5;
+  instrSetType(m, InstrType::String);
+  TEST_ASSERT_TRUE(m.type == InstrType::String);
+  TEST_ASSERT_EQUAL(0, m.machine);  // >= StringModel::Count
+  const uint8_t def[kFmMacros] = {80, 64, 0, 30, 10};  // DAMP, BRIGHT, STRUCT, POS, EXC
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(def, m.macro, kFmMacros);
+  TEST_ASSERT_EQUAL(0, kMacDamp);
+  TEST_ASSERT_EQUAL(4, kMacExc);
+  m.machine = 1;
+  instrSetType(m, InstrType::String);
+  TEST_ASSERT_EQUAL(1, m.machine);
+  // COMB needs the voice's delay line, which STRING takes: switching to STRING turns it Off.
+  m.fltMode = static_cast<uint8_t>(FltMode::Comb);
+  instrSetType(m, InstrType::String);
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Off), m.fltMode);
+  m.fltMode = static_cast<uint8_t>(FltMode::Formant);
+  instrSetType(m, InstrType::String);
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Formant), m.fltMode);
+  m.machine = 2;
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(0, m.machine);
+  m.machine = 1;
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(1, m.machine);
+  // A loaded STRING with COMB comes out Off; FORMANT stays.
+  m.fltMode = static_cast<uint8_t>(FltMode::Comb);
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Off), m.fltMode);
+  m.fltMode = static_cast<uint8_t>(FltMode::Formant);
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Formant), m.fltMode);
+}
+
+void test_string_model_names() {
+  TEST_ASSERT_EQUAL(2, static_cast<int>(StringModel::Count));
+  TEST_ASSERT_EQUAL_STRING("STRING", stringModelName(0));
+  TEST_ASSERT_EQUAL_STRING("MODAL", stringModelName(1));
+  TEST_ASSERT_EQUAL_STRING("STRING", stringModelName(2));  // out of range
+}
+
+void test_string_lfo_dests() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  constexpr InstrType T = InstrType::String;
+  for (uint8_t x = d(LfoDest::Dec); x <= d(LfoDest::Con); ++x) TEST_ASSERT_TRUE(lfoDestValid(x, T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sub), T));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Fold), T));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Cutoff), T));
+  TEST_ASSERT_EQUAL_STRING("DAMP", lfoDestName(d(LfoDest::Dec), T));
+  TEST_ASSERT_EQUAL_STRING("BRIGHT", lfoDestName(d(LfoDest::Col), T));
+  TEST_ASSERT_EQUAL_STRING("STRUCT", lfoDestName(d(LfoDest::Shp), T));
+  TEST_ASSERT_EQUAL_STRING("POS", lfoDestName(d(LfoDest::Swp), T));
+  TEST_ASSERT_EQUAL_STRING("EXC", lfoDestName(d(LfoDest::Con), T));
+  TEST_ASSERT_EQUAL_STRING("CUTOFF", lfoDestName(d(LfoDest::Cutoff), T));
 }
 
 void test_env_time_curve() {
@@ -276,7 +385,7 @@ void test_lfo_dest_step_skips_self_retrig() {
   TEST_ASSERT_EQUAL(d(LfoDest::Rtrg3), lfoDestStep(d(LfoDest::Rtrg1), 1, InstrType::Fm, 1));
   TEST_ASSERT_EQUAL(d(LfoDest::Rtrg2), lfoDestStep(d(LfoDest::Rtrg4), -1, InstrType::Fm, 2));
   TEST_ASSERT_EQUAL(d(LfoDest::Rtrg1), lfoDestStep(d(LfoDest::Rtrg4), -2, InstrType::Fm, 2));
-  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Semi2), 1, InstrType::Synth, 0));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Ring), 1, InstrType::Synth, 0));
   TEST_ASSERT_EQUAL(d(LfoDest::Rtrg3), lfoDestStep(d(LfoDest::Rtrg3), 1, InstrType::Fm, 3));  // end, self skipped
 }
 
@@ -320,6 +429,38 @@ void test_mod_send_lock_and_dest() {
   TEST_ASSERT_EQUAL(0, TrackCfg().modSend);
 }
 
+// SYNTH FOLD / RING (plan A): appended after MOD in the enum (file format), shown after SEMI2,
+// SYNTH only; a type change moves them to PITCH; Instrument fields 0 by default.
+void test_lfo_dest_fold_ring() {
+  using T = InstrType;
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::ModSend) + 1, static_cast<int>(LfoDest::Fold));
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Fold) + 1, static_cast<int>(LfoDest::Ring));
+  const LfoDest dests[] = {LfoDest::Fold, LfoDest::Ring};
+  const T others[] = {T::Chip, T::Fm, T::Drum, T::Sample, T::Kit};
+  for (LfoDest x : dests) {
+    TEST_ASSERT_TRUE(lfoDestValid(d(x), T::Synth));
+    for (T t : others) TEST_ASSERT_FALSE(lfoDestValid(d(x), t));
+  }
+  TEST_ASSERT_EQUAL_STRING("FOLD", lfoDestName(d(LfoDest::Fold), T::Synth));
+  TEST_ASSERT_EQUAL_STRING("RING", lfoDestName(d(LfoDest::Ring), T::Synth));
+  TEST_ASSERT_EQUAL(d(LfoDest::Fold), lfoDestStep(d(LfoDest::Semi2), 1, T::Synth));
+  TEST_ASSERT_EQUAL(d(LfoDest::Ring), lfoDestStep(d(LfoDest::Fold), 1, T::Synth));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Ring), 1, T::Synth));
+  TEST_ASSERT_EQUAL(d(LfoDest::Ring), lfoDestStep(d(LfoDest::Rate1), -1, T::Synth));
+  TEST_ASSERT_EQUAL(d(LfoDest::Rate1), lfoDestStep(d(LfoDest::Fine), 1, T::Fm));  // both skipped
+  TEST_ASSERT_EQUAL(d(LfoDest::Ring), folDestStep(d(LfoDest::Fold), 1, T::Synth));
+  Instrument m;
+  TEST_ASSERT_EQUAL(0, m.synFold);
+  TEST_ASSERT_EQUAL(0, m.synRing);
+  instrSetType(m, T::Synth);
+  m.lfoDest = d(LfoDest::Fold);
+  m.lfo[0].dest = d(LfoDest::Ring);
+  instrSetType(m, T::Fm);
+  TEST_ASSERT_EQUAL(d(LfoDest::Pitch), m.lfoDest);
+  TEST_ASSERT_EQUAL(d(LfoDest::Pitch), m.lfo[0].dest);
+}
+
 // Type change: a target the new type lacks becomes PITCH, on every LFO.
 void test_instr_set_type_fixes_lfo_dests() {
   Instrument m;
@@ -357,11 +498,11 @@ void test_synth_type_defaults() {
 }
 
 void test_synth_type_order() {
-  // UI order: FM, SYNTH, DRUM, SAMPLE, CHIP.
+  // UI order: FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP, KIT.
   TEST_ASSERT_EQUAL(InstrType::Fm, instrTypeAt(0));
   TEST_ASSERT_EQUAL(InstrType::Synth, instrTypeAt(1));
   TEST_ASSERT_EQUAL(1, instrTypePos(InstrType::Synth));
-  TEST_ASSERT_EQUAL(InstrType::Chip, instrTypeAt(4));
+  TEST_ASSERT_EQUAL(InstrType::Chip, instrTypeAt(6));
 }
 
 void test_project_reset_clears_wavetables() {
@@ -556,6 +697,12 @@ int main() {
   RUN_TEST(test_track_audible_mute_solo);
   RUN_TEST(test_reset_audio_defaults);
   RUN_TEST(test_instr_type_order);
+  RUN_TEST(test_macro_type);
+  RUN_TEST(test_macro_model_names);
+  RUN_TEST(test_macro_lfo_dests);
+  RUN_TEST(test_string_type);
+  RUN_TEST(test_string_model_names);
+  RUN_TEST(test_string_lfo_dests);
   RUN_TEST(test_env_time_curve);
   RUN_TEST(test_fm_decay_ms_range);
   RUN_TEST(test_lfo_hz_range);
@@ -585,5 +732,6 @@ int main() {
   RUN_TEST(test_lfo_dest_pan);
   RUN_TEST(test_mod_send_lock_and_dest);
   RUN_TEST(test_follower_defaults_and_helpers);
+  RUN_TEST(test_lfo_dest_fold_ring);
   return UNITY_END();
 }

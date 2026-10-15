@@ -338,6 +338,8 @@ void test_mod_fx() {
   TEST_ASSERT_TRUE(fxNextCmd(Fx::RVB, 1) == Fx::MOD);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::PAN, -1) == Fx::MOD);
   TEST_ASSERT_EQUAL_STRING("MOD", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::ModSend)));
+  TEST_ASSERT_EQUAL_STRING("FLD", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Fold)));
+  TEST_ASSERT_EQUAL_STRING("RNG", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Ring)));
 }
 
 // DTY: the track insert's drive model lock, TNH CLP FLD RCT ASY, INT tracks only, after DRV; stored

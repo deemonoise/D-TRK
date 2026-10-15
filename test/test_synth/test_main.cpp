@@ -339,6 +339,112 @@ void test_guard_hard_spike_sheds_at_once() {
   TEST_ASSERT_EQUAL(full - 1, liveVoices());
 }
 
+// ---- Voice pool by cost (setVoiceBudget) ----
+
+static void poolInstr(Instrument& m) {
+  m.sustain = 127;
+  m.release = 100;
+  m.mono = false;
+}
+
+void test_pool_budget_off_by_default() {
+  TEST_ASSERT_EQUAL(kVoiceBudgetOff, s->voiceBudget());
+  fillVoices();  // 32 CHIP notes on 16 tracks x2
+  TEST_ASSERT_EQUAL(kVoices < 2 * kTracks ? kVoices : 2 * kTracks, liveVoices());
+  for (int i = 0; i < kVoices; ++i)
+    if (s->voice(i).on) TEST_ASSERT_EQUAL(kCostChip, s->voice(i).cost);
+}
+
+void test_pool_budget_steals_oldest_chip() {
+  s->setVoiceBudget(500);  // four CHIP notes (119) fit, the fifth does not
+  for (int t = 0; t < 5; ++t) {
+    poolInstr(p->instruments[t]);
+    p->tracks[t].instr = static_cast<uint8_t>(t);
+  }
+  for (int t = 0; t < 4; ++t) noteOn(0, static_cast<uint8_t>(t), 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(4, liveVoices());
+  noteOn(0, 4, 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(4, liveVoices());
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& v = s->voice(i);
+    if (v.on && v.stolen) TEST_ASSERT_EQUAL(0, v.track);  // the oldest
+    if (v.on && v.track == 4) TEST_ASSERT_FALSE(v.stolen);  // the new note plays
+  }
+}
+
+// The note sequence of bench-max group 5 (plan A worst case): WT SYNTH fold + ring + LADDER on
+// tracks 0..7 and a growing CHIP LADDER pool on tracks 8.., 16 .. 32 voices requested, the notes
+// ended and started again each step. At every block, step changes included, the live voices stay
+// within the budget (scaled to the native pool: kFmVoiceMax heavy voices here, not 16).
+void test_pool_budget_holds_through_ladder_steps() {
+  Instrument& w = p->instruments[1];
+  instrSetType(w, InstrType::Synth);
+  w.synOsc[0] = w.synOsc[1] = static_cast<uint8_t>(SynOsc::Wt);
+  w.synFold = 100;
+  w.synRing = 64;
+  w.fltMode = static_cast<uint8_t>(FltMode::Ladder);
+  Instrument& c = p->instruments[2];
+  c.fltMode = static_cast<uint8_t>(FltMode::Ladder);
+  w.sustain = c.sustain = 127;
+  w.mono = c.mono = false;
+  for (int t = 0; t < kTracks; ++t) p->tracks[t].instr = t < 8 ? 1 : 2;
+  const int budget = kFmVoiceMax * (kCostSynWt + kCostFold + kCostRing + kCostLadder) + 3 * (kCostChip + kCostLadder) + 50;
+  s->setVoiceBudget(budget);
+  auto chord = [](int first, int voices, uint8_t on) {
+    for (int i = 0; i < voices; ++i) {
+      const int t = first + i / kPolyPerTrack, k = i % kPolyPerTrack;
+      const uint8_t key = static_cast<uint8_t>(48 + (t % 4) * 3 + k * 5);
+      if (on) noteOn(0, static_cast<uint8_t>(t), key, 100);
+      else noteOff(0, static_cast<uint8_t>(t), key);
+    }
+  };
+  int prev = 0, top = 0;
+  for (int count = 0; count <= 16; count += 4) {
+    if (count) {
+      chord(0, 16, 0);
+      chord(8, prev, 0);
+      render1(buf);
+    }
+    chord(0, 16, 1);
+    chord(8, count, 1);
+    for (int b = 0; b < 40; ++b) {
+      render1(buf);
+      int used = 0;
+      for (int i = 0; i < kVoices; ++i)
+        if (s->voice(i).on && !s->voice(i).stolen) used += s->voice(i).cost;
+      TEST_ASSERT_TRUE(used <= budget);
+      if (used > top) top = used;
+    }
+    prev = count;
+  }
+  // The budget, not the pool, set the limit: no room left for one more WT voice.
+  TEST_ASSERT_TRUE(top + kCostSynWt + kCostFold + kCostRing + kCostLadder > budget);
+}
+
+void test_pool_budget_wt_synth_ladder() {
+  Instrument& m = p->instruments[0];
+  instrSetType(m, InstrType::Synth);
+  poolInstr(m);
+  m.synOsc[0] = static_cast<uint8_t>(SynOsc::Wt);
+  m.fltMode = static_cast<uint8_t>(FltMode::Ladder);
+  const int c = kCostSynWt + kCostLadder;
+  s->setVoiceBudget(3 * c);  // three fit, the fourth steals one
+  p->tracks[0].instr = 0;
+  p->tracks[1].instr = 0;
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  noteOn(0, 0, 64);
+  render1(buf);
+  TEST_ASSERT_EQUAL(3, liveVoices());
+  for (int i = 0; i < kVoices; ++i)
+    if (s->voice(i).on) TEST_ASSERT_EQUAL(c, s->voice(i).cost);
+  noteOn(0, 1, 64);
+  render1(buf);
+  TEST_ASSERT_EQUAL(3, liveVoices());
+}
+
 void test_guard_panic_keeps_the_cap() {
   fillVoices();
   const int full = liveVoices();
@@ -651,6 +757,59 @@ void test_fx_sld_slides_to_next_note() {
   noteOn(0, 0, 60);
   render1(buf);
   TEST_ASSERT_FLOAT_WITHIN(noteHz(60) * 0.01f, noteHz(60), voiceHz(0));
+}
+
+// SLD takes the held voice without allocVoice: the voice's cost follows the new note's instrument.
+void test_pool_sld_held_voice_takes_new_cost() {
+  p->tracks[0].instr = 0;
+  noteOn(0, 0, 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(kCostChip, s->voice(0).cost);
+  Instrument& w = p->instruments[1];
+  instrSetType(w, InstrType::Synth);
+  w.sustain = 127;
+  w.synOsc[0] = static_cast<uint8_t>(SynOsc::Wt);
+  w.fltMode = static_cast<uint8_t>(FltMode::Ladder);
+  p->tracks[0].instr = 1;
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::SLD, 25);
+  noteOn(0, 0, 72);
+  render1(buf);
+  TEST_ASSERT_EQUAL(1, s->activeVoices());
+  TEST_ASSERT_TRUE(s->voice(0).on);
+  TEST_ASSERT_EQUAL(kCostSynWt + kCostLadder, s->voice(0).cost);
+}
+
+// SLD into an expensive note keeps the budget: the oldest other voice fades out.
+void test_pool_sld_into_expensive_note_steals() {
+  for (int t = 0; t < 3; ++t) {
+    p->tracks[t].instr = 0;
+    p->instruments[t].mono = false;
+  }
+  s->setVoiceBudget(kCostSynWt + kCostLadder + kCostChip + 6);  // three CHIP notes fit (357 <= 400)
+  noteOn(0, 1, 50);  // the oldest
+  noteOn(0, 2, 52);
+  noteOn(0, 0, 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(3, liveVoices());
+  Instrument& w = p->instruments[1];
+  instrSetType(w, InstrType::Synth);
+  w.sustain = 127;
+  w.synOsc[0] = static_cast<uint8_t>(SynOsc::Wt);
+  w.fltMode = static_cast<uint8_t>(FltMode::Ladder);
+  p->tracks[0].instr = 1;
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::SLD, 25);
+  noteOn(0, 0, 72);  // 275 + 2 x 119 > 400, 275 + 119 fits: only track 1's (oldest) voice goes
+  render1(buf);
+  TEST_ASSERT_EQUAL(2, liveVoices());
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& v = s->voice(i);
+    if (!v.on) continue;
+    if (v.track == 1) TEST_ASSERT_TRUE(v.stolen);
+    else TEST_ASSERT_FALSE(v.stolen);
+    if (v.track == 0) TEST_ASSERT_EQUAL(kCostSynWt + kCostLadder, v.cost);
+  }
 }
 
 void test_fx_vib_depth_and_period() {
@@ -1121,8 +1280,10 @@ void test_max_reso_stays_finite() {
   noteOn(0, 0, 100);
   for (int k = 0; k < 50; ++k) render1(buf);  // softClip keeps int16 in range; must not hang / NaN
   TEST_ASSERT_TRUE(s->activeVoices() == 1);
-  Svf f = s->voice(s->trackVoice(0)).flt;
-  TEST_ASSERT_TRUE(isfinite(f.process(0)));
+  VoiceFilter f = s->voice(s->trackVoice(0)).flt;  // a copy: its own state (BP: no line)
+  float y = 0;
+  f.processAdd(nullptr, &y, 1, nullptr);
+  TEST_ASSERT_TRUE(isfinite(y));
 }
 
 void test_flt_lock_on_note_step() {
@@ -2622,6 +2783,29 @@ void test_kit_inst_lane_plays_instrument() {
   TEST_ASSERT_FALSE(x.sample);
   TEST_ASSERT_EQUAL(5, x.instr);
   TEST_ASSERT_EQUAL(62, x.note);
+}
+
+// A KIT lane note is priced by its lane: a sampler lane as a sample, an instrument lane by that
+// instrument (not by the KIT).
+void test_kit_lane_voice_cost() {
+  kitSetup(0, 0);
+  Instrument& w = p->instruments[5];
+  instrSetType(w, InstrType::Synth);
+  w.sustain = 127;
+  w.synOsc[0] = static_cast<uint8_t>(SynOsc::Wt);
+  w.fltMode = static_cast<uint8_t>(FltMode::Ladder);
+  p->instruments[0].kit[1].instr = 5;
+  noteOn(0, 0, 60, 100);  // lane 0: sampler
+  noteOn(0, 0, 61, 100);  // lane 1: instrument 5
+  render1(buf);
+  int seen = 0;
+  for (int v = 0; v < kVoices; ++v) {
+    const Voice& x = s->voice(v);
+    if (!x.on) continue;
+    ++seen;
+    TEST_ASSERT_EQUAL(x.laneIdx == 0 ? kCostSample : kCostSynWt + kCostLadder, x.cost);
+  }
+  TEST_ASSERT_EQUAL(2, seen);
 }
 
 void test_kit_in_kit_lane_silent() {
@@ -4258,6 +4442,719 @@ void test_ringing_tail_keeps_strip() {
   TEST_ASSERT_TRUE_MESSAGE(abs(lr[0] - last) < abs(last) / 4 + 20, msg);
 }
 
+// ---- SYNTH fold / ring (plan A) ----
+
+// Track 0: a CHIP note (instrument 0); track 1: a SYNTH note (instrument 1, set up by the caller).
+// FNV-1a of 16 stereo blocks from a fresh synth.
+static uint32_t synFoldHash() {
+  p->tracks[0].instr = 0;
+  p->tracks[1].instr = 1;
+  Synth* t = new Synth(*p);
+  const uint8_t on0[3] = {0x90, 60, 127}, on1[3] = {0x90, 57, 127};
+  t->event(0, 0, on0, 3);
+  t->event(0, 1, on1, 3);
+  uint32_t h = 2166136261u;
+  int16_t l[Synth::kBlock], r[Synth::kBlock];
+  for (int k = 0; k < 16; ++k) {
+    t->render(l, r);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      h = (h ^ static_cast<uint16_t>(l[i])) * 16777619u;
+      h = (h ^ static_cast<uint16_t>(r[i])) * 16777619u;
+    }
+  }
+  delete t;
+  return h;
+}
+static Instrument& synFoldInst() {
+  Instrument& m = p->instruments[1];
+  instrSetType(m, InstrType::Synth);
+  return m;
+}
+constexpr uint32_t kSynFoldRef = 0x250BF7C3;  // today's build (fold 0, ring 0), captured before the change
+
+void test_synth_fold_ring_off_bit_exact() {
+  Instrument& m = synFoldInst();
+  TEST_ASSERT_EQUAL(0, m.synFold);
+  TEST_ASSERT_EQUAL(0, m.synRing);
+  TEST_ASSERT_EQUAL_HEX32(kSynFoldRef, synFoldHash());
+}
+
+void test_synth_fold_changes_output() {
+  synFoldInst();
+  const uint32_t ref = synFoldHash();
+  p->instruments[1].synFold = 100;
+  TEST_ASSERT_NOT_EQUAL(ref, synFoldHash());
+  p->instruments[1].synFold = 0;
+  p->instruments[1].synRing = 100;
+  TEST_ASSERT_NOT_EQUAL(ref, synFoldHash());
+}
+
+void test_synth_lfo_fold_changes_output() {
+  Instrument& m = synFoldInst();
+  const uint32_t ref = synFoldHash();
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Fold);
+  m.lfoDepth = 63;
+  m.lfoRate = 100;
+  TEST_ASSERT_NOT_EQUAL(ref, synFoldHash());
+}
+
+void test_synth_follower_ring_changes_output() {
+  synFoldInst();
+  const uint32_t ref = synFoldHash();
+  folSetup(1, 0, LfoDest::Ring, 63);
+  TEST_ASSERT_NOT_EQUAL(ref, synFoldHash());
+}
+
+// ---- filter types (VoiceFilter) ----
+
+// FNV-1a over 4 s of L / R: LP on CHIP, BP on FM, HP on SYNTH (chords, releases, filter env, key
+// track): pins the LP / BP / HP path bit-exact across the filter rework.
+static uint32_t lpBpHpRenderHash() {
+  Instrument& c = p->instruments[0];  // CHIP saw, LP
+  c.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  c.cutoff = 60;
+  c.reso = 100;
+  c.fenv = 30;
+  c.fDec = 60;
+  c.keytrack = 64;
+  c.release = 50;
+  Instrument& f = p->instruments[1];  // FM, BP
+  useFm(1, FmMachine::Kick);
+  instrSetType(f, InstrType::Fm);
+  f.fltMode = static_cast<uint8_t>(FltMode::Bp);
+  f.cutoff = 90;
+  f.reso = 70;
+  f.release = 40;
+  Instrument& y = p->instruments[2];  // SYNTH, HP
+  instrSetType(y, InstrType::Synth);
+  y.fltMode = static_cast<uint8_t>(FltMode::Hp);
+  y.cutoff = 50;
+  y.reso = 40;
+  y.release = 60;
+  for (int t = 0; t < 3; ++t) p->tracks[t].instr = static_cast<uint8_t>(t);
+  delete s;
+  s = new Synth(*p);
+  uint32_t h = 2166136261u;
+  int peak = 0;
+  auto mix = [&h, &peak](const int16_t* x) {
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      h = (h ^ static_cast<uint16_t>(x[i])) * 16777619u;
+      peak = abs(x[i]) > peak ? abs(x[i]) : peak;
+    }
+  };
+  const int blocks = 4 * kSynthRate / Synth::kBlock;
+  for (int k = 0; k < blocks; ++k) {
+    if (k == 0) {
+      noteOn(0, 0, 48);
+      noteOn(3, 0, 55);
+      noteOn(5, 1, 60);
+      noteOn(9, 2, 64);
+    }
+    if (k == blocks / 4) {
+      noteOff(0, 0, 48);
+      noteOn(7, 1, 67);
+      noteOn(11, 2, 71, 90);
+    }
+    if (k == blocks / 2) {
+      noteOff(1, 0, 55);
+      noteOff(2, 1, 60);
+      noteOff(2, 1, 67);
+      noteOff(4, 2, 64);
+      noteOff(4, 2, 71);
+    }
+    render1(buf);
+    mix(buf);
+    mix(bufR);
+  }
+  TEST_ASSERT_TRUE(peak > 1000);  // not a hash of silence
+  return h;
+}
+
+void test_lp_bp_hp_render_unchanged() {
+  const uint32_t h = lpBpHpRenderHash();
+  TEST_ASSERT_EQUAL_HEX32(0x3D847FB5u, h);  // captured before VoiceFilter replaced the Svf
+}
+
+// A CHIP saw through each new type: it sounds, and the voice is freed within 3 s of the release
+// (a self-oscillating LADDER / MS20 tail fades out).
+void test_new_filter_types_sound_and_free() {
+  const struct { FltMode m; uint8_t reso; } cases[] = {
+      {FltMode::Ladder, 100}, {FltMode::Ms20, 100}, {FltMode::Comb, 100}, {FltMode::Formant, 100},
+      {FltMode::Ladder, 127}, {FltMode::Ms20, 127}, {FltMode::Comb, 127}, {FltMode::Formant, 127}};
+  for (const auto& c : cases) {
+    s->reset();
+    Instrument& m = p->instruments[0];
+    m.fltMode = static_cast<uint8_t>(c.m);
+    m.cutoff = 70;
+    m.reso = c.reso;
+    noteOn(0, 0, 57);
+    TEST_ASSERT_TRUE(rmsBlocks(40) > 100.f);
+    noteOff(0, 0, 57);
+    for (int k = 0; k < 3 * kSynthRate / Synth::kBlock && s->activeVoices() > 0; ++k) render1(buf);
+    TEST_ASSERT_EQUAL(0, s->activeVoices());
+  }
+}
+
+// FORMANT: the cutoff is the vowel, key track does not move it.
+static void renderNote(int16_t* out, int blocks, uint8_t note) {
+  delete s;
+  s = new Synth(*p);
+  noteOn(0, 0, note);
+  for (int k = 0; k < blocks; ++k) {
+    render1(buf);
+    memcpy(out + k * Synth::kBlock, buf, sizeof(buf));
+  }
+}
+
+void test_formant_ignores_key_track() {
+  static int16_t a[64 * Synth::kBlock], b[64 * Synth::kBlock];
+  Instrument& m = p->instruments[0];
+  m.fltMode = static_cast<uint8_t>(FltMode::Formant);
+  m.cutoff = 40;
+  m.reso = 90;
+  m.keytrack = 0;
+  renderNote(a, 64, 84);
+  m.keytrack = 127;
+  renderNote(b, 64, 84);
+  TEST_ASSERT_EQUAL_INT16_ARRAY(a, b, 64 * Synth::kBlock);
+  m.fltMode = static_cast<uint8_t>(FltMode::Lp);  // LP does track
+  renderNote(b, 64, 84);
+  m.keytrack = 0;
+  renderNote(a, 64, 84);
+  TEST_ASSERT_TRUE(memcmp(a, b, sizeof(a)) != 0);
+}
+
+// COMB on two notes of one track: each voice its own line (the chord is the sum of the two notes
+// alone), tuned to each note (key track 100 %).
+void test_comb_voices_have_own_lines() {
+  static int16_t a[96 * Synth::kBlock], b[96 * Synth::kBlock], ab[96 * Synth::kBlock];
+  Instrument& m = p->instruments[0];
+  m.fltMode = static_cast<uint8_t>(FltMode::Comb);
+  m.cutoff = 50;  // ~261 Hz at C4
+  m.reso = 115;
+  m.keytrack = 127;
+  m.vol = 8;  // far below the master soft clip (the tuned comb is ~3x the saw)
+  renderNote(a, 96, 60);
+  renderNote(b, 96, 67);
+  delete s;
+  s = new Synth(*p);
+  noteOn(0, 0, 60);
+  noteOn(0, 0, 67);
+  for (int k = 0; k < 96; ++k) {
+    render1(buf);
+    memcpy(ab + k * Synth::kBlock, buf, sizeof(buf));
+  }
+  int worst = 0, peak = 0;
+  for (int i = 0; i < 96 * Synth::kBlock; ++i) {
+    worst = abs(ab[i] - a[i] - b[i]) > worst ? abs(ab[i] - a[i] - b[i]) : worst;
+    peak = abs(ab[i]) > peak ? abs(ab[i]) : peak;
+  }
+  TEST_ASSERT_TRUE(peak > 500);
+  TEST_ASSERT_TRUE(worst <= 4 + peak / 100);
+}
+
+// RMS of the second half (the comb settled).
+static float rmsTail(const int16_t* x, int blocks) {
+  double sum = 0;
+  for (int i = blocks / 2 * Synth::kBlock; i < blocks * Synth::kBlock; ++i) sum += double(x[i]) * x[i];
+  return static_cast<float>(sqrt(sum / (blocks / 2 * Synth::kBlock)));
+}
+
+// COMB follows the key: at key track 100 % its peaks (multiples of the comb pitch) sit on every
+// harmonic of the saw, so G4 rings far louder than at key track 0. There the comb stays at C4's
+// 261 Hz: its peaks (261, 523, 785 Hz ...) meet only G4's even harmonics (784 Hz ~ the 3rd peak, ...),
+// the fundamental 392 Hz and the other odd ones fall between peaks. On C4 key track changes nothing
+// (the reference note).
+void test_comb_key_track_tunes_to_note() {
+  static int16_t x[96 * Synth::kBlock];
+  Instrument& m = p->instruments[0];
+  m.fltMode = static_cast<uint8_t>(FltMode::Comb);
+  m.cutoff = 50;  // ~261 Hz at C4
+  m.reso = 115;
+  m.vol = 8;
+  m.keytrack = 127;
+  renderNote(x, 96, 67);
+  const float tracked = rmsTail(x, 96);
+  renderNote(x, 96, 60);
+  const float c4Tracked = rmsTail(x, 96);
+  m.keytrack = 0;
+  renderNote(x, 96, 67);
+  const float fixed = rmsTail(x, 96);
+  renderNote(x, 96, 60);
+  const float c4Fixed = rmsTail(x, 96);
+  TEST_ASSERT_TRUE(tracked > 2.f * fixed);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f * c4Fixed, c4Fixed, c4Tracked);
+}
+
+// ---- MACRO ----
+
+static Instrument& macroInst(MacroModel mdl) {
+  Instrument& m = p->instruments[0];
+  instrSetType(m, InstrType::Macro);
+  m.machine = static_cast<uint8_t>(mdl);
+  m.sustain = 127;
+  return m;
+}
+
+constexpr int kMacBlocks = 40;
+static int16_t ma_[Synth::kBlock * kMacBlocks], mb_[Synth::kBlock * kMacBlocks];
+
+// Sum of |a - b| and of |a| over samples [from, to).
+static void macDiff(int from, int to, long& d, long& a) {
+  d = a = 0;
+  for (int i = from; i < to; ++i) {
+    d += abs(ma_[i] - mb_[i]);
+    a += abs(ma_[i]);
+  }
+}
+
+static void renderMac(int16_t* out, uint8_t note = 57, uint8_t vel = 127) {
+  noteOn(0, 0, note, vel);
+  for (int k = 0; k < kMacBlocks; ++k) s->render(out + k * Synth::kBlock);
+}
+
+void test_macro_sounds_at_note_pitch() {
+  macroInst(MacroModel::Fold);  // a folded sine: two falling crossings at most per cycle at TIMBRE 64
+  Instrument& m = p->instruments[0];
+  m.macro[kMacTimbre] = 0;  // plain sine
+  m.wave = static_cast<uint8_t>(Wave::Noise);  // a CHIP fallback would hiss
+  noteOn(0, 0, 57);  // 220 Hz
+  render1(buf);
+  int nz = 0;
+  for (int i = 0; i < Synth::kBlock; ++i) nz += buf[i] != 0;
+  TEST_ASSERT_TRUE(nz > 100);
+  TEST_ASSERT_INT_WITHIN(2, 22, crossings(blocksMs(100)));
+}
+
+void test_macro_voices_are_heavy() {
+  macroInst(MacroModel::SawPlus).mono = false;
+  for (int t = 0; t < 3; ++t) p->tracks[t].instr = 0;
+  for (int k = 0; k < 9; ++k) {  // 4 + 4 + 1: the 9th steals one
+    noteOn(0, static_cast<uint8_t>(k / 4), static_cast<uint8_t>(48 + k));
+    render1(buf);
+  }
+  renderMs(kStealMs);
+  int heavy = 0;
+  for (int i = 0; i < kVoices; ++i) heavy += heavyLoad(s->voice(i));
+  TEST_ASSERT_EQUAL(kFmVoiceMax, heavy);
+  TEST_ASSERT_EQUAL(kFmVoiceMax, s->activeVoices());
+}
+
+void test_macro_col_lock_changes_output() {
+  macroInst(MacroModel::SawSqr);
+  renderMac(ma_);
+  s->reset();
+  fx(0, 0, Fx::COL, 127);  // COLOR
+  renderMac(mb_);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lockMask & (1 << kMacColor));
+  long d, a;
+  macDiff(0, Synth::kBlock * kMacBlocks, d, a);
+  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
+}
+
+void test_macro_lfo_timbre_changes_output() {
+  Instrument& m = macroInst(MacroModel::Fold);
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Dec);  // TIMBRE
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 100;
+  m.lfoDepth = 0;
+  renderMac(ma_);
+  s->reset();
+  m.lfoDepth = 63;
+  renderMac(mb_);
+  long d, a;
+  macDiff(0, Synth::kBlock * kMacBlocks, d, a);
+  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
+}
+
+void test_macro_velocity_moves_timbre() {
+  Instrument& m = macroInst(MacroModel::Fold);
+  m.macro[kMacTimbre] = 30;
+  renderMac(ma_);
+  s->reset();
+  m.velMac = 63;  // vel 127: TIMBRE +62
+  renderMac(mb_);
+  long d, a;
+  macDiff(0, Synth::kBlock * kMacBlocks, d, a);
+  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
+  // At velocity 64 velMac is neutral.
+  s->reset();
+  m.velMac = 0;
+  renderMac(ma_, 57, 64);
+  s->reset();
+  m.velMac = 63;
+  renderMac(mb_, 57, 64);
+  macDiff(0, Synth::kBlock * kMacBlocks, d, a);
+  TEST_ASSERT_EQUAL(0, d);
+}
+
+void test_macro_env_timbre_is_ad() {
+  Instrument& m = macroInst(MacroModel::Fold);
+  m.macro[kMacTimbre] = 10;
+  m.synEAtk = 0;
+  m.synEDec = 41;  // ~19 ms to -60 dB
+  m.macro[kMacEnvTmb] = 64;  // off
+  renderMac(ma_);
+  s->reset();
+  m.macro[kMacEnvTmb] = 127;
+  renderMac(mb_);
+  long d, a;
+  macDiff(0, kSynthRate * 50 / 1000, d, a);  // first 50 ms: TIMBRE pushed up
+  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
+  macDiff(kSynthRate * 100 / 1000, Synth::kBlock * kMacBlocks, d, a);  // after: the same sound
+  TEST_ASSERT_TRUE(a > 0 && d < a / 100);
+}
+
+// A legato MACRO note on a voice that played SYNTH starts the MACRO voice and ENV>TMB afresh.
+static void macLegatoSetup() {
+  Instrument& m = macroInst(MacroModel::Fold);
+  m.mono = true;
+  m.macro[kMacTimbre] = 10;
+  m.synEAtk = 0;
+  m.synEDec = 41;
+  m.macro[kMacEnvTmb] = 127;
+  Instrument& y = p->instruments[1];
+  instrSetType(y, InstrType::Synth);
+  y.mono = true;
+  y.sustain = 127;
+}
+
+void test_macro_legato_from_synth_starts_fresh() {
+  macLegatoSetup();
+  renderMac(ma_);  // a fresh MACRO note
+  s->reset();
+  pgm(0, 1);
+  noteOn(0, 0, 57);  // SYNTH
+  for (int k = 0; k < 60; ++k) render1(buf);
+  pgm(0, 0);
+  renderMac(mb_);  // MACRO legato on the same voice
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).mac);
+  long d, a;
+  macDiff(0, kSynthRate * 50 / 1000, d, a);  // ENV>TMB from its start
+  TEST_ASSERT_TRUE(a > 0);
+  TEST_ASSERT_TRUE(d < a / 100);
+}
+
+// A legato SYNTH note on a voice that played MACRO starts the SYNTH voice and env -> SHAPE afresh
+// (the MACRO voice shares the engine storage and ran its own senvT).
+void test_synth_legato_from_macro_starts_fresh() {
+  macLegatoSetup();
+  Instrument& y = p->instruments[1];
+  y.synOsc[0] = y.synOsc[1] = static_cast<uint8_t>(SynOsc::Square);  // SHAPE = pulse width
+  y.macro[kMacShp1] = y.macro[kMacShp2] = 0;
+  y.macro[kMacSenv] = 127;  // full env -> SHAPE
+  y.synEAtk = 0;
+  y.synEDec = 41;
+  pgm(0, 1);
+  renderMac(ma_);  // a fresh SYNTH note
+  s->reset();
+  pgm(0, 0);
+  noteOn(0, 0, 57);  // MACRO
+  for (int k = 0; k < 60; ++k) render1(buf);
+  pgm(0, 1);
+  renderMac(mb_);  // SYNTH legato on the same voice
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).syn);
+  long d, a;
+  macDiff(0, kSynthRate * 50 / 1000, d, a);  // env -> SHAPE from its start
+  TEST_ASSERT_TRUE(a > 0);
+  TEST_ASSERT_TRUE(d < a / 100);
+}
+
+// SYNTH then MACRO on the same mono track: the engine union is rebuilt, the output finite and sounding.
+void test_macro_after_synth_same_track_sounds() {
+  macLegatoSetup();
+  pgm(0, 1);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 20; ++k) render1(buf);
+  pgm(0, 0);
+  noteOn(0, 0, 57);
+  long a = 0;
+  int rails = 0;  // a NaN / inf would pin the output to the rails
+  for (int k = 0; k < 20; ++k) {
+    render1(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      a += abs(buf[i]);
+      rails += buf[i] == 32767 || buf[i] == -32768;
+    }
+  }
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_TRUE(v.mac);
+  TEST_ASSERT_FALSE(v.syn);
+  TEST_ASSERT_TRUE(rails < Synth::kBlock);
+  TEST_ASSERT_TRUE(a > 20 * Synth::kBlock * 100);
+}
+
+static uint32_t macClk = 0;
+static uint32_t macClock() { return macClk += 3; }
+
+void test_macro_profile_stage() {
+  macroInst(MacroModel::Vowel);
+  TEST_ASSERT_EQUAL_STRING("macro", Synth::profName(Synth::kProfMacro));
+  noteOn(0, 0, 57);
+  s->render(buf);
+  s->setProfiler(macClock);
+  s->render(buf);
+  s->render(buf);
+  uint32_t c[Synth::kProfStages], n[Synth::kProfStages], blocks = 0;
+  s->takeProfile(c, n, blocks);
+  TEST_ASSERT_TRUE(n[Synth::kProfMacro] > 0);
+  TEST_ASSERT_TRUE(c[Synth::kProfMacro] > 0);
+  TEST_ASSERT_EQUAL_UINT32(0, n[Synth::kProfChip]);
+  s->setProfiler(nullptr);
+}
+
+// ---- STRING ----
+
+static Instrument& stringInst(StringModel mdl) {
+  Instrument& m = p->instruments[0];
+  instrSetType(m, InstrType::String);
+  m.machine = static_cast<uint8_t>(mdl);
+  m.sustain = 127;
+  return m;
+}
+
+constexpr int kStrBlocks = 200;  // ~0.58 s
+static int16_t sa_[Synth::kBlock * kStrBlocks], sb_[Synth::kBlock * kStrBlocks];
+
+static void renderStr(int16_t* out, uint8_t note = 57, uint8_t vel = 127) {
+  noteOn(0, 0, note, vel);
+  for (int k = 0; k < kStrBlocks; ++k) s->render(out + k * Synth::kBlock);
+}
+
+// Sum of |x| over samples [from, to).
+static long absSum(const int16_t* x, int from, int to) {
+  long a = 0;
+  for (int i = from; i < to; ++i) a += abs(x[i]);
+  return a;
+}
+
+// The lag in [lo, hi] with the largest autocorrelation of x[from, from + len).
+static int acLag(const int16_t* x, int from, int len, int lo, int hi) {
+  int best = lo;
+  double bestV = -1e300;
+  for (int l = lo; l <= hi; ++l) {
+    double c = 0;
+    for (int i = from; i < from + len; ++i) c += double(x[i]) * x[i + l];
+    if (c > bestV) {
+      bestV = c;
+      best = l;
+    }
+  }
+  return best;
+}
+
+void test_string_sounds_at_note_pitch() {
+  for (int k = 0; k < 2; ++k) {
+    s->reset();
+    Instrument& m = stringInst(k ? StringModel::Modal : StringModel::String);
+    m.wave = static_cast<uint8_t>(Wave::Noise);  // a CHIP fallback would hiss
+    renderStr(sa_, 57);  // 220 Hz: 200.45 samples
+    TEST_ASSERT_TRUE(absSum(sa_, 0, Synth::kBlock * 20) > 1000);
+    TEST_ASSERT_INT_WITHIN(2, 200, acLag(sa_, 4410, 4096, 150, 260));
+    TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).str);
+  }
+}
+
+void test_string_voices_are_heavy() {
+  stringInst(StringModel::String).mono = false;
+  for (int t = 0; t < 3; ++t) p->tracks[t].instr = 0;
+  for (int k = 0; k < kFmVoiceMax + 1; ++k) {  // the last one steals one
+    noteOn(0, static_cast<uint8_t>(k / 4), static_cast<uint8_t>(48 + k));
+    render1(buf);
+  }
+  renderMs(kStealMs);
+  int heavy = 0;
+  for (int i = 0; i < kVoices; ++i) heavy += heavyLoad(s->voice(i));
+  TEST_ASSERT_EQUAL(kFmVoiceMax, heavy);
+  TEST_ASSERT_EQUAL(kFmVoiceMax, s->activeVoices());
+}
+
+// A held note whose resonance died (DAMP 0: T60 50 ms) frees its voice before the note-off.
+void test_string_done_frees_held_voice() {
+  for (int k = 0; k < 2; ++k) {
+    s->reset();
+    Instrument& m = stringInst(k ? StringModel::Modal : StringModel::String);
+    m.macro[kMacDamp] = 0;
+    m.macro[kMacExc] = 0;  // click
+    noteOn(0, 0, 57);
+    render1(buf);
+    const int vi = s->trackVoice(0);
+    TEST_ASSERT_TRUE(vi >= 0);
+    renderMs(20);
+    TEST_ASSERT_TRUE(s->voice(vi).on);
+    renderMs(300);
+    TEST_ASSERT_FALSE(s->voice(vi).on);
+    TEST_ASSERT_EQUAL(0, s->activeVoices());
+  }
+}
+
+// Tail energy (the last third of the buffer) relative to the whole.
+static long strTail(const int16_t* x) { return absSum(x, Synth::kBlock * kStrBlocks * 2 / 3, Synth::kBlock * kStrBlocks); }
+
+void test_string_dcy_lock_changes_decay() {
+  Instrument& m = stringInst(StringModel::String);
+  m.macro[kMacDamp] = 40;
+  renderStr(sa_);
+  s->reset();
+  fx(0, 0, Fx::DCY, 120);  // DAMP: a longer ring
+  renderStr(sb_);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lockMask & (1 << kMacDamp));
+  TEST_ASSERT_TRUE(strTail(sb_) > 4 * strTail(sa_) + 100);
+}
+
+void test_string_lfo_damp_changes_decay() {
+  Instrument& m = stringInst(StringModel::Modal);
+  m.macro[kMacDamp] = 40;
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Dec);  // DAMP
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 10;
+  m.lfoDepth = 0;
+  renderStr(sa_);
+  s->reset();
+  m.lfoDepth = 63;  // the square's first half: DAMP up
+  renderStr(sb_);
+  long d = 0, a = 0;
+  for (int i = 0; i < Synth::kBlock * kStrBlocks; ++i) {
+    d += abs(sa_[i] - sb_[i]);
+    a += abs(sa_[i]);
+  }
+  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
+}
+
+// COMB needs the voice's line, which STRING holds: on a STRING instrument it renders as filter Off.
+void test_string_comb_filter_is_off() {
+  Instrument& m = stringInst(StringModel::String);
+  m.fltMode = static_cast<uint8_t>(FltMode::Off);
+  renderStr(sa_);
+  delete s;
+  s = new Synth(*p);
+  m.fltMode = static_cast<uint8_t>(FltMode::Comb);
+  m.cutoff = 50;
+  m.reso = 115;
+  renderStr(sb_);
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).fltOn);
+  TEST_ASSERT_EQUAL_INT16_ARRAY(sa_, sb_, Synth::kBlock * kStrBlocks);
+}
+
+// A STRING note after a MACRO note on the same mono track: the engine union is rebuilt, the string starts
+// from a cleared line; finite and sounding.
+void test_string_after_macro_same_track_sounds() {
+  Instrument& y = p->instruments[1];
+  instrSetType(y, InstrType::Macro);
+  y.mono = true;
+  y.sustain = 127;
+  stringInst(StringModel::String).mono = true;
+  pgm(0, 1);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 20; ++k) render1(buf);
+  pgm(0, 0);
+  noteOn(0, 0, 57);
+  long a = 0;
+  int rails = 0;
+  for (int k = 0; k < 20; ++k) {
+    render1(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      a += abs(buf[i]);
+      rails += buf[i] == 32767 || buf[i] == -32768;
+    }
+  }
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_TRUE(v.str);
+  TEST_ASSERT_FALSE(v.mac);
+  TEST_ASSERT_TRUE(rails < Synth::kBlock);
+  TEST_ASSERT_TRUE(a > 20 * Synth::kBlock * 50);
+}
+
+void test_string_profile_stage() {
+  stringInst(StringModel::Modal);
+  TEST_ASSERT_EQUAL_STRING("string", Synth::profName(Synth::kProfString));
+  noteOn(0, 0, 57);
+  s->render(buf);
+  s->setProfiler(macClock);
+  s->render(buf);
+  s->render(buf);
+  uint32_t c[Synth::kProfStages], n[Synth::kProfStages], blocks = 0;
+  s->takeProfile(c, n, blocks);
+  TEST_ASSERT_TRUE(n[Synth::kProfString] > 0);
+  TEST_ASSERT_TRUE(c[Synth::kProfString] > 0);
+  TEST_ASSERT_EQUAL_UINT32(0, n[Synth::kProfChip]);
+  TEST_ASSERT_EQUAL_UINT32(0, n[Synth::kProfMacro]);
+  s->setProfiler(nullptr);
+}
+
+// VSL scales a STRING note's level (the strike's level is the velocity; VSL moves Voice::gain after it).
+void test_string_vsl_changes_level() {
+  Instrument& m = stringInst(StringModel::String);
+  m.macro[kMacDamp] = 110;  // rings through
+  p->bpm = 150;             // 24 ticks = 100 ms
+  stepStart(0, 0, 24, true);
+  noteOn(0, 0, 57, 127);
+  for (int k = 0; k < 60; ++k) render1(sa_ + k * Synth::kBlock);
+  s->reset();
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::VSL, static_cast<uint8_t>(-64));
+  noteOn(0, 0, 57, 127);
+  for (int k = 0; k < 60; ++k) render1(sb_ + k * Synth::kBlock);
+  const int from = 40 * Synth::kBlock, to = 60 * Synth::kBlock;  // ~116 .. 174 ms: VSL at 0
+  TEST_ASSERT_TRUE(absSum(sa_, from, to) > 1000);
+  TEST_ASSERT_TRUE(absSum(sb_, from, to) < absSum(sa_, from, to) / 50);
+}
+
+// Legato on one mono track: STRING -> other (MACRO, FM) -> STRING, every note finite and sounding.
+static void strLegatoStep(uint8_t instr, uint8_t note, bool str) {
+  pgm(0, instr);
+  noteOn(0, 0, note);
+  long a = 0;
+  int rails = 0;
+  for (int k = 0; k < 20; ++k) {
+    render1(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      a += abs(buf[i]);
+      rails += buf[i] == 32767 || buf[i] == -32768;
+    }
+  }
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL(str, v.str);
+  TEST_ASSERT_TRUE(rails < Synth::kBlock);
+  TEST_ASSERT_TRUE(a > 20 * Synth::kBlock * 50);
+}
+
+void test_string_legato_with_macro_and_fm() {
+  for (int k = 0; k < 2; ++k) {
+    s->reset();
+    Instrument& y = p->instruments[1];
+    instrSetType(y, k ? InstrType::Fm : InstrType::Macro);
+    y.mono = true;
+    y.sustain = 127;
+    stringInst(StringModel::String).mono = true;
+    strLegatoStep(0, 57, true);
+    const int vi = s->trackVoice(0);
+    strLegatoStep(1, 60, false);
+    strLegatoStep(0, 57, true);
+    TEST_ASSERT_EQUAL(vi, s->trackVoice(0));
+  }
+}
+
+// A legato re-strike on a ringing STRING voice adds energy into the resonance, without a click.
+void test_string_legato_restrike_adds_energy() {
+  Instrument& m = stringInst(StringModel::String);
+  m.mono = true;
+  m.macro[kMacDamp] = 100;
+  noteOn(0, 0, 57, 127);
+  for (int k = 0; k < 60; ++k) render1(sa_ + k * Synth::kBlock);
+  const int vi = s->trackVoice(0);
+  noteOn(0, 0, 57, 127);  // legato: same voice, same note
+  for (int k = 60; k < 80; ++k) render1(sa_ + k * Synth::kBlock);
+  TEST_ASSERT_EQUAL(vi, s->trackVoice(0));
+  const int at = 60 * Synth::kBlock, w = 4 * Synth::kBlock;
+  TEST_ASSERT_TRUE(absSum(sa_, at, at + w) > absSum(sa_, at - w, at) * 5 / 4);
+  int jump = 0, fresh = 0;
+  for (int i = at - w; i < at + w; ++i) jump = abs(sa_[i] - sa_[i - 1]) > jump ? abs(sa_[i] - sa_[i - 1]) : jump;
+  for (int i = 1; i < w; ++i) fresh = abs(sa_[i] - sa_[i - 1]) > fresh ? abs(sa_[i] - sa_[i - 1]) : fresh;
+  TEST_ASSERT_TRUE(jump < 16384);
+  TEST_ASSERT_TRUE(jump <= 2 * fresh);  // no larger step than a fresh strike's own
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -4284,6 +5181,10 @@ int main() {
   RUN_TEST(test_guard_cap_limits_new_notes_and_recovers);
   RUN_TEST(test_guard_ignores_single_spikes);
   RUN_TEST(test_guard_hard_spike_sheds_at_once);
+  RUN_TEST(test_pool_budget_off_by_default);
+  RUN_TEST(test_pool_budget_steals_oldest_chip);
+  RUN_TEST(test_pool_budget_holds_through_ladder_steps);
+  RUN_TEST(test_pool_budget_wt_synth_ladder);
   RUN_TEST(test_guard_panic_keeps_the_cap);
   RUN_TEST(test_guard_smoothed_load_sheds_without_a_spike);
   RUN_TEST(test_guard_reset_restores_pool);
@@ -4305,6 +5206,8 @@ int main() {
   RUN_TEST(test_sample_without_bank_is_silent);
   RUN_TEST(test_sample_resolved_by_name);
   RUN_TEST(test_fx_sld_slides_to_next_note);
+  RUN_TEST(test_pool_sld_held_voice_takes_new_cost);
+  RUN_TEST(test_pool_sld_into_expensive_note_steals);
   RUN_TEST(test_fx_vib_depth_and_period);
   RUN_TEST(test_fx_arp_three_notes_per_step);
   RUN_TEST(test_fx_vsl_fades_over_step);
@@ -4354,6 +5257,11 @@ int main() {
   RUN_TEST(test_lp_darkens_saw);
   RUN_TEST(test_filter_env_opens);
   RUN_TEST(test_max_reso_stays_finite);
+  RUN_TEST(test_lp_bp_hp_render_unchanged);
+  RUN_TEST(test_new_filter_types_sound_and_free);
+  RUN_TEST(test_formant_ignores_key_track);
+  RUN_TEST(test_comb_voices_have_own_lines);
+  RUN_TEST(test_comb_key_track_tunes_to_note);
   RUN_TEST(test_flt_lock_on_note_step);
   RUN_TEST(test_flt_lock_without_note_hits_sounding_voice);
   RUN_TEST(test_res_lock_on_chip_sets_lock_bit);
@@ -4421,6 +5329,7 @@ int main() {
   RUN_TEST(test_kit_decay_zero_is_one_shot);
   RUN_TEST(test_kit_missing_sample_silent);
   RUN_TEST(test_kit_inst_lane_plays_instrument);
+  RUN_TEST(test_kit_lane_voice_cost);
   RUN_TEST(test_kit_in_kit_lane_silent);
   RUN_TEST(test_kit_eight_lanes_sound_and_rehit_chokes);
   RUN_TEST(test_kit_unknown_note_silent);
@@ -4506,6 +5415,10 @@ int main() {
   RUN_TEST(test_perf_return_floor_decays);
   RUN_TEST(test_perf_reset_drops_throw);
   RUN_TEST(test_fol_silent_source_bit_exact);
+  RUN_TEST(test_synth_fold_ring_off_bit_exact);
+  RUN_TEST(test_synth_fold_changes_output);
+  RUN_TEST(test_synth_lfo_fold_changes_output);
+  RUN_TEST(test_synth_follower_ring_changes_output);
   RUN_TEST(test_fol_cutoff_ducks_and_recovers);
   RUN_TEST(test_fol_positive_amount_opens);
   RUN_TEST(test_fol_vol_ducks_strip);
@@ -4517,5 +5430,26 @@ int main() {
   RUN_TEST(test_fol_off_cases_and_preview);
   RUN_TEST(test_fol_kit_track_strip);
   RUN_TEST(test_profiler_arms_at_block_start);
+  RUN_TEST(test_macro_sounds_at_note_pitch);
+  RUN_TEST(test_macro_voices_are_heavy);
+  RUN_TEST(test_macro_col_lock_changes_output);
+  RUN_TEST(test_macro_lfo_timbre_changes_output);
+  RUN_TEST(test_macro_velocity_moves_timbre);
+  RUN_TEST(test_macro_env_timbre_is_ad);
+  RUN_TEST(test_macro_profile_stage);
+  RUN_TEST(test_string_sounds_at_note_pitch);
+  RUN_TEST(test_string_voices_are_heavy);
+  RUN_TEST(test_string_done_frees_held_voice);
+  RUN_TEST(test_string_dcy_lock_changes_decay);
+  RUN_TEST(test_string_lfo_damp_changes_decay);
+  RUN_TEST(test_string_comb_filter_is_off);
+  RUN_TEST(test_string_after_macro_same_track_sounds);
+  RUN_TEST(test_string_profile_stage);
+  RUN_TEST(test_string_vsl_changes_level);
+  RUN_TEST(test_string_legato_with_macro_and_fm);
+  RUN_TEST(test_string_legato_restrike_adds_energy);
+  RUN_TEST(test_macro_legato_from_synth_starts_fresh);
+  RUN_TEST(test_synth_legato_from_macro_starts_fresh);
+  RUN_TEST(test_macro_after_synth_same_track_sounds);
   return UNITY_END();
 }

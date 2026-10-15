@@ -1,6 +1,7 @@
 #include "synth_fm_machines.h"
 #include <math.h>
 #include "fastmath.h"
+#include "hot.h"
 #include "synth_osc.h"
 
 namespace mt {
@@ -9,13 +10,13 @@ namespace {
 constexpr float kTopHz = 13000.f;  // highest partial a machine makes (the core drops what aliases)
 constexpr float kFbMax = 1.7f;     // carrier feedback peak, rad: above ~2 the saw turns to noise
 
-float u(float v) { return v <= 0 ? 0 : (v >= 127 ? 1 : v * (1.f / 127.f)); }
-float lerp(float a, float b, float x) { return a + (b - a) * x; }
-float expMap(float lo, float hi, float x) { return lo * fastPow(hi / lo, x); }
-float decayMs(float d) { return expMap(5.f, 4000.f, u(d)); }  // as fmDecayMs, fractional
-float toC4(float pitch) { return fastExp2((pitch - 60.f) * (1.f / 12.f)); }
+MT_HOT float u(float v) { return v <= 0 ? 0 : (v >= 127 ? 1 : v * (1.f / 127.f)); }
+MT_HOT float lerp(float a, float b, float x) { return a + (b - a) * x; }
+MT_HOT float expMap(float lo, float hi, float x) { return lo * fastPow(hi / lo, x); }
+MT_HOT float decayMs(float d) { return expMap(5.f, 4000.f, u(d)); }  // as fmDecayMs, fractional
+MT_HOT float toC4(float pitch) { return fastExp2((pitch - 60.f) * (1.f / 12.f)); }
 // Interpolated entry of a table at x 0..1.
-float tableAt(const float* t, int n, float x) {
+MT_HOT float tableAt(const float* t, int n, float x) {
   const float pos = x * (n - 1);
   int a = static_cast<int>(pos);
   if (a > n - 2) a = n - 2;
@@ -23,28 +24,28 @@ float tableAt(const float* t, int n, float x) {
 }
 // Decay of a part that, under the one-shot amp decay ampMs, makes it last ms in total
 // (decays multiply: rates add). 0 = the amp decay alone (ms >= ampMs).
-float within(float ms, float ampMs) {
+MT_HOT float within(float ms, float ampMs) {
   if (ms <= 0 || ms >= ampMs) return 0;
   return 1.f / (1.f / ms - 1.f / ampMs);
 }
 // Pitch sweep, semitones, capped so that topHz x the sweep stays below kTopHz.
-float sweepCap(float semis, float topHz) {
+MT_HOT float sweepCap(float semis, float topHz) {
   if (topHz <= 0) return semis;
   const float cap = 12.f * fastLog2(kTopHz / topHz);
   return semis < cap ? semis : (cap > 0 ? cap : 0);
 }
 // Carrier feedback of an operator at hz: less at high pitch (aliasing).
-float fbLimit(float hz) {
+MT_HOT float fbLimit(float hz) {
   const float m = 0.5f * fmMaxIndex(hz);
   return m < kFbMax ? m : kFbMax;
 }
 // Feedback as fractions of fbLimit: COLOR the held part (floor with SWEEP, so SWEEP always acts),
 // SWEEP a decaying boost towards the limit. Peak = held x (1 + fbEnv) <= 1.
-float fbHeld(float c, float w) {
+MT_HOT float fbHeld(float c, float w) {
   const float f = 0.1f * w;
   return c > f ? c : f;
 }
-float fbEnvOf(float c, float w) {
+MT_HOT float fbEnvOf(float c, float w) {
   const float b = fbHeld(c, w);
   return b > 0 ? (1.f - b) * w / b : 0;
 }
@@ -52,7 +53,7 @@ float fbEnvOf(float c, float w) {
 FmOp carrier(float ratio, float level, float decay = 0, float fb = 0) { return {ratio, level, 0, decay, fb}; }
 FmOp modulator(float ratio, float index, float decay, float sustain = 0) { return {ratio, index, sustain, decay, 0}; }
 
-void kick(const float* m, float pitch, FmParams& p) {
+MT_HOT void kick(const float* m, float pitch, FmParams& p) {
   const float c = u(m[kMacCol]), s = u(m[kMacShp]);
   p.alg = FmAlg::Stack;
   p.hz = 55.f * toC4(pitch);
@@ -65,7 +66,7 @@ void kick(const float* m, float pitch, FmParams& p) {
   p.ampMs = decayMs(m[kMacDec]);
 }
 
-void snare(const float* m, float pitch, FmParams& p) {
+MT_HOT void snare(const float* m, float pitch, FmParams& p) {
   const float c = u(m[kMacCol]), s = u(m[kMacShp]);
   const float amp = decayMs(m[kMacDec]);
   const float tone = 1.f - c;
@@ -90,7 +91,7 @@ void snare(const float* m, float pitch, FmParams& p) {
   }
 }
 
-void metal(const float* m, float pitch, FmParams& p) {
+MT_HOT void metal(const float* m, float pitch, FmParams& p) {
   // Carrier 1..3 and modulator ratios: bell, cowbell, gong, cymbal.
   static const float kSets[kFmOps][4] = {
       {1.f, 1.f, 1.f, 1.f}, {2.76f, 1.48f, 1.19f, 1.34f}, {5.40f, 2.20f, 1.53f, 1.87f}, {3.50f, 1.41f, 0.71f, 2.41f}};
@@ -106,7 +107,7 @@ void metal(const float* m, float pitch, FmParams& p) {
   p.ampMs = amp;
 }
 
-void perc(const float* m, float pitch, FmParams& p) {
+MT_HOT void perc(const float* m, float pitch, FmParams& p) {
   static const float kRatios[8] = {1.f, 1.5f, 2.f, 2.76f, 3.5f, 4.2f, 5.4f, 7.f};
   const float c = u(m[kMacCol]);
   const float amp = decayMs(m[kMacDec]);
@@ -120,7 +121,7 @@ void perc(const float* m, float pitch, FmParams& p) {
   p.ampMs = amp;
 }
 
-void tone(const float* m, float pitch, FmParams& p) {
+MT_HOT void tone(const float* m, float pitch, FmParams& p) {
   const float c = u(m[kMacCol]), w = u(m[kMacSwp]);
   const float envMs = expMap(20, 2000, u(m[kMacCon]));
   // Index = COLOR part (held) + SWEEP part (decays: pluck).
@@ -157,12 +158,12 @@ const int8_t kChords[kFmChords][kFmOps] = {
 const char* const kChordNames[kFmChords] = {"MAJ", "MIN", "SUS2", "SUS4", "7", "MI7",
                                             "MAJ7", "DIM", "AUG", "5", "OCT", "MI9"};
 
-int chordIndex(float shape) {
+MT_HOT int chordIndex(float shape) {
   const int i = static_cast<int>(u(shape) * kFmChords);
   return i >= kFmChords ? kFmChords - 1 : i;
 }
 
-void chord(const float* m, float pitch, FmParams& p) {
+MT_HOT void chord(const float* m, float pitch, FmParams& p) {
   const float c = u(m[kMacCol]), w = u(m[kMacSwp]);
   const int8_t* iv = kChords[chordIndex(m[kMacShp])];
   p.oneShot = false;
@@ -177,7 +178,7 @@ void chord(const float* m, float pitch, FmParams& p) {
   p.fbMs = expMap(20, 2000, u(m[kMacCon]));
 }
 
-void clap(const float* m, float pitch, FmParams& p) {
+MT_HOT void clap(const float* m, float pitch, FmParams& p) {
   const float s = u(m[kMacShp]);
   p.noise = 1;
   p.bursts = static_cast<uint8_t>(2 + static_cast<int>(s * 3.99f));  // 2..5, looser with SHAPE
@@ -190,7 +191,7 @@ void clap(const float* m, float pitch, FmParams& p) {
   p.ampMs = decayMs(m[kMacDec]);  // bursts, shapes it alone
 }
 
-void hat(const float* m, float pitch, FmParams& p) {
+MT_HOT void hat(const float* m, float pitch, FmParams& p) {
   static const float kRatios[kFmOps] = {1.f, 1.342f, 1.756f, 2.15f};
   const float s = u(m[kMacShp]);
   const float amp = decayMs(m[kMacDec]);
@@ -219,7 +220,7 @@ void hat(const float* m, float pitch, FmParams& p) {
 
 const char* fmChordName(uint8_t shape) { return kChordNames[chordIndex(shape)]; }
 
-void fmMachine(uint8_t machine, const float mac[kFmMacros], float pitch, FmParams& out) {
+MT_HOT void fmMachine(uint8_t machine, const float mac[kFmMacros], float pitch, FmParams& out) {
   out = FmParams();
   switch (static_cast<FmMachine>(machine)) {
     case FmMachine::Snare: snare(mac, pitch, out); break;

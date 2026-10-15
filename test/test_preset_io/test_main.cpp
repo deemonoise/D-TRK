@@ -52,6 +52,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
     TEST_ASSERT_EQUAL_STRING_MESSAGE(a.synWt[k], b.synWt[k], msg);
   }
   SAME(synSemi); SAME(synSync); SAME(synSub); SAME(synSubOct); SAME(synNoise); SAME(synEAtk); SAME(synEDec);
+  SAME(synFold); SAME(synRing);
 #undef SAME
 }
 
@@ -268,6 +269,8 @@ static Instrument synthInst() {
   a.synNoise = 20;
   a.synEAtk = 5;
   a.synEDec = 70;
+  a.synFold = 77;
+  a.synRing = 33;
   a.macro[kMacMix] = 40;
   a.lfoDest = static_cast<uint8_t>(LfoDest::Dec);
   a.lfoDepth = 20;
@@ -285,6 +288,49 @@ void test_v3_roundtrip_synth() {
   Instrument b;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
   assertSameInst(a, b, "v3 synth");
+}
+
+void test_roundtrip_macro() {
+  Instrument a;
+  strcpy(a.name, "VOWEL");
+  instrSetType(a, InstrType::Macro);
+  a.machine = 5;
+  a.macro[kMacTimbre] = 10;
+  a.macro[kMacColor] = 20;
+  a.macro[kMacEnvTmb] = 90;
+  a.synEAtk = 3;
+  a.synEDec = 50;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Macro), out.buf[5]);
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "macro");
+  TEST_ASSERT_TRUE(b.type == InstrType::Macro);
+  TEST_ASSERT_EQUAL(5, b.machine);
+}
+
+void test_roundtrip_string() {
+  Instrument a;
+  strcpy(a.name, "BELL");
+  instrSetType(a, InstrType::String);
+  a.machine = static_cast<uint8_t>(StringModel::Modal);
+  a.macro[kMacDamp] = 10;
+  a.macro[kMacBright] = 90;
+  a.macro[kMacStruct] = 64;
+  a.macro[kMacPos] = 20;
+  a.macro[kMacExc] = 127;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::String), out.buf[5]);
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "string");
+  TEST_ASSERT_TRUE(b.type == InstrType::String);
+  TEST_ASSERT_EQUAL(static_cast<int>(StringModel::Modal), b.machine);
+  TEST_ASSERT_EQUAL(127, b.macro[kMacExc]);
 }
 
 // A v2 file (no SYNI record): SYNTH fields get their defaults.
@@ -484,6 +530,29 @@ void test_drive_model_byte() {
   TEST_ASSERT_EQUAL(0, b.driveModel);
 }
 
+// SYNTH fold / ring: SYNI bytes 41 / 42 (once reserved, 0 = off); clamped to 0..127.
+void test_syn_fold_ring_bytes() {
+  Instrument a = synthInst();
+  uint8_t r[kSynRecSize];
+  packSyn(a, r);
+  TEST_ASSERT_EQUAL(77, r[41]);
+  TEST_ASSERT_EQUAL(33, r[42]);
+  for (size_t k = 43; k < kSynRecSize; ++k) TEST_ASSERT_EQUAL(0, r[k]);
+  Instrument b;
+  unpackSyn(r, b);
+  TEST_ASSERT_EQUAL(77, b.synFold);
+  TEST_ASSERT_EQUAL(33, b.synRing);
+  for (size_t k = 41; k < kSynRecSize; ++k) r[k] = 0;
+  unpackSyn(r, b);
+  TEST_ASSERT_EQUAL(0, b.synFold);
+  TEST_ASSERT_EQUAL(0, b.synRing);
+  r[41] = 200;
+  r[42] = 200;
+  unpackSyn(r, b);
+  TEST_ASSERT_EQUAL(127, b.synFold);
+  TEST_ASSERT_EQUAL(127, b.synRing);
+}
+
 Project proj;
 
 // Loading a preset onto a track: its recommended insert overwrites the track's insert when the
@@ -579,6 +648,8 @@ int main() {
   RUN_TEST(test_v1_file_loads_without_slices);
   RUN_TEST(test_apply_preset_sample_missing_keeps_slices);
   RUN_TEST(test_v3_roundtrip_synth);
+  RUN_TEST(test_roundtrip_macro);
+  RUN_TEST(test_roundtrip_string);
   RUN_TEST(test_v2_file_loads_synth_defaults);
   RUN_TEST(test_apply_synth_copies_tables);
   RUN_TEST(test_v3_file_loads_with_sound_fx_defaults);
@@ -588,6 +659,7 @@ int main() {
   RUN_TEST(test_lfo_sync_bits);
   RUN_TEST(test_lfo_dest_out_of_range);
   RUN_TEST(test_drive_model_byte);
+  RUN_TEST(test_syn_fold_ring_bytes);
   RUN_TEST(test_take_preset_insert);
   RUN_TEST(test_take_preset_insert_other_track);
   RUN_TEST(test_preset_insert_for_save_roundtrip);

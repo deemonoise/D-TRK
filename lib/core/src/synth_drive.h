@@ -77,8 +77,8 @@ class Drive {
 class ModelDrive {
  public:
   enum : uint8_t { kTanh, kClip, kFold, kRect, kAsym, kModels };
-  // Per control update: the unchanged case inline (IRAM with the caller), a change out of line
-  // (flash: per move only).
+  // Per control update: the unchanged case inline, a change out of line (hot too: an LFO on DRIVE
+  // moves it every control period).
   MT_INLINE void set(uint8_t drive, uint8_t model) {
     if (model >= kModels) model = kTanh;
     if (drive == drive_ && model == model_) return;
@@ -92,7 +92,7 @@ class ModelDrive {
     return drive != drive_ || (drive && model != model_);
   }
   float makeup() const { return k_; }
-  void reset();  // a strip snap (flash, synth_drive.cpp)
+  void reset();  // a strip snap, or the drive turning on in change() (hot, synth_drive.cpp)
   float process(float x) {
     if (!on()) return x;
     processBlock(&x, 1);
@@ -103,7 +103,7 @@ class ModelDrive {
   // The curves without the make-up gain (CLIP, FOLD, RECT; ASYM: the bias-shifted tanh, unscaled)
   // and the antiderivatives of CLIP / FOLD / RECT.
   static float curve(uint8_t model, float u);
-  static float anti(uint8_t model, float u);  // on a move / reset only (flash)
+  static float anti(uint8_t model, float u);  // on a move / reset only (hot: reset() under an LFO)
   static constexpr float kBias = 0.5f;  // ASYM
 
  private:

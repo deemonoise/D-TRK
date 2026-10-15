@@ -1,6 +1,7 @@
 #include "synth_syn.h"
 #include "fastmath.h"
 #include "hot.h"
+#include "synth_shape.h"
 #include <math.h>
 
 namespace mt {
@@ -36,13 +37,15 @@ MT_HOT void SynVoice::control(const SynParams& p, int n) {
     if (p.mode[k] == static_cast<uint8_t>(SynOsc::Wt)) wt_[k].setLevel(p.hz[k]);
   if (snap_) {
     snap_ = false;
-    shape_[0] = p.shape[0], shape_[1] = p.shape[1], mix_ = p.mix;
-    shapeStep_[0] = shapeStep_[1] = mixStep_ = 0;
+    shape_[0] = p.shape[0], shape_[1] = p.shape[1], mix_ = p.mix, fold_ = p.fold, ring_ = p.ring;
+    shapeStep_[0] = shapeStep_[1] = mixStep_ = foldStep_ = ringStep_ = 0;
     return;
   }
   const float inv = n == 32 ? 1.f / 32 : (n > 0 ? 1.f / n : 1.f);  // kControl: no __divsf3
   for (int k = 0; k < 2; ++k) shapeStep_[k] = (p.shape[k] - shape_[k]) * inv;
   mixStep_ = (p.mix - mix_) * inv;
+  foldStep_ = (p.fold - fold_) * inv;
+  ringStep_ = (p.ring - ring_) * inv;
 }
 
 constexpr float kMaxDt = 0.4999f;  // phase step per sample, below Nyquist
@@ -106,6 +109,30 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
   }
 }
 
+// Fold: gain 1..8 (up to ~4 folds) with a make-up to the plain mix's level at full fold. Ring:
+// osc 1 x osc 2 scaled to the plain mix's level. Both: a 220 Hz saw + square or tri within +-3 dB RMS.
+constexpr float kFoldGain = 1.0f, kRingGain = 1.3f;
+constexpr float kFoldFade = 16.f;  // fully wet from fold ~8/127
+
+MT_HOT void SynVoice::foldBlock(float* a, int m, float lim) {
+  // Naive (no ADAA: its slope quotient cost ~1 %/voice on the Teensy); the pitch limit bounds the
+  // aliasing. No branch, no division per sample.
+  float fd = fold_;
+  const float df = foldStep_;
+  // Two samples per pass: the M7 issues in order, two independent chains fill each other's stalls.
+#pragma GCC unroll 2
+  for (int i = 0; i < m; ++i, fd += df) {
+    const float e = fd * lim;
+    const float x = a[i];
+    float y = foldTri(x * (1.f + 7.f * e));
+    if (kFoldGain != 1.f) y *= 1.f + (kFoldGain - 1.f) * e;
+    // Dry / wet fade-in: a mix above 1 (ring, BLEP overshoot) would otherwise fold all at once as
+    // the fold leaves 0 (an LFO crossing it, the pitch limit). w = 0 is the skip path.
+    const float w = fclamp(e * kFoldFade, 0.f, 1.f);  // e >= 0; no compare + VMRS
+    a[i] = x + (y - x) * w;
+  }
+}
+
 MT_HOT void SynVoice::render(float* out, int n, float amp) {
   constexpr int kChunk = 32;
   const float g = amp * kSynGain;
@@ -114,8 +141,13 @@ MT_HOT void SynVoice::render(float* out, int n, float amp) {
   const float subInv = subDt > 1e-30f ? fastRcp(subDt) : 0.f;
   // An oscillator out of the mix for the whole block is skipped (osc 1 still runs as a sync master).
   const float mixEnd = mix_ + mixStep_ * n;
-  const bool need1 = mix_ < 1.f || mixEnd < 1.f || p_.sync;
-  const bool need2 = mix_ > 0.f || mixEnd > 0.f;
+  const bool ring = ring_ > 0.f || ring_ + ringStep_ * n > 0.f;  // needs both oscillators
+  const bool need1 = mix_ < 1.f || mixEnd < 1.f || p_.sync || ring;
+  const bool need2 = mix_ > 0.f || mixEnd > 0.f || ring;
+  // Fold pitch limit: full up to osc 1 at 1 kHz, falling linearly to off at 5 kHz (aliasing).
+  const float lh = (5000.f - p_.hz[0]) * (1.f / 4000.f);
+  const float lim = lh < 0.f ? 0.f : (lh > 1.f ? 1.f : lh);
+  const bool fold = lim > 0.f && (fold_ > 0.f || fold_ + foldStep_ * n > 0.f);
   float a[kChunk], b[kChunk], w[kChunk];
   for (int pos = 0; pos < n; pos += kChunk) {
     const int m = n - pos < kChunk ? n - pos : kChunk;
@@ -125,7 +157,20 @@ MT_HOT void SynVoice::render(float* out, int n, float amp) {
     else for (int i = 0; i < m; ++i) b[i] = 0;
     float mx = mix_;
     const float dm = mixStep_;
-    for (int i = 0; i < m; ++i, mx += dm) a[i] += (b[i] - a[i]) * mx;
+    if (ring) {
+      float rg = ring_;
+      const float dr = ringStep_;
+      for (int i = 0; i < m; ++i, mx += dm, rg += dr) {
+        const float mi = a[i] + (b[i] - a[i]) * mx;
+        a[i] = mi + (a[i] * b[i] * kRingGain - mi) * rg;
+      }
+      ring_ = rg;
+    } else {
+      for (int i = 0; i < m; ++i, mx += dm) a[i] += (b[i] - a[i]) * mx;
+      ring_ += ringStep_ * m;
+    }
+    if (fold) foldBlock(a, m, lim);
+    fold_ += foldStep_ * m;
     if (p_.sub > 0) {
       const float sg = p_.sub;
       for (int i = 0; i < m; ++i) a[i] += sub_.square(subDt, subInv, 0.5f, -1).v * sg;

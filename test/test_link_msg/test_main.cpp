@@ -181,6 +181,7 @@ void test_status_with_and_without_scope() {
   a.psramFill = 57;
   a.gatePos = 63 * 256 + 128;
   for (int i = 0; i < 16; ++i) a.follower[i] = static_cast<uint8_t>(255 - i);
+  a.stackFree = 70000;
   int n = put(a);
   Status b;
   Reader r(buf, n);
@@ -200,7 +201,10 @@ void test_status_with_and_without_scope() {
   TEST_ASSERT_EQUAL(57, b.psramFill);
   TEST_ASSERT_EQUAL(63 * 256 + 128, b.gatePos);
   TEST_ASSERT_EQUAL_MEMORY(a.follower, b.follower, 16);
+  TEST_ASSERT_EQUAL_UINT32(70000, b.stackFree);
   checkTruncated<Status>(n);
+  TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFu, Status::kStackUnknown);
+  TEST_ASSERT_EQUAL_UINT32(Status::kStackUnknown, Status().stackFree);  // not measured by default
 
   a.scopeN = Status::kScopeMax;
   for (int i = 0; i < a.scopeN; ++i) a.scope[i] = static_cast<int8_t>(i - 128);
@@ -213,6 +217,7 @@ void test_status_with_and_without_scope() {
   TEST_ASSERT_EQUAL(41, b.minReserveMs);  // after the scope: still in place
   TEST_ASSERT_EQUAL(57, b.psramFill);
   TEST_ASSERT_EQUAL_MEMORY(a.follower, b.follower, 16);
+  TEST_ASSERT_EQUAL_UINT32(70000, b.stackFree);
 }
 
 void test_debug() {
@@ -232,8 +237,8 @@ void test_debug() {
   checkTruncated<Debug>(n);
 }
 
-void test_protocol_4_and_debug_id() {
-  TEST_ASSERT_EQUAL(4, kProtocol);
+void test_protocol_7_and_debug_id() {
+  TEST_ASSERT_EQUAL(7, kProtocol);  // 7: ProfileRep has 24 stages (STRING)
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
 }
 
@@ -472,6 +477,22 @@ void test_profile_rep() {
   checkTruncated<ProfileRep>(n);
 }
 
+void test_profile_rep_24_stages() {
+  TEST_ASSERT_EQUAL(24, ProfileRep::kStages);  // + STRING
+  ProfileRep a;
+  for (int i = 0; i < ProfileRep::kStages; ++i) {
+    a.cycles[i] = 1000ull * (i + 1);
+    a.count[i] = static_cast<uint32_t>(i + 100);
+  }
+  int n = put(a);
+  ProfileRep b;
+  Reader r(buf, n);
+  TEST_ASSERT_TRUE(decode(r, b));
+  TEST_ASSERT_EQUAL_UINT64(24000, b.cycles[23]);
+  TEST_ASSERT_EQUAL_UINT32(123, b.count[23]);
+  TEST_ASSERT_EQUAL_MEMORY(a.count, b.count, sizeof a.count);
+}
+
 void test_log() {
   Log a;
   strcpy(a.text, "bank: 12 samples, 3.1 MB free");
@@ -677,10 +698,11 @@ int main(int, char**) {
   RUN_TEST(test_frame_round_trip);
   RUN_TEST(test_msg_numbers_stable);
   RUN_TEST(test_profile_rep);
+  RUN_TEST(test_profile_rep_24_stages);
   RUN_TEST(test_render_messages);
   RUN_TEST(test_fw_messages);
   RUN_TEST(test_ev_batch_carries_a_hint);
   RUN_TEST(test_debug);
-  RUN_TEST(test_protocol_4_and_debug_id);
+  RUN_TEST(test_protocol_7_and_debug_id);
   return UNITY_END();
 }

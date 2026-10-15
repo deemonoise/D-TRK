@@ -101,13 +101,13 @@ PerfFx perfFromLegacy(uint8_t old) {
   return old < sizeof(kMap) / sizeof(kMap[0]) ? kMap[old] : PerfFx::None;
 }
 
-// PerfBus reads these per block / seam while held: one call each, in flash.
-float perfRepeatSteps(int depth) { return kRepeatSteps[at(PerfFx::Repeat, depth)]; }
-float perfGateSteps(int depth) { return kGateSteps[at(PerfFx::Gate, depth)]; }
-float perfReverseSteps(int depth) { return kReverseSteps[at(PerfFx::Reverse, depth)]; }
-float perfScratchSteps(int depth) { return kScratchSteps[at(PerfFx::Scratch, depth)]; }
-float perfTapeSteps(int depth) { return kTapeSteps[at(PerfFx::TapeStop, depth)]; }
-int perfDownHz(int depth) { return kDownHz[at(PerfFx::Downsample, depth)]; }
+// PerfBus reads these per block / seam while held: one call each (hot).
+MT_HOT float perfRepeatSteps(int depth) { return kRepeatSteps[at(PerfFx::Repeat, depth)]; }
+MT_HOT float perfGateSteps(int depth) { return kGateSteps[at(PerfFx::Gate, depth)]; }
+MT_HOT float perfReverseSteps(int depth) { return kReverseSteps[at(PerfFx::Reverse, depth)]; }
+MT_HOT float perfScratchSteps(int depth) { return kScratchSteps[at(PerfFx::Scratch, depth)]; }
+MT_HOT float perfTapeSteps(int depth) { return kTapeSteps[at(PerfFx::TapeStop, depth)]; }
+MT_HOT int perfDownHz(int depth) { return kDownHz[at(PerfFx::Downsample, depth)]; }
 
 MT_HOT int PerfStack::find(PerfFx f) const {
   for (int i = 0; i < n_; ++i)
@@ -137,14 +137,14 @@ void PerfStack::turn(int delta) {
   s.depth = static_cast<int8_t>(d < r.lo ? r.lo : (d > r.hi ? r.hi : d));
 }
 
-bool PerfStack::held(PerfFx f) const { return find(f) >= 0; }
+MT_HOT bool PerfStack::held(PerfFx f) const { return find(f) >= 0; }
 
-int PerfStack::depth(PerfFx f) const {
+MT_HOT int PerfStack::depth(PerfFx f) const {
   const int i = find(f);
   return i < 0 ? perfRange(f).def : slot_[i].depth;
 }
 
-PerfFx PerfStack::buffered() const {
+MT_HOT PerfFx PerfStack::buffered() const {
   for (int i = n_ - 1; i >= 0; --i)
     if (perfBuffered(slot_[i].fx)) return slot_[i].fx;
   return PerfFx::None;

@@ -193,6 +193,8 @@ void packSyn(const Instrument& m, uint8_t* b) {
   b[38] = m.synNoise;
   b[39] = m.synEAtk;
   b[40] = m.synEDec;
+  b[41] = m.synFold;
+  b[42] = m.synRing;
 }
 
 void unpackSyn(const uint8_t* b, Instrument& m) {
@@ -208,6 +210,8 @@ void unpackSyn(const uint8_t* b, Instrument& m) {
   m.synNoise = clampu(b[38], 0, 127);
   m.synEAtk = clampu(b[39], 0, 127);
   m.synEDec = clampu(b[40], 0, 127);
+  m.synFold = clampu(b[41], 0, 127);  // 41, 42: once reserved 0 (off)
+  m.synRing = clampu(b[42], 0, 127);
 }
 
 void fixInstrument(Instrument& m) {
@@ -215,7 +219,12 @@ void fixInstrument(Instrument& m) {
   int n = 0;
   if (m.type == InstrType::Fm) n = static_cast<int>(FmMachine::Count);
   else if (m.type == InstrType::Drum) n = static_cast<int>(DrumMachine::Count);
+  else if (m.type == InstrType::Macro) n = static_cast<int>(MacroModel::Count);
+  else if (m.type == InstrType::String) n = static_cast<int>(StringModel::Count);
   if (n && m.machine >= n) m.machine = 0;
+  // COMB needs the voice's delay line, which STRING takes (the synth would run it as Off).
+  if (m.type == InstrType::String && m.fltMode == static_cast<uint8_t>(FltMode::Comb))
+    m.fltMode = static_cast<uint8_t>(FltMode::Off);
 }
 
 }  // namespace mt

@@ -5,7 +5,7 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 4;
+constexpr uint16_t kProtocol = 7;
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -137,6 +137,11 @@ struct Status {
   static constexpr uint16_t kGateStopped = 0xFFFF;
   uint16_t gatePos = kGateStopped;
   uint8_t follower[16] = {};
+  // Protocol 5: the synth board's stack low-water mark since boot, bytes never touched (the main
+  // loop and the audio interrupt share one stack in RAM1); 0 = the stack reached its guard,
+  // kStackUnknown = not measured.
+  static constexpr uint32_t kStackUnknown = 0xFFFFFFFF;
+  uint32_t stackFree = kStackUnknown;
 };
 
 // A long request on the synth board is still running: op = its type, done / total in work units,
@@ -363,7 +368,7 @@ struct FwRep {
 // reply: the render cycles and counts per Synth::ProfStage summed since the start, the blocks
 // rendered, the slowest block (events, render, preview mix) and the cycles per us to convert them.
 struct ProfileRep {
-  static constexpr int kStages = 22;  // Synth::kProfStages
+  static constexpr int kStages = 24;  // Synth::kProfStages
   uint8_t running = 0;
   uint32_t blocks = 0;
   uint32_t cyclesPerUs = 0;

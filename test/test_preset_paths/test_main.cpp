@@ -14,6 +14,14 @@ void test_roots() {
   TEST_ASSERT_EQUAL_STRING("/presets/FM", presetRoot(InstrType::Fm));
   TEST_ASSERT_EQUAL_STRING("/presets/DRUM", presetRoot(InstrType::Drum));
   TEST_ASSERT_EQUAL_STRING("/presets/SYNTH", presetRoot(InstrType::Synth));
+  TEST_ASSERT_EQUAL_STRING("/presets/MACRO", presetRoot(InstrType::Macro));
+  TEST_ASSERT_EQUAL_STRING("MACRO", presetTypeName(InstrType::Macro));
+  TEST_ASSERT_TRUE(presetTypeHas(InstrType::Macro));
+  TEST_ASSERT_EQUAL(1, presetDepth("/presets/MACRO/LEAD"));
+  TEST_ASSERT_EQUAL_STRING("/presets/STRING", presetRoot(InstrType::String));
+  TEST_ASSERT_EQUAL_STRING("STRING", presetTypeName(InstrType::String));
+  TEST_ASSERT_TRUE(presetTypeHas(InstrType::String));
+  TEST_ASSERT_EQUAL(1, presetDepth("/presets/STRING/PLUCK"));
   TEST_ASSERT_EQUAL_STRING("SAMPLE", presetTypeName(InstrType::Sample));
   TEST_ASSERT_EQUAL_STRING("SYNTH", presetTypeName(InstrType::Synth));
   TEST_ASSERT_EQUAL_STRING("KIT", presetTypeName(InstrType::Kit));

@@ -47,8 +47,9 @@ enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
 enum class ChopMode : uint8_t { Equal, Trans, Count };
 constexpr int kMaxSlices = 32;
-enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Count };
-// UI order of the types (FM, SYNTH, DRUM, SAMPLE, CHIP, KIT): position k -> type, type -> position.
+// Stored in files (INST byte 8): new types before Count only.
+enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Macro, String, Count };
+// UI order of the types (FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP, KIT): position k -> type, type -> position.
 InstrType instrTypeAt(int k);
 int instrTypePos(InstrType t);
 constexpr int kKitLanes = 8;
@@ -80,11 +81,25 @@ enum SynMacro : uint8_t { kMacShp1 = kMacDec, kMacShp2 = kMacCol, kMacMix = kMac
 enum class DrumMachine : uint8_t {
   Bd8, Sd8, Tom8, Cp8, Rs8, Cl8, Cb8, Hh8, Cy8, Bd9, Sd9, Tom9, Cp9, Rs9, Hh9, Cy9, Count
 };
-// Instrument::machine of either type fits below this.
+// MACRO oscillator models (Instrument::machine). Stored in files: new models before Count only.
+enum class MacroModel : uint8_t { SawPlus, Morph, SawSqr, Fold, Vosim, Vowel, Fm, FbFm, Count };
+// MACRO macros: same slots as FM / DRUM (fx DCY..SHP, LFO Dec..Shp); SWP / CON unused.
+enum MacroMacro : uint8_t { kMacTimbre = kMacDec, kMacColor = kMacCol, kMacEnvTmb = kMacShp };
+const char* macroModelName(uint8_t model);  // "SAW+"; out of range -> model 0
+// STRING resonator models (Instrument::machine). Stored in files: new models before Count only.
+enum class StringModel : uint8_t { String, Modal, Count };
+// STRING macros: same slots as FM / DRUM (fx DCY..CON, LFO Dec..Con).
+enum StringMacro : uint8_t { kMacDamp = kMacDec, kMacBright = kMacCol, kMacStruct = kMacShp, kMacPos = kMacSwp,
+                             kMacExc = kMacCon };
+const char* stringModelName(uint8_t model);  // "STRING"; out of range -> model 0
+// Instrument::machine of any type fits below this.
 constexpr int kMachineMax = 16;
 static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
-enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
+static_assert(static_cast<int>(MacroModel::Count) <= kMachineMax, "machine field");
+static_assert(static_cast<int>(StringModel::Count) <= kMachineMax, "machine field");
+// Stored in files (Instrument::fltMode): new values go before Count only; loaders clamp unknown ones to Off.
+enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
 // send, the drive, the reverb send, the bit / sample-rate reduction, the pan, the drive model, the
 // trance gate's depth, the MOD send (the last bit: lockMask is full).
@@ -97,7 +112,7 @@ enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
 // TrackCfg::driveModel, fx DTY: the curve of the track insert's drive (see ModelDrive, synth_drive.h).
 // Stored in files: new models before Count only; a value >= Count loads as Tanh.
 enum class DriveModel : uint8_t { Tanh, Clip, Fold, Rect, Asym, Count };
-// Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2: SYNTH (osc 2);
+// Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2, Fold, Ring: SYNTH;
 // RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Pan: the track's
 // pan (+-64 at full depth). ModSend: the track's MOD send (TrackCfg::modSend). Stored in files: new targets before Count only (the Dest list shows them
 // in its own order, see lfoDestStep).
@@ -105,6 +120,7 @@ enum class LfoDest : uint8_t {
   Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive,
   Reso, Fenv, Dly, Rvb, Bit, Srr, Fine, Duty, Sub, Noise, Semi2,
   Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4, Pan, ModSend,
+  Fold, Ring,
   Count
 };
 
@@ -206,6 +222,8 @@ struct Instrument {
   LfoCfg lfo[kLfos - 1];   // LFO 2..4 (LFO 1 is lfoWave .. lfoSync above; see lfoRef)
   KitLane kit[kKitLanes];  // KIT: the lanes (see kitSetDefaults)
   uint8_t driveModel = 0;  // DriveModel of the recommended insert (see drive above); 0 in a project
+  // SYNTH wavefolder and ring modulator on the oscillator mix (SynParams::fold, ring), 0..127, 0 = off.
+  uint8_t synFold = 0, synRing = 0;
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }
@@ -254,7 +272,7 @@ void drumSetMachine(Instrument& m, uint8_t machine);
 void instrSetType(Instrument& m, InstrType t);
 // KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
 void kitSetDefaults(Instrument& m);
-// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
+// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH / STRING, DEC..SHP: MACRO; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
 bool lfoDestValid(uint8_t dest, InstrType t);
 // LFO target d steps from dest over the targets valid for t, in the display order (PAN after RVB;
 // clamped at the ends); self (0..kLfos-1, -1 = none): that LFO's RTRG is skipped.

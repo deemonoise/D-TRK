@@ -67,8 +67,8 @@ static_assert(kLfos == 4, "LfoMods::depth initializer");
 // has a note) opens a step, then come the step's fx, then its notes. On a step with a note the fx apply
 // to its note-ons (all of them: chord notes, ratchet hits), except SLD and OFS, which only the first
 // note-on takes; a new step with a note ends VIB and ARP. On a step without a note the fx act on the
-// track's sounding voices. DCY..CON lock macros (FM / DRUM / SYNTH voices only), FLT / RES the filter (every type),
-// DLY the delay send (every type).
+// track's sounding voices. DCY..CON lock macros (FM / DRUM / SYNTH / MACRO voices only), FLT / RES the
+// filter (every type), DLY the delay send (every type).
 // Without any kSynthStep (tests, preview) fx wait for the next note-on. On the preview track SLC picks
 // the slice in every slice mode, played at the root (slice audition).
 // Tick length comes from Project::bpm, the step length is ticks per step x tick.
@@ -173,6 +173,11 @@ class Synth {
   static constexpr int kMinVoices = 4;     // never shed below
   void setLoad(float load);
   int voiceCap() const { return cap_; }
+  // Voice pool by cost (voice_cost.h): the summed voiceCost of the live voices stays under the
+  // budget, new notes steal the oldest (releasing first). kVoiceBudgetOff (default): no limit; the
+  // Teensy firmware sets kVoiceBudgetTeensy. The CPU guard above stays the backstop.
+  void setVoiceBudget(int b) { budget_ = b; }
+  int voiceBudget() const { return budget_; }
 
   // Level meters (MIX): the peak of each pattern track's voices since the last call, before the
   // master gain (1.0 = full scale at MAIN 100 %), then cleared. Read without a lock: a block may land
@@ -190,7 +195,7 @@ class Synth {
   enum ProfStage : uint8_t {
     kProfQueue, kProfEvents, kProfCache, kProfInstLfo, kProfCtlMod, kProfCtlFlt, kProfCtlEng, kProfChip,
     kProfSample, kProfFm, kProfDrum, kProfSyn, kProfMix, kProfDelay, kProfReverb, kProfComp, kProfPerf,
-    kProfMaster, kProfStrip, kProfMod, kProfShim, kProfEq, kProfStages
+    kProfMaster, kProfStrip, kProfMod, kProfShim, kProfEq, kProfMacro, kProfString, kProfStages
   };
   static const char* profName(int stage);
   // Any task: arms (or, nullptr, stops) the profiler. It takes effect at the start of the next block
@@ -279,6 +284,8 @@ class Synth {
   void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
+  void controlMacro(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
+  void controlString(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   static void macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]);
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
   void controlFilter(Voice& v, const Instrument& m, float pitch, const float* la);  // la: control()'s LFO sums
@@ -310,7 +317,7 @@ class Synth {
   // The voice's instrument: a KIT sampler lane's, built into laneScratch_ (valid until the next
   // call), else inst(v.instr).
   MT_INLINE const Instrument& instrOf(const Voice& v) const { return v.lane ? laneOf(v) : inst(v.instr); }
-  const Instrument& laneOf(const Voice& v) const;  // builds the lane (flash)
+  const Instrument& laneOf(const Voice& v) const;  // builds the lane (per control for a kit lane: hot)
   // Instrument i: its copy in internal RAM if cached, else the project's.
   MT_INLINE const Instrument& inst(uint8_t i) const {
     const int s = i < kInstruments ? instSlot_[i] : -1;
@@ -369,6 +376,7 @@ class Synth {
   Voice voices_[kVoices];
   float load_ = 0;  // smoothed render load (setLoad)
   int cap_ = kVoices;
+  int budget_ = kVoiceBudgetOff;  // setVoiceBudget
   int capUp_ = 0;
   int over_ = 0;  // blocks in a row over kLoadPanic
   uint32_t age_ = 0;

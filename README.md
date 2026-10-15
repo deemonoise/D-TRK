@@ -18,16 +18,18 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 
 ### Built-in sound
 
-32 instruments, 32 voices (up to 16 of them FM / DRUM / SYNTH WT), 44.1 kHz, stereo with per-track pan. Types:
+32 instruments, 32 voices (up to 16 of them FM / DRUM / MACRO / STRING / SYNTH WT), 44.1 kHz, stereo with per-track pan. Types:
 
 - **FM**: 8 machines in the spirit of the Model:Cycles (kick, snare, metal, perc, tone, chord, clap, hat) with 5 macros.
 - **DRUM**: 16 machines in the spirit of the TR-808 and TR-909.
 - **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables.
+- **MACRO**: one oscillator, 8 models (saw variants, morph, fold, VOSIM, vowels, FM, feedback FM) shaped by Timbre and Color.
+- **STRING**: a physical-model resonator, 2 models (plucked string, 6 tuned modes for bars and bells) with Damp, Bright, Struct, Position and a click / noise-burst exciter.
 - **SAMPLE**: a sampler with slices, WAV import from the card. The sample editor works without the touchscreen too.
 - **CHIP**: pulse, triangle, noise, metal and wavetable for chiptune.
 - **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
 
-Every instrument has an LP / BP / HP filter with an envelope, drive and 4 LFOs (tempo sync, modulate each other, controlled from steps). 145 factory presets.
+Every instrument has a filter (LP / BP / HP, LADDER, MS20, COMB, FORMANT) with an envelope, drive and 4 LFOs (tempo sync, modulate each other, controlled from steps). 159 factory presets.
 
 ### Mix and effects
 
@@ -110,3 +112,5 @@ Copyright © 2026 deemonoise.
 The name **D-TRK** and its logo are not covered by these licenses: a modified firmware or a device built from this project may say it is based on D-TRK, but must not be called or sold as D-TRK without permission.
 
 Full texts: [LICENSES/](LICENSES/). Third-party libraries (ESP-IDF, Arduino-ESP32, LovyanGFX, Teensyduino, Teensy Audio Library, SdFat, FlasherX, Unity) keep their own licenses.
+
+DSP derived from MIT-licensed Eurorack firmware (`lib/core/src/synth_macro.*`) — see [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt).

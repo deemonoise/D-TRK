@@ -20,8 +20,15 @@ MT_INLINE float tableSine(uint32_t ph) {
   const float a = gSine[i];
   return a + (gSine[i + 1] - a) * f;
 }
-// sin(2 pi x ph), ph in 0 .. 1.
-MT_INLINE float phaseSine(float ph) { return tableSine(static_cast<uint32_t>(ph * 1073741824.f) << 2); }
+// sin(2 pi x ph), ph in 0 .. 4 (whole turns wrap). ph x kSineLen is exact (a power of 2), so its int
+// part and fraction are tableSine's index and fraction of the fixed-point phase (the same value) without
+// the shifts and the second register transfer.
+MT_INLINE float phaseSine(float ph) {
+  const float x = ph * static_cast<float>(kSineLen);
+  const int k = static_cast<int>(x);
+  const float* s = gSine + (k & (kSineLen - 1));
+  return s[0] + (s[1] - s[0]) * (x - static_cast<float>(k));
+}
 
 // Frequency of a (fractional) MIDI note, Hz. 69 = 440.
 float noteHz(float note);

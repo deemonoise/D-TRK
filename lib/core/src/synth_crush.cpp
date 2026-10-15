@@ -1,8 +1,9 @@
 #include "synth_crush.h"
+#include "hot.h"
 
 namespace mt {
 
-void Crush::change(uint8_t bits, uint8_t rate) {
+MT_HOT void Crush::change(uint8_t bits, uint8_t rate) {
   bits_ = bits;
   rate_ = rate;
   // 16 bits at 1 down to 2 at 127; the signal is about +-1 at full scale.

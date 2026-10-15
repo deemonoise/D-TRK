@@ -196,6 +196,7 @@ void encode(const Status& m, Writer& w) {
   w.u8(m.psramFill);
   w.u16(m.gatePos);
   w.bytes(m.follower, sizeof m.follower);
+  w.u32(m.stackFree);
 }
 
 bool decode(Reader& r, Status& m) {
@@ -217,6 +218,7 @@ bool decode(Reader& r, Status& m) {
   m.psramFill = r.u8();
   m.gatePos = r.u16();
   r.bytes(m.follower, sizeof m.follower);
+  m.stackFree = r.u32();
   return r.ok();
 }
 

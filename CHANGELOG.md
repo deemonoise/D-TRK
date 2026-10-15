@@ -3,6 +3,10 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## 2026-10-15
+- SYNTH: wavefolder and ring mod; filters LADDER, MS20, COMB, FORMANT on every type.
+- New instrument type MACRO: 8 oscillator models with Timbre / Color.
+- New instrument type STRING: plucked string and modal resonator (models STRING / MODAL; Damp, Bright,
+  Struct, Position, Excite); 6 factory presets.
 - Track insert chain (drive, crush, trance gate) instead of per-voice drive / crush; old projects migrate.
 - Drive models; presets carry a recommended insert.
 - Trance gate and envelope follower per track (TRACK -> FOL).
@@ -11,6 +15,8 @@ Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 - ESP32-S3 audio path optimised; internal RAM freed (UI in PSRAM, Wi-Fi works again). Main branch only:
   with the Teensy synth board the ESP renders no audio.
 - BANK: Length 128 in the pattern menu.
+- Teensy synth board: voice pool by cost: each note is priced at note-on, the sounding voices stay
+  under ~65 % of the CPU (the oldest fade out first); the CPU guard stays the backstop.
 
 ## 2026-10-14
 - CPU guard no longer steals voices on a single late block.

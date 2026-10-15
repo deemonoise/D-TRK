@@ -192,10 +192,10 @@ MT_INLINE float lineLoop(int kTaps, int16_t* line, uint32_t& wRef, const float* 
 }  // namespace
 
 // One segment of k <= kFxSeg samples: LFO targets at the segment end, offsets / coefficients ramped.
-// The segment's targets at its end (per segment of kFxSeg samples, ~1 kHz: flash): the LFOs move,
+// The segment's targets at its end (per segment of kFxSeg samples, ~1 kHz: hot): the LFOs move,
 // then the phaser's two coefficients (t[0..1]) or the line taps' offsets (t[0..taps)). Returns the
 // tap count (2 for the phaser).
-int ModFx::targets(int k, float* t) {
+MT_HOT int ModFx::targets(int k, float* t) {
   lfo_.advance(hz_, k);
   const ModFxType ty = static_cast<ModFxType>(type_);
   const float d = depth_;

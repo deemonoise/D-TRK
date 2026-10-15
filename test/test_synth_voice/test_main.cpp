@@ -104,6 +104,7 @@ void test_full_pool_steals_globally_oldest() {
 static int allocFm(uint8_t track, bool mono, bool& legato) {
   const int i = allocVoice(v, track, mono, age, legato, true);
   v[i].fm = true;
+  v[i].heavy = true;
   v[i].env.set(0, 0, 1.f, 100);
   v[i].env.gate(true);
   v[i].env.next();
@@ -226,6 +227,17 @@ void test_heavy_limit_skips_stolen_and_tails() {
   TEST_ASSERT_EQUAL(1, stolen);  // 7 counted + the tail freed a slot: nothing more stolen
 }
 
+void test_heavy_load_reads_heavy_flag() {
+  // Voice::heavy is the single source (set at note-on): the engine flags alone do not count.
+  const int i = allocFm(1);
+  TEST_ASSERT_TRUE(heavyLoad(v[i]));
+  v[i].heavy = false;
+  TEST_ASSERT_FALSE(heavyLoad(v[i]));  // fm still true
+  v[i].fm = false;
+  v[i].heavy = true;
+  TEST_ASSERT_TRUE(heavyLoad(v[i]));
+}
+
 void test_poly_max_eight() {
   int got[8];
   for (int k = 0; k < 8; ++k) {
@@ -235,6 +247,177 @@ void test_poly_max_eight() {
   }
   bool l;
   TEST_ASSERT_EQUAL(got[0], allocVoice(v, 0, false, age, l, false, 8));
+}
+
+// ---- Cost budget ----
+
+// A held note of cost on track (budget in the same units).
+static int allocCost(uint8_t track, int cost, int budget, bool mono = false, int polyMax = kPolyPerTrack) {
+  bool l;
+  const int i = allocVoice(v, track, mono, age, l, false, polyMax, kVoices, cost, budget);
+  v[i].env.set(0, 0, 1.f, 100);
+  v[i].env.gate(true);
+  v[i].env.next();
+  return i;
+}
+static int stolenCount() {
+  int n = 0;
+  for (const auto& x : v) n += x.on && x.stolen;
+  return n;
+}
+
+void test_budget_off_steals_nothing() {
+  for (int k = 0; k < 40; ++k) alloc(static_cast<uint8_t>(k % 20));
+  TEST_ASSERT_EQUAL(0, stolenCount());
+}
+
+void test_budget_over_steals_oldest() {
+  const int a = allocCost(0, 300, 1000);
+  const int b = allocCost(1, 300, 1000);
+  const int c = allocCost(2, 300, 1000);
+  TEST_ASSERT_EQUAL(0, stolenCount());
+  const int d = allocCost(3, 300, 1000);
+  TEST_ASSERT_TRUE(v[a].stolen);
+  TEST_ASSERT_TRUE(v[a].env.stage() == Env::Stage::Release);  // fades, no hard cut
+  TEST_ASSERT_FALSE(v[b].stolen);
+  TEST_ASSERT_FALSE(v[c].stolen);
+  TEST_ASSERT_NOT_EQUAL(a, d);
+  TEST_ASSERT_TRUE(v[d].on);
+  TEST_ASSERT_FALSE(v[d].stolen);
+  TEST_ASSERT_EQUAL(300, v[d].cost);
+  TEST_ASSERT_EQUAL(1, stolenCount());
+}
+
+void test_budget_prefers_releasing_victim() {
+  const int a = allocCost(0, 300, 1000);
+  const int b = allocCost(1, 300, 1000);
+  allocCost(2, 300, 1000);
+  v[b].env.gate(false);
+  allocCost(3, 300, 1000);
+  TEST_ASSERT_TRUE(v[b].stolen);
+  TEST_ASSERT_FALSE(v[a].stolen);
+  TEST_ASSERT_EQUAL(1, stolenCount());
+}
+
+void test_budget_big_note_steals_until_it_fits() {
+  // used 900: 900 + 900 > 1000 -> a (600 left), 1500 > 1000 -> b (300), 1200 > 1000 -> c (0): all three.
+  const int a = allocCost(0, 300, 1000);
+  const int b = allocCost(1, 300, 1000);
+  const int c = allocCost(2, 300, 1000);
+  const int d = allocCost(3, 900, 1000);
+  TEST_ASSERT_TRUE(v[a].stolen && v[b].stolen && v[c].stolen);
+  TEST_ASSERT_FALSE(v[d].stolen);
+  TEST_ASSERT_EQUAL(3, stolenCount());
+}
+
+void test_budget_note_always_plays() {
+  const int a = allocCost(0, 300, 1000);
+  const int d = allocCost(1, 1500, 1000);  // never fits: steals all, plays anyway
+  TEST_ASSERT_TRUE(v[a].stolen);
+  TEST_ASSERT_TRUE(v[d].on);
+  TEST_ASSERT_FALSE(v[d].stolen);
+}
+
+void test_budget_mono_legato_not_counted_twice() {
+  // 300 + 600 fits; the retrigger reuses the 600 voice, so 300 + 600 again, not 300 + 600 + 600.
+  const int other = allocCost(1, 300, 1000);
+  const int a = allocCost(0, 600, 1000, true);
+  const int b = allocCost(0, 600, 1000, true);
+  TEST_ASSERT_EQUAL(a, b);
+  TEST_ASSERT_FALSE(v[other].stolen);
+  TEST_ASSERT_EQUAL(0, stolenCount());
+}
+
+void test_budget_poly_track_steal_not_counted_twice() {
+  // Track 0 at polyMax 2 reuses its oldest voice: 600 + 300, nothing stolen.
+  const int a = allocCost(0, 300, 1000, false, 2);
+  allocCost(0, 300, 1000, false, 2);
+  const int other = allocCost(1, 300, 1000, false, 2);
+  TEST_ASSERT_EQUAL(a, allocCost(0, 300, 1000, false, 2));
+  TEST_ASSERT_FALSE(v[other].stolen);
+  TEST_ASSERT_EQUAL(0, stolenCount());
+}
+
+void test_budget_cheap_notes_steal_nothing() {
+  for (int k = 0; k < 10; ++k) allocCost(static_cast<uint8_t>(k), 100, 1000);
+  TEST_ASSERT_EQUAL(0, stolenCount());
+}
+
+void test_budget_ignores_stolen_voices() {
+  // A stolen (fading) voice no longer counts: the 5th note steals one more, not two.
+  for (int k = 0; k < 4; ++k) allocCost(static_cast<uint8_t>(k), 300, 1000);  // steals the 1st
+  allocCost(4, 300, 1000);
+  TEST_ASSERT_EQUAL(2, stolenCount());
+}
+
+// A held heavy note of cost on track.
+static int allocHeavyCost(uint8_t track, int cost, int budget) {
+  bool l;
+  const int i = allocVoice(v, track, false, age, l, true, kPolyPerTrack, kVoices, cost, budget);
+  v[i].fm = true;
+  v[i].heavy = true;
+  v[i].env.set(0, 0, 1.f, 100);
+  v[i].env.gate(true);
+  v[i].env.next();
+  return i;
+}
+
+void test_budget_heavy_victim_counted_once() {
+  // kFmVoiceMax heavy voices of 100 fill the budget. A heavy 200 note steals the oldest heavy voice
+  // (heavy limit, 100 back) and still needs 100 more: exactly one more victim.
+  const int budget = kFmVoiceMax * 100;
+  for (int k = 0; k < kFmVoiceMax; ++k) allocHeavyCost(static_cast<uint8_t>(1 + k % 4), 100, budget);
+  const int got = allocHeavyCost(5, 200, budget);
+  TEST_ASSERT_TRUE(v[byAge(1)].stolen);
+  TEST_ASSERT_TRUE(v[byAge(2)].stolen);
+  TEST_ASSERT_FALSE(v[got].stolen);
+  TEST_ASSERT_EQUAL(2, stolenCount());
+}
+
+void test_budget_heavy_victim_reused_as_pick() {
+  // No free voice: the heavy victim itself is the pick and gives its 100 back; a 200 note needs one more.
+  const int budget = kVoices * 100;
+  for (int k = 0; k < kVoices - kFmVoiceMax; ++k) allocCost(static_cast<uint8_t>(8 + k), 100, budget);
+  for (int k = 0; k < kFmVoiceMax; ++k) allocHeavyCost(static_cast<uint8_t>(1 + k % 4), 100, budget);
+  const int victim = byAge(kVoices - kFmVoiceMax + 1);
+  const int chip = byAge(1);
+  TEST_ASSERT_EQUAL(victim, allocHeavyCost(5, 200, budget));
+  TEST_ASSERT_FALSE(v[victim].stolen);
+  TEST_ASSERT_TRUE(v[chip].stolen);
+  TEST_ASSERT_EQUAL(1, stolenCount());
+}
+
+void test_budget_stolen_pick_not_given_back() {
+  // Full pool, the oldest voice already stolen (not in the sum) and picked: kVoices - 1 live of 100
+  // plus the new 100 is over a budget of kVoices * 100 - 50, so one more voice goes.
+  const int budget = kVoices * 100 - 50;
+  for (int k = 0; k < kVoices; ++k) allocCost(static_cast<uint8_t>(k), 100, kVoiceBudgetOff);
+  const int first = byAge(1);
+  v[first].env.fade(kStealMs);
+  v[first].stolen = true;
+  TEST_ASSERT_EQUAL(first, allocCost(30, 100, budget));
+  TEST_ASSERT_FALSE(v[first].stolen);
+  TEST_ASSERT_TRUE(v[byAge(2)].stolen);
+  TEST_ASSERT_EQUAL(1, stolenCount());
+}
+
+void test_budget_skips_zero_cost_victims() {
+  // Stealing a 0-cost voice frees nothing: the oldest priced voice goes instead.
+  const int free0 = allocCost(0, 0, 1000);
+  const int a = allocCost(1, 300, 1000);
+  allocCost(2, 300, 1000);
+  allocCost(3, 300, 1000);
+  allocCost(4, 300, 1000);
+  TEST_ASSERT_FALSE(v[free0].stolen);
+  TEST_ASSERT_TRUE(v[a].stolen);
+  TEST_ASSERT_EQUAL(1, stolenCount());
+}
+
+void test_budget_cost_clamped() {
+  const int i = allocCost(0, 70000, kVoiceBudgetOff);
+  TEST_ASSERT_EQUAL(65535, v[i].cost);
+  const int j = allocCost(1, -5, kVoiceBudgetOff);
+  TEST_ASSERT_EQUAL(0, v[j].cost);
 }
 
 int main() {
@@ -253,6 +436,21 @@ int main() {
   RUN_TEST(test_heavy_limit_counts_drum_with_fm);
   RUN_TEST(test_heavy_limit_no_free_voice_takes_victim);
   RUN_TEST(test_heavy_limit_skips_stolen_and_tails);
+  RUN_TEST(test_heavy_load_reads_heavy_flag);
   RUN_TEST(test_poly_max_eight);
+  RUN_TEST(test_budget_off_steals_nothing);
+  RUN_TEST(test_budget_over_steals_oldest);
+  RUN_TEST(test_budget_prefers_releasing_victim);
+  RUN_TEST(test_budget_big_note_steals_until_it_fits);
+  RUN_TEST(test_budget_note_always_plays);
+  RUN_TEST(test_budget_mono_legato_not_counted_twice);
+  RUN_TEST(test_budget_poly_track_steal_not_counted_twice);
+  RUN_TEST(test_budget_cheap_notes_steal_nothing);
+  RUN_TEST(test_budget_ignores_stolen_voices);
+  RUN_TEST(test_budget_heavy_victim_counted_once);
+  RUN_TEST(test_budget_heavy_victim_reused_as_pick);
+  RUN_TEST(test_budget_stolen_pick_not_given_back);
+  RUN_TEST(test_budget_skips_zero_cost_victims);
+  RUN_TEST(test_budget_cost_clamped);
   return UNITY_END();
 }

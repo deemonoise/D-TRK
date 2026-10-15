@@ -14,6 +14,7 @@
 #include "psram.h"
 #include "render_server.h"
 #include "sample_tools.h"
+#include "stack_mark.h"
 #include "stream.h"
 #include "synth.h"
 #include "synth_model.h"
@@ -326,6 +327,7 @@ void sendStatus() {
   for (int t = 0; t < mt::kTracks; ++t)
     s.follower[t] = static_cast<uint8_t>(min(255.f, synth->followerLevel(static_cast<uint8_t>(t)) * 255.f + 0.5f));
   s.scopeN = static_cast<uint16_t>(out->scopeRead(s.scope, Status::kScopeMax));
+  s.stackFree = stackmark::minFree();
   send(Msg::Status, s);
 }
 

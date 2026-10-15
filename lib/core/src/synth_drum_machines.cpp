@@ -1,14 +1,15 @@
 #include "synth_drum_machines.h"
 #include <math.h>
 #include "fastmath.h"
+#include "hot.h"
 #include "synth_osc.h"
 
 namespace mt {
 namespace {
 
-float u(float v) { return v <= 0 ? 0 : (v >= 127 ? 1 : v * (1.f / 127.f)); }
-float lerp(float a, float b, float t) { return a + (b - a) * t; }
-float expMap(float lo, float hi, float t) { return lo * fastPow(hi / lo, t); }
+MT_HOT float u(float v) { return v <= 0 ? 0 : (v >= 127 ? 1 : v * (1.f / 127.f)); }
+MT_HOT float lerp(float a, float b, float t) { return a + (b - a) * t; }
+MT_HOT float expMap(float lo, float hi, float t) { return lo * fastPow(hi / lo, t); }
 
 // TR-808 metal oscillators; the 909 set is an inharmonic stand-in (the originals are samples),
 // design table (263 / 400 / 421 / 474 / 587 / 845 Hz) x 2.
@@ -44,11 +45,11 @@ struct Mac {
 };
 
 // spread stretches the set around its centre: lowest x 1 / spread, highest x spread.
-void metal(DrumParams& o, const float* set, float scale, float spread) {
+MT_HOT void metal(DrumParams& o, const float* set, float scale, float spread) {
   for (int k = 0; k < kDrumMetal; ++k) o.metalHz[k] = set[k] * scale * fastPow(spread, (k - 2.5f) / 2.5f);
 }
 
-void kick(DrumParams& o, const Mac& m, float hz, float click, float clickMs, float sweep, float tLo,
+MT_HOT void kick(DrumParams& o, const Mac& m, float hz, float click, float clickMs, float sweep, float tLo,
           float tHi) {
   o.toneHz[0] = hz;
   o.toneLvl[0] = 1;
@@ -60,7 +61,7 @@ void kick(DrumParams& o, const Mac& m, float hz, float click, float clickMs, flo
   o.pitchMs = expMap(tLo, tHi, m.con);
 }
 
-void tom(DrumParams& o, const Mac& m, float hz, float noiseHz, float sweep) {
+MT_HOT void tom(DrumParams& o, const Mac& m, float hz, float noiseHz, float sweep) {
   o.toneHz[0] = hz;
   o.toneLvl[0] = 1;
   o.toneMs = m.dMs;
@@ -73,7 +74,7 @@ void tom(DrumParams& o, const Mac& m, float hz, float noiseHz, float sweep) {
   o.pitchMs = expMap(10, 200, m.con);
 }
 
-void snare(DrumParams& o, const Mac& m, float lo, float hi, float noiseHz) {
+MT_HOT void snare(DrumParams& o, const Mac& m, float lo, float hi, float noiseHz) {
   o.toneHz[0] = lo;
   o.toneHz[1] = hi;
   o.toneLvl[0] = 0.6f * (0.9f * (1 - m.col) + 0.1f);
@@ -87,7 +88,7 @@ void snare(DrumParams& o, const Mac& m, float lo, float hi, float noiseHz) {
   o.noiseHz = noiseHz;
 }
 
-void clap(DrumParams& o, const Mac& m, float lo, float hi, uint8_t bursts) {
+MT_HOT void clap(DrumParams& o, const Mac& m, float lo, float hi, uint8_t bursts) {
   o.noiseLvl = 1;
   o.noiseMs = m.dMs;
   o.noiseMode = Svf::Mode::Bp;
@@ -98,7 +99,7 @@ void clap(DrumParams& o, const Mac& m, float lo, float hi, uint8_t bursts) {
   o.tail = m.con;
 }
 
-void rim(DrumParams& o, const Mac& m, float lo, float hi, float decHi, float noiseMs, float noiseHz,
+MT_HOT void rim(DrumParams& o, const Mac& m, float lo, float hi, float decHi, float noiseMs, float noiseHz,
          float pitchMs) {
   o.toneHz[0] = lo;
   o.toneHz[1] = hi;
@@ -112,7 +113,7 @@ void rim(DrumParams& o, const Mac& m, float lo, float hi, float decHi, float noi
   o.pitchMs = pitchMs;
 }
 
-void hat(DrumParams& o, const Mac& m, const float* set, float scale, float decLo, float decHi,
+MT_HOT void hat(DrumParams& o, const Mac& m, const float* set, float scale, float decLo, float decHi,
          float hpLo, float hpHi, float bp1, float bp2) {
   metal(o, set, scale, expMap(0.8f, 1.25f, m.swp));
   o.metalLvl = 1.f - 0.7f * m.shp;
@@ -137,7 +138,7 @@ const char* drumMacroName(uint8_t m, int k) {
   return kNames[m < static_cast<int>(DrumMachine::Count) ? m : 0].mac[k];
 }
 
-void drumMachine(uint8_t machine, const float mac[kFmMacros], float pitch, DrumParams& o) {
+MT_HOT void drumMachine(uint8_t machine, const float mac[kFmMacros], float pitch, DrumParams& o) {
   o = DrumParams();
   const float r = fastExp2((pitch - 60.f) * (1.f / 12.f));
   Mac m;

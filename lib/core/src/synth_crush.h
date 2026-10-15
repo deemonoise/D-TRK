@@ -8,7 +8,8 @@ namespace mt {
 // Lo-fi per voice: bit depth and sample-rate reduction (fx BIT / SRR), after the drive, before the
 // filter. bits 0 = off .. 127 = 2 bits; rate 0 = off .. 127 = holds each sample ~64 samples.
 struct Crush {
-  // Per control update: the unchanged case inline, a change out of line (synth_crush.cpp, flash).
+  // Per control update: the unchanged case inline, a change out of line (synth_crush.cpp,
+  // hot too: an LFO on BIT / SRR moves it every control period).
   MT_INLINE void set(uint8_t bits, uint8_t rate) {
     bits = bits > 127 ? 127 : bits;
     rate = rate > 127 ? 127 : rate;

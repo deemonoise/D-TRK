@@ -1023,6 +1023,19 @@ void test_fltr_roundtrip() {
   TEST_ASSERT_EQUAL(127, r.keytrack);
 }
 
+// The filter types after HP (LADDER .. FORMANT) survive a save / load; past them clamps to OFF.
+void test_fltr_new_modes_roundtrip() {
+  const FltMode modes[] = {FltMode::Ladder, FltMode::Ms20, FltMode::Comb, FltMode::Formant};
+  for (int k = 0; k < 4; ++k) a.instruments[k].fltMode = static_cast<uint8_t>(modes[k]);
+  a.instruments[4].fltMode = static_cast<uint8_t>(FltMode::Count);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(static_cast<int>(modes[k]), b.instruments[k].fltMode);
+  TEST_ASSERT_EQUAL(static_cast<int>(FltMode::Off), b.instruments[4].fltMode);
+}
+
 // The new LFO targets (LFO-to-LFO, SEMI2) survive a project save / load.
 void test_lfo_dests_roundtrip() {
   Instrument& m = a.instruments[6];
@@ -1208,6 +1221,8 @@ static void fillSyn(Instrument& m) {
   m.synNoise = 17;
   m.synEAtk = 5;
   m.synEDec = 120;
+  m.synFold = 77;
+  m.synRing = 33;
 }
 
 void test_syn_roundtrip() {
@@ -1234,11 +1249,61 @@ void test_syn_roundtrip() {
   TEST_ASSERT_EQUAL(m.synNoise, r.synNoise);
   TEST_ASSERT_EQUAL(m.synEAtk, r.synEAtk);
   TEST_ASSERT_EQUAL(m.synEDec, r.synEDec);
+  TEST_ASSERT_EQUAL(77, r.synFold);
+  TEST_ASSERT_EQUAL(33, r.synRing);
   TEST_ASSERT_EQUAL(2, b.wavetableCount);
   TEST_ASSERT_EQUAL_STRING("pad", b.wavetables[0].name);
   TEST_ASSERT_EQUAL_HEX32(0xCAFEBABE, b.wavetables[0].crc);
   TEST_ASSERT_EQUAL_STRING("pad_table_name16", b.wavetables[1].name);
   TEST_ASSERT_EQUAL_HEX32(7, b.wavetables[1].crc);
+}
+
+// MACRO: the model in machine, TIMBRE / COLOR / ENV>TMB in the macros, the env in synEAtk / synEDec.
+void test_macro_instrument_roundtrip() {
+  Instrument& m = a.instruments[5];
+  instrSetType(m, InstrType::Macro);
+  m.machine = 5;
+  m.macro[kMacTimbre] = 10;
+  m.macro[kMacColor] = 20;
+  m.macro[kMacEnvTmb] = 90;
+  m.synEAtk = 3;
+  m.synEDec = 50;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  const Instrument& r = b.instruments[5];
+  TEST_ASSERT_TRUE(r.type == InstrType::Macro);
+  TEST_ASSERT_EQUAL(5, r.machine);
+  for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_EQUAL(m.macro[k], r.macro[k]);
+  TEST_ASSERT_EQUAL(10, r.macro[kMacTimbre]);
+  TEST_ASSERT_EQUAL(20, r.macro[kMacColor]);
+  TEST_ASSERT_EQUAL(90, r.macro[kMacEnvTmb]);
+  TEST_ASSERT_EQUAL(3, r.synEAtk);
+  TEST_ASSERT_EQUAL(50, r.synEDec);
+}
+
+// STRING: the model in machine, DAMP / BRIGHT / STRUCT / POS / EXC in the macros.
+void test_string_instrument_roundtrip() {
+  Instrument& m = a.instruments[6];
+  instrSetType(m, InstrType::String);
+  m.machine = static_cast<uint8_t>(StringModel::Modal);
+  m.macro[kMacDamp] = 10;
+  m.macro[kMacBright] = 90;
+  m.macro[kMacStruct] = 64;
+  m.macro[kMacPos] = 20;
+  m.macro[kMacExc] = 127;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  const Instrument& r = b.instruments[6];
+  TEST_ASSERT_TRUE(r.type == InstrType::String);
+  TEST_ASSERT_EQUAL(static_cast<int>(StringModel::Modal), r.machine);
+  for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_EQUAL(m.macro[k], r.macro[k]);
+  TEST_ASSERT_EQUAL(10, r.macro[kMacDamp]);
+  TEST_ASSERT_EQUAL(90, r.macro[kMacBright]);
+  TEST_ASSERT_EQUAL(64, r.macro[kMacStruct]);
+  TEST_ASSERT_EQUAL(20, r.macro[kMacPos]);
+  TEST_ASSERT_EQUAL(127, r.macro[kMacExc]);
 }
 
 void test_file_without_syn_chunks() {
@@ -1260,6 +1325,8 @@ void test_file_without_syn_chunks() {
   TEST_ASSERT_EQUAL(def.synSemi, r.synSemi);
   TEST_ASSERT_EQUAL(def.synSub, r.synSub);
   TEST_ASSERT_EQUAL(def.synEDec, r.synEDec);
+  TEST_ASSERT_EQUAL(0, r.synFold);
+  TEST_ASSERT_EQUAL(0, r.synRing);
 }
 
 void test_syni_garbage_clamped() {
@@ -1269,6 +1336,7 @@ void test_syni_garbage_clamped() {
   r[0] = 9;    // osc 1
   r[1] = 200;  // osc 2
   r[34] = 100; // semi
+  r[41] = 200; // fold
   in.insert(in.end(), r.begin(), r.end());
   putChunk(f, "SYNI", in);
   finish(f);
@@ -1285,6 +1353,8 @@ void test_syni_garbage_clamped() {
   TEST_ASSERT_EQUAL(127, m.synNoise);
   TEST_ASSERT_EQUAL(127, m.synEAtk);
   TEST_ASSERT_EQUAL(127, m.synEDec);
+  TEST_ASSERT_EQUAL(127, m.synFold);  // 200 clamped
+  TEST_ASSERT_EQUAL(127, m.synRing);  // 0xFF clamped
   f = fileHeader();
   in = {1};
   r.assign(kSynRecSize, 0);
@@ -1296,6 +1366,8 @@ void test_syni_garbage_clamped() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
   TEST_ASSERT_EQUAL(-24, b.instruments[0].synSemi);
   TEST_ASSERT_TRUE(b.instruments[0].synSync);
+  TEST_ASSERT_EQUAL(0, b.instruments[0].synFold);  // bytes 41 / 42 once reserved 0: off
+  TEST_ASSERT_EQUAL(0, b.instruments[0].synRing);
 }
 
 static std::vector<uint8_t> wtblChunk(std::initializer_list<const char*> names) {
@@ -2184,6 +2256,7 @@ int main() {
   RUN_TEST(test_samples_chunk_too_small);
   RUN_TEST(test_samples_two_chunks_last_wins);
   RUN_TEST(test_fltr_roundtrip);
+  RUN_TEST(test_fltr_new_modes_roundtrip);
   RUN_TEST(test_lfo_dests_roundtrip);
   RUN_TEST(test_file_without_fltr);
   RUN_TEST(test_fltr_garbage_clamped);
@@ -2194,6 +2267,8 @@ int main() {
   RUN_TEST(test_slices_bad_order_truncated);
   RUN_TEST(test_slices_count_clamped);
   RUN_TEST(test_syn_roundtrip);
+  RUN_TEST(test_macro_instrument_roundtrip);
+  RUN_TEST(test_string_instrument_roundtrip);
   RUN_TEST(test_file_without_syn_chunks);
   RUN_TEST(test_syni_garbage_clamped);
   RUN_TEST(test_wtbl_dup_bad_and_repeat);

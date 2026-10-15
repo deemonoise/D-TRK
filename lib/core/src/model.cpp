@@ -31,13 +31,25 @@ bool Pattern::isEmpty() const {
 }
 
 namespace {
-constexpr InstrType kTypeOrder[] = {InstrType::Fm, InstrType::Synth, InstrType::Drum, InstrType::Sample,
-                                    InstrType::Chip, InstrType::Kit};
+constexpr InstrType kTypeOrder[] = {InstrType::Fm,   InstrType::Synth,  InstrType::Macro, InstrType::String,
+                                    InstrType::Drum, InstrType::Sample, InstrType::Chip,  InstrType::Kit};
 static_assert(sizeof(kTypeOrder) == static_cast<size_t>(InstrType::Count), "type order");
 }  // namespace
 
 InstrType instrTypeAt(int k) {
   return k >= 0 && k < static_cast<int>(InstrType::Count) ? kTypeOrder[k] : InstrType::Fm;
+}
+
+const char* macroModelName(uint8_t model) {
+  static const char* const kNames[] = {"SAW+", "MORPH", "SAW/SQR", "FOLD", "VOSIM", "VOWEL", "FM", "FB FM"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(MacroModel::Count), "MACRO model names");
+  return kNames[model < static_cast<uint8_t>(MacroModel::Count) ? model : 0];
+}
+
+const char* stringModelName(uint8_t model) {
+  static const char* const kNames[] = {"STRING", "MODAL"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(StringModel::Count), "STRING model names");
+  return kNames[model < static_cast<uint8_t>(StringModel::Count) ? model : 0];
 }
 
 int instrTypePos(InstrType t) {
@@ -185,7 +197,7 @@ float cutoffHz(float v) {
   return 20.f * powf(700.f, v / 127.f);
 }
 
-float resoQ(float v) {  // per control with an LFO on RESO: no powf
+MT_HOT float resoQ(float v) {  // per control with an LFO on RESO: no powf
   v = v < 0 ? 0 : (v > 127 ? 127 : v);
   return 0.5f * fastExp2(v * (5.32192809f / 127.f));  // 0.5 x 40^(v / 127)
 }
@@ -232,6 +244,16 @@ void instrSetType(Instrument& m, InstrType t) {
   else if (t == InstrType::Synth) {
     static const uint8_t kDef[kFmMacros] = {0, 0, 0, 64, 64};  // SHP1, SHP2, MIX, DET, SENV
     memcpy(m.macro, kDef, kFmMacros);
+  } else if (t == InstrType::Macro) {
+    static const uint8_t kDef[kFmMacros] = {64, 64, 64, 0, 0};  // TIMBRE, COLOR, ENV>TMB (64 = off)
+    memcpy(m.macro, kDef, kFmMacros);
+    if (m.machine >= static_cast<uint8_t>(MacroModel::Count)) m.machine = 0;
+  } else if (t == InstrType::String) {
+    static const uint8_t kDef[kFmMacros] = {80, 64, 0, 30, 10};  // DAMP, BRIGHT, STRUCT, POS, EXC
+    memcpy(m.macro, kDef, kFmMacros);
+    if (m.machine >= static_cast<uint8_t>(StringModel::Count)) m.machine = 0;
+    // COMB needs the voice's delay line, which STRING takes (the synth would run it as Off).
+    if (m.fltMode == static_cast<uint8_t>(FltMode::Comb)) m.fltMode = static_cast<uint8_t>(FltMode::Off);
   } else if (t == InstrType::Kit) kitSetDefaults(m);
   for (int i = 0; i < kLfos; ++i) {
     uint8_t& dest = lfoRef(m, i).dest;
@@ -250,18 +272,22 @@ bool lfoDestValid(uint8_t dest, InstrType t) {
   if (dest >= static_cast<uint8_t>(LfoDest::Count)) return false;
   const auto d = static_cast<LfoDest>(dest);
   if (d >= LfoDest::Dec && d <= LfoDest::Con)
-    return t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth;
+    return t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth || t == InstrType::String ||
+           (t == InstrType::Macro && d <= LfoDest::Shp);  // MACRO: TIMBRE, COLOR, ENV>TMB
   if (d == LfoDest::Duty) return t == InstrType::Chip;
-  if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2) return t == InstrType::Synth;
+  if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2 || d == LfoDest::Fold ||
+      d == LfoDest::Ring)
+    return t == InstrType::Synth;
   return true;
 }
 
-// The Dest list order: the enum's, with PAN and MOD (appended for the file format) next to the sends.
+// The Dest list order: the enum's, with PAN and MOD (appended for the file format) next to the sends
+// and FOLD, RING (likewise) after SEMI2.
 constexpr LfoDest kDestOrder[] = {
     LfoDest::Pitch, LfoDest::Dec,    LfoDest::Col,    LfoDest::Shp,    LfoDest::Swp,    LfoDest::Con,
     LfoDest::Vol,   LfoDest::Cutoff, LfoDest::Drive,  LfoDest::Reso,   LfoDest::Fenv,   LfoDest::Dly,
     LfoDest::Rvb,   LfoDest::ModSend, LfoDest::Pan,  LfoDest::Bit,    LfoDest::Srr,    LfoDest::Fine,   LfoDest::Duty,
-    LfoDest::Sub,   LfoDest::Noise,  LfoDest::Semi2,  LfoDest::Rate1,  LfoDest::Rate2,  LfoDest::Rate3,
+    LfoDest::Sub,   LfoDest::Noise,  LfoDest::Semi2,  LfoDest::Fold,   LfoDest::Ring,   LfoDest::Rate1,  LfoDest::Rate2,  LfoDest::Rate3,
     LfoDest::Rate4, LfoDest::Depth1, LfoDest::Depth2, LfoDest::Depth3, LfoDest::Depth4, LfoDest::Rtrg1,
     LfoDest::Rtrg2, LfoDest::Rtrg3,  LfoDest::Rtrg4};
 constexpr int kDestN = sizeof(kDestOrder) / sizeof(kDestOrder[0]);
@@ -289,12 +315,16 @@ const char* lfoDestName(uint8_t dest, InstrType t) {
       "PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP", "CONTOUR", "VOL", "CUTOFF", "DRIVE",
       "RESO", "FENV", "DLY", "RVB", "BIT", "SRR", "FINE", "DUTY", "SUB", "NOISE", "SEMI2",
       "L1 RATE", "L2 RATE", "L3 RATE", "L4 RATE", "L1 DEPTH", "L2 DEPTH", "L3 DEPTH", "L4 DEPTH",
-      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD"};
+      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD", "FOLD", "RING"};
   static const char* const kSyn[] = {"SHP1", "SHP2", "MIX", "DET", "SENV"};
+  static const char* const kMac[] = {"TIMBRE", "COLOR", "ENV>TMB"};
+  static const char* const kStr[] = {"DAMP", "BRIGHT", "STRUCT", "POS", "EXC"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");
   if (dest >= static_cast<uint8_t>(LfoDest::Count)) dest = 0;
   const int mac = dest - static_cast<int>(LfoDest::Dec);
   if (t == InstrType::Synth && mac >= 0 && mac < kFmMacros) return kSyn[mac];
+  if (t == InstrType::Macro && mac >= 0 && mac < 3) return kMac[mac];
+  if (t == InstrType::String && mac >= 0 && mac < kFmMacros) return kStr[mac];
   return kNames[dest];
 }
 
@@ -316,8 +346,9 @@ uint8_t folDestStep(uint8_t dest, int d, InstrType t) {
 }
 
 // The follower / gate helpers (updateFollowers, a gate ATK / REL change): per control update or per
-// change, in flash; fastmath's inline exp / log (no newlib call), accurate to float precision.
-float folLevel(float pk) {
+// change (folLevel / folCoef hot, gateMs in flash); fastmath's inline exp / log (no newlib call),
+// accurate to float precision.
+MT_HOT float folLevel(float pk) {
   const float x = pk * 0.25f;
   if (x < 0.00398f) return 0.f;  // -48 dB
   const float l = (6.0205999f * fastLog2(x) + 48.f) * (1.f / 48.f);
@@ -329,7 +360,7 @@ constexpr float kFolStepMs = 32.f * 1000.f / kSynthRate;  // Synth::kControl sam
 }
 float folStepMs() { return kFolStepMs; }
 
-float folCoef(uint8_t v) {
+MT_HOT float folCoef(uint8_t v) {
   const uint16_t ms = envTimeMs(v);
   return ms == 0 ? 1.f : 1.f - fastExp(-kFolStepMs * fastRcp(static_cast<float>(ms)));  // no __divsf3
 }

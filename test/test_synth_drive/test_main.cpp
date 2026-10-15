@@ -4,6 +4,7 @@
 #include <unity.h>
 #include "model.h"
 #include "synth_drive.h"
+#include "synth_shape.h"
 
 using namespace mt;
 
@@ -326,6 +327,47 @@ void test_reset_clears_state() {
   }
 }
 
+static uint32_t fnv(const float* x, int n) {
+  uint32_t h = 2166136261u;
+  const uint8_t* b = reinterpret_cast<const uint8_t*>(x);
+  for (int i = 0; i < n * 4; ++i) h = (h ^ b[i]) * 16777619u;
+  return h;
+}
+
+// FOLD bit-exact across the move of its curve into synth_shape.h (hash of the pre-move output,
+// a sine with a jump and small steps: the ADAA quotient and the midpoint fallback both run).
+void test_fold_bit_exact() {
+  static float x[4096];
+  for (int i = 0; i < 4096; ++i) x[i] = (i < 2048 ? 0.9f : 0.3f) * sinf(2 * kPi * 220.f * i / kFs);
+  for (int i = 3000; i < 3100; ++i) x[i] = 0.25f + i * 1e-6f;
+  ModelDrive d;
+  d.set(100, 2);
+  for (int k = 0; k < 4096; k += 64) d.processBlock(x + k, 64);
+  const uint32_t h = fnv(x, 4096);
+  TEST_ASSERT_EQUAL_HEX32(0xc0ddea23u, h);
+}
+
+// The shared fold curve (synth_shape.h): period 4, odd; its antiderivative against a trapezoid sum.
+void test_shape_fold_curve_and_anti() {
+  const float pts[] = {0.f, 1.f, 2.f, 3.f}, want[] = {0.f, 1.f, 0.f, -1.f};
+  for (int k = 0; k < 4; ++k) {
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, want[k], foldCurve(pts[k]));
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -want[k], foldCurve(-pts[k]));
+  }
+  for (int k = 0; k < 100; ++k) {
+    const float u = frand() * 20.f;
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -foldCurve(u), foldCurve(-u));
+  }
+  const double h = 1e-3;
+  double acc = 0;
+  const double base = foldAnti(-6.f);
+  for (int i = 0; i <= 12000; ++i) {
+    const double u = -6.0 + i * h;
+    if (i > 0) acc += 0.5 * h * (foldCurve(static_cast<float>(u - h)) + foldCurve(static_cast<float>(u)));
+    if (i % 50 == 0) TEST_ASSERT_FLOAT_WITHIN(1e-3f, static_cast<float>(acc), static_cast<float>(foldAnti(static_cast<float>(u)) - base));
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_drive_zero_is_identity);
@@ -345,5 +387,7 @@ int main() {
   RUN_TEST(test_drive_jump_is_smooth);
   RUN_TEST(test_model_switch_is_smooth);
   RUN_TEST(test_reset_clears_state);
+  RUN_TEST(test_fold_bit_exact);
+  RUN_TEST(test_shape_fold_curve_and_anti);
   return UNITY_END();
 }

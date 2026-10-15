@@ -16,6 +16,7 @@
 #include "psram.h"
 #include "render_server.h"
 #include "sample_tools.h"
+#include "stack_mark.h"
 #include "stream.h"
 #include "synth.h"
 #include "synth_reverb.h"
@@ -115,6 +116,7 @@ void loop() {
 }
 #else
 void setup() {
+  stackmark::paint();  // first: nothing deep has run yet
   wdog::captureReset();
   Serial.begin(115200);
 #if defined(LINK_DESK) && !defined(AUDIO_BENCH_MAX)
@@ -133,6 +135,7 @@ void setup() {
   memset(shimWet, 0, sizeof shimWet);  // DMAMEM (bench) is not zeroed at boot; the lines are cleared
   synth.setShimmerBuffer(shimLine, mt::PitchShift::kLen, shimWet);
   synth.setModBuffer(modLine, mt::ModFx::kLineLen);
+  synth.setVoiceBudget(mt::kVoiceBudgetTeensy);  // the pool by cost (voice_cost.h); the guard is the backstop
   AudioMemory(12);
   out.begin(&synth);
   const bool shield = codec::begin();

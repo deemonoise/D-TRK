@@ -215,6 +215,44 @@ void test_every_preset_sounds() {
   }
 }
 
+// MACRO: one preset per model, generic names.
+void test_macro_presets() {
+  constexpr int kModels = static_cast<int>(MacroModel::Count);
+  TEST_ASSERT_EQUAL(8, factoryCount(InstrType::Macro));
+  bool seen[kModels] = {};
+  for (int i = 0; i < factoryCount(InstrType::Macro); ++i) {
+    const FactoryPreset& a = factoryPreset(InstrType::Macro, i);
+    Instrument m;
+    factoryBuild(InstrType::Macro, i, m);
+    TEST_ASSERT_TRUE_MESSAGE(m.type == InstrType::Macro, a.name);
+    TEST_ASSERT_TRUE_MESSAGE(m.machine < kModels, a.name);
+    seen[m.machine] = true;
+    TEST_ASSERT_TRUE_MESSAGE(strlen(a.name) >= 1 && strlen(a.name) <= 8, a.name);
+    for (int j = i + 1; j < factoryCount(InstrType::Macro); ++j)
+      TEST_ASSERT_TRUE_MESSAGE(strcmp(a.name, factoryPreset(InstrType::Macro, j).name) != 0, a.name);
+  }
+  for (int k = 0; k < kModels; ++k) TEST_ASSERT_TRUE_MESSAGE(seen[k], macroModelName(static_cast<uint8_t>(k)));
+}
+
+// STRING: 3 STRING + 3 MODAL presets, generic names.
+void test_string_presets() {
+  TEST_ASSERT_EQUAL(6, factoryCount(InstrType::String));
+  int perModel[static_cast<int>(StringModel::Count)] = {};
+  for (int i = 0; i < factoryCount(InstrType::String); ++i) {
+    const FactoryPreset& a = factoryPreset(InstrType::String, i);
+    Instrument m;
+    factoryBuild(InstrType::String, i, m);
+    TEST_ASSERT_TRUE_MESSAGE(m.type == InstrType::String, a.name);
+    TEST_ASSERT_TRUE_MESSAGE(m.machine < static_cast<int>(StringModel::Count), a.name);
+    ++perModel[m.machine];
+    TEST_ASSERT_TRUE_MESSAGE(strlen(a.name) >= 1 && strlen(a.name) <= 8, a.name);
+    for (int j = i + 1; j < factoryCount(InstrType::String); ++j)
+      TEST_ASSERT_TRUE_MESSAGE(strcmp(a.name, factoryPreset(InstrType::String, j).name) != 0, a.name);
+  }
+  TEST_ASSERT_EQUAL(3, perModel[static_cast<int>(StringModel::String)]);
+  TEST_ASSERT_EQUAL(3, perModel[static_cast<int>(StringModel::Modal)]);
+}
+
 void test_kit_block() {
   TEST_ASSERT_EQUAL(24, factoryKitBlock(0));
   TEST_ASSERT_EQUAL(24, factoryKitBlock(23));
@@ -269,6 +307,8 @@ int main() {
   RUN_TEST(test_synth_presets_builtin_tables);
   RUN_TEST(test_chord_preset_is_maj7);
   RUN_TEST(test_every_preset_sounds);
+  RUN_TEST(test_macro_presets);
+  RUN_TEST(test_string_presets);
   RUN_TEST(test_kit_block);
   RUN_TEST(test_kit_lanes);
   return UNITY_END();

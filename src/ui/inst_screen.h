@@ -15,15 +15,19 @@ namespace ui {
 // slice, Clear slices (confirm), Load / Save preset; A tap / Shift + A tap = next / previous marker.
 // Name: click to edit, turn = character, Shift+turn = position.
 // Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
-// ADSR graph), the type's own (OSC / SMPL / FM / DRUM; SYNTH: OSC and MOD), FILT, LFO. The page is
+// ADSR graph), the type's own (OSC / SMPL / FM / DRUM; SYNTH: OSC and MOD; MACRO: OSC), FILT, LFO. The page is
 // kept across instruments and type changes (SYNTH MOD -> the type page of the others).
 // SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows).
 // FM: machine, macros (DECAY..CONTOUR); ADSR rows grey where the machine ignores them.
 // DRUM: machine, macros named per machine (grey "-" where unused); ADSR, mode and glide grey.
 // SYNTH: six pages, MAIN / ENV / OSC / MOD / FILT / LFO. OSC: Osc1, Table1, Shape1 (SHP1), Osc2, Table2,
 // Shape2 (SHP2), Semi2, Detune (DET), Sync, Mix (MIX), with the selected oscillator's waveform (WT: the
-// frame under SHAPE) on the right; MOD: Sub, Sub oct, Noise, Env>Shp (SENV), Env atk, Env dec. ADSR, mode
-// and glide as CHIP. A click / tap on a Table row opens WtPicker; a missing table is shown red.
+// frame under SHAPE) on the right; MOD: Sub, Sub oct, Noise, Ring, Fold (0 = OFF), Env>Shp (SENV),
+// Env atk, Env dec. ADSR, mode and glide as CHIP. A click / tap on a Table row opens WtPicker; a missing table is shown red.
+// MACRO: MAIN / ENV / OSC / FILT / LFO. OSC: Model, Timbre, Color, Env>Tmb (OFF at 64), Env atk, Env dec
+// (grey when Env>Tmb is OFF). ADSR, mode and glide as SYNTH.
+// STRING: MAIN / ENV / RES / FILT / LFO. RES: Model, Damp (as T60), Bright, Struct, Position (%), Excite
+// (CLICK at 0, else the burst in ms). ADSR, mode and glide as SYNTH. The Filter row skips COMB.
 // Filter and LFO rows on every type, after the type's own (CHIP / SAMPLE: no macro LFO targets).
 // KIT: two pages, MAIN (Name, Type, Dly send) and LANES: per lane Src (SAMPLE / INST), then SAMPLE:
 // Sample, Volume, Pitch, Decay, Note; INST: Instr (red when it is a KIT), Note. The other mode's rows
@@ -59,8 +63,15 @@ class InstScreen : public Screen {
   static constexpr int kOsc1 = kCommon, kTable1 = kCommon + 1, kShape1 = kCommon + 2, kOsc2 = kCommon + 3,
                        kTable2 = kCommon + 4, kShape2 = kCommon + 5, kSemi = kCommon + 6, kDetune = kCommon + 7,
                        kSync = kCommon + 8, kMix = kCommon + 9, kSynOscRows = 10;
-  static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kSenv = kSub + 3,
-                       kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
+  static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kRing = kSub + 3,
+                       kFold = kSub + 4, kSenv = kSub + 5, kEAtk = kSub + 6, kEDec = kSub + 7, kSynRows = kSub + 8;
+  // MACRO: one OSC page.
+  static constexpr int kModel = kCommon, kTimbre = kCommon + 1, kColor = kCommon + 2, kEnvTmb = kCommon + 3,
+                       kMEAtk = kCommon + 4, kMEDec = kCommon + 5, kMacroRows = kCommon + 6;
+  // STRING: one RES page.
+  static constexpr int kStrModel = kCommon, kStrDamp = kCommon + 1, kStrBright = kCommon + 2,
+                       kStrStruct = kCommon + 3, kStrPos = kCommon + 4, kStrExc = kCommon + 5,
+                       kStringRows = kCommon + 6;
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
   static constexpr int kFltMode = 0, kCutoff = 1, kReso = 2, kFEnv = 3, kFAtk = 4, kFDec = 5, kKeytrack = 6,
                        kLfoSel = 7, kLfoWave = 8, kLfoSync = 9, kLfoRetrig = 10, kLfoRate = 11, kLfoDepth = 12,
@@ -128,6 +139,8 @@ class InstScreen : public Screen {
   Param fm_[kMacRows + kTailRows];
   Param drum_[kMacRows + kTailRows];
   Param syn_[kSynRows + kTailRows];
+  Param macro_[kMacroRows + kTailRows];
+  Param string_[kStringRows + kTailRows];
   Param kit_[kKitRows];       // every KIT row
   Param kitShown_[kKitRows];  // LANES page: the rows of each lane's mode
   mt::InstrType shown_ = mt::InstrType::Chip;

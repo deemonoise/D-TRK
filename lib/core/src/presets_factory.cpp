@@ -45,6 +45,20 @@ void lfoN(I& m, int i, LfoWave w, LfoDest d, uint8_t rate, int8_t depth) {  // L
   l.wave = LW(w); l.dest = D(d); l.rate = rate; l.depth = depth; l.sync = 0;
 }
 void fx(I& m, uint8_t send, uint8_t rsend) { m.send = send; m.rsend = rsend; }
+// MACRO: type with its defaults, the model, TIMBRE, COLOR, ENV>TMB (64 = off).
+void mo(I& m, MacroModel md, uint8_t timbre, uint8_t color, uint8_t envTmb) {
+  m.machine = static_cast<uint8_t>(md);
+  instrSetType(m, InstrType::Macro);
+  m.macro[kMacTimbre] = timbre; m.macro[kMacColor] = color; m.macro[kMacEnvTmb] = envTmb;
+}
+
+// STRING: type with its defaults, the model, DAMP (T60 0.05 s x 200^(v/127)), BRIGHT, STRUCT, POS, EXC (0 = click).
+void st(I& m, StringModel md, uint8_t damp, uint8_t bright, uint8_t structure, uint8_t pos, uint8_t exc) {
+  m.machine = static_cast<uint8_t>(md);
+  instrSetType(m, InstrType::String);
+  m.macro[kMacDamp] = damp; m.macro[kMacBright] = bright; m.macro[kMacStruct] = structure;
+  m.macro[kMacPos] = pos; m.macro[kMacExc] = exc;
+}
 
 // KIT lanes: kick, snare, closed / open hat, clap, then the extras.
 constexpr InstrType kD = InstrType::Drum, kF = InstrType::Fm, kC = InstrType::Chip;
@@ -418,6 +432,45 @@ constexpr FactoryPreset kAll[] = {
        sy(m, SynOsc::Wt, "*SYNC", SynOsc::Saw, nullptr); m.macro[kMacMix] = 40;
        lfo1(m, LfoWave::Random, LfoDest::Pitch, 90, 12); lfoN(m, 1, LfoWave::Sine, LfoDest::Dec, 60, 50);
        fx(m, 60, 60); }},
+
+    // ================= MACRO =================
+    // One per model. Macros TIMBRE, COLOR, ENV>TMB (64 = off); its AD in synEAtk / synEDec.
+    {InstrType::Macro, "BASS", "MORPHBAS", [](I& m) {  // tri -> saw -> square, low-passed
+       mo(m, MacroModel::Morph, 50, 40, 100); m.synEDec = 45; m.transpose = -12; m.mono = true; m.glide = 6;
+       env(m, 0, 70, 90, 30); }},
+    {InstrType::Macro, "BASS", "FB GRIT", [](I& m) {  // feedback FM, gritty
+       mo(m, MacroModel::FbFm, 40, 70, 90); m.synEDec = 40; m.transpose = -12; m.mono = true;
+       env(m, 0, 70, 80, 30); }},
+    {InstrType::Macro, "LEAD", "NOTCHSAW", [](I& m) {  // saw with a moving notch
+       mo(m, MacroModel::SawPlus, 60, 50, 64); m.mono = true; m.glide = 5;
+       lfo1(m, LfoWave::Tri, LfoDest::Dec, 40, 20); fx(m, 40, 30); }},
+    {InstrType::Macro, "LEAD", "SQRSAW", [](I& m) {  // saw + square blend
+       mo(m, MacroModel::SawSqr, 70, 64, 64); lp(m, 90, 20, 20, 50); fx(m, 40, 30); }},
+    {InstrType::Macro, "LEAD", "FOLDLEAD", [](I& m) {  // wavefolded sine, env opens the fold
+       mo(m, MacroModel::Fold, 40, 30, 110); m.synEDec = 60; m.mono = true; m.glide = 4; fx(m, 40, 40); }},
+    {InstrType::Macro, "PAD", "VOSIMPAD", [](I& m) {
+       mo(m, MacroModel::Vosim, 50, 60, 64); env(m, 30, 90, 110, 90);
+       lfo1(m, LfoWave::Sine, LfoDest::Col, 25, 20); fx(m, 20, 90); }},
+    {InstrType::Macro, "VOX", "TALKER", [](I& m) {  // vowels swept by the LFO
+       mo(m, MacroModel::Vowel, 40, 64, 64); m.mono = true; m.glide = 8;
+       lfo1(m, LfoWave::Tri, LfoDest::Dec, 30, 40); fx(m, 20, 50); }},
+    {InstrType::Macro, "KEYS", "FM BELL", [](I& m) {
+       mo(m, MacroModel::Fm, 70, 90, 100); m.synEDec = 70; env(m, 0, 95, 0, 80); fx(m, 30, 60); }},
+
+    // ================= STRING =================
+    // 3 STRING (plucked line), 3 MODAL (struck modes). Sustain 127: the resonator's own decay shapes the note.
+    {InstrType::String, "PLUCK", "NYLON", [](I& m) {  // soft pluck near the middle, ~2 s
+       st(m, StringModel::String, 88, 50, 0, 40, 0); env(m, 0, 40, 127, 50); fx(m, 20, 40); }},
+    {InstrType::String, "PLUCK", "HARP", [](I& m) {  // bright, long ring, short noise burst
+       st(m, StringModel::String, 105, 80, 10, 25, 35); env(m, 0, 40, 127, 70); fx(m, 30, 70); }},
+    {InstrType::String, "PLUCK", "PIZZ", [](I& m) {  // dark, short
+       st(m, StringModel::String, 43, 30, 0, 50, 0); env(m, 0, 40, 127, 20); fx(m, 10, 30); }},
+    {InstrType::String, "KEYS", "MARIMBA", [](I& m) {  // bar-like partials, mellow mallet
+       st(m, StringModel::Modal, 72, 35, 50, 20, 0); env(m, 0, 40, 127, 40); fx(m, 10, 40); }},
+    {InstrType::String, "KEYS", "BELL", [](I& m) {  // inharmonic, long
+       st(m, StringModel::Modal, 115, 90, 110, 15, 0); env(m, 0, 40, 127, 90); fx(m, 30, 80); }},
+    {InstrType::String, "KEYS", "KALIMBA", [](I& m) {  // tine: short click, medium ring
+       st(m, StringModel::Modal, 81, 60, 75, 30, 0); env(m, 0, 40, 127, 50); fx(m, 20, 50); }},
 };
 
 }  // namespace

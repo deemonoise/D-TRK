@@ -46,13 +46,13 @@ void waveName(uint8_t w, char* o, int n) {
 }  // namespace
 
 InstScreen::InstScreen(App& app) : app_(app) {
-  Param* const sets[] = {chip_, sample_, fm_, drum_, syn_};
+  Param* const sets[] = {chip_, sample_, fm_, drum_, syn_, macro_, string_};
   for (Param* p : sets) {
     p[kName] = {"Name", [this](char* o, int n) { snprintf(o, n, "%s", inst().name); },
                 [this](int d) { editNameChar(inst().name, kNameLen, namePos_, d); }};
     p[kType] = {"Type",
                 [this](char* o, int n) {
-                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT"};
+                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT", "MACRO", "STRING"};
                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::InstrType::Count), "type names");
                   const int t = static_cast<int>(inst().type);
                   snprintf(o, n, "%s", kNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0]);
@@ -96,6 +96,8 @@ InstScreen::InstScreen(App& app) : app_(app) {
     p[kSend] = {"Dly send", [this](char* o, int n) { snprintf(o, n, "%u", inst().send); },
                 [this](int d) { inst().send = static_cast<uint8_t>(clampi(inst().send + d, 0, 127)); }};
   }
+  macro_[kVelMac].label = "Vel>Tmb";   // MACRO: velocity moves TIMBRE (the DECAY slot)
+  string_[kVelMac].label = "Vel>Dmp";  // STRING: velocity moves DAMP (the DECAY slot)
   chip_[kWave] = {"Wave", [this](char* o, int n) { waveName(inst().wave, o, n); },
                   [this](int d) { inst().wave = static_cast<uint8_t>(clampi(inst().wave + d, 0, mt::kWaveCount - 1)); }};
   auto notPulse = [this] { return inst().wave != static_cast<uint8_t>(mt::Wave::Pulse); };
@@ -206,6 +208,18 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    [this](int d) { inst().synSubOct = d > 0 ? 1 : 0; }, [this] { return inst().synSub == 0; }};
   syn_[kNoise] = {"Noise", [this](char* o, int n) { snprintf(o, n, "%u", inst().synNoise); },
                   [this](int d) { inst().synNoise = static_cast<uint8_t>(clampi(inst().synNoise + d, 0, 127)); }};
+  syn_[kRing] = {"Ring",
+                 [this](char* o, int n) {
+                   if (inst().synRing) snprintf(o, n, "%u", inst().synRing);
+                   else snprintf(o, n, "OFF");
+                 },
+                 [this](int d) { inst().synRing = static_cast<uint8_t>(clampi(inst().synRing + d, 0, 127)); }};
+  syn_[kFold] = {"Fold",
+                 [this](char* o, int n) {
+                   if (inst().synFold) snprintf(o, n, "%u", inst().synFold);
+                   else snprintf(o, n, "OFF");
+                 },
+                 [this](int d) { inst().synFold = static_cast<uint8_t>(clampi(inst().synFold + d, 0, 127)); }};
   syn_[kSenv] = {"Env>Shp", [this](char* o, int n) { snprintf(o, n, "%+d", inst().macro[mt::kMacSenv] - 64); },
                  macroEdit(mt::kMacSenv)};
   auto noSenv = [this] { return inst().macro[mt::kMacSenv] == 64; };
@@ -217,11 +231,58 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    else snprintf(o, n, "HOLD");
                  },
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
+  // MACRO: the model's TIMBRE / COLOR; ENV>TMB an AD envelope on TIMBRE (64 = none).
+  macro_[kModel] = {"Model", [this](char* o, int n) { snprintf(o, n, "%s", mt::macroModelName(inst().machine)); },
+                    [this](int d) {
+                      inst().machine = static_cast<uint8_t>(
+                          clampi(inst().machine + d, 0, static_cast<int>(mt::MacroModel::Count) - 1));
+                    }};
+  macro_[kTimbre] = {"Timbre", macroNum(mt::kMacTimbre), macroEdit(mt::kMacTimbre)};
+  macro_[kColor] = {"Color", macroNum(mt::kMacColor), macroEdit(mt::kMacColor)};
+  macro_[kEnvTmb] = {"Env>Tmb",
+                     [this](char* o, int n) {
+                       const int v = inst().macro[mt::kMacEnvTmb] - 64;
+                       if (v) snprintf(o, n, "%+d", v);
+                       else snprintf(o, n, "OFF");
+                     },
+                     macroEdit(mt::kMacEnvTmb)};
+  auto noEnvTmb = [this] { return inst().macro[mt::kMacEnvTmb] == 64; };
+  macro_[kMEAtk] = syn_[kEAtk];
+  macro_[kMEAtk].dim = noEnvTmb;
+  macro_[kMEDec] = syn_[kEDec];
+  macro_[kMEDec].dim = noEnvTmb;
+  // STRING: DAMP (as the T60 0.05 s x 200^(v/127)), BRIGHT, STRUCT, POS, EXC (0 = click, else a burst).
+  string_[kStrModel] = {"Model", [this](char* o, int n) { snprintf(o, n, "%s", mt::stringModelName(inst().machine)); },
+                        [this](int d) {
+                          inst().machine = static_cast<uint8_t>(
+                              clampi(inst().machine + d, 0, static_cast<int>(mt::StringModel::Count) - 1));
+                        }};
+  string_[kStrDamp] = {"Damp",
+                       [this](char* o, int n) {
+                         const float t60 = 0.05f * powf(200.0f, inst().macro[mt::kMacDamp] / 127.0f);
+                         if (t60 < 1.0f) snprintf(o, n, "%.2f s", static_cast<double>(t60));
+                         else snprintf(o, n, "%.1f s", static_cast<double>(t60));
+                       },
+                       macroEdit(mt::kMacDamp)};
+  string_[kStrBright] = {"Bright", macroNum(mt::kMacBright), macroEdit(mt::kMacBright)};
+  string_[kStrStruct] = {"Struct", macroNum(mt::kMacStruct), macroEdit(mt::kMacStruct)};
+  string_[kStrPos] = {"Position",
+                      [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().macro[mt::kMacPos] * 100 + 63) / 127); },
+                      macroEdit(mt::kMacPos)};
+  string_[kStrExc] = {"Excite",
+                      [this](char* o, int n) {
+                        const float e = inst().macro[mt::kMacExc] / 127.0f;
+                        if (inst().macro[mt::kMacExc] == 0) snprintf(o, n, "CLICK");
+                        else snprintf(o, n, "%.1f ms", static_cast<double>(0.5f + 20.0f * e * e));
+                      },
+                      macroEdit(mt::kMacExc)};
   initTail(chip_ + kChipRows);
   initTail(sample_ + kCommon);
   initTail(fm_ + kMacRows);
   initTail(drum_ + kMacRows);
   initTail(syn_ + kSynRows);
+  initTail(macro_ + kMacroRows);
+  initTail(string_ + kStringRows);
   initKit();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
@@ -339,15 +400,28 @@ void InstScreen::initTail(Param* t) {
   auto noEnv = [this, off] { return off() || inst().fenv == 0; };
   t[kFltMode] = {"Filter",
                  [this](char* o, int n) {
-                   static const char* const kNames[] = {"OFF", "LP", "BP", "HP"};
-                   snprintf(o, n, "%s", kNames[inst().fltMode % 4]);
+                   static const char* const kNames[] = {"OFF", "LP", "BP", "HP", "LADDER", "MS20", "COMB", "FORMANT"};
+                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::FltMode::Count), "names");
+                   snprintf(o, n, "%s", kNames[inst().fltMode % static_cast<int>(mt::FltMode::Count)]);
                  },
                  [this](int d) {
-                   inst().fltMode = static_cast<uint8_t>(
-                       clampi(inst().fltMode + d, 0, static_cast<int>(mt::FltMode::Count) - 1));
+                   constexpr int kMax = static_cast<int>(mt::FltMode::Count) - 1;
+                   int v = clampi(inst().fltMode + d, 0, kMax);
+                   // STRING takes the voice's delay line: no COMB, step over it in both directions.
+                   if (inst().type == mt::InstrType::String && v == static_cast<int>(mt::FltMode::Comb) && d)
+                     v = clampi(v + (d > 0 ? 1 : -1), 0, kMax);
+                   inst().fltMode = static_cast<uint8_t>(v);
                  }};
   t[kCutoff] = {"Cutoff",
                 [this](char* o, int n) {
+                  if (inst().fltMode == static_cast<uint8_t>(mt::FltMode::Formant)) {
+                    // FORMANT: the vowel the knob sets (A E I O U evenly over 0..127), "A>E" between.
+                    static const char kV[] = "AEIOU";
+                    const int q = (inst().cutoff * 8 + 63) / 127;  // 0..8, odd = between two vowels
+                    if (q & 1) snprintf(o, n, "%c>%c", kV[q / 2], kV[q / 2 + 1]);
+                    else snprintf(o, n, "%c", kV[q / 2]);
+                    return;
+                  }
                   const float hz = mt::cutoffHz(inst().cutoff);
                   if (hz < 1000) snprintf(o, n, "%u Hz", static_cast<unsigned>(hz + 0.5f));
                   else snprintf(o, n, "%.1f kHz", hz / 1000.f);
@@ -368,7 +442,7 @@ void InstScreen::initTail(Param* t) {
   t[kKeytrack] = {"Key track",
                   [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().keytrack * 100 + 63) / 127); },
                   [this](int d) { inst().keytrack = static_cast<uint8_t>(clampi(inst().keytrack + d, 0, 127)); },
-                  off};
+                  [this, off] { return off() || inst().fltMode == static_cast<uint8_t>(mt::FltMode::Formant); }};
   // LFO page: the selected LFO (1..4) of the instrument; the others keep running. Rows read a copy
   // (lfoAt) and write through lfoRef: GCC 14 (xtensa) miscompiled a read through the reference
   // struct in the Dest row into a load from address 0 (PANIC on any non-SYNTH instrument).
@@ -475,6 +549,8 @@ Param* InstScreen::typeRows() {
     case mt::InstrType::Fm: return fm_;
     case mt::InstrType::Drum: return drum_;
     case mt::InstrType::Synth: return syn_;
+    case mt::InstrType::Macro: return macro_;
+    case mt::InstrType::String: return string_;
     default: return chip_;
   }
 }
@@ -485,6 +561,8 @@ int InstScreen::typeCount() const {
     case mt::InstrType::Fm:
     case mt::InstrType::Drum: return kMacRows - kCommon;
     case mt::InstrType::Synth: return kSynRows - kCommon;
+    case mt::InstrType::Macro: return kMacroRows - kCommon;
+    case mt::InstrType::String: return kStringRows - kCommon;
     default: return kChipRows - kCommon;
   }
 }
@@ -782,7 +860,7 @@ void InstScreen::onTouch(const TouchEvent& ev) {
 }
 
 void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
-  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES"};
+  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "OSC", "RES"};
   static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
   const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};

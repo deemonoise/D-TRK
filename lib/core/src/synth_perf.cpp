@@ -154,19 +154,19 @@ void PerfBus::reset() {
   downL_ = downR_ = 0;
 }
 
-float PerfBus::delaySend() const {
+MT_HOT float PerfBus::delaySend() const {
   return stack_.held(PerfFx::DelayThrow) ? stack_.depth(PerfFx::DelayThrow) / 127.f : 0.f;
 }
 
-float PerfBus::reverbSend() const {
+MT_HOT float PerfBus::reverbSend() const {
   return stack_.held(PerfFx::ReverbThrow) ? stack_.depth(PerfFx::ReverbThrow) / 127.f : 0.f;
 }
 
-float PerfBus::modSend() const {
+MT_HOT float PerfBus::modSend() const {
   return stack_.held(PerfFx::ModThrow) ? stack_.depth(PerfFx::ModThrow) / 127.f : 0.f;
 }
 
-float PerfBus::freezeDry() const {
+MT_HOT float PerfBus::freezeDry() const {
   return stack_.held(PerfFx::Freeze) ? stack_.depth(PerfFx::Freeze) / 100.f : 1.f;
 }
 
@@ -220,7 +220,7 @@ MT_HOT uint32_t PerfBus::intact(const Head& h, uint32_t wEnd) const {
   return d < h.avail ? d : h.avail;
 }
 
-void PerfBus::reverseWindow(Head& h, float over, float samplesPerStep, uint32_t wEnd) const {
+MT_HOT void PerfBus::reverseWindow(Head& h, float over, float samplesPerStep, uint32_t wEnd) const {
   // Reads base - 1 - k for k < len, then (outgoing, under the seam crossfade) kXfade further.
   constexpr float kMin = static_cast<float>(kXfade + 1);
   const float room = static_cast<float>(intact(h, wEnd)) - static_cast<float>(kRevMargin + 1);
@@ -233,7 +233,7 @@ void PerfBus::reverseWindow(Head& h, float over, float samplesPerStep, uint32_t 
   h.prot = -static_cast<int32_t>(len) - kRevMargin;
 }
 
-void PerfBus::scratchPeriod(Head& h, float over, float samplesPerStep, uint32_t wEnd) const {
+MT_HOT void PerfBus::scratchPeriod(Head& h, float over, float samplesPerStep, uint32_t wEnd) const {
   // off(t) = A (sin(2 pi t / T) - 1): swings between base - 2A and base, peak speed 2 at A = T/pi.
   // sinf / cosf once per period; per sample the (cos, sin) pair is rotated.
   float t = perfScratchSteps(stack_.depth(PerfFx::Scratch)) * samplesPerStep;
@@ -313,7 +313,7 @@ void PerfBus::switchHead(PerfFx want, uint32_t w0, int n, double grid0, float sa
   }
 }
 
-void PerfBus::seam(Head& h, Head& out, int& xf, float samplesPerStep) const {
+MT_HOT void PerfBus::seam(Head& h, Head& out, int& xf, float samplesPerStep) const {
   const float over = -h.left;  // 0..1: keeps fractional lengths on average
   switch (h.fx) {
     case PerfFx::Repeat:
