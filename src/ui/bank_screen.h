@@ -17,7 +17,7 @@ class BankScreen : public Screen {
   bool wantsRedraw(const engine::Status& st) override;
 
  private:
-  enum MenuId : int { kCopyTo, kClear, kClearConfirm, kCancel, kLen16, kLen32, kLen64 };
+  enum MenuId : int { kCopyTo, kClear, kClearConfirm, kCancel, kLen16, kLen32, kLen64, kLen128 };
   static constexpr int kCols = 4;
   static constexpr int kTileW = 112, kTileH = 64;
   static constexpr int kGapX = 6, kGapY = 4;

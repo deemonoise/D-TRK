@@ -1302,7 +1302,7 @@ A 4×4 grid of tiles: patterns P01–P16. Each tile shows the number, length, re
 
 - **Copy to…**, then tap the target tile. Everything is copied: steps, length, resolution, swing. Tapping the same tile cancels.
 - **Clear**, with confirmation. Also resets length (16), resolution (1/16), swing (50).
-- **Length 16 / 32 / 64**: quick length change.
+- **Length 16 / 32 / 64 / 128**: quick length change.
 
 Any pattern change clears TIE. The pass counter is reset.
 
