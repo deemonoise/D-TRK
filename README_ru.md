@@ -27,19 +27,21 @@
 - **CHIP**: pulse, triangle, noise, metal и wavetable для чиптюна.
 - **KIT**: драм-дорожка из 8 лейнов, у каждого свой сэмпл или любой инструмент.
 
-У каждого инструмента фильтр LP / BP / HP с огибающей, drive и 4 LFO (синхронизируются с темпом, модулируют друг друга, управляются с шага). 145 заводских пресетов.
+У каждого инструмента фильтр LP / BP / HP с огибающей и 4 LFO (синхронизируются с темпом, модулируют друг друга, управляются с шага). 145 заводских пресетов.
 
 ### Микс и эффекты
 
 - Микшер: фейдеры, панорама, посылы, mute / solo, индикаторы уровня, осциллограф.
-- Delay и псевдостерео reverb на посылах, мастер-компрессор с sidechain, PERF-эффекты-«вставки» на мастер (repeat, roll, reverse, scratch, tape stop, gate, LP / HP фильтр, crush, downsample, drive, delay / reverb throw, freeze).
-- Lo-fi на каждую ноту: битность и сэмплрейт.
+- Insert дорожки: drive (TANH, CLIP, FOLD, RECT), bit crush, downsample и trance gate с 16-шаговым рисунком. Пресеты инструментов несут рекомендуемый insert.
+- Envelope follower: уровень одной дорожки двигает параметр другой (sidechain-«качание», ducking, auto-wah).
+- Посылы: delay (DIGITAL, TAPE, PING-PONG), псевдостерео reverb с shimmer, MOD-шина (chorus, ensemble, flanger, phaser).
+- Мастер: компрессор с sidechain, EQ-полки, PERF-эффекты-«вставки» (repeat, roll, reverse, scratch, tape stop, gate, LP / HP фильтр, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze).
 - Каждую дорожку можно направить во внутренний синт или на внешний MIDI.
 
 ### Живое исполнение и песня
 
 - **Песня** (вкладка SONG, в стиле Polyend): до 128 слотов, у каждого паттерн и mute 16 дорожек. Повтор делается тапом A, mute в слоте ставится тапом или кнопкой дорожки. Play на вкладке SONG играет песню, на остальных крутит паттерн; Shift + Play — песня с курсора на любой вкладке; переключение SONG / LOOP на лету, undo правок песни.
-- **PERF**: эффекты-«вставки» на весь микс, пока держишь кнопку (repeat, roll, reverse, scratch, tape stop, gate, фильтр, crush, downsample, drive, delay / reverb throw, freeze), энкодер задаёт глубину, несколько кнопок складываются; назначение кнопок настраивается.
+- **PERF**: эффекты-«вставки» на весь микс, пока держишь кнопку (repeat, roll, reverse, scratch, tape stop, gate, фильтр, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze), энкодер задаёт глубину, несколько кнопок складываются; назначение кнопок настраивается.
 - **REC**: запись нот с кнопок дорожек прямо во время игры.
 - Shift + Play: песня с курсора SONG на любой вкладке; удержание во время игры — fill.
 
