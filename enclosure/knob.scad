@@ -118,9 +118,9 @@ module knob() {
         // выборки снизу: гайка, втулка
         translate([0, 0, -0.01]) cylinder(d = nut_cav_d, h = nut_cav_h + 0.01);
         translate([0, 0, -0.01]) cylinder(d = bush_cav_d, h = bush_cav_h + 0.01);
-        // вал: круглая часть, выше — D
-        translate([0, 0, -0.01]) cylinder(d = shaft_d + shaft_clr, h = bore_h - flat_l + 0.01);
+        // вал: круглая часть, выше — D или шлицы
         top_l = shaft == "spline" ? spline_l : flat_l;
+        translate([0, 0, -0.01]) cylinder(d = shaft_d + shaft_clr, h = bore_h - top_l + 0.02);
         translate([0, 0, bore_h - top_l - 0.01]) linear_extrude(top_l + 0.01)
             if (shaft == "spline") spline_profile(shaft_d + shaft_clr, spline_dr + shaft_clr, spline_n);
             else d_profile(shaft_d + shaft_clr, shaft_dd + shaft_clr);
