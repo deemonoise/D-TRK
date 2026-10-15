@@ -3,7 +3,7 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## 2026-10-15
-- Track insert chain (drive, crush, trance gate) instead of per-voice drive / crush; old projects migrate.
+- Track insert chain (drive, crush, trance gate) instead of per-voice drive / crush.
 - Drive models; presets carry a recommended insert.
 - Trance gate and envelope follower per track (TRACK -> FOL).
 - Master fx: MOD (chorus / ensemble / flanger / phaser), delay modes (digital / tape / ping-pong),

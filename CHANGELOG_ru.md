@@ -3,7 +3,7 @@
 Собрано по истории git. English: [CHANGELOG.md](CHANGELOG.md).
 
 ## 2026-10-15
-- Insert-цепочка на дорожке (drive, crush, trance gate) вместо drive / crush в голосе; старые проекты мигрируют.
+- Insert-цепочка на дорожке (drive, crush, trance gate) вместо drive / crush в голосе.
 - Модели drive; пресеты несут рекомендованный insert.
 - Trance gate и envelope follower на дорожке (TRACK -> FOL).
 - Master fx: MOD (chorus / ensemble / flanger / phaser), режимы delay (digital / tape / ping-pong),
