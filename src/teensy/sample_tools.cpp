@@ -11,6 +11,7 @@
 #include "sample_store.h"
 #include "stream.h"
 #include "wave_peaks.h"
+#include "wt_make.h"
 
 using namespace mt::link;
 using mt::BankResult;
@@ -76,7 +77,7 @@ class StoreReader final : public mt::PeakReader {
 StoreReader rd;
 
 // The request being answered later (one at a time: a new one replaces it, the ESP gave up on it).
-enum class Task : uint8_t { None, Peaks, Onsets };
+enum class Task : uint8_t { None, Peaks, Onsets, WtRender };
 Task task = Task::None;
 uint8_t taskType = 0, taskSeq = 0;
 uint32_t lastProgress = 0;
@@ -97,6 +98,12 @@ mt::OnsetScan* scan = nullptr;
 uint32_t scanAt = 0;
 uint32_t scanCrc = 0, scanFrames = 0;
 
+// WtRender: the maker (its buffers malloc'ed in RAM2 for the job), the sample in memory or on the card.
+WtRenderReq wtQ;
+alignas(mt::WtMaker) DMAMEM uint8_t makerMem[sizeof(mt::WtMaker)];
+mt::WtMaker* maker = nullptr;
+const int16_t* wtWhole = nullptr;
+
 void endTask() {
   task = Task::None;
   rd.close();
@@ -104,6 +111,106 @@ void endTask() {
     scan->~OnsetScan();
     scan = nullptr;
   }
+  if (maker) {
+    maker->~WtMaker();
+    maker = nullptr;
+  }
+}
+
+void answerTask(const uint8_t* p, int n);
+
+int wtReply(BankResult r, mt::WtMakeErr e, int pitched, uint8_t* p) {
+  WtRenderRep m;
+  m.result = res(r);
+  m.err = static_cast<uint8_t>(e);
+  m.pitched = static_cast<uint8_t>(pitched < 0 ? 0 : (pitched > 255 ? 255 : pitched));
+  return put(m, p);
+}
+
+// Only /wavetables/<name>.wav (no ".." or deeper folders).
+bool wtPathOk(const char* path) {
+  const size_t n = strlen(path);
+  return strncmp(path, "/wavetables/", 12) == 0 && n > 16 && n + 5 <= sizeof wtQ.path &&
+         strstr(path, "..") == nullptr && strchr(path + 12, '/') == nullptr && strcmp(path + n - 4, ".wav") == 0;
+}
+
+struct SdSink final : mt::ByteSink {
+  FsFile* f;
+  bool write(const void* d, size_t n) override { return f->write(d, n) == n; }
+};
+
+// The finished table to path (through path.tmp).
+BankResult wtWrite(const int16_t* src) {
+  if (!card::ready()) return BankResult::NoSd;
+  char tmp[sizeof wtQ.path + 4];
+  snprintf(tmp, sizeof tmp, "%s.tmp", wtQ.path);
+  SD.sdfs.mkdir("/wavetables");
+  SD.sdfs.remove(tmp);
+  FsFile f = SD.sdfs.open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
+  if (!f) return BankResult::WriteFail;
+  SdSink sink;
+  sink.f = &f;
+  const bool ok = mt::wtWavWrite(src, sink);
+  f.close();
+  if (!ok) {
+    SD.sdfs.remove(tmp);
+    return BankResult::WriteFail;
+  }
+  SD.sdfs.remove(wtQ.path);
+  return SD.sdfs.rename(tmp, wtQ.path) ? BankResult::Ok : BankResult::WriteFail;
+}
+
+int wtRender(Reader& r, uint8_t* p) {
+  if (!decode(r, wtQ) || !wtPathOk(wtQ.path)) return wtReply(BankResult::OpenFail, mt::WtMakeErr::Ok, 0, p);
+  const BankResult w = bank::writable();
+  if (w != BankResult::Ok) return wtReply(w, mt::WtMakeErr::Ok, 0, p);
+  uint32_t crc, frames, rate;
+  const int16_t* whole;
+  if (!bank::sampleAccess(wtQ.index, crc, frames, rate, whole))
+    return wtReply(BankResult::OpenFail, mt::WtMakeErr::Ok, 0, p);
+  if (wtQ.to > frames) wtQ.to = frames;
+  if (!whole) {
+    if (!rd.open(crc)) return wtReply(BankResult::OpenFail, mt::WtMakeErr::Ok, 0, p);
+    rd.total = frames;
+  }
+  wtWhole = whole;
+  maker = new (makerMem) mt::WtMaker();
+  mt::WtMakeParams mp;
+  mp.mode = static_cast<mt::WtMode>(wtQ.mode);
+  mp.norm = static_cast<mt::WtNorm>(wtQ.norm);
+  mp.seam = wtQ.seam != 0;
+  const mt::WtMakeErr e = maker->begin(mp, wtQ.from, wtQ.to, rate);
+  if (e != mt::WtMakeErr::Ok) {
+    const int n = wtReply(e == mt::WtMakeErr::NoMemory ? BankResult::NoMemory : BankResult::Ok, e, 0, p);
+    endTask();
+    return n;
+  }
+  task = Task::WtRender;
+  return -1;
+}
+
+// A portion of the maker: one read (<= 2 KB) or one step; the WAV written when done.
+bool wtStep(uint8_t* p) {
+  uint32_t at, n;
+  if (maker->nextRead(at, n)) {
+    DMAMEM static int16_t buf[mt::kWtMakeRead];
+    if (wtWhole) maker->feed(wtWhole + at, n);
+    else if (rd.frames(at, n, buf)) maker->feed(buf, n);
+    else {
+      answerTask(p, wtReply(BankResult::ReadFail, mt::WtMakeErr::Ok, 0, p));
+      return false;
+    }
+  } else {
+    maker->step();
+  }
+  if (!maker->done()) return true;
+  const mt::WtMakeErr e = maker->error();
+  const int pitched = maker->pitched();
+  BankResult r = BankResult::Ok;
+  if (e == mt::WtMakeErr::Ok) r = wtWrite(maker->result());
+  else if (e == mt::WtMakeErr::NoMemory) r = BankResult::NoMemory;
+  answerTask(p, wtReply(r, e, pitched, p));
+  return false;
 }
 
 void answerTask(const uint8_t* p, int n) {
@@ -209,7 +316,9 @@ int onsetList(Reader& r, uint8_t* p) {
 bool taskStep() {
   if (task == Task::None) return false;
   uint8_t p[kMaxPayload];
-  if (task == Task::Peaks) {
+  if (task == Task::WtRender) {
+    if (!wtStep(p)) return true;
+  } else if (task == Task::Peaks) {
     const int left = peaksQ.cols - peaksDone;
     const int k = left < (rd.pk ? kPeakCols : 1) ? left : (rd.pk ? kPeakCols : 1);
     if (k > 0 && !mt::wavePeaksRead(rd, peaksFrames, peaksQ.col0 + peaksDone, peaksQ.span, peaksQ.width, k,
@@ -248,6 +357,7 @@ bool taskStep() {
   if (now - lastProgress >= kProgressMs) {
     lastProgress = now;
     if (task == Task::Peaks) progress(static_cast<uint32_t>(peaksDone), peaksQ.cols);
+    else if (task == Task::WtRender) progress(static_cast<uint32_t>(maker->progress()), mt::kWtFrames);
     else progress(scanAt, scanFrames);
   }
   return true;
@@ -266,7 +376,7 @@ void reset() {
   answered = false;
 }
 
-bool isRequest(Msg t) { return t == Msg::WavePeaks || t == Msg::Onsets; }
+bool isRequest(Msg t) { return t == Msg::WavePeaks || t == Msg::Onsets || t == Msg::WtRender; }
 
 int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out) {
   const uint8_t type = static_cast<uint8_t>(t);
@@ -283,6 +393,7 @@ int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out) {
   taskType = type;
   taskSeq = seq;
   lastProgress = millis();
+  if (t == Msg::WtRender) return wtRender(r, out);
   return t == Msg::WavePeaks ? peaks(r, out) : onsetList(r, out);
 }
 

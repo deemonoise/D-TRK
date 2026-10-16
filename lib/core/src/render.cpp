@@ -68,10 +68,11 @@ OfflineSequence::OfflineSequence(Project& p, const RenderSpec& spec) : spec_(spe
   seq_.seed(0x5EED);
   seq_.setSong(0, *this, spec.mode == RenderSpec::Mode::Song, 0);
   if (spec.mode == RenderSpec::Mode::Pattern) seq_.queuePattern(spec.pattern < kPatterns ? spec.pattern : 0);
-  bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p) : passUs(p, spec.pattern);
+  const uint64_t loops = spec.mode == RenderSpec::Mode::Song || spec.loops < 1 ? 1 : spec.loops;
+  bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p) : passUs(p, spec.pattern) * loops;
   bodyBlocks_ = static_cast<uint32_t>((bodyUs_ + kRenderBlockUs - 1) / kRenderBlockUs);
   // Steps of the next pass are never planned (a negative NDG would land inside the body).
-  seq_.setEndTick(spec.mode == RenderSpec::Mode::Song ? songTicks(p) : passTicks(p, spec.pattern));
+  seq_.setEndTick(spec.mode == RenderSpec::Mode::Song ? songTicks(p) : passTicks(p, spec.pattern) * loops);
   seq_.start(0, *this);
   seq_.process(0, *this);  // step 0 planned at 0, not clamped to the first block's end
 }

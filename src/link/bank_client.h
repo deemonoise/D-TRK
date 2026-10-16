@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "bank_ops.h"
 #include "onset.h"
+#include "wt_make.h"
 
 // The sample bank lives on the synth board (src/teensy/bank.cpp): these are its requests over the
 // link. UI task only, blocking (the long ones report progress). Whatever depends on the project's
@@ -84,6 +85,12 @@ bool wtFrame(const char* name, int f, int8_t* out);
 // (up to max), the count, -1 on failure (*err says why).
 BankResult wavePeaks(int index, uint32_t col0, uint32_t span, int width, int cols, int8_t* mn, int8_t* mx);
 int onsets(int index, mt::Onset* out, int max, BankResult* err = nullptr);
+// A wavetable made on the synth board (mt::WtMaker) from frames [from, to) of project sample index,
+// written to path (/wavetables/<name>.wav). Busy while the engine plays. err = the maker's error
+// (result Ok with err != Ok: nothing written); pitched = CYCLE frames whose pitch was found. cb gets
+// done / total = frames of the table.
+BankResult wtRender(int index, uint32_t from, uint32_t to, const mt::WtMakeParams& p, const char* path,
+                    mt::WtMakeErr& err, int& pitched, BankProgressFn cb = nullptr, void* ctx = nullptr);
 
 // A WAV on the synth board's card (FILE import list) streamed to its output from the start, ending
 // the previous one; frames / rate of the file. previewStop() ends it.

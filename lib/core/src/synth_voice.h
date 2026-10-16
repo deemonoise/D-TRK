@@ -168,6 +168,9 @@ struct Voice {
   bool mac = false;
   // STRING instrument (machine above holds its StringModel; the delay line is voiceLine(slot)).
   bool str = false;
+  // Melodic voice in a project tuning (Synth::tune_ on at note-on, not a drum / KIT lane / NOTE slice):
+  // pitch / target / the track's lastPitch are keys without fine, control() maps them (tuning.h).
+  bool tuned = false;
   // FM / DRUM / SYNTH / MACRO / STRING engine, see VoiceEngine.
   EngineKind engKind = EngineKind::Fm;
   VoiceEngine eng;

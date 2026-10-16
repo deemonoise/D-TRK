@@ -64,7 +64,8 @@ void SynthStream::update() {
   const uint32_t c = ARM_DWT_CYCCNT - c0;
   lastCycles_ = c;
   const uint32_t kBlockCycles = blockCycles();
-  if (synth_) synth_->setLoad(static_cast<float>(c) / kBlockCycles);
+  // Parked: an offline render (or a bank job) owns the synth; the CPU guard must not touch its pool.
+  if (synth_ && !parked_) synth_->setLoad(static_cast<float>(c) / kBlockCycles);
   cycles_ += c;
   blocks_++;
   if (c > peakCycles_) peakCycles_ = c;

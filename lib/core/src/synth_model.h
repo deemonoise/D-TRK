@@ -6,8 +6,9 @@ namespace mt {
 
 // SynthModel cut into chunks for the ESP -> synth board mirror. The chunks tile the struct: every
 // byte (padding included) belongs to exactly one.
-enum class Chunk : uint16_t { Tracks = 0, Master = 1, Samples = 2, Wavetables = 3, Instr0 = 16 };  // Instr0 + i
-constexpr int kChunks = 4 + kInstruments;
+enum class Chunk : uint16_t { Tracks = 0, Master = 1, Samples = 2, Wavetables = 3, Tuning = 4, Scenes = 5,
+                            Instr0 = 16 };  // Instr0 + i
+constexpr int kChunks = 6 + kInstruments;
 
 // Byte range of a chunk inside SynthModel; false for an unknown id.
 bool chunkRange(uint16_t id, uint32_t& off, uint32_t& len);

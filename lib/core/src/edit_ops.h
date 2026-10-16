@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "model.h"
 #include "scale.h"
+#include "shift_gen.h"
 
 namespace mt {
 
@@ -24,6 +25,12 @@ void clearSel(Pattern& p, const Sel& s);
 // drumTracks[t] (optional): track t is a drum track, left as is (its note is a velocity).
 void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t,
                   const bool* drumTracks = nullptr);
+
+// Capture gen: writes track tr's generator loop (c, from state st, not changed) into p, one pass of the
+// track's length starting at step fromStep (wrapping), with Flip 0 (FLP locks ignored): the loop as it plays
+// now, without mutations. PITCH: the note steps get the generated notes. GATE: steps with a gate get the
+// note, the others lose theirs; OFF stays. Velocities and fx stay.
+void captureGen(Pattern& p, int tr, const GenCfg& c, const GenState& st, int fromStep, uint8_t root, ScaleType t);
 
 // Song slots: inserts slot (pat, mute) at `at` (clamped to 0..songLen), false when full; deletes slot
 // `at` (nothing past the end). A freed slot is zeroed.

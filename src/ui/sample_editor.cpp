@@ -191,6 +191,15 @@ void SampleEditor::region(uint32_t& from, uint32_t& to) {
   if (to <= from) to = from + 1;
 }
 
+bool SampleEditor::wtSource(int& index, uint32_t& from, uint32_t& to, uint32_t& rate) {
+  sync();
+  if (idx_ < 0 || frames_ == 0) return false;
+  region(from, to);
+  index = idx_;
+  rate = rate_;
+  return true;
+}
+
 uint32_t SampleEditor::markerFrame(int id) {
   const mt::Instrument& m = inst();
   if (id == kS) return mt::fracToFrame(m.start, frames_);

@@ -580,12 +580,33 @@ bool decode(Reader& r, ProfileRep& m) {
 void encode(const RenderStartReq& m, Writer& w) {
   w.u8(m.target);
   w.str(m.path);
+  w.u8(m.bits);
+  w.u8(m.outs);
+  w.u32(m.skipFrames);
+  w.u32(m.estFrames);
 }
 
 bool decode(Reader& r, RenderStartReq& m) {
   m.target = r.u8();
   r.str(m.path, sizeof m.path);
-  return r.ok() && m.target <= RenderStartReq::kBank;
+  m.bits = r.u8();
+  m.outs = r.u8();
+  m.skipFrames = r.u32();
+  m.estFrames = r.u32();
+  return r.ok() && m.target <= RenderStartReq::kExport;
+}
+
+void encode(const RenderOut& m, Writer& w) {
+  w.u8(m.idx);
+  w.u8(m.tap);
+  w.str(m.name);
+}
+
+bool decode(Reader& r, RenderOut& m) {
+  m.idx = r.u8();
+  m.tap = r.u8();
+  r.str(m.name, sizeof m.name);
+  return r.ok() && m.idx < RenderRep::kMaxOut && m.tap < RenderRep::kMaxOut;
 }
 
 void encode(const RenderBlocks& m, Writer& w) {
@@ -634,12 +655,14 @@ void encode(const RenderEndReq& m, Writer& w) {
   w.u8(m.abort);
   w.u8(m.normalize);
   w.u8(m.trim);
+  w.u32(m.frames);
 }
 
 bool decode(Reader& r, RenderEndReq& m) {
   m.abort = r.u8();
   m.normalize = r.u8();
   m.trim = r.u8();
+  m.frames = r.u32();
   return r.ok();
 }
 
@@ -651,6 +674,12 @@ void encode(const RenderRep& m, Writer& w) {
   w.u16(m.peak);
   w.u32(m.clips);
   w.u32(m.crc);
+  w.u32(m.quiet);
+  w.u8(m.outMax);
+  const int n = m.outN < RenderRep::kMaxOut ? m.outN : RenderRep::kMaxOut;
+  w.u8(static_cast<uint8_t>(n));
+  for (int i = 0; i < n; ++i) w.u16(m.peaks[i]);
+  for (int i = 0; i < n; ++i) w.u32(m.clipsN[i]);
 }
 
 bool decode(Reader& r, RenderRep& m) {
@@ -661,6 +690,12 @@ bool decode(Reader& r, RenderRep& m) {
   m.peak = r.u16();
   m.clips = r.u32();
   m.crc = r.u32();
+  m.quiet = r.u32();
+  m.outMax = r.u8();
+  m.outN = r.u8();
+  if (m.outN > RenderRep::kMaxOut) return false;
+  for (int i = 0; i < m.outN; ++i) m.peaks[i] = r.u16();
+  for (int i = 0; i < m.outN; ++i) m.clipsN[i] = r.u32();
   return r.ok();
 }
 
@@ -679,6 +714,40 @@ void encode(const FwRep& m, Writer& w) {
 bool decode(Reader& r, FwRep& m) {
   m.result = r.u8();
   m.bytes = r.u32();
+  return r.ok();
+}
+
+void encode(const WtRenderReq& m, Writer& w) {
+  w.u8(m.index);
+  w.u32(m.from);
+  w.u32(m.to);
+  w.u8(m.mode);
+  w.u8(m.norm);
+  w.u8(m.seam);
+  w.str(m.path);
+}
+
+bool decode(Reader& r, WtRenderReq& m) {
+  m.index = r.u8();
+  m.from = r.u32();
+  m.to = r.u32();
+  m.mode = r.u8();
+  m.norm = r.u8();
+  m.seam = r.u8();
+  r.str(m.path, sizeof m.path);
+  return r.ok() && m.mode < 2 && m.norm < 2 && m.seam < 2;
+}
+
+void encode(const WtRenderRep& m, Writer& w) {
+  w.u8(m.result);
+  w.u8(m.err);
+  w.u8(m.pitched);
+}
+
+bool decode(Reader& r, WtRenderRep& m) {
+  m.result = r.u8();
+  m.err = r.u8();
+  m.pitched = r.u8();
   return r.ok();
 }
 

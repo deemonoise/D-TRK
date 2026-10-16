@@ -1,4 +1,5 @@
 #pragma once
+#include "export.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "param_list.h"
@@ -10,12 +11,12 @@ namespace ui {
 
 class App;
 
-// FILE -> Render WAV: Source (PATTERN 01..16, SONG when the song has slots), Tracks (ALL, SOLOED
-// when a solo is on, STEMS), RENDER / CANCEL. Renders the internal synth offline into
-// /samples/render/<project>_P01.wav (or _SONG.wav) with a 2 s tail (storage::renderWav), asking before
-// it overwrites. STEMS: one file per audible INT track with notes in the source, _P01_T03.wav; each
-// stem has the shared delay / reverb / compressor on its own (no sidechain from other tracks).
-// Fills the work area.
+// FILE -> Export...: Source (PATTERN 01..16, SONG when the song has slots), Loops (1 2 4 8 16, PATTERN
+// only), Tail (AUTO / OFF / 2 s / 4 s / 8 s / WRAP, WRAP for PATTERN only), Tracks (ALL, SOLOED when a solo
+// is on: what the master holds), Stems (OFF / TRACKS / TRACKS+FX), Format (24 / 16 BIT), EXPORT / CANCEL.
+// Renders the internal synth offline into /export/<project>/<src>/ (storage::exportSet): the master and
+// the dry stems of one length, asking before it overwrites the folder. The header shows the folder and an
+// estimate (size x files, length, passes, MIDI tracks skipped). Fills the work area.
 class RenderDialog {
  public:
   explicit RenderDialog(App& app);
@@ -27,24 +28,27 @@ class RenderDialog {
   void draw(LGFX_Sprite& s, int y0);
 
  private:
-  enum Row : int { kSource, kTracks, kRender, kCancel, kRows };
+  enum Row : int { kSource, kLoops, kTail, kTracks, kStems, kFormat, kExport, kCancel, kRows };
   enum MenuId : int { kMenuCancel, kMenuOverwrite };
-  static constexpr int kHeaderH = 28;
-  static constexpr uint32_t kTailBlocks = 500;  // 2 s
+  static constexpr int kHeaderH = 44;
 
   bool songOk() const;
-  bool action(int row);  // RENDER / CANCEL rows: runs it, true when handled
-  void confirm();        // RENDER: checks, then asks before overwriting
+  bool isSong() const { return source_ >= mt::kPatterns; }
+  mt::ExportSpec spec() const;
+  bool action(int row);  // EXPORT / CANCEL rows: runs it, true when handled
+  void confirm();        // EXPORT: checks, then asks before overwriting
   void run();
-  uint16_t stemTracks(const mt::RenderSpec& spec) const;  // STEMS: the tracks that get a file
-  void runStems(const mt::RenderSpec& spec);
+  void estimate(char* out, int n) const;
 
   App& app_;
   Param params_[kRows];
   ParamList list_{kAreaY + kHeaderH};
-  int source_ = 0;      // 0..kPatterns-1 = pattern, kPatterns = SONG
-  enum Tracks : int { kAll, kSoloed, kStems };
-  int tracks_ = kAll;
+  int source_ = 0;  // 0..kPatterns-1 = pattern, kPatterns = SONG
+  int loops_ = 0;   // index into 1 2 4 8 16
+  mt::ExportTail tail_ = mt::ExportTail::Auto;
+  bool soloed_ = false;
+  mt::ExportStems stems_ = mt::ExportStems::Off;
+  bool bits16_ = false;
   bool open_ = false;
 };
 

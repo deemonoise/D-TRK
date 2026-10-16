@@ -128,6 +128,8 @@ Synth::Synth(const SynthModel& p) : p_(p) {
   initPan();
   for (int8_t& s : instSlot_) s = -1;
   for (int m = 0; m < kInstruments; ++m) cacheLfos(m);
+  tuneSeen_.count = 0xFF;  // never a valid table: the first syncTuning builds
+  syncTuning();
   reset();
   for (auto& r : instLfoRnd_)
     for (float& x : r) x = rnd();
@@ -160,6 +162,7 @@ void Synth::reset() {
   shimRan_ = false;
   for (auto& x : strips_) x = TrackStrip();
   stripDirty_ = 0;
+  xfSnap_ = true;  // the crossfader lands where the model has it
   for (float& x : srcPk_) x = 0;
   for (int t = 0; t < kTracks; ++t) {
     folEnv_[t] = 0;
@@ -256,13 +259,24 @@ uint8_t Synth::trackInstr(uint8_t track) const {
   return i < kInstruments ? i : 0;
 }
 
+MT_HOT uint8_t Synth::morphTrk(uint8_t t, int k, uint8_t base) const {
+  const Scene &a = p_.sceneLive[0], &b = p_.sceneLive[1];
+  return sceneMix(base, (a.trkMask[t] >> k) & 1u, a.trk[t][k], (b.trkMask[t] >> k) & 1u, b.trk[t][k], xf_,
+                  sceneTrkDiscrete(k));
+}
+
+MT_HOT uint8_t Synth::morphMst(int k, uint8_t base) const {
+  const Scene &a = p_.sceneLive[0], &b = p_.sceneLive[1];
+  return sceneMix(base, (a.mstMask >> k) & 1u, a.mst[k], (b.mstMask >> k) & 1u, b.mst[k], xf_, sceneMstDiscrete(k));
+}
+
 MT_HOT uint8_t Synth::trackVol(uint8_t track) const {
-  const uint8_t v = track < kTracks ? p_.tracks[track].vol : kPreviewVol;
+  const uint8_t v = track < kTracks ? morphT(track, kScnVol, p_.tracks[track].vol) : kPreviewVol;
   return v > 127 ? 127 : v;
 }
 
 MT_HOT uint8_t Synth::trackPan(uint8_t track) const {
-  const uint8_t v = track < kTracks ? p_.tracks[track].pan : 64;  // the preview track: centre
+  const uint8_t v = track < kTracks ? morphT(track, kScnPan, p_.tracks[track].pan) : 64;  // the preview track: centre
   return v > 127 ? 127 : v;
 }
 
@@ -402,7 +416,8 @@ MT_HOT float Synth::tickSamples() const {
 
 // Project::dlyTime sixteenths (24 ticks each); Delay clamps it to its line.
 MT_HOT uint32_t Synth::delaySamples() const {
-  const uint8_t t = p_.dlyTime < 1 ? 1 : (p_.dlyTime > kDlyTimeMax ? kDlyTimeMax : p_.dlyTime);
+  const uint8_t dt = morphM(kScnDTime, p_.dlyTime);
+  const uint8_t t = dt < 1 ? 1 : (dt > kDlyTimeMax ? kDlyTimeMax : dt);
   return static_cast<uint32_t>(t * 24 * tickSamples() + 0.5f);
 }
 
@@ -782,7 +797,11 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // FM: only TONE may be poly; drums and CHORD take the track's voice. DRUM is always mono.
   // A KIT lane is mono through its own note (below), so the track is poly across lanes.
   const bool mono = kitLane ? false : fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
-  const float pitch = (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
+  // Tuning: melodic voices only (not drums, FM drum machines, KIT lanes, NOTE slices). Their pitches are
+  // keys without fine: control() maps them and adds fine in cents.
+  const bool tuned = tune_.on() && !kitLane && !drum && !slicePitch;
+  const float pitch = tuned ? static_cast<float>(note + static_cast<int>(clampf(m.transpose, -24, 24)))
+                            : (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
   bool legato;
   // SLD: the track's sounding voice glides to the note (like legato), else a new one from the last note.
   // A KIT lane never takes another lane's voice: only its own (same note) glides or chokes.
@@ -834,6 +853,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // A slot of another sample (or of none) goes back to the pool.
   if (v.slot >= 0 && (!sample || v.srcKey != sd.key || !(!sd.whole && sd.streamable))) dropSlot(v);
   v.note = note;
+  v.tuned = tuned;
   v.instr = ii;
   v.lane = kitLane && mp == &scratch;
   v.laneIdx = static_cast<uint8_t>(laneIdx);
@@ -1075,7 +1095,8 @@ MT_HOT void Synth::control(Voice& v, int dt) {
       v.cutLeft = -1;
     }
   }
-  float pitch = v.pitch + r.bend;
+  // A tuned voice: keys (slide, ARP) map through the tuning, then fine, bend, VIB, LFO in semitones.
+  float pitch = v.tuned ? v.pitch : v.pitch + r.bend;
   v.arpOff = 0;
   if (r.arp) {
     // Notes 0, +x, +y (or the ARP + CHD chord), `rate` switches per step in the ARM order; the
@@ -1111,6 +1132,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
     v.arpOff = offs[v.arpIdx];
     pitch += v.arpOff;
   }
+  if (v.tuned) pitch = tune_.map(pitch) + clampf(m.fine, -50, 50) * 0.01f + r.bend;
   const uint8_t vx = r.vib >> 4, vy = r.vib & 15;
   if (vx && vy) {
     // Sine LFO, x * 0.5 Hz, depth y / 15 * 2 semitones.
@@ -1157,26 +1179,27 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   float lm[kFmMacros];
   for (int k = 0; k < kFmMacros; ++k) lm[k] = 64.f * la[ld(LfoDest::Dec) + k];
   // The strip's values as this voice asks for them (see Voice::send .. srr). Sends: the track's
-  // instrument; a KIT's lanes all take the KIT's.
+  // instrument; a KIT's lanes all take the KIT's. Bases through the scene morph (morphT), the locks above.
   const Instrument& ti = inst(trackInstr(v.track));
   const Instrument& sm = ti.type == InstrType::Kit ? ti : m;
-  const uint8_t snd = (v.lockMask & (1u << kLockDly)) ? v.lock[kLockDly] : sm.send;
+  const uint8_t tr = v.track;
+  const uint8_t snd = (v.lockMask & (1u << kLockDly)) ? v.lock[kLockDly] : morphT(tr, kScnDly, sm.send);
   v.send = u7(snd + 64.f * la[ld(LfoDest::Dly)]) * (1.f / 127.f);
-  const uint8_t rs = (v.lockMask & (1u << kLockRvb)) ? v.lock[kLockRvb] : sm.rsend;
+  const uint8_t rs = (v.lockMask & (1u << kLockRvb)) ? v.lock[kLockRvb] : morphT(tr, kScnRvb, sm.rsend);
   v.rsend = u7(rs + 64.f * la[ld(LfoDest::Rvb)]) * (1.f / 127.f);
   const uint8_t pb = (v.lockMask & (1u << kLockPan)) ? v.lock[kLockPan] : trackPan(v.track);
   v.pan = u7(pb + 64.f * la[ld(LfoDest::Pan)]);
   const TrackCfg* ic = insertCfg(v.track);
-  const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : (ic ? ic->drive : 0);
+  const uint8_t drv = (v.lockMask & (1u << kLockDrv)) ? v.lock[kLockDrv] : (ic ? morphT(tr, kScnDrv, ic->drive) : 0);
   v.drive = u7(drv + 64.f * la[ld(LfoDest::Drive)]);
-  const uint8_t bits = (v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : (ic ? ic->crushBits : 0);
-  const uint8_t srr = (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : (ic ? ic->crushRate : 0);
+  const uint8_t bits = (v.lockMask & (1u << kLockBit)) ? v.lock[kLockBit] : (ic ? morphT(tr, kScnBit, ic->crushBits) : 0);
+  const uint8_t srr = (v.lockMask & (1u << kLockSrr)) ? v.lock[kLockSrr] : (ic ? morphT(tr, kScnSrr, ic->crushRate) : 0);
   v.bits = u7(bits + 64.f * la[ld(LfoDest::Bit)]);
   v.srr = u7(srr + 64.f * la[ld(LfoDest::Srr)]);
-  v.dmodel = (v.lockMask & (1u << kLockDty)) ? v.lock[kLockDty] : (ic ? ic->driveModel : 0);
-  const uint8_t gd = (v.lockMask & (1u << kLockGte)) ? v.lock[kLockGte] : (ic ? ic->gateDepth : 0);
+  v.dmodel = (v.lockMask & (1u << kLockDty)) ? v.lock[kLockDty] : (ic ? morphT(tr, kScnDty, ic->driveModel) : 0);
+  const uint8_t gd = (v.lockMask & (1u << kLockGte)) ? v.lock[kLockGte] : (ic ? morphT(tr, kScnGte, ic->gateDepth) : 0);
   v.gdepth = gd > 127 ? 127 : gd;
-  const uint8_t ms = (v.lockMask & (1u << kLockMod)) ? v.lock[kLockMod] : (ic ? ic->modSend : 0);
+  const uint8_t ms = (v.lockMask & (1u << kLockMod)) ? v.lock[kLockMod] : (ic ? morphT(tr, kScnMod, ic->modSend) : 0);
   v.msend = u7(ms + 64.f * la[ld(LfoDest::ModSend)]) * (1.f / 127.f);
   if (dt && clock_) {  // the profile: render's updates only (note-on / fx updates stay in events)
     ++profN_[kProfCtlMod];
@@ -1263,8 +1286,9 @@ MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, con
   v.fltOn = mode != static_cast<uint8_t>(FltMode::Off);
   if (!v.fltOn) return;
   if (!was) v.flt.reset();  // turned on mid-note (UI, legato from an unfiltered instrument): no stale state
-  const float cut = (v.lockMask & (1u << kLockFlt)) ? v.lock[kLockFlt] : (m.cutoff > 127 ? 127 : m.cutoff);
-  float res = (v.lockMask & (1u << kLockRes)) ? v.lock[kLockRes] : (m.reso > 127 ? 127 : m.reso);
+  const uint8_t mc = morphT(v.track, kScnCut, m.cutoff), mr = morphT(v.track, kScnRes, m.reso);
+  const float cut = (v.lockMask & (1u << kLockFlt)) ? v.lock[kLockFlt] : (mc > 127 ? 127 : mc);
+  float res = (v.lockMask & (1u << kLockRes)) ? v.lock[kLockRes] : (mr > 127 ? 127 : mr);
   if (la[ld(LfoDest::Reso)] != 0) res = clampf(res + 64.f * la[ld(LfoDest::Reso)], 0.f, 127.f);
   if (res != v.fltRes) {
     v.fltRes = res;
@@ -1876,6 +1900,7 @@ MT_HOT void Synth::runStrip(uint8_t track, int pos, int n, int scTrack, bool key
   }
   const bool key = sc && keyAround;
   panAdd(x, (key ? scL_ : mixL_) + pos, (key ? scR_ : mixR_) + pos, n, gl, gr, s.dgl, s.dgr);
+  if (track < kTracks && tapOn(track)) tapTrack(track, x, pos, n, s.gl, s.gr, s.dgl, s.dgr);
   s.gl = gl;
   s.gr = gr;
 }
@@ -1992,6 +2017,46 @@ bool Synth::applyProfiler() {
   return true;
 }
 
+// A changed table (the link's Tuning chunk, the UI) or scale root (AUTO root): rebuild the key map. A
+// memcmp of ~280 bytes per block; nothing per sample.
+MT_HOT void Synth::syncTuning() {
+  if (p_.scaleRoot == tuneRootSeen_ && memcmp(&p_.tuning, &tuneSeen_, sizeof tuneSeen_) == 0) return;
+  memcpy(&tuneSeen_, &p_.tuning, sizeof tuneSeen_);
+  tuneRootSeen_ = p_.scaleRoot;
+  tune_.build(tuneSeen_, tuneRootSeen_);
+}
+
+void Synth::tapsClear() {
+  for (int k = 0; k < RenderTaps::kCount; ++k)
+    if (taps_->mask >> k & 1u)
+      for (int i = 0; i < kBlock; ++i) taps_->l[k][i] = taps_->r[k][i] = 0;
+}
+
+// The same panAdd as the mix's, into the zeroed tap.
+void Synth::tapTrack(int track, const float* x, int pos, int n, float gl, float gr, float dgl, float dgr) {
+  panAdd(x, taps_->l[track] + pos, taps_->r[track] + pos, n, gl, gr, dgl, dgr);
+}
+
+// A return bus k, around its process() call: before (after = false) the tap gets a copy of the mix,
+// after it the difference. The mix itself is never touched (a return computed into its own buffer and
+// added would round differently where the compiler fuses the multiply-add).
+void Synth::tapReturn(int k, bool after) {
+  if (!(taps_->mask >> k & 1u)) return;
+  float* const l = taps_->l[k];
+  float* const r = taps_->r[k];
+  if (!after) {
+    for (int i = 0; i < kBlock; ++i) {
+      l[i] = mixL_[i];
+      r[i] = mixR_[i];
+    }
+    return;
+  }
+  for (int i = 0; i < kBlock; ++i) {
+    l[i] = mixL_[i] - l[i];
+    r[i] = mixR_[i] - r[i];
+  }
+}
+
 MT_HOT void Synth::renderCore() {
   // Profiling: mark(stage) books the time since the last mark. The clock only changes here.
   syncProfiler();
@@ -2002,6 +2067,12 @@ MT_HOT void Synth::renderCore() {
     profT_ = clock_();
   }
   cacheInstruments();
+  syncTuning();
+  const float xft = p_.xfade > 127 ? 127.f : static_cast<float>(p_.xfade);
+  if (xfSnap_) {  // a new synth / reset: the position as it is, no glide
+    xf_ = xft;
+    xfSnap_ = false;
+  }
   mark(kProfInstLfo);
   for (auto& x : mixL_) x = 0;
   for (auto& x : mixR_) x = 0;
@@ -2010,6 +2081,7 @@ MT_HOT void Synth::renderCore() {
   for (auto& x : msend_) x = 0;
   for (auto& x : scL_) x = 0;
   for (auto& x : scR_) x = 0;
+  if (taps_) tapsClear();
   const int scTrack = p_.scTrack >= 1 && p_.scTrack <= kTracks ? p_.scTrack - 1 : -1;
   // Sidechain ducking: the key track goes around the compressor (into sc only, added back after it),
   // so it ducks the rest of the mix without squashing itself.
@@ -2019,6 +2091,7 @@ MT_HOT void Synth::renderCore() {
   for (int pos = 0; pos < kBlock;) {
     mark(kProfMix);
     if (pos % kControl == 0) {
+      if (xf_ != xft) xf_ = xf_ < xft ? minf(xf_ + kXfStep, xft) : maxf(xf_ - kXfStep, xft);  // crossfader glide
       // Followers: none set and none running (the common case) costs a scan of the tracks.
       bool fol = !folIdle_;
       for (int t = 0; t < kTracks && !fol; ++t) fol = p_.tracks[t].folSrc != 0;
@@ -2144,26 +2217,36 @@ MT_HOT void Synth::renderCore() {
   floor(perfDRet_, perf_.delayTail() || perfDs_ > 0.f);
   floor(perfRRet_, perf_.reverbTail() || frozen || perfRs_ > 0.f);
   floor(perfMRet_, perf_.modTail() || perfMs_ > 0.f);
-  const uint8_t dl = p_.dlyLevel < perfDRet_ ? perfDRet_ : p_.dlyLevel;
-  const uint8_t rl = p_.rvbLevel < perfRRet_ ? perfRRet_ : p_.rvbLevel;
+  // Scene morph of the master values (morphM: the project's when no scene end holds them).
+  const uint8_t dlv = morphM(kScnDLvl, p_.dlyLevel), rlv = morphM(kScnRLvl, p_.rvbLevel);
+  const uint8_t rsz = morphM(kScnRSize, p_.rvbSize);
+  const uint8_t dl = dlv < perfDRet_ ? perfDRet_ : dlv;
+  const uint8_t rl = rlv < perfRRet_ ? perfRRet_ : rlv;
   // MOD bus: its stereo return into the mix (OFF, level 0 or idle: untouched).
   {
     uint8_t mt = p_.modType;
     if (mt == static_cast<uint8_t>(ModType::Off) && perfMRet_ > 0) mt = static_cast<uint8_t>(ModType::Chorus);
-    const uint8_t ml = p_.modLevel < perfMRet_ ? perfMRet_ : p_.modLevel;
-    modfx_.process(msend_, mixL_, mixR_, kBlock, mt, p_.modRate, p_.modDepth, p_.modFb, ml);
+    const uint8_t mlv = morphM(kScnMLvl, p_.modLevel);
+    const uint8_t ml = mlv < perfMRet_ ? perfMRet_ : mlv;
+    if (taps_) tapReturn(RenderTaps::kMod, false);
+    modfx_.process(msend_, mixL_, mixR_, kBlock, mt, morphM(kScnMRate, p_.modRate), morphM(kScnMDepth, p_.modDepth),
+                   p_.modFb, ml);
+    if (taps_) tapReturn(RenderTaps::kMod, true);
   }
   mark(kProfMod);
   // Delay mode; TAPE WOBBLE (PERF) forces TAPE at its wear (at least the project's) while held. In
   // PING-PONG it does nothing: a switch would wipe the line (the delay mutes for ~0.25 s).
   {
-    uint8_t mode = p_.dlyMode, chr = p_.dlyChar;
+    uint8_t mode = p_.dlyMode, chr = morphM(kScnDChar, p_.dlyChar);
     if (const int w = perf_.tapeWobble(); w >= 0 && mode != static_cast<uint8_t>(DlyMode::PingPong)) {
       if (mode != static_cast<uint8_t>(DlyMode::Tape)) chr = 0;
       mode = static_cast<uint8_t>(DlyMode::Tape);
       if (w > chr) chr = static_cast<uint8_t>(w);
     }
-    delay_.process(send_, mixL_, mixR_, kBlock, delaySamples(), p_.dlyFb, p_.dlyTone, dl, mode, chr);
+    if (taps_) tapReturn(RenderTaps::kDly, false);
+    delay_.process(send_, mixL_, mixR_, kBlock, delaySamples(), morphM(kScnDFb, p_.dlyFb),
+                   morphM(kScnDTone, p_.dlyTone), dl, mode, chr);
+    if (taps_) tapReturn(RenderTaps::kDly, true);
   }
   mark(kProfDelay);
   // FREEZE: the live mix (and the delay) ducks under the frozen tail, ramped in and out.
@@ -2188,12 +2271,14 @@ MT_HOT void Synth::renderCore() {
       for (int i = 0; i < kBlock; ++i) shimWet_[i] = 0;
     shimmer_.setInterval(p_.shimInt);
     const uint8_t amt = p_.rvbMode == static_cast<uint8_t>(RvbMode::Shimmer) ? p_.rvbShim : 0;
-    shimmer_.process(rsend_, shimWet_, rsend_, kBlock, amt, p_.rvbSize, frozen);
+    shimmer_.process(rsend_, shimWet_, rsend_, kBlock, amt, rsz, frozen);
     for (int i = 0; i < kBlock; ++i) shimWet_[i] = 0;  // the reverb writes this block's (or nothing: silent)
   }
   shimRan_ = shim;
   mark(kProfShim);
-  reverb_.process(rsend_, mixL_, mixR_, kBlock, p_.rvbSize, p_.rvbDamp, rl, frozen, shim ? shimWet_ : nullptr);
+  if (taps_) tapReturn(RenderTaps::kRvb, false);
+  reverb_.process(rsend_, mixL_, mixR_, kBlock, rsz, morphM(kScnRDamp, p_.rvbDamp), rl, frozen, shim ? shimWet_ : nullptr);
+  if (taps_) tapReturn(RenderTaps::kRvb, true);
   mark(kProfReverb);
   comp_.process(mixL_, mixR_, scTrack >= 0 ? scL_ : nullptr, scTrack >= 0 ? scR_ : nullptr, kBlock, p_.compAmt,
                 p_.compRel, p_.scDepth);
@@ -2205,13 +2290,15 @@ MT_HOT void Synth::renderCore() {
     }
   // Master EQ: after the comp (it does not react to the boost) and the key track, before PERF (its
   // FILTER stays the last colour). Flat: skipped.
-  eq_.process(mixL_, mixR_, kBlock, p_.eqLow, p_.eqHigh);
+  eq_.process(mixL_, mixR_, kBlock, morphM(kScnEqLo, p_.eqLow), morphM(kScnEqHi, p_.eqHigh));
   mark(kProfEq);
   // After the key track is back: PERF works on the whole mix. A 1/16 step = kPpqn / 4 ticks.
   perf_.process(mixL_, mixR_, kBlock, (kPpqn / 4) * tickSamples(), !paused_);
   mark(kProfPerf);
-  const uint8_t mv = p_.masterVol > kMasterVolMax ? kMasterVolMax : p_.masterVol;
+  const uint8_t mvs = morphM(kScnMain, p_.masterVol);
+  const uint8_t mv = mvs > kMasterVolMax ? kMasterVolMax : mvs;
   const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
+  if (taps_) taps_->gain = g;
   for (int i = 0; i < kBlock; ++i) mixL_[i] = softClip(mixL_[i] * g) * 32767.f;
   for (int i = 0; i < kBlock; ++i) mixR_[i] = softClip(mixR_[i] * g) * 32767.f;
   mark(kProfMaster);

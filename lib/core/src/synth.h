@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <atomic>
 #include "model.h"
+#include "scene.h"
 #include "sample_source.h"
 #include "stream_pool.h"
 #include "synth_comp.h"
@@ -14,6 +15,7 @@
 #include "synth_shimmer.h"
 #include "synth_reverb.h"
 #include "synth_voice.h"
+#include "tuning.h"
 
 namespace mt {
 
@@ -37,6 +39,20 @@ struct LfoMods {
   uint8_t rtrg = 0;
 };
 static_assert(kLfos == 4, "LfoMods::depth initializer");
+
+// Export stem taps (Synth::setTaps, offline renders only; the live path never sets them). Per block,
+// for each bit of mask: l[i] / r[i] (kBlock floats each, owned by the caller) get track i's strip
+// after insert, fader and pan (no sends, before the compressor) or the MOD / DLY / RVB return; mix
+// units, before the master stage. gain: that block's MAIN gain (mv x 0.25 / 100): x gain x 32767 is
+// the master's int16 scale. The master stays bit-identical: the taps only read the mix (a return is
+// the mix after its bus minus the mix before it).
+struct RenderTaps {
+  static constexpr int kMod = kTracks, kDly = kTracks + 1, kRvb = kTracks + 2, kCount = kTracks + 3;
+  uint32_t mask = 0;
+  float* l[kCount] = {};
+  float* r[kCount] = {};
+  float gain = 0;
+};
 
 // Hardware-free synth for INT tracks. Messages are MIDI-like, channel nibble ignored:
 // 0x90 note vel (vel 0 = off), 0x80 note, 0xE0 lsb msb (bend, +-2 semitones), 0xC0 prog (instrument),
@@ -118,6 +134,11 @@ class Synth {
   void startTrack(uint8_t track);
   // Silences everything at once, clears the queue and the delay line.
   void reset();
+  // Stem taps for the next blocks (an offline render, see RenderTaps), nullptr = off.
+  void setTaps(RenderTaps* t) { taps_ = t; }
+  // The last block's master: float, int16 scale, after the soft clip (render() truncates it).
+  const float* masterL() const { return mixL_; }
+  const float* masterR() const { return mixR_; }
   // Renders kBlock stereo frames, interleaved L R (lr[2 * kBlock]), applying pending events at
   // their offsets.
   void renderStereo(int16_t* lr);
@@ -341,6 +362,12 @@ class Synth {
   // The strip of track over the segment trk_[0..n) at block position pos: insert, sends,
   // peak, pan into the mix (or the sidechain bus).
   void runStrip(uint8_t track, int pos, int n, int scTrack, bool keyAround);
+  // Export taps (out of the hot section: only offline renders set taps_).
+  RenderTaps* taps_ = nullptr;
+  MT_INLINE bool tapOn(int k) const { return taps_ && (taps_->mask >> k & 1u); }
+  void tapsClear();
+  void tapTrack(int track, const float* x, int pos, int n, float gl, float gr, float dgl, float dgr);
+  void tapReturn(int k, bool after);
   // Envelope followers, at each control boundary before the voices' updates: the sources' levels
   // over the last segment (srcPk_) into the destination tracks' envelopes and their targets.
   void updateFollowers();
@@ -353,6 +380,29 @@ class Synth {
   void renderCore();
 
   const SynthModel& p_;
+  // Project tuning: rebuilt at a block's start when the model's table or scale root changed.
+  TuneMap tune_;
+  TuningTable tuneSeen_;
+  uint8_t tuneRootSeen_ = 0;
+  void syncTuning();
+  // Scenes: the crossfader's smoothed position 0..127 (follows xfade per control period, full travel in
+  // kXfMs; the first block after construction / reset snaps). morphT / morphM: the morph of parameter k
+  // with the project's value base (scene.h); unset at both ends = base, two mask tests.
+  static constexpr float kXfMs = 30.f;
+  static constexpr float kXfStep = 127.f * kControl / (kXfMs * 0.001f * kSynthRate);
+  float xf_ = 0;
+  bool xfSnap_ = true;
+  MT_INLINE uint8_t morphT(uint8_t t, int k, uint8_t base) const {
+    if (t >= kTracks) return base;  // the preview track: unmorphed
+    const uint16_t bit = static_cast<uint16_t>(1u << k);
+    return ((p_.sceneLive[0].trkMask[t] | p_.sceneLive[1].trkMask[t]) & bit) ? morphTrk(t, k, base) : base;
+  }
+  MT_INLINE uint8_t morphM(int k, uint8_t base) const {
+    const uint16_t bit = static_cast<uint16_t>(1u << k);
+    return ((p_.sceneLive[0].mstMask | p_.sceneLive[1].mstMask) & bit) ? morphMst(k, base) : base;
+  }
+  uint8_t morphTrk(uint8_t t, int k, uint8_t base) const;  // a scene end holds it
+  uint8_t morphMst(int k, uint8_t base) const;
   const SampleSource* bank_ = nullptr;
   StreamPool* pool_ = nullptr;
   const WtSource* wt_ = nullptr;

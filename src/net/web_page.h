@@ -4,8 +4,8 @@
 namespace net {
 
 // Single page served at "/" (and "/firmware"): firmware updates of the tracker (.bin) and of the synth
-// board (.hex, through its card). The card's files are
-// on the synth board now and not served here.
+// board (.hex, through its card), and the Export section: the WAV files of /export on the synth board's
+// card (FILE -> Export...), listed by /api/export/list and downloaded by /api/export/file.
 // No external resources: works without internet access.
 static const char kWebPage[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -25,6 +25,10 @@ p.note{color:var(--dim);margin:0 0 8px;font-size:13px}
 .drop.over{border-color:var(--acc);color:var(--fg)}
 .st{min-height:1.4em;margin-top:8px;color:var(--dim)}.st.err{color:var(--err)}
 progress{width:100%;display:none;margin-top:8px}
+a{color:var(--acc)}ul.ex{list-style:none;padding:0;margin:4px 0 0}ul.ex li{display:flex;justify-content:space-between;
+gap:12px;padding:2px 0;border-bottom:1px solid var(--line);font-size:14px}ul.ex li span{color:var(--dim)}
+h3{font-size:14px;margin:10px 0 0;color:var(--dim)}button{background:var(--box);color:var(--fg);border:1px solid #444;
+border-radius:6px;padding:4px 10px;cursor:pointer}
 </style></head><body>
 <header><div class="bar">
 <h1>D-TRK</h1>
@@ -40,6 +44,11 @@ progress{width:100%;display:none;margin-top:8px}
 /firmware/teensy.hex, then the board flashes it and restarts.</p>
 <div class="drop">Drop firmware.hex here or click to choose<input type="file" accept=".hex" hidden></div>
 <progress max="100"></progress><div class="st"></div></section>
+<section id="ex" style="margin-top:20px"><h2>Export (.wav)</h2>
+<p class="note">Files of FILE &rarr; Export... on the synth board's card, /export/&lt;project&gt;/&lt;source&gt;/.
+The link runs at about 200 KB/s (a 4 min master at 24 bit, 63 MB, takes ~5 min); for a full set of stems take
+the card out. A cut download resumes where it stopped.</p>
+<button>Refresh</button><div class="st"></div><div class="list"></div></section>
 </main>
 <script>
 const $=(s,e=document)=>e.querySelector(s);
@@ -89,6 +98,18 @@ function drop(sec,fn){
 }
 drop($('#fw'),firmware);
 drop($('#syn'),synth);
+async function exports(){
+  const sec=$('#ex'),l=$('.list',sec);status(sec,'Reading the card...');
+  let a;try{a=await(await fetch('/api/export/list')).json();}catch(e){status(sec,'no answer',1);return;}
+  if(!a.length){l.innerHTML='';status(sec,'No exports on the card.');return;}
+  const g={};for(const f of a){const d=f.p.slice(0,f.p.lastIndexOf('/'));(g[d]=g[d]||[]).push(f);}
+  let h='';for(const d of Object.keys(g).sort()){h+='<h3>'+d+'</h3><ul class="ex">';
+    for(const f of g[d].sort((x,y)=>x.p<y.p?-1:1)){const n=f.p.slice(d.length+1);
+      h+='<li><a href="/api/export/file?path='+encodeURIComponent(f.p)+'" download="'+n+'">'+n+'</a><span>'+kb(f.s)+'</span></li>';}
+    h+='</ul>';}
+  l.innerHTML=h;status(sec,a.length+' files');
+}
+$('#ex button').onclick=exports;exports();
 </script></body></html>)HTML";
 
 }  // namespace net

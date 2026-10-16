@@ -354,6 +354,7 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
     case InputType::EncLong: openMenu(); break;
     // A + turn: hold edit of the cursor slot's pattern, release = keep, B = cancel.
     case InputType::EditTurn:
+      if (app_.perf().xfadeTurn(ev.delta, ev.shift)) break;  // PERF, nothing held: the scene crossfader
       if (!patEdit_) {
         if (n == 0) break;
         patEdit_ = holdRow_ = true;

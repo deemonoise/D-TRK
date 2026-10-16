@@ -25,7 +25,7 @@ namespace ui {
 namespace {
 
 constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
-                                   "Import MIDI...", "Render WAV...", "Wi-Fi firmware...", "Retry"};
+                                   "Import MIDI...", "Export...", "Wi-Fi firmware...", "Retry"};
 // The last row: Retry without a card, Restore autosave with one (they never need the row together).
 constexpr const char* kRestoreLabel = "Restore autosave";
 

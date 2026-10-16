@@ -204,6 +204,7 @@ class SdBackend : public FsBackend {
     for (const char* d : kDirs) folder(d);
     for (int t = 0; t < static_cast<int>(mt::InstrType::Count); ++t)
       if (mt::presetTypeHas(static_cast<mt::InstrType>(t))) folder(mt::presetRoot(static_cast<mt::InstrType>(t)));
+    folder("/presets/TUN");  // user tunings (.scl), read by the PROJ Tuning row
   }
 
   SafeCard dev_;

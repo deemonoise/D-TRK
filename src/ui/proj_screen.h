@@ -1,4 +1,5 @@
 #pragma once
+#include "hw/sdcard.h"
 #include "model.h"
 #include "page_bar.h"
 #include "param_list.h"
@@ -23,7 +24,7 @@ class ProjScreen : public Screen {
 
  private:
   enum Row : int {
-    kBpm, kRoot, kScale, kLength, kRes, kSwing, kGroove,
+    kBpm, kRoot, kScale, kTuning, kTuneRoot, kLength, kRes, kSwing, kGroove,
     kDlyTime, kDlyMode, kDlyFb, kDlyTone, kDlyChar, kDlyLevel,
     kRvbSize, kRvbMode, kRvbDamp, kRvbShim, kShimInt, kRvbLevel,
     kModType, kModRate, kModDepth, kModFb, kModLevel,
@@ -45,6 +46,17 @@ class ProjScreen : public Screen {
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
   int bpm();  // local target while it is ahead of the engine, else p.bpm
   void editBpm(int delta);
+
+  // Tuning row: 0 = 12-TET, then the factory tunings, then the card's /presets/TUN files (listed at
+  // onEnter). An edit (under the project lock) only picks; draw() loads and applies the pick, outside it.
+  static constexpr int kTunUserMax = 64;
+  int tunCount() const;
+  const char* tunName(int i) const;
+  int tunCurrent() const;  // the project's tuning in the list, -1 if it is not there (file gone)
+  void applyTuning();
+  char (*tunUser_)[hw::kNameMax] = nullptr;
+  int tunUserN_ = 0;
+  int tunPick_ = -1;  // pending pick, -1 = none
 
   App& app_;
   Param params_[kRows];

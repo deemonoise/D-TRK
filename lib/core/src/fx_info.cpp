@@ -63,6 +63,7 @@ constexpr Info kInfo[] = {
     {"DTY", "DRIVE TYPE", 0, static_cast<int16_t>(DriveModel::Count) - 1, 0, false},  // DTY: drive model lock
     {"GTE", "TRANCE GATE", 0, 127, 127, false},  // GTE: trance gate depth lock, 0 = off
     {"MOD", "MOD SEND", 0, 127, 64, false},      // MOD: MOD bus send lock
+    {"FLP", "GEN FLIP", 0, 100, 50, false},      // FLP: the track generator's flip chance on this step
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -107,7 +108,7 @@ constexpr Fx kOrder[] = {
     Fx::None,
     Fx::CHD, Fx::STR, Fx::ARP, Fx::ARM, Fx::ARS,
     Fx::RAT, Fx::NDG, Fx::GAT, Fx::TIE, Fx::OFF, Fx::CUT,
-    Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN,
+    Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN, Fx::FLP,
     Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
     Fx::FLT, Fx::RES, Fx::DRV, Fx::DTY, Fx::BIT, Fx::SRR, Fx::GTE, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
     Fx::LFO, Fx::LFD, Fx::LFS, Fx::LFW, Fx::LFT, Fx::LFR,

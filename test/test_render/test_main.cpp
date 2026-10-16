@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <math.h>
 #include <vector>
 #include "demos.h"
 #include "render.h"
@@ -283,6 +284,37 @@ void test_two_renders_identical() {
   TEST_ASSERT_TRUE(a == b);
 }
 
+// The track generator renders the same bytes every time (hash flips from the seed, reset by start()).
+static std::vector<int16_t> renderAll(Project& p) {
+  RenderSpec s;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p);
+  std::vector<int16_t> v;
+  synth.reset();
+  OfflineRender r(p, synth, s);
+  int16_t out[Synth::kBlock], outR[Synth::kBlock];
+  while (r.renderBlock(out, outR)) {
+    v.insert(v.end(), out, out + Synth::kBlock);
+    v.insert(v.end(), outR, outR + Synth::kBlock);
+  }
+  return v;
+}
+
+void test_generator_renders_identically() {
+  Project& p = *mkProj();
+  for (int i = 0; i < 16; i += 2) p.patterns[0].steps[0][i].note = 60;
+  p.patterns[0].steps[0][4].fx[0] = {Fx::PRB, 50};
+  const std::vector<int16_t> plain = renderAll(p);
+  p.gen[0].mode = static_cast<uint8_t>(GenMode::Pitch);
+  p.gen[0].flip = 50;
+  p.gen[1].mode = static_cast<uint8_t>(GenMode::Gate);
+  p.gen[1].flip = 50;
+  const std::vector<int16_t> a = renderAll(p), b = renderAll(p);
+  TEST_ASSERT_EQUAL(a.size(), b.size());
+  TEST_ASSERT_TRUE(a == b);
+  TEST_ASSERT_FALSE(a == plain);
+}
+
 // All pans at the centre (the default): L == R, the delay included (the reverb spreads by design).
 void test_centred_project_renders_l_equals_r() {
   Project& p = *mkProj();
@@ -564,6 +596,146 @@ void test_render_hard_right_peak_from_r() {
   TEST_ASSERT_TRUE(r.peak() > 1000);
 }
 
+
+// ---- Export stem taps (Synth::setTaps) ----
+
+// A synth with every send bus live: delay line, reverb, MOD line.
+static Synth* fxSynth(Project& p) {
+  static int16_t dline[kSynthRate / 4];
+  static float rbuf[Reverb::kBufLen];
+  static int16_t mline[ModFx::kLineLen];
+  Synth* s = synthFor(p);
+  s->setDelayBuffer(dline, kSynthRate / 4);
+  s->setReverbBuffer(rbuf, Reverb::kBufLen);
+  s->setModBuffer(mline, ModFx::kLineLen);
+  return s;
+}
+
+static void fxProj(Project& p) {
+  fillSeqProj(p);
+  p.instruments[0].rsend = 70;
+  p.tracks[2].modSend = 90;
+  p.modType = static_cast<uint8_t>(ModType::Chorus);
+  p.modLevel = 100;
+  p.rvbLevel = 100;
+}
+
+struct TapBufs {
+  float l[RenderTaps::kCount][Synth::kBlock], r[RenderTaps::kCount][Synth::kBlock];
+  RenderTaps t;
+  explicit TapBufs(uint32_t mask) {
+    t.mask = mask;
+    for (int i = 0; i < RenderTaps::kCount; ++i) {
+      t.l[i] = l[i];
+      t.r[i] = r[i];
+    }
+  }
+};
+
+static uint32_t renderHash(Project& p, Synth& synth, RenderTaps* taps, uint32_t* blocks = nullptr) {
+  RenderSpec s;
+  s.tailBlocks = 60;
+  synth.reset();
+  synth.setTaps(taps);
+  OfflineRender::Guard g(p);
+  OfflineRender r(p, synth, s);
+  int16_t l[Synth::kBlock], rr[Synth::kBlock];
+  uint32_t h = 2166136261u;
+  if (blocks) *blocks = 0;
+  while (r.renderBlock(l, rr)) {
+    for (int i = 0; i < Synth::kBlock; ++i) h = (h ^ static_cast<uint16_t>(l[i] ^ rr[i] << 1)) * 16777619u;
+    if (blocks) ++*blocks;
+  }
+  synth.setTaps(nullptr);
+  return h;
+}
+
+// The live path is untouched: every tap on, or a few, the master is the same bit for bit.
+void test_taps_keep_master_identical() {
+  Project& p = *mkProj();
+  fxProj(p);
+  p.compAmt = 60;
+  p.scTrack = 2;
+  p.scDepth = 80;
+  p.eqLow = 80;
+  Synth& synth = *fxSynth(p);
+  const uint32_t plain = renderHash(p, synth, nullptr);
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(plain, renderHash(p, synth, nullptr), "replay");
+  static TapBufs all(0x7FFFFu), some(0x50005u), trk(0xFFFFu), mod(1u << RenderTaps::kMod), dly(1u << RenderTaps::kDly),
+      rvb(1u << RenderTaps::kRvb);
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(plain, renderHash(p, synth, &all.t), "all");
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(plain, renderHash(p, synth, &some.t), "some");
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(plain, renderHash(p, synth, &trk.t), "tracks");
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(plain, renderHash(p, synth, &mod.t), "mod");
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(plain, renderHash(p, synth, &dly.t), "dly");
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(plain, renderHash(p, synth, &rvb.t), "rvb");
+  TEST_ASSERT_EQUAL_HEX32(plain, renderHash(p, synth, nullptr));
+}
+
+static float clip(float x) { return x >= 1.f ? 1.f : (x <= -1.f ? -1.f : x * (1.5f - 0.5f * x * x)); }
+
+// Comp 0, EQ flat: the master is the soft clip of (sum of the track taps + the returns) x MAIN gain.
+void test_taps_sum_to_master() {
+  Project& p = *mkProj();
+  fxProj(p);
+  p.masterVol = 80;
+  Synth& synth = *fxSynth(p);
+  static TapBufs all(0x7FFFFu);
+  synth.reset();
+  synth.setTaps(&all.t);
+  RenderSpec s;
+  s.tailBlocks = 60;
+  OfflineRender::Guard g(p);
+  OfflineRender r(p, synth, s);
+  int16_t l[Synth::kBlock], rr[Synth::kBlock];
+  float worst = 0, loud = 0, fx[3] = {0, 0, 0};
+  while (r.renderBlock(l, rr)) {
+    TEST_ASSERT_FLOAT_WITHIN(1e-7f, 80 * 0.25f / 100.f, all.t.gain);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      float sl = 0, sr = 0;
+      for (int k = 0; k < RenderTaps::kCount; ++k) {
+        sl += all.l[k][i];
+        sr += all.r[k][i];
+      }
+      for (int k = 0; k < 3; ++k) fx[k] = fmaxf(fx[k], fabsf(all.l[RenderTaps::kMod + k][i]));
+      const float wl = clip(sl * all.t.gain) * 32767.f, wr = clip(sr * all.t.gain) * 32767.f;
+      worst = fmaxf(worst, fmaxf(fabsf(wl - synth.masterL()[i]), fabsf(wr - synth.masterR()[i])));
+      loud = fmaxf(loud, fabsf(synth.masterL()[i]));
+    }
+  }
+  synth.setTaps(nullptr);
+  TEST_ASSERT_TRUE(loud > 1000);
+  TEST_ASSERT_TRUE(worst < 0.05f);
+  for (float v : fx) TEST_ASSERT_TRUE(v > 0);  // every return has its own signal
+}
+
+// A tap holds one track only; a track that sends nowhere leaves the returns at zero.
+void test_taps_split_tracks_and_returns() {
+  Project& p = *mkProj();
+  fxProj(p);
+  for (int t = 0; t < kTracks; ++t) p.tracks[t].modSend = 0;
+  p.instruments[0].send = 0;
+  p.instruments[0].rsend = 0;
+  Synth& synth = *fxSynth(p);
+  static TapBufs all(0x7FFFFu);
+  synth.reset();
+  synth.setTaps(&all.t);
+  RenderSpec s;
+  OfflineRender::Guard g(p);
+  OfflineRender r(p, synth, s);
+  int16_t l[Synth::kBlock], rr[Synth::kBlock];
+  float trk[kTracks] = {}, ret = 0;
+  while (r.renderBlock(l, rr))
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      for (int t = 0; t < kTracks; ++t) trk[t] = fmaxf(trk[t], fabsf(all.l[t][i]) + fabsf(all.r[t][i]));
+      for (int k = RenderTaps::kMod; k < RenderTaps::kCount; ++k) ret = fmaxf(ret, fabsf(all.l[k][i]));
+    }
+  synth.setTaps(nullptr);
+  for (int t = 0; t < 4; ++t) TEST_ASSERT_TRUE(trk[t] > 0);
+  for (int t = 4; t < kTracks; ++t) TEST_ASSERT_EQUAL_FLOAT(0.f, trk[t]);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, ret);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_pass_us);
@@ -582,6 +754,7 @@ int main() {
   RUN_TEST(test_song_render_applies_masks_and_restores_mutes);
   RUN_TEST(test_guard_restores_mutes);
   RUN_TEST(test_two_renders_identical);
+  RUN_TEST(test_generator_renders_identically);
   RUN_TEST(test_peak_and_clips);
   RUN_TEST(test_centred_project_renders_l_equals_r);
   RUN_TEST(test_demo_render_unchanged_by_split);
@@ -591,5 +764,8 @@ int main() {
   RUN_TEST(test_link_render_splits_dense_block);
   RUN_TEST(test_feeder_refuses_out_of_order);
   RUN_TEST(test_render_hard_right_peak_from_r);
+  RUN_TEST(test_taps_keep_master_identical);
+  RUN_TEST(test_taps_sum_to_master);
+  RUN_TEST(test_taps_split_tracks_and_returns);
   return UNITY_END();
 }

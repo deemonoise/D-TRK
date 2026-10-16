@@ -6,6 +6,8 @@
 #include "slices.h"
 #include "synth.h"
 #include "synth_drum_machines.h"
+#include "scene.h"
+#include "tuning_factory.h"
 #include "wt_builtin.h"
 
 using namespace mt;
@@ -5155,6 +5157,331 @@ void test_string_legato_restrike_adds_energy() {
   TEST_ASSERT_TRUE(jump <= 2 * fresh);  // no larger step than a fresh strike's own
 }
 
+// ---- microtonal tuning (Project::tuning, tuning.h) ----
+
+static void setEdo(TuningTable& t, int n) {
+  tuningClear(t);
+  t.count = static_cast<uint8_t>(n);
+  for (int k = 1; k <= n; ++k) t.mc[k - 1] = static_cast<int32_t>(1200000LL * k / n);
+  strcpy(t.name, "EDO");
+}
+
+void test_tuning_12tet_voices_untuned() {
+  noteOn(0, 0, 60);
+  render1(buf);
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).tuned);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 60.f, voiceSemis(0));
+}
+
+// A tuning of 12 equal steps plays the 12-TET pitches through the tuned path: fine, transpose, bend,
+// ARP and VIB land where they do untuned.
+void test_tuning_12_edo_matches_12tet() {
+  Project* p2 = new Project(*p);
+  setEdo(p2->tuning, 12);
+  Synth* s2 = new Synth(*p2);
+  Project* projs[2] = {p, p2};
+  for (Project* q : projs) {
+    q->instruments[0].fine = 30;
+    q->instruments[0].transpose = 2;
+  }
+  Synth* both[2] = {s, s2};
+  for (Synth* x : both) {
+    Synth* keep = s;
+    s = x;
+    send(0, 0, 0xE0, 0x00, 0x50);  // bend up a bit
+    stepStart(0, 0, 24, true);
+    fx(0, 0, Fx::ARP, 0x47);
+    fx(0, 0, Fx::VIB, 0x48);
+    noteOn(0, 0, 57);
+    s = keep;
+  }
+  for (int k = 0; k < 60; ++k) {
+    s->render(buf, bufR);
+    s2->render(buf, bufR);
+    const float a = s->voice(s->trackVoice(0)).inc, b = s2->voice(s2->trackVoice(0)).inc;
+    TEST_ASSERT_FLOAT_WITHIN(a * 2e-5f, a, b);
+  }
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).tuned);
+  TEST_ASSERT_TRUE(s2->voice(s2->trackVoice(0)).tuned);
+  delete s2;
+  delete p2;
+}
+
+void test_tuning_24_edo_chip_and_fine() {
+  setEdo(p->tuning, 24);
+  noteOn(0, 0, 61);
+  render1(buf);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).tuned);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 60.5f, voiceSemis(0));
+  noteOn(0, 0, 36);
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 48.f, voiceSemis(0));
+  // Fine: cents over the tuning, live.
+  p->instruments[0].fine = 50;
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 48.5f, voiceSemis(0));
+}
+
+void test_tuning_just_auto_root() {
+  TEST_ASSERT_TRUE(factoryTuning(factoryTuningFind("JUST 5-LIMIT"), p->tuning));
+  noteOn(0, 0, 64);
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, 63.863f, voiceSemis(0));  // 5/4 over C-4
+  noteOn(0, 1, 60);
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 60.f, voiceSemis(1));  // the root keeps its pitch
+  p->scaleRoot = 4;  // AUTO follows: E-4 is the root now
+  noteOn(0, 2, 64);
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 64.f, voiceSemis(2));
+}
+
+void test_tuning_glide_ends_on_degree() {
+  setEdo(p->tuning, 24);
+  Instrument& m = p->instruments[0];
+  m.mono = true;
+  m.glide = 25;  // 100 ms
+  noteOn(0, 0, 60);
+  render1(buf);
+  noteOn(0, 0, 62);
+  renderMs(48);
+  const float mid = voiceSemis(0);
+  TEST_ASSERT_TRUE(mid > 60.1f && mid < 60.9f);
+  renderMs(80);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 61.f, voiceSemis(0));
+}
+
+void test_tuning_table_change_applies_live() {
+  setEdo(p->tuning, 24);
+  noteOn(0, 0, 62);
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 61.f, voiceSemis(0));
+  setEdo(p->tuning, 12 * 4);  // 48-EDO
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 60.5f, voiceSemis(0));
+  tuningClear(p->tuning);  // 12-TET: the sounding tuned voice plays plain keys
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 62.f, voiceSemis(0));
+}
+
+void test_tuning_sample_by_note() {
+  sampleInstr(400, kSynthRate);
+  setEdo(p->tuning, 24);
+  noteOn(0, 0, 62);
+  render1(buf);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).tuned);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1.f, 12.f * log2f(s->voice(s->trackVoice(0)).inc));  // root 60 + 1 st
+}
+
+void test_tuning_synth_sounds_tuned() {
+  instrSetType(p->instruments[0], InstrType::Synth);
+  p->instruments[0].attack = 0;
+  p->instruments[0].sustain = 127;
+  setEdo(p->tuning, 24);
+  noteOn(0, 0, 81);  // 70.5 st
+  render1(buf);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).tuned);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 70.5f, s->voice(s->trackVoice(0)).hzKey[0]);  // osc 1's note
+}
+
+void test_tuning_eligible_types() {
+  setEdo(p->tuning, 24);
+  const InstrType yes[] = {InstrType::Synth, InstrType::Macro, InstrType::String, InstrType::Fm};
+  for (InstrType t : yes) {
+    instrSetType(p->instruments[1], t);
+    if (t == InstrType::Fm) fmSetMachine(p->instruments[1], static_cast<uint8_t>(FmMachine::Tone));
+    p->tracks[1].instr = 1;
+    s->startTrack(1);
+    noteOn(0, 1, 61);
+    render1(buf);
+    TEST_ASSERT_TRUE(s->voice(s->trackVoice(1)).tuned);
+    if (t != InstrType::Fm) TEST_ASSERT_FLOAT_WITHIN(1e-3f, 60.5f, s->voice(s->trackVoice(1)).hzKey[0]);
+    noteOff(0, 1, 61);
+  }
+  // Drums, FM drum machines: not tuned.
+  instrSetType(p->instruments[2], InstrType::Drum);
+  p->tracks[2].instr = 2;
+  s->startTrack(2);
+  noteOn(0, 2, 60);
+  instrSetType(p->instruments[3], InstrType::Fm);
+  fmSetMachine(p->instruments[3], static_cast<uint8_t>(FmMachine::Kick));
+  p->tracks[3].instr = 3;
+  s->startTrack(3);
+  noteOn(0, 3, 60);
+  render1(buf);
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(2)).tuned);
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(3)).tuned);
+}
+
+void test_tuning_kit_lane_and_note_slices_untuned() {
+  setEdo(p->tuning, 24);
+  // A KIT lane playing a CHIP instrument.
+  Instrument& k = p->instruments[4];
+  instrSetType(k, InstrType::Kit);
+  k.kit[0].note = 61;
+  k.kit[0].instr = 5;
+  p->tracks[4].instr = 4;
+  s->startTrack(4);
+  noteOn(0, 4, 61);
+  render1(buf);
+  bool found = false;
+  for (int i = 0; i < kVoices; ++i)
+    if (s->voice(i).on && s->voice(i).track == 4) {
+      found = true;
+      TEST_ASSERT_FALSE(s->voice(i).tuned);
+    }
+  TEST_ASSERT_TRUE(found);
+  // NOTE slices: the note picks a slice, no pitch.
+  sampleInstr(400, kSynthRate);
+  fourSlices();
+  p->instruments[0].sliceMode = static_cast<uint8_t>(SliceMode::Note);
+  noteOn(0, 0, 61);
+  render1(buf);  // the 100-frame slice ends inside the block: find its (freed) voice
+  found = false;
+  for (int i = 0; i < kVoices; ++i)
+    if (s->voice(i).track == 0 && s->voice(i).note == 61 && s->voice(i).sample) {
+      found = true;
+      TEST_ASSERT_FALSE(s->voice(i).tuned);
+    }
+  TEST_ASSERT_TRUE(found);
+}
+
+
+// ---- scenes / crossfader (Project::scenes, SynthModel::sceneLive / xfade, scene.h) ----
+
+// Renders n blocks of L and R into out (2 * n * kBlock).
+static void renderLR(Synth* x, int16_t* out, int n) {
+  for (int k = 0; k < n; ++k) x->render(out + 2 * k * Synth::kBlock, out + (2 * k + 1) * Synth::kBlock);
+}
+
+void test_scene_empty_is_bit_identical() {
+  for (auto& m : p->instruments) m.send = 60, m.rsend = 70;
+  Project* p2 = new Project(*p);
+  p2->xfade = 127;
+  sceneSetTrk(p2->scenes[4], 0, kScnVol, 0);  // a scene that is neither A nor B
+  sceneSetMst(p2->scenes[4], kScnMain, 10);
+  Synth* s2 = new Synth(*p2);
+  Synth* both[2] = {s, s2};
+  for (Synth* x : both) {
+    Synth* keep = s;
+    s = x;
+    noteOn(0, 0, 60);
+    noteOn(10, 1, 64);
+    s = keep;
+  }
+  static int16_t a[2 * 30 * Synth::kBlock], b[2 * 30 * Synth::kBlock];
+  renderLR(s, a, 30);
+  renderLR(s2, b, 30);
+  TEST_ASSERT_EQUAL_MEMORY(a, b, sizeof a);
+  delete s2;
+  delete p2;
+}
+
+void test_scene_morphs_voice_fields() {
+  p->tracks[0].instr = p->tracks[1].instr = 0;
+  p->instruments[0].send = 10;
+  Scene& b = p->sceneLive[1];
+  sceneSetTrk(b, 0, kScnPan, 0);
+  sceneSetTrk(b, 0, kScnDrv, 100);
+  sceneSetTrk(b, 0, kScnDly, 127);
+  sceneSetTrk(b, 0, kScnMod, 50);
+  sceneSetTrk(b, 0, kScnGte, 90);
+  sceneSetTrk(b, 0, kScnBit, 30);
+  sceneSetTrk(b, 0, kScnSrr, 20);
+  sceneSetTrk(b, 0, kScnDty, 2);
+  p->xfade = 127;
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  render1(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL(0, v.pan);
+  TEST_ASSERT_EQUAL(100, v.drive);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, v.send);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 50.f / 127.f, v.msend);
+  TEST_ASSERT_EQUAL(90, v.gdepth);
+  TEST_ASSERT_EQUAL(30, v.bits);
+  TEST_ASSERT_EQUAL(20, v.srr);
+  TEST_ASSERT_EQUAL(2, v.dmodel);
+  // Track 1 plays the same instrument: its own (base) values.
+  const Voice& w = s->voice(s->trackVoice(1));
+  TEST_ASSERT_EQUAL(64, w.pan);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 10.f / 127.f, w.send);
+  TEST_ASSERT_EQUAL(0, w.drive);
+  // Halfway: continuous values in between, the drive model (discrete) on B from 64.
+  p->xfade = 64;
+  for (int k = 0; k < 30; ++k) render1(buf);
+  TEST_ASSERT_EQUAL(32, s->voice(s->trackVoice(0)).pan);
+  TEST_ASSERT_EQUAL(50, s->voice(s->trackVoice(0)).drive);
+  TEST_ASSERT_EQUAL(2, s->voice(s->trackVoice(0)).dmodel);
+  p->xfade = 0;
+  for (int k = 0; k < 30; ++k) render1(buf);
+  TEST_ASSERT_EQUAL(64, s->voice(s->trackVoice(0)).pan);
+  TEST_ASSERT_EQUAL(0, s->voice(s->trackVoice(0)).dmodel);
+}
+
+void test_scene_vol_and_first_block_snap() {
+  sceneSetTrk(p->sceneLive[1], 0, kScnVol, 0);
+  p->xfade = 127;  // set before the first block: no glide from A
+  noteOn(0, 0, 60);
+  TEST_ASSERT_TRUE(silentBlocks(5));
+  p->xfade = 0;
+  for (int k = 0; k < 20; ++k) render1(buf);
+  TEST_ASSERT_TRUE(rmsBlocks(4) > 1000.f);
+}
+
+void test_scene_smoothing_takes_about_30ms() {
+  sceneSetTrk(p->sceneLive[1], 0, kScnVol, 0);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 4; ++k) render1(buf);
+  float lo = 1e9f, hi = 0;  // the per-block RMS of the steady note
+  for (int k = 0; k < 8; ++k) {
+    const float r = rmsBlocks(1);
+    lo = r < lo ? r : lo;
+    hi = r > hi ? r : hi;
+  }
+  p->xfade = 127;
+  int silentAt = -1;
+  for (int k = 0; k < 20 && silentAt < 0; ++k) {
+    const float r = rmsBlocks(1);
+    if (k == 0) TEST_ASSERT_TRUE(r > 0.7f * lo);   // no step down
+    if (k == 5) TEST_ASSERT_TRUE(r < 0.75f * hi);  // half way down
+    if (r == 0.f) silentAt = k;
+  }
+  // 30 ms = 10.3 blocks of 128 at 44.1 kHz.
+  TEST_ASSERT_TRUE(silentAt >= 9 && silentAt <= 13);
+}
+
+void test_scene_cutoff_morph_and_flt_lock_wins() {
+  for (auto& m : p->instruments) m.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  noteOn(0, 0, 48);
+  for (int k = 0; k < 4; ++k) render1(buf);
+  const float open = rmsBlocks(8);
+  sceneSetTrk(p->sceneLive[1], 0, kScnCut, 0);
+  p->xfade = 127;
+  for (int k = 0; k < 20; ++k) render1(buf);
+  const float closed = rmsBlocks(8);
+  TEST_ASSERT_TRUE(closed < 0.3f * open);
+  stepStart(0, 0, 24, false);
+  fx(0, 0, Fx::FLT, 127);  // the step's lock beats the scene
+  for (int k = 0; k < 4; ++k) render1(buf);
+  const float locked = rmsBlocks(8);
+  TEST_ASSERT_FLOAT_WITHIN(0.1f * open, open, locked);
+}
+
+void test_scene_master_vol_morph() {
+  p->masterVol = 100;
+  noteOn(0, 0, 60, 40);
+  for (int k = 0; k < 4; ++k) render1(buf);
+  const float base = rmsBlocks(8);
+  sceneSetMst(p->sceneLive[0], kScnMain, 50);
+  for (int k = 0; k < 20; ++k) render1(buf);
+  const float half = rmsBlocks(8);
+  TEST_ASSERT_TRUE(half > 0.4f * base && half < 0.6f * base);
+  p->xfade = 127;  // B does not hold MAIN: the base
+  for (int k = 0; k < 20; ++k) render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f * base, base, rmsBlocks(8));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -5451,5 +5778,21 @@ int main() {
   RUN_TEST(test_macro_legato_from_synth_starts_fresh);
   RUN_TEST(test_synth_legato_from_macro_starts_fresh);
   RUN_TEST(test_macro_after_synth_same_track_sounds);
+  RUN_TEST(test_tuning_12tet_voices_untuned);
+  RUN_TEST(test_tuning_12_edo_matches_12tet);
+  RUN_TEST(test_tuning_24_edo_chip_and_fine);
+  RUN_TEST(test_tuning_just_auto_root);
+  RUN_TEST(test_tuning_glide_ends_on_degree);
+  RUN_TEST(test_tuning_table_change_applies_live);
+  RUN_TEST(test_tuning_sample_by_note);
+  RUN_TEST(test_tuning_synth_sounds_tuned);
+  RUN_TEST(test_tuning_eligible_types);
+  RUN_TEST(test_tuning_kit_lane_and_note_slices_untuned);
+  RUN_TEST(test_scene_empty_is_bit_identical);
+  RUN_TEST(test_scene_morphs_voice_fields);
+  RUN_TEST(test_scene_vol_and_first_block_snap);
+  RUN_TEST(test_scene_smoothing_takes_about_30ms);
+  RUN_TEST(test_scene_cutoff_morph_and_flt_lock_wins);
+  RUN_TEST(test_scene_master_vol_morph);
   return UNITY_END();
 }

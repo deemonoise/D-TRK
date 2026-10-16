@@ -86,4 +86,21 @@ uint16_t patternTrackMask(const Project& p, int pat) {
   return m;
 }
 
+void captureGen(Pattern& p, int tr, const GenCfg& c, const GenState& st, int fromStep, uint8_t root, ScaleType t) {
+  if (tr < 0 || tr >= kTracks) return;
+  const uint8_t n = p.trackLen[tr];
+  const int len = n && n < p.length ? n : p.length;
+  if (len <= 0) return;
+  const bool gate = c.mode == static_cast<uint8_t>(GenMode::Gate);
+  GenState g = st;
+  const int from = fromStep < 0 ? 0 : fromStep % len;
+  for (int k = 0; k < len; ++k) {
+    Step& s = p.steps[tr][(from + k) % len];
+    if (!gate && !s.hasNote()) continue;
+    genShift(g, c, tr, 0);
+    if (gate && s.note == kNoteOff) continue;
+    s.note = !gate || genGate(g, c) ? genNote(g, c, root, t) : kNoteEmpty;
+  }
+}
+
 }  // namespace mt

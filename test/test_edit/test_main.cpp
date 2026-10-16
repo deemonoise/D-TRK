@@ -1,5 +1,7 @@
 #include <unity.h>
+#include <vector>
 #include "edit_ops.h"
+#include "shift_gen.h"
 #include "undo.h"
 
 using namespace mt;
@@ -328,6 +330,78 @@ void test_pattern_track_mask() {
   TEST_ASSERT_EQUAL_HEX16(0, patternTrackMask(p, 3));
 }
 
+static GenCfg capCfg(uint8_t mode) {
+  GenCfg c;
+  c.mode = mode;
+  c.len = 5;
+  c.flip = 100;  // ignored by the capture
+  c.density = 50;
+  c.seed = 42;
+  return c;
+}
+
+// The loop with Flip 0 from st: note (or kNoteEmpty when GATE says no) per shift.
+static std::vector<int> capExpect(const GenCfg& c, GenState st, int n, bool gate) {
+  std::vector<int> v;
+  for (int i = 0; i < n; ++i) {
+    genShift(st, c, 3, 0);
+    v.push_back(!gate || genGate(st, c) ? genNote(st, c, 0, ScaleType::Minor) : kNoteEmpty);
+  }
+  return v;
+}
+
+void test_capture_gen_pitch() {
+  const GenCfg c = capCfg(static_cast<uint8_t>(GenMode::Pitch));
+  GenState st;
+  genReset(st, c, 3);
+  const GenState before = st;
+  for (int i = 0; i < 16; i += 2) {
+    pat.steps[3][i].note = 60;
+    pat.steps[3][i].vel = 77;
+    pat.steps[3][i].fx[0] = {Fx::PRB, 30};
+  }
+  pat.steps[3][3].note = kNoteOff;
+  captureGen(pat, 3, c, st, 0, 0, ScaleType::Minor);
+  TEST_ASSERT_EQUAL(before.reg, st.reg);
+  const auto want = capExpect(c, st, 8, false);
+  for (int i = 0; i < 16; ++i) {
+    if (i % 2 == 0) {
+      TEST_ASSERT_EQUAL(want[i / 2], pat.steps[3][i].note);
+      TEST_ASSERT_EQUAL(77, pat.steps[3][i].vel);
+      TEST_ASSERT_TRUE(pat.steps[3][i].fx[0].cmd == Fx::PRB);
+    } else {
+      TEST_ASSERT_EQUAL(i == 3 ? kNoteOff : kNoteEmpty, pat.steps[3][i].note);
+    }
+  }
+  TEST_ASSERT_EQUAL(kNoteEmpty, pat.steps[2][0].note);  // other tracks untouched
+}
+
+void test_capture_gen_gate_from_step_and_track_len() {
+  const GenCfg c = capCfg(static_cast<uint8_t>(GenMode::Gate));
+  GenState st;
+  genReset(st, c, 3);
+  pat.trackLen[3] = 12;
+  pat.steps[3][1].note = kNoteOff;
+  pat.steps[3][7].note = 50;
+  pat.steps[3][7].fx[1] = {Fx::FLT, 9};
+  pat.steps[3][13].note = 61;  // past the track length: untouched
+  captureGen(pat, 3, c, st, 9, 0, ScaleType::Minor);
+  const auto want = capExpect(c, st, 12, true);
+  int gated = 0;
+  for (int k = 0; k < 12; ++k) {
+    const int i = (9 + k) % 12;
+    if (i == 1) {
+      TEST_ASSERT_EQUAL(kNoteOff, pat.steps[3][i].note);
+      continue;
+    }
+    TEST_ASSERT_EQUAL(want[k], pat.steps[3][i].note);
+    gated += want[k] != kNoteEmpty;
+  }
+  TEST_ASSERT_TRUE(gated > 0 && gated < 11);
+  TEST_ASSERT_TRUE(pat.steps[3][7].fx[1].cmd == Fx::FLT);
+  TEST_ASSERT_EQUAL(61, pat.steps[3][13].note);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_make_sel_normalizes);
@@ -352,5 +426,7 @@ int main(int, char**) {
   RUN_TEST(test_song_delete_middle_and_past_end);
   RUN_TEST(test_song_insert_clamps_pattern);
   RUN_TEST(test_pattern_track_mask);
+  RUN_TEST(test_capture_gen_pitch);
+  RUN_TEST(test_capture_gen_gate_from_step_and_track_len);
   return UNITY_END();
 }

@@ -665,6 +665,7 @@ void InstScreen::onEnter() {
 void InstScreen::onLeave() {
   if (presets_.isOpen()) presets_.close(false);
   if (wt_.isOpen()) wt_.close();
+  wtMake_.cancel();
 }
 
 void InstScreen::onProjectReplaced() {
@@ -672,6 +673,7 @@ void InstScreen::onProjectReplaced() {
   // The instrument the browsers would restore / set belongs to the old project.
   if (presets_.isOpen()) presets_.close(true);
   if (wt_.isOpen()) wt_.close();
+  wtMake_.cancel();
   onEnter();
 }
 
@@ -693,10 +695,16 @@ void InstScreen::presetMenu() {
     presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
-  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kToWt };
   auto choose = [this](int id) {
     switch (id) {
       case kChop: editor_.chop(); break;
+      case kToWt: {
+        int idx;
+        uint32_t from, to, rate;
+        if (editor_.wtSource(idx, from, to, rate)) wtMake_.open(idx, from, to, rate, inst().sample);
+        break;
+      }
       case kAdd: editor_.addSlice(app_.shift()); break;  // Shift held on the click: at a transient
       case kDel: editor_.deleteSlice(); break;
       case kClear: {
@@ -716,13 +724,16 @@ void InstScreen::presetMenu() {
   };
   if (onEditor()) {
     editor_.bind(instr_);
+    int wi;
+    uint32_t wf, wt, wr;
     const MenuItem items[] = {{"Chop", kChop},
                               {"Add slice", kAdd},
                               {"Delete slice", kDel, editor_.sliceSelected()},
                               {"Clear slices", kClear, editor_.hasSlices()},
+                              {"To wavetable...", kToWt, editor_.wtSource(wi, wf, wt, wr)},
                               {"Load preset", kLoad},
                               {"Save preset", kSave}};
-    app_.menu().open("SAMPLE", items, 6, choose);
+    app_.menu().open("SAMPLE", items, 7, choose);
     return;
   }
   const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
@@ -730,7 +741,7 @@ void InstScreen::presetMenu() {
 }
 
 void InstScreen::onATap(bool shift) {
-  if (presets_.isOpen() || wt_.isOpen() || !onEditor()) return;
+  if (presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || !onEditor()) return;
   editor_.bind(instr_);
   editor_.stepMarker(shift ? -1 : 1);
 }
@@ -742,10 +753,10 @@ void InstScreen::changeInstr(int d) {
   syncParams();
 }
 
-bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && onEditor(); }
+bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && !wtMake_.isOpen() && onEditor(); }
 
 bool InstScreen::trackKey(int n, bool shift) {
-  if (shift || presets_.isOpen() || !onEditor()) return false;
+  if (shift || presets_.isOpen() || wtMake_.isOpen() || !onEditor()) return false;
   editor_.playSlice(n);
   return true;
 }
@@ -760,6 +771,10 @@ void InstScreen::preview() {
 void InstScreen::onInput(const hw::InputEvent& ev) {
   if (presets_.isOpen()) {
     presets_.onInput(ev);
+    return;
+  }
+  if (wtMake_.isOpen()) {
+    wtMake_.onInput(ev);
     return;
   }
   if (wt_.isOpen()) {
@@ -806,13 +821,14 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
 
 // B + Shift + turn: the previous / next page (not over the browsers); the cursor stays on the page bar.
 void InstScreen::onPage(int d) {
-  if (presets_.isOpen() || wt_.isOpen()) return;
+  if (presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen()) return;
   showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
 }
 
 // B: closes the browser (as its long press), else leaves the edit with the value kept.
 void InstScreen::onBack() {
   if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
+  else if (wtMake_.isOpen()) wtMake_.onInput({hw::InputType::EncLong, 0, false});
   else if (wt_.isOpen()) wt_.onInput({hw::InputType::EncLong, 0, false});
   else if (onEditor() ? editor_.editing() : list_.editing()) leaveEdit();
 }
@@ -820,6 +836,10 @@ void InstScreen::onBack() {
 void InstScreen::onTouch(const TouchEvent& ev) {
   if (presets_.isOpen()) {
     presets_.onTouch(ev);
+    return;
+  }
+  if (wtMake_.isOpen()) {
+    wtMake_.onTouch(ev);
     return;
   }
   if (wt_.isOpen()) {
@@ -944,6 +964,10 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   if (wt_.isOpen()) {
     wt_.draw(s, y0);
+    return;
+  }
+  if (wtMake_.isOpen()) {
+    wtMake_.draw(s, y0);
     return;
   }
   char buf[24];

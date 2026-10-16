@@ -160,14 +160,15 @@ void App::onInput(const hw::InputEvent& ev) {
     case InputType::TrackRelease:
       if (ev.delta == heldTrackBtn_) {
         heldTrackBtn_ = -1;
-        holdPan_ = false;
+        holdMode_ = mt::HoldMode::Vol;
       }
       trackRelease(ev.delta);
       return;
     case InputType::EncClick:
-      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL <-> PAN
-        holdPan_ = !holdPan_;
-        holdToast(heldTrack());
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL -> PAN (-> FLIP)
+        const int tr = heldTrack();
+        holdMode_ = mt::holdNext(holdMode_, p_->trackInternal(tr), p_->genOn(tr));
+        holdToast(tr);
         return;
       }
       break;
@@ -176,9 +177,14 @@ void App::onInput(const hw::InputEvent& ev) {
         abAction(o);
         return;
       }
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && tab_ == Tab::Mix && track_.sceneView()) {
+        track_.sceneHoldTurn(heldTrack(), ev.delta * (ev.shift ? 8 : 1));  // SCENE view: the scene's value
+        return;
+      }
       if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed
         const int d = ev.delta * (ev.shift ? 10 : 1);
-        if (holdPan_) nudgeTrackPan(heldTrack(), d);
+        if (holdMode_ == mt::HoldMode::Pan) nudgeTrackPan(heldTrack(), d);
+        else if (holdMode_ == mt::HoldMode::Flip) nudgeTrackFlip(heldTrack(), d);
         else nudgeTrackVol(heldTrack(), d);
         return;
       }
@@ -191,7 +197,8 @@ void App::onInput(const hw::InputEvent& ev) {
         return;
       }
       heldTrackBtn_ = ev.delta;
-      holdPan_ = false;  // a new hold starts on the volume
+      // A new hold starts on the volume (a MIDI track with a generator: on its Flip).
+      holdMode_ = mt::holdFirst(p_->trackInternal(heldTrack()), p_->genOn(heldTrack()));
       if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
       return;
     case InputType::EditEnd:  // A released: always ends the screen's hold edit (menu / BPM edit or not)
@@ -402,6 +409,7 @@ void App::trackKey(int n, bool shift) {
   if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
   if (tab_ == Tab::Song && song_.trackKey(n, shift)) return;
   if (tab_ == Tab::Track && track_.trackKey(n, shift)) return;  // the trance gate's Steps editor
+  if (tab_ == Tab::Mix && track_.trackKey(n, shift)) return;    // SCENE view: the scene to edit
   if (!shift) {
     setCurTrack(track);
     return;
@@ -418,7 +426,8 @@ void App::trackKey(int n, bool shift) {
 
 bool App::holdVolume() const {
   return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) &&
-         !(tab_ == Tab::Song && perf_.on()) && !(tab_ == Tab::Track && track_.buttonsBusy()) && !busy_;
+         !(tab_ == Tab::Song && perf_.on()) && !((tab_ == Tab::Track || tab_ == Tab::Mix) && track_.buttonsBusy()) &&
+         !busy_;
 }
 
 // Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.
@@ -458,13 +467,32 @@ void App::nudgeTrackPan(int track, int d) {
   holdToast(track);
 }
 
+// Flip of a held track button's track's generator (MIDI or INT), with a toast; replans the unheard steps.
+void App::nudgeTrackFlip(int track, int d) {
+  mt::GenCfg& g = p_->gen[track];
+  int v = g.flip + d;
+  v = v < 0 ? 0 : (v > 100 ? 100 : v);
+  if (v != g.flip) {
+    engine::lockProject();
+    g.flip = static_cast<uint8_t>(v);
+    engine::unlockProject();
+    markDirty();
+    engine::post(engine::Cmd::GenEdit);
+  }
+  holdToast(track);
+}
+
 // What the held button's turn changes now, with its value.
 void App::holdToast(int track) {
   const mt::TrackCfg& t = p_->tracks[track];
   char msg[24];
-  if (t.out != mt::TrackOut::Int) {
+  if (holdMode_ == mt::HoldMode::Flip) {
+    char v[8];
+    mt::genFlipText(p_->gen[track].flip, v);
+    snprintf(msg, sizeof(msg), "TRK%d FLIP %s", track + 1, v);
+  } else if (t.out != mt::TrackOut::Int) {
     snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
-  } else if (holdPan_) {
+  } else if (holdMode_ == mt::HoldMode::Pan) {
     char v[5];
     mt::fxFormat(mt::Fx::PAN, t.pan, v);
     snprintf(msg, sizeof(msg), "TRK%d PAN %s", track + 1, v);
@@ -477,6 +505,7 @@ void App::holdToast(int track) {
 void App::trackRelease(int n) {
   if (n < 0 || n >= mt::kTrackButtons) return;
   if (perfTab(tab_)) perf_.release(n);  // PERF: the effect the button held ends
+  if (tab_ == Tab::Mix) track_.trackUp(n);  // SCENE view: the scene to edit
 }
 
 // Shift + Play while playing: fill while held; a short press is still Shift + Play (song start) on
@@ -586,8 +615,12 @@ void App::syncProgress(const char* file, uint32_t done, uint32_t total, void* ap
 }
 
 bool App::renderProgress(uint32_t done, uint32_t total, void* app) {
+  return labeledProgress("RENDER", done, total, app);
+}
+
+bool App::labeledProgress(const char* label, uint32_t done, uint32_t total, void* app) {
   App& a = *static_cast<App*>(app);
-  a.showProgress("RENDER", done, total);
+  a.showProgress(label, done, total);
   // Renders run for up to a minute on this task: let the idle task (watchdog) run now and then.
   static uint32_t lastYield = 0;
   if (millis() - lastYield >= 100) {
@@ -618,7 +651,7 @@ void App::dropInput(const hw::InputEvent& ev) {
     case hw::InputType::TrackRelease:
       if (ev.delta == heldTrackBtn_) {
         heldTrackBtn_ = -1;
-        holdPan_ = false;
+        holdMode_ = mt::HoldMode::Vol;
       }
       trackRelease(ev.delta);
       break;
@@ -630,7 +663,7 @@ void App::dropInput(const hw::InputEvent& ev) {
 
 void App::endProgress() {
   heldTrackBtn_ = -1;  // its release may have been dropped with the queued input
-  holdPan_ = false;
+  holdMode_ = mt::HoldMode::Vol;
   ab_.reset();         // so may the A / B releases
   screen()->onInput(hw::InputEvent{hw::InputType::EditEnd, 0, false});  // no hold edit left stuck
   progLabel_[0] = 0;
@@ -641,12 +674,13 @@ void App::endProgress() {
 }
 
 void App::loadedToast(const char* what, int missing, bool folderFail) {
-  char parts[4][40];
+  char parts[5][40];
   int n = 0;
   if (what && what[0]) strlcpy(parts[n++], what, sizeof(parts[0]));
   if (missing > 0) snprintf(parts[n++], sizeof(parts[0]), "%d SAMPLES MISSING", missing);
   if (folderFail) strlcpy(parts[n++], "SAMPLES NOT SAVED", sizeof(parts[0]));
   if (storage::songTransposeDropped()) strlcpy(parts[n++], "SONG: TRANSPOSE DROPPED", sizeof(parts[0]));
+  if (storage::tuningDropped()) strlcpy(parts[n++], "TUNING RESET", sizeof(parts[0]));
   for (int first = 0; first < n; ++first) {
     char msg[128] = "";
     for (int k = first; k < n; ++k) {

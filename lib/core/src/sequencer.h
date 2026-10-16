@@ -3,6 +3,7 @@
 #include "event_heap.h"
 #include "model.h"
 #include "rng.h"
+#include "shift_gen.h"
 #include "step_expand.h"
 #include "voices.h"
 
@@ -139,6 +140,21 @@ class Sequencer {
   // Position inside the heard step at now, 0 at its start .. 255 (live recording).
   uint8_t phase256(uint64_t now) const;
   uint64_t heardStepTime() const { return heardStepT_; }
+
+  // Track generators (Project::gen, shift_gen.h). The register of a track shifts on each of its steps with a
+  // note (PITCH) or each of its steps (GATE), muted or skipped too, before CND / PRB; start() resets every
+  // register, nothing else does (pattern / song changes, pause go on). The step's note is replaced before
+  // expand; everything else of the step applies. Rewound with the unheard steps.
+  // After a GenCfg edit while playing: the unheard steps are planned again with it.
+  void genEdited(uint64_t now, MidiSink& out) { replan(now, out); }
+  // After a new seed of track tr: replanned, its register reset from the first unheard step.
+  void genReseed(uint64_t now, MidiSink& out, int tr);
+  // The register as the next planned step of tr finds it (Capture), and the step of tr it starts from in
+  // pattern pat (0 when another pattern plays or stopped: the state is the reset one then).
+  GenState genNext(int tr) const;
+  int genFromStep(int tr, int pat) const;
+  // The register after the heard step of tr (UI); the reset one while stopped.
+  GenState heardGen(int tr) const;
   uint32_t stepDuration() const { return stepUs(); }
 
  private:
@@ -164,6 +180,7 @@ class Sequencer {
     int8_t song, prevSong;  // songPos_ when played / before
     Tie ties[kTracks];
     StepArp arps[kTracks];
+    GenState gens[kTracks];
     uint16_t condBits;    // condBits_ before
     uint16_t mutes;       // TrackCfg::mute bits before
     bool muteSet;         // the step's pass end started a slot or left the song (mutes written)
@@ -204,6 +221,9 @@ class Sequencer {
   void releaseTie(int track, uint64_t t);
   void pushOff(int track, uint64_t t);
   void releaseAllTies(uint64_t t);
+  // Gen: shifts tr's register for this track step, returns the step to play (s, or tmp with the generated note).
+  const Step& genStep(int tr, const Step& s, Step& tmp);
+  void genResetAll();
   // ARS: the next arp note of the track on a step without a note (sounds only if aud); su: the track's step.
   void arpStep(int track, uint64_t t, int64_t earliest, bool aud, uint32_t su);
   void stopArps() {
@@ -305,6 +325,7 @@ class Sequencer {
   uint32_t nextId_ = 1;
   Tie ties_[kTracks];
   StepArp arps_[kTracks];  // running ARS per track (n = 0: none)
+  GenState gen_[kTracks];  // generator registers, as the next step to plan finds them
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };
 

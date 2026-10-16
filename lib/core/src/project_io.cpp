@@ -1,4 +1,5 @@
 #include "project_io.h"
+#include "shift_gen.h"
 #include <string.h>
 #include <strings.h>
 #include "file_rules.h"
@@ -6,6 +7,7 @@
 #include "inst_codec.h"
 #include "sample_set.h"
 #include "scale.h"
+#include "scene.h"
 
 namespace mt {
 namespace {
@@ -32,6 +34,9 @@ constexpr size_t kTinsRec = 12;
 // TFOL (envelope followers): count, record size, then a record per track: folSrc, folDest, folAmt,
 // folAtk, folRel. Same rules as TINS (a second follower per track would append fields).
 constexpr size_t kTfolRec = 5;
+// TGEN (track generators, GenCfg): count, record size, then a record per track: mode, len, flip, low, oct,
+// density, seed lo, seed hi. Same rules as TINS; values clamped (genClamp).
+constexpr size_t kTgenRec = 8;
 // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
 // scTrack, scDepth, then byte 13: the old DJ filter (+ 64), ignored on load and written 64, then the
 // master / send fx: dlyMode, dlyChar, rvbMode, rvbShim, modType, modRate, modDepth, modFb, modLevel,
@@ -228,6 +233,80 @@ LoadErr readTpan(CrcSource& in, uint32_t size, Project& p) {
   return readRecords(in, size, 1, kTracks, [&](int t, const uint8_t* b) { p.tracks[t].pan = clampu(b[0], 0, 127); });
 }
 
+// TUNE: u8 count, u8 root, name[16], count x i32 (1/1000 cent); written only for a tuning (12-TET:
+// none). A broken one leaves 12-TET (notes->tuningDropped); extra bytes after it are skipped.
+constexpr uint32_t kTuneHead = 18;
+LoadErr readTune(CrcSource& in, uint32_t size, Project& p, LoadNotes* notes) {
+  TuningTable t;
+  bool ok = size >= kTuneHead;
+  uint32_t used = 0;
+  if (ok) {
+    uint8_t h[kTuneHead];
+    if (!in.read(h, kTuneHead)) return LoadErr::Truncated;
+    used = kTuneHead;
+    t.count = h[0];
+    t.root = h[1];
+    memcpy(t.name, h + 2, 16);
+    t.name[16] = 0;
+    ok = t.count >= 1 && t.count <= kTuneDegMax && size >= kTuneHead + 4u * t.count;
+    for (int i = 0; ok && i < t.count; ++i) {
+      uint8_t v[4];
+      if (!in.read(v, 4)) return LoadErr::Truncated;
+      used += 4;
+      t.mc[i] = static_cast<int32_t>(rd32(v));
+    }
+    ok = ok && tuningValid(t);
+  }
+  if (!in.skip(size - used)) return LoadErr::Truncated;
+  if (ok) p.tuning = t;
+  else if (notes) notes->tuningDropped = true;
+  return LoadErr::Ok;
+}
+
+// SCEN: u8 count, u8 tracks, u8 trkParams, u8 mstParams, u8 sceneA, u8 sceneB, u8 xfade, then count
+// scenes: tracks x (u16 mask + trkParams bytes), u16 mstMask + mstParams bytes. Written only when a scene is
+// set or A / B / the fader are off their defaults. The reader takes what it knows: extra scenes, tracks,
+// parameters and mask bits are skipped, missing ones stay unset; values are clamped (scene.h).
+constexpr uint32_t kScenHead = 7;
+LoadErr readScen(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[kScenHead];
+  if (size < kScenHead) return in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
+  if (!in.read(h, kScenHead)) return LoadErr::Truncated;
+  uint32_t left = size - kScenHead;
+  const int count = h[0], tracks = h[1], nTrk = h[2], nMst = h[3];
+  p.sceneA = h[4] < kScenes ? h[4] : 0;
+  p.sceneB = h[5] < kScenes ? h[5] : 1;
+  p.xfade = h[6] > 127 ? 127 : h[6];
+  auto readRec = [&](int n, uint16_t& mask, uint8_t* vals, int known, uint16_t bits, bool trk) -> LoadErr {
+    uint8_t b[2 + 255];
+    const uint32_t len = 2u + static_cast<uint32_t>(n);
+    if (left < len) return LoadErr::Truncated;
+    if (!in.read(b, len)) return LoadErr::Truncated;
+    left -= len;
+    if (!vals) return LoadErr::Ok;
+    uint16_t m = static_cast<uint16_t>((b[0] | b[1] << 8) & bits);
+    for (int k = 0; k < known; ++k) {
+      if (k >= n) m &= static_cast<uint16_t>(~(1u << k));
+      vals[k] = (m >> k) & 1u ? (trk ? sceneClampTrk(k, b[2 + k]) : sceneClampMst(k, b[2 + k])) : 0;
+    }
+    mask = m;
+    return LoadErr::Ok;
+  };
+  for (int sc = 0; sc < count; ++sc) {
+    Scene* s = sc < kScenes ? &p.scenes[sc] : nullptr;
+    uint16_t dummy;
+    for (int t = 0; t < tracks; ++t) {
+      const bool keep = s && t < kTracks;
+      const LoadErr e = readRec(nTrk, keep ? s->trkMask[t] : dummy, keep ? s->trk[t] : nullptr, kScnTrk,
+                                kScnTrkBits, true);
+      if (e != LoadErr::Ok) return e;
+    }
+    const LoadErr e = readRec(nMst, s ? s->mstMask : dummy, s ? s->mst : nullptr, kScnMst, kScnMstBits, false);
+    if (e != LoadErr::Ok) return e;
+  }
+  return in.skip(left) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 // TINS (see kTinsRec); tracks it lacks stay off (reset()).
 LoadErr readTins(CrcSource& in, uint32_t size, Project& p) {
   uint8_t h[2];
@@ -266,6 +345,27 @@ LoadErr readTfol(CrcSource& in, uint32_t size, Project& p) {
     }
     if (take > 3) c.folAtk = clampu(b[3], 0, 127);
     if (take > 4) c.folRel = clampu(b[4], 0, 127);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// TGEN (see kTgenRec); tracks it lacks (and files without it) keep their generators off.
+LoadErr readTgen(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kTracks ? h[0] : kTracks;
+  const uint32_t take = rec < kTgenRec ? rec : kTgenRec;
+  for (int t = 0; t < n; ++t) {
+    uint8_t b[kTgenRec] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    GenCfg& c = p.gen[t];
+    uint8_t* const f[6] = {&c.mode, &c.len, &c.flip, &c.low, &c.oct, &c.density};
+    for (uint32_t i = 0; i < take && i < 6; ++i) *f[i] = b[i];
+    if (take >= 8) c.seed = static_cast<uint16_t>(b[6] | b[7] << 8);
+    genClamp(c);
   }
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
@@ -707,6 +807,14 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  const uint8_t gh[2] = {static_cast<uint8_t>(kTracks), static_cast<uint8_t>(kTgenRec)};
+  if (!o.chunk("TGEN", 2 + kTracks * kTgenRec) || !o.write(gh, 2)) return false;
+  for (const GenCfg& c : p.gen) {
+    const uint8_t b[kTgenRec] = {c.mode,    c.len, c.flip, c.low, c.oct, c.density, static_cast<uint8_t>(c.seed & 0xFF),
+                                 static_cast<uint8_t>(c.seed >> 8)};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
   const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0),
                                  p.dlyTime,   p.dlyFb,
                                  p.dlyTone,   p.dlyLevel,
@@ -780,6 +888,38 @@ bool saveProject(const Project& p, ByteSink& out) {
     memcpy(pf, p.perfMap, kPerfButtons);
     memcpy(pf + kPerfButtons, p.perfDepth, kPerfButtons);
     if (!o.chunk("PRF2", sizeof(pf)) || !o.write(pf, sizeof(pf))) return false;
+  }
+
+  if (tuningValid(p.tuning)) {
+    const TuningTable& t = p.tuning;
+    uint8_t h[kTuneHead] = {t.count, t.root};
+    memcpy(h + 2, t.name, strnlen(t.name, 16));
+    if (!o.chunk("TUNE", kTuneHead + 4u * t.count) || !o.write(h, sizeof(h))) return false;
+    for (int i = 0; i < t.count; ++i) {
+      uint8_t v[4];
+      wr32(v, static_cast<uint32_t>(t.mc[i]));
+      if (!o.write(v, 4)) return false;
+    }
+  }
+
+  bool scen = p.sceneA != 0 || p.sceneB != 1 || p.xfade != 0;
+  for (const Scene& sc : p.scenes) scen = scen || !sceneEmpty(sc);
+  if (scen) {
+    constexpr uint32_t kRec = kTracks * (2 + kScnTrk) + 2 + kScnMst;
+    const uint8_t h[kScenHead] = {kScenes, kTracks, kScnTrk, kScnMst, p.sceneA, p.sceneB, p.xfade};
+    if (!o.chunk("SCEN", kScenHead + kScenes * kRec) || !o.write(h, sizeof(h))) return false;
+    for (const Scene& sc : p.scenes) {
+      uint8_t r[kRec];
+      int n = 0;
+      for (int t = 0; t < kTracks; ++t) {
+        wr16(r + n, static_cast<uint16_t>(sc.trkMask[t] & kScnTrkBits));
+        memcpy(r + n + 2, sc.trk[t], kScnTrk);
+        n += 2 + kScnTrk;
+      }
+      wr16(r + n, static_cast<uint16_t>(sc.mstMask & kScnMstBits));
+      memcpy(r + n + 2, sc.mst, kScnMst);
+      if (!o.write(r, sizeof(r))) return false;
+    }
   }
 
   uint8_t c[12] = {'C', 'R', 'C', ' '};
@@ -857,6 +997,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       for (Instrument& m : out.instruments) fixInstrument(m);
       if (!tins) migrateInsert(out);
       for (Instrument& m : out.instruments) clearInsert(m);  // the tracks' now
+      syncSceneLive(out);
       for (Pattern& pt : out.patterns)  // a PATN after its TLEN may have shortened the pattern
         for (uint8_t& n : pt.trackLen)
           if (n > pt.length) n = pt.length;
@@ -884,6 +1025,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       e = readTins(in, size, out);
     }
     else if (memcmp(ch, "TFOL", 4) == 0) e = readTfol(in, size, out);
+    else if (memcmp(ch, "TGEN", 4) == 0) e = readTgen(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
@@ -901,6 +1043,8 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "PRF2", 4) == 0) e = readPrf2(in, size, out, prf2);
     else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out, prf2);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, legacy);
+    else if (memcmp(ch, "TUNE", 4) == 0) e = readTune(in, size, out, notes);
+    else if (memcmp(ch, "SCEN", 4) == 0) e = readScen(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;
   }

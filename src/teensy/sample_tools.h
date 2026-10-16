@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "link_msg.h"
 
-// Sample editor requests on a project sample (bank::sampleAccess): WavePeaks, Onsets. In memory
+// Sample editor requests on a project sample (bank::sampleAccess): WavePeaks, Onsets, WtRender. In memory
 // (PSRAM, legacy flash bank) they are answered at once; from the store file on the card they run as
 // the stream scheduler's background work and answer later (Progress meanwhile). loop() only.
 namespace tools {

@@ -1,6 +1,7 @@
 #include "proj_screen.h"
 #include <Arduino.h>
 #include <math.h>
+#include <new>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +13,9 @@
 #include "scale.h"
 #include "synth_eq.h"
 #include "synth_fxutil.h"
+#include "note_name.h"
+#include "storage/tuning_store.h"
+#include "tuning_factory.h"
 
 namespace ui {
 namespace {
@@ -33,6 +37,33 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                        constexpr int count = static_cast<int>(mt::ScaleType::Count);
                        app_.project().scaleType = static_cast<uint8_t>(wrapi(app_.project().scaleType + d, count));
                      }};
+  params_[kTuning] = {"Tuning",
+                      [this](char* o, int n) {
+                        const mt::TuningTable& t = app_.project().tuning;
+                        snprintf(o, n, "%s", tunPick_ >= 0 ? tunName(tunPick_) : (t.count ? t.name : "12-TET"));
+                      },
+                      [this](int d) {
+                        const int cur = tunPick_ >= 0 ? tunPick_ : tunCurrent();
+                        const int v = clampi(cur < 0 ? (d > 0 ? d - 1 : 0) : cur + d, 0, tunCount() - 1);
+                        if (v != cur) tunPick_ = v;
+                      }};
+  params_[kTuneRoot] = {"Tuning root",
+                        [this](char* o, int n) {
+                          const uint8_t r = app_.project().tuning.root;
+                          if (r == mt::kTuneRootAuto) {
+                            snprintf(o, n, "AUTO");
+                            return;
+                          }
+                          char nm[4];
+                          mt::noteName(r, nm);
+                          snprintf(o, n, "%s", nm);
+                        },
+                        [this](int d) {
+                          uint8_t& r = app_.project().tuning.root;
+                          const int v = clampi((r == mt::kTuneRootAuto ? -1 : r) + d, -1, 127);
+                          r = v < 0 ? mt::kTuneRootAuto : static_cast<uint8_t>(v);
+                        },
+                        [this] { return app_.project().tuning.count == 0; }};
   params_[kLength] = {"Length", [this](char* o, int n) { snprintf(o, n, "%u", pat().length); },
                       [this](int d) {
                         const int v = clampi(pat().length + d, mt::kMinSteps, mt::kMaxSteps);
@@ -245,6 +276,60 @@ void ProjScreen::editBpm(int delta) {
 void ProjScreen::onEnter() {
   list_.setEdit(false);
   bpmTarget_ = app_.project().bpm;
+  if (!tunUser_) tunUser_ = new (std::nothrow) char[kTunUserMax][hw::kNameMax];
+  tunUserN_ = tunUser_ ? storage::listTunings(tunUser_, kTunUserMax) : 0;
+  tunPick_ = -1;
+}
+
+int ProjScreen::tunCount() const { return 1 + mt::factoryTuningCount() + tunUserN_; }
+
+const char* ProjScreen::tunName(int i) const {
+  if (i <= 0) return "12-TET";
+  if (i <= mt::factoryTuningCount()) return mt::factoryTuningName(i - 1);
+  i -= 1 + mt::factoryTuningCount();
+  return i < tunUserN_ ? tunUser_[i] : "?";
+}
+
+int ProjScreen::tunCurrent() const {
+  const mt::TuningTable& t = app_.project().tuning;
+  if (t.count == 0) return 0;
+  const int f = mt::factoryTuningFind(t.name);
+  if (f >= 0) return 1 + f;
+  for (int i = 0; i < tunUserN_; ++i)
+    if (strcmp(tunUser_[i], t.name) == 0) return 1 + mt::factoryTuningCount() + i;
+  return -1;
+}
+
+// The pending pick: a factory table, or the card's file read and parsed here (UI task, no project lock
+// held), then copied into the project under the lock. The root stays. A bad file: a toast, no change.
+void ProjScreen::applyTuning() {
+  const int i = tunPick_;
+  tunPick_ = -1;
+  if (i < 0 || i == tunCurrent()) return;
+  mt::TuningTable t;
+  t.root = app_.project().tuning.root;
+  if (i == 0) {
+    mt::tuningClear(t);
+    t.root = app_.project().tuning.root;
+  } else if (i <= mt::factoryTuningCount()) {
+    if (!mt::factoryTuning(i - 1, t)) return;
+  } else {
+    mt::ParseErr err;
+    int line;
+    const storage::Result r = storage::loadTuning(tunName(i), t, err, line);
+    if (r != storage::Result::Ok) {
+      char msg[48];
+      if (err == mt::ParseErr::Ok) snprintf(msg, sizeof(msg), "%s", storage::resultText(r));
+      else if (line > 0) snprintf(msg, sizeof(msg), "SCL L%d: %s", line, mt::sclErrName(err));
+      else snprintf(msg, sizeof(msg), "SCL: %s", mt::sclErrName(err));
+      app_.toast(msg);
+      return;
+    }
+  }
+  engine::lockProject();
+  app_.project().tuning = t;
+  engine::unlockProject();
+  app_.markDirty();
 }
 
 // A + turn on the page bar: the previous / next page.
@@ -268,6 +353,7 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
 }
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
+  if (tunPick_ >= 0) applyTuning();
   char buf[24];
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);

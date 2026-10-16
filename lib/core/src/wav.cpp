@@ -181,6 +181,24 @@ void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uin
   wr32(p, frames * align);
 }
 
+void wavHeaderPcm(uint8_t out[kWavPcmHeaderBytes], uint32_t frames, uint32_t rate, uint16_t channels, uint16_t bits) {
+  const uint32_t align = static_cast<uint32_t>(channels) * (bits / 8u);
+  uint8_t* p = out;
+  wrId(p, "RIFF");
+  wr32(p, kWavPcmHeaderBytes - 8 + frames * align);
+  wrId(p, "WAVE");
+  wrId(p, "fmt ");
+  wr32(p, 16);
+  wr16(p, 1);  // PCM
+  wr16(p, channels);
+  wr32(p, rate);
+  wr32(p, rate * align);
+  wr16(p, static_cast<uint16_t>(align));
+  wr16(p, bits);
+  wrId(p, "data");
+  wr32(p, frames * align);
+}
+
 void wavToMono(const uint8_t* raw, uint32_t frames, const WavInfo& w, int16_t* out) {
   const int ch = w.channels;
   const int bps = w.bits / 8;

@@ -53,6 +53,9 @@ class SampleEditor {
   void addSlice(bool onset);
   bool sliceSelected();
   bool hasSlices();
+  // SAMPLE -> To wavetable: project sample index, Start..End frames and rate; false without a sample
+  // in the bank (none / MISSING).
+  bool wtSource(int& index, uint32_t& from, uint32_t& to, uint32_t& rate);
 
  private:
   static constexpr int kMarkerRow = 0, kZoomRow = 1, kSampleRow = 2, kRoot = 3, kStart = 4, kEnd = 5,

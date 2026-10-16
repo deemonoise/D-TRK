@@ -38,6 +38,11 @@ constexpr uint32_t kWavHeaderBytes = 12 + 24 + 44 + 16 + 8;
 void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc,
                uint16_t channels = 1);
 
+// RIFF + fmt + data: a plain PCM header (no smpl / mtcr), for files that leave the box (export).
+constexpr uint32_t kWavPcmHeaderBytes = 44;
+// Header of a bits-bit (16 / 24) PCM WAV with `channels` interleaved channels; frames follow.
+void wavHeaderPcm(uint8_t out[kWavPcmHeaderBytes], uint32_t frames, uint32_t rate, uint16_t channels, uint16_t bits);
+
 // Converts frames of raw data (any channels, 8/16/24 bit PCM or 32-bit float) to mono int16:
 // channels averaged, 8 bit unsigned (128 = 0), 24 bit keeps the top 16 bits, float clips to -1..1
 // (NaN = 0).

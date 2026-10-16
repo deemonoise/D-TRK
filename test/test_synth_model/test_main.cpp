@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <stddef.h>
 #include <string.h>
 #include <vector>
 #include "synth_model.h"
@@ -58,11 +59,16 @@ void test_copy_chunk_by_chunk_rebuilds_the_model() {
 void test_send_order_and_ids() {
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Master), chunkId(0));
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Tracks), chunkId(1));
-  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Instr0), chunkId(2));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Tuning), chunkId(2));  // before the first notes
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Scenes), chunkId(3));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Instr0), chunkId(4));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Samples), chunkId(kChunks - 2));
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Wavetables), chunkId(kChunks - 1));
   for (int i = 0; i < kChunks; ++i) TEST_ASSERT_EQUAL(i, chunkIndex(chunkId(i)));
   uint32_t off, len;
-  TEST_ASSERT_FALSE(chunkRange(4, off, len));
+  TEST_ASSERT_TRUE(chunkRange(static_cast<uint16_t>(Chunk::Tuning), off, len));
+  TEST_ASSERT_TRUE(chunkRange(static_cast<uint16_t>(Chunk::Scenes), off, len));
+  TEST_ASSERT_FALSE(chunkRange(6, off, len));
   TEST_ASSERT_FALSE(chunkRange(static_cast<uint16_t>(static_cast<int>(Chunk::Instr0) + kInstruments), off, len));
   TEST_ASSERT_EQUAL(-1, chunkIndex(999));
 }
@@ -89,6 +95,49 @@ void test_one_edit_one_chunk() {
   TEST_ASSERT_EQUAL(2, static_cast<int>(c.size()));
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Tracks), c[0]);
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Samples), c[1]);
+}
+
+void test_tuning_chunk() {
+  uint32_t off, len;
+  TEST_ASSERT_TRUE(chunkRange(static_cast<uint16_t>(Chunk::Tuning), off, len));
+  TEST_ASSERT_EQUAL(offsetof(SynthModel, tuning), off);
+  TEST_ASSERT_EQUAL(offsetof(SynthModel, sceneLive) - offsetof(SynthModel, tuning), len);
+  TEST_ASSERT_TRUE(len <= 480);  // one StateSet piece (link::StateSet::kMaxData)
+  Project a;
+  Project b = a;
+  b.tuning.count = 2;
+  b.tuning.mc[1] = 1200000;
+  std::vector<uint16_t> c = changed(a, b);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(c.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Tuning), c[0]);
+  b = a;
+  b.wavetableCount = 2;
+  c = changed(a, b);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(c.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Wavetables), c[0]);
+}
+
+void test_scenes_chunk() {
+  uint32_t off, len;
+  TEST_ASSERT_TRUE(chunkRange(static_cast<uint16_t>(Chunk::Scenes), off, len));
+  TEST_ASSERT_EQUAL(offsetof(SynthModel, sceneLive), off);
+  TEST_ASSERT_EQUAL(sizeof(SynthModel) - off, len);
+  TEST_ASSERT_EQUAL(480, static_cast<int>(len));  // one StateSet piece
+  Project a;
+  Project b = a;
+  b.sceneLive[1].trkMask[3] = 1;
+  std::vector<uint16_t> c = changed(a, b);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(c.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Scenes), c[0]);
+  b = a;
+  b.xfade = 64;
+  c = changed(a, b);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(c.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Master), c[0]);
+  b = a;
+  b.scenes[4].mstMask = 1;  // the project's scenes travel only as the live ends
+  b.sceneA = 4;
+  TEST_ASSERT_EQUAL(0, static_cast<int>(changed(a, b).size()));
 }
 
 void test_project_only_fields_not_in_model() {
@@ -122,6 +171,8 @@ int main(int, char**) {
   RUN_TEST(test_copy_chunk_by_chunk_rebuilds_the_model);
   RUN_TEST(test_send_order_and_ids);
   RUN_TEST(test_one_edit_one_chunk);
+  RUN_TEST(test_tuning_chunk);
+  RUN_TEST(test_scenes_chunk);
   RUN_TEST(test_project_only_fields_not_in_model);
   RUN_TEST(test_synth_runs_on_a_bare_model);
   return UNITY_END();

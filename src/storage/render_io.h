@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "export.h"
 #include "render.h"
 #include "storage.h"
 
@@ -17,16 +18,23 @@ struct RenderStats {
   uint32_t clips;
 };
 
-constexpr const char* kRenderDir = "/samples/render";  // FILE -> SAMPLES lists it; files import as samples
 constexpr uint32_t kResampleMaxFrames = 60 * mt::kSynthRate;  // 60 s
 
-// path of the WAV of spec for project p: /samples/render/<project>_P01.wav or <project>_SONG.wav.
-// stem >= 0: one track's file, "_T03" appended (track 3).
-void renderPath(const mt::Project& p, const mt::RenderSpec& spec, char* out, int n, int stem = -1);
-// Renders spec into path (stereo 16-bit 44.1 kHz WAV, "mtcr" = the mono mix's crc, written via
-// path.tmp on the synth board's card).
-Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, RenderStats& st, RenderProgress cb,
-                 void* ctx);
+// Export (FILE -> PROJECTS -> Export...): spec's master and stems into /export/<project>/<src>/ on the
+// synth board's card (mt::exportOutputs names them), all files one length. Passes: as many files per
+// pass as the board takes (RenderStart's outMax); every pass renders the same blocks (deterministic), the
+// first one decides the length (AUTO tail). Result::DiskFull when the estimate does not fit the card.
+// Cancel / error: the files of this run removed. Success: the folder's other .wav files (an older set)
+// removed. cb: pass (0-based) of passes, blocks done / total of the pass; false cancels.
+struct ExportStats {
+  uint32_t frames = 0;
+  int files = 0, passes = 0;
+  uint16_t peak = 0;
+  uint32_t clips = 0;
+  int clipFile = -1;  // the first file with clipped samples (index into mt::exportOutputs)
+};
+using ExportProgress = bool (*)(int pass, int passes, uint32_t done, uint32_t total, void* ctx);
+Result exportSet(mt::Project& p, const mt::ExportSpec& spec, ExportStats& st, ExportProgress cb, void* ctx);
 // Renders spec into the sample bank (via a temporary file on the card): the mono mix, cut after the
 // last block above -60 dBFS and normalized to -1 dBFS, added to p's sample list as RSn (name out). At
 // most kResampleMaxFrames: Result::Capped (added, but cut).

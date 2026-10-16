@@ -684,6 +684,65 @@ void test_follower_defaults_and_helpers() {
   TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.632f, reach);
 }
 
+void test_tuning_defaults_and_valid() {
+  Project p;
+  TEST_ASSERT_EQUAL(0, p.tuning.count);
+  TEST_ASSERT_EQUAL(kTuneRootAuto, p.tuning.root);
+  p.tuning.count = 2;
+  p.tuning.root = 50;
+  p.tuning.mc[0] = 600000;
+  p.tuning.mc[1] = 1200000;
+  strcpy(p.tuning.name, "X");
+  TEST_ASSERT_TRUE(tuningValid(p.tuning));
+  p.reset();
+  TEST_ASSERT_EQUAL(0, p.tuning.count);
+  TEST_ASSERT_EQUAL(kTuneRootAuto, p.tuning.root);
+  TEST_ASSERT_EQUAL(0, p.tuning.name[0]);
+  TEST_ASSERT_EQUAL(0, p.tuning.mc[1]);
+
+  TuningTable t;
+  TEST_ASSERT_FALSE(tuningValid(t));  // count 0: 12-TET, not a table
+  t.count = 1;
+  t.mc[0] = 1200000;
+  TEST_ASSERT_TRUE(tuningValid(t));
+  t.mc[0] = 0;
+  TEST_ASSERT_FALSE(tuningValid(t));
+  t.mc[0] = -100000;
+  TEST_ASSERT_FALSE(tuningValid(t));
+  t.mc[0] = 4800000;
+  TEST_ASSERT_TRUE(tuningValid(t));
+  t.mc[0] = 4800001;
+  TEST_ASSERT_FALSE(tuningValid(t));
+  t.count = 3;
+  t.mc[0] = 100000;
+  t.mc[1] = 9600001;
+  t.mc[2] = 1200000;
+  TEST_ASSERT_FALSE(tuningValid(t));
+  t.mc[1] = -9600000;
+  TEST_ASSERT_TRUE(tuningValid(t));  // non-monotonic degrees are allowed, as in Scala
+  t.count = 65;
+  TEST_ASSERT_FALSE(tuningValid(t));
+  t.count = 3;
+  t.root = 200;  // neither a note nor AUTO
+  TEST_ASSERT_FALSE(tuningValid(t));
+}
+
+void test_tuning_root_key() {
+  TuningTable t;
+  TEST_ASSERT_EQUAL(60, tuningRootKey(t, 0));
+  TEST_ASSERT_EQUAL(62, tuningRootKey(t, 2));
+  TEST_ASSERT_EQUAL(71, tuningRootKey(t, 11));
+  TEST_ASSERT_EQUAL(61, tuningRootKey(t, 13));  // scale root wraps
+  t.root = 48;
+  TEST_ASSERT_EQUAL(48, tuningRootKey(t, 5));
+  t.count = 4;
+  strcpy(t.name, "A");
+  tuningClear(t);
+  TEST_ASSERT_EQUAL(0, t.count);
+  TEST_ASSERT_EQUAL(kTuneRootAuto, t.root);
+  TEST_ASSERT_EQUAL(0, t.name[0]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_gate_defaults_and_presets);
@@ -733,5 +792,7 @@ int main() {
   RUN_TEST(test_mod_send_lock_and_dest);
   RUN_TEST(test_follower_defaults_and_helpers);
   RUN_TEST(test_lfo_dest_fold_ring);
+  RUN_TEST(test_tuning_defaults_and_valid);
+  RUN_TEST(test_tuning_root_key);
   return UNITY_END();
 }

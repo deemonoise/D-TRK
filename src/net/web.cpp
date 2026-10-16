@@ -4,6 +4,7 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <WebServer.h>
+#include <WiFiClient.h>
 #include <stdio.h>
 #include <string.h>
 #include "file_rules.h"
@@ -279,6 +280,93 @@ void beginOta() {
   MDNS.addService("http", "tcp", 80);
 }
 
+// Export download (/export/<project>/<src>/*.wav on the synth board's card, through remoteFs).
+// /api/export/list: JSON [{"p":path,"s":size}, ...] of the files up to 3 levels below /export.
+void listDir(fs::File& d, int depth, bool& first) {
+  for (fs::File f = d.openNextFile(); f; f = d.openNextFile()) {
+    if (f.isDirectory()) {
+      if (depth < 2) listDir(f, depth + 1, first);
+      continue;
+    }
+    char js[200];
+    snprintf(js, sizeof js, "%s{\"p\":\"%s\",\"s\":%lu}", first ? "" : ",", f.path(),
+             static_cast<unsigned long>(f.size()));
+    first = false;
+    srv->sendContent(js);
+  }
+}
+
+void handleExportList() {
+  srv->setContentLength(CONTENT_LENGTH_UNKNOWN);
+  srv->send(200, "application/json", "");
+  srv->sendContent("[");
+  fs::File d = storage::remoteFs().open("/export");
+  bool first = true;
+  if (d && d.isDirectory()) listDir(d, 0, first);
+  srv->sendContent("]");
+  srv->sendContent("");  // end of the chunked reply
+}
+
+// /api/export/file?path=/export/...: the file as an attachment, Range "bytes=N-" resumes a download.
+// Synchronous: the UI task serves it to the end (or until the client goes away), the screen shows DL.
+void handleExportFile() {
+  const String path = srv->arg("path");
+  if (!mt::webExportPath(path.c_str())) {
+    reply(400, "not an export path");
+    return;
+  }
+  fs::File f = storage::remoteFs().open(path.c_str());
+  if (!f || f.isDirectory()) {
+    reply(404, "no such file");
+    return;
+  }
+  const uint32_t size = f.size();
+  uint32_t at = 0;
+  const bool ranged = srv->hasHeader("Range") && mt::parseRangeStart(srv->header("Range").c_str(), at);
+  if (ranged && at >= size) {
+    srv->sendHeader("Content-Range", String("bytes */") + size);
+    reply(416, "range past the end");
+    return;
+  }
+  if (at && !f.seek(at)) {
+    reply(500, "seek failed");
+    return;
+  }
+  const char* name = strrchr(path.c_str(), '/') + 1;
+  srv->sendHeader("Content-Disposition", String("attachment; filename=\"") + name + "\"");
+  srv->sendHeader("Accept-Ranges", "bytes");
+  if (ranged) {
+    char cr[48];
+    snprintf(cr, sizeof cr, "bytes %lu-%lu/%lu", static_cast<unsigned long>(at),
+             static_cast<unsigned long>(size - 1), static_cast<unsigned long>(size));
+    srv->sendHeader("Content-Range", cr);
+  }
+  srv->setContentLength(size - at);
+  srv->send(ranged ? 206 : 200, "audio/wav", "");
+  static uint8_t buf[4096];
+  WiFiClient c = srv->client();
+  uint32_t shownMb = 0xFFFFFFFFu;
+  for (uint32_t done = at; done < size;) {
+    const int n = f.read(buf, sizeof buf);
+    if (n <= 0 || !c.connected() || c.write(buf, n) != static_cast<size_t>(n)) {
+      log("! download %s: %s", name, "cut off");
+      break;
+    }
+    done += n;
+    const uint32_t mb = done >> 20;
+    if (mb != shownMb) {
+      shownMb = mb;
+      char msg[32];
+      snprintf(msg, sizeof msg, "DL %lu/%lu MB", static_cast<unsigned long>(mb),
+               static_cast<unsigned long>((size + (1u << 20) - 1) >> 20));
+      busy(msg);
+    }
+    if (done >= size) log("+ download %s", name);
+    yield();
+  }
+  f.close();
+}
+
 }  // namespace
 
 bool webBegin(const WebHooks& h) {
@@ -292,6 +380,10 @@ bool webBegin(const WebHooks& h) {
   srv->on("/api/update", HTTP_POST, handleFwDone, handleFwChunk);
   srv->on("/api/update-synth", HTTP_POST, handleSynthDone, handleSynthChunk);
   srv->on("/api/update-synth/status", HTTP_GET, handleSynthStatus);
+  srv->on("/api/export/list", HTTP_GET, handleExportList);
+  srv->on("/api/export/file", HTTP_GET, handleExportFile);
+  static const char* kHeaders[] = {"Range"};
+  srv->collectHeaders(kHeaders, 1);
   srv->onNotFound([] { reply(404, "no such page"); });
   srv->begin();
   beginOta();

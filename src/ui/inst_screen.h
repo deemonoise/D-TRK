@@ -4,6 +4,7 @@
 #include "preset_browser.h"
 #include "sample_editor.h"
 #include "screen.h"
+#include "wt_make_dialog.h"
 #include "wt_picker.h"
 
 namespace ui {
@@ -46,7 +47,9 @@ class InstScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
-  bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && onEditor(); }
+  bool wantsHDrag() const override {
+    return wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !wtMake_.isOpen() && onEditor());
+  }
   // Track button n: on the sample editor plays slices (see SampleEditor::playSlice). False = not taken.
   bool trackKey(int n, bool shift);
 
@@ -148,6 +151,7 @@ class InstScreen : public Screen {
   int page_ = kPgMain;
   PresetBrowser presets_{app_};
   WtPicker wt_{app_};
+  WtMakeDialog wtMake_{app_};
   int instr_ = 0;
   int lfoSel_ = 0;  // LFO page: which of the 4 LFOs the rows edit
   mt::Instrument typeSnap_;     // the instrument as it was in the type being left (setType)

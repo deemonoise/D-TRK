@@ -4,6 +4,7 @@
 #include <vector>
 #include "inst_codec.h"
 #include "project_io.h"
+#include "scene.h"
 #include "sample_set.h"
 #include "scale.h"
 
@@ -86,6 +87,7 @@ static void fillFull(Project& p) {
   p.perfMap[3] = static_cast<uint8_t>(PerfFx::ReverbThrow);
   p.perfDepth[3] = 70;
   p.perfDepth[0] = 6;  // Repeat 1/32
+  p.gen[4] = GenCfg{static_cast<uint8_t>(GenMode::Pitch), 16, 0, 40, 4, 0, 777};
   p.tracks[6].humanize = 40;
   p.tracks[2].pan = 0;
   p.tracks[4].pan = 47;
@@ -189,6 +191,7 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL_UINT16_ARRAY(x.songMute, y.songMute, x.songLen);
   TEST_ASSERT_EQUAL_UINT8_ARRAY(x.perfMap, y.perfMap, kPerfButtons);
   TEST_ASSERT_EQUAL_INT8_ARRAY(x.perfDepth, y.perfDepth, kPerfButtons);
+  TEST_ASSERT_EQUAL_MEMORY(x.gen, y.gen, sizeof(x.gen));
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg &c = x.tracks[t], &d = y.tracks[t];
     TEST_ASSERT_EQUAL(c.humanize, d.humanize);
@@ -2219,6 +2222,253 @@ void test_tfol_records_and_garbage() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// ---- TGEN (track generators) ----
+
+void test_tgen_round_trip_and_missing() {
+  a.gen[2] = GenCfg{static_cast<uint8_t>(GenMode::Gate), 13, 77, 36, 3, 81, 0xBEEF};
+  a.gen[15].mode = static_cast<uint8_t>(GenMode::Pitch);
+  a.patterns[0].steps[2][5].fx[3] = {Fx::FLP, 33};
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TGEN"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int t = 0; t < kTracks; ++t) TEST_ASSERT_EQUAL_MEMORY(&a.gen[t], &b.gen[t], sizeof(GenCfg));
+  TEST_ASSERT_TRUE(b.patterns[0].steps[2][5].fx[3].cmd == Fx::FLP);
+  TEST_ASSERT_EQUAL(33, b.patterns[0].steps[2][5].fx[3].val);
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TRKS", trks(kTracks, kTracks));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(0, b.gen[t].mode);
+    TEST_ASSERT_EQUAL(t + 1, b.gen[t].seed);
+  }
+}
+
+// A longer record: the known part; a shorter one: defaults for the rest; values clamped; bad sizes.
+void test_tgen_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TGEN", {2, 10, 9, 40, 250, 200, 0, 101, 0x34, 0x12, 7, 7,  // clamped, 2 extra bytes
+                       1, 3, 50, 60, 4, 20, 0xFF, 0xFF, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.gen[0].mode);
+  TEST_ASSERT_EQUAL(kGenLenMax, b.gen[0].len);
+  TEST_ASSERT_EQUAL(100, b.gen[0].flip);
+  TEST_ASSERT_EQUAL(127, b.gen[0].low);
+  TEST_ASSERT_EQUAL(1, b.gen[0].oct);
+  TEST_ASSERT_EQUAL(100, b.gen[0].density);
+  TEST_ASSERT_EQUAL(0x1234, b.gen[0].seed);
+  TEST_ASSERT_EQUAL(1, b.gen[1].mode);
+  TEST_ASSERT_EQUAL(3, b.gen[1].len);
+  TEST_ASSERT_EQUAL(0xFFFF, b.gen[1].seed);
+  TEST_ASSERT_EQUAL(3, b.gen[2].seed);  // not in the chunk: default
+  f = fileHeader();
+  putChunk(f, "TGEN", {1, 3, 2, 12, 0});  // an older, shorter record
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(2, b.gen[0].mode);
+  TEST_ASSERT_EQUAL(12, b.gen[0].len);
+  TEST_ASSERT_EQUAL(0, b.gen[0].flip);
+  TEST_ASSERT_EQUAL(48, b.gen[0].low);
+  TEST_ASSERT_EQUAL(1, b.gen[0].seed);
+  f = fileHeader();
+  putChunk(f, "TGEN", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "TGEN", {2, 8, 1, 2, 3, 4, 5, 6, 7, 8});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+// ---- TUNE (project tuning) ----
+
+static std::vector<uint8_t> tunePayload(uint8_t count, uint8_t root, const char* name, const int32_t* mc, int n) {
+  std::vector<uint8_t> v = {count, root};
+  char nm[16] = {};
+  strncpy(nm, name, 16);
+  v.insert(v.end(), nm, nm + 16);
+  for (int i = 0; i < n; ++i)
+    for (int k = 0; k < 4; ++k) v.push_back(static_cast<uint8_t>(static_cast<uint32_t>(mc[i]) >> (8 * k)));
+  return v;
+}
+
+void test_tune_round_trip() {
+  a.tuning.count = 3;
+  a.tuning.root = 57;
+  strcpy(a.tuning.name, "ABCDEFGHIJKLMNOP");
+  a.tuning.mc[0] = 231000;
+  a.tuning.mc[1] = -50;
+  a.tuning.mc[2] = 1901955;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TUNE"));
+  LoadNotes notes;
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b, &notes)));
+  TEST_ASSERT_EQUAL(0, memcmp(&a.tuning, &b.tuning, sizeof(TuningTable)));
+  TEST_ASSERT_FALSE(notes.tuningDropped);
+  // AUTO root survives too.
+  a.tuning.root = kTuneRootAuto;
+  VecSink o2;
+  TEST_ASSERT_TRUE(saveProject(a, o2));
+  VecSource i2(o2.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(i2, b)));
+  TEST_ASSERT_EQUAL(kTuneRootAuto, b.tuning.root);
+}
+
+void test_tune_12tet_not_written() {
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_FALSE(hasChunk(out.buf, "TUNE"));
+  // A root set without a table changes nothing in the file either.
+  a.tuning.root = 40;
+  VecSink o2;
+  TEST_ASSERT_TRUE(saveProject(a, o2));
+  TEST_ASSERT_TRUE(out.buf == o2.buf);
+  b.tuning.count = 5;  // loading resets it
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(0, b.tuning.count);
+}
+
+void test_tune_bad_chunks_reset_to_12tet() {
+  const int32_t ok[2] = {600000, 1200000};
+  const int32_t zeroPeriod[2] = {600000, 0};
+  int32_t many[65];
+  for (int i = 0; i < 65; ++i) many[i] = (i + 1) * 18000;
+  struct Case {
+    std::vector<uint8_t> pay;
+    uint32_t size;
+  } cases[] = {
+      {tunePayload(2, 60, "Z", zeroPeriod, 2), 26},
+      {tunePayload(65, 60, "Z", many, 65), 18 + 65 * 4},
+      {tunePayload(0, 60, "Z", ok, 0), 18},
+      {tunePayload(2, 60, "Z", ok, 1), 22},          // short
+      {tunePayload(2, 200, "Z", ok, 2), 26},         // root not a note
+      {{2}, 1},                                       // no header
+  };
+  for (auto& c : cases) {
+    std::vector<uint8_t> f = fileHeader();
+    putChunkSized(f, "TUNE", c.size, c.pay);
+    finish(f);
+    LoadNotes notes;
+    VecSource in(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b, &notes)));
+    TEST_ASSERT_EQUAL(0, b.tuning.count);
+    TEST_ASSERT_TRUE(notes.tuningDropped);
+  }
+  // A good chunk with extra bytes after it (a newer writer) still loads.
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> pay = tunePayload(2, 60, "TRITONE", ok, 2);
+  pay.push_back(9);
+  putChunkSized(f, "TUNE", static_cast<uint32_t>(pay.size()), pay);
+  finish(f);
+  LoadNotes notes;
+  VecSource in(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b, &notes)));
+  TEST_ASSERT_EQUAL(2, b.tuning.count);
+  TEST_ASSERT_EQUAL_STRING("TRITONE", b.tuning.name);
+  TEST_ASSERT_EQUAL(1200000, b.tuning.mc[1]);
+  TEST_ASSERT_FALSE(notes.tuningDropped);
+}
+
+
+// ---- SCEN (scenes and the crossfader) ----
+
+void test_scen_round_trip() {
+  sceneSetTrk(a.scenes[2], 0, kScnVol, 10);
+  sceneSetTrk(a.scenes[2], 15, kScnRes, 99);
+  sceneSetTrk(a.scenes[7], 3, kScnDty, 4);
+  sceneSetMst(a.scenes[7], kScnMain, 180);
+  sceneSetMst(a.scenes[7], kScnDTime, 16);
+  a.sceneA = 7;
+  a.sceneB = 2;
+  a.xfade = 77;
+  syncSceneLive(a);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SCEN"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(0, memcmp(a.scenes, b.scenes, sizeof a.scenes));
+  TEST_ASSERT_EQUAL(7, b.sceneA);
+  TEST_ASSERT_EQUAL(2, b.sceneB);
+  TEST_ASSERT_EQUAL(77, b.xfade);
+  // The live ends are synced by the load.
+  TEST_ASSERT_EQUAL(0, memcmp(&b.sceneLive[0], &b.scenes[7], sizeof(Scene)));
+  TEST_ASSERT_EQUAL(0, memcmp(&b.sceneLive[1], &b.scenes[2], sizeof(Scene)));
+}
+
+void test_scen_default_not_written_and_absent_loads_default() {
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_FALSE(hasChunk(out.buf, "SCEN"));
+  a.xfade = 1;  // only the fader moved: written
+  VecSink out2;
+  TEST_ASSERT_TRUE(saveProject(a, out2));
+  TEST_ASSERT_TRUE(hasChunk(out2.buf, "SCEN"));
+  sceneSetTrk(b.scenes[0], 0, kScnVol, 3);  // loading resets them
+  b.sceneA = 5;
+  b.xfade = 9;
+  syncSceneLive(b);
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_TRUE(sceneEmpty(b.scenes[0]) && sceneEmpty(b.sceneLive[0]));
+  TEST_ASSERT_EQUAL(0, b.sceneA);
+  TEST_ASSERT_EQUAL(1, b.sceneB);
+  TEST_ASSERT_EQUAL(0, b.xfade);
+}
+
+// A SCEN body: count scenes, nTrk / nMst parameters; scene 0 track 0 and the master get every value v
+// with full masks.
+static std::vector<uint8_t> scenPayload(uint8_t count, uint8_t tracks, uint8_t nTrk, uint8_t nMst, uint8_t v,
+                                        uint8_t sa = 0, uint8_t sb = 1, uint8_t xf = 0) {
+  std::vector<uint8_t> p = {count, tracks, nTrk, nMst, sa, sb, xf};
+  for (int s = 0; s < count; ++s) {
+    for (int t = 0; t < tracks; ++t) {
+      const uint16_t m = s == 0 && t == 0 ? 0xFFFF : 0;
+      p.push_back(static_cast<uint8_t>(m));
+      p.push_back(static_cast<uint8_t>(m >> 8));
+      for (int k = 0; k < nTrk; ++k) p.push_back(m ? v : 0);
+    }
+    const uint16_t mm = s == 0 ? 0xFFFF : 0;
+    p.push_back(static_cast<uint8_t>(mm));
+    p.push_back(static_cast<uint8_t>(mm >> 8));
+    for (int k = 0; k < nMst; ++k) p.push_back(mm ? v : 0);
+  }
+  return p;
+}
+
+void test_scen_longer_and_shorter_records() {
+  // More parameters than known: the extras skipped, the high mask bits dropped; values clamped.
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SCEN", scenPayload(9, 17, 16, 16, 250, 9, 3, 200));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(kScnTrkBits, b.scenes[0].trkMask[0]);
+  TEST_ASSERT_EQUAL(kScnMstBits, b.scenes[0].mstMask);
+  TEST_ASSERT_EQUAL(127, b.scenes[0].trk[0][kScnVol]);
+  TEST_ASSERT_EQUAL(0, b.scenes[0].trk[0][kScnDty]);  // out of range: TNH
+  TEST_ASSERT_EQUAL(kMasterVolMax, b.scenes[0].mst[kScnMain]);
+  TEST_ASSERT_EQUAL(kDlyTimeMax, b.scenes[0].mst[kScnDTime]);
+  TEST_ASSERT_TRUE(sceneEmpty(b.scenes[1]));
+  TEST_ASSERT_EQUAL(0, b.sceneA);  // 9: out of range
+  TEST_ASSERT_EQUAL(3, b.sceneB);
+  TEST_ASSERT_EQUAL(127, b.xfade);
+  // Fewer: the missing parameters unset.
+  f = fileHeader();
+  putChunk(f, "SCEN", scenPayload(2, 16, 3, 2, 20));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0x7, b.scenes[0].trkMask[0]);
+  TEST_ASSERT_EQUAL(20, b.scenes[0].trk[0][kScnDrv]);
+  TEST_ASSERT_EQUAL(0x3, b.scenes[0].mstMask);
+  TEST_ASSERT_EQUAL(kDlyTimeMax, b.scenes[0].mst[kScnDTime]);  // 20 clamped
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -2290,6 +2540,8 @@ int main() {
   RUN_TEST(test_tpan_garbage_clamped);
   RUN_TEST(test_tins_round_trip);
   RUN_TEST(test_tfol_round_trip_and_missing);
+  RUN_TEST(test_tgen_round_trip_and_missing);
+  RUN_TEST(test_tgen_records_and_garbage);
   RUN_TEST(test_tfol_records_and_garbage);
   RUN_TEST(test_tins_gate_fields);
   RUN_TEST(test_tins_longer_records_and_garbage);
@@ -2306,5 +2558,11 @@ int main() {
   RUN_TEST(test_audi_master_fx_round_trip);
   RUN_TEST(test_audi_master_fx_old_and_garbage);
   RUN_TEST(test_tins_mod_send);
+  RUN_TEST(test_tune_round_trip);
+  RUN_TEST(test_tune_12tet_not_written);
+  RUN_TEST(test_tune_bad_chunks_reset_to_12tet);
+  RUN_TEST(test_scen_round_trip);
+  RUN_TEST(test_scen_default_not_written_and_absent_loads_default);
+  RUN_TEST(test_scen_longer_and_shorter_records);
   return UNITY_END();
 }

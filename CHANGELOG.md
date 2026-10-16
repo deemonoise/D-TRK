@@ -17,6 +17,31 @@ Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 - BANK: Length 128 in the pattern menu.
 - Teensy synth board: voice pool by cost: each note is priced at note-on, the sounding voices stay
   under ~65 % of the CPU (the oldest fade out first); the CPU guard stays the backstop.
+- Microtonal project tuning (PROJ -> SONG: Tuning, Tuning root): 12-TET (default), 10 factory tunings
+  (just, Pythagorean, meantone, well temperament, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce) and your own
+  Scala `.scl` files from `/presets/TUN`. Applies to melodic INT voices; MIDI out stays 12-TET. The tuning is
+  saved in the project; link protocol 8, flash both boards.
+- Scenes and crossfader (Octatrack style): 8 scenes per project locking per-track VOL, PAN, insert, sends and
+  filter plus 14 master parameters; an A↔B crossfader on MIX (tap / drag, encoder), the SCENE view for editing
+  (long tap on the bar), A + turn in PERF. The morph runs on the synth board, smoothed over ~30 ms; a p-lock
+  beats the scene. Scenes and the fader position are saved in the project (`SCEN` chunk); link protocol 9,
+  flash both boards.
+- Shift-register generator per track (TRACK -> GEN): a looping 2–16-bit register with a Flip chance plays
+  notes of the project scale live, the pattern stays as it is. PITCH mode (pitch of the step notes) and GATE
+  (the rhythm too, Density); Low, Range, Seed. FLP fx sets Flip per step; live Flip from a track button (the
+  VOL → PAN → FLIP cycle on an encoder click); Capture gen in the GRID menu writes the loop into the pattern.
+  Saved in the project (`TGEN` chunk); ESP firmware only, the link protocol is unchanged.
+- Your own wavetables: SAMPLE -> To wavetable… makes a 64 × 256 table from a sample's Start..End region
+  (CYCLE — one period per frame with pitch detection, WINDOW — 64 equal windows; Norm FRAME / TABLE, Seam),
+  computed on the synth board; DRAW… in the table list — a touch keyframe editor (SIN / TRI / SAW / SQR,
+  SMTH, linear blend between keys). The result is `/wavetables/<name>.wav` and a project table; link
+  protocol 10 — flash both boards.
+- Song / pattern export to WAV with stems (FILE -> Export…, formerly Render WAV): the master and optionally
+  dry INT track stems and the MOD / DLY / RVB returns in one render, all files one length; 24-bit (or
+  16-bit with TPDF dither); Loops 1–16, Tail AUTO / OFF / 2 / 4 / 8 s / WRAP (seamless loop). Files go to
+  `/export/<project>/<P01 | P01x4 | SONG>/` and download from the Wi-Fi page (Export section, resumable).
+  Without PSRAM on the synth board, passes of 6 files. The old STEMS mode and `/samples/render/*.wav` are
+  gone; link protocol 11 — flash both boards.
 
 ## 2026-10-14
 - CPU guard no longer steals voices on a single late block.

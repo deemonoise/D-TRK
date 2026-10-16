@@ -32,6 +32,7 @@ struct RenderSpec {
   uint8_t pattern = 0;           // Mode::Pattern
   uint16_t tracksMask = 0xFFFF;  // bit = track sounds (on top of mute / solo)
   uint32_t tailBlocks = 0;       // blocks after the end: delay / reverb ring-out (689 = 2 s)
+  uint8_t loops = 1;             // Mode::Pattern: passes of the pattern in the body (1..17)
 };
 
 // One synth event of a rendered block: its sample offset in the block and the message.

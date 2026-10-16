@@ -237,9 +237,52 @@ void test_debug() {
   checkTruncated<Debug>(n);
 }
 
-void test_protocol_7_and_debug_id() {
-  TEST_ASSERT_EQUAL(7, kProtocol);  // 7: ProfileRep has 24 stages (STRING)
+void test_protocol_8_and_debug_id() {
+  TEST_ASSERT_EQUAL(11, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields)
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
+  TEST_ASSERT_EQUAL(42, static_cast<int>(Msg::WtRender));
+  TEST_ASSERT_EQUAL(43, static_cast<int>(Msg::RenderOut));
+}
+
+void test_wt_render() {
+  WtRenderReq a;
+  a.index = 77;
+  a.from = 123456;
+  a.to = 9876543;
+  a.mode = 1;
+  a.norm = 1;
+  a.seam = 0;
+  memset(a.path, 'x', sizeof a.path - 1);
+  memcpy(a.path, "/wavetables/", 12);
+  int n = put(a);
+  WtRenderReq b;
+  Reader r(buf, n);
+  TEST_ASSERT_TRUE(decode(r, b));
+  TEST_ASSERT_EQUAL(77, b.index);
+  TEST_ASSERT_EQUAL_UINT32(123456, b.from);
+  TEST_ASSERT_EQUAL_UINT32(9876543, b.to);
+  TEST_ASSERT_EQUAL(1, b.mode);
+  TEST_ASSERT_EQUAL(1, b.norm);
+  TEST_ASSERT_EQUAL(0, b.seam);
+  TEST_ASSERT_EQUAL_STRING(a.path, b.path);
+  checkTruncated<WtRenderReq>(n);
+  a.mode = 2;  // no such mode
+  n = put(a);
+  Reader r2(buf, n);
+  TEST_ASSERT_FALSE(decode(r2, b));
+
+  WtRenderRep c;
+  c.result = 5;
+  c.err = 2;
+  c.pitched = 58;
+  n = put(c);
+  WtRenderRep d;
+  Reader r3(buf, n);
+  TEST_ASSERT_TRUE(decode(r3, d));
+  TEST_ASSERT_EQUAL(5, d.result);
+  TEST_ASSERT_EQUAL(2, d.err);
+  TEST_ASSERT_EQUAL(58, d.pitched);
+  checkTruncated<WtRenderRep>(n);
 }
 
 void test_progress() {
@@ -639,6 +682,78 @@ void test_render_messages() {
   checkTruncated<RenderRep>(n);
 }
 
+void test_export_messages() {
+  RenderStartReq q;
+  q.target = RenderStartReq::kExport;
+  strcpy(q.path, "/export/DEMO/P01x4");
+  q.bits = 16;
+  q.outs = 20;
+  q.skipFrames = 88215;
+  q.estFrames = 1234567;
+  int n = put(q);
+  RenderStartReq q2;
+  Reader r1(buf, n);
+  TEST_ASSERT_TRUE(decode(r1, q2));
+  TEST_ASSERT_EQUAL(RenderStartReq::kExport, q2.target);
+  TEST_ASSERT_EQUAL_STRING(q.path, q2.path);
+  TEST_ASSERT_EQUAL(16, q2.bits);
+  TEST_ASSERT_EQUAL(20, q2.outs);
+  TEST_ASSERT_EQUAL_UINT32(88215, q2.skipFrames);
+  TEST_ASSERT_EQUAL_UINT32(1234567, q2.estFrames);
+  checkTruncated<RenderStartReq>(n);
+  q.target = RenderStartReq::kExport + 1;
+  n = put(q);
+  Reader r1b(buf, n);
+  TEST_ASSERT_FALSE(decode(r1b, q2));
+
+  RenderOut o;
+  o.idx = 19;
+  o.tap = 19;
+  memset(o.name, 'A', sizeof o.name - 1);
+  n = put(o);
+  RenderOut o2;
+  Reader r2(buf, n);
+  TEST_ASSERT_TRUE(decode(r2, o2));
+  TEST_ASSERT_EQUAL(19, o2.idx);
+  TEST_ASSERT_EQUAL(19, o2.tap);
+  TEST_ASSERT_EQUAL(63, static_cast<int>(strlen(o2.name)));
+  checkTruncated<RenderOut>(n);
+  o.tap = 20;  // no such tap
+  n = put(o);
+  Reader r2b(buf, n);
+  TEST_ASSERT_FALSE(decode(r2b, o2));
+
+  RenderEndReq e;
+  e.frames = 4000000;
+  n = put(e);
+  RenderEndReq e2;
+  Reader r3(buf, n);
+  TEST_ASSERT_TRUE(decode(r3, e2));
+  TEST_ASSERT_EQUAL_UINT32(4000000, e2.frames);
+
+  RenderRep p;  // the largest reply fits a payload
+  p.quiet = 345;
+  p.outMax = 6;
+  p.outN = RenderRep::kMaxOut;
+  for (int i = 0; i < RenderRep::kMaxOut; ++i) {
+    p.peaks[i] = static_cast<uint16_t>(1000 + i);
+    p.clipsN[i] = 70000u + i;
+  }
+  n = put(p);
+  RenderRep p2;
+  Reader r4(buf, n);
+  TEST_ASSERT_TRUE(decode(r4, p2));
+  TEST_ASSERT_EQUAL_UINT32(345, p2.quiet);
+  TEST_ASSERT_EQUAL(6, p2.outMax);
+  TEST_ASSERT_EQUAL(RenderRep::kMaxOut, p2.outN);
+  TEST_ASSERT_EQUAL(1019, p2.peaks[19]);
+  TEST_ASSERT_EQUAL_UINT32(70019u, p2.clipsN[19]);
+  checkTruncated<RenderRep>(n);
+  buf[n - 4 * RenderRep::kMaxOut - 2 * RenderRep::kMaxOut - 1] = RenderRep::kMaxOut + 1;  // outN
+  Reader r5(buf, n);
+  TEST_ASSERT_FALSE(decode(r5, p2));
+}
+
 void test_fw_messages() {
   FwFromFileReq q;
   strcpy(q.path, "/firmware/teensy.hex");
@@ -700,9 +815,11 @@ int main(int, char**) {
   RUN_TEST(test_profile_rep);
   RUN_TEST(test_profile_rep_24_stages);
   RUN_TEST(test_render_messages);
+  RUN_TEST(test_export_messages);
   RUN_TEST(test_fw_messages);
   RUN_TEST(test_ev_batch_carries_a_hint);
   RUN_TEST(test_debug);
-  RUN_TEST(test_protocol_7_and_debug_id);
+  RUN_TEST(test_protocol_8_and_debug_id);
+  RUN_TEST(test_wt_render);
   return UNITY_END();
 }

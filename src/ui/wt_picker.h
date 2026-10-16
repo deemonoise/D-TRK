@@ -6,6 +6,7 @@
 #include "model.h"
 #include "theme.h"
 #include "touch.h"
+#include "wt_draw.h"
 
 namespace ui {
 
@@ -23,7 +24,8 @@ bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSa
 // SYNTH table picker over the work area (INST, OSC page), drawn and driven like FILE's import
 // lists: row 0 is "< Back" (close, the table stays) or "< Up (..)" in a subfolder, the encoder turns
 // round and round, a long press goes back. The table list holds the built-in tables ("*NAME"),
-// the project's, then IMPORT... (a browser of /wavetables and its subfolders: folders, *.wav).
+// the project's, DRAW... (WtDraw: keyframes from the oscillator's table, a new table), then IMPORT... (a
+// browser of /wavetables and its subfolders: folders, *.wav).
 // Turning / a tap only moves the cursor; a click (a tap on the selected row) sets the table on the
 // oscillator and closes. A picked file is imported (see wtImportFile) and set. The selected
 // table's frame 0 is drawn right of the list.
@@ -34,6 +36,7 @@ class WtPicker {
   void open(int instr, int osc);
   void close();
   bool isOpen() const { return open_; }
+  bool drawOpen() const { return draw_.isOpen(); }  // the editor wants HDrag (strokes)
   void onInput(const hw::InputEvent& ev);
   void onTouch(const TouchEvent& ev);
   void draw(LGFX_Sprite& s, int y0);
@@ -45,7 +48,7 @@ class WtPicker {
   static constexpr int kDepthMax = 4;  // subfolders below /wavetables
   // Frame preview right of the table names.
   static constexpr int kPvX0 = 240, kPvX1 = 440, kPvY0 = 16, kPvY1 = 112;
-  enum class Kind : uint8_t { Table, Import, Folder, File };
+  enum class Kind : uint8_t { Table, Import, Folder, File, Draw };
 
   mt::Instrument& inst();
   // Rows: 0 = Back / Up, i + 1 = entry i.
@@ -61,6 +64,7 @@ class WtPicker {
   void setTable(const char* name);
 
   App& app_;
+  WtDraw draw_{app_};
   std::function<void()> onClose_;
   bool open_ = false;
   bool files_ = false;  // listing /wavetables

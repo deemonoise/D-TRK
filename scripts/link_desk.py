@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = 7
+PROTOCOL = 11
 MAX_PAYLOAD = 512
 
 # lib/core/src/link_msg.h, enum class Msg (append only).
@@ -40,7 +40,7 @@ MSG = {name: i + 1 for i, name in enumerate(
     "RenderStart RenderBlocks RenderEnd "
     "Meters Phones Profile "
     "Status Progress FwFromFile Log "
-    "FsRmdir WtFrame Perf Debug".split())}
+    "FsRmdir WtFrame Perf Debug WtRender RenderOut".split())}
 MSG_NAME = {v: k for k, v in MSG.items()}
 
 # lib/core/src/link_msg.h, kErr*.
@@ -732,8 +732,15 @@ RENDER_RESULT = ["Ok", "NoSd", "OpenFail", "WriteFail", "ReadFail", "Busy", "NoR
 
 def parse_render(p):
     res, bank, blocks, frames, peak, clips, crc = struct.unpack("<BBIIHII", p[:20])
-    return dict(result=RENDER_RESULT[res] if res < len(RENDER_RESULT) else res, bank=BANK_RESULT[bank],
-                blocks=blocks, frames=frames, peak=peak, clips=clips, crc=crc)
+    d = dict(result=RENDER_RESULT[res] if res < len(RENDER_RESULT) else res, bank=BANK_RESULT[bank],
+             blocks=blocks, frames=frames, peak=peak, clips=clips, crc=crc)
+    if len(p) >= 26:  # protocol 11: quiet, outMax, outN, peaks[outN] u16, clips[outN] u32
+        quiet, out_max, out_n = struct.unpack("<IBB", p[20:26])
+        d.update(quiet=quiet, outMax=out_max)
+        if out_n:
+            d["peaks"] = list(struct.unpack("<%dH" % out_n, p[26:26 + 2 * out_n]))
+            d["clipsN"] = list(struct.unpack("<%dI" % out_n, p[26 + 2 * out_n:26 + 6 * out_n]))
+    return d
 
 
 def cmd_render(link, args):
@@ -747,7 +754,8 @@ def cmd_render(link, args):
         frames.append(raw[2:2 + n])
         raw = raw[2 + n:]
     t0 = time.monotonic()
-    p = link.call("RenderStart", bytes([0]) + fs_str(args.path), 5.0)
+    # target file, path, bits 24, outs 1, skipFrames 0, estFrames 0 (protocol 11)
+    p = link.call("RenderStart", bytes([0]) + fs_str(args.path) + struct.pack("<BBII", 24, 1, 0, 0), 5.0)
     r = parse_render(p) if p else None
     print("RenderStart:", r, flush=True)
     if not r or r["result"] != "Ok":
@@ -762,7 +770,8 @@ def cmd_render(link, args):
     t1 = time.monotonic()
     print("%d frames, %d blocks in %.1f s" % (k + 1, r["blocks"], t1 - t0), flush=True)
     abort = args.abort_after is not None
-    p = link.call("RenderEnd", bytes([1 if abort else 0, 1 if args.normalize else 0, 1 if args.trim else 0]), 5.0)
+    p = link.call("RenderEnd", bytes([1 if abort else 0, 1 if args.normalize else 0, 1 if args.trim else 0]) +
+                  struct.pack("<I", 0), 5.0)
     print("RenderEnd%s: %s in %.1f s" % (" (abort)" if abort else "", parse_render(p) if p else "no reply",
                                          time.monotonic() - t1))
 
@@ -787,7 +796,7 @@ def cmd_selftest(args):
     assert b["count"] == 3 and b["free"] == 4000 and b["builtins"] == 0xFF and b["rates"] == [44100, 0]
     page = bytes([1, 2]) + struct.pack("<BI", 1, 0) + fs_str("wt") + struct.pack("<BI", 0, 1234) + fs_str("kick.wav")
     assert parse_list(page) == (True, [(True, 0, "wt"), (False, 1234, "kick.wav")])
-    assert PROTOCOL == 7 and MSG["Debug"] == 41
+    assert PROTOCOL == 11 and MSG["Debug"] == 41 and MSG["WtRender"] == 42 and MSG["RenderOut"] == 43
     st = struct.pack("<BHHBH", 50, 0, 0, 20, 1000) + bytes(16) + struct.pack("<HBH", 0, 0, 2) + b"\x01\x02" + \
         struct.pack("<BHHBB", 14, 3, 41, 1, 57) + struct.pack("<H", 0xFFFF) + bytes(16) + struct.pack("<I", 11800)
     s = parse_status(st)

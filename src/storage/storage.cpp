@@ -50,7 +50,8 @@ static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt
               "Pattern changed: update snapshot() and project_io");
 // 382: synFold, synRing (SYNI bytes 41, 42; snapshot copies instruments whole).
 static_assert(sizeof(mt::Instrument) == 382, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 477000, "Project changed: update snapshot() and project_io");
+// 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
+static_assert(sizeof(mt::Project) == 479816, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -82,6 +83,7 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.scDepth = live.scDepth;
   memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));
   memcpy(out.perfDepth, live.perfDepth, sizeof(out.perfDepth));
+  memcpy(out.gen, live.gen, sizeof(out.gen));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));
@@ -99,6 +101,12 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.eqLow = live.eqLow;
   out.eqHigh = live.eqHigh;
   out.shimInt = live.shimInt;
+  out.tuning = live.tuning;
+  out.xfade = live.xfade;
+  memcpy(out.scenes, live.scenes, sizeof(out.scenes));
+  out.sceneA = live.sceneA;
+  out.sceneB = live.sceneB;
+  memcpy(out.sceneLive, live.sceneLive, sizeof(out.sceneLive));
   engine::unlockProject();
   for (int i = 0; i < mt::kPatterns; ++i) {
     engine::lockProject();
@@ -123,6 +131,7 @@ bool writeLast(const char* name) {
 }
 
 bool transposeDropped = false;  // set by the last readFile, see songTransposeDropped()
+bool tuneDropped = false;       // the same for tuningDropped()
 
 Result readFile(const char* path, mt::Project& out) {
   fs::File f = hw::sdFs().open(path, FILE_READ);
@@ -131,6 +140,7 @@ Result readFile(const char* path, mt::Project& out) {
   mt::LoadNotes notes;
   const mt::LoadErr e = mt::loadProject(src, out, &notes);
   transposeDropped = notes.songTransposeDropped;
+  tuneDropped = notes.tuningDropped;
   f.close();
   switch (e) {
     case mt::LoadErr::Ok: return Result::Ok;
@@ -531,6 +541,7 @@ Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
   if (!stopEngine()) return Result::EngineBusy;
   srcFolder[0] = 0;
   transposeDropped = false;
+  tuneDropped = false;
   engine::lockProject();
   build(i, live);
   engine::unlockProject();
@@ -542,6 +553,7 @@ Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
 }  // namespace
 
 bool songTransposeDropped() { return transposeDropped; }
+bool tuningDropped() { return tuneDropped; }
 
 Result newProject(mt::Project& live, int tmpl) { return newBuilt(live, mt::templateBuild, tmpl); }
 

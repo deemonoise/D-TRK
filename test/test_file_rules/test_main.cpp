@@ -28,9 +28,43 @@ void test_firmware_names() {
   TEST_ASSERT_FALSE(webFirmwareName(nullptr));
 }
 
+void test_web_export_path() {
+  TEST_ASSERT_TRUE(webExportPath("/export/DEMO/P01/DEMO_P01_MASTER.wav"));
+  TEST_ASSERT_TRUE(webExportPath("/export/DEMO/SONG"));
+  TEST_ASSERT_FALSE(webExportPath("/export"));
+  TEST_ASSERT_FALSE(webExportPath("/export/"));
+  TEST_ASSERT_FALSE(webExportPath("/export/../projects/A.mtp"));
+  TEST_ASSERT_FALSE(webExportPath("/export/A/../../x"));
+  TEST_ASSERT_FALSE(webExportPath("/export/A/.."));
+  TEST_ASSERT_FALSE(webExportPath("/samples/x.wav"));
+  TEST_ASSERT_FALSE(webExportPath("//export/x"));
+  TEST_ASSERT_FALSE(webExportPath("/exportx/a"));
+  TEST_ASSERT_FALSE(webExportPath("/export//a"));
+  TEST_ASSERT_FALSE(webExportPath("/export/a\\b"));
+  TEST_ASSERT_FALSE(webExportPath(""));
+  TEST_ASSERT_FALSE(webExportPath(nullptr));
+}
+
+void test_range_start() {
+  uint32_t at = 7;
+  TEST_ASSERT_TRUE(parseRangeStart("bytes=1000-", at));
+  TEST_ASSERT_EQUAL_UINT32(1000, at);
+  TEST_ASSERT_TRUE(parseRangeStart("bytes=0-", at));
+  TEST_ASSERT_EQUAL_UINT32(0, at);
+  TEST_ASSERT_TRUE(parseRangeStart("bytes=5-99", at));  // an end: served to the file's end anyway
+  TEST_ASSERT_EQUAL_UINT32(5, at);
+  TEST_ASSERT_FALSE(parseRangeStart("bytes=-500", at));  // suffix ranges: not supported
+  TEST_ASSERT_FALSE(parseRangeStart("items=1-", at));
+  TEST_ASSERT_FALSE(parseRangeStart("bytes=x-", at));
+  TEST_ASSERT_FALSE(parseRangeStart("bytes=99999999999-", at));
+  TEST_ASSERT_FALSE(parseRangeStart(nullptr, at));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_project_base);
   RUN_TEST(test_firmware_names);
+  RUN_TEST(test_web_export_path);
+  RUN_TEST(test_range_start);
   return UNITY_END();
 }

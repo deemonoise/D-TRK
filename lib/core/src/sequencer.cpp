@@ -94,8 +94,67 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   out.send(&s, 1);
   anchorTick_ = stepTick_ = clockTick_ = 0;
   gateTick_ = 0;
+  genResetAll();
   anchorAt(now);
   state_ = State::Playing;
+}
+
+void Sequencer::genResetAll() {
+  for (int i = 0; i < kTracks; ++i) genReset(gen_[i], p_.gen[i], i);
+}
+
+void Sequencer::genReseed(uint64_t now, MidiSink& out, int tr) {
+  if (tr < 0 || tr >= kTracks) return;
+  replan(now, out);
+  if (state_ != State::Stopped) genReset(gen_[tr], p_.gen[tr], tr);
+}
+
+GenState Sequencer::genNext(int tr) const {
+  GenState g;
+  if (tr < 0 || tr >= kTracks) return g;
+  if (state_ != State::Stopped) return gen_[tr];
+  genReset(g, p_.gen[tr], tr);
+  return g;
+}
+
+int Sequencer::genFromStep(int tr, int pat) const {
+  if (state_ == State::Stopped || pat != cur_ || tr < 0 || tr >= kTracks) return 0;
+  const Pattern& pt = p_.patterns[cur_];
+  int pos = pos_;
+  uint32_t loop = loop_;
+  for (int k = 0; k < 4 * kMaxSteps; ++k) {  // a slow track resting: its next step
+    if (pos >= pt.length) {
+      pos = 0;
+      ++loop;
+    }
+    const int idx = trackStepAt(pt, tr, pos, loop, 0);
+    if (idx >= 0) return idx;
+    ++pos;
+  }
+  return 0;
+}
+
+GenState Sequencer::heardGen(int tr) const {
+  if (tr < 0 || tr >= kTracks || state_ == State::Stopped) return genNext(tr);
+  for (int i = 0; i < histN_; ++i)
+    if (hist(i).t <= heardStepT_) return i > 0 ? hist(i - 1).gens[tr] : gen_[tr];
+  return gen_[tr];
+}
+
+const Step& Sequencer::genStep(int tr, const Step& s, Step& tmp) {
+  if (!p_.genOn(tr)) return s;
+  const GenCfg& g = p_.gen[tr];
+  const bool gate = g.mode == static_cast<uint8_t>(GenMode::Gate);
+  if (!gate && !s.hasNote()) return s;  // PITCH: clocked by the steps with a note
+  const FxSlot* f = s.find(Fx::FLP);
+  genShift(gen_[tr], g, tr, f ? (f->val > 100 ? 100 : f->val) : g.flip);
+  if (gate && s.note == kNoteOff) return s;
+  tmp = s;
+  if (!gate || genGate(gen_[tr], g))
+    tmp.note = genNote(gen_[tr], g, p_.scaleRoot, static_cast<ScaleType>(p_.scaleType));
+  else
+    tmp.note = kNoteEmpty;
+  return tmp;
 }
 
 void Sequencer::synthTransport(uint64_t now, MidiSink& out, uint8_t msg) {
@@ -316,6 +375,7 @@ bool Sequencer::rewind(uint64_t now) {
   heap_.removeIf([&](const SchedEvent& e) { return static_cast<int32_t>(e.tag - h.serial) >= 0; });
   memcpy(ties_, h.ties, sizeof(ties_));
   memcpy(arps_, h.arps, sizeof(arps_));
+  memcpy(gen_, h.gens, sizeof(gen_));
   condBits_ = h.condBits;
   muteHeld_ = h.held;
   savedMute_ = h.saved;
@@ -430,6 +490,7 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.prevSong = static_cast<int8_t>(songPos_);
   memcpy(h.ties, ties_, sizeof(ties_));
   memcpy(h.arps, arps_, sizeof(arps_));
+  memcpy(h.gens, gen_, sizeof(gen_));
   h.condBits = condBits_;
   h.held = muteHeld_;
   h.saved = savedMute_;
@@ -483,8 +544,10 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.muteSet = muteSet_;
 }
 
-void Sequencer::playTrackStep(int tr, const Step& s, uint64_t t, const ExpandCtx& c, uint16_t tps,
+void Sequencer::playTrackStep(int tr, const Step& ps, uint64_t t, const ExpandCtx& c, uint16_t tps,
                               int64_t earliest) {
+  Step gs;
+  const Step& s = genStep(tr, ps, gs);
   ExpandOut& ex = ex_;
   const bool aud = audible(tr);
   const bool hasFx = s.hasFx();
@@ -662,7 +725,9 @@ void Sequencer::skipStep(uint64_t now) {
   if (++pos_ >= pat.length) endOfPass();
 }
 
-void Sequencer::skipTrackStep(int tr, const Step& s, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps) {
+void Sequencer::skipTrackStep(int tr, const Step& ps, uint64_t t, uint64_t now, const ExpandCtx& c, uint16_t tps) {
+  Step gs;
+  const Step& s = genStep(tr, ps, gs);
   if (s.note == kNoteOff) pushOff(tr, t);
   else if (s.hasNote()) releaseTie(tr, t);
   const bool aud = audible(tr);

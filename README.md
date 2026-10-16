@@ -13,8 +13,11 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - A step holds a note, volume, chord (36 types × 4 inversions) and 6 fx commands: slide, vibrato, retrigger, arp, trig conditions (probability, fill, "previous played"…), p-locks of sound parameters, pan and LFOs.
 - Fill notes, volume or any fx on every Nth step, by Euclid or at random, with value ramps.
 - Generators that write straight into notes: **ARP** (106 patterns, including 64 from the Access Virus), **CHORDS** (55 progressions in the project key, 32 rhythms, RANDOM, Mutate, voice leading) and **BASS** (48 bass patterns that follow the chords). Your own patterns are saved with Capture.
+- A live shift-register generator per track (**GEN**): a looping 2–16-bit register slowly mutates and plays notes of the project scale (pitch, or the rhythm too), Flip live from a track button and the FLP fx per step, Capture writes the loop into the pattern.
 - Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
 - Scales, undo, selection, copy.
+- Microtonal project tuning: 10 factory tunings (just, meantone, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce…) and your own Scala `.scl` files from the card.
+- Scenes and an A↔B crossfader: 8 scenes of mix and sound locks per project, morphed live on MIX or in PERF.
 
 ### Built-in sound
 
@@ -22,7 +25,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 
 - **FM**: 8 machines in the spirit of the Model:Cycles (kick, snare, metal, perc, tone, chord, clap, hat) with 5 macros.
 - **DRUM**: 16 machines in the spirit of the TR-808 and TR-909.
-- **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables.
+- **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables; makes your own from a sample region (one pitch period or equal windows per frame) or by drawing keyframes on the touch screen.
 - **MACRO**: one oscillator, 8 models (saw variants, morph, fold, VOSIM, vowels, FM, feedback FM) shaped by Timbre and Color.
 - **STRING**: a physical-model resonator, 2 models (plucked string, 6 tuned modes for bars and bells) with Damp, Bright, Struct, Position and a click / noise-burst exciter.
 - **SAMPLE**: a sampler with slices, WAV import from the card. The sample editor works without the touchscreen too.
@@ -49,7 +52,7 @@ Every instrument has a filter (LP / BP / HP, LADDER, MS20, COMB, FORMANT) with a
 
 - Projects, samples and presets on microSD, autosave, templates and 8 demo songs.
 - MIDI file import.
-- Stereo WAV render: a pattern, the whole song or per-track stems. Resample a track into a new sample.
+- WAV export (24 / 16-bit): a looped pattern or the whole song, the master and track stems with effect returns in one render, AUTO tail or a seamless loop; download over Wi-Fi. Resample a track into a new sample.
 - Wi-Fi: a web page for firmware updates (the tracker and the synth board).
 - 17 themes.
 
@@ -89,7 +92,7 @@ Service environments:
 
 | Folder | Contents |
 |---|---|
-| `lib/core` | hardware-independent code shared by both boards: model, sequencer, fx, scales, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, SYNTH, filter, delay, reverb, compressor), WAV parser, sample bank, sample store and streaming (`stream_pool`, `stream_loader`, `stream_sched`, `sample_store`, `sample_heads`, `psram_cache`), project sample list, presets; link: `link_frame`, `link_msg`, `link_fs`, `state_mirror`, `time_sync`, `bank_ops`, `render_link`, `wave_peaks`, `ihex` |
+| `lib/core` | hardware-independent code shared by both boards: model, sequencer, fx, scales, tuning (`.scl` parser, factory tunings, key map), scenes, wavetable maker, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, SYNTH, filter, delay, reverb, compressor), WAV parser, sample bank, sample store and streaming (`stream_pool`, `stream_loader`, `stream_sched`, `sample_store`, `sample_heads`, `psram_cache`), project sample list, presets; link: `link_frame`, `link_msg`, `link_fs`, `state_mirror`, `time_sync`, `bank_ops`, `render_link`, `wave_peaks`, `ihex` |
 | `lib/flasherx` | FlasherX (vendored, with its license): writing the Teensy's flash for OTA |
 | `src/engine` | sequencer task on core 0 (timer, MIDI output) |
 | `src/link` | link client on the ESP: UART task, synth events and state, sample bank commands, synth board firmware update |

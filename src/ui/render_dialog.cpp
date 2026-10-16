@@ -3,33 +3,66 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "audio/audio.h"
 #include "hw/sdcard.h"
 #include "storage/render_io.h"
 
 namespace ui {
 
+namespace {
+constexpr uint8_t kLoopCounts[] = {1, 2, 4, 8, 16};
+constexpr int kLoopN = sizeof kLoopCounts;
+const char* const kTailNames[] = {"AUTO", "OFF", "2 s", "4 s", "8 s", "WRAP"};
+const char* const kStemNames[] = {"OFF", "TRACKS", "TRACKS+FX"};
+
+int step(int v, int d, int lo, int hi) {
+  v += d > 0 ? 1 : -1;
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
+// "EXPORT 2/4" over every pass.
+struct Prog {
+  App* app;
+};
+bool progress(int pass, int passes, uint32_t done, uint32_t total, void* ctx) {
+  char label[24];
+  if (passes > 1) snprintf(label, sizeof label, "EXPORT %d/%d", pass + 1, passes);
+  else snprintf(label, sizeof label, "EXPORT");
+  return App::labeledProgress(label, done, total, static_cast<Prog*>(ctx)->app);
+}
+}  // namespace
+
 RenderDialog::RenderDialog(App& app) : app_(app) {
   params_[kSource] = {"Source",
                       [this](char* o, int n) {
-                        if (source_ >= mt::kPatterns) snprintf(o, n, "SONG");
+                        if (isSong()) snprintf(o, n, "SONG");
                         else snprintf(o, n, "PATTERN %02d", source_ + 1);
                       },
                       [this](int d) {
                         const int last = songOk() ? mt::kPatterns : mt::kPatterns - 1;
                         source_ = source_ + d < 0 ? 0 : (source_ + d > last ? last : source_ + d);
+                        if (isSong() && tail_ == mt::ExportTail::Wrap) tail_ = mt::ExportTail::Auto;
                       }};
-  params_[kTracks] = {"Tracks",
-                      [this](char* o, int n) {
-                        static const char* const kNames[] = {"ALL", "SOLOED", "STEMS"};
-                        snprintf(o, n, "%s", kNames[tracks_]);
-                      },
-                      [this](int d) {
-                        int v = tracks_ + (d > 0 ? 1 : -1);
-                        v = v < kAll ? kAll : (v > kStems ? kStems : v);
-                        if (v == kSoloed && !app_.project().anySolo()) v += d > 0 ? 1 : -1;  // no solo: skipped
-                        tracks_ = v;
-                      }};
-  params_[kRender] = {"RENDER", [](char* o, int n) { snprintf(o, n, "LONG PRESS: STOP"); }, nullptr};
+  params_[kLoops] = {"Loops", [this](char* o, int n) { snprintf(o, n, "%u", isSong() ? 1u : kLoopCounts[loops_]); },
+                     [this](int d) {
+                       if (!isSong()) loops_ = step(loops_, d, 0, kLoopN - 1);
+                     },
+                     [this] { return isSong(); }};
+  params_[kTail] = {"Tail", [this](char* o, int n) { snprintf(o, n, "%s", kTailNames[static_cast<int>(tail_)]); },
+                    [this](int d) {
+                      const int last = isSong() ? static_cast<int>(mt::ExportTail::S8) : static_cast<int>(mt::ExportTail::Wrap);
+                      tail_ = static_cast<mt::ExportTail>(step(static_cast<int>(tail_), d, 0, last));
+                    }};
+  params_[kTracks] = {"Tracks", [this](char* o, int n) { snprintf(o, n, "%s", soloed_ ? "SOLOED" : "ALL"); },
+                      [this](int d) { soloed_ = d > 0 && app_.project().anySolo(); }};
+  params_[kStems] = {"Stems", [this](char* o, int n) { snprintf(o, n, "%s", kStemNames[static_cast<int>(stems_)]); },
+                     [this](int d) {
+                       stems_ = static_cast<mt::ExportStems>(step(static_cast<int>(stems_), d, 0,
+                                                                  static_cast<int>(mt::ExportStems::TracksFx)));
+                     }};
+  params_[kFormat] = {"Format", [this](char* o, int n) { snprintf(o, n, "%s", bits16_ ? "16 BIT" : "24 BIT"); },
+                      [this](int d) { bits16_ = d > 0; }};
+  params_[kExport] = {"EXPORT", [](char* o, int n) { snprintf(o, n, "LONG PRESS: STOP"); }, nullptr};
   params_[kCancel] = {"Cancel", nullptr, nullptr};
   list_.setParams(params_, kRows);
   list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
@@ -39,14 +72,49 @@ bool RenderDialog::songOk() const { return app_.project().songLen > 0; }
 
 void RenderDialog::open() {
   source_ = app_.editPattern();
-  tracks_ = kAll;
+  soloed_ = false;
   list_.setEdit(false);
   list_.setSel(kSource);
   open_ = true;
 }
 
+mt::ExportSpec RenderDialog::spec() const {
+  const mt::Project& p = app_.project();
+  mt::ExportSpec s;
+  if (isSong()) s.mode = mt::RenderSpec::Mode::Song;
+  else s.pattern = static_cast<uint8_t>(source_);
+  s.loops = isSong() ? 1 : kLoopCounts[loops_];
+  s.tail = isSong() && tail_ == mt::ExportTail::Wrap ? mt::ExportTail::Auto : tail_;
+  s.stems = stems_;
+  s.bits = bits16_ ? 16 : 24;
+  if (soloed_ && p.anySolo()) {
+    s.tracksMask = 0;
+    for (int t = 0; t < mt::kTracks; ++t)
+      if (p.tracks[t].solo) s.tracksMask |= static_cast<uint16_t>(1u << t);
+  }
+  return s;
+}
+
+// "~63MB x20 4:12 2 PASSES  3 MIDI SKIPPED"
+void RenderDialog::estimate(char* out, int n) const {
+  const mt::Project& p = app_.project();
+  const mt::ExportSpec s = spec();
+  static mt::ExportOut outs[mt::kExportMaxOut];
+  const int files = mt::exportOutputs(p, s, outs);
+  const uint32_t frames = mt::exportEstFrames(p, s);
+  const uint32_t mb = static_cast<uint32_t>(mt::exportBytes(1, frames, s.bits) / (1024u * 1024u)) + 1;
+  const uint32_t sec = frames / mt::kSynthRate;
+  const int outMax = audio::streamInfo().psram == 1 ? mt::kExportMaxOut : 6;
+  const int passes = mt::exportPasses(files, outMax);
+  const int midi = mt::exportMidiTracks(p, s);
+  int k = snprintf(out, n, "~%luMB x%d  %lu:%02lu", static_cast<unsigned long>(mb), files,
+                   static_cast<unsigned long>(sec / 60), static_cast<unsigned long>(sec % 60));
+  if (passes > 1 && k < n) k += snprintf(out + k, n - k, "  %d PASSES", passes);
+  if (midi && k < n) snprintf(out + k, n - k, "  %d MIDI SKIPPED", midi);
+}
+
 bool RenderDialog::action(int row) {
-  if (row == kRender) confirm();
+  if (row == kExport) confirm();
   else if (row == kCancel) close();
   else return false;
   app_.invalidate();
@@ -63,25 +131,18 @@ void RenderDialog::confirm() {
     app_.toast(storage::resultText(storage::Result::NoSd));
     return;
   }
-  if (source_ >= mt::kPatterns && !songOk()) source_ = app_.editPattern();
-  mt::RenderSpec spec;
-  if (source_ >= mt::kPatterns) spec.mode = mt::RenderSpec::Mode::Song;
-  else spec.pattern = static_cast<uint8_t>(source_);
-  char path[96];
-  int first = -1;  // STEMS: the first stem's file stands for all of them
-  if (tracks_ == kStems) {
-    const uint16_t m = stemTracks(spec);
-    if (!m) {
-      app_.toast("NO INT TRACK WITH NOTES");
-      return;
-    }
-    while (!(m & (1u << ++first))) {}
+  if (isSong() && !songOk()) source_ = app_.editPattern();
+  const mt::ExportSpec s = spec();
+  if (s.stems != mt::ExportStems::Off && !mt::exportStemTracks(app_.project(), s)) {
+    app_.toast("NO INT TRACK WITH NOTES");
+    return;
   }
-  storage::renderPath(app_.project(), spec, path, sizeof(path), first);
-  if (hw::sdFs().exists(path)) {
-    char title[48];
-    const char* file = strrchr(path, '/');
-    snprintf(title, sizeof(title), "OVERWRITE %s?", file ? file + 1 : path);
+  char dir[128];
+  mt::exportDir(app_.project(), s, dir, sizeof dir);
+  if (hw::sdFs().exists(dir)) {
+    char src[12], title[40];
+    mt::exportSrcTag(s, src, sizeof src);
+    snprintf(title, sizeof(title), "OVERWRITE %s?", src);
     const MenuItem items[] = {{"Cancel", kMenuCancel}, {"Overwrite", kMenuOverwrite}};
     app_.menu().open(title, items, 2, [this](int id) {
       if (id == kMenuOverwrite) run();
@@ -93,23 +154,10 @@ void RenderDialog::confirm() {
 
 void RenderDialog::run() {
   mt::Project& p = app_.project();
-  mt::RenderSpec spec;
-  if (source_ >= mt::kPatterns) spec.mode = mt::RenderSpec::Mode::Song;
-  else spec.pattern = static_cast<uint8_t>(source_);
-  if (tracks_ == kStems) {
-    runStems(spec);
-    return;
-  }
-  if (tracks_ == kSoloed && p.anySolo()) {
-    spec.tracksMask = 0;
-    for (int t = 0; t < mt::kTracks; ++t)
-      if (p.tracks[t].solo) spec.tracksMask |= static_cast<uint16_t>(1u << t);
-  }
-  spec.tailBlocks = kTailBlocks;
-  char path[96];
-  storage::renderPath(p, spec, path, sizeof(path));
-  storage::RenderStats st;
-  const storage::Result r = storage::renderWav(p, spec, path, st, App::renderProgress, &app_);
+  const mt::ExportSpec s = spec();
+  storage::ExportStats st;
+  Prog prog{&app_};
+  const storage::Result r = storage::exportSet(p, s, st, progress, &prog);
   app_.endProgress();
   if (r != storage::Result::Ok) {
     app_.toast(storage::resultText(r));
@@ -117,74 +165,9 @@ void RenderDialog::run() {
   }
   char msg[48];
   const float db = st.peak > 0 ? 20.f * log10f(st.peak / 32767.f) : -96.f;
-  snprintf(msg, sizeof(msg), "%lu.%lus  PEAK %.1fdB%s", static_cast<unsigned long>(st.frames / mt::kSynthRate),
-           static_cast<unsigned long>(st.frames % mt::kSynthRate / (mt::kSynthRate / 10)), db, st.clips ? "  CLIP" : "");
-  app_.toast(msg);
-  close();
-}
-
-uint16_t RenderDialog::stemTracks(const mt::RenderSpec& spec) const {
-  const mt::Project& p = app_.project();
-  bool used[mt::kPatterns] = {};
-  if (spec.mode == mt::RenderSpec::Mode::Song) {
-    for (int i = 0; i < p.songLen && i < mt::kSongMax; ++i) used[p.song[i] < mt::kPatterns ? p.song[i] : 0] = true;
-  } else {
-    used[spec.pattern] = true;
-  }
-  uint16_t m = 0;
-  for (int t = 0; t < mt::kTracks; ++t) {
-    if (!p.trackInternal(t) || !p.trackAudible(t)) continue;
-    for (int pi = 0; pi < mt::kPatterns && !(m & (1u << t)); ++pi) {
-      if (!used[pi]) continue;
-      const mt::Pattern& pt = p.patterns[pi];
-      for (int s = 0; s < pt.length; ++s)
-        if (pt.steps[t][s].hasNote()) {
-          m |= static_cast<uint16_t>(1u << t);
-          break;
-        }
-    }
-  }
-  return m;
-}
-
-namespace {
-struct StemProgress {
-  App* app;
-  int index, count;
-};
-// One bar over all the stems.
-bool stemProgress(uint32_t done, uint32_t total, void* ctx) {
-  const StemProgress& s = *static_cast<StemProgress*>(ctx);
-  return App::renderProgress(static_cast<uint32_t>(s.index) * total + done, static_cast<uint32_t>(s.count) * total,
-                             s.app);
-}
-}  // namespace
-
-void RenderDialog::runStems(const mt::RenderSpec& base) {
-  mt::Project& p = app_.project();
-  const uint16_t m = stemTracks(base);
-  int count = 0;
-  for (int t = 0; t < mt::kTracks; ++t) count += (m >> t) & 1;
-  StemProgress prog{&app_, 0, count};
-  storage::Result r = storage::Result::Ok;
-  for (int t = 0; t < mt::kTracks && r == storage::Result::Ok; ++t) {
-    if (!(m & (1u << t))) continue;
-    mt::RenderSpec spec = base;
-    spec.tracksMask = static_cast<uint16_t>(1u << t);
-    spec.tailBlocks = kTailBlocks;
-    char path[96];
-    storage::renderPath(p, spec, path, sizeof(path), t);
-    storage::RenderStats st;
-    r = storage::renderWav(p, spec, path, st, stemProgress, &prog);
-    ++prog.index;
-  }
-  app_.endProgress();
-  if (r != storage::Result::Ok) {
-    app_.toast(storage::resultText(r));
-    return;
-  }
-  char msg[40];
-  snprintf(msg, sizeof(msg), "%d STEMS RENDERED", count);
+  const uint32_t sec = st.frames / mt::kSynthRate;
+  snprintf(msg, sizeof(msg), "%lu:%02lu PEAK %.1fdB %d FILES%s", static_cast<unsigned long>(sec / 60),
+           static_cast<unsigned long>(sec % 60), db, st.files, st.clips ? " CLIP" : "");
   app_.toast(msg);
   close();
 }
@@ -204,7 +187,7 @@ void RenderDialog::onTouch(const TouchEvent& ev) {
   if (!open_) return;
   if (ev.type == TouchType::Tap) {
     const int r = list_.rowAt(ev.y);
-    if (r == kRender || r == kCancel) {
+    if (r == kExport || r == kCancel) {
       list_.setSel(r);
       action(r);
       return;
@@ -216,8 +199,14 @@ void RenderDialog::onTouch(const TouchEvent& ev) {
 void RenderDialog::draw(LGFX_Sprite& s, int y0) {
   if (!open_) return;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
+  char dir[128], line[64];
+  mt::exportDir(app_.project(), spec(), dir, sizeof dir);
+  snprintf(line, sizeof line, "EXPORT  %s", dir);
   s.setTextColor(kText);
-  s.drawString("RENDER WAV  /samples/render", ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
+  s.drawString(line, ParamList::kLabelX, y0 + 2);
+  estimate(line, sizeof line);
+  s.setTextColor(kDim);
+  s.drawString(line, ParamList::kLabelX, y0 + 2 + kCharH + 2);
   list_.draw(s, y0 + kHeaderH);
 }
 

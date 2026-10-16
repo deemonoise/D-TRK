@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "model.h"
+#include "shift_gen.h"
 
 namespace engine {
 
@@ -10,9 +11,11 @@ namespace engine {
 // SetSong: arg = on << 15 | slot: SONG from that slot / LOOP (Sequencer::setSong).
 // TrackOut: arg = track, after TrackCfg::out changed (post ReleaseTies first): ends its sounding notes.
 // Fill: arg 1 = fill held, 0 = released.
+// GenEdit: after a Project::gen edit while playing: the unheard steps are planned again with it.
+// GenReseed: arg = track, after its GenCfg::seed changed: replanned, its register reset from the next step.
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
-  Fill, SetSong
+  Fill, SetSong, GenEdit, GenReseed
 };
 
 struct Command {
@@ -62,5 +65,10 @@ void unlockProject();
 // While the song plays: the mutes from before it (bit = track), see Sequencer::savedMutes.
 // Call holding lockProject().
 bool savedMutes(uint16_t& bits);
+// Track generators, holding lockProject(): the register after the heard step (the reset one while
+// stopped), and the register the next planned step starts from with that step of `track` in pattern pat
+// (Capture; step 0 while stopped or another pattern plays; stopped: the reset register).
+mt::GenState heardGen(int track);
+mt::GenState nextGen(int track, int pat, int& fromStep);
 
 }  // namespace engine

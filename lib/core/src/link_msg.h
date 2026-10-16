@@ -5,7 +5,8 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 7;
+constexpr uint16_t kProtocol = 11;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
+                                    // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields)
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -21,6 +22,8 @@ enum class Msg : uint8_t {
   WtFrame,
   Perf,
   Debug,
+  WtRender,
+  RenderOut,
 };
 
 // Fs* replies: err first, 0 = ok.
@@ -294,6 +297,19 @@ struct OnsetsRep {
   uint32_t pos[kMax] = {};
   uint16_t strength[kMax] = {};
 };
+// WtRender: a wavetable made (mt::WtMaker) from frames [from, to) of project sample index, written as
+// a 64 x 256 WAV to path (under /wavetables/, through path.tmp). Progress meanwhile (done / total =
+// frames of the table). result: mt::BankResult (sample access, card, memory); err: mt::WtMakeErr of the
+// computation; pitched: CYCLE frames whose pitch was found.
+struct WtRenderReq {
+  uint8_t index = 0;
+  uint32_t from = 0, to = 0;
+  uint8_t mode = 0, norm = 0, seam = 1;  // mt::WtMode, mt::WtNorm, 0 / 1
+  char path[64] = {};
+};
+struct WtRenderRep {
+  uint8_t result = 0, err = 0, pitched = 0;
+};
 // PreviewFile: a WAV on the card (PCM 8/16/24 bit, channels mixed to mono, rate <= kPreviewMaxRate)
 // streamed to the output from its start, ending the previous one; the reply has its frames and
 // rate. PreviewStop (empty) ends it.
@@ -319,10 +335,22 @@ enum class RenderResult : uint8_t {
   BadOrder,  // RenderBlocks not starting at the block being filled
   Bank,      // the bank write failed: RenderRep::bank has the mt::BankResult
 };
+// Target kExport (mt::ExportWriter): path is the folder; RenderOut adds the pass's files (stereo, bits
+// 16 / 24) before the first RenderBlocks; outs: the files wanted, the reply's outMax: how many this pass
+// takes (the PERF ring in PSRAM: up to 20, RAM2: up to 6); skipFrames: not written (WRAP); estFrames:
+// the expected length (preallocation).
 struct RenderStartReq {
-  static constexpr uint8_t kFile = 0, kBank = 1;
+  static constexpr uint8_t kFile = 0, kBank = 1, kExport = 2;
   uint8_t target = kFile;
   char path[128] = {};
+  uint8_t bits = 24, outs = 1;
+  uint32_t skipFrames = 0, estFrames = 0;
+};
+// RenderOut: file idx (0.. in order, < outMax) of the export pass, tap (mt::kExportTapMaster, 1 + track,
+// 17..19 MOD / DLY / RVB), its name in the folder. Reply: RenderRep.
+struct RenderOut {
+  uint8_t idx = 0, tap = 0;
+  char name[64] = {};
 };
 struct RenderEv {
   uint8_t off, track, len, b[3];
@@ -338,17 +366,26 @@ struct RenderBlocks {
 };
 // normalize: scaled so the peak lands at -1 dBFS (the bank: the mono mix's peak); trim: cut after
 // the last block above -60 dBFS.
+// Export: frames = the files' length (0 = all written).
 struct RenderEndReq {
   uint8_t abort = 0, normalize = 0, trim = 0;
+  uint32_t frames = 0;
 };
 // blocks: rendered so far; at the end frames / crc of the result (the bank: its data key, file: the
 // mono mix's crc in its "mtcr"), peak (before normalizing) and clips of the render.
+// Export: quiet = rendered blocks since the last one above kSilence on the master; outMax (RenderStart);
+// at RenderEnd the pass's outN files' peaks (int16 units) and clipped samples.
 struct RenderRep {
+  static constexpr int kMaxOut = 20;
   uint8_t result = 0;
   uint8_t bank = 0;
   uint32_t blocks = 0, frames = 0;
   uint16_t peak = 0;
   uint32_t clips = 0, crc = 0;
+  uint32_t quiet = 0;
+  uint8_t outMax = 0, outN = 0;
+  uint16_t peaks[kMaxOut] = {};
+  uint32_t clipsN[kMaxOut] = {};
 };
 
 // FwFromFile: a .hex on the card (Intel HEX of this board's firmware) into the OTA area of the flash,
@@ -413,12 +450,15 @@ void encode(const WavePeaksReq& m, Writer& w);
 void encode(const WavePeaksRep& m, Writer& w);
 void encode(const OnsetsReq& m, Writer& w);
 void encode(const OnsetsRep& m, Writer& w);
+void encode(const WtRenderReq& m, Writer& w);
+void encode(const WtRenderRep& m, Writer& w);
 void encode(const PreviewFileReq& m, Writer& w);
 void encode(const PreviewFileRep& m, Writer& w);
 void encode(const RenderStartReq& m, Writer& w);
 void encode(const RenderBlocks& m, Writer& w);
 void encode(const RenderEndReq& m, Writer& w);
 void encode(const RenderRep& m, Writer& w);
+void encode(const RenderOut& m, Writer& w);
 void encode(const FwFromFileReq& m, Writer& w);
 void encode(const FwRep& m, Writer& w);
 
@@ -452,6 +492,8 @@ bool decode(Reader& r, WavePeaksReq& m);
 bool decode(Reader& r, WavePeaksRep& m);
 bool decode(Reader& r, OnsetsReq& m);
 bool decode(Reader& r, OnsetsRep& m);
+bool decode(Reader& r, WtRenderReq& m);
+bool decode(Reader& r, WtRenderRep& m);
 bool decode(Reader& r, PreviewFileReq& m);
 bool decode(Reader& r, PreviewFileRep& m);
 bool decode(Reader& r, ProfileRep& m);
@@ -459,6 +501,7 @@ bool decode(Reader& r, RenderStartReq& m);
 bool decode(Reader& r, RenderBlocks& m);
 bool decode(Reader& r, RenderEndReq& m);
 bool decode(Reader& r, RenderRep& m);
+bool decode(Reader& r, RenderOut& m);
 bool decode(Reader& r, FwFromFileReq& m);
 bool decode(Reader& r, FwRep& m);
 

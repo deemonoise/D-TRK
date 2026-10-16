@@ -59,6 +59,8 @@ void handle(const Command& c) {
     case Cmd::SongEdit: seq->songEdited(now, midi, c.arg >> 8, static_cast<mt::SongOp>(c.arg & 0xFF)); break;
     case Cmd::SetSong: seq->setSong(now, midi, c.arg >> 15, c.arg & 0xFF); break;
     case Cmd::Fill: seq->setFill(c.arg != 0); break;
+    case Cmd::GenEdit: seq->genEdited(now, midi); break;
+    case Cmd::GenReseed: seq->genReseed(now, midi, c.arg); break;
   }
 }
 
@@ -167,5 +169,16 @@ uint8_t stepPhase(const Status& s) { return mt::stepPhase256(nowUs(), s.stepT, s
 void lockProject() { xSemaphoreTake(projMutex, portMAX_DELAY); }
 void unlockProject() { xSemaphoreGive(projMutex); }
 bool savedMutes(uint16_t& bits) { return seq && seq->savedMutes(bits); }
+
+mt::GenState heardGen(int track) { return seq ? seq->heardGen(track) : mt::GenState{}; }
+
+mt::GenState nextGen(int track, int pat, int& fromStep) {
+  if (!seq) {
+    fromStep = 0;
+    return mt::GenState{};
+  }
+  fromStep = seq->genFromStep(track, pat);
+  return seq->genNext(track);  // the track's register goes on over patterns
+}
 
 }  // namespace engine

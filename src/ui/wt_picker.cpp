@@ -108,6 +108,7 @@ void WtPicker::open(int instr, int osc) {
 
 void WtPicker::close() {
   if (!open_) return;
+  draw_.close();
   heap_caps_free(names_);
   names_ = nullptr;
   count_ = 0;
@@ -135,6 +136,7 @@ void WtPicker::listTables(const char* select) {
   for (int i = 0; i < mt::kWtBuiltins; ++i) add(Kind::Table, mt::wtBuiltinName(i));
   const mt::Project& p = app_.project();
   for (int i = 0; i < p.wavetableCount; ++i) add(Kind::Table, p.wavetables[i].name);
+  add(Kind::Draw, "DRAW...");
   add(Kind::Import, "IMPORT...");
   top_ = 0;
   dragAcc_ = 0;
@@ -263,6 +265,15 @@ void WtPicker::choose(int row) {
       return;
     }
     case Kind::File: importFile(i); return;
+    case Kind::Draw:
+      draw_.open(inst().synWt[osc_], [this](const char* nm) {
+        setTable(nm);
+        char msg[32];
+        snprintf(msg, sizeof(msg), "WT %s", nm);
+        app_.toast(msg);
+        close();
+      });
+      return;
   }
 }
 
@@ -273,6 +284,10 @@ void WtPicker::moveSel(int d) {
 
 void WtPicker::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
+  if (draw_.isOpen()) {
+    draw_.onInput(ev);
+    return;
+  }
   switch (ev.type) {
     case InputType::EncTurn: moveSel(ev.delta); break;
     case InputType::EncClick: choose(sel_); break;
@@ -282,6 +297,10 @@ void WtPicker::onInput(const hw::InputEvent& ev) {
 }
 
 void WtPicker::onTouch(const TouchEvent& ev) {
+  if (draw_.isOpen()) {
+    draw_.onTouch(ev);
+    return;
+  }
   const int top = y0_ + kHeaderH;
   if (ev.type == TouchType::Drag) {
     dragAcc_ += ev.dy;
@@ -306,6 +325,10 @@ void WtPicker::onTouch(const TouchEvent& ev) {
 
 void WtPicker::draw(LGFX_Sprite& s, int y0) {
   y0_ = y0;
+  if (draw_.isOpen()) {
+    draw_.draw(s, y0);
+    return;
+  }
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.setTextColor(kText);
@@ -341,7 +364,7 @@ void WtPicker::draw(LGFX_Sprite& s, int y0) {
     const int i = row - 1;
     const Kind k = kinds_[i];
     uint16_t c = kText;
-    if (k == Kind::Import) c = kCyan;
+    if (k == Kind::Import || k == Kind::Draw) c = kCyan;
     else if (k == Kind::Table && !audio::wtCached(names_[i])) c = kRed;  // not in the bank
     s.setTextColor(sel ? kCursor : c);
     if (k == Kind::Table && strcasecmp(inst().synWt[osc_], names_[i]) == 0) s.drawString(">", 4, tyy);  // set now

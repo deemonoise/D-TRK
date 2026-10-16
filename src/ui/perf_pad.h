@@ -27,6 +27,9 @@ class PerfPad {
   // Encoder: the last pressed effect's depth (Shift x10 on coarse ranges), with a toast. False
   // (not consumed) when nothing is held.
   bool turn(int delta, bool shift);
+  // A + turn: the scene crossfader (Project::xfade, Shift x8) with a toast, while PERF is on and no
+  // effect is held. False (not consumed) otherwise.
+  bool xfadeTurn(int delta, bool shift);
   void allOff();  // every held effect ends; release all is sent even with nothing held
   // Every UI tick: a stop or an audio park releases the held effects; a lost message is resent.
   void poll(bool playing);

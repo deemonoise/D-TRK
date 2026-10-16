@@ -386,6 +386,34 @@ int onsets(int index, mt::Onset* out, int max, BankResult* err) {
   return r == BankResult::Ok ? n : -1;
 }
 
+BankResult wtRender(int index, uint32_t from, uint32_t to, const mt::WtMakeParams& p, const char* path,
+                    mt::WtMakeErr& err, int& pitched, BankProgressFn cb, void* ctx) {
+  err = mt::WtMakeErr::Ok;
+  pitched = 0;
+  if (!engineIdle()) return BankResult::Busy;
+  if (index < 0 || index >= mt::kProjSamples) return BankResult::OpenFail;
+  if (!waitSynced()) return BankResult::Link;
+  WtRenderReq q;
+  if (!path || strlen(path) >= sizeof q.path) return BankResult::OpenFail;
+  q.index = static_cast<uint8_t>(index);
+  q.from = from;
+  q.to = to;
+  q.mode = static_cast<uint8_t>(p.mode);
+  q.norm = static_cast<uint8_t>(p.norm);
+  q.seam = p.seam ? 1 : 0;
+  strcpy(q.path, path);
+  uint8_t reply[kMaxPayload];
+  int len = 0;
+  BankResult r = longCall(Msg::WtRender, q, reply, len, cb, ctx);
+  if (r != BankResult::Ok) return r;
+  WtRenderRep rep;
+  Reader rd(reply, len);
+  if (!decode(rd, rep)) return result(reply[0]);
+  if (rep.err < static_cast<uint8_t>(mt::WtMakeErr::Count)) err = static_cast<mt::WtMakeErr>(rep.err);
+  pitched = rep.pitched;
+  return result(rep.result);
+}
+
 BankResult previewFile(const char* path, uint32_t* frames, uint32_t* rate) {
   PreviewFileReq q;
   if (!path || strlen(path) >= sizeof q.path) return BankResult::OpenFail;

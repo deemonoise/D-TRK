@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <unity.h>
+#include "wt_make.h"
 #include <string>
 #include <vector>
 #include "bank_ops.h"
@@ -294,6 +295,26 @@ static void sineFrames(std::vector<int16_t>& v, int frames, int len) {
   for (int f = 0; f < frames; ++f)
     for (int i = 0; i < len; ++i)
       v[f * len + i] = static_cast<int16_t>(20000 * sinf(6.2831853f * (f % 8 + 1) * i / len));
+}
+
+void test_import_made_wavetable_wav() {
+  static int16_t made[kWtSrcSamples], ref[kWtTableSamples], src[kWtSrcSamples];
+  for (int i = 0; i < kWtSrcSamples; ++i)
+    made[i] = static_cast<int16_t>(25000 * sinf(6.2831853f * (1 + i / kWtFrameLen % 5) * (i % kWtFrameLen) / kWtFrameLen));
+  struct FileSink : ByteSink {
+    FILE* f;
+    bool write(const void* d, size_t n) override { return fwrite(d, 1, n, f) == n; }
+  } sink;
+  sink.f = fopen(disk->full("/made.wav").c_str(), "wb");
+  TEST_ASSERT_NOT_NULL(sink.f);
+  TEST_ASSERT_TRUE(wtWavWrite(made, sink));
+  fclose(sink.f);
+  TEST_ASSERT_EQUAL(WtErr::Ok, wtImport(made, kWtSrcSamples, kWtFrameLen, ref));
+  wtLevel0(ref, src);
+  BankJob j(*bank, *disk);
+  j.startImport("/made.wav", true, *proj);
+  TEST_ASSERT_EQUAL(BankResult::Ok, run(j));
+  TEST_ASSERT_EQUAL_UINT32(sampleCrc(src, kWtSrcSamples), j.imported().crc);
 }
 
 void test_import_wavetable_matches_buffer_import() {
@@ -612,6 +633,7 @@ int main(int, char**) {
   RUN_TEST(test_save_then_sync);
   RUN_TEST(test_save_skips_current_files);
   RUN_TEST(test_import_wavetable_matches_buffer_import);
+  RUN_TEST(test_import_made_wavetable_wav);
   RUN_TEST(test_wavetable_bad_length);
   RUN_TEST(test_sample_source);
   RUN_TEST(test_write_frames);
