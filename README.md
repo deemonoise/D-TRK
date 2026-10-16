@@ -40,7 +40,7 @@ Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo s
 
 ### Live performance and song
 
-- **Song** (SONG tab, Polyend-style): up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
+- **Song**: up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
 - **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable.
 - **REC**: record notes from the track buttons while playing.
 - Shift + Play: the song from the SONG cursor on any tab; held while playing, fill.
