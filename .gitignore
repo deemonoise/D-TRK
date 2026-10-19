@@ -16,3 +16,6 @@ desktop.ini
 # Python
 __pycache__/
 *.pyc
+
+# Working notes
+docs/plans/
