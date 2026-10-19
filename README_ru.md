@@ -1,6 +1,8 @@
 # D-TRK
 
-<a href="docs/img/tracker.jpg"><img src="docs/img/tracker.jpg" alt="D-TRK" width="320"></a>
+<p align="center">
+  <a href="docs/img/tracker.jpg"><img src="docs/img/tracker.jpg" alt="D-TRK" width="320"></a>
+</p>
 
 Карманный 16-дорожечный трекер со встроенным синтезатором. Собран на **WT32-SC01 Plus** (ESP32-S3, тач-экран 480×320): энкодер, кнопки Play, Shift, A и B и 8 механических кнопок дорожек. С кнопками A / B трекером можно пользоваться почти без тачскрина: навигация, редактирование и переключение страниц делаются энкодером и кнопками. Звук стерео, через ЦАП PCM5102A и усилитель в наушники. MIDI OUT (TRS) отдаёт ноты, clock и Start / Stop. Прошивка открытая (GPL v3), корпус для 3D-печати тоже (CERN-OHL-S).
 
