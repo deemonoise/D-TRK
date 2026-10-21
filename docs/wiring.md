@@ -1,6 +1,6 @@
 # Tracker wiring diagram
 
-Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery monitor, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, and the synth board, a Teensy 4.1. Sound comes from a Teensy Audio Shield Rev D (SGTL5000): you can add it later, everything else builds and tests without it. The display and touch are already routed on the board. The microSD card sits in the Teensy (FAT32 or exFAT); the WT32's own card slot is not used.
+Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery monitor, MIDI OUT, the encoder, the PCF8575 expander with the encoder button, Play, Shift, A, B and eight track buttons, and the synth board, a Teensy 4.1. Sound comes from a Teensy Audio Shield Rev D (SGTL5000), soldered to the Teensy on wires. The display and touch are already routed on the board. The microSD card sits in the Teensy (FAT32 or exFAT); the WT32's own card slot is not used.
 
 Русская версия: [wiring_ru.md](wiring_ru.md)
 
@@ -16,9 +16,9 @@ The status bar shows the synth board's state in the CPU field: `NO SYNTH` (no an
 
 ## Diagram
 
-![Tracker wiring: LiPo through the INA226, IP5306 and the switch to the 5 V bus; WT32-SC01 Plus with MIDI OUT, the encoder and the link to the Teensy 4.1; the PCF8575 with the buttons on the Debug connector; the Audio Shield dashed, for later.](img/wiring-1.svg)
+![Tracker wiring: LiPo through the INA226, IP5306 and the switch to the 5 V bus; WT32-SC01 Plus with MIDI OUT, the encoder and the link to the Teensy 4.1; the PCF8575 with the buttons on the Debug connector; the Audio Shield on wires to the Teensy.](img/wiring-1.svg)
 
-*Solid lines: solder now. Dashed: optional or later — the IO21 wire (spare), the PSRAM on the Teensy and the whole Audio Shield.*
+*Solid lines: solder now. Dashed: optional — the IO21 wire (spare) and the PSRAM on the Teensy.*
 
 ## Build order
 
@@ -31,7 +31,7 @@ Each step can be checked before the next one, which makes mistakes easy to find.
 5.  **INA226** in the battery's positive wire, SDA / SCL in parallel with the PCF8575. Check: the status bar shows the charge percentage.
 6.  **Teensy 4.1.** Flash it over USB before assembly (see "Synth board"), cut the VUSB–VIN trace, solder VIN, GND and the link (IO13 → 0, IO14 → 1). Insert the card. Check: `NO SYNTH` is gone, FILE shows the card's files, samples import. No sound yet — that is expected.
 7.  **PSRAM** (optional): an 8 MB chip on the first pad under the Teensy (CS0, the one PJRC's startup code probes). Without it samples play straight from the card, but the PERF buffer is silent.
-8.  **Later: Audio Shield Rev D** — eight wires to the Teensy (see "Audio Shield"). After that you get sound in the headphones.
+8.  **Audio Shield Rev D** — eight wires to the Teensy (see "Audio Shield"). After that you get sound in the headphones.
 
 ## Schematic
 
@@ -77,12 +77,12 @@ Teensy 4.1 (synth board; VUSB–VIN trace on the back cut)
   0 ── IO13,  1 ── IO14,  2 ── IO21        microSD slot ── card (FAT32 / exFAT)
   underside: PSRAM 8 MB on the 1st pad, CS0 (optional)
 
-Audio Shield Rev D (later; on wires next to the Teensy, not stacked)
+Audio Shield Rev D (on wires next to the Teensy, not stacked)
   Teensy 7  (OUT1A)  ── shield 7  (TX, DIN)      Teensy 18 (SDA) ── shield 18
   Teensy 20 (LRCLK1) ── shield 20 (LRCLK)        Teensy 19 (SCL) ── shield 19
   Teensy 21 (BCLK1)  ── shield 21 (BCLK)         Teensy 3V3 ──── shield 3V3
   Teensy 23 (MCLK1)  ── shield 23 (MCLK)         Teensy GND ──── shield GND
-  Teensy 8  (IN1)    ── shield 8  (RX, DOUT)   only for recording from MIC / LINE IN
+  Teensy 8  (IN1)    ── shield 8  (RX, DOUT)   input: recording from MIC / LINE IN
   the shield's microSD slot, the pot pad — not needed
   the shield's headphone jack goes to the front panel
   shield MIC / GND ── 9767 capsule (shielded wire, 33–100 pF at the capsule)
@@ -134,11 +134,11 @@ Audio Shield Rev D (later; on wires next to the Teensy, not stacked)
 | `WT32 IO21`                       | `Teensy 2`                          | spare, not used by the firmware yet; may be left out        |
 | `microSD card`                    | `Teensy slot`                       | FAT32 or exFAT, MBR partitioning (GPT is not read)          |
 | `PSRAM 8 MB`                      | `Teensy underside, 1st pad (CS0)`   | optional: sample cache and the PERF buffer                  |
-| **Audio Shield Rev D (later)** |                                     |                                                             |
+| **Audio Shield Rev D**         |                                     |                                                             |
 | `Teensy 7 / 20 / 21 / 23`         | `shield 7 / 20 / 21 / 23`           | I2S: data / LRCLK / BCLK / MCLK; MCLK is required           |
 | `Teensy 18 / 19`                  | `shield 18 / 19`                    | I2C control of the SGTL5000 (address 0x0A)                  |
 | `Teensy 3V3 / GND`                | `shield 3V3 / GND`                  | from the Teensy's regulator, not from the 5V bus            |
-| `Teensy 8`                        | `shield 8`                          | I2S input (codec ADC): only needed for recording            |
+| `Teensy 8`                        | `shield 8`                          | I2S input (codec ADC): recording from MIC / LINE IN         |
 | `9767 capsule (+ / −)`            | `shield MIC / GND`                  | shielded wire, shield to GND at the Audio Shield end        |
 | `LINE IN tip / ring / sleeve`     | `shield LINE IN L / R / GND`        | PJ-392 jack in the front panel                              |
 | `—`                               | `the shield's microSD slot`         | leave unconnected: the shield's card is not used            |
@@ -200,7 +200,7 @@ The INA226 sits in the battery's positive wire, before the IP5306, and reports o
 - Non-inverted UART, 31250 baud, 3.3 V. Optionally, a 74HC14 buffer (two inverters in series) can be placed between GPIO10 and the 10 Ω resistor.
 - There is no MIDI input: the device is always the master and sends clock, Start/Stop/Continue.
 
-## Audio Shield Rev D (later)
+## Audio Shield Rev D
 
 The shield sits next to the Teensy on wires (in its own slots in the case), with its headphone jack poking out of the front panel next to the card slot. The firmware picks up the shield and the headphone volume by itself: at boot it looks for the SGTL5000 on I2C (address 0x0A), and FILE → SYSTEM → Phones sets the volume.
 
@@ -217,7 +217,7 @@ Teensy GND ── shield GND
 
 - The shield's pin labels are Teensy pin numbers: solder number to number.
 - Keep the wires short (under 10 cm), MCLK and BCLK away from the IO13 / IO14 link. Run a separate ground wire next to the I2S lines.
-- Pin 8 (I2S input) is only needed for recording from MIC / LINE IN. Leave the shield's microSD slot (pins 10–13) and the pot pad unconnected: the card lives only in the Teensy, don't give pins 10–13 to the shield.
+- Pin 8 (I2S input) carries MIC / LINE IN for recording; solder it with the rest. Leave the shield's microSD slot (pins 10–13) and the pot pad unconnected: the card lives only in the Teensy, don't give pins 10–13 to the shield.
 - The shield's headphone output uses a virtual ground (HP_VGND): do **not** tie the jack's Sleeve to GND or to the case; the shield's own jack is already wired that way.
 - The shield's line out (LINE OUT L / R) can go to a second jack — same signal, not affected by Phones.
 - First power-up with Phones and MAIN (MIX tab) at minimum and without the headphones on.

@@ -1847,7 +1847,7 @@ Sound goes from the synth board to a Teensy Audio Shield Rev D (SGTL5000) and fr
 - The shield's headphone output uses a virtual ground: don't tie the jack's Sleeve to GND or the case. The shield's line out (LINE OUT) can go to a mixer or audio interface.
 - Start at low volume.
 
-Full wiring: [wiring.md](wiring.md#audio-shield-rev-d-later).
+Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting. Track Volume comes after its [insert](#insert) (Drive, Bit crush, Downsample).
 - **Pan:** the track's mono sum is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level, hard left is +3 dB on the left and silence on the right. The delay, reverb and MOD bus sends are taken before pan (mono); the delay returns to the centre (PING-PONG — alternating sides), the reverb in pseudo-stereo, the MOD bus in stereo. The compressor is stereo-linked; the PERF effects, MAIN and the soft clip work on both channels.
