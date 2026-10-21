@@ -18,9 +18,8 @@ constexpr int kLcdBacklight = 45;
 constexpr int kXSda = 43;
 constexpr int kXScl = 44;
 // Expander pin per track (0-7 = P00-P07, 8-15 = P10-P17, 0xFF = not wired).
-// Default: buttons on P00-P07; a button may move to a free pin.
-// This unit: P00 and P10 read low, button 1 lives on P12.
-constexpr uint8_t kTrackBtnBit[8] = {10, 1, 2, 3, 4, 5, 6, 7};
+// Buttons on P00-P07; a button may move to a free pin.
+constexpr uint8_t kTrackBtnBit[8] = {0, 1, 2, 3, 4, 5, 6, 7};
 // Encoder button, Play and Shift on the expander (to GND), freeing GPIO 13/14/21 for the DAC.
 constexpr uint8_t kEncSwBit = 11;  // P13
 constexpr uint8_t kPlayBit = 12;   // P14

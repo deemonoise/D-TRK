@@ -1,0 +1,306 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1270 1090" width="1270" height="1090" role="img" aria-label="Схема: LiPo через INA226 и IP5306, тумблер на 5V платы; MIDI OUT на IO10; энкодер на IO11/IO12; ЦАП PCM5102A на IO13/IO14/IO21 и усилитель MAX97220; PCF8575 на IO43/IO44 с кнопкой энкодера, Play, Shift, A, B и восемью кнопками дорожек.">
+<style>
+.bg{fill:#ffffff}
+.blk{fill:#f6f8fa;stroke:#1f2328;stroke-width:1.5}
+.t{font:600 15px Arial,sans-serif;fill:#1f2328}
+.s{font:400 12px Arial,sans-serif;fill:#59636e}
+.p{font:500 12px Menlo,Consolas,monospace;fill:#1f2328}
+.l{font:500 12px Arial,sans-serif;fill:#1f2328}
+.w{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pwr{stroke:#cf222e}.gnd{stroke:#1f2328}.sig{stroke:#0969da}.i2c{stroke:#8250df}
+.aud{stroke:#1a7f37}.btn{stroke:#9a6700}
+.dot{fill:#1f2328}
+.res{fill:#ffffff;stroke-width:1.8}
+.net{font:600 12px Menlo,Consolas,monospace;fill:#cf222e}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0d1117}
+.blk{fill:#161b22;stroke:#e6edf3}
+.t,.p,.l{fill:#e6edf3}.s{fill:#9198a1}
+.pwr{stroke:#ff7b72}.gnd{stroke:#e6edf3}.sig{stroke:#4493f8}.i2c{stroke:#ab7df8}
+.aud{stroke:#3fb950}.btn{stroke:#d29922}
+.dot{fill:#e6edf3}.res{fill:#0d1117}.net{fill:#ff7b72}
+}
+</style>
+<rect width="1270" height="1090" class="bg"/>
+<rect x="20" y="45" width="110" height="80" rx="6" class="blk"/>
+<text x="30" y="40" class="t" text-anchor="start">LiPo 103450</text>
+<circle cx="130" cy="70" r="3.2" class="dot"/>
+<text x="122" y="74" class="p" text-anchor="end">+</text>
+<circle cx="130" cy="105" r="3.2" class="dot"/>
+<text x="122" y="109" class="p" text-anchor="end">−</text>
+<rect x="170" y="50" width="110" height="40" rx="6" class="blk"/>
+<text x="225" y="40" class="t" text-anchor="middle">INA226 0x40</text>
+<text x="225" y="125" class="s" text-anchor="middle">VCC 3V3 · SDA/SCL на I2C</text>
+<circle cx="170" cy="70" r="3.2" class="dot"/>
+<text x="178" y="74" class="p" text-anchor="start">IN+</text>
+<circle cx="280" cy="70" r="3.2" class="dot"/>
+<text x="272" y="74" class="p" text-anchor="end">IN−</text>
+<polyline points="130,70 170,70" class="w pwr"/>
+<rect x="330" y="45" width="150" height="95" rx="6" class="blk"/>
+<text x="405" y="40" class="t" text-anchor="middle">IP5306</text>
+<text x="405" y="100" class="s" text-anchor="middle">зарядка Type-C</text>
+<circle cx="330" cy="70" r="3.2" class="dot"/>
+<text x="338" y="74" class="p" text-anchor="start">B+</text>
+<circle cx="330" cy="105" r="3.2" class="dot"/>
+<text x="338" y="109" class="p" text-anchor="start">B−</text>
+<circle cx="380" cy="140" r="3.2" class="dot"/>
+<text x="380" y="132" class="p" text-anchor="middle">VOUT</text>
+<circle cx="440" cy="140" r="3.2" class="dot"/>
+<text x="440" y="132" class="p" text-anchor="middle">GND</text>
+<polyline points="280,70 330,70" class="w pwr"/>
+<polyline points="130,105 330,105" class="w gnd"/>
+<polyline points="380,140 380,152" class="w pwr"/>
+<circle cx="380" cy="152" r="3.2" class="dot"/>
+<circle cx="380" cy="182" r="3.2" class="dot"/>
+<polyline points="380,152 393,178" class="w pwr"/>
+<text x="370" y="172" class="s" text-anchor="end">тумблер</text>
+<polyline points="380,182 380,200" class="w pwr"/>
+<polyline points="440,140 440,200" class="w gnd"/>
+<rect x="300" y="200" width="200" height="700" rx="6" class="blk"/>
+<circle cx="380" cy="200" r="3.2" class="dot"/>
+<text x="380" y="218" class="p" text-anchor="middle">5V</text>
+<circle cx="440" cy="200" r="3.2" class="dot"/>
+<text x="440" y="218" class="p" text-anchor="middle">GND</text>
+<text x="400" y="675" class="t" text-anchor="middle">WT32-SC01 Plus</text>
+<text x="400" y="695" class="s" text-anchor="middle">ESP32-S3</text>
+<text x="490" y="330" class="s" text-anchor="end">Extended IO</text>
+<text x="490" y="735" class="s" text-anchor="end">Debug</text>
+<circle cx="500" cy="250" r="3.2" class="dot"/>
+<text x="492" y="254" class="p" text-anchor="end">IO10</text>
+<circle cx="500" cy="400" r="3.2" class="dot"/>
+<text x="492" y="404" class="p" text-anchor="end">IO11</text>
+<circle cx="500" cy="430" r="3.2" class="dot"/>
+<text x="492" y="434" class="p" text-anchor="end">IO12</text>
+<circle cx="500" cy="550" r="3.2" class="dot"/>
+<text x="492" y="554" class="p" text-anchor="end">IO13</text>
+<circle cx="500" cy="580" r="3.2" class="dot"/>
+<text x="492" y="584" class="p" text-anchor="end">IO14</text>
+<circle cx="500" cy="610" r="3.2" class="dot"/>
+<text x="492" y="614" class="p" text-anchor="end">IO21</text>
+<circle cx="500" cy="760" r="3.2" class="dot"/>
+<text x="492" y="764" class="p" text-anchor="end">IO43</text>
+<circle cx="500" cy="790" r="3.2" class="dot"/>
+<text x="492" y="794" class="p" text-anchor="end">IO44</text>
+<circle cx="300" cy="420" r="3.2" class="dot"/>
+<text x="308" y="424" class="p" text-anchor="start">3V3</text>
+<circle cx="300" cy="460" r="3.2" class="dot"/>
+<text x="308" y="464" class="p" text-anchor="start">GND</text>
+<polyline points="300,420 270,420" class="w pwr"/>
+<text x="264" y="424" class="net" text-anchor="end">3V3</text>
+<polyline points="300,460 270,460" class="w gnd"/>
+<polyline points="270,460 270,470" class="w gnd"/>
+<polyline points="260,470 280,470" class="w gnd"/>
+<polyline points="264,474 276,474" class="w gnd"/>
+<polyline points="268,478 272,478" class="w gnd"/>
+<rect x="660" y="225" width="160" height="100" rx="6" class="blk"/>
+<text x="660" y="215" class="t" text-anchor="start">MIDI OUT, TRS тип A</text>
+<circle cx="660" cy="250" r="3.2" class="dot"/>
+<text x="668" y="254" class="p" text-anchor="start">Tip    DIN 5</text>
+<circle cx="660" cy="280" r="3.2" class="dot"/>
+<text x="668" y="284" class="p" text-anchor="start">Ring   DIN 4</text>
+<circle cx="660" cy="310" r="3.2" class="dot"/>
+<text x="668" y="314" class="p" text-anchor="start">Sleeve DIN 2</text>
+<polyline points="500,250 560,250" class="w sig"/>
+<polyline points="560,250 660,250" class="w sig"/>
+<rect x="592.0" y="244" width="36" height="12" class="res sig"/>
+<text x="610.0" y="240" class="s" text-anchor="middle">10 Ω</text>
+<text x="552" y="284" class="net" text-anchor="end">3V3</text>
+<polyline points="560,280 660,280" class="w pwr"/>
+<rect x="592.0" y="274" width="36" height="12" class="res pwr"/>
+<text x="610.0" y="270" class="s" text-anchor="middle">33 Ω</text>
+<polyline points="660,310 630,310" class="w gnd"/>
+<polyline points="630,310 630,320" class="w gnd"/>
+<polyline points="620,320 640,320" class="w gnd"/>
+<polyline points="624,324 636,324" class="w gnd"/>
+<polyline points="628,328 632,328" class="w gnd"/>
+<rect x="660" y="385" width="160" height="90" rx="6" class="blk"/>
+<text x="660" y="375" class="t" text-anchor="start">Энкодер EC11</text>
+<circle cx="660" cy="400" r="3.2" class="dot"/>
+<text x="668" y="404" class="p" text-anchor="start">A</text>
+<circle cx="660" cy="430" r="3.2" class="dot"/>
+<text x="668" y="434" class="p" text-anchor="start">B</text>
+<circle cx="660" cy="460" r="3.2" class="dot"/>
+<text x="668" y="464" class="p" text-anchor="start">C</text>
+<polyline points="500,400 660,400" class="w sig"/>
+<polyline points="500,430 660,430" class="w sig"/>
+<polyline points="660,460 630,460" class="w gnd"/>
+<polyline points="630,460 630,470" class="w gnd"/>
+<polyline points="620,470 640,470" class="w gnd"/>
+<polyline points="624,474 636,474" class="w gnd"/>
+<polyline points="628,478 632,478" class="w gnd"/>
+<rect x="660" y="535" width="160" height="90" rx="6" class="blk"/>
+<text x="660" y="525" class="t" text-anchor="start">ЦАП PCM5102A</text>
+<circle cx="660" cy="550" r="3.2" class="dot"/>
+<text x="668" y="554" class="p" text-anchor="start">BCK</text>
+<polyline points="500,550 660,550" class="w sig"/>
+<circle cx="660" cy="580" r="3.2" class="dot"/>
+<text x="668" y="584" class="p" text-anchor="start">LCK</text>
+<polyline points="500,580 660,580" class="w sig"/>
+<circle cx="660" cy="610" r="3.2" class="dot"/>
+<text x="668" y="614" class="p" text-anchor="start">DIN</text>
+<polyline points="500,610 660,610" class="w sig"/>
+<circle cx="820" cy="550" r="3.2" class="dot"/>
+<text x="812" y="554" class="p" text-anchor="end">L</text>
+<circle cx="820" cy="580" r="3.2" class="dot"/>
+<text x="812" y="584" class="p" text-anchor="end">R</text>
+<text x="660" y="645" class="s" text-anchor="start">SCK, FMT, FLT, DEMP → GND</text>
+<text x="660" y="661" class="s" text-anchor="start">XSMT → 3V3 · VIN 3V3 или 5V</text>
+<rect x="900" y="535" width="150" height="90" rx="6" class="blk"/>
+<text x="900" y="525" class="t" text-anchor="start">Усилитель MAX97220</text>
+<circle cx="900" cy="550" r="3.2" class="dot"/>
+<text x="908" y="554" class="p" text-anchor="start">IN L+</text>
+<circle cx="900" cy="580" r="3.2" class="dot"/>
+<text x="908" y="584" class="p" text-anchor="start">IN R+</text>
+<circle cx="1050" cy="550" r="3.2" class="dot"/>
+<text x="1042" y="554" class="p" text-anchor="end">OUT L</text>
+<circle cx="1050" cy="580" r="3.2" class="dot"/>
+<text x="1042" y="584" class="p" text-anchor="end">OUT R</text>
+<circle cx="1050" cy="610" r="3.2" class="dot"/>
+<text x="1042" y="614" class="p" text-anchor="end">GND</text>
+<polyline points="820,550 900,550" class="w aud"/>
+<polyline points="820,580 900,580" class="w aud"/>
+<text x="900" y="645" class="s" text-anchor="start">IN L−, IN R− → GND ЦАП</text>
+<text x="900" y="661" class="s" text-anchor="start">VCC, SHDN → 5V (или 3V3)</text>
+<rect x="1110" y="535" width="140" height="90" rx="6" class="blk"/>
+<text x="1110" y="525" class="t" text-anchor="start">Наушники 3,5 мм</text>
+<circle cx="1110" cy="550" r="3.2" class="dot"/>
+<text x="1118" y="554" class="p" text-anchor="start">Tip</text>
+<circle cx="1110" cy="580" r="3.2" class="dot"/>
+<text x="1118" y="584" class="p" text-anchor="start">Ring</text>
+<circle cx="1110" cy="610" r="3.2" class="dot"/>
+<text x="1118" y="614" class="p" text-anchor="start">Sleeve</text>
+<polyline points="1050,550 1110,550" class="w aud"/>
+<polyline points="1050,580 1110,580" class="w aud"/>
+<polyline points="1050,610 1110,610" class="w gnd"/>
+<rect x="660" y="740" width="160" height="330" rx="6" class="blk"/>
+<text x="660" y="730" class="t" text-anchor="start">PCF8575 (0x20–0x27)</text>
+<circle cx="660" cy="760" r="3.2" class="dot"/>
+<text x="668" y="764" class="p" text-anchor="start">SDA</text>
+<circle cx="660" cy="790" r="3.2" class="dot"/>
+<text x="668" y="794" class="p" text-anchor="start">SCL</text>
+<circle cx="660" cy="830" r="3.2" class="dot"/>
+<text x="668" y="834" class="p" text-anchor="start">VCC</text>
+<circle cx="660" cy="860" r="3.2" class="dot"/>
+<text x="668" y="864" class="p" text-anchor="start">GND</text>
+<polyline points="500,760 660,760" class="w i2c"/>
+<polyline points="500,790 660,790" class="w i2c"/>
+<text x="580" y="753" class="s" text-anchor="middle">SDA (+ INA226)</text>
+<text x="580" y="783" class="s" text-anchor="middle">SCL (+ INA226)</text>
+<polyline points="660,830 630,830" class="w pwr"/>
+<text x="624" y="834" class="net" text-anchor="end">3V3</text>
+<polyline points="660,860 630,860" class="w gnd"/>
+<polyline points="630,860 630,870" class="w gnd"/>
+<polyline points="620,870 640,870" class="w gnd"/>
+<polyline points="624,874 636,874" class="w gnd"/>
+<polyline points="628,878 632,878" class="w gnd"/>
+<circle cx="820" cy="760" r="3.2" class="dot"/>
+<text x="812" y="764" class="p" text-anchor="end">P00</text>
+<polyline points="820,760 900,760" class="w btn"/>
+<text x="860" y="755" class="s" text-anchor="middle">1</text>
+<circle cx="900" cy="760" r="3.2" class="dot"/>
+<circle cx="936" cy="760" r="3.2" class="dot"/>
+<polyline points="900,760 932,749" class="w btn"/>
+<polyline points="936,760 1000,760" class="w gnd"/>
+<circle cx="820" cy="784" r="3.2" class="dot"/>
+<text x="812" y="788" class="p" text-anchor="end">P01</text>
+<polyline points="820,784 900,784" class="w btn"/>
+<text x="860" y="779" class="s" text-anchor="middle">2</text>
+<circle cx="900" cy="784" r="3.2" class="dot"/>
+<circle cx="936" cy="784" r="3.2" class="dot"/>
+<polyline points="900,784 932,773" class="w btn"/>
+<polyline points="936,784 1000,784" class="w gnd"/>
+<circle cx="820" cy="808" r="3.2" class="dot"/>
+<text x="812" y="812" class="p" text-anchor="end">P02</text>
+<polyline points="820,808 900,808" class="w btn"/>
+<text x="860" y="803" class="s" text-anchor="middle">3</text>
+<circle cx="900" cy="808" r="3.2" class="dot"/>
+<circle cx="936" cy="808" r="3.2" class="dot"/>
+<polyline points="900,808 932,797" class="w btn"/>
+<polyline points="936,808 1000,808" class="w gnd"/>
+<circle cx="820" cy="832" r="3.2" class="dot"/>
+<text x="812" y="836" class="p" text-anchor="end">P03</text>
+<polyline points="820,832 900,832" class="w btn"/>
+<text x="860" y="827" class="s" text-anchor="middle">4</text>
+<circle cx="900" cy="832" r="3.2" class="dot"/>
+<circle cx="936" cy="832" r="3.2" class="dot"/>
+<polyline points="900,832 932,821" class="w btn"/>
+<polyline points="936,832 1000,832" class="w gnd"/>
+<circle cx="820" cy="856" r="3.2" class="dot"/>
+<text x="812" y="860" class="p" text-anchor="end">P04</text>
+<polyline points="820,856 900,856" class="w btn"/>
+<text x="860" y="851" class="s" text-anchor="middle">5</text>
+<circle cx="900" cy="856" r="3.2" class="dot"/>
+<circle cx="936" cy="856" r="3.2" class="dot"/>
+<polyline points="900,856 932,845" class="w btn"/>
+<polyline points="936,856 1000,856" class="w gnd"/>
+<circle cx="820" cy="880" r="3.2" class="dot"/>
+<text x="812" y="884" class="p" text-anchor="end">P05</text>
+<polyline points="820,880 900,880" class="w btn"/>
+<text x="860" y="875" class="s" text-anchor="middle">6</text>
+<circle cx="900" cy="880" r="3.2" class="dot"/>
+<circle cx="936" cy="880" r="3.2" class="dot"/>
+<polyline points="900,880 932,869" class="w btn"/>
+<polyline points="936,880 1000,880" class="w gnd"/>
+<circle cx="820" cy="904" r="3.2" class="dot"/>
+<text x="812" y="908" class="p" text-anchor="end">P06</text>
+<polyline points="820,904 900,904" class="w btn"/>
+<text x="860" y="899" class="s" text-anchor="middle">7</text>
+<circle cx="900" cy="904" r="3.2" class="dot"/>
+<circle cx="936" cy="904" r="3.2" class="dot"/>
+<polyline points="900,904 932,893" class="w btn"/>
+<polyline points="936,904 1000,904" class="w gnd"/>
+<circle cx="820" cy="928" r="3.2" class="dot"/>
+<text x="812" y="932" class="p" text-anchor="end">P07</text>
+<polyline points="820,928 900,928" class="w btn"/>
+<text x="860" y="923" class="s" text-anchor="middle">8</text>
+<circle cx="900" cy="928" r="3.2" class="dot"/>
+<circle cx="936" cy="928" r="3.2" class="dot"/>
+<polyline points="900,928 932,917" class="w btn"/>
+<polyline points="936,928 1000,928" class="w gnd"/>
+<circle cx="820" cy="952" r="3.2" class="dot"/>
+<text x="812" y="956" class="p" text-anchor="end">P13</text>
+<polyline points="820,952 900,952" class="w btn"/>
+<text x="860" y="947" class="s" text-anchor="middle">Энк.</text>
+<circle cx="900" cy="952" r="3.2" class="dot"/>
+<circle cx="936" cy="952" r="3.2" class="dot"/>
+<polyline points="900,952 932,941" class="w btn"/>
+<polyline points="936,952 1000,952" class="w gnd"/>
+<circle cx="820" cy="976" r="3.2" class="dot"/>
+<text x="812" y="980" class="p" text-anchor="end">P14</text>
+<polyline points="820,976 900,976" class="w btn"/>
+<text x="860" y="971" class="s" text-anchor="middle">Play</text>
+<circle cx="900" cy="976" r="3.2" class="dot"/>
+<circle cx="936" cy="976" r="3.2" class="dot"/>
+<polyline points="900,976 932,965" class="w btn"/>
+<polyline points="936,976 1000,976" class="w gnd"/>
+<circle cx="820" cy="1000" r="3.2" class="dot"/>
+<text x="812" y="1004" class="p" text-anchor="end">P15</text>
+<polyline points="820,1000 900,1000" class="w btn"/>
+<text x="860" y="995" class="s" text-anchor="middle">Shift</text>
+<circle cx="900" cy="1000" r="3.2" class="dot"/>
+<circle cx="936" cy="1000" r="3.2" class="dot"/>
+<polyline points="900,1000 932,989" class="w btn"/>
+<polyline points="936,1000 1000,1000" class="w gnd"/>
+<circle cx="820" cy="1024" r="3.2" class="dot"/>
+<text x="812" y="1028" class="p" text-anchor="end">P16</text>
+<polyline points="820,1024 900,1024" class="w btn"/>
+<text x="860" y="1019" class="s" text-anchor="middle">B</text>
+<circle cx="900" cy="1024" r="3.2" class="dot"/>
+<circle cx="936" cy="1024" r="3.2" class="dot"/>
+<polyline points="900,1024 932,1013" class="w btn"/>
+<polyline points="936,1024 1000,1024" class="w gnd"/>
+<circle cx="820" cy="1048" r="3.2" class="dot"/>
+<text x="812" y="1052" class="p" text-anchor="end">P17</text>
+<polyline points="820,1048 900,1048" class="w btn"/>
+<text x="860" y="1043" class="s" text-anchor="middle">A</text>
+<circle cx="900" cy="1048" r="3.2" class="dot"/>
+<circle cx="936" cy="1048" r="3.2" class="dot"/>
+<polyline points="900,1048 932,1037" class="w btn"/>
+<polyline points="936,1048 1000,1048" class="w gnd"/>
+<polyline points="1000,760 1000,1048" class="w gnd"/>
+<polyline points="1000,1048 1000,1058" class="w gnd"/>
+<polyline points="990,1058 1010,1058" class="w gnd"/>
+<polyline points="994,1062 1006,1062" class="w gnd"/>
+<polyline points="998,1066 1002,1066" class="w gnd"/>
+<text x="1012" y="848" class="s" text-anchor="start">1–8: кнопки дорожек</text>
+</svg>

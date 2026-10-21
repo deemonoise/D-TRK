@@ -7,6 +7,8 @@ Everything you solder to the WT32-SC01 Plus: battery power, an INA226 battery mo
 
 ## Schematic
 
+<a href="img/wiring.svg"><img src="img/wiring.svg" alt="Wiring: LiPo through INA226 and IP5306 to the board 5V, MIDI OUT, encoder, PCM5102A DAC with MAX97220 headphone amp, PCF8575 with all buttons."></a>
+
 ```
 LiPo 103450 + ── INA226 IN+ ─[shunt]─ INA226 IN− ── IP5306 B+   (IP5306 Type-C — charging)
 LiPo 103450 − ──────────────────────────────────── IP5306 B−
@@ -101,7 +103,7 @@ PCM5102A                                 MAX97220
 | `PCF P15`                         | `Shift button`                      | other pin to GND                                            |
 | `PCF P16 / P17`                   | `button B / A`                      | other pin to GND                                            |
 
-The pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read low, so track button 1 is on P12, and P11 is free.
+The pins are set in `src/hw/pins.h`.
 
 ## Encoder
 
@@ -181,12 +183,6 @@ amp VCC, amp SHDN ── board 5V (or 3V3)
 | ST7796 display | 8080 bus, 8-bit (internal board routing) |
 
 GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound goes to the external DAC on GPIO 13/14/21. GPIO 43/44 (Debug connector) are used by the PCF8575 and the INA226.
-
-## Which track button is which
-
-![Button layout: Shift, Play and the encoder under the screen; below them buttons 1–4, and 5–8 at the front edge. The bottom view is mirrored: button 1 is on the right.](img/wiring-3.svg)
-
-*Button number = track number = pin number + 1 (button 1 is P00). While soldering, the lid lies face down, so the left-to-right order is reversed: button 1 ends up on the right.*
 
 ## Before powering up
 
