@@ -1,5 +1,9 @@
 # D-TRK
 
+<p align="center">
+  <a href="docs/img/tracker.jpg"><img src="docs/img/tracker.jpg" alt="D-TRK" width="320"></a>
+</p>
+
 Карманный 16-дорожечный трекер со встроенным синтезатором. Собран на **WT32-SC01 Plus** (ESP32-S3, тач-экран 480×320) и синт-плате **Teensy 4.1**: энкодер, кнопки Play, Shift, A и B и 8 механических кнопок дорожек. С кнопками A / B трекером можно пользоваться почти без тачскрина: навигация, редактирование и переключение страниц делаются энкодером и кнопками. Звук стерео 44,1 кГц, через Teensy Audio Shield (SGTL5000) в наушники. MIDI OUT (TRS) отдаёт ноты, clock и Start / Stop. Прошивка открытая (GPL v3), корпус для 3D-печати тоже (CERN-OHL-S).
 
 Руководство пользователя: [docs/manual_ru.md](docs/manual_ru.md). Подключение: [docs/wiring_ru.md](docs/wiring_ru.md). English: [README.md](README.md).
@@ -37,14 +41,16 @@
 ### Микс и эффекты
 
 - Микшер: фейдеры, панорама, посылы, mute / solo, индикаторы уровня, осциллограф.
-- Delay и псевдостерео reverb на посылах, мастер-компрессор с sidechain, PERF-эффекты-«вставки» на мастер (repeat, roll, reverse, scratch, tape stop, gate, LP / HP фильтр, crush, downsample, drive, delay / reverb throw, freeze).
-- Lo-fi на каждую ноту: битность и сэмплрейт.
+- Insert дорожки: drive (TANH, CLIP, FOLD, RECT), bit crush, downsample и trance gate с 16-шаговым рисунком. Пресеты инструментов несут рекомендуемый insert.
+- Envelope follower: уровень одной дорожки двигает параметр другой (sidechain-«качание», ducking, auto-wah).
+- Посылы: delay (DIGITAL, TAPE, PING-PONG), псевдостерео reverb с shimmer, MOD-шина (chorus, ensemble, flanger, phaser).
+- Мастер: компрессор с sidechain, EQ-полки, PERF-эффекты-«вставки» (repeat, roll, reverse, scratch, tape stop, gate, LP / HP фильтр, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze).
 - Каждую дорожку можно направить во внутренний синт или на внешний MIDI.
 
 ### Живое исполнение и песня
 
-- **Песня** (вкладка SONG, в стиле Polyend): до 128 слотов, у каждого паттерн и mute 16 дорожек. Повтор делается тапом A, mute в слоте ставится тапом или кнопкой дорожки. Play на вкладке SONG играет песню, на остальных крутит паттерн; Shift + Play — песня с курсора на любой вкладке; переключение SONG / LOOP на лету, undo правок песни.
-- **PERF**: эффекты-«вставки» на весь микс, пока держишь кнопку (repeat, roll, reverse, scratch, tape stop, gate, фильтр, crush, downsample, drive, delay / reverb throw, freeze), энкодер задаёт глубину, несколько кнопок складываются; назначение кнопок настраивается.
+- **SONG**: до 128 слотов, у каждого паттерн и mute 16 дорожек. Повтор делается тапом A, mute в слоте ставится тапом или кнопкой дорожки. Play на вкладке SONG играет песню, на остальных крутит паттерн; Shift + Play — песня с курсора на любой вкладке; переключение SONG / LOOP на лету, undo правок песни.
+- **PERF**: эффекты-«вставки» на весь микс, пока держишь кнопку (repeat, roll, reverse, scratch, tape stop, gate, фильтр, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze), энкодер задаёт глубину, несколько кнопок складываются; назначение кнопок настраивается.
 - **REC**: запись нот с кнопок дорожек прямо во время игры.
 - Shift + Play: песня с курсора SONG на любой вкладке; удержание во время игры — fill.
 

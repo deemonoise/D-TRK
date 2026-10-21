@@ -14,6 +14,7 @@
 #include "menu.h"
 #include "model.h"
 #include "perf_pad.h"
+#include "perf_vis.h"
 #include "proj_screen.h"
 #include "screen.h"
 #include "song_screen.h"
@@ -43,7 +44,7 @@ class App {
   // Track shared by GRID and TRACK screens.
   int curTrack() const { return curTrack_; }
   void setCurTrack(int t) { curTrack_ = static_cast<uint8_t>(((t % mt::kTracks) + mt::kTracks) % mt::kTracks); }
-  // PERF, shared by GRID and SONG (the tabs that play it).
+  // PERF, shared by GRID, SONG and MIX (the tabs that play it).
   PerfPad& perf() { return perf_; }
 
   // Shared by screens; nullptr when the allocation failed.
@@ -63,6 +64,9 @@ class App {
   // Preview: notes entered on GRID sound on INT tracks (device setting; the project's byte is ignored).
   bool preview() const { return preview_; }
   void setPreview(bool on);
+  // Perf visuals: held PERF effects show on the whole screen (device setting).
+  bool perfVisuals() const { return visuals_; }
+  void setPerfVisuals(bool on);
   void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
   void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
   bool doUndo();    // false when there is nothing to undo
@@ -131,7 +135,7 @@ class App {
   static constexpr int kBarrierBtnY = kAreaY + 176;
 
   Screen* screen() { return screens_[static_cast<int>(tab_)]; }
-  static bool perfTab(Tab t) { return t == Tab::Grid || t == Tab::Song; }
+  static bool perfTab(Tab t) { return t == Tab::Grid || t == Tab::Song || t == Tab::Mix; }
   void onTouch(const TouchEvent& ev);
   void transport();
   void postSong(bool on);  // SetSong from the SONG cursor
@@ -143,6 +147,8 @@ class App {
   // Hold a track button + turn = its volume (encoder click while held: its pan, again: volume), here
   // and now.
   bool holdVolume() const;
+  // Held PERF effects show on the screen (PerfVis) instead of a plain pushSprite.
+  bool perfVisible() const { return visuals_ && perf_.heldCount() > 0 && perfTab(tab_); }
   int heldTrack() const { return (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + heldTrackBtn_; }
   void nudgeTrackVol(int track, int d);
   void nudgeTrackPan(int track, int d);  // as nudgeTrackVol
@@ -176,6 +182,7 @@ class App {
   TouchTracker touch_;
   Menu menu_;
   PerfPad perf_{*this};
+  PerfVis vis_;
 
   GridScreen grid_{*this};
   TrackScreen track_{*this};
@@ -226,6 +233,7 @@ class App {
   int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)
   int phones_ = 100, savedPhones_ = 100;  // phones level, % (device setting)
   bool preview_ = true, savedPreview_ = true;  // GRID note preview (device setting)
+  bool visuals_ = true, savedVisuals_ = true;  // perf visuals (device setting)
   uint32_t settingsChangedAt_ = 0;  // 0 = nothing pending
   uint32_t autosaveDue_ = 0;        // when the next autosave is due, 0 = not counting
   uint32_t autosavedSeq_ = 0;       // editSeq_ of the last autosave

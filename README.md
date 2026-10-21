@@ -1,5 +1,9 @@
 # D-TRK
 
+<p align="center">
+  <a href="docs/img/tracker.jpg"><img src="docs/img/tracker.jpg" alt="D-TRK" width="320"></a>
+</p>
+
 A pocket 16-track tracker with a built-in synthesizer. Built on the **WT32-SC01 Plus** (ESP32-S3, 480×320 touchscreen) plus a **Teensy 4.1** synth board: an encoder, Play, Shift, A and B buttons and 8 mechanical track buttons. With A / B the tracker works almost without the touchscreen: navigation, editing and page switching are done with the encoder and buttons. Stereo sound at 44.1 kHz through a Teensy Audio Shield (SGTL5000) to headphones. MIDI OUT (TRS) sends notes, clock and Start / Stop. The firmware is open (GPL v3), and so is the 3D-printable enclosure (CERN-OHL-S).
 
 User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wiring.md). Русская версия: [README_ru.md](README_ru.md).
@@ -37,14 +41,16 @@ Every instrument has a filter (LP / BP / HP, LADDER, MS20, COMB, FORMANT) with a
 ### Mix and effects
 
 - Mixer: faders, pan, sends, mute / solo, level meters, scope.
-- Delay and pseudo-stereo reverb on sends, master compressor with sidechain, PERF punch-in effects on the master (repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb throw, freeze).
-- Per-note lo-fi: bit depth and sample rate.
+- Track insert: drive (TANH, CLIP, FOLD, RECT), bit crush, downsample and a trance gate with a 16-step pattern. Instrument presets carry a recommended insert.
+- Envelope follower: one track's level moves a parameter of another (sidechain pumping, ducking, auto-wah).
+- Sends: delay (DIGITAL, TAPE, PING-PONG), pseudo-stereo reverb with shimmer, MOD bus (chorus, ensemble, flanger, phaser).
+- Master: compressor with sidechain, EQ shelves, PERF punch-in effects (repeat, roll, reverse, scratch, tape stop, gate, LP / HP filter, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze).
 - Each track goes to the internal synth or to external MIDI.
 
 ### Live performance and song
 
-- **Song** (SONG tab, Polyend-style): up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
-- **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb throw, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable.
+- **Song**: up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
+- **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable. Works on GRID, SONG and MIX; held effects also show on the whole screen (dim, pixelate, invert…), switchable in FILE → SYSTEM.
 - **REC**: record notes from the track buttons while playing.
 - Shift + Play: the song from the SONG cursor on any tab; held while playing, fill.
 

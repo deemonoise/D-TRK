@@ -51,7 +51,8 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   }
   Serial.printf("psram free %u KB\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
-  // Device settings in NVS: the colour theme, the autosave interval, the phones level, preview.
+  // Device settings in NVS: the colour theme, the autosave interval, the phones level, preview,
+  // perf visuals.
   const int theme = storage::loadTheme(0);
   theme_ = savedTheme_ = theme < themeCount() ? theme : 0;
   applyTheme(theme_);
@@ -61,6 +62,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   phones_ = savedPhones_ = ph <= 100 ? ph : 100;
   audio::setPhones(static_cast<uint8_t>(phones_));
   preview_ = savedPreview_ = storage::loadSetting("preview", 1) != 0;
+  visuals_ = savedVisuals_ = storage::loadSetting("perfvis", 1) != 0;
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -76,7 +78,7 @@ void App::setTab(Tab t) {
   menu_.close();
   if (perfTab(tab_)) perf_.allOff();  // leaving releases the held effects
   screen()->onLeave();
-  // GRID <-> SONG keeps the PERF buffer; any other tab frees it (its PSRAM is needed there).
+  // GRID / SONG / MIX keep the PERF buffer between them; any other tab frees it (its PSRAM is needed there).
   if (perfTab(t)) perf_.attach();
   else perf_.detach();
   tab_ = t;
@@ -410,6 +412,7 @@ void App::trackKey(int n, bool shift) {
   if (tab_ == Tab::Song && song_.trackKey(n, shift)) return;
   if (tab_ == Tab::Track && track_.trackKey(n, shift)) return;  // the trance gate's Steps editor
   if (tab_ == Tab::Mix && track_.trackKey(n, shift)) return;    // SCENE view: the scene to edit
+  if (tab_ == Tab::Mix && !shift && perf_.press(n)) return;     // PERF while playing; Shift + N still mutes
   if (!shift) {
     setCurTrack(track);
     return;
@@ -426,8 +429,8 @@ void App::trackKey(int n, bool shift) {
 
 bool App::holdVolume() const {
   return !(tab_ == Tab::Grid && grid_.buttonsBusy()) && !(tab_ == Tab::Inst && inst_.buttonsBusy()) &&
-         !(tab_ == Tab::Song && perf_.on()) && !((tab_ == Tab::Track || tab_ == Tab::Mix) && track_.buttonsBusy()) &&
-         !busy_;
+         !(tab_ == Tab::Song && perf_.on()) && !(tab_ == Tab::Mix && perf_.on()) &&
+         !((tab_ == Tab::Track || tab_ == Tab::Mix) && track_.buttonsBusy()) && !busy_;
 }
 
 // Volume of a held track button's track (INT only), with a toast; the mixer redraws by itself.
@@ -552,23 +555,31 @@ void App::setPreview(bool on) {
   settingsChangedAt_ = millis() | 1;
 }
 
-// Device settings (theme, autosave, phones, preview): written once they stay put for a second (an encoder
+void App::setPerfVisuals(bool on) {
+  if (on == visuals_) return;
+  visuals_ = on;
+  settingsChangedAt_ = millis() | 1;
+}
+
+// Device settings (theme, autosave, phones, preview, perf visuals): written once they stay put for a second (an encoder
 // sweep = one write) and the transport is stopped. An NVS write can erase a flash sector with the
 // caches off: never while playing.
 void App::saveSettingsIdle(uint32_t now) {
   if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
   settingsChangedAt_ = 0;
   if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_ &&
-      preview_ == savedPreview_)
+      preview_ == savedPreview_ && visuals_ == savedVisuals_)
     return;
   if (theme_ != savedTheme_) storage::saveTheme(static_cast<uint8_t>(theme_));
   if (autosaveMin_ != savedAutosaveMin_) storage::saveSetting("autosave", static_cast<uint8_t>(autosaveMin_));
   if (phones_ != savedPhones_) storage::saveSetting("phones", static_cast<uint8_t>(phones_));
   if (preview_ != savedPreview_) storage::saveSetting("preview", preview_ ? 1 : 0);
+  if (visuals_ != savedVisuals_) storage::saveSetting("perfvis", visuals_ ? 1 : 0);
   savedTheme_ = theme_;
   savedAutosaveMin_ = autosaveMin_;
   savedPhones_ = phones_;
   savedPreview_ = preview_;
+  savedVisuals_ = visuals_;
 }
 
 // Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
@@ -739,6 +750,7 @@ void App::tick() {
   perf_.poll(status_.playing);
   screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
+  if (perfVisible() || vis_.engaged()) dirty_ = true;  // moving while held; the last frame goes back to plain
 
   if (dirty_ && now - lastDraw_ >= kFrameMs) {
     draw();
@@ -864,6 +876,15 @@ void App::draw() {
   drawTabs();
   menu_.draw(*spr_);
   if (busy_) drawBusy();
+  if (perfVisible() && !busy_) {
+    // The play position in sixteenths: the heard step plus how far into it.
+    const int64_t into = static_cast<int64_t>(engine::nowUs() - status_.stepT);
+    float steps = status_.pos;
+    if (status_.stepUs && into > 0) steps += static_cast<float>(into) / status_.stepUs;
+    vis_.push(*lcd_, *spr_, perf_.stack(), steps, status_.stepUs);
+    return;
+  }
+  vis_.reset(*lcd_);
   spr_->pushSprite(0, 0);
 }
 

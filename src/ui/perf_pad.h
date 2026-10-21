@@ -8,7 +8,7 @@ namespace ui {
 class App;
 
 // PERF: punch-in effects on the master, held on the track buttons while playing. One mode shared
-// by GRID and SONG (App owns it): the on flag, the held effects as the synth has them and the
+// by GRID, SONG and MIX (App owns it): the on flag, the held effects as the synth has them and the
 // ring buffer, held only while PERF is on and a PERF tab (attach()) is shown.
 class PerfPad {
  public:
@@ -34,6 +34,7 @@ class PerfPad {
   // Every UI tick: a stop or an audio park releases the held effects; a lost message is resent.
   void poll(bool playing);
   int heldCount() const { return stack_.count(); }
+  const mt::PerfStack& stack() const { return stack_; }  // the held effects and depths (PerfVis)
   // "PERF RPT FLT" (held shorts in press order) into out, as many as fit; "" when off. Its length.
   int badge(char* out, int size) const;
   // The badge in yellow at x, y; its right edge (x when off).

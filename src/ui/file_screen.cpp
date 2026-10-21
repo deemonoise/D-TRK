@@ -1052,6 +1052,9 @@ void FileScreen::initSystem() {
                          [this](int d) { app_.setPhones(app_.phones() + d); }};
   sysParams_[kPreview] = {"Preview", [this](char* o, int n) { snprintf(o, n, "%s", app_.preview() ? "ON" : "OFF"); },
                           [this](int d) { app_.setPreview(d > 0); }};
+  sysParams_[kPerfVis] = {"Perf visuals",
+                          [this](char* o, int n) { snprintf(o, n, "%s", app_.perfVisuals() ? "ON" : "OFF"); },
+                          [this](int d) { app_.setPerfVisuals(d > 0); }};
   sysParams_[kTheme] = {"Theme", [this](char* o, int n) { snprintf(o, n, "%s", themeAt(app_.theme()).name); },
                         [this](int d) { app_.setTheme(app_.theme() + d); }};
   sysParams_[kAutosave] = {"Autosave",

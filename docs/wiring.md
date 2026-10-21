@@ -143,7 +143,7 @@ Audio Shield Rev D (on wires next to the Teensy, not stacked)
 | `LINE IN tip / ring / sleeve`     | `shield LINE IN L / R / GND`        | PJ-392 jack in the front panel                              |
 | `—`                               | `the shield's microSD slot`         | leave unconnected: the shield's card is not used            |
 
-Pins are set in `src/hw/pins.h`. On the author's unit P00 and P10 read as pressed, so track button 1 moved to P12 and P11 is free.
+The pins are set in `src/hw/pins.h`.
 
 ## Encoder
 
@@ -248,12 +248,6 @@ PJ-392 LINE IN  Tip ── shield LINE IN L    Ring ── LINE IN R    Sleeve �
 | ST7796 display | 8080 bus, 8-bit (internal board routing) |
 
 GPIO 1, 2, 42 go to the built-in RS485 transceiver; only the A/B lines reach the connector. GPIO 35, 36, 37 go to the built-in NS4168 amplifier and the SPK connector; they are not used: the speaker is removed and sound comes from the synth board's Audio Shield; GPIO 13 / 14 / 21 carry the link to the Teensy. GPIO 43/44 (Debug connector) are used by the PCF8575 and the INA226.
-
-## Which track button is which
-
-![Button layout: Shift, Play and the encoder under the screen; below them buttons 1–4, and 5–8 at the front edge. The bottom view is mirrored: button 1 is on the right.](img/wiring-3.svg)
-
-*Button number = track number = pin number + 1 (button 1 is P00). While soldering, the lid lies face down, so the left-to-right order is reversed: button 1 ends up on the right.*
 
 ## Before powering up
 
