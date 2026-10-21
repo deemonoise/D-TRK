@@ -101,7 +101,7 @@ class TrackScreen : public Screen {
   void updateMeters();
   float level_[mt::kTracks] = {};
   uint32_t clipAt_[mt::kTracks] = {};  // millis() | 1 of the last full-scale peak, held 1 s
-  enum class Part : uint8_t { Name, Fader, Pan, Mute, Solo };
+  enum class Part : uint8_t { Name, Fader, Pan, Mute, Solo, Perf };  // Perf: the master column's box
   int firstTrack() const;
   void mixerInput(const hw::InputEvent& ev);
   void mixerTouch(const TouchEvent& ev);
@@ -112,6 +112,7 @@ class TrackScreen : public Screen {
   void setPan(int track, int v);
   void setMasterVol(int v);  // project data: saved with it, in Render WAV
   void toggleMuteSolo(int track, bool solo);
+  void togglePerf();  // MIX: B (no pan bar selected) or a tap on the PERF box
   uint32_t mixSignature() const;
   bool mixer_ = false;
   int panSel_ = -1;  // track whose pan bar the encoder turns, -1 = none (the encoder turns MAIN)

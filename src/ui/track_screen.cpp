@@ -464,10 +464,22 @@ void TrackScreen::onPage(int d) {
 }
 
 // B: leaves the edit with the value kept (as the second click), a name edit gets fixNames(). MIX:
-// drops the pan bar selection.
+// drops the pan bar selection, else PERF on / off.
 void TrackScreen::onBack() {
-  if (mixer_) panSel_ = -1;
-  else if (list_.editing()) leaveEdit();
+  if (!mixer_) {
+    if (list_.editing()) leaveEdit();
+  } else if (panSel_ >= 0) {
+    panSel_ = -1;
+  } else {
+    togglePerf();
+  }
+}
+
+void TrackScreen::togglePerf() {
+  const bool on = !app_.perf().on();
+  app_.perf().setOn(on);
+  app_.toast(on ? "PERF: HOLD A BUTTON" : "PERF OFF");
+  app_.invalidate();
 }
 
 void TrackScreen::onTouch(const TouchEvent& ev) {
@@ -641,6 +653,7 @@ void TrackScreen::mixerInput(const hw::InputEvent& ev) {
     return;
   }
   if (ev.type != hw::InputType::EncTurn) return;
+  if (app_.perf().turn(ev.delta, ev.shift)) return;  // a held PERF effect's depth
   if (ev.shift) {  // A / B: the same strip in the other half
     panSel_ = -1;
     app_.setCurTrack((app_.curTrack() + kStrips) % mt::kTracks);
@@ -657,6 +670,7 @@ bool TrackScreen::hitStrip(int x, int y, int& strip, Part& part) const {
     strip = kMaster;
     if (ly < kFaderY) part = Part::Name;
     else if (ly < kFaderY + kFaderH + 8) part = Part::Fader;
+    else if (ly >= kBtnY - 4 && ly < kBtnY + kBtnH + 4) part = Part::Perf;
     else return false;
     return true;
   }
@@ -682,6 +696,10 @@ void TrackScreen::mixerTouch(const TouchEvent& ev) {
   const int fy = y0_ + kFaderY;
   const int pos = clampi(ev.y - fy, 0, kFaderH);  // 0 = top
   if (strip == kMaster) {
+    if (part == Part::Perf) {
+      if (ev.type == TouchType::Tap) togglePerf();
+      return;
+    }
     if (part == Part::Fader) setMasterVol(mt::kMasterVolMax - pos * mt::kMasterVolMax / kFaderH);
     app_.invalidate();
     return;
@@ -836,6 +854,11 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
   s.setTextColor(kDim);
   snprintf(buf, sizeof(buf), "%d-%d", firstTrack() + 1, firstTrack() + kStrips);
   s.drawString(buf, kMasterX + (kMasterW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + kSendY + kSendDy);
+  // PERF (B or a tap): yellow while on, as the GRID / SONG badge.
+  const bool perf = app_.perf().on();
+  s.fillRect(kMasterX + 2, y0 + kBtnY, kMasterW - 4, kBtnH, perf ? kYellow : kBeatBg);
+  s.setTextColor(perf ? kBg : kDim);
+  s.drawString("PERF", kMasterX + (kMasterW - 4 * kCharW) / 2, y0 + kBtnY + (kBtnH - kCharH) / 2);
   drawScope(s, y0);
 }
 

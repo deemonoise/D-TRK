@@ -54,7 +54,7 @@ class FileScreen : public Screen {
 
   // SYSTEM rows.
   enum SysRow : int {
-    kPhones, kPreview, kTheme, kAutosave, kFirmware, kLastReset, kAudioRam, kBattery, kCpuProf, kSysRows
+    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kFirmware, kLastReset, kAudioRam, kBattery, kCpuProf, kSysRows
   };
   static constexpr int kSysListRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;
 
