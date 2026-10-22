@@ -131,6 +131,118 @@ void test_stack_ignores_invalid_and_idle_turn() {
   TEST_ASSERT_EQUAL(100, s.depth(PerfFx::DelayThrow));  // default when not held
 }
 
+// ---- setDepth: the XY pad's depths, as the messages the synth gets ----
+
+// The synth's side of 0xF6 op val (Synth::perfMsg) on a PerfBus.
+static void apply(PerfBus& b, const PerfMsg& m) {
+  const PerfFx f = static_cast<PerfFx>(m.val);
+  if (m.op == 0) b.press(f);
+  else if (m.op == 1) b.release(f);
+  else if (m.op == 2) b.turn(static_cast<int8_t>(m.val));
+  else if (m.op == 3) b.releaseAll();
+}
+
+static void assertSameStack(const PerfStack& a, const PerfStack& b) {
+  TEST_ASSERT_EQUAL(a.count(), b.count());
+  for (int i = 0; i < a.count(); ++i) {
+    TEST_ASSERT_EQUAL(static_cast<int>(a.at(i)), static_cast<int>(b.at(i)));
+    TEST_ASSERT_EQUAL(a.depth(a.at(i)), b.depth(b.at(i)));
+  }
+}
+
+void test_set_depth_not_held_presses_and_turns() {
+  PerfStack s;
+  PerfMsg m[2];
+  TEST_ASSERT_EQUAL(2, s.setDepth(PerfFx::Filter, -20, m));
+  TEST_ASSERT_EQUAL(0, m[0].op);
+  TEST_ASSERT_EQUAL(static_cast<int>(PerfFx::Filter), m[0].val);
+  TEST_ASSERT_EQUAL(2, m[1].op);
+  TEST_ASSERT_EQUAL(-20, static_cast<int8_t>(m[1].val));
+  TEST_ASSERT_TRUE(s.held(PerfFx::Filter));
+  TEST_ASSERT_EQUAL(-20, s.depth(PerfFx::Filter));
+}
+
+void test_set_depth_not_held_at_default_only_presses() {
+  PerfStack s;
+  PerfMsg m[2];
+  TEST_ASSERT_EQUAL(1, s.setDepth(PerfFx::Crush, 6, m));  // Crush default 6
+  TEST_ASSERT_EQUAL(0, m[0].op);
+  TEST_ASSERT_EQUAL(6, s.depth(PerfFx::Crush));
+}
+
+void test_set_depth_last_only_turns() {
+  PerfStack s;
+  PerfMsg m[2];
+  s.press(PerfFx::Crush);
+  TEST_ASSERT_EQUAL(1, s.setDepth(PerfFx::Crush, 3, m));
+  TEST_ASSERT_EQUAL(2, m[0].op);
+  TEST_ASSERT_EQUAL(-3, static_cast<int8_t>(m[0].val));
+  TEST_ASSERT_EQUAL(3, s.depth(PerfFx::Crush));
+  TEST_ASSERT_EQUAL(0, s.setDepth(PerfFx::Crush, 3, m));  // no change: no message
+}
+
+void test_set_depth_under_others_repress_to_top() {
+  PerfStack s;
+  PerfMsg m[2];
+  s.press(PerfFx::Filter);
+  s.turn(-30);
+  s.press(PerfFx::Crush);
+  TEST_ASSERT_EQUAL(0, s.setDepth(PerfFx::Filter, -30, m));  // same depth: the order stays
+  TEST_ASSERT_EQUAL(static_cast<int>(PerfFx::Crush), static_cast<int>(s.last()));
+  TEST_ASSERT_EQUAL(2, s.setDepth(PerfFx::Filter, 10, m));
+  TEST_ASSERT_EQUAL(0, m[0].op);
+  TEST_ASSERT_EQUAL(10, static_cast<int8_t>(m[1].val));  // from the default 0
+  TEST_ASSERT_EQUAL(static_cast<int>(PerfFx::Filter), static_cast<int>(s.last()));
+  TEST_ASSERT_EQUAL(10, s.depth(PerfFx::Filter));
+  TEST_ASSERT_EQUAL(6, s.depth(PerfFx::Crush));
+}
+
+void test_set_depth_clamps_and_ignores_invalid() {
+  PerfStack s;
+  PerfMsg m[2];
+  s.setDepth(PerfFx::Repeat, 99, m);
+  TEST_ASSERT_EQUAL(6, s.depth(PerfFx::Repeat));
+  TEST_ASSERT_EQUAL(0, s.setDepth(PerfFx::None, 3, m));
+  TEST_ASSERT_EQUAL(0, s.setDepth(PerfFx::Count, 3, m));
+  TEST_ASSERT_EQUAL(1, s.count());
+}
+
+void test_set_depth_full_stack_sends_nothing() {
+  PerfStack s;
+  PerfMsg m[2];
+  for (int f = 1; f <= kPerfButtons; ++f) s.press(static_cast<PerfFx>(f));
+  TEST_ASSERT_EQUAL(0, s.setDepth(PerfFx::TapeWobble, 10, m));
+  TEST_ASSERT_FALSE(s.held(PerfFx::TapeWobble));
+}
+
+// The synth's stack ends where the UI's does after any sequence of presses, turns and setDepth.
+void test_set_depth_messages_mirror_the_synth() {
+  PerfStack ui;
+  PerfBus bus;
+  PerfMsg m[2];
+  const PerfFx fx[] = {PerfFx::Filter, PerfFx::Crush, PerfFx::Repeat, PerfFx::DelayThrow};
+  uint32_t r = 12345;
+  for (int i = 0; i < 400; ++i) {
+    r = r * 1103515245u + 12345u;
+    const PerfFx f = fx[(r >> 16) % 4];
+    const int d = static_cast<int>((r >> 8) % 200) - 100;
+    int n;
+    if ((r >> 24) % 5 == 0) {
+      ui.press(f);
+      m[0] = PerfMsg{0, static_cast<uint8_t>(f)};
+      n = 1;
+    } else if ((r >> 24) % 5 == 1) {
+      ui.release(f);
+      m[0] = PerfMsg{1, static_cast<uint8_t>(f)};
+      n = 1;
+    } else {
+      n = ui.setDepth(f, d, m);
+    }
+    for (int k = 0; k < n; ++k) apply(bus, m[k]);
+    assertSameStack(ui, bus.stack());
+  }
+}
+
 // ---- PerfBus ----
 
 namespace {
@@ -998,6 +1110,13 @@ int main() {
   RUN_TEST(test_stack_same_fx_twice_is_one_slot);
   RUN_TEST(test_stack_repress_moves_to_top_at_default);
   RUN_TEST(test_stack_ignores_invalid_and_idle_turn);
+  RUN_TEST(test_set_depth_not_held_presses_and_turns);
+  RUN_TEST(test_set_depth_not_held_at_default_only_presses);
+  RUN_TEST(test_set_depth_last_only_turns);
+  RUN_TEST(test_set_depth_under_others_repress_to_top);
+  RUN_TEST(test_set_depth_clamps_and_ignores_invalid);
+  RUN_TEST(test_set_depth_full_stack_sends_nothing);
+  RUN_TEST(test_set_depth_messages_mirror_the_synth);
   RUN_TEST(test_bus_idle_is_bit_exact);
   RUN_TEST(test_bus_filter_zero_is_passthrough);
   RUN_TEST(test_bus_filter_lp_cuts_highs);

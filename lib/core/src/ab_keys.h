@@ -16,6 +16,7 @@ enum class AbAction : uint8_t {
   Back,          // B tap
   Solo,          // A + track button (delta = button)
   QueuePattern,  // B + track button (delta = button, shift)
+  Both,          // A and B pressed together and released, nothing else meanwhile (on the first release)
 };
 
 struct AbOut {
@@ -25,18 +26,26 @@ struct AbOut {
 };
 
 // Chords of buttons A and B with the encoder and the track buttons. A tap counts on release,
-// only if nothing else happened while the button was held. With both held B wins.
+// only if nothing else happened while the button was held. With both held B wins. A and B
+// together, released with nothing else: Both.
 class AbKeys {
  public:
   AbOut aDown() {
     a_ = true;
     aUsed_ = editing_ = false;
-    if (b_) aUsed_ = bUsed_ = true;  // a B + A chord: neither taps
+    if (b_) {  // a B + A chord: neither taps; alone (B not used yet) it is Both
+      both_ = !bUsed_;
+      aUsed_ = bUsed_ = true;
+    }
     return out(AbAction::None);
   }
   AbOut aUp(bool shift) {
     if (!a_) return out(AbAction::None);  // its press was dropped (reset)
     a_ = false;
+    if (both_) {
+      both_ = false;
+      return out(AbAction::Both);
+    }
     if (editing_) {
       editing_ = false;
       return out(AbAction::EditEnd);
@@ -47,6 +56,7 @@ class AbKeys {
     b_ = true;
     bUsed_ = false;
     if (!a_) return out(AbAction::None);
+    if (!editing_) both_ = !aUsed_;  // alone (A not used yet): Both
     aUsed_ = bUsed_ = true;
     if (!editing_) return out(AbAction::None);
     editing_ = false;
@@ -55,10 +65,15 @@ class AbKeys {
   AbOut bUp(bool shift) {
     if (!b_) return out(AbAction::None);  // its press was dropped (reset)
     b_ = false;
+    if (both_) {
+      both_ = false;
+      return out(AbAction::Both);
+    }
     if (bUsed_) return out(AbAction::None);
     return out(shift ? AbAction::Undo : AbAction::Back);
   }
   AbOut turn(int delta, bool shift) {
+    both_ = false;
     if (b_) {
       bUsed_ = true;
       if (a_) aUsed_ = true;
@@ -71,6 +86,7 @@ class AbKeys {
     return out(AbAction::Pass);
   }
   AbOut track(int n, bool shift) {
+    both_ = false;
     if (b_) {
       bUsed_ = true;
       if (a_) aUsed_ = true;
@@ -85,11 +101,11 @@ class AbKeys {
   bool aHeld() const { return a_; }
   bool bHeld() const { return b_; }
   // Input was dropped (long operation): forget held buttons.
-  void reset() { a_ = b_ = aUsed_ = bUsed_ = editing_ = false; }
+  void reset() { a_ = b_ = aUsed_ = bUsed_ = editing_ = both_ = false; }
 
  private:
   static AbOut out(AbAction a, int d = 0, bool s = false) { return {a, static_cast<int8_t>(d), s}; }
-  bool a_ = false, b_ = false, aUsed_ = false, bUsed_ = false, editing_ = false;
+  bool a_ = false, b_ = false, aUsed_ = false, bUsed_ = false, editing_ = false, both_ = false;
 };
 
 }  // namespace mt

@@ -108,6 +108,7 @@ bool sdBegin() {
     const char* root = mt::presetRoot(static_cast<mt::InstrType>(t));
     if (!SD.exists(root)) SD.mkdir(root);
   }
+  if (!SD.exists("/presets/TUN")) SD.mkdir("/presets/TUN");  // user tunings (.scl), read by the PROJ Tuning row
   return true;
 }
 

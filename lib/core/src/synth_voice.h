@@ -129,6 +129,9 @@ struct Voice {
   bool stolen = false;    // fading out (kStealMs) for a heavy note past kFmVoiceMax
   uint32_t senvT = 0;                // samples since the env -> SHAPE trigger
   const int16_t* synWt[2] = {nullptr, nullptr};
+  // Melodic voice in a project tuning (Synth::tune_ on at note-on, not a drum / KIT lane / NOTE slice):
+  // pitch / target / the track's lastPitch are keys without fine, control() maps them (tuning.h).
+  bool tuned = false;
   // FM / DRUM / SYNTH engine, see VoiceEngine.
   EngineKind engKind = EngineKind::Fm;
   VoiceEngine eng;

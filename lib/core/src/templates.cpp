@@ -119,6 +119,7 @@ void templateStrip(Project& p) {
   for (int i = 0; i < kSongMax; ++i) {
     p.song[i] = 0;
     p.songMute[i] = 0;
+    p.songFol[i] = SongFollow();
   }
   strncpy(p.name, "untitled", sizeof(p.name) - 1);
   p.name[sizeof(p.name) - 1] = 0;

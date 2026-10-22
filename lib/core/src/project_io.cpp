@@ -1,4 +1,6 @@
 #include "project_io.h"
+#include "evolve.h"
+#include "shift_gen.h"
 #include <string.h>
 #include <strings.h>
 #include "file_rules.h"
@@ -32,6 +34,12 @@ constexpr size_t kTinsRec = 12;
 // TFOL (envelope followers): count, record size, then a record per track: folSrc, folDest, folAmt,
 // folAtk, folRel. Same rules as TINS (a second follower per track would append fields).
 constexpr size_t kTfolRec = 5;
+// TGEN (track generators, GenCfg): count, record size, then a record per track: mode, len, flip, low, oct,
+// density, seed lo, seed hi. Same rules as TINS; values clamped (genClamp).
+constexpr size_t kTgenRec = 8;
+// TEVO (track evolve, EvoCfg): count, record size, then a record per track: amount, every, home, mask.
+// Same rules as TINS; values clamped (evoClamp). Files without it: evolve off.
+constexpr size_t kTevoRec = 4;
 // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
 // scTrack, scDepth, then byte 13: the old DJ filter (+ 64), ignored on load and written 64, then the
 // master / send fx: dlyMode, dlyChar, rvbMode, rvbShim, modType, modRate, modDepth, modFb, modLevel,
@@ -55,6 +63,11 @@ static_assert(kSmplSize <= kMaxRec, "readRecords buffer");
 constexpr size_t kWtblSize = 20;  // name[16] u32 crc
 constexpr size_t kChn2Rec = 4;    // pattern, transpose, repeat, scene
 constexpr size_t kSng3Rec = 3;    // pattern, mute u16
+// SFOL (follow actions, Project::seed): u16 seed, count, record size, then a record per slot: action
+// (FollowAct), JUMP target, chance 0..100. Like TFOL: a longer record's known part is read, a shorter one
+// keeps the defaults of what it lacks; the seed is clamped to 1..9999. Files without SFOL: every slot NEXT
+// 100 %, seed 1.
+constexpr size_t kSfolRec = 3;
 static_assert(kSynRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kWtblSize <= kMaxRec, "readRecords buffer");
 
@@ -228,6 +241,36 @@ LoadErr readTpan(CrcSource& in, uint32_t size, Project& p) {
   return readRecords(in, size, 1, kTracks, [&](int t, const uint8_t* b) { p.tracks[t].pan = clampu(b[0], 0, 127); });
 }
 
+// TUNE: u8 count, u8 root, name[16], count x i32 (1/1000 cent); written only for a tuning (12-TET:
+// none). A broken one leaves 12-TET (notes->tuningDropped); extra bytes after it are skipped.
+constexpr uint32_t kTuneHead = 18;
+LoadErr readTune(CrcSource& in, uint32_t size, Project& p, LoadNotes* notes) {
+  TuningTable t;
+  bool ok = size >= kTuneHead;
+  uint32_t used = 0;
+  if (ok) {
+    uint8_t h[kTuneHead];
+    if (!in.read(h, kTuneHead)) return LoadErr::Truncated;
+    used = kTuneHead;
+    t.count = h[0];
+    t.root = h[1];
+    memcpy(t.name, h + 2, 16);
+    t.name[16] = 0;
+    ok = t.count >= 1 && t.count <= kTuneDegMax && size >= kTuneHead + 4u * t.count;
+    for (int i = 0; ok && i < t.count; ++i) {
+      uint8_t v[4];
+      if (!in.read(v, 4)) return LoadErr::Truncated;
+      used += 4;
+      t.mc[i] = static_cast<int32_t>(rd32(v));
+    }
+    ok = ok && tuningValid(t);
+  }
+  if (!in.skip(size - used)) return LoadErr::Truncated;
+  if (ok) p.tuning = t;
+  else if (notes) notes->tuningDropped = true;
+  return LoadErr::Ok;
+}
+
 // TINS (see kTinsRec); tracks it lacks stay off (reset()).
 LoadErr readTins(CrcSource& in, uint32_t size, Project& p) {
   uint8_t h[2];
@@ -266,6 +309,47 @@ LoadErr readTfol(CrcSource& in, uint32_t size, Project& p) {
     }
     if (take > 3) c.folAtk = clampu(b[3], 0, 127);
     if (take > 4) c.folRel = clampu(b[4], 0, 127);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// TGEN (see kTgenRec); tracks it lacks (and files without it) keep their generators off.
+LoadErr readTgen(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kTracks ? h[0] : kTracks;
+  const uint32_t take = rec < kTgenRec ? rec : kTgenRec;
+  for (int t = 0; t < n; ++t) {
+    uint8_t b[kTgenRec] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    GenCfg& c = p.gen[t];
+    uint8_t* const f[6] = {&c.mode, &c.len, &c.flip, &c.low, &c.oct, &c.density};
+    for (uint32_t i = 0; i < take && i < 6; ++i) *f[i] = b[i];
+    if (take >= 8) c.seed = static_cast<uint16_t>(b[6] | b[7] << 8);
+    genClamp(c);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// TEVO (see kTevoRec); tracks it lacks (and files without it) keep evolve off.
+LoadErr readTevo(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kTracks ? h[0] : kTracks;
+  const uint32_t take = rec < kTevoRec ? rec : kTevoRec;
+  for (int t = 0; t < n; ++t) {
+    uint8_t b[kTevoRec] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    EvoCfg& c = p.evo[t];
+    uint8_t* const f[kTevoRec] = {&c.amount, &c.every, &c.home, &c.mask};
+    for (uint32_t i = 0; i < take; ++i) *f[i] = b[i];
+    evoClamp(c);
   }
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
@@ -424,6 +508,27 @@ LoadErr readSng3(CrcSource& in, uint32_t size, Project& p) {
   });
 }
 
+LoadErr readSfol(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[4];
+  if (size < 4) return LoadErr::BadValue;
+  if (!in.read(h, 4)) return LoadErr::Truncated;
+  const uint32_t rec = h[3];
+  if ((rec == 0 && h[2] > 0) || size < 4 + h[2] * rec) return LoadErr::BadValue;
+  const int seed = h[0] | (h[1] << 8);
+  p.seed = static_cast<uint16_t>(seed < 1 ? 1 : (seed > 9999 ? 9999 : seed));  // the UI range
+  const int n = h[2] < kSongMax ? h[2] : kSongMax;
+  const uint32_t take = rec < kSfolRec ? rec : kSfolRec;
+  for (int i = 0; i < n; ++i) {
+    uint8_t b[kSfolRec] = {0, 0, 100};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    SongFollow& f = p.songFol[i];
+    f.act = b[0] < static_cast<uint8_t>(FollowAct::Count) ? b[0] : 0;
+    f.target = b[1] < kSongMax ? b[1] : kSongMax - 1;
+    f.chance = b[2] > 100 ? 100 : b[2];
+  }
+  return in.skip(size - 4 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 // CHN2 (legacy): count, then per item pattern, transpose (int8), repeat, scene. Replaces PROJ's chain.
 LoadErr readChn2(CrcSource& in, uint32_t size, LegacySong& ls) {
   ls.chn2 = true;
@@ -485,6 +590,16 @@ LoadErr readPerf(CrcSource& in, uint32_t size, Project& p, bool legacy, bool& pr
 }
 LoadErr readPrfm(CrcSource& in, uint32_t size, Project& p, bool& prf2) { return readPerf(in, size, p, true, prf2); }
 LoadErr readPrf2(CrcSource& in, uint32_t size, Project& p, bool& prf2) { return readPerf(in, size, p, false, prf2); }
+
+// PXY : the XY pad's axis effects (PerfFx: X, then Y); out of range = None. Files without it:
+// kPerfXyDefault (FILTER / CRUSH).
+LoadErr readPxy(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t b[2];
+  if (size < sizeof(b)) return LoadErr::BadValue;
+  if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+  for (int a = 0; a < 2; ++a) p.perfXy[a] = b[a] < static_cast<uint8_t>(PerfFx::Count) ? b[a] : 0;
+  return in.skip(size - sizeof(b)) ? LoadErr::Ok : LoadErr::Truncated;
+}
 
 constexpr size_t kGrovSize = kPatterns + kTracks;
 LoadErr readGrov(CrcSource& in, uint32_t size, Project& p) {
@@ -609,6 +724,16 @@ bool saveProject(const Project& p, ByteSink& out) {
     wr16(b + 1, p.songMute[i]);
     if (!o.write(b, sizeof(b))) return false;
   }
+  uint8_t sh[4];
+  wr16(sh, p.seed);
+  sh[2] = songN;
+  sh[3] = static_cast<uint8_t>(kSfolRec);
+  if (!o.chunk("SFOL", 4 + songN * kSfolRec) || !o.write(sh, sizeof(sh))) return false;
+  for (int i = 0; i < songN; ++i) {
+    const SongFollow& f = p.songFol[i];
+    const uint8_t b[kSfolRec] = {f.act, f.target, f.chance};
+    if (!o.write(b, sizeof(b))) return false;
+  }
 
   uint8_t count = kTracks;
   if (!o.chunk("TRKS", kTrksSize) || !o.write(&count, 1)) return false;
@@ -707,6 +832,21 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  const uint8_t gh[2] = {static_cast<uint8_t>(kTracks), static_cast<uint8_t>(kTgenRec)};
+  if (!o.chunk("TGEN", 2 + kTracks * kTgenRec) || !o.write(gh, 2)) return false;
+  for (const GenCfg& c : p.gen) {
+    const uint8_t b[kTgenRec] = {c.mode,    c.len, c.flip, c.low, c.oct, c.density, static_cast<uint8_t>(c.seed & 0xFF),
+                                 static_cast<uint8_t>(c.seed >> 8)};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  const uint8_t eh[2] = {static_cast<uint8_t>(kTracks), static_cast<uint8_t>(kTevoRec)};
+  if (!o.chunk("TEVO", 2 + kTracks * kTevoRec) || !o.write(eh, 2)) return false;
+  for (const EvoCfg& c : p.evo) {
+    const uint8_t b[kTevoRec] = {c.amount, c.every, c.home, c.mask};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
   const uint8_t au[kAudiSize] = {p.masterVol, static_cast<uint8_t>(p.preview ? 1 : 0),
                                  p.dlyTime,   p.dlyFb,
                                  p.dlyTone,   p.dlyLevel,
@@ -780,6 +920,19 @@ bool saveProject(const Project& p, ByteSink& out) {
     memcpy(pf, p.perfMap, kPerfButtons);
     memcpy(pf + kPerfButtons, p.perfDepth, kPerfButtons);
     if (!o.chunk("PRF2", sizeof(pf)) || !o.write(pf, sizeof(pf))) return false;
+  }
+  if (!o.chunk("PXY ", sizeof(p.perfXy)) || !o.write(p.perfXy, sizeof(p.perfXy))) return false;
+
+  if (tuningValid(p.tuning)) {
+    const TuningTable& t = p.tuning;
+    uint8_t h[kTuneHead] = {t.count, t.root};
+    memcpy(h + 2, t.name, strnlen(t.name, 16));
+    if (!o.chunk("TUNE", kTuneHead + 4u * t.count) || !o.write(h, sizeof(h))) return false;
+    for (int i = 0; i < t.count; ++i) {
+      uint8_t v[4];
+      wr32(v, static_cast<uint32_t>(t.mc[i]));
+      if (!o.write(v, 4)) return false;
+    }
   }
 
   uint8_t c[12] = {'C', 'R', 'C', ' '};
@@ -884,6 +1037,8 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       e = readTins(in, size, out);
     }
     else if (memcmp(ch, "TFOL", 4) == 0) e = readTfol(in, size, out);
+    else if (memcmp(ch, "TGEN", 4) == 0) e = readTgen(in, size, out);
+    else if (memcmp(ch, "TEVO", 4) == 0) e = readTevo(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
@@ -895,12 +1050,15 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       sng3 = true;
       e = readSng3(in, size, out);
     }
+    else if (memcmp(ch, "SFOL", 4) == 0) e = readSfol(in, size, out);
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
     else if (memcmp(ch, "TSPD", 4) == 0) e = readTspd(in, size, out);
     else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);
     else if (memcmp(ch, "PRF2", 4) == 0) e = readPrf2(in, size, out, prf2);
     else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out, prf2);
+    else if (memcmp(ch, "PXY ", 4) == 0) e = readPxy(in, size, out);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, legacy);
+    else if (memcmp(ch, "TUNE", 4) == 0) e = readTune(in, size, out, notes);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;
   }

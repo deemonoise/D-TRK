@@ -3,6 +3,7 @@
 #include <string.h>
 #include <initializer_list>
 #include <vector>
+#include "follow.h"
 #include "sequencer.h"
 
 using namespace mt;
@@ -1062,6 +1063,135 @@ static std::vector<int> heardPatterns() {
   for (const auto& r : sink->log)
     if (r.b[0] == 0x90 && r.b[1] >= 60 && r.b[1] < 65) out.push_back(r.b[1] - 60);
   return out;
+}
+
+static void fol(int slot, FollowAct a, int chance = 100, int target = 0) {
+  p->songFol[slot].act = static_cast<uint8_t>(a);
+  p->songFol[slot].chance = static_cast<uint8_t>(chance);
+  p->songFol[slot].target = static_cast<uint8_t>(target);
+}
+
+void test_follow_stay_repeats_slot() {
+  songSetup({1, 2});
+  fol(0, FollowAct::Stay);
+  seq->start(0, *sink);
+  run(0, 1900000);
+  const std::vector<int> want = {1, 1, 1, 1};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+  TEST_ASSERT_EQUAL(0, seq->heardSongPos());
+}
+
+void test_follow_chance_zero_plays_next() {
+  songSetup({1, 2});
+  fol(0, FollowAct::Stay, 0);
+  seq->start(0, *sink);
+  run(0, 1900000);
+  const std::vector<int> want = {1, 2, 1, 2};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+}
+
+void test_follow_prev_from_first_and_jump() {
+  songSetup({1, 2, 3});
+  fol(0, FollowAct::Prev);  // 0 -> the last
+  seq->start(0, *sink);
+  run(0, 1900000);
+  std::vector<int> want = {1, 3, 1, 3};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+  tearDown();
+  setUp();
+  songSetup({1, 2, 3, 4});
+  fol(1, FollowAct::Jump, 100, 3);
+  seq->start(0, *sink);
+  run(0, 2900000);
+  want = {1, 2, 4, 1, 2, 4};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
+}
+
+// Slot i = pattern i: the heard patterns are the slots. Live (any salt) follows the walk of that salt,
+// wrapping to slot 0 where the walk would end.
+static std::vector<int> liveWalk(uint32_t salt, int passes) {
+  std::vector<int> v;
+  const uint32_t rs = followRunSeed(p->seed, salt);
+  int slot = 0;
+  for (int n = 0; n < passes; ++n) {
+    v.push_back(slot);
+    const int nx = followNext(*p, slot, rs, static_cast<uint32_t>(n));
+    slot = nx < 0 ? 0 : nx;
+  }
+  return v;
+}
+
+void test_follow_random_matches_walk_and_salt() {
+  songSetup({0, 1, 2, 3, 4});
+  for (int i = 0; i < 5; ++i) fol(i, FollowAct::Random, 60);
+  seq->setFollowSalt(1234);
+  seq->start(0, *sink);
+  run(0, 5900000);  // 12 passes of 0.5 s
+  const std::vector<int> a = heardPatterns();
+  TEST_ASSERT_TRUE(a == liveWalk(1234, 12));
+  // Restart (Shift+Play): the counter starts over, same salt -> same path.
+  seq->stop(6000000, *sink);
+  sink->log.clear();
+  seq->start(7000000, *sink);
+  run(7000000, 12900000);
+  TEST_ASSERT_TRUE(heardPatterns() == a);
+  // Another salt (the next Play live): another path.
+  seq->stop(13000000, *sink);
+  sink->log.clear();
+  seq->setFollowSalt(99);
+  seq->start(14000000, *sink);
+  run(14000000, 19900000);
+  TEST_ASSERT_TRUE(heardPatterns() == liveWalk(99, 12));
+  TEST_ASSERT_FALSE(heardPatterns() == a);
+}
+
+// Replanning (tempo, pause) undoes the unheard decision and takes it again with the same count:
+// the path stays the walk's.
+void test_follow_fuzz_tempo_pause_keeps_path() {
+  for (uint32_t seed = 1; seed <= 20; ++seed) {
+    tearDown();
+    setUp();
+    songSetup({0, 1, 2, 3, 4});
+    for (int i = 0; i < 5; ++i) fol(i, static_cast<FollowAct>(1 + (i + seed) % 4), 50 + 10 * (i % 3), (i + 2) % 5);
+    Rng r(seed * 2654435761u + 11);
+    seq->setFollowSalt(seed);
+    seq->start(0, *sink);
+    uint64_t t = 0;
+    for (int k = 0; k < 60; ++k) {
+      const uint64_t next = t + 1 + r.below(200000);
+      run(t, next);
+      t = next;
+      sink->now = t;
+      switch (r.below(5)) {
+        case 0:
+        case 1: seq->setBpm(static_cast<uint16_t>(60 + r.below(240))); break;
+        case 2:
+          seq->pause(t, *sink);
+          t += r.below(100000);
+          sink->now = t;
+          seq->resume(t, *sink);
+          break;
+        default: break;
+      }
+    }
+    const std::vector<int> got = heardPatterns();
+    TEST_ASSERT_TRUE(got.size() > 8);
+    const std::vector<int> want = liveWalk(seed, static_cast<int>(got.size()));
+    TEST_ASSERT_TRUE(got == want);
+  }
+}
+
+// A follow edit before the pass end (the advance already planned in the lookahead) is taken.
+void test_follow_edit_redecides_unheard_advance() {
+  songSetup({1, 2});
+  seq->start(0, *sink);
+  run(0, 300000);  // slot 0's last step (375 ms) planned, not heard: the advance to slot 1 decided
+  fol(0, FollowAct::Stay);
+  sink->now = 300000;
+  seq->songEdited(300000, *sink, 0, SongOp::Edit);
+  run(300000, 1400000);
+  const std::vector<int> want = {1, 1, 1};
+  TEST_ASSERT_TRUE(heardPatterns() == want);
 }
 
 void test_song_plays_slots_and_wraps() {
@@ -2761,6 +2891,12 @@ int main() {
   RUN_TEST(test_song_empty_keeps_pattern);
   RUN_TEST(test_song_empty_at_start_plays_current);
   RUN_TEST(test_song_slots_clamped);
+  RUN_TEST(test_follow_stay_repeats_slot);
+  RUN_TEST(test_follow_chance_zero_plays_next);
+  RUN_TEST(test_follow_prev_from_first_and_jump);
+  RUN_TEST(test_follow_random_matches_walk_and_salt);
+  RUN_TEST(test_follow_fuzz_tempo_pause_keeps_path);
+  RUN_TEST(test_follow_edit_redecides_unheard_advance);
   RUN_TEST(test_song_enable_while_playing_starts_slot_at_boundary);
   RUN_TEST(test_song_enable_while_looping_goes_to_slot);
   RUN_TEST(test_song_enable_while_looping_slot_clamped);

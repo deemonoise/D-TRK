@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <esp_random.h>
 #include "app.h"
 #include "page_bar.h"
 #include "audio/audio.h"
@@ -591,6 +592,7 @@ void InstScreen::onLeave() {
 }
 
 void InstScreen::onProjectReplaced() {
+  mut_.slot = -1;  // belongs to the old project
   typeSnapInstr_ = -1;
   // The instrument the browsers would restore / set belongs to the old project.
   if (presets_.isOpen()) presets_.close(true);
@@ -616,7 +618,7 @@ void InstScreen::presetMenu() {
     presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
-  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kMut15, kMut30, kMut60, kMutUndo };
   auto choose = [this](int id) {
     switch (id) {
       case kChop: editor_.chop(); break;
@@ -634,9 +636,14 @@ void InstScreen::presetMenu() {
         typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
         presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
         break;
+      case kMut15: mutate(15); break;
+      case kMut30: mutate(30); break;
+      case kMut60: mutate(60); break;
+      case kMutUndo: undoMutate(); break;
       default: break;
     }
   };
+  const bool canUndo = mut_.slot == instr_ && mt::mutateCanRestore(app_.project(), mut_);  // not edited since
   if (onEditor()) {
     editor_.bind(instr_);
     const MenuItem items[] = {{"Chop", kChop},
@@ -644,12 +651,47 @@ void InstScreen::presetMenu() {
                               {"Delete slice", kDel, editor_.sliceSelected()},
                               {"Clear slices", kClear, editor_.hasSlices()},
                               {"Load preset", kLoad},
-                              {"Save preset", kSave}};
-    app_.menu().open("SAMPLE", items, 6, choose);
+                              {"Save preset", kSave},
+                              {"Mutate 15%", kMut15},
+                              {"Mutate 30%", kMut30},
+                              {"Mutate 60%", kMut60},
+                              {"Undo mutate", kMutUndo, canUndo}};
+    app_.menu().open("SAMPLE", items, 10, choose);
     return;
   }
-  const MenuItem items[] = {{"Load", kLoad}, {"Save", kSave}};
-  app_.menu().open("PRESET", items, 2, choose);
+  const MenuItem items[] = {{"Load", kLoad},        {"Save", kSave},        {"Mutate 15%", kMut15},
+                            {"Mutate 30%", kMut30}, {"Mutate 60%", kMut60}, {"Undo mutate", kMutUndo, canUndo}};
+  app_.menu().open("PRESET", items, 6, choose);
+}
+
+void InstScreen::mutate(int strength) {
+  leaveEdit();
+  engine::lockProject();
+  const bool ok = mt::mutateSlot(app_.project(), instr_, strength, esp_random(), mut_);
+  engine::unlockProject();
+  if (!ok) {
+    app_.toast("NOTHING TO MUTATE");
+    return;
+  }
+  app_.markDirty();
+  syncParams();
+  char msg[24];
+  snprintf(msg, sizeof(msg), "MUTATE %d%%", strength);
+  app_.toast(msg);
+  preview();
+}
+
+void InstScreen::undoMutate() {
+  if (mut_.slot != instr_) return;
+  leaveEdit();
+  engine::lockProject();
+  const bool ok = mt::mutateRestore(app_.project(), mut_);
+  engine::unlockProject();
+  if (!ok) return;
+  app_.markDirty();
+  syncParams();
+  app_.toast("UNDO MUTATE");
+  preview();
 }
 
 void InstScreen::onATap(bool shift) {

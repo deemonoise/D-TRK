@@ -12,6 +12,7 @@
 #include "synth_shimmer.h"
 #include "synth_reverb.h"
 #include "synth_voice.h"
+#include "tuning.h"
 
 namespace mt {
 
@@ -59,8 +60,8 @@ static_assert(kLfos == 4, "LfoMods::depth initializer");
 // newest voice (DRV, BIT, SRR, DTY, GTE, PAN, DLY, RVB, MOD): one value for the whole track, a KIT
 // shares the KIT's delay / reverb sends (the MOD send is the track's).
 //
-// Master chain (renderCore): PERF throws -> MOD bus (ModFx, Project::mod*: the tracks' MOD sends ->
-// a stereo return into the mix) -> delay (Project::dlyMode, dlyChar) -> freeze duck -> reverb (SHIMMER:
+// Master chain (renderCore): PERF throws -> MOD bus (ModFx, SynthModel::mod*: the tracks' MOD sends ->
+// a stereo return into the mix) -> delay (SynthModel::dlyMode, dlyChar) -> freeze duck -> reverb (SHIMMER:
 // the pitch shifter in its feedback) -> compressor -> + sidechain key -> master EQ (eqLow / eqHigh)
 // -> PERF -> master gain, soft clip. The defaults (OFF, DIGITAL, PLAIN, flat) are bit-exact to the
 // chain before them.
@@ -74,14 +75,14 @@ static_assert(kLfos == 4, "LfoMods::depth initializer");
 // Without any kSynthStep (tests, preview) fx wait for the next note-on. On the preview track SLC picks
 // the slice in every slice mode, played at the root (slice audition).
 // Tick length comes from Project::bpm, the step length is ticks per step x tick.
-// Reads Project without locks: the fields it uses are single bytes / aligned halfwords.
+// Reads the SynthModel without locks: the fields it uses are single bytes / aligned halfwords.
 class Synth {
  public:
   static constexpr int kBlock = 128;     // samples per render()
   static constexpr int kControl = 32;    // samples per control update (1 ms)
   static constexpr int kMaxEvents = 64;  // per block
 
-  explicit Synth(const Project& p);
+  explicit Synth(const SynthModel& p);
   // Sample source for SAMPLE instruments; nullptr = sampler silent.
   void setBank(const SampleSource* b) { bank_ = b; }
   // Wavetables for SYNTH instruments, resolved at note-on; nullptr = WT oscillators silent.
@@ -328,7 +329,12 @@ class Synth {
   // The block through the master chain into mixL_ / mixR_ (master gain and soft clip applied).
   void renderCore();
 
-  const Project& p_;
+  const SynthModel& p_;
+  // Project tuning: rebuilt at a block's start when the model's table or scale root changed.
+  TuneMap tune_;
+  TuningTable tuneSeen_;
+  uint8_t tuneRootSeen_ = 0;
+  void syncTuning();
   const SampleSource* bank_ = nullptr;
   const WtSource* wt_ = nullptr;
   mutable Instrument laneScratch_;  // instrOf: KIT sampler lane

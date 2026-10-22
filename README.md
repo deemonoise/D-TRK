@@ -17,8 +17,12 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - A step holds a note, volume, chord (36 types × 4 inversions) and 6 fx commands: slide, vibrato, retrigger, arp, trig conditions (probability, fill, "previous played"…), p-locks of sound parameters, pan and LFOs.
 - Fill notes, volume or any fx on every Nth step, by Euclid or at random, with value ramps.
 - Generators that write straight into notes: **ARP** (106 patterns, including 64 from the Access Virus), **CHORDS** (55 progressions in the project key, 32 rhythms, RANDOM, Mutate, voice leading) and **BASS** (48 bass patterns that follow the chords). Your own patterns are saved with Capture.
+- A live shift-register generator per track (**GEN**): a looping 2–16-bit register slowly mutates and plays notes of the project scale (pitch, or the rhythm too), Flip live from a track button and the FLP fx per step, Capture writes the loop into the pattern.
+- **Dice** on PROJ: one roll gives a genre tempo and scale, factory sounds on four role tracks (drums, bass, chords, lead) and a pattern from the generators, undoable; **Mutate** on INST nudges an instrument's sound.
+- Evolve per track (**EVO**): the pattern drifts live (notes along the scale, drops and ghost notes, retriggers and velocity, shifted steps), pulled back by Home; Capture writes the heard variant into the pattern.
 - Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
 - Scales, undo, selection, copy.
+- Microtonal project tuning: 10 factory tunings (just, meantone, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce…) and your own Scala `.scl` files from the card.
 
 ### Built-in sound
 
@@ -44,8 +48,8 @@ Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo s
 
 ### Live performance and song
 
-- **Song**: up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
-- **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable. Works on GRID, SONG and MIX; held effects also show on the whole screen (dim, pixelate, invert…), switchable in FILE → SYSTEM.
+- **Song**: up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Follow actions per slot (next, previous, stay, jump, random, with a chance) from a project seed: every Play a new path, the render repeatable. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
+- **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable. Works on GRID, SONG and MIX; held effects also show on the whole screen (dim, pixelate, invert…), switchable in FILE → SYSTEM. XY pad (A + B): the touch screen holds two effects, the finger sets their depths.
 - **REC**: record notes from the track buttons while playing.
 - Shift + Play: the song from the SONG cursor on any tab; held while playing, fill.
 
@@ -81,7 +85,7 @@ The partition table is custom (`partitions.csv`): two 3 MB firmware slots and a 
 
 | Folder | Contents |
 |---|---|
-| `lib/core` | hardware-independent core: model, sequencer, fx, scales, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, filter), WAV parser, sample bank, project sample list, presets |
+| `lib/core` | hardware-independent core: model, sequencer, fx, scales, tuning (`.scl` parser, factory tunings, key map), shift-register generator, evolve, song follow actions, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, filter), WAV parser, sample bank, project sample list, presets |
 | `src/engine` | sequencer task on core 0 (timer, MIDI output) |
 | `src/audio` | built-in sound: I2S to the external PCM5102A DAC, audio task, sample bank in flash, WAV import |
 | `src/hw` | input (encoder, buttons), MIDI UART, SD, display configuration |

@@ -27,6 +27,7 @@ enum class LoadErr : uint8_t { Ok, BadMagic, BadVersion, Truncated, BadCrc, BadV
 // What a load changed in an old file (for a message to the user).
 struct LoadNotes {
   bool songTransposeDropped = false;  // a legacy chain item had a transpose: the song has none
+  bool tuningDropped = false;         // a TUNE chunk was broken: the project plays 12-TET
 };
 
 // Resets out first. Values are clamped to valid ranges; unknown chunks are skipped. Old song chunks
