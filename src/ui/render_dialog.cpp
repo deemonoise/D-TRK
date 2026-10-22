@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "follow.h"
 #include "hw/sdcard.h"
 #include "storage/render_io.h"
 
@@ -29,6 +30,12 @@ RenderDialog::RenderDialog(App& app) : app_(app) {
                         if (v == kSoloed && !app_.project().anySolo()) v += d > 0 ? 1 : -1;  // no solo: skipped
                         tracks_ = v;
                       }};
+  params_[kSlots] = {"Max slots", [this](char* o, int n) { snprintf(o, n, "%d", maxSlots_); },
+                     [this](int d) {
+                       const int v = maxSlots_ + d;
+                       maxSlots_ = v < 1 ? 1 : (v > mt::kRenderSlotsMax ? mt::kRenderSlotsMax : v);
+                     },
+                     [this] { return source_ < mt::kPatterns; }};
   params_[kRender] = {"RENDER", [](char* o, int n) { snprintf(o, n, "LONG PRESS: STOP"); }, nullptr};
   params_[kCancel] = {"Cancel", nullptr, nullptr};
   list_.setParams(params_, kRows);
@@ -64,9 +71,7 @@ void RenderDialog::confirm() {
     return;
   }
   if (source_ >= mt::kPatterns && !songOk()) source_ = app_.editPattern();
-  mt::RenderSpec spec;
-  if (source_ >= mt::kPatterns) spec.mode = mt::RenderSpec::Mode::Song;
-  else spec.pattern = static_cast<uint8_t>(source_);
+  const mt::RenderSpec spec = this->spec();
   char path[96];
   int first = -1;  // STEMS: the first stem's file stands for all of them
   if (tracks_ == kStems) {
@@ -93,9 +98,7 @@ void RenderDialog::confirm() {
 
 void RenderDialog::run() {
   mt::Project& p = app_.project();
-  mt::RenderSpec spec;
-  if (source_ >= mt::kPatterns) spec.mode = mt::RenderSpec::Mode::Song;
-  else spec.pattern = static_cast<uint8_t>(source_);
+  mt::RenderSpec spec = this->spec();
   if (tracks_ == kStems) {
     runStems(spec);
     return;
@@ -123,11 +126,20 @@ void RenderDialog::run() {
   close();
 }
 
+mt::RenderSpec RenderDialog::spec() const {
+  mt::RenderSpec s;
+  if (source_ >= mt::kPatterns) s.mode = mt::RenderSpec::Mode::Song;
+  else s.pattern = static_cast<uint8_t>(source_);
+  s.maxSlots = static_cast<uint16_t>(maxSlots_);
+  return s;
+}
+
 uint16_t RenderDialog::stemTracks(const mt::RenderSpec& spec) const {
   const mt::Project& p = app_.project();
   bool used[mt::kPatterns] = {};
   if (spec.mode == mt::RenderSpec::Mode::Song) {
-    for (int i = 0; i < p.songLen && i < mt::kSongMax; ++i) used[p.song[i] < mt::kPatterns ? p.song[i] : 0] = true;
+    mt::followWalk(p, mt::followRunSeed(p.seed, 0), spec.maxSlots,  // the slots on the render's path
+                   [&](int i) { used[p.song[i] < mt::kPatterns ? p.song[i] : 0] = true; });
   } else {
     used[spec.pattern] = true;
   }

@@ -50,15 +50,24 @@ void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t ro
   }
 }
 
-bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute) {
+namespace {
+bool isJump(const SongFollow& f) { return f.act == static_cast<uint8_t>(FollowAct::Jump); }
+}  // namespace
+
+bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute, SongFollow fol) {
   const int n = p.songLen;
   if (n >= kSongMax) return false;
   at = clampi(at, 0, n);
+  for (int i = 0; i < n; ++i)
+    if (isJump(p.songFol[i]) && p.songFol[i].target >= at && p.songFol[i].target < kSongMax - 1) ++p.songFol[i].target;
+  if (isJump(fol) && fol.target >= at && fol.target < kSongMax - 1) ++fol.target;
   const size_t k = static_cast<size_t>(n - at);
   memmove(p.song + at + 1, p.song + at, k);
   memmove(p.songMute + at + 1, p.songMute + at, k * sizeof(p.songMute[0]));
+  memmove(p.songFol + at + 1, p.songFol + at, k * sizeof(p.songFol[0]));
   p.song[at] = pat < kPatterns ? pat : kPatterns - 1;
   p.songMute[at] = mute;
+  p.songFol[at] = fol;
   p.songLen = static_cast<uint8_t>(n + 1);
   return true;
 }
@@ -66,11 +75,20 @@ bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute) {
 void songDelete(Project& p, int at) {
   const int n = p.songLen;
   if (at < 0 || at >= n) return;
+  for (int i = 0; i < n; ++i) {
+    SongFollow& f = p.songFol[i];
+    if (!isJump(f) || f.target < at) continue;
+    if (f.target > at) --f.target;
+    else if (at == n - 1) f.target = static_cast<uint8_t>(n >= 2 ? n - 2 : 0);
+    // == at, not the last: the slot that moves into its place keeps the index
+  }
   const size_t k = static_cast<size_t>(n - at - 1);
   memmove(p.song + at, p.song + at + 1, k);
   memmove(p.songMute + at, p.songMute + at + 1, k * sizeof(p.songMute[0]));
+  memmove(p.songFol + at, p.songFol + at + 1, k * sizeof(p.songFol[0]));
   p.song[n - 1] = 0;
   p.songMute[n - 1] = 0;
+  p.songFol[n - 1] = SongFollow();
   p.songLen = static_cast<uint8_t>(n - 1);
 }
 
@@ -84,6 +102,23 @@ uint16_t patternTrackMask(const Project& p, int pat) {
         break;
       }
   return m;
+}
+
+void captureGen(Pattern& p, int tr, const GenCfg& c, const GenState& st, int fromStep, uint8_t root, ScaleType t) {
+  if (tr < 0 || tr >= kTracks) return;
+  const uint8_t n = p.trackLen[tr];
+  const int len = n && n < p.length ? n : p.length;
+  if (len <= 0) return;
+  const bool gate = c.mode == static_cast<uint8_t>(GenMode::Gate);
+  GenState g = st;
+  const int from = fromStep < 0 ? 0 : fromStep % len;
+  for (int k = 0; k < len; ++k) {
+    Step& s = p.steps[tr][(from + k) % len];
+    if (!gate && !s.hasNote()) continue;
+    genShift(g, c, tr, 0);
+    if (gate && s.note == kNoteOff) continue;
+    s.note = !gate || genGate(g, c) ? genNote(g, c, root, t) : kNoteEmpty;
+  }
 }
 
 }  // namespace mt

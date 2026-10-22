@@ -377,8 +377,25 @@ void test_gte_fx() {
   TEST_ASSERT_TRUE(fxNextCmd(Fx::GTE, 1) == Fx::DCY);
 }
 
+void test_flp_fx() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::MOD) + 1, static_cast<int>(Fx::FLP));
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::FLP) + 1, static_cast<int>(Fx::Count));
+  TEST_ASSERT_EQUAL_STRING("FLP", fxName(Fx::FLP));
+  TEST_ASSERT_EQUAL_STRING("GEN FLIP", fxLongName(Fx::FLP));
+  TEST_ASSERT_EQUAL(50, fxDefault(Fx::FLP));
+  TEST_ASSERT_EQUAL_STRING("  0", fmt(Fx::FLP, 0));
+  TEST_ASSERT_EQUAL_STRING("100", fmt(Fx::FLP, 100));
+  TEST_ASSERT_EQUAL(100, fxStep(Fx::FLP, 95, 20));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::FLP, 3, -5));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::FLP));
+  TEST_ASSERT_FALSE(fxDrumOnly(Fx::FLP));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::NRN, 1) == Fx::FLP);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::FLP, 1) == Fx::SLD);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_flp_fx);
   RUN_TEST(test_dty_fx);
   RUN_TEST(test_gte_fx);
   RUN_TEST(test_long_names);

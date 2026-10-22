@@ -6,6 +6,8 @@
 #include "audio/audio.h"
 #include "fx_info.h"
 #include "name_edit.h"
+#include "note_name.h"
+#include "esp_random.h"
 
 namespace ui {
 namespace {
@@ -233,6 +235,110 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                           else snprintf(o, n, "OFF");
                         },
                         [this](int d) { cfg().humanize = static_cast<uint8_t>(clampi(cfg().humanize + d, 0, 100)); }};
+  // GEN page (Project::gen): every edit replans the unheard steps.
+  auto genDimF = [this] { return genDim(); };
+  params_[kGenMode] = {"Gen",
+                       [this](char* o, int n) {
+                         static const char* const kN[] = {"OFF", "PITCH", "GATE"};
+                         static_assert(sizeof(kN) / sizeof(kN[0]) == static_cast<int>(mt::GenMode::Count), "Gen");
+                         if (app_.project().trackIsDrum(app_.curTrack())) snprintf(o, n, "DRUM");
+                         else snprintf(o, n, "%s", kN[gen().mode < 3 ? gen().mode : 0]);
+                       },
+                       [this](int d) {
+                         gen().mode = static_cast<uint8_t>(
+                             clampi(gen().mode + d, 0, static_cast<int>(mt::GenMode::Count) - 1));
+                         genEdited();
+                       },
+                       [this] { return app_.project().trackIsDrum(app_.curTrack()); }};
+  params_[kGenLen] = {"Length", [this](char* o, int n) { snprintf(o, n, "%u", gen().len); },
+                      [this](int d) {
+                        gen().len = static_cast<uint8_t>(clampi(gen().len + d, mt::kGenLenMin, mt::kGenLenMax));
+                        genEdited();
+                      },
+                      genDimF};
+  params_[kGenFlip] = {"Flip",
+                       [this](char* o, int n) {
+                         char v[8];
+                         mt::genFlipText(gen().flip, v);
+                         snprintf(o, n, "%s", v);
+                       },
+                       [this](int d) {
+                         gen().flip = static_cast<uint8_t>(clampi(gen().flip + d, 0, 100));
+                         genEdited();
+                       },
+                       genDimF};
+  params_[kGenLow] = {"Low",
+                      [this](char* o, int n) {
+                        char v[4];
+                        mt::noteName(gen().low, v);
+                        snprintf(o, n, "%s", v);
+                      },
+                      [this](int d) {
+                        gen().low = static_cast<uint8_t>(clampi(gen().low + d, 0, 127));
+                        genEdited();
+                      },
+                      genDimF};
+  params_[kGenOct] = {"Range", [this](char* o, int n) { snprintf(o, n, "%u OCT", gen().oct); },
+                      [this](int d) {
+                        gen().oct = static_cast<uint8_t>(clampi(gen().oct + d, 1, mt::kGenOctMax));
+                        genEdited();
+                      },
+                      genDimF};
+  params_[kGenDens] = {"Density", [this](char* o, int n) { snprintf(o, n, "%u%%", gen().density); },
+                       [this](int d) {
+                         gen().density = static_cast<uint8_t>(clampi(gen().density + d, 0, 100));
+                         genEdited();
+                       },
+                       [this] { return genDim() || gen().mode != static_cast<uint8_t>(mt::GenMode::Gate); }};
+  params_[kGenSeed] = {"Seed", [this](char* o, int n) { snprintf(o, n, "%u", gen().seed); },
+                       [this](int d) {
+                         gen().seed = static_cast<uint16_t>(clampi(gen().seed + d, 0, 65535));
+                         engine::post(engine::Cmd::GenReseed, static_cast<uint16_t>(app_.curTrack()));
+                       },
+                       genDimF};
+  // Drawn as cells (drawGen); no edit.
+  params_[kGenReg] = {"Register", [](char* o, int) { o[0] = 0; }, nullptr, genDimF};
+  // EVO page (Project::evo): every edit replans the unheard steps. Evolve OFF greys all but Home (it still
+  // pulls the drift back).
+  auto evoDimF = [this] { return evoDim(); };
+  params_[kEvoAmt] = {"Evolve",
+                      [this](char* o, int n) {
+                        if (evo().amount) snprintf(o, n, "%u%%", evo().amount);
+                        else snprintf(o, n, "OFF");
+                      },
+                      [this](int d) {
+                        evo().amount = static_cast<uint8_t>(clampi(evo().amount + d, 0, 100));
+                        evoEdited();
+                      }};
+  params_[kEvoEvery] = {"Every", [this](char* o, int n) { snprintf(o, n, "%u PASS", evo().every); },
+                        [this](int d) {
+                          evo().every = static_cast<uint8_t>(clampi(evo().every + d, 1, mt::kEvoEveryMax));
+                          evoEdited();
+                        },
+                        evoDimF};
+  params_[kEvoHome] = {"Home", [this](char* o, int n) { snprintf(o, n, "%u%%", evo().home); },
+                       [this](int d) {
+                         evo().home = static_cast<uint8_t>(clampi(evo().home + d, 0, 100));
+                         evoEdited();
+                       }};
+  auto evoBit = [this](const char* label, uint8_t b, std::function<bool()> dim) {
+    return Param{label, [this, b](char* o, int n) { snprintf(o, n, "%s", (evo().mask & b) ? "ON" : "OFF"); },
+                 [this, b](int d) {
+                   if (d > 0) evo().mask = static_cast<uint8_t>(evo().mask | b);
+                   else if (d < 0) evo().mask = static_cast<uint8_t>(evo().mask & ~b);
+                   evoEdited();
+                 },
+                 dim};
+  };
+  params_[kEvoNote] = evoBit("Note", mt::kEvoNote, [this] {  // drum / GEN tracks: never
+    const mt::Project& p = app_.project();
+    return evoDim() || p.trackIsDrum(app_.curTrack()) || p.genOn(app_.curTrack());
+  });
+  params_[kEvoRhythm] = evoBit("Rhythm", mt::kEvoRhythm, [this] {  // GEN GATE makes the rhythm
+    return evoDim() || !mt::evoRhythmOk(app_.project(), app_.curTrack());
+  });
+  params_[kEvoRtrg] = evoBit("Rtrg+Vol", mt::kEvoRtrgVol, evoDimF);
+  params_[kEvoShift] = evoBit("Shift", mt::kEvoShift, evoDimF);
   params_[kCcA] = {"CC A", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccA); },
                    [this](int d) { cfg().ccA = static_cast<uint8_t>(clampi(cfg().ccA + d, 0, 127)); }, midiOnly};
   params_[kCcB] = {"CC B", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccB); },
@@ -281,6 +387,95 @@ void TrackScreen::setPageRows(int page, bool bar) {
 }
 
 mt::TrackCfg& TrackScreen::cfg() { return app_.project().tracks[app_.curTrack()]; }
+
+mt::GenCfg& TrackScreen::gen() { return app_.project().gen[app_.curTrack()]; }
+
+bool TrackScreen::genDim() { return !app_.project().genOn(app_.curTrack()); }
+
+void TrackScreen::genEdited() { engine::post(engine::Cmd::GenEdit); }
+
+void TrackScreen::reseed() {
+  engine::lockProject();
+  gen().seed = static_cast<uint16_t>(esp_random() & 0xFFFF);
+  engine::unlockProject();
+  engine::post(engine::Cmd::GenReseed, static_cast<uint16_t>(app_.curTrack()));
+  app_.markDirty();
+  char msg[20];
+  snprintf(msg, sizeof(msg), "SEED %u", gen().seed);
+  app_.toast(msg);
+}
+
+mt::EvoCfg& TrackScreen::evo() { return app_.project().evo[app_.curTrack()]; }
+
+bool TrackScreen::evoDim() { return evo().amount == 0; }
+
+void TrackScreen::evoEdited() { engine::post(engine::Cmd::EvoEdit); }
+
+engine::EvoInfo TrackScreen::heardEvo(int& len) {
+  engine::lockProject();
+  len = mt::evoLen(app_.project().patterns[app_.status().pattern % mt::kPatterns], app_.curTrack());
+  const engine::EvoInfo e = engine::heardEvoInfo(app_.curTrack(), len);
+  engine::unlockProject();
+  return e;
+}
+
+// EVO page header: "MUT n  PASS c/every" left of the title, "CHG k/len" right of it (the heard state).
+void TrackScreen::drawEvo(LGFX_Sprite& s, int y0) {
+  int len = 0;
+  const engine::EvoInfo e = heardEvo(len);
+  shownEvoN_ = e.n;
+  shownEvoPass_ = e.passes;
+  shownEvoChg_ = e.changed;
+  char buf[24];
+  const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
+  s.setTextColor(evoDim() ? kDim : kCursor);
+  snprintf(buf, sizeof(buf), "MUT %lu  PASS %u/%u", static_cast<unsigned long>(e.n), e.passes + 1u,
+           static_cast<unsigned>(evo().every));
+  s.drawString(buf, 44, ty);
+  snprintf(buf, sizeof(buf), "CHG %d/%d", e.changed, len);
+  s.drawString(buf, kScreenW - 44 - static_cast<int>(strlen(buf)) * kCharW, ty);
+}
+
+mt::GenState TrackScreen::heardGen() {
+  engine::lockProject();
+  const mt::GenState g = engine::heardGen(app_.curTrack());
+  engine::unlockProject();
+  return g;
+}
+
+// GEN page: the Register row's cells and, in the header, the note (and the gate in GATE) it gives now.
+void TrackScreen::drawGen(LGFX_Sprite& s, int y0) {
+  const mt::Project& p = app_.project();
+  const mt::GenCfg& g = gen();
+  const mt::GenState st = heardGen();
+  if (st.n != shownGenN_ && st.flipped) flipAt_ = millis() | 1;
+  shownGen_ = st.reg;
+  shownGenN_ = st.n;
+  flipShown_ = flipAt_ && millis() - flipAt_ < kFlipMs;
+  const bool dim = genDim();
+  const int y = list_.rowY(kGenReg - kGenMode);
+  if (list_.rowAt(y + 1) == kGenRegRow) {
+    const uint16_t col = dim ? kDim : kText;
+    const int cy = y + (ParamList::kRowH - kCellW) / 2;
+    const int len = clampi(g.len, mt::kGenLenMin, mt::kGenLenMax);
+    for (int i = 0; i < len; ++i) {
+      const int x = cellX(i);
+      const bool on = (st.reg >> i) & 1;
+      const uint16_t c = i == 0 && flipShown_ ? kEditCursor : col;
+      if (on) s.fillRect(x, cy, kCellW, kCellW, c);
+      else s.drawRect(x, cy, kCellW, kCellW, c);
+    }
+  }
+  if (dim) return;
+  char nn[4], buf[12];
+  mt::noteName(mt::genNote(st, g, p.scaleRoot, static_cast<mt::ScaleType>(p.scaleType)), nn);
+  snprintf(buf, sizeof(buf), "%s", nn);
+  const int x = kScreenW - 44 - 5 * kCharW, ty = y0 + (kHeaderH - 4 - kCharH) / 2;
+  s.setTextColor(kCursor);
+  s.drawString(buf, x, ty);
+  if (g.mode == static_cast<uint8_t>(mt::GenMode::Gate) && mt::genGate(st, g))
+    s.fillCircle(x + 4 * kCharW + 3, y0 + (kHeaderH - 4) / 2, 3, kCursor);
+}
 
 void TrackScreen::fixNames() {
   mt::Project& p = app_.project();
@@ -363,6 +558,12 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
       }
       return;
     }
+  }
+  // GEN: a click on Seed (not editing) = a new random seed.
+  if (page_ == kPgGen && ev.type == hw::InputType::EncClick && !ev.shift && !list_.editing() &&
+      list_.sel() == kGenSeedRow && !genDim()) {
+    reseed();
+    return;
   }
   const bool wasName = nameEdit();
   if (ev.type == hw::InputType::EncTurn && ev.shift) {
@@ -538,7 +739,7 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   s.setTextColor(kText);
   s.drawString(buf, (kScreenW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
 
-  static const char* const kNames[kPages] = {"MAIN", "INS", "FOL", "NOTE", "MIDI"};
+  static const char* const kNames[kPages] = {"MAIN", "INS", "FOL", "NOTE", "GEN", "EVO", "MIDI"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
@@ -548,6 +749,8 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   if (page_ == kPgIns) drawSteps(s);
   if (page_ == kPgFol) drawFolBar(s, y0);
+  if (page_ == kPgGen) drawGen(s, y0);
+  if (page_ == kPgEvo) drawEvo(s, y0);
 }
 
 int TrackScreen::folBarPx() const {
@@ -592,6 +795,17 @@ uint32_t TrackScreen::mixSignature() const {
 bool TrackScreen::wantsRedraw(const engine::Status&) {
   if (!mixer_) {
     if (page_ == kPgFol) return folBarPx() != shownFolPx_;  // the follower's bar moved
+    if (page_ == kPgGen) {  // the register moved, or a flip blink ends
+      if (genDim()) return false;
+      const mt::GenState g = heardGen();
+      const bool blink = flipAt_ && millis() - flipAt_ < kFlipMs;
+      return g.reg != shownGen_ || g.n != shownGenN_ || blink != flipShown_;
+    }
+    if (page_ == kPgEvo) {  // a mutation, a pass counted or a Capture
+      int len = 0;
+      const engine::EvoInfo e = heardEvo(len);
+      return e.n != shownEvoN_ || e.passes != shownEvoPass_ || e.changed != shownEvoChg_;
+    }
     return page_ == kPgIns && gateStep() != shownGateStep_;  // the gate's playhead moved
   }
   const uint32_t sig = mixSignature();

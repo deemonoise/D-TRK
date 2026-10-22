@@ -43,11 +43,12 @@ void test_b_during_a_edit_cancels() {
   expect(AbAction::None, k.aUp(false));  // no EditEnd, no tap
 }
 
-void test_b_during_a_without_edit_does_nothing() {
+// A then B, nothing else, released: one Both on the first release; no tap, no Back.
+void test_a_then_b_is_both() {
   AbKeys k;
   k.aDown();
   expect(AbAction::None, k.bDown());
-  expect(AbAction::None, k.bUp(false));
+  expect(AbAction::Both, k.bUp(false));
   expect(AbAction::None, k.aUp(false));
 }
 
@@ -122,16 +123,51 @@ void test_b_then_a_turn_no_taps() {
   expect(AbAction::None, k.bUp(false));  // no Back
 }
 
-void test_b_then_a_release_both_no_taps() {
+void test_b_then_a_release_is_both_once() {
   AbKeys k;
   k.bDown();
   k.aDown();
-  expect(AbAction::None, k.bUp(false));
+  expect(AbAction::Both, k.bUp(false));
   expect(AbAction::None, k.aUp(false));
   k.bDown();
   k.aDown();
+  expect(AbAction::Both, k.aUp(false));
+  expect(AbAction::None, k.bUp(false));
+}
+
+// A turn or a track button while both are held is that chord, not Both; an A edit cancelled by B neither.
+void test_both_not_after_turn_track_or_cancel() {
+  AbKeys k;
+  k.aDown();
+  k.bDown();
+  expect(AbAction::TabTurn, k.turn(1, false));
+  expect(AbAction::None, k.bUp(false));
+  expect(AbAction::None, k.aUp(false));
+  k.aDown();
+  k.bDown();
+  expect(AbAction::QueuePattern, k.track(1, false));
   expect(AbAction::None, k.aUp(false));
   expect(AbAction::None, k.bUp(false));
+  k.aDown();
+  k.turn(1, false);
+  expect(AbAction::EditCancel, k.bDown());
+  expect(AbAction::None, k.bUp(false));
+  expect(AbAction::None, k.aUp(false));
+}
+
+// A chord before the other button came down (B + turn, A + track button) is not Both either.
+void test_both_not_after_chord_before_the_other() {
+  AbKeys k;
+  k.bDown();
+  expect(AbAction::TabTurn, k.turn(1, false));
+  k.aDown();
+  expect(AbAction::None, k.aUp(false));
+  expect(AbAction::None, k.bUp(false));
+  k.aDown();
+  expect(AbAction::Solo, k.track(2, false));
+  k.bDown();
+  expect(AbAction::None, k.bUp(false));
+  expect(AbAction::None, k.aUp(false));
 }
 
 void test_b_then_a_track_no_taps() {
@@ -149,7 +185,7 @@ int main(int, char**) {
   RUN_TEST(test_a_turn_edits_and_release_ends);
   RUN_TEST(test_a_tap);
   RUN_TEST(test_b_during_a_edit_cancels);
-  RUN_TEST(test_b_during_a_without_edit_does_nothing);
+  RUN_TEST(test_a_then_b_is_both);
   RUN_TEST(test_b_turn_tabs_and_pages);
   RUN_TEST(test_b_tap_back_and_shift_undo);
   RUN_TEST(test_track_chords);
@@ -157,7 +193,9 @@ int main(int, char**) {
   RUN_TEST(test_reset_clears_held);
   RUN_TEST(test_release_after_reset_does_nothing);
   RUN_TEST(test_b_then_a_turn_no_taps);
-  RUN_TEST(test_b_then_a_release_both_no_taps);
+  RUN_TEST(test_b_then_a_release_is_both_once);
+  RUN_TEST(test_both_not_after_turn_track_or_cancel);
+  RUN_TEST(test_both_not_after_chord_before_the_other);
   RUN_TEST(test_b_then_a_track_no_taps);
   return UNITY_END();
 }

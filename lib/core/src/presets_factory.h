@@ -34,5 +34,7 @@ int factoryKitBlock(int kitSlot);
 // block + k, transposed down by k to sound at its own pitch on note 60 + k), without their insert
 // recommendation (a lane has no insert of its own). Slots past the kit's drums are left as they are.
 void factoryBuildKit(int i, Project& p, int kitSlot);
+// The same on an instrument array of kInstruments slots (a copy of the project's).
+void factoryBuildKit(int i, Instrument* instruments, int kitSlot);
 
 }  // namespace mt

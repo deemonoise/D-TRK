@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "model.h"
 #include "scale.h"
+#include "shift_gen.h"
 
 namespace mt {
 
@@ -25,9 +26,17 @@ void clearSel(Pattern& p, const Sel& s);
 void transposeSel(Pattern& p, const Sel& s, int amount, bool degrees, uint8_t root, ScaleType t,
                   const bool* drumTracks = nullptr);
 
-// Song slots: inserts slot (pat, mute) at `at` (clamped to 0..songLen), false when full; deletes slot
-// `at` (nothing past the end). A freed slot is zeroed.
-bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute);
+// Capture gen: writes track tr's generator loop (c, from state st, not changed) into p, one pass of the
+// track's length starting at step fromStep (wrapping), with Flip 0 (FLP locks ignored): the loop as it plays
+// now, without mutations. PITCH: the note steps get the generated notes. GATE: steps with a gate get the
+// note, the others lose theirs; OFF stays. Velocities and fx stay.
+void captureGen(Pattern& p, int tr, const GenCfg& c, const GenState& st, int fromStep, uint8_t root, ScaleType t);
+
+// Song slots: inserts slot (pat, mute, fol) at `at` (clamped to 0..songLen), false when full; deletes slot
+// `at` (nothing past the end). A freed slot is zeroed (follow: NEXT 100 %). JUMP targets (also fol's) keep
+// pointing at the same slot; a target on a deleted slot goes to the slot in its place (the new last when
+// the last was deleted).
+bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute, SongFollow fol = SongFollow());
 void songDelete(Project& p, int at);
 // Bit t set: track t of pattern pat has a non-empty step within the pattern length.
 uint16_t patternTrackMask(const Project& p, int pat);

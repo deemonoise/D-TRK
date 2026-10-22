@@ -11,6 +11,14 @@ constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
 constexpr int kPatterns = 16;
 constexpr int kSongMax = 128;  // song slots
+// Follow action of a song slot (Project::songFol, follow.h): what plays after the slot's pass.
+// In files (SFOL): new actions before Count only.
+enum class FollowAct : uint8_t { Next, Prev, Stay, Jump, Random, Count };
+struct SongFollow {
+  uint8_t act = 0;       // FollowAct
+  uint8_t target = 0;    // JUMP: the slot (past the song: its last slot)
+  uint8_t chance = 100;  // 0..100 %: the action happens, else NEXT
+};
 constexpr int kPpqn = 96;
 
 constexpr uint8_t kNoteEmpty = 0xFF;
@@ -131,7 +139,7 @@ static_assert(kLfos * kLfoLocks <= 16, "LFO lock mask is a uint16_t");
 // Internal synth instrument. One-byte fields: the audio task reads them without a lock.
 constexpr uint8_t kMasterVolMax = 200;  // master volume %, above 100 = up to +6 dB
 constexpr uint8_t kDlyTimeMax = 16;     // delay time, sixteenths
-// Master / send fx modes (Project::dlyMode, rvbMode, modType, shimInt). Stored in files: new values
+// Master / send fx modes (SynthModel::dlyMode, rvbMode, modType, shimInt). Stored in files: new values
 // before Count only. DlyMode = DelayMode (synth_delay.h), ModType = ModFxType (synth_modfx.h),
 // ShimInt = PitchShift::Interval (synth_shimmer.h).
 enum class DlyMode : uint8_t { Digital, Tape, PingPong, Count };
@@ -283,7 +291,7 @@ float folCoef(uint8_t v);
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
-  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, Count
+  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, Count
 };
 // LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
@@ -298,6 +306,8 @@ enum class Fx : uint8_t {
 // DTY locks the track insert's drive model (kLockDty, DriveModel: TNH CLP FLD RCT ASY), INT tracks only.
 // GTE locks the trance gate's depth (kLockGte, TrackCfg::gateDepth: 0 = OFF, 1..127), INT tracks only.
 // MOD locks the MOD bus send (kLockMod, TrackCfg::modSend), INT tracks only.
+// FLP (0..100 %): the track generator's register shift on this step flips with this chance instead of
+// GenCfg::flip (shift_gen.h). The sequencer's; never sent to the synth.
 // ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
 // kArmDefault (UP, 3) is the plain ARP. INT tracks only.
 // ARS (step arp, the sequencer's): (octaves - 1) << 6 | mode << 4 | steps per note (1..kArmRateMax),
@@ -479,25 +489,41 @@ struct TrackCfg {
   int8_t folAmt = 0;
   uint8_t folAtk = 0;
   uint8_t folRel = 70;
-  // MOD send (Synth's MOD bus, Project::mod*): 0..127, after the fader like the delay / reverb sends.
+  // MOD send (Synth's MOD bus, SynthModel::mod*): 0..127, after the fader like the delay / reverb sends.
   // Fx MOD locks it, LFO / follower target ModSend moves it. INT tracks only; a KIT shares one.
   uint8_t modSend = 0;
 };
 
-struct Project {
-  char name[17] = {0};
+// Microtonal tuning of the project (INT melodic voices, see tuning.h): count degrees per period in
+// 1/1000 cent, mc[count - 1] = the period (Scala's last line). count 0 = 12-TET (the default, the old sound).
+// root: the MIDI key that keeps its 12-TET pitch, kTuneRootAuto = C-4 + scale root. name: the factory
+// tuning's or the .scl file's name (shown on PROJ); the table plays without the file.
+constexpr int kTuneDegMax = 64;
+constexpr uint8_t kTuneRootAuto = 0xFF;
+constexpr int32_t kTunePeriodMaxMc = 4800000;  // 4 octaves
+constexpr int32_t kTuneDegAbsMaxMc = 9600000;
+struct TuningTable {
+  char name[17] = {};
+  uint8_t count = 0;
+  uint8_t root = kTuneRootAuto;
+  uint8_t pad = 0;
+  int32_t mc[kTuneDegMax] = {};
+};
+// A playable table: count 1..kTuneDegMax, period in (0, kTunePeriodMaxMc], degrees within
+// +-kTuneDegAbsMaxMc, root a note or AUTO. False for 12-TET (count 0).
+bool tuningValid(const TuningTable& t);
+// The anchor key: root, or for AUTO C-4 (60) + scaleRoot % 12.
+int tuningRootKey(const TuningTable& t, uint8_t scaleRoot);
+void tuningClear(TuningTable& t);  // back to 12-TET, root AUTO
+
+// Everything the synth reads from the project: the sound state the ESP mirrors to the synth board
+// (synth_model.h cuts it into chunks). Fields are grouped by chunk: master, tracks, instruments,
+// samples, wavetables.
+struct SynthModel {
   uint16_t bpm = 120;
   uint8_t scaleRoot = 0;
-  uint8_t scaleType = 0;  // ScaleType (scale.h), 0 = Chromatic
-  TrackCfg tracks[kTracks];
-  Pattern patterns[kPatterns];
-  // Song: slot i plays pattern song[i]; when it starts, track t is muted iff bit t of songMute[i].
-  uint8_t song[kSongMax] = {0};
-  uint16_t songMute[kSongMax] = {0};
-  uint8_t songLen = 0;
-  Instrument instruments[kInstruments];
+  uint8_t scaleType = 0;   // ScaleType (scale.h), 0 = Chromatic
   uint8_t masterVol = 100;  // 0..kMasterVolMax %
-  bool preview = true;      // GRID note entry sounds on INT tracks
   // Send delay (INT tracks): time 1..kDlyTimeMax sixteenths, feedback / tone / return level 0..127.
   uint8_t dlyTime = 3;
   uint8_t dlyFb = 50;
@@ -513,18 +539,6 @@ struct Project {
   uint8_t compRel = 50;
   uint8_t scTrack = 0;
   uint8_t scDepth = 64;
-  // PERF: the effect of track button 1..8 (PerfFx).
-  uint8_t perfMap[kPerfButtons] = {kPerfDefaultMap[0], kPerfDefaultMap[1], kPerfDefaultMap[2], kPerfDefaultMap[3],
-                                   kPerfDefaultMap[4], kPerfDefaultMap[5], kPerfDefaultMap[6], kPerfDefaultMap[7]};
-  // Each button's start depth (PerfStack depth), within perfRange() of its effect; 0 for None.
-  int8_t perfDepth[kPerfButtons] = {};
-  ProjSample samples[kProjSamples];
-  uint8_t sampleCount = 0;  // names unique ignoring case
-  ProjWavetable wavetables[kProjWavetables];
-  uint8_t wavetableCount = 0;  // names unique ignoring case
-  // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
-  // whose instrument sample names still have to be migrated (and after reset()).
-  bool hasSampleList = false;
   // Master / send fx (feature 5), saved in AUDI bytes 14..25. Delay mode (DlyMode) and its character
   // dlyChar (TAPE: wear, PING-PONG: width); reverb mode (RvbMode), shimmer amount and interval
   // (ShimInt: +12 / +7 / +24); MOD bus effect (ModType), rate (0.05..8 Hz exp), depth, feedback
@@ -542,6 +556,69 @@ struct Project {
   uint8_t eqLow = 64;
   uint8_t eqHigh = 64;
   uint8_t shimInt = 0;
+  TrackCfg tracks[kTracks];
+  Instrument instruments[kInstruments];
+  ProjSample samples[kProjSamples];
+  uint8_t sampleCount = 0;  // names unique ignoring case
+  ProjWavetable wavetables[kProjWavetables];
+  uint8_t wavetableCount = 0;  // names unique ignoring case
+  // Tuning chunk (synth_model.h), last.
+  TuningTable tuning;
+};
+
+// Shift-register generator of a track (shift_gen.h): plays the project scale live in place of the
+// pattern's notes (PITCH) or also its rhythm (GATE). A project setting per track (not in TrackCfg: the
+// synth board never needs it). In files (TGEN): new modes before Count only.
+enum class GenMode : uint8_t { Off, Pitch, Gate, Count };
+constexpr uint8_t kGenLenMin = 2, kGenLenMax = 16, kGenOctMax = 4;
+struct GenCfg {
+  uint8_t mode = 0;      // GenMode
+  uint8_t len = 8;       // kGenLenMin..kGenLenMax bits
+  uint8_t flip = 10;     // 0..100 %
+  uint8_t low = 48;      // the range's lowest note (raised to the scale)
+  uint8_t oct = 2;       // 1..kGenOctMax octaves
+  uint8_t density = 50;  // 0..100 %, GATE only
+  uint16_t seed = 1;     // the start register and the flips
+};
+
+// Evolve of a track (evolve.h): the track's steps drift on the fly every `every` pattern passes, by
+// `amount`, pulled back to the pattern by `home`; mask = what may change. A project setting per track
+// (sequencer only, never sent to the synth). In files (TEVO): new mask bits after the last only.
+constexpr uint8_t kEvoNote = 1, kEvoRhythm = 2, kEvoRtrgVol = 4, kEvoShift = 8, kEvoMaskAll = 15;
+constexpr uint8_t kEvoEveryMax = 16;
+struct EvoCfg {
+  uint8_t amount = 0;  // 0..100 %, 0 = no new changes (Home still pulls back)
+  uint8_t every = 4;   // 1..kEvoEveryMax pattern passes per mutation
+  uint8_t home = 25;   // 0..100 %: the chance per mutation that each change steps back
+  uint8_t mask = kEvoNote | kEvoRhythm | kEvoRtrgVol;  // kEvoNote .. kEvoShift
+};
+
+struct Project : SynthModel {
+  char name[17] = {0};
+  Pattern patterns[kPatterns];
+  // Song: slot i plays pattern song[i]; when it starts, track t is muted iff bit t of songMute[i].
+  uint8_t song[kSongMax] = {0};
+  uint16_t songMute[kSongMax] = {0};
+  uint8_t songLen = 0;
+  // After slot i's pass the song goes on as songFol[i] says (follow.h). The defaults (NEXT 100 %)
+  // play the slots in order. Saved in SFOL.
+  SongFollow songFol[kSongMax];
+  // Project seed (UI 1..9999): the follow decisions (follow.h); evolve shares it. Saved in SFOL.
+  uint16_t seed = 1;
+  bool preview = true;     // GRID note entry sounds on INT tracks
+  // PERF: the effect of track button 1..8 (PerfFx).
+  uint8_t perfMap[kPerfButtons] = {kPerfDefaultMap[0], kPerfDefaultMap[1], kPerfDefaultMap[2], kPerfDefaultMap[3],
+                                   kPerfDefaultMap[4], kPerfDefaultMap[5], kPerfDefaultMap[6], kPerfDefaultMap[7]};
+  // Each button's start depth (PerfStack depth), within perfRange() of its effect; 0 for None.
+  int8_t perfDepth[kPerfButtons] = {};
+  // XY pad (PERF, A + B): the effect on its X and Y axis (PerfFx; None = that axis does nothing).
+  // Saved in PXY. Follows perfDepth (PROJ's Shift+click cancel restores the PERF page as one block).
+  uint8_t perfXy[2] = {kPerfXyDefault[0], kPerfXyDefault[1]};
+  GenCfg gen[kTracks];  // reset(): all OFF, seed = track + 1. Saved in TGEN.
+  EvoCfg evo[kTracks];  // reset(): all off (amount 0). Saved in TEVO.
+  // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
+  // whose instrument sample names still have to be migrated (and after reset()).
+  bool hasSampleList = false;
 
   Project() { reset(); }
   void reset();
@@ -551,6 +628,13 @@ struct Project {
   bool trackAudible(int t) const { return !tracks[t].mute && (!anySolo() || tracks[t].solo); }
   // A drum track: its instrument is a KIT (steps hold lane masks, see Step). Any Out.
   bool trackIsDrum(int t) const { return kitOf(t) != nullptr; }
+  // The track's generator plays (Gen not OFF, not a drum track).
+  bool genOn(int t) const {
+    return t >= 0 && t < kTracks && gen[t].mode != 0 && gen[t].mode < static_cast<uint8_t>(GenMode::Count) &&
+           !trackIsDrum(t);
+  }
+  // The track's evolve makes new changes (amount > 0 and something in the mask).
+  bool evoOn(int t) const { return t >= 0 && t < kTracks && evo[t].amount > 0 && (evo[t].mask & kEvoMaskAll); }
   // The KIT of track t, nullptr when its instrument is another type (or t out of range).
   const Instrument* kitOf(int t) const {
     if (t < 0 || t >= kTracks) return nullptr;

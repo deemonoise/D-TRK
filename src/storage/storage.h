@@ -76,6 +76,8 @@ Result newFromTemplate(mt::Project& live, const char* name, int* missing = nullp
 // Legacy chain transposes were dropped by the song migration (mt::LoadNotes); set by the last file
 // read (load / save verify / upload check), false after newProject / newDemo.
 bool songTransposeDropped();
+// The file's tuning (TUNE chunk) was broken: the project plays 12-TET. Set like songTransposeDropped().
+bool tuningDropped();
 
 // Boot: loads /last.txt straight into p (engine not running yet). False = p left reset.
 // *fromBak = true when the .mtp was unreadable and the .bak was loaded instead.

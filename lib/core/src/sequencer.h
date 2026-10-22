@@ -1,8 +1,11 @@
 #pragma once
 #include <stdint.h>
 #include "event_heap.h"
+#include "evolve.h"
+#include "follow.h"
 #include "model.h"
 #include "rng.h"
+#include "shift_gen.h"
 #include "step_expand.h"
 #include "voices.h"
 
@@ -33,8 +36,10 @@ constexpr uint32_t kTieOverlapUs = 1000;  // tied note ends this long after the 
 //
 // SONG or LOOP is a runtime flag (setSong), not part of the project. SONG (with songLen > 0) plays
 // the slots of Project.song: start() begins at the slot given to setSong and every pattern end
-// advances to the next slot, after the last back to slot 0. The next slot is decided when the last
-// step of a pass is scheduled, like a queued pattern, so rewind() undoes it together with that step.
+// advances as the slot's follow action says (follow.h: NEXT = the next slot, after the last back to
+// slot 0). The decisions hash the run seed (Project::seed mixed with setFollowSalt's salt at start())
+// with a decision count that rewinds with the steps, so a replan takes the same decision again (on
+// the edited song). The next slot is decided when the last step of a pass is scheduled, like a queued pattern, so rewind() undoes it together with that step.
 // queuePattern() is ignored while the song plays (stopped it works); selectPattern() still switches
 // at once and the song goes on from its position. setSong while playing takes effect at the pass
 // end: on goes to the given slot, off keeps the heard pattern looping. With no slots the current
@@ -121,6 +126,9 @@ class Sequencer {
   // Song slot of the heard pattern; -1 outside the song (and stopped).
   int heardSongPos() const { return heardSong_; }
   void seed(uint32_t s) { rng_ = Rng(s); }
+  // Mixed with Project::seed into the follow run seed at start(): live play passes a fresh value per
+  // start, 0 (default) is the render's path (followWalk with salt 0).
+  void setFollowSalt(uint32_t s) { followSalt_ = s; }
   // Tracks that may sound (bit = track), on top of mute / solo. Offline render; default all.
   void setTrackMask(uint16_t m) { mask_ = m; }
   // Steps at or after this tick (counted from start()) are not planned. Offline render; default never.
@@ -131,7 +139,39 @@ class Sequencer {
   // Position inside the heard step at now, 0 at its start .. 255 (live recording).
   uint8_t phase256(uint64_t now) const;
   uint64_t heardStepTime() const { return heardStepT_; }
+
+  // Track generators (Project::gen, shift_gen.h). The register of a track shifts on each of its steps with a
+  // note (PITCH) or each of its steps (GATE), muted or skipped too, before CND / PRB; start() resets every
+  // register, nothing else does (pattern / song changes, pause go on). The step's note is replaced before
+  // expand; everything else of the step applies. Rewound with the unheard steps.
+  // After a GenCfg edit while playing: the unheard steps are planned again with it.
+  void genEdited(uint64_t now, MidiSink& out) { replan(now, out); }
+  // After a new seed of track tr: replanned, its register reset from the first unheard step.
+  void genReseed(uint64_t now, MidiSink& out, int tr);
+  // The register as the next planned step of tr finds it (Capture), and the step of tr it starts from in
+  // pattern pat (0 when another pattern plays or stopped: the state is the reset one then).
+  GenState genNext(int tr) const;
+  int genFromStep(int tr, int pat) const;
+  // The register after the heard step of tr (UI); the reset one while stopped.
+  GenState heardGen(int tr) const;
   uint32_t stepDuration() const { return stepUs(); }
+
+  // Evolve (Project::evo, evolve.h). A pass = a pattern pass (endOfPass: the pattern's end or a song slot's),
+  // counted per track from start() across pattern / slot changes. Every `every` passes the track's state
+  // mutates from the one before (the follow run seed, not rng_); every track step plays through it
+  // (evoStep) before GEN; the pattern is never written. start() / stop() reset every state; rewound
+  // with the unheard steps.
+  // After an EvoCfg edit while playing: the unheard steps are planned again with it.
+  void evoEdited(uint64_t now, MidiSink& out) { replan(now, out); }
+  // After Capture of track tr: replanned, then its changes and rotation cleared (n and the pass count go on).
+  void evoClear(uint64_t now, MidiSink& out, int tr);
+  // The state after the heard step of tr (UI, Capture); the reset one while stopped. Valid until the next
+  // call on the sequencer (hold the project lock).
+  const EvoTrack& heardEvo(int tr) const;
+  // Passes counted towards the next mutation of tr (0..every-1).
+  uint8_t evoPasses(int tr) const { return tr >= 0 && tr < kTracks ? evoCnt_[tr] : 0; }
+  // Tests only: the state the next planned step of tr plays.
+  EvoTrack& evoDebugState(int tr) { return evoAt(tr, evoN_[tr]); }
 
  private:
   enum class State : uint8_t { Stopped, Playing, Paused };
@@ -154,8 +194,12 @@ class Sequencer {
     uint8_t prevPos, prevPat;
     int8_t prevQueued;
     int8_t song, prevSong;  // songPos_ when played / before
+    uint32_t prevSongN;     // songN_ before
     Tie ties[kTracks];
     StepArp arps[kTracks];
+    GenState gens[kTracks];
+    uint32_t evoN[kTracks];   // evoN_ before
+    uint8_t evoCnt[kTracks];  // evoCnt_ before
     uint16_t condBits;    // condBits_ before
     uint16_t mutes;       // TrackCfg::mute bits before
     bool muteSet;         // the step's pass end started a slot or left the song (mutes written)
@@ -196,6 +240,15 @@ class Sequencer {
   void releaseTie(int track, uint64_t t);
   void pushOff(int track, uint64_t t);
   void releaseAllTies(uint64_t t);
+  // Gen: shifts tr's register for this track step, returns the step to play (s, or tmp with the generated note).
+  const Step& genStep(int tr, const Step& s, Step& tmp);
+  void genResetAll();
+  // Evolve: state n of tr in the ring; the state a track step plays (the pattern's step, or tmp).
+  EvoTrack& evoAt(int tr, uint32_t n) { return cold_->evo[tr][n % kEvoRing]; }
+  const EvoTrack& evoAt(int tr, uint32_t n) const { return cold_->evo[tr][n % kEvoRing]; }
+  void evoResetAll();
+  const Step& evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const;
+  void evoPass();  // endOfPass: counts the pass, mutates the tracks due
   // ARS: the next arp note of the track on a step without a note (sounds only if aud); su: the track's step.
   void arpStep(int track, uint64_t t, int64_t earliest, bool aud, uint32_t su);
   void stopArps() {
@@ -246,6 +299,7 @@ class Sequencer {
   struct Cold {
     Sched hist[kHist];  // a ring: hist(0) newest
     Voices voices;      // MIDI-out tracks' sounding notes
+    EvoTrack evo[kTracks][kEvoRing];  // state n of track t at [t][n % kEvoRing] (rewind needs the older ones)
   };
   Sched& hist(int i) { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
   const Sched& hist(int i) const { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
@@ -262,6 +316,9 @@ class Sequencer {
   int songPos_ = -1;  // song slot of cur_, -1 outside the song
   bool song_ = false;      // setSong
   uint8_t songFrom_ = 0;   // setSong's slot
+  uint32_t followSalt_ = 0;  // setFollowSalt
+  uint32_t runSeed_ = 0;     // followRunSeed at start()
+  uint32_t songN_ = 0;       // follow decisions since start(): the n of followNext
   bool fill_ = false;
   bool muteSet_ = false;    // applyMute wrote the mutes while the current step was planned
   bool muteHeld_ = false;   // savedMute_ holds the mutes from before the song
@@ -295,6 +352,10 @@ class Sequencer {
   uint32_t nextId_ = 1;
   Tie ties_[kTracks];
   StepArp arps_[kTracks];  // running ARS per track (n = 0: none)
+  GenState gen_[kTracks];  // generator registers, as the next step to plan finds them
+  uint32_t evoN_[kTracks] = {};   // each track's state number, as the next step to plan finds it
+  uint8_t evoCnt_[kTracks] = {};  // passes since the last mutation
+  EvoView evoView_;               // scratch for evoPass
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };
 

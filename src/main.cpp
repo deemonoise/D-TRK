@@ -90,7 +90,7 @@ void setup() {
     char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
     app->toast(msg);
-  } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped()) {
+  } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped() || storage::tuningDropped()) {
     app->loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
 #ifdef WT_BENCH

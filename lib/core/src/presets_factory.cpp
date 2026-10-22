@@ -448,13 +448,15 @@ int factoryKitBlock(int kitSlot) {
   return kitSlot >= kInstruments - kKitLanes ? kInstruments - 2 * kKitLanes : kInstruments - kKitLanes;
 }
 
-void factoryBuildKit(int i, Project& p, int kitSlot) {
-  Instrument& kit = p.instruments[kitSlot];
+void factoryBuildKit(int i, Project& p, int kitSlot) { factoryBuildKit(i, p.instruments, kitSlot); }
+
+void factoryBuildKit(int i, Instrument* instruments, int kitSlot) {
+  Instrument& kit = instruments[kitSlot];
   factoryBuild(InstrType::Kit, i, kit);
   const FactoryPreset& f = factoryPreset(InstrType::Kit, i);
   const int first = factoryKitBlock(kitSlot);
   for (int k = 0; k < f.drumCount && k < kKitLanes; ++k) {
-    Instrument& d = p.instruments[first + k];
+    Instrument& d = instruments[first + k];
     const FactoryDrum& dr = f.drums[k];
     for (int j = 0; j < factoryCount(dr.type); ++j)
       if (strcmp(factoryPreset(dr.type, j).name, dr.name) == 0) {

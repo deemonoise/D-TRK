@@ -2,6 +2,34 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-21
+- Shift-register generator per track (TRACK -> GEN): a looping 2–16-bit register with a Flip chance plays
+  notes of the project scale live, the pattern stays as it is. PITCH mode (pitch of the step notes) and GATE
+  (the rhythm too, Density); Low, Range, Seed. FLP fx sets Flip per step; live Flip from a track button (the
+  VOL → PAN → FLIP cycle on an encoder click); Capture gen in the GRID menu writes the loop into the pattern.
+  Saved in the project (`TGEN` chunk).
+- Microtonal project tuning (PROJ -> SONG: Tuning, Tuning root): 12-TET (default), 10 factory tunings
+  (just, Pythagorean, meantone, well temperament, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce) and your own
+  Scala `.scl` files from `/presets/TUN`. Applies to melodic INT voices; MIDI out stays 12-TET. The tuning is
+  saved in the project (`TUNE` chunk).
+- Song follow actions (SONG, FOL column): after each pass a slot goes NEXT, PREV, STAY, JUMP to a slot or
+  RANDOM, with a chance 0–100 %. Decided from the project Seed (PROJ -> SONG): live play takes a new path at
+  every start, Render WAV the same one every time (Max slots limits loops). Old songs play as before (all
+  NEXT). Saved in the project (`SFOL` chunk).
+- Dice (PROJ header DICE, or a long encoder press on PROJ): one roll gives the project a genre tempo and
+  scale, factory sounds on tracks 1–4 (DRUMS kit matching the genre, BASS, CHORDS, LEAD) and their part of
+  the heard pattern from the Euclid / CHORDS / BASS / ARP generators; Undo dice takes it back in one step.
+  Mutate 15 / 30 / 60 % in the INST PRESET menu nudges filter, envelope and macros at random, with Undo mutate.
+- PERF XY pad (A + B on GRID / SONG / MIX with PERF on): the work area becomes a touch pad holding two
+  PERF effects, the finger's position sets their depths (list values in zones, FILTER LP / OFF / HP); the
+  finger's trail is drawn over the visuals. Axes in PROJ -> PERF (XY pad X / Y, default FILTER / CRUSH),
+  saved in the project (`PXY ` chunk). B tap, another tab or PERF off closes it.
+- Evolve per track (TRACK -> EVO): the pattern drifts live every 1–16 passes (Evolve 1–100 %), the pattern
+  itself stays as it is. Notes move along the scale, hits drop out and ghost notes appear, retriggers and
+  velocity change, steps turn or swap (Note / Rhythm / Rtrg+Vol / Shift); Home pulls the drift back. From
+  the project Seed like the follow actions: each Play drifts its own way, Render WAV the same every time.
+  Capture evo in the GRID menu writes the heard variant into the pattern. Saved in the project (`TEVO` chunk).
+
 ## 2026-10-15
 - Track insert chain (drive, crush, trance gate) instead of per-voice drive / crush.
 - Drive models; presets carry a recommended insert.

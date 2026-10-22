@@ -1,4 +1,5 @@
 #include "grid_screen.h"
+#include "edit_ops.h"
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
@@ -41,6 +42,8 @@ bool fieldText(const mt::Step& c, int field, char out[5]) {
     }
   }
 }
+
+mt::EvoTrack heardEvoSt;  // UI task only (Capture gen / evo)
 
 }  // namespace
 
@@ -692,6 +695,8 @@ void GridScreen::openMenu() {
     add("Clear track", kClearTrack, true);
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
+    if (app_.project().genOn(track())) add("Capture gen", kCaptureGen, true);
+    if (app_.project().evoOn(track())) add("Capture evo", kCaptureEvo, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
     add(detail_ ? "Overview" : "Detail view", kToggleView, true);
@@ -768,6 +773,60 @@ void GridScreen::openFill() {
 
 // Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
 // project's samples, normalized to -1 dBFS with the silent end cut: RS1, RS2, ...
+void GridScreen::captureGen() {
+  const int tr = track();
+  mt::Project& p = app_.project();
+  if (!p.genOn(tr)) return;
+  uint8_t passes = 0;
+  engine::lockProject();
+  engine::heardEvo(tr, heardEvoSt, passes);
+  engine::unlockProject();
+  if (!mt::evoIdle(heardEvoSt)) {  // the notes heard went through the drift: captureGen would miss it
+    app_.toast("EVO: CAPTURE EVO FIRST");
+    return;
+  }
+  app_.pushUndo();
+  engine::lockProject();
+  int from = 0;
+  const mt::GenState st = engine::nextGen(tr, app_.editPattern(), from);
+  mt::captureGen(pat(), tr, p.gen[tr], st, from, p.scaleRoot, static_cast<mt::ScaleType>(p.scaleType));
+  p.gen[tr].mode = static_cast<uint8_t>(mt::GenMode::Off);  // else it would replace the notes just written
+  engine::unlockProject();
+  app_.markDirty();
+  engine::post(engine::Cmd::ReleaseTies);
+  app_.toast("GEN CAPTURED");
+}
+
+void GridScreen::captureEvo() {
+  const int tr = track();
+  const engine::Status& es = app_.status();
+  if ((es.playing || es.paused) && es.pattern != app_.editPattern()) {  // the drift is the heard pattern's
+    app_.toast("EVO: OTHER PATTERN");
+    return;
+  }
+  mt::Pattern* scratch = app_.undoScratch();  // free outside the undo calls
+  if (!scratch) {
+    app_.toast("NO MEMORY");
+    return;
+  }
+  uint8_t passes = 0;
+  engine::lockProject();
+  engine::heardEvo(tr, heardEvoSt, passes);
+  engine::unlockProject();
+  if (mt::evoIdle(heardEvoSt)) {
+    app_.toast("EVO: NO CHANGES");
+    return;
+  }
+  app_.pushUndo();
+  engine::lockProject();
+  mt::evoCapture(pat(), tr, heardEvoSt, mt::evoApplyOf(app_.project(), tr), scratch->steps[0]);
+  engine::evoClear(tr);  // under the lock: before the next plan
+  engine::unlockProject();
+  app_.markDirty();
+  engine::post(engine::Cmd::ReleaseTies);
+  app_.toast("EVO CAPTURED");
+}
+
 void GridScreen::resample(bool wholePattern) {
   const engine::Status& st = app_.status();
   if (st.playing || st.paused) {
@@ -927,6 +986,8 @@ void GridScreen::onMenu(int id) {
     case kUndo: undo(); break;
     case kDropSel: selOn_ = false; break;
     case kFill: openFill(); break;
+    case kCaptureGen: captureGen(); break;
+    case kCaptureEvo: captureEvo(); break;
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
     case kRec:
@@ -1007,6 +1068,12 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
     if (kNumW + col * kColW + 4 < badgeW) continue;
     s.setTextColor(t.solo ? kCursor : (p.trackAudible(tr) ? kText : kDim));
     s.drawString(t.name, kNumW + col * kColW + 4, gridY - kNamesH);
+    if (p.genOn(tr)) {  // the track generator plays its notes
+      const int gx = kNumW + (col + 1) * kColW - kCharW - 1;
+      s.fillRect(gx - 1, gridY - kNamesH, kCharW + 1, kNamesH, kBg);
+      s.setTextColor(kCursor);
+      s.drawString("G", gx, gridY - kNamesH);
+    }
   }
 
   for (int row = 0; row < rows_; ++row) {
@@ -1065,6 +1132,7 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   const mt::TrackCfg& t = p.tracks[tr];
   const bool audible = p.trackAudible(tr);
   const bool midi = !p.trackInternal(tr);
+  const bool genTr = p.genOn(tr);
   const bool drumTr = drumAt(tr);
   char buf[16];
 
@@ -1084,6 +1152,10 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   if (kNumW + 1 >= badgeW) {
     s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
     s.drawString(t.name, kNumW + 1, gridY - kNamesH);  // 8 chars fit 2 fields
+    if (p.genOn(tr)) {
+      s.setTextColor(kCursor);
+      s.drawString("G", kNumW + 1 + 9 * kCharW, gridY - kNamesH);
+    }
   }
   s.setTextColor(kDim);
   for (int k = 0; k < mt::kFxSlots; ++k) {
@@ -1127,7 +1199,10 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
       }
       // Synth fx do nothing on a MIDI track, drum fx off a drum track.
       const mt::Fx cmd = f >= kFx1 ? c.fx[(f - kFx1) / 2].cmd : mt::Fx::None;
-      const bool ignored = f >= kFx1 && ((midi && mt::fxSynthOnly(cmd)) || (!drumTr && mt::fxDrumOnly(cmd)));
+      // FLP does nothing without the track generator; its notes are the generator's (the pattern's: dim).
+      const bool ignored = (f >= kFx1 && ((midi && mt::fxSynthOnly(cmd)) || (!drumTr && mt::fxDrumOnly(cmd)) ||
+                                          (cmd == mt::Fx::FLP && !genTr))) ||
+                           (f == kNote && genTr);
       s.setTextColor(has && audible && !ignored && !past ? kText : kDim);
       s.drawString(txt, kNumW + f * kFieldW + (strlen(txt) > 3 ? 0 : 4), y);  // 4 chars (CHD "MA72") fill the field
     }

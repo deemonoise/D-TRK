@@ -27,6 +27,8 @@ void applyPreset(Instrument& dst, const Instrument& src, bool sampleFound);
 // (e.g. a KIT track while one of its lane instruments gets a preset), a MIDI track or track -1: the
 // recommendation is dropped, no track changes.
 void takePresetInsert(Project& p, int instr, int track);
+// The same for a track c known to play m (INT): c takes m's recommendation, m's is cleared.
+void takePresetInsert(Instrument& m, TrackCfg& c);
 // Saving p.instruments[instr] as the preset m (a copy of it): its recommendation is track `track`'s
 // insert when that track is INT and plays instr, else none.
 void presetInsertForSave(const Project& p, int instr, int track, Instrument& m);

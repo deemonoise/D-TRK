@@ -106,11 +106,13 @@ int eventOffset(uint64_t t, uint64_t blockT) {
   return off < static_cast<uint64_t>(Synth::kBlock) ? static_cast<int>(off) : -1;
 }
 
-Synth::Synth(const Project& p) : p_(p) {
+Synth::Synth(const SynthModel& p) : p_(p) {
   Drive::init();  // the tanh table, outside the audio path
   initPan();
   for (int8_t& s : instSlot_) s = -1;
   for (int m = 0; m < kInstruments; ++m) cacheLfos(m);
+  tuneSeen_.count = 0xFF;  // never a valid table: the first syncTuning builds
+  syncTuning();
   reset();
   for (auto& r : instLfoRnd_)
     for (float& x : r) x = rnd();
@@ -728,7 +730,11 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // FM: only TONE may be poly; drums and CHORD take the track's voice. DRUM is always mono.
   // A KIT lane is mono through its own note (below), so the track is poly across lanes.
   const bool mono = kitLane ? false : fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
-  const float pitch = (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
+  // Tuning: melodic voices only (not drums, FM drum machines, KIT lanes, NOTE slices). Their pitches are
+  // keys without fine: control() maps them and adds fine in cents.
+  const bool tuned = tune_.on() && !kitLane && !drum && !slicePitch;
+  const float pitch = tuned ? static_cast<float>(note + static_cast<int>(clampf(m.transpose, -24, 24)))
+                            : (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
   bool legato;
   // SLD: the track's sounding voice glides to the note (like legato), else a new one from the last note.
   // A KIT lane never takes another lane's voice: only its own (same note) glides or chokes.
@@ -772,6 +778,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // Legato on the same sample keeps playing from where it is.
   const bool restartSmp = sample && (!overlap || !v.sample || v.smp != smp || v.slice != slice);
   v.note = note;
+  v.tuned = tuned;
   v.instr = ii;
   v.lane = kitLane && mp == &scratch;
   v.laneIdx = static_cast<uint8_t>(laneIdx);
@@ -971,7 +978,8 @@ MT_HOT void Synth::control(Voice& v, int dt) {
       v.cutLeft = -1;
     }
   }
-  float pitch = v.pitch + r.bend;
+  // A tuned voice: keys (slide, ARP) map through the tuning, then fine, bend, VIB, LFO in semitones.
+  float pitch = v.tuned ? v.pitch : v.pitch + r.bend;
   v.arpOff = 0;
   if (r.arp) {
     // Notes 0, +x, +y (or the ARP + CHD chord), `rate` switches per step in the ARM order; the
@@ -1007,6 +1015,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
     v.arpOff = offs[v.arpIdx];
     pitch += v.arpOff;
   }
+  if (v.tuned) pitch = tune_.map(pitch) + clampf(m.fine, -50, 50) * 0.01f + r.bend;
   const uint8_t vx = r.vib >> 4, vy = r.vib & 15;
   if (vx && vy) {
     // Sine LFO, x * 0.5 Hz, depth y / 15 * 2 semitones.
@@ -1721,6 +1730,15 @@ bool Synth::applyProfiler() {
   return true;
 }
 
+// A changed table (the link's Tuning chunk, the UI) or scale root (AUTO root): rebuild the key map. A
+// memcmp of ~280 bytes per block; nothing per sample.
+MT_HOT void Synth::syncTuning() {
+  if (p_.scaleRoot == tuneRootSeen_ && memcmp(&p_.tuning, &tuneSeen_, sizeof tuneSeen_) == 0) return;
+  memcpy(&tuneSeen_, &p_.tuning, sizeof tuneSeen_);
+  tuneRootSeen_ = p_.scaleRoot;
+  tune_.build(tuneSeen_, tuneRootSeen_);
+}
+
 MT_HOT void Synth::renderCore() {
   // Profiling: mark(stage) books the time since the last mark. The clock only changes here.
   syncProfiler();
@@ -1731,6 +1749,7 @@ MT_HOT void Synth::renderCore() {
     profT_ = clock_();
   }
   cacheInstruments();
+  syncTuning();
   mark(kProfInstLfo);
   for (auto& x : mixL_) x = 0;
   for (auto& x : mixR_) x = 0;

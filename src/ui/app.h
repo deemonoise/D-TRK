@@ -1,4 +1,5 @@
 #pragma once
+#include "shift_gen.h"
 #include "ab_keys.h"
 #include "bank_screen.h"
 #include "battery_gauge.h"
@@ -20,6 +21,7 @@
 #include "touch.h"
 #include "track_screen.h"
 #include "undo.h"
+#include "xy_pad.h"
 
 namespace ui {
 
@@ -45,6 +47,7 @@ class App {
   void setCurTrack(int t) { curTrack_ = static_cast<uint8_t>(((t % mt::kTracks) + mt::kTracks) % mt::kTracks); }
   // PERF, shared by GRID, SONG and MIX (the tabs that play it).
   PerfPad& perf() { return perf_; }
+  InstScreen& inst() { return inst_; }
 
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
@@ -141,10 +144,15 @@ class App {
   bool holdVolume() const;
   // Held PERF effects show on the screen (PerfVis) instead of a plain pushSprite.
   bool perfVisible() const { return visuals_ && perf_.heldCount() > 0 && perfTab(tab_); }
+  // The XY pad covers the work area: PERF's XY on a PERF tab.
+  bool xyMode() const { return perf_.xy() && perfTab(tab_); }
+  void toggleXy();                      // A + B
+  void xyTouch(const TouchEvent& ev);   // raw Down / Move / Up on the pad
   int heldTrack() const { return (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + heldTrackBtn_; }
   void nudgeTrackVol(int track, int d);
   void nudgeTrackPan(int track, int d);  // as nudgeTrackVol
-  void holdToast(int track);             // "TRK3 VOL 100" / "TRK3 PAN L12" / "TRK3 MIDI"
+  void nudgeTrackFlip(int track, int d);  // the track generator's Flip, as nudgeTrackVol
+  void holdToast(int track);             // "TRK3 VOL 100" / "TRK3 PAN L12" / "TRK3 FLIP 30%" / "TRK3 MIDI"
   void fillUp();
   void saveSettingsIdle(uint32_t now);
   void autosaveIdle(uint32_t now);
@@ -169,6 +177,7 @@ class App {
   Menu menu_;
   PerfPad perf_{*this};
   PerfVis vis_;
+  XyPad xyPad_;
 
   GridScreen grid_{*this};
   TrackScreen track_{*this};
@@ -223,7 +232,7 @@ class App {
   bool fillHeld_ = false;   // Shift + Play held while playing: fill
   mt::AbKeys ab_;  // buttons A / B
   int8_t heldTrackBtn_ = -1;  // track button held (0..7 of the visible half), -1 = none
-  bool holdPan_ = false;      // the held button's turn sets the pan, not the volume (until released)
+  mt::HoldMode holdMode_ = mt::HoldMode::Vol;  // what the held button's turn sets (until released)
   uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;
   bool dirty_ = true;

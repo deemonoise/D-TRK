@@ -164,6 +164,7 @@ void song(Project& p, const Item* items, int n) {
     for (int r = 0; r < items[i].rep && len < kSongMax; ++r) {
       p.song[len] = items[i].pattern;
       p.songMute[len] = 0;
+      p.songFol[len] = SongFollow();
       ++len;
     }
   p.songLen = static_cast<uint8_t>(len);

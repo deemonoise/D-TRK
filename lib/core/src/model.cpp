@@ -82,10 +82,17 @@ void Project::reset() {
   scDepth = 64;
   memcpy(perfMap, kPerfDefaultMap, sizeof(perfMap));
   perfDefaultDepths();
+  memcpy(perfXy, kPerfXyDefault, sizeof(perfXy));
+  for (int i = 0; i < kTracks; ++i) {
+    gen[i] = GenCfg();
+    gen[i].seed = static_cast<uint16_t>(i + 1);
+  }
+  for (EvoCfg& e : evo) e = EvoCfg();
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};
   wavetableCount = 0;
+  tuningClear(tuning);
   hasSampleList = false;
   dlyMode = 0;
   dlyChar = 40;
@@ -103,6 +110,8 @@ void Project::reset() {
   memset(song, 0, sizeof(song));
   memset(songMute, 0, sizeof(songMute));
   songLen = 0;
+  for (SongFollow& f : songFol) f = SongFollow();
+  seed = 1;
 }
 
 void Project::perfDefaultDepths() {
@@ -161,6 +170,22 @@ MT_HOT float lfoHz(uint8_t v) {
   }
   return table[v > 127 ? 127 : v];
 }
+
+bool tuningValid(const TuningTable& t) {
+  if (t.count < 1 || t.count > kTuneDegMax) return false;
+  if (t.root > 127 && t.root != kTuneRootAuto) return false;
+  const int32_t per = t.mc[t.count - 1];
+  if (per <= 0 || per > kTunePeriodMaxMc) return false;
+  for (int i = 0; i < t.count; ++i)
+    if (t.mc[i] > kTuneDegAbsMaxMc || t.mc[i] < -kTuneDegAbsMaxMc) return false;
+  return true;
+}
+
+int tuningRootKey(const TuningTable& t, uint8_t scaleRoot) {
+  return t.root == kTuneRootAuto ? 60 + scaleRoot % 12 : (t.root > 127 ? 127 : t.root);
+}
+
+void tuningClear(TuningTable& t) { t = TuningTable(); }
 
 bool fmGated(uint8_t machine) {
   return machine == static_cast<uint8_t>(FmMachine::Tone) || machine == static_cast<uint8_t>(FmMachine::Chord);

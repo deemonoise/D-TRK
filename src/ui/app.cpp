@@ -74,6 +74,8 @@ void App::setTab(Tab t) {
   if (t == Tab::Count || !screens_[static_cast<int>(t)]) return;
   setBpmEdit(false);
   if (t == tab_) return;
+  perf_.setXy(false);  // the pad belongs to the tab it was opened on
+  xyPad_.clear();
   menu_.close();
   if (perfTab(tab_)) perf_.allOff();  // leaving releases the held effects
   screen()->onLeave();
@@ -144,14 +146,15 @@ void App::onInput(const hw::InputEvent& ev) {
     case InputType::TrackRelease:
       if (ev.delta == heldTrackBtn_) {
         heldTrackBtn_ = -1;
-        holdPan_ = false;
+        holdMode_ = mt::HoldMode::Vol;
       }
       trackRelease(ev.delta);
       return;
     case InputType::EncClick:
-      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL <-> PAN
-        holdPan_ = !holdPan_;
-        holdToast(heldTrack());
+      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL -> PAN (-> FLIP)
+        const int tr = heldTrack();
+        holdMode_ = mt::holdNext(holdMode_, p_->trackInternal(tr), p_->genOn(tr));
+        holdToast(tr);
         return;
       }
       break;
@@ -162,7 +165,8 @@ void App::onInput(const hw::InputEvent& ev) {
       }
       if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed
         const int d = ev.delta * (ev.shift ? 10 : 1);
-        if (holdPan_) nudgeTrackPan(heldTrack(), d);
+        if (holdMode_ == mt::HoldMode::Pan) nudgeTrackPan(heldTrack(), d);
+        else if (holdMode_ == mt::HoldMode::Flip) nudgeTrackFlip(heldTrack(), d);
         else nudgeTrackVol(heldTrack(), d);
         return;
       }
@@ -175,13 +179,21 @@ void App::onInput(const hw::InputEvent& ev) {
         return;
       }
       heldTrackBtn_ = ev.delta;
-      holdPan_ = false;  // a new hold starts on the volume
+      // A new hold starts on the volume (a MIDI track with a generator: on its Flip).
+      holdMode_ = mt::holdFirst(p_->trackInternal(heldTrack()), p_->genOn(heldTrack()));
       if (!menu_.isOpen()) trackKey(ev.delta, ev.shift);
       return;
     case InputType::EditEnd:  // A released: always ends the screen's hold edit (menu / BPM edit or not)
       screen()->onInput(ev);
       return;
     default: break;
+  }
+  // The pad hides the screen: the encoder only turns PERF's last pressed effect.
+  if (xyMode() && !menu_.isOpen() && !bpmEdit_) {
+    if (ev.type == InputType::EncTurn) perf_.turn(ev.delta, ev.shift);
+    if (ev.type == InputType::EncTurn || ev.type == InputType::EncClick || ev.type == InputType::EncLong ||
+        ev.type == InputType::EditTurn || ev.type == InputType::EditCancel)
+      return;
   }
   if (menu_.isOpen()) {
     menu_.onInput(ev);
@@ -218,6 +230,7 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::EditCancel: t = hw::InputType::EditCancel; break;
     case AbAction::TabTurn: cycleTab(o.delta); return;
     case AbAction::PageTurn:
+      if (xyMode()) return;  // the pad hides the screen
       if (!menu_.isOpen() && !bpmEdit_) screen()->onPage(o.delta);
       return;
     case AbAction::Undo:
@@ -237,9 +250,14 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::Back:
       if (menu_.isOpen()) menu_.close();
       else if (bpmEdit_) setBpmEdit(false);
-      else screen()->onBack();
+      else if (xyMode()) {
+        perf_.setXy(false);
+        xyPad_.clear();
+        toast("XY OFF");
+      } else screen()->onBack();
       return;
     case AbAction::ATap:
+      if (xyMode()) return;  // the pad hides the screen
       if (!menu_.isOpen() && !bpmEdit_) screen()->onATap(o.shift);
       return;
     case AbAction::Solo:
@@ -247,6 +265,9 @@ void App::abAction(const mt::AbOut& o) {
       return;
     case AbAction::QueuePattern:
       if (!menu_.isOpen()) queueKey(o.delta, o.shift);
+      return;
+    case AbAction::Both:
+      if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
     default: return;
   }
@@ -288,9 +309,44 @@ void App::queueKey(int n, bool shift) {
   toast(msg);
 }
 
+// The pad is the work area; a finger leaving it keeps the nearest edge.
+void App::xyTouch(const TouchEvent& ev) {
+  const int y = ev.y - kAreaY;
+  const int py = y < 0 ? 0 : (y >= kAreaH ? kAreaH - 1 : y);
+  const uint32_t now = millis();
+  if (ev.type == TouchType::Down) {
+    xyPad_.touch(ev.x, py, now);
+    if (!perf_.xyDown(ev.x, py, kScreenW, kAreaH)) toast(perf_.on() ? "XY: PRESS PLAY" : "PERF OFF");
+  } else if (ev.type == TouchType::Move) {
+    xyPad_.touch(ev.x, py, now);
+    perf_.xyMove(ev.x, py, kScreenW, kAreaH);
+  } else {
+    xyPad_.lift();
+    perf_.xyUp();
+  }
+}
+
+void App::toggleXy() {
+  if (!perfTab(tab_)) return;
+  if (!perf_.on()) {
+    toast("XY: TURN PERF ON");
+    return;
+  }
+  const bool on = !perf_.xy();
+  perf_.setXy(on);
+  xyPad_.clear();
+  if (on && perf_.xyAxis(0) == mt::PerfFx::None && perf_.xyAxis(1) == mt::PerfFx::None)
+    toast("XY: NO EFFECTS (PROJ > PERF)");
+  else toast(on ? "XY PAD" : "XY OFF");
+}
+
 void App::onTouch(const TouchEvent& ev) {
   lastInputMs_ = millis();
   dirty_ = true;
+  if (ev.type == TouchType::Down || ev.type == TouchType::Move || ev.type == TouchType::Up) {
+    xyTouch(ev);
+    return;
+  }
   if (ev.type == TouchType::HDrag) {
     const int y0 = ev.y0;
     if (!menu_.isOpen() && y0 >= kAreaY && y0 < kTabY && screen()->wantsHDrag()) screen()->onTouch(ev);
@@ -434,13 +490,32 @@ void App::nudgeTrackPan(int track, int d) {
   holdToast(track);
 }
 
+// Flip of a held track button's track's generator (MIDI or INT), with a toast; replans the unheard steps.
+void App::nudgeTrackFlip(int track, int d) {
+  mt::GenCfg& g = p_->gen[track];
+  int v = g.flip + d;
+  v = v < 0 ? 0 : (v > 100 ? 100 : v);
+  if (v != g.flip) {
+    engine::lockProject();
+    g.flip = static_cast<uint8_t>(v);
+    engine::unlockProject();
+    markDirty();
+    engine::post(engine::Cmd::GenEdit);
+  }
+  holdToast(track);
+}
+
 // What the held button's turn changes now, with its value.
 void App::holdToast(int track) {
   const mt::TrackCfg& t = p_->tracks[track];
   char msg[24];
-  if (t.out != mt::TrackOut::Int) {
+  if (holdMode_ == mt::HoldMode::Flip) {
+    char v[8];
+    mt::genFlipText(p_->gen[track].flip, v);
+    snprintf(msg, sizeof(msg), "TRK%d FLIP %s", track + 1, v);
+  } else if (t.out != mt::TrackOut::Int) {
     snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
-  } else if (holdPan_) {
+  } else if (holdMode_ == mt::HoldMode::Pan) {
     char v[5];
     mt::fxFormat(mt::Fx::PAN, t.pan, v);
     snprintf(msg, sizeof(msg), "TRK%d PAN %s", track + 1, v);
@@ -605,7 +680,7 @@ void App::dropInput(const hw::InputEvent& ev) {
     case hw::InputType::TrackRelease:
       if (ev.delta == heldTrackBtn_) {
         heldTrackBtn_ = -1;
-        holdPan_ = false;
+        holdMode_ = mt::HoldMode::Vol;
       }
       trackRelease(ev.delta);
       break;
@@ -617,7 +692,7 @@ void App::dropInput(const hw::InputEvent& ev) {
 
 void App::endProgress() {
   heldTrackBtn_ = -1;  // its release may have been dropped with the queued input
-  holdPan_ = false;
+  holdMode_ = mt::HoldMode::Vol;
   ab_.reset();         // so may the A / B releases
   screen()->onInput(hw::InputEvent{hw::InputType::EditEnd, 0, false});  // no hold edit left stuck
   progLabel_[0] = 0;
@@ -628,12 +703,13 @@ void App::endProgress() {
 }
 
 void App::loadedToast(const char* what, int missing, bool folderFail) {
-  char parts[4][40];
+  char parts[5][40];
   int n = 0;
   if (what && what[0]) strlcpy(parts[n++], what, sizeof(parts[0]));
   if (missing > 0) snprintf(parts[n++], sizeof(parts[0]), "%d SAMPLES MISSING", missing);
   if (folderFail) strlcpy(parts[n++], "SAMPLES NOT SAVED", sizeof(parts[0]));
   if (storage::songTransposeDropped()) strlcpy(parts[n++], "SONG: TRANSPOSE DROPPED", sizeof(parts[0]));
+  if (storage::tuningDropped()) strlcpy(parts[n++], "TUNING RESET", sizeof(parts[0]));
   for (int first = 0; first < n; ++first) {
     char msg[128] = "";
     for (int k = first; k < n; ++k) {
@@ -663,7 +739,7 @@ void App::showBusy(const char* msg) {
 
 void App::tick() {
   TouchEvent te;
-  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag())) onTouch(te);
+  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag(), xyMode() && !menu_.isOpen())) onTouch(te);
 
   const engine::Status s = engine::status();
   if (!(s == status_)) {
@@ -691,6 +767,7 @@ void App::tick() {
   screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
   if (perfVisible() || vis_.engaged()) dirty_ = true;  // moving while held; the last frame goes back to plain
+  if (xyMode() && xyPad_.animating(now)) dirty_ = true;  // the trail fades
 
   if (dirty_ && now - lastDraw_ >= kFrameMs) {
     draw();
@@ -753,7 +830,9 @@ void App::draw() {
   spr_->fillScreen(kBg);
   drawStatus();
   spr_->setClipRect(0, kAreaY, kScreenW, kAreaH);
-  screen()->draw(*spr_, kAreaY, kAreaH);
+  const bool xy = xyMode();
+  if (xy) xyPad_.draw(*spr_, kAreaY, kAreaH, perf_, millis(), !perfVisible());
+  else screen()->draw(*spr_, kAreaY, kAreaH);
   spr_->clearClipRect();
   drawTabs();
   menu_.draw(*spr_);
@@ -763,7 +842,9 @@ void App::draw() {
     const int64_t into = static_cast<int64_t>(engine::nowUs() - status_.stepT);
     float steps = status_.pos;
     if (status_.stepUs && into > 0) steps += static_cast<float>(into) / status_.stepUs;
-    vis_.push(*lcd_, *spr_, perf_.stack(), steps, status_.stepUs);
+    mt::PerfTrail trail;
+    if (xy) xyPad_.trail(trail, kAreaY, millis());
+    vis_.push(*lcd_, *spr_, perf_.stack(), steps, status_.stepUs, xy ? &trail : nullptr, kYellow);
     return;
   }
   vis_.reset(*lcd_);
