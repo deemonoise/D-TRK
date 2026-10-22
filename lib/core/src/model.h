@@ -516,6 +516,24 @@ bool tuningValid(const TuningTable& t);
 int tuningRootKey(const TuningTable& t, uint8_t scaleRoot);
 void tuningClear(TuningTable& t);  // back to 12-TET, root AUTO
 
+// Scenes (scene.h): a scene locks some mix / sound parameters; the crossfader (SynthModel::xfade 0..127)
+// morphs scene A into scene B. A parameter not set in a scene takes the project's value at that end.
+// Parameter orders = mask bits, stored in files: new parameters before the counts only.
+constexpr int kScenes = 8;
+enum ScnTrk : uint8_t {  // per INT track
+  kScnVol, kScnPan, kScnDrv, kScnDty, kScnBit, kScnSrr, kScnGte, kScnDly, kScnRvb, kScnMod, kScnCut, kScnRes,
+  kScnTrk };
+enum ScnMst : uint8_t {  // master
+  kScnMain, kScnDTime, kScnDFb, kScnDTone, kScnDChar, kScnDLvl, kScnRSize, kScnRDamp, kScnRLvl, kScnMRate,
+  kScnMDepth, kScnMLvl, kScnEqLo, kScnEqHi, kScnMst };
+struct Scene {
+  uint16_t trkMask[kTracks] = {};  // bit p: track parameter p is set
+  uint8_t trk[kTracks][kScnTrk] = {};
+  uint16_t mstMask = 0;
+  uint8_t mst[kScnMst] = {};
+};
+static_assert(kScnTrk <= 16 && kScnMst <= 16, "scene masks are 16 bits");
+
 // Everything the synth reads from the project: the sound state the ESP mirrors to the synth board
 // (synth_model.h cuts it into chunks). Fields are grouped by chunk: master, tracks, instruments,
 // samples, wavetables.
@@ -556,6 +574,7 @@ struct SynthModel {
   uint8_t eqLow = 64;
   uint8_t eqHigh = 64;
   uint8_t shimInt = 0;
+  uint8_t xfade = 0;  // crossfader 0 = scene A .. 127 = scene B (scene.h); saved in SCEN
   TrackCfg tracks[kTracks];
   Instrument instruments[kInstruments];
   ProjSample samples[kProjSamples];
@@ -564,6 +583,8 @@ struct SynthModel {
   uint8_t wavetableCount = 0;  // names unique ignoring case
   // Tuning chunk (synth_model.h), last.
   TuningTable tuning;
+  // Scenes chunk, last: copies of Project::scenes[sceneA / sceneB] (syncSceneLive), all the synth needs.
+  Scene sceneLive[2];
 };
 
 // Shift-register generator of a track (shift_gen.h): plays the project scale live in place of the
@@ -605,6 +626,9 @@ struct Project : SynthModel {
   SongFollow songFol[kSongMax];
   // Project seed (UI 1..9999): the follow decisions (follow.h); evolve shares it. Saved in SFOL.
   uint16_t seed = 1;
+  // Scenes (scene.h): the ends of the crossfader, indices into scenes. Saved in SCEN.
+  Scene scenes[kScenes];
+  uint8_t sceneA = 0, sceneB = 1;
   bool preview = true;     // GRID note entry sounds on INT tracks
   // PERF: the effect of track button 1..8 (PerfFx).
   uint8_t perfMap[kPerfButtons] = {kPerfDefaultMap[0], kPerfDefaultMap[1], kPerfDefaultMap[2], kPerfDefaultMap[3],

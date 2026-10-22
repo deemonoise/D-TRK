@@ -4,6 +4,7 @@
 #include <vector>
 #include "inst_codec.h"
 #include "project_io.h"
+#include "scene.h"
 #include "sample_set.h"
 #include "scale.h"
 
@@ -2460,6 +2461,99 @@ void test_sfol_records_and_garbage() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// ---- SCEN (scenes and the crossfader) ----
+
+void test_scen_round_trip() {
+  sceneSetTrk(a.scenes[2], 0, kScnVol, 10);
+  sceneSetTrk(a.scenes[2], 15, kScnRes, 99);
+  sceneSetTrk(a.scenes[7], 3, kScnDty, 4);
+  sceneSetMst(a.scenes[7], kScnMain, 180);
+  sceneSetMst(a.scenes[7], kScnDTime, 16);
+  a.sceneA = 7;
+  a.sceneB = 2;
+  a.xfade = 77;
+  syncSceneLive(a);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SCEN"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(0, memcmp(a.scenes, b.scenes, sizeof a.scenes));
+  TEST_ASSERT_EQUAL(7, b.sceneA);
+  TEST_ASSERT_EQUAL(2, b.sceneB);
+  TEST_ASSERT_EQUAL(77, b.xfade);
+  // The live ends are synced by the load.
+  TEST_ASSERT_EQUAL(0, memcmp(&b.sceneLive[0], &b.scenes[7], sizeof(Scene)));
+  TEST_ASSERT_EQUAL(0, memcmp(&b.sceneLive[1], &b.scenes[2], sizeof(Scene)));
+}
+
+void test_scen_default_not_written_and_absent_loads_default() {
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_FALSE(hasChunk(out.buf, "SCEN"));
+  a.xfade = 1;  // only the fader moved: written
+  VecSink out2;
+  TEST_ASSERT_TRUE(saveProject(a, out2));
+  TEST_ASSERT_TRUE(hasChunk(out2.buf, "SCEN"));
+  sceneSetTrk(b.scenes[0], 0, kScnVol, 3);  // loading resets them
+  b.sceneA = 5;
+  b.xfade = 9;
+  syncSceneLive(b);
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_TRUE(sceneEmpty(b.scenes[0]) && sceneEmpty(b.sceneLive[0]));
+  TEST_ASSERT_EQUAL(0, b.sceneA);
+  TEST_ASSERT_EQUAL(1, b.sceneB);
+  TEST_ASSERT_EQUAL(0, b.xfade);
+}
+
+// A SCEN body: count scenes, nTrk / nMst parameters; scene 0 track 0 and the master get every value v
+// with full masks.
+static std::vector<uint8_t> scenPayload(uint8_t count, uint8_t tracks, uint8_t nTrk, uint8_t nMst, uint8_t v,
+                                        uint8_t sa = 0, uint8_t sb = 1, uint8_t xf = 0) {
+  std::vector<uint8_t> p = {count, tracks, nTrk, nMst, sa, sb, xf};
+  for (int s = 0; s < count; ++s) {
+    for (int t = 0; t < tracks; ++t) {
+      const uint16_t m = s == 0 && t == 0 ? 0xFFFF : 0;
+      p.push_back(static_cast<uint8_t>(m));
+      p.push_back(static_cast<uint8_t>(m >> 8));
+      for (int k = 0; k < nTrk; ++k) p.push_back(m ? v : 0);
+    }
+    const uint16_t mm = s == 0 ? 0xFFFF : 0;
+    p.push_back(static_cast<uint8_t>(mm));
+    p.push_back(static_cast<uint8_t>(mm >> 8));
+    for (int k = 0; k < nMst; ++k) p.push_back(mm ? v : 0);
+  }
+  return p;
+}
+
+void test_scen_longer_and_shorter_records() {
+  // More parameters than known: the extras skipped, the high mask bits dropped; values clamped.
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SCEN", scenPayload(9, 17, 16, 16, 250, 9, 3, 200));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(kScnTrkBits, b.scenes[0].trkMask[0]);
+  TEST_ASSERT_EQUAL(kScnMstBits, b.scenes[0].mstMask);
+  TEST_ASSERT_EQUAL(127, b.scenes[0].trk[0][kScnVol]);
+  TEST_ASSERT_EQUAL(0, b.scenes[0].trk[0][kScnDty]);  // out of range: TNH
+  TEST_ASSERT_EQUAL(kMasterVolMax, b.scenes[0].mst[kScnMain]);
+  TEST_ASSERT_EQUAL(kDlyTimeMax, b.scenes[0].mst[kScnDTime]);
+  TEST_ASSERT_TRUE(sceneEmpty(b.scenes[1]));
+  TEST_ASSERT_EQUAL(0, b.sceneA);  // 9: out of range
+  TEST_ASSERT_EQUAL(3, b.sceneB);
+  TEST_ASSERT_EQUAL(127, b.xfade);
+  // Fewer: the missing parameters unset.
+  f = fileHeader();
+  putChunk(f, "SCEN", scenPayload(2, 16, 3, 2, 20));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0x7, b.scenes[0].trkMask[0]);
+  TEST_ASSERT_EQUAL(20, b.scenes[0].trk[0][kScnDrv]);
+  TEST_ASSERT_EQUAL(0x3, b.scenes[0].mstMask);
+  TEST_ASSERT_EQUAL(kDlyTimeMax, b.scenes[0].mst[kScnDTime]);  // 20 clamped
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -2555,5 +2649,8 @@ int main() {
   RUN_TEST(test_tune_round_trip);
   RUN_TEST(test_tune_12tet_not_written);
   RUN_TEST(test_tune_bad_chunks_reset_to_12tet);
+  RUN_TEST(test_scen_round_trip);
+  RUN_TEST(test_scen_default_not_written_and_absent_loads_default);
+  RUN_TEST(test_scen_longer_and_shorter_records);
   return UNITY_END();
 }

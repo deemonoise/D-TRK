@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unity.h>
 #include "scale.h"
+#include "scene.h"
 #include "slices.h"
 #include "synth.h"
 #include "synth_drum_machines.h"
@@ -4408,6 +4409,205 @@ void test_tuning_kit_lane_and_note_slices_untuned() {
   TEST_ASSERT_TRUE(found);
 }
 
+// ---- scenes / crossfader (Project::scenes, SynthModel::sceneLive / xfade, scene.h) ----
+
+// Renders n blocks of interleaved L R into out (2 * n * kBlock).
+static void renderLR(Synth* x, int16_t* out, int n) {
+  for (int k = 0; k < n; ++k) x->renderStereo(out + 2 * k * Synth::kBlock);
+}
+
+void test_scene_empty_is_bit_identical() {
+  for (auto& m : p->instruments) m.send = 60, m.rsend = 70;
+  for (int xf = 0; xf <= 127; xf += 127) {
+    Project* p1 = new Project(*p);
+    Project* p2 = new Project(*p);
+    p2->xfade = static_cast<uint8_t>(xf);
+    sceneSetTrk(p2->scenes[4], 0, kScnVol, 0);  // a scene that is neither A nor B
+    sceneSetMst(p2->scenes[4], kScnMain, 10);
+    Synth* s1 = new Synth(*p1);
+    Synth* s2 = new Synth(*p2);
+    Synth* both[2] = {s1, s2};
+    for (Synth* x : both) {
+      Synth* keep = s;
+      s = x;
+      noteOn(0, 0, 60);
+      noteOn(10, 1, 64);
+      s = keep;
+    }
+    static int16_t a[2 * 30 * Synth::kBlock], b[2 * 30 * Synth::kBlock];
+    renderLR(s1, a, 30);
+    renderLR(s2, b, 30);
+    TEST_ASSERT_EQUAL_MEMORY(a, b, sizeof a);
+    delete s1;
+    delete s2;
+    delete p1;
+    delete p2;
+  }
+}
+
+void test_scene_morphs_voice_fields() {
+  p->tracks[0].instr = p->tracks[1].instr = 0;
+  p->instruments[0].send = 10;
+  Scene& b = p->sceneLive[1];
+  sceneSetTrk(b, 0, kScnPan, 0);
+  sceneSetTrk(b, 0, kScnDrv, 100);
+  sceneSetTrk(b, 0, kScnDly, 127);
+  sceneSetTrk(b, 0, kScnMod, 50);
+  sceneSetTrk(b, 0, kScnGte, 90);
+  sceneSetTrk(b, 0, kScnBit, 30);
+  sceneSetTrk(b, 0, kScnSrr, 20);
+  sceneSetTrk(b, 0, kScnDty, 2);
+  p->xfade = 127;
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  render1(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL(0, v.pan);
+  TEST_ASSERT_EQUAL(100, v.drive);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, v.send);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 50.f / 127.f, v.msend);
+  TEST_ASSERT_EQUAL(90, v.gdepth);
+  TEST_ASSERT_EQUAL(30, v.bits);
+  TEST_ASSERT_EQUAL(20, v.srr);
+  TEST_ASSERT_EQUAL(2, v.dmodel);
+  // Track 1 plays the same instrument: its own (base) values.
+  const Voice& w = s->voice(s->trackVoice(1));
+  TEST_ASSERT_EQUAL(64, w.pan);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 10.f / 127.f, w.send);
+  TEST_ASSERT_EQUAL(0, w.drive);
+  // Halfway: continuous values in between, the drive model (discrete) on B from 64.
+  p->xfade = 64;
+  for (int k = 0; k < 30; ++k) render1(buf);
+  TEST_ASSERT_EQUAL(32, s->voice(s->trackVoice(0)).pan);
+  TEST_ASSERT_EQUAL(50, s->voice(s->trackVoice(0)).drive);
+  TEST_ASSERT_EQUAL(2, s->voice(s->trackVoice(0)).dmodel);
+  p->xfade = 0;
+  for (int k = 0; k < 30; ++k) render1(buf);
+  TEST_ASSERT_EQUAL(64, s->voice(s->trackVoice(0)).pan);
+  TEST_ASSERT_EQUAL(0, s->voice(s->trackVoice(0)).dmodel);
+}
+
+// Two tracks on one instrument: only the track the scene holds feeds the delay.
+static int echoStartOf(uint8_t track) {
+  noteOn(0, track, 60);
+  noteOff(Synth::kBlock - 1, track, 60);
+  int gap = 0, at = -1;
+  for (int k = 0; k < 40 && at < 0; ++k) {
+    s->render(buf);
+    for (int i = 0; i < Synth::kBlock && at < 0; ++i) {
+      if (buf[i] == 0) ++gap;
+      else if (gap > 1000) at = k * Synth::kBlock + i;
+      else gap = 0;
+    }
+  }
+  return at;
+}
+
+void test_scene_dly_send_per_track() {
+  delaySetup(0);
+  p->tracks[0].instr = p->tracks[1].instr = 0;
+  sceneSetTrk(p->sceneLive[1], 1, kScnDly, 127);
+  p->xfade = 127;
+  TEST_ASSERT_EQUAL(-1, echoStartOf(0));  // track 0: the instrument's send 0, no echo
+  const int at = echoStartOf(1);          // track 1: the scene's send, an echo 1/16 later
+  TEST_ASSERT_TRUE(at >= 3995 && at <= 4005);
+}
+
+void test_scene_lfo_pan_adds_to_morph() {
+  Instrument& m = p->instruments[0];
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Pan);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoDepth = 63;
+  m.lfoRate = 100;
+  sceneSetTrk(p->sceneLive[1], 0, kScnPan, 32);
+  p->xfade = 127;
+  noteOn(0, 0, 60);
+  int lo = 127, hi = 0;
+  for (int k = 0; k < 200; ++k) {
+    render1(buf);
+    const int pn = s->voice(s->trackVoice(0)).pan;
+    lo = pn < lo ? pn : lo;
+    hi = pn > hi ? pn : hi;
+  }
+  TEST_ASSERT_EQUAL(0, lo);
+  TEST_ASSERT_TRUE(hi > 80 && hi < 110);  // 32 + ~63, not the base's 64 + 63
+}
+
+void test_scene_vol_and_first_block_snap() {
+  sceneSetTrk(p->sceneLive[1], 0, kScnVol, 0);
+  p->xfade = 127;  // set before the first block: no glide from A
+  noteOn(0, 0, 60);
+  TEST_ASSERT_TRUE(silentBlocks(5));
+  p->xfade = 0;
+  for (int k = 0; k < 20; ++k) render1(buf);
+  TEST_ASSERT_TRUE(rmsBlocks(4) > 1000.f);
+}
+
+void test_scene_reset_snaps() {
+  sceneSetTrk(p->sceneLive[1], 0, kScnVol, 0);
+  for (int k = 0; k < 2; ++k) render1(buf);
+  p->xfade = 127;
+  s->reset();
+  noteOn(0, 0, 60);
+  TEST_ASSERT_TRUE(silentBlocks(3));
+}
+
+void test_scene_smoothing_takes_about_30ms() {
+  sceneSetTrk(p->sceneLive[1], 0, kScnVol, 0);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 4; ++k) render1(buf);
+  float lo = 1e9f, hi = 0;  // the per-block RMS of the steady note
+  for (int k = 0; k < 8; ++k) {
+    const float r = rmsBlocks(1);
+    lo = r < lo ? r : lo;
+    hi = r > hi ? r : hi;
+  }
+  p->xfade = 127;
+  int silentAt = -1;
+  float prev = 1e9f;
+  for (int k = 0; k < 20 && silentAt < 0; ++k) {
+    const float r = rmsBlocks(1);
+    if (k == 0) TEST_ASSERT_TRUE(r > 0.7f * lo);   // no step down
+    if (k == 4) TEST_ASSERT_TRUE(r < 0.75f * hi);  // half way down
+    TEST_ASSERT_TRUE(r <= prev * 1.05f);           // monotone (the saw's per-block jitter aside)
+    prev = r;
+    if (r == 0.f) silentAt = k;
+  }
+  // 30 ms = 7.5 blocks of 128 at 32 kHz.
+  TEST_ASSERT_TRUE(silentAt >= 6 && silentAt <= 10);
+}
+
+void test_scene_cutoff_morph_and_flt_lock_wins() {
+  for (auto& m : p->instruments) m.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  noteOn(0, 0, 48);
+  for (int k = 0; k < 4; ++k) render1(buf);
+  const float open = rmsBlocks(8);
+  sceneSetTrk(p->sceneLive[1], 0, kScnCut, 0);
+  p->xfade = 127;
+  for (int k = 0; k < 20; ++k) render1(buf);
+  const float closed = rmsBlocks(8);
+  TEST_ASSERT_TRUE(closed < 0.3f * open);
+  stepStart(0, 0, 24, false);
+  fx(0, 0, Fx::FLT, 127);  // the step's lock beats the scene
+  for (int k = 0; k < 4; ++k) render1(buf);
+  const float locked = rmsBlocks(8);
+  TEST_ASSERT_FLOAT_WITHIN(0.1f * open, open, locked);
+}
+
+void test_scene_master_vol_morph() {
+  p->masterVol = 100;
+  noteOn(0, 0, 60, 40);
+  for (int k = 0; k < 4; ++k) render1(buf);
+  const float base = rmsBlocks(8);
+  sceneSetMst(p->sceneLive[0], kScnMain, 50);
+  for (int k = 0; k < 20; ++k) render1(buf);
+  const float half = rmsBlocks(8);
+  TEST_ASSERT_TRUE(half > 0.4f * base && half < 0.6f * base);
+  p->xfade = 127;  // B does not hold MAIN: the base
+  for (int k = 0; k < 20; ++k) render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f * base, base, rmsBlocks(8));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -4676,5 +4876,14 @@ int main() {
   RUN_TEST(test_tuning_synth_sounds_tuned);
   RUN_TEST(test_tuning_eligible_types);
   RUN_TEST(test_tuning_kit_lane_and_note_slices_untuned);
+  RUN_TEST(test_scene_empty_is_bit_identical);
+  RUN_TEST(test_scene_morphs_voice_fields);
+  RUN_TEST(test_scene_dly_send_per_track);
+  RUN_TEST(test_scene_lfo_pan_adds_to_morph);
+  RUN_TEST(test_scene_vol_and_first_block_snap);
+  RUN_TEST(test_scene_reset_snaps);
+  RUN_TEST(test_scene_smoothing_takes_about_30ms);
+  RUN_TEST(test_scene_cutoff_morph_and_flt_lock_wins);
+  RUN_TEST(test_scene_master_vol_morph);
   return UNITY_END();
 }

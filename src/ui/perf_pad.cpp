@@ -3,6 +3,7 @@
 #include <string.h>
 #include "app.h"
 #include "audio/audio.h"
+#include "engine/engine.h"
 #include "theme.h"
 
 namespace ui {
@@ -145,6 +146,23 @@ bool PerfPad::turn(int delta, bool shift) {
   return true;
 }
 
+bool PerfPad::xfadeTurn(int delta, bool shift) {
+  if (!on_ || stack_.count() > 0) return false;
+  mt::Project& p = app_.project();
+  int v = p.xfade + delta * (shift ? 8 : 1);
+  v = v < 0 ? 0 : (v > 127 ? 127 : v);
+  if (v != p.xfade) {
+    engine::lockProject();
+    p.xfade = static_cast<uint8_t>(v);
+    engine::unlockProject();
+    app_.markDirty();
+  }
+  char msg[32];
+  snprintf(msg, sizeof(msg), "XFADE %d A%d>B%d", v, p.sceneA + 1, p.sceneB + 1);
+  app_.toast(msg);
+  return true;
+}
+
 // Always sent: a press lost in a full queue must not leave the synth holding an effect.
 void PerfPad::allOff() {
   for (int8_t& h : held_) h = -1;
@@ -171,7 +189,8 @@ int PerfPad::badge(char* out, int size) const {
   if (size <= 0) return 0;
   out[0] = 0;
   if (!on_) return 0;
-  int n = snprintf(out, size, "PERF");
+  const uint8_t xf = app_.project().xfade;
+  int n = xf ? snprintf(out, size, "PERF X%u", xf) : snprintf(out, size, "PERF");  // the crossfader off A
   if (n >= size) return size - 1;
   for (int i = 0; i < stack_.count(); ++i) {
     const char* sh = mt::perfShort(stack_.at(i));

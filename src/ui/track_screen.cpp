@@ -8,6 +8,7 @@
 #include "name_edit.h"
 #include "note_name.h"
 #include "esp_random.h"
+#include "scene.h"
 
 namespace ui {
 namespace {
@@ -496,7 +497,18 @@ void TrackScreen::leaveEdit() {
 void TrackScreen::onLeave() {
   leaveEdit();
   panSel_ = -1;
+  xfSel_ = kXfNone;
+  setSceneView(false);
   audio::setMeters(false);  // the level meters cost render time: only while MIX is shown
+}
+
+// A new project: drop the SCENE view without restoring the parked fader (it belonged to the old one).
+void TrackScreen::onProjectReplaced() {
+  xfSaved_ = -1;
+  scnView_ = scnCopy_ = false;
+  scnPending_ = -1;
+  xfSel_ = kXfNone;
+  panSel_ = -1;
 }
 
 void TrackScreen::showPage(int page, bool bar) {
@@ -528,6 +540,8 @@ void TrackScreen::setMixer(bool on) {
   if (on == mixer_) return;
   leaveEdit();
   panSel_ = -1;
+  xfSel_ = kXfNone;
+  if (!on) setSceneView(false);
   mixer_ = on;
   audio::setMeters(on);
   app_.invalidate();
@@ -621,10 +635,39 @@ void TrackScreen::rotateSteps(int d) {
 bool TrackScreen::trackKey(int n, bool shift) {
   followTrack();
   syncSteps();
+  if (sceneView() && !shift && n >= 0 && n < mt::kScenes) {  // SCENE: on release without a turn (trackUp)
+    scnPending_ = n;
+    return true;
+  }
   if (shift || mixer_ || !stepsEdit() || n < 0 || n >= 8) return false;
   gateCur_ = (gateCur_ / 8) * 8 + n;
   toggleStep(gateCur_);
   return true;
+}
+
+// SCENE view: a track button released without a turn = edit scene N, or the CPY target.
+void TrackScreen::trackUp(int n) {
+  if (!sceneView() || n != scnPending_) {
+    scnPending_ = -1;
+    return;
+  }
+  scnPending_ = -1;
+  {
+    if (scnCopy_) {
+      engine::lockProject();
+      app_.project().scenes[n] = app_.project().scenes[scnEdit_];
+      mt::syncSceneLive(app_.project());
+      engine::unlockProject();
+      app_.markDirty();
+      char msg[24];
+      snprintf(msg, sizeof(msg), "SCENE %d > %d", scnEdit_ + 1, n + 1);
+      app_.toast(msg);
+      scnCopy_ = false;
+    }
+    scnEdit_ = n;
+    parkFader();
+    app_.invalidate();
+  }
 }
 
 int TrackScreen::gateStep() {
@@ -665,15 +708,19 @@ void TrackScreen::onPage(int d) {
 }
 
 // B: leaves the edit with the value kept (as the second click), a name edit gets fixNames(). MIX:
-// drops the pan bar selection, else PERF on / off.
+// drops the pan bar / crossfader selection, else PERF on / off.
 void TrackScreen::onBack() {
-  if (!mixer_) {
-    if (list_.editing()) leaveEdit();
-  } else if (panSel_ >= 0) {
+  if (mixer_ && scnView_) {
+    if (scnCopy_) scnCopy_ = false;
+    else setSceneView(false);
+    app_.invalidate();
+  } else if (mixer_ && (panSel_ >= 0 || xfSel_ != kXfNone)) {
     panSel_ = -1;
-  } else {
+    xfSel_ = kXfNone;
+  } else if (mixer_) {
     togglePerf();
   }
+  else if (list_.editing()) leaveEdit();
 }
 
 void TrackScreen::togglePerf() {
@@ -783,6 +830,15 @@ uint32_t TrackScreen::mixSignature() const {
   mix(static_cast<uint32_t>(app_.curTrack()));
   mix(p.masterVol);
   mix(static_cast<uint32_t>(panSel_));
+  mix(p.xfade | p.sceneA << 8 | p.sceneB << 12 | static_cast<uint32_t>(xfSel_) << 16 |
+      static_cast<uint32_t>(scnView_) << 20 | static_cast<uint32_t>(scnCopy_) << 21);
+  mix(static_cast<uint32_t>(scnEdit_ | scnPar_ << 4 | scnMst_ << 8));
+  if (scnView_) {
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(&p.scenes[scnEdit_]);
+    for (size_t i = 0; i < sizeof(mt::Scene); ++i) mix(b[i]);
+  }
+  for (int t = 0; t < mt::kTracks; ++t) mix(p.sceneLive[0].trkMask[t] | p.sceneLive[1].trkMask[t] << 16);
+  mix(p.sceneLive[0].mstMask | p.sceneLive[1].mstMask << 16);
   for (int t = 0; t < mt::kTracks; ++t) mix(p.tracks[t].mute | p.tracks[t].solo << 1 | static_cast<uint32_t>(p.tracks[t].out) << 2);
   for (int k = 0; k < kStrips; ++k) {
     const mt::TrackCfg& t = p.tracks[firstTrack() + k];
@@ -809,7 +865,7 @@ bool TrackScreen::wantsRedraw(const engine::Status&) {
     return page_ == kPgIns && gateStep() != shownGateStep_;  // the gate's playhead moved
   }
   const uint32_t sig = mixSignature();
-  const bool scope = millis() - scopeMs_ >= kScopeMs;
+  const bool scope = !scnView_ && millis() - scopeMs_ >= kScopeMs;  // the SCENE view has no scope
   if (sig == mixSig_ && !scope) return false;
   mixSig_ = sig;
   return true;
@@ -856,14 +912,25 @@ void TrackScreen::toggleMuteSolo(int track, bool solo) {
 }
 
 void TrackScreen::mixerInput(const hw::InputEvent& ev) {
+  if (scnView_) {
+    sceneInput(ev);
+    return;
+  }
+  // The crossfader row selected: turn / A + turn move the fader or step the end's scene (Shift x8).
+  if (xfSel_ != kXfNone && (ev.type == hw::InputType::EditTurn || ev.type == hw::InputType::EncTurn)) {
+    const mt::Project& p = app_.project();
+    if (xfSel_ == kXfFader) setXfade(p.xfade + ev.delta * (ev.shift ? 8 : 1));
+    else setSceneEnd(xfSel_ == kXfEndB, ((xfSel_ == kXfEndB ? p.sceneB : p.sceneA) + ev.delta % mt::kScenes +
+                                         mt::kScenes) % mt::kScenes);
+    return;
+  }
   // The selected pan bar went away (another half, a MIDI output, a project load): MAIN again.
   if (panSel_ >= 0 && (panSel_ / kStrips != firstTrack() / kStrips ||
                        app_.project().tracks[panSel_].out != mt::TrackOut::Int))
     panSel_ = -1;
-  if (ev.type == hw::InputType::EditTurn) {  // A + turn: master volume (or the selected pan), Shift = x10
-    const int d = ev.delta * (ev.shift ? 10 : 1);
-    if (panSel_ >= 0) setPan(panSel_, app_.project().tracks[panSel_].pan + d);
-    else setMasterVol(app_.project().masterVol + d);
+  if (ev.type == hw::InputType::EditTurn) {  // A + turn: the selected pan (Shift x10), else the crossfader (x8)
+    if (panSel_ >= 0) setPan(panSel_, app_.project().tracks[panSel_].pan + ev.delta * (ev.shift ? 10 : 1));
+    else setXfade(app_.project().xfade + ev.delta * (ev.shift ? 8 : 1));
     return;
   }
   if (ev.type != hw::InputType::EncTurn) return;
@@ -901,6 +968,11 @@ bool TrackScreen::hitStrip(int x, int y, int& strip, Part& part) const {
 
 void TrackScreen::mixerTouch(const TouchEvent& ev) {
   if (ev.type == TouchType::HDrag) return;
+  if (xfTouch(ev)) return;
+  if (scnView_) {
+    sceneTouch(ev);
+    return;
+  }
   int strip;
   Part part;
   // A drag keeps to the fader it started on.
@@ -915,6 +987,7 @@ void TrackScreen::mixerTouch(const TouchEvent& ev) {
       return;
     }
     if (part == Part::Fader) setMasterVol(mt::kMasterVolMax - pos * mt::kMasterVolMax / kFaderH);
+    xfSel_ = kXfNone;
     app_.invalidate();
     return;
   }
@@ -926,6 +999,7 @@ void TrackScreen::mixerTouch(const TouchEvent& ev) {
   if (part == Part::Pan) {  // tap: select / drop the pan bar (INT tracks); the encoder turns it
     if (ev.type == TouchType::Tap && app_.project().tracks[tr].out == mt::TrackOut::Int) {
       panSel_ = panSel_ == tr ? -1 : tr;
+      xfSel_ = kXfNone;
       app_.invalidate();
     }
     return;
@@ -944,7 +1018,7 @@ void TrackScreen::drawFader(LGFX_Sprite& s, int x, int y, int value, int max, ui
 // material still fills the box; the meter shows the real level), the peak meter and CLIP (held 1 s).
 void TrackScreen::drawScope(LGFX_Sprite& s, int y0) {
   scopeMs_ = millis();
-  constexpr int kX = kStripX0, kW = kScreenW - 2 * kStripX0, kH = kScopeH;
+  constexpr int kX = kStripX0, kW = kScopeW, kH = kScopeH;
   constexpr int kN = kW - kMeterW - 4;  // one sample per pixel
   const int y = y0 + kScopeY, mid = y + kH / 2;
   s.fillRect(kX, y, kW, kH, kBeatBg);
@@ -996,6 +1070,11 @@ void TrackScreen::updateMeters() {
 }
 
 void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
+  if (scnView_) {
+    drawScene(s, y0);
+    drawPanel(s, y0);
+    return;
+  }
   const mt::Project& p = app_.project();
   char buf[12];
   updateMeters();
@@ -1007,11 +1086,18 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     const bool audible = p.trackAudible(tr);
     const int x = kStripX0 + k * kStripW;
     snprintf(buf, sizeof(buf), "%.6s", t.name);  // 6 x 8 px fit the strip
-    s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
+    // A scene end holds one of the track's parameters: the name in yellow (the base may not be what sounds).
+    bool scn = false;
+    for (int k = 0; k < mt::kScnTrk && internal && !scn; ++k) scn = mt::sceneTrkLive(p, tr, k);
+    s.setTextColor(t.solo ? kCursor : (scn ? kYellow : (audible ? kText : kDim)));
     s.drawString(buf, x + 2, y0 + kNameY);
     const int fx = x + (kStripW - 2 - kFaderW) / 2, fy = y0 + kFaderY;
     if (internal) drawFader(s, fx, fy, t.vol, 127, audible ? kText : kDim);
     else s.drawRect(fx, fy, kFaderW, kFaderH, kDim);
+    if (internal && mt::sceneTrkLive(p, tr, mt::kScnVol)) {  // what sounds: a yellow tick over the base
+      const int ev = mt::sceneTrkEff(p, tr, mt::kScnVol);
+      s.fillRect(fx - 2, fy + kFaderH - 1 - ev * (kFaderH - 2) / 127, kFaderW + 4, 2, kYellow);
+    }
     if (internal) {  // level meter: green, yellow above -6 dB, red for a second after full scale
       const int mx = fx + kFaderW + 3;
       s.fillRect(mx, fy, kMeterBarW, kFaderH, kBeatBg);
@@ -1036,6 +1122,8 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
       const int bx = x + 4, bw = kStripW - 10, by = py + kPanBarDy;
       s.fillRect(bx, by, bw, 2, kDim);
       s.fillRect(bx + t.pan * (bw - 2) / 127, by - 1, 2, 4, sel ? kCursor : kText);
+      if (mt::sceneTrkLive(p, tr, mt::kScnPan))
+        s.fillRect(bx + mt::sceneTrkEff(p, tr, mt::kScnPan) * (bw - 2) / 127, by - 3, 2, 3, kYellow);
     }
     const mt::Instrument& in = p.instruments[t.instr % mt::kInstruments];
     s.setTextColor(kDim);
@@ -1054,7 +1142,7 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     s.drawString("S", x + 3 + kBtnW + 2 + (kBtnW - kCharW) / 2, by + (kBtnH - kCharH) / 2);
   }
   // Master: masterVol 0..200 %; above 100 % the fill turns yellow (the soft clip works harder).
-  s.drawFastVLine(kMasterX - 4, y0, kScopeY - 4, kDim);
+  s.drawFastVLine(kMasterX - 4, y0, kScopeY - 4, kDim);  // the crossfader stays left of it, the scope spans the width
   s.setTextColor(kText);
   s.drawString("MAIN", kMasterX + (kMasterW - 4 * kCharW) / 2, y0 + kNameY);
   const int mv = p.masterVol;
@@ -1068,12 +1156,414 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
   s.setTextColor(kDim);
   snprintf(buf, sizeof(buf), "%d-%d", firstTrack() + 1, firstTrack() + kStrips);
   s.drawString(buf, kMasterX + (kMasterW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + kSendY + kSendDy);
+  drawXfade(s, y0);
   // PERF (B or a tap): yellow while on, as the GRID / SONG badge.
   const bool perf = app_.perf().on();
   s.fillRect(kMasterX + 2, y0 + kBtnY, kMasterW - 4, kBtnH, perf ? kYellow : kBeatBg);
   s.setTextColor(perf ? kBg : kDim);
   s.drawString("PERF", kMasterX + (kMasterW - 4 * kCharW) / 2, y0 + kBtnY + (kBtnH - kCharH) / 2);
   drawScope(s, y0);
+}
+
+// ---- crossfader and SCENE view (scene.h) ----
+
+void TrackScreen::setXfade(int v) {
+  v = clampi(v, 0, 127);
+  mt::Project& p = app_.project();
+  if (v == p.xfade) return;
+  engine::lockProject();
+  p.xfade = static_cast<uint8_t>(v);
+  engine::unlockProject();
+  app_.markDirty();
+}
+
+void TrackScreen::setSceneEnd(bool b, int idx) {
+  mt::Project& p = app_.project();
+  idx = clampi(idx, 0, mt::kScenes - 1);
+  engine::lockProject();
+  (b ? p.sceneB : p.sceneA) = static_cast<uint8_t>(idx);
+  mt::syncSceneLive(p);
+  engine::unlockProject();
+  app_.markDirty();
+  char msg[16];
+  snprintf(msg, sizeof(msg), "%c = SCENE %d", b ? 'B' : 'A', idx + 1);
+  app_.toast(msg);
+}
+
+// The crossfader row: A3 (tap: select the end), the bar (tap / drag: position, a tap selects it), B5;
+// under the 8 strips only. In the SCENE view the panel (pnlTouch) has the area instead.
+bool TrackScreen::xfTouch(const TouchEvent& ev) {
+  if (scnView_) return false;
+  const int sy = ev.type == TouchType::Drag ? ev.y0 : ev.y, sx = ev.type == TouchType::Drag ? ev.x0 : ev.x;
+  if (sy < y0_ + kXfY || sy >= y0_ + kXfY + kXfH + 2) return false;  // above: the M / S buttons
+  if (sx < kStripX0 || sx >= kXfX1) return false;                      // the MAIN column
+  if (ev.type == TouchType::LongPress) return true;
+  if (sx < kXfBarX0 - 2 || sx >= kXfBarX1 + 2) {  // an end label
+    if (ev.type == TouchType::Tap) {
+      const int want = sx < kXfBarX0 ? kXfEndA : kXfEndB;
+      xfSel_ = xfSel_ == want ? kXfNone : want;
+      panSel_ = -1;
+      app_.invalidate();
+    }
+    return true;
+  }
+  const int v = clampi((ev.x - kXfBarX0) * 127 / (kXfBarX1 - kXfBarX0), 0, 127);
+  if (ev.type == TouchType::Drag) {
+    setXfade(v);
+  } else if (ev.type == TouchType::Tap) {
+    setXfade(v);
+    xfSel_ = kXfFader;
+    panSel_ = -1;
+  }
+  app_.invalidate();
+  return true;
+}
+
+void TrackScreen::drawXfade(LGFX_Sprite& s, int y0) {
+  const mt::Project& p = app_.project();
+  const int y = y0 + kXfY, ty = y + (kXfH - kCharH) / 2;
+  char buf[24];
+  const bool live = !mt::sceneEmpty(p.sceneLive[0]) || !mt::sceneEmpty(p.sceneLive[1]);
+  snprintf(buf, sizeof(buf), "A%d", p.sceneA + 1);
+  s.setTextColor(xfSel_ == kXfEndA ? kCursor : kText);
+  if (xfSel_ == kXfEndA) s.fillRect(kStripX0, y, kXfLabW, kXfH, kBeatBg);
+  s.drawString(buf, kStripX0 + 4, ty);
+  snprintf(buf, sizeof(buf), "B%d", p.sceneB + 1);
+  s.setTextColor(xfSel_ == kXfEndB ? kCursor : kText);
+  if (xfSel_ == kXfEndB) s.fillRect(kXfX1 - kXfLabW, y, kXfLabW, kXfH, kBeatBg);
+  s.drawString(buf, kXfX1 - kXfLabW + 4, ty);
+  const int my = y + kXfH / 2;
+  s.fillRect(kXfBarX0, my - 1, kXfBarX1 - kXfBarX0, 2, live ? kText : kDim);
+  const int kx = kXfBarX0 + p.xfade * (kXfBarX1 - kXfBarX0) / 127;
+  const uint16_t kc = xfSel_ == kXfFader ? kCursor : (live ? kYellow : kDim);
+  s.fillRect(kx - 4, y + 2, 9, kXfH - 4, kc);
+}
+
+void TrackScreen::parkFader() {
+  if (!scnView_) return;
+  const mt::Project& p = app_.project();
+  if (scnEdit_ == p.sceneA) setXfade(0);
+  else if (scnEdit_ == p.sceneB) setXfade(127);
+}
+
+void TrackScreen::setSceneView(bool on) {
+  if (on == scnView_) return;
+  if (on) {
+    xfSaved_ = app_.project().xfade;
+    scnView_ = true;
+    scnCopy_ = false;
+    xfSel_ = kXfNone;
+    panSel_ = -1;
+    scnEdit_ = app_.project().sceneB;
+    parkFader();
+  } else {
+    scnView_ = scnCopy_ = false;
+    if (xfSaved_ >= 0) setXfade(xfSaved_);
+    xfSaved_ = -1;
+  }
+}
+
+void TrackScreen::scnSetTrk(int track, int v) {
+  mt::Project& p = app_.project();
+  if (p.tracks[track].out != mt::TrackOut::Int) return;  // MIDI: no scene parameters
+  engine::lockProject();
+  mt::sceneSetTrk(p.scenes[scnEdit_], track, scnPar_, v);
+  mt::syncSceneLive(p);
+  engine::unlockProject();
+  app_.markDirty();
+}
+
+void TrackScreen::scnNudgeTrk(int track, int d) {
+  const mt::Project& p = app_.project();
+  const mt::Scene& sc = p.scenes[scnEdit_];
+  const int cur = mt::sceneTrkIsSet(sc, track, scnPar_) ? sc.trk[track][scnPar_] : mt::sceneTrkBase(p, track, scnPar_);
+  scnSetTrk(track, clampi(cur + d, mt::sceneTrkMin(scnPar_), mt::sceneTrkMax(scnPar_)));
+}
+
+void TrackScreen::scnUnsetTrk(int track) {
+  mt::Project& p = app_.project();
+  engine::lockProject();
+  mt::sceneUnsetTrk(p.scenes[scnEdit_], track, scnPar_);
+  mt::syncSceneLive(p);
+  engine::unlockProject();
+  app_.markDirty();
+}
+
+void TrackScreen::scnNudgeMst(int d) {
+  mt::Project& p = app_.project();
+  mt::Scene& sc = p.scenes[scnEdit_];
+  const int cur = mt::sceneMstIsSet(sc, scnMst_) ? sc.mst[scnMst_] : mt::sceneMstBase(p, scnMst_);
+  engine::lockProject();
+  mt::sceneSetMst(sc, scnMst_, cur + d);
+  mt::syncSceneLive(p);
+  engine::unlockProject();
+  app_.markDirty();
+}
+
+void TrackScreen::sceneHoldTurn(int track, int d) {
+  if (!sceneView()) return;
+  scnPending_ = -1;  // the hold edited a value: no scene change on release
+  scnNudgeTrk(track, d);
+  char msg[24];
+  const mt::Scene& sc = app_.project().scenes[scnEdit_];
+  if (mt::sceneTrkIsSet(sc, track, scnPar_))
+    snprintf(msg, sizeof(msg), "TRK%d %s %d", track + 1, mt::sceneTrkName(scnPar_), sc.trk[track][scnPar_]);
+  else snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
+  app_.toast(msg);
+}
+
+void TrackScreen::sceneHoldClick(int track) {
+  if (!sceneView()) return;
+  scnPending_ = -1;  // the hold did something: no scene change on release
+  char msg[24];
+  if (app_.project().tracks[track].out != mt::TrackOut::Int) {
+    snprintf(msg, sizeof(msg), "TRK%d MIDI", track + 1);
+  } else {
+    scnUnsetTrk(track);
+    snprintf(msg, sizeof(msg), "TRK%d %s ---", track + 1, mt::sceneTrkName(scnPar_));
+  }
+  app_.toast(msg);
+}
+
+void TrackScreen::sceneMasterParam(int d) {
+  if (!sceneView()) return;
+  scnMst_ = ((scnMst_ + d) % mt::kScnMst + mt::kScnMst) % mt::kScnMst;
+  app_.invalidate();
+}
+
+void TrackScreen::sceneMasterUnset() {
+  if (!sceneView()) return;
+  mt::Project& p = app_.project();
+  engine::lockProject();
+  mt::sceneUnsetMst(p.scenes[scnEdit_], scnMst_);
+  mt::syncSceneLive(p);
+  engine::unlockProject();
+  app_.markDirty();
+  char msg[24];
+  snprintf(msg, sizeof(msg), "%s ---", mt::sceneMstName(scnMst_));
+  app_.toast(msg);
+}
+
+void TrackScreen::onATap(bool shift) {
+  if (!mixer_ || !shift) return;
+  setSceneView(!scnView_);
+  app_.invalidate();
+}
+
+void TrackScreen::scnCapture() {
+  engine::lockProject();
+  mt::sceneCaptureMix(app_.project(), scnEdit_);  // syncs sceneLive
+  engine::unlockProject();
+  app_.markDirty();
+  app_.toast("CAPTURE MIX");
+}
+
+void TrackScreen::scnClear() {
+  engine::lockProject();
+  mt::sceneClear(app_.project(), scnEdit_);  // syncs sceneLive
+  engine::unlockProject();
+  app_.markDirty();
+  app_.toast("SCENE CLEARED");
+}
+
+void TrackScreen::scnCopyArm() {
+  scnCopy_ = true;
+  app_.toast("COPY TO: TRACK BUTTON");
+}
+
+void TrackScreen::scnMenu() {
+  enum { kCap, kClr, kCpy };
+  const MenuItem items[] = {{"Capture mix", kCap}, {"Clear scene", kClr}, {"Copy scene", kCpy}};
+  char title[16];
+  snprintf(title, sizeof(title), "SCENE %d", scnEdit_ + 1);
+  app_.menu().open(title, items, 3, [this](int id) {
+    if (!sceneView()) return;
+    if (id == kCap) scnCapture();
+    else if (id == kClr) scnClear();
+    else if (id == kCpy) scnCopyArm();
+    app_.invalidate();
+  });
+}
+
+// SCENE view encoder: turn alone nothing, Shift + turn = the track parameter, A + turn = the master
+// value (Shift x8), long press = the menu. Held track buttons, B + turn and A + click come from App.
+void TrackScreen::sceneInput(const hw::InputEvent& ev) {
+  if (ev.type == hw::InputType::EditTurn) {
+    scnNudgeMst(ev.delta * (ev.shift ? 8 : 1));
+    return;
+  }
+  if (ev.type == hw::InputType::EncLong) {
+    scnMenu();
+    return;
+  }
+  if (ev.type != hw::InputType::EncTurn || !ev.shift) return;
+  scnPar_ = ((scnPar_ + ev.delta) % mt::kScnTrk + mt::kScnTrk) % mt::kScnTrk;
+  app_.invalidate();
+}
+
+// The panel's buttons: a point in a button or in the gap right of / under it counts for that button.
+int TrackScreen::pnlHit(int x, int y) const {
+  const int ly = y - y0_;
+  if (ly < kPnlY || ly >= kAreaH || x < kStripX0 || x >= kStripX0 + kPnlW) return -1;
+  const int col = clampi((x - kStripX0) / (kPnlBtnW + kPnlGap), 0, kPnlCols - 1);
+  const int row = clampi((ly - kPnlY) / (kPnlRowH + kPnlGap), 0, 1);
+  return row * kPnlCols + col;
+}
+
+void TrackScreen::pnlTouch(const TouchEvent& ev) {
+  if (ev.type != TouchType::Tap) return;
+  const int b = pnlHit(ev.x, ev.y);
+  const bool left = ev.x < pnlX(b % kPnlCols) + kPnlBtnW / 2;  // < or > of SCN / VOL
+  switch (b) {
+    case kPbScn:
+      scnEdit_ = (scnEdit_ + (left ? mt::kScenes - 1 : 1)) % mt::kScenes;
+      scnCopy_ = false;
+      parkFader();
+      break;
+    case kPbPar: scnPar_ = (scnPar_ + (left ? mt::kScnTrk - 1 : 1)) % mt::kScnTrk; break;
+    case kPbCap: scnCapture(); break;
+    case kPbClr: scnClear(); break;
+    case kPbCpy:
+      if (scnCopy_) scnCopy_ = false;
+      else scnCopyArm();
+      break;
+    case kPbDone: setSceneView(false); break;
+    default: return;  // =A / =B, X64: shown only
+  }
+  app_.invalidate();
+}
+
+void TrackScreen::sceneTouch(const TouchEvent& ev) {
+  int strip;
+  Part part;
+  const int sx = ev.type == TouchType::Drag ? ev.x0 : ev.x, sy = ev.type == TouchType::Drag ? ev.y0 : ev.y;
+  if (sy - y0_ >= kPnlY) {
+    pnlTouch(ev);
+    return;
+  }
+  if (!hitStrip(sx, sy, strip, part)) return;
+  const int pos = clampi(ev.y - (y0_ + kFaderY), 0, kFaderH);  // 0 = top
+  mt::Project& p = app_.project();
+  if (strip == kMaster) {
+    if (part == Part::Name && ev.type == TouchType::Tap) scnMst_ = (scnMst_ + 1) % mt::kScnMst;
+    else if (part == Part::Fader && ev.type == TouchType::Tap && app_.shift()) {
+      engine::lockProject();
+      mt::sceneUnsetMst(p.scenes[scnEdit_], scnMst_);
+      mt::syncSceneLive(p);
+      engine::unlockProject();
+      app_.markDirty();
+    } else if (part == Part::Fader) {
+      const int lo = mt::sceneMstMin(scnMst_), hi = mt::sceneMstMax(scnMst_);
+      engine::lockProject();
+      mt::sceneSetMst(p.scenes[scnEdit_], scnMst_, hi - pos * (hi - lo) / kFaderH);
+      mt::syncSceneLive(p);
+      engine::unlockProject();
+      app_.markDirty();
+    }
+    app_.invalidate();
+    return;
+  }
+  const int tr = firstTrack() + strip;
+  if (part == Part::Name && ev.type == TouchType::Tap) app_.setCurTrack(tr);
+  else if ((part == Part::Mute || part == Part::Solo) && ev.type == TouchType::Tap)
+    toggleMuteSolo(tr, part == Part::Solo);
+  else if (part == Part::Fader && ev.type == TouchType::Tap && app_.shift()) scnUnsetTrk(tr);
+  else if (part == Part::Fader) {
+    const int hi = mt::sceneTrkMax(scnPar_);
+    scnSetTrk(tr, hi - (pos * hi + kFaderH / 2) / kFaderH);
+  }
+  app_.invalidate();
+}
+
+// The SCENE view's strips: the edited scene's parameter for the half's tracks (--- unset; the base under
+// it dim), the master strip one master parameter.
+void TrackScreen::drawScene(LGFX_Sprite& s, int y0) {
+  const mt::Project& p = app_.project();
+  const mt::Scene& sc = p.scenes[scnEdit_];
+  char buf[12];
+  for (int k = 0; k < kStrips; ++k) {
+    const int tr = firstTrack() + k;
+    const mt::TrackCfg& t = p.tracks[tr];
+    const bool internal = t.out == mt::TrackOut::Int;
+    const int x = kStripX0 + k * kStripW;
+    if (tr == app_.curTrack()) s.fillRect(x, y0 + kNameY - 1, kStripW - 2, kCharH + 2, kBeatBg);
+    snprintf(buf, sizeof(buf), "%.6s", t.name);
+    s.setTextColor(tr == app_.curTrack() ? kCursor : (internal ? kText : kDim));
+    s.drawString(buf, x + 2, y0 + kNameY);
+    const int fx = x + (kStripW - 2 - kFaderW) / 2, fy = y0 + kFaderY;
+    const bool set = internal && mt::sceneTrkIsSet(sc, tr, scnPar_);
+    const int hi = mt::sceneTrkMax(scnPar_);
+    if (set) drawFader(s, fx, fy, sc.trk[tr][scnPar_], hi, kYellow);
+    else s.drawRect(fx, fy, kFaderW, kFaderH, kDim);
+    if (!internal) snprintf(buf, sizeof(buf), "MIDI");
+    else if (!set) snprintf(buf, sizeof(buf), "---");
+    else if (scnPar_ == mt::kScnPan) mt::fxFormat(mt::Fx::PAN, sc.trk[tr][scnPar_], buf);
+    else snprintf(buf, sizeof(buf), "%3u", sc.trk[tr][scnPar_]);
+    s.setTextColor(set ? kYellow : kDim);
+    s.drawString(buf, x + 6, y0 + kValY);
+    if (internal) {  // the project's value, for reference
+      snprintf(buf, sizeof(buf), "b%u", mt::sceneTrkBase(p, tr, scnPar_));
+      s.setTextColor(kDim);
+      s.drawString(buf, x + 6, y0 + kPanY - 2);
+    }
+    const int by = y0 + kBtnY;
+    s.fillRect(x + 3, by, kBtnW, kBtnH, t.mute ? kRed : kBeatBg);
+    s.fillRect(x + 3 + kBtnW + 2, by, kBtnW, kBtnH, t.solo ? kCursor : kBeatBg);
+    s.setTextColor(t.mute ? kText : kDim);
+    s.drawString("M", x + 3 + (kBtnW - kCharW) / 2, by + (kBtnH - kCharH) / 2);
+    s.setTextColor(t.solo ? kBg : kDim);
+    s.drawString("S", x + 3 + kBtnW + 2 + (kBtnW - kCharW) / 2, by + (kBtnH - kCharH) / 2);
+  }
+  s.drawFastVLine(kMasterX - 4, y0, kPnlY - 4, kDim);  // the panel below spans the width
+  s.setTextColor(kCursor);
+  const char* mn = mt::sceneMstName(scnMst_);
+  s.drawString(mn, kMasterX + (kMasterW - static_cast<int>(strlen(mn)) * kCharW) / 2, y0 + kNameY);
+  const bool mset = mt::sceneMstIsSet(sc, scnMst_);
+  const int fx = kMasterX + (kMasterW - kFaderW) / 2;
+  if (mset) drawFader(s, fx, y0 + kFaderY, sc.mst[scnMst_], mt::sceneMstMax(scnMst_), kYellow);
+  else s.drawRect(fx, y0 + kFaderY, kFaderW, kFaderH, kDim);
+  if (mset) snprintf(buf, sizeof(buf), "%u", sc.mst[scnMst_]);
+  else snprintf(buf, sizeof(buf), "---");
+  s.setTextColor(mset ? kYellow : kDim);
+  s.drawString(buf, kMasterX + (kMasterW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + kValY);
+  snprintf(buf, sizeof(buf), "b%u", mt::sceneMstBase(p, scnMst_));
+  s.setTextColor(kDim);
+  s.drawString(buf, kMasterX + (kMasterW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + kPanY - 2);
+}
+
+// The SCENE view's panel: `< SCN n >`, `< VOL >`, =A / =B, X64 (shown only); CAP, CLR, CPY, END.
+void TrackScreen::drawPanel(LGFX_Sprite& s, int y0) {
+  const mt::Project& p = app_.project();
+  char buf[16];
+  for (int b = 0; b < 2 * kPnlCols; ++b) {
+    const int x = pnlX(b % kPnlCols), y = y0 + pnlY(b / kPnlCols);
+    const bool info = b == kPbEnd || b == kPbXf;
+    const bool on = b == kPbCpy && scnCopy_;
+    s.fillRect(x, y, kPnlBtnW, kPnlRowH, on ? kCursor : (info ? kBg : kBeatBg));
+    s.drawRect(x, y, kPnlBtnW, kPnlRowH, info ? kBeatBg : kDim);
+    uint16_t col = on ? kBg : kText;
+    switch (b) {
+      case kPbScn: snprintf(buf, sizeof(buf), "SCN %d", scnEdit_ + 1); col = kCursor; break;
+      case kPbPar: snprintf(buf, sizeof(buf), "%s", mt::sceneTrkName(scnPar_)); break;
+      case kPbEnd:
+        snprintf(buf, sizeof(buf), "%s", scnEdit_ == p.sceneA ? "=A" : (scnEdit_ == p.sceneB ? "=B" : "--"));
+        col = kDim;
+        break;
+      case kPbXf: snprintf(buf, sizeof(buf), "X%d", p.xfade); col = kDim; break;
+      case kPbCap: snprintf(buf, sizeof(buf), "CAP"); break;
+      case kPbClr: snprintf(buf, sizeof(buf), "CLR"); break;
+      case kPbCpy: snprintf(buf, sizeof(buf), "CPY"); break;
+      default: snprintf(buf, sizeof(buf), "END"); break;
+    }
+    const int ty = y + (kPnlRowH - kCharH) / 2;
+    s.setTextColor(col);
+    s.drawString(buf, x + (kPnlBtnW - static_cast<int>(strlen(buf)) * kCharW) / 2, ty);
+    if (b == kPbScn || b == kPbPar) {  // the arrows: a tap on the left / right half
+      s.setTextColor(kText);
+      s.drawString("<", x + 8, ty);
+      s.drawString(">", x + kPnlBtnW - 8 - kCharW, ty);
+    }
+  }
 }
 
 }  // namespace ui

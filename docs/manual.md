@@ -81,20 +81,23 @@ Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and t
 
 | Action | What it does |
 |--------|--------------|
-| Hold <kbd>A</kbd> + turn | Edit the value under the cursor: enters edit mode if it is off and changes the value at once. Releasing A commits the value and leaves edit mode (if A entered it). Works on parameter lists, the GRID cell, name rows, SONG (the slot's pattern), sample markers, MIX (MAIN volume). |
+| Hold <kbd>A</kbd> + turn | Edit the value under the cursor: enters edit mode if it is off and changes the value at once. Releasing A commits the value and leaves edit mode (if A entered it). Works on parameter lists, the GRID cell, name rows, SONG (the slot's pattern), sample markers, MIX (the [scene crossfader](#scenes), or the selected pan). With [PERF](#live) on and no effect held, on GRID and SONG (except in the FOL column) it moves the crossfader too. |
+| Hold <kbd>A</kbd> + encoder click in MIX, SCENE view | Unset the master parameter's lock in the edited scene (see [SCENE view](#scenes)). Elsewhere the click works as usual. |
 | Hold <kbd>A</kbd> + <kbd>Shift</kbd> + turn | Whatever <kbd>Shift</kbd>+turn does in edit mode: ×10, a note by octaves, a sample marker to the nearest onset, the cursor position on a name row. |
 | Hold <kbd>A</kbd>, press <kbd>B</kbd> | Cancel the edit: the value made with A is restored. |
 | <kbd>A</kbd> tap in GRID | Empty step: put the track's last note (on a [drum track](#drumtrack), toggle the lane under the cursor). Step with a note: hear it. |
 | <kbd>Shift</kbd>+<kbd>A</kbd> in GRID | Clear the step under the cursor. |
+| <kbd>Shift</kbd>+<kbd>A</kbd> in MIX | Open / close the [SCENE view](#scenes). |
 | <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> in the sample editor (INST, SMPL page) | Next / previous marker, like **\>** / **\<** — see [SAMPLE](#sample). |
-| Hold <kbd>A</kbd> + <kbd>N</kbd> | Solo / unsolo track N of the visible half; toast `TRACK n SOLO` / `TRACK n ON`. |
-| Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. |
+| Hold <kbd>Shift</kbd> + <kbd>A</kbd> + <kbd>N</kbd> | Solo / unsolo track N of the visible half; toast `TRACK n SOLO` / `TRACK n ON`. |
+| Hold <kbd>A</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end A (toast `A = SCENE 3`), also in the SCENE view and with the XY pad open; see [scenes](#scenes). Elsewhere it does nothing (the press does not reach the screen). |
+| Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. In MIX in the SCENE view: the master parameter MAIN … EQHI instead (the tab stays). |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ, section in FILE (wraps). The cursor stays on the page tabs if it was there, otherwise it goes to the first row. |
 | <kbd>A</kbd>+<kbd>B</kbd> (press both, release) on GRID, SONG, MIX | With [PERF](#live) on: XY pad on / off (see [XY pad](#xypad)). Nothing happens if a turn or a track button came in between. |
-| <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker it steps back one level. In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. |
+| <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker it steps back one level. In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. In MIX: leave the SCENE view (in CPY mode, cancel the copy first) → drop the pan or crossfader selection → PERF on / off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
-| Hold <kbd>B</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. While the song plays (SONG mode) a queue is ignored (toast `SONG MODE`). |
-| Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Switch to pattern N at once, also while the song plays. |
+| Hold <kbd>B</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end B (toast `B = SCENE 3`), as A + N. Elsewhere it does nothing. |
+| Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. While the song plays (SONG mode) a queue is ignored (toast `SONG MODE`). |
 
 The encoder click works as before; A is just a faster way to edit one value: hold, turn, release.
 
@@ -219,7 +222,7 @@ Two modes from the GRID context menu. They exclude each other and edit mode: tur
 PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row menu too, and it is one shared mode — turned on in either menu it is on in both (turning it on in SONG leaves pattern edit; GRID turns REC off when you come back). In SONG with PERF on, button N holds its effect while playing, the encoder turns a held effect's depth instead of moving the cursor, and <kbd>Shift</kbd>+N mutes the track live. The SONG header shows the same `PERF …` badge in place of `n/128`.
 
 - **REC** — records from the track buttons into the current track. Button N writes scale degree N (in the octave of the track's last note) into the playing step; a press in the second half of a step lands in the next one. On a track with its own Speed this is the track's own step that is sounding. <kbd>Shift</kbd>+N erases that step's note. On a drum track button N sets lane N, <kbd>Shift</kbd>+N removes it. Each pattern pass is one undo step. Choose the track to record into by tapping its name (in REC this is not mute) or with <kbd>Shift</kbd>+turn. The recorded note sounds immediately if Preview is on.
-- **PERF** (GRID and SONG) — punch-in effects on the whole internal mix while a button is held. Which effect is on which button, and the Value it starts at, is set in [PROJ → PERF](#proj) and stored in the project: button 1 can hold REPEAT 1/8 and button 2 REPEAT 1/32. The press starts the effect at the button's Value and shows it (`PERF REPEAT 1/8`); turning the encoder while the button is held changes the depth (<kbd>Shift</kbd> ×10 on the wide ranges: FILTER, DRIVE, DELAY THROW, REVERB THROW, FREEZE). The turn is not remembered: every press starts at the button's Value (PROJ → PERF). Release — the effect is gone. <kbd>Shift</kbd>+N still mutes.
+- **PERF** (GRID and SONG) — punch-in effects on the whole internal mix while a button is held. Which effect is on which button, and the Value it starts at, is set in [PROJ → PERF](#proj) and stored in the project: button 1 can hold REPEAT 1/8 and button 2 REPEAT 1/32. The press starts the effect at the button's Value and shows it (`PERF REPEAT 1/8`); turning the encoder while the button is held changes the depth (<kbd>Shift</kbd> ×10 on the wide ranges: FILTER, DRIVE, DELAY THROW, REVERB THROW, FREEZE). The turn is not remembered: every press starts at the button's Value (PROJ → PERF). Release — the effect is gone. <kbd>Shift</kbd>+N still mutes. While no button is held, <kbd>A</kbd> + turn moves the [scene crossfader](#scenes) (<kbd>Shift</kbd> ×8).
 
 | Effect | What it does | Encoder | Default |
 |--------|--------------|---------|---------|
@@ -244,7 +247,7 @@ The header shows the held effects in press order by short name: `PERF RPT FLT CR
 
 <a id="xypad"></a>
 
-**XY pad.** With PERF on, <kbd>A</kbd>+<kbd>B</kbd> on GRID, SONG or MIX turns the work area into a pad (the status bar and the tabs stay). A finger on the pad holds two effects — the X and Y axes from [PROJ → PERF](#proj) (new project: X FILTER, Y CRUSH); the position sets the depth: left / bottom is the start of the range, right / top its end. List-valued effects (REPEAT 1/2…1/32, GATE, CRUSH, DOWNSAMPLE and so on) split the axis into equal zones, drawn as lines. FILTER: LP on the left / bottom, OFF in the middle band, HP on the right / top. Lift the finger — the effects end. Works only while playing (stopped: `XY: PRESS PLAY`; a stop during a touch releases the effects). The PERF buttons and the encoder work as usual: an axis effect a button already holds is not restarted by the finger, the finger drives its depth, and it lives while the button or the finger holds it. An axis set to `---` does nothing; Y on the same effect as X, or a buffer effect (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP) on both axes, does nothing (the row is dim): they share one read head. Both axes doing nothing — toast `XY: NO EFFECTS (PROJ > PERF)`. The finger's trail is drawn over the visuals (on FREEZE the frame stands still, the trail too). Leave: <kbd>A</kbd>+<kbd>B</kbd>, a <kbd>B</kbd> tap, another tab or PERF off. While the pad is open the encoder click and long press, <kbd>A</kbd> and <kbd>A</kbd>+turn do nothing — the screen under the pad does not change.
+**XY pad.** With PERF on, <kbd>A</kbd>+<kbd>B</kbd> on GRID, SONG or MIX turns the work area into a pad (the status bar and the tabs stay). A finger on the pad holds two effects — the X and Y axes from [PROJ → PERF](#proj) (new project: X FILTER, Y CRUSH); the position sets the depth: left / bottom is the start of the range, right / top its end. List-valued effects (REPEAT 1/2…1/32, GATE, CRUSH, DOWNSAMPLE and so on) split the axis into equal zones, drawn as lines. FILTER: LP on the left / bottom, OFF in the middle band, HP on the right / top. Lift the finger — the effects end. Works only while playing (stopped: `XY: PRESS PLAY`; a stop during a touch releases the effects). The PERF buttons and the encoder work as usual: an axis effect a button already holds is not restarted by the finger, the finger drives its depth, and it lives while the button or the finger holds it. An axis set to `---` does nothing; Y on the same effect as X, or a buffer effect (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP) on both axes, does nothing (the row is dim): they share one read head. Both axes doing nothing — toast `XY: NO EFFECTS (PROJ > PERF)`. The finger's trail is drawn over the visuals (on FREEZE the frame stands still, the trail too). Leave: <kbd>A</kbd>+<kbd>B</kbd>, a <kbd>B</kbd> tap, another tab or PERF off. While the pad is open the encoder click and long press and <kbd>A</kbd> do nothing — the screen under the pad does not change; <kbd>A</kbd> + turn, while no button is held, moves the [scene crossfader](#scenes) (<kbd>Shift</kbd> ×8). If the encoder was turned while <kbd>A</kbd> was held, <kbd>A</kbd>+<kbd>B</kbd> does not toggle the pad.
 
 <a id="resample"></a>
 
@@ -868,10 +871,59 @@ A separate tab at the bottom of the screen, between INST and BANK: tap **MIX**. 
 - **Strip:** name (colored as in GRID: yellow means solo, gray means not audible), the track's Volume fader, a level meter next to it (−48…0 dB post-fader, at MAIN 100%; yellow above −6 dB, a red mark for one second means a full-scale peak), the value, its instrument's sends to delay (`S`) and reverb (`R`) — display only, edited in INST — and the **M** (mute) and **S** (solo) buttons. Under the value, on INT tracks, the **pan** row: `C` / `L12` / `R40` and a bar with a tick at the position. On a MIDI track the fader is empty, `MIDI` is shown instead of the value, and there is no pan row.
 - **MAIN** — the overall volume of the built-in sound, 0–200%, default 100%. Above 100% you get up to +6 dB, and loud peaks are soft-clipped (the fill turns yellow). It is project data: saved with the project, applied before the soft clip and included in Render WAV. The headphone / speaker level of the device is a separate setting: FILE → SYSTEM → Phones.
 - **Encoder:** turn — **MAIN** volume (or the selected pan, see below); <kbd>Shift</kbd>+turn — half **A** (tracks 1–8) / **B** (9–16), shown as a letter on the MAIN strip. Hold a track button and turn — that track's volume (with <kbd>Shift</kbd>, step ×10; a click while holding switches the turn to pan); <kbd>Shift</kbd>+track button — mute. Solo is only by tapping S. An encoder click does nothing on MIX.
-- **Pan:** tap a strip's pan row — that track is selected (the row is highlighted), and the encoder turn (and <kbd>A</kbd> + turn, ×10 with <kbd>Shift</kbd>) changes its pan instead of MAIN. Tapping the same row again, tapping another strip's pan row (selects that one), a <kbd>B</kbd> tap, <kbd>Shift</kbd>+turn (half switch) or leaving the tab drops the selection: the encoder turns MAIN again.
+- **Pan:** tap a strip's pan row — that track is selected (the row is highlighted), and the encoder turn (and <kbd>A</kbd> + turn, ×10 with <kbd>Shift</kbd>) changes its pan instead of MAIN. With no pan selected, <kbd>A</kbd> + turn on MIX moves the [scene crossfader](#scenes) (<kbd>Shift</kbd> ×8), with or without PERF. Tapping the same row again, tapping another strip's pan row (selects that one), a <kbd>B</kbd> tap, <kbd>Shift</kbd>+turn (half switch) or leaving the tab drops the selection: the encoder turns MAIN again.
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
-- **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
+- **PERF:** the **PERF** button under the MAIN strip (yellow — on) or <kbd>B</kbd> (when neither a pan nor the crossfader is selected) turns [PERF](#live) on / off — the same mode as in GRID and SONG. While playing, a track button holds its effect, the encoder changes the held effect's depth instead of MAIN, <kbd>Shift</kbd>+button still mutes; holding a button does not turn the volume in PERF.
+- **Scope** at the bottom, across the full width: the last ≈ 14 ms of the audio output, ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
+- **Scene crossfader** — the bar between the M / S buttons and the scope, under the eight strips (it stays out of the MAIN column); the SCENE view: <kbd>Shift</kbd>+<kbd>A</kbd>; see [Scenes and crossfader](#scenes).
 - Track volume and pan without going to MIX: hold its button and turn the encoder; a click while holding switches to pan (see [track buttons](#trackkeys)).
+
+<a id="scenes"></a>
+
+### Scenes and crossfader
+
+Like the Octatrack crossfader: a **scene** is a set of parameter locks for the mix and the sound; two scenes sit at the fader ends **A** and **B**, and the fader morphs the sound from one into the other live. A project has 8 scenes; a scene holds only the parameters set in it.
+
+- **Track parameters** (INT only): VOL, PAN, DRV, DTY (drive model), BIT, SRR, GTE (trance gate depth), DLY and RVB (the track instrument's sends), MOD (the MOD bus send), CUT and RES (the track instrument's filter). The scene holds DLY / RVB / CUT / RES **per track**: two tracks on one instrument morph independently.
+- **Master parameters:** MAIN, DTIM (delay time, 1–16 sixteenths), DFB, DTON, DCHR, DLVL (delay), RSIZ, RDMP, RLVL (reverb), MRAT, MDEP, MLVL (MOD bus), EQLO, EQHI.
+- **Rule:** a parameter not set in a scene takes the project's value at that end. Continuous values move linearly, DTY and DTIM switch at the middle (64). When neither A nor B holds a parameter, exactly the project's value plays: a project without scenes sounds as before.
+- **Priority:** a step p-lock beats the scene (FLT, RES, DLY, RVB, DRV, BIT, SRR, PAN, DTY, GTE, MOD), LFO and follower add on top of the morph. PERF sits after the master; the fader does not touch it.
+- The fader is smoothed: full travel in ~30 ms, no steps from encoder clicks.
+
+**Crossfader bar on MIX** — under the M / S buttons, above the scope, under the eight strips (the MAIN column stays right of the separator): `A1 ━━━●━━━ B2`.
+
+- Tap or drag on the bar — fader position 0–127; a tap also selects it (the knob is highlighted): the encoder turn and <kbd>A</kbd> + turn move the fader, <kbd>Shift</kbd> ×8.
+- Tap `A1` / `B2` to select that end: the turn steps the scene 1–8 (toast `A = SCENE 3`).
+- Hold <kbd>A</kbd> / <kbd>B</kbd> + track button N: scene N straight onto end A / B (also in the SCENE view and with the XY pad open; PERF buttons are not triggered).
+- The selection is dropped like the pan selection: a second tap, <kbd>B</kbd>, leaving the tab.
+- When scene A or B holds a track's VOL / PAN, a yellow tick on the fader and the pan bar shows what sounds now; the strip name is yellow when a scene holds any of the track's parameters. The fader knob is yellow when at least one end is not empty.
+
+**SCENE view** — scene editing. <kbd>Shift</kbd>+<kbd>A</kbd> on MIX opens and closes it; **END**, a <kbd>B</kbd> tap (in CPY mode the first tap cancels the copy) or leaving the tab closes it too. The eight strips show **one parameter** of the edited scene for the eight tracks, the master strip one master parameter.
+
+- The crossfader and the scope make room for a panel of big buttons in two rows. Top: `< SCN 3 >` (tap the left / right half: previous / next scene), `< VOL >` (parameter back / forward), `=A` / `=B` — the edited scene sits at that end, `X64` — the fader position (these two only show). Bottom: **CAP** (VOL + PAN of every INT track from the project's current values into the scene), **CLR** (clear the scene), **CPY** (then track button N: copy into scene N; tap again to cancel), **END**.
+- An unset parameter is an empty frame and `---`; under the value, dim `b100` is the project's value. Dragging on a fader sets the value; <kbd>Shift</kbd> + tap on a fader unsets the lock. Tap a strip name to move the cursor to that track, tap the master name for the next master parameter.
+
+| Action (SCENE view) | What it does |
+|----------|------------|
+| Encoder turn | Nothing (a stray turn does not edit the scene). |
+| <kbd>Shift</kbd> + turn | Track parameter VOL … RES. |
+| Hold track button N + turn | Track N's value (an unset one starts from the project's value), <kbd>Shift</kbd> ×8. |
+| Hold track button N + encoder click | Unset track N's lock. |
+| Track button N tap (on release, no turn) | Edit scene N; after CPY: copy into scene N. |
+| <kbd>Shift</kbd>+N | Mute, as everywhere. |
+| Hold <kbd>A</kbd> / <kbd>B</kbd> + N | Scene N on end A / B (the edited scene stays). |
+| Hold <kbd>B</kbd> + turn | Master parameter MAIN … EQHI. |
+| Hold <kbd>A</kbd> + turn | The master parameter's value, <kbd>Shift</kbd> ×8. |
+| Hold <kbd>A</kbd> + encoder click | Unset the master parameter's lock. |
+| Long encoder press | Menu: Capture mix / Clear scene / Copy scene (same as CAP / CLR / CPY). |
+
+Outside the SCENE view nothing changes: a held track button + click cycles VOL / PAN / FLIP, <kbd>B</kbd> + turn switches tabs.
+
+- While the view is open, the fader parks on the edited scene's end (when it is A or B), so you hear what you edit; leaving restores the previous position.
+
+**PERF:** while PERF is on and no effect is held, <kbd>A</kbd> + turn moves the crossfader (<kbd>Shift</kbd> ×8), toast `XFADE 64 A1>B2`. On MIX A + turn always moves the fader, PERF or not, while no pan is selected; on SONG, except in the FOL column; with the [XY pad](#xypad) open too. The header shows `X64` next to `PERF` when the fader is off A.
+
+Scenes, the A / B ends and the fader position are saved with the project (`SCEN` chunk); the project opens as you left it. Render WAV and Resample play at the current fader position. MIDI tracks, mute / solo, effect modes and engine parameters are not part of scenes.
 
 <a id="inst"></a>
 
@@ -1433,7 +1485,7 @@ A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the
 | Click on PAT | Pattern edit on / off; <kbd>Shift</kbd>+click in pattern edit cancels it (the old pattern returns). |
 | Click on a track cell | Mute / unmute that track in this slot. |
 | Click on FOL | [Follow](#follow) edit. |
-| Hold <kbd>A</kbd> + turn | Change the slot's pattern (on FOL: its follow action); <kbd>A</kbd>+<kbd>B</kbd> cancels. |
+| Hold <kbd>A</kbd> + turn | Change the slot's pattern (on FOL: its follow action); <kbd>A</kbd>+<kbd>B</kbd> cancels. With [PERF](#live) on and no effect held: the [scene crossfader](#scenes) (<kbd>Shift</kbd> ×8), except in the FOL column. |
 | Tap on a cell | Move the cursor there; on a track cell, also toggle mute; on FOL, follow edit. |
 | Vertical drag starting on PAT of the selected row | Change the pattern. |
 | Other drag | Scroll. |
@@ -1477,7 +1529,7 @@ After every pass of a slot the song goes on as its action says: **NEXT** — the
 - STAY writes the slot's mutes again at every pass: a live <kbd>Shift</kbd>+<kbd>N</kbd> lasts until the next pass.
 - Two equal adjacent slots play as a repeat: TIE and the CND counter continue (STAY too). Repeats are made by duplicating slots (<kbd>A</kbd> tap).
 - Edits during play are picked up at the end of the pass. Inserting or deleting above the heard slot does not shift the position. Deleting the heard slot: the next one starts at the end of the pass.
-- The pattern queue (BANK tile tap, <kbd>B</kbd>+<kbd>N</kbd>) works only in LOOP; while the song plays it toasts `SONG MODE`. <kbd>B</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> and <kbd>Shift</kbd>+tap on a BANK tile (switch at once) still work.
+- The pattern queue (BANK tile tap, <kbd>B</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>) works only in LOOP; while the song plays it toasts `SONG MODE`. <kbd>Shift</kbd>+tap on a BANK tile (switch at once) still works.
 - When stopped, moving the SONG cursor makes that slot's pattern current, and GRID shows it.
 
 <a id="file"></a>
@@ -1727,6 +1779,7 @@ Sound goes to an external DAC and a headphone amplifier; the signal is stereo. T
 | Chord progressions | up to 16 chords; 55 factory + RANDOM, 32 rhythms, up to 32 of your own listed |
 | Bass patterns | up to 32 steps; 48 factory, up to 32 of your own listed |
 | Tuning | up to 64 degrees, period up to 4800 cents; `.scl` file up to 8 KB; up to 64 of your own listed; 10 factory |
+| Scenes | 8 per project; 12 track parameters, 14 master; fader 0–127, ~30 ms travel |
 | Shift-register generator | 1 per track (not on drum tracks); 2–16 bits, 1–4 octaves; Capture writes one pass of the track length |
 | Evolve | 1 per track, up to 128 steps of the track's length; 4 versions kept for live edits: an edit while more than 3 change steps are planned but not heard yet (only a very short, fast pattern with Every 1) starts that track's drift over |
 | CHD | 36 types × 4 inversions |

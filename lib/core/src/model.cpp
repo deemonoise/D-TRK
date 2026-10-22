@@ -106,6 +106,11 @@ void Project::reset() {
   eqLow = 64;
   eqHigh = 64;
   shimInt = 0;
+  xfade = 0;
+  for (Scene& sc : scenes) sc = Scene();
+  sceneA = 0;
+  sceneB = 1;
+  sceneLive[0] = sceneLive[1] = Scene();
   for (auto& p : patterns) p.clear();
   memset(song, 0, sizeof(song));
   memset(songMute, 0, sizeof(songMute));
