@@ -149,6 +149,7 @@ class App {
   // Hold a track button + turn = its volume (encoder click while held: its pan, again: volume), here
   // and now.
   bool holdVolume() const;
+  bool sceneKeys() const;  // MIX SCENE view takes the hold / B + turn / A + click chords
   // Held PERF effects show on the screen (PerfVis) instead of a plain pushSprite.
   bool perfVisible() const { return visuals_ && perf_.heldCount() > 0 && perfTab(tab_); }
   // The XY pad covers the work area: PERF's XY on a PERF tab.
@@ -174,7 +175,7 @@ class App {
   void abAction(const mt::AbOut& o);  // A / B chord result
   void cycleTab(int d);
   void soloKey(int n);
-  void queueKey(int n, bool shift);
+  void queueKey(int n);
   void draw();
   void drawStatus();
   void drawBattery();  // status bar, right of the loop counter

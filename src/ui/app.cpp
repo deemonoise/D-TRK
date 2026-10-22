@@ -4,6 +4,7 @@
 #include <string.h>
 #include "audio/audio.h"
 #include "fx_info.h"
+#include "scene.h"
 #include "esp_heap_caps.h"
 #include "hw/battery.h"
 #include "hw/trackio.h"
@@ -169,6 +170,16 @@ void App::onInput(const hw::InputEvent& ev) {
       trackRelease(ev.delta);
       return;
     case InputType::EncClick:
+      if (sceneKeys()) {  // SCENE view: a held track button + click = unset its lock, A + click = the master's
+        if (heldTrackBtn_ >= 0) {
+          track_.sceneHoldClick(heldTrack());
+          return;
+        }
+        if (ab_.aClick().act == mt::AbAction::AClick) {
+          track_.sceneMasterUnset();
+          return;
+        }
+      }
       if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && holdVolume()) {  // consumed: VOL -> PAN (-> FLIP)
         const int tr = heldTrack();
         holdMode_ = mt::holdNext(holdMode_, p_->trackInternal(tr), p_->genOn(tr));
@@ -181,7 +192,7 @@ void App::onInput(const hw::InputEvent& ev) {
         abAction(o);
         return;
       }
-      if (heldTrackBtn_ >= 0 && !menu_.isOpen() && !bpmEdit_ && tab_ == Tab::Mix && track_.sceneView()) {
+      if (heldTrackBtn_ >= 0 && sceneKeys()) {
         track_.sceneHoldTurn(heldTrack(), ev.delta * (ev.shift ? 8 : 1));  // SCENE view: the scene's value
         return;
       }
@@ -210,9 +221,11 @@ void App::onInput(const hw::InputEvent& ev) {
       return;
     default: break;
   }
-  // The pad hides the screen: the encoder only turns PERF's last pressed effect.
+  // The pad hides the screen: the encoder only turns PERF's last pressed effect, A + turn the scene
+  // crossfader (nothing held).
   if (xyMode() && !menu_.isOpen() && !bpmEdit_) {
     if (ev.type == InputType::EncTurn) perf_.turn(ev.delta, ev.shift);
+    if (ev.type == InputType::EditTurn) perf_.xfadeTurn(ev.delta, ev.shift);
     if (ev.type == InputType::EncTurn || ev.type == InputType::EncClick || ev.type == InputType::EncLong ||
         ev.type == InputType::EditTurn || ev.type == InputType::EditCancel)
       return;
@@ -254,7 +267,10 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::EditTurn: t = hw::InputType::EditTurn; break;
     case AbAction::EditEnd: t = hw::InputType::EditEnd; break;
     case AbAction::EditCancel: t = hw::InputType::EditCancel; break;
-    case AbAction::TabTurn: cycleTab(o.delta); return;
+    case AbAction::TabTurn:
+      if (sceneKeys()) track_.sceneMasterParam(o.delta);  // SCENE view: B + turn = the master parameter
+      else cycleTab(o.delta);
+      return;
     case AbAction::PageTurn:
       if (xyMode()) return;  // the pad hides the screen
       if (!menu_.isOpen() && !bpmEdit_) screen()->onPage(o.delta);
@@ -290,7 +306,11 @@ void App::abAction(const mt::AbOut& o) {
       if (!menu_.isOpen()) soloKey(o.delta);
       return;
     case AbAction::QueuePattern:
-      if (!menu_.isOpen()) queueKey(o.delta, o.shift);
+      if (!menu_.isOpen()) queueKey(o.delta);
+      return;
+    case AbAction::ATrack:  // MIX: scene N on crossfader end A / B; elsewhere consumed (free)
+    case AbAction::BTrack:
+      if (tab_ == Tab::Mix && !menu_.isOpen()) track_.setSceneEnd(o.act == AbAction::BTrack, o.delta);
       return;
     case AbAction::Both:
       if (!menu_.isOpen() && !bpmEdit_) toggleXy();
@@ -306,7 +326,7 @@ void App::cycleTab(int d) {
   setTab(static_cast<Tab>(((static_cast<int>(tab_) + d) % n + n) % n));  // closes the menu and the BPM edit
 }
 
-// A + button N: solo track N of the half holding the cursor.
+// Shift + A + button N: solo track N of the half holding the cursor.
 void App::soloKey(int n) {
   if (n < 0 || n >= mt::kTrackButtons) return;
   const int track = (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + n;
@@ -320,18 +340,18 @@ void App::soloKey(int n) {
   toast(msg);
 }
 
-// B + button N: queue pattern N of the bank holding the edit pattern; Shift = switch at once (as BANK).
-void App::queueKey(int n, bool shift) {
+// B + Shift + button N: queue pattern N of the bank holding the edit pattern.
+void App::queueKey(int n) {
   if (n < 0 || n >= mt::kTrackButtons) return;
   const int pat = (editPattern() / mt::kTrackButtons) * mt::kTrackButtons + n;
   if (pat >= mt::kPatterns) return;
-  if (!shift && songPlays()) {  // the sequencer ignores a queue while the song plays
+  if (songPlays()) {  // the sequencer ignores a queue while the song plays
     toast("SONG MODE");
     return;
   }
-  engine::post(shift ? engine::Cmd::SelectPattern : engine::Cmd::QueuePattern, static_cast<uint16_t>(pat));
+  engine::post(engine::Cmd::QueuePattern, static_cast<uint16_t>(pat));
   char msg[20];
-  snprintf(msg, sizeof(msg), "PATTERN %02d%s", pat + 1, !shift && status_.playing ? " NEXT" : "");
+  snprintf(msg, sizeof(msg), "PATTERN %02d%s", pat + 1, status_.playing ? " NEXT" : "");
   toast(msg);
 }
 
@@ -432,6 +452,7 @@ void App::projectReplaced() {
   markSaved();
   setBpmEdit(false);
   lastBpm_ = p_->bpm;
+  mt::syncSceneLive(*p_);  // the crossfader's live ends (load / template / demo already match)
   // Let the sequencer re-read the song (stopped: no slot shown).
   engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
   perf_.allOff();  // the loaded project does not inherit the held effects
@@ -464,7 +485,7 @@ void App::trackKey(int n, bool shift) {
   if (tab_ == Tab::Inst && inst_.trackKey(n, shift)) return;
   if (tab_ == Tab::Song && song_.trackKey(n, shift)) return;
   if (tab_ == Tab::Track && track_.trackKey(n, shift)) return;  // the trance gate's Steps editor
-  if (tab_ == Tab::Mix && track_.trackKey(n, shift)) return;    // SCENE view: the scene to edit
+  if (tab_ == Tab::Mix && !xyMode() && track_.sceneView() && track_.trackKey(n, shift)) return;  // SCENE view: the scene to edit
   if (tab_ == Tab::Mix && !shift && perf_.press(n)) return;     // PERF while playing; Shift + N still mutes
   if (!shift) {
     setCurTrack(track);
@@ -478,6 +499,11 @@ void App::trackKey(int n, bool shift) {
   char msg[16];
   snprintf(msg, sizeof(msg), "TRACK %d %s", track + 1, t.mute ? "MUTE" : "ON");
   toast(msg);
+}
+
+// MIX SCENE view shown and taking keys (no menu, BPM edit or XY pad over it).
+bool App::sceneKeys() const {
+  return tab_ == Tab::Mix && track_.sceneView() && !xyMode() && !menu_.isOpen() && !bpmEdit_;
 }
 
 bool App::holdVolume() const {

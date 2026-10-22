@@ -2,6 +2,16 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-22
+- Scenes and crossfader (Octatrack style): 8 scenes per project locking per-track VOL, PAN, insert, sends and
+  filter plus 14 master parameters; an A↔B crossfader on MIX (tap / drag, encoder), the SCENE view for editing
+  (Shift + A on MIX; big touch buttons, a held track button + turn / click sets / unsets its lock), A + turn in
+  PERF (GRID, SONG, MIX, XY pad). The morph is smoothed over ~30 ms; a p-lock beats the scene. Scenes and the
+  fader position are saved in the project (`SCEN` chunk).
+- A / B + track button remapped: solo is now Shift + A + N, the pattern queue B + Shift + N (everywhere);
+  plain A + N / B + N put scene N on crossfader end A / B on MIX and do nothing elsewhere. The old
+  B + Shift + N "switch at once" is gone (Shift + tap on a BANK tile still does it).
+
 ## 2026-10-21
 - Song follow actions (SONG, FOL column): after each pass a slot goes NEXT, PREV, STAY, JUMP to a slot or
   RANDOM, with a chance 0–100 %. Decided from the project Seed (PROJ -> SONG): live play takes a new path at

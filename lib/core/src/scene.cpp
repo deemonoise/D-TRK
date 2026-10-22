@@ -1,5 +1,7 @@
 #include "scene.h"
 
+#include <atomic>
+
 namespace mt {
 
 namespace {
@@ -123,8 +125,25 @@ bool sceneEmpty(const Scene& s) {
 void syncSceneLive(Project& p) {
   if (p.sceneA >= kScenes) p.sceneA = 0;
   if (p.sceneB >= kScenes) p.sceneB = 1;
-  p.sceneLive[0] = p.scenes[p.sceneA];
-  p.sceneLive[1] = p.scenes[p.sceneB];
+  // The audio task reads sceneLive without the lock: a set bit must never meet an old value. Drop the
+  // bits that change first, publish the values, then raise the new bits.
+  const Scene* src[2] = {&p.scenes[p.sceneA], &p.scenes[p.sceneB]};
+  for (int e = 0; e < 2; ++e) {
+    Scene& d = p.sceneLive[e];
+    for (int t = 0; t < kTracks; ++t) d.trkMask[t] &= src[e]->trkMask[t];
+    d.mstMask &= src[e]->mstMask;
+  }
+  std::atomic_thread_fence(std::memory_order_release);
+  for (int e = 0; e < 2; ++e) {
+    for (int t = 0; t < kTracks; ++t)
+      for (int k = 0; k < kScnTrk; ++k) p.sceneLive[e].trk[t][k] = src[e]->trk[t][k];
+    for (int k = 0; k < kScnMst; ++k) p.sceneLive[e].mst[k] = src[e]->mst[k];
+  }
+  std::atomic_thread_fence(std::memory_order_release);
+  for (int e = 0; e < 2; ++e) {
+    for (int t = 0; t < kTracks; ++t) p.sceneLive[e].trkMask[t] = src[e]->trkMask[t];
+    p.sceneLive[e].mstMask = src[e]->mstMask;
+  }
 }
 
 void sceneClear(Project& p, int s) {
