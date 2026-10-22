@@ -28,6 +28,9 @@ class PerfPad {
   // Encoder: the last pressed effect's depth (Shift x10 on coarse ranges), with a toast. False
   // (not consumed) when nothing is held.
   bool turn(int delta, bool shift);
+  // A + turn: the scene crossfader (Project::xfade, Shift x8) with a toast, while PERF is on and no
+  // effect is held. False (not consumed) otherwise.
+  bool xfadeTurn(int delta, bool shift);
   void allOff();  // every held effect ends; release all is sent even with nothing held
   // XY pad (A + B on GRID / SONG / MIX with PERF on): the work area is a touch pad whose axes hold
   // the effects of Project::perfXy. Off: the axis effects end (unless a button holds them too).

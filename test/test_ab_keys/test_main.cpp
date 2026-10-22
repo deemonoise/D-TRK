@@ -73,15 +73,29 @@ void test_b_tap_back_and_shift_undo() {
 void test_track_chords() {
   AbKeys k;
   k.aDown();
-  AbOut o = k.track(5, false);
+  AbOut o = k.track(5, true);  // Shift + A + N: solo
   expect(AbAction::Solo, o);
   TEST_ASSERT_EQUAL_INT(5, o.delta);
   expect(AbAction::None, k.aUp(false));  // used: no tap
   k.bDown();
-  o = k.track(3, true);
+  o = k.track(3, true);  // B + Shift + N: queue
   expect(AbAction::QueuePattern, o);
   TEST_ASSERT_EQUAL_INT(3, o.delta);
-  TEST_ASSERT_TRUE(o.shift);
+  expect(AbAction::None, k.bUp(false));
+}
+
+// Without Shift: A + N / B + N (the MIX scene ends), still chords (consumed, no tap / Back).
+void test_track_chords_no_shift() {
+  AbKeys k;
+  k.aDown();
+  AbOut o = k.track(2, false);
+  expect(AbAction::ATrack, o);
+  TEST_ASSERT_EQUAL_INT(2, o.delta);
+  expect(AbAction::None, k.aUp(false));
+  k.bDown();
+  o = k.track(6, false);
+  expect(AbAction::BTrack, o);
+  TEST_ASSERT_EQUAL_INT(6, o.delta);
   expect(AbAction::None, k.bUp(false));
 }
 
@@ -90,7 +104,8 @@ void test_b_wins_over_a() {
   k.aDown();
   k.bDown();
   expect(AbAction::TabTurn, k.turn(1, false));
-  expect(AbAction::QueuePattern, k.track(0, false));
+  expect(AbAction::BTrack, k.track(0, false));
+  expect(AbAction::QueuePattern, k.track(0, true));
 }
 
 void test_reset_clears_held() {
@@ -145,7 +160,7 @@ void test_both_not_after_turn_track_or_cancel() {
   expect(AbAction::None, k.aUp(false));
   k.aDown();
   k.bDown();
-  expect(AbAction::QueuePattern, k.track(1, false));
+  expect(AbAction::BTrack, k.track(1, false));
   expect(AbAction::None, k.aUp(false));
   expect(AbAction::None, k.bUp(false));
   k.aDown();
@@ -164,7 +179,7 @@ void test_both_not_after_chord_before_the_other() {
   expect(AbAction::None, k.aUp(false));
   expect(AbAction::None, k.bUp(false));
   k.aDown();
-  expect(AbAction::Solo, k.track(2, false));
+  expect(AbAction::ATrack, k.track(2, false));
   k.bDown();
   expect(AbAction::None, k.bUp(false));
   expect(AbAction::None, k.aUp(false));
@@ -174,9 +189,31 @@ void test_b_then_a_track_no_taps() {
   AbKeys k;
   k.bDown();
   k.aDown();
-  expect(AbAction::QueuePattern, k.track(2, false));
+  expect(AbAction::BTrack, k.track(2, false));
   expect(AbAction::None, k.aUp(false));
   expect(AbAction::None, k.bUp(false));
+}
+
+void test_a_click() {
+  AbKeys k;
+  expect(AbAction::Pass, k.aClick());  // nothing held
+  k.aDown();
+  expect(AbAction::AClick, k.aClick());
+  expect(AbAction::None, k.aUp(false));  // the click used A: no tap
+  k.aDown();
+  k.turn(1, false);
+  expect(AbAction::AClick, k.aClick());
+  expect(AbAction::EditEnd, k.aUp(false));  // the edit still ends
+  k.aDown();
+  k.bDown();
+  expect(AbAction::Pass, k.aClick());  // with B: not an A click, the state stays
+  expect(AbAction::Both, k.bUp(false));
+  expect(AbAction::None, k.aUp(false));
+  k.aDown();
+  k.aClick();
+  k.bDown();
+  expect(AbAction::None, k.bUp(false));  // A was used: no Both
+  expect(AbAction::None, k.aUp(false));
 }
 
 int main(int, char**) {
@@ -189,6 +226,7 @@ int main(int, char**) {
   RUN_TEST(test_b_turn_tabs_and_pages);
   RUN_TEST(test_b_tap_back_and_shift_undo);
   RUN_TEST(test_track_chords);
+  RUN_TEST(test_track_chords_no_shift);
   RUN_TEST(test_b_wins_over_a);
   RUN_TEST(test_reset_clears_held);
   RUN_TEST(test_release_after_reset_does_nothing);
@@ -197,5 +235,6 @@ int main(int, char**) {
   RUN_TEST(test_both_not_after_turn_track_or_cancel);
   RUN_TEST(test_both_not_after_chord_before_the_other);
   RUN_TEST(test_b_then_a_track_no_taps);
+  RUN_TEST(test_a_click);
   return UNITY_END();
 }

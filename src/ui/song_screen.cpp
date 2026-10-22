@@ -462,6 +462,8 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
     case InputType::EncLong: openMenu(); break;
     // A + turn: hold edit of the cursor slot's pattern, release = keep, B = cancel.
     case InputType::EditTurn:
+      // PERF, nothing held: the scene crossfader (not on FOL: there A + turn edits the follow)
+      if (col_ != kFolCol && app_.perf().xfadeTurn(ev.delta, ev.shift)) break;
       if (col_ == kFolCol && n > 0) {  // on FOL: hold edit of the follow, from the action
         if (folField_ < 0) {
           snapFol();

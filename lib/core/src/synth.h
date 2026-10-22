@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <atomic>
 #include "model.h"
+#include "scene.h"
 #include "synth_comp.h"
 #include "synth_crush.h"
 #include "synth_delay.h"
@@ -330,6 +331,24 @@ class Synth {
   void renderCore();
 
   const SynthModel& p_;
+  // Scenes: the crossfader's smoothed position 0..127 (follows xfade per control period, full travel in
+  // kXfMs; the first block after construction / reset snaps). morphT / morphM: the morph of parameter k
+  // with the project's value base (scene.h); unset at both ends = base, two mask tests.
+  static constexpr float kXfMs = 30.f;
+  static constexpr float kXfStep = 127.f * kControl / (kXfMs * 0.001f * kSynthRate);
+  float xf_ = 0;
+  bool xfSnap_ = true;
+  MT_INLINE uint8_t morphT(uint8_t t, int k, uint8_t base) const {
+    if (t >= kTracks) return base;  // the preview track: unmorphed
+    const uint16_t bit = static_cast<uint16_t>(1u << k);
+    return ((p_.sceneLive[0].trkMask[t] | p_.sceneLive[1].trkMask[t]) & bit) ? morphTrk(t, k, base) : base;
+  }
+  MT_INLINE uint8_t morphM(int k, uint8_t base) const {
+    const uint16_t bit = static_cast<uint16_t>(1u << k);
+    return ((p_.sceneLive[0].mstMask | p_.sceneLive[1].mstMask) & bit) ? morphMst(k, base) : base;
+  }
+  uint8_t morphTrk(uint8_t t, int k, uint8_t base) const;  // a scene end holds it
+  uint8_t morphMst(int k, uint8_t base) const;
   // Project tuning: rebuilt at a block's start when the model's table or scale root changed.
   TuneMap tune_;
   TuningTable tuneSeen_;

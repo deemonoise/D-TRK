@@ -8,6 +8,7 @@
 #include "inst_codec.h"
 #include "sample_set.h"
 #include "scale.h"
+#include "scene.h"
 
 namespace mt {
 namespace {
@@ -269,6 +270,50 @@ LoadErr readTune(CrcSource& in, uint32_t size, Project& p, LoadNotes* notes) {
   if (ok) p.tuning = t;
   else if (notes) notes->tuningDropped = true;
   return LoadErr::Ok;
+}
+
+// SCEN: u8 count, u8 tracks, u8 trkParams, u8 mstParams, u8 sceneA, u8 sceneB, u8 xfade, then count
+// scenes: tracks x (u16 mask + trkParams bytes), u16 mstMask + mstParams bytes. Written only when a scene is
+// set or A / B / the fader are off their defaults. The reader takes what it knows: extra scenes, tracks,
+// parameters and mask bits are skipped, missing ones stay unset; values are clamped (scene.h).
+constexpr uint32_t kScenHead = 7;
+LoadErr readScen(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[kScenHead];
+  if (size < kScenHead) return in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
+  if (!in.read(h, kScenHead)) return LoadErr::Truncated;
+  uint32_t left = size - kScenHead;
+  const int count = h[0], tracks = h[1], nTrk = h[2], nMst = h[3];
+  p.sceneA = h[4] < kScenes ? h[4] : 0;
+  p.sceneB = h[5] < kScenes ? h[5] : 1;
+  p.xfade = h[6] > 127 ? 127 : h[6];
+  auto readRec = [&](int n, uint16_t& mask, uint8_t* vals, int known, uint16_t bits, bool trk) -> LoadErr {
+    uint8_t b[2 + 255];
+    const uint32_t len = 2u + static_cast<uint32_t>(n);
+    if (left < len) return LoadErr::Truncated;
+    if (!in.read(b, len)) return LoadErr::Truncated;
+    left -= len;
+    if (!vals) return LoadErr::Ok;
+    uint16_t m = static_cast<uint16_t>((b[0] | b[1] << 8) & bits);
+    for (int k = 0; k < known; ++k) {
+      if (k >= n) m &= static_cast<uint16_t>(~(1u << k));
+      vals[k] = (m >> k) & 1u ? (trk ? sceneClampTrk(k, b[2 + k]) : sceneClampMst(k, b[2 + k])) : 0;
+    }
+    mask = m;
+    return LoadErr::Ok;
+  };
+  for (int sc = 0; sc < count; ++sc) {
+    Scene* s = sc < kScenes ? &p.scenes[sc] : nullptr;
+    uint16_t dummy;
+    for (int t = 0; t < tracks; ++t) {
+      const bool keep = s && t < kTracks;
+      const LoadErr e = readRec(nTrk, keep ? s->trkMask[t] : dummy, keep ? s->trk[t] : nullptr, kScnTrk,
+                                kScnTrkBits, true);
+      if (e != LoadErr::Ok) return e;
+    }
+    const LoadErr e = readRec(nMst, s ? s->mstMask : dummy, s ? s->mst : nullptr, kScnMst, kScnMstBits, false);
+    if (e != LoadErr::Ok) return e;
+  }
+  return in.skip(left) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
 // TINS (see kTinsRec); tracks it lacks stay off (reset()).
@@ -935,6 +980,26 @@ bool saveProject(const Project& p, ByteSink& out) {
     }
   }
 
+  bool scen = p.sceneA != 0 || p.sceneB != 1 || p.xfade != 0;
+  for (const Scene& sc : p.scenes) scen = scen || !sceneEmpty(sc);
+  if (scen) {
+    constexpr uint32_t kRec = kTracks * (2 + kScnTrk) + 2 + kScnMst;
+    const uint8_t h[kScenHead] = {kScenes, kTracks, kScnTrk, kScnMst, p.sceneA, p.sceneB, p.xfade};
+    if (!o.chunk("SCEN", kScenHead + kScenes * kRec) || !o.write(h, sizeof(h))) return false;
+    for (const Scene& sc : p.scenes) {
+      uint8_t r[kRec];
+      int n = 0;
+      for (int t = 0; t < kTracks; ++t) {
+        wr16(r + n, static_cast<uint16_t>(sc.trkMask[t] & kScnTrkBits));
+        memcpy(r + n + 2, sc.trk[t], kScnTrk);
+        n += 2 + kScnTrk;
+      }
+      wr16(r + n, static_cast<uint16_t>(sc.mstMask & kScnMstBits));
+      memcpy(r + n + 2, sc.mst, kScnMst);
+      if (!o.write(r, sizeof(r))) return false;
+    }
+  }
+
   uint8_t c[12] = {'C', 'R', 'C', ' '};
   wr32(c + 4, 4);
   wr32(c + 8, o.crc());
@@ -1010,6 +1075,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       for (Instrument& m : out.instruments) fixInstrument(m);
       if (!tins) migrateInsert(out);
       for (Instrument& m : out.instruments) clearInsert(m);  // the tracks' now
+      syncSceneLive(out);
       for (Pattern& pt : out.patterns)  // a PATN after its TLEN may have shortened the pattern
         for (uint8_t& n : pt.trackLen)
           if (n > pt.length) n = pt.length;
@@ -1059,6 +1125,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "PXY ", 4) == 0) e = readPxy(in, size, out);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, legacy);
     else if (memcmp(ch, "TUNE", 4) == 0) e = readTune(in, size, out, notes);
+    else if (memcmp(ch, "SCEN", 4) == 0) e = readScen(in, size, out);
     else e = in.skip(size) ? LoadErr::Ok : LoadErr::Truncated;
     if (e != LoadErr::Ok) return e;
   }

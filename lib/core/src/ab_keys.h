@@ -14,9 +14,12 @@ enum class AbAction : uint8_t {
   PageTurn,      // B + Shift + turn (delta)
   Undo,          // Shift + B tap
   Back,          // B tap
-  Solo,          // A + track button (delta = button)
-  QueuePattern,  // B + track button (delta = button, shift)
+  Solo,          // Shift + A + track button (delta = button)
+  QueuePattern,  // B + Shift + track button (delta = button)
+  ATrack,        // A + track button, no Shift (delta = button; MIX: scene N on crossfader end A)
+  BTrack,        // B + track button, no Shift (delta = button; MIX: scene N on crossfader end B)
   Both,          // A and B pressed together and released, nothing else meanwhile (on the first release)
+  AClick,        // A held alone + encoder click (aClick: only where the screen asks for it)
 };
 
 struct AbOut {
@@ -90,13 +93,21 @@ class AbKeys {
     if (b_) {
       bUsed_ = true;
       if (a_) aUsed_ = true;
-      return out(AbAction::QueuePattern, n, shift);
+      return out(shift ? AbAction::QueuePattern : AbAction::BTrack, n);
     }
     if (a_) {
       aUsed_ = true;
-      return out(AbAction::Solo, n);
+      return out(shift ? AbAction::Solo : AbAction::ATrack, n);
     }
     return out(AbAction::Pass);
+  }
+  // An encoder click while A is held alone: AClick, A counts as used (no tap, no Both); else Pass.
+  // The app asks only where A + click means something (MIX SCENE view); elsewhere the click passes.
+  AbOut aClick() {
+    if (!a_ || b_) return out(AbAction::Pass);
+    both_ = false;
+    aUsed_ = true;
+    return out(AbAction::AClick);
   }
   bool aHeld() const { return a_; }
   bool bHeld() const { return b_; }

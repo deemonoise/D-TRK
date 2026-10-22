@@ -49,7 +49,7 @@ static_assert(sizeof(mt::TrackCfg) == 40, "TrackCfg changed: update snapshot() a
 static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Instrument) == 380, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 477796, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 480204, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -103,7 +103,12 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.eqLow = live.eqLow;
   out.eqHigh = live.eqHigh;
   out.shimInt = live.shimInt;
+  out.xfade = live.xfade;
   out.tuning = live.tuning;
+  memcpy(out.scenes, live.scenes, sizeof(out.scenes));
+  out.sceneA = live.sceneA;
+  out.sceneB = live.sceneB;
+  memcpy(out.sceneLive, live.sceneLive, sizeof(out.sceneLive));
   engine::unlockProject();
   for (int i = 0; i < mt::kPatterns; ++i) {
     engine::lockProject();

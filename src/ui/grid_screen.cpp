@@ -434,6 +434,7 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
       }
       break;
     case InputType::EditTurn:  // A + turn: edits the cell, entering edit for as long as A is held
+      if (app_.perf().xfadeTurn(ev.delta, ev.shift)) break;  // PERF, nothing held: the scene crossfader
       if (!edit_) {
         selOn_ = false;
         setEdit(true);

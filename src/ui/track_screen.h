@@ -22,11 +22,24 @@ namespace ui {
 // leaving the tab drop it). A track button held + turn = that track's volume (+ encoder click: its
 // pan), Shift + track button = mute (App, every screen). Touch: the fader follows the finger, M / S
 // toggle (solo only here).
+// Crossfader (scene.h) under the 8 strips (not the MAIN column): `A3 ---o--- B5`. Tap / drag on the bar =
+// position (a tap also selects it: turn / A + turn move it, Shift x8); a tap on A3 / B5 selects that end
+// (turn: scene 1..8); B, a second tap or leaving the tab drop the selection. Shift + A: the SCENE view.
+// SCENE view (Shift + A again, B or leaving the tab: back; B first cancels a pending CPY): the strips show
+// one parameter of the edited scene for the 8 tracks (--- = unset), the master strip one master parameter;
+// a two-row button panel replaces the crossfader and the scope: `< SCN n >`, `< VOL >`, =A / =B, X64;
+// CAP (VOL + PAN of the INT tracks), CLR, CPY (then a track button N), END. Encoder: turn alone nothing,
+// Shift + turn = the parameter, a held track button + turn = that track's value (Shift x8), + click =
+// unset it; a track button tap (on release) = edit scene N (after CPY: the copy target); B + turn = the
+// master parameter, A + turn = its value (Shift x8), A + click = unset it; long press = menu CAP / CLR /
+// CPY. Touch: drag a fader = set, Shift + tap = unset, a strip name = cursor, MAIN = the next master
+// parameter. While open, the fader parks on the edited scene's end (when it is A or B).
 class TrackScreen : public Screen {
  public:
   explicit TrackScreen(App& app);
   void onEnter() override;
   void onLeave() override;
+  void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
   void onPage(int d) override;
@@ -37,7 +50,15 @@ class TrackScreen : public Screen {
   void setMixer(bool on);
   // Track buttons while the Steps row is edited: toggle a step of the cursor's half (Shift: not taken).
   bool trackKey(int n, bool shift);
-  bool buttonsBusy() const { return !mixer_ && stepsEdit(); }
+  bool buttonsBusy() const { return (!mixer_ && stepsEdit()) || sceneView(); }
+  bool sceneView() const { return mixer_ && scnView_; }
+  void sceneHoldTurn(int track, int d);  // a held track button + turn in the SCENE view
+  void sceneHoldClick(int track);        // a held track button + encoder click: unset its lock
+  void sceneMasterParam(int d);          // B + turn: the master parameter
+  void sceneMasterUnset();               // A + encoder click: unset the master parameter's lock
+  void setSceneEnd(bool b, int idx);     // scene idx on crossfader end A / B (A / B + track button), toast
+  void onATap(bool shift) override;      // MIX: Shift + A = the SCENE view on / off
+  void trackUp(int n);                   // track button n released (MIX)
 
  private:
   // Rows in page order: MAIN, INS (the INT track's insert chain, then its MOD send), FOL (its envelope follower), NOTE,
@@ -116,8 +137,21 @@ class TrackScreen : public Screen {
   // Pan row: the text at kPanY - 2 and the bar (2 px line, 4 px tick) under it, at kPanY + kPanBarDy.
   static constexpr int kPanY = 100, kPanBarDy = 13;
   static constexpr int kSendY = 116, kSendDy = 16, kBtnY = 150, kBtnW = 22, kBtnH = 16;
-  // Scope under the strips: the waveform (auto gain) and a peak meter with CLIP.
-  static constexpr int kScopeY = kBtnY + kBtnH + 6, kScopeH = kAreaH - kScopeY - 4, kMeterW = 10;
+  // The crossfader row under the 8 strips (kXfX1: the MAIN separator), then the scope across the width:
+  // the waveform (auto gain) and a peak meter with CLIP.
+  static constexpr int kXfY = kBtnY + kBtnH + 4, kXfH = 20, kXfX1 = kMasterX - 8;
+  static constexpr int kXfLabW = 24, kXfBarX0 = kStripX0 + kXfLabW + 6, kXfBarX1 = kXfX1 - kXfLabW - 6;
+  static constexpr int kScopeY = kXfY + kXfH + 4, kScopeH = kAreaH - kScopeY - 4, kMeterW = 10;
+  static constexpr int kScopeW = kScreenW - 2 * kStripX0;
+  // SCENE view: the button panel in place of the crossfader row and the scope, 2 rows x 4.
+  static constexpr int kPnlY = kXfY, kPnlGap = 6, kPnlCols = 4;
+  static constexpr int kPnlW = kScreenW - 2 * kStripX0;
+  static constexpr int kPnlBtnW = (kPnlW - (kPnlCols - 1) * kPnlGap) / kPnlCols;
+  static constexpr int kPnlRowH = (kAreaH - 4 - kPnlY - kPnlGap) / 2;
+  enum PnlBtn : int { kPbScn, kPbPar, kPbEnd, kPbXf, kPbCap, kPbClr, kPbCpy, kPbDone };
+  static int pnlX(int col) { return kStripX0 + col * (kPnlBtnW + kPnlGap); }
+  static int pnlY(int row) { return kPnlY + row * (kPnlRowH + kPnlGap); }
+  int pnlHit(int x, int y) const;  // the panel button (PnlBtn) under a point, -1 = none
   static constexpr uint32_t kScopeMs = 50;  // ~20 frames a second while the MIX tab is shown
   void drawScope(LGFX_Sprite& s, int y0);
   uint32_t scopeMs_ = 0, clipMs_ = 0;
@@ -143,6 +177,33 @@ class TrackScreen : public Screen {
   uint32_t mixSignature() const;
   bool mixer_ = false;
   int panSel_ = -1;  // track whose pan bar the encoder turns, -1 = none (the encoder turns MAIN)
+  // Crossfader: what the encoder turns (kXfNone: MAIN / the pan as before).
+  enum XfSel : int8_t { kXfNone, kXfFader, kXfEndA, kXfEndB };
+  int xfSel_ = kXfNone;
+  void setXfade(int v);
+  bool xfTouch(const TouchEvent& ev);  // true: the row took it
+  void drawXfade(LGFX_Sprite& s, int y0);
+  // SCENE view.
+  bool scnView_ = false, scnCopy_ = false;
+  int scnEdit_ = 0, scnPar_ = 0, scnMst_ = 0;
+  int xfSaved_ = -1;  // the fader before the view parked it
+  int scnPending_ = -1;  // a track button pressed in the SCENE view, acted on at its release
+  void setSceneView(bool on);
+  void parkFader();
+  void scnSetTrk(int track, int v);  // clamped, sets the lock
+  void scnNudgeTrk(int track, int d);  // from the base when unset
+  void scnUnsetTrk(int track);
+  void scnNudgeMst(int d);
+  void scnEdited();  // live sync + dirty
+  void scnCapture();
+  void scnClear();
+  void scnCopyArm();  // CPY: the next track button is the target
+  void scnMenu();     // encoder long press
+  void pnlTouch(const TouchEvent& ev);
+  void sceneInput(const hw::InputEvent& ev);
+  void sceneTouch(const TouchEvent& ev);
+  void drawScene(LGFX_Sprite& s, int y0);
+  void drawPanel(LGFX_Sprite& s, int y0);
   uint32_t mixSig_ = 0;
 
   App& app_;
