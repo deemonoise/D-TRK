@@ -78,13 +78,15 @@ bool playsInstr(const Project& p, int instr, int track) {
 void takePresetInsert(Project& p, int instr, int track) {
   if (instr < 0 || instr >= kInstruments) return;
   Instrument& m = p.instruments[instr];
-  if (playsInstr(p, instr, track)) {
-    TrackCfg& c = p.tracks[track];
-    c.drive = m.drive;
-    c.crushBits = m.crushBits;
-    c.crushRate = m.crushRate;
-    c.driveModel = m.driveModel;
-  }
+  if (playsInstr(p, instr, track)) takePresetInsert(m, p.tracks[track]);
+  else clearInsert(m);
+}
+
+void takePresetInsert(Instrument& m, TrackCfg& c) {
+  c.drive = m.drive;
+  c.crushBits = m.crushBits;
+  c.crushRate = m.crushRate;
+  c.driveModel = m.driveModel;
   clearInsert(m);
 }
 

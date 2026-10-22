@@ -21,6 +21,7 @@
 #include "touch.h"
 #include "track_screen.h"
 #include "undo.h"
+#include "xy_pad.h"
 
 namespace ui {
 
@@ -46,6 +47,7 @@ class App {
   void setCurTrack(int t) { curTrack_ = static_cast<uint8_t>(((t % mt::kTracks) + mt::kTracks) % mt::kTracks); }
   // PERF, shared by GRID, SONG and MIX (the tabs that play it).
   PerfPad& perf() { return perf_; }
+  InstScreen& inst() { return inst_; }
 
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
@@ -149,6 +151,10 @@ class App {
   bool holdVolume() const;
   // Held PERF effects show on the screen (PerfVis) instead of a plain pushSprite.
   bool perfVisible() const { return visuals_ && perf_.heldCount() > 0 && perfTab(tab_); }
+  // The XY pad covers the work area: PERF's XY on a PERF tab.
+  bool xyMode() const { return perf_.xy() && perfTab(tab_); }
+  void toggleXy();                      // A + B
+  void xyTouch(const TouchEvent& ev);   // raw Down / Move / Up on the pad
   int heldTrack() const { return (curTrack_ / mt::kTrackButtons) * mt::kTrackButtons + heldTrackBtn_; }
   void nudgeTrackVol(int track, int d);
   void nudgeTrackPan(int track, int d);  // as nudgeTrackVol
@@ -183,6 +189,7 @@ class App {
   Menu menu_;
   PerfPad perf_{*this};
   PerfVis vis_;
+  XyPad xyPad_;
 
   GridScreen grid_{*this};
   TrackScreen track_{*this};

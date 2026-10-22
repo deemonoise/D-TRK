@@ -299,6 +299,47 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                        genDimF};
   // Drawn as cells (drawGen); no edit.
   params_[kGenReg] = {"Register", [](char* o, int) { o[0] = 0; }, nullptr, genDimF};
+  // EVO page (Project::evo): every edit replans the unheard steps. Evolve OFF greys all but Home (it still
+  // pulls the drift back).
+  auto evoDimF = [this] { return evoDim(); };
+  params_[kEvoAmt] = {"Evolve",
+                      [this](char* o, int n) {
+                        if (evo().amount) snprintf(o, n, "%u%%", evo().amount);
+                        else snprintf(o, n, "OFF");
+                      },
+                      [this](int d) {
+                        evo().amount = static_cast<uint8_t>(clampi(evo().amount + d, 0, 100));
+                        evoEdited();
+                      }};
+  params_[kEvoEvery] = {"Every", [this](char* o, int n) { snprintf(o, n, "%u PASS", evo().every); },
+                        [this](int d) {
+                          evo().every = static_cast<uint8_t>(clampi(evo().every + d, 1, mt::kEvoEveryMax));
+                          evoEdited();
+                        },
+                        evoDimF};
+  params_[kEvoHome] = {"Home", [this](char* o, int n) { snprintf(o, n, "%u%%", evo().home); },
+                       [this](int d) {
+                         evo().home = static_cast<uint8_t>(clampi(evo().home + d, 0, 100));
+                         evoEdited();
+                       }};
+  auto evoBit = [this](const char* label, uint8_t b, std::function<bool()> dim) {
+    return Param{label, [this, b](char* o, int n) { snprintf(o, n, "%s", (evo().mask & b) ? "ON" : "OFF"); },
+                 [this, b](int d) {
+                   if (d > 0) evo().mask = static_cast<uint8_t>(evo().mask | b);
+                   else if (d < 0) evo().mask = static_cast<uint8_t>(evo().mask & ~b);
+                   evoEdited();
+                 },
+                 dim};
+  };
+  params_[kEvoNote] = evoBit("Note", mt::kEvoNote, [this] {  // drum / GEN tracks: never
+    const mt::Project& p = app_.project();
+    return evoDim() || p.trackIsDrum(app_.curTrack()) || p.genOn(app_.curTrack());
+  });
+  params_[kEvoRhythm] = evoBit("Rhythm", mt::kEvoRhythm, [this] {  // GEN GATE makes the rhythm
+    return evoDim() || !mt::evoRhythmOk(app_.project(), app_.curTrack());
+  });
+  params_[kEvoRtrg] = evoBit("Rtrg+Vol", mt::kEvoRtrgVol, evoDimF);
+  params_[kEvoShift] = evoBit("Shift", mt::kEvoShift, evoDimF);
   params_[kCcA] = {"CC A", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccA); },
                    [this](int d) { cfg().ccA = static_cast<uint8_t>(clampi(cfg().ccA + d, 0, 127)); }, midiOnly};
   params_[kCcB] = {"CC B", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccB); },
@@ -363,6 +404,37 @@ void TrackScreen::reseed() {
   char msg[20];
   snprintf(msg, sizeof(msg), "SEED %u", gen().seed);
   app_.toast(msg);
+}
+
+mt::EvoCfg& TrackScreen::evo() { return app_.project().evo[app_.curTrack()]; }
+
+bool TrackScreen::evoDim() { return evo().amount == 0; }
+
+void TrackScreen::evoEdited() { engine::post(engine::Cmd::EvoEdit); }
+
+engine::EvoInfo TrackScreen::heardEvo(int& len) {
+  engine::lockProject();
+  len = mt::evoLen(app_.project().patterns[app_.status().pattern % mt::kPatterns], app_.curTrack());
+  const engine::EvoInfo e = engine::heardEvoInfo(app_.curTrack(), len);
+  engine::unlockProject();
+  return e;
+}
+
+// EVO page header: "MUT n  PASS c/every" left of the title, "CHG k/len" right of it (the heard state).
+void TrackScreen::drawEvo(LGFX_Sprite& s, int y0) {
+  int len = 0;
+  const engine::EvoInfo e = heardEvo(len);
+  shownEvoN_ = e.n;
+  shownEvoPass_ = e.passes;
+  shownEvoChg_ = e.changed;
+  char buf[24];
+  const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
+  s.setTextColor(evoDim() ? kDim : kCursor);
+  snprintf(buf, sizeof(buf), "MUT %lu  PASS %u/%u", static_cast<unsigned long>(e.n), e.passes + 1u,
+           static_cast<unsigned>(evo().every));
+  s.drawString(buf, 44, ty);
+  snprintf(buf, sizeof(buf), "CHG %d/%d", e.changed, len);
+  s.drawString(buf, kScreenW - 44 - static_cast<int>(strlen(buf)) * kCharW, ty);
 }
 
 mt::GenState TrackScreen::heardGen() {
@@ -705,7 +777,7 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   s.setTextColor(kText);
   s.drawString(buf, (kScreenW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
 
-  static const char* const kNames[kPages] = {"MAIN", "INS", "FOL", "NOTE", "GEN", "MIDI"};
+  static const char* const kNames[kPages] = {"MAIN", "INS", "FOL", "NOTE", "GEN", "EVO", "MIDI"};
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
@@ -716,6 +788,7 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   if (page_ == kPgIns) drawSteps(s);
   if (page_ == kPgFol) drawFolBar(s, y0);
   if (page_ == kPgGen) drawGen(s, y0);
+  if (page_ == kPgEvo) drawEvo(s, y0);
 }
 
 int TrackScreen::folBarPx() const {
@@ -773,6 +846,11 @@ bool TrackScreen::wantsRedraw(const engine::Status&) {
       const mt::GenState g = heardGen();
       const bool blink = flipAt_ && millis() - flipAt_ < kFlipMs;
       return g.reg != shownGen_ || g.n != shownGenN_ || blink != flipShown_;
+    }
+    if (page_ == kPgEvo) {  // a mutation, a pass counted or a Capture
+      int len = 0;
+      const engine::EvoInfo e = heardEvo(len);
+      return e.n != shownEvoN_ || e.passes != shownEvoPass_ || e.changed != shownEvoChg_;
     }
     return page_ == kPgIns && gateStep() != shownGateStep_;  // the gate's playhead moved
   }

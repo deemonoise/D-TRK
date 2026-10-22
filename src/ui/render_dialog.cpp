@@ -48,6 +48,12 @@ RenderDialog::RenderDialog(App& app) : app_(app) {
                        if (!isSong()) loops_ = step(loops_, d, 0, kLoopN - 1);
                      },
                      [this] { return isSong(); }};
+  params_[kSlots] = {"Max slots", [this](char* o, int n) { snprintf(o, n, "%d", maxSlots_); },
+                     [this](int d) {
+                       const int v = maxSlots_ + d;
+                       maxSlots_ = v < 1 ? 1 : (v > mt::kRenderSlotsMax ? mt::kRenderSlotsMax : v);
+                     },
+                     [this] { return !isSong(); }};
   params_[kTail] = {"Tail", [this](char* o, int n) { snprintf(o, n, "%s", kTailNames[static_cast<int>(tail_)]); },
                     [this](int d) {
                       const int last = isSong() ? static_cast<int>(mt::ExportTail::S8) : static_cast<int>(mt::ExportTail::Wrap);
@@ -84,6 +90,7 @@ mt::ExportSpec RenderDialog::spec() const {
   if (isSong()) s.mode = mt::RenderSpec::Mode::Song;
   else s.pattern = static_cast<uint8_t>(source_);
   s.loops = isSong() ? 1 : kLoopCounts[loops_];
+  s.maxSlots = static_cast<uint16_t>(maxSlots_);
   s.tail = isSong() && tail_ == mt::ExportTail::Wrap ? mt::ExportTail::Auto : tail_;
   s.stems = stems_;
   s.bits = bits16_ ? 16 : 24;

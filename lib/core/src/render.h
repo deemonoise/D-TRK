@@ -10,11 +10,15 @@ constexpr uint32_t kRenderBlockUs = 1000000u * Synth::kBlock / kSynthRate;  // 2
 constexpr int16_t kSilence = 33;             // -60 dBFS
 constexpr float kNormPeak = 0.891f * 32767;  // -1 dBFS
 
-// Length of one pass of pattern idx / of the song (one pass per slot), in ticks and in us.
+constexpr int kRenderSlotsMax = 512;  // RenderSpec::maxSlots
+
+// Length of one pass of pattern idx / of the song, in ticks and in us. The song: the follow-action path
+// from slot 0 with Project::seed (followWalk, salt 0), at most maxSlots passes (a song of NEXT slots:
+// each slot once).
 uint64_t passTicks(const Project& p, int idx);
-uint64_t songTicks(const Project& p);
+uint64_t songTicks(const Project& p, int maxSlots = kSongMax);
 uint64_t passUs(const Project& p, int idx);
-uint64_t songUs(const Project& p);
+uint64_t songUs(const Project& p, int maxSlots = kSongMax);
 // Interleaved stereo (L, R) of `frames` frames: scales so that `peak` lands at -1 dBFS; peak 0 leaves
 // the buffer as is.
 void normalizePeak(int16_t* lr, uint32_t frames, int16_t peak);
@@ -31,6 +35,7 @@ struct RenderSpec {
   Mode mode = Mode::Pattern;
   uint8_t pattern = 0;           // Mode::Pattern
   uint16_t tracksMask = 0xFFFF;  // bit = track sounds (on top of mute / solo)
+  uint16_t maxSlots = kSongMax;  // Mode::Song: at most this many slot passes (1..kRenderSlotsMax)
   uint32_t tailBlocks = 0;       // blocks after the end: delay / reverb ring-out (689 = 2 s)
   uint8_t loops = 1;             // Mode::Pattern: passes of the pattern in the body (1..17)
 };
@@ -41,11 +46,12 @@ struct SeqEv {
 };
 
 // The sequencing half of an offline render: a sequencer of its own over the live project (Mode::Song:
-// SONG from slot 0, else LOOP) on a virtual block clock; block n starts at n x kRenderBlockUs; the
-// sequencer is processed one block ahead and its synth events are time-stamped into blocks like the
-// audio task does (eventOffset). The length is analytic (passUs / songUs); after it only note-offs and
-// releases pass (the next pass never starts), the sequencer stops at the first tail block. MIDI is
-// dropped. Deterministic (fixed seed). The caller keeps the project still (lock).
+// SONG from slot 0 along the follow path of salt 0, see songTicks; else LOOP) on a virtual block clock;
+// block n starts at n x kRenderBlockUs; the sequencer is processed one block ahead and its synth events
+// are time-stamped into blocks like the audio task does (eventOffset). The length is analytic (passUs /
+// songUs); after it only note-offs and releases pass (the next pass never starts), the sequencer stops at
+// the first tail block. MIDI is dropped. Deterministic (fixed seed). The caller keeps the project still
+// (lock).
 class OfflineSequence : public MidiSink {
  public:
   static constexpr int kMaxEvents = 256;  // per block

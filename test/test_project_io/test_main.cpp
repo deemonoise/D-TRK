@@ -87,7 +87,10 @@ static void fillFull(Project& p) {
   p.perfMap[3] = static_cast<uint8_t>(PerfFx::ReverbThrow);
   p.perfDepth[3] = 70;
   p.perfDepth[0] = 6;  // Repeat 1/32
+  p.perfXy[0] = static_cast<uint8_t>(PerfFx::Repeat);
+  p.perfXy[1] = 0;  // None
   p.gen[4] = GenCfg{static_cast<uint8_t>(GenMode::Pitch), 16, 0, 40, 4, 0, 777};
+  p.evo[4] = EvoCfg{55, 3, 12, kEvoRhythm | kEvoShift};
   p.tracks[6].humanize = 40;
   p.tracks[2].pan = 0;
   p.tracks[4].pan = 47;
@@ -191,7 +194,14 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL_UINT16_ARRAY(x.songMute, y.songMute, x.songLen);
   TEST_ASSERT_EQUAL_UINT8_ARRAY(x.perfMap, y.perfMap, kPerfButtons);
   TEST_ASSERT_EQUAL_INT8_ARRAY(x.perfDepth, y.perfDepth, kPerfButtons);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(x.perfXy, y.perfXy, 2);
   TEST_ASSERT_EQUAL_MEMORY(x.gen, y.gen, sizeof(x.gen));
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(x.evo[t].amount, y.evo[t].amount);
+    TEST_ASSERT_EQUAL(x.evo[t].every, y.evo[t].every);
+    TEST_ASSERT_EQUAL(x.evo[t].home, y.evo[t].home);
+    TEST_ASSERT_EQUAL(x.evo[t].mask, y.evo[t].mask);
+  }
   for (int t = 0; t < kTracks; ++t) {
     const TrackCfg &c = x.tracks[t], &d = y.tracks[t];
     TEST_ASSERT_EQUAL(c.humanize, d.humanize);
@@ -2059,6 +2069,15 @@ void test_new_project_perf_depths() {
   TEST_ASSERT_EQUAL_INT8(4, p.perfDepth[0]);  // Repeat 1/16
 }
 
+// A new project's XY pad: FILTER on X, CRUSH on Y.
+void test_new_project_perf_xy() {
+  Project p;
+  p.perfXy[0] = p.perfXy[1] = 0;
+  p.reset();
+  TEST_ASSERT_EQUAL(pf(PerfFx::Filter), p.perfXy[0]);
+  TEST_ASSERT_EQUAL(pf(PerfFx::Crush), p.perfXy[1]);
+}
+
 // Old PRFM bytes (pre-2026-10-13 enum) are mapped to the new effects.
 void test_prfm_legacy_mapped() {
   std::vector<uint8_t> f = fileHeader();
@@ -2093,6 +2112,27 @@ void test_prf2_wins_over_prfm() {
   TEST_ASSERT_TRUE(saveProject(a, out));
   TEST_ASSERT_TRUE(hasChunk(out.buf, "PRF2"));
   TEST_ASSERT_FALSE(hasChunk(out.buf, "PRFM"));
+}
+
+// PXY: X, Y; out-of-range = None; extra bytes skipped; files without it keep FILTER / CRUSH.
+void test_pxy_chunk() {
+  std::vector<uint8_t> f = fileHeader();
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(pf(PerfFx::Filter), b.perfXy[0]);
+  TEST_ASSERT_EQUAL(pf(PerfFx::Crush), b.perfXy[1]);
+
+  f = fileHeader();
+  putChunk(f, "PXY ", {pf(PerfFx::Gate), 200, 7, 7});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(pf(PerfFx::Gate), b.perfXy[0]);
+  TEST_ASSERT_EQUAL(0, b.perfXy[1]);
+
+  f = fileHeader();
+  putChunk(f, "PXY ", {pf(PerfFx::Gate)});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
 // PRF2 depths are clamped into their effect's range; None and unknown effects get 0.
@@ -2283,6 +2323,66 @@ void test_tgen_records_and_garbage() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// ---- TEVO (track evolve) ----
+
+// TEVO: evolve round trip; a file without it has evolve off.
+void test_tevo_round_trip_and_missing() {
+  a.evo[0] = EvoCfg{70, 2, 30, kEvoNote | kEvoShift};
+  a.evo[15] = EvoCfg{100, 16, 0, kEvoMaskAll};
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TEVO"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  for (int t = 0; t < kTracks; ++t) {
+    TEST_ASSERT_EQUAL(a.evo[t].amount, b.evo[t].amount);
+    TEST_ASSERT_EQUAL(a.evo[t].every, b.evo[t].every);
+    TEST_ASSERT_EQUAL(a.evo[t].home, b.evo[t].home);
+    TEST_ASSERT_EQUAL(a.evo[t].mask, b.evo[t].mask);
+  }
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TRKS", trks(kTracks, kTracks));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.evo[0].amount);
+  TEST_ASSERT_EQUAL(EvoCfg().mask, b.evo[0].mask);
+  TEST_ASSERT_EQUAL(0, b.evo[15].amount);
+}
+
+// Longer records read the known part, a short one keeps the defaults it lacks, values are clamped;
+// record size 0 is bad.
+void test_tevo_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TEVO", {2, 5, 200, 0, 255, 0xFF, 9, 50, 40, 10, 2, 9});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(100, b.evo[0].amount);
+  TEST_ASSERT_EQUAL(1, b.evo[0].every);
+  TEST_ASSERT_EQUAL(100, b.evo[0].home);
+  TEST_ASSERT_EQUAL(kEvoMaskAll, b.evo[0].mask);
+  TEST_ASSERT_EQUAL(50, b.evo[1].amount);
+  TEST_ASSERT_EQUAL(kEvoEveryMax, b.evo[1].every);  // 40
+  TEST_ASSERT_EQUAL(10, b.evo[1].home);
+  TEST_ASSERT_EQUAL(kEvoRhythm, b.evo[1].mask);
+  TEST_ASSERT_EQUAL(0, b.evo[2].amount);  // not in the chunk: default
+  f = fileHeader();
+  putChunk(f, "TEVO", {1, 2, 60, 8});  // an older, shorter record
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(60, b.evo[0].amount);
+  TEST_ASSERT_EQUAL(8, b.evo[0].every);
+  TEST_ASSERT_EQUAL(EvoCfg().home, b.evo[0].home);
+  TEST_ASSERT_EQUAL(EvoCfg().mask, b.evo[0].mask);
+  f = fileHeader();
+  putChunk(f, "TEVO", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "TEVO", {2, 4, 1, 2, 3, 4});  // says 2 records, holds 1
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
 // ---- TUNE (project tuning) ----
 
 static std::vector<uint8_t> tunePayload(uint8_t count, uint8_t root, const char* name, const int32_t* mc, int n) {
@@ -2376,6 +2476,67 @@ void test_tune_bad_chunks_reset_to_12tet() {
 }
 
 
+// SFOL: seed and follow actions round trip; a file without SFOL plays in order, seed 1.
+void test_sfol_round_trip_and_missing() {
+  a.songLen = 3;
+  a.song[0] = 1;
+  a.song[1] = 2;
+  a.song[2] = 3;
+  a.songFol[0] = {static_cast<uint8_t>(FollowAct::Jump), 2, 75};
+  a.songFol[2] = {static_cast<uint8_t>(FollowAct::Random), 0, 10};
+  a.seed = 4321;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SFOL"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(4321, b.seed);
+  for (int i = 0; i < 3; ++i) TEST_ASSERT_EQUAL_MEMORY(&a.songFol[i], &b.songFol[i], sizeof(SongFollow));
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SNG3", {1, 4, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(1, b.seed);
+  TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Next), b.songFol[0].act);
+  TEST_ASSERT_EQUAL(100, b.songFol[0].chance);
+}
+
+// Values clamped (unknown action NEXT, target <= 127, chance <= 100); a longer record reads the known
+// part, a shorter one keeps defaults; record size 0 with records or a short chunk is bad. Empty song: seed only.
+void test_sfol_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SFOL", {0x34, 0x12, 3, 4,  3, 1, 50, 9,  9, 200, 150, 9,  4, 0, 100, 9});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0x1234, b.seed);
+  TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Jump), b.songFol[0].act);
+  TEST_ASSERT_EQUAL(1, b.songFol[0].target);
+  TEST_ASSERT_EQUAL(50, b.songFol[0].chance);
+  TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Next), b.songFol[1].act);
+  TEST_ASSERT_EQUAL(kSongMax - 1, b.songFol[1].target);
+  TEST_ASSERT_EQUAL(100, b.songFol[1].chance);
+  TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Random), b.songFol[2].act);
+  f = fileHeader();
+  putChunk(f, "SFOL", {5, 0, 1, 1, static_cast<uint8_t>(FollowAct::Stay)});  // an older, shorter record
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Stay), b.songFol[0].act);
+  TEST_ASSERT_EQUAL(100, b.songFol[0].chance);
+  f = fileHeader();
+  putChunk(f, "SFOL", {7, 0, 0, 3});  // no slots: the seed alone
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(7, b.seed);
+  f = fileHeader();
+  putChunk(f, "SFOL", {1, 0, 2, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "SFOL", {1, 0, 2, 3, 0, 0, 100});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
 // ---- SCEN (scenes and the crossfader) ----
 
 void test_scen_round_trip() {
@@ -2468,7 +2629,6 @@ void test_scen_longer_and_shorter_records() {
   TEST_ASSERT_EQUAL(0x3, b.scenes[0].mstMask);
   TEST_ASSERT_EQUAL(kDlyTimeMax, b.scenes[0].mst[kScnDTime]);  // 20 clamped
 }
-
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -2542,6 +2702,8 @@ int main() {
   RUN_TEST(test_tfol_round_trip_and_missing);
   RUN_TEST(test_tgen_round_trip_and_missing);
   RUN_TEST(test_tgen_records_and_garbage);
+  RUN_TEST(test_tevo_round_trip_and_missing);
+  RUN_TEST(test_tevo_records_and_garbage);
   RUN_TEST(test_tfol_records_and_garbage);
   RUN_TEST(test_tins_gate_fields);
   RUN_TEST(test_tins_longer_records_and_garbage);
@@ -2552,12 +2714,16 @@ int main() {
   RUN_TEST(test_read_file_names);
   RUN_TEST(test_prfm_legacy_mapped);
   RUN_TEST(test_prf2_wins_over_prfm);
+  RUN_TEST(test_pxy_chunk);
   RUN_TEST(test_prf2_depths_clamped);
   RUN_TEST(test_new_project_perf_depths);
+  RUN_TEST(test_new_project_perf_xy);
   RUN_TEST(test_audi_dj_byte_ignored);
   RUN_TEST(test_audi_master_fx_round_trip);
   RUN_TEST(test_audi_master_fx_old_and_garbage);
   RUN_TEST(test_tins_mod_send);
+  RUN_TEST(test_sfol_round_trip_and_missing);
+  RUN_TEST(test_sfol_records_and_garbage);
   RUN_TEST(test_tune_round_trip);
   RUN_TEST(test_tune_12tet_not_written);
   RUN_TEST(test_tune_bad_chunks_reset_to_12tet);

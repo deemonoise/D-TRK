@@ -66,6 +66,17 @@ void test_reset_never_zero_and_depends_on_seed_and_track() {
   TEST_ASSERT_GREATER_THAN(15 * 150, diffTrack);
 }
 
+// Length lowered while playing: the bits left above the new mask must not leave the register at 0.
+void test_shorter_length_never_zero() {
+  const GenCfg c = cfg(8, 0);
+  GenState s;
+  s.reg = 0x0100;  // a 16-step register with only bit 8 set
+  for (int i = 0; i < 32; ++i) {
+    genShift(s, c, 0, 0);
+    TEST_ASSERT_TRUE(s.reg != 0);
+  }
+}
+
 void test_flip0_period_is_length() {
   for (int len = kGenLenMin; len <= kGenLenMax; ++len) {
     const GenCfg c = cfg(static_cast<uint8_t>(len), 0);
@@ -270,6 +281,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_defaults);
   RUN_TEST(test_reset_never_zero_and_depends_on_seed_and_track);
+  RUN_TEST(test_shorter_length_never_zero);
   RUN_TEST(test_flip0_period_is_length);
   RUN_TEST(test_flip100_period_twice_length_inverted_half);
   RUN_TEST(test_same_seed_same_sequence);

@@ -11,6 +11,14 @@ constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
 constexpr int kPatterns = 16;
 constexpr int kSongMax = 128;  // song slots
+// Follow action of a song slot (Project::songFol, follow.h): what plays after the slot's pass.
+// In files (SFOL): new actions before Count only.
+enum class FollowAct : uint8_t { Next, Prev, Stay, Jump, Random, Count };
+struct SongFollow {
+  uint8_t act = 0;       // FollowAct
+  uint8_t target = 0;    // JUMP: the slot (past the song: its last slot)
+  uint8_t chance = 100;  // 0..100 %: the action happens, else NEXT
+};
 constexpr int kPpqn = 96;
 
 constexpr uint8_t kNoteEmpty = 0xFF;
@@ -616,6 +624,18 @@ struct GenCfg {
   uint16_t seed = 1;     // the start register and the flips
 };
 
+// Evolve of a track (evolve.h): the track's steps drift on the fly every `every` pattern passes, by
+// `amount`, pulled back to the pattern by `home`; mask = what may change. A project setting per track
+// (sequencer only, never sent to the synth). In files (TEVO): new mask bits after the last only.
+constexpr uint8_t kEvoNote = 1, kEvoRhythm = 2, kEvoRtrgVol = 4, kEvoShift = 8, kEvoMaskAll = 15;
+constexpr uint8_t kEvoEveryMax = 16;
+struct EvoCfg {
+  uint8_t amount = 0;  // 0..100 %, 0 = no new changes (Home still pulls back)
+  uint8_t every = 4;   // 1..kEvoEveryMax pattern passes per mutation
+  uint8_t home = 25;   // 0..100 %: the chance per mutation that each change steps back
+  uint8_t mask = kEvoNote | kEvoRhythm | kEvoRtrgVol;  // kEvoNote .. kEvoShift
+};
+
 struct Project : SynthModel {
   char name[17] = {0};
   Pattern patterns[kPatterns];
@@ -623,6 +643,11 @@ struct Project : SynthModel {
   uint8_t song[kSongMax] = {0};
   uint16_t songMute[kSongMax] = {0};
   uint8_t songLen = 0;
+  // After slot i's pass the song goes on as songFol[i] says (follow.h). The defaults (NEXT 100 %)
+  // play the slots in order. Saved in SFOL.
+  SongFollow songFol[kSongMax];
+  // Project seed (UI 1..9999): the follow decisions (follow.h); evolve shares it. Saved in SFOL.
+  uint16_t seed = 1;
   // Scenes (scene.h): the ends of the crossfader, indices into scenes. Saved in SCEN.
   Scene scenes[kScenes];
   uint8_t sceneA = 0, sceneB = 1;
@@ -632,7 +657,11 @@ struct Project : SynthModel {
                                    kPerfDefaultMap[4], kPerfDefaultMap[5], kPerfDefaultMap[6], kPerfDefaultMap[7]};
   // Each button's start depth (PerfStack depth), within perfRange() of its effect; 0 for None.
   int8_t perfDepth[kPerfButtons] = {};
+  // XY pad (PERF, A + B): the effect on its X and Y axis (PerfFx; None = that axis does nothing).
+  // Saved in PXY. Follows perfDepth (PROJ's Shift+click cancel restores the PERF page as one block).
+  uint8_t perfXy[2] = {kPerfXyDefault[0], kPerfXyDefault[1]};
   GenCfg gen[kTracks];  // reset(): all OFF, seed = track + 1. Saved in TGEN.
+  EvoCfg evo[kTracks];  // reset(): all off (amount 0). Saved in TEVO.
   // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
   // whose instrument sample names still have to be migrated (and after reset()).
   bool hasSampleList = false;
@@ -650,6 +679,8 @@ struct Project : SynthModel {
     return t >= 0 && t < kTracks && gen[t].mode != 0 && gen[t].mode < static_cast<uint8_t>(GenMode::Count) &&
            !trackIsDrum(t);
   }
+  // The track's evolve makes new changes (amount > 0 and something in the mask).
+  bool evoOn(int t) const { return t >= 0 && t < kTracks && evo[t].amount > 0 && (evo[t].mask & kEvoMaskAll); }
   // The KIT of track t, nullptr when its instrument is another type (or t out of range).
   const Instrument* kitOf(int t) const {
     if (t < 0 || t >= kTracks) return nullptr;

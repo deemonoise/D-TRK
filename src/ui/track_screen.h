@@ -1,4 +1,5 @@
 #pragma once
+#include "evolve.h"
 #include "model.h"
 #include "page_bar.h"
 #include "param_list.h"
@@ -6,7 +7,8 @@
 
 namespace ui {
 
-// Settings of App::curTrack(). GEN page: the track generator (shift_gen.h); click on Seed = a new random seed. MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
+// Settings of App::curTrack(). GEN page: the track generator (shift_gen.h); click on Seed = a new random seed. EVO page: the
+// track evolve (evolve.h), its heard drift in the header. MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
 // Name: click to edit, turn = character, Shift+turn = position.
 // INS page, Steps (the trance gate's 16-step mask): click = edit; turn = cursor, Shift + turn =
 // rotate the mask, A + turn = toggle at the cursor and step on, a tap on a cell or track button 1-8
@@ -58,9 +60,10 @@ class TrackScreen : public Screen {
                    kFolSrc, kFolDest, kFolAmt, kFolAtk, kFolRel, kVel,
                    kGate, kPatLen, kSpeed, kHumanize,
                    kGenMode, kGenLen, kGenFlip, kGenLow, kGenOct, kGenDens, kGenSeed, kGenReg,
+                   kEvoAmt, kEvoEvery, kEvoHome, kEvoNote, kEvoRhythm, kEvoRtrg, kEvoShift,
                    kChannel, kCcA, kCcB, kProgram, kRows };
-  enum Page : int { kPgMain, kPgIns, kPgFol, kPgNote, kPgGen, kPgMidi, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kName, kDrive, kFolSrc, kVel, kGenMode, kChannel, kRows};
+  enum Page : int { kPgMain, kPgIns, kPgFol, kPgNote, kPgGen, kPgEvo, kPgMidi, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kName, kDrive, kFolSrc, kVel, kGenMode, kEvoAmt, kChannel, kRows};
   static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
   static constexpr int kHeaderH = 28;
   static constexpr int kArrowW = 96;  // header hit area on each side
@@ -103,6 +106,16 @@ class TrackScreen : public Screen {
   void drawGen(LGFX_Sprite& s, int y0);
   uint32_t shownGen_ = 0xFFFFFFFF, shownGenN_ = 0, flipAt_ = 0;
   bool flipShown_ = false;
+  // EVO page: the track evolve (Project::evo). Header: mutations and passes to the next one (left), changed
+  // steps of the track's length (right), of the heard state.
+  mt::EvoCfg& evo();
+  bool evoDim();     // Evolve OFF
+  void evoEdited();  // under lock: the engine replans
+  engine::EvoInfo heardEvo(int& len);  // len: the track's in the heard pattern
+  void drawEvo(LGFX_Sprite& s, int y0);
+  uint32_t shownEvoN_ = 0xFFFFFFFF;
+  uint8_t shownEvoPass_ = 0xFF;
+  int shownEvoChg_ = -1;
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
   void setPageRows(int page, bool bar);  // the list only: safe in the constructor
   int page_ = kPgMain;

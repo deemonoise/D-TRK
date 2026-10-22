@@ -43,6 +43,8 @@ bool fieldText(const mt::Step& c, int field, char out[5]) {
   }
 }
 
+mt::EvoTrack heardEvoSt;  // UI task only (Capture gen / evo)
+
 }  // namespace
 
 mt::Pattern& GridScreen::pat() { return app_.project().patterns[app_.editPattern()]; }
@@ -695,6 +697,7 @@ void GridScreen::openMenu() {
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
     if (app_.project().genOn(track())) add("Capture gen", kCaptureGen, true);
+    if (app_.project().evoOn(track())) add("Capture evo", kCaptureEvo, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
     add(detail_ ? "Overview" : "Detail view", kToggleView, true);
@@ -775,6 +778,14 @@ void GridScreen::captureGen() {
   const int tr = track();
   mt::Project& p = app_.project();
   if (!p.genOn(tr)) return;
+  uint8_t passes = 0;
+  engine::lockProject();
+  engine::heardEvo(tr, heardEvoSt, passes);
+  engine::unlockProject();
+  if (!mt::evoIdle(heardEvoSt)) {  // the notes heard went through the drift: captureGen would miss it
+    app_.toast("EVO: CAPTURE EVO FIRST");
+    return;
+  }
   app_.pushUndo();
   engine::lockProject();
   int from = 0;
@@ -785,6 +796,36 @@ void GridScreen::captureGen() {
   app_.markDirty();
   engine::post(engine::Cmd::ReleaseTies);
   app_.toast("GEN CAPTURED");
+}
+
+void GridScreen::captureEvo() {
+  const int tr = track();
+  const engine::Status& es = app_.status();
+  if ((es.playing || es.paused) && es.pattern != app_.editPattern()) {  // the drift is the heard pattern's
+    app_.toast("EVO: OTHER PATTERN");
+    return;
+  }
+  mt::Pattern* scratch = app_.undoScratch();  // free outside the undo calls
+  if (!scratch) {
+    app_.toast("NO MEMORY");
+    return;
+  }
+  uint8_t passes = 0;
+  engine::lockProject();
+  engine::heardEvo(tr, heardEvoSt, passes);
+  engine::unlockProject();
+  if (mt::evoIdle(heardEvoSt)) {
+    app_.toast("EVO: NO CHANGES");
+    return;
+  }
+  app_.pushUndo();
+  engine::lockProject();
+  mt::evoCapture(pat(), tr, heardEvoSt, mt::evoApplyOf(app_.project(), tr), scratch->steps[0]);
+  engine::evoClear(tr);  // under the lock: before the next plan
+  engine::unlockProject();
+  app_.markDirty();
+  engine::post(engine::Cmd::ReleaseTies);
+  app_.toast("EVO CAPTURED");
 }
 
 void GridScreen::resample(bool wholePattern) {
@@ -947,6 +988,7 @@ void GridScreen::onMenu(int id) {
     case kDropSel: selOn_ = false; break;
     case kFill: openFill(); break;
     case kCaptureGen: captureGen(); break;
+    case kCaptureEvo: captureEvo(); break;
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
     case kRec:

@@ -5,7 +5,7 @@
 
 namespace ui {
 
-bool TouchTracker::poll(LGFX& lcd, TouchEvent& ev, bool hdrag) {
+bool TouchTracker::poll(LGFX& lcd, TouchEvent& ev, bool hdrag, bool raw) {
   int32_t x, y;
   const bool t = lcd.getTouch(&x, &y);
   const uint32_t now = millis();
@@ -17,6 +17,11 @@ bool TouchTracker::poll(LGFX& lcd, TouchEvent& ev, bool hdrag) {
   if (!t) {
     if (!down_) return false;
     down_ = false;
+    if (raw_) {
+      raw_ = false;
+      ev = {TouchType::Up, lastX_, lastY_, 0, 0, x0_, y0_, id_};
+      return true;
+    }
     if (dragging_ || longSent_ || swiped_) return false;
     ev = {TouchType::Tap, x0_, y0_, 0, 0, x0_, y0_, id_};
     return true;
@@ -29,7 +34,18 @@ bool TouchTracker::poll(LGFX& lcd, TouchEvent& ev, bool hdrag) {
     x0_ = lastX_ = static_cast<int16_t>(x);
     y0_ = lastY_ = static_cast<int16_t>(y);
     t0_ = now;
-    return false;
+    raw_ = raw && y >= kAreaY && y < kTabY;
+    if (!raw_) return false;
+    ev = {TouchType::Down, x0_, y0_, 0, 0, x0_, y0_, id_};
+    return true;
+  }
+
+  if (raw_) {
+    if (abs(static_cast<int>(x) - lastX_) < kRawStep && abs(static_cast<int>(y) - lastY_) < kRawStep) return false;
+    lastX_ = static_cast<int16_t>(x);
+    lastY_ = static_cast<int16_t>(y);
+    ev = {TouchType::Move, lastX_, lastY_, 0, 0, x0_, y0_, id_};
+    return true;
   }
 
   const int adx = abs(static_cast<int>(x) - x0_), ady = abs(static_cast<int>(y) - y0_);

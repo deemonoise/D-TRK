@@ -27,6 +27,7 @@ void genShift(GenState& s, const GenCfg& c, int track, uint8_t flip) {
   const unsigned out = (s.reg >> (len - 1)) & 1u;
   const bool f = genHash(c.seed, static_cast<uint32_t>(track), s.n) % 100u < flip;
   s.reg = static_cast<uint16_t>(((s.reg << 1) | (out ^ (f ? 1u : 0u))) & m);
+  if (!s.reg && !flip) s.reg = 1;  // len lowered while playing can mask every bit away: LOCK keeps 0 forever
   s.flipped = f ? 1 : 0;
   ++s.n;
 }

@@ -2,6 +2,7 @@
 #include <math.h>
 #include <vector>
 #include "demos.h"
+#include "follow.h"
 #include "render.h"
 #include "render_link.h"
 #include "sample_set.h"
@@ -736,6 +737,69 @@ void test_taps_split_tracks_and_returns() {
   TEST_ASSERT_EQUAL_FLOAT(0.f, ret);
 }
 
+// Follow actions: the render walks the path (salt 0) up to maxSlots passes.
+void test_song_follow_stay_limited_by_max_slots() {
+  Project& p = *mkProj();  // P01: 16 steps = 2 s
+  p.song[0] = 0;
+  p.song[1] = 0;
+  p.songLen = 2;
+  p.songFol[0].act = static_cast<uint8_t>(FollowAct::Stay);
+  RenderSpec s;
+  s.mode = RenderSpec::Mode::Song;
+  s.maxSlots = 3;
+  s.tailBlocks = 10;
+  Synth& synth = *synthFor(p);
+  OfflineRender::Guard g(p);
+  OfflineRender r(p, synth, s);
+  TEST_ASSERT_EQUAL(blocksFor(3 * 2000000) + 10, r.blocksTotal());
+  TEST_ASSERT_EQUAL_UINT64(3 * 2000000ull, songUs(p, 3));
+}
+
+void test_song_follow_jump_path_length() {
+  Project& p = *mkProj();
+  p.patterns[1].length = 32;  // 4 s
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.song[2] = 0;
+  p.songLen = 3;
+  p.songFol[1].act = static_cast<uint8_t>(FollowAct::Jump);
+  p.songFol[1].target = 0;  // 0 1 0 1 0 ...
+  TEST_ASSERT_EQUAL_UINT64(3 * 2000000ull + 2 * 4000000ull, songUs(p, 5));
+  p.songFol[1].chance = 0;  // never jumps: the plain song, then the end
+  TEST_ASSERT_EQUAL_UINT64(2000000ull + 4000000ull + 2000000ull, songUs(p, 5));
+  TEST_ASSERT_EQUAL_UINT64(2000000ull + 4000000ull, songUs(p, 2));
+}
+
+void test_song_follow_render_repeatable() {
+  Project& p = *mkProj();
+  p.patterns[0].steps[0][0].note = 60;
+  p.patterns[1].length = 16;
+  p.patterns[1].steps[0][4].note = 67;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.song[2] = 0;
+  p.songLen = 3;
+  for (int i = 0; i < 3; ++i) {
+    p.songFol[i].act = static_cast<uint8_t>(FollowAct::Random);
+    p.songFol[i].chance = 60;
+  }
+  RenderSpec s;
+  s.mode = RenderSpec::Mode::Song;
+  s.maxSlots = 6;
+  std::vector<int16_t> one, two;
+  for (std::vector<int16_t>* v : {&one, &two}) {
+    Synth& synth = *synthFor(p);
+    OfflineRender::Guard g(p);
+    OfflineRender r(p, synth, s);
+    int16_t out[Synth::kBlock], outR[Synth::kBlock];
+    while (r.renderBlock(out, outR)) {
+      v->insert(v->end(), out, out + Synth::kBlock);
+      v->insert(v->end(), outR, outR + Synth::kBlock);
+    }
+  }
+  TEST_ASSERT_EQUAL(one.size(), two.size());
+  TEST_ASSERT_TRUE(one == two);
+}
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_pass_us);
@@ -767,5 +831,8 @@ int main() {
   RUN_TEST(test_taps_keep_master_identical);
   RUN_TEST(test_taps_sum_to_master);
   RUN_TEST(test_taps_split_tracks_and_returns);
+  RUN_TEST(test_song_follow_stay_limited_by_max_slots);
+  RUN_TEST(test_song_follow_jump_path_length);
+  RUN_TEST(test_song_follow_render_repeatable);
   return UNITY_END();
 }

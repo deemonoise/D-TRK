@@ -13,7 +13,8 @@ constexpr uint8_t kIdleOn = 0x39, kIdleOff = 0x38;  // ST7796 IDMON / IDMOFF
 alignas(4) uint16_t line[2][kScreenW];
 }  // namespace
 
-void PerfVis::push(LGFX& lcd, LGFX_Sprite& spr, const mt::PerfStack& stack, float steps, uint32_t stepUs) {
+void PerfVis::push(LGFX& lcd, LGFX_Sprite& spr, const mt::PerfStack& stack, float steps, uint32_t stepUs,
+                   const mt::PerfTrail* trail, uint16_t trailColor) {
   const uint32_t now = millis();
   mt::PerfFx fx[mt::kPerfButtons];
   uint32_t at[mt::kPerfButtons];
@@ -37,12 +38,14 @@ void PerfVis::push(LGFX& lcd, LGFX_Sprite& spr, const mt::PerfStack& stack, floa
   if (look.freeze && pushed_) return;
   const auto* fb = static_cast<const uint16_t*>(spr.getBuffer());
   if (!fb) return;
+  const uint16_t tc = static_cast<uint16_t>((trailColor << 8) | (trailColor >> 8));  // panel byte order
   lcd.startWrite();
   for (int y = 0; y < kScreenH; ++y) {
     uint16_t* buf = line[y & 1];
     const int sy = mt::perfLookSrcRow(look, y);
     if (sy < 0) memset(buf, 0, sizeof(line[0]));
     else mt::perfLookRow(look, fb + sy * kScreenW, buf, kScreenW, mt::perfLookShift(look, y));
+    if (trail && trail->n) mt::perfTrailRow(*trail, y, buf, kScreenW, tc);
     lcd.pushImageDMA(0, y, kScreenW, 1, reinterpret_cast<const lgfx::swap565_t*>(buf));
   }
   lcd.endWrite();

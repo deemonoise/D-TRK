@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "hw/lgfx_config.h"
 #include "perf_fx.h"
+#include "perf_axis.h"
 
 namespace ui {
 
@@ -11,7 +12,9 @@ namespace ui {
 class PerfVis {
  public:
   // The sprite through `stack`'s look; steps = play position (sixteenths), stepUs = a step's length.
-  void push(LGFX& lcd, LGFX_Sprite& spr, const mt::PerfStack& stack, float steps, uint32_t stepUs);
+  // trail (XY pad): discs painted over each row after the look, in trailColor (RGB565).
+  void push(LGFX& lcd, LGFX_Sprite& spr, const mt::PerfStack& stack, float steps, uint32_t stepUs,
+            const mt::PerfTrail* trail = nullptr, uint16_t trailColor = 0);
   // Back to plain (the panel modes off) before a plain pushSprite; nothing when not engaged.
   void reset(LGFX& lcd);
   bool engaged() const { return engaged_; }

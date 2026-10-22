@@ -75,6 +75,8 @@ void App::setTab(Tab t) {
   if (t == Tab::Count || !screens_[static_cast<int>(t)]) return;
   setBpmEdit(false);
   if (t == tab_) return;
+  perf_.setXy(false);  // the pad belongs to the tab it was opened on
+  xyPad_.clear();
   menu_.close();
   if (perfTab(tab_)) perf_.allOff();  // leaving releases the held effects
   screen()->onLeave();
@@ -208,6 +210,13 @@ void App::onInput(const hw::InputEvent& ev) {
       return;
     default: break;
   }
+  // The pad hides the screen: the encoder only turns PERF's last pressed effect.
+  if (xyMode() && !menu_.isOpen() && !bpmEdit_) {
+    if (ev.type == InputType::EncTurn) perf_.turn(ev.delta, ev.shift);
+    if (ev.type == InputType::EncTurn || ev.type == InputType::EncClick || ev.type == InputType::EncLong ||
+        ev.type == InputType::EditTurn || ev.type == InputType::EditCancel)
+      return;
+  }
   if (menu_.isOpen()) {
     menu_.onInput(ev);
     return;
@@ -247,6 +256,7 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::EditCancel: t = hw::InputType::EditCancel; break;
     case AbAction::TabTurn: cycleTab(o.delta); return;
     case AbAction::PageTurn:
+      if (xyMode()) return;  // the pad hides the screen
       if (!menu_.isOpen() && !bpmEdit_) screen()->onPage(o.delta);
       return;
     case AbAction::Undo:
@@ -266,9 +276,14 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::Back:
       if (menu_.isOpen()) menu_.close();
       else if (bpmEdit_) setBpmEdit(false);
-      else screen()->onBack();
+      else if (xyMode()) {
+        perf_.setXy(false);
+        xyPad_.clear();
+        toast("XY OFF");
+      } else screen()->onBack();
       return;
     case AbAction::ATap:
+      if (xyMode()) return;  // the pad hides the screen
       if (!menu_.isOpen() && !bpmEdit_) screen()->onATap(o.shift);
       return;
     case AbAction::Solo:
@@ -276,6 +291,9 @@ void App::abAction(const mt::AbOut& o) {
       return;
     case AbAction::QueuePattern:
       if (!menu_.isOpen()) queueKey(o.delta, o.shift);
+      return;
+    case AbAction::Both:
+      if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
     default: return;
   }
@@ -317,9 +335,44 @@ void App::queueKey(int n, bool shift) {
   toast(msg);
 }
 
+// The pad is the work area; a finger leaving it keeps the nearest edge.
+void App::xyTouch(const TouchEvent& ev) {
+  const int y = ev.y - kAreaY;
+  const int py = y < 0 ? 0 : (y >= kAreaH ? kAreaH - 1 : y);
+  const uint32_t now = millis();
+  if (ev.type == TouchType::Down) {
+    xyPad_.touch(ev.x, py, now);
+    if (!perf_.xyDown(ev.x, py, kScreenW, kAreaH)) toast(perf_.on() ? "XY: PRESS PLAY" : "PERF OFF");
+  } else if (ev.type == TouchType::Move) {
+    xyPad_.touch(ev.x, py, now);
+    perf_.xyMove(ev.x, py, kScreenW, kAreaH);
+  } else {
+    xyPad_.lift();
+    perf_.xyUp();
+  }
+}
+
+void App::toggleXy() {
+  if (!perfTab(tab_)) return;
+  if (!perf_.on()) {
+    toast("XY: TURN PERF ON");
+    return;
+  }
+  const bool on = !perf_.xy();
+  perf_.setXy(on);
+  xyPad_.clear();
+  if (on && perf_.xyAxis(0) == mt::PerfFx::None && perf_.xyAxis(1) == mt::PerfFx::None)
+    toast("XY: NO EFFECTS (PROJ > PERF)");
+  else toast(on ? "XY PAD" : "XY OFF");
+}
+
 void App::onTouch(const TouchEvent& ev) {
   lastInputMs_ = millis();
   dirty_ = true;
+  if (ev.type == TouchType::Down || ev.type == TouchType::Move || ev.type == TouchType::Up) {
+    xyTouch(ev);
+    return;
+  }
   if (ev.type == TouchType::HDrag) {
     const int y0 = ev.y0;
     if (!menu_.isOpen() && !versionBarrier() && y0 >= kAreaY && y0 < kTabY && screen()->wantsHDrag()) screen()->onTouch(ev);
@@ -721,7 +774,7 @@ void App::showBusy(const char* msg) {
 
 void App::tick() {
   TouchEvent te;
-  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag())) onTouch(te);
+  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag(), xyMode() && !menu_.isOpen())) onTouch(te);
 
   const engine::Status s = engine::status();
   if (!(s == status_)) {
@@ -751,6 +804,7 @@ void App::tick() {
   screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
   if (perfVisible() || vis_.engaged()) dirty_ = true;  // moving while held; the last frame goes back to plain
+  if (xyMode() && xyPad_.animating(now)) dirty_ = true;  // the trail fades
 
   if (dirty_ && now - lastDraw_ >= kFrameMs) {
     draw();
@@ -870,7 +924,9 @@ void App::draw() {
   spr_->fillScreen(kBg);
   drawStatus();
   spr_->setClipRect(0, kAreaY, kScreenW, kAreaH);
+  const bool xy = xyMode();
   if (versionBarrier()) drawBarrier(kAreaY);
+  else if (xy) xyPad_.draw(*spr_, kAreaY, kAreaH, perf_, millis(), !perfVisible());
   else screen()->draw(*spr_, kAreaY, kAreaH);
   spr_->clearClipRect();
   drawTabs();
@@ -881,7 +937,9 @@ void App::draw() {
     const int64_t into = static_cast<int64_t>(engine::nowUs() - status_.stepT);
     float steps = status_.pos;
     if (status_.stepUs && into > 0) steps += static_cast<float>(into) / status_.stepUs;
-    vis_.push(*lcd_, *spr_, perf_.stack(), steps, status_.stepUs);
+    mt::PerfTrail trail;
+    if (xy) xyPad_.trail(trail, kAreaY, millis());
+    vis_.push(*lcd_, *spr_, perf_.stack(), steps, status_.stepUs, xy ? &trail : nullptr, kYellow);
     return;
   }
   vis_.reset(*lcd_);

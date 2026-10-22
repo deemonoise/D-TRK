@@ -91,10 +91,12 @@ void Project::reset() {
   scDepth = 64;
   memcpy(perfMap, kPerfDefaultMap, sizeof(perfMap));
   perfDefaultDepths();
+  memcpy(perfXy, kPerfXyDefault, sizeof(perfXy));
   for (int i = 0; i < kTracks; ++i) {
     gen[i] = GenCfg();
     gen[i].seed = static_cast<uint16_t>(i + 1);
   }
+  for (EvoCfg& e : evo) e = EvoCfg();
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};
@@ -122,6 +124,8 @@ void Project::reset() {
   memset(song, 0, sizeof(song));
   memset(songMute, 0, sizeof(songMute));
   songLen = 0;
+  for (SongFollow& f : songFol) f = SongFollow();
+  seed = 1;
 }
 
 void Project::perfDefaultDepths() {

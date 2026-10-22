@@ -1,6 +1,7 @@
 #include "render.h"
 #include <stdio.h>
 #include <string.h>
+#include "follow.h"
 #include "sample_set.h"
 
 namespace mt {
@@ -18,16 +19,16 @@ uint64_t passTicks(const Project& p, int idx) {
   return len * ticksPerStep(pt.res);
 }
 
-uint64_t songTicks(const Project& p) {
+uint64_t songTicks(const Project& p, int maxSlots) {
   uint64_t ticks = 0;
-  const int n = p.songLen > kSongMax ? kSongMax : p.songLen;
-  for (int i = 0; i < n; ++i) ticks += passTicks(p, p.song[i] < kPatterns ? p.song[i] : kPatterns - 1);
+  followWalk(p, followRunSeed(p.seed, 0), maxSlots,
+             [&](int slot) { ticks += passTicks(p, p.song[slot] < kPatterns ? p.song[slot] : kPatterns - 1); });
   return ticks;
 }
 
 uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, idx)); }
 
-uint64_t songUs(const Project& p) { return ticksToUs(p, songTicks(p)); }
+uint64_t songUs(const Project& p, int maxSlots) { return ticksToUs(p, songTicks(p, maxSlots)); }
 
 void normalizePeak(int16_t* b, uint32_t frames, int16_t peak) { normalizeSamples(b, 2 * frames, peak); }
 
@@ -64,15 +65,17 @@ OfflineSequence::Guard::~Guard() {
 }
 
 OfflineSequence::OfflineSequence(Project& p, const RenderSpec& spec) : spec_(spec), seq_(p) {
+  const int slots = spec.maxSlots < 1 ? 1 : (spec.maxSlots > kRenderSlotsMax ? kRenderSlotsMax : spec.maxSlots);
   seq_.setTrackMask(spec.tracksMask);
   seq_.seed(0x5EED);
+  seq_.setFollowSalt(0);  // the walk's path
   seq_.setSong(0, *this, spec.mode == RenderSpec::Mode::Song, 0);
   if (spec.mode == RenderSpec::Mode::Pattern) seq_.queuePattern(spec.pattern < kPatterns ? spec.pattern : 0);
   const uint64_t loops = spec.mode == RenderSpec::Mode::Song || spec.loops < 1 ? 1 : spec.loops;
-  bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p) : passUs(p, spec.pattern) * loops;
+  bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p, slots) : passUs(p, spec.pattern) * loops;
   bodyBlocks_ = static_cast<uint32_t>((bodyUs_ + kRenderBlockUs - 1) / kRenderBlockUs);
   // Steps of the next pass are never planned (a negative NDG would land inside the body).
-  seq_.setEndTick(spec.mode == RenderSpec::Mode::Song ? songTicks(p) : passTicks(p, spec.pattern) * loops);
+  seq_.setEndTick(spec.mode == RenderSpec::Mode::Song ? songTicks(p, slots) : passTicks(p, spec.pattern) * loops);
   seq_.start(0, *this);
   seq_.process(0, *this);  // step 0 planned at 0, not clamped to the first block's end
 }

@@ -1,11 +1,14 @@
 #include "proj_screen.h"
 #include <Arduino.h>
+#include <esp_random.h>
 #include <math.h>
 #include <new>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#include "dice.h"
+#include "esp_heap_caps.h"
 #include "engine/engine.h"
 #include "fx_info.h"
 #include "groove.h"
@@ -14,6 +17,7 @@
 #include "synth_eq.h"
 #include "synth_fxutil.h"
 #include "note_name.h"
+#include "perf_axis.h"
 #include "storage/tuning_store.h"
 #include "tuning_factory.h"
 
@@ -64,6 +68,11 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                           r = v < 0 ? mt::kTuneRootAuto : static_cast<uint8_t>(v);
                         },
                         [this] { return app_.project().tuning.count == 0; }};
+  // Read at the sequencer's start(): a change takes effect at the next Play (a render: at once).
+  params_[kSeed] = {"Seed", [this](char* o, int n) { snprintf(o, n, "%u", app_.project().seed); },
+                    [this](int d) {
+                      app_.project().seed = static_cast<uint16_t>(clampi(app_.project().seed + d, 1, 9999));
+                    }};
   params_[kLength] = {"Length", [this](char* o, int n) { snprintf(o, n, "%u", pat().length); },
                       [this](int d) {
                         const int v = clampi(pat().length + d, mt::kMinSteps, mt::kMaxSteps);
@@ -228,11 +237,31 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                                    },
                                    [this, b] { return app_.project().perfMap[b] == 0; }};
   }
-  // Shift+click cancel on PERF restores the effect and its depth together (a new effect resets the depth).
+  // XY pad: the effect on each axis (--- = that axis does nothing). Y is dim where the pad ignores
+  // it (mt::perfXyAxis): on X's effect (X drives it), or a buffer effect on both.
+  for (int a = 0; a < 2; ++a)
+    params_[kPerfX + a] = {a ? "XY pad Y" : "XY pad X",
+                           [this, a](char* o, int n) {
+                             const uint8_t f = app_.project().perfXy[a];
+                             snprintf(o, n, "%s", f ? mt::perfName(static_cast<mt::PerfFx>(f)) : "---");
+                           },
+                           [this, a](int d) {
+                             constexpr int kLast = static_cast<int>(mt::PerfFx::Count) - 1;
+                             uint8_t& f = app_.project().perfXy[a];
+                             f = static_cast<uint8_t>(clampi(f + d, 0, kLast));
+                           },
+                           [this, a] {
+                             const uint8_t* xy = app_.project().perfXy;
+                             return a == 1 && xy[1] != 0 && mt::perfXyAxis(xy, 1) == mt::PerfFx::None;
+                           }};
+  // Shift+click cancel on PERF restores the effect and its depth together (a new effect resets the depth),
+  // and the XY axes.
   static_assert(offsetof(mt::Project, perfDepth) == offsetof(mt::Project, perfMap) + sizeof(mt::Project::perfMap),
                 "perfDepth follows perfMap");
+  static_assert(offsetof(mt::Project, perfXy) == offsetof(mt::Project, perfDepth) + sizeof(mt::Project::perfDepth),
+                "perfXy follows perfDepth");
   list_.setEditScope([this]() -> void* { return page_ == kPgPerf ? app_.project().perfMap : nullptr; },
-                     sizeof(mt::Project::perfMap) + sizeof(mt::Project::perfDepth));
+                     sizeof(mt::Project::perfMap) + sizeof(mt::Project::perfDepth) + sizeof(mt::Project::perfXy));
   // Every row is project data (device settings live on FILE > SYSTEM).
   list_.setOnEdit([this] { app_.markDirty(); });
   list_.setOnCancel([this] { app_.toast("CANCEL"); });
@@ -332,8 +361,100 @@ void ProjScreen::applyTuning() {
   app_.markDirty();
 }
 
+void ProjScreen::onProjectReplaced() {
+  if (dice_) {  // its undo (and a draft) belong to the old project
+    dice_->layers = 0;
+    dice_->drafted = 0;
+  }
+}
+
+void ProjScreen::diceMenu() {
+  list_.setEdit(false);
+  constexpr int kUndoDice = 100;
+  const MenuItem items[] = {{"Roll all", mt::kDiceAll},
+                            {"Tempo + scale", mt::kDiceTempo},
+                            {"Sounds", mt::kDiceSounds},
+                            {"Pattern", mt::kDicePattern},
+                            {"Sounds + pattern", mt::kDiceSounds | mt::kDicePattern},
+                            {"Undo dice", kUndoDice, dice_ && dice_->layers != 0}};
+  app_.menu().open("DICE", items, 6, [this](int id) {
+    if (id == kUndoDice) undoDice();
+    else roll(static_cast<uint8_t>(id));
+  });
+}
+
+// The evolve drift is indexed by step: on steps a roll (or its undo) rewrote it would play over notes it
+// never saw. Holding lockProject(): cleared before the next plan.
+void ProjScreen::evoClearTracks(uint16_t mask) {
+  for (int t = 0; t < mt::kTracks; ++t)
+    if (mask & (1u << t)) engine::evoClear(t);
+}
+
+void ProjScreen::afterDice(uint8_t layers) {
+  const mt::Project& p = app_.project();
+  if (layers & mt::kDiceTempo) {
+    bpmTarget_ = p.bpm;
+    engine::postWait(engine::Cmd::SetBpm, p.bpm);  // the sequencer applies it (p.bpm already holds it)
+  }
+  if (layers & (mt::kDiceSounds | mt::kDicePattern)) engine::postWait(engine::Cmd::ReleaseTies);
+  if (layers & mt::kDiceSounds) app_.inst().dropMutateUndo();  // its snapshot is of the old instrument
+  if (layers & mt::kDiceSounds)
+    for (int k = 0; k < mt::kDiceRoles; ++k) {  // as TRACK's Out / Instr rows
+      engine::postWait(engine::Cmd::TrackOut, mt::kDiceTrack[k]);
+      engine::postWait(engine::Cmd::SendProgram, mt::kDiceTrack[k]);
+    }
+  // The planned steps of the rolled tracks (and their GEN, now OFF) are planned again.
+  if (layers & mt::kDicePattern) engine::postWait(engine::Cmd::GenEdit);
+  app_.markDirty();
+}
+
+void ProjScreen::roll(uint8_t layers) {
+  if (!dice_) {
+    void* m = heap_caps_malloc(sizeof(mt::DiceSnap), MALLOC_CAP_SPIRAM);
+    if (!m) {
+      app_.toast("NO MEMORY");
+      return;
+    }
+    dice_ = new (m) mt::DiceSnap();
+  }
+  mt::Project& p = app_.project();
+  // The generators run without the lock (the UI is the only writer of what they read); the engine only
+  // waits for the swap.
+  const mt::DiceResult r = mt::diceDraft(p, layers, app_.editPattern(), esp_random(), *dice_);
+  engine::lockProject();
+  mt::diceApply(p, *dice_);
+  evoClearTracks(dice_->patMask);
+  engine::unlockProject();
+  afterDice(layers);
+  char msg[48];
+  if (r.genre >= 0) {
+    snprintf(msg, sizeof(msg), "DICE %s %u %s %s", mt::diceGenre(r.genre).name, static_cast<unsigned>(p.bpm),
+             kRootNames[p.scaleRoot % 12], mt::scaleName(static_cast<mt::ScaleType>(p.scaleType)));
+  } else {
+    snprintf(msg, sizeof(msg), "DICE %s",
+             layers == mt::kDiceSounds ? "SOUNDS" : (layers == mt::kDicePattern ? "PATTERN" : "SOUNDS+PATTERN"));
+  }
+  app_.toast(msg);
+}
+
+void ProjScreen::undoDice() {
+  if (!dice_) return;
+  engine::lockProject();
+  const uint16_t rolled = dice_->patMask;  // diceUndo empties it
+  const uint8_t l = mt::diceUndo(app_.project(), *dice_);
+  if (l) evoClearTracks(rolled);
+  engine::unlockProject();
+  if (!l) return;
+  afterDice(l);
+  app_.toast("UNDO DICE");
+}
+
 // A + turn on the page bar: the previous / next page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
+  if (ev.type == hw::InputType::EncLong) {  // the DICE menu (the list has no long press)
+    diceMenu();
+    return;
+  }
   if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
 }
 
@@ -344,6 +465,10 @@ void ProjScreen::onPage(int d) { showPage(page_ + d, list_.barSelected()); }
 void ProjScreen::onBack() { list_.setEdit(false); }
 
 void ProjScreen::onTouch(const TouchEvent& ev) {
+  if (ev.type == TouchType::Tap && ev.y < kAreaY + kHeaderH) {
+    if (ev.x >= kDiceX0 && ev.x < kDiceX1) diceMenu();
+    return;
+  }
   const int barY = kAreaY + kHeaderH;
   if (ev.y >= barY && ev.y < barY + PageBar::kH) {
     if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
@@ -359,6 +484,9 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
+  s.fillRect(kDiceX0, y0 + 2, kDiceX1 - kDiceX0, kHeaderH - 8, kPlayBg);
+  s.setTextColor(kCursor);
+  s.drawString("DICE", kDiceX0 + (kDiceX1 - kDiceX0 - 4 * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
   static const char* const kNames[kPages] = {"SONG", "DLY", "RVB", "MOD", "MSTR", "PERF"};
   params_[kDlyChar].label = app_.project().dlyMode == static_cast<uint8_t>(mt::DlyMode::PingPong) ? "Width" : "Wear";
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);

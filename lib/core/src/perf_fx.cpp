@@ -137,6 +137,26 @@ void PerfStack::turn(int delta) {
   s.depth = static_cast<int8_t>(d < r.lo ? r.lo : (d > r.hi ? r.hi : d));
 }
 
+int PerfStack::setDepth(PerfFx f, int to, PerfMsg out[2]) {
+  if (!valid(f)) return 0;
+  const PerfRange r = perfRange(f);
+  const int want = to < r.lo ? r.lo : (to > r.hi ? r.hi : to);
+  const int i = find(f);
+  if (i >= 0 && slot_[i].depth == want) return 0;
+  int n = 0;
+  if (i < 0 || i != n_ - 1) {  // not held, or under others: (again) on top at its default
+    press(f);
+    if (!held(f)) return 0;  // full
+    out[n++] = PerfMsg{0, static_cast<uint8_t>(f)};
+  }
+  const int d = want - depth(f);  // |d| <= hi - lo <= 127
+  if (d != 0) {
+    turn(d);
+    out[n++] = PerfMsg{2, static_cast<uint8_t>(static_cast<int8_t>(d))};
+  }
+  return n;
+}
+
 MT_HOT bool PerfStack::held(PerfFx f) const { return find(f) >= 0; }
 
 MT_HOT int PerfStack::depth(PerfFx f) const {

@@ -12,7 +12,10 @@ int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 }  // namespace
 
 void PerfPad::setOn(bool on) {
-  if (!on) allOff();
+  if (!on) {
+    allOff();
+    xy_ = false;
+  }
   on_ = on;
   if (on && attached_) takeBuffer();
   else if (!on) freeBuffer();
@@ -72,14 +75,62 @@ bool PerfPad::press(int n) {
 }
 
 void PerfPad::release(int n) {
-  if (n < 0 || n >= mt::kPerfButtons || held_[n] < 0) return;
-  const int8_t fx = held_[n];
-  held_[n] = -1;
-  for (const int8_t h : held_)
-    if (h == fx) return;  // another button still holds it
+  if (n < 0 || n >= mt::kPerfButtons) return;
+  releaseHolder(n);
+}
+
+void PerfPad::releaseHolder(int h) {
+  if (h < 0 || h >= kHolders || held_[h] < 0) return;
+  const int8_t fx = held_[h];
+  held_[h] = -1;
+  for (const int8_t o : held_)
+    if (o == fx) return;  // another button or axis still holds it
   stack_.release(static_cast<mt::PerfFx>(fx));
   if (!audio::perf(1, static_cast<uint8_t>(fx))) lost_ = true;
   app_.invalidate();  // the header loses its short name
+}
+
+void PerfPad::setXy(bool on) {
+  if (!on) xyUp();
+  xy_ = on && on_;
+  app_.invalidate();
+}
+
+mt::PerfFx PerfPad::xyAxis(int a) const { return mt::perfXyAxis(app_.project().perfXy, a); }
+
+bool PerfPad::xyDown(int x, int y, int w, int h) {
+  if (!on_ || !xy_ || !app_.status().playing) return false;
+  xyTouch_ = true;
+  xyApply(x, y, w, h);
+  return true;
+}
+
+void PerfPad::xyMove(int x, int y, int w, int h) {
+  if (xyTouch_ && app_.status().playing) xyApply(x, y, w, h);  // a stop before poll(): nothing new
+}
+
+void PerfPad::xyUp() {
+  if (!xyTouch_) return;
+  xyTouch_ = false;
+  releaseHolder(kXyHolder);
+  releaseHolder(kXyHolder + 1);
+}
+
+// Y grows upwards. An axis effect a button already holds is joined: its depth follows the finger.
+void PerfPad::xyApply(int x, int y, int w, int h) {
+  const int pos[2] = {x, h - 1 - y}, len[2] = {w, h};
+  for (int a = 0; a < 2; ++a) {
+    const mt::PerfFx f = xyAxis(a);
+    if (f == mt::PerfFx::None) continue;
+    mt::PerfMsg m[2];
+    send(m, stack_.setDepth(f, mt::perfAxisDepth(f, pos[a], len[a]), m));
+    if (stack_.held(f)) held_[kXyHolder + a] = static_cast<int8_t>(f);
+  }
+}
+
+void PerfPad::send(const mt::PerfMsg* m, int n) {
+  for (int i = 0; i < n; ++i)
+    if (!audio::perf(m[i].op, m[i].val)) lost_ = true;
 }
 
 bool PerfPad::turn(int delta, bool shift) {
@@ -115,6 +166,7 @@ bool PerfPad::xfadeTurn(int delta, bool shift) {
 // Always sent: a press lost in a full queue must not leave the synth holding an effect.
 void PerfPad::allOff() {
   for (int8_t& h : held_) h = -1;
+  xyTouch_ = false;
   stack_.releaseAll();
   lost_ = !audio::perf(3, 0);
 }

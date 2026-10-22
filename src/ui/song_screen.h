@@ -1,5 +1,6 @@
 #pragma once
 #include "edit_ops.h"
+#include "follow.h"
 #include "model.h"
 #include "screen.h"
 #include "sequencer.h"
@@ -7,8 +8,11 @@
 namespace ui {
 
 // Song slots, one row each: "01  P03  [16 track cells]" (filled = plays, frame = muted, dot = no
-// data). Turn = row (in pattern edit: the pattern), Shift + turn = column, click = PAT: pattern edit /
-// track: mute, A = add a copy below, A + turn = pattern edit (B cancels), long = row menu. Track
+// data), then the follow icon (FOL column: NEXT dot, PREV <, STAY =, JUMP >, RANDOM ?; dim below
+// 100 %). Turn = row (in pattern edit: the pattern), Shift + turn = column, click = PAT: pattern edit /
+// track: mute / FOL: follow edit (turn = value, Shift + turn = field, click / B = done, Shift + click =
+// cancel; the header shows "FOLLOW JUMP >07 75%"), A = add a copy below, A + turn = pattern edit (on
+// FOL: follow edit; B cancels), long = row menu. Track
 // buttons toggle the cursor slot's mutes; with PERF on (App::perf(), shared with GRID) they hold
 // its effects while playing. Every write is under engine::lockProject() + SongEdit.
 class SongScreen : public Screen {
@@ -31,16 +35,19 @@ class SongScreen : public Screen {
 
  private:
   enum MenuId : int {
-    kAdd, kInsert, kDelete, kMutesLive, kMutesClear, kClear, kClearConfirm, kCancel, kPerf
+    kAdd, kInsert, kDelete, kMutesLive, kMutesClear, kClear, kClearConfirm, kFolReset, kCancel, kPerf
   };
   static constexpr int kHeadH = 24, kRowH = 24;
   static constexpr int kRows = (kAreaH - kHeadH) / kRowH;  // 10
   static constexpr int kNumX = 4, kPatX = 30;
   static constexpr int kCellX0 = 66, kCellW = 24, kHalfGap = 4;
-  static constexpr int kCols = 1 + mt::kTracks;  // PAT + tracks
+  static constexpr int kFolX = kCellX0 + mt::kTracks * kCellW + kHalfGap;  // 454: the follow column
+  static constexpr int kFolW = 20;
+  static constexpr int kFolCol = 1 + mt::kTracks;  // column index of FOL
+  static constexpr int kCols = 2 + mt::kTracks;    // PAT + tracks + FOL
   static constexpr uint32_t kFollowMs = 2000;    // no auto-scroll this long after user input
   static constexpr int kUndoDepth = 8;
-  static_assert(kCellX0 + mt::kTracks * kCellW + kHalfGap <= 476, "cells fit");
+  static_assert(kFolX + kFolW <= 476, "cells and the follow column fit (scroll bar at 476)");
 
   struct Snap {
     mt::SongOp op;  // the write it precedes: undo posts the inverse
@@ -48,11 +55,12 @@ class SongScreen : public Screen {
     uint8_t len;
     uint8_t song[mt::kSongMax];
     uint16_t mute[mt::kSongMax];
+    mt::SongFollow fol[mt::kSongMax];
   };
 
   int len() const;
   static int cellX(int t) { return kCellX0 + t * kCellW + (t >= mt::kTracks / 2 ? kHalfGap : 0); }
-  int colAt(int x) const;  // -1 = number column, 0 = PAT, 1..16 = track
+  int colAt(int x) const;  // -1 = number column, 0 = PAT, 1..16 = track, kFolCol = FOL
   int rowAt(int y) const;  // slot index (may be >= len), -1 = header / below the rows
   void setRow(int r);      // clamps, scrolls, follows (stopped)
   void setCol(int c);
@@ -67,7 +75,7 @@ class SongScreen : public Screen {
   void endWrite(int row, mt::SongOp op);
   void pushSongUndo(int row, mt::SongOp op);
   void add();
-  void insertAt(int at, uint8_t pat, uint16_t mute);
+  void insertAt(int at, uint8_t pat, uint16_t mute, mt::SongFollow fol = mt::SongFollow());
   void deleteRow();
   void toggleMute(int track);
   void setMask(uint16_t m);
@@ -75,6 +83,15 @@ class SongScreen : public Screen {
   void editPat(int delta);
   void snapRow();
   void cancelRow();
+  // Follow edit of the cursor slot (fields: 0 action, 1 JUMP target, 2 chance).
+  bool folFieldOk(int f) const;  // the field applies to the slot's action
+  void snapFol();                // starts the edit at the action
+  void editFol(int delta);
+  void nextFolField(int dir);
+  void cancelFol();
+  void setFol(const mt::SongFollow& f);  // one undo step per edit (editPushed_)
+  void drawFol(LGFX_Sprite& s, int y, const mt::SongFollow& f, bool cur);
+  int drawFolHeader(LGFX_Sprite& s, int x, int y);
   void openMenu();
   void onMenu(int id);
 
@@ -86,6 +103,10 @@ class SongScreen : public Screen {
   bool editPushed_ = false;   // the pattern edit took its undo snapshot
   int origRow_ = -1;
   uint8_t origPat_ = 0;
+  int folField_ = -1;         // follow edit: -1 off, 0 action, 1 JUMP target, 2 chance
+  bool holdFol_ = false;      // follow edit by A + turn (A release ends it)
+  mt::SongFollow origFol_;
+  int origFolRow_ = -1;
   uint16_t gesture_ = 0;      // touch gesture id seen last
   bool dragPat_ = false;      // the drag edits the pattern
   int dragAcc_ = 0;

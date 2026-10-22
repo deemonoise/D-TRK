@@ -14,6 +14,8 @@ int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 void SongScreen::onEnter() {
   masksStale_ = true;  // GRID may have edited patterns
   patEdit_ = holdRow_ = false;
+  folField_ = -1;
+  holdFol_ = false;
   clampRow();
   showRow(row_);
 }
@@ -22,6 +24,8 @@ void SongScreen::onProjectReplaced() {
   row_ = col_ = top_ = 0;
   patEdit_ = holdRow_ = false;
   origRow_ = -1;
+  folField_ = origFolRow_ = -1;
+  holdFol_ = false;
   undoHead_ = undoCount_ = 0;
   followPat_ = -1;
   masksStale_ = true;
@@ -56,7 +60,10 @@ void SongScreen::refreshMasks() {
 void SongScreen::clampRow() {
   const int n = len();
   row_ = n == 0 ? 0 : clampi(row_, 0, n - 1);
-  if (n == 0) patEdit_ = holdRow_ = false;
+  if (n == 0) {
+    patEdit_ = holdRow_ = holdFol_ = false;
+    folField_ = -1;
+  }
 }
 
 void SongScreen::showRow(int r) {
@@ -72,16 +79,22 @@ void SongScreen::setRow(int r) {
   clampRow();
   showRow(row_);
   if (row_ != old) {
-    patEdit_ = holdRow_ = false;
+    patEdit_ = holdRow_ = holdFol_ = false;
     origRow_ = -1;
+    folField_ = -1;
   }
   follow();
 }
 
 void SongScreen::setCol(int c) {
   col_ = clampi(c, 0, kCols - 1);
+  if (col_ != kFolCol) {
+    folField_ = -1;
+    holdFol_ = false;
+  }
   if (col_ == 0) return;
   patEdit_ = holdRow_ = false;
+  if (col_ == kFolCol) return;
   app_.setCurTrack(col_ - 1);  // the track buttons address its half
 }
 
@@ -95,6 +108,7 @@ void SongScreen::follow() {
 }
 
 int SongScreen::colAt(int x) const {
+  if (x >= kFolX) return kFolCol;
   if (x < kPatX - 4) return -1;
   if (x < kCellX0) return 0;
   int xx = x - kCellX0;
@@ -126,6 +140,7 @@ void SongScreen::pushSongUndo(int row, mt::SongOp op) {
   s.len = p.songLen;
   memcpy(s.song, p.song, sizeof(s.song));
   memcpy(s.mute, p.songMute, sizeof(s.mute));
+  memcpy(s.fol, p.songFol, sizeof(s.fol));
   undoHead_ = (undoHead_ + 1) % kUndoDepth;
   if (undoCount_ < kUndoDepth) ++undoCount_;
 }
@@ -144,8 +159,9 @@ void SongScreen::endWrite(int row, mt::SongOp op) {
 }
 
 void SongScreen::undo() {
-  patEdit_ = holdRow_ = false;
+  patEdit_ = holdRow_ = holdFol_ = false;
   origRow_ = -1;
+  folField_ = -1;
   if (!undo_ || undoCount_ == 0) {
     app_.toast("NOTHING TO UNDO");
     return;
@@ -162,6 +178,7 @@ void SongScreen::undo() {
   p.songLen = s.len;
   memcpy(p.song, s.song, sizeof(p.song));
   memcpy(p.songMute, s.mute, sizeof(p.songMute));
+  memcpy(p.songFol, s.fol, sizeof(p.songFol));
   endWrite(s.row, op);
   clampRow();
   showRow(row_);
@@ -169,24 +186,24 @@ void SongScreen::undo() {
   app_.toast("UNDO");
 }
 
-void SongScreen::insertAt(int at, uint8_t pat, uint16_t mute) {
+void SongScreen::insertAt(int at, uint8_t pat, uint16_t mute, mt::SongFollow fol) {
   if (len() >= mt::kSongMax) {
     app_.toast("SONG FULL");
     return;
   }
   at = clampi(at, 0, len());
   beginWrite(true, at, mt::SongOp::Insert);
-  mt::songInsert(app_.project(), at, pat, mute);
+  mt::songInsert(app_.project(), at, pat, mute, fol);
   endWrite(at, mt::SongOp::Insert);
   setRow(at);
   touched();
 }
 
-// A: a copy of the cursor slot below it; empty song: the heard pattern, nothing muted.
+// A: a copy of the cursor slot (follow too) below it; empty song: the heard pattern, nothing muted.
 void SongScreen::add() {
   const mt::Project& p = app_.project();
   if (len() == 0) insertAt(0, app_.editPattern(), 0);
-  else insertAt(row_ + 1, p.song[row_], p.songMute[row_]);
+  else insertAt(row_ + 1, p.song[row_], p.songMute[row_], p.songFol[row_]);
 }
 
 void SongScreen::deleteRow() {
@@ -221,10 +238,12 @@ void SongScreen::clearSong() {
   beginWrite();
   memset(p.song, 0, sizeof(p.song));
   memset(p.songMute, 0, sizeof(p.songMute));
+  for (mt::SongFollow& f : p.songFol) f = mt::SongFollow();
   p.songLen = 0;
   endWrite(0, mt::SongOp::Edit);
   row_ = top_ = 0;
-  patEdit_ = holdRow_ = false;
+  patEdit_ = holdRow_ = holdFol_ = false;
+  folField_ = -1;
   app_.toast("SONG CLEARED");
 }
 
@@ -269,6 +288,78 @@ void SongScreen::cancelRow() {
   app_.toast("CANCEL");
 }
 
+// ---- follow edit ----
+
+bool SongScreen::folFieldOk(int f) const {
+  const mt::SongFollow& fo = app_.project().songFol[row_];
+  if (f == 1) return fo.act == static_cast<uint8_t>(mt::FollowAct::Jump);
+  if (f == 2) return fo.act != static_cast<uint8_t>(mt::FollowAct::Next);  // NEXT: no chance
+  return f == 0;
+}
+
+void SongScreen::snapFol() {
+  if (row_ >= len()) return;
+  editPushed_ = false;
+  origFolRow_ = row_;
+  origFol_ = app_.project().songFol[row_];
+  folField_ = 0;
+  patEdit_ = holdRow_ = false;
+}
+
+void SongScreen::setFol(const mt::SongFollow& f) {
+  mt::Project& p = app_.project();
+  if (row_ >= len() || memcmp(&f, &p.songFol[row_], sizeof(f)) == 0) return;
+  beginWrite(!editPushed_);  // one undo step per edit
+  editPushed_ = true;
+  p.songFol[row_] = f;
+  endWrite(row_, mt::SongOp::Edit);
+}
+
+// Action and target clamp (no wrap); chance in steps of 5 %. A JUMP gets a target inside the song.
+void SongScreen::editFol(int delta) {
+  if (delta == 0 || folField_ < 0 || row_ >= len()) return;
+  mt::SongFollow f = app_.project().songFol[row_];
+  if (folField_ == 0) {
+    f.act = static_cast<uint8_t>(clampi(f.act + delta, 0, static_cast<int>(mt::FollowAct::Count) - 1));
+    if (f.act == static_cast<uint8_t>(mt::FollowAct::Jump) && f.target >= len()) f.target = static_cast<uint8_t>(len() - 1);
+  } else if (folField_ == 1) {
+    f.target = static_cast<uint8_t>(clampi(f.target + delta, 0, len() - 1));
+  } else {
+    f.chance = static_cast<uint8_t>(clampi(f.chance + 5 * delta, 0, 100));
+  }
+  setFol(f);
+  if (!folFieldOk(folField_)) folField_ = 0;
+}
+
+void SongScreen::nextFolField(int dir) {
+  for (int k = 1; k <= 3; ++k) {
+    const int f = ((folField_ + (dir > 0 ? k : -k)) % 3 + 3) % 3;
+    if (folFieldOk(f)) {
+      folField_ = f;
+      return;
+    }
+  }
+}
+
+void SongScreen::cancelFol() {
+  folField_ = -1;
+  holdFol_ = false;
+  mt::Project& p = app_.project();
+  if (origFolRow_ < 0 || origFolRow_ >= len()) return;
+  const int r = origFolRow_;
+  origFolRow_ = -1;
+  if (memcmp(&p.songFol[r], &origFol_, sizeof(origFol_)) == 0) return;
+  if (editPushed_ && undoCount_ > 0) {  // the snapshot holds what we restore
+    undoHead_ = (undoHead_ + kUndoDepth - 1) % kUndoDepth;
+    --undoCount_;
+  }
+  editPushed_ = false;
+  beginWrite(false);
+  p.songFol[r] = origFol_;
+  endWrite(r, mt::SongOp::Edit);
+  app_.toast("CANCEL");
+}
+
 // ---- menu ----
 
 void SongScreen::openMenu() {
@@ -276,13 +367,15 @@ void SongScreen::openMenu() {
   const int n = len();
   const bool valid = n > 0;
   const bool room = n < mt::kSongMax;
-  patEdit_ = holdRow_ = false;
+  patEdit_ = holdRow_ = holdFol_ = false;
+  folField_ = -1;
   char ins[32], title[28];
   snprintf(ins, sizeof(ins), "Insert P%02u above", app_.editPattern() + 1u);
   const MenuItem items[] = {
       {"Add", kAdd, room},           {ins, kInsert, room},
       {"Delete", kDelete, valid},    {"Mutes <- live", kMutesLive, valid},
-      {"Clear mutes", kMutesClear, valid}, {"Clear song", kClear, valid},
+      {"Clear mutes", kMutesClear, valid}, {"Follow: NEXT", kFolReset, valid},
+      {"Clear song", kClear, valid},
       {app_.perf().on() ? "Perf: ON" : "Perf: OFF", kPerf},
   };
   if (valid) snprintf(title, sizeof(title), "SLOT %02d: P%02u", row_ + 1, app_.project().song[row_] + 1u);
@@ -304,6 +397,10 @@ void SongScreen::onMenu(int id) {
       break;
     }
     case kMutesClear: setMask(0); break;
+    case kFolReset:
+      editPushed_ = false;  // its own undo step
+      setFol(mt::SongFollow());
+      break;
     case kClear: {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Clear song: sure?", kClearConfirm}};
       app_.menu().open("CLEAR SONG?", items, 2, [this](int i) { onMenu(i); });
@@ -332,11 +429,20 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
     case InputType::EncTurn:
       if (app_.perf().turn(ev.delta, ev.shift)) break;  // a held PERF effect's depth; the cursor stays
       touched();
-      if (ev.shift) setCol(col_ + ev.delta);
+      if (folField_ >= 0) {
+        if (ev.shift) nextFolField(ev.delta);
+        else editFol(ev.delta);
+      } else if (ev.shift) setCol(col_ + ev.delta);
       else if (patEdit_) editPat(ev.delta);
       else if (n > 0) setRow(row_ + ev.delta);
       break;
     case InputType::EncClick:
+      if (folField_ >= 0) {  // done; Shift: cancel
+        if (ev.shift) cancelFol();
+        else folField_ = -1;
+        holdFol_ = false;
+        break;
+      }
       if (patEdit_ && ev.shift) {
         cancelRow();
         break;
@@ -347,6 +453,8 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
       } else if (col_ == 0) {
         patEdit_ = !patEdit_;
         if (patEdit_) snapRow();
+      } else if (col_ == kFolCol) {
+        snapFol();
       } else {
         toggleMute(col_ - 1);
       }
@@ -355,6 +463,15 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
     // A + turn: hold edit of the cursor slot's pattern, release = keep, B = cancel.
     case InputType::EditTurn:
       if (app_.perf().xfadeTurn(ev.delta, ev.shift)) break;  // PERF, nothing held: the scene crossfader
+      if (col_ == kFolCol && n > 0) {  // on FOL: hold edit of the follow, from the action
+        if (folField_ < 0) {
+          snapFol();
+          holdFol_ = true;
+        }
+        touched();
+        editFol(ev.delta);
+        break;
+      }
       if (!patEdit_) {
         if (n == 0) break;
         patEdit_ = holdRow_ = true;
@@ -366,19 +483,24 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
       break;
     case InputType::EditEnd:
       if (holdRow_) patEdit_ = false;
-      holdRow_ = false;
+      if (holdFol_) folField_ = -1;
+      holdRow_ = holdFol_ = false;
       break;
     case InputType::EditCancel:
       if (patEdit_) cancelRow();
-      holdRow_ = false;
+      if (folField_ >= 0) cancelFol();
+      holdRow_ = holdFol_ = false;
       break;
     default: break;
   }
 }
 
-// B: leave pattern edit, keeping the value; else PERF off.
+// B: leave follow / pattern edit, keeping the value; else PERF off.
 void SongScreen::onBack() {
-  if (patEdit_) {
+  if (folField_ >= 0) {
+    folField_ = -1;
+    holdFol_ = false;
+  } else if (patEdit_) {
     patEdit_ = holdRow_ = false;
   } else if (app_.perf().on()) {
     app_.perf().setOn(false);
@@ -387,7 +509,8 @@ void SongScreen::onBack() {
 }
 
 void SongScreen::onATap(bool) {
-  patEdit_ = holdRow_ = false;
+  patEdit_ = holdRow_ = holdFol_ = false;
+  folField_ = -1;
   add();
 }
 
@@ -395,7 +518,8 @@ bool SongScreen::trackKey(int n, bool shift) {
   if (!shift && app_.perf().press(n)) return true;  // PERF while playing; Shift + N still mutes
   if (shift || len() == 0 || n < 0 || n >= mt::kTrackButtons) return false;
   clampRow();
-  patEdit_ = holdRow_ = false;  // a separate undo step from the pattern edit
+  patEdit_ = holdRow_ = holdFol_ = false;  // a separate undo step from the pattern / follow edit
+  folField_ = -1;
   toggleMute((app_.curTrack() / mt::kTrackButtons) * mt::kTrackButtons + n);
   return true;
 }
@@ -446,7 +570,8 @@ void SongScreen::onTouch(const TouchEvent& ev) {
   const int c = colAt(ev.x);
   if (c < 0) return;
   setCol(c);
-  if (c > 0) toggleMute(c - 1);
+  if (c == kFolCol) snapFol();
+  else if (c > 0) toggleMute(c - 1);
 }
 
 // ---- drawing ----
@@ -463,15 +588,16 @@ void SongScreen::draw(LGFX_Sprite& s, int y0, int) {
   showRow(top_);  // the song may have shrunk
   char buf[16];
 
-  // Header: count, track numbers. The PERF badge replaces the count, grows with the held effects
-  // and covers the numbers it reaches.
+  // Header: count, track numbers (cursor on FOL: the slot's follow instead). The PERF badge replaces
+  // the count, grows with the held effects and covers the numbers it reaches.
   const int badgeR = app_.perf().drawBadge(s, kNumX, y0 + 4);
   if (badgeR == kNumX) {
     s.setTextColor(kText);
     snprintf(buf, sizeof(buf), "%d/%d", n, mt::kSongMax);
     s.drawString(buf, kNumX, y0 + 4);
   }
-  for (int t = 0; t < mt::kTracks; ++t) {
+  if (n > 0 && col_ == kFolCol) drawFolHeader(s, badgeR > kCellX0 ? badgeR + kCharW : kCellX0, y0 + 4);
+  for (int t = 0; t < mt::kTracks && !(n > 0 && col_ == kFolCol); ++t) {
     snprintf(buf, sizeof(buf), "%d", t + 1);
     const int w = static_cast<int>(strlen(buf)) * kCharW;
     const int x = cellX(t) + (kCellW - w) / 2;
@@ -519,6 +645,7 @@ void SongScreen::draw(LGFX_Sprite& s, int y0, int) {
       else s.fillRect(x + kCellW / 2 - 1, y + kRowH / 2 - 1, 2, 2, kDim);
       if (cur && col_ == t + 1) s.drawRect(x, y + 2, kCellW, kRowH - 4, kCursor);
     }
+    drawFol(s, y, p.songFol[idx], cur && col_ == kFolCol);
   }
   if (n > kRows) {  // scroll bar
     const int h = kRows * kRowH;
@@ -526,6 +653,46 @@ void SongScreen::draw(LGFX_Sprite& s, int y0, int) {
     const int by = ly + (h - bh) * top_ / (n - kRows);
     s.fillRect(kScreenW - 4, by, 3, bh, kDim);
   }
+}
+
+void SongScreen::drawFol(LGFX_Sprite& s, int y, const mt::SongFollow& f, bool cur) {
+  static const char kGlyph[] = {'.', '<', '=', '>', '?'};
+  static_assert(sizeof(kGlyph) == static_cast<int>(mt::FollowAct::Count), "follow glyphs");
+  const uint8_t a = f.act < static_cast<uint8_t>(mt::FollowAct::Count) ? f.act : 0;
+  if (a == 0) {
+    s.fillRect(kFolX + kFolW / 2 - 1, y + kRowH / 2 - 1, 2, 2, kDim);  // NEXT: as an empty cell
+  } else {
+    const char g[2] = {kGlyph[a], 0};
+    s.setTextColor(f.chance >= 100 ? kText : kDim);
+    s.drawString(g, kFolX + (kFolW - kCharW) / 2, y + 4);
+  }
+  if (cur) s.drawRect(kFolX, y + 2, kFolW, kRowH - 4, folField_ >= 0 ? kEditCursor : kCursor);
+}
+
+// "FOLLOW JUMP >07 75%": the cursor slot's follow, the edited field red. Returns the x after it.
+int SongScreen::drawFolHeader(LGFX_Sprite& s, int x, int y) {
+  const mt::SongFollow& f = app_.project().songFol[row_];
+  const bool jump = f.act == static_cast<uint8_t>(mt::FollowAct::Jump);
+  const bool next = f.act >= static_cast<uint8_t>(mt::FollowAct::Count) || f.act == 0;
+  s.setTextColor(kDim);
+  s.drawString("FOLLOW", x, y);
+  x += 7 * kCharW;
+  auto part = [&](const char* t, int field) {
+    s.setTextColor(folField_ == field ? kEditCursor : kText);
+    s.drawString(t, x, y);
+    x += (static_cast<int>(strlen(t)) + 1) * kCharW;
+  };
+  char buf[8];
+  part(mt::followName(f.act), 0);
+  if (jump) {
+    snprintf(buf, sizeof(buf), ">%02d", f.target + 1);
+    part(buf, 1);
+  }
+  if (!next) {
+    snprintf(buf, sizeof(buf), "%d%%", f.chance);
+    part(buf, 2);
+  }
+  return x;
 }
 
 }  // namespace ui

@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "evolve.h"
 #include "model.h"
 #include "shift_gen.h"
 
@@ -13,9 +14,10 @@ namespace engine {
 // Fill: arg 1 = fill held, 0 = released.
 // GenEdit: after a Project::gen edit while playing: the unheard steps are planned again with it.
 // GenReseed: arg = track, after its GenCfg::seed changed: replanned, its register reset from the next step.
+// EvoEdit: after a Project::evo edit while playing: the unheard steps are planned again with it.
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
-  Fill, SetSong, GenEdit, GenReseed
+  Fill, SetSong, GenEdit, GenReseed, EvoEdit
 };
 
 struct Command {
@@ -70,5 +72,18 @@ bool savedMutes(uint16_t& bits);
 // (Capture; step 0 while stopped or another pattern plays; stopped: the reset register).
 mt::GenState heardGen(int track);
 mt::GenState nextGen(int track, int pat, int& fromStep);
+// Track evolve, holding lockProject(): the state after the heard step of `track` (copied; the reset one
+// while stopped) and the passes counted towards its next mutation.
+void heardEvo(int track, mt::EvoTrack& out, uint8_t& passes);
+// The same without the copy (UI header): mutations, changed steps of the first len, passes counted.
+struct EvoInfo {
+  uint32_t n;
+  int changed;
+  uint8_t passes;
+};
+EvoInfo heardEvoInfo(int track, int len);
+// Clears the track's evolve changes (Capture evo, a rewritten track), holding lockProject(): the engine
+// does it before it plans again. A flag, not a command: it cannot be lost to a full queue.
+void evoClear(int track);
 
 }  // namespace engine

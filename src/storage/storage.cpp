@@ -51,7 +51,8 @@ static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt
 // 382: synFold, synRing (SYNI bytes 41, 42; snapshot copies instruments whole).
 static_assert(sizeof(mt::Instrument) == 382, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
-static_assert(sizeof(mt::Project) == 479816, "Project changed: update snapshot() and project_io");
+// 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO).
+static_assert(sizeof(mt::Project) == 480268, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -67,6 +68,8 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.song, live.song, sizeof(out.song));
   memcpy(out.songMute, live.songMute, sizeof(out.songMute));
   out.songLen = live.songLen;
+  memcpy(out.songFol, live.songFol, sizeof(out.songFol));
+  out.seed = live.seed;
   memcpy(out.instruments, live.instruments, sizeof(out.instruments));
   out.masterVol = live.masterVol;
   out.preview = live.preview;
@@ -83,7 +86,9 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.scDepth = live.scDepth;
   memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));
   memcpy(out.perfDepth, live.perfDepth, sizeof(out.perfDepth));
+  memcpy(out.perfXy, live.perfXy, sizeof(out.perfXy));
   memcpy(out.gen, live.gen, sizeof(out.gen));
+  memcpy(out.evo, live.evo, sizeof(out.evo));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));

@@ -2,6 +2,25 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-21
+- Song follow actions (SONG, FOL column): after each pass a slot goes NEXT, PREV, STAY, JUMP to a slot or
+  RANDOM, with a chance 0–100 %. Decided from the project Seed (PROJ -> SONG): live play takes a new path at
+  every start, Export the same one every time (Max slots limits loops). Old songs play as before (all
+  NEXT). Saved in the project (`SFOL` chunk).
+- Dice (PROJ header DICE, or a long encoder press on PROJ): one roll gives the project a genre tempo and
+  scale, factory sounds on tracks 1–4 (DRUMS kit matching the genre, BASS, CHORDS, LEAD) and their part of
+  the heard pattern from the Euclid / CHORDS / BASS / ARP generators; Undo dice takes it back in one step.
+  Mutate 15 / 30 / 60 % in the INST PRESET menu nudges filter, envelope and macros at random, with Undo mutate.
+- PERF XY pad (A + B on GRID / SONG / MIX with PERF on): the work area becomes a touch pad holding two
+  PERF effects, the finger's position sets their depths (list values in zones, FILTER LP / OFF / HP); the
+  finger's trail is drawn over the visuals. Axes in PROJ -> PERF (XY pad X / Y, default FILTER / CRUSH),
+  saved in the project (`PXY ` chunk). B tap, another tab or PERF off closes it.
+- Evolve per track (TRACK -> EVO): the pattern drifts live every 1–16 passes (Evolve 1–100 %), the pattern
+  itself stays as it is. Notes move along the scale, hits drop out and ghost notes appear, retriggers and
+  velocity change, steps turn or swap (Note / Rhythm / Rtrg+Vol / Shift); Home pulls the drift back. From
+  the project Seed like the follow actions: each Play drifts its own way, Export the same every time.
+  Capture evo in the GRID menu writes the heard variant into the pattern. Saved in the project (`TEVO` chunk).
+
 ## 2026-10-15
 - SYNTH: wavefolder and ring mod; filters LADDER, MS20, COMB, FORMANT on every type.
 - New instrument type MACRO: 8 oscillator models with Timbre / Color.
@@ -36,7 +55,7 @@ Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
   computed on the synth board; DRAW… in the table list — a touch keyframe editor (SIN / TRI / SAW / SQR,
   SMTH, linear blend between keys). The result is `/wavetables/<name>.wav` and a project table; link
   protocol 10 — flash both boards.
-- Song / pattern export to WAV with stems (FILE -> Export…, formerly Render WAV): the master and optionally
+- Song / pattern export to WAV with stems (FILE -> Export…, formerly Export): the master and optionally
   dry INT track stems and the MOD / DLY / RVB returns in one render, all files one length; 24-bit (or
   16-bit with TPDF dither); Loops 1–16, Tail AUTO / OFF / 2 / 4 / 8 s / WRAP (seamless loop). Files go to
   `/export/<project>/<P01 | P01x4 | SONG>/` and download from the Wi-Fi page (Export section, resumable).

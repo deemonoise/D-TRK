@@ -743,6 +743,23 @@ void test_tuning_root_key() {
   TEST_ASSERT_EQUAL(0, t.name[0]);
 }
 
+// Follow actions: a fresh project plays the slots in order (NEXT 100 %), seed 1; reset() restores it.
+void test_song_follow_defaults() {
+  static Project p;
+  p.songFol[3].act = static_cast<uint8_t>(FollowAct::Jump);
+  p.songFol[3].target = 9;
+  p.songFol[3].chance = 40;
+  p.seed = 777;
+  p.reset();
+  for (int i = 0; i < kSongMax; ++i) {
+    TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Next), p.songFol[i].act);
+    TEST_ASSERT_EQUAL(0, p.songFol[i].target);
+    TEST_ASSERT_EQUAL(100, p.songFol[i].chance);
+  }
+  TEST_ASSERT_EQUAL(1, p.seed);
+  TEST_ASSERT_EQUAL(3, sizeof(SongFollow));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_gate_defaults_and_presets);
@@ -794,5 +811,6 @@ int main() {
   RUN_TEST(test_lfo_dest_fold_ring);
   RUN_TEST(test_tuning_defaults_and_valid);
   RUN_TEST(test_tuning_root_key);
+  RUN_TEST(test_song_follow_defaults);
   return UNITY_END();
 }

@@ -34,6 +34,7 @@ portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
 Status st{};
 // Track bits (16); 32-bit so the atomic is a plain s32c1i CAS on the ESP32, no lock in the
 // engine task (xtensa gcc reports is_always_lock_free false even for 32 bits, so no static_assert).
+std::atomic<uint32_t> evoClearBits{0};  // evoClear(): tracks to clear before the next plan
 
 bool IRAM_ATTR onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void*) {
   BaseType_t woken = pdFALSE;
@@ -45,10 +46,17 @@ void handle(const Command& c) {
   const uint64_t now = nowUs();
   switch (c.cmd) {
     case Cmd::StartStop:
-      if (seq->playing()) seq->stop(now, midi);
-      else seq->start(now, midi);
+      if (seq->playing()) {
+        seq->stop(now, midi);
+      } else {
+        seq->setFollowSalt(esp_random());  // live: a new follow path on every start
+        seq->start(now, midi);
+      }
       break;
-    case Cmd::TogglePlay: seq->togglePlay(now, midi); break;
+    case Cmd::TogglePlay:
+      if (!seq->playing() && !seq->paused()) seq->setFollowSalt(esp_random());  // resume keeps the path
+      seq->togglePlay(now, midi);
+      break;
     case Cmd::Stop: seq->stop(now, midi); break;
     case Cmd::QueuePattern: seq->queuePattern(c.arg); break;
     case Cmd::SelectPattern: seq->selectPattern(c.arg); break;
@@ -61,6 +69,7 @@ void handle(const Command& c) {
     case Cmd::Fill: seq->setFill(c.arg != 0); break;
     case Cmd::GenEdit: seq->genEdited(now, midi); break;
     case Cmd::GenReseed: seq->genReseed(now, midi, c.arg); break;
+    case Cmd::EvoEdit: seq->evoEdited(now, midi); break;
   }
 }
 
@@ -79,6 +88,7 @@ void run(void*) {
     xSemaphoreTake(projMutex, portMAX_DELAY);
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
+    for (uint32_t b = evoClearBits.exchange(0); b; b &= b - 1) seq->evoClear(nowUs(), midi, __builtin_ctz(b));
     const uint64_t next = seq->process(nowUs(), midi);
     publish();  // under the mutex: core_ram may move seq (moveSeq)
     xSemaphoreGive(projMutex);
@@ -179,6 +189,26 @@ mt::GenState nextGen(int track, int pat, int& fromStep) {
   }
   fromStep = seq->genFromStep(track, pat);
   return seq->genNext(track);  // the track's register goes on over patterns
+}
+
+void heardEvo(int track, mt::EvoTrack& out, uint8_t& passes) {
+  if (!seq) {
+    mt::evoReset(out);
+    passes = 0;
+    return;
+  }
+  out = seq->heardEvo(track);
+  passes = seq->evoPasses(track);
+}
+
+void evoClear(int track) {
+  if (track >= 0 && track < mt::kTracks) evoClearBits.fetch_or(1u << track);
+}
+
+EvoInfo heardEvoInfo(int track, int len) {
+  if (!seq) return EvoInfo{0, 0, 0};
+  const mt::EvoTrack& e = seq->heardEvo(track);
+  return EvoInfo{e.n, mt::evoChanged(e, len), seq->evoPasses(track)};
 }
 
 }  // namespace engine

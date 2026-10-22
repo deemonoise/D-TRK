@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "follow.h"
 #include "wav.h"
 
 namespace mt {
@@ -10,7 +11,7 @@ namespace {
 
 bool isSong(const ExportSpec& s) { return s.mode == RenderSpec::Mode::Song; }
 uint32_t loopsOf(const ExportSpec& s) { return isSong(s) || s.loops < 1 ? 1 : s.loops; }
-uint64_t passOf(const Project& p, const ExportSpec& s) { return isSong(s) ? songUs(p) : passUs(p, s.pattern); }
+uint64_t passOf(const Project& p, const ExportSpec& s) { return isSong(s) ? songUs(p, s.maxSlots) : passUs(p, s.pattern); }
 uint32_t tailSec(ExportTail t) { return t == ExportTail::S2 ? 2 : (t == ExportTail::S4 ? 4 : (t == ExportTail::S8 ? 8 : 0)); }
 bool wrap(const ExportSpec& s) { return s.tail == ExportTail::Wrap && !isSong(s); }
 uint32_t bodyBlocks(const Project& p, const ExportSpec& s) {
@@ -21,7 +22,8 @@ uint32_t bodyBlocks(const Project& p, const ExportSpec& s) {
 void usedPatterns(const Project& p, const ExportSpec& s, bool used[kPatterns]) {
   for (int i = 0; i < kPatterns; ++i) used[i] = false;
   if (isSong(s)) {
-    for (int i = 0; i < p.songLen && i < kSongMax; ++i) used[p.song[i] < kPatterns ? p.song[i] : 0] = true;
+    followWalk(p, followRunSeed(p.seed, 0), s.maxSlots,  // the slots on the render's path
+               [&](int i) { used[p.song[i] < kPatterns ? p.song[i] : 0] = true; });
   } else {
     used[s.pattern < kPatterns ? s.pattern : 0] = true;
   }
@@ -67,6 +69,7 @@ RenderSpec exportRenderSpec(const Project& p, const ExportSpec& s) {
   r.mode = s.mode;
   r.pattern = s.pattern;
   r.tracksMask = s.tracksMask;
+  r.maxSlots = s.maxSlots;
   r.loops = static_cast<uint8_t>(loopsOf(s) + (wrap(s) ? 1 : 0));
   if (wrap(s)) r.tailBlocks = 1;  // the cut's rounding never runs past the render
   else if (s.tail == ExportTail::Auto) r.tailBlocks = kExportAutoMaxBlocks;

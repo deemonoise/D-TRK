@@ -25,6 +25,7 @@ struct ExportSpec {
   uint8_t pattern = 0;
   uint16_t tracksMask = 0xFFFF;  // what sounds in the master (ALL / SOLOED)
   uint8_t loops = 1;             // Mode::Pattern: 1, 2, 4, 8, 16
+  uint16_t maxSlots = kSongMax;  // Mode::Song: the follow path from slot 0, at most this many slot passes
   ExportTail tail = ExportTail::Auto;
   ExportStems stems = ExportStems::Off;
   uint8_t bits = 24;  // 24 or 16

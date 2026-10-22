@@ -1,5 +1,6 @@
 #pragma once
 #include "model.h"
+#include "mutate.h"
 #include "param_list.h"
 #include "preset_browser.h"
 #include "sample_editor.h"
@@ -14,6 +15,8 @@ namespace ui {
 // PRESET (tap, or Shift + long press): LOAD / SAVE menu, then the PresetBrowser over the list.
 // On the SMPL page that menu is SAMPLE: Chop, Add slice (Shift on the click: at a transient), Delete
 // slice, Clear slices (confirm), Load / Save preset; A tap / Shift + A tap = next / previous marker.
+// PRESET menu (not on a KIT): also Mutate 15 / 30 / 60 % (mutateSlot: filter, envelopes, macros of
+// this instrument, seeded by esp_random) and Undo mutate (one step, this instrument only).
 // Name: click to edit, turn = character, Shift+turn = position.
 // Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
 // ADSR graph), the type's own (OSC / SMPL / FM / DRUM; SYNTH: OSC and MOD; MACRO: OSC), FILT, LFO. The page is
@@ -41,6 +44,7 @@ class InstScreen : public Screen {
   // The track buttons play slices (sample editor page): no hold-button volume then.
   bool buttonsBusy() const;
   void onProjectReplaced() override;
+  void dropMutateUndo() { mut_.slot = -1; }  // Dice SOUNDS rewrote the instruments
   void onInput(const hw::InputEvent& ev) override;
   void onPage(int d) override;
   void onBack() override;
@@ -133,6 +137,8 @@ class InstScreen : public Screen {
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
   void preview();
   void presetMenu();
+  void mutate(int strength);  // mutateSlot under the lock, toast, preview
+  void undoMutate();
   void afterPresets();  // the browser closed: the type may have changed
   void openTables(int osc);
 
@@ -156,6 +162,7 @@ class InstScreen : public Screen {
   int lfoSel_ = 0;  // LFO page: which of the 4 LFOs the rows edit
   mt::Instrument typeSnap_;     // the instrument as it was in the type being left (setType)
   int typeSnapInstr_ = -1;      // whose copy typeSnap_ is, -1 = none
+  mt::MutateUndo mut_;          // the last Mutate (slot -1 = none); dropped on load / New, refused once the slot is edited
   int y0_ = kAreaY;
   int namePos_ = 0;
   SampleEditor editor_{app_, kAreaY + kHeaderH + kPageBarH};

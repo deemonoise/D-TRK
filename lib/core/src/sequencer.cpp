@@ -27,6 +27,7 @@ Sequencer::Sequencer(Project& p, void* cold)
     : p_(p), cold_(static_cast<Cold*>(cold)), ownCold_(cold == nullptr), bpm_(clampBpm(p.bpm)) {
   if (ownCold_) cold_ = new Cold();
   else new (cold_) Cold();  // zeroed
+  evoResetAll();
 }
 
 Sequencer::~Sequencer() {
@@ -74,6 +75,8 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
     if (queued_ >= 0) cur_ = queued_;
   }
   queued_ = -1;
+  songN_ = 0;
+  runSeed_ = followRunSeed(p_.seed, followSalt_);
   pos_ = 0;
   loop_ = 0;
   condBits_ = 0;
@@ -95,6 +98,7 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   anchorTick_ = stepTick_ = clockTick_ = 0;
   gateTick_ = 0;
   genResetAll();
+  evoResetAll();
   anchorAt(now);
   state_ = State::Playing;
 }
@@ -157,6 +161,67 @@ const Step& Sequencer::genStep(int tr, const Step& s, Step& tmp) {
   return tmp;
 }
 
+void Sequencer::evoResetAll() {
+  for (int tr = 0; tr < kTracks; ++tr) {
+    for (int k = 0; k < kEvoRing; ++k) cold_->evo[tr][k].n = kEvoNone;
+    evoReset(cold_->evo[tr][0]);  // n = 0
+    evoN_[tr] = 0;
+    evoCnt_[tr] = 0;
+  }
+}
+
+const Step& Sequencer::evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const {
+  if (!(p_.evo[tr].mask & kEvoMaskAll)) return pt.steps[tr][idx];
+  return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp);
+}
+
+const EvoTrack& Sequencer::heardEvo(int tr) const {
+  if (tr < 0 || tr >= kTracks) tr = 0;
+  uint32_t n = evoN_[tr];
+  if (state_ != State::Stopped)
+    for (int i = 0; i < histN_; ++i)
+      if (hist(i).t <= heardStepT_) {
+        if (i > 0) n = hist(i - 1).evoN[tr];  // the state after the heard step
+        break;
+      }
+  const EvoTrack& e = evoAt(tr, n);
+  return e.n == n ? e : evoAt(tr, evoN_[tr]);
+}
+
+void Sequencer::evoClear(uint64_t now, MidiSink& out, int tr) {
+  if (tr < 0 || tr >= kTracks) return;
+  replan(now, out);  // back to the heard step: its state is the one Capture wrote
+  EvoTrack& e = evoAt(tr, evoN_[tr]);
+  evoClearDeltas(e);
+  for (int k = 0; k < kEvoRing; ++k)  // older states would bring the changes back on a rewind
+    if (&cold_->evo[tr][k] != &e) cold_->evo[tr][k].n = kEvoNone;
+}
+
+// A pass ended (the pattern that plays next is cur_): each track with something in its mask counts it
+// and, every `every` passes, mutates its state into the next ring slot. The mask in effect (evoApplyOf:
+// no RHYTHM on a GEN GATE track) is what may change.
+void Sequencer::evoPass() {
+  const Pattern& pt = p_.patterns[cur_];
+  for (int tr = 0; tr < kTracks; ++tr) {
+    EvoCfg c = p_.evo[tr];
+    evoClamp(c);
+    if (!c.mask) {
+      evoCnt_[tr] = 0;
+      continue;
+    }
+    if (++evoCnt_[tr] < c.every) continue;
+    evoCnt_[tr] = 0;
+    const EvoApply a = evoApplyOf(p_, tr);
+    c.mask = a.mask;
+    const EvoTrack& from = evoAt(tr, evoN_[tr]);
+    EvoTrack& to = evoAt(tr, evoN_[tr] + 1);
+    evoMakeView(pt, tr, from, c.mask, a.noteOk, a.scale, evoView_);
+    to = from;
+    evoMutate(to, c, evoView_, runSeed_, tr);
+    evoN_[tr] = to.n;
+  }
+}
+
 void Sequencer::synthTransport(uint64_t now, MidiSink& out, uint8_t msg) {
   for (int i = 0; i < kTracks; ++i)
     if (internal(i)) {
@@ -209,6 +274,7 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   heardPos_ = 0;
   loop_ = 0;
   heardLoop_ = 0;
+  evoResetAll();
   restoreMutes(kNever);
   showStopped();
 }
@@ -376,6 +442,16 @@ bool Sequencer::rewind(uint64_t now) {
   memcpy(ties_, h.ties, sizeof(ties_));
   memcpy(arps_, h.arps, sizeof(arps_));
   memcpy(gen_, h.gens, sizeof(gen_));
+  for (int tr = 0; tr < kTracks; ++tr) {
+    const uint32_t n = h.evoN[tr];
+    evoCnt_[tr] = h.evoCnt[tr];
+    EvoTrack& e = evoAt(tr, n);
+    if (e.n != n) {  // older than the ring: start over from no changes (still deterministic)
+      evoReset(e);
+      e.n = n;
+    }
+    evoN_[tr] = n;
+  }
   condBits_ = h.condBits;
   muteHeld_ = h.held;
   savedMute_ = h.saved;
@@ -385,6 +461,7 @@ bool Sequencer::rewind(uint64_t now) {
       break;
     }
   songPos_ = h.prevSong;  // a song advance among the undone steps is decided again
+  songN_ = h.prevSongN;
   stepTick_ = h.tick;
   gateTick_ = h.gateTick;
   stepSerial_ = h.serial;
@@ -488,9 +565,12 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.prevPat = cur_;
   h.prevQueued = static_cast<int8_t>(queued_);
   h.prevSong = static_cast<int8_t>(songPos_);
+  h.prevSongN = songN_;
   memcpy(h.ties, ties_, sizeof(ties_));
   memcpy(h.arps, arps_, sizeof(arps_));
   memcpy(h.gens, gen_, sizeof(gen_));
+  memcpy(h.evoN, evoN_, sizeof(evoN_));
+  memcpy(h.evoCnt, evoCnt_, sizeof(evoCnt_));
   h.condBits = condBits_;
   h.held = muteHeld_;
   h.saved = savedMute_;
@@ -523,10 +603,12 @@ void Sequencer::scheduleStep(uint64_t now) {
       const int idx = trackStepAt(pat, tr, pos_, loop_, k);
       if (idx < 0) break;  // a slow track rests on this pattern step
       const uint64_t tk = t + slot * k / tm.mul;
+      Step es;
+      const Step& st = evoPick(pat, tr, idx, es);
       if (tm.mul > 1 && t + slot * (k + 1) / tm.mul <= now) {
-        skipTrackStep(tr, pat.steps[tr][idx], tk, now, tc, tm.tps);  // after a stall: as a missed step
+        skipTrackStep(tr, st, tk, now, tc, tm.tps);  // after a stall: as a missed step
       } else {
-        playTrackStep(tr, pat.steps[tr][idx], tk, tc, tm.tps, earliest);
+        playTrackStep(tr, st, tk, tc, tm.tps, earliest);
       }
     }
   }
@@ -717,7 +799,8 @@ void Sequencer::skipStep(uint64_t now) {
     for (int k = 0; k < tm.mul; ++k) {
       const int idx = trackStepAt(pat, tr, pos_, loop_, k);
       if (idx < 0) break;  // a slow track rests on this pattern step
-      skipTrackStep(tr, pat.steps[tr][idx], t + slot * k / tm.mul, now, c, tm.tps);
+      Step es;
+      skipTrackStep(tr, evoPick(pat, tr, idx, es), t + slot * k / tm.mul, now, c, tm.tps);
     }
   }
   stepTick_ += ticks();
@@ -754,7 +837,12 @@ void Sequencer::endOfPass() {
   ++loop_;
   int next = queued_;
   if (songActive()) {
-    songPos_ = songPos_ < 0 ? songEntry() : (songPos_ + 1 < songLen() ? songPos_ + 1 : 0);
+    if (songPos_ < 0) {
+      songPos_ = songEntry();  // LOOP -> SONG: no decision
+    } else {
+      const int nx = followNext(p_, songPos_, runSeed_, songN_++);
+      songPos_ = nx < 0 ? 0 : nx;  // past the last slot (or a shrunk song): slot 0 again
+    }
     next = songAt(songPos_);
     applyMute(songPos_, tickTime(stepTick_));
     if (next == cur_) next = -1;  // the same pattern again goes on like a loop (ties, CND)
@@ -768,6 +856,7 @@ void Sequencer::endOfPass() {
     cur_ = static_cast<uint8_t>(next);
     loop_ = 0;
   }
+  evoPass();
   reanchor(stepTick_);  // keeps tick distances small
 }
 

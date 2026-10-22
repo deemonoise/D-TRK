@@ -402,6 +402,55 @@ void test_capture_gen_gate_from_step_and_track_len() {
   TEST_ASSERT_EQUAL(61, pat.steps[3][13].note);
 }
 
+static SongFollow jumpTo(int t) {
+  SongFollow f;
+  f.act = static_cast<uint8_t>(FollowAct::Jump);
+  f.target = static_cast<uint8_t>(t);
+  return f;
+}
+
+// Follow moves with its slot; JUMP targets keep pointing at the same slot; others keep their bytes.
+void test_song_insert_moves_follow_and_jump_targets() {
+  static Project p;
+  p.reset();
+  songInsert(p, 0, 1, 0);
+  songInsert(p, 1, 2, 0);
+  songInsert(p, 2, 3, 0);
+  p.songFol[0] = jumpTo(2);  // set directly: an insert would remap a target passed with it
+  p.songFol[2] = jumpTo(0);
+  p.songFol[1].chance = 30;  // NEXT, target 0: not remapped
+  TEST_ASSERT_TRUE(songInsert(p, 1, 7, 0, jumpTo(2)));  // the new slot's own target is remapped too
+  TEST_ASSERT_EQUAL(4, p.songLen);
+  TEST_ASSERT_EQUAL(3, p.songFol[0].target);  // slot 2 moved to 3
+  TEST_ASSERT_EQUAL(3, p.songFol[1].target);
+  TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Next), p.songFol[2].act);
+  TEST_ASSERT_EQUAL(30, p.songFol[2].chance);
+  TEST_ASSERT_EQUAL(0, p.songFol[2].target);
+  TEST_ASSERT_EQUAL(0, p.songFol[3].target);  // before `at`: unchanged
+}
+
+void test_song_delete_moves_follow_and_jump_targets() {
+  static Project p;
+  p.reset();
+  for (int i = 0; i < 4; ++i) songInsert(p, i, static_cast<uint8_t>(i + 1), 0);
+  p.songFol[0] = jumpTo(3);
+  p.songFol[1] = jumpTo(1);
+  p.songFol[2] = jumpTo(0);
+  p.songFol[3] = jumpTo(2);
+  songDelete(p, 1);  // 0 1 2 3 -> 0 2 3; slot 1 targeted itself: gone with it
+  TEST_ASSERT_EQUAL(3, p.songLen);
+  TEST_ASSERT_EQUAL(2, p.songFol[0].target);  // 3 -> 2
+  TEST_ASSERT_EQUAL(0, p.songFol[1].target);  // the old slot 2, its target 0 unchanged
+  TEST_ASSERT_EQUAL(1, p.songFol[2].target);  // 2 -> 1
+  TEST_ASSERT_EQUAL(static_cast<int>(FollowAct::Next), p.songFol[3].act);  // the freed slot is zeroed
+  TEST_ASSERT_EQUAL(100, p.songFol[3].chance);
+  songDelete(p, 2);  // the last slot: targets on it go to the new last
+  TEST_ASSERT_EQUAL(1, p.songFol[0].target);
+  songDelete(p, 1);  // slot 0 targets slot 1, the last: the new last (0)
+  TEST_ASSERT_EQUAL(0, p.songFol[0].target);
+  TEST_ASSERT_EQUAL(1, p.songLen);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_make_sel_normalizes);
@@ -425,6 +474,8 @@ int main(int, char**) {
   RUN_TEST(test_song_insert_full_fails);
   RUN_TEST(test_song_delete_middle_and_past_end);
   RUN_TEST(test_song_insert_clamps_pattern);
+  RUN_TEST(test_song_insert_moves_follow_and_jump_targets);
+  RUN_TEST(test_song_delete_moves_follow_and_jump_targets);
   RUN_TEST(test_pattern_track_mask);
   RUN_TEST(test_capture_gen_pitch);
   RUN_TEST(test_capture_gen_gate_from_step_and_track_len);
