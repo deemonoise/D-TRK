@@ -32,7 +32,7 @@ bool mutateInstrument(Instrument& m, int strength, uint32_t seed) {
   Rng r(seed);
   Mover mv{r, strength};
   const InstrType t = m.type;
-  if (t == InstrType::Chip || t == InstrType::Sample || t == InstrType::Synth ||
+  if (t == InstrType::Chip || t == InstrType::Sample || t == InstrType::Synth || t == InstrType::Lofi ||
       (t == InstrType::Fm && fmGated(m.machine))) {
     mv.move(m.attack, 0, 100);
     mv.move(m.decay, 1, 127);
@@ -48,6 +48,9 @@ bool mutateInstrument(Instrument& m, int strength, uint32_t seed) {
   }
   if (t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth)
     for (uint8_t& k : m.macro) mv.move(k, 0, 127);
+  if (t == InstrType::Lofi)
+    for (int k = 0; k < kFmMacros; ++k)
+      if (*lofiMacroName(m.machine, k)) mv.move(m.macro[k], 0, 127);  // not a slot the machine leaves unused
   if (t == InstrType::Synth) {
     mv.move(m.synSub, 0, 127);
     mv.move(m.synNoise, 0, 80);

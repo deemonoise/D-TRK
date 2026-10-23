@@ -7,7 +7,7 @@ namespace net {
 // wavetables, presets, diagnostics, firmware; the tab is kept in the URL hash), file lists scrolling in their own
 // box with a name filter, upload (drag & drop), rename, delete, firmware update;
 // samples, wavetables and presets also have subfolders (breadcrumb, new folder, delete an empty folder;
-// presets sit in type folders FM / DRUM / SAMPLE / CHIP / SYNTH); projects have one level of project
+// presets sit in type folders FM / DRUM / SAMPLE / CHIP / SYNTH / LOFI); projects have one level of project
 // folders with their samples and a "wt" folder of wavetables (made and removed by the tracker, no new
 // folder button).
 // No external resources: works without internet access.
@@ -88,7 +88,7 @@ progress{width:100%;display:none;margin-top:8px}
 <div class="list"><table></table></div></section>
 
 <section id="presets"><h2>Presets (/presets)</h2>
-<p class="note">Only .mti, up to 1 KB, name up to 16 characters: A-Z, digits, - and _. A preset sits in the folder of its type (FM, DRUM, SAMPLE, CHIP, SYNTH); inside, folders are allowed (up to 4 levels). On the tracker: INST &rarr; presets.</p>
+<p class="note">Only .mti, up to 1 KB, name up to 16 characters: A-Z, digits, - and _. A preset sits in the folder of its type (FM, DRUM, SAMPLE, CHIP, SYNTH, LOFI); inside, folders are allowed (up to 4 levels). On the tracker: INST &rarr; presets.</p>
 <div class="crumb"><span></span><button>New folder</button></div>
 <div class="drop">Drop files here or click to choose<input type="file" accept=".mti" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>

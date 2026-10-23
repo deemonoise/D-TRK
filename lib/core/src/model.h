@@ -55,8 +55,8 @@ enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
 enum class ChopMode : uint8_t { Equal, Trans, Count };
 constexpr int kMaxSlices = 32;
-enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Count };
-// UI order of the types (FM, SYNTH, DRUM, SAMPLE, CHIP, KIT): position k -> type, type -> position.
+enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Lofi, Count };
+// UI order of the types (FM, SYNTH, DRUM, SAMPLE, CHIP, LOFI, KIT): position k -> type, type -> position.
 InstrType instrTypeAt(int k);
 int instrTypePos(InstrType t);
 constexpr int kKitLanes = 8;
@@ -88,10 +88,14 @@ enum SynMacro : uint8_t { kMacShp1 = kMacDec, kMacShp2 = kMacCol, kMacMix = kMac
 enum class DrumMachine : uint8_t {
   Bd8, Sd8, Tom8, Cp8, Rs8, Cl8, Cb8, Hh8, Cy8, Bd9, Sd9, Tom9, Cp9, Rs9, Hh9, Cy9, Count
 };
-// Instrument::machine of either type fits below this.
+// Instrument::machine of any type fits below this.
 constexpr int kMachineMax = 16;
 static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
+// LOFI machines: BYTE (bytebeat formula, Instrument::lofiFormula), APC (Atari Punk Console). Stored in
+// files: new machines go before Count only.
+enum class LofiMachine : uint8_t { Byte, Apc, Count };
+static_assert(static_cast<int>(LofiMachine::Count) <= kMachineMax, "machine field");
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
 // send, the drive, the reverb send, the bit / sample-rate reduction, the pan, the drive model, the
@@ -175,7 +179,7 @@ struct Instrument {
   uint8_t sliceCount = 0;     // 0..kMaxSlices
   uint16_t slices[kMaxSlices] = {0};
   // FM / DRUM: machine and its macros (see fmSetMachine, drumSetMachine), LFO.
-  uint8_t machine = 0;                                // FmMachine or DrumMachine, by type
+  uint8_t machine = 0;                                // FmMachine, DrumMachine or LofiMachine, by type
   uint8_t macro[kFmMacros] = {85, 40, 32, 70, 50};    // DECAY..CONTOUR 0..127 (FM / DRUM), Kick defaults
   uint8_t lfoWave = 0;   // LfoWave
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
@@ -214,6 +218,8 @@ struct Instrument {
   LfoCfg lfo[kLfos - 1];   // LFO 2..4 (LFO 1 is lfoWave .. lfoSync above; see lfoRef)
   KitLane kit[kKitLanes];  // KIT: the lanes (see kitSetDefaults)
   uint8_t driveModel = 0;  // DriveModel of the recommended insert (see drive above); 0 in a project
+  uint8_t lofiFormula = 0;  // LOFI BYTE: built-in formula index (bytebeat_lib.h), out of range = 0
+  uint8_t lofiSync = 0;     // LOFI BYTE: 1 = t at 1024 per 1/16 step of the project tempo
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }
@@ -256,13 +262,21 @@ float resoQ(float v);
 float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec);
 // DRUM: sets the machine (clamped) and its default macros.
 void drumSetMachine(Instrument& m, uint8_t machine);
+// LOFI: sets the machine (clamped) and its default macros (BYTE: A B C = lofiFormula's defaults).
+void lofiSetMachine(Instrument& m, uint8_t machine);
+// LOFI BYTE: macros A B C (slots 1..3) = the defaults of lofiFormula (out of range = entry 0); TONE
+// and LOOP stay. The UI calls it when the formula changes.
+void lofiLoadFormulaDefaults(Instrument& m);
+const char* lofiMachineName(uint8_t machine);  // "BYTE", "APC"; out of range = BYTE
+// Macro label of the LOFI machine (k 0..4), e.g. "TONE"; "" = the slot does nothing on it.
+const char* lofiMacroName(uint8_t machine, int k);
 // Changes the type. FM / DRUM: the machine (clamped) with its default macros (they mean other
-// things per type); SYNTH: its default macros; KIT: its default lanes. A LFO target the type lacks
-// (lfoDestValid) becomes PITCH.
+// things per type); SYNTH: its default macros; KIT: its default lanes; LOFI: BYTE with its default
+// macros, formula 0, sync off. A LFO target the type lacks (lfoDestValid) becomes PITCH.
 void instrSetType(Instrument& m, InstrType t);
 // KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
 void kitSetDefaults(Instrument& m);
-// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
+// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH / LOFI; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
 bool lfoDestValid(uint8_t dest, InstrType t);
 // LFO target d steps from dest over the targets valid for t, in the display order (PAN after RVB;
 // clamped at the ends); self (0..kLfos-1, -1 = none): that LFO's RTRG is skipped.

@@ -2,6 +2,7 @@
 #include <string.h>
 #include <unity.h>
 #include <vector>
+#include "bytebeat_lib.h"
 #include "inst_codec.h"
 #include "project_io.h"
 #include "scene.h"
@@ -323,7 +324,7 @@ void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   // Everything but patterns: project, track and audio chunks (< 2 KB) plus the instrument records
-  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LFOX 16, KITS 176 = 384 bytes each). One written
+  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LOFI 8, LFOX 16, KITS 176 = 392 bytes each). One written
   // empty pattern would add ~28 KB, so the bound proves none is.
   TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 400);
   a.patterns[2].steps[1][1].note = 60;
@@ -2554,6 +2555,95 @@ void test_scen_longer_and_shorter_records() {
   TEST_ASSERT_EQUAL(kDlyTimeMax, b.scenes[0].mst[kScnDTime]);  // 20 clamped
 }
 
+// ---- LOFI: machine + macros in FMIN, the formula in LOFI ----
+
+void test_lofi_round_trip() {
+  Instrument& m = a.instruments[5];
+  instrSetType(m, InstrType::Lofi);
+  lofiSetMachine(m, static_cast<uint8_t>(LofiMachine::Apc));
+  m.macro[2] = 77;
+  m.lofiFormula = static_cast<uint8_t>(byteFormulaCount() - 1);
+  m.lofiSync = 1;
+  a.instruments[6].lofiFormula = 3;  // kept on any type
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "LOFI"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  const Instrument& r = b.instruments[5];
+  TEST_ASSERT_TRUE(r.type == InstrType::Lofi);
+  TEST_ASSERT_EQUAL(static_cast<int>(LofiMachine::Apc), r.machine);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(m.macro, r.macro, kFmMacros);
+  TEST_ASSERT_EQUAL(byteFormulaCount() - 1, r.lofiFormula);
+  TEST_ASSERT_EQUAL(1, r.lofiSync);
+  TEST_ASSERT_EQUAL(0, b.instruments[6].lofiSync);
+  TEST_ASSERT_EQUAL(3, b.instruments[6].lofiFormula);
+}
+
+void test_file_without_lofi_chunk() {
+  instrSetType(a.instruments[0], InstrType::Lofi);
+  a.instruments[0].lofiFormula = 4;
+  a.instruments[0].lofiSync = 1;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"LOFI"});
+  TEST_ASSERT_FALSE(hasChunk(f, "LOFI"));
+  b.instruments[0].lofiFormula = 9;
+  b.instruments[0].lofiSync = 1;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_TRUE(b.instruments[0].type == InstrType::Lofi);
+  TEST_ASSERT_EQUAL(0, b.instruments[0].lofiFormula);
+  TEST_ASSERT_EQUAL(0, b.instruments[0].lofiSync);
+}
+
+// LOFI: count, record size, then 8-byte records (formula, sync, 6 reserved). Longer records: the known part;
+// shorter: defaults. Out of range machine / formula -> 0.
+void test_lofi_garbage_clamped_and_sizes() {
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> inst = {2};
+  for (int i = 0; i < 2; ++i) {
+    std::vector<uint8_t> r(kInstRecSize, 0);
+    r[8] = static_cast<uint8_t>(InstrType::Lofi);
+    inst.insert(inst.end(), r.begin(), r.end());
+  }
+  putChunk(f, "INST", inst);
+  std::vector<uint8_t> fm = {1};
+  std::vector<uint8_t> r(kFmRecSize, 0);
+  r[0] = static_cast<uint8_t>(LofiMachine::Count);  // machine out of range for LOFI
+  fm.insert(fm.end(), r.begin(), r.end());
+  putChunk(f, "FMIN", fm);
+  std::vector<uint8_t> lo = {2, 12};  // 2 records of 12 bytes (a newer, longer record)
+  for (int i = 0; i < 2; ++i) {
+    std::vector<uint8_t> x(12, 0xAA);
+    x[0] = i == 0 ? 200 : 2;  // formula: out of range, valid
+    lo.insert(lo.end(), x.begin(), x.end());
+  }
+  putChunk(f, "LOFI", lo);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.instruments[0].machine);
+  TEST_ASSERT_EQUAL(0, b.instruments[0].lofiFormula);
+  TEST_ASSERT_EQUAL(2, b.instruments[1].lofiFormula);
+  TEST_ASSERT_EQUAL(1, b.instruments[1].lofiSync);  // 0xAA: clamped to on
+  // An 8-byte record from before the sync flag (byte 1 = 0): sync off.
+  f = fileHeader();
+  putChunk(f, "LOFI", {1, 8, 3, 0, 0, 0, 0, 0, 0, 0});
+  finish(f);
+  b.instruments[0].lofiSync = 1;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(3, b.instruments[0].lofiFormula);
+  TEST_ASSERT_EQUAL(0, b.instruments[0].lofiSync);
+  // A zero record size: bad value (as TINS).
+  f = fileHeader();
+  putChunk(f, "LOFI", {kInstruments, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  // Records shorter than the chunk claims: bad value.
+  f = fileHeader();
+  putChunk(f, "LOFI", {3, 8, 1, 0, 0, 0, 0, 0, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -2652,5 +2742,8 @@ int main() {
   RUN_TEST(test_scen_round_trip);
   RUN_TEST(test_scen_default_not_written_and_absent_loads_default);
   RUN_TEST(test_scen_longer_and_shorter_records);
+  RUN_TEST(test_lofi_round_trip);
+  RUN_TEST(test_file_without_lofi_chunk);
+  RUN_TEST(test_lofi_garbage_clamped_and_sizes);
   return UNITY_END();
 }

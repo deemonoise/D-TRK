@@ -7,6 +7,7 @@
 #include "synth_drum.h"
 #include "synth_filter.h"
 #include "synth_fm.h"
+#include "synth_lofi.h"
 #include "synth_osc.h"
 #include "synth_syn.h"
 
@@ -28,7 +29,7 @@ constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceM
 // memory (Voice::eng); Voice::engKind says which one it holds. A note of another engine type
 // constructs its engine afresh; a note of the same type keeps it, also across CHIP / SAMPLE notes
 // in between, as when the three were separate members.
-enum class EngineKind : uint8_t { Fm, Drum, Syn };
+enum class EngineKind : uint8_t { Fm, Drum, Syn, Lofi };
 struct FmEngine {
   FmVoice fmv;
   FmParams fp;
@@ -37,14 +38,19 @@ struct DrumEngine {
   DrumVoice drv;
   DrumParams dp;
 };
+struct LofiEngine {
+  LofiVoice lv;
+  LofiParams lp;  // the formula cache (Synth::controlLofi)
+};
 union VoiceEngine {
   FmEngine fm;
   DrumEngine drum;
   SynVoice syn;
+  LofiEngine lofi;
   VoiceEngine() : fm() {}
 };
 static_assert(std::is_trivially_copyable<FmEngine>::value && std::is_trivially_copyable<DrumEngine>::value &&
-                  std::is_trivially_copyable<SynVoice>::value,
+                  std::is_trivially_copyable<SynVoice>::value && std::is_trivially_copyable<LofiEngine>::value,
               "Voice is copied as a whole (v = Voice())");
 
 struct Voice {
@@ -132,7 +138,7 @@ struct Voice {
   // Melodic voice in a project tuning (Synth::tune_ on at note-on, not a drum / KIT lane / NOTE slice):
   // pitch / target / the track's lastPitch are keys without fine, control() maps them (tuning.h).
   bool tuned = false;
-  // FM / DRUM / SYNTH engine, see VoiceEngine.
+  // FM / DRUM / SYNTH / LOFI engine, see VoiceEngine.
   EngineKind engKind = EngineKind::Fm;
   VoiceEngine eng;
   FmVoice& fmv() { return eng.fm.fmv; }
@@ -141,12 +147,15 @@ struct Voice {
   DrumParams& dp() { return eng.drum.dp; }
   const DrumParams& dp() const { return eng.drum.dp; }
   SynVoice& sv() { return eng.syn; }
+  LofiVoice& lv() { return eng.lofi.lv; }
+  LofiParams& lp() { return eng.lofi.lp; }
   // Makes the engine of kind k current: constructed afresh when another one is held.
   void useEngine(EngineKind k) {
     if (k == engKind) return;
     if (k == EngineKind::Fm) new (&eng.fm) FmEngine();
     else if (k == EngineKind::Drum) new (&eng.drum) DrumEngine();
-    else new (&eng.syn) SynVoice();
+    else if (k == EngineKind::Syn) new (&eng.syn) SynVoice();
+    else new (&eng.lofi) LofiEngine();
     engKind = k;
   }
   // Filter, every type (Synth::controlFilter).
@@ -155,12 +164,15 @@ struct Voice {
   bool fenvDone = false;             // the envelope has decayed to -60 dB: 0 until the next trigger
   float fltRes = -1, fltQ = 0.5f;    // resoQ(fltRes), cached
   Svf flt;
+  // LOFI instrument (machine above holds its LofiMachine): BYTE is heavy, APC light.
+  bool lofi = false;
 };
 
 // Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the
 // filter and a stolen voice is on its way out.
 inline bool heavyLoad(const Voice& x) {
-  return x.on && (x.fm || x.drum || x.synHeavy) && !x.stolen && !x.env.idle();
+  return x.on && (x.fm || x.drum || x.synHeavy || (x.lofi && x.machine == static_cast<uint8_t>(LofiMachine::Byte))) &&
+         !x.stolen && !x.env.idle();
 }
 
 // Picks a voice for track and marks it allocated. Mono: the track's voice if any (legato), else a free one.

@@ -3,6 +3,15 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## 2026-10-22
+- New instrument type **LOFI** (INST, the LOFI page) with two machines. **BYTE** — bytebeat: 45 built-in
+  formulas (2011 classics, our own and rhythmic ones), the counter `t` at 8 kHz on C-4 and by note pitch,
+  unsigned / signed modes; macros A, B, C (in every formula; turning Formula loads its defaults, a macro the
+  formula does not read is gray), TONE (steps → interpolation and lowpass), LOOP (loops `t`). **Sync**: `t`
+  from the project tempo (1024 per 1/16 step, the note sets only the octave), LOOP then in steps (1–1024).
+  **APC** — Atari Punk Console: an oscillator triggers a pulse of length WIDTH, a long pulse gives
+  subharmonics; macros WIDTH, TONE, DRIFT, SMOOTH. ADSR, filter, LFOs, macro locks and Mutate as on the other
+  types; BYTE is a heavy voice (within the limit of 8), APC a light one. 18 factory presets (BYTE, APC, SYNC*), your
+  own in `/presets/LOFI`; presets v6, the formula is stored in the project (`LOFI` chunk).
 - Scenes and crossfader (Octatrack style): 8 scenes per project locking per-track VOL, PAN, insert, sends and
   filter plus 14 master parameters; an A↔B crossfader on MIX (tap / drag, encoder), the SCENE view for editing
   (Shift + A on MIX; big touch buttons, a held track button + turn / click sets / unsets its lock), A + turn in

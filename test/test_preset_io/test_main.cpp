@@ -45,6 +45,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   SAME(lfoWave); SAME(lfoRate); SAME(lfoDepth); SAME(lfoDest);
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack); SAME(send);
   SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate); SAME(driveModel);
+  SAME(lofiFormula); SAME(lofiSync);
   SAME(sliceMode); SAME(chopMode); SAME(chopN); SAME(chopThresh); SAME(sliceCount);
   for (int k = 0; k < kMaxSlices; ++k) SAME(slices[k]);
   for (int k = 0; k < 2; ++k) {
@@ -85,7 +86,8 @@ void test_roundtrip() {
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(220, kPresetSize);
+  TEST_ASSERT_EQUAL(228, kPresetSize);
+  TEST_ASSERT_EQUAL(220, kPresetSizeV5);
   TEST_ASSERT_EQUAL(204, kPresetSizeV3);
   TEST_ASSERT_EQUAL(156, kPresetSizeV2);
   TEST_ASSERT_EQUAL(84, kPresetSizeV1);
@@ -567,6 +569,86 @@ void test_preset_insert_for_save_roundtrip() {
   TEST_ASSERT_EQUAL(0, n.driveModel);
 }
 
+// ---- Version 6: the LOFI record ----
+
+// A file with v as its version, cut to size (the CRC refreshed).
+static std::vector<uint8_t> asVersion(std::vector<uint8_t> v, uint8_t ver, size_t size) {
+  v.erase(v.begin() + (size - 4), v.end() - 4);
+  v[4] = ver;
+  const size_t p = v.size() - 4;
+  const uint32_t c = crc32(v.data(), p);
+  for (int i = 0; i < 4; ++i) v[p + i] = static_cast<uint8_t>(c >> (8 * i));
+  return v;
+}
+
+static Instrument lofi() {
+  Instrument m;
+  strcpy(m.name, "BYTES");
+  instrSetType(m, InstrType::Lofi);
+  lofiSetMachine(m, static_cast<uint8_t>(LofiMachine::Apc));
+  m.macro[1] = 90;
+  m.lofiFormula = 5;
+  m.lofiSync = 1;
+  return m;
+}
+
+void test_v6_lofi_roundtrip() {
+  const Instrument a = lofi();
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  TEST_ASSERT_EQUAL(6, kPresetVersion);
+  TEST_ASSERT_EQUAL(6, out.buf[4]);
+  TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "v6");
+  TEST_ASSERT_TRUE(b.type == InstrType::Lofi);
+  TEST_ASSERT_EQUAL(static_cast<int>(LofiMachine::Apc), b.machine);
+  TEST_ASSERT_EQUAL(5, b.lofiFormula);
+  TEST_ASSERT_EQUAL(1, b.lofiSync);
+  // The sync flag is byte 1 of the LOFI record (the last kLofiRecSize bytes before the CRC);
+  // a record from before it (0 there) loads sync off.
+  std::vector<uint8_t> v = out.buf;
+  TEST_ASSERT_EQUAL(1, v[v.size() - 4 - kLofiRecSize + 1]);
+  v[v.size() - 4 - kLofiRecSize + 1] = 0;
+  v = asVersion(v, 6, kPresetSize);
+  VecSource in0(v);
+  Instrument c;
+  c.lofiSync = 1;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in0, c)));
+  TEST_ASSERT_EQUAL(0, c.lofiSync);
+}
+
+void test_v5_file_loads_formula_0() {
+  Instrument a = sample();
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  const std::vector<uint8_t> v = asVersion(out.buf, 5, kPresetSizeV5);
+  TEST_ASSERT_EQUAL(kPresetSizeV5, v.size());
+  VecSource in(v);
+  Instrument b;
+  b.lofiFormula = 9;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "v5");
+  TEST_ASSERT_EQUAL(0, b.lofiFormula);
+}
+
+void test_lofi_preset_clamped() {
+  Instrument a = lofi();
+  a.machine = 9;         // past LofiMachine::Count
+  a.lofiFormula = 250;   // past the library
+  a.lofiSync = 7;        // flag: 0 / 1
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(0, b.machine);
+  TEST_ASSERT_EQUAL(0, b.lofiFormula);
+  TEST_ASSERT_EQUAL(1, b.lofiSync);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -591,5 +673,8 @@ int main() {
   RUN_TEST(test_take_preset_insert);
   RUN_TEST(test_take_preset_insert_other_track);
   RUN_TEST(test_preset_insert_for_save_roundtrip);
+  RUN_TEST(test_v6_lofi_roundtrip);
+  RUN_TEST(test_v5_file_loads_formula_0);
+  RUN_TEST(test_lofi_preset_clamped);
   return UNITY_END();
 }
