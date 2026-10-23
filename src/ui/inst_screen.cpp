@@ -55,7 +55,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                 [this](int d) { editNameChar(inst().name, kNameLen, namePos_, d); }};
     p[kType] = {"Type",
                 [this](char* o, int n) {
-                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT", "MACRO", "STRING", "LOFI"};
+                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT", "LOFI", "MACRO", "STRING"};
                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::InstrType::Count), "type names");
                   const int t = static_cast<int>(inst().type);
                   snprintf(o, n, "%s", kNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0]);
@@ -987,7 +987,7 @@ void InstScreen::onTouch(const TouchEvent& ev) {
 }
 
 void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
-  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "OSC", "RES", "LOFI"};
+  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "LOFI", "OSC", "RES"};
   static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
   const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};

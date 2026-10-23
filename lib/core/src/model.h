@@ -55,9 +55,8 @@ enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
 enum class ChopMode : uint8_t { Equal, Trans, Count };
 constexpr int kMaxSlices = 32;
-// Stored in files (INST byte 8): new types before Count only. LOFI is 8 here (6 on main, before MACRO /
-// STRING came over from this branch).
-enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Macro, String, Lofi, Count };
+// Stored in files (INST byte 8): new types before Count only. LOFI is 6 as on main; MACRO, STRING follow.
+enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Lofi, Macro, String, Count };
 // UI order of the types (FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP, LOFI, KIT): position k -> type, type -> position.
 InstrType instrTypeAt(int k);
 int instrTypePos(InstrType t);

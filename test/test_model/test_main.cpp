@@ -136,9 +136,9 @@ void test_instr_type_order() {
   TEST_ASSERT_TRUE(instrTypeAt(6) == InstrType::Chip);
   TEST_ASSERT_TRUE(instrTypeAt(7) == InstrType::Lofi);
   TEST_ASSERT_TRUE(instrTypeAt(8) == InstrType::Kit);
-  TEST_ASSERT_EQUAL(6, static_cast<int>(InstrType::Macro));  // stored in files: appended after Kit
-  TEST_ASSERT_EQUAL(7, static_cast<int>(InstrType::String));  // appended after Macro
-  TEST_ASSERT_EQUAL(8, static_cast<int>(InstrType::Lofi));    // appended after String (6 on main)
+  TEST_ASSERT_EQUAL(6, static_cast<int>(InstrType::Lofi));    // stored in files: appended after Kit (as on main)
+  TEST_ASSERT_EQUAL(7, static_cast<int>(InstrType::Macro));   // appended after Lofi
+  TEST_ASSERT_EQUAL(8, static_cast<int>(InstrType::String));  // appended after Macro
   TEST_ASSERT_EQUAL(9, static_cast<int>(InstrType::Count));
   for (int k = 0; k < static_cast<int>(InstrType::Count); ++k) TEST_ASSERT_EQUAL(k, instrTypePos(instrTypeAt(k)));
 }
