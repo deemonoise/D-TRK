@@ -59,6 +59,7 @@ struct DiceParts {
   Instrument instruments[kInstruments];
   GenCfg gen[kTracks];
   Pattern pat;
+  VarCfg var[kTracks];
 };
 
 // A roll in two phases, so the engine never waits for the generators: diceDraft copies the parts from

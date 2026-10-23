@@ -1225,9 +1225,15 @@ MT_HOT float Synth::lfoRateHz(const LfoCfg& c) const {
 }
 
 namespace {
-// LFO wave at phase ph (0..1), -1..1; rnd: the Random wave's value of this cycle.
-MT_HOT float lfoShape(uint8_t wave, float ph, float rnd) {
+// LFO wave at phase ph (0..1), -1..1; rnd: the Random wave's value of this cycle; byte: the Byte
+// wave's {formula, A} (Instrument::lfoByte), at t = phase x 65536, B / C the formula's defaults.
+MT_HOT float lfoShape(uint8_t wave, float ph, float rnd, const uint8_t* byte) {
   switch (static_cast<LfoWave>(wave)) {
+    case LfoWave::Byte: {
+      const ByteFormula& f = byteFormula(byte[0]);
+      const int32_t x = byteEval(byteCode(byte[0]), static_cast<uint32_t>(ph * 65536.f), byte[1], f.b, f.c);
+      return byteSample(x, f.mode);
+    }
     case LfoWave::Tri: return 4.f * (ph < 0.5f ? 0.5f - ph : ph - 0.5f) - 1.f;
     case LfoWave::Saw: return 2.f * ph - 1.f;
     case LfoWave::Square: return ph < 0.5f ? 1.f : -1.f;
@@ -1244,7 +1250,7 @@ MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods&
   if (!c.depth) return v.lfoOut[i] = 0;
   float w;
   if (lfoFree(c.sync)) {
-    w = lfoShape(c.wave, instLfoPhase_[v.instr][i], instLfoRnd_[v.instr][i]);
+    w = lfoShape(c.wave, instLfoPhase_[v.instr][i], instLfoRnd_[v.instr][i], inst(v.instr).lfoByte[i]);
   } else {
     float& ph = v.lfoPhase[i];
     if (mods.rtrg & (1u << i)) {
@@ -1259,7 +1265,7 @@ MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods&
       v.lfoRnd[i] = rnd();
       v.lfoWrap |= static_cast<uint8_t>(1u << i);
     }
-    w = lfoShape(c.wave, ph, v.lfoRnd[i]);
+    w = lfoShape(c.wave, ph, v.lfoRnd[i], inst(v.instr).lfoByte[i]);
   }
   return v.lfoOut[i] = w * lfoDepth(c.depth) * (1.f / 64.f) * mods.depth[i];
 }
@@ -1308,7 +1314,7 @@ MT_HOT void Synth::advanceInstLfos() {
       }
       // Read only as an LFO -> LFO source: the wave (sinf) only for an L1..L4 target.
       instLfoOut_[m][i] = c.depth && c.dest >= ld(LfoDest::Rate1)
-                              ? lfoShape(c.wave, ph, instLfoRnd_[m][i]) * lfoDepth(c.depth) * (1.f / 64.f) * mods.depth[i]
+                              ? lfoShape(c.wave, ph, instLfoRnd_[m][i], inst(static_cast<uint8_t>(m)).lfoByte[i]) * lfoDepth(c.depth) * (1.f / 64.f) * mods.depth[i]
                               : 0;
     }
     instLfoWrap_[m] = wrap;

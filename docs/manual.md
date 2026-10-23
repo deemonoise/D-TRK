@@ -204,11 +204,12 @@ Menu → **Select** sets a selection corner at the cell under the cursor. While 
 
 | Without selection | With selection |
 |-------------------|----------------|
-| Copy step · Paste · Clear step · Note OFF · Select · Copy track · Clear track · Transpose track… · **Fill…** · **Capture gen** (on a track with a generator) · **Capture evo** (on a track with Evolve on) · **Resample track** · **Resample pattern** · **Rec: ON/OFF** · **Perf: ON/OFF** · Detail view / Overview · Follow: ON/OFF · Undo | Copy sel · Paste · Clear sel · Note OFF sel · Transpose… · **Fill…** · Undo · Clear selection |
+| Copy step · Paste · Clear step · Note OFF · Select · Copy track · Clear track · Transpose track… · **Fill…** · **Capture gen** (on a track with a generator) · **Capture evo** (on a track with Evolve on) · **Capture var** (on a track with VAR on, instead of Capture evo) · **Resample track** · **Resample pattern** · **Rec: ON/OFF** · **Perf: ON/OFF** · Detail view / Overview · Follow: ON/OFF · Undo | Copy sel · Paste · Clear sel · Note OFF sel · Transpose… · **Fill…** · Undo · Clear selection |
 
 - **Transpose…** opens a dialog: **Amount** and **Mode** (SCALE — scale degrees, CHROMATIC — semitones), with OK / CANCEL buttons. The range is two octaves up and down (in SCALE that is 2 × the number of scale notes; ±14 for major). <kbd>Shift</kbd>+turn changes Amount by an octave. Long press — Cancel. Affects only steps with a note; without a selection, the whole track; one undo step. It is a shift, not a state: Amount starts at 0 every time the dialog opens; to restore the notes, apply the opposite shift (+12, then −12). Mode is remembered until power-off.
-- **Capture gen** (a track with a [generator](#gen), not a drum track) writes the generator's loop into the pattern: one pass of the track length. PITCH replaces the notes of steps with a note; GATE puts a note on the hit steps and removes it from the others; OFF and step fx stay, Flip is not applied (the loop as it is). While playing, the loop is taken from where it is now; when stopped, from the start (from the seed). Then Gen is turned off so the pattern sounds as written; toast `GEN CAPTURED`, one undo step. While [Evolve](#evolve) has changes on the track the heard notes differ from the loop: it refuses with `EVO: CAPTURE EVO FIRST` (Capture evo first, or wait for a stop).
+- **Capture gen** (a track with a [generator](#gen), not a drum track) writes the generator's loop into the pattern: one pass of the track length. PITCH replaces the notes of steps with a note; GATE puts a note on the hit steps and removes it from the others; OFF and step fx stay, Flip is not applied (the loop as it is). While playing, the loop is taken from where it is now; when stopped, from the start (from the seed). Then Gen is turned off so the pattern sounds as written; toast `GEN CAPTURED`, one undo step. While [Evolve](#evolve) has changes on the track the heard notes differ from the loop: it refuses with `EVO: CAPTURE EVO FIRST` (Capture evo first, or wait for a stop); likewise with a [VAR](#var) generation other than 0 — `VAR: CAPTURE VAR FIRST`. In BYTE PITCH / BYTE GATE, Capture gen writes the formula's notes the same way as PITCH / GATE.
 - **Capture evo** (a track with [Evolve](#evolve) on) writes the track's heard drift into the edited pattern, then the drift starts over; see [Capture evo](#captureevo).
+- **Capture var** (a track with [VAR](#var) on) writes what the track plays now (VAR, and EVO on top of it) into the edited pattern; see [Capture var](#capturevar).
 - Paste inserts at the cursor position or at the top-left corner of the selection. It doesn't go past track 16 or the pattern length; the selection is also clipped at track 16.
 - The clipboard survives loading another project — so you can move parts between projects.
 - If the pattern changed while the menu was open, the action is not performed (toast "PATTERN CHANGED").
@@ -315,7 +316,7 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `LFO` | 1–4 | INT | Which LFO of the instrument this step's `LFD`…`LFR` act on; without it — LFO 1. Slot order doesn't matter. |
 | `LFD` | −64…+63 | INT | Depth lock of the selected LFO (turns the LFO on even if the instrument's Depth is 0). |
 | `LFS` | 0–127 | INT | Rate lock of the selected LFO: in FREE — the Hz scale, in TEMPO — the division index (above 11 = 8 BARS); not applied to a Retrig OFF LFO (its phase is the instrument's). |
-| `LFW` | SIN, TRI, SAW, SQR, RND | INT | Wave lock of the selected LFO. |
+| `LFW` | SIN, TRI, SAW, SQR, RND, BYT | INT | Wave lock of the selected LFO. |
 | `LFT` | PIT, DEC, COL, SHP, SWP, CON, VOL, CUT, DRV, RES, FEN, DLY, RVB, PAN, BIT, SRR, FIN, DUT, SUB, NOI, SM2, RA1–RA4, DP1–DP4, RG1–RG4, MOD | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
 | `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): Retrig OFF — the instrument's shared phase, Retrig ON — the step's notes or the sounding notes. |
 | `DEC` | 0–127 | INT | FM, DRUM, SYNTH, LOFI: the DECAY macro for the step's note (for DRUM and LOFI — the machine slot with the same number, for SYNTH — SHP1). |
@@ -752,7 +753,7 @@ The next chord: with PROGRESSION the next one of the progression, with SELECTION
 
 The track is the one under the cursor in GRID. To switch: tap the arrows in the header or <kbd>Shift</kbd>+turn outside edit mode. The mixer for all tracks is the [MIX](#mixer) tab.
 
-Parameters are on seven pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **EVO**, **MIDI**. To pick a page, tap its tab below the header; with the encoder, a turn cycles through the rows and the page tabs (above the first row, framed); there, <kbd>A</kbd> held + turn goes to the next / previous page (the cursor stays on the page tabs); a click does nothing. From anywhere on the screen: <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
+Parameters are on eight pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **EVO**, **VAR**, **MIDI**. To pick a page, tap its tab below the header; with the encoder, a turn cycles through the rows and the page tabs (above the first row, framed); there, <kbd>A</kbd> held + turn goes to the next / previous page (the cursor stays on the page tabs); a click does nothing. From anywhere on the screen: <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
 
 | Parameter | Values | Default |
 |-----------|--------|---------|
@@ -788,6 +789,7 @@ Parameters are on seven pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **
 | Humanize | OFF, 1–100: each note of the track is randomly shifted in time (up to ±10% of a step at 100) and in velocity (up to ±20) — a "live" feel | OFF |
 | **GEN** | see [GEN: shift-register generator](#gen) | |
 | **EVO** | see [EVO: evolve](#evolve) | |
+| **VAR** | see [VAR: cellular automaton and Markov chain](#var) | |
 | **MIDI** | | |
 | Channel | 1–16 | track number |
 | CC A / CC B | CC number 0–127 | 74 / 71 |
@@ -812,21 +814,27 @@ Parameters are on seven pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **
 
 A live melody generator on a track: a looping shift register 2–16 bits long. On every clock the register shifts, the bit that falls out comes back in at the start, and with probability **Flip** it is inverted on the way. Flip `LOCK` (0) locks the loop: it repeats every Length clocks; `x2 INV` (100) locks it too, but twice as long (the second half is the first one inverted); in between the loop slowly mutates (fastest around 50%). The register value picks a note of the project scale (PROJ → Scale) in a range.
 
+The **BYTE PITCH** and **BYTE GATE** modes read a bytebeat formula instead of the register — one of the 45 [LOFI](#lofi) formulas: each generator clock listens to its own stretch of the formula, which gives a scale degree and a hit loudness (see [below](#genbyte)).
+
 The generator **plays live and leaves the pattern alone**, unlike Fill, which writes notes once. The track stays an ordinary one: MIDI or INT, its own instrument, insert, mute / solo, every step fx works. To write the loop into the pattern, use **Capture gen** in the GRID menu.
 
 | Parameter | Values | Default |
 |-----------|--------|---------|
-| Gen | OFF, PITCH, GATE (on a drum track `DRUM`: the generator does not act) | OFF |
-| Length | 2–16 bits | 8 |
-| Flip | LOCK (0), 1–99%, x2 INV (100) | 10% |
+| Gen | OFF, PITCH, GATE, BYTE PITCH, BYTE GATE (on a drum track `DRUM`: the generator does not act) | OFF |
+| Length | 2–16 bits, PITCH / GATE only | 8 |
+| Flip | LOCK (0), 1–99%, x2 INV (100), PITCH / GATE only | 10% |
 | Low | the lowest note of the range (raised to the nearest scale note) | C-3 |
 | Range | 1–4 OCT | 2 OCT |
-| Density | 0–100%, GATE only | 50% |
-| Seed | 0–65535; click — a new random seed | track number |
-| Register | the register bits as cells (the newest bit on the left), display only | — |
+| Density | 0–100%, GATE and BYTE GATE only | 50% |
+| Seed | 0–65535; click — a new random seed; PITCH / GATE only | track number |
+| Register | the register bits as cells (the newest bit on the left), display only; PITCH / GATE only | — |
+| Formula | a bytebeat formula, the same 45 as in [LOFI](#lofi) (the turn wraps around); BYTE only | 42MELODY |
+| A / B / C | 0–127: the formula's `a`, `b`, `c`; grey when the formula does not read it; BYTE only | 42 / 10 / 0 |
+| Zoom | 0–12: the stretch of the formula per clock — 2^Zoom values of `t`; BYTE only | 10 |
 
 - **PITCH:** steps **with a note** get the generator's note instead of their pitch; velocity, gate and every fx of the step stay. CHD builds the chord on the new note, NRN scatters it, ARS arpeggiates it, TIE joins equal neighbouring notes. The register shifts on every step with a note, so Length is the number of notes in the loop: 4 notes in the pattern with Length 8 give an 8-note melody over two passes. Editing the pattern's rhythm shifts the melody's phase.
 - **GATE:** the generator sets the rhythm too. The register shifts on every step of the track (Speed counts); a step plays the generator's note when the register gives a hit (Density: higher — more hits, the old ones stay; 0% — silence, 100% — every step). The pattern's notes are ignored except **OFF**, which ends notes as usual. The step's fx act on the hit: CND / PRB decide whether it sounds, FLT / GAT / CHD are its locks. The velocity is the step's (`...` — Def vel).
+- <a id="genbyte"></a>**BYTE PITCH / BYTE GATE:** the clock runs as in PITCH (steps with a note) / GATE (every track step), and everything above about fx, OFF and velocity applies the same way. Clock number `n` reads a stretch of 2^Zoom values of `t` starting at `n × 2^Zoom`; at Zoom 10 a step is 1024 values, exactly what LOFI with Sync runs per 1/16 step, so the rhythmic formulas (35–44) line up with the steps. 8 samples are taken from the stretch: their hash picks the scale degree in the Low / Range range, and their loudness (the spread around their mean) decides the hit in BYTE GATE: a step hits when it is loud enough for Density — as Density grows, the loudest steps come in first; 100% — every step. Formula silence (including a flat 128) is the quietest step. A smaller Zoom — short stretches, the melody travels through the formula faster; a larger one — each step covers more of the formula. Turning Formula loads its default A, B, C, as in LOFI. Length, Flip, Seed and Register are unused in BYTE (grey): the melody comes from the formula, A / B / C and Zoom only, and repeats from every Play from stop.
 - A step failing CND / PRB, a muted track and steps skipped after a stall shift the register too: after unmute the loop is in the same phase.
 - The register resets only on **Play from stop** (and <kbd>Shift</kbd>+<kbd>Play</kbd>). Pattern changes, song slots, pause — the loop goes on. The generator acts in every pattern.
 - The header shows on the right the note the register gives now (in GATE also a hit dot). The cells follow the heard step; a flip of the new bit blinks yellow.
@@ -834,7 +842,7 @@ The generator **plays live and leaves the pattern alone**, unlike Fill, which wr
 - **Live Flip:** hold a track button and click the encoder — the turn switches volume → pan → Flip (see [Track buttons](#trackkeys)); `FLP` on a step is a per-step "lock" (see [fx](#fx)).
 - In GRID a track with a generator has a yellow `G` by its name; in Detail its note column is dim: the generator sets the pitch.
 - **Render and Resample** sound like "Play from stop": the register from the start, flips from the seed, so two renders give the same bytes. To keep the live loop, use Capture gen.
-- The generator is saved with the project (TGEN chunk); its rows have no undo (like Volume). Older files open with the generators OFF; older firmware skips TGEN and reads FLP as an empty slot.
+- The generator is saved with the project (TGEN chunk); its rows have no undo (like Volume). Older files open with the generators OFF; older firmware skips TGEN and reads FLP as an empty slot. The TGEN record grew (Formula, A, B, C, Zoom): older files lack these fields and get the defaults.
 
 <a id="evolve"></a>
 ### EVO: evolve
@@ -861,6 +869,38 @@ The track's pattern slowly drifts by itself while it plays: notes move along the
 - The header shows `MUT` (change steps since Play), `PASS` (passes counted towards the next one) and `CHG` (changed steps of the track's length) of the heard drift. Live edits apply from the next unheard step; turning a kind off silences its changes at once (they come back when it is turned on).
 - <a id="captureevo"></a>**Capture evo** (GRID menu, on a track with Evolve on) writes what the track plays now into the edited pattern, all steps of its length (one undo step, toast `EVO CAPTURED`). Then the track's drift starts over from the written pattern. Only while the edited pattern is the one playing (else toast `EVO: OTHER PATTERN`); with no drift, `EVO: NO CHANGES`.
 - Evolve is saved with the project (TEVO chunk); its rows have no undo (like Volume). Older files open with evolve OFF; older firmware skips TEVO.
+
+<a id="var"></a>
+### VAR: cellular automaton and Markov chain
+
+The track plays variations of its pattern: every few passes a new **generation** comes in — of a cellular automaton grown from the pattern's notes, or of a Markov chain built from the transitions between its own notes. Like GEN and EVO, VAR **plays live and leaves the pattern alone**: GRID shows the notes as written. To keep a variant you like, use **Capture var** in the GRID menu.
+
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| Var | OFF, CA1D, CA2D, MARKOV (CA2D on a melodic track — `CA2D (AS 1D)`) | OFF |
+| Every | 1–16 PASS: a new generation every that many pattern passes | 2 PASS |
+| Rule | CA1D: Wolfram rule 0–255; CA2D: LIFE, HIGHLIFE, SEEDS, DAYNIGHT, MAZE; CA only | 90 / LIFE |
+| Reset | NEVER, 1–64 GEN: after that many generations, back to generation 0; CA only | 16 GEN |
+| Noise | 0–100%: the chance that one random cell flips in a generation; CA only | 0% |
+| Amount | 0–100%: the chance that a step takes the chain's note instead of the pattern's; MARKOV only | 50% |
+| Order | 1–2: how many previous notes the chain remembers; MARKOV only | 1 |
+| Rhythm | ON / OFF: rests are links of the chain too, the rhythm changes as well; MARKOV only | OFF |
+
+Rows the mode does not use are grey (with Var OFF, all but Var). The CA1D rule number and the CA2D rule are kept apart: switching modes does not lose them.
+
+- **Cells (CA1D, CA2D):** each step of the track (within its length, Pat len) is a cell, alive or dead. **Generation 0** is the pattern itself: steps with a note are alive. On a drum track the cells are 8 rows, one per KIT lane: the lanes a step plays are alive.
+- **CA1D** — a one-dimensional automaton on a Wolfram rule: a cell of the next generation depends on itself and its two neighbouring steps, wrapping round the end of the track. For example, 90 — a Sierpinski pattern, 30 — chaos, 110 — complex moving structures; many rules die out or freeze quickly. On a drum track each lane follows the rule on its own.
+- **CA2D** — a Life-like automaton on a field of 8 lanes × the track's steps, wrapped into a torus (the last lane borders the first, the end of the track the start); a cell has 8 neighbours. **LIFE** — the classic Game of Life (B3/S23); **HIGHLIFE** — close to it, with self-replicating shapes (B36/S23); **SEEDS** — every live cell dies at once, births burst out (B2/S); **DAYNIGHT** — live and dead behave alike (B3678/S34678); **MAZE** — grows into mazes (B3/S12345). Drum tracks only: a melodic track has one row, so CA2D plays as CA1D (the Var row shows `CA2D (AS 1D)`, Rule is the CA1D rule number).
+- **Back to generation 0:** after **Reset** generations (NEVER — never; Reset 1 goes back right after the first generation, so the track sounds as written), when every cell has died and when a generation did not change (stasis). **Noise** flips one random cell per generation with its chance — a frozen field comes back to life.
+- **How the cells sound:** a live cell with a note — the step as written; a live empty one — a copy of the nearest step with a note to its left (wrapping), whole, with its velocity and fx; on a track with no notes at all — the project scale's root in the C-4 octave at the default velocity. A dead cell is silent: the note is dropped, the step's fx stay. On a drum track a step plays the lanes whose cells are alive.
+- **MARKOV:** each generation builds a transition table from the track's pattern: which notes (up to 16 distinct ones; on a drum track, lane sets) follow which, wrapping round the end of the track. **Order** 1 — the next note depends on one previous note, 2 — on two (closer to the original). Then a new sequence of the track's length is built: it starts on the pattern's first note, and each next step takes a note from the chain with chance **Amount** (the more often a transition occurs in the pattern, the likelier it is), otherwise the pattern's. Amount 0 — the pattern as is. A note from the chain plays with the velocity and fx of the first pattern step holding that note. **Rhythm** OFF — only the pitch of the steps with a note changes (on a drum track, their lanes), the rhythm stays as written; ON — rests are links of the chain too, so notes can move onto empty steps and back. Each MARKOV generation is built afresh from the pattern; Reset and Noise do not apply. If a note has no transitions in the pattern, the step plays the pattern.
+- **Passes and generations:** the first pass after Play always sounds as written; with Every 2 the first generation sounds from the third pass. Generations go on across song slots with the same pattern. Another pattern (queued, or the next song slot) — generation 0 of the new pattern, the pass count from zero. Stop (and <kbd>Shift</kbd>+<kbd>Play</kbd>) resets VAR; pause keeps it.
+- **Order:** pattern → VAR → [EVO](#evolve) → [GEN](#gen). Evolve drifts what VAR plays (both change the rhythm and stack); the generator acts last (PITCH replaces the pitch of the notes VAR played). CND, PRB, Humanize and groove apply after all of them. MIDI tracks work like INT ones.
+- **Randomness:** as for EVO — from the project **Seed** (PROJ → SONG), mixed with a random number at every Play: each start goes its own way. **Render WAV and Resample** use the Seed alone: the same file every time.
+- The header shows `GEN` (generations since generation 0; for MARKOV, since Play) and `PASS` (passes counted towards the next generation); on the right, a mini grid of the heard state over the track's length: CA live cells (on a drum track 8 rows, lane 1 on top), MARKOV the steps that differ from the pattern. Live edits apply from the next unheard step.
+- <a id="capturevar"></a>**Capture var** (GRID menu, on a track with VAR on; it replaces Capture evo) writes what the track plays now — VAR, and the EVO drift on top of it — into the edited pattern, all steps of its length (one undo step, toast `VAR CAPTURED`). Then VAR starts from generation 0 of the written pattern (and the EVO drift starts over). Only while the edited pattern is the one playing (else toast `VAR: OTHER PATTERN`); at generation 0 with no drift, `VAR: NO CHANGES`. Capture gen on a track whose VAR is not at generation 0 refuses with `VAR: CAPTURE VAR FIRST`.
+- **Dice** (PROJ) → Pattern turns VAR off on the rewritten tracks.
+- VAR is saved with the project (TVAR chunk); its rows have no undo (like Volume). Older files open with Var OFF; older firmware skips TVAR.
 
 <a id="mixer"></a>
 
@@ -1297,7 +1337,7 @@ The macros work as on DRUM: the step locks `DEC`, `COL`, `SHP`, `SWP`, `CON`, th
 | 43 | MELSEQ | unsigned | **rhythm:** 16-step melody; A — octaves down, B — gate |
 | 44 | PWMARP | unsigned | **rhythm:** pulse arpeggio; A — steps per note, B — pulse width, C — width sweep speed |
 
-Formulas 0–17 and 26–34 are bytebeat classics from 2011 (authors credited in the source), 18–25 and 35–44 are D-TRK's own; 35–44 are rhythmic (the rhythm runs on `t>>10…14`) and are meant for Sync. The formula number is stored in projects and presets; new formulas are only appended. Entering your own formula comes later.
+Formulas 0–17 and 26–34 are bytebeat classics from 2011 (authors credited in the source), 18–25 and 35–44 are D-TRK's own; 35–44 are rhythmic (the rhythm runs on `t>>10…14`) and are meant for Sync. The formula number is stored in projects and presets; new formulas are only appended. Entering your own formula comes later. The same formulas play in the track generator ([GEN BYTE PITCH / BYTE GATE](#genbyte)) and in an LFO with Wave BYTE ([LFO BYTE](#filter)).
 
 **Factory presets** (`[FACTORY]` → LOFI): BYTE — 42 MELDY, VIZNUT, SIERPNSK, LOSTSPC, NIBBLES, MASK 27, SQ DUET, FRACBELL, LOOP ARP, BYTEBASS, SYNCBEAT, SYNCHATS, SYNCARP, SYNCBASS (the SYNC ones with Sync on); APC — APC, APC SUB, APC DRFT, APC SOFT. Your own LOFI presets go to `/presets/LOFI`.
 
@@ -1317,17 +1357,21 @@ The FILT and LFO pages exist for all types. The filter is a 12 dB/oct SVF after 
 | Flt decay | HOLD, 1 ms … 10 s | 18 ms | Envelope decay (exponential). HOLD — the envelope stays at the peak. |
 | Key track | 0–100% | 0% | Cutoff follows the note from C-4: 100% — one octave per octave. |
 | LFO | 1–4 | 1 | Which of the instrument's four LFOs the rows below edit; the number in brackets is how many are on. All four run at once; their effects on the same destination add up (VOL — multiplies). |
-| Wave | SINE, TRI, SAW, SQR, RND | SINE | LFO shape; RND — a random value each period. |
+| Wave | SINE, TRI, SAW, SQR, RND, BYTE | SINE | LFO shape; RND — a random value each period; BYTE — a bytebeat formula (the Formula and A rows, see below). |
 | Sync | FREE / TEMPO | FREE | TEMPO — the rate is set as a fraction of a bar and follows the project BPM. |
 | Retrig | ON / OFF | ON | ON — the LFO phase restarts on every new note (except legato). OFF — one phase per instrument, shared by all its voices and all tracks playing it: a note lands in the running phase. With FREE the LFO runs continuously; with TEMPO it restarts when playback starts, so a 1 BAR LFO always begins at the start of the bar and every run sounds the same. RND with OFF gives one shared value per period. |
 | Rate | 0.05–30 Hz or 1/32 … 8 BARS | ≈ 1.3 Hz | Rate: in FREE — an exponential Hz scale; in TEMPO — 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4T, 1/4, 1/2, 1, 2, 4, 8 bars per period. |
 | Depth | −64…+63 | 0 | Depth; 0 — LFO off (then wave, sync, retrig, rate and dest are gray). Full depth: PITCH ±12 semitones, VOL ±100%, CUTOFF ±64 Cutoff steps (≈ ±4.8 octaves), macro ±64; RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE ±64 steps; FINE ±1 semitone; DUTY ±49%; SEMI2 ±24 semitones; L1–L4 RATE ×/÷16; L1–L4 DEPTH 0…×2. |
 | Dest | PITCH, DECAY, COLOR, SHAPE, SWEEP, CONTOUR, VOL, CUTOFF, DRIVE, RESO, FENV, DLY, RVB, PAN, BIT, SRR, FINE, DUTY, SUB, NOISE, SEMI2, L1–L4 RATE, L1–L4 DEPTH, L1–L4 RTRG, MOD | PITCH | Destination. DECAY…CONTOUR (macros) — only for FM, DRUM, SYNTH and LOFI (for SYNTH they are called SHP1, SHP2, MIX, DET, SENV, for LOFI by the machine: A, B, C, TONE, LOOP / WIDTH, TONE, DRIFT, SMOOTH); DUTY — only for CHIP; SUB, NOISE and SEMI2 (oscillator 2) — only for SYNTH. Other types skip targets they lack; changing Type turns a missing target into PITCH. CUTOFF acts when the filter is on. DRIVE — ±64 Drive steps at full depth. RESO, FENV, DLY, RVB, BIT, SRR, SUB, NOISE shift Reso, Flt env, Dly send, Rvb send, Bit crush, Downsample (track insert), Sub, Noise; DRIVE, BIT, SRR, DLY, RVB, PAN act on the whole track by the newest note (see [fx](#trackfx)); FINE — fine pitch; DUTY — the PULSE Duty; PAN — the track's pan (see below); MOD — the track's Mod send (send to the [MOD bus](#modbus), on the whole track); L1–L4 — another LFO of the instrument (see below). |
+| Formula | a bytebeat formula, the same 45 as in [LOFI](#lofi) (the turn wraps around); Wave BYTE only | 42MELODY | The LFO BYTE shape. Each of the four LFOs has its own; turning it loads the formula's default A. |
+| A | 0–127; Wave BYTE only, grey when the formula does not read `a` | 42 | The formula's `a`. B and C are the formula's defaults. |
 
 - The filter envelope (and the LFO phase with Retrig ON) restart on every new note except legato (MONO with overlap, FM CHORD): there the envelope keeps running, as on a classic acid bass.
 - **PAN** (INT tracks): shifts the track's pan by up to ±64 around the track's Pan (or the step's PAN lock) at full depth, limited to hard left / hard right. There is one pan per track and it comes from the LFO of the newest sounding note, so chord notes do not spread across the field; Retrig ON restarts the phase with each new note.
 - LFOs can be controlled from steps: fx `LFO`, `LFD`, `LFS`, `LFW`, `LFT`, `LFR` (see the [fx table](#fx)).
 - Cutoff = Cutoff (or FLT lock) + envelope + Key track + LFO CUTOFF, limited to 20 Hz … 14 kHz.
+
+**LFO BYTE.** Wave BYTE plays a bytebeat formula instead of a wave: one LFO period is `t` from 0 to 65535, so Rate (Hz, or a bar fraction in TEMPO) sets how fast the formula runs through the period, and Retrig ON starts it at `t = 0` on every note. The formula's output (unsigned or signed, as in the [LOFI](#lofi) table) is mapped to −1…+1 and moves in steps, unsmoothed: rhythmic and melodic formulas give jagged modulation — stepped cutoff, glitchy pan, broken pitch. Depth, destination and locks (`LFW BYT`) work as for the other shapes. Formula and A are saved with the project (LFOB chunk) and in presets; older files open with formula 0.
 
 **LFO to LFO.** An LFO can modulate another LFO of the same instrument. **L1–L4 RATE** speeds up / slows down the target: its rate × 2^(±4), ≈ ×/÷16 at full depth, in FREE and TEMPO. **L1–L4 DEPTH** scales the target's depth: × (1 + value), limited to 0…2 — −64 silences the target, +63 nearly doubles it. **L1–L4 RTRG** restarts the target at phase 0 on each cycle of the source (RND gets a new value); only depth ≠ 0 matters, its amount doesn't. An LFO can't pick its own RTRG. Modulation reaches the target with a 1 ms lag, so any routing works, loops included. A Retrig OFF target (one phase per instrument) takes RATE and RTRG only from Retrig OFF LFOs — a per-voice LFO has no single phase to give; DEPTH works from any LFO. While playback is stopped, a TEMPO + Retrig OFF target holds and ignores restarts.
 
@@ -1377,7 +1421,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 - **Save** always writes to the folder of the instrument's type; `[FACTORY]` is not shown. File name: up to 16 characters, A–Z 0–9 \_ -; the first 8 characters also become the instrument name.
 - A **SAMPLE preset** stores the sample name. If that sample is in the project, it is applied together with the preset's Root and slices; otherwise the instrument's sample, Root and slices stay as they were. The Slices, Chop and Chop N / Sens modes are always taken from the preset. There are no factory SAMPLE presets.
 - A **SYNTH preset** stores the oscillator wavetable names: built-in tables are always available, a project table is matched by name, and a missing one is imported from `/wavetables` (see [wavetables](#wavetables)). Factory SYNTH presets use only built-in tables.
-- **Format:** presets are saved in v6 format, including slices, SYNTH parameters, LFOs and the LOFI formula; older files load (a LOFI formula missing from them is 0).
+- **Format:** presets are saved in v7 format, including slices, SYNTH parameters, LFOs (with the LFO BYTE formulas) and the LOFI formula; older files load (a LOFI formula and LFO BYTE formulas missing from them are 0).
 - **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP").
 - Without a card, Load shows only `[FACTORY]` and Save does not open ("NO SD CARD").
 
@@ -1418,7 +1462,7 @@ Six pages: **SONG** (tempo, scale, tuning, seed, pattern, groove), **DLY** ([del
 | Scale | 13 scales | project |
 | Tuning | 12-TET, 10 factory, your own `.scl` files from the card; default 12-TET | project: the built-in sound's [tuning](#tuning). The encoder scrolls the list, a pick applies at once |
 | Tuning root | AUTO, C-m…G-9; default AUTO | project: the key that keeps its 12-TET pitch; AUTO is C-4 + Scale root. Grey in 12-TET |
-| Seed | 1–9999, default 1 | project: seed of the song's [follow actions](#follow) (and [evolve](#evolve)); live play mixes it with a random number at every start, Render WAV uses it as is. Takes effect at the next Play |
+| Seed | 1–9999, default 1 | project: seed of the song's [follow actions](#follow) (and [evolve](#evolve), [VAR](#var)); live play mixes it with a random number at every start, Render WAV uses it as is. Takes effect at the next Play |
 | Length | 4–128 | playing pattern |
 | Resolution | 1/4, 1/8, 1/16, 1/32, 1/8T, 1/16T | playing pattern |
 | Swing | 50–75% | playing pattern (grayed out when a Groove is selected) |
@@ -1512,7 +1556,7 @@ The project stores the name and the table itself: it plays in tune without the f
 | Roll all | Tempo + scale, sounds and the pattern in one go. |
 | Tempo + scale | A genre (HOUSE, TECHNO, TRANCE, DNB, HIPHOP, SYNTHPOP, DOWNTEMPO): BPM from its range, one of its scales, a random root. |
 | Sounds | Factory presets on tracks 1–4: T1 **DRUMS** a factory KIT (its drums go to INS25–32, or INS17–24 when the kit itself is there), T2 **BASS**, T3 **CHORDS** (a PAD / KEYS preset), T4 **LEAD** (LEAD / PLUCK). The kit mostly suits the genre (TECHNO / HOUSE / TRANCE a 909, HIPHOP the 808 DEEP or LOFI, DOWNTEMPO DUB / LOFI…; about 70 % of rolls, the rest any kit); without Tempo + scale the genre is the one whose BPM range holds the project tempo. The tracks become INT and take the preset's recommended insert. An instrument another track plays (or a lane of its KIT uses) is never overwritten: the role moves to a free slot, or is skipped when none is left; DRUMS is skipped when another track plays the kit or one of the INS slots its drums would go to. |
-| Pattern | Tracks 1–4 of the pattern you hear, rewritten from the generators: Euclid hits on the KIT lanes (kick, snare, hats, clap), a random chord progression ([CHORDS](#chords)), a bass against it ([BASS](#bass)), an arp over the chords ([ARP](#arp)). The pattern length stays; GEN of these tracks is turned off and their [Evolve](#evolve) changes are cleared. Notes stay in the project scale. Drums are written only when track 1 plays a KIT. |
+| Pattern | Tracks 1–4 of the pattern you hear, rewritten from the generators: Euclid hits on the KIT lanes (kick, snare, hats, clap), a random chord progression ([CHORDS](#chords)), a bass against it ([BASS](#bass)), an arp over the chords ([ARP](#arp)). The pattern length stays; GEN and [VAR](#var) of these tracks are turned off and their [Evolve](#evolve) changes are cleared. Notes stay in the project scale. Drums are written only when track 1 plays a KIT. |
 | Sounds + pattern | Both. |
 | Undo dice | Puts back what the last roll changed (one step). Edits elsewhere made since stay; edits to the rolled parts are lost. Load and New clear it. |
 
@@ -1651,7 +1695,7 @@ A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the 
 
 - Only when stopped (`STOP FIRST`). Progress shows `RENDER nn%`, roughly in real time; a long press of the encoder or Play cancels (`CANCELLED`, no file is created).
 - Done: `12.3s PEAK -2.1dB`; `CLIP` means there was clipping (lower MAIN or the volumes). Errors: `DISK FULL`, `WRITE FAILED`, `AUDIO BUSY` (audio did not stop within 0.5 s; try again).
-- The render reproduces playback, just without the 14 ms output latency; PRB / NRN / VRN are random but identical from render to render; the [generator](#gen) sounds as on Play from stop. Notes pushed past the end of the pattern (NDG, swing) are cut off.
+- The render reproduces playback, just without the 14 ms output latency; PRB / NRN / VRN are random but identical from render to render; the [generator](#gen) sounds as on Play from stop, [evolve](#evolve) and [VAR](#var) follow the project Seed, the same from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
 
 Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn. PROJECTS holds the items above, SAMPLES the [project samples](#samples), SYSTEM the [device settings](#system).
 

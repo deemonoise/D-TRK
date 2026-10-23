@@ -17,9 +17,10 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - A step holds a note, volume, chord (36 types × 4 inversions) and 6 fx commands: slide, vibrato, retrigger, arp, trig conditions (probability, fill, "previous played"…), p-locks of sound parameters, pan and LFOs.
 - Fill notes, volume or any fx on every Nth step, by Euclid or at random, with value ramps.
 - Generators that write straight into notes: **ARP** (106 patterns, including 64 from the Access Virus), **CHORDS** (55 progressions in the project key, 32 rhythms, RANDOM, Mutate, voice leading) and **BASS** (48 bass patterns that follow the chords). Your own patterns are saved with Capture.
-- A live shift-register generator per track (**GEN**): a looping 2–16-bit register slowly mutates and plays notes of the project scale (pitch, or the rhythm too), Flip live from a track button and the FLP fx per step, Capture writes the loop into the pattern.
+- A live shift-register generator per track (**GEN**): a looping 2–16-bit register slowly mutates and plays notes of the project scale (pitch, or the rhythm too), Flip live from a track button and the FLP fx per step, Capture writes the loop into the pattern. The BYTE PITCH / BYTE GATE modes take the melody and hits from any of the 45 bytebeat formulas instead.
 - **Dice** on PROJ: one roll gives a genre tempo and scale, factory sounds on four role tracks (drums, bass, chords, lead) and a pattern from the generators, undoable; **Mutate** on INST nudges an instrument's sound.
 - Evolve per track (**EVO**): the pattern drifts live (notes along the scale, drops and ghost notes, retriggers and velocity, shifted steps), pulled back by Home; Capture writes the heard variant into the pattern.
+- Variations per track (**VAR**): every few passes a new generation of a cellular automaton grown from the pattern (1D Wolfram rules, or Life-like rules over the KIT lanes) or of a Markov chain built from the pattern's own notes; Capture writes the heard generation into the pattern.
 - Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
 - Scales, undo, selection, copy.
 - Microtonal project tuning: 10 factory tunings (just, meantone, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce…) and your own Scala `.scl` files from the card.
@@ -37,7 +38,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - **LOFI**: bytebeat (45 built-in formulas, from the 2011 classics to our own rhythmic ones that lock to the tempo, all with A, B, C parameters) and an Atari Punk Console with subharmonics — dirty 8-bit sound.
 - **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
 
-Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo sync, modulate each other, controlled from steps). 159 factory presets.
+Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo sync, modulate each other, controlled from steps, a bytebeat formula as a wave). 159 factory presets.
 
 ### Mix and effects
 
@@ -87,7 +88,7 @@ The partition table is custom (`partitions.csv`): two 3 MB firmware slots and a 
 
 | Folder | Contents |
 |---|---|
-| `lib/core` | hardware-independent core: model, sequencer, fx, scales, tuning (`.scl` parser, factory tunings, key map), shift-register generator, evolve, song follow actions, scenes, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, LOFI: bytebeat compiler and VM, filter), WAV parser, sample bank, project sample list, presets |
+| `lib/core` | hardware-independent core: model, sequencer, fx, scales, tuning (`.scl` parser, factory tunings, key map), shift-register generator, evolve, variations (cellular automaton, Markov chain), song follow actions, scenes, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, LOFI: bytebeat compiler and VM, filter), WAV parser, sample bank, project sample list, presets |
 | `src/engine` | sequencer task on core 0 (timer, MIDI output) |
 | `src/audio` | built-in sound: I2S to the external PCM5102A DAC, audio task, sample bank in flash, WAV import |
 | `src/hw` | input (encoder, buttons), MIDI UART, SD, display configuration |

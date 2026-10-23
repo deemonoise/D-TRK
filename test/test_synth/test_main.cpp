@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unity.h>
+#include "bytebeat_lib.h"
 #include "scale.h"
 #include "scene.h"
 #include "slices.h"
@@ -1335,6 +1336,86 @@ static void rtrgMod(uint8_t sync1, uint8_t sync2) {
 void test_lfo_rtrg_mod() { rtrgMod(0, 0); }
 void test_lfo_rtrg_mod_shared_source() { rtrgMod(0, kLfoFree); }
 void test_lfo_rtrg_mod_shared_target() { rtrgMod(kLfoFree, kLfoFree); }
+
+// LFO i's BYTE value at phase ph: the formula at t = phase x 65536 (A = lfoByte, B / C its
+// defaults), its mode's sample, x depth / 64.
+static float byteLfoWant(const Instrument& m, int i, float ph, int8_t depth) {
+  const int f = m.lfoByte[i][0];
+  const ByteFormula& bf = byteFormula(f);
+  const int32_t x = byteEval(byteCode(f), static_cast<uint32_t>(ph * 65536.f), m.lfoByte[i][1], bf.b, bf.c);
+  return byteSample(x, bf.mode) * depth * (1.f / 64.f);
+}
+
+// LFO i (0 = LFO 1, else m.lfo[i - 1]) set to BYTE, depth 63 on Cutoff; checks every block that its
+// output is the formula at the voice's phase, in [-1, 1] and on the 1/128 grid (steps). Returns the
+// number of distinct values seen.
+static int byteLfoRun(int i, uint8_t sync, int blocks, float* outs = nullptr) {
+  Instrument& m = p->instruments[0];
+  LfoCfg c = {static_cast<uint8_t>(LfoWave::Byte), 60, 63, static_cast<uint8_t>(LfoDest::Cutoff), sync};
+  if (i == 0) {
+    m.lfoWave = c.wave;
+    m.lfoRate = c.rate;
+    m.lfoDepth = c.depth;
+    m.lfoDest = c.dest;
+    m.lfoSync = c.sync;
+  } else {
+    m.lfo[i - 1] = c;
+  }
+  noteOn(0, 0, 60);
+  int distinct = 0;
+  float last = 2.f;
+  for (int k = 0; k < blocks; ++k) {
+    s->render(buf);
+    const int v = s->trackVoice(0);
+    const float o = s->voice(v).lfoOut[i];
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, byteLfoWant(m, i, s->lfoPhase(v, i), 63), o);
+    TEST_ASSERT_TRUE(o >= -1.f && o <= 1.f);
+    const float q = o * (64.f / 63.f) * 128.f;
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, roundf(q), q);
+    if (o != last) ++distinct;
+    last = o;
+    if (outs) outs[k] = o;
+  }
+  return distinct;
+}
+
+void test_lfo_byte_follows_formula() {
+  p->instruments[0].lfoByte[0][0] = 0;  // 42MELODY: t*(a&t>>b)
+  TEST_ASSERT_TRUE(byteLfoRun(0, 0, 200) > 20);
+}
+
+void test_lfo_byte_lfo2_own_formula_shared_phase() {
+  Instrument& m = p->instruments[0];
+  m.lfoByte[1][0] = static_cast<uint8_t>(byteFormulaCount() - 1);  // a signed one
+  m.lfoByte[1][1] = 4;
+  m.lfoByte[0][0] = 3;  // LFO 1's, unused
+  TEST_ASSERT_TRUE(byteLfoRun(1, kLfoFree, 200) > 20);  // Retrig OFF: the instrument's phase
+}
+
+void test_lfo_byte_changes_with_a() {
+  float x[100], y[100];
+  p->instruments[0].lfoByte[0][1] = 42;
+  byteLfoRun(0, 0, 100, x);
+  s->reset();
+  p->instruments[0].lfoByte[0][1] = 7;
+  byteLfoRun(0, 0, 100, y);
+  int diff = 0;
+  for (int k = 0; k < 100; ++k) diff += x[k] != y[k];
+  TEST_ASSERT_TRUE(diff > 10);
+}
+
+// TEMPO: the phase runs at the division's rate like the other waves.
+void test_lfo_byte_tempo_period() {
+  const int blocks = 150;
+  byteLfoRun(0, kLfoTempo, blocks);
+  const Instrument& m = p->instruments[0];
+  float want = 0;  // the same steps as Synth::lfo
+  for (int k = 0; k < blocks * Synth::kBlock / Synth::kControl - 1; ++k) {
+    want += lfoSyncHz(m.lfoRate, p->bpm) * Synth::kControl * (1.f / kSynthRate);
+    if (want >= 1.f) want -= static_cast<int>(want);
+  }
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, want, s->lfoPhase(s->trackVoice(0), 0));
+}
 
 // RTRG on itself is ignored: LFO 1 -> L1 RTRG runs on like a plain LFO (no restart after its wraps).
 void test_lfo_self_rtrg_ignored() {
@@ -4835,6 +4916,10 @@ int main() {
   RUN_TEST(test_lfo_rtrg_mod_shared_source);
   RUN_TEST(test_lfo_rtrg_mod_shared_target);
   RUN_TEST(test_lfo_self_rtrg_ignored);
+  RUN_TEST(test_lfo_byte_follows_formula);
+  RUN_TEST(test_lfo_byte_lfo2_own_formula_shared_phase);
+  RUN_TEST(test_lfo_byte_changes_with_a);
+  RUN_TEST(test_lfo_byte_tempo_period);
   RUN_TEST(test_lfo_rtrg_survives_mid_tick_update);
   RUN_TEST(test_lfo_shared_target_ignores_voice_rtrg);
   RUN_TEST(test_lfo_shared_target_rate_sources);

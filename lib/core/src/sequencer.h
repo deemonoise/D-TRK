@@ -7,6 +7,7 @@
 #include "rng.h"
 #include "shift_gen.h"
 #include "step_expand.h"
+#include "var_gen.h"
 #include "voices.h"
 
 namespace mt {
@@ -173,6 +174,22 @@ class Sequencer {
   // Tests only: the state the next planned step of tr plays.
   EvoTrack& evoDebugState(int tr) { return evoAt(tr, evoN_[tr]); }
 
+  // VAR (Project::var, var_gen.h). Passes as for Evolve: every `every` passes the track's state takes its
+  // next generation (varNext, the follow run seed), at the pass end before Evolve mutates. A track step
+  // plays pattern -> VAR (varStep) -> EVO (on VAR's output) -> GEN. Another pattern next (a queued one, a
+  // song slot with another pattern): back to generation 0, the pass count from 0. start() / stop() reset
+  // every state; rewound with the unheard steps; the pattern is never written.
+  // After a VarCfg edit while playing: the unheard steps are planned again with it.
+  void varEdited(uint64_t now, MidiSink& out) { replan(now, out); }
+  // After Capture of track tr (varCapture): replanned, then its state back to generation 0 (n and the pass
+  // count go on).
+  void varClear(uint64_t now, MidiSink& out, int tr);
+  // The state after the heard step of tr (UI, Capture); the reset one while stopped. Valid until the next
+  // call on the sequencer (hold the project lock).
+  const VarTrack& heardVar(int tr) const;
+  // Passes counted towards the next generation of tr (0..every-1).
+  uint8_t varPasses(int tr) const { return tr >= 0 && tr < kTracks ? varCnt_[tr] : 0; }
+
  private:
   enum class State : uint8_t { Stopped, Playing, Paused };
   struct Tie {
@@ -200,6 +217,8 @@ class Sequencer {
     GenState gens[kTracks];
     uint32_t evoN[kTracks];   // evoN_ before
     uint8_t evoCnt[kTracks];  // evoCnt_ before
+    uint32_t varN[kTracks];   // varN_ before
+    uint8_t varCnt[kTracks];  // varCnt_ before
     uint16_t condBits;    // condBits_ before
     uint16_t mutes;       // TrackCfg::mute bits before
     bool muteSet;         // the step's pass end started a slot or left the song (mutes written)
@@ -247,8 +266,16 @@ class Sequencer {
   EvoTrack& evoAt(int tr, uint32_t n) { return cold_->evo[tr][n % kEvoRing]; }
   const EvoTrack& evoAt(int tr, uint32_t n) const { return cold_->evo[tr][n % kEvoRing]; }
   void evoResetAll();
+  // The step a track step plays before GEN: the pattern's through VAR, then EVO (pt's step or tmp).
   const Step& evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const;
   void evoPass();  // endOfPass: counts the pass, mutates the tracks due
+  // VAR: generation n of tr in the ring (as Evolve's).
+  VarTrack& varAt(int tr, uint32_t n) { return cold_->var[tr][n % kEvoRing]; }
+  const VarTrack& varAt(int tr, uint32_t n) const { return cold_->var[tr][n % kEvoRing]; }
+  void varResetAll();
+  // endOfPass, before evoPass: counts the pass, the tracks due take a generation; newPat: another pattern
+  // plays next, every VAR track back to generation 0.
+  void varPass(bool newPat);
   // ARS: the next arp note of the track on a step without a note (sounds only if aud); su: the track's step.
   void arpStep(int track, uint64_t t, int64_t earliest, bool aud, uint32_t su);
   void stopArps() {
@@ -300,6 +327,7 @@ class Sequencer {
     Sched hist[kHist];  // a ring: hist(0) newest
     Voices voices;      // MIDI-out tracks' sounding notes
     EvoTrack evo[kTracks][kEvoRing];  // state n of track t at [t][n % kEvoRing] (rewind needs the older ones)
+    VarTrack var[kTracks][kEvoRing];  // VAR generation n of track t, as evo (n = kEvoNone: none)
   };
   Sched& hist(int i) { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
   const Sched& hist(int i) const { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
@@ -356,6 +384,8 @@ class Sequencer {
   uint32_t evoN_[kTracks] = {};   // each track's state number, as the next step to plan finds it
   uint8_t evoCnt_[kTracks] = {};  // passes since the last mutation
   EvoView evoView_;               // scratch for evoPass
+  uint32_t varN_[kTracks] = {};   // VAR: each track's generation, as the next step to plan finds it
+  uint8_t varCnt_[kTracks] = {};  // passes since the last generation
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };
 

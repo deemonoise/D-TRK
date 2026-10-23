@@ -2644,6 +2644,172 @@ void test_lofi_garbage_clamped_and_sizes() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// ---- Generative 2: TVAR, TGEN BYTE fields, LFOB ----
+
+// TVAR: VAR round trip; a file without it has VAR off.
+void test_tvar_round_trip_and_missing() {
+  a.var[0] = VarCfg{static_cast<uint8_t>(VarMode::Ca2d), 5, 30, 3, 0, 40, 70, 2, 1};
+  a.var[15] = VarCfg{static_cast<uint8_t>(VarMode::Markov), 16, 110, 4, 64, 100, 0, 1, 0};
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "TVAR"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  for (int t = 0; t < kTracks; ++t) {
+    const VarCfg &x = a.var[t], &y = b.var[t];
+    TEST_ASSERT_EQUAL(x.mode, y.mode);
+    TEST_ASSERT_EQUAL(x.every, y.every);
+    TEST_ASSERT_EQUAL(x.rule, y.rule);
+    TEST_ASSERT_EQUAL(x.rule2, y.rule2);
+    TEST_ASSERT_EQUAL(x.reset, y.reset);
+    TEST_ASSERT_EQUAL(x.noise, y.noise);
+    TEST_ASSERT_EQUAL(x.amount, y.amount);
+    TEST_ASSERT_EQUAL(x.order, y.order);
+    TEST_ASSERT_EQUAL(x.rhythm, y.rhythm);
+  }
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"TVAR"});
+  b.var[0].mode = 3;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.var[0].mode);
+  TEST_ASSERT_EQUAL(VarCfg().every, b.var[0].every);
+  TEST_ASSERT_EQUAL(VarCfg().rule, b.var[15].rule);
+}
+
+// Longer records: the known part; a shorter one keeps the defaults it lacks; values clamped; bad sizes.
+void test_tvar_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TVAR", {2, 10, 9, 0, 77, 9, 200, 101, 101, 0, 5, 0xEE,  // clamped, 1 extra byte
+                       3, 40, 30, 4, 64, 100, 100, 3, 1, 0xEE});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.var[0].mode);
+  TEST_ASSERT_EQUAL(1, b.var[0].every);
+  TEST_ASSERT_EQUAL(77, b.var[0].rule);
+  TEST_ASSERT_EQUAL(0, b.var[0].rule2);
+  TEST_ASSERT_EQUAL(kVarResetMax, b.var[0].reset);
+  TEST_ASSERT_EQUAL(100, b.var[0].noise);
+  TEST_ASSERT_EQUAL(100, b.var[0].amount);
+  TEST_ASSERT_EQUAL(1, b.var[0].order);
+  TEST_ASSERT_EQUAL(1, b.var[0].rhythm);
+  TEST_ASSERT_EQUAL(3, b.var[1].mode);
+  TEST_ASSERT_EQUAL(kVarEveryMax, b.var[1].every);
+  TEST_ASSERT_EQUAL(4, b.var[1].rule2);
+  TEST_ASSERT_EQUAL(2, b.var[1].order);
+  TEST_ASSERT_EQUAL(VarCfg().rule, b.var[2].rule);  // not in the chunk: default
+  f = fileHeader();
+  putChunk(f, "TVAR", {1, 2, 1, 4});  // an older, shorter record
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(1, b.var[0].mode);
+  TEST_ASSERT_EQUAL(4, b.var[0].every);
+  TEST_ASSERT_EQUAL(VarCfg().rule, b.var[0].rule);
+  TEST_ASSERT_EQUAL(VarCfg().amount, b.var[0].amount);
+  f = fileHeader();
+  putChunk(f, "TVAR", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "TVAR", {2, 2, 1, 2});  // says 2 records, holds 1
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+// TGEN BYTE fields round trip; an old 8-byte record leaves them at their defaults; clamped.
+void test_tgen_byte_fields() {
+  GenCfg& g = a.gen[4];
+  g.mode = static_cast<uint8_t>(GenMode::BytePitch);
+  g.formula = static_cast<uint8_t>(byteFormulaCount() - 1);
+  g.a = 1;
+  g.b = 127;
+  g.c = 64;
+  g.zoom = 12;
+  a.gen[5].mode = static_cast<uint8_t>(GenMode::ByteGate);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  const GenCfg& r = b.gen[4];
+  TEST_ASSERT_EQUAL(static_cast<int>(GenMode::BytePitch), r.mode);
+  TEST_ASSERT_EQUAL(byteFormulaCount() - 1, r.formula);
+  TEST_ASSERT_EQUAL(1, r.a);
+  TEST_ASSERT_EQUAL(127, r.b);
+  TEST_ASSERT_EQUAL(64, r.c);
+  TEST_ASSERT_EQUAL(12, r.zoom);
+  TEST_ASSERT_EQUAL(static_cast<int>(GenMode::ByteGate), b.gen[5].mode);
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TGEN", {1, 8, 3, 9, 20, 50, 2, 40, 7, 0});  // a record from before the BYTE fields
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(3, b.gen[0].mode);
+  TEST_ASSERT_EQUAL(7, b.gen[0].seed);
+  TEST_ASSERT_EQUAL(GenCfg().formula, b.gen[0].formula);
+  TEST_ASSERT_EQUAL(GenCfg().a, b.gen[0].a);
+  TEST_ASSERT_EQUAL(GenCfg().b, b.gen[0].b);
+  TEST_ASSERT_EQUAL(GenCfg().c, b.gen[0].c);
+  TEST_ASSERT_EQUAL(10, b.gen[0].zoom);
+  f = fileHeader();
+  putChunk(f, "TGEN", {1, 15, 4, 9, 20, 50, 2, 40, 7, 0, 250, 200, 200, 200, 13, 0xEE, 0xEE});  // longer
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(4, b.gen[0].mode);
+  TEST_ASSERT_EQUAL(0, b.gen[0].formula);
+  TEST_ASSERT_EQUAL(127, b.gen[0].a);
+  TEST_ASSERT_EQUAL(127, b.gen[0].c);
+  TEST_ASSERT_EQUAL(12, b.gen[0].zoom);
+}
+
+// LFOB: per instrument 4 x {formula, A} of LFO BYTE; files without it: formula 0, its default A.
+void test_lfob_round_trip_and_missing() {
+  Instrument& m = a.instruments[3];
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Byte);
+  for (int i = 0; i < kLfos; ++i) {
+    m.lfoByte[i][0] = static_cast<uint8_t>((byteFormulaCount() - 1 - i) % byteFormulaCount());
+    m.lfoByte[i][1] = static_cast<uint8_t>(10 + 30 * i);
+  }
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "LFOB"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Byte), b.instruments[3].lfoWave);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(&m.lfoByte[0][0], &b.instruments[3].lfoByte[0][0], 2 * kLfos);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"LFOB"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  for (int i = 0; i < kLfos; ++i) {
+    TEST_ASSERT_EQUAL(0, b.instruments[3].lfoByte[i][0]);
+    TEST_ASSERT_EQUAL(byteFormula(0).a, b.instruments[3].lfoByte[i][1]);
+  }
+}
+
+// LFOB: count, record size, then 8-byte records. Longer: the known part; shorter: defaults; clamped.
+void test_lfob_garbage_clamped_and_sizes() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "LFOB", {2, 10, 250, 200, 2, 5, 1, 6, 3, 7, 0xEE, 0xEE,
+                       1, 1, 2, 2, 3, 3, 4, 4, 0xEE, 0xEE});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.instruments[0].lfoByte[0][0]);
+  TEST_ASSERT_EQUAL(127, b.instruments[0].lfoByte[0][1]);
+  TEST_ASSERT_EQUAL(2, b.instruments[0].lfoByte[1][0]);
+  TEST_ASSERT_EQUAL(7, b.instruments[0].lfoByte[3][1]);
+  TEST_ASSERT_EQUAL(4, b.instruments[1].lfoByte[3][0]);
+  TEST_ASSERT_EQUAL(0, b.instruments[2].lfoByte[0][0]);  // not in the chunk: default
+  TEST_ASSERT_EQUAL(byteFormula(0).a, b.instruments[2].lfoByte[0][1]);
+  f = fileHeader();
+  putChunk(f, "LFOB", {1, 2, 3, 9});  // a shorter record: LFO 1 only
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(3, b.instruments[0].lfoByte[0][0]);
+  TEST_ASSERT_EQUAL(9, b.instruments[0].lfoByte[0][1]);
+  TEST_ASSERT_EQUAL(0, b.instruments[0].lfoByte[1][0]);
+  TEST_ASSERT_EQUAL(byteFormula(0).a, b.instruments[0].lfoByte[1][1]);
+  f = fileHeader();
+  putChunk(f, "LFOB", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "LFOB", {3, 8, 1, 0, 0, 0, 0, 0, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -2745,5 +2911,10 @@ int main() {
   RUN_TEST(test_lofi_round_trip);
   RUN_TEST(test_file_without_lofi_chunk);
   RUN_TEST(test_lofi_garbage_clamped_and_sizes);
+  RUN_TEST(test_tvar_round_trip_and_missing);
+  RUN_TEST(test_tvar_records_and_garbage);
+  RUN_TEST(test_tgen_byte_fields);
+  RUN_TEST(test_lfob_round_trip_and_missing);
+  RUN_TEST(test_lfob_garbage_clamped_and_sizes);
   return UNITY_END();
 }

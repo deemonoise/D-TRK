@@ -35,6 +35,7 @@ Status st{};
 // Track bits (16); 32-bit so the atomic is a plain s32c1i CAS on the ESP32, no lock in the
 // engine task (xtensa gcc reports is_always_lock_free false even for 32 bits, so no static_assert).
 std::atomic<uint32_t> evoClearBits{0};  // evoClear(): tracks to clear before the next plan
+std::atomic<uint32_t> varClearBits{0};  // varClear(): the same for VAR
 
 bool IRAM_ATTR onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void*) {
   BaseType_t woken = pdFALSE;
@@ -70,6 +71,7 @@ void handle(const Command& c) {
     case Cmd::GenEdit: seq->genEdited(now, midi); break;
     case Cmd::GenReseed: seq->genReseed(now, midi, c.arg); break;
     case Cmd::EvoEdit: seq->evoEdited(now, midi); break;
+    case Cmd::VarEdit: seq->varEdited(now, midi); break;
   }
 }
 
@@ -88,6 +90,7 @@ void run(void*) {
     xSemaphoreTake(projMutex, portMAX_DELAY);
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
+    for (uint32_t b = varClearBits.exchange(0); b; b &= b - 1) seq->varClear(nowUs(), midi, __builtin_ctz(b));
     for (uint32_t b = evoClearBits.exchange(0); b; b &= b - 1) seq->evoClear(nowUs(), midi, __builtin_ctz(b));
     const uint64_t next = seq->process(nowUs(), midi);
     publish();  // under the mutex: core_ram may move seq (moveSeq)
@@ -209,6 +212,26 @@ EvoInfo heardEvoInfo(int track, int len) {
   if (!seq) return EvoInfo{0, 0, 0};
   const mt::EvoTrack& e = seq->heardEvo(track);
   return EvoInfo{e.n, mt::evoChanged(e, len), seq->evoPasses(track)};
+}
+
+void heardVar(int track, mt::VarTrack& out, uint8_t& passes) {
+  if (!seq) {
+    mt::varReset(out);
+    passes = 0;
+    return;
+  }
+  out = seq->heardVar(track);
+  passes = seq->varPasses(track);
+}
+
+VarInfo heardVarInfo(int track) {
+  if (!seq) return VarInfo{0, 0, 0};
+  const mt::VarTrack& v = seq->heardVar(track);
+  return VarInfo{v.n, v.sinceReset, seq->varPasses(track)};
+}
+
+void varClear(int track) {
+  if (track >= 0 && track < mt::kTracks) varClearBits.fetch_or(1u << track);
 }
 
 }  // namespace engine

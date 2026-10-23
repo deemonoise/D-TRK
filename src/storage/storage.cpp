@@ -48,8 +48,8 @@ static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() an
 static_assert(sizeof(mt::TrackCfg) == 40, "TrackCfg changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Instrument) == 382, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 480268, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Instrument) == 390, "Instrument changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 480764, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -86,6 +86,7 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.perfXy, live.perfXy, sizeof(out.perfXy));
   memcpy(out.gen, live.gen, sizeof(out.gen));
   memcpy(out.evo, live.evo, sizeof(out.evo));
+  memcpy(out.var, live.var, sizeof(out.var));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));

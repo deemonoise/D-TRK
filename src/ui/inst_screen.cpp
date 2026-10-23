@@ -421,8 +421,9 @@ void InstScreen::initTail(Param* t) {
                 [this](int d) { lfoSel_ = clampi(lfoSel_ + d, 0, mt::kLfos - 1); }};
   t[kLfoWave] = {"Wave",
                  [cfg](char* o, int n) {
-                   static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND"};
-                   snprintf(o, n, "%s", kNames[cfg().wave % 5]);
+                   static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND", "BYTE"};
+                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::LfoWave::Count), "Wave");
+                   snprintf(o, n, "%s", kNames[cfg().wave % static_cast<int>(mt::LfoWave::Count)]);
                  },
                  [cfg, lfo](int d) {
                    const uint8_t w = static_cast<uint8_t>(clampi(cfg().wave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
@@ -472,6 +473,24 @@ void InstScreen::initTail(Param* t) {
                    lfo().dest = v;
                  },
                  noLfo};
+  // Wave BYTE (Instrument::lfoByte of the selected LFO): the formula and its A; B / C are the formula's.
+  // A formula change loads its A.
+  auto notByte = [cfg, noLfo] { return noLfo() || cfg().wave != static_cast<uint8_t>(mt::LfoWave::Byte); };
+  t[kLfoFormula] = {"Formula",
+                    [this](char* o, int n) { snprintf(o, n, "%s", mt::byteFormula(inst().lfoByte[lfoSel_][0]).name); },
+                    [this](int d) {
+                      uint8_t* b = inst().lfoByte[lfoSel_];
+                      const int c = mt::byteFormulaCount();
+                      b[0] = static_cast<uint8_t>(((b[0] + d) % c + c) % c);
+                      b[1] = mt::byteFormula(b[0]).a;
+                    },
+                    notByte};
+  t[kLfoA] = {"A", [this](char* o, int n) { snprintf(o, n, "%u", inst().lfoByte[lfoSel_][1]); },
+              [this](int d) {
+                uint8_t* b = inst().lfoByte[lfoSel_];
+                b[1] = static_cast<uint8_t>(clampi(b[1] + d, 0, 127));
+              },
+              [this, notByte] { return notByte() || !(mt::byteUses(mt::byteCode(inst().lfoByte[lfoSel_][0])) & 1); }};
 }
 
 void InstScreen::relabel() {
