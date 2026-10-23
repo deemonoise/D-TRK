@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include "scale.h"
+#include "edit_ops.h"
 #include "sequencer.h"
 
 using namespace mt;
@@ -358,6 +359,69 @@ void test_int_track_gets_generated_notes() {
   for (int k = 0; k < 8; ++k) TEST_ASSERT_EQUAL(want[k], got[k]);
 }
 
+static constexpr uint8_t kBytePitch = static_cast<uint8_t>(GenMode::BytePitch);
+static constexpr uint8_t kByteGate = static_cast<uint8_t>(GenMode::ByteGate);
+
+// BYTE PITCH: clocked like PITCH (steps with a note), the note from the formula at n.
+void test_byte_pitch_clocked_by_note_steps() {
+  GenCfg& g = gen(kBytePitch, 50);
+  g.formula = 1;
+  for (int i = 0; i < 16; i += 4) p->patterns[0].steps[0][i].note = 60;
+  seq->start(0, *sink);
+  run(0, 16 * kStep - 1);
+  const auto got = onsByStep();
+  TEST_ASSERT_EQUAL(4, got.size());
+  GenState s;
+  for (int k = 0; k < 4; ++k) {
+    s.n = static_cast<uint32_t>(k + 1);
+    TEST_ASSERT_EQUAL(genNote(s, g, 0, ScaleType::Major), got.at(k * 4)[0]);
+  }
+  TEST_ASSERT_EQUAL(4, seq->heardGen(0).n);
+}
+
+// BYTE GATE: clocked like GATE (every step), OFF holds, gate and note from the formula.
+void test_byte_gate_plays_empty_steps() {
+  GenCfg& g = gen(kByteGate, 0);
+  g.formula = 2;
+  g.density = 60;
+  p->patterns[0].steps[0][6].note = kNoteOff;
+  seq->start(0, *sink);
+  run(0, 16 * kStep - 1);
+  const auto got = onsByStep();
+  int hits = 0;
+  GenState s;
+  for (int k = 0; k < 16; ++k) {
+    s.n = static_cast<uint32_t>(k + 1);
+    const bool want = k != 6 && genGate(s, g);
+    TEST_ASSERT_EQUAL_MESSAGE(want, got.count(k) == 1, "gate");
+    if (want) {
+      TEST_ASSERT_EQUAL(genNote(s, g, 0, ScaleType::Major), got.at(k)[0]);
+      ++hits;
+    }
+  }
+  TEST_ASSERT_EQUAL(16, seq->heardGen(0).n);
+  TEST_ASSERT_TRUE(hits > 0);
+}
+
+// Capture of BYTE GATE writes empty steps too (gate mode), as heard.
+void test_capture_byte_gate() {
+  GenCfg& g = gen(kByteGate, 0);
+  g.formula = 2;
+  g.density = 60;
+  seq->start(0, *sink);
+  run(0, 16 * kStep - 1);
+  const auto got = onsByStep();
+  TEST_ASSERT_TRUE(got.size() > 0);
+  GenState st;
+  genReset(st, g, 0);
+  captureGen(p->patterns[0], 0, g, st, 0, 0, ScaleType::Major);
+  for (int k = 0; k < 16; ++k) {
+    const Step& s = p->patterns[0].steps[0][k];
+    TEST_ASSERT_EQUAL(got.count(k) == 1, s.hasNote());
+    if (s.hasNote()) TEST_ASSERT_EQUAL(got.at(k)[0], s.note);
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_replaces_only_the_pitch);
@@ -374,5 +438,8 @@ int main(int, char**) {
   RUN_TEST(test_drum_track_untouched);
   RUN_TEST(test_heard_gen_follows_the_heard_step);
   RUN_TEST(test_int_track_gets_generated_notes);
+  RUN_TEST(test_byte_pitch_clocked_by_note_steps);
+  RUN_TEST(test_byte_gate_plays_empty_steps);
+  RUN_TEST(test_capture_byte_gate);
   return UNITY_END();
 }

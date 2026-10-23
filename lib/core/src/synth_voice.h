@@ -10,6 +10,7 @@
 #include "synth_fm.h"
 #include "synth_macro.h"
 #include "synth_string.h"
+#include "synth_lofi.h"
 #include "synth_osc.h"
 #include "synth_syn.h"
 #include "synth_vfilter.h"
@@ -42,7 +43,7 @@ constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceM
 // share memory (Voice::eng); Voice::engKind says which one it holds. A note of another engine type
 // constructs its engine afresh; a note of the same type keeps it, also across CHIP / SAMPLE notes
 // in between, as when they were separate members.
-enum class EngineKind : uint8_t { Fm, Drum, Syn, Macro, String };
+enum class EngineKind : uint8_t { Fm, Drum, Syn, Macro, String, Lofi };
 struct FmEngine {
   FmVoice fmv;
   FmParams fp;
@@ -51,17 +52,22 @@ struct DrumEngine {
   DrumVoice drv;
   DrumParams dp;
 };
+struct LofiEngine {
+  LofiVoice lv;
+  LofiParams lp;  // the formula cache (Synth::controlLofi)
+};
 union VoiceEngine {
   FmEngine fm;
   DrumEngine drum;
   SynVoice syn;
   MacroVoice mac;
   StringVoice stg;  // its delay line is the voice's (voiceLine(slot))
+  LofiEngine lofi;
   VoiceEngine() : fm() {}
 };
 static_assert(std::is_trivially_copyable<FmEngine>::value && std::is_trivially_copyable<DrumEngine>::value &&
                   std::is_trivially_copyable<SynVoice>::value && std::is_trivially_copyable<MacroVoice>::value &&
-                  std::is_trivially_copyable<StringVoice>::value,
+                  std::is_trivially_copyable<StringVoice>::value && std::is_trivially_copyable<LofiEngine>::value,
               "Voice is copied as a whole (v = Voice())");
 // MACRO and STRING fit in the union as it was: Voice does not grow.
 constexpr size_t kEngineMax = sizeof(FmEngine) > sizeof(DrumEngine)
@@ -171,7 +177,7 @@ struct Voice {
   // Melodic voice in a project tuning (Synth::tune_ on at note-on, not a drum / KIT lane / NOTE slice):
   // pitch / target / the track's lastPitch are keys without fine, control() maps them (tuning.h).
   bool tuned = false;
-  // FM / DRUM / SYNTH / MACRO / STRING engine, see VoiceEngine.
+  // FM / DRUM / SYNTH / MACRO / STRING / LOFI engine, see VoiceEngine.
   EngineKind engKind = EngineKind::Fm;
   VoiceEngine eng;
   FmVoice& fmv() { return eng.fm.fmv; }
@@ -182,6 +188,8 @@ struct Voice {
   SynVoice& sv() { return eng.syn; }
   MacroVoice& mv() { return eng.mac; }
   StringVoice& stv() { return eng.stg; }
+  LofiVoice& lv() { return eng.lofi.lv; }
+  LofiParams& lp() { return eng.lofi.lp; }
   // Makes the engine of kind k current: constructed afresh when another one is held.
   void useEngine(EngineKind k) {
     if (k == engKind) return;
@@ -189,6 +197,7 @@ struct Voice {
     else if (k == EngineKind::Drum) new (&eng.drum) DrumEngine();
     else if (k == EngineKind::Syn) new (&eng.syn) SynVoice();
     else if (k == EngineKind::Macro) new (&eng.mac) MacroVoice();
+    else if (k == EngineKind::Lofi) new (&eng.lofi) LofiEngine();
     else new (&eng.stg) StringVoice();
     engKind = k;
   }
@@ -198,6 +207,8 @@ struct Voice {
   bool fenvDone = false;             // the envelope has decayed to -60 dB: 0 until the next trigger
   float fltRes = -1, fltQ = 0.5f;    // resoQ(fltRes), cached (LP / BP / HP)
   VoiceFilter flt;                   // COMB uses the voice's line: voiceLine(slot) (not on STRING: Off)
+  // LOFI instrument (machine above holds its LofiMachine): BYTE is heavy, APC light.
+  bool lofi = false;
 };
 
 // Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the

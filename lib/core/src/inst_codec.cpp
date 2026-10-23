@@ -1,5 +1,6 @@
 #include "inst_codec.h"
 #include <string.h>
+#include "bytebeat_lib.h"
 
 namespace mt {
 namespace {
@@ -214,6 +215,23 @@ void unpackSyn(const uint8_t* b, Instrument& m) {
   m.synRing = clampu(b[42], 0, 127);
 }
 
+void packLofi(const Instrument& m, uint8_t* b) {
+  memset(b, 0, kLofiRecSize);
+  b[0] = m.lofiFormula;
+  b[1] = m.lofiSync;
+}
+
+void unpackLofi(const uint8_t* b, size_t n, Instrument& m) {
+  if (n > 0) m.lofiFormula = b[0];  // range: fixInstrument
+  if (n > 1) m.lofiSync = b[1];     // 0 in records from before the flag; range: fixInstrument
+}
+
+void packLfoByte(const Instrument& m, uint8_t* b) { memcpy(b, m.lfoByte, kLfoByteRecSize); }
+
+void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m) {
+  memcpy(m.lfoByte, b, n < kLfoByteRecSize ? n : kLfoByteRecSize);  // range: fixInstrument
+}
+
 void fixInstrument(Instrument& m) {
   // SYNTH: unpackSyn already clamps every field; wavetable names are resolved by the firmware.
   int n = 0;
@@ -221,10 +239,17 @@ void fixInstrument(Instrument& m) {
   else if (m.type == InstrType::Drum) n = static_cast<int>(DrumMachine::Count);
   else if (m.type == InstrType::Macro) n = static_cast<int>(MacroModel::Count);
   else if (m.type == InstrType::String) n = static_cast<int>(StringModel::Count);
+  else if (m.type == InstrType::Lofi) n = static_cast<int>(LofiMachine::Count);
   if (n && m.machine >= n) m.machine = 0;
   // COMB needs the voice's delay line, which STRING takes (the synth would run it as Off).
   if (m.type == InstrType::String && m.fltMode == static_cast<uint8_t>(FltMode::Comb))
     m.fltMode = static_cast<uint8_t>(FltMode::Off);
+  if (m.lofiFormula >= byteFormulaCount()) m.lofiFormula = 0;
+  if (m.lofiSync > 1) m.lofiSync = 1;
+  for (uint8_t* l : m.lfoByte) {
+    if (l[0] >= byteFormulaCount()) l[0] = 0;
+    if (l[1] > 127) l[1] = 127;
+  }
 }
 
 }  // namespace mt

@@ -1,4 +1,5 @@
 #include "model.h"
+#include "bytebeat_lib.h"
 #include "fastmath.h"
 #include "hot.h"
 #include "synth_osc.h"
@@ -32,7 +33,8 @@ bool Pattern::isEmpty() const {
 
 namespace {
 constexpr InstrType kTypeOrder[] = {InstrType::Fm,   InstrType::Synth,  InstrType::Macro, InstrType::String,
-                                    InstrType::Drum, InstrType::Sample, InstrType::Chip,  InstrType::Kit};
+                                    InstrType::Drum, InstrType::Sample, InstrType::Chip,  InstrType::Lofi,
+                                    InstrType::Kit};
 static_assert(sizeof(kTypeOrder) == static_cast<size_t>(InstrType::Count), "type order");
 }  // namespace
 
@@ -97,6 +99,7 @@ void Project::reset() {
     gen[i].seed = static_cast<uint16_t>(i + 1);
   }
   for (EvoCfg& e : evo) e = EvoCfg();
+  for (VarCfg& v : var) v = VarCfg();
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};
@@ -266,6 +269,40 @@ void drumSetMachine(Instrument& m, uint8_t machine) {
   for (int k = 0; k < kFmMacros; ++k) m.macro[k] = kDefaults[m.machine][k];
 }
 
+void lofiSetMachine(Instrument& m, uint8_t machine) {
+  // A B C TONE LOOP (BYTE, A B C from the formula below) / WIDTH TONE DRIFT SMOOTH - (APC).
+  static const uint8_t kDefaults[static_cast<int>(LofiMachine::Count)][kFmMacros] = {
+      {0, 0, 0, 0, 0},     // BYTE
+      {20, 100, 0, 0, 0},  // APC
+  };
+  constexpr int kLast = static_cast<int>(LofiMachine::Count) - 1;
+  m.machine = static_cast<uint8_t>(machine > kLast ? kLast : machine);
+  for (int k = 0; k < kFmMacros; ++k) m.macro[k] = kDefaults[m.machine][k];
+  if (m.machine == static_cast<uint8_t>(LofiMachine::Byte)) lofiLoadFormulaDefaults(m);
+}
+
+void lofiLoadFormulaDefaults(Instrument& m) {
+  const ByteFormula& f = byteFormula(m.lofiFormula);
+  m.macro[0] = f.a;
+  m.macro[1] = f.b;
+  m.macro[2] = f.c;
+}
+
+const char* lofiMachineName(uint8_t machine) {
+  static const char* const kNames[] = {"BYTE", "APC"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LofiMachine::Count), "LOFI names");
+  return kNames[machine < static_cast<int>(LofiMachine::Count) ? machine : 0];
+}
+
+const char* lofiMacroName(uint8_t machine, int k) {
+  static const char* const kNames[static_cast<int>(LofiMachine::Count)][kFmMacros] = {
+      {"A", "B", "C", "TONE", "LOOP"},
+      {"WIDTH", "TONE", "DRIFT", "SMOOTH", ""},
+  };
+  if (k < 0 || k >= kFmMacros) return "";
+  return kNames[machine < static_cast<int>(LofiMachine::Count) ? machine : 0][k];
+}
+
 void instrSetType(Instrument& m, InstrType t) {
   if (t >= InstrType::Count) t = InstrType::Chip;
   m.type = t;
@@ -284,6 +321,10 @@ void instrSetType(Instrument& m, InstrType t) {
     if (m.machine >= static_cast<uint8_t>(StringModel::Count)) m.machine = 0;
     // COMB needs the voice's delay line, which STRING takes (the synth would run it as Off).
     if (m.fltMode == static_cast<uint8_t>(FltMode::Comb)) m.fltMode = static_cast<uint8_t>(FltMode::Off);
+  } else if (t == InstrType::Lofi) {
+    m.lofiFormula = 0;
+    m.lofiSync = 0;
+    lofiSetMachine(m, static_cast<uint8_t>(LofiMachine::Byte));
   } else if (t == InstrType::Kit) kitSetDefaults(m);
   for (int i = 0; i < kLfos; ++i) {
     uint8_t& dest = lfoRef(m, i).dest;
@@ -303,7 +344,7 @@ bool lfoDestValid(uint8_t dest, InstrType t) {
   const auto d = static_cast<LfoDest>(dest);
   if (d >= LfoDest::Dec && d <= LfoDest::Con)
     return t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth || t == InstrType::String ||
-           (t == InstrType::Macro && d <= LfoDest::Shp);  // MACRO: TIMBRE, COLOR, ENV>TMB
+           t == InstrType::Lofi || (t == InstrType::Macro && d <= LfoDest::Shp);  // MACRO: TIMBRE, COLOR, ENV>TMB
   if (d == LfoDest::Duty) return t == InstrType::Chip;
   if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2 || d == LfoDest::Fold ||
       d == LfoDest::Ring)

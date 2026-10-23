@@ -15,6 +15,8 @@ constexpr size_t kFltRecSize = 8;    // filter, delay send
 constexpr size_t kSliceRecSize = 8 + 2 * kMaxSlices;  // modes, count, 3 reserved, positions
 constexpr size_t kSynRecSize = 48;  // SYNTH: 43 bytes of fields (41 fold, 42 ring) + reserved
 constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, depth, dest, sync (bits)
+constexpr size_t kLofiRecSize = 8;  // LOFI: formula, sync, 6 reserved (0)
+constexpr size_t kLfoByteRecSize = 2 * kLfos;  // LFO BYTE: formula, A of LFO 1..4
 
 void packInst(const Instrument& m, uint8_t* b);
 void unpackInst(const uint8_t* b, Instrument& m);
@@ -28,10 +30,18 @@ void packSyn(const Instrument& m, uint8_t* b);
 void unpackSyn(const uint8_t* b, Instrument& m);
 void packLfo(const Instrument& m, uint8_t* b);
 void unpackLfo(const uint8_t* b, Instrument& m);
+// LOFI: the formula index and sync (machine and macros are in the FM record). unpackLofi reads n bytes of a
+// record (older / shorter: the rest keeps its value).
+void packLofi(const Instrument& m, uint8_t* b);
+void unpackLofi(const uint8_t* b, size_t n, Instrument& m);
+// LFO BYTE (Instrument::lfoByte). unpackLfoByte reads n bytes of a record (shorter: the rest keeps its value).
+void packLfoByte(const Instrument& m, uint8_t* b);
+void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m);
 // Count is cut to the longest strictly ascending prefix of the positions.
 void packSlices(const Instrument& m, uint8_t* b);
 void unpackSlices(const uint8_t* b, Instrument& m);
-// After all records of an instrument: a machine number the type does not have becomes 0.
+// After all records of an instrument: a machine number the type does not have becomes 0, so does a
+// LOFI or LFO BYTE formula past the library (byteFormulaCount); an LFO BYTE A over 127 becomes 127.
 void fixInstrument(Instrument& m);
 
 }  // namespace mt

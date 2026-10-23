@@ -26,6 +26,9 @@ int voiceCost(const Instrument& m, bool sample) {
       static_assert(static_cast<int>(StringModel::Count) == 2, "voiceCost: a branch per STRING model");
       c = m.machine == static_cast<uint8_t>(StringModel::String) ? kCostString[0] : kCostString[1];
       break;
+    case InstrType::Lofi:
+      c = m.machine == static_cast<uint8_t>(LofiMachine::Byte) ? kCostLofiByte : kCostLofiApc;
+      break;
     default: break;                                  // CHIP, KIT
   }
   switch (static_cast<FltMode>(m.fltMode)) {

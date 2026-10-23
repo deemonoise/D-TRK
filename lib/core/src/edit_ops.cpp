@@ -109,7 +109,7 @@ void captureGen(Pattern& p, int tr, const GenCfg& c, const GenState& st, int fro
   const uint8_t n = p.trackLen[tr];
   const int len = n && n < p.length ? n : p.length;
   if (len <= 0) return;
-  const bool gate = c.mode == static_cast<uint8_t>(GenMode::Gate);
+  const bool gate = genGateMode(c.mode);
   GenState g = st;
   const int from = fromStep < 0 ? 0 : fromStep % len;
   for (int k = 0; k < len; ++k) {

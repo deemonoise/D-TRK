@@ -19,6 +19,9 @@ static_assert(sizeof(kCostMacro) / sizeof(kCostMacro[0]) == static_cast<unsigned
 constexpr int kCostString[] = {203, 228};  // StringModel order (MODAL: 6 modes)
 static_assert(sizeof(kCostString) / sizeof(kCostString[0]) == static_cast<unsigned>(StringModel::Count),
               "a cost per STRING model");
+// LOFI (estimates, not benched on the Teensy yet): BYTE runs a bytecode VM per sample (heavy), APC
+// two counters (light, about CHIP).
+constexpr int kCostLofiByte = 200, kCostLofiApc = 120;
 constexpr int kCostLadder = 35, kCostMs20 = 23, kCostComb = 34, kCostFormant = 40;  // over LP
 constexpr int kCostFold = 39, kCostRing = 9;  // SYNTH, only when on
 // The load around the voices with every track playing: fx, track strips (bench-max group 5,

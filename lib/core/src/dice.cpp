@@ -41,6 +41,7 @@ void load(const Project& p, int pattern, DiceParts& d) {
   memcpy(d.tracks, p.tracks, sizeof(d.tracks));
   memcpy(d.instruments, p.instruments, sizeof(d.instruments));
   memcpy(d.gen, p.gen, sizeof(d.gen));
+  memcpy(d.var, p.var, sizeof(d.var));
   memcpy(&d.pat, &p.patterns[pattern], sizeof(Pattern));
 }
 
@@ -182,6 +183,7 @@ void clearTrack(DiceParts& d, int t, DiceSnap& s) {
   d.pat.trackLen[t] = 0;
   d.pat.trackSpeed[t] = 0;
   d.gen[t].mode = static_cast<uint8_t>(GenMode::Off);
+  d.var[t].mode = static_cast<uint8_t>(VarMode::Off);
   s.patMask |= static_cast<uint16_t>(1u << t);
 }
 
@@ -336,6 +338,7 @@ void swapWritten(Project& p, DiceSnap& s) {
       swapBytes(&pt.trackLen[t], &d.pat.trackLen[t], sizeof(pt.trackLen[t]));
       swapBytes(&pt.trackSpeed[t], &d.pat.trackSpeed[t], sizeof(pt.trackSpeed[t]));
       swapBytes(&p.gen[t], &d.gen[t], sizeof(GenCfg));
+      swapBytes(&p.var[t], &d.var[t], sizeof(VarCfg));
     }
   }
   for (int i = 0; i < kInstruments; ++i)

@@ -49,10 +49,11 @@ static_assert(sizeof(mt::TrackCfg) == 40, "TrackCfg changed: update snapshot() a
 static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 // 382: synFold, synRing (SYNI bytes 41, 42; snapshot copies instruments whole).
-static_assert(sizeof(mt::Instrument) == 382, "Instrument changed: update snapshot() and project_io");
+// 392: lofiFormula, lofiSync, lfoByte (LOFI chunk).
+static_assert(sizeof(mt::Instrument) == 392, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
-// 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO).
-static_assert(sizeof(mt::Project) == 480268, "Project changed: update snapshot() and project_io");
+// 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO). 480828: var (TVAR), LOFI instrument fields.
+static_assert(sizeof(mt::Project) == 480828, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -89,6 +90,7 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.perfXy, live.perfXy, sizeof(out.perfXy));
   memcpy(out.gen, live.gen, sizeof(out.gen));
   memcpy(out.evo, live.evo, sizeof(out.evo));
+  memcpy(out.var, live.var, sizeof(out.var));
   memcpy(out.samples, live.samples, sizeof(out.samples));
   out.sampleCount = live.sampleCount;
   memcpy(out.wavetables, live.wavetables, sizeof(out.wavetables));

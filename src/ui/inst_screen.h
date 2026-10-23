@@ -19,11 +19,15 @@ namespace ui {
 // this instrument, seeded by esp_random) and Undo mutate (one step, this instrument only).
 // Name: click to edit, turn = character, Shift+turn = position.
 // Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
-// ADSR graph), the type's own (OSC / SMPL / FM / DRUM; SYNTH: OSC and MOD; MACRO: OSC), FILT, LFO. The page is
+// ADSR graph), the type's own (OSC / SMPL / FM / DRUM / LOFI; SYNTH: OSC and MOD; MACRO: OSC), FILT, LFO. The page is
 // kept across instruments and type changes (SYNTH MOD -> the type page of the others).
 // SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows).
 // FM: machine, macros (DECAY..CONTOUR); ADSR rows grey where the machine ignores them.
 // DRUM: machine, macros named per machine (grey "-" where unused); ADSR, mode and glide grey.
+// LOFI: machine (BYTE / APC), Formula (BYTE: the library formula by name, turn = next / previous,
+// wrapping, loads its default A B C; grey on APC), Sync (BYTE: t from the tempo, LOOP in steps; grey on
+// APC), macros named per machine (grey "-" where unused; BYTE: A B C grey where the formula does not read
+// them). ADSR, mode and glide as CHIP.
 // SYNTH: six pages, MAIN / ENV / OSC / MOD / FILT / LFO. OSC: Osc1, Table1, Shape1 (SHP1), Osc2, Table2,
 // Shape2 (SHP2), Semi2, Detune (DET), Sync, Mix (MIX), with the selected oscillator's waveform (WT: the
 // frame under SHAPE) on the right; MOD: Sub, Sub oct, Noise, Ring, Fold (0 = OFF), Env>Shp (SENV),
@@ -66,6 +70,9 @@ class InstScreen : public Screen {
   static constexpr int kWave = kCommon, kDuty = kCommon + 1, kPwmRate = kCommon + 2, kPwmDepth = kCommon + 3,
                        kChipRows = kCommon + 4;
   static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM, DRUM
+  // LOFI: Machine (kMachine), Formula, Sync, then the macros.
+  static constexpr int kFormula = kCommon + 1, kLofiSync = kCommon + 2, kLofiMac0 = kCommon + 3,
+                       kLofiRows = kLofiMac0 + mt::kFmMacros;
   // SYNTH: OSC page rows, then MOD page rows.
   static constexpr int kOsc1 = kCommon, kTable1 = kCommon + 1, kShape1 = kCommon + 2, kOsc2 = kCommon + 3,
                        kTable2 = kCommon + 4, kShape2 = kCommon + 5, kSemi = kCommon + 6, kDetune = kCommon + 7,
@@ -82,7 +89,7 @@ class InstScreen : public Screen {
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
   static constexpr int kFltMode = 0, kCutoff = 1, kReso = 2, kFEnv = 3, kFAtk = 4, kFDec = 5, kKeytrack = 6,
                        kLfoSel = 7, kLfoWave = 8, kLfoSync = 9, kLfoRetrig = 10, kLfoRate = 11, kLfoDepth = 12,
-                       kLfoDest = 13, kTailRows = 14;
+                       kLfoDest = 13, kLfoFormula = 14, kLfoA = 15, kTailRows = 16;
   // tail: FILT = [0, 7) (drive and crush are the track's, TRACK -> INS), LFO
   static constexpr int kFiltRows = 7;
   // KIT: MAIN rows, then kLaneRows per lane.
@@ -131,7 +138,7 @@ class InstScreen : public Screen {
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
   void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC page: frame / waveform of the selected osc
   void initTail(Param* t);  // t = &rows[type's row count]
-  void relabel();           // DRUM macro labels of the current machine
+  void relabel();           // DRUM / LOFI macro labels of the current machine
   void leaveEdit();
   void fixNames();  // empty name -> INSn
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
@@ -147,6 +154,7 @@ class InstScreen : public Screen {
   Param sample_[kCommon + kTailRows];  // the type page is editor_
   Param fm_[kMacRows + kTailRows];
   Param drum_[kMacRows + kTailRows];
+  Param lofi_[kLofiRows + kTailRows];
   Param syn_[kSynRows + kTailRows];
   Param macro_[kMacroRows + kTailRows];
   Param string_[kStringRows + kTailRows];

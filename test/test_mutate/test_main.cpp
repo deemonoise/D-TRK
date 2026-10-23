@@ -34,9 +34,11 @@ namespace {
 
 bool ampEnv(const Instrument& m) {
   return m.type == InstrType::Chip || m.type == InstrType::Sample || m.type == InstrType::Synth ||
-         (m.type == InstrType::Fm && fmGated(m.machine));
+         m.type == InstrType::Lofi || (m.type == InstrType::Fm && fmGated(m.machine));
 }
-bool macros(const Instrument& m) {
+// Macro k moves: FM, DRUM, SYNTH, LOFI (not a slot the LOFI machine leaves unused).
+bool macros(const Instrument& m, int k) {
+  if (m.type == InstrType::Lofi) return *lofiMacroName(m.machine, k);
   return m.type == InstrType::Fm || m.type == InstrType::Drum || m.type == InstrType::Synth;
 }
 
@@ -83,7 +85,7 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
     same(was.fDec, m.fDec, "fDec");
   }
   for (int k = 0; k < kFmMacros; ++k) {
-    if (macros(was)) field(was.macro[k], m.macro[k], 0, 127, s, "macro");
+    if (macros(was, k)) field(was.macro[k], m.macro[k], 0, 127, s, "macro");
     else same(was.macro[k], m.macro[k], "macro");
   }
   if (was.type == InstrType::Synth) {
@@ -121,7 +123,8 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
 }  // namespace
 
 void test_ranges_every_factory_preset() {
-  static const InstrType kTypes[] = {InstrType::Chip, InstrType::Fm, InstrType::Drum, InstrType::Synth};
+  static const InstrType kTypes[] = {InstrType::Chip, InstrType::Fm, InstrType::Drum, InstrType::Synth,
+                                     InstrType::Lofi};
   static const int kStrengths[] = {15, 60, 100};
   for (InstrType t : kTypes)
     for (int i = 0; i < factoryCount(t); ++i) {
@@ -130,6 +133,28 @@ void test_ranges_every_factory_preset() {
       for (int st : kStrengths)
         for (uint32_t seed = 1; seed <= 8; ++seed) checkOne(was, st, seed);
     }
+}
+
+// LOFI: macros and envelope move; machine and formula never (also APC: its unused slot 5 stays).
+void test_lofi_macros_not_machine_or_formula() {
+  for (int mc = 0; mc < static_cast<int>(LofiMachine::Count); ++mc) {
+    Instrument was;
+    instrSetType(was, InstrType::Lofi);
+    lofiSetMachine(was, static_cast<uint8_t>(mc));
+    was.lofiFormula = 7;
+    was.macro[4] = 50;
+    int moved = 0;
+    for (uint32_t seed = 1; seed <= 20; ++seed) {
+      checkOne(was, 100, seed);
+      Instrument m;
+      memcpy(&m, &was, sizeof(Instrument));
+      mutateInstrument(m, 100, seed);
+      TEST_ASSERT_EQUAL(was.machine, m.machine);
+      TEST_ASSERT_EQUAL(7, m.lofiFormula);
+      moved += memcmp(m.macro, was.macro, sizeof(m.macro)) != 0;
+    }
+    TEST_ASSERT_TRUE(moved >= 18);
+  }
 }
 
 void test_sample_and_reset_instruments() {
@@ -206,6 +231,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_kit_and_zero_strength_do_nothing);
   RUN_TEST(test_ranges_every_factory_preset);
+  RUN_TEST(test_lofi_macros_not_machine_or_formula);
   RUN_TEST(test_sample_and_reset_instruments);
   RUN_TEST(test_moves_something_and_is_seeded);
   RUN_TEST(test_slot_undo_bit_exact);

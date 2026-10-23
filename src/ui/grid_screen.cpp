@@ -44,6 +44,13 @@ bool fieldText(const mt::Step& c, int field, char out[5]) {
 }
 
 mt::EvoTrack heardEvoSt;  // UI task only (Capture gen / evo)
+mt::VarTrack heardVarSt;  // UI task only (Capture gen / var)
+
+bool varOn(const mt::Project& p, int tr) {
+  return mt::varModeOf(p.var[tr], p.trackIsDrum(tr)) != mt::VarMode::Off;
+}
+// The heard VAR state plays the pattern as is (generation 0, or built by another mode).
+bool varIdle(const mt::VarTrack& s, const mt::VarApply& a) { return s.sinceReset == 0 || s.mode != a.mode; }
 
 }  // namespace
 
@@ -697,7 +704,8 @@ void GridScreen::openMenu() {
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
     if (app_.project().genOn(track())) add("Capture gen", kCaptureGen, true);
-    if (app_.project().evoOn(track())) add("Capture evo", kCaptureEvo, true);
+    if (varOn(app_.project(), track())) add("Capture var", kCaptureVar, true);  // takes EVO's too
+    else if (app_.project().evoOn(track())) add("Capture evo", kCaptureEvo, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
     add(detail_ ? "Overview" : "Detail view", kToggleView, true);
@@ -786,6 +794,14 @@ void GridScreen::captureGen() {
     app_.toast("EVO: CAPTURE EVO FIRST");
     return;
   }
+  engine::lockProject();
+  engine::heardVar(tr, heardVarSt, passes);
+  const bool varBusy = !varIdle(heardVarSt, mt::varApplyOf(p, tr));
+  engine::unlockProject();
+  if (varBusy) {  // the same for the VAR generation
+    app_.toast("VAR: CAPTURE VAR FIRST");
+    return;
+  }
   app_.pushUndo();
   engine::lockProject();
   int from = 0;
@@ -800,6 +816,10 @@ void GridScreen::captureGen() {
 
 void GridScreen::captureEvo() {
   const int tr = track();
+  if (varOn(app_.project(), tr)) {  // EVO works on VAR's output: both together
+    captureVar();
+    return;
+  }
   const engine::Status& es = app_.status();
   if ((es.playing || es.paused) && es.pattern != app_.editPattern()) {  // the drift is the heard pattern's
     app_.toast("EVO: OTHER PATTERN");
@@ -826,6 +846,40 @@ void GridScreen::captureEvo() {
   app_.markDirty();
   engine::post(engine::Cmd::ReleaseTies);
   app_.toast("EVO CAPTURED");
+}
+
+void GridScreen::captureVar() {
+  const int tr = track();
+  const engine::Status& es = app_.status();
+  if ((es.playing || es.paused) && es.pattern != app_.editPattern()) {  // the state is the heard pattern's
+    app_.toast("VAR: OTHER PATTERN");
+    return;
+  }
+  mt::Pattern* scratch = app_.undoScratch();  // free outside the undo calls
+  if (!scratch) {
+    app_.toast("NO MEMORY");
+    return;
+  }
+  uint8_t passes = 0;
+  engine::lockProject();
+  engine::heardVar(tr, heardVarSt, passes);
+  engine::heardEvo(tr, heardEvoSt, passes);
+  const mt::VarApply va = mt::varApplyOf(app_.project(), tr);
+  engine::unlockProject();
+  const bool evoIdle = mt::evoIdle(heardEvoSt);
+  if (varIdle(heardVarSt, va) && evoIdle) {
+    app_.toast("VAR: NO CHANGES");
+    return;
+  }
+  app_.pushUndo();
+  engine::lockProject();
+  mt::varCapture(pat(), tr, heardVarSt, va, heardEvoSt, mt::evoApplyOf(app_.project(), tr), scratch->steps[0]);
+  engine::varClear(tr);  // under the lock: before the next plan
+  if (!evoIdle) engine::evoClear(tr);
+  engine::unlockProject();
+  app_.markDirty();
+  engine::post(engine::Cmd::ReleaseTies);
+  app_.toast("VAR CAPTURED");
 }
 
 void GridScreen::resample(bool wholePattern) {
@@ -989,6 +1043,7 @@ void GridScreen::onMenu(int id) {
     case kFill: openFill(); break;
     case kCaptureGen: captureGen(); break;
     case kCaptureEvo: captureEvo(); break;
+    case kCaptureVar: captureVar(); break;
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
     case kRec:

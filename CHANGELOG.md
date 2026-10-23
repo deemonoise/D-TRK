@@ -2,7 +2,35 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-23
+- Variations per track (TRACK → VAR, a new page after EVO): every Every passes a new generation replaces
+  what the track plays, the pattern stays. **CA1D** — a Wolfram rule (0–255) over the track's steps,
+  generation 0 = the pattern's notes; **CA2D** — Life-like rules LIFE, HIGHLIFE, SEEDS, DAYNIGHT, MAZE on a
+  torus of KIT lanes × steps (a melodic track plays it as 1D); **MARKOV** — a transition chain from the
+  pattern (Order 1–2, Amount, Rhythm). CA: Reset after N generations (NEVER), back to the pattern on death /
+  stasis, Noise. An alive empty step plays a copy of the nearest note to its left, a dead one is silent.
+  Another pattern restarts at generation 0. Order pattern → VAR → EVO → GEN. Header: generation, pass count
+  and a mini grid of the cells. **Capture var** in the GRID menu writes the heard steps (with EVO's drift,
+  undo). From the project Seed: Render repeatable, every live Play different. Dice turns VAR off on the
+  rolled tracks. Saved in the project (`TVAR` chunk).
+- GEN modes **BYTE PITCH** / **BYTE GATE**: one of the 45 LOFI bytebeat formulas, read over each step's
+  window (Zoom: 2^Zoom values of `t` per step, 10 = as LOFI Sync), picks the scale degree; BYTE GATE plays
+  the loudest steps first as Density grows. Rows Formula, A, B, C, Zoom (turning Formula loads its
+  defaults); Length, Flip, Seed and Register are unused. The `TGEN` record grew.
+- LFO wave **BYTE**: a bytebeat formula over one LFO period (`t` 0–65535), stepped output; rows Formula and
+  A per LFO (B, C the formula's defaults), `LFW BYT` lock. Saved in the project (`LFOB` chunk); presets v7.
+  Older projects and presets load.
+
 ## 2026-10-22
+- New instrument type **LOFI** (INST, the LOFI page) with two machines. **BYTE** — bytebeat: 45 built-in
+  formulas (2011 classics, our own and rhythmic ones), the counter `t` at 8 kHz on C-4 and by note pitch,
+  unsigned / signed modes; macros A, B, C (in every formula; turning Formula loads its defaults, a macro the
+  formula does not read is gray), TONE (steps → interpolation and lowpass), LOOP (loops `t`). **Sync**: `t`
+  from the project tempo (1024 per 1/16 step, the note sets only the octave), LOOP then in steps (1–1024).
+  **APC** — Atari Punk Console: an oscillator triggers a pulse of length WIDTH, a long pulse gives
+  subharmonics; macros WIDTH, TONE, DRIFT, SMOOTH. ADSR, filter, LFOs, macro locks and Mutate as on the other
+  types; BYTE is a heavy voice (within the limit of 8), APC a light one. 18 factory presets (BYTE, APC, SYNC*), your
+  own in `/presets/LOFI`; presets v6, the formula is stored in the project (`LOFI` chunk).
 - Scenes and crossfader (Octatrack style): 8 scenes per project locking per-track VOL, PAN, insert, sends and
   filter plus 14 master parameters; an A↔B crossfader on MIX (tap / drag, encoder), the SCENE view for editing
   (Shift + A on MIX; big touch buttons, a held track button + turn / click sets / unsets its lock), A + turn in

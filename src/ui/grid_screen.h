@@ -38,7 +38,7 @@ class GridScreen : public Screen {
   enum MenuId : int {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
-    kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureGen, kCaptureEvo,
+    kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureGen, kCaptureEvo, kCaptureVar,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;
@@ -93,6 +93,9 @@ class GridScreen : public Screen {
   // Capture evo: the heard drift of the track into the edited pattern (one undo step), then its drift
   // starts over from the result. Only while the edited pattern is the heard one.
   void captureEvo();
+  // Capture var: the track as VAR, then EVO play it (var_gen.h varCapture) into the edited pattern (one undo
+  // step), then both start over from the result (VAR at generation 0). Also Capture evo while VAR is on.
+  void captureVar();
   void resample(bool wholePattern);  // the pattern (current track / audible tracks) into a sample RSn
   void openTranspose();
   void transpose(const mt::Sel& sel, int amount, bool degrees);

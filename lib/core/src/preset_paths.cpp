@@ -34,6 +34,7 @@ const char* presetTypeName(InstrType t) {
     case InstrType::Synth: return "SYNTH";
     case InstrType::Macro: return "MACRO";
     case InstrType::String: return "STRING";
+    case InstrType::Lofi: return "LOFI";
     default: return "CHIP";
   }
 }
@@ -46,6 +47,7 @@ const char* presetRoot(InstrType t) {
     case InstrType::Synth: return "/presets/SYNTH";
     case InstrType::Macro: return "/presets/MACRO";
     case InstrType::String: return "/presets/STRING";
+    case InstrType::Lofi: return "/presets/LOFI";
     case InstrType::Kit: return "/presets/KIT";
     default: return "/presets/CHIP";
   }

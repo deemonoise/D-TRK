@@ -55,9 +55,10 @@ enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
 enum class ChopMode : uint8_t { Equal, Trans, Count };
 constexpr int kMaxSlices = 32;
-// Stored in files (INST byte 8): new types before Count only.
-enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Macro, String, Count };
-// UI order of the types (FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP, KIT): position k -> type, type -> position.
+// Stored in files (INST byte 8): new types before Count only. LOFI is 8 here (6 on main, before MACRO /
+// STRING came over from this branch).
+enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Macro, String, Lofi, Count };
+// UI order of the types (FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP, LOFI, KIT): position k -> type, type -> position.
 InstrType instrTypeAt(int k);
 int instrTypePos(InstrType t);
 constexpr int kKitLanes = 8;
@@ -106,6 +107,9 @@ static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field"
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(MacroModel::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(StringModel::Count) <= kMachineMax, "machine field");
+// LOFI machines: BYTE (bytebeat formula, Instrument::lofiFormula), APC (Atari Punk Console). Stored in
+// files: new machines go before Count only.
+enum class LofiMachine : uint8_t { Byte, Apc, Count };
 // Stored in files (Instrument::fltMode): new values go before Count only; loaders clamp unknown ones to Off.
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
@@ -116,7 +120,8 @@ enum LockBit : uint8_t {
   kLockMod, kLocks
 };
 static_assert(kLocks <= 16, "lockMask is a uint16_t");
-enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Count };
+// Byte: a bytebeat formula over the phase (Instrument::lfoByte). Stored in files: new waves before Count only.
+enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Byte, Count };
 // TrackCfg::driveModel, fx DTY: the curve of the track insert's drive (see ModelDrive, synth_drive.h).
 // Stored in files: new models before Count only; a value >= Count loads as Tanh.
 enum class DriveModel : uint8_t { Tanh, Clip, Fold, Rect, Asym, Count };
@@ -134,6 +139,8 @@ enum class LfoDest : uint8_t {
 
 // LFO 2..4 of an instrument (LFO 1 keeps its own fields: older files). depth 0 = off.
 constexpr int kLfos = 4;
+// Bytebeat formula 0's default macros A B C (bytebeat_lib.h; test_model checks): LFO / GEN BYTE defaults.
+constexpr uint8_t kByteDefA = 42, kByteDefB = 10, kByteDefC = 0;
 static_assert(static_cast<int>(LfoDest::Rtrg1) - static_cast<int>(LfoDest::Rate1) == 2 * kLfos, "LFO targets");
 // LFO sync byte (LfoCfg::sync, Instrument::lfoSync): bit 0 TEMPO (rate is a division, lfoSyncHz),
 // bit 1 Retrig OFF (one phase per instrument, not restarted by notes; see Synth).
@@ -191,7 +198,7 @@ struct Instrument {
   uint8_t sliceCount = 0;     // 0..kMaxSlices
   uint16_t slices[kMaxSlices] = {0};
   // FM / DRUM: machine and its macros (see fmSetMachine, drumSetMachine), LFO.
-  uint8_t machine = 0;                                // FmMachine or DrumMachine, by type
+  uint8_t machine = 0;                                // FmMachine, DrumMachine or LofiMachine, by type
   uint8_t macro[kFmMacros] = {85, 40, 32, 70, 50};    // DECAY..CONTOUR 0..127 (FM / DRUM), Kick defaults
   uint8_t lfoWave = 0;   // LfoWave
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
@@ -232,6 +239,11 @@ struct Instrument {
   uint8_t driveModel = 0;  // DriveModel of the recommended insert (see drive above); 0 in a project
   // SYNTH wavefolder and ring modulator on the oscillator mix (SynParams::fold, ring), 0..127, 0 = off.
   uint8_t synFold = 0, synRing = 0;
+  uint8_t lofiFormula = 0;  // LOFI BYTE: built-in formula index (bytebeat_lib.h), out of range = 0
+  uint8_t lofiSync = 0;     // LOFI BYTE: 1 = t at 1024 per 1/16 step of the project tempo
+  // LFO 1..4 wave BYTE: {formula (bytebeat_lib.h), A 0..127}; B / C are the formula's defaults. Default:
+  // formula 0 and its A (kByteDef*).
+  uint8_t lfoByte[kLfos][2] = {{0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}};
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }
@@ -274,13 +286,21 @@ float resoQ(float v);
 float filterEnv(uint32_t t, uint8_t fAtk, uint8_t fDec);
 // DRUM: sets the machine (clamped) and its default macros.
 void drumSetMachine(Instrument& m, uint8_t machine);
+// LOFI: sets the machine (clamped) and its default macros (BYTE: A B C = lofiFormula's defaults).
+void lofiSetMachine(Instrument& m, uint8_t machine);
+// LOFI BYTE: macros A B C (slots 1..3) = the defaults of lofiFormula (out of range = entry 0); TONE
+// and LOOP stay. The UI calls it when the formula changes.
+void lofiLoadFormulaDefaults(Instrument& m);
+const char* lofiMachineName(uint8_t machine);  // "BYTE", "APC"; out of range = BYTE
+// Macro label of the LOFI machine (k 0..4), e.g. "TONE"; "" = the slot does nothing on it.
+const char* lofiMacroName(uint8_t machine, int k);
 // Changes the type. FM / DRUM: the machine (clamped) with its default macros (they mean other
-// things per type); SYNTH: its default macros; KIT: its default lanes. A LFO target the type lacks
-// (lfoDestValid) becomes PITCH.
+// things per type); SYNTH: its default macros; KIT: its default lanes; LOFI: BYTE with its default
+// macros, formula 0, sync off. A LFO target the type lacks (lfoDestValid) becomes PITCH.
 void instrSetType(Instrument& m, InstrType t);
 // KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
 void kitSetDefaults(Instrument& m);
-// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH / STRING, DEC..SHP: MACRO; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
+// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH / STRING / LOFI, DEC..SHP: MACRO; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
 bool lfoDestValid(uint8_t dest, InstrType t);
 // LFO target d steps from dest over the targets valid for t, in the display order (PAN after RVB;
 // clamped at the ends); self (0..kLfos-1, -1 = none): that LFO's RTRG is skipped.
@@ -611,9 +631,10 @@ struct SynthModel {
 
 // Shift-register generator of a track (shift_gen.h): plays the project scale live in place of the
 // pattern's notes (PITCH) or also its rhythm (GATE). A project setting per track (not in TrackCfg: the
-// synth board never needs it). In files (TGEN): new modes before Count only.
-enum class GenMode : uint8_t { Off, Pitch, Gate, Count };
-constexpr uint8_t kGenLenMin = 2, kGenLenMax = 16, kGenOctMax = 4;
+// synth board never needs it). In files (TGEN): new modes before Count only. BYTE PITCH / BYTE GATE: a
+// bytebeat formula (formula, a, b, c, zoom) in place of the register, clocked as PITCH / GATE.
+enum class GenMode : uint8_t { Off, Pitch, Gate, BytePitch, ByteGate, Count };
+constexpr uint8_t kGenLenMin = 2, kGenLenMax = 16, kGenOctMax = 4, kGenZoomMax = 12;
 struct GenCfg {
   uint8_t mode = 0;      // GenMode
   uint8_t len = 8;       // kGenLenMin..kGenLenMax bits
@@ -622,6 +643,9 @@ struct GenCfg {
   uint8_t oct = 2;       // 1..kGenOctMax octaves
   uint8_t density = 50;  // 0..100 %, GATE only
   uint16_t seed = 1;     // the start register and the flips
+  uint8_t formula = 0;   // BYTE: bytebeat_lib.h index
+  uint8_t a = kByteDefA, b = kByteDefB, c = kByteDefC;  // BYTE: macros 0..127 (formula 0's defaults)
+  uint8_t zoom = 10;     // BYTE: 0..kGenZoomMax, a clock = 1 << zoom ticks (genByteBytes)
 };
 
 // Evolve of a track (evolve.h): the track's steps drift on the fly every `every` pattern passes, by
@@ -634,6 +658,24 @@ struct EvoCfg {
   uint8_t every = 4;   // 1..kEvoEveryMax pattern passes per mutation
   uint8_t home = 25;   // 0..100 %: the chance per mutation that each change steps back
   uint8_t mask = kEvoNote | kEvoRhythm | kEvoRtrgVol;  // kEvoNote .. kEvoShift
+};
+
+// VAR of a track (var_gen.h): every `every` passes a new generation of a cellular automaton (CA1D, CA2D
+// on a KIT track) or a Markov chain from the track's pattern replaces what it plays. A project setting
+// per track (sequencer only). New modes / rules before Count only.
+enum class VarMode : uint8_t { Off, Ca1d, Ca2d, Markov, Count };
+enum class VarRule2 : uint8_t { Life, HighLife, Seeds, DayNight, Maze, Count };
+constexpr uint8_t kVarEveryMax = 16, kVarResetMax = 64;
+struct VarCfg {
+  uint8_t mode = 0;     // VarMode
+  uint8_t every = 2;    // 1..kVarEveryMax pattern passes per generation
+  uint8_t rule = 90;    // CA1D: Wolfram rule 0..255
+  uint8_t rule2 = 0;    // CA2D: VarRule2
+  uint8_t reset = 16;   // CA: back to generation 0 after this many, 0..kVarResetMax, 0 = never
+  uint8_t noise = 0;    // CA: 0..100 %, the chance per generation that one cell flips
+  uint8_t amount = 50;  // MARKOV: 0..100 %, the chance a step takes the chain's token
+  uint8_t order = 1;    // MARKOV: 1..2 previous tokens
+  uint8_t rhythm = 0;   // MARKOV: 1 = REST is a token (the rhythm changes too)
 };
 
 struct Project : SynthModel {
@@ -662,6 +704,7 @@ struct Project : SynthModel {
   uint8_t perfXy[2] = {kPerfXyDefault[0], kPerfXyDefault[1]};
   GenCfg gen[kTracks];  // reset(): all OFF, seed = track + 1. Saved in TGEN.
   EvoCfg evo[kTracks];  // reset(): all off (amount 0). Saved in TEVO.
+  VarCfg var[kTracks];  // reset(): all off. Saved in TVAR.
   // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
   // whose instrument sample names still have to be migrated (and after reset()).
   bool hasSampleList = false;

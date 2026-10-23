@@ -5,8 +5,9 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 11;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
-                                    // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields)
+constexpr uint16_t kProtocol = 12;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
+                                    // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields);
+                                    // 12: LOFI (InstrType::Lofi, Instrument lofiFormula / lofiSync / lfoByte)
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -405,7 +406,7 @@ struct FwRep {
 // reply: the render cycles and counts per Synth::ProfStage summed since the start, the blocks
 // rendered, the slowest block (events, render, preview mix) and the cycles per us to convert them.
 struct ProfileRep {
-  static constexpr int kStages = 24;  // Synth::kProfStages
+  static constexpr int kStages = 25;  // Synth::kProfStages
   uint8_t running = 0;
   uint32_t blocks = 0;
   uint32_t cyclesPerUs = 0;

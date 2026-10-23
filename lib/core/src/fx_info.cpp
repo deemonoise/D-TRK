@@ -153,7 +153,7 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::LFR: snprintf(out, 5, " %02X", v); return;
     case Fx::LFD: snprintf(out, 5, "%+3d", fxSigned(v)); return;
     case Fx::LFW: {
-      static const char* const kW[] = {"SIN", "TRI", "SAW", "SQR", "RND"};
+      static const char* const kW[] = {"SIN", "TRI", "SAW", "SQR", "RND", "BYT"};
       static_assert(sizeof(kW) / sizeof(kW[0]) == static_cast<int>(LfoWave::Count), "LFW names");
       snprintf(out, 5, "%s", kW[v < static_cast<uint8_t>(LfoWave::Count) ? v : 0]);
       return;

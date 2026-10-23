@@ -7,11 +7,13 @@
 #include "page_bar.h"
 #include "audio/audio.h"
 #include "link/bank_client.h"
+#include "bytebeat_lib.h"
 #include "name_edit.h"
 #include "note_name.h"
 #include "sample_set.h"
 #include "synth_drum_machines.h"
 #include "synth_fm_machines.h"
+#include "synth_lofi.h"
 #include "wt_builtin.h"
 #include "wt_mip.h"
 
@@ -47,13 +49,13 @@ void waveName(uint8_t w, char* o, int n) {
 }  // namespace
 
 InstScreen::InstScreen(App& app) : app_(app) {
-  Param* const sets[] = {chip_, sample_, fm_, drum_, syn_, macro_, string_};
+  Param* const sets[] = {chip_, sample_, fm_, drum_, syn_, macro_, string_, lofi_};
   for (Param* p : sets) {
     p[kName] = {"Name", [this](char* o, int n) { snprintf(o, n, "%s", inst().name); },
                 [this](int d) { editNameChar(inst().name, kNameLen, namePos_, d); }};
     p[kType] = {"Type",
                 [this](char* o, int n) {
-                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT", "MACRO", "STRING"};
+                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT", "MACRO", "STRING", "LOFI"};
                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::InstrType::Count), "type names");
                   const int t = static_cast<int>(inst().type);
                   snprintf(o, n, "%s", kNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0]);
@@ -163,6 +165,38 @@ InstScreen::InstScreen(App& app) : app_(app) {
                      }};
   for (int k = 0; k < mt::kFmMacros; ++k)
     drum_[kMac0 + k] = {"-", macroNum(k), macroEdit(k), [this, k] { return !*mt::drumMacroName(inst().machine, k); }};
+  // LOFI: ADSR, mode and glide as CHIP. A machine change loads its default macros.
+  lofi_[kMachine] = {"Machine",
+                     [this](char* o, int n) { snprintf(o, n, "%s", mt::lofiMachineName(inst().machine)); },
+                     [this](int d) {
+                       const int v = clampi(inst().machine + d, 0, static_cast<int>(mt::LofiMachine::Count) - 1);
+                       if (v != inst().machine) mt::lofiSetMachine(inst(), static_cast<uint8_t>(v));
+                     }};
+  auto notByte = [this] { return inst().machine != static_cast<uint8_t>(mt::LofiMachine::Byte); };
+  lofi_[kFormula] = {"Formula",
+                     [this](char* o, int n) { snprintf(o, n, "%s", mt::byteFormula(inst().lofiFormula).name); },
+                     [this](int d) {
+                       const int c = mt::byteFormulaCount();
+                       inst().lofiFormula = static_cast<uint8_t>(((inst().lofiFormula + d) % c + c) % c);
+                       mt::lofiLoadFormulaDefaults(inst());  // A B C jump to the formula's (not on load)
+                     },
+                     notByte};
+  lofi_[kLofiSync] = {"Sync", [this](char* o, int n) { snprintf(o, n, "%s", inst().lofiSync ? "ON" : "OFF"); },
+                      [this](int d) { inst().lofiSync = d > 0; }, notByte};
+  for (int k = 0; k < mt::kFmMacros; ++k)
+    lofi_[kLofiMac0 + k] = {"-", macroNum(k), macroEdit(k), [this, k, notByte] {
+                              if (!*mt::lofiMacroName(inst().machine, k)) return true;
+                              // BYTE A B C: grey when the formula does not read the variable.
+                              return k < 3 && !notByte() && !(mt::byteUses(mt::byteCode(inst().lofiFormula)) >> k & 1);
+                            }};
+  // BYTE LOOP under SYNC: the loop length in steps.
+  lofi_[kLofiMac0 + 4].format = [this](char* o, int n) {
+    const mt::Instrument& m = inst();
+    const uint8_t v = m.macro[4];
+    if (m.machine != static_cast<uint8_t>(mt::LofiMachine::Byte) || !m.lofiSync) snprintf(o, n, "%u", v);
+    else if (!v) snprintf(o, n, "OFF");
+    else snprintf(o, n, "%d st", mt::lofiLoopSteps(v));
+  };
   // SYNTH: ADSR, mode and glide as CHIP. Oscillator k rows, then the shared ones.
   for (int k = 0; k < 2; ++k) {
     const int base = k ? kOsc2 : kOsc1;
@@ -284,6 +318,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   initTail(syn_ + kSynRows);
   initTail(macro_ + kMacroRows);
   initTail(string_ + kStringRows);
+  initTail(lofi_ + kLofiRows);
   initKit();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
@@ -459,8 +494,9 @@ void InstScreen::initTail(Param* t) {
                 [this](int d) { lfoSel_ = clampi(lfoSel_ + d, 0, mt::kLfos - 1); }};
   t[kLfoWave] = {"Wave",
                  [cfg](char* o, int n) {
-                   static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND"};
-                   snprintf(o, n, "%s", kNames[cfg().wave % 5]);
+                   static const char* const kNames[] = {"SINE", "TRI", "SAW", "SQR", "RND", "BYTE"};
+                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::LfoWave::Count), "Wave");
+                   snprintf(o, n, "%s", kNames[cfg().wave % static_cast<int>(mt::LfoWave::Count)]);
                  },
                  [cfg, lfo](int d) {
                    const uint8_t w = static_cast<uint8_t>(clampi(cfg().wave + d, 0, static_cast<int>(mt::LfoWave::Count) - 1));
@@ -510,9 +546,34 @@ void InstScreen::initTail(Param* t) {
                    lfo().dest = v;
                  },
                  noLfo};
+  // Wave BYTE (Instrument::lfoByte of the selected LFO): the formula and its A; B / C are the formula's.
+  // A formula change loads its A.
+  auto notByte = [cfg, noLfo] { return noLfo() || cfg().wave != static_cast<uint8_t>(mt::LfoWave::Byte); };
+  t[kLfoFormula] = {"Formula",
+                    [this](char* o, int n) { snprintf(o, n, "%s", mt::byteFormula(inst().lfoByte[lfoSel_][0]).name); },
+                    [this](int d) {
+                      uint8_t* b = inst().lfoByte[lfoSel_];
+                      const int c = mt::byteFormulaCount();
+                      b[0] = static_cast<uint8_t>(((b[0] + d) % c + c) % c);
+                      b[1] = mt::byteFormula(b[0]).a;
+                    },
+                    notByte};
+  t[kLfoA] = {"A", [this](char* o, int n) { snprintf(o, n, "%u", inst().lfoByte[lfoSel_][1]); },
+              [this](int d) {
+                uint8_t* b = inst().lfoByte[lfoSel_];
+                b[1] = static_cast<uint8_t>(clampi(b[1] + d, 0, 127));
+              },
+              [this, notByte] { return notByte() || !(mt::byteUses(mt::byteCode(inst().lfoByte[lfoSel_][0])) & 1); }};
 }
 
 void InstScreen::relabel() {
+  if (shown_ == mt::InstrType::Lofi) {
+    for (int k = 0; k < mt::kFmMacros; ++k) {
+      const char* l = mt::lofiMacroName(inst().machine, k);
+      lofi_[kLofiMac0 + k].label = *l ? l : "-";
+    }
+    return;
+  }
   if (shown_ != mt::InstrType::Drum) return;
   for (int k = 0; k < mt::kFmMacros; ++k) {
     const char* l = mt::drumMacroName(inst().machine, k);
@@ -539,6 +600,8 @@ void InstScreen::setType(mt::InstrType v) {
   m.machine = typeSnap_.machine;
   memcpy(m.macro, typeSnap_.macro, sizeof(m.macro));
   memcpy(m.kit, typeSnap_.kit, sizeof(m.kit));
+  m.lofiFormula = typeSnap_.lofiFormula;
+  m.lofiSync = typeSnap_.lofiSync;
   m.lfoDest = typeSnap_.lfoDest;
   for (int i = 0; i < mt::kLfos - 1; ++i) m.lfo[i].dest = typeSnap_.lfo[i].dest;
 }
@@ -552,6 +615,7 @@ Param* InstScreen::typeRows() {
     case mt::InstrType::Synth: return syn_;
     case mt::InstrType::Macro: return macro_;
     case mt::InstrType::String: return string_;
+    case mt::InstrType::Lofi: return lofi_;
     default: return chip_;
   }
 }
@@ -564,6 +628,7 @@ int InstScreen::typeCount() const {
     case mt::InstrType::Synth: return kSynRows - kCommon;
     case mt::InstrType::Macro: return kMacroRows - kCommon;
     case mt::InstrType::String: return kStringRows - kCommon;
+    case mt::InstrType::Lofi: return kLofiRows - kCommon;
     default: return kChipRows - kCommon;
   }
 }
@@ -922,7 +987,7 @@ void InstScreen::onTouch(const TouchEvent& ev) {
 }
 
 void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
-  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "OSC", "RES"};
+  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "OSC", "RES", "LOFI"};
   static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
   const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};

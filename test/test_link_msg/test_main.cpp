@@ -238,7 +238,7 @@ void test_debug() {
 }
 
 void test_protocol_8_and_debug_id() {
-  TEST_ASSERT_EQUAL(11, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields)
+  TEST_ASSERT_EQUAL(12, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
   TEST_ASSERT_EQUAL(42, static_cast<int>(Msg::WtRender));
   TEST_ASSERT_EQUAL(43, static_cast<int>(Msg::RenderOut));
@@ -521,7 +521,7 @@ void test_profile_rep() {
 }
 
 void test_profile_rep_24_stages() {
-  TEST_ASSERT_EQUAL(24, ProfileRep::kStages);  // + STRING
+  TEST_ASSERT_EQUAL(25, ProfileRep::kStages);  // + STRING, LOFI
   ProfileRep a;
   for (int i = 0; i < ProfileRep::kStages; ++i) {
     a.cycles[i] = 1000ull * (i + 1);

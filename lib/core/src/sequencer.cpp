@@ -28,6 +28,7 @@ Sequencer::Sequencer(Project& p, void* cold)
   if (ownCold_) cold_ = new Cold();
   else new (cold_) Cold();  // zeroed
   evoResetAll();
+  varResetAll();
 }
 
 Sequencer::~Sequencer() {
@@ -99,6 +100,7 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   gateTick_ = 0;
   genResetAll();
   evoResetAll();
+  varResetAll();
   anchorAt(now);
   state_ = State::Playing;
 }
@@ -148,7 +150,7 @@ GenState Sequencer::heardGen(int tr) const {
 const Step& Sequencer::genStep(int tr, const Step& s, Step& tmp) {
   if (!p_.genOn(tr)) return s;
   const GenCfg& g = p_.gen[tr];
-  const bool gate = g.mode == static_cast<uint8_t>(GenMode::Gate);
+  const bool gate = genGateMode(g.mode);
   if (!gate && !s.hasNote()) return s;  // PITCH: clocked by the steps with a note
   const FxSlot* f = s.find(Fx::FLP);
   genShift(gen_[tr], g, tr, f ? (f->val > 100 ? 100 : f->val) : g.flip);
@@ -171,8 +173,18 @@ void Sequencer::evoResetAll() {
 }
 
 const Step& Sequencer::evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const {
-  if (!(p_.evo[tr].mask & kEvoMaskAll)) return pt.steps[tr][idx];
-  return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp);
+  VarApply va;  // mode Off
+  if (p_.var[tr].mode != static_cast<uint8_t>(VarMode::Off)) va = varApplyOf(p_, tr);  // VAR off: no lookups
+  const bool var = va.mode != static_cast<uint8_t>(VarMode::Off);
+  if (!(p_.evo[tr].mask & kEvoMaskAll))
+    return var ? varStep(pt, tr, idx, varAt(tr, varN_[tr]), va, tmp) : pt.steps[tr][idx];
+  if (!var) return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp);
+  VarView v;
+  v.pt = &pt;
+  v.tr = tr;
+  v.s = &varAt(tr, varN_[tr]);
+  v.a = va;
+  return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp, varSrc(v));
 }
 
 const EvoTrack& Sequencer::heardEvo(int tr) const {
@@ -197,6 +209,66 @@ void Sequencer::evoClear(uint64_t now, MidiSink& out, int tr) {
     if (&cold_->evo[tr][k] != &e) cold_->evo[tr][k].n = kEvoNone;
 }
 
+void Sequencer::varResetAll() {
+  for (int tr = 0; tr < kTracks; ++tr) {
+    for (int k = 0; k < kEvoRing; ++k) cold_->var[tr][k].n = kEvoNone;
+    varReset(cold_->var[tr][0]);  // n = 0
+    varN_[tr] = 0;
+    varCnt_[tr] = 0;
+  }
+}
+
+const VarTrack& Sequencer::heardVar(int tr) const {
+  if (tr < 0 || tr >= kTracks) tr = 0;
+  uint32_t n = varN_[tr];
+  if (state_ != State::Stopped)
+    for (int i = 0; i < histN_; ++i)
+      if (hist(i).t <= heardStepT_) {
+        if (i > 0) n = hist(i - 1).varN[tr];  // the state after the heard step
+        break;
+      }
+  const VarTrack& v = varAt(tr, n);
+  return v.n == n ? v : varAt(tr, varN_[tr]);
+}
+
+void Sequencer::varClear(uint64_t now, MidiSink& out, int tr) {
+  if (tr < 0 || tr >= kTracks) return;
+  replan(now, out);  // back to the heard step: its state is the one Capture wrote
+  VarTrack& v = varAt(tr, varN_[tr]);
+  v.sinceReset = 0;  // generation 0: the (captured) pattern
+  for (int k = 0; k < kEvoRing; ++k)  // older states would bring the changes back on a rewind
+    if (&cold_->var[tr][k] != &v) cold_->var[tr][k].n = kEvoNone;
+}
+
+// A pass ended (the pattern that plays next is cur_): each track with VAR on counts it and, every `every`
+// passes, takes the next generation into the next ring slot (from the pattern that plays next). Another
+// pattern next (newPat): each track with VAR on restarts at generation 0 of it instead (a new ring slot, n
+// goes on, the pass count from 0).
+void Sequencer::varPass(bool newPat) {
+  const Pattern& pt = p_.patterns[cur_];
+  for (int tr = 0; tr < kTracks; ++tr) {
+    VarCfg c = p_.var[tr];
+    varClamp(c);
+    const bool kit = p_.trackIsDrum(tr);
+    if (varModeOf(c, kit) == VarMode::Off) {
+      varCnt_[tr] = 0;
+      continue;
+    }
+    if (!newPat && ++varCnt_[tr] < c.every) continue;
+    varCnt_[tr] = 0;
+    const VarTrack& from = varAt(tr, varN_[tr]);
+    VarTrack& to = varAt(tr, varN_[tr] + 1);
+    to = from;
+    if (newPat) {
+      ++to.n;
+      to.sinceReset = 0;
+    } else {
+      varNext(to, c, pt, tr, kit, runSeed_);
+    }
+    varN_[tr] = to.n;
+  }
+}
+
 // A pass ended (the pattern that plays next is cur_): each track with something in its mask counts it
 // and, every `every` passes, mutates its state into the next ring slot. The mask in effect (evoApplyOf:
 // no RHYTHM on a GEN GATE track) is what may change.
@@ -215,7 +287,14 @@ void Sequencer::evoPass() {
     c.mask = a.mask;
     const EvoTrack& from = evoAt(tr, evoN_[tr]);
     EvoTrack& to = evoAt(tr, evoN_[tr] + 1);
-    evoMakeView(pt, tr, from, c.mask, a.noteOk, a.scale, evoView_);
+    const VarApply va = varApplyOf(p_, tr);
+    VarView v;  // EVO looks at the steps as VAR plays them
+    v.pt = &pt;
+    v.tr = tr;
+    v.s = &varAt(tr, varN_[tr]);
+    v.a = va;
+    evoMakeView(pt, tr, from, c.mask, a.noteOk, a.scale, evoView_,
+                va.mode != static_cast<uint8_t>(VarMode::Off) ? varSrc(v) : EvoSrc());
     to = from;
     evoMutate(to, c, evoView_, runSeed_, tr);
     evoN_[tr] = to.n;
@@ -275,6 +354,7 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   loop_ = 0;
   heardLoop_ = 0;
   evoResetAll();
+  varResetAll();
   restoreMutes(kNever);
   showStopped();
 }
@@ -451,6 +531,14 @@ bool Sequencer::rewind(uint64_t now) {
       e.n = n;
     }
     evoN_[tr] = n;
+    const uint32_t vn = h.varN[tr];
+    varCnt_[tr] = h.varCnt[tr];
+    VarTrack& v = varAt(tr, vn);
+    if (v.n != vn) {  // older than the ring: generation 0 (still deterministic)
+      varReset(v);
+      v.n = vn;
+    }
+    varN_[tr] = vn;
   }
   condBits_ = h.condBits;
   muteHeld_ = h.held;
@@ -571,6 +659,8 @@ void Sequencer::scheduleStep(uint64_t now) {
   memcpy(h.gens, gen_, sizeof(gen_));
   memcpy(h.evoN, evoN_, sizeof(evoN_));
   memcpy(h.evoCnt, evoCnt_, sizeof(evoCnt_));
+  memcpy(h.varN, varN_, sizeof(varN_));
+  memcpy(h.varCnt, varCnt_, sizeof(varCnt_));
   h.condBits = condBits_;
   h.held = muteHeld_;
   h.saved = savedMute_;
@@ -851,11 +941,13 @@ void Sequencer::endOfPass() {
     restoreMutes(tickTime(stepTick_));
   }
   queued_ = -1;
+  const bool newPat = next >= 0 && next != cur_;
   if (next >= 0) {
     releaseAllTies(tickTime(stepTick_));
     cur_ = static_cast<uint8_t>(next);
     loop_ = 0;
   }
+  varPass(newPat);
   evoPass();
   reanchor(stepTick_);  // keeps tick distances small
 }

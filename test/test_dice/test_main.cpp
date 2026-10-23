@@ -386,6 +386,17 @@ void test_pattern_turns_gen_off() {
   TEST_ASSERT_EQUAL(static_cast<int>(GenMode::Pitch), p.gen[1].mode);
 }
 
+void test_pattern_turns_var_off() {
+  templateBuild(1, p);
+  p.var[1].mode = static_cast<uint8_t>(VarMode::Ca1d);
+  p.var[7].mode = static_cast<uint8_t>(VarMode::Markov);
+  diceRoll(p, kDicePattern, 0, 3, snap);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Off), p.var[1].mode);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Markov), p.var[7].mode);
+  diceUndo(p, snap);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Ca1d), p.var[1].mode);
+}
+
 namespace {
 struct VecSink : ByteSink {
   std::vector<uint8_t> buf;
@@ -527,6 +538,7 @@ int main() {
   RUN_TEST(test_pattern_notes_in_scale);
   RUN_TEST(test_lead_without_chords_track);
   RUN_TEST(test_pattern_turns_gen_off);
+  RUN_TEST(test_pattern_turns_var_off);
   RUN_TEST(test_roll_all_valid_and_saves);
   RUN_TEST(test_roll_all_undo_bit_exact);
   RUN_TEST(test_unrelated_edits_survive_undo);

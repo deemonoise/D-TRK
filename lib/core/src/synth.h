@@ -216,7 +216,7 @@ class Synth {
   enum ProfStage : uint8_t {
     kProfQueue, kProfEvents, kProfCache, kProfInstLfo, kProfCtlMod, kProfCtlFlt, kProfCtlEng, kProfChip,
     kProfSample, kProfFm, kProfDrum, kProfSyn, kProfMix, kProfDelay, kProfReverb, kProfComp, kProfPerf,
-    kProfMaster, kProfStrip, kProfMod, kProfShim, kProfEq, kProfMacro, kProfString, kProfStages
+    kProfMaster, kProfStrip, kProfMod, kProfShim, kProfEq, kProfMacro, kProfString, kProfLofi, kProfStages
   };
   static const char* profName(int stage);
   // Any task: arms (or, nullptr, stops) the profiler. It takes effect at the start of the next block
@@ -307,6 +307,7 @@ class Synth {
   void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
   void controlMacro(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlString(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
+  void controlLofi(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   static void macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]);
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
   void controlFilter(Voice& v, const Instrument& m, float pitch, const float* la);  // la: control()'s LFO sums

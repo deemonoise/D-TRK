@@ -264,7 +264,8 @@ void test_lfo_fx() {
   TEST_ASSERT_EQUAL(-64, fxSigned(fxStep(Fx::LFD, static_cast<uint8_t>(-60), -10)));
   TEST_ASSERT_EQUAL_STRING("127", fmt(Fx::LFS, 127));
   TEST_ASSERT_EQUAL_STRING("SQR", fmt(Fx::LFW, static_cast<uint8_t>(LfoWave::Square)));
-  TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Random), fxStep(Fx::LFW, 0, 10));
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Byte), fxStep(Fx::LFW, 0, 10));
+  TEST_ASSERT_EQUAL_STRING("BYT", fmt(Fx::LFW, static_cast<uint8_t>(LfoWave::Byte)));
   TEST_ASSERT_EQUAL_STRING("CUT", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Cutoff)));
   TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Count) - 1, fxStep(Fx::LFT, 0, 40));
   TEST_ASSERT_EQUAL_STRING(" 80", fmt(Fx::LFR, 0x80));

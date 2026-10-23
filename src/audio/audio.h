@@ -38,7 +38,7 @@ LinkCounters linkCounters();
 // CPU profile (PROJ -> SYS): the synth board's render time per stage (mt::Synth::ProfStage) while
 // running. UI task, blocking (a link request each). profileStart leaves it off when the board does
 // not answer.
-constexpr int kProfStages = 24;
+constexpr int kProfStages = 25;
 struct Profile {
   uint32_t blocks;        // blocks rendered while it ran
   float us[kProfStages];  // average per block, us

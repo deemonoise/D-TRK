@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unity.h>
+#include "bytebeat_lib.h"
 #include "scale.h"
 #include "scene.h"
 #include "slices.h"
@@ -1516,6 +1517,86 @@ void test_lfo_rtrg_mod() { rtrgMod(0, 0); }
 void test_lfo_rtrg_mod_shared_source() { rtrgMod(0, kLfoFree); }
 void test_lfo_rtrg_mod_shared_target() { rtrgMod(kLfoFree, kLfoFree); }
 
+// LFO i's BYTE value at phase ph: the formula at t = phase x 65536 (A = lfoByte, B / C its
+// defaults), its mode's sample, x depth / 64.
+static float byteLfoWant(const Instrument& m, int i, float ph, int8_t depth) {
+  const int f = m.lfoByte[i][0];
+  const ByteFormula& bf = byteFormula(f);
+  const int32_t x = byteEval(byteCode(f), static_cast<uint32_t>(ph * 65536.f), m.lfoByte[i][1], bf.b, bf.c);
+  return byteSample(x, bf.mode) * depth * (1.f / 64.f);
+}
+
+// LFO i (0 = LFO 1, else m.lfo[i - 1]) set to BYTE, depth 63 on Cutoff; checks every block that its
+// output is the formula at the voice's phase, in [-1, 1] and on the 1/128 grid (steps). Returns the
+// number of distinct values seen.
+static int byteLfoRun(int i, uint8_t sync, int blocks, float* outs = nullptr) {
+  Instrument& m = p->instruments[0];
+  LfoCfg c = {static_cast<uint8_t>(LfoWave::Byte), 60, 63, static_cast<uint8_t>(LfoDest::Cutoff), sync};
+  if (i == 0) {
+    m.lfoWave = c.wave;
+    m.lfoRate = c.rate;
+    m.lfoDepth = c.depth;
+    m.lfoDest = c.dest;
+    m.lfoSync = c.sync;
+  } else {
+    m.lfo[i - 1] = c;
+  }
+  noteOn(0, 0, 60);
+  int distinct = 0;
+  float last = 2.f;
+  for (int k = 0; k < blocks; ++k) {
+    s->render(buf);
+    const int v = s->trackVoice(0);
+    const float o = s->voice(v).lfoOut[i];
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, byteLfoWant(m, i, s->lfoPhase(v, i), 63), o);
+    TEST_ASSERT_TRUE(o >= -1.f && o <= 1.f);
+    const float q = o * (64.f / 63.f) * 128.f;
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, roundf(q), q);
+    if (o != last) ++distinct;
+    last = o;
+    if (outs) outs[k] = o;
+  }
+  return distinct;
+}
+
+void test_lfo_byte_follows_formula() {
+  p->instruments[0].lfoByte[0][0] = 0;  // 42MELODY: t*(a&t>>b)
+  TEST_ASSERT_TRUE(byteLfoRun(0, 0, 200) > 20);
+}
+
+void test_lfo_byte_lfo2_own_formula_shared_phase() {
+  Instrument& m = p->instruments[0];
+  m.lfoByte[1][0] = static_cast<uint8_t>(byteFormulaCount() - 1);  // a signed one
+  m.lfoByte[1][1] = 4;
+  m.lfoByte[0][0] = 3;  // LFO 1's, unused
+  TEST_ASSERT_TRUE(byteLfoRun(1, kLfoFree, 200) > 20);  // Retrig OFF: the instrument's phase
+}
+
+void test_lfo_byte_changes_with_a() {
+  float x[100], y[100];
+  p->instruments[0].lfoByte[0][1] = 42;
+  byteLfoRun(0, 0, 100, x);
+  s->reset();
+  p->instruments[0].lfoByte[0][1] = 7;
+  byteLfoRun(0, 0, 100, y);
+  int diff = 0;
+  for (int k = 0; k < 100; ++k) diff += x[k] != y[k];
+  TEST_ASSERT_TRUE(diff > 10);
+}
+
+// TEMPO: the phase runs at the division's rate like the other waves.
+void test_lfo_byte_tempo_period() {
+  const int blocks = 150;
+  byteLfoRun(0, kLfoTempo, blocks);
+  const Instrument& m = p->instruments[0];
+  float want = 0;  // the same steps as Synth::lfo
+  for (int k = 0; k < blocks * Synth::kBlock / Synth::kControl - 1; ++k) {
+    want += lfoSyncHz(m.lfoRate, p->bpm) * Synth::kControl * (1.f / kSynthRate);
+    if (want >= 1.f) want -= static_cast<int>(want);
+  }
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, want, s->lfoPhase(s->trackVoice(0), 0));
+}
+
 // RTRG on itself is ignored: LFO 1 -> L1 RTRG runs on like a plain LFO (no restart after its wraps).
 void test_lfo_self_rtrg_ignored() {
   Instrument& m = p->instruments[0];
@@ -2570,6 +2651,120 @@ void test_synth_wt_voices_are_heavy() {
 void test_synth_bl_voices_use_whole_pool() {
   TEST_ASSERT_EQUAL(kVoices, synthPolyChords(SynOsc::Saw, SynOsc::Square));
 }
+
+// ---- LOFI ----
+
+static void lofiInstr(int i, LofiMachine mc) {
+  Instrument& m = p->instruments[i];
+  instrSetType(m, InstrType::Lofi);
+  lofiSetMachine(m, static_cast<uint8_t>(mc));
+  m.sustain = 127;
+  m.release = 0;
+}
+
+void test_lofi_byte_sounds_and_env_ends() {
+  lofiInstr(0, LofiMachine::Byte);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lofi);
+  TEST_ASSERT_FALSE(silentBlocks(blocksMs(320)));  // formula 0 (42MELODY) rests 256 ms at C-4
+  noteOff(0, 0, 60);
+  for (int k = 0; k < 400 && s->activeVoices(); ++k) s->render(buf);
+  TEST_ASSERT_EQUAL(0, s->activeVoices());
+}
+
+void test_lofi_apc_sounds() {
+  lofiInstr(0, LofiMachine::Apc);
+  noteOn(0, 0, 57);  // 220 Hz, WIDTH default: one pulse per period
+  s->render(buf);
+  // 100 ms: ~22 falling crossings at 220 Hz.
+  TEST_ASSERT_INT_WITHIN(2, 22, crossings(blocksMs(100)));
+}
+
+static int lofiPolyChords(LofiMachine mc) {
+  lofiInstr(0, mc);
+  p->instruments[0].mono = false;
+  for (int t = 0; t < kTracks; ++t) {
+    p->tracks[t].instr = 0;
+    for (int k = 0; k < kPolyPerTrack; ++k) noteOn(0, t, 48 + t * 2 + k * 4);
+  }
+  s->render(buf);
+  return s->activeVoices();
+}
+
+void test_lofi_byte_voices_are_heavy() { TEST_ASSERT_EQUAL(kFmVoiceMax, lofiPolyChords(LofiMachine::Byte)); }
+
+void test_lofi_apc_voices_use_whole_pool() { TEST_ASSERT_EQUAL(kVoices, lofiPolyChords(LofiMachine::Apc)); }
+
+void test_lofi_macro_lock_applies() {
+  lofiInstr(0, LofiMachine::Byte);
+  send(0, 0, 0xF5, static_cast<uint8_t>(Fx::DCY), 100);  // A
+  noteOn(0, 0, 60);
+  s->render(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_TRUE(v.lockMask & 1);
+  TEST_ASSERT_EQUAL(100, v.lock[0]);
+}
+
+// LOFI legato from a CHIP voice starts the LOFI voice afresh (as FM): t from zero, not the
+// stale counter the CHIP note left in the engine.
+void test_lofi_legato_from_chip_starts_lofi_voice() {
+  lofiInstr(1, LofiMachine::Byte);
+  p->instruments[1].mono = true;
+  p->instruments[0].mono = true;
+  pgm(0, 1);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 100; ++k) s->render(buf);
+  Voice& v = const_cast<Voice&>(s->voice(s->trackVoice(0)));
+  TEST_ASSERT_TRUE(v.lv().tick() > 2000);
+  pgm(0, 0);
+  noteOn(0, 0, 62);  // CHIP legato on the same voice
+  s->render(buf);
+  TEST_ASSERT_FALSE(s->voice(s->trackVoice(0)).lofi);
+  pgm(0, 1);
+  noteOn(0, 0, 60);  // LOFI legato from a CHIP voice: a new LOFI note
+  s->render(buf);
+  TEST_ASSERT_EQUAL(1, s->activeVoices());
+  Voice& w = const_cast<Voice&>(s->voice(s->trackVoice(0)));
+  TEST_ASSERT_TRUE(w.lofi);
+  TEST_ASSERT_TRUE(w.lv().tick() < 200);  // one block at C-4: ~32
+}
+
+// SYNC: t runs 1024 per 1/16 step of the project tempo (step = 24 ticks), x 2^octave of the note
+// from C-4; semitones are ignored. kLofiSyncBlocks: ~0.5 s = 4 steps at 120 BPM.
+constexpr int kLofiSyncBlocks = kBlocksPerSec / 2;
+static uint32_t lofiSyncTicks(uint16_t bpm, uint8_t note, uint8_t sync, int blocks = kLofiSyncBlocks) {
+  lofiInstr(0, LofiMachine::Byte);
+  p->instruments[0].lofiSync = sync;
+  p->bpm = bpm;
+  noteOn(0, 0, note);
+  for (int k = 0; k < blocks; ++k) s->render(buf);
+  return const_cast<Voice&>(s->voice(s->trackVoice(0))).lv().tick();
+}
+
+void test_lofi_sync_step_is_1024() { TEST_ASSERT_UINT32_WITHIN(20, 4096, lofiSyncTicks(120, 60, 1)); }
+
+void test_lofi_sync_octave_up() { TEST_ASSERT_UINT32_WITHIN(40, 8192, lofiSyncTicks(120, 72, 1)); }
+
+void test_lofi_sync_octave_down() { TEST_ASSERT_UINT32_WITHIN(20, 2048, lofiSyncTicks(120, 59, 1)); }
+
+void test_lofi_sync_ignores_semitones() { TEST_ASSERT_UINT32_WITHIN(20, 4096, lofiSyncTicks(120, 61, 1)); }
+
+void test_lofi_sync_half_tempo() { TEST_ASSERT_UINT32_WITHIN(20, 2048, lofiSyncTicks(60, 60, 1)); }
+
+void test_lofi_sync_off_follows_pitch() {
+  // C#4 free: 8 kHz x 2^(1/12) for 0.5 s.
+  TEST_ASSERT_UINT32_WITHIN(20, 4238, lofiSyncTicks(120, 61, 0));
+}
+
+void test_lofi_sync_follows_tempo_change() {
+  const uint32_t t0 = lofiSyncTicks(120, 60, 1);
+  p->bpm = 60;
+  for (int k = 0; k < kLofiSyncBlocks; ++k) s->render(buf);
+  TEST_ASSERT_UINT32_WITHIN(30, t0 + 2048, const_cast<Voice&>(s->voice(s->trackVoice(0))).lv().tick());
+}
+
+void test_lofi_profile_stage_name() { TEST_ASSERT_EQUAL_STRING("lofi", Synth::profName(Synth::kProfLofi)); }
 
 void test_synth_macro_lock_applies() {
   // fx DCY on a SYNTH step locks SHP1 (macro 0): the lock reaches the voice.
@@ -5671,6 +5866,10 @@ int main() {
   RUN_TEST(test_lfo_rtrg_mod_shared_source);
   RUN_TEST(test_lfo_rtrg_mod_shared_target);
   RUN_TEST(test_lfo_self_rtrg_ignored);
+  RUN_TEST(test_lfo_byte_follows_formula);
+  RUN_TEST(test_lfo_byte_lfo2_own_formula_shared_phase);
+  RUN_TEST(test_lfo_byte_changes_with_a);
+  RUN_TEST(test_lfo_byte_tempo_period);
   RUN_TEST(test_lfo_rtrg_survives_mid_tick_update);
   RUN_TEST(test_lfo_shared_target_ignores_voice_rtrg);
   RUN_TEST(test_lfo_shared_target_rate_sources);
@@ -5713,6 +5912,20 @@ int main() {
   RUN_TEST(test_synth_wt_plays);
   RUN_TEST(test_synth_wt_voices_are_heavy);
   RUN_TEST(test_synth_bl_voices_use_whole_pool);
+  RUN_TEST(test_lofi_byte_sounds_and_env_ends);
+  RUN_TEST(test_lofi_apc_sounds);
+  RUN_TEST(test_lofi_byte_voices_are_heavy);
+  RUN_TEST(test_lofi_apc_voices_use_whole_pool);
+  RUN_TEST(test_lofi_macro_lock_applies);
+  RUN_TEST(test_lofi_legato_from_chip_starts_lofi_voice);
+  RUN_TEST(test_lofi_sync_step_is_1024);
+  RUN_TEST(test_lofi_sync_octave_up);
+  RUN_TEST(test_lofi_sync_octave_down);
+  RUN_TEST(test_lofi_sync_ignores_semitones);
+  RUN_TEST(test_lofi_sync_half_tempo);
+  RUN_TEST(test_lofi_sync_off_follows_pitch);
+  RUN_TEST(test_lofi_sync_follows_tempo_change);
+  RUN_TEST(test_lofi_profile_stage_name);
   RUN_TEST(test_synth_macro_lock_applies);
   RUN_TEST(test_synth_macro_lock_on_empty_step_hits_sounding_voice);
   RUN_TEST(test_kit_sampler_lane_builds_scratch_instrument);
