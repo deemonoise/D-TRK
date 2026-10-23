@@ -26,7 +26,7 @@ void reverbToInternal();
 void* moveSynth(void* dst);
 
 // CPU profile (PROJ -> SYS): the render time per stage (mt::Synth::ProfStage) while running.
-constexpr int kProfStages = 22;
+constexpr int kProfStages = 23;
 struct Profile {
   uint32_t blocks;               // blocks rendered while it ran
   float us[kProfStages];         // average per block, us

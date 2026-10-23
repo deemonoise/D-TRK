@@ -325,6 +325,7 @@ void test_presets_web() {
   // Type folder first, then up to kPresetDepthMax folders.
   TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, ""));
   TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, "CHIP"));
+  TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, "LOFI/x"));
   TEST_ASSERT_TRUE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c"));    // 1 + 4
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "DRUM/808 kit/a/b/c/d"));  // 1 + 5
   TEST_ASSERT_FALSE(webSubValid(WebDir::Presets, "chip"));

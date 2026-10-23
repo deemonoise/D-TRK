@@ -44,6 +44,10 @@
 // while it runs: Rvb level 0 = no reverb, Rvb mode PLAIN = no shimmer, Mod type OFF / PHASER, Dly
 // mode DIGITAL, EQ flat (64 / 64), Comp OFF (the status-bar CPU figure; the CPU profile splits
 // mod / shim / eq / delay / reverb).
+// LOFI bench: -DAUDIO_BENCH_LOFI puts a LOFI BYTE on 8 tracks (8 voices, the heavy cap: formulas
+// VIZNUT1, SKURK, LOSTSPC, BLUEBRY, BEAR, NIBBLES, SQUARES, BELLS, TONE 40, track 1 also LOOP 60)
+// held at C-3..A-4 on tracks 1..8. Same Serial line, plus the CPU profile (per-stage us per block)
+// every 5 s. It overwrites instruments 8..15 and tracks 1..8's out / instrument, like the FM bench.
 // Pool bench: -DAUDIO_BENCH_POOL with -DMT_VOICES=N -DMT_HEAVY_MAX=H (envs wt32-pool24 /
 // wt32-pool32): first 16 CHIP voices alone (their cost per voice), then the whole N-voice pool
 // with 8, 10, H heavy voices (DRUM and FM HAT on alternate tracks, retriggered every 16th), the
@@ -56,7 +60,7 @@
 #define AUDIO_BENCH_DRUM
 #endif
 #if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN) || \
-    defined(AUDIO_BENCH_POOL)
+    defined(AUDIO_BENCH_POOL) || defined(AUDIO_BENCH_LOFI)
 #define AUDIO_BENCH_ANY
 #endif
 
@@ -519,6 +523,29 @@ void benchSynTick() {
 }
 #endif
 
+#ifdef AUDIO_BENCH_LOFI
+constexpr uint8_t kBenchLofiInstr = 8;  // instruments 8..15, one per track
+constexpr int kBenchLofiTracks = 8;     // tracks 1..8: the heavy cap
+
+void benchLofiBegin() {
+  static const uint8_t kFormulas[kBenchLofiTracks] = {1, 7, 8, 9, 13, 16, 23, 24};  // bytebeat_lib.cpp
+  for (int t = 0; t < kBenchLofiTracks; ++t) {
+    mt::Instrument& m = project->instruments[kBenchLofiInstr + t];
+    m = mt::Instrument();
+    mt::instrSetType(m, mt::InstrType::Lofi);
+    m.lofiFormula = kFormulas[t];
+    mt::lofiLoadFormulaDefaults(m);
+    m.macro[3] = 40;              // TONE: interpolation + LP, the dearer path
+    if (t == 0) m.macro[4] = 60;  // LOOP
+    m.sustain = 127;
+    project->tracks[t].out = mt::TrackOut::Int;
+    project->tracks[t].instr = static_cast<uint8_t>(kBenchLofiInstr + t);
+    const uint8_t on[3] = {0x90, static_cast<uint8_t>(48 + t * 3), 100};
+    synth->event(0, static_cast<uint8_t>(t), on, 3);
+  }
+}
+#endif
+
 #ifdef AUDIO_BENCH_POOL
 static_assert(mt::kFmVoiceMax >= 8 && mt::kFmVoiceMax <= 12, "pool bench: heavy tracks 1..12");
 constexpr int kPoolHeavyInstr = 16;  // instruments 16..27: heavy, 28: CHIP
@@ -952,6 +979,9 @@ void begin(mt::Project* p) {
 #ifdef AUDIO_BENCH_SYN
   benchSynBegin();
 #endif
+#ifdef AUDIO_BENCH_LOFI
+  benchLofiBegin();
+#endif
 #ifdef AUDIO_BENCH_POOL
   benchPoolBegin();
 #endif
@@ -1196,6 +1226,22 @@ void pollLog() {
     Serial.printf("audio bench: render %u us (peak %u) / 4000 us\n",
                   static_cast<unsigned>(renderUs.load(std::memory_order_relaxed)),
                   static_cast<unsigned>(benchPeak.exchange(0, std::memory_order_relaxed)));
+  }
+#endif
+#ifdef AUDIO_BENCH_LOFI
+  // Every 5 s: the CPU profile of the last 5 s, per stage.
+  static int64_t lastLofi;
+  if (now - lastLofi >= 5000000) {
+    lastLofi = now;
+    Profile pr;
+    if (profileRunning() && profileStop(pr)) {
+      Serial.printf("lofi bench: %u blocks, peak %u us; us per block:", static_cast<unsigned>(pr.blocks),
+                    static_cast<unsigned>(pr.peakUs));
+      for (int i = 0; i < kProfStages; ++i)
+        if (pr.us[i] >= 0.5f) Serial.printf(" %s %u", mt::Synth::profName(i), static_cast<unsigned>(pr.us[i] + 0.5f));
+      Serial.println();
+    }
+    profileStart();
   }
 #endif
 #ifdef AUDIO_BENCH_POOL

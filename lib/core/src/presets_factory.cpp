@@ -45,6 +45,19 @@ void lfoN(I& m, int i, LfoWave w, LfoDest d, uint8_t rate, int8_t depth) {  // L
   l.wave = LW(w); l.dest = D(d); l.rate = rate; l.depth = depth; l.sync = 0;
 }
 void fx(I& m, uint8_t send, uint8_t rsend) { m.send = send; m.rsend = rsend; }
+// LOFI BYTE: library formula (bytebeat_lib.cpp) with its default A B C, then tl() sets TONE LOOP
+// (mac() all five); APC: WIDTH TONE DRIFT SMOOTH (slot 5 stays 0). A held gate: the formula runs as
+// long as the note.
+void bb(I& m, uint8_t formula) {
+  m.lofiFormula = formula;
+  lofiSetMachine(m, static_cast<uint8_t>(LofiMachine::Byte));
+  env(m, 0, 60, 127, 40);
+}
+void tl(I& m, uint8_t tone, uint8_t loop) { m.macro[3] = tone; m.macro[4] = loop; }
+void apc(I& m) {
+  lofiSetMachine(m, static_cast<uint8_t>(LofiMachine::Apc));
+  env(m, 0, 60, 127, 40);
+}
 
 // KIT lanes: kick, snare, closed / open hat, clap, then the extras.
 constexpr InstrType kD = InstrType::Drum, kF = InstrType::Fm, kC = InstrType::Chip;
@@ -418,6 +431,33 @@ constexpr FactoryPreset kAll[] = {
        sy(m, SynOsc::Wt, "*SYNC", SynOsc::Saw, nullptr); m.macro[kMacMix] = 40;
        lfo1(m, LfoWave::Random, LfoDest::Pitch, 90, 12); lfoN(m, 1, LfoWave::Sine, LfoDest::Dec, 60, 50);
        fx(m, 60, 60); }},
+
+    // ================= LOFI =================
+    // BYTE: the formula's index in bytebeat_lib.cpp; songs play at their own speed on C-4.
+    {InstrType::Lofi, "BYTE", "42 MELDY", [](I& m) { bb(m, 0); }},
+    {InstrType::Lofi, "BYTE", "VIZNUT", [](I& m) { bb(m, 1); tl(m, 30, 0); }},
+    {InstrType::Lofi, "BYTE", "SIERPNSK", [](I& m) { bb(m, 5); tl(m, 20, 0); fx(m, 30, 0); }},
+    {InstrType::Lofi, "BYTE", "LOSTSPC", [](I& m) { bb(m, 8); tl(m, 40, 0); fx(m, 40, 40); }},
+    {InstrType::Lofi, "BYTE", "NIBBLES", [](I& m) { bb(m, 16); tl(m, 25, 0); }},
+    {InstrType::Lofi, "BYTE", "MASK 27", [](I& m) { bb(m, 21); mac(m, 27, 0, 0, 0, 0); }},  // 42 melody, mask 27
+    {InstrType::Lofi, "BYTE", "SQ DUET", [](I& m) {  // two squares, rhythm gate (C 20: t>>9, 64 ms rests); LFO on B
+       bb(m, 23); mac(m, 40, 60, 20, 15, 0); lp(m, 100, 20, 0, 40); lfo1(m, LfoWave::Tri, LfoDest::Col, 30, 20); }},
+    {InstrType::Lofi, "BYTE", "FRACBELL", [](I& m) { bb(m, 24); mac(m, 50, 70, 90, 50, 0); fx(m, 30, 70); }},
+    {InstrType::Lofi, "BYTE", "LOOP ARP", [](I& m) { bb(m, 19); tl(m, 35, 40); fx(m, 50, 20); }},
+    {InstrType::Lofi, "BYTE", "BYTEBASS", [](I& m) {  // signed pulse an octave down, A = pitch, B = level
+       bb(m, 25); mac(m, 16, 100, 0, 20, 0); m.transpose = -12; lp(m, 80, 30, 25, 60); m.mono = true; }},
+    // SYNC: t locked to the tempo (1024 per step), the rhythm formulas play on the grid.
+    {InstrType::Lofi, "BYTE", "SYNCBEAT", [](I& m) { bb(m, 37); m.lofiSync = 1; tl(m, 20, 0); }},  // BACKBEAT
+    {InstrType::Lofi, "BYTE", "SYNCHATS", [](I& m) { bb(m, 36); m.lofiSync = 1; fx(m, 20, 20); }},  // HATS
+    {InstrType::Lofi, "BYTE", "SYNCARP", [](I& m) {  // ARP
+       bb(m, 38); m.lofiSync = 1; tl(m, 40, 0); fx(m, 50, 30); }},
+    {InstrType::Lofi, "BYTE", "SYNCBASS", [](I& m) {  // BASSLN
+       bb(m, 40); m.lofiSync = 1; tl(m, 30, 0); lp(m, 85, 40, 30, 50); m.mono = true; }},
+    // APC: WIDTH under a period = the note; above it swallows edges (subharmonics).
+    {InstrType::Lofi, "APC", "APC", [](I& m) { apc(m); }},
+    {InstrType::Lofi, "APC", "APC SUB", [](I& m) { apc(m); mac(m, 90, 90, 0, 30, 0); m.transpose = 12; }},
+    {InstrType::Lofi, "APC", "APC DRFT", [](I& m) { apc(m); mac(m, 50, 110, 90, 40, 0); fx(m, 40, 30); }},
+    {InstrType::Lofi, "APC", "APC SOFT", [](I& m) { apc(m); mac(m, 30, 70, 20, 127, 0); lp(m, 95, 20, 20, 60); }},
 };
 
 }  // namespace

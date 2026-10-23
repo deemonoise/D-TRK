@@ -32,6 +32,7 @@ const char* presetTypeName(InstrType t) {
     case InstrType::Fm: return "FM";
     case InstrType::Drum: return "DRUM";
     case InstrType::Synth: return "SYNTH";
+    case InstrType::Lofi: return "LOFI";
     default: return "CHIP";
   }
 }
@@ -42,6 +43,7 @@ const char* presetRoot(InstrType t) {
     case InstrType::Fm: return "/presets/FM";
     case InstrType::Drum: return "/presets/DRUM";
     case InstrType::Synth: return "/presets/SYNTH";
+    case InstrType::Lofi: return "/presets/LOFI";
     case InstrType::Kit: return "/presets/KIT";
     default: return "/presets/CHIP";
   }

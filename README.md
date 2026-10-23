@@ -34,9 +34,10 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables.
 - **SAMPLE**: a sampler with slices, WAV import from the card. The sample editor works without the touchscreen too.
 - **CHIP**: pulse, triangle, noise, metal and wavetable for chiptune.
+- **LOFI**: bytebeat (45 built-in formulas, from the 2011 classics to our own rhythmic ones that lock to the tempo, all with A, B, C parameters) and an Atari Punk Console with subharmonics — dirty 8-bit sound.
 - **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
 
-Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo sync, modulate each other, controlled from steps). 145 factory presets.
+Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo sync, modulate each other, controlled from steps). 159 factory presets.
 
 ### Mix and effects
 
@@ -86,7 +87,7 @@ The partition table is custom (`partitions.csv`): two 3 MB firmware slots and a 
 
 | Folder | Contents |
 |---|---|
-| `lib/core` | hardware-independent core: model, sequencer, fx, scales, tuning (`.scl` parser, factory tunings, key map), shift-register generator, evolve, song follow actions, scenes, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, filter), WAV parser, sample bank, project sample list, presets |
+| `lib/core` | hardware-independent core: model, sequencer, fx, scales, tuning (`.scl` parser, factory tunings, key map), shift-register generator, evolve, song follow actions, scenes, Euclid and Fill, file format, MIDI parser, synthesizer (CHIP, SAMPLE, FM, DRUM, LOFI: bytebeat compiler and VM, filter), WAV parser, sample bank, project sample list, presets |
 | `src/engine` | sequencer task on core 0 (timer, MIDI output) |
 | `src/audio` | built-in sound: I2S to the external PCM5102A DAC, audio task, sample bank in flash, WAV import |
 | `src/hw` | input (encoder, buttons), MIDI UART, SD, display configuration |

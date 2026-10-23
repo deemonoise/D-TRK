@@ -1,6 +1,7 @@
 #include <string.h>
 #include <unity.h>
 #include "inst_codec.h"
+#include "bytebeat_lib.h"
 #include "presets_factory.h"
 #include "synth.h"
 #include "synth_fm_machines.h"
@@ -39,6 +40,7 @@ void test_counts() {
   TEST_ASSERT_TRUE(factoryCount(InstrType::Drum) >= 30);
   TEST_ASSERT_TRUE(factoryCount(InstrType::Synth) >= 30);
   TEST_ASSERT_TRUE(factoryCount(InstrType::Kit) >= 12);
+  TEST_ASSERT_TRUE(factoryCount(InstrType::Lofi) >= 12);
   TEST_ASSERT_EQUAL(0, factoryCount(InstrType::Sample));
 }
 
@@ -162,6 +164,54 @@ void test_synth_presets_builtin_tables() {
   }
 }
 
+// LOFI: BYTE and APC presets, machine and formula in range (the formula survives its record).
+void test_lofi_presets_valid() {
+  int byteN = 0, apcN = 0;
+  for (int i = 0; i < factoryCount(InstrType::Lofi); ++i) {
+    Instrument m;
+    factoryBuild(InstrType::Lofi, i, m);
+    TEST_ASSERT_TRUE_MESSAGE(m.type == InstrType::Lofi, m.name);
+    TEST_ASSERT_TRUE_MESSAGE(m.machine < static_cast<int>(LofiMachine::Count), m.name);
+    TEST_ASSERT_TRUE_MESSAGE(m.lofiFormula < byteFormulaCount(), m.name);
+    for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_TRUE_MESSAGE(m.macro[k] <= 127, m.name);
+    byteN += m.machine == static_cast<uint8_t>(LofiMachine::Byte);
+    apcN += m.machine == static_cast<uint8_t>(LofiMachine::Apc);
+    if (m.machine == static_cast<uint8_t>(LofiMachine::Apc)) TEST_ASSERT_EQUAL_MESSAGE(0, m.macro[4], m.name);
+    uint8_t b[kLofiRecSize];
+    packLofi(m, b);
+    Instrument r;
+    unpackLofi(b, sizeof(b), r);
+    fixInstrument(r);
+    TEST_ASSERT_EQUAL_MESSAGE(m.lofiFormula, r.lofiFormula, m.name);
+  }
+  TEST_ASSERT_TRUE(byteN >= 8);
+  TEST_ASSERT_TRUE(apcN >= 4);
+}
+
+// LOFI BYTE: A B C are the formula's defaults (else the formula sounds other than its original),
+// except the presets built on other values on purpose. A few play in SYNC.
+void test_lofi_byte_presets_use_formula_defaults() {
+  static const char* const kOwnAbc[] = {"MASK 27"};  // 42 melody with mask 27 instead of 42
+  int syncN = 0;
+  for (int i = 0; i < factoryCount(InstrType::Lofi); ++i) {
+    Instrument m;
+    factoryBuild(InstrType::Lofi, i, m);
+    TEST_ASSERT_TRUE_MESSAGE(m.lofiSync <= 1, m.name);
+    if (m.machine != static_cast<uint8_t>(LofiMachine::Byte)) {
+      TEST_ASSERT_EQUAL_MESSAGE(0, m.lofiSync, m.name);
+      continue;
+    }
+    syncN += m.lofiSync;
+    bool own = false;
+    for (const char* n : kOwnAbc) own = own || strcmp(n, m.name) == 0;
+    if (own) continue;
+    const ByteFormula& f = byteFormula(m.lofiFormula);
+    const uint8_t want[3] = {f.a, f.b, f.c};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY_MESSAGE(want, m.macro, 3, m.name);
+  }
+  TEST_ASSERT_TRUE(syncN >= 3);
+}
+
 void test_chord_preset_is_maj7() {
   for (int i = 0; i < factoryCount(InstrType::Fm); ++i) {
     if (strcmp(factoryPreset(InstrType::Fm, i).name, "CHORD M7") != 0) continue;
@@ -206,7 +256,9 @@ void test_every_preset_sounds() {
       s.event(0, 0, on, 3);
       int16_t buf[Synth::kBlock];
       int peak = 0;
-      for (int k = 0; k < 40; ++k) {  // 160 ms
+      // 160 ms; LOFI 400 ms: a bytebeat song may start with a rest (42 MELDY: 256 ms at C-4).
+      const int blocks = ty == InstrType::Lofi ? 100 : 40;
+      for (int k = 0; k < blocks; ++k) {
         s.render(buf);
         for (int16_t x : buf) peak = x > peak ? x : (-x > peak ? -x : peak);
       }
@@ -267,6 +319,8 @@ int main() {
   RUN_TEST(test_kit_drums_no_insert);
   RUN_TEST(test_build_resets_target);
   RUN_TEST(test_synth_presets_builtin_tables);
+  RUN_TEST(test_lofi_presets_valid);
+  RUN_TEST(test_lofi_byte_presets_use_formula_defaults);
   RUN_TEST(test_chord_preset_is_maj7);
   RUN_TEST(test_every_preset_sounds);
   RUN_TEST(test_kit_block);

@@ -2,6 +2,7 @@
 #include <math.h>
 #include <string.h>
 #include <unity.h>
+#include "bytebeat_lib.h"
 #include "model.h"
 
 using namespace mt;
@@ -619,6 +620,103 @@ void test_song_follow_defaults() {
   TEST_ASSERT_EQUAL(3, sizeof(SongFollow));
 }
 
+// ---- LOFI (ByteBeat / Atari Punk Console) ----
+
+void test_lofi_type_in_order() {
+  TEST_ASSERT_TRUE(static_cast<int>(InstrType::Lofi) < static_cast<int>(InstrType::Count));
+  const int k = instrTypePos(InstrType::Lofi);
+  TEST_ASSERT_TRUE(instrTypeAt(k) == InstrType::Lofi);
+  TEST_ASSERT_TRUE(k > instrTypePos(InstrType::Synth));
+  TEST_ASSERT_TRUE(k < instrTypePos(InstrType::Kit));
+}
+
+void test_lofi_type_defaults() {
+  Instrument m;
+  m.machine = 5;
+  m.lofiFormula = 7;
+  m.lofiSync = 1;
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Swp);
+  instrSetType(m, InstrType::Lofi);
+  TEST_ASSERT_EQUAL(0, m.lofiSync);
+  TEST_ASSERT_TRUE(m.type == InstrType::Lofi);
+  TEST_ASSERT_EQUAL(static_cast<int>(LofiMachine::Byte), m.machine);
+  TEST_ASSERT_EQUAL(0, m.lofiFormula);
+  const uint8_t mac[kFmMacros] = {42, 10, 0, 0, 0};  // A B C TONE LOOP (formula 0's defaults)
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(mac, m.macro, kFmMacros);
+  // Envelope and mode as CHIP: the instrument defaults.
+  const Instrument def;
+  TEST_ASSERT_EQUAL(def.attack, m.attack);
+  TEST_ASSERT_EQUAL(def.decay, m.decay);
+  TEST_ASSERT_EQUAL(def.sustain, m.sustain);
+  TEST_ASSERT_EQUAL(def.release, m.release);
+  TEST_ASSERT_EQUAL(def.mono, m.mono);
+  TEST_ASSERT_EQUAL(0, def.lofiFormula);
+  TEST_ASSERT_EQUAL(0, def.lofiSync);
+  // Macro LFO targets exist on LOFI.
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(LfoDest::Swp), m.lfoDest);
+}
+
+void test_lofi_set_machine() {
+  Instrument m;
+  instrSetType(m, InstrType::Lofi);
+  lofiSetMachine(m, static_cast<uint8_t>(LofiMachine::Apc));
+  TEST_ASSERT_EQUAL(static_cast<int>(LofiMachine::Apc), m.machine);
+  const uint8_t apc[kFmMacros] = {20, 100, 0, 0, 0};  // WIDTH TONE DRIFT SMOOTH -
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(apc, m.macro, kFmMacros);
+  lofiSetMachine(m, 200);
+  TEST_ASSERT_EQUAL(static_cast<int>(LofiMachine::Count) - 1, m.machine);
+  m.lofiFormula = 1;  // BYTE: A B C = the formula's defaults
+  lofiSetMachine(m, static_cast<uint8_t>(LofiMachine::Byte));
+  const uint8_t byte[kFmMacros] = {12, 63, 4, 0, 0};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(byte, m.macro, kFmMacros);
+  TEST_ASSERT_TRUE(static_cast<int>(LofiMachine::Count) <= kMachineMax);
+}
+
+void test_lofi_load_formula_defaults() {
+  Instrument m;
+  instrSetType(m, InstrType::Lofi);
+  m.macro[3] = 33;
+  m.macro[4] = 44;
+  for (int i = 0; i < byteFormulaCount(); ++i) {
+    m.lofiFormula = static_cast<uint8_t>(i);
+    lofiLoadFormulaDefaults(m);
+    const ByteFormula& f = byteFormula(i);
+    const uint8_t want[kFmMacros] = {f.a, f.b, f.c, 33, 44};  // TONE LOOP kept
+    TEST_ASSERT_EQUAL_UINT8_ARRAY_MESSAGE(want, m.macro, kFmMacros, f.name);
+  }
+  m.lofiFormula = 250;  // out of range = entry 0
+  lofiLoadFormulaDefaults(m);
+  TEST_ASSERT_EQUAL(byteFormula(0).a, m.macro[0]);
+  TEST_ASSERT_EQUAL(byteFormula(0).b, m.macro[1]);
+  TEST_ASSERT_EQUAL(byteFormula(0).c, m.macro[2]);
+}
+
+void test_lofi_names() {
+  const uint8_t b = static_cast<uint8_t>(LofiMachine::Byte), a = static_cast<uint8_t>(LofiMachine::Apc);
+  TEST_ASSERT_EQUAL_STRING("BYTE", lofiMachineName(b));
+  TEST_ASSERT_EQUAL_STRING("APC", lofiMachineName(a));
+  TEST_ASSERT_EQUAL_STRING("BYTE", lofiMachineName(200));  // out of range
+  const char* const byteN[] = {"A", "B", "C", "TONE", "LOOP"};
+  const char* const apcN[] = {"WIDTH", "TONE", "DRIFT", "SMOOTH", ""};
+  for (int k = 0; k < kFmMacros; ++k) {
+    TEST_ASSERT_EQUAL_STRING(byteN[k], lofiMacroName(b, k));
+    TEST_ASSERT_EQUAL_STRING(apcN[k], lofiMacroName(a, k));
+  }
+  TEST_ASSERT_EQUAL_STRING("", lofiMacroName(b, kFmMacros));
+  TEST_ASSERT_EQUAL_STRING("", lofiMacroName(b, -1));
+  TEST_ASSERT_EQUAL_STRING("A", lofiMacroName(200, 0));  // out of range machine = BYTE
+}
+
+void test_lofi_lfo_dests() {
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  for (int k = 0; k < kFmMacros; ++k)
+    TEST_ASSERT_TRUE(lfoDestValid(static_cast<uint8_t>(static_cast<int>(LfoDest::Dec) + k), InstrType::Lofi));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), InstrType::Lofi));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sub), InstrType::Lofi));
+  TEST_ASSERT_EQUAL(d(LfoDest::Dec), lfoDestStep(d(LfoDest::Pitch), 1, InstrType::Lofi));
+  TEST_ASSERT_EQUAL_STRING("COLOR", lfoDestName(d(LfoDest::Col), InstrType::Lofi));  // generic, as DRUM
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_gate_defaults_and_presets);
@@ -664,5 +762,11 @@ int main() {
   RUN_TEST(test_tuning_defaults_and_valid);
   RUN_TEST(test_tuning_root_key);
   RUN_TEST(test_song_follow_defaults);
+  RUN_TEST(test_lofi_type_in_order);
+  RUN_TEST(test_lofi_type_defaults);
+  RUN_TEST(test_lofi_set_machine);
+  RUN_TEST(test_lofi_load_formula_defaults);
+  RUN_TEST(test_lofi_names);
+  RUN_TEST(test_lofi_lfo_dests);
   return UNITY_END();
 }

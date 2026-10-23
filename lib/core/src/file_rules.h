@@ -47,7 +47,7 @@ bool webFirmwareName(const char* name);
 // to the section folder, "" = the folder itself, segments joined by '/': each 1..kWebSegMax chars of
 // [A-Za-z0-9 _-.], not starting with '.' or ' ', not ending with '.' or ' ' (FAT drops those), at most
 // webDepthMax(d) segments, kWebSubMax chars in total. No leading / trailing / doubled '/', no "." / "..",
-// no backslashes. /presets: the first segment is a type folder (presetTypeName: CHIP, SAMPLE, FM, DRUM, SYNTH),
+// no backslashes. /presets: the first segment is a type folder (presetTypeName: CHIP, SAMPLE, FM, DRUM, SYNTH, LOFI),
 // then up to kPresetDepthMax folders as on the tracker.
 constexpr int kWebSegMax = 32;
 constexpr int kWebDepthMax = 4;
