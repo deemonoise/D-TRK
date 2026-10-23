@@ -387,7 +387,10 @@ void ProjScreen::diceMenu() {
 // never saw. Holding lockProject(): cleared before the next plan.
 void ProjScreen::evoClearTracks(uint16_t mask) {
   for (int t = 0; t < mt::kTracks; ++t)
-    if (mask & (1u << t)) engine::evoClear(t);
+    if (mask & (1u << t)) {
+      engine::evoClear(t);
+      engine::varClear(t);  // a rewritten track starts over at VAR generation 0 too
+    }
 }
 
 void ProjScreen::afterDice(uint8_t layers) {

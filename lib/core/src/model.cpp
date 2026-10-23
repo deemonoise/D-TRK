@@ -89,6 +89,7 @@ void Project::reset() {
     gen[i].seed = static_cast<uint16_t>(i + 1);
   }
   for (EvoCfg& e : evo) e = EvoCfg();
+  for (VarCfg& v : var) v = VarCfg();
   for (ProjSample& s : samples) s = ProjSample{};
   sampleCount = 0;
   for (ProjWavetable& w : wavetables) w = ProjWavetable{};

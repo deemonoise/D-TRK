@@ -1,6 +1,7 @@
 #include <string.h>
 #include <unity.h>
 #include <vector>
+#include "bytebeat_lib.h"
 #include "preset_io.h"
 
 using namespace mt;
@@ -86,7 +87,8 @@ void test_roundtrip() {
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(228, kPresetSize);
+  TEST_ASSERT_EQUAL(236, kPresetSize);
+  TEST_ASSERT_EQUAL(228, kPresetSizeV6);
   TEST_ASSERT_EQUAL(220, kPresetSizeV5);
   TEST_ASSERT_EQUAL(204, kPresetSizeV3);
   TEST_ASSERT_EQUAL(156, kPresetSizeV2);
@@ -596,10 +598,9 @@ void test_v6_lofi_roundtrip() {
   const Instrument a = lofi();
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
-  TEST_ASSERT_EQUAL(6, kPresetVersion);
-  TEST_ASSERT_EQUAL(6, out.buf[4]);
-  TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  VecSource in(out.buf);
+  std::vector<uint8_t> v = asVersion(out.buf, 6, kPresetSizeV6);  // a v6 file: no LFOB record
+  TEST_ASSERT_EQUAL(kPresetSizeV6, v.size());
+  VecSource in(v);
   Instrument b;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
   assertSameInst(a, b, "v6");
@@ -607,12 +608,11 @@ void test_v6_lofi_roundtrip() {
   TEST_ASSERT_EQUAL(static_cast<int>(LofiMachine::Apc), b.machine);
   TEST_ASSERT_EQUAL(5, b.lofiFormula);
   TEST_ASSERT_EQUAL(1, b.lofiSync);
-  // The sync flag is byte 1 of the LOFI record (the last kLofiRecSize bytes before the CRC);
+  // The sync flag is byte 1 of the LOFI record (the last kLofiRecSize bytes before the CRC in v6);
   // a record from before it (0 there) loads sync off.
-  std::vector<uint8_t> v = out.buf;
   TEST_ASSERT_EQUAL(1, v[v.size() - 4 - kLofiRecSize + 1]);
   v[v.size() - 4 - kLofiRecSize + 1] = 0;
-  v = asVersion(v, 6, kPresetSize);
+  v = asVersion(v, 6, kPresetSizeV6);
   VecSource in0(v);
   Instrument c;
   c.lofiSync = 1;
@@ -649,6 +649,60 @@ void test_lofi_preset_clamped() {
   TEST_ASSERT_EQUAL(1, b.lofiSync);
 }
 
+// ---- Version 7: the LFOB record (LFO BYTE formula, A per LFO) ----
+
+void test_v7_lfob_roundtrip() {
+  Instrument a = lofi();
+  a.lfoWave = static_cast<uint8_t>(LfoWave::Byte);
+  for (int i = 0; i < kLfos; ++i) {
+    a.lfoByte[i][0] = static_cast<uint8_t>(i + 1);
+    a.lfoByte[i][1] = static_cast<uint8_t>(100 + i);
+  }
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  TEST_ASSERT_EQUAL(7, kPresetVersion);
+  TEST_ASSERT_EQUAL(7, out.buf[4]);
+  TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
+  TEST_ASSERT_EQUAL(kPresetSizeV6 + kLfoByteRecSize, kPresetSize);
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "v7");
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoWave::Byte), b.lfoWave);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(&a.lfoByte[0][0], &b.lfoByte[0][0], 2 * kLfos);
+}
+
+void test_v6_file_loads_lfob_defaults() {
+  Instrument a = sample();
+  for (int i = 0; i < kLfos; ++i) a.lfoByte[i][0] = a.lfoByte[i][1] = 3;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  const std::vector<uint8_t> v = asVersion(out.buf, 6, kPresetSizeV6);
+  VecSource in(v);
+  Instrument b;
+  for (int i = 0; i < kLfos; ++i) b.lfoByte[i][0] = b.lfoByte[i][1] = 9;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  for (int i = 0; i < kLfos; ++i) {
+    TEST_ASSERT_EQUAL(0, b.lfoByte[i][0]);
+    TEST_ASSERT_EQUAL(byteFormula(0).a, b.lfoByte[i][1]);
+  }
+}
+
+void test_lfob_preset_clamped() {
+  Instrument a = sample();
+  a.lfoByte[0][0] = 250;  // past the library
+  a.lfoByte[0][1] = 200;  // A: 0..127
+  a.lfoByte[3][0] = static_cast<uint8_t>(byteFormulaCount() - 1);
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(0, b.lfoByte[0][0]);
+  TEST_ASSERT_EQUAL(127, b.lfoByte[0][1]);
+  TEST_ASSERT_EQUAL(byteFormulaCount() - 1, b.lfoByte[3][0]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -676,5 +730,8 @@ int main() {
   RUN_TEST(test_v6_lofi_roundtrip);
   RUN_TEST(test_v5_file_loads_formula_0);
   RUN_TEST(test_lofi_preset_clamped);
+  RUN_TEST(test_v7_lfob_roundtrip);
+  RUN_TEST(test_v6_file_loads_lfob_defaults);
+  RUN_TEST(test_lfob_preset_clamped);
   return UNITY_END();
 }

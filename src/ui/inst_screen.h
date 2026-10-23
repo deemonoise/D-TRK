@@ -75,7 +75,7 @@ class InstScreen : public Screen {
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
   static constexpr int kFltMode = 0, kCutoff = 1, kReso = 2, kFEnv = 3, kFAtk = 4, kFDec = 5, kKeytrack = 6,
                        kLfoSel = 7, kLfoWave = 8, kLfoSync = 9, kLfoRetrig = 10, kLfoRate = 11, kLfoDepth = 12,
-                       kLfoDest = 13, kTailRows = 14;
+                       kLfoDest = 13, kLfoFormula = 14, kLfoA = 15, kTailRows = 16;
   // tail: FILT = [0, 7) (drive and crush are the track's, TRACK -> INS), LFO
   static constexpr int kFiltRows = 7;
   // KIT: MAIN rows, then kLaneRows per lane.

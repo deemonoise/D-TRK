@@ -222,6 +222,12 @@ void unpackLofi(const uint8_t* b, size_t n, Instrument& m) {
   if (n > 1) m.lofiSync = b[1];     // 0 in records from before the flag; range: fixInstrument
 }
 
+void packLfoByte(const Instrument& m, uint8_t* b) { memcpy(b, m.lfoByte, kLfoByteRecSize); }
+
+void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m) {
+  memcpy(m.lfoByte, b, n < kLfoByteRecSize ? n : kLfoByteRecSize);  // range: fixInstrument
+}
+
 void fixInstrument(Instrument& m) {
   // SYNTH: unpackSyn already clamps every field; wavetable names are resolved by the firmware.
   int n = 0;
@@ -231,6 +237,10 @@ void fixInstrument(Instrument& m) {
   if (n && m.machine >= n) m.machine = 0;
   if (m.lofiFormula >= byteFormulaCount()) m.lofiFormula = 0;
   if (m.lofiSync > 1) m.lofiSync = 1;
+  for (uint8_t* l : m.lfoByte) {
+    if (l[0] >= byteFormulaCount()) l[0] = 0;
+    if (l[1] > 127) l[1] = 127;
+  }
 }
 
 }  // namespace mt

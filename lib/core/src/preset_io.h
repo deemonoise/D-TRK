@@ -5,15 +5,17 @@
 namespace mt {
 
 // .mti: "MTI1" u8 version u8 type u16 reserved, INST + FMIN + FLTR (+ SLCE from v2, + SYNI from v3,
-// + LFO from v5, + LOFI from v6) records (inst_codec), u32 crc32 of every byte before it. Little-endian.
-// v1 files load without slices, v1 / v2 with SYNTH defaults, v5 and older with LOFI formula 0.
-constexpr uint8_t kPresetVersion = 6;  // 4: drive, rsend, velCut, velMac in the FM record (same size as 3);
-                                       // 5: + the LFO record; 6: + the LOFI record
+// + LFO from v5, + LOFI from v6, + LFOB from v7) records (inst_codec), u32 crc32 of every byte before it.
+// Little-endian. v1 files load without slices, v1 / v2 with SYNTH defaults, v5 and older with LOFI formula
+// 0, v6 and older with LFO BYTE defaults.
+constexpr uint8_t kPresetVersion = 7;  // 4: drive, rsend, velCut, velMac in the FM record (same size as 3);
+                                       // 5: + the LFO record; 6: + the LOFI record; 7: + the LFOB record
 constexpr size_t kPresetSizeV1 = 8 + kInstRecSize + kFmRecSize + kFltRecSize + 4;
 constexpr size_t kPresetSizeV2 = kPresetSizeV1 + kSliceRecSize;
 constexpr size_t kPresetSizeV3 = kPresetSizeV2 + kSynRecSize;
 constexpr size_t kPresetSizeV5 = kPresetSizeV3 + kLfoRecSize;
-constexpr size_t kPresetSize = kPresetSizeV5 + kLofiRecSize;
+constexpr size_t kPresetSizeV6 = kPresetSizeV5 + kLofiRecSize;
+constexpr size_t kPresetSize = kPresetSizeV6 + kLfoByteRecSize;
 
 bool savePreset(const Instrument& m, ByteSink& out);
 // out is written only on Ok. Values are clamped like a project's.

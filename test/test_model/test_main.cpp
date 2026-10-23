@@ -717,6 +717,41 @@ void test_lofi_lfo_dests() {
   TEST_ASSERT_EQUAL_STRING("COLOR", lfoDestName(d(LfoDest::Col), InstrType::Lofi));  // generic, as DRUM
 }
 
+// Generative 2: VAR per track, GEN BYTE fields, LFO BYTE (formula, A) per LFO; defaults = formula 0's.
+void test_gen2_defaults() {
+  static Project p;
+  p.reset();
+  const ByteFormula& f = byteFormula(0);
+  for (int t = 0; t < kTracks; ++t) {
+    const VarCfg& v = p.var[t];
+    TEST_ASSERT_EQUAL(0, v.mode);
+    TEST_ASSERT_EQUAL(2, v.every);
+    TEST_ASSERT_EQUAL(90, v.rule);
+    TEST_ASSERT_EQUAL(16, v.reset);
+    TEST_ASSERT_EQUAL(50, v.amount);
+    TEST_ASSERT_EQUAL(1, v.order);
+    const GenCfg& g = p.gen[t];
+    TEST_ASSERT_EQUAL(0, g.formula);
+    TEST_ASSERT_EQUAL(f.a, g.a);
+    TEST_ASSERT_EQUAL(f.b, g.b);
+    TEST_ASSERT_EQUAL(f.c, g.c);
+    TEST_ASSERT_EQUAL(10, g.zoom);
+  }
+  TEST_ASSERT_EQUAL(3, static_cast<int>(GenMode::BytePitch));
+  TEST_ASSERT_EQUAL(4, static_cast<int>(GenMode::ByteGate));
+  TEST_ASSERT_EQUAL(5, static_cast<int>(GenMode::Count));
+  TEST_ASSERT_EQUAL(5, static_cast<int>(LfoWave::Byte));
+  TEST_ASSERT_EQUAL(6, static_cast<int>(LfoWave::Count));
+  const Instrument m;
+  for (int i = 0; i < kLfos; ++i) {
+    TEST_ASSERT_EQUAL(0, m.lfoByte[i][0]);
+    TEST_ASSERT_EQUAL(f.a, m.lfoByte[i][1]);
+  }
+  // Byte modes count as a running generator (not on a drum track).
+  p.gen[3].mode = static_cast<uint8_t>(GenMode::ByteGate);
+  TEST_ASSERT_TRUE(p.genOn(3));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_gate_defaults_and_presets);
@@ -768,5 +803,6 @@ int main() {
   RUN_TEST(test_lofi_load_formula_defaults);
   RUN_TEST(test_lofi_names);
   RUN_TEST(test_lofi_lfo_dests);
+  RUN_TEST(test_gen2_defaults);
   return UNITY_END();
 }

@@ -1,5 +1,8 @@
+#include <stdio.h>
+#include <string.h>
 #include <unity.h>
 #include <vector>
+#include "bytebeat_lib.h"
 #include "model.h"
 #include "scale.h"
 #include "shift_gen.h"
@@ -236,6 +239,21 @@ void test_clamp() {
   genClamp(c);
   TEST_ASSERT_EQUAL(kGenLenMax, c.len);
   TEST_ASSERT_EQUAL(kGenOctMax, c.oct);
+  // BYTE fields: formula past the library -> 0, A / B / C <= 127, zoom <= 12; Byte modes kept.
+  c.mode = static_cast<uint8_t>(GenMode::ByteGate);
+  c.formula = 250;
+  c.a = c.b = c.c = 200;
+  c.zoom = 13;
+  genClamp(c);
+  TEST_ASSERT_EQUAL(static_cast<int>(GenMode::ByteGate), c.mode);
+  TEST_ASSERT_EQUAL(0, c.formula);
+  TEST_ASSERT_EQUAL(127, c.a);
+  TEST_ASSERT_EQUAL(127, c.b);
+  TEST_ASSERT_EQUAL(127, c.c);
+  TEST_ASSERT_EQUAL(12, c.zoom);
+  c.formula = static_cast<uint8_t>(byteFormulaCount() - 1);
+  genClamp(c);
+  TEST_ASSERT_EQUAL(byteFormulaCount() - 1, c.formula);
 }
 
 void test_hold_cycle() {
@@ -277,6 +295,165 @@ void test_gen_on_skips_drum_tracks() {
   TEST_ASSERT_FALSE(p.genOn(1));
 }
 
+// GEN BYTE: a bytebeat formula in place of the register.
+static GenCfg byteCfg(GenMode m, int formula, uint8_t zoom = 10) {
+  GenCfg c;
+  c.mode = static_cast<uint8_t>(m);
+  c.formula = static_cast<uint8_t>(formula);
+  const ByteFormula& f = byteFormula(formula);
+  c.a = f.a;
+  c.b = f.b;
+  c.c = f.c;
+  c.zoom = zoom;
+  return c;
+}
+
+// The step window: W = 1 << zoom ticks per clock, 8 points (W < 8: tick by tick), output bytes.
+void test_byte_window_samples_the_step() {
+  const GenCfg c = byteCfg(GenMode::BytePitch, 0, 10);
+  GenState s;
+  s.n = 3;
+  uint8_t v[8];
+  TEST_ASSERT_EQUAL(8, genByteBytes(s, c, v));
+  for (int k = 0; k < 8; ++k)
+    TEST_ASSERT_EQUAL(byteEval(byteCode(0), 3u * 1024u + k * 128u + (k * 37u) % 128u, c.a, c.b, c.c) & 255, v[k]);
+  const GenCfg z1 = byteCfg(GenMode::BytePitch, 0, 1);
+  TEST_ASSERT_EQUAL(8, genByteBytes(s, z1, v));
+  for (int k = 0; k < 8; ++k) TEST_ASSERT_EQUAL(byteEval(byteCode(0), 6u + k, c.a, c.b, c.c) & 255, v[k]);
+}
+
+// Gate level: twice the mean distance of the samples from their mean, 0..255; silence is 0.
+void test_byte_level() {
+  for (int f = 0; f < byteFormulaCount(); ++f) {
+    const GenCfg c = byteCfg(GenMode::ByteGate, f, 10);
+    GenState s;
+    s.n = 7;
+    uint8_t v[8];
+    genByteBytes(s, c, v);
+    int x[8], mean = 0, dev = 0;
+    for (int k = 0; k < 8; ++k) mean += x[k] = byteFormula(f).mode == kByteSigned ? static_cast<int8_t>(v[k]) : v[k];
+    mean /= 8;
+    for (int k = 0; k < 8; ++k) dev += x[k] > mean ? x[k] - mean : mean - x[k];
+    TEST_ASSERT_EQUAL(dev / 4 > 255 ? 255 : dev / 4, genByteLevel(s, c));
+  }
+  GenCfg kick = byteCfg(GenMode::ByteGate, 0);
+  for (int f = 0; f < byteFormulaCount(); ++f)
+    if (!strcmp(byteFormula(f).name, "KICK")) kick = byteCfg(GenMode::ByteGate, f);
+  GenState s;
+  s.n = 1;  // KICK: the second step of 8 is silent
+  TEST_ASSERT_EQUAL(0, genByteLevel(s, kick));
+}
+
+void test_byte_notes_in_scale_and_range() {
+  for (int f = 0; f < byteFormulaCount(); ++f) {
+    GenCfg c = byteCfg(GenMode::BytePitch, f);
+    c.low = 50;  // raised to D (C major)
+    c.oct = 2;
+    GenState s;
+    for (uint32_t n = 0; n < 200; ++n) {
+      s.n = n;
+      const uint8_t m = genNote(s, c, 0, ScaleType::Major);
+      TEST_ASSERT_TRUE(inScale(m, 0, ScaleType::Major));
+      TEST_ASSERT_TRUE(m >= 50 && m <= 50 + 24);
+    }
+  }
+  GenCfg hi = byteCfg(GenMode::BytePitch, 1);
+  hi.low = 127;
+  hi.oct = 4;
+  GenState s;
+  for (uint32_t n = 0; n < 100; ++n) {
+    s.n = n;
+    TEST_ASSERT_TRUE(genNote(s, hi, 0, ScaleType::Chromatic) <= 127);
+  }
+}
+
+// Byte modes: the note depends on n only (not the register, not flip).
+void test_byte_deterministic() {
+  GenCfg c = byteCfg(GenMode::BytePitch, 2);
+  GenState a, b;
+  a.reg = 0x55;
+  b.reg = 0xAA;
+  a.n = b.n = 37;
+  TEST_ASSERT_EQUAL(genNote(a, c, 0, ScaleType::Minor), genNote(b, c, 0, ScaleType::Minor));
+  c.flip = 100;
+  GenState s;
+  genReset(s, c, 0);
+  genShift(s, c, 0, 100);
+  TEST_ASSERT_EQUAL(0, s.flipped);  // no flips in byte modes
+  TEST_ASSERT_EQUAL_UINT32(1, s.n);
+}
+
+void test_byte_gate_monotonic_in_density() {
+  GenCfg c = byteCfg(GenMode::ByteGate, 3);
+  GenState s;
+  for (uint32_t n = 0; n < 128; ++n) {
+    s.n = n;
+    c.density = 0;
+    TEST_ASSERT_FALSE(genGate(s, c));
+    c.density = 100;
+    TEST_ASSERT_TRUE(genGate(s, c));
+    bool was = false;
+    for (int d = 0; d <= 100; ++d) {
+      c.density = static_cast<uint8_t>(d);
+      const bool g = genGate(s, c);
+      TEST_ASSERT_TRUE(!was || g);
+      was = g;
+    }
+  }
+  // Half density: some formulas gate, none of them plays nothing at all.
+  int some = 0;
+  for (int f = 0; f < byteFormulaCount(); ++f) {
+    GenCfg g = byteCfg(GenMode::ByteGate, f);
+    g.density = 50;
+    int hits = 0;
+    for (uint32_t n = 0; n < 256; ++n) {
+      s.n = n;
+      hits += genGate(s, g);
+    }
+    some += hits > 0 && hits < 256;
+  }
+  TEST_ASSERT_TRUE(some * 2 > byteFormulaCount());
+}
+
+void test_gate_mode_helpers() {
+  TEST_ASSERT_TRUE(genGateMode(static_cast<uint8_t>(GenMode::Gate)));
+  TEST_ASSERT_TRUE(genGateMode(static_cast<uint8_t>(GenMode::ByteGate)));
+  TEST_ASSERT_FALSE(genGateMode(static_cast<uint8_t>(GenMode::Pitch)));
+  TEST_ASSERT_FALSE(genGateMode(static_cast<uint8_t>(GenMode::BytePitch)));
+  TEST_ASSERT_TRUE(genByteMode(static_cast<uint8_t>(GenMode::BytePitch)));
+  TEST_ASSERT_TRUE(genByteMode(static_cast<uint8_t>(GenMode::ByteGate)));
+  TEST_ASSERT_FALSE(genByteMode(static_cast<uint8_t>(GenMode::Gate)));
+}
+
+// Formulas playing fewer than 2 degrees in 64 clocks at zoom z (default A B C, C major over 2 octaves).
+static int stillAt(uint8_t z, bool print) {
+  int failed = 0;
+  for (int f = 0; f < byteFormulaCount(); ++f) {
+    const GenCfg c = byteCfg(GenMode::BytePitch, f, z);
+    bool seen[128] = {};
+    int k = 0;
+    GenState s;
+    for (uint32_t n = 1; n <= 64; ++n) {
+      s.n = n;
+      const uint8_t m = genNote(s, c, 0, ScaleType::Major);
+      if (!seen[m]) ++k;
+      seen[m] = true;
+    }
+    if (k >= 2) continue;
+    ++failed;
+    if (print) printf("GEN BYTE zoom %u: %s still\n", z, byteFormula(f).name);
+  }
+  return failed;
+}
+
+// Every library formula at the default zoom moves (>= 2 degrees in 64 clocks); at most 5 may not (kept in
+// the library, see the design). Still at zoom 10: SGNPULSE. Still per zoom 0..12: 16 12 11 7 4 2 0 1 1 1
+// 1 2 6 (of 45).
+void test_byte_every_formula_moves() {
+  for (uint8_t z = 0; z <= kGenZoomMax; ++z) printf("GEN BYTE zoom %u: %d still\n", z, stillAt(z, false));
+  TEST_ASSERT_TRUE(stillAt(GenCfg().zoom, true) <= 5);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_defaults);
@@ -296,5 +473,12 @@ int main(int, char**) {
   RUN_TEST(test_hold_cycle);
   RUN_TEST(test_flip_text);
   RUN_TEST(test_gen_on_skips_drum_tracks);
+  RUN_TEST(test_byte_window_samples_the_step);
+  RUN_TEST(test_byte_level);
+  RUN_TEST(test_byte_notes_in_scale_and_range);
+  RUN_TEST(test_byte_deterministic);
+  RUN_TEST(test_byte_gate_monotonic_in_density);
+  RUN_TEST(test_gate_mode_helpers);
+  RUN_TEST(test_byte_every_formula_moves);
   return UNITY_END();
 }

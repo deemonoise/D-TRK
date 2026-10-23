@@ -1,6 +1,7 @@
 #include "project_io.h"
 #include "evolve.h"
 #include "shift_gen.h"
+#include "var_gen.h"
 #include <string.h>
 #include <strings.h>
 #include "file_rules.h"
@@ -36,11 +37,15 @@ constexpr size_t kTinsRec = 12;
 // folAtk, folRel. Same rules as TINS (a second follower per track would append fields).
 constexpr size_t kTfolRec = 5;
 // TGEN (track generators, GenCfg): count, record size, then a record per track: mode, len, flip, low, oct,
-// density, seed lo, seed hi. Same rules as TINS; values clamped (genClamp).
-constexpr size_t kTgenRec = 8;
+// density, seed lo, seed hi, then BYTE: formula, a, b, c, zoom. Same rules as TINS (older 8-byte records:
+// BYTE defaults); values clamped (genClamp).
+constexpr size_t kTgenRec = 13;
 // TEVO (track evolve, EvoCfg): count, record size, then a record per track: amount, every, home, mask.
 // Same rules as TINS; values clamped (evoClamp). Files without it: evolve off.
 constexpr size_t kTevoRec = 4;
+// TVAR (track VAR, VarCfg): count, record size, then a record per track: mode, every, rule, rule2, reset,
+// noise, amount, order, rhythm. Same rules as TINS; values clamped (varClamp). Files without it: VAR off.
+constexpr size_t kTvarRec = 9;
 // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
 // scTrack, scDepth, then byte 13: the old DJ filter (+ 64), ignored on load and written 64, then the
 // master / send fx: dlyMode, dlyChar, rvbMode, rvbShim, modType, modRate, modDepth, modFb, modLevel,
@@ -374,6 +379,8 @@ LoadErr readTgen(CrcSource& in, uint32_t size, Project& p) {
     uint8_t* const f[6] = {&c.mode, &c.len, &c.flip, &c.low, &c.oct, &c.density};
     for (uint32_t i = 0; i < take && i < 6; ++i) *f[i] = b[i];
     if (take >= 8) c.seed = static_cast<uint16_t>(b[6] | b[7] << 8);
+    uint8_t* const g[5] = {&c.formula, &c.a, &c.b, &c.c, &c.zoom};
+    for (uint32_t i = 8; i < take; ++i) *g[i - 8] = b[i];
     genClamp(c);
   }
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
@@ -395,6 +402,27 @@ LoadErr readTevo(CrcSource& in, uint32_t size, Project& p) {
     uint8_t* const f[kTevoRec] = {&c.amount, &c.every, &c.home, &c.mask};
     for (uint32_t i = 0; i < take; ++i) *f[i] = b[i];
     evoClamp(c);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// TVAR (see kTvarRec); tracks it lacks (and files without it) keep VAR off.
+LoadErr readTvar(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kTracks ? h[0] : kTracks;
+  const uint32_t take = rec < kTvarRec ? rec : kTvarRec;
+  for (int t = 0; t < n; ++t) {
+    uint8_t b[kTvarRec] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    VarCfg& c = p.var[t];
+    uint8_t* const f[kTvarRec] = {&c.mode,  &c.every,  &c.rule,  &c.rule2, &c.reset,
+                                  &c.noise, &c.amount, &c.order, &c.rhythm};
+    for (uint32_t i = 0; i < take; ++i) *f[i] = b[i];
+    varClamp(c);
   }
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
@@ -468,6 +496,24 @@ LoadErr readLofi(CrcSource& in, uint32_t size, Project& p) {
     uint8_t b[kLofiRecSize] = {};
     if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
     unpackLofi(b, take, p.instruments[i]);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// LFOB (Instrument::lfoByte, inst_codec kLfoByteRecSize): count, record size, then a record per
+// instrument. Same rules as TINS. Files without it: formula 0, its default A.
+LoadErr readLfob(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kInstruments ? h[0] : kInstruments;
+  const uint32_t take = rec < kLfoByteRecSize ? rec : kLfoByteRecSize;
+  for (int i = 0; i < n; ++i) {
+    uint8_t b[kLfoByteRecSize] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    unpackLfoByte(b, take, p.instruments[i]);
   }
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
@@ -863,6 +909,14 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  const uint8_t bh[2] = {static_cast<uint8_t>(kInstruments), static_cast<uint8_t>(kLfoByteRecSize)};
+  if (!o.chunk("LFOB", 2 + kInstruments * kLfoByteRecSize) || !o.write(bh, 2)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kLfoByteRecSize];
+    packLfoByte(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
   if (!o.chunk("KITS", 1 + kInstruments * kKitRecSize) || !o.write(&count, 1)) return false;
   for (const Instrument& m : p.instruments)
     for (const KitLane& l : m.kit) {
@@ -907,7 +961,7 @@ bool saveProject(const Project& p, ByteSink& out) {
   if (!o.chunk("TGEN", 2 + kTracks * kTgenRec) || !o.write(gh, 2)) return false;
   for (const GenCfg& c : p.gen) {
     const uint8_t b[kTgenRec] = {c.mode,    c.len, c.flip, c.low, c.oct, c.density, static_cast<uint8_t>(c.seed & 0xFF),
-                                 static_cast<uint8_t>(c.seed >> 8)};
+                                 static_cast<uint8_t>(c.seed >> 8), c.formula, c.a, c.b, c.c, c.zoom};
     if (!o.write(b, sizeof(b))) return false;
   }
 
@@ -915,6 +969,13 @@ bool saveProject(const Project& p, ByteSink& out) {
   if (!o.chunk("TEVO", 2 + kTracks * kTevoRec) || !o.write(eh, 2)) return false;
   for (const EvoCfg& c : p.evo) {
     const uint8_t b[kTevoRec] = {c.amount, c.every, c.home, c.mask};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  const uint8_t vh[2] = {static_cast<uint8_t>(kTracks), static_cast<uint8_t>(kTvarRec)};
+  if (!o.chunk("TVAR", 2 + kTracks * kTvarRec) || !o.write(vh, 2)) return false;
+  for (const VarCfg& c : p.var) {
+    const uint8_t b[kTvarRec] = {c.mode, c.every, c.rule, c.rule2, c.reset, c.noise, c.amount, c.order, c.rhythm};
     if (!o.write(b, sizeof(b))) return false;
   }
 
@@ -1131,11 +1192,13 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "TFOL", 4) == 0) e = readTfol(in, size, out);
     else if (memcmp(ch, "TGEN", 4) == 0) e = readTgen(in, size, out);
     else if (memcmp(ch, "TEVO", 4) == 0) e = readTevo(in, size, out);
+    else if (memcmp(ch, "TVAR", 4) == 0) e = readTvar(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
     else if (memcmp(ch, "LFOX", 4) == 0) e = readLfox(in, size, out);
     else if (memcmp(ch, "LOFI", 4) == 0) e = readLofi(in, size, out);
+    else if (memcmp(ch, "LFOB", 4) == 0) e = readLfob(in, size, out);
     else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, legacy);

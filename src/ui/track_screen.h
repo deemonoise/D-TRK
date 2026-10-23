@@ -8,7 +8,8 @@
 namespace ui {
 
 // Settings of App::curTrack(). GEN page: the track generator (shift_gen.h); click on Seed = a new random seed. EVO page: the
-// track evolve (evolve.h), its heard drift in the header. MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
+// track evolve (evolve.h), its heard drift in the header. VAR page: the track VAR (var_gen.h), its heard generation
+// in the header. MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
 // Name: click to edit, turn = character, Shift+turn = position.
 // INS page, Steps (the trance gate's 16-step mask): click = edit; turn = cursor, Shift + turn =
 // rotate the mask, A + turn = toggle at the cursor and step on, a tap on a cell or track button 1-8
@@ -69,10 +70,12 @@ class TrackScreen : public Screen {
                    kFolSrc, kFolDest, kFolAmt, kFolAtk, kFolRel, kVel,
                    kGate, kPatLen, kSpeed, kHumanize,
                    kGenMode, kGenLen, kGenFlip, kGenLow, kGenOct, kGenDens, kGenSeed, kGenReg,
+                   kGenFormula, kGenA, kGenB, kGenC, kGenZoom,
                    kEvoAmt, kEvoEvery, kEvoHome, kEvoNote, kEvoRhythm, kEvoRtrg, kEvoShift,
+                   kVarMode, kVarEvery, kVarRule, kVarReset, kVarNoise, kVarAmt, kVarOrder, kVarRhythm,
                    kChannel, kCcA, kCcB, kProgram, kRows };
-  enum Page : int { kPgMain, kPgIns, kPgFol, kPgNote, kPgGen, kPgEvo, kPgMidi, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kName, kDrive, kFolSrc, kVel, kGenMode, kEvoAmt, kChannel, kRows};
+  enum Page : int { kPgMain, kPgIns, kPgFol, kPgNote, kPgGen, kPgEvo, kPgVar, kPgMidi, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kName, kDrive, kFolSrc, kVel, kGenMode, kEvoAmt, kVarMode, kChannel, kRows};
   static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
   static constexpr int kHeaderH = 28;
   static constexpr int kArrowW = 96;  // header hit area on each side
@@ -104,11 +107,14 @@ class TrackScreen : public Screen {
   void drawFolBar(LGFX_Sprite& s, int y0);
   int shownFolPx_ = -1;
   // GEN page: the track generator (Project::gen). Register row: the bits as cells (bit 0, the newest, left),
-  // the note it gives in the header; a flipped newest bit blinks yellow for kFlipMs.
+  // the note it gives in the header; a flipped newest bit blinks yellow for kFlipMs. BYTE modes: the rows
+  // Formula, A, B, C, Zoom (last); the register rows (Length, Flip, Seed, Register) grey.
   static constexpr int kGenRegRow = kGenReg - kGenMode, kGenSeedRow = kGenSeed - kGenMode;
   static constexpr uint32_t kFlipMs = 100;
   mt::GenCfg& gen();
   bool genDim();  // a drum track or Gen OFF
+  bool genRegDim();  // genDim or a BYTE mode: the register rows do not matter
+  bool genByteDim();  // genDim or not a BYTE mode
   void genEdited();  // under lock: the engine replans
   void reseed();     // a random seed (click on Seed)
   mt::GenState heardGen();
@@ -125,6 +131,15 @@ class TrackScreen : public Screen {
   uint32_t shownEvoN_ = 0xFFFFFFFF;
   uint8_t shownEvoPass_ = 0xFF;
   int shownEvoChg_ = -1;
+  // VAR page: the track VAR (Project::var). Header: the generation and passes to the next one (left), the
+  // heard state's cells (CA; KIT 8 rows) or changed steps (MARKOV) over the track's length (right).
+  mt::VarCfg& var();
+  mt::VarMode varMode();  // the mode that plays (CA2D on a melodic track: CA1D)
+  void varEdited();  // under lock: the engine replans
+  engine::VarInfo heardVarInfo();
+  void drawVar(LGFX_Sprite& s, int y0);
+  uint32_t shownVarN_ = 0xFFFFFFFF;
+  uint8_t shownVarGen_ = 0xFF, shownVarPass_ = 0xFF;
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
   void setPageRows(int page, bool bar);  // the list only: safe in the constructor
   int page_ = kPgMain;
