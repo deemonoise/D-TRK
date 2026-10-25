@@ -11,7 +11,7 @@ constexpr int kCostSample = 100;  // SD / flash stream (plus the filter add-ons,
 constexpr int kCostChip = 119;
 constexpr int kCostSynBl = 130;   // SYNTH without a wavetable oscillator (estimate, below WT)
 constexpr int kCostSynWt = 240;
-constexpr int kCostFm = 195;
+constexpr int kCostFm = 225;      // bench-max 2026-10-25: TONE 4 ops + detune, 2.23 %/voice
 constexpr int kCostDrum = 290;
 // DRUM BDA..HHR (Drum2Kind order): bench-max group 3, 2026-10-25 (slope of the ladders' average
 // load, 4 .. 16 voices, HHR 4 .. 12; the WT SYNTH reference in the same run gave 237 for its 240).

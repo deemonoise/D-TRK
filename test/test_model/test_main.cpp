@@ -540,7 +540,7 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(50, p.compRel);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(16, kLocks);  // + BIT, SRR, PAN, DTY, GTE, MOD
+  TEST_ASSERT_EQUAL(17, kLocks);  // + BIT, SRR, PAN, DTY, GTE, MOD, SAT
   TEST_ASSERT_EQUAL(kLockSrr + 1, kLockPan);
   TEST_ASSERT_EQUAL(kLockPan + 1, kLockDty);
   TEST_ASSERT_EQUAL(kLockDty + 1, kLockGte);
@@ -864,6 +864,44 @@ void test_gen2_defaults() {
   TEST_ASSERT_TRUE(p.genOn(3));
 }
 
+// FM SAT: an instrument field (0 = off), lock bit kLockSat after kLockMod, LFO target SAT after RING
+// (FM only, listed after CONTOUR).
+void test_fm_sat_model() {
+  using T = InstrType;
+  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
+  TEST_ASSERT_EQUAL(0, Instrument().fmSat);
+  TEST_ASSERT_EQUAL(kLockMod + 1, kLockSat);
+  TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Ring) + 1, static_cast<int>(LfoDest::Sat));
+  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Sat), T::Fm));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sat), T::Drum));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sat), T::Synth));
+  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sat), T::Chip));
+  TEST_ASSERT_EQUAL_STRING("SAT", lfoDestName(d(LfoDest::Sat), T::Fm));
+  TEST_ASSERT_EQUAL(d(LfoDest::Sat), lfoDestStep(d(LfoDest::Con), 1, T::Fm));
+  TEST_ASSERT_EQUAL(d(LfoDest::Vol), lfoDestStep(d(LfoDest::Sat), 1, T::Fm));
+  TEST_ASSERT_EQUAL(d(LfoDest::Vol), lfoDestStep(d(LfoDest::Con), 1, T::Drum));
+  Instrument m;
+  instrSetType(m, T::Fm);
+  m.lfoDest = d(LfoDest::Sat);
+  instrSetType(m, T::Drum);
+  TEST_ASSERT_EQUAL(d(LfoDest::Pitch), m.lfoDest);
+}
+
+// fixInstrument keeps SAT in 0..127 (a record from anywhere other than unpackFmEx).
+void test_fix_instrument_clamps_fm_sat() {
+  Instrument m;
+  instrSetType(m, InstrType::Fm);
+  m.fmSat = 200;
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(127, m.fmSat);
+  m.fmSat = 127;
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(127, m.fmSat);
+  m.fmSat = 40;
+  fixInstrument(m);
+  TEST_ASSERT_EQUAL(40, m.fmSat);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_gate_defaults_and_presets);
@@ -921,5 +959,7 @@ int main() {
   RUN_TEST(test_lofi_names);
   RUN_TEST(test_lofi_lfo_dests);
   RUN_TEST(test_gen2_defaults);
+  RUN_TEST(test_fm_sat_model);
+  RUN_TEST(test_fix_instrument_clamps_fm_sat);
   return UNITY_END();
 }

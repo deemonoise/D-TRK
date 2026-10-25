@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <unity.h>
 #include "synth_fm_machines.h"
 
@@ -79,13 +80,51 @@ void test_chord_maj_ratios() {
   FmParams p;
   fmMachine(static_cast<uint8_t>(FmMachine::Chord), m, 60, p);
   TEST_ASSERT_TRUE(p.alg == FmAlg::Additive);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.f, p.op[0].ratio);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.2599f, p.op[1].ratio);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.4983f, p.op[2].ratio);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.f, p.op[3].ratio);
+  // MAJ 0 4 7 12 with the fixed detune -6 / +4 / -2 / +7 cents.
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.996540f, p.op[0].ratio);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.262835f, p.op[1].ratio);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.496577f, p.op[2].ratio);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, 2.008103f, p.op[3].ratio);
   TEST_ASSERT_EQUAL_STRING("MAJ", fmChordName(0));
   TEST_ASSERT_EQUAL_STRING("MI9", fmChordName(127));
   TEST_ASSERT_EQUAL_STRING("MI7", fmChordName(5 * 127 / 12 + 1));
+}
+
+// TONE: two voices -d / +d cents, d = 4 + 8 x COLOR. Sine, square, bell: two pairs with the same timbre;
+// saw: two feedback carriers; stack: the modulators.
+void test_tone_detune() {
+  float m[kFmMacros];
+  macros(m, 64);
+  const float pairZones[] = {0, 127 * 2.5f / 5, 127};  // zones 0, 2, 4
+  const float cols[] = {0, 127};
+  const float lo[] = {0.997692f, 0.993092f}, hi[] = {1.002313f, 1.006956f};  // -+4, -+12 cents
+  FmParams p;
+  for (int c = 0; c < 2; ++c) {
+    m[kMacCol] = cols[c];
+    for (float z : pairZones) {
+      m[kMacShp] = z;
+      fmMachine(static_cast<uint8_t>(FmMachine::Tone), m, 60, p);
+      TEST_ASSERT_TRUE(p.alg == FmAlg::TwoPairs);
+      TEST_ASSERT_FLOAT_WITHIN(1e-4f, lo[c], p.op[0].ratio);
+      TEST_ASSERT_FLOAT_WITHIN(1e-4f, hi[c], p.op[2].ratio);
+      TEST_ASSERT_FLOAT_WITHIN(1e-4f, p.op[1].ratio / p.op[0].ratio, p.op[3].ratio / p.op[2].ratio);
+      TEST_ASSERT_EQUAL_FLOAT(p.op[0].level, p.op[2].level);
+      TEST_ASSERT_EQUAL_FLOAT(p.op[1].level, p.op[3].level);
+    }
+    m[kMacShp] = 127 * 1.5f / 5;  // zone 1: saw
+    fmMachine(static_cast<uint8_t>(FmMachine::Tone), m, 60, p);
+    TEST_ASSERT_TRUE(p.alg == FmAlg::Additive);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, lo[c], p.op[0].ratio);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, hi[c], p.op[1].ratio);
+    TEST_ASSERT_EQUAL_FLOAT(p.op[0].fb, p.op[1].fb);
+    TEST_ASSERT_EQUAL_FLOAT(0, p.op[2].level);
+    m[kMacShp] = 127 * 3.5f / 5;  // zone 3: stack
+    fmMachine(static_cast<uint8_t>(FmMachine::Tone), m, 60, p);
+    TEST_ASSERT_TRUE(p.alg == FmAlg::Stack);
+    TEST_ASSERT_EQUAL_FLOAT(1, p.op[0].ratio);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, hi[c], p.op[1].ratio);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 2 * lo[c], p.op[2].ratio);
+  }
 }
 
 void test_hat_shape_mixes_metal_and_noise() {
@@ -114,14 +153,15 @@ void test_decay_macro_lengthens() {
   TEST_ASSERT_TRUE(b.ampMs > a.ampMs * 10);
 }
 
-// Renders a machine's first n samples into out (zeroed first).
-static void render(uint8_t mc, const float* m, float note, float* out, int n) {
+// Renders a machine's first n samples into out (zeroed first); sat: FmParams::sat (SAT 127 = 1).
+static void render(uint8_t mc, const float* m, float note, float* out, int n, float sat = 0) {
   FmParams p;
   FmVoice fv;
   fv.trigger(false);
   for (int i = 0; i < n; ++i) out[i] = 0;
   for (int pos = 0; pos < n; pos += 32) {
     fmMachine(mc, m, note, p);
+    p.sat = sat;
     fv.control(p, 32);
     fv.render(out + pos, 32, 1.f);
   }
@@ -147,6 +187,124 @@ void test_out_of_range_machine_is_kick() {
   for (int i = 0; i < 4000; ++i) TEST_ASSERT_EQUAL_FLOAT(other[i], buf[i]);
 }
 
+// KICK: TwoPairs; op3 the body carrier at x2.5..3 (SHAPE), level 0.5 x COLOR, 30..80 ms in total (DECAY);
+// op4 its modulator. COLOR 0: no body.
+void test_kick_body_params() {
+  float m[kFmMacros];
+  macros(m, 64);
+  FmParams p;
+  m[kMacCol] = 0;
+  fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, 60, p);
+  TEST_ASSERT_TRUE(p.alg == FmAlg::TwoPairs);
+  TEST_ASSERT_EQUAL_FLOAT(0, p.op[2].level);
+  TEST_ASSERT_EQUAL_FLOAT(0, p.op[3].level);
+  m[kMacCol] = 127;
+  m[kMacShp] = 0;
+  m[kMacDec] = 127;
+  fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, 60, p);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f, p.op[2].level);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 2.5f, p.op[2].ratio);
+  TEST_ASSERT_EQUAL_FLOAT(p.op[2].ratio, p.op[3].ratio);
+  TEST_ASSERT_TRUE(p.op[3].level > 0);
+  // Decays multiply (rates add): the body lasts 80 ms under the 4 s amp.
+  TEST_ASSERT_FLOAT_WITHIN(0.5f, 80.f, 1.f / (1.f / p.op[2].decayMs + 1.f / p.ampMs));
+  m[kMacShp] = 127;
+  fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, 60, p);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 3.f, p.op[2].ratio);
+}
+
+// COLOR 0: the kick is the 2-operator one (as a Stack) sample for sample.
+void test_kick_color0_is_two_op() {
+  float m[kFmMacros];
+  macros(m, 64);
+  m[kMacCol] = 0;
+  static float a[4000], b[4000];
+  render(static_cast<uint8_t>(FmMachine::Kick), m, 60, a, 4000);
+  FmVoice fv;
+  fv.trigger(false);
+  for (int i = 0; i < 4000; ++i) b[i] = 0;
+  for (int pos = 0; pos < 4000; pos += 32) {
+    FmParams p;
+    fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, 60, p);
+    p.alg = FmAlg::Stack;
+    fv.control(p, 32);
+    fv.render(b + pos, 32, 1.f);
+  }
+  TEST_ASSERT_EQUAL_MEMORY(b, a, sizeof(a));
+}
+
+// KICK's sweep cap follows COLOR continuously: COLOR 1 (body level ~0.004) caps the sweep as COLOR 0 does
+// (the sub's ratio), not as the full body (x2.5..3); the cap reaches the body's by body level 0.05.
+void test_kick_sweep_cap_continuous_in_color() {
+  float m[kFmMacros];
+  macros(m, 64);
+  m[kMacSwp] = 127;
+  m[kMacShp] = 0;  // sub modulator x0.5: the widest gap to the body (x2.5)
+  FmParams a, b;
+  for (float note = 72; note <= 127; note += 6) {
+    m[kMacCol] = 0;
+    fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, note, a);
+    float prev = a.pitchEnv;
+    for (int col = 1; col <= 127; ++col) {
+      m[kMacCol] = col;
+      fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, note, b);
+      char msg[48];
+      snprintf(msg, sizeof msg, "note %.0f color %d: %.2f -> %.2f", note, col, prev, b.pitchEnv);
+      TEST_ASSERT_TRUE_MESSAGE(fabsf(b.pitchEnv - prev) < 1.5f, msg);  // no step from one COLOR to the next
+      prev = b.pitchEnv;
+    }
+  }
+}
+
+// Goertzel energy of x over lo..hi Hz in 5 Hz steps.
+static double bandEnergy(const float* x, int n, float lo, float hi) {
+  double e = 0;
+  for (float f = lo; f <= hi; f += 5) {
+    const double k = 2 * cos(2 * M_PI * f / kSynthRate);
+    double s1 = 0, s2 = 0;
+    for (int i = 0; i < n; ++i) {
+      const double s0 = x[i] + k * s1 - s2;
+      s2 = s1;
+      s1 = s0;
+    }
+    e += s1 * s1 + s2 * s2 - k * s1 * s2;
+  }
+  return e;
+}
+
+// Kick render with or without the body (op3 silenced every tick).
+static void renderKick(const float* m, float* out, int n, bool body) {
+  FmVoice fv;
+  fv.trigger(false);
+  for (int i = 0; i < n; ++i) out[i] = 0;
+  for (int pos = 0; pos < n; pos += 32) {
+    FmParams p;
+    fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, 60, p);
+    if (!body) p.op[2].level = 0;
+    fv.control(p, 32);
+    fv.render(out + pos, 32, 1.f);
+  }
+}
+
+// The body fills 150..400 Hz: well above the same kick without it, and more with COLOR (SWEEP 0).
+void test_kick_body_fills_low_mids() {
+  float m[kFmMacros];
+  macros(m, 64);
+  m[kMacSwp] = 0;
+  static float a[4096], b[4096];
+  renderKick(m, a, 4096, true);
+  renderKick(m, b, 4096, false);
+  TEST_ASSERT_TRUE(bandEnergy(a, 4096, 150, 400) > 1.5 * bandEnergy(b, 4096, 150, 400));
+  double e[3];
+  const float cols[] = {32, 64, 96};
+  for (int k = 0; k < 3; ++k) {
+    m[kMacCol] = cols[k];
+    renderKick(m, a, 4096, true);
+    e[k] = bandEnergy(a, 4096, 150, 400);
+  }
+  TEST_ASSERT_TRUE(e[0] < e[1] && e[1] < e[2]);
+}
+
 void test_every_machine_sounds() {
   const float m[kFmMacros] = {85, 40, 32, 70, 50};  // Instrument defaults
   for (int mc = 0; mc < static_cast<int>(FmMachine::Count); ++mc) {
@@ -169,8 +327,14 @@ void test_feedback_peak_bounded() {
         m[kMacShp] = static_cast<float>(shp);
         FmParams p;
         fmMachine(static_cast<uint8_t>(mc), m, note, p);
-        for (int i = 0; i < kFmOps; ++i) TEST_ASSERT_TRUE(p.op[i].fb * (1 + p.fbEnv) <= 1.8f);
+        for (int i = 0; i < kFmOps; ++i) TEST_ASSERT_TRUE(p.op[i].fb * (1 + p.fbEnv) <= 2.5f);
       }
+  // The TONE saw at C4 reaches the raised peak (kFbMax 2.4).
+  macros(m, 127);
+  m[kMacShp] = 127 * 1.5f / 5;  // zone 1
+  FmParams p;
+  fmMachine(static_cast<uint8_t>(FmMachine::Tone), m, 60, p);
+  TEST_ASSERT_TRUE(p.op[0].fb * (1 + p.fbEnv) > 2.3f);
 }
 
 // SWEEP/CONTOUR shape the TONE saw even at COLOR 0.
@@ -266,7 +430,96 @@ void test_high_pitch_partials_audible() {
     for (int i = 0; i < kFmOps; ++i) TEST_ASSERT_TRUE(p.hz * p.op[i].ratio <= 13001.f);
     fmMachine(static_cast<uint8_t>(FmMachine::Kick), m, note, p);
     TEST_ASSERT_TRUE(p.hz * p.op[1].ratio * exp2f(p.pitchEnv / 12) <= 13001.f);
+    TEST_ASSERT_TRUE(p.hz * p.op[2].ratio * exp2f(p.pitchEnv / 12) <= 13001.f);  // the body too
   }
+}
+
+// In-place radix-2 FFT; n a power of two.
+static void fft(double* re, double* im, int n) {
+  for (int i = 1, j = 0; i < n; ++i) {
+    int bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      double t = re[i];
+      re[i] = re[j], re[j] = t;
+      t = im[i];
+      im[i] = im[j], im[j] = t;
+    }
+  }
+  for (int len = 2; len <= n; len <<= 1) {
+    const double a = -2 * M_PI / len, wr = cos(a), wi = sin(a);
+    for (int i = 0; i < n; i += len) {
+      double xr = 1, xi = 0;
+      for (int k = 0; k < len / 2; ++k) {
+        const int p = i + k, q = p + len / 2;
+        const double vr = re[q] * xr - im[q] * xi, vi = re[q] * xi + im[q] * xr;
+        re[q] = re[p] - vr, im[q] = im[p] - vi;
+        re[p] += vr, im[p] += vi;
+        const double t = xr * wr - xi * wi;
+        xi = xr * wi + xi * wr;
+        xr = t;
+      }
+    }
+  }
+}
+
+// Share of a render's energy at >= 19 kHz (first 4096 samples, Hann window): partials and aliases at the top.
+static double hfShare(uint8_t mc, const float* m, float note, float sat = 0) {
+  constexpr int kN = 4096;
+  static float x[kN];
+  static double re[kN], im[kN];
+  render(mc, m, note, x, kN, sat);
+  for (int i = 0; i < kN; ++i) {
+    re[i] = x[i] * (0.5 - 0.5 * cos(2 * M_PI * i / kN));
+    im[i] = 0;
+  }
+  fft(re, im, kN);
+  double all = 0, top = 0;
+  for (int k = 1; k < kN / 2; ++k) {
+    const double e = re[k] * re[k] + im[k] * im[k];
+    all += e;
+    if (k * static_cast<double>(kSynthRate) / kN >= 19000) top += e;
+  }
+  return all > 0 ? top / all : 0;
+}
+
+// At full COLOR / SWEEP / CONTOUR the operator machines keep < 1 % of their energy above 19 kHz (measured
+// <= 0.6 %). SNARE, CLAP, HAT are out: their noise is broadband by design. TONE skips the stack zone (3):
+// its nested modulator's sidebands are not bounded by fmMaxIndex (as before).
+void test_limits_keep_top_clean() {
+  const FmMachine mcs[] = {FmMachine::Kick, FmMachine::Metal, FmMachine::Perc, FmMachine::Tone, FmMachine::Chord};
+  const float notes[] = {36, 60, 72, 84, 96};
+  const float shapes[] = {0, 32, 64, 127};  // TONE zones 0, 1, 2, 4
+  for (FmMachine mc : mcs)
+    for (float note : notes)
+      for (float shp : shapes) {
+        const float m[kFmMacros] = {100, 127, shp, 127, 127};
+        const double r = hfShare(static_cast<uint8_t>(mc), m, note);
+        char msg[64];
+        snprintf(msg, sizeof msg, "machine %d note %.0f shape %.0f: %.4f", static_cast<int>(mc), note, shp, r);
+        TEST_ASSERT_TRUE_MESSAGE(r < 0.01, msg);
+      }
+}
+
+// SAT 127 (tanh drive x8, no oversampling) at the top notes: the operator machines keep < 5 % of their energy
+// above 19 kHz. Measured max (over SHAPE 0, 32, 64, 127; full COLOR / SWEEP / CONTOUR), SAT 127 vs SAT 0:
+//   note 84: KICK 0.12 % (0.01), METAL 0.78 % (0.06), PERC 2.75 % (0.31), TONE 3.87 % (0.59), CHORD 1.81 % (0.12)
+//   note 96: KICK 0.26 % (0.01), METAL 3.14 % (0.54), PERC 2.85 % (0.47), TONE 3.72 % (0.21), CHORD 3.57 % (0.27)
+// What is up there is the shaper's harmonics and their aliases (no oversampling): the guard is for regressions.
+void test_sat_keeps_top_bounded() {
+  const FmMachine mcs[] = {FmMachine::Kick, FmMachine::Metal, FmMachine::Perc, FmMachine::Tone, FmMachine::Chord};
+  const float notes[] = {84, 96};
+  const float shapes[] = {0, 32, 64, 127};
+  for (FmMachine mc : mcs)
+    for (float note : notes)
+      for (float shp : shapes) {
+        const float m[kFmMacros] = {100, 127, shp, 127, 127};
+        const double r = hfShare(static_cast<uint8_t>(mc), m, note, 1.f);
+        char msg[64];
+        snprintf(msg, sizeof msg, "machine %d note %.0f shape %.0f: %.4f", static_cast<int>(mc), note, shp, r);
+        TEST_ASSERT_TRUE_MESSAGE(r < 0.05, msg);
+      }
 }
 
 int main() {
@@ -276,9 +529,14 @@ int main() {
   RUN_TEST(test_kick_color_raises_index);
   RUN_TEST(test_kick_pitch_follows_note);
   RUN_TEST(test_chord_maj_ratios);
+  RUN_TEST(test_tone_detune);
   RUN_TEST(test_hat_shape_mixes_metal_and_noise);
   RUN_TEST(test_decay_macro_lengthens);
   RUN_TEST(test_out_of_range_machine_is_kick);
+  RUN_TEST(test_kick_body_params);
+  RUN_TEST(test_kick_color0_is_two_op);
+  RUN_TEST(test_kick_sweep_cap_continuous_in_color);
+  RUN_TEST(test_kick_body_fills_low_mids);
   RUN_TEST(test_every_machine_sounds);
   RUN_TEST(test_feedback_peak_bounded);
   RUN_TEST(test_tone_sweep_at_zero_color);
@@ -286,5 +544,7 @@ int main() {
   RUN_TEST(test_clap_bursts_even);
   RUN_TEST(test_clap_done_after_tail);
   RUN_TEST(test_high_pitch_partials_audible);
+  RUN_TEST(test_limits_keep_top_clean);
+  RUN_TEST(test_sat_keeps_top_bounded);
   return UNITY_END();
 }

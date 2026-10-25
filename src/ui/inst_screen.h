@@ -26,7 +26,7 @@ namespace ui {
 // SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows). Its SAMPLE menu
 // starts with Record... (RecDialog over the work area); leaving the screen while a take runs = STOP.
 // Save one-shot... (PRESET menu; SAMPLE: the SAMPLE menu; not KIT): BounceDialog over the work area.
-// FM: machine, macros (DECAY..CONTOUR); ADSR rows grey where the machine ignores them.
+// FM: machine, macros (DECAY..CONTOUR), SAT; ADSR rows grey where the machine ignores them.
 // DRUM: machine, macros named per machine (grey "-" where unused); ADSR, mode and glide grey.
 // LOFI: machine (BYTE / APC), Formula (BYTE: the library formula by name, turn = next / previous,
 // wrapping, loads its default A B C; grey on APC), Sync (BYTE: t from the tempo, LOOP in steps; grey on
@@ -75,6 +75,7 @@ class InstScreen : public Screen {
   static constexpr int kWave = kCommon, kDuty = kCommon + 1, kPwmRate = kCommon + 2, kPwmDepth = kCommon + 3,
                        kChipRows = kCommon + 4;
   static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM, DRUM
+  static constexpr int kFmSat = kMacRows, kFmRows = kFmSat + 1;  // FM only: SAT after the macros (not DRUM)
   // LOFI: Machine (kMachine), Formula, Sync, then the macros.
   static constexpr int kFormula = kCommon + 1, kLofiSync = kCommon + 2, kLofiMac0 = kCommon + 3,
                        kLofiRows = kLofiMac0 + mt::kFmMacros;
@@ -154,7 +155,7 @@ class InstScreen : public Screen {
   App& app_;
   Param chip_[kChipRows + kTailRows];
   Param sample_[kCommon + kTailRows];  // the type page is editor_
-  Param fm_[kMacRows + kTailRows];
+  Param fm_[kFmRows + kTailRows];
   Param drum_[kMacRows + kTailRows];
   Param lofi_[kLofiRows + kTailRows];
   Param syn_[kSynRows + kTailRows];

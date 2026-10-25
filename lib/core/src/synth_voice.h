@@ -150,7 +150,7 @@ struct Voice {
   // FM instrument.
   bool fm = false;
   uint8_t machine = 0;               // FmMachine / DrumMachine / StringModel / LofiMachine, latched at note-on: a sounding note keeps it
-  uint16_t lockMask = 0;             // locked for this note: bit = LockBit (macros: heavy types and SYNTH only)
+  uint32_t lockMask = 0;             // locked for this note: bit = LockBit (macros: heavy types and SYNTH only)
   uint8_t lock[kLocks] = {0};
   float lfoPhase[kLfos] = {};        // 0..1, per LFO (Retrig OFF ones use the instrument's)
   float lfoRnd[kLfos] = {};          // Random wave: value of the current cycle

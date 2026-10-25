@@ -154,6 +154,8 @@ InstScreen::InstScreen(App& app) : app_(app) {
                               macroEdit(mt::kMacShp)};
   fm_[kMac0 + mt::kMacSwp] = {"SWEEP", macroNum(mt::kMacSwp), macroEdit(mt::kMacSwp)};
   fm_[kMac0 + mt::kMacCon] = {"CONTOUR", macroNum(mt::kMacCon), macroEdit(mt::kMacCon)};
+  fm_[kFmSat] = {"SAT", [this](char* o, int n) { snprintf(o, n, "%u", inst().fmSat); },
+                 [this](int d) { inst().fmSat = static_cast<uint8_t>(clampi(inst().fmSat + d, 0, 127)); }};
   // DRUM: the machine shapes the whole sound; DECAY is a number (its range differs per machine).
   auto always = [] { return true; };
   for (int r : {kAttack, kDecay, kSustain, kRelease, kMode, kGlide}) drum_[r].dim = always;
@@ -293,7 +295,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                       macroEdit(mt::kMacExc)};
   initTail(chip_ + kChipRows);
   initTail(sample_ + kCommon);
-  initTail(fm_ + kMacRows);
+  initTail(fm_ + kFmRows);
   initTail(drum_ + kMacRows);
   initTail(syn_ + kSynRows);
   initTail(string_ + kStringRows);
@@ -601,7 +603,7 @@ Param* InstScreen::typeRows() {
 int InstScreen::typeCount() const {
   switch (shown_) {
     case mt::InstrType::Sample: return 0;  // SampleEditor
-    case mt::InstrType::Fm:
+    case mt::InstrType::Fm: return kFmRows - kCommon;
     case mt::InstrType::Drum: return kMacRows - kCommon;
     case mt::InstrType::Synth: return kSynRows - kCommon;
     case mt::InstrType::String: return kStringRows - kCommon;

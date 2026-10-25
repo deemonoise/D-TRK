@@ -58,7 +58,7 @@ void test_synth_bl() {
 }
 
 void test_fm_drum() {
-  TEST_ASSERT_EQUAL(195, voiceCost(of(InstrType::Fm), false));
+  TEST_ASSERT_EQUAL(225, voiceCost(of(InstrType::Fm), false));
   TEST_ASSERT_EQUAL(290, voiceCost(of(InstrType::Drum), false));
 }
 

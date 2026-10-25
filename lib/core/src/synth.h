@@ -282,7 +282,7 @@ class Synth {
     bool slcSet;
     uint8_t slc;       // SLC: slice of the next SAMPLE note-on
     float lastPitch;   // of the last note-on, < 0 = none (SLD)
-    uint16_t lockMask;  // LockBit: this step's note-ons
+    uint32_t lockMask;  // LockBit: this step's note-ons
     uint8_t lock[kLocks];
     uint8_t lfoSel;         // LFO fx: LFO 0..kLfos-1 this step's LFD .. LFR act on
     uint16_t lfoLockMask;   // LFO locks (see Voice::lfoLockMask): this step's note-ons
@@ -304,7 +304,7 @@ class Synth {
   void noteOff(uint8_t track, uint8_t note);
   void releaseTrack(uint8_t track);
   void control(Voice& v, int dt);
-  void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
+  void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
   void controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlDrum2(Voice& v, const Instrument& m, float pitch, int dt, const float* mac, float vol);
   void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);

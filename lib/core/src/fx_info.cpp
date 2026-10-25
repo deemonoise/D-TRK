@@ -61,9 +61,10 @@ constexpr Info kInfo[] = {
     {"LFR", "LFO RESET", 0, 255, 0, false},            // LFR: phase restart at val / 256
     {"PAN", "PAN", 0, 127, 64, false},                 // PAN: track pan lock, 64 = centre
     {"DTY", "DRIVE TYPE", 0, static_cast<int16_t>(DriveModel::Count) - 1, 0, false},  // DTY: drive model lock
-    {"GTE", "TRANCE GATE", 0, 127, 127, false},  // GTE: trance gate depth lock, 0 = off
-    {"MOD", "MOD SEND", 0, 127, 64, false},      // MOD: MOD bus send lock
-    {"FLP", "GEN FLIP", 0, 100, 50, false},      // FLP: the track generator's flip chance on this step
+    {"GTE", "TRANCE GATE", 0, 127, 127, false},   // GTE: trance gate depth lock, 0 = off
+    {"MOD", "MOD SEND", 0, 127, 64, false},       // MOD: MOD bus send lock
+    {"FLP", "GEN FLIP", 0, 100, 50, false},       // FLP: the track generator's flip chance on this step
+    {"SAT", "FM SATURATION", 0, 127, 64, false},  // SAT: FM SAT lock (kLockSat)
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -110,7 +111,7 @@ constexpr Fx kOrder[] = {
     Fx::RAT, Fx::NDG, Fx::GAT, Fx::TIE, Fx::OFF, Fx::CUT,
     Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN, Fx::FLP,
     Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
-    Fx::FLT, Fx::RES, Fx::DRV, Fx::DTY, Fx::BIT, Fx::SRR, Fx::GTE, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON,
+    Fx::FLT, Fx::RES, Fx::DRV, Fx::DTY, Fx::BIT, Fx::SRR, Fx::GTE, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON, Fx::SAT,
     Fx::LFO, Fx::LFD, Fx::LFS, Fx::LFW, Fx::LFT, Fx::LFR,
     Fx::OFS, Fx::SLC,
     Fx::DLY, Fx::RVB, Fx::MOD, Fx::PAN,
@@ -162,7 +163,7 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
       static const char* const kD[] = {"PIT", "DEC", "COL", "SHP", "SWP", "CON", "VOL", "CUT", "DRV", "RES", "FEN",
                                        "DLY", "RVB", "BIT", "SRR", "FIN", "DUT", "SUB", "NOI", "SM2", "RA1", "RA2",
                                        "RA3", "RA4", "DP1", "DP2", "DP3", "DP4", "RG1", "RG2", "RG3", "RG4", "PAN", "MOD",
-                                       "FLD", "RNG"};
+                                       "FLD", "RNG", "SAT"};
       static_assert(sizeof(kD) / sizeof(kD[0]) == static_cast<int>(LfoDest::Count), "LFT names");
       snprintf(out, 5, "%s", kD[v < static_cast<uint8_t>(LfoDest::Count) ? v : 0]);
       return;
@@ -245,7 +246,7 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
 bool fxSynthOnly(Fx f) {
   return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR ||
          (f >= Fx::LFO && f <= Fx::LFR) || f == Fx::PAN || f == Fx::DTY || f == Fx::GTE ||
-         f == Fx::MOD;
+         f == Fx::MOD || f == Fx::SAT;
 }
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }

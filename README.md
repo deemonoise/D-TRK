@@ -30,7 +30,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 
 32 instruments, 32 voices (up to 16 of them FM / DRUM / STRING / SYNTH WT), 44.1 kHz, stereo with per-track pan. Types:
 
-- **FM**: 8 machines in the spirit of the Model:Cycles (kick, snare, metal, perc, tone, chord, clap, hat) with 5 macros.
+- **FM**: 8 machines in the spirit of the Model:Cycles (kick, snare, metal, perc, tone, chord, clap, hat) with 5 macros and SAT (saturation); TONE and CHORD detuned.
 - **DRUM**: 24 machines: 16 in the spirit of the TR-808 and TR-909, plus 8 more (resonant and synthetic kicks and snares, a clap with 16 patterns, a rim shot, a 2-operator FM kick, a ring-modulated hat).
 - **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables; makes your own from a sample region (one pitch period or equal windows per frame) or by drawing keyframes on the touch screen.
 - **STRING**: a physical-model resonator, 2 models (plucked string, 6 tuned modes for bars and bells) with Damp, Bright, Struct, Position and a click / noise-burst exciter.

@@ -49,6 +49,7 @@ bool mutateInstrument(Instrument& m, int strength, uint32_t seed) {
   }
   if (t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth)
     for (uint8_t& k : m.macro) mv.move(k, 0, 127);
+  if (t == InstrType::Fm) mv.move(m.fmSat, 0, 127);  // after the macros: the other types' draws stay as they were
   if (t == InstrType::Lofi)
     for (int k = 0; k < kFmMacros; ++k)
       if (*lofiMacroName(m.machine, k)) mv.move(m.macro[k], 0, 127);  // not a slot the machine leaves unused

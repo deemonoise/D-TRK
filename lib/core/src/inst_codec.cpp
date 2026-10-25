@@ -235,6 +235,15 @@ void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m) {
   memcpy(m.lfoByte, b, n < kLfoByteRecSize ? n : kLfoByteRecSize);  // range: fixInstrument
 }
 
+void packFmEx(const Instrument& m, uint8_t* b) {
+  memset(b, 0, kFmExRecSize);
+  b[0] = m.fmSat;
+}
+
+void unpackFmEx(const uint8_t* b, size_t n, Instrument& m) {
+  if (n > 0) m.fmSat = clampu(b[0], 0, 127);
+}
+
 void fixInstrument(Instrument& m) {
   // SYNTH: unpackSyn already clamps every field; wavetable names are resolved by the firmware.
   int n = 0;
@@ -248,6 +257,7 @@ void fixInstrument(Instrument& m) {
     m.fltMode = static_cast<uint8_t>(FltMode::Off);
   if (m.lofiFormula >= byteFormulaCount()) m.lofiFormula = 0;
   if (m.lofiSync > 1) m.lofiSync = 1;
+  if (m.fmSat > 127) m.fmSat = 127;
   for (uint8_t* l : m.lfoByte) {
     if (l[0] >= byteFormulaCount()) l[0] = 0;
     if (l[1] > 127) l[1] = 127;

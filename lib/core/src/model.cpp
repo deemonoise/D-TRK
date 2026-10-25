@@ -346,18 +346,20 @@ bool lfoDestValid(uint8_t dest, InstrType t) {
   if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2 || d == LfoDest::Fold ||
       d == LfoDest::Ring)
     return t == InstrType::Synth;
+  if (d == LfoDest::Sat) return t == InstrType::Fm;
   return true;
 }
 
 // The Dest list order: the enum's, with PAN and MOD (appended for the file format) next to the sends
-// and FOLD, RING (likewise) after SEMI2.
+// and FOLD, RING (likewise) after SEMI2, and SAT (likewise) after CONTOUR.
 constexpr LfoDest kDestOrder[] = {
-    LfoDest::Pitch, LfoDest::Dec,    LfoDest::Col,    LfoDest::Shp,    LfoDest::Swp,    LfoDest::Con,
-    LfoDest::Vol,   LfoDest::Cutoff, LfoDest::Drive,  LfoDest::Reso,   LfoDest::Fenv,   LfoDest::Dly,
-    LfoDest::Rvb,   LfoDest::ModSend, LfoDest::Pan,  LfoDest::Bit,    LfoDest::Srr,    LfoDest::Fine,   LfoDest::Duty,
-    LfoDest::Sub,   LfoDest::Noise,  LfoDest::Semi2,  LfoDest::Fold,   LfoDest::Ring,   LfoDest::Rate1,  LfoDest::Rate2,  LfoDest::Rate3,
-    LfoDest::Rate4, LfoDest::Depth1, LfoDest::Depth2, LfoDest::Depth3, LfoDest::Depth4, LfoDest::Rtrg1,
-    LfoDest::Rtrg2, LfoDest::Rtrg3,  LfoDest::Rtrg4};
+    LfoDest::Pitch,   LfoDest::Dec,     LfoDest::Col,     LfoDest::Shp,     LfoDest::Swp,     LfoDest::Con,
+    LfoDest::Sat,     LfoDest::Vol,     LfoDest::Cutoff,  LfoDest::Drive,   LfoDest::Reso,    LfoDest::Fenv,
+    LfoDest::Dly,     LfoDest::Rvb,     LfoDest::ModSend, LfoDest::Pan,     LfoDest::Bit,     LfoDest::Srr,
+    LfoDest::Fine,    LfoDest::Duty,    LfoDest::Sub,     LfoDest::Noise,   LfoDest::Semi2,   LfoDest::Fold,
+    LfoDest::Ring,    LfoDest::Rate1,   LfoDest::Rate2,   LfoDest::Rate3,   LfoDest::Rate4,   LfoDest::Depth1,
+    LfoDest::Depth2,  LfoDest::Depth3,  LfoDest::Depth4,  LfoDest::Rtrg1,   LfoDest::Rtrg2,   LfoDest::Rtrg3,
+    LfoDest::Rtrg4};
 constexpr int kDestN = sizeof(kDestOrder) / sizeof(kDestOrder[0]);
 static_assert(kDestN == static_cast<int>(LfoDest::Count), "kDestOrder must list every LfoDest once");
 
@@ -383,7 +385,7 @@ const char* lfoDestName(uint8_t dest, InstrType t) {
       "PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP", "CONTOUR", "VOL", "CUTOFF", "DRIVE",
       "RESO", "FENV", "DLY", "RVB", "BIT", "SRR", "FINE", "DUTY", "SUB", "NOISE", "SEMI2",
       "L1 RATE", "L2 RATE", "L3 RATE", "L4 RATE", "L1 DEPTH", "L2 DEPTH", "L3 DEPTH", "L4 DEPTH",
-      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD", "FOLD", "RING"};
+      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD", "FOLD", "RING", "SAT"};
   static const char* const kSyn[] = {"SHP1", "SHP2", "MIX", "DET", "SENV"};
   static const char* const kStr[] = {"DAMP", "BRIGHT", "STRUCT", "POS", "EXC"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");

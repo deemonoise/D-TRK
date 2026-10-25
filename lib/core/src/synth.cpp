@@ -522,9 +522,11 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
     case Fx::PAN:
     case Fx::DTY:
     case Fx::GTE:
-    case Fx::MOD: {
+    case Fx::MOD:
+    case Fx::SAT: {
       // Lock: this step's note-ons, or the track's sounding voices. Macros: heavy (FM / DRUM / STRING /
-      // wavetable SYNTH) and SYNTH voices only, as noteOn's lockMask.
+      // wavetable SYNTH) and SYNTH voices only, as noteOn's lockMask. SAT: every voice takes the bit, only
+      // FM reads it.
       const int k = cmd == static_cast<uint8_t>(Fx::DLY)   ? kLockDly
                     : cmd == static_cast<uint8_t>(Fx::DRV) ? kLockDrv
                     : cmd == static_cast<uint8_t>(Fx::RVB) ? kLockRvb
@@ -534,6 +536,7 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
                     : cmd == static_cast<uint8_t>(Fx::DTY) ? kLockDty
                     : cmd == static_cast<uint8_t>(Fx::GTE) ? kLockGte
                     : cmd == static_cast<uint8_t>(Fx::MOD) ? kLockMod
+                    : cmd == static_cast<uint8_t>(Fx::SAT) ? kLockSat
                                                            : cmd - static_cast<uint8_t>(Fx::DCY);
       const bool macro = k < kFmMacros;
       const uint8_t lv = val > 127 ? 127 : val;
@@ -541,14 +544,14 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
         for (auto& x : voices_)
           if (x.on && x.track == track && (!macro || x.heavy || x.syn || x.lofi)) {
             x.lock[k] = lv;
-            x.lockMask |= static_cast<uint16_t>(1u << k);
+            x.lockMask |= 1u << k;
             // PAN ramps from here to the control boundary (apply() marks the strip for a refresh;
             // the others wait for the next update).
             if (k == kLockPan) control(x, 0);
           }
       } else {
         r.lock[k] = lv;
-        r.lockMask |= static_cast<uint16_t>(1u << k);
+        r.lockMask |= 1u << k;
       }
       break;
     }
@@ -1148,7 +1151,8 @@ MT_HOT void Synth::control(Voice& v, int dt) {
     v.vibPhase = 0;
   }
   // LFOs 1..4 summed per target (la: -1..1 x depth / 64 each; VOL multiplies). Macro targets go to
-  // controlFm / controlDrum / controlSyn (lm: macro offsets), SUB / NOISE / SEMI2 / FOLD / RING to controlSyn.
+  // controlFm / controlDrum / controlSyn (lm: macro offsets), SAT to controlFm, SUB / NOISE / SEMI2 / FOLD /
+  // RING to controlSyn.
   // Targets invalid for the type are summed and never read, so are L1..L4 RATE / DEPTH / RTRG: they
   // act through mods, LFO -> LFO from the last update's outputs and wraps (shared LFOs' wraps: advanceInstLfos). A
   // dt = 0 update (note-on, fx) neither restarts nor consumes the wraps.
@@ -1213,7 +1217,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   controlFilter(v, m, pitch, la);
   if (dt) mark(kProfCtlFlt);
   if (v.fm) {
-    controlFm(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
+    controlFm(v, m, pitch, dt, lm, lfoVol, la);  // sets v.amp too
     if (dt) mark(kProfCtlEng);
     return;
   }
@@ -1494,8 +1498,10 @@ MT_HOT void Synth::macros(const Voice& v, const Instrument& m, const float* lm, 
     if (lm[k] != 0) mac[k] = clampf(mac[k] + lm[k], 0.f, 127.f);
 }
 
-// pitch includes the LFO's PITCH target, vol its VOL target; l moves the macro targets here.
-MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
+// pitch includes the LFO's PITCH target, vol its VOL target; l moves the macro targets here, la (LFO sums
+// per target) the SAT one.
+MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
+                             const float* la) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   // fmMachine is pure and costly (tens of us): reuse the last params while the inputs stay
@@ -1509,6 +1515,10 @@ MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt,
     v.fpPitch = pitch;
     for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
   }
+  // SAT (FmParams::sat): outside the cache, so a lock or an LFO on it costs no fmMachine call; set every
+  // update (a recomputed fp() comes back with sat 0).
+  const uint8_t sb = (v.lockMask & (1u << kLockSat)) ? v.lock[kLockSat] : m.fmSat;
+  v.fp().sat = u7(sb + 64.f * la[ld(LfoDest::Sat)]) * (1.f / 127.f);
   // Ramp to the next control update: a full period from render(), the rest of it mid-segment
   // (note-on, bend), so a choke ramp ends exactly where the next update starts.
   v.fmv().control(v.fp(), dt ? dt : ctlLeft_);

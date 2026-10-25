@@ -1963,7 +1963,8 @@ void test_fm_cache_lfo_macro_close_to_recompute() {
     diff = abs(fa[i] - fb[i]) > diff ? abs(fa[i] - fb[i]) : diff;
   }
   TEST_ASSERT_TRUE(peak > 1000);
-  TEST_ASSERT_TRUE(diff < peak / 50);
+  // COLOR also sets the TONE detune: the cache's 0.5-unit macro tolerance shows as a slow phase drift.
+  TEST_ASSERT_TRUE(diff < peak / 40);
 }
 
 void test_fm_cache_lfo_pitch_close_to_recompute() {
@@ -1983,6 +1984,100 @@ void test_fm_cache_lfo_pitch_close_to_recompute() {
   noteOn(0, 0, 69);
   const int cached = crossings(250);
   TEST_ASSERT_INT_WITHIN(2, plain, cached);
+}
+
+// ---- FM SAT ----
+
+static long diffOf(const int16_t* a, const int16_t* b, int n, long* sum) {
+  long d = 0;
+  *sum = 0;
+  for (int i = 0; i < n; ++i) {
+    d += abs(a[i] - b[i]);
+    *sum += abs(a[i]);
+  }
+  return d;
+}
+
+// Instrument SAT changes the sound; set outside the machine cache (no extra fmMachine calls).
+void test_fm_sat_instrument() {
+  useFm(0, FmMachine::Tone);
+  Instrument& m = p->instruments[0];
+  m.sustain = 127;
+  renderFm(fa, 40, true);
+  m.fmSat = 127;
+  const uint32_t c0 = s->fmMachineCalls();
+  renderFm(fb, 40, true);
+  TEST_ASSERT_TRUE(s->fmMachineCalls() - c0 <= 2);
+  long sum;
+  TEST_ASSERT_TRUE(diffOf(fa, fb, Synth::kBlock * 40, &sum) > sum / 10);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, s->voice(s->trackVoice(0)).eng.fm.fp.sat);
+}
+
+void test_fm_sat_lock_on_note_step() {
+  useFm(0, FmMachine::Tone);
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::SAT, 100);
+  noteOn(0, 0, 60);
+  render1(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL_HEX32(1u << kLockSat, v.lockMask);
+  TEST_ASSERT_EQUAL(100, v.lock[kLockSat]);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 100.f / 127.f, v.eng.fm.fp.sat);
+  stepStart(0, 0, 6, true);  // next step: no lock, the instrument's SAT (0)
+  noteOn(0, 0, 62);
+  render1(buf);
+  TEST_ASSERT_EQUAL(0, s->voice(s->trackVoice(0)).lockMask);
+  TEST_ASSERT_EQUAL_FLOAT(0, s->voice(s->trackVoice(0)).eng.fm.fp.sat);
+}
+
+void test_fm_sat_lock_on_empty_step_hits_sounding_voice() {
+  useFm(0, FmMachine::Tone);
+  stepStart(0, 0, 6, true);
+  noteOn(0, 0, 60);
+  render1(buf);
+  stepStart(0, 0, 6, false);
+  fx(0, 0, Fx::SAT, 127);
+  render1(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL_HEX32(1u << kLockSat, v.lockMask);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, v.eng.fm.fp.sat);
+}
+
+void test_fm_sat_lfo() {
+  useFm(0, FmMachine::Tone);
+  Instrument& m = p->instruments[0];
+  m.sustain = 127;
+  renderFm(fa, 40, true);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 30;
+  m.lfoDepth = 63;  // SAT 0 -> ~63 in the first half cycle
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Sat);
+  const uint32_t c0 = s->fmMachineCalls();
+  renderFm(fb, 40, true);
+  TEST_ASSERT_TRUE(s->fmMachineCalls() - c0 <= 2);  // SAT moves without recomputing the machine
+  long sum;
+  TEST_ASSERT_TRUE(diffOf(fa, fb, Synth::kBlock * 40, &sum) > sum / 20);
+  // First half cycle of the square: la = +63/64, so SAT = 0 + 63 (a wrong sign gives 0, a wrong scale not 63).
+  s->reset();
+  noteOn(0, 0, 69);
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.5f / 127.f, 63.f / 127.f, s->voice(s->trackVoice(0)).eng.fm.fp.sat);
+}
+
+// SAT on a CHIP track: the voice takes the bit (as any non-macro lock), nothing reads it; it plays on.
+void test_fm_sat_lock_ignored_on_chip() {
+  const bool withSat[] = {false, true};
+  int16_t* outs[] = {fa, fb};
+  for (int t = 0; t < 2; ++t) {
+    s->reset();
+    stepStart(0, 0, 6, true);
+    if (withSat[t]) fx(0, 0, Fx::SAT, 127);
+    noteOn(0, 0, 60);
+    for (int k = 0; k < 20; ++k) render1(outs[t] + k * Synth::kBlock);  // CHIP voice: the bit is set, nothing reads it
+    TEST_ASSERT_FALSE(blockSilent());
+    if (withSat[t]) TEST_ASSERT_EQUAL_HEX32(1u << kLockSat, s->voice(s->trackVoice(0)).lockMask);
+  }
+  TEST_ASSERT_EQUAL_INT16_ARRAY(fa, fb, Synth::kBlock * 20);
 }
 
 // ---- FM voice limit ----
@@ -4770,7 +4865,8 @@ static uint32_t lpBpHpRenderHash() {
 
 void test_lp_bp_hp_render_unchanged() {
   const uint32_t h = lpBpHpRenderHash();
-  TEST_ASSERT_EQUAL_HEX32(0x3D847FB5u, h);  // captured before VoiceFilter replaced the Svf
+  // Captured before VoiceFilter replaced the Svf; re-captured after the FM KICK body (filter path unchanged).
+  TEST_ASSERT_EQUAL_HEX32(0x09EFE345u, h);
 }
 
 // A CHIP saw through each new type: it sounds, and the voice is freed within 3 s of the release
@@ -5746,6 +5842,11 @@ int main() {
   RUN_TEST(test_fm_cache_static_note_matches_recompute);
   RUN_TEST(test_fm_cache_lfo_macro_close_to_recompute);
   RUN_TEST(test_fm_cache_lfo_pitch_close_to_recompute);
+  RUN_TEST(test_fm_sat_instrument);
+  RUN_TEST(test_fm_sat_lock_on_note_step);
+  RUN_TEST(test_fm_sat_lock_on_empty_step_hits_sounding_voice);
+  RUN_TEST(test_fm_sat_lfo);
+  RUN_TEST(test_fm_sat_lock_ignored_on_chip);
   RUN_TEST(test_fm_ninth_note_steals_oldest_fm_keeps_chip);
   RUN_TEST(test_fm_voices_never_exceed_cap);
   RUN_TEST(test_filter_off_is_bit_identical);

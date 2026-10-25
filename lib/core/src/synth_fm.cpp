@@ -2,6 +2,7 @@
 #include <math.h>
 #include "fastmath.h"
 #include "hot.h"
+#include "synth_drive.h"
 
 namespace mt {
 namespace {
@@ -62,9 +63,9 @@ MT_HOT bool fmCarrier(FmAlg a, int op) {
 }
 
 MT_HOT float fmMaxIndex(float hz) {
-  if (hz <= 0) return 8;
-  const float m = 12000.f * fastRcp(hz < 1e-30f ? 1e-30f : hz) - 1.f;  // per modulator per tick: no __divsf3
-  return m < 0.2f ? 0.2f : (m > 8.f ? 8.f : m);
+  if (hz <= 0) return 12;
+  const float m = 16000.f * fastRcp(hz < 1e-30f ? 1e-30f : hz) - 1.f;  // per modulator per tick: no __divsf3
+  return m < 0.2f ? 0.2f : (m > 12.f ? 12.f : m);
 }
 
 void FmVoice::trigger(bool keepPhase) {
@@ -72,6 +73,7 @@ void FmVoice::trigger(bool keepPhase) {
   t_ = 0;
   choke_ = keepPhase;
   if (keepPhase) return;
+  satSnap_ = true;
   for (int i = 0; i < kFmOps; ++i) ph_[i] = 0, last_[i] = fbIn_[i] = 0;
   amp_ = 0;
   svf_.reset();
@@ -185,7 +187,8 @@ MT_HOT void FmVoice::control(const FmParams& p, int span) {
       l0 = o.level * (s + (1.f - s) * d0);
       l1 = o.level * (s + (1.f - s) * d1);
       if (!fmCarrier(p.alg, i)) {
-        const float m = fmMaxIndex(hz);
+        // The limit of the highest pitch this tick reaches: a sweep starts octaves up (KICK, PERC).
+        const float m = fmMaxIndex(hz * (bend0 > bend1 ? bend0 : bend1));
         l0 = (l0 < m ? l0 : m) * kInvTwoPi;
         l1 = (l1 < m ? l1 : m) * kInvTwoPi;
       }
@@ -222,6 +225,21 @@ MT_HOT void FmVoice::control(const FmParams& p, int span) {
     svf_.set(p.filterMode, p.filterHz, p.filterQ);
     filterHz_ = p.filterHz, filterQ_ = p.filterQ, filterMode_ = p.filterMode;
   }
+  // SAT: this tick's targets (tanh only when SAT moves), ramped from the last tick's; a fresh trigger
+  // starts at them.
+  const float su = p.sat <= 0 ? 0.f : (p.sat >= 1 ? 1.f : p.sat);
+  float sg0 = satGT_, sn0 = satNT_, sw0 = satWT_;
+  if (su != satU_) {
+    satU_ = su;
+    satGT_ = 1.f + 7.f * su * su;
+    satNT_ = fastRcp(fastTanh(satGT_));
+    satWT_ = su * 8.f < 1.f ? su * 8.f : 1.f;
+  }
+  if (satSnap_) sg0 = satGT_, sn0 = satNT_, sw0 = satWT_, satSnap_ = false;
+  satG_ = sg0, satN_ = sn0, satW_ = sw0;
+  dSatG_ = (satGT_ - sg0) * inv;
+  dSatN_ = (satNT_ - sn0) * inv;
+  dSatW_ = (satWT_ - sw0) * inv;
 }
 
 template <FmAlg A>
@@ -244,6 +262,12 @@ MT_INLINE void FmVoice::run(float* __restrict out, int n, float gain) {
   const bool filterOn = filterOn_, filterAll = filterAll_;
   const bool noiseOn = noisy || (filterOn && filterAll);
   Svf svf = svf_;
+  // SAT: off (w 0 all block) skips the shaper: bit-exact without it.
+  float sg = satG_, sn = satN_, sw = satW_;
+  const float dsg = dSatG_, dsn = dSatN_, dsw = dSatW_;
+  const bool satOn = sw != 0 || dsw != 0;
+  const float *tt = nullptr, *ts = nullptr;
+  if (satOn) Drive::tables(tt, ts);
   for (int s = 0; s < n; ++s) {
     float y;
     if (A == FmAlg::Stack) {
@@ -269,6 +293,12 @@ MT_INLINE void FmVoice::run(float* __restrict out, int n, float gain) {
       else if (filterAll) y = svf.process(y + nz);
       else y += svf.process(nz);
     }
+    if (satOn) {
+      y += sw * (Drive::tanhLut(sg * y, tt, ts) * sn - y);
+      sg += dsg;
+      sn += dsn;
+      sw += dsw;
+    }
     out[s] += y * amp * gain;
     for (int i = 0; i < kFmOps; ++i) {
       o[i].ph += o[i].inc;
@@ -285,6 +315,7 @@ MT_INLINE void FmVoice::run(float* __restrict out, int n, float gain) {
   }
   noise_ = noise;
   amp_ = amp;
+  satG_ = sg, satN_ = sn, satW_ = sw;
   rng_ = rng;
   svf_ = svf;
   t_ += static_cast<uint32_t>(n);
