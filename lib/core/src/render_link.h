@@ -31,6 +31,12 @@ class RenderFeeder {
   using Out = bool (*)(const int16_t* l, const int16_t* r, void* ctx);
   explicit RenderFeeder(Synth& s) : synth_(s) {}
   void reset();
+  // Tap mode (one-shot bounce): out() and the stats get tap k of t (x kTapScale, saturated) instead of
+  // the master; t = nullptr: the master. The caller sets t as the synth's taps (Synth::setTaps).
+  void setTap(const RenderTaps* t, int k) {
+    tap_ = t;
+    tapK_ = k;
+  }
   // Ok; BadOrder when m does not start at the block being filled (nothing applied); WriteFail when
   // out said stop.
   link::RenderResult apply(const link::RenderBlocks& m, Out out, void* ctx);
@@ -47,6 +53,8 @@ class RenderFeeder {
   BlockRender stats_;
   uint32_t blocks_ = 0, loud_ = 0, loudMono_ = 0;
   int16_t monoPeak_ = 0;
+  const RenderTaps* tap_ = nullptr;
+  int tapK_ = 0;
 };
 
 }  // namespace mt

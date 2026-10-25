@@ -43,6 +43,14 @@ mt::BankResult writable();
 mt::BankResult writeFrames(uint32_t frames, uint32_t rate, mt::FrameFill fill, void* ctx, mt::ImportOut& out,
                            mt::BankProgress keep, void* keepCtx);
 
+// A take's file (rec_server) into the store while the synth plays, as BankImport kind 0 but with no
+// reply over the link: Running (importPoll follows it), NoSd, Busy or the start's error. Bank requests
+// get Busy until it ends.
+mt::BankResult importFile(const char* path);
+// Running while it goes on (done / total of the store job for the take's Progress), then its result
+// and the import (crc, frames in the store) until the next importFile.
+mt::BankResult importPoll(mt::ImportOut& o, uint32_t& done, uint32_t& total);
+
 // The ESP (re)started: its seqs start over, so the last reply is no longer one to repeat.
 void reset();
 

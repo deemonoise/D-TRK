@@ -12,6 +12,7 @@
 #include "link_msg.h"
 #include "preview_stream.h"
 #include "psram.h"
+#include "rec_server.h"
 #include "render_server.h"
 #include "sample_tools.h"
 #include "stack_mark.h"
@@ -102,6 +103,7 @@ void onHello(Reader& r) {
   card::reset();  // and with it the files it had open
   preview::stop();
   render::reset();  // a render it was feeding is over
+  rec::reset();     // a take is sealed into its file, the window's meter stops
   bank::reset();
   tools::reset();
   fw::reset();
@@ -307,6 +309,7 @@ void dispatch() {
       else if (tools::isRequest(t)) n = tools::handle(t, dec.seq(), dec.payload(), dec.size(), out);
       else if (preview::isRequest(t)) n = preview::handle(t, dec.payload(), dec.size(), out);
       else if (render::isRequest(t)) n = render::handle(t, dec.seq(), dec.payload(), dec.size(), out);
+      else if (rec::isRequest(t)) n = rec::handle(t, dec.seq(), dec.payload(), dec.size(), out);
       else if (fw::isRequest(t)) n = fw::handle(t, dec.seq(), dec.payload(), dec.size(), out);
       if (n >= 0) reply(t, dec.seq(), out, n);  // a bank job replies when it is done
       break;

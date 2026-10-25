@@ -5,7 +5,8 @@
 namespace mt {
 
 bool mutateApplies(const Instrument& m, int strength) {
-  return m.type != InstrType::Kit && m.type < InstrType::Count && strength > 0 && strength <= kMutateMax;
+  return m.type != InstrType::Kit && m.type != InstrType::Unused7 && m.type < InstrType::Count && strength > 0 &&
+         strength <= kMutateMax;
 }
 
 namespace {

@@ -45,13 +45,6 @@ void lfoN(I& m, int i, LfoWave w, LfoDest d, uint8_t rate, int8_t depth) {  // L
   l.wave = LW(w); l.dest = D(d); l.rate = rate; l.depth = depth; l.sync = 0;
 }
 void fx(I& m, uint8_t send, uint8_t rsend) { m.send = send; m.rsend = rsend; }
-// MACRO: type with its defaults, the model, TIMBRE, COLOR, ENV>TMB (64 = off).
-void mo(I& m, MacroModel md, uint8_t timbre, uint8_t color, uint8_t envTmb) {
-  m.machine = static_cast<uint8_t>(md);
-  instrSetType(m, InstrType::Macro);
-  m.macro[kMacTimbre] = timbre; m.macro[kMacColor] = color; m.macro[kMacEnvTmb] = envTmb;
-}
-
 // STRING: type with its defaults, the model, DAMP (T60 0.05 s x 200^(v/127)), BRIGHT, STRUCT, POS, EXC (0 = click).
 void st(I& m, StringModel md, uint8_t damp, uint8_t bright, uint8_t structure, uint8_t pos, uint8_t exc) {
   m.machine = static_cast<uint8_t>(md);
@@ -104,6 +97,8 @@ constexpr FactoryDrum kHybrid[] = {{kD, "BD909", 115}, {kD, "SD808", 100}, {kF, 
                                    {kF, "CLAP", 95},   {kD, "CB808", 80},  {kF, "CONGA", 90}, {kD, "RIM BIT", 90}};
 constexpr FactoryDrum kDub[] = {{kD, "BD909 S", 115}, {kD, "RS909", 95}, {kD, "CH909", 85},    {kD, "OH808", 80},
                                 {kD, "CP808", 90},    {kD, "TOM808 L", 95}, {kD, "CY909", 75}, {kD, "CB808", 80}};
+constexpr FactoryDrum kAnalog[] = {{kD, "BDA", 115}, {kD, "SDA", 100},  {kD, "HHR C", 85}, {kD, "HHR O", 80},
+                                   {kD, "CPX", 95},  {kD, "RSX", 90},  {kD, "BDS", 110},   {kD, "BDF ZAP", 95}};
 void kitFill(I&) {}
 #define KIT(cat, name, d) {InstrType::Kit, cat, name, kitFill, d, sizeof(d) / sizeof(d[0])}
 
@@ -115,6 +110,7 @@ constexpr FactoryPreset kAll[] = {
     KIT("DRUM", "909 HARD", k909Hard),
     KIT("DRUM", "LOFI KIT", kLofi),
     KIT("DRUM", "HARD KIT", kHard),
+    KIT("DRUM", "ANALOG", kAnalog),
     KIT("FM", "FM KIT", kFmKit),
     KIT("FM", "FM PUNCH", kFmPunch),
     KIT("FM", "FM PERC", kFmPerc),
@@ -323,6 +319,23 @@ constexpr FactoryPreset kAll[] = {
     {InstrType::Drum, "HARD", "CLAP VRB", [](I& m) { dr(m, DrumMachine::Cp9); mac(m, 80, 70, 64, 50, 50); fx(m, 0, 100); }},
     {InstrType::Drum, "HARD", "HH HARSH", [](I& m) { dr(m, DrumMachine::Hh9); mac(m, 25, 110, 70, 64, 64); m.drive = 60; }},
     {InstrType::Drum, "HARD", "METAL HT", [](I& m) { dr(m, DrumMachine::Cb8); mac(m, 60, 90, 100, 60, 0); bp(m, 100, 50); }},
+    // Second engine (BDA .. HHR): macros as drumMacroName.
+    {InstrType::Drum, "ANALOG", "BDA", [](I& m) { dr(m, DrumMachine::Bda); }},
+    {InstrType::Drum, "ANALOG", "BDA BOOM", [](I& m) { dr(m, DrumMachine::Bda); m.macro[kMacDec] = 115; m.macro[kMacCol] = 30; }},
+    {InstrType::Drum, "ANALOG", "SDA", [](I& m) { dr(m, DrumMachine::Sda); }},
+    {InstrType::Drum, "ANALOG", "SDA SNAP", [](I& m) { dr(m, DrumMachine::Sda); m.macro[kMacShp] = 110; }},
+    {InstrType::Drum, "ANALOG", "BDS", [](I& m) { dr(m, DrumMachine::Bds); }},
+    {InstrType::Drum, "ANALOG", "BDS DIRT", [](I& m) { dr(m, DrumMachine::Bds); m.macro[kMacShp] = 100; m.drive = 30; }},
+    {InstrType::Drum, "ANALOG", "SDS", [](I& m) { dr(m, DrumMachine::Sds); }},
+    {InstrType::Drum, "ANALOG", "SDS FM", [](I& m) { dr(m, DrumMachine::Sds); m.macro[kMacSwp] = 100; }},
+    {InstrType::Drum, "ANALOG", "CPX", [](I& m) { dr(m, DrumMachine::Cpx); }},
+    {InstrType::Drum, "ANALOG", "CPX WIDE", [](I& m) { dr(m, DrumMachine::Cpx); m.macro[kMacSwp] = 120; m.macro[kMacCon] = 90; }},
+    {InstrType::Drum, "ANALOG", "RSX", [](I& m) { dr(m, DrumMachine::Rsx); }},
+    {InstrType::Drum, "ANALOG", "RSX NOIS", [](I& m) { dr(m, DrumMachine::Rsx); m.macro[kMacShp] = 110; }},
+    {InstrType::Drum, "ANALOG", "HHR C", [](I& m) { dr(m, DrumMachine::Hhr); m.macro[kMacDec] = 25; }},
+    {InstrType::Drum, "ANALOG", "HHR O", [](I& m) { dr(m, DrumMachine::Hhr); m.macro[kMacDec] = 95; }},
+    {InstrType::Drum, "FM", "BDF", [](I& m) { dr(m, DrumMachine::Bdf); }},
+    {InstrType::Drum, "FM", "BDF ZAP", [](I& m) { dr(m, DrumMachine::Bdf); m.macro[kMacCol] = 120; m.macro[kMacShp] = 20; }},
 
     // ================= SYNTH =================
     // Built-in wavetables only. Macros SHP1, SHP2, MIX (0 = osc 1 only), DET (64 = 0), SENV (64 = 0).
@@ -446,30 +459,6 @@ constexpr FactoryPreset kAll[] = {
        sy(m, SynOsc::Wt, "*SYNC", SynOsc::Saw, nullptr); m.macro[kMacMix] = 40;
        lfo1(m, LfoWave::Random, LfoDest::Pitch, 90, 12); lfoN(m, 1, LfoWave::Sine, LfoDest::Dec, 60, 50);
        fx(m, 60, 60); }},
-
-    // ================= MACRO =================
-    // One per model. Macros TIMBRE, COLOR, ENV>TMB (64 = off); its AD in synEAtk / synEDec.
-    {InstrType::Macro, "BASS", "MORPHBAS", [](I& m) {  // tri -> saw -> square, low-passed
-       mo(m, MacroModel::Morph, 50, 40, 100); m.synEDec = 45; m.transpose = -12; m.mono = true; m.glide = 6;
-       env(m, 0, 70, 90, 30); }},
-    {InstrType::Macro, "BASS", "FB GRIT", [](I& m) {  // feedback FM, gritty
-       mo(m, MacroModel::FbFm, 40, 70, 90); m.synEDec = 40; m.transpose = -12; m.mono = true;
-       env(m, 0, 70, 80, 30); }},
-    {InstrType::Macro, "LEAD", "NOTCHSAW", [](I& m) {  // saw with a moving notch
-       mo(m, MacroModel::SawPlus, 60, 50, 64); m.mono = true; m.glide = 5;
-       lfo1(m, LfoWave::Tri, LfoDest::Dec, 40, 20); fx(m, 40, 30); }},
-    {InstrType::Macro, "LEAD", "SQRSAW", [](I& m) {  // saw + square blend
-       mo(m, MacroModel::SawSqr, 70, 64, 64); lp(m, 90, 20, 20, 50); fx(m, 40, 30); }},
-    {InstrType::Macro, "LEAD", "FOLDLEAD", [](I& m) {  // wavefolded sine, env opens the fold
-       mo(m, MacroModel::Fold, 40, 30, 110); m.synEDec = 60; m.mono = true; m.glide = 4; fx(m, 40, 40); }},
-    {InstrType::Macro, "PAD", "VOSIMPAD", [](I& m) {
-       mo(m, MacroModel::Vosim, 50, 60, 64); env(m, 30, 90, 110, 90);
-       lfo1(m, LfoWave::Sine, LfoDest::Col, 25, 20); fx(m, 20, 90); }},
-    {InstrType::Macro, "VOX", "TALKER", [](I& m) {  // vowels swept by the LFO
-       mo(m, MacroModel::Vowel, 40, 64, 64); m.mono = true; m.glide = 8;
-       lfo1(m, LfoWave::Tri, LfoDest::Dec, 30, 40); fx(m, 20, 50); }},
-    {InstrType::Macro, "KEYS", "FM BELL", [](I& m) {
-       mo(m, MacroModel::Fm, 70, 90, 100); m.synEDec = 70; env(m, 0, 95, 0, 80); fx(m, 30, 60); }},
 
     // ================= STRING =================
     // 3 STRING (plucked line), 3 MODAL (struck modes). Sustain 127: the resonator's own decay shapes the note.

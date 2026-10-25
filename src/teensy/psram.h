@@ -21,6 +21,10 @@ constexpr uint8_t kPerfSec = 6;
 void begin(const mt::SynthModel& m, mt::Synth& s);
 // The reserved PERF buffer (frames stereo frames, its contents undefined), nullptr when PSRAM is off.
 int16_t* perfBuffer(uint32_t& frames);
+// The recording ring reserved after PERF (mt::kRecRingBytes, stereo int16 frames), nullptr / 0 when
+// PSRAM is off or failed.
+int16_t* recRing();
+uint32_t recRingFrames();
 // loop(): the watchdog. A failure clears pool.psramOk for good (voices go to SD at the next block)
 // and silences PERF until a reboot.
 void step();

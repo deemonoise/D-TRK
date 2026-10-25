@@ -32,20 +32,13 @@ bool Pattern::isEmpty() const {
 }
 
 namespace {
-constexpr InstrType kTypeOrder[] = {InstrType::Fm,   InstrType::Synth,  InstrType::Macro, InstrType::String,
-                                    InstrType::Drum, InstrType::Sample, InstrType::Chip,  InstrType::Lofi,
-                                    InstrType::Kit};
-static_assert(sizeof(kTypeOrder) == static_cast<size_t>(InstrType::Count), "type order");
+constexpr InstrType kTypeOrder[] = {InstrType::Fm,     InstrType::Synth, InstrType::String, InstrType::Drum,
+                                    InstrType::Sample, InstrType::Chip,  InstrType::Lofi,   InstrType::Kit};
+static_assert(sizeof(kTypeOrder) == static_cast<size_t>(kInstrTypesUi), "type order");
 }  // namespace
 
 InstrType instrTypeAt(int k) {
-  return k >= 0 && k < static_cast<int>(InstrType::Count) ? kTypeOrder[k] : InstrType::Fm;
-}
-
-const char* macroModelName(uint8_t model) {
-  static const char* const kNames[] = {"SAW+", "MORPH", "SAW/SQR", "FOLD", "VOSIM", "VOWEL", "FM", "FB FM"};
-  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(MacroModel::Count), "MACRO model names");
-  return kNames[model < static_cast<uint8_t>(MacroModel::Count) ? model : 0];
+  return k >= 0 && k < kInstrTypesUi ? kTypeOrder[k] : InstrType::Fm;
 }
 
 const char* stringModelName(uint8_t model) {
@@ -55,7 +48,7 @@ const char* stringModelName(uint8_t model) {
 }
 
 int instrTypePos(InstrType t) {
-  for (int k = 0; k < static_cast<int>(InstrType::Count); ++k)
+  for (int k = 0; k < kInstrTypesUi; ++k)
     if (kTypeOrder[k] == t) return k;
   return 0;
 }
@@ -263,6 +256,14 @@ void drumSetMachine(Instrument& m, uint8_t machine) {
       {35, 64, 30, 20, 0},   // RS9
       {30, 70, 50, 64, 64},  // HH9: closed
       {95, 64, 50, 64, 64},  // CY9
+      {80, 40, 50, 40, 0},   // BDA
+      {55, 64, 70, 0, 0},    // SDA
+      {75, 50, 30, 60, 40},  // BDS
+      {55, 60, 70, 40, 0},   // SDS
+      {60, 64, 64, 64, 0},   // CPX
+      {40, 64, 40, 0, 0},    // RSX
+      {75, 50, 40, 50, 16},  // BDF
+      {30, 64, 30, 0, 0},    // HHR
   };
   constexpr int kLast = static_cast<int>(DrumMachine::Count) - 1;
   m.machine = static_cast<uint8_t>(machine > kLast ? kLast : machine);
@@ -304,17 +305,13 @@ const char* lofiMacroName(uint8_t machine, int k) {
 }
 
 void instrSetType(Instrument& m, InstrType t) {
-  if (t >= InstrType::Count) t = InstrType::Chip;
+  if (t >= InstrType::Count || t == InstrType::Unused7) t = InstrType::Chip;
   m.type = t;
   if (t == InstrType::Fm) fmSetMachine(m, m.machine);
   else if (t == InstrType::Drum) drumSetMachine(m, m.machine);
   else if (t == InstrType::Synth) {
     static const uint8_t kDef[kFmMacros] = {0, 0, 0, 64, 64};  // SHP1, SHP2, MIX, DET, SENV
     memcpy(m.macro, kDef, kFmMacros);
-  } else if (t == InstrType::Macro) {
-    static const uint8_t kDef[kFmMacros] = {64, 64, 64, 0, 0};  // TIMBRE, COLOR, ENV>TMB (64 = off)
-    memcpy(m.macro, kDef, kFmMacros);
-    if (m.machine >= static_cast<uint8_t>(MacroModel::Count)) m.machine = 0;
   } else if (t == InstrType::String) {
     static const uint8_t kDef[kFmMacros] = {80, 64, 0, 30, 10};  // DAMP, BRIGHT, STRUCT, POS, EXC
     memcpy(m.macro, kDef, kFmMacros);
@@ -344,7 +341,7 @@ bool lfoDestValid(uint8_t dest, InstrType t) {
   const auto d = static_cast<LfoDest>(dest);
   if (d >= LfoDest::Dec && d <= LfoDest::Con)
     return t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth || t == InstrType::String ||
-           t == InstrType::Lofi || (t == InstrType::Macro && d <= LfoDest::Shp);  // MACRO: TIMBRE, COLOR, ENV>TMB
+           t == InstrType::Lofi;
   if (d == LfoDest::Duty) return t == InstrType::Chip;
   if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2 || d == LfoDest::Fold ||
       d == LfoDest::Ring)
@@ -388,13 +385,11 @@ const char* lfoDestName(uint8_t dest, InstrType t) {
       "L1 RATE", "L2 RATE", "L3 RATE", "L4 RATE", "L1 DEPTH", "L2 DEPTH", "L3 DEPTH", "L4 DEPTH",
       "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD", "FOLD", "RING"};
   static const char* const kSyn[] = {"SHP1", "SHP2", "MIX", "DET", "SENV"};
-  static const char* const kMac[] = {"TIMBRE", "COLOR", "ENV>TMB"};
   static const char* const kStr[] = {"DAMP", "BRIGHT", "STRUCT", "POS", "EXC"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");
   if (dest >= static_cast<uint8_t>(LfoDest::Count)) dest = 0;
   const int mac = dest - static_cast<int>(LfoDest::Dec);
   if (t == InstrType::Synth && mac >= 0 && mac < kFmMacros) return kSyn[mac];
-  if (t == InstrType::Macro && mac >= 0 && mac < 3) return kMac[mac];
   if (t == InstrType::String && mac >= 0 && mac < kFmMacros) return kStr[mac];
   return kNames[dest];
 }

@@ -77,7 +77,10 @@ void unpackFm(const uint8_t* b, Instrument& m) {
 void unpackInst(const uint8_t* b, Instrument& m) {
   memcpy(m.name, b, 8);
   m.name[8] = 0;
-  m.type = b[8] < static_cast<int>(InstrType::Count) ? static_cast<InstrType>(b[8]) : InstrType::Chip;
+  // Type 7 is a former type (and anything past Count is unknown): both load as CHIP.
+  m.type = b[8] < static_cast<int>(InstrType::Count) && b[8] != static_cast<int>(InstrType::Unused7)
+               ? static_cast<InstrType>(b[8])
+               : InstrType::Chip;
   m.vol = clampu(b[9], 0, 127);
   m.transpose = clamps(static_cast<int8_t>(b[10]), -24, 24);
   m.fine = clamps(static_cast<int8_t>(b[11]), -50, 50);
@@ -237,7 +240,6 @@ void fixInstrument(Instrument& m) {
   int n = 0;
   if (m.type == InstrType::Fm) n = static_cast<int>(FmMachine::Count);
   else if (m.type == InstrType::Drum) n = static_cast<int>(DrumMachine::Count);
-  else if (m.type == InstrType::Macro) n = static_cast<int>(MacroModel::Count);
   else if (m.type == InstrType::String) n = static_cast<int>(StringModel::Count);
   else if (m.type == InstrType::Lofi) n = static_cast<int>(LofiMachine::Count);
   if (n && m.machine >= n) m.machine = 0;

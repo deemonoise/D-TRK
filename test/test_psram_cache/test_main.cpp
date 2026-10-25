@@ -68,6 +68,18 @@ void test_arena_reserve_comes_first_and_survives_reset() {
   TEST_ASSERT_EQUAL_UINT32(1000, b.size());
 }
 
+void test_arena_two_reserves_both_survive_reset() {
+  PsramArena a;
+  a.init(chip.data(), 1000);
+  uint8_t* base = reinterpret_cast<uint8_t*>(chip.data());
+  TEST_ASSERT_EQUAL_PTR(base, a.reserve(100));        // PERF
+  TEST_ASSERT_EQUAL_PTR(base + 128, a.reserve(200));  // the recording ring, after it
+  TEST_ASSERT_EQUAL_UINT32(1000 - 128 - 224, a.size());
+  TEST_ASSERT_EQUAL_PTR(base + 352, a.alloc(10));
+  a.reset();
+  TEST_ASSERT_EQUAL_PTR(base + 352, a.alloc(1));      // both reserves stay
+}
+
 void test_selftest_passes_on_good_memory() {
   TEST_ASSERT_TRUE(psramSelfTest(chip.data(), chip.size() * 4, hw));
   TEST_ASSERT_TRUE(hw.flushes > 0);
@@ -275,6 +287,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_arena_aligns_and_fills);
   RUN_TEST(test_arena_reserve_comes_first_and_survives_reset);
+  RUN_TEST(test_arena_two_reserves_both_survive_reset);
   RUN_TEST(test_selftest_passes_on_good_memory);
   RUN_TEST(test_selftest_finds_stuck_address_line);
   RUN_TEST(test_selftest_finds_bad_bit);

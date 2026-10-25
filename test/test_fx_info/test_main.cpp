@@ -244,8 +244,8 @@ void test_long_names() {
   TEST_ASSERT_EQUAL_STRING("", fxLongName(Fx::None));
   TEST_ASSERT_EQUAL_STRING("VIBRATO", fxLongName(Fx::VIB));
   // DCY..CON: FM / DRUM macro and the SYNTH one.
-  TEST_ASSERT_EQUAL_STRING("MACRO DECAY / SHP1", fxLongName(Fx::DCY));
-  TEST_ASSERT_EQUAL_STRING("MACRO CONTOUR / SENV", fxLongName(Fx::CON));
+  TEST_ASSERT_EQUAL_STRING("DRUM DECAY / SHP1", fxLongName(Fx::DCY));
+  TEST_ASSERT_EQUAL_STRING("DRUM CONTOUR / SENV", fxLongName(Fx::CON));
   for (int i = 1; i < static_cast<int>(Fx::Count); ++i) {
     const size_t n = strlen(fxLongName(static_cast<Fx>(i)));
     TEST_ASSERT_TRUE(n > 0 && n <= 24);

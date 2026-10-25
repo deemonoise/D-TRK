@@ -28,19 +28,18 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 
 ### Built-in sound
 
-32 instruments, 32 voices (up to 16 of them FM / DRUM / MACRO / STRING / SYNTH WT), 44.1 kHz, stereo with per-track pan. Types:
+32 instruments, 32 voices (up to 16 of them FM / DRUM / STRING / SYNTH WT), 44.1 kHz, stereo with per-track pan. Types:
 
 - **FM**: 8 machines in the spirit of the Model:Cycles (kick, snare, metal, perc, tone, chord, clap, hat) with 5 macros.
-- **DRUM**: 16 machines in the spirit of the TR-808 and TR-909.
+- **DRUM**: 24 machines: 16 in the spirit of the TR-808 and TR-909, plus 8 more (resonant and synthetic kicks and snares, a clap with 16 patterns, a rim shot, a 2-operator FM kick, a ring-modulated hat).
 - **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables; makes your own from a sample region (one pitch period or equal windows per frame) or by drawing keyframes on the touch screen.
-- **MACRO**: one oscillator, 8 models (saw variants, morph, fold, VOSIM, vowels, FM, feedback FM) shaped by Timbre and Color.
 - **STRING**: a physical-model resonator, 2 models (plucked string, 6 tuned modes for bars and bells) with Damp, Bright, Struct, Position and a click / noise-burst exciter.
-- **SAMPLE**: a sampler with slices, WAV import from the card. The sample editor works without the touchscreen too.
+- **SAMPLE**: a sampler with slices, WAV import from the card. The sample editor works without the touchscreen too. Record straight into an instrument from the mic, the line input or the tracker's own output (up to 5 min, threshold start, monitoring) while the track keeps playing. Any instrument can be rendered into a one-shot sample (Save one-shot) for a KIT lane.
 - **CHIP**: pulse, triangle, noise, metal and wavetable for chiptune.
 - **LOFI**: bytebeat (45 built-in formulas, from the 2011 classics to our own rhythmic ones that lock to the tempo, all with A, B, C parameters) and an Atari Punk Console with subharmonics — dirty 8-bit sound.
 - **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
 
-Every instrument has a filter (LP / BP / HP, LADDER, MS20, COMB, FORMANT) with an envelope, drive and 4 LFOs (tempo sync, modulate each other, controlled from steps, a bytebeat formula as a wave). 177 factory presets.
+Every instrument has a filter (LP / BP / HP, LADDER, MS20, COMB, FORMANT) with an envelope, drive and 4 LFOs (tempo sync, modulate each other, controlled from steps, a bytebeat formula as a wave). 185 factory presets.
 
 ### Mix and effects
 
@@ -126,4 +125,9 @@ The name **D-TRK** and its logo are not covered by these licenses: a modified fi
 
 Full texts: [LICENSES/](LICENSES/). Third-party libraries (ESP-IDF, Arduino-ESP32, LovyanGFX, Teensyduino, Teensy Audio Library, SdFat, FlasherX, Unity) keep their own licenses.
 
-DSP derived from MIT-licensed Eurorack firmware (`lib/core/src/synth_macro.*`) — see [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt).
+DSP derived from MIT-licensed Eurorack firmware (`lib/core/src/synth_string.*`) — see [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt).
+
+The DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, BDF, HHR (`lib/core/src/synth_drum2.*`) follow the algorithms of the drum voices collected in [ctag-tbd](https://github.com/ctag-fh-kiel/ctag-tbd):
+
+- BDA, SDA, BDS, SDS, HHR — after the 2016 drum voices, MIT License, Copyright 2016 Emilie Gillet; the FM operator of BDF — MIT License, Copyright 2021 Emilie Gillet (see [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt));
+- CPX, RSX, BDF — after ctag-tbd Clap, Rimshot and FmKick, © 2024 Robert Manzke, GPL-3.0.

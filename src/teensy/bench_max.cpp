@@ -15,16 +15,14 @@
 // Groups (-DBENCH_MAX_GROUP=g, 0 = every ladder once): 1 the ladders above; 2 the SYNTH fold / ring and
 // the filter types (CHIP LADDER / MS20 / COMB / FORMANT, WT FOLD (fold 100), WT RING (ring 64), WT
 // FOLD+RING (both), 16 WT FX + CHIP LADDER), all with an LFO on the cutoff, and fx only, CHIP LFO and WT LFO (CHIP / WT SYNTH with that LFO) as
-// references; 3 the MACRO models (MACRO SAW+ .. MACRO FB FM: held chords, t 0.7, c 0.6, LP 90 / reso
-// 40, no ENV>TMB) and 16 MACRO <worst> + CHIP (kMacroWorst: 16 held MACRO voices plus a growing CHIP
-// pool), with fx only and WT SYNTH as references; 4 the STRING models (STRING HIT, MODAL HIT: chords
+// references; 3: the DRUM machines BDA .. HHR (DRUM2 <machine>: hits as DRUM, every track on that one machine;
+// fx only, WT SYNTH and DRUM as references: price kCostDrum2 from them); 4 the STRING models (STRING HIT, MODAL HIT: chords
 // re-struck every 1/8 at 120 BPM, DAMP 100 so they ring through, BRIGHT 0.7, STRUCT 0.6, POS 0.3, EXC 100
 // (a 13 ms burst), LP 90 / reso 40; STRING LOW: the STRING chords on notes 28 .. 40, the half / quarter rate
 // string) and 16 <worst> HIT + CHIP (kStringWorst: 16 re-struck voices plus a growing held CHIP pool),
 // with fx only, WT SYNTH and DRUM as references; 5 the voice pool by cost
 // (Synth::setVoiceBudget at kVoiceBudgetTeensy, the other groups run with the budget off: they price raw
-// voices): POOL WT FX+CHIP LADDER (16 WT FX as in group 2 plus CHIP LADDER) and POOL MACRO <worst> + CHIP
-// request 16 .. 32 voices by 4; the budget steals, so their reports add the live voices (on, not
+// voices): POOL WT FX+CHIP LADDER (16 WT FX as in group 2 plus CHIP LADDER) requests 16 .. 32 voices by 4; the budget steals, so their reports add the live voices (on, not
 // stolen), and they go over only on the CPU (average, a block over 100 %, the guard shrinking the pool).
 // A ladder lists the groups it runs in; its instruments come from the table in begin().
 #ifdef AUDIO_BENCH_MAX
@@ -60,25 +58,21 @@ constexpr int kWtLfoInstr = kChipLfoInstr - 1;
 // Fold and ring priced apart (each over WT LFO).
 constexpr int kWtFoldOnlyInstr = kWtLfoInstr - 1;  // fold 100, LP
 constexpr int kWtRingInstr = kWtFoldOnlyInstr - 1;  // ring 64, LP
-// Group 3: one MACRO slot per model (kMacroInstr + MacroModel).
-constexpr int kMacroModels = static_cast<int>(mt::MacroModel::Count);
-constexpr int kMacroInstr = kWtRingInstr - kMacroModels;  // .. kWtRingInstr - 1
-// The model of 16 MACRO <worst> + CHIP: the most expensive one (MORPH by estimate; set it from a run).
-// Its ladder name is BENCH_MACRO_WORST_NAME, checked against the model's own ladder below.
-constexpr mt::MacroModel kMacroWorst = mt::MacroModel::Morph;
-#define BENCH_MACRO_WORST_NAME "MORPH"
-constexpr int kMacroWorstInstr = kMacroInstr + static_cast<int>(kMacroWorst);
-static_assert(kMacroModels == 8, "kLadders / kInstrs list 8 MACRO models");
+// Group 3: new DRUM machines (task 13).
 // Group 4: one STRING slot per model (kStringInstr + StringModel).
 constexpr int kStringModels = static_cast<int>(mt::StringModel::Count);
-constexpr int kStringInstr = kMacroInstr - kStringModels;  // .. kMacroInstr - 1
+constexpr int kStringInstr = kWtRingInstr - kStringModels;  // .. kWtRingInstr - 1
 // The model of 16 <worst> HIT + CHIP: the most expensive one (MODAL by estimate; set it from a run).
 // Its ladder name is BENCH_STRING_WORST_NAME, checked against the model's own HIT ladder below.
 constexpr mt::StringModel kStringWorst = mt::StringModel::Modal;
 #define BENCH_STRING_WORST_NAME "MODAL"
 constexpr int kStringWorstInstr = kStringInstr + static_cast<int>(kStringWorst);
 static_assert(kStringModels == 2, "kLadders / kInstrs list 2 STRING models");
-static_assert(kStringInstr >= 0, "max bench layout");
+// Group 3: one slot per DRUM machine BDA .. HHR (kDrum2Instr + Drum2Kind).
+constexpr int kDrum2Kinds = static_cast<int>(mt::DrumMachine::Count) - mt::kDrum2First;
+constexpr int kDrum2Instr = kStringInstr - kDrum2Kinds;  // .. kStringInstr - 1
+static_assert(kDrum2Kinds == 8, "kLadders / kInstrs list 8 DRUM2 machines");
+static_assert(kDrum2Instr >= 0, "max bench layout");
 
 constexpr uint32_t blocksIn(float ms) { return static_cast<uint32_t>(ms * 1000.f / SynthStream::kBlockUs + 0.5f); }
 constexpr uint32_t kHitEvery = blocksIn(125);     // a 16th at 120 BPM
@@ -116,6 +110,7 @@ struct Ladder {
   bool pool = false;  // the budget on (kVoiceBudgetTeensy), from 0 voices of instr (Mix: kMixWt played)
   bool strike = false;  // the held chords re-struck every kStrikeEvery
   bool low = false;     // the chords on notes 28 .. 40
+  bool solo = false;    // Hits: every track on instr (one machine), not instr + t % kDrumKinds
 };
 // In flash (PROGMEM, read in place): RAM1 is short in this env.
 constexpr Ladder kLadders[] PROGMEM = {
@@ -123,7 +118,7 @@ constexpr Ladder kLadders[] PROGMEM = {
     {"CHIP", kG1, Kind::Held, kChipTop, kChipInstr, -1},
     {"FM TONE", kG1, Kind::Held, kHeavyTop, kFmInstr, -1},
     {"WT SYNTH", kG1 | kG3 | kG4, Kind::Held, kHeavyTop, kWtInstr, -1},
-    {"DRUM", kG1 | kG4, Kind::Hits, mt::kTracks, kDrumInstr, -1},
+    {"DRUM", kG1 | kG3 | kG4, Kind::Hits, mt::kTracks, kDrumInstr, -1},
     {"16 WT + CHIP", kG1, Kind::Mix, kMixTop, kChipInstr, kWtInstr},
     {"CHIP LFO", kG2, Kind::Held, kChipTop, kChipLfoInstr, -1},
     {"WT LFO", kG2, Kind::Held, kHeavyTop, kWtLfoInstr, -1},
@@ -135,31 +130,22 @@ constexpr Ladder kLadders[] PROGMEM = {
     {"WT RING", kG2, Kind::Held, kHeavyTop, kWtRingInstr, -1},
     {"WT FOLD+RING", kG2, Kind::Held, kHeavyTop, kWtFoldInstr, -1},
     {"16 WT FX + CHIP LADDER", kG2, Kind::Mix, kMixTop, kChipLadderInstr, kWtFxInstr},
-    {"MACRO SAW+", kG3, Kind::Held, kHeavyTop, kMacroInstr + 0, -1},
-    {"MACRO MORPH", kG3, Kind::Held, kHeavyTop, kMacroInstr + 1, -1},
-    {"MACRO SAW/SQR", kG3, Kind::Held, kHeavyTop, kMacroInstr + 2, -1},
-    {"MACRO FOLD", kG3, Kind::Held, kHeavyTop, kMacroInstr + 3, -1},
-    {"MACRO VOSIM", kG3, Kind::Held, kHeavyTop, kMacroInstr + 4, -1},
-    {"MACRO VOWEL", kG3, Kind::Held, kHeavyTop, kMacroInstr + 5, -1},
-    {"MACRO FM", kG3, Kind::Held, kHeavyTop, kMacroInstr + 6, -1},
-    {"MACRO FB FM", kG3, Kind::Held, kHeavyTop, kMacroInstr + 7, -1},
-    {"16 MACRO " BENCH_MACRO_WORST_NAME " + CHIP", kG3, Kind::Mix, kMixTop, kChipInstr, kMacroWorstInstr},
+    {"DRUM2 BDA", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 0, -1, false, false, false, true},
+    {"DRUM2 SDA", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 1, -1, false, false, false, true},
+    {"DRUM2 BDS", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 2, -1, false, false, false, true},
+    {"DRUM2 SDS", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 3, -1, false, false, false, true},
+    {"DRUM2 CPX", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 4, -1, false, false, false, true},
+    {"DRUM2 RSX", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 5, -1, false, false, false, true},
+    {"DRUM2 BDF", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 6, -1, false, false, false, true},
+    {"DRUM2 HHR", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 7, -1, false, false, false, true},
     {"STRING HIT", kG4, Kind::Held, kHeavyTop, kStringInstr + 0, -1, false, true},
     {"MODAL HIT", kG4, Kind::Held, kHeavyTop, kStringInstr + 1, -1, false, true},
     {"STRING LOW", kG4, Kind::Held, kHeavyTop, kStringInstr + 0, -1, false, true, true},
     {"16 " BENCH_STRING_WORST_NAME " HIT + CHIP", kG4, Kind::Mix, kMixTop, kChipInstr, kStringWorstInstr, false, true},
     {"POOL WT FX+CHIP LADDER", kG5, Kind::Mix, kPoolTop, kChipLadderInstr, kWtFxInstr, true},
-    {"POOL MACRO " BENCH_MACRO_WORST_NAME " + CHIP", kG5, Kind::Mix, kPoolTop, kChipInstr, kMacroWorstInstr, true},
 };
 constexpr int kLadderCount = sizeof(kLadders) / sizeof(kLadders[0]);
 constexpr bool sameStr(const char* a, const char* b) { return *a == *b && (!*a || sameStr(a + 1, b + 1)); }
-// The held MACRO ladder of model kMacroWorst, kLadderCount if none.
-constexpr int worstLadder(int i = 0) {
-  return i >= kLadderCount || (kLadders[i].kind == Kind::Held && kLadders[i].instr == kMacroWorstInstr)
-             ? i : worstLadder(i + 1);
-}
-static_assert(worstLadder() < kLadderCount && sameStr(kLadders[worstLadder()].name, "MACRO " BENCH_MACRO_WORST_NAME),
-              "BENCH_MACRO_WORST_NAME must name kMacroWorst (its MACRO <model> ladder)");
 // The struck STRING ladder (not LOW) of model kStringWorst, kLadderCount if none.
 constexpr int stringWorstLadder(int i = 0) {
   return i >= kLadderCount || (kLadders[i].kind == Kind::Held && kLadders[i].strike && !kLadders[i].low &&
@@ -267,7 +253,7 @@ void startStep() {
   for (int t = 0; t < mt::kTracks; ++t) {
     mt::TrackCfg& tr = model->tracks[t];
     tr.out = mt::TrackOut::Int;
-    tr.instr = l.kind == Kind::Hits                     ? l.instr + t % kDrumKinds
+    tr.instr = l.kind == Kind::Hits                     ? l.instr + (l.solo ? 0 : t % kDrumKinds)
                : l.kind == Kind::Mix && t < kMixWtTracks ? l.mix
                                                          : l.instr;
   }
@@ -421,6 +407,14 @@ void makeDrum(mt::Instrument& in, int kind) {
   in.vol = 40;
 }
 
+// DRUM BDA .. HHR (kind: Drum2Kind), as makeDrum.
+void makeDrum2(mt::Instrument& in, int kind) {
+  mt::instrSetType(in, mt::InstrType::Drum);
+  mt::drumSetMachine(in, static_cast<uint8_t>(mt::kDrum2First + kind));
+  in.macro[mt::kMacDec] = 110;  // still ringing at the choke
+  in.vol = 40;
+}
+
 void makeFm(mt::Instrument& fm, int) {
   mt::instrSetType(fm, mt::InstrType::Fm);
   mt::fmSetMachine(fm, static_cast<uint8_t>(mt::FmMachine::Tone));
@@ -487,21 +481,6 @@ void makeChip(mt::Instrument& chip, int arg) {
   moveCutoff(chip, arg);
 }
 
-// Group 3: a MACRO model (arg) at TIMBRE 0.7 / COLOR 0.6 through LP, held, no ENV>TMB.
-void makeMacro(mt::Instrument& in, int model) {
-  mt::instrSetType(in, mt::InstrType::Macro);
-  in.machine = static_cast<uint8_t>(model);
-  in.macro[mt::kMacTimbre] = 89;  // 0.7
-  in.macro[mt::kMacColor] = 76;   // 0.6
-  in.macro[mt::kMacEnvTmb] = 64;  // off
-  in.sustain = 127;
-  in.mono = false;
-  in.fltMode = static_cast<uint8_t>(mt::FltMode::Lp);
-  in.cutoff = 90;
-  in.reso = 40;
-  in.vol = 30;
-}
-
 // Group 4: a STRING model (arg) plucked: DAMP 100 (rings through the 1/8), BRIGHT 0.7, STRUCT 0.6, POS
 // 0.3, EXC 100 (a noise burst of ~13 ms), sustain held (the natural decay), through LP 90 / reso 40.
 void makeString(mt::Instrument& in, int model) {
@@ -548,16 +527,16 @@ constexpr InstrDef kInstrs[] PROGMEM = {
     {kWtFoldOnlyInstr, makeWtFold, kLp | kMove | kNoRing},
     {kWtRingInstr, makeWtFold, kLp | kMove | kNoFold},
     {kWtFxInstr, makeWtFold, static_cast<int>(mt::FltMode::Ladder) | kMove},
-    {kMacroInstr + 0, makeMacro, 0},
-    {kMacroInstr + 1, makeMacro, 1},
-    {kMacroInstr + 2, makeMacro, 2},
-    {kMacroInstr + 3, makeMacro, 3},
-    {kMacroInstr + 4, makeMacro, 4},
-    {kMacroInstr + 5, makeMacro, 5},
-    {kMacroInstr + 6, makeMacro, 6},
-    {kMacroInstr + 7, makeMacro, 7},
     {kStringInstr + 0, makeString, 0},
     {kStringInstr + 1, makeString, 1},
+    {kDrum2Instr + 0, makeDrum2, 0},
+    {kDrum2Instr + 1, makeDrum2, 1},
+    {kDrum2Instr + 2, makeDrum2, 2},
+    {kDrum2Instr + 3, makeDrum2, 3},
+    {kDrum2Instr + 4, makeDrum2, 4},
+    {kDrum2Instr + 5, makeDrum2, 5},
+    {kDrum2Instr + 6, makeDrum2, 6},
+    {kDrum2Instr + 7, makeDrum2, 7},
 };
 static_assert(kDrumKinds == 8, "kInstrs lists 8 drums");
 

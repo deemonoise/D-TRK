@@ -217,14 +217,14 @@ Teensy GND ── shield GND
 
 - The shield's pin labels are Teensy pin numbers: solder number to number.
 - Keep the wires short (under 10 cm), MCLK and BCLK away from the IO13 / IO14 link. Run a separate ground wire next to the I2S lines.
-- Pin 8 (I2S input) carries MIC / LINE IN for recording; solder it with the rest. Leave the shield's microSD slot (pins 10–13) and the pot pad unconnected: the card lives only in the Teensy, don't give pins 10–13 to the shield.
+- Pin 8 (I2S input) carries MIC / LINE IN for recording; solder it with the rest. The firmware reads it in the REC window (INST → SAMPLE → Record…): without the 8 → 8 wire MIC and LINE record silence, RESAMPLE (the tracker's own output) still works. Leave the shield's microSD slot (pins 10–13) and the pot pad unconnected: the card lives only in the Teensy, don't give pins 10–13 to the shield.
 - The shield's headphone output uses a virtual ground (HP_VGND): do **not** tie the jack's Sleeve to GND or to the case; the shield's own jack is already wired that way.
 - The shield's line out (LINE OUT L / R) can go to a second jack — same signal, not affected by Phones.
 - First power-up with Phones and MAIN (MIX tab) at minimum and without the headphones on.
 
 ### Microphone and line input
 
-For recording samples. Both inputs go to the SGTL5000 ADC and to the Teensy on pin 8; only one works at a time — the firmware selects it. The capsule and the jack sit on tabs of the case bottom (MIC on the back between MIDI and the power switch, on one tab with the switch; LINE IN on the front to the right of PHONES, on one tab with it), so they are soldered before the top goes on.
+For recording samples. Both inputs go to the SGTL5000 ADC and to the Teensy on pin 8; only one works at a time — the Source row of the REC window selects it (see the manual, "Recording a sample"). The capsule and the jack sit on tabs of the case bottom (MIC on the back between MIDI and the power switch, on one tab with the switch; LINE IN on the front to the right of PHONES, on one tab with it), so they are soldered before the top goes on.
 
 ```
 9767 capsule  + ─── shield MIC      (inner conductor of a shielded wire)

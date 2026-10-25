@@ -4,6 +4,7 @@
 #include "link_server.h"
 #include "model.h"
 #include "psram_cache.h"
+#include "rec.h"
 #include "stream.h"
 #include "synth.h"
 
@@ -37,6 +38,7 @@ mt::PsramWatch watch;
 mt::PsramFill* fill = nullptr;
 mt::Synth* synth = nullptr;
 int16_t* perf = nullptr;
+int16_t* rec = nullptr;  // the recording ring (mt::kRecRingBytes), after PERF
 
 }  // namespace
 
@@ -64,6 +66,7 @@ void begin(const mt::SynthModel& m, mt::Synth& s) {
   arena.init(chip, arenaBytes);
   // PERF first, before any copy: reset() keeps it, the copies take what follows.
   perf = static_cast<int16_t*>(arena.reserve(kPerfFrames * 2 * sizeof(int16_t)));
+  rec = static_cast<int16_t*>(arena.reserve(mt::kRecRingBytes));  // reset() keeps it too
   watch.init(chip + arenaBytes / 4, hw);
   static mt::PsramFill f(stream::table(), stream::pool(), stream::reader(), arena, hw);
   fill = &f;
@@ -79,6 +82,10 @@ int16_t* perfBuffer(uint32_t& frames) {
   frames = st == State::On && perf ? kPerfFrames : 0;
   return frames ? perf : nullptr;
 }
+
+int16_t* recRing() { return st == State::On ? rec : nullptr; }
+
+uint32_t recRingFrames() { return recRing() ? mt::kRecRingBytes / 4 : 0; }
 
 void step() {
   if (st != State::On || watch.step(millis())) return;

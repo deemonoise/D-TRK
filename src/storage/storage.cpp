@@ -319,6 +319,7 @@ const char* resultText(Result r) {
     case Result::SamplesNotSaved: return "SAMPLES NOT SAVED";
     case Result::AudioBusy: return "AUDIO BUSY";
     case Result::NoSynth: return "NO SYNTH";
+    case Result::Silent: return "SILENT";
     case Result::DiskFull: return "DISK FULL";
     case Result::Cancelled: return "CANCELLED";
     case Result::Capped: return "SAMPLE CAP";

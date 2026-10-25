@@ -868,13 +868,17 @@ void App::pollSynth(uint32_t now) {
   Synth st = Synth::Ok;
   if (!audio::synthUp()) st = Synth::Down;
   else if (!audio::versionOk()) st = Synth::Mismatch;
-  else if (!audio::synced()) st = Synth::Sync;
+  const bool syncing = st == Synth::Ok && !audio::synced();
+  // An edit is a chunk and its Ack, tens of ms: SYNC only for a wait longer than kSyncShowMs.
+  if (!syncing) syncSince_ = 0;
+  else if (!syncSince_) syncSince_ = now ? now : 1;
+  else if (now - syncSince_ >= kSyncShowMs) st = Synth::Sync;
   if (st != synth_) {
     synth_ = st;
     dirty_ = true;
   }
   // Down or mismatched it will not sync: start anyway (MIDI OUT tracks still play).
-  if (playWait_ >= 0 && (st != Synth::Sync || now - playWaitAt_ >= kSyncWaitMs)) {
+  if (playWait_ >= 0 && (!syncing || now - playWaitAt_ >= kSyncWaitMs)) {
     engine::post(static_cast<engine::Cmd>(playWait_));
     playWait_ = -1;
     dirty_ = true;

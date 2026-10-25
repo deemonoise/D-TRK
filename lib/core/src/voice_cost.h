@@ -13,9 +13,12 @@ constexpr int kCostSynBl = 130;   // SYNTH without a wavetable oscillator (estim
 constexpr int kCostSynWt = 240;
 constexpr int kCostFm = 195;
 constexpr int kCostDrum = 290;
-constexpr int kCostMacro[] = {148, 233, 166, 219, 191, 229, 174, 174};  // MacroModel order
-static_assert(sizeof(kCostMacro) / sizeof(kCostMacro[0]) == static_cast<unsigned>(MacroModel::Count),
-              "a cost per MACRO model");
+// DRUM BDA..HHR (Drum2Kind order): bench-max group 3, 2026-10-25 (slope of the ladders' average
+// load, 4 .. 16 voices, HHR 4 .. 12; the WT SYNTH reference in the same run gave 237 for its 240).
+constexpr int kCostDrum2[] = {310, 355, 400, 360, 285, 310, 270, 455};
+static_assert(sizeof(kCostDrum2) / sizeof(kCostDrum2[0]) ==
+                  static_cast<unsigned>(DrumMachine::Count) - kDrum2First,
+              "a cost per DRUM machine BDA..HHR");
 constexpr int kCostString[] = {203, 228};  // StringModel order (MODAL: 6 modes)
 static_assert(sizeof(kCostString) / sizeof(kCostString[0]) == static_cast<unsigned>(StringModel::Count),
               "a cost per STRING model");

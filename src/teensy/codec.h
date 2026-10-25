@@ -12,4 +12,11 @@ bool present();
 // Phones 0..100 %: the SGTL5000 headphone volume (the line out keeps its level).
 void phones(uint8_t pct);
 
+// Recording input (the ADC feeds AudioInputI2S): MIC (the shield's mic pad, mono on the left) or LINE
+// IN. The ADC high-pass filter stays on (no DC offset in the takes). No-ops without the shield.
+enum class Input : uint8_t { Mic, Line };
+void input(Input in);
+void micGain(int db);     // 0..63 dB (preamp steps + ADC gain), clamped
+void lineLevel(int lvl);  // line-in level 0..15 (0 = 3.12 Vpp full scale, 15 = 0.24 Vpp), clamped
+
 }  // namespace codec

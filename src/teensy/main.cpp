@@ -14,6 +14,7 @@
 #include "link_server.h"
 #include "preview_stream.h"
 #include "psram.h"
+#include "rec_server.h"
 #include "render_server.h"
 #include "sample_tools.h"
 #include "stack_mark.h"
@@ -55,6 +56,10 @@ SynthStream out;
 AudioOutputI2S i2s;
 AudioConnection toL(out, 0, i2s, 0);
 AudioConnection toR(out, 1, i2s, 1);
+// The codec's ADC (pin 8; the SGTL5000 shield's MIC / LINE IN) into the synth's inputs: recording, MON.
+AudioInputI2S i2sIn;
+AudioConnection fromL(i2sIn, 0, out, 0);
+AudioConnection fromR(i2sIn, 1, out, 1);
 #if defined(LINK_DESK) && !defined(AUDIO_BENCH_MAX)  // the ceiling bench: USB_SERIAL only, its RAM1 goes to the raised voice pool
 AudioOutputUSB usbOut;
 AudioConnection toUsbL(out, 0, usbOut, 0);
@@ -136,11 +141,12 @@ void setup() {
   synth.setShimmerBuffer(shimLine, mt::PitchShift::kLen, shimWet);
   synth.setModBuffer(modLine, mt::ModFx::kLineLen);
   synth.setVoiceBudget(mt::kVoiceBudgetTeensy);  // the pool by cost (voice_cost.h); the guard is the backstop
-  AudioMemory(12);
+  AudioMemory(16);  // the input takes 2 blocks a cycle (recording, MON) on top of the output
   out.begin(&synth);
   const bool shield = codec::begin();
   preview::begin(model, out);
   render::begin(synth, out);
+  rec::begin(out);
   fw::begin(out);
   link::begin(model, synth, out, perfSec);
   link::log("synth board up, model %u B, voices %d / heavy %d, delay %lu ms, PERF %u s, RAM2 free %lu B, PSRAM %s",
@@ -161,6 +167,7 @@ void loop() {
   wdog::feed();
   link::poll();
   stream::step();  // voice / preview loads, then one background portion (bank job, ...)
+  rec::step();     // a take's ring into its file, STOP / keepalive
   psram::step();   // the watchdog
 #if defined(LINK_DESK) && !defined(AUDIO_BENCH_MAX)
   sbench::step();  // the desk stream bench (link_desk.py bench-stream)

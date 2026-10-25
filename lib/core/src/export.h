@@ -13,7 +13,7 @@ namespace mt {
 enum class ExportTail : uint8_t { Auto, Off, S2, S4, S8, Wrap, Count };
 enum class ExportStems : uint8_t { Off, Tracks, TracksFx, Count };
 
-constexpr int kExportMaxOut = RenderTaps::kCount + 1;  // MASTER + 16 tracks + 3 returns
+constexpr int kExportMaxOut = RenderTaps::kRvb + 2;  // MASTER + 16 tracks + 3 returns (not kPrev)
 constexpr uint8_t kExportTapMaster = 0;                // tap ids: 0 MASTER, 1..16 track, 17..19 MOD / DLY / RVB
 constexpr int kExportNameMax = 64;                     // file name, with ".wav"
 constexpr uint32_t kExportQuietBlocks = 345;           // AUTO: 1 s below kSilence ends the render

@@ -238,7 +238,8 @@ void test_debug() {
 }
 
 void test_protocol_8_and_debug_id() {
-  TEST_ASSERT_EQUAL(12, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI
+  TEST_ASSERT_EQUAL(14, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
+                                     // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2)
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
   TEST_ASSERT_EQUAL(42, static_cast<int>(Msg::WtRender));
   TEST_ASSERT_EQUAL(43, static_cast<int>(Msg::RenderOut));
@@ -794,6 +795,136 @@ void test_ev_batch_carries_a_hint() {
   TEST_ASSERT_EQUAL_UINT64(126000, b.ev[1].tUs);
 }
 
+void test_rec_msgs_roundtrip() {
+  RecStartReq a;
+  a.source = 2;
+  a.gain = -3;
+  a.thresh = -40;
+  a.mon = 1;
+  a.number = 4321;
+  int n = put(a);
+  RecStartReq a2;
+  Reader r(buf, n);
+  TEST_ASSERT_TRUE(decode(r, a2));
+  TEST_ASSERT_EQUAL(2, a2.source);
+  TEST_ASSERT_EQUAL(-3, a2.gain);
+  TEST_ASSERT_EQUAL(-40, a2.thresh);
+  TEST_ASSERT_EQUAL(1, a2.mon);
+  TEST_ASSERT_EQUAL(4321, a2.number);
+  checkTruncated<RecStartReq>(n);
+
+  RecStartRep b;
+  b.result = static_cast<uint8_t>(RecResult::NoPsram);
+  b.number = 65000;
+  n = put(b);
+  RecStartRep b2;
+  Reader rb(buf, n);
+  TEST_ASSERT_TRUE(decode(rb, b2));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(RecResult::NoPsram), b2.result);
+  TEST_ASSERT_EQUAL(65000, b2.number);
+  checkTruncated<RecStartRep>(n);
+
+  RecSetReq c;
+  c.gain = 47;
+  c.mon = 1;
+  c.source = 2;
+  n = put(c);
+  RecSetReq c2;
+  Reader rc(buf, n);
+  TEST_ASSERT_TRUE(decode(rc, c2));
+  TEST_ASSERT_EQUAL(47, c2.gain);
+  TEST_ASSERT_EQUAL(1, c2.mon);
+  TEST_ASSERT_EQUAL(2, c2.source);
+  checkTruncated<RecSetReq>(n);
+
+  RecLevelRep d;
+  d.result = static_cast<uint8_t>(RecResult::CardSlow);
+  d.state = 2;
+  d.peak = 32767;
+  d.clips = 0x01020304;
+  d.frames = 13230000;
+  d.codec = 1;
+  n = put(d);
+  RecLevelRep d2;
+  Reader rd(buf, n);
+  TEST_ASSERT_TRUE(decode(rd, d2));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(RecResult::CardSlow), d2.result);
+  TEST_ASSERT_EQUAL(2, d2.state);
+  TEST_ASSERT_EQUAL(32767, d2.peak);
+  TEST_ASSERT_EQUAL_HEX32(0x01020304, d2.clips);
+  TEST_ASSERT_EQUAL(13230000, d2.frames);
+  TEST_ASSERT_EQUAL(1, d2.codec);
+  checkTruncated<RecLevelRep>(n);
+
+  RecStopRep e;
+  e.result = static_cast<uint8_t>(RecResult::Bank);
+  e.bank = 3;
+  e.number = 12;
+  e.crc = 0xDEADBEEF;
+  e.frames = 547200;
+  e.peak = 20000;
+  e.clips = 7;
+  n = put(e);
+  RecStopRep e2;
+  Reader re(buf, n);
+  TEST_ASSERT_TRUE(decode(re, e2));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(RecResult::Bank), e2.result);
+  TEST_ASSERT_EQUAL(3, e2.bank);
+  TEST_ASSERT_EQUAL(12, e2.number);
+  TEST_ASSERT_EQUAL_HEX32(0xDEADBEEF, e2.crc);
+  TEST_ASSERT_EQUAL(547200, e2.frames);
+  TEST_ASSERT_EQUAL(20000, e2.peak);
+  TEST_ASSERT_EQUAL(7, e2.clips);
+  checkTruncated<RecStopRep>(n);
+}
+
+void test_msg_rec_ids() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Msg::RenderOut) + 1, static_cast<int>(Msg::RecStart));
+  TEST_ASSERT_EQUAL(static_cast<int>(Msg::RecStart) + 1, static_cast<int>(Msg::RecSet));
+  TEST_ASSERT_EQUAL(static_cast<int>(Msg::RecSet) + 1, static_cast<int>(Msg::RecLevel));
+  TEST_ASSERT_EQUAL(static_cast<int>(Msg::RecLevel) + 1, static_cast<int>(Msg::RecStop));
+  TEST_ASSERT_EQUAL(static_cast<int>(Msg::RecStop) + 1, static_cast<int>(Msg::RecCancel));
+  TEST_ASSERT_EQUAL(48, static_cast<int>(Msg::RecCancel));
+}
+
+// 14: the one-shot source (the preview track's tap), bank only; normalize 2 = -0.3 dBFS.
+void test_render_oneshot_fields() {
+  RenderStartReq q;
+  q.target = RenderStartReq::kBank;
+  q.src = RenderStartReq::kSrcPreview;
+  int n = put(q);
+  RenderStartReq q2;
+  Reader r1(buf, n);
+  TEST_ASSERT_TRUE(decode(r1, q2));
+  TEST_ASSERT_EQUAL(RenderStartReq::kSrcPreview, q2.src);
+  TEST_ASSERT_EQUAL(RenderStartReq::kBank, q2.target);
+  checkTruncated<RenderStartReq>(n);
+  q.src = RenderStartReq::kSrcPreview + 1;
+  n = put(q);
+  Reader r2(buf, n);
+  TEST_ASSERT_FALSE(decode(r2, q2));
+  q.src = RenderStartReq::kSrcPreview;
+  q.target = RenderStartReq::kFile;  // the preview source: bank only
+  n = put(q);
+  Reader r3(buf, n);
+  TEST_ASSERT_FALSE(decode(r3, q2));
+  q.target = RenderStartReq::kExport;
+  n = put(q);
+  Reader r4(buf, n);
+  TEST_ASSERT_FALSE(decode(r4, q2));
+
+  RenderEndReq e{0, 2, 1};
+  n = put(e);
+  RenderEndReq e2;
+  Reader r5(buf, n);
+  TEST_ASSERT_TRUE(decode(r5, e2));
+  TEST_ASSERT_EQUAL(2, e2.normalize);
+  e.normalize = 3;
+  n = put(e);
+  Reader r6(buf, n);
+  TEST_ASSERT_FALSE(decode(r6, e2));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_writer_reader_primitives);
@@ -815,11 +946,14 @@ int main(int, char**) {
   RUN_TEST(test_profile_rep);
   RUN_TEST(test_profile_rep_24_stages);
   RUN_TEST(test_render_messages);
+  RUN_TEST(test_render_oneshot_fields);
   RUN_TEST(test_export_messages);
   RUN_TEST(test_fw_messages);
   RUN_TEST(test_ev_batch_carries_a_hint);
   RUN_TEST(test_debug);
   RUN_TEST(test_protocol_8_and_debug_id);
   RUN_TEST(test_wt_render);
+  RUN_TEST(test_rec_msgs_roundtrip);
+  RUN_TEST(test_msg_rec_ids);
   return UNITY_END();
 }

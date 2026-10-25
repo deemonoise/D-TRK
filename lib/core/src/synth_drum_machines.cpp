@@ -37,6 +37,14 @@ constexpr Names kNames[static_cast<int>(DrumMachine::Count)] = {
     {"RS9", {"DECAY", "TONE", "NOISE", "SWEEP", ""}},
     {"HH9", {"DECAY", "HP", "NOISE", "SPREAD", "N.DEC"}},
     {"CY9", {"DECAY", "HP", "RIDE/CR", "SPREAD", "N.DEC"}},
+    {"BDA", {"DECAY", "TONE", "ATTACK", "PUNCH", ""}},
+    {"SDA", {"DECAY", "TONE", "SNAPPY", "", ""}},
+    {"BDS", {"DECAY", "TONE", "DIRT", "SWEEP", "TIME"}},
+    {"SDS", {"DECAY", "TONE", "SNAPPY", "FM", ""}},
+    {"CPX", {"DECAY", "FREQ", "TONE", "SPREAD", "PATTERN"}},
+    {"RSX", {"DECAY", "TONE", "NOISE", "", ""}},
+    {"BDF", {"DECAY", "SWEEP", "TIME", "INDEX", "RATIO"}},
+    {"HHR", {"DECAY", "TONE", "NOISE", "", ""}},
 };
 
 // Macros as 0..1, DECAY also as ms (fmDecayMs range, fractional).
@@ -140,6 +148,7 @@ const char* drumMacroName(uint8_t m, int k) {
 
 MT_HOT void drumMachine(uint8_t machine, const float mac[kFmMacros], float pitch, DrumParams& o) {
   o = DrumParams();
+  if (machine >= kDrum2First && machine < static_cast<int>(DrumMachine::Count)) return;  // Drum2Voice
   const float r = fastExp2((pitch - 60.f) * (1.f / 12.f));
   Mac m;
   m.dec = u(mac[kMacDec]);

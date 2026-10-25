@@ -28,19 +28,18 @@
 
 ### Встроенный звук
 
-32 инструмента, 32 голоса (до 16 из них FM / DRUM / MACRO / STRING / SYNTH WT), 44,1 кГц, стерео с панорамой на дорожку. Типы:
+32 инструмента, 32 голоса (до 16 из них FM / DRUM / STRING / SYNTH WT), 44,1 кГц, стерео с панорамой на дорожку. Типы:
 
 - **FM**: 8 машин в духе Model:Cycles (kick, snare, metal, perc, tone, chord, clap, hat) с 5 макросами.
-- **DRUM**: 16 машин в духе TR-808 и TR-909.
+- **DRUM**: 24 машины: 16 в духе TR-808 и TR-909 и ещё 8 (резонансные и синтетические бочки и снейры, клэп с 16 паттернами, римшот, 2-операторная FM-бочка, хэт на кольцевой модуляции).
 - **SYNTH**: 2 осциллятора (saw / square / tri без алиасинга или wavetable), sub, шум, hard sync. Импортирует таблицы WaveEdit, Serum и Vital; делает свои из области сэмпла (по периоду тона или равными окнами) или рисованием ключевых кадров на тач-экране.
-- **MACRO**: один осциллятор, 8 моделей (варианты пилы, морф, загиб, VOSIM, гласные, FM, FM с обратной связью), форму задают Timbre и Color.
 - **STRING**: резонатор на физической модели, 2 модели (щипковая струна, 6 настроенных мод для брусков и колоколов) с Damp, Bright, Struct, Position и возбудителем щелчком / вспышкой шума.
-- **SAMPLE**: сэмплер со слайсами, импорт WAV с карты. Сэмпл-эдитор работает и без тачскрина.
+- **SAMPLE**: сэмплер со слайсами, импорт WAV с карты. Сэмпл-эдитор работает и без тачскрина. Запись прямо в инструмент с микрофона, линейного входа или собственного выхода трекера (до 5 мин, старт по порогу, мониторинг), пока трек играет. Любой инструмент можно отрендерить в ваншот-сэмпл (Save one-shot) для лейна KIT.
 - **CHIP**: pulse, triangle, noise, metal и wavetable для чиптюна.
 - **LOFI**: bytebeat (45 встроенных формул, от классики 2011 года до своих ритмических, синхронных с темпом, все с параметрами A, B, C) и Atari Punk Console с субгармониками — грязный 8-битный звук.
 - **KIT**: драм-дорожка из 8 лейнов, у каждого свой сэмпл или любой инструмент.
 
-У каждого инструмента фильтр (LP / BP / HP, LADDER, MS20, COMB, FORMANT) с огибающей, drive и 4 LFO (синхронизируются с темпом, модулируют друг друга, управляются с шага, формула bytebeat как форма волны). 177 заводских пресетов.
+У каждого инструмента фильтр (LP / BP / HP, LADDER, MS20, COMB, FORMANT) с огибающей, drive и 4 LFO (синхронизируются с темпом, модулируют друг друга, управляются с шага, формула bytebeat как форма волны). 185 заводских пресетов.
 
 ### Микс и эффекты
 
@@ -126,4 +125,9 @@ Copyright © 2026 deemonoise.
 
 Полные тексты: [LICENSES/](LICENSES/). Сторонние библиотеки (ESP-IDF, Arduino-ESP32, LovyanGFX, Teensyduino, Teensy Audio Library, SdFat, FlasherX, Unity) — под своими лицензиями.
 
-DSP на основе прошивки Eurorack-модулей под MIT (`lib/core/src/synth_macro.*`) — см. [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt).
+DSP на основе прошивки Eurorack-модулей под MIT (`lib/core/src/synth_string.*`) — см. [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt).
+
+Машины DRUM BDA, SDA, BDS, SDS, CPX, RSX, BDF, HHR (`lib/core/src/synth_drum2.*`) написаны по алгоритмам драм-голосов, собранных в [ctag-tbd](https://github.com/ctag-fh-kiel/ctag-tbd):
+
+- BDA, SDA, BDS, SDS, HHR — по драм-голосам 2016 г., лицензия MIT, Copyright 2016 Emilie Gillet; FM-оператор BDF — лицензия MIT, Copyright 2021 Emilie Gillet (см. [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt));
+- CPX, RSX, BDF — по Clap, Rimshot и FmKick из ctag-tbd, © 2024 Robert Manzke, GPL-3.0.

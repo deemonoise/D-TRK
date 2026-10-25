@@ -109,7 +109,7 @@ void PresetBrowser::list() {
   if (inFactory_) {
     add(Kind::Up, 0, "..");
     if (facType_ == mt::InstrType::Count) {
-      for (int k = 0; k < static_cast<int>(mt::InstrType::Count); ++k) {
+      for (int k = 0; k < mt::kInstrTypesUi; ++k) {
         const mt::InstrType t = mt::instrTypeAt(k);
         if (mt::factoryCount(t) > 0) add(Kind::FactoryType, static_cast<int>(t), mt::presetTypeName(t));
       }
@@ -124,7 +124,7 @@ void PresetBrowser::list() {
     }
   } else if (type_ == mt::InstrType::Count) {  // Load top: [FACTORY], the types' user folders
     add(Kind::Factory, 0, "[FACTORY]");
-    for (int k = 0; k < static_cast<int>(mt::InstrType::Count); ++k) {
+    for (int k = 0; k < mt::kInstrTypesUi; ++k) {
       const mt::InstrType t = mt::instrTypeAt(k);
       if (mt::presetTypeHas(t)) add(Kind::UserType, static_cast<int>(t), mt::presetTypeName(t));
     }

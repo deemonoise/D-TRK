@@ -9,17 +9,25 @@ int voiceCost(const Instrument& m, bool sample) {
   switch (sample ? InstrType::Sample : m.type) {
     case InstrType::Sample: c = kCostSample; break;
     case InstrType::Fm: c = kCostFm; break;
-    case InstrType::Drum: c = kCostDrum; break;
+    case InstrType::Drum:  // constant indices, no .rodata table (RAM1): see STRING below
+      static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == 8, "voiceCost: a case per machine");
+      switch (static_cast<DrumMachine>(m.machine)) {
+        case DrumMachine::Bda: c = kCostDrum2[0]; break;
+        case DrumMachine::Sda: c = kCostDrum2[1]; break;
+        case DrumMachine::Bds: c = kCostDrum2[2]; break;
+        case DrumMachine::Sds: c = kCostDrum2[3]; break;
+        case DrumMachine::Cpx: c = kCostDrum2[4]; break;
+        case DrumMachine::Rsx: c = kCostDrum2[5]; break;
+        case DrumMachine::Bdf: c = kCostDrum2[6]; break;
+        case DrumMachine::Hhr: c = kCostDrum2[7]; break;
+        default: c = kCostDrum; break;
+      }
+      break;
     case InstrType::Synth: {
       const uint8_t wt = static_cast<uint8_t>(SynOsc::Wt);
       c = m.synOsc[0] == wt || m.synOsc[1] == wt ? kCostSynWt : kCostSynBl;
       if (m.synFold) c += kCostFold;
       if (m.synRing) c += kCostRing;
-      break;
-    }
-    case InstrType::Macro: {
-      const int n = static_cast<int>(MacroModel::Count);
-      c = kCostMacro[m.machine < n ? m.machine : n - 1];
       break;
     }
     case InstrType::String:  // constant indices: a table in .rodata would cost RAM1 (DTCM alignment)

@@ -125,6 +125,7 @@ class App {
   static constexpr uint32_t kCpuMs = 500;   // status bar CPU: averaging window
   static constexpr uint32_t kCpuRedMs = 2000;  // status bar CPU: red held after an audio stall
   static constexpr uint32_t kSyncWaitMs = 10000;  // Play waits this long at most for the synth's sound state
+  static constexpr uint32_t kSyncShowMs = 300;    // the status bar shows SYNC after this long unsynced
   static constexpr uint32_t kBatMs = 250;        // battery poll (the reader samples once a second)
   static constexpr uint32_t kBatStaleMs = 5000;  // older sample = no data
   static constexpr int kTabW = kScreenW / static_cast<int>(Tab::Count);
@@ -225,6 +226,7 @@ class App {
   Synth synth_ = Synth::Ok;  // the synth board as the status bar shows it
   int8_t playWait_ = -1;     // a start (engine::Cmd) held back until the synth is synced, -1 = none
   uint32_t playWaitAt_ = 0;
+  uint32_t syncSince_ = 0;  // millis() the synth board fell behind the model, 0: in sync
   mt::BatteryGauge gauge_;
   hw::BatterySample batSample_{0.f, 0.f, 0};  // last sample fed to gauge_
   bool batHave_ = false;     // batSample_ is valid

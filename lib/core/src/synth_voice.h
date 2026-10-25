@@ -6,9 +6,9 @@
 #include "sample_source.h"
 #include "synth_env.h"
 #include "synth_drum.h"
+#include "synth_drum2.h"
 #include "synth_filter.h"
 #include "synth_fm.h"
-#include "synth_macro.h"
 #include "synth_string.h"
 #include "synth_lofi.h"
 #include "synth_osc.h"
@@ -36,14 +36,14 @@ namespace mt {
 #endif
 constexpr int kVoices = MT_VOICES;
 constexpr int kPolyPerTrack = 4;
-constexpr int kFmVoiceMax = MT_HEAVY_MAX;  // heavy voices (FM, DRUM, wavetable SYNTH, MACRO, STRING) sounding at once (CPU)
+constexpr int kFmVoiceMax = MT_HEAVY_MAX;  // heavy voices (FM, DRUM, wavetable SYNTH, STRING, LOFI) sounding at once (CPU)
 constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceMax
 
-// The engine state of a voice. FM, DRUM, SYNTH, MACRO and STRING never sound on one voice at once, so they
+// The engine state of a voice. FM, DRUM, SYNTH, STRING and LOFI never sound on one voice at once, so they
 // share memory (Voice::eng); Voice::engKind says which one it holds. A note of another engine type
 // constructs its engine afresh; a note of the same type keeps it, also across CHIP / SAMPLE notes
 // in between, as when they were separate members.
-enum class EngineKind : uint8_t { Fm, Drum, Syn, Macro, String, Lofi };
+enum class EngineKind : uint8_t { Fm, Drum, Syn, String, Lofi, Drum2 };
 struct FmEngine {
   FmVoice fmv;
   FmParams fp;
@@ -60,21 +60,22 @@ union VoiceEngine {
   FmEngine fm;
   DrumEngine drum;
   SynVoice syn;
-  MacroVoice mac;
   StringVoice stg;  // its delay line is the voice's (voiceLine(slot))
   LofiEngine lofi;
+  Drum2Voice drum2;  // DRUM machines BDA..HHR (machine >= kDrum2First)
   VoiceEngine() : fm() {}
 };
 static_assert(std::is_trivially_copyable<FmEngine>::value && std::is_trivially_copyable<DrumEngine>::value &&
-                  std::is_trivially_copyable<SynVoice>::value && std::is_trivially_copyable<MacroVoice>::value &&
+                  std::is_trivially_copyable<SynVoice>::value &&
                   std::is_trivially_copyable<StringVoice>::value && std::is_trivially_copyable<LofiEngine>::value,
               "Voice is copied as a whole (v = Voice())");
-// MACRO and STRING fit in the union as it was: Voice does not grow.
+// STRING fits in the union as it was: Voice does not grow.
 constexpr size_t kEngineMax = sizeof(FmEngine) > sizeof(DrumEngine)
                                   ? (sizeof(FmEngine) > sizeof(SynVoice) ? sizeof(FmEngine) : sizeof(SynVoice))
                                   : (sizeof(DrumEngine) > sizeof(SynVoice) ? sizeof(DrumEngine) : sizeof(SynVoice));
-static_assert(sizeof(MacroVoice) <= kEngineMax, "MacroVoice no larger than the largest other engine");
 static_assert(sizeof(StringVoice) <= kEngineMax, "StringVoice no larger than the largest other engine");
+static_assert(std::is_trivially_copyable<Drum2Voice>::value, "Voice is copied as a whole (v = Voice())");
+static_assert(sizeof(Drum2Voice) <= kEngineMax, "Drum2Voice no larger than the largest other engine");
 
 struct Voice {
   bool on = false;          // allocated (until the envelope goes idle)
@@ -144,11 +145,11 @@ struct Voice {
   uint32_t loopLo = 0, loopHi = 0;  // loop region [loopLo, loopHi), mirrored for reverse
   ChipOsc osc;
   Env env;
-  // Counts against kFmVoiceMax, set at note-on (Synth::noteOn: FM, DRUM, SYNTH with a wavetable, MACRO, STRING).
+  // Counts against kFmVoiceMax, set at note-on (Synth::noteOn: FM, DRUM, SYNTH with a wavetable, STRING, LOFI).
   bool heavy = false;
   // FM instrument.
   bool fm = false;
-  uint8_t machine = 0;               // FmMachine / DrumMachine / MacroModel / StringModel, latched at note-on: a sounding note keeps it
+  uint8_t machine = 0;               // FmMachine / DrumMachine / StringModel / LofiMachine, latched at note-on: a sounding note keeps it
   uint16_t lockMask = 0;             // locked for this note: bit = LockBit (macros: heavy types and SYNTH only)
   uint8_t lock[kLocks] = {0};
   float lfoPhase[kLfos] = {};        // 0..1, per LFO (Retrig OFF ones use the instrument's)
@@ -168,16 +169,14 @@ struct Voice {
   // SYNTH instrument: tables resolved at note-on (a table changed mid-note applies to the next note).
   bool syn = false;
   bool stolen = false;    // fading out (kStealMs) for a heavy note past kFmVoiceMax or the budget
-  uint32_t senvT = 0;                // samples since the env -> SHAPE (SYNTH) / ENV>TMB (MACRO) trigger
+  uint32_t senvT = 0;                // samples since the env -> SHAPE (SYNTH) trigger
   const int16_t* synWt[2] = {nullptr, nullptr};
-  // MACRO instrument (machine above holds its MacroModel).
-  bool mac = false;
   // STRING instrument (machine above holds its StringModel; the delay line is voiceLine(slot)).
   bool str = false;
   // Melodic voice in a project tuning (Synth::tune_ on at note-on, not a drum / KIT lane / NOTE slice):
   // pitch / target / the track's lastPitch are keys without fine, control() maps them (tuning.h).
   bool tuned = false;
-  // FM / DRUM / SYNTH / MACRO / STRING / LOFI engine, see VoiceEngine.
+  // FM / DRUM / SYNTH / STRING / LOFI engine, see VoiceEngine.
   EngineKind engKind = EngineKind::Fm;
   VoiceEngine eng;
   FmVoice& fmv() { return eng.fm.fmv; }
@@ -186,18 +185,19 @@ struct Voice {
   DrumParams& dp() { return eng.drum.dp; }
   const DrumParams& dp() const { return eng.drum.dp; }
   SynVoice& sv() { return eng.syn; }
-  MacroVoice& mv() { return eng.mac; }
   StringVoice& stv() { return eng.stg; }
   LofiVoice& lv() { return eng.lofi.lv; }
   LofiParams& lp() { return eng.lofi.lp; }
+  Drum2Voice& d2v() { return eng.drum2; }
+  const Drum2Voice& d2v() const { return eng.drum2; }
   // Makes the engine of kind k current: constructed afresh when another one is held.
   void useEngine(EngineKind k) {
     if (k == engKind) return;
     if (k == EngineKind::Fm) new (&eng.fm) FmEngine();
     else if (k == EngineKind::Drum) new (&eng.drum) DrumEngine();
     else if (k == EngineKind::Syn) new (&eng.syn) SynVoice();
-    else if (k == EngineKind::Macro) new (&eng.mac) MacroVoice();
     else if (k == EngineKind::Lofi) new (&eng.lofi) LofiEngine();
+    else if (k == EngineKind::Drum2) new (&eng.drum2) Drum2Voice();
     else new (&eng.stg) StringVoice();
     engKind = k;
   }
@@ -220,7 +220,7 @@ inline bool heavyLoad(const Voice& x) {
 // Picks a voice for track and marks it allocated. Mono: the track's voice if any (legato), else a free one.
 // Poly: a free voice if the track has < polyMax, else the track's oldest.
 // No free voice: the globally oldest releasing voice, else the globally oldest.
-// heavy: the note is FM, DRUM, a wavetable SYNTH, MACRO or STRING (Voice::heavy). With kFmVoiceMax heavy voices on
+// heavy: the note is FM, DRUM, a wavetable SYNTH, STRING or LOFI (Voice::heavy). With kFmVoiceMax heavy voices on
 // (heavyLoad), a pick that would add one more fades the oldest releasing heavy voice, else the
 // oldest heavy voice, over kStealMs (stolen) and takes a free voice; with none free it takes the
 // victim itself. A mono track's own heavy voice is reused as before; a mono track's CHIP / SAMPLE

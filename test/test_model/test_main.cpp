@@ -129,62 +129,27 @@ void test_reset_audio_defaults() {
 void test_instr_type_order() {
   TEST_ASSERT_TRUE(instrTypeAt(0) == InstrType::Fm);
   TEST_ASSERT_TRUE(instrTypeAt(1) == InstrType::Synth);
-  TEST_ASSERT_TRUE(instrTypeAt(2) == InstrType::Macro);
-  TEST_ASSERT_TRUE(instrTypeAt(3) == InstrType::String);
-  TEST_ASSERT_TRUE(instrTypeAt(4) == InstrType::Drum);
-  TEST_ASSERT_TRUE(instrTypeAt(5) == InstrType::Sample);
-  TEST_ASSERT_TRUE(instrTypeAt(6) == InstrType::Chip);
-  TEST_ASSERT_TRUE(instrTypeAt(7) == InstrType::Lofi);
-  TEST_ASSERT_TRUE(instrTypeAt(8) == InstrType::Kit);
-  TEST_ASSERT_EQUAL(6, static_cast<int>(InstrType::Lofi));    // stored in files: appended after Kit (as on main)
-  TEST_ASSERT_EQUAL(7, static_cast<int>(InstrType::Macro));   // appended after Lofi
-  TEST_ASSERT_EQUAL(8, static_cast<int>(InstrType::String));  // appended after Macro
+  TEST_ASSERT_TRUE(instrTypeAt(2) == InstrType::String);
+  TEST_ASSERT_TRUE(instrTypeAt(3) == InstrType::Drum);
+  TEST_ASSERT_TRUE(instrTypeAt(4) == InstrType::Sample);
+  TEST_ASSERT_TRUE(instrTypeAt(5) == InstrType::Chip);
+  TEST_ASSERT_TRUE(instrTypeAt(6) == InstrType::Lofi);
+  TEST_ASSERT_TRUE(instrTypeAt(7) == InstrType::Kit);
+  TEST_ASSERT_TRUE(instrTypeAt(8) == InstrType::Fm);  // out of range
+  TEST_ASSERT_EQUAL(8, kInstrTypesUi);
+  TEST_ASSERT_EQUAL(6, static_cast<int>(InstrType::Lofi));     // stored in files: appended after Kit (as on main)
+  TEST_ASSERT_EQUAL(7, static_cast<int>(InstrType::Unused7));  // former type, never reused
+  TEST_ASSERT_EQUAL(8, static_cast<int>(InstrType::String));
   TEST_ASSERT_EQUAL(9, static_cast<int>(InstrType::Count));
-  for (int k = 0; k < static_cast<int>(InstrType::Count); ++k) TEST_ASSERT_EQUAL(k, instrTypePos(instrTypeAt(k)));
+  for (int k = 0; k < kInstrTypesUi; ++k) TEST_ASSERT_EQUAL(k, instrTypePos(instrTypeAt(k)));
 }
 
-void test_macro_type() {
+// Type 7 is a former type: setting it gives CHIP.
+void test_unused7_type_is_chip() {
   Instrument m;
-  m.machine = 9;
-  instrSetType(m, InstrType::Macro);
-  TEST_ASSERT_TRUE(m.type == InstrType::Macro);
-  TEST_ASSERT_EQUAL(0, m.machine);  // >= MacroModel::Count
-  const uint8_t def[kFmMacros] = {64, 64, 64, 0, 0};  // TIMBRE, COLOR, ENV>TMB off
-  TEST_ASSERT_EQUAL_UINT8_ARRAY(def, m.macro, kFmMacros);
-  m.machine = 7;
-  instrSetType(m, InstrType::Macro);
-  TEST_ASSERT_EQUAL(7, m.machine);
-  m.machine = 8;
-  fixInstrument(m);
-  TEST_ASSERT_EQUAL(0, m.machine);
-  m.machine = 7;
-  fixInstrument(m);
-  TEST_ASSERT_EQUAL(7, m.machine);
-}
-
-void test_macro_model_names() {
-  const char* const want[] = {"SAW+", "MORPH", "SAW/SQR", "FOLD", "VOSIM", "VOWEL", "FM", "FB FM"};
-  TEST_ASSERT_EQUAL(8, static_cast<int>(MacroModel::Count));
-  for (int k = 0; k < 8; ++k) TEST_ASSERT_EQUAL_STRING(want[k], macroModelName(static_cast<uint8_t>(k)));
-  TEST_ASSERT_EQUAL_STRING("SAW+", macroModelName(8));  // out of range
-}
-
-void test_macro_lfo_dests() {
-  auto d = [](LfoDest x) { return static_cast<uint8_t>(x); };
-  constexpr InstrType T = InstrType::Macro;
-  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Dec), T));
-  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Col), T));
-  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Shp), T));
-  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Swp), T));
-  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Con), T));
-  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Duty), T));
-  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sub), T));
-  TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Fold), T));
-  TEST_ASSERT_TRUE(lfoDestValid(d(LfoDest::Cutoff), T));
-  TEST_ASSERT_EQUAL_STRING("TIMBRE", lfoDestName(d(LfoDest::Dec), T));
-  TEST_ASSERT_EQUAL_STRING("COLOR", lfoDestName(d(LfoDest::Col), T));
-  TEST_ASSERT_EQUAL_STRING("ENV>TMB", lfoDestName(d(LfoDest::Shp), T));
-  TEST_ASSERT_EQUAL_STRING("CUTOFF", lfoDestName(d(LfoDest::Cutoff), T));
+  m.type = InstrType::Fm;
+  instrSetType(m, InstrType::Unused7);
+  TEST_ASSERT_TRUE(m.type == InstrType::Chip);
 }
 
 void test_string_type() {
@@ -327,6 +292,10 @@ void test_drum_set_machine() {
   TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Hh8), m.machine);
   drumSetMachine(m, 200);
   TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Count) - 1, m.machine);
+  drumSetMachine(m, 20);  // CPX
+  TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Cpx), m.machine);
+  const uint8_t cpx[kFmMacros] = {60, 64, 64, 64, 0};
+  for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_EQUAL(cpx[k], m.macro[k]);
 }
 
 void test_instr_set_type() {
@@ -501,11 +470,11 @@ void test_synth_type_defaults() {
 }
 
 void test_synth_type_order() {
-  // UI order: FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP, KIT.
+  // UI order: FM, SYNTH, STRING, DRUM, SAMPLE, CHIP, LOFI, KIT.
   TEST_ASSERT_EQUAL(InstrType::Fm, instrTypeAt(0));
   TEST_ASSERT_EQUAL(InstrType::Synth, instrTypeAt(1));
   TEST_ASSERT_EQUAL(1, instrTypePos(InstrType::Synth));
-  TEST_ASSERT_EQUAL(InstrType::Chip, instrTypeAt(6));
+  TEST_ASSERT_EQUAL(InstrType::Chip, instrTypeAt(5));
 }
 
 void test_project_reset_clears_wavetables() {
@@ -552,7 +521,7 @@ void test_kit_defaults_and_drum_track() {
   TEST_ASSERT_NULL(p->kitOf(kTracks));
   // KIT is the last type in the UI order.
   TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Kit),
-                    static_cast<int>(instrTypeAt(static_cast<int>(InstrType::Count) - 1)));
+                    static_cast<int>(instrTypeAt(kInstrTypesUi - 1)));
   delete p;
 }
 
@@ -908,9 +877,7 @@ int main() {
   RUN_TEST(test_track_audible_mute_solo);
   RUN_TEST(test_reset_audio_defaults);
   RUN_TEST(test_instr_type_order);
-  RUN_TEST(test_macro_type);
-  RUN_TEST(test_macro_model_names);
-  RUN_TEST(test_macro_lfo_dests);
+  RUN_TEST(test_unused7_type_is_chip);
   RUN_TEST(test_string_type);
   RUN_TEST(test_string_model_names);
   RUN_TEST(test_string_lfo_dests);

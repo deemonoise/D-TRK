@@ -1,9 +1,12 @@
-Derived from github.com/pichenettes/eurorack (Braids macro oscillator; Rings resonator, rings/dsp/string.cc, resonator.cc; Mutable Instruments): lib/core/src/synth_macro.h, lib/core/src/synth_macro.cpp, lib/core/src/synth_string.h, lib/core/src/synth_string.cpp.
+Derived from github.com/pichenettes/eurorack (Rings resonator, rings/dsp/string.cc, resonator.cc; Mutable Instruments): lib/core/src/synth_string.h, lib/core/src/synth_string.cpp.
+
+After the 2016 drum models and the FM operator of the same repository, as collected in github.com/ctag-fh-kiel/ctag-tbd (DRUM machines BDA, SDA, BDS, SDS, HHR and the operator of BDF): lib/core/src/synth_drum2.h, lib/core/src/synth_drum2.cpp.
 
 From the source file headers:
 
-Copyright 2012 Emilie Gillet.
 Copyright 2015 Emilie Gillet.
+Copyright 2016 Emilie Gillet.
+Copyright 2021 Emilie Gillet.
 
 Author: Emilie Gillet (emilie.o.gillet@gmail.com)
 

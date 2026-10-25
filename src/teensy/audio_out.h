@@ -6,9 +6,11 @@
 namespace mt {
 class Synth;
 class StreamRing;
+class RecCapture;
 }
 
-// The synth as an Audio Library source: 0 inputs, 2 outputs (L, R). Runs in the audio interrupt.
+// The synth as an Audio Library source: 2 inputs (the codec's ADC, AudioInputI2S: recording and MON),
+// 2 outputs (L, R). Runs in the audio interrupt.
 class SynthStream : public AudioStream {
  public:
   static constexpr float kBlockUs = 1e6f * AUDIO_BLOCK_SAMPLES / AUDIO_SAMPLE_RATE_EXACT;
@@ -16,7 +18,7 @@ class SynthStream : public AudioStream {
   // CPU cycles in one block's time.
   static uint32_t blockCycles() { return static_cast<uint32_t>(kBlockUs * (F_CPU_ACTUAL / 1000000)); }
 
-  SynthStream() : AudioStream(0, nullptr) {}
+  SynthStream() : AudioStream(2, inQ_) {}
   void begin(mt::Synth* s) { synth_ = s; }
   void update() override;
 
@@ -57,6 +59,13 @@ class SynthStream : public AudioStream {
   void setPreview(mt::StreamRing* r) { preview_ = r; }
   void setPreviewGain(float g) { previewGain_ = g; }
 
+  // Recording (rec_server.h): while set, every block goes to c->feed (its meter runs in any state):
+  // the input blocks for MIC / LINE (silence when none came), the synth's output (before the preview)
+  // for RESAMPLE. MON adds the input (MIC: the left one on both sides) to the output, saturated,
+  // before the output meter and the phones level.
+  void setRec(mt::RecCapture* c) { rec_ = c; }
+  void setMonitor(bool on) { monitor_ = on; }
+
   // Called in the audio interrupt before each block's events and render (the pool bench), with the
   // previous block's render cycles.
   void setBlockHook(void (*f)(uint32_t lastCycles)) { hook_ = f; }
@@ -64,6 +73,9 @@ class SynthStream : public AudioStream {
  private:
   mt::Synth* synth_ = nullptr;
   mt::StreamRing* preview_ = nullptr;
+  audio_block_t* inQ_[2];
+  mt::RecCapture* volatile rec_ = nullptr;
+  volatile bool monitor_ = false;
   volatile float previewGain_ = 0.4f;
   void (*volatile hook_)(uint32_t) = nullptr;
   uint32_t lastCycles_ = 0;

@@ -1,8 +1,10 @@
 #pragma once
+#include "bounce_dialog.h"
 #include "model.h"
 #include "mutate.h"
 #include "param_list.h"
 #include "preset_browser.h"
+#include "rec_dialog.h"
 #include "sample_editor.h"
 #include "screen.h"
 #include "wt_make_dialog.h"
@@ -19,9 +21,11 @@ namespace ui {
 // this instrument, seeded by esp_random) and Undo mutate (one step, this instrument only).
 // Name: click to edit, turn = character, Shift+turn = position.
 // Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
-// ADSR graph), the type's own (OSC / SMPL / FM / DRUM / LOFI; SYNTH: OSC and MOD; MACRO: OSC), FILT, LFO. The page is
+// ADSR graph), the type's own (OSC / SMPL / FM / DRUM / LOFI / RES; SYNTH: OSC and MOD), FILT, LFO. The page is
 // kept across instruments and type changes (SYNTH MOD -> the type page of the others).
-// SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows).
+// SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows). Its SAMPLE menu
+// starts with Record... (RecDialog over the work area); leaving the screen while a take runs = STOP.
+// Save one-shot... (PRESET menu; SAMPLE: the SAMPLE menu; not KIT): BounceDialog over the work area.
 // FM: machine, macros (DECAY..CONTOUR); ADSR rows grey where the machine ignores them.
 // DRUM: machine, macros named per machine (grey "-" where unused); ADSR, mode and glide grey.
 // LOFI: machine (BYTE / APC), Formula (BYTE: the library formula by name, turn = next / previous,
@@ -32,8 +36,6 @@ namespace ui {
 // Shape2 (SHP2), Semi2, Detune (DET), Sync, Mix (MIX), with the selected oscillator's waveform (WT: the
 // frame under SHAPE) on the right; MOD: Sub, Sub oct, Noise, Ring, Fold (0 = OFF), Env>Shp (SENV),
 // Env atk, Env dec. ADSR, mode and glide as CHIP. A click / tap on a Table row opens WtPicker; a missing table is shown red.
-// MACRO: MAIN / ENV / OSC / FILT / LFO. OSC: Model, Timbre, Color, Env>Tmb (OFF at 64), Env atk, Env dec
-// (grey when Env>Tmb is OFF). ADSR, mode and glide as SYNTH.
 // STRING: MAIN / ENV / RES / FILT / LFO. RES: Model, Damp (as T60), Bright, Struct, Position (%), Excite
 // (CLICK at 0, else the burst in ms). ADSR, mode and glide as SYNTH. The Filter row skips COMB.
 // Filter and LFO rows on every type, after the type's own (CHIP / SAMPLE: no macro LFO targets).
@@ -56,8 +58,11 @@ class InstScreen : public Screen {
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsHDrag() const override {
-    return wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !wtMake_.isOpen() && onEditor());
+    return !rec_.isOpen() &&
+           (wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor()));
   }
+  void poll() override { rec_.poll(); }
+  bool wantsRedraw(const engine::Status&) override { return rec_.isOpen(); }  // the meter
   // Track button n: on the sample editor plays slices (see SampleEditor::playSlice). False = not taken.
   bool trackKey(int n, bool shift);
 
@@ -79,9 +84,6 @@ class InstScreen : public Screen {
                        kSync = kCommon + 8, kMix = kCommon + 9, kSynOscRows = 10;
   static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kRing = kSub + 3,
                        kFold = kSub + 4, kSenv = kSub + 5, kEAtk = kSub + 6, kEDec = kSub + 7, kSynRows = kSub + 8;
-  // MACRO: one OSC page.
-  static constexpr int kModel = kCommon, kTimbre = kCommon + 1, kColor = kCommon + 2, kEnvTmb = kCommon + 3,
-                       kMEAtk = kCommon + 4, kMEDec = kCommon + 5, kMacroRows = kCommon + 6;
   // STRING: one RES page.
   static constexpr int kStrModel = kCommon, kStrDamp = kCommon + 1, kStrBright = kCommon + 2,
                        kStrStruct = kCommon + 3, kStrPos = kCommon + 4, kStrExc = kCommon + 5,
@@ -156,7 +158,6 @@ class InstScreen : public Screen {
   Param drum_[kMacRows + kTailRows];
   Param lofi_[kLofiRows + kTailRows];
   Param syn_[kSynRows + kTailRows];
-  Param macro_[kMacroRows + kTailRows];
   Param string_[kStringRows + kTailRows];
   Param kit_[kKitRows];       // every KIT row
   Param kitShown_[kKitRows];  // LANES page: the rows of each lane's mode
@@ -166,6 +167,7 @@ class InstScreen : public Screen {
   PresetBrowser presets_{app_};
   WtPicker wt_{app_};
   WtMakeDialog wtMake_{app_};
+  BounceDialog bounce_{app_};  // Save one-shot...
   int instr_ = 0;
   int lfoSel_ = 0;  // LFO page: which of the 4 LFOs the rows edit
   mt::Instrument typeSnap_;     // the instrument as it was in the type being left (setType)
@@ -174,6 +176,7 @@ class InstScreen : public Screen {
   int y0_ = kAreaY;
   int namePos_ = 0;
   SampleEditor editor_{app_, kAreaY + kHeaderH + kPageBarH};
+  RecDialog rec_{app_};
 };
 
 }  // namespace ui

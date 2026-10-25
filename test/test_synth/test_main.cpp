@@ -2766,7 +2766,7 @@ void test_lofi_sync_follows_tempo_change() {
 
 void test_lofi_profile_stage_name() { TEST_ASSERT_EQUAL_STRING("lofi", Synth::profName(Synth::kProfLofi)); }
 
-void test_synth_macro_lock_applies() {
+void test_synth_mac_lock_applies() {
   // fx DCY on a SYNTH step locks SHP1 (macro 0): the lock reaches the voice.
   Instrument& m = p->instruments[0];
   instrSetType(m, InstrType::Synth);
@@ -2778,7 +2778,7 @@ void test_synth_macro_lock_applies() {
   TEST_ASSERT_EQUAL(100, v.lock[kMacShp1]);
 }
 
-void test_synth_macro_lock_on_empty_step_hits_sounding_voice() {
+void test_synth_mac_lock_on_empty_step_hits_sounding_voice() {
   Instrument& m = p->instruments[0];
   instrSetType(m, InstrType::Synth);
   stepStart(0, 0, 6, true);
@@ -4884,15 +4884,7 @@ void test_comb_key_track_tunes_to_note() {
   TEST_ASSERT_FLOAT_WITHIN(0.01f * c4Fixed, c4Fixed, c4Tracked);
 }
 
-// ---- MACRO ----
-
-static Instrument& macroInst(MacroModel mdl) {
-  Instrument& m = p->instruments[0];
-  instrSetType(m, InstrType::Macro);
-  m.machine = static_cast<uint8_t>(mdl);
-  m.sustain = 127;
-  return m;
-}
+// ---- macro locks (DRUM) ----
 
 constexpr int kMacBlocks = 40;
 static int16_t ma_[Synth::kBlock * kMacBlocks], mb_[Synth::kBlock * kMacBlocks];
@@ -4911,195 +4903,24 @@ static void renderMac(int16_t* out, uint8_t note = 57, uint8_t vel = 127) {
   for (int k = 0; k < kMacBlocks; ++k) s->render(out + k * Synth::kBlock);
 }
 
-void test_macro_sounds_at_note_pitch() {
-  macroInst(MacroModel::Fold);  // a folded sine: two falling crossings at most per cycle at TIMBRE 64
+void test_drum_col_lock_changes_output() {
   Instrument& m = p->instruments[0];
-  m.macro[kMacTimbre] = 0;  // plain sine
-  m.wave = static_cast<uint8_t>(Wave::Noise);  // a CHIP fallback would hiss
-  noteOn(0, 0, 57);  // 220 Hz
-  render1(buf);
-  int nz = 0;
-  for (int i = 0; i < Synth::kBlock; ++i) nz += buf[i] != 0;
-  TEST_ASSERT_TRUE(nz > 100);
-  TEST_ASSERT_INT_WITHIN(2, 22, crossings(blocksMs(100)));
-}
-
-void test_macro_voices_are_heavy() {
-  macroInst(MacroModel::SawPlus).mono = false;
-  for (int t = 0; t < 3; ++t) p->tracks[t].instr = 0;
-  for (int k = 0; k < 9; ++k) {  // 4 + 4 + 1: the 9th steals one
-    noteOn(0, static_cast<uint8_t>(k / 4), static_cast<uint8_t>(48 + k));
-    render1(buf);
-  }
-  renderMs(kStealMs);
-  int heavy = 0;
-  for (int i = 0; i < kVoices; ++i) heavy += heavyLoad(s->voice(i));
-  TEST_ASSERT_EQUAL(kFmVoiceMax, heavy);
-  TEST_ASSERT_EQUAL(kFmVoiceMax, s->activeVoices());
-}
-
-void test_macro_col_lock_changes_output() {
-  macroInst(MacroModel::SawSqr);
+  m.machine = static_cast<uint8_t>(DrumMachine::Sd8);
+  instrSetType(m, InstrType::Drum);
   renderMac(ma_);
   s->reset();
   fx(0, 0, Fx::COL, 127);  // COLOR
-  renderMac(mb_);
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lockMask & (1 << kMacColor));
+  noteOn(0, 0, 57, 127);
+  s->render(mb_);
+  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).lockMask & (1 << kMacCol));  // read while the hit sounds
+  for (int k = 1; k < kMacBlocks; ++k) s->render(mb_ + k * Synth::kBlock);
   long d, a;
   macDiff(0, Synth::kBlock * kMacBlocks, d, a);
   TEST_ASSERT_TRUE(a > 0 && d > a / 10);
-}
-
-void test_macro_lfo_timbre_changes_output() {
-  Instrument& m = macroInst(MacroModel::Fold);
-  m.lfoDest = static_cast<uint8_t>(LfoDest::Dec);  // TIMBRE
-  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
-  m.lfoRate = 100;
-  m.lfoDepth = 0;
-  renderMac(ma_);
-  s->reset();
-  m.lfoDepth = 63;
-  renderMac(mb_);
-  long d, a;
-  macDiff(0, Synth::kBlock * kMacBlocks, d, a);
-  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
-}
-
-void test_macro_velocity_moves_timbre() {
-  Instrument& m = macroInst(MacroModel::Fold);
-  m.macro[kMacTimbre] = 30;
-  renderMac(ma_);
-  s->reset();
-  m.velMac = 63;  // vel 127: TIMBRE +62
-  renderMac(mb_);
-  long d, a;
-  macDiff(0, Synth::kBlock * kMacBlocks, d, a);
-  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
-  // At velocity 64 velMac is neutral.
-  s->reset();
-  m.velMac = 0;
-  renderMac(ma_, 57, 64);
-  s->reset();
-  m.velMac = 63;
-  renderMac(mb_, 57, 64);
-  macDiff(0, Synth::kBlock * kMacBlocks, d, a);
-  TEST_ASSERT_EQUAL(0, d);
-}
-
-void test_macro_env_timbre_is_ad() {
-  Instrument& m = macroInst(MacroModel::Fold);
-  m.macro[kMacTimbre] = 10;
-  m.synEAtk = 0;
-  m.synEDec = 41;  // ~19 ms to -60 dB
-  m.macro[kMacEnvTmb] = 64;  // off
-  renderMac(ma_);
-  s->reset();
-  m.macro[kMacEnvTmb] = 127;
-  renderMac(mb_);
-  long d, a;
-  macDiff(0, kSynthRate * 50 / 1000, d, a);  // first 50 ms: TIMBRE pushed up
-  TEST_ASSERT_TRUE(a > 0 && d > a / 10);
-  macDiff(kSynthRate * 100 / 1000, Synth::kBlock * kMacBlocks, d, a);  // after: the same sound
-  TEST_ASSERT_TRUE(a > 0 && d < a / 100);
-}
-
-// A legato MACRO note on a voice that played SYNTH starts the MACRO voice and ENV>TMB afresh.
-static void macLegatoSetup() {
-  Instrument& m = macroInst(MacroModel::Fold);
-  m.mono = true;
-  m.macro[kMacTimbre] = 10;
-  m.synEAtk = 0;
-  m.synEDec = 41;
-  m.macro[kMacEnvTmb] = 127;
-  Instrument& y = p->instruments[1];
-  instrSetType(y, InstrType::Synth);
-  y.mono = true;
-  y.sustain = 127;
-}
-
-void test_macro_legato_from_synth_starts_fresh() {
-  macLegatoSetup();
-  renderMac(ma_);  // a fresh MACRO note
-  s->reset();
-  pgm(0, 1);
-  noteOn(0, 0, 57);  // SYNTH
-  for (int k = 0; k < 60; ++k) render1(buf);
-  pgm(0, 0);
-  renderMac(mb_);  // MACRO legato on the same voice
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).mac);
-  long d, a;
-  macDiff(0, kSynthRate * 50 / 1000, d, a);  // ENV>TMB from its start
-  TEST_ASSERT_TRUE(a > 0);
-  TEST_ASSERT_TRUE(d < a / 100);
-}
-
-// A legato SYNTH note on a voice that played MACRO starts the SYNTH voice and env -> SHAPE afresh
-// (the MACRO voice shares the engine storage and ran its own senvT).
-void test_synth_legato_from_macro_starts_fresh() {
-  macLegatoSetup();
-  Instrument& y = p->instruments[1];
-  y.synOsc[0] = y.synOsc[1] = static_cast<uint8_t>(SynOsc::Square);  // SHAPE = pulse width
-  y.macro[kMacShp1] = y.macro[kMacShp2] = 0;
-  y.macro[kMacSenv] = 127;  // full env -> SHAPE
-  y.synEAtk = 0;
-  y.synEDec = 41;
-  pgm(0, 1);
-  renderMac(ma_);  // a fresh SYNTH note
-  s->reset();
-  pgm(0, 0);
-  noteOn(0, 0, 57);  // MACRO
-  for (int k = 0; k < 60; ++k) render1(buf);
-  pgm(0, 1);
-  renderMac(mb_);  // SYNTH legato on the same voice
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).syn);
-  long d, a;
-  macDiff(0, kSynthRate * 50 / 1000, d, a);  // env -> SHAPE from its start
-  TEST_ASSERT_TRUE(a > 0);
-  TEST_ASSERT_TRUE(d < a / 100);
-}
-
-// SYNTH then MACRO on the same mono track: the engine union is rebuilt, the output finite and sounding.
-void test_macro_after_synth_same_track_sounds() {
-  macLegatoSetup();
-  pgm(0, 1);
-  noteOn(0, 0, 60);
-  for (int k = 0; k < 20; ++k) render1(buf);
-  pgm(0, 0);
-  noteOn(0, 0, 57);
-  long a = 0;
-  int rails = 0;  // a NaN / inf would pin the output to the rails
-  for (int k = 0; k < 20; ++k) {
-    render1(buf);
-    for (int i = 0; i < Synth::kBlock; ++i) {
-      a += abs(buf[i]);
-      rails += buf[i] == 32767 || buf[i] == -32768;
-    }
-  }
-  const Voice& v = s->voice(s->trackVoice(0));
-  TEST_ASSERT_TRUE(v.mac);
-  TEST_ASSERT_FALSE(v.syn);
-  TEST_ASSERT_TRUE(rails < Synth::kBlock);
-  TEST_ASSERT_TRUE(a > 20 * Synth::kBlock * 100);
 }
 
 static uint32_t macClk = 0;
 static uint32_t macClock() { return macClk += 3; }
-
-void test_macro_profile_stage() {
-  macroInst(MacroModel::Vowel);
-  TEST_ASSERT_EQUAL_STRING("macro", Synth::profName(Synth::kProfMacro));
-  noteOn(0, 0, 57);
-  s->render(buf);
-  s->setProfiler(macClock);
-  s->render(buf);
-  s->render(buf);
-  uint32_t c[Synth::kProfStages], n[Synth::kProfStages], blocks = 0;
-  s->takeProfile(c, n, blocks);
-  TEST_ASSERT_TRUE(n[Synth::kProfMacro] > 0);
-  TEST_ASSERT_TRUE(c[Synth::kProfMacro] > 0);
-  TEST_ASSERT_EQUAL_UINT32(0, n[Synth::kProfChip]);
-  s->setProfiler(nullptr);
-}
 
 // ---- STRING ----
 
@@ -5234,11 +5055,11 @@ void test_string_comb_filter_is_off() {
   TEST_ASSERT_EQUAL_INT16_ARRAY(sa_, sb_, Synth::kBlock * kStrBlocks);
 }
 
-// A STRING note after a MACRO note on the same mono track: the engine union is rebuilt, the string starts
+// A STRING note after a SYNTH note on the same mono track: the engine union is rebuilt, the string starts
 // from a cleared line; finite and sounding.
-void test_string_after_macro_same_track_sounds() {
+void test_string_after_synth_same_track_sounds() {
   Instrument& y = p->instruments[1];
-  instrSetType(y, InstrType::Macro);
+  instrSetType(y, InstrType::Synth);
   y.mono = true;
   y.sustain = 127;
   stringInst(StringModel::String).mono = true;
@@ -5258,7 +5079,7 @@ void test_string_after_macro_same_track_sounds() {
   }
   const Voice& v = s->voice(s->trackVoice(0));
   TEST_ASSERT_TRUE(v.str);
-  TEST_ASSERT_FALSE(v.mac);
+  TEST_ASSERT_FALSE(v.syn);
   TEST_ASSERT_TRUE(rails < Synth::kBlock);
   TEST_ASSERT_TRUE(a > 20 * Synth::kBlock * 50);
 }
@@ -5276,7 +5097,7 @@ void test_string_profile_stage() {
   TEST_ASSERT_TRUE(n[Synth::kProfString] > 0);
   TEST_ASSERT_TRUE(c[Synth::kProfString] > 0);
   TEST_ASSERT_EQUAL_UINT32(0, n[Synth::kProfChip]);
-  TEST_ASSERT_EQUAL_UINT32(0, n[Synth::kProfMacro]);
+  TEST_ASSERT_EQUAL_UINT32(0, n[Synth::kProfSpare]);
   s->setProfiler(nullptr);
 }
 
@@ -5298,7 +5119,7 @@ void test_string_vsl_changes_level() {
   TEST_ASSERT_TRUE(absSum(sb_, from, to) < absSum(sa_, from, to) / 50);
 }
 
-// Legato on one mono track: STRING -> other (MACRO, FM) -> STRING, every note finite and sounding.
+// Legato on one mono track: STRING -> other (SYNTH, FM) -> STRING, every note finite and sounding.
 static void strLegatoStep(uint8_t instr, uint8_t note, bool str) {
   pgm(0, instr);
   noteOn(0, 0, note);
@@ -5317,11 +5138,11 @@ static void strLegatoStep(uint8_t instr, uint8_t note, bool str) {
   TEST_ASSERT_TRUE(a > 20 * Synth::kBlock * 50);
 }
 
-void test_string_legato_with_macro_and_fm() {
+void test_string_legato_with_synth_and_fm() {
   for (int k = 0; k < 2; ++k) {
     s->reset();
     Instrument& y = p->instruments[1];
-    instrSetType(y, k ? InstrType::Fm : InstrType::Macro);
+    instrSetType(y, k ? InstrType::Fm : InstrType::Synth);
     y.mono = true;
     y.sustain = 127;
     stringInst(StringModel::String).mono = true;
@@ -5482,7 +5303,7 @@ void test_tuning_synth_sounds_tuned() {
 
 void test_tuning_eligible_types() {
   setEdo(p->tuning, 24);
-  const InstrType yes[] = {InstrType::Synth, InstrType::Macro, InstrType::String, InstrType::Fm};
+  const InstrType yes[] = {InstrType::Synth, InstrType::String, InstrType::Fm};
   for (InstrType t : yes) {
     instrSetType(p->instruments[1], t);
     if (t == InstrType::Fm) fmSetMachine(p->instruments[1], static_cast<uint8_t>(FmMachine::Tone));
@@ -5740,6 +5561,95 @@ void test_scene_master_vol_morph() {
   TEST_ASSERT_FLOAT_WITHIN(0.05f * base, base, rmsBlocks(8));
 }
 
+
+// ---- DRUM BDA..HHR (Drum2Voice) ----
+
+static int peakBlocks(int n) {
+  int pk = 0;
+  for (int k = 0; k < n; ++k) {
+    render1(buf);
+    const int q = peakOf(buf);
+    if (q > pk) pk = q;
+  }
+  return pk;
+}
+
+void test_drum2_each_machine_sounds() {
+  for (int mc = kDrum2First; mc < static_cast<int>(DrumMachine::Count); ++mc) {
+    s->reset();
+    drumInstr(0, static_cast<DrumMachine>(mc));
+    p->instruments[0].macro[kMacDec] = 40;
+    noteOn(0, 0, 60);
+    const int pk = peakBlocks(blocksMs(300));
+    TEST_ASSERT_TRUE_MESSAGE(pk > 328, drumMachineName(static_cast<uint8_t>(mc)));  // louder than -40 dB
+    for (int k = 0; k < blocksMs(6000) && s->activeVoices(); ++k) render1(buf);
+    TEST_ASSERT_EQUAL_MESSAGE(0, s->activeVoices(), drumMachineName(static_cast<uint8_t>(mc)));
+    TEST_ASSERT_TRUE(silentBlocks(2));
+  }
+}
+
+void test_drum2_choke_same_track() {
+  drumInstr(0, DrumMachine::Bda);
+  p->instruments[0].macro[kMacDec] = 110;
+  noteOn(0, 0, 60);
+  renderMs(40);
+  const int16_t prev = buf[Synth::kBlock - 1];
+  noteOn(0, 0, 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(1, s->activeVoices());
+  TEST_ASSERT_TRUE(maxStep(buf, prev) < 0.2f * 32767);
+}
+
+void test_drum2_after_old_drum() {
+  drumInstr(0, DrumMachine::Bd8);
+  drumInstr(1, DrumMachine::Bda);
+  const int order[] = {0, 1, 0};
+  for (int i : order) {
+    pgm(0, static_cast<uint8_t>(i));
+    noteOn(0, 0, 60);
+    const int pk = peakBlocks(blocksMs(60));
+    TEST_ASSERT_TRUE(pk > 328);
+  }
+  TEST_ASSERT_EQUAL(1, s->activeVoices());
+}
+
+void test_drum2_lock_macro() {
+  drumInstr(0, DrumMachine::Bda);
+  int16_t a[Synth::kBlock * 8];
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 8; ++k) render1(a + k * Synth::kBlock);
+  s->reset();
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::COL, 127);  // TONE
+  noteOn(0, 0, 60);
+  long diff = 0;
+  for (int k = 0; k < 8; ++k) {
+    render1(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) diff += abs(buf[i] - a[k * Synth::kBlock + i]);
+  }
+  TEST_ASSERT_EQUAL(127, s->voice(s->trackVoice(0)).lock[kMacCol]);
+  TEST_ASSERT_TRUE(diff > 1000);
+}
+
+static float drum2Hz(uint8_t note) {
+  s->reset();
+  noteOn(0, 0, note);
+  renderMs(30);  // past the click
+  const int n = blocksMs(500);
+  return crossings(n) / (n * float(Synth::kBlock) / kSynthRate);
+}
+
+void test_drum2_pitch_note() {
+  drumInstr(0, DrumMachine::Bds);
+  Instrument& m = p->instruments[0];
+  m.macro[kMacDec] = 127;
+  m.macro[kMacShp] = 0;  // DIRT
+  m.macro[kMacSwp] = 0;  // SWEEP
+  const float lo = drum2Hz(60), hi = drum2Hz(72);
+  TEST_ASSERT_TRUE(lo > 20);
+  TEST_ASSERT_FLOAT_WITHIN(0.1f, 2.f, hi / lo);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -5926,8 +5836,8 @@ int main() {
   RUN_TEST(test_lofi_sync_off_follows_pitch);
   RUN_TEST(test_lofi_sync_follows_tempo_change);
   RUN_TEST(test_lofi_profile_stage_name);
-  RUN_TEST(test_synth_macro_lock_applies);
-  RUN_TEST(test_synth_macro_lock_on_empty_step_hits_sounding_voice);
+  RUN_TEST(test_synth_mac_lock_applies);
+  RUN_TEST(test_synth_mac_lock_on_empty_step_hits_sounding_voice);
   RUN_TEST(test_kit_sampler_lane_builds_scratch_instrument);
   RUN_TEST(test_kit_decay_zero_is_one_shot);
   RUN_TEST(test_kit_missing_sample_silent);
@@ -6033,27 +5943,18 @@ int main() {
   RUN_TEST(test_fol_off_cases_and_preview);
   RUN_TEST(test_fol_kit_track_strip);
   RUN_TEST(test_profiler_arms_at_block_start);
-  RUN_TEST(test_macro_sounds_at_note_pitch);
-  RUN_TEST(test_macro_voices_are_heavy);
-  RUN_TEST(test_macro_col_lock_changes_output);
-  RUN_TEST(test_macro_lfo_timbre_changes_output);
-  RUN_TEST(test_macro_velocity_moves_timbre);
-  RUN_TEST(test_macro_env_timbre_is_ad);
-  RUN_TEST(test_macro_profile_stage);
+  RUN_TEST(test_drum_col_lock_changes_output);
   RUN_TEST(test_string_sounds_at_note_pitch);
   RUN_TEST(test_string_voices_are_heavy);
   RUN_TEST(test_string_done_frees_held_voice);
   RUN_TEST(test_string_dcy_lock_changes_decay);
   RUN_TEST(test_string_lfo_damp_changes_decay);
   RUN_TEST(test_string_comb_filter_is_off);
-  RUN_TEST(test_string_after_macro_same_track_sounds);
+  RUN_TEST(test_string_after_synth_same_track_sounds);
   RUN_TEST(test_string_profile_stage);
   RUN_TEST(test_string_vsl_changes_level);
-  RUN_TEST(test_string_legato_with_macro_and_fm);
+  RUN_TEST(test_string_legato_with_synth_and_fm);
   RUN_TEST(test_string_legato_restrike_adds_energy);
-  RUN_TEST(test_macro_legato_from_synth_starts_fresh);
-  RUN_TEST(test_synth_legato_from_macro_starts_fresh);
-  RUN_TEST(test_macro_after_synth_same_track_sounds);
   RUN_TEST(test_tuning_12tet_voices_untuned);
   RUN_TEST(test_tuning_12_edo_matches_12tet);
   RUN_TEST(test_tuning_24_edo_chip_and_fine);
@@ -6073,5 +5974,10 @@ int main() {
   RUN_TEST(test_scene_smoothing_takes_about_30ms);
   RUN_TEST(test_scene_cutoff_morph_and_flt_lock_wins);
   RUN_TEST(test_scene_master_vol_morph);
+  RUN_TEST(test_drum2_each_machine_sounds);
+  RUN_TEST(test_drum2_choke_same_track);
+  RUN_TEST(test_drum2_after_old_drum);
+  RUN_TEST(test_drum2_lock_macro);
+  RUN_TEST(test_drum2_pitch_note);
   return UNITY_END();
 }

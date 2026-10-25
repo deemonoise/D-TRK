@@ -35,12 +35,12 @@ constexpr Info kInfo[] = {
     {"VSL", "VOLUME SLIDE", -64, 63, -8, true},  // VSL: volume change per step
     {"OFS", "SAMPLE OFFSET", 0, 255, 0, false},   // OFS: sample start, /256
     {"CUT", "NOTE CUT", 1, 96, 6, false},    // CUT: ticks
-    // DCY..CON: FM / DRUM / SYNTH macro locks (SYNTH: SHP1, SHP2, MIX, DET, SENV).
-    {"DEC", "MACRO DECAY / SHP1", 0, 127, 64, false},
-    {"COL", "MACRO COLOR / SHP2", 0, 127, 64, false},
-    {"SHP", "MACRO SHAPE / MIX", 0, 127, 64, false},
-    {"SWP", "MACRO SWEEP / DET", 0, 127, 64, false},
-    {"CON", "MACRO CONTOUR / SENV", 0, 127, 64, false},
+    // DCY..CON: FM / DRUM / SYNTH / STRING / LOFI macro locks (SYNTH: SHP1, SHP2, MIX, DET, SENV).
+    {"DEC", "DRUM DECAY / SHP1", 0, 127, 64, false},
+    {"COL", "DRUM COLOR / SHP2", 0, 127, 64, false},
+    {"SHP", "DRUM SHAPE / MIX", 0, 127, 64, false},
+    {"SWP", "DRUM SWEEP / DET", 0, 127, 64, false},
+    {"CON", "DRUM CONTOUR / SENV", 0, 127, 64, false},
     {"FLT", "FILTER CUTOFF", 0, 127, 64, false},  // FLT: filter cutoff lock
     {"RES", "FILTER RESONANCE", 0, 127, 0, false},   // RES: filter resonance lock
     {"SLC", "SAMPLE SLICE", 0, kMaxSlices - 1, 0, false},  // SLC: slice of the next SAMPLE note-on (FX slice mode)

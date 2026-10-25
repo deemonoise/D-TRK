@@ -294,25 +294,24 @@ void test_v3_roundtrip_synth() {
   assertSameInst(a, b, "v3 synth");
 }
 
-void test_roundtrip_macro() {
+// Type 7 is a former type: a preset stored with it loads as CHIP.
+void test_type7_preset_loads_as_chip() {
   Instrument a;
-  strcpy(a.name, "VOWEL");
-  instrSetType(a, InstrType::Macro);
-  a.machine = 5;
-  a.macro[kMacTimbre] = 10;
-  a.macro[kMacColor] = 20;
-  a.macro[kMacEnvTmb] = 90;
-  a.synEAtk = 3;
-  a.synEDec = 50;
+  strcpy(a.name, "OLD7");
+  instrSetType(a, InstrType::Fm);
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
-  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Macro), out.buf[5]);
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Fm), out.buf[5]);
+  out.buf[5] = 7;   // header type
+  out.buf[16] = 7;  // INST byte 8
+  const size_t p = out.buf.size() - 4;
+  const uint32_t c = crc32(out.buf.data(), p);
+  for (int i = 0; i < 4; ++i) out.buf[p + i] = static_cast<uint8_t>(c >> (8 * i));
   VecSource in(out.buf);
   Instrument b;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
-  assertSameInst(a, b, "macro");
-  TEST_ASSERT_TRUE(b.type == InstrType::Macro);
-  TEST_ASSERT_EQUAL(5, b.machine);
+  TEST_ASSERT_TRUE(b.type == InstrType::Chip);
+  TEST_ASSERT_EQUAL_STRING("OLD7", b.name);
 }
 
 void test_roundtrip_string() {
@@ -784,7 +783,7 @@ int main() {
   RUN_TEST(test_v1_file_loads_without_slices);
   RUN_TEST(test_apply_preset_sample_missing_keeps_slices);
   RUN_TEST(test_v3_roundtrip_synth);
-  RUN_TEST(test_roundtrip_macro);
+  RUN_TEST(test_type7_preset_loads_as_chip);
   RUN_TEST(test_roundtrip_string);
   RUN_TEST(test_v2_file_loads_synth_defaults);
   RUN_TEST(test_apply_synth_copies_tables);

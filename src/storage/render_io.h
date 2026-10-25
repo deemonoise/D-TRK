@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "bounce.h"
 #include "export.h"
 #include "render.h"
 #include "storage.h"
@@ -40,5 +41,12 @@ Result exportSet(mt::Project& p, const mt::ExportSpec& spec, ExportStats& st, Ex
 // most kResampleMaxFrames: Result::Capped (added, but cut).
 Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampleNameMax + 1], RenderStats& st,
                 RenderProgress cb, void* ctx);
+// One-shot (Save one-shot...): a note of spec.instr into the sample bank. The synth board renders the
+// preview track's tap (spec.insTrack's insert or dry, fader, pan; no sends, no master) until silence
+// after the note-off or 10 s (mt::BounceSeq), trimmed, normalized to -0.3 dBFS; added to p's sample
+// list as name. The transport must be stopped (EngineBusy). Errors: BankFull (the list or the bank),
+// NoSd, AudioBusy, NoSynth, Silent (nothing above -60 dBFS: nothing added), Cancelled (cb).
+Result bounce(mt::Project& p, const mt::BounceSpec& spec, const char* name, RenderStats& st, RenderProgress cb,
+              void* ctx);
 
 }  // namespace storage

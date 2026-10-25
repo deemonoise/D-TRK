@@ -8,7 +8,9 @@ namespace mt {
 
 constexpr uint32_t kRenderBlockUs = 1000000u * Synth::kBlock / kSynthRate;  // 2902
 constexpr int16_t kSilence = 33;             // -60 dBFS
-constexpr float kNormPeak = 0.891f * 32767;  // -1 dBFS
+constexpr float kNormPeak = 0.891f * 32767;     // -1 dBFS
+constexpr float kNormPeakHot = 0.966f * 32767;  // -0.3 dBFS (one-shot bounce)
+constexpr float kTapScale = 32767.f * 0.25f;    // a RenderTaps tap (mix units) to int16, as MAIN 100
 
 constexpr int kRenderSlotsMax = 512;  // RenderSpec::maxSlots
 
@@ -21,9 +23,9 @@ uint64_t passUs(const Project& p, int idx);
 uint64_t songUs(const Project& p, int maxSlots = kSongMax);
 // Interleaved stereo (L, R) of `frames` frames: scales so that `peak` lands at -1 dBFS; peak 0 leaves
 // the buffer as is.
-void normalizePeak(int16_t* lr, uint32_t frames, int16_t peak);
-// The same on n samples of any layout (mono).
-void normalizeSamples(int16_t* b, uint32_t n, int16_t peak);
+void normalizePeak(int16_t* lr, uint32_t frames, int16_t peak, float target = kNormPeak);
+// The same on n samples of any layout (mono). target: the peak's level after (kNormPeak / kNormPeakHot).
+void normalizeSamples(int16_t* b, uint32_t n, int16_t peak, float target = kNormPeak);
 // Frames to keep of interleaved stereo: past the last frame with a sample above kSilence, rounded up
 // to `block`, at least one block.
 uint32_t trimTail(const int16_t* lr, uint32_t frames, uint32_t block);
@@ -95,6 +97,8 @@ struct BlockRender {
   int16_t peak = 0;
   uint32_t clips = 0;
   void render(Synth& synth, const SeqEv* ev, int n, int16_t l[Synth::kBlock], int16_t r[Synth::kBlock]);
+  // Peak and clips of a block (render() calls it on the master).
+  void measure(const int16_t* l, const int16_t* r);
 };
 
 // Offline render of the INT tracks: OfflineSequence through `synth`. Two renders of the same spec are

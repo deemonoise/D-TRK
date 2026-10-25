@@ -23,7 +23,7 @@ size_t rootLen(const char* dir) {
 
 }  // namespace
 
-bool presetTypeHas(InstrType t) { return t < InstrType::Count && t != InstrType::Kit; }
+bool presetTypeHas(InstrType t) { return t < InstrType::Count && t != InstrType::Kit && t != InstrType::Unused7; }
 
 const char* presetTypeName(InstrType t) {
   switch (t) {
@@ -32,7 +32,7 @@ const char* presetTypeName(InstrType t) {
     case InstrType::Fm: return "FM";
     case InstrType::Drum: return "DRUM";
     case InstrType::Synth: return "SYNTH";
-    case InstrType::Macro: return "MACRO";
+    case InstrType::Unused7: return "";
     case InstrType::String: return "STRING";
     case InstrType::Lofi: return "LOFI";
     default: return "CHIP";
@@ -45,7 +45,7 @@ const char* presetRoot(InstrType t) {
     case InstrType::Fm: return "/presets/FM";
     case InstrType::Drum: return "/presets/DRUM";
     case InstrType::Synth: return "/presets/SYNTH";
-    case InstrType::Macro: return "/presets/MACRO";
+    case InstrType::Unused7: return "";
     case InstrType::String: return "/presets/STRING";
     case InstrType::Lofi: return "/presets/LOFI";
     case InstrType::Kit: return "/presets/KIT";

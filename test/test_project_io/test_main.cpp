@@ -1037,6 +1037,19 @@ void test_fltr_roundtrip() {
   TEST_ASSERT_EQUAL(127, r.keytrack);
 }
 
+// DRUM machines past 16 (the second engine) survive a save / load.
+void test_drum2_machine_roundtrip() {
+  Instrument& m = a.instruments[4];
+  instrSetType(m, InstrType::Drum);
+  drumSetMachine(m, static_cast<uint8_t>(DrumMachine::Hhr));
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(static_cast<int>(InstrType::Drum), static_cast<int>(b.instruments[4].type));
+  TEST_ASSERT_EQUAL(23, b.instruments[4].machine);
+}
+
 // The filter types after HP (LADDER .. FORMANT) survive a save / load; past them clamps to OFF.
 void test_fltr_new_modes_roundtrip() {
   const FltMode modes[] = {FltMode::Ladder, FltMode::Ms20, FltMode::Comb, FltMode::Formant};
@@ -1272,28 +1285,33 @@ void test_syn_roundtrip() {
   TEST_ASSERT_EQUAL_HEX32(7, b.wavetables[1].crc);
 }
 
-// MACRO: the model in machine, TIMBRE / COLOR / ENV>TMB in the macros, the env in synEAtk / synEDec.
-void test_macro_instrument_roundtrip() {
+// Type 7 is a former type: an instrument stored with it loads as CHIP, the rest of the record intact.
+void test_type7_loads_as_chip() {
   Instrument& m = a.instruments[5];
-  instrSetType(m, InstrType::Macro);
-  m.machine = 5;
-  m.macro[kMacTimbre] = 10;
-  m.macro[kMacColor] = 20;
-  m.macro[kMacEnvTmb] = 90;
-  m.synEAtk = 3;
-  m.synEDec = 50;
+  instrSetType(m, InstrType::Fm);
+  strcpy(m.name, "OLD7");
+  m.vol = 77;
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
-  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  std::vector<uint8_t> f(out.buf.begin(), out.buf.end() - 12);  // without the CRC tail
+  size_t pos = 8;
+  bool patched = false;
+  while (pos + 8 <= f.size()) {
+    const uint32_t size = f[pos + 4] | (f[pos + 5] << 8) | (f[pos + 6] << 16) |
+                          (static_cast<uint32_t>(f[pos + 7]) << 24);
+    if (memcmp(f.data() + pos, "INST", 4) == 0) {
+      f[pos + 8 + 1 + 5 * kInstRecSize + 8] = 7;  // INST byte 8 of record 5
+      patched = true;
+    }
+    pos += 8 + size;
+  }
+  TEST_ASSERT_TRUE(patched);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
   const Instrument& r = b.instruments[5];
-  TEST_ASSERT_TRUE(r.type == InstrType::Macro);
-  TEST_ASSERT_EQUAL(5, r.machine);
-  for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_EQUAL(m.macro[k], r.macro[k]);
-  TEST_ASSERT_EQUAL(10, r.macro[kMacTimbre]);
-  TEST_ASSERT_EQUAL(20, r.macro[kMacColor]);
-  TEST_ASSERT_EQUAL(90, r.macro[kMacEnvTmb]);
-  TEST_ASSERT_EQUAL(3, r.synEAtk);
-  TEST_ASSERT_EQUAL(50, r.synEDec);
+  TEST_ASSERT_TRUE(r.type == InstrType::Chip);
+  TEST_ASSERT_EQUAL_STRING("OLD7", r.name);
+  TEST_ASSERT_EQUAL(77, r.vol);
 }
 
 // STRING: the model in machine, DAMP / BRIGHT / STRUCT / POS / EXC in the macros.
@@ -2923,6 +2941,7 @@ int main() {
   RUN_TEST(test_samples_chunk_too_small);
   RUN_TEST(test_samples_two_chunks_last_wins);
   RUN_TEST(test_fltr_roundtrip);
+  RUN_TEST(test_drum2_machine_roundtrip);
   RUN_TEST(test_fltr_new_modes_roundtrip);
   RUN_TEST(test_lfo_dests_roundtrip);
   RUN_TEST(test_file_without_fltr);
@@ -2934,7 +2953,7 @@ int main() {
   RUN_TEST(test_slices_bad_order_truncated);
   RUN_TEST(test_slices_count_clamped);
   RUN_TEST(test_syn_roundtrip);
-  RUN_TEST(test_macro_instrument_roundtrip);
+  RUN_TEST(test_type7_loads_as_chip);
   RUN_TEST(test_string_instrument_roundtrip);
   RUN_TEST(test_file_without_syn_chunks);
   RUN_TEST(test_syni_garbage_clamped);

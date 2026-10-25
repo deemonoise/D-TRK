@@ -5,9 +5,11 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 12;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
+constexpr uint16_t kProtocol = 14;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
                                     // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields);
-                                    // 12: LOFI (InstrType::Lofi, Instrument lofiFormula / lofiSync / lfoByte)
+                                    // 12: LOFI (InstrType::Lofi, Instrument lofiFormula / lofiSync / lfoByte);
+                                    // 13: recording (Rec*)
+                                    // 14: one-shot (RenderStartReq::src, RenderEndReq normalize 2)
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -25,6 +27,7 @@ enum class Msg : uint8_t {
   Debug,
   WtRender,
   RenderOut,
+  RecStart, RecSet, RecLevel, RecStop, RecCancel,
 };
 
 // Fs* replies: err first, 0 = ok.
@@ -340,12 +343,16 @@ enum class RenderResult : uint8_t {
 // 16 / 24) before the first RenderBlocks; outs: the files wanted, the reply's outMax: how many this pass
 // takes (the PERF ring in PSRAM: up to 20, RAM2: up to 6); skipFrames: not written (WRAP); estFrames:
 // the expected length (preallocation).
+// src: kSrcMaster = the master mix; kSrcPreview (target kBank only, one-shot bounce) = the preview
+// track's strip (its insert, fader, pan; no sends, no master: mt::RenderTaps::kPrev).
 struct RenderStartReq {
   static constexpr uint8_t kFile = 0, kBank = 1, kExport = 2;
+  static constexpr uint8_t kSrcMaster = 0, kSrcPreview = 1;
   uint8_t target = kFile;
   char path[128] = {};
   uint8_t bits = 24, outs = 1;
   uint32_t skipFrames = 0, estFrames = 0;
+  uint8_t src = kSrcMaster;
 };
 // RenderOut: file idx (0.. in order, < outMax) of the export pass, tap (mt::kExportTapMaster, 1 + track,
 // 17..19 MOD / DLY / RVB), its name in the folder. Reply: RenderRep.
@@ -365,7 +372,8 @@ struct RenderBlocks {
   uint8_t evN[kMaxBlocks] = {};
   RenderEv ev[kMaxEvents];
 };
-// normalize: scaled so the peak lands at -1 dBFS (the bank: the mono mix's peak); trim: cut after
+// normalize: 1 scaled so the peak lands at -1 dBFS (the bank: the mono mix's peak), 2 at -0.3 dBFS
+// (mt::kNormPeakHot, one-shot); trim: cut after
 // the last block above -60 dBFS.
 // Export: frames = the files' length (0 = all written).
 struct RenderEndReq {
@@ -387,6 +395,56 @@ struct RenderRep {
   uint8_t outMax = 0, outN = 0;
   uint16_t peaks[kMaxOut] = {};
   uint32_t clipsN[kMaxOut] = {};
+};
+
+// Recording (mt::RecCapture on the synth board) from MIC / LINE (the codec's inputs) or RESAMPLE (the
+// synth's own output) into /samples/rec/RECn.wav while the song plays. RecStart arms a take (source
+// mt::RecSource, gain mt::recGainClamp, thresh in dB or mt::kRecThreshOff, mon: input into the
+// output; number: the first n free in the project, the board takes the first n' >= number with no
+// file on the card and returns it). RecSet changes gain / mon (also before RecStart, with the source the
+// meter follows: the window opens with one, the meter runs from then). RecLevel (no payload) polls state (mt::RecState), the meter since the last
+// poll, frames so far; it is also the keepalive: 2 s without one and the board ends the take into
+// the file without the bank. RecStop is long: Progress {op = RecStop} every 100 ms, then RecStopRep
+// (the mono mix's crc / frames in the bank, the take's peak / clips). RecCancel (no payload) drops
+// the take and its file. RecSet / RecCancel reply with a RecLevelRep.
+enum class RecResult : uint8_t {
+  Ok, NoSd, Busy, NoCodec,
+  NoPsram,   // no PSRAM for the ring: no take
+  NotRec,    // RecStop without a take
+  TooShort,  // under mt::kRecMinFrames: nothing kept
+  CardSlow,  // the ring overflowed: the take stopped, what was written is kept
+  WriteFail,  // the card failed
+  Bank,      // the bank import failed: RecStopRep::bank has the mt::BankResult
+  BadArg,
+};
+struct RecStartReq {
+  uint8_t source = 0;
+  int8_t gain = 0, thresh = -128;
+  uint8_t mon = 0;
+  uint16_t number = 1;
+};
+struct RecStartRep {
+  uint8_t result = 0;
+  uint16_t number = 0;  // n of the take's file
+};
+struct RecSetReq {
+  int8_t gain = 0;
+  uint8_t mon = 0;
+  uint8_t source = 0;  // mt::RecSource: the input the meter (and the codec) follows before RecStart;
+                      // during a take only the take's source is accepted (else BadArg)
+};
+struct RecLevelRep {
+  uint8_t result = 0, state = 0;
+  uint16_t peak = 0;
+  uint32_t clips = 0, frames = 0;
+  uint8_t codec = 0;  // the codec answers: MIC / LINE available
+};
+struct RecStopRep {
+  uint8_t result = 0, bank = 0;
+  uint16_t number = 0;
+  uint32_t crc = 0, frames = 0;
+  uint16_t peak = 0;
+  uint32_t clips = 0;
 };
 
 // FwFromFile: a .hex on the card (Intel HEX of this board's firmware) into the OTA area of the flash,
@@ -462,6 +520,11 @@ void encode(const RenderRep& m, Writer& w);
 void encode(const RenderOut& m, Writer& w);
 void encode(const FwFromFileReq& m, Writer& w);
 void encode(const FwRep& m, Writer& w);
+void encode(const RecStartReq& m, Writer& w);
+void encode(const RecStartRep& m, Writer& w);
+void encode(const RecSetReq& m, Writer& w);
+void encode(const RecLevelRep& m, Writer& w);
+void encode(const RecStopRep& m, Writer& w);
 
 // False on a truncated / malformed payload.
 bool decode(Reader& r, Hello& m);
@@ -505,6 +568,11 @@ bool decode(Reader& r, RenderRep& m);
 bool decode(Reader& r, RenderOut& m);
 bool decode(Reader& r, FwFromFileReq& m);
 bool decode(Reader& r, FwRep& m);
+bool decode(Reader& r, RecStartReq& m);
+bool decode(Reader& r, RecStartRep& m);
+bool decode(Reader& r, RecSetReq& m);
+bool decode(Reader& r, RecLevelRep& m);
+bool decode(Reader& r, RecStopRep& m);
 
 // Encodes m as a whole frame of type t into out (kMaxEncoded bytes); 0 when it does not fit.
 template <class M>

@@ -1,5 +1,6 @@
 #include "audio_out.h"
 #include "clock.h"
+#include "rec.h"
 #include "stream_ring.h"
 #include "synth.h"
 
@@ -13,14 +14,22 @@ int offsetIn(uint64_t t, uint64_t blockUs) {
   return off < AUDIO_BLOCK_SAMPLES ? static_cast<int>(off) : -1;
 }
 
+const int16_t kSilence[AUDIO_BLOCK_SAMPLES] PROGMEM = {};  // a missing input block (rare: flash)
+
+int16_t sat16(int32_t v) { return static_cast<int16_t>(v > 32767 ? 32767 : v < -32768 ? -32768 : v); }
+
 }  // namespace
 
 void SynthStream::update() {
+  audio_block_t* inL = receiveReadOnly(0);
+  audio_block_t* inR = receiveReadOnly(1);
   audio_block_t* l = allocate();
   audio_block_t* r = allocate();
   if (!l || !r) {
     if (l) release(l);
     if (r) release(r);
+    if (inL) release(inL);
+    if (inR) release(inR);
     return;
   }
   const uint32_t c0 = ARM_DWT_CYCCNT;
@@ -60,6 +69,23 @@ void SynthStream::update() {
     memset(l->data, 0, sizeof(l->data));
     memset(r->data, 0, sizeof(r->data));
   }
+  if (mt::RecCapture* rc = rec_) {
+    const bool resample = rc->source() == mt::RecSource::Resample;
+    const int16_t* il = inL ? inL->data : kSilence;
+    const int16_t* ir = rc->source() == mt::RecSource::Mic ? il : inR ? inR->data : kSilence;
+    if (resample) {
+      rc->feed(l->data, r->data, AUDIO_BLOCK_SAMPLES);
+    } else {
+      rc->feed(il, ir, AUDIO_BLOCK_SAMPLES);
+      if (monitor_)
+        for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
+          l->data[i] = sat16(l->data[i] + il[i]);
+          r->data[i] = sat16(r->data[i] + ir[i]);
+        }
+    }
+  }
+  if (inL) release(inL);
+  if (inR) release(inR);
   if (preview_) preview_->mix(l->data, r->data, AUDIO_BLOCK_SAMPLES, previewGain_);
   const uint32_t c = ARM_DWT_CYCCNT - c0;
   lastCycles_ = c;

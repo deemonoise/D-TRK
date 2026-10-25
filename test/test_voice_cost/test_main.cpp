@@ -62,19 +62,17 @@ void test_fm_drum() {
   TEST_ASSERT_EQUAL(290, voiceCost(of(InstrType::Drum), false));
 }
 
-void test_macro_by_model() {
-  const int want[] = {148, 233, 166, 219, 191, 229, 174, 174};
-  Instrument m = of(InstrType::Macro);
-  for (int k = 0; k < static_cast<int>(MacroModel::Count); ++k) {
-    m.machine = static_cast<uint8_t>(k);
-    TEST_ASSERT_EQUAL(want[k], voiceCost(m, false));
+void test_drum2_costs() {
+  Instrument m = of(InstrType::Drum);
+  for (int mc = 0; mc < kDrum2First; ++mc) {
+    m.machine = static_cast<uint8_t>(mc);
+    TEST_ASSERT_EQUAL(kCostDrum, voiceCost(m, false));
   }
-}
-
-void test_macro_out_of_range_clamps() {
-  Instrument m = of(InstrType::Macro);
-  m.machine = 200;
-  TEST_ASSERT_EQUAL(kCostMacro[static_cast<int>(MacroModel::Count) - 1], voiceCost(m, false));
+  for (int k = 0; k < static_cast<int>(DrumMachine::Count) - kDrum2First; ++k) {
+    m.machine = static_cast<uint8_t>(kDrum2First + k);
+    TEST_ASSERT_EQUAL(kCostDrum2[k], voiceCost(m, false));
+    TEST_ASSERT_TRUE(kCostDrum2[k] >= 200 && kCostDrum2[k] <= 600);  // bench-max: about the old DRUM
+  }
 }
 
 void test_string_by_model() {
@@ -132,8 +130,7 @@ int main() {
   RUN_TEST(test_synth_wt_on_osc_two);
   RUN_TEST(test_synth_bl);
   RUN_TEST(test_fm_drum);
-  RUN_TEST(test_macro_by_model);
-  RUN_TEST(test_macro_out_of_range_clamps);
+  RUN_TEST(test_drum2_costs);
   RUN_TEST(test_string_by_model);
   RUN_TEST(test_kit);
   RUN_TEST(test_string_comb_costs_nothing);

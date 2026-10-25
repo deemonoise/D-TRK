@@ -230,7 +230,7 @@ void ExportWriter::path(int i, bool tmp, char* out, int n) const {
 }
 
 bool ExportWriter::add(int idx, uint8_t tap, const char* name, uint64_t prealloc) {
-  if (!open_ || idx != n_ || idx >= max_ || tap > RenderTaps::kCount || !name || !name[0]) return false;
+  if (!open_ || idx != n_ || idx >= max_ || tap > RenderTaps::kRvb + 1 || !name || !name[0]) return false;
   snprintf(name_[idx], kExportNameMax, "%s", name);
   char p[sizeof dir_ + kExportNameMax + 8];
   path(idx, true, p, sizeof p);

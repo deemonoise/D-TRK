@@ -108,6 +108,21 @@ RenderRep rep(RenderResult r) {
   return m;
 }
 
+// One-shot bounce (RenderStartReq::kSrcPreview): the preview track's tap is the render's source.
+struct PrevTap {
+  mt::RenderTaps t;
+  float l[mt::Synth::kBlock], r[mt::Synth::kBlock];
+};
+PrevTap* prevTap = nullptr;  // malloc'd for the render
+
+void freePrevTap() {
+  if (!prevTap) return;
+  synth->setTaps(nullptr);
+  feeder->setTap(nullptr, 0);
+  free(prevTap);
+  prevTap = nullptr;
+}
+
 // The export's memory back: taps off, buffers freed, the PERF ring reattached (cleared).
 void freeExport() {
   if (!ex) return;
@@ -138,6 +153,7 @@ void keepalive(uint32_t done, uint32_t total, void*) {
 // The render ends either way: file closed, buffer freed, the live output back (the synth reset by it).
 void finish() {
   freeExport();
+  freePrevTap();
   if (file) file.close();
   free(buf);
   buf = nullptr;
@@ -276,6 +292,19 @@ RenderResult start(Reader& r, uint8_t& outMax) {
     return RenderResult::WriteFail;
   }
   beginRender();
+  if (q.src == RenderStartReq::kSrcPreview) {
+    prevTap = static_cast<PrevTap*>(malloc(sizeof(PrevTap)));
+    if (!prevTap) {
+      abortRender();
+      return RenderResult::WriteFail;
+    }
+    new (&prevTap->t) mt::RenderTaps();
+    prevTap->t.mask = 1u << mt::RenderTaps::kPrev;
+    prevTap->t.l[mt::RenderTaps::kPrev] = prevTap->l;
+    prevTap->t.r[mt::RenderTaps::kPrev] = prevTap->r;
+    synth->setTaps(&prevTap->t);
+    feeder->setTap(&prevTap->t, mt::RenderTaps::kPrev);
+  }
   return RenderResult::Ok;
 }
 
@@ -290,7 +319,10 @@ uint32_t keptFrames(bool trim) {
 
 // The file target: the kept frames read back (scaled in place when normalizing), the mono mix's crc
 // for "mtcr", the header, then <path>.tmp renamed to path.
-RenderResult endFile(bool normalize, uint32_t frames, uint32_t& crc) {
+// normalize (RenderEndReq): 0 off, 1 -1 dBFS, 2 -0.3 dBFS.
+float normTarget(uint8_t normalize) { return normalize == 2 ? mt::kNormPeakHot : mt::kNormPeak; }
+
+RenderResult endFile(uint8_t normalize, uint32_t frames, uint32_t& crc) {
   crc = 0;
   const int16_t peak = normalize ? feeder->peak() : 0;
   for (uint32_t at = 0; at < frames;) {
@@ -298,7 +330,7 @@ RenderResult endFile(bool normalize, uint32_t frames, uint32_t& crc) {
     const uint64_t pos = mt::kWavHeaderBytes + static_cast<uint64_t>(at) * 4;
     if (!file.seekSet(pos) || file.read(buf, n * 4) != static_cast<int>(n * 4)) return RenderResult::ReadFail;
     if (peak > 0) {
-      mt::normalizePeak(buf, n, peak);
+      mt::normalizePeak(buf, n, peak, normTarget(normalize));
       if (!file.seekSet(pos) || file.write(buf, n * 4) != n * 4) return RenderResult::WriteFail;
     }
     for (uint32_t i = 0; i < n; ++i) buf[i] = static_cast<int16_t>((buf[2 * i] + buf[2 * i + 1]) / 2);
@@ -320,6 +352,7 @@ RenderResult endFile(bool normalize, uint32_t frames, uint32_t& crc) {
 struct BankFill {
   int16_t peak;
   bool failed;
+  float target;
 };
 
 bool fillBank(int16_t* o, uint32_t at, uint32_t n, void* ctx) {
@@ -332,7 +365,7 @@ bool fillBank(int16_t* o, uint32_t at, uint32_t n, void* ctx) {
       return false;
     }
     for (uint32_t i = 0; i < k; ++i) o[i] = static_cast<int16_t>((buf[2 * i] + buf[2 * i + 1]) / 2);
-    mt::normalizeSamples(o, k, bf.peak);
+    mt::normalizeSamples(o, k, bf.peak, bf.target);
     o += k;
     at += k;
     n -= k;
@@ -340,8 +373,8 @@ bool fillBank(int16_t* o, uint32_t at, uint32_t n, void* ctx) {
   return true;
 }
 
-RenderResult endBank(bool normalize, uint32_t frames, mt::ImportOut& o, mt::BankResult& br) {
-  BankFill bf{normalize ? feeder->monoPeak() : static_cast<int16_t>(0), false};
+RenderResult endBank(uint8_t normalize, uint32_t frames, mt::ImportOut& o, mt::BankResult& br) {
+  BankFill bf{normalize ? feeder->monoPeak() : static_cast<int16_t>(0), false, normTarget(normalize)};
   br = bank::writeFrames(frames, mt::kSynthRate, fillBank, &bf, o, keepalive, nullptr);
   file.close();
   SD.sdfs.remove(tmp);
@@ -393,13 +426,13 @@ RenderRep end(Reader& r, uint8_t seq) {
     if (target == RenderStartReq::kBank) {
       mt::ImportOut o;
       mt::BankResult br = mt::BankResult::Ok;
-      res = endBank(q.normalize != 0, frames, o, br);
+      res = endBank(q.normalize, frames, o, br);
       m.bank = static_cast<uint8_t>(br);
       m.crc = o.crc;
       m.frames = o.frames;
       m.peak = static_cast<uint16_t>(feeder->monoPeak());
     } else {
-      res = endFile(q.normalize != 0, frames, m.crc);
+      res = endFile(q.normalize, frames, m.crc);
       m.frames = frames;
       m.peak = static_cast<uint16_t>(feeder->peak());
     }

@@ -55,9 +55,12 @@ enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
 enum class ChopMode : uint8_t { Equal, Trans, Count };
 constexpr int kMaxSlices = 32;
-// Stored in files (INST byte 8): new types before Count only. LOFI is 6 as on main; MACRO, STRING follow.
-enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Lofi, Macro, String, Count };
-// UI order of the types (FM, SYNTH, MACRO, STRING, DRUM, SAMPLE, CHIP, LOFI, KIT): position k -> type, type -> position.
+// Stored in files (INST byte 8): new types before Count only. LOFI is 6 as on main.
+// 7 is a former type: never reuse it; a file / preset with type 7 loads as CHIP.
+enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Lofi, Unused7, String, Count };
+// Types shown in the UI (all but Unused7).
+constexpr int kInstrTypesUi = 8;
+// UI order of the types (FM, SYNTH, STRING, DRUM, SAMPLE, CHIP, LOFI, KIT): position k -> type, type -> position.
 InstrType instrTypeAt(int k);
 int instrTypePos(InstrType t);
 constexpr int kKitLanes = 8;
@@ -85,15 +88,14 @@ enum class SynOsc : uint8_t { Saw, Square, Tri, Wt, Count };
 // SYNTH macros: same slots as FM / DRUM (fx DCY..CON, LFO Dec..Con).
 enum SynMacro : uint8_t { kMacShp1 = kMacDec, kMacShp2 = kMacCol, kMacMix = kMacShp, kMacDet = kMacSwp,
                           kMacSenv = kMacCon };
-// DRUM machines (808 / 909 models). Stored in files: new machines go before Count only.
+// DRUM machines (808 / 909 models; from BDA on the second engine, Drum2Voice). Stored in files: new
+// machines go before Count only.
 enum class DrumMachine : uint8_t {
-  Bd8, Sd8, Tom8, Cp8, Rs8, Cl8, Cb8, Hh8, Cy8, Bd9, Sd9, Tom9, Cp9, Rs9, Hh9, Cy9, Count
+  Bd8, Sd8, Tom8, Cp8, Rs8, Cl8, Cb8, Hh8, Cy8, Bd9, Sd9, Tom9, Cp9, Rs9, Hh9, Cy9,
+  Bda, Sda, Bds, Sds, Cpx, Rsx, Bdf, Hhr, Count
 };
-// MACRO oscillator models (Instrument::machine). Stored in files: new models before Count only.
-enum class MacroModel : uint8_t { SawPlus, Morph, SawSqr, Fold, Vosim, Vowel, Fm, FbFm, Count };
-// MACRO macros: same slots as FM / DRUM (fx DCY..SHP, LFO Dec..Shp); SWP / CON unused.
-enum MacroMacro : uint8_t { kMacTimbre = kMacDec, kMacColor = kMacCol, kMacEnvTmb = kMacShp };
-const char* macroModelName(uint8_t model);  // "SAW+"; out of range -> model 0
+// First DRUM machine of the second engine (Drum2Voice, synth_drum2.h).
+constexpr uint8_t kDrum2First = static_cast<uint8_t>(DrumMachine::Bda);
 // STRING resonator models (Instrument::machine). Stored in files: new models before Count only.
 enum class StringModel : uint8_t { String, Modal, Count };
 // STRING macros: same slots as FM / DRUM (fx DCY..CON, LFO Dec..Con).
@@ -101,10 +103,9 @@ enum StringMacro : uint8_t { kMacDamp = kMacDec, kMacBright = kMacCol, kMacStruc
                              kMacExc = kMacCon };
 const char* stringModelName(uint8_t model);  // "STRING"; out of range -> model 0
 // Instrument::machine of any type fits below this.
-constexpr int kMachineMax = 16;
+constexpr int kMachineMax = 32;
 static_assert(static_cast<int>(FmMachine::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(DrumMachine::Count) <= kMachineMax, "machine field");
-static_assert(static_cast<int>(MacroModel::Count) <= kMachineMax, "machine field");
 static_assert(static_cast<int>(StringModel::Count) <= kMachineMax, "machine field");
 // LOFI machines: BYTE (bytebeat formula, Instrument::lofiFormula), APC (Atari Punk Console). Stored in
 // files: new machines go before Count only.
@@ -299,7 +300,7 @@ const char* lofiMacroName(uint8_t machine, int k);
 void instrSetType(Instrument& m, InstrType t);
 // KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
 void kitSetDefaults(Instrument& m);
-// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH / STRING / LOFI, DEC..SHP: MACRO; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
+// LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH / STRING / LOFI; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
 bool lfoDestValid(uint8_t dest, InstrType t);
 // LFO target d steps from dest over the targets valid for t, in the display order (PAN after RVB;
 // clamped at the ends); self (0..kLfos-1, -1 = none): that LFO's RTRG is skipped.

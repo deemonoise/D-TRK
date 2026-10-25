@@ -45,9 +45,11 @@ static_assert(kLfos == 4, "LfoMods::depth initializer");
 // after insert, fader and pan (no sends, before the compressor) or the MOD / DLY / RVB return; mix
 // units, before the master stage. gain: that block's MAIN gain (mv x 0.25 / 100): x gain x 32767 is
 // the master's int16 scale. The master stays bit-identical: the taps only read the mix (a return is
-// the mix after its bus minus the mix before it).
+// the mix after its bus minus the mix before it). kPrev: the preview track's strip (one-shot bounce:
+// the insert it plays through, fader and pan, no sends, no master).
 struct RenderTaps {
-  static constexpr int kMod = kTracks, kDly = kTracks + 1, kRvb = kTracks + 2, kCount = kTracks + 3;
+  static constexpr int kMod = kTracks, kDly = kTracks + 1, kRvb = kTracks + 2, kPrev = kTracks + 3,
+                       kCount = kTracks + 4;
   uint32_t mask = 0;
   float* l[kCount] = {};
   float* r[kCount] = {};
@@ -216,7 +218,7 @@ class Synth {
   enum ProfStage : uint8_t {
     kProfQueue, kProfEvents, kProfCache, kProfInstLfo, kProfCtlMod, kProfCtlFlt, kProfCtlEng, kProfChip,
     kProfSample, kProfFm, kProfDrum, kProfSyn, kProfMix, kProfDelay, kProfReverb, kProfComp, kProfPerf,
-    kProfMaster, kProfStrip, kProfMod, kProfShim, kProfEq, kProfMacro, kProfString, kProfLofi, kProfStages
+    kProfMaster, kProfStrip, kProfMod, kProfShim, kProfEq, kProfSpare, kProfString, kProfLofi, kProfStages
   };
   static const char* profName(int stage);
   // Any task: arms (or, nullptr, stops) the profiler. It takes effect at the start of the next block
@@ -304,8 +306,8 @@ class Synth {
   void control(Voice& v, int dt);
   void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
+  void controlDrum2(Voice& v, const Instrument& m, float pitch, int dt, const float* mac, float vol);
   void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
-  void controlMacro(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlString(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlLofi(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   static void macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]);
@@ -367,7 +369,7 @@ class Synth {
   RenderTaps* taps_ = nullptr;
   MT_INLINE bool tapOn(int k) const { return taps_ && (taps_->mask >> k & 1u); }
   void tapsClear();
-  void tapTrack(int track, const float* x, int pos, int n, float gl, float gr, float dgl, float dgr);
+  void tapTrack(int k, const float* x, int pos, int n, float gl, float gr, float dgl, float dgr);
   void tapReturn(int k, bool after);
   // Envelope followers, at each control boundary before the voices' updates: the sources' levels
   // over the last segment (srcPk_) into the destination tracks' envelopes and their targets.

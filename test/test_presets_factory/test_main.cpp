@@ -34,6 +34,35 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
 void setUp() {}
 void tearDown() {}
 
+// Two factory DRUM presets per machine BDA .. HHR, unique short names; the ANALOG KIT plays them.
+void test_drum2_presets() {
+  int per[static_cast<int>(DrumMachine::Count)] = {};
+  const int n = factoryCount(InstrType::Drum);
+  for (int i = 0; i < n; ++i) {
+    const FactoryPreset& f = factoryPreset(InstrType::Drum, i);
+    TEST_ASSERT_TRUE_MESSAGE(strlen(f.name) <= 8, f.name);
+    for (int j = 0; j < i; ++j) TEST_ASSERT_TRUE_MESSAGE(strcmp(f.name, factoryPreset(InstrType::Drum, j).name), f.name);
+    Instrument m;
+    factoryBuild(InstrType::Drum, i, m);
+    TEST_ASSERT_TRUE(m.machine < static_cast<int>(DrumMachine::Count));
+    ++per[m.machine];
+  }
+  for (int mc = kDrum2First; mc < static_cast<int>(DrumMachine::Count); ++mc) TEST_ASSERT_EQUAL(2, per[mc]);
+  bool found = false;
+  for (int i = 0; i < factoryCount(InstrType::Kit); ++i) {
+    const FactoryPreset& k = factoryPreset(InstrType::Kit, i);
+    if (strcmp(k.name, "ANALOG")) continue;
+    found = true;
+    TEST_ASSERT_EQUAL(8, k.drumCount);
+    for (int l = 0; l < k.drumCount; ++l) {
+      bool exists = false;
+      for (int j = 0; j < n && !exists; ++j) exists = !strcmp(k.drums[l].name, factoryPreset(InstrType::Drum, j).name);
+      TEST_ASSERT_TRUE_MESSAGE(exists, k.drums[l].name);
+    }
+  }
+  TEST_ASSERT_TRUE(found);
+}
+
 void test_counts() {
   TEST_ASSERT_TRUE(factoryCount(InstrType::Chip) >= 30);
   TEST_ASSERT_TRUE(factoryCount(InstrType::Fm) >= 30);
@@ -267,24 +296,8 @@ void test_every_preset_sounds() {
   }
 }
 
-// MACRO: one preset per model, generic names.
-void test_macro_presets() {
-  constexpr int kModels = static_cast<int>(MacroModel::Count);
-  TEST_ASSERT_EQUAL(8, factoryCount(InstrType::Macro));
-  bool seen[kModels] = {};
-  for (int i = 0; i < factoryCount(InstrType::Macro); ++i) {
-    const FactoryPreset& a = factoryPreset(InstrType::Macro, i);
-    Instrument m;
-    factoryBuild(InstrType::Macro, i, m);
-    TEST_ASSERT_TRUE_MESSAGE(m.type == InstrType::Macro, a.name);
-    TEST_ASSERT_TRUE_MESSAGE(m.machine < kModels, a.name);
-    seen[m.machine] = true;
-    TEST_ASSERT_TRUE_MESSAGE(strlen(a.name) >= 1 && strlen(a.name) <= 8, a.name);
-    for (int j = i + 1; j < factoryCount(InstrType::Macro); ++j)
-      TEST_ASSERT_TRUE_MESSAGE(strcmp(a.name, factoryPreset(InstrType::Macro, j).name) != 0, a.name);
-  }
-  for (int k = 0; k < kModels; ++k) TEST_ASSERT_TRUE_MESSAGE(seen[k], macroModelName(static_cast<uint8_t>(k)));
-}
+// Type 7 is a former type: no factory presets.
+void test_unused7_has_no_presets() { TEST_ASSERT_EQUAL(0, factoryCount(InstrType::Unused7)); }
 
 // STRING: 3 STRING + 3 MODAL presets, generic names.
 void test_string_presets() {
@@ -350,6 +363,7 @@ void test_kit_lanes() {
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_counts);
+  RUN_TEST(test_drum2_presets);
   RUN_TEST(test_names_unique_and_short);
   RUN_TEST(test_categories_grouped);
   RUN_TEST(test_valid_values);
@@ -361,7 +375,7 @@ int main() {
   RUN_TEST(test_lofi_byte_presets_use_formula_defaults);
   RUN_TEST(test_chord_preset_is_maj7);
   RUN_TEST(test_every_preset_sounds);
-  RUN_TEST(test_macro_presets);
+  RUN_TEST(test_unused7_has_no_presets);
   RUN_TEST(test_string_presets);
   RUN_TEST(test_kit_block);
   RUN_TEST(test_kit_lanes);

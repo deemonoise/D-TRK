@@ -49,19 +49,20 @@ void waveName(uint8_t w, char* o, int n) {
 }  // namespace
 
 InstScreen::InstScreen(App& app) : app_(app) {
-  Param* const sets[] = {chip_, sample_, fm_, drum_, syn_, macro_, string_, lofi_};
+  Param* const sets[] = {chip_, sample_, fm_, drum_, syn_, string_, lofi_};
   for (Param* p : sets) {
     p[kName] = {"Name", [this](char* o, int n) { snprintf(o, n, "%s", inst().name); },
                 [this](int d) { editNameChar(inst().name, kNameLen, namePos_, d); }};
     p[kType] = {"Type",
                 [this](char* o, int n) {
-                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT", "LOFI", "MACRO", "STRING"};
+                  // Slot 7: a former type (never shown: it loads as CHIP).
+                  static const char* const kNames[] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "KIT", "LOFI", "", "STRING"};
                   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::InstrType::Count), "type names");
                   const int t = static_cast<int>(inst().type);
                   snprintf(o, n, "%s", kNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0]);
                 },
                 [this](int d) {
-                  const int k = clampi(mt::instrTypePos(inst().type) + d, 0, static_cast<int>(mt::InstrType::Count) - 1);
+                  const int k = clampi(mt::instrTypePos(inst().type) + d, 0, mt::kInstrTypesUi - 1);
                   setType(mt::instrTypeAt(k));
                 }};
     p[kVol] = {"Volume", [this](char* o, int n) { snprintf(o, n, "%u", inst().vol); },
@@ -99,7 +100,6 @@ InstScreen::InstScreen(App& app) : app_(app) {
     p[kSend] = {"Dly send", [this](char* o, int n) { snprintf(o, n, "%u", inst().send); },
                 [this](int d) { inst().send = static_cast<uint8_t>(clampi(inst().send + d, 0, 127)); }};
   }
-  macro_[kVelMac].label = "Vel>Tmb";   // MACRO: velocity moves TIMBRE (the DECAY slot)
   string_[kVelMac].label = "Vel>Dmp";  // STRING: velocity moves DAMP (the DECAY slot)
   chip_[kWave] = {"Wave", [this](char* o, int n) { waveName(inst().wave, o, n); },
                   [this](int d) { inst().wave = static_cast<uint8_t>(clampi(inst().wave + d, 0, mt::kWaveCount - 1)); }};
@@ -266,26 +266,6 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    else snprintf(o, n, "HOLD");
                  },
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
-  // MACRO: the model's TIMBRE / COLOR; ENV>TMB an AD envelope on TIMBRE (64 = none).
-  macro_[kModel] = {"Model", [this](char* o, int n) { snprintf(o, n, "%s", mt::macroModelName(inst().machine)); },
-                    [this](int d) {
-                      inst().machine = static_cast<uint8_t>(
-                          clampi(inst().machine + d, 0, static_cast<int>(mt::MacroModel::Count) - 1));
-                    }};
-  macro_[kTimbre] = {"Timbre", macroNum(mt::kMacTimbre), macroEdit(mt::kMacTimbre)};
-  macro_[kColor] = {"Color", macroNum(mt::kMacColor), macroEdit(mt::kMacColor)};
-  macro_[kEnvTmb] = {"Env>Tmb",
-                     [this](char* o, int n) {
-                       const int v = inst().macro[mt::kMacEnvTmb] - 64;
-                       if (v) snprintf(o, n, "%+d", v);
-                       else snprintf(o, n, "OFF");
-                     },
-                     macroEdit(mt::kMacEnvTmb)};
-  auto noEnvTmb = [this] { return inst().macro[mt::kMacEnvTmb] == 64; };
-  macro_[kMEAtk] = syn_[kEAtk];
-  macro_[kMEAtk].dim = noEnvTmb;
-  macro_[kMEDec] = syn_[kEDec];
-  macro_[kMEDec].dim = noEnvTmb;
   // STRING: DAMP (as the T60 0.05 s x 200^(v/127)), BRIGHT, STRUCT, POS, EXC (0 = click, else a burst).
   string_[kStrModel] = {"Model", [this](char* o, int n) { snprintf(o, n, "%s", mt::stringModelName(inst().machine)); },
                         [this](int d) {
@@ -316,7 +296,6 @@ InstScreen::InstScreen(App& app) : app_(app) {
   initTail(fm_ + kMacRows);
   initTail(drum_ + kMacRows);
   initTail(syn_ + kSynRows);
-  initTail(macro_ + kMacroRows);
   initTail(string_ + kStringRows);
   initTail(lofi_ + kLofiRows);
   initKit();
@@ -613,7 +592,6 @@ Param* InstScreen::typeRows() {
     case mt::InstrType::Fm: return fm_;
     case mt::InstrType::Drum: return drum_;
     case mt::InstrType::Synth: return syn_;
-    case mt::InstrType::Macro: return macro_;
     case mt::InstrType::String: return string_;
     case mt::InstrType::Lofi: return lofi_;
     default: return chip_;
@@ -626,7 +604,6 @@ int InstScreen::typeCount() const {
     case mt::InstrType::Fm:
     case mt::InstrType::Drum: return kMacRows - kCommon;
     case mt::InstrType::Synth: return kSynRows - kCommon;
-    case mt::InstrType::Macro: return kMacroRows - kCommon;
     case mt::InstrType::String: return kStringRows - kCommon;
     case mt::InstrType::Lofi: return kLofiRows - kCommon;
     default: return kChipRows - kCommon;
@@ -729,9 +706,11 @@ void InstScreen::onEnter() {
 }
 
 void InstScreen::onLeave() {
+  if (rec_.isOpen()) rec_.stop();  // a running take is saved and bound
   if (presets_.isOpen()) presets_.close(false);
   if (wt_.isOpen()) wt_.close();
   wtMake_.cancel();
+  bounce_.cancel();
 }
 
 void InstScreen::onProjectReplaced() {
@@ -741,6 +720,8 @@ void InstScreen::onProjectReplaced() {
   if (presets_.isOpen()) presets_.close(true);
   if (wt_.isOpen()) wt_.close();
   wtMake_.cancel();
+  bounce_.cancel();
+  rec_.detach();  // the take belongs to the old project: the board seals it into its file
   onEnter();
 }
 
@@ -762,10 +743,17 @@ void InstScreen::presetMenu() {
     presets_.open(PresetBrowser::Mode::Load, instr_);
     return;
   }
-  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kToWt, kMut15, kMut30, kMut60, kMutUndo };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kToWt, kMut15, kMut30, kMut60, kMutUndo, kRec, kShot };
   auto choose = [this](int id) {
     switch (id) {
       case kChop: editor_.chop(); break;
+      case kRec: rec_.open(instr_, [this] { editor_.bind(instr_); }); break;
+      case kShot: {  // through the current track's insert when it plays this instrument (as preview())
+        const int t = app_.curTrack();
+        const uint8_t ins = app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
+        bounce_.open(instr_, onEditor() ? editor_.previewNote() : kPreviewNote, ins);
+        break;
+      }
       case kToWt: {
         int idx;
         uint32_t from, to, rate;
@@ -798,7 +786,9 @@ void InstScreen::presetMenu() {
     editor_.bind(instr_);
     int wi;
     uint32_t wf, wt, wr;
-    const MenuItem items[] = {{"Chop", kChop},
+    const MenuItem items[] = {{"Record...", kRec},
+                              {"Save one-shot...", kShot},
+                              {"Chop", kChop},
                               {"Add slice", kAdd},
                               {"Delete slice", kDel, editor_.sliceSelected()},
                               {"Clear slices", kClear, editor_.hasSlices()},
@@ -809,12 +799,17 @@ void InstScreen::presetMenu() {
                               {"Mutate 30%", kMut30},
                               {"Mutate 60%", kMut60},
                               {"Undo mutate", kMutUndo, canUndo}};
-    app_.menu().open("SAMPLE", items, 11, choose);
+    app_.menu().open("SAMPLE", items, 13, choose);
     return;
   }
-  const MenuItem items[] = {{"Load", kLoad},        {"Save", kSave},        {"Mutate 15%", kMut15},
-                            {"Mutate 30%", kMut30}, {"Mutate 60%", kMut60}, {"Undo mutate", kMutUndo, canUndo}};
-  app_.menu().open("PRESET", items, 6, choose);
+  const MenuItem items[] = {{"Load", kLoad},
+                            {"Save", kSave},
+                            {"Save one-shot...", kShot},
+                            {"Mutate 15%", kMut15},
+                            {"Mutate 30%", kMut30},
+                            {"Mutate 60%", kMut60},
+                            {"Undo mutate", kMutUndo, canUndo}};
+  app_.menu().open("PRESET", items, 7, choose);
 }
 
 void InstScreen::mutate(int strength) {
@@ -848,7 +843,7 @@ void InstScreen::undoMutate() {
 }
 
 void InstScreen::onATap(bool shift) {
-  if (presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || !onEditor()) return;
+  if (rec_.isOpen() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || bounce_.isOpen() || !onEditor()) return;
   editor_.bind(instr_);
   editor_.stepMarker(shift ? -1 : 1);
 }
@@ -860,10 +855,10 @@ void InstScreen::changeInstr(int d) {
   syncParams();
 }
 
-bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && !wtMake_.isOpen() && onEditor(); }
+bool InstScreen::buttonsBusy() const { return !rec_.isOpen() && !presets_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor(); }
 
 bool InstScreen::trackKey(int n, bool shift) {
-  if (shift || presets_.isOpen() || wtMake_.isOpen() || !onEditor()) return false;
+  if (shift || rec_.isOpen() || presets_.isOpen() || wtMake_.isOpen() || bounce_.isOpen() || !onEditor()) return false;
   editor_.playSlice(n);
   return true;
 }
@@ -876,12 +871,20 @@ void InstScreen::preview() {
 }
 
 void InstScreen::onInput(const hw::InputEvent& ev) {
+  if (rec_.isOpen()) {
+    rec_.onInput(ev);
+    return;
+  }
   if (presets_.isOpen()) {
     presets_.onInput(ev);
     return;
   }
   if (wtMake_.isOpen()) {
     wtMake_.onInput(ev);
+    return;
+  }
+  if (bounce_.isOpen()) {
+    bounce_.onInput(ev);
     return;
   }
   if (wt_.isOpen()) {
@@ -928,25 +931,35 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
 
 // B + Shift + turn: the previous / next page (not over the browsers); the cursor stays on the page bar.
 void InstScreen::onPage(int d) {
-  if (presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen()) return;
+  if (rec_.isOpen() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || bounce_.isOpen()) return;
   showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
 }
 
 // B: closes the browser (as its long press), else leaves the edit with the value kept.
 void InstScreen::onBack() {
-  if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
+  if (rec_.isOpen()) rec_.onInput({hw::InputType::EncLong, 0, false});
+  else if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
   else if (wtMake_.isOpen()) wtMake_.onInput({hw::InputType::EncLong, 0, false});
+  else if (bounce_.isOpen()) bounce_.onInput({hw::InputType::EncLong, 0, false});
   else if (wt_.isOpen()) wt_.onInput({hw::InputType::EncLong, 0, false});
   else if (onEditor() ? editor_.editing() : list_.editing()) leaveEdit();
 }
 
 void InstScreen::onTouch(const TouchEvent& ev) {
+  if (rec_.isOpen()) {
+    rec_.onTouch(ev);
+    return;
+  }
   if (presets_.isOpen()) {
     presets_.onTouch(ev);
     return;
   }
   if (wtMake_.isOpen()) {
     wtMake_.onTouch(ev);
+    return;
+  }
+  if (bounce_.isOpen()) {
+    bounce_.onTouch(ev);
     return;
   }
   if (wt_.isOpen()) {
@@ -987,7 +1000,7 @@ void InstScreen::onTouch(const TouchEvent& ev) {
 }
 
 void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
-  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "LOFI", "OSC", "RES"};
+  static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "LOFI", "", "RES"};
   static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
   const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};
@@ -1065,6 +1078,10 @@ void InstScreen::drawOsc(LGFX_Sprite& s, int y) {
 
 void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
+  if (rec_.isOpen()) {
+    rec_.draw(s, y0);
+    return;
+  }
   if (presets_.isOpen()) {
     presets_.draw(s, y0);
     return;
@@ -1075,6 +1092,10 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   if (wtMake_.isOpen()) {
     wtMake_.draw(s, y0);
+    return;
+  }
+  if (bounce_.isOpen()) {
+    bounce_.draw(s, y0);
     return;
   }
   char buf[24];

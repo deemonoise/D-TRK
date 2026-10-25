@@ -191,6 +191,68 @@ Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampl
   return capped ? Result::Capped : Result::Ok;
 }
 
+Result bounce(mt::Project& p, const mt::BounceSpec& spec, const char* name, RenderStats& st, RenderProgress cb,
+              void* ctx) {
+  st = {0, 0, 0};
+  if (!stopped()) return Result::EngineBusy;
+  if (p.sampleCount >= mt::kProjSamples) return Result::BankFull;
+  if (!hw::sdReady()) return Result::NoSd;  // the render goes through a file on the card
+  if (!name || !validName(name)) return Result::BadFile;
+  if (!slink::synthUp() || !waitSynced()) return Result::NoSynth;
+  Result res = Result::Ok;
+  RenderRep rep;
+  {
+    Session ses;
+    RenderStartReq q;
+    q.target = RenderStartReq::kBank;
+    q.src = RenderStartReq::kSrcPreview;
+    if (!call(Msg::RenderStart, q, rep, kStartMs)) return Result::NoSynth;
+    if (rep.result != static_cast<uint8_t>(RenderResult::Ok)) {
+      audio::bankViewStale();
+      return fromRender(rep);
+    }
+    mt::BounceSeq seq(spec);
+    static RenderBlocks frame;  // ~500 B: off the task's stack
+    uint32_t quiet = 0, lastCb = millis();
+    while (seq.next(frame, quiet)) {
+      if (!call(Msg::RenderBlocks, frame, rep, kBlocksMs)) {
+        abortRender();
+        return Result::NoSynth;
+      }
+      if (rep.result != static_cast<uint8_t>(RenderResult::Ok)) {
+        abortRender();
+        return fromRender(rep);
+      }
+      quiet = rep.quiet;
+      const uint32_t now = millis();
+      if (cb && now - lastCb >= kProgressMs) {
+        lastCb = now;
+        if (!cb(seq.blocksSent(), spec.maxBlocks, ctx)) {
+          abortRender();
+          return Result::Cancelled;
+        }
+      }
+    }
+    if (rep.quiet >= rep.blocks) {  // never above -60 dBFS
+      abortRender();
+      return Result::Silent;
+    }
+    if (cb) cb(spec.maxBlocks, spec.maxBlocks, ctx);
+    RenderEndReq end;
+    end.normalize = 2;  // -0.3 dBFS
+    end.trim = 1;
+    res = callEnd(end, rep) ? fromRender(rep) : Result::NoSynth;
+  }
+  audio::bankViewStale();
+  if (res != Result::Ok) return res;
+  engine::lockProject();
+  const int idx = mt::projSampleSet(p, name, rep.crc, rep.frames);
+  engine::unlockProject();
+  if (idx < 0) return Result::BankFull;
+  st = {rep.frames, static_cast<int16_t>(rep.peak), rep.clips};
+  return Result::Ok;
+}
+
 namespace {
 
 constexpr uint32_t kOutMs = 1500;  // a file opened (preallocated) on the board's card

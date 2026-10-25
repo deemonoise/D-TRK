@@ -6,6 +6,12 @@ namespace mt {
 using link::RenderBlocks;
 using link::RenderResult;
 
+namespace {
+int16_t sat(float v) {
+  return static_cast<int16_t>(v > 32767.f ? 32767 : (v < -32768.f ? -32768 : (v < 0 ? v - 0.5f : v + 0.5f)));
+}
+}  // namespace
+
 bool RenderPacker::next(RenderBlocks& m) {
   m.first = packed_;
   m.n = 0;
@@ -51,7 +57,16 @@ RenderResult RenderFeeder::apply(const RenderBlocks& m, Out out, void* ctx) {
     for (int k = 0; k < n; ++k, ++ev) synth_.event(ev->off, ev->track, ev->b, ev->len);
     if (m.evN[i] & RenderBlocks::kCont) break;
     int16_t l[Synth::kBlock], r[Synth::kBlock];
-    stats_.render(synth_, nullptr, 0, l, r);
+    if (tap_) {
+      synth_.render(l, r);
+      for (int k = 0; k < Synth::kBlock; ++k) {
+        l[k] = sat(tap_->l[tapK_][k] * kTapScale);
+        r[k] = sat(tap_->r[tapK_][k] * kTapScale);
+      }
+      stats_.measure(l, r);
+    } else {
+      stats_.render(synth_, nullptr, 0, l, r);
+    }
     ++blocks_;
     for (int k = 0; k < Synth::kBlock; ++k) {
       if (l[k] > kSilence || l[k] < -kSilence || r[k] > kSilence || r[k] < -kSilence) loud_ = blocks_;

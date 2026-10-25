@@ -52,6 +52,9 @@ SECTIONS
 		/* wavetable maker (WtRender, a background job with the transport stopped) */
 		*:wt_make.cpp.o(.text* .rodata*)
 		*wt_make.cpp.o(.text* .rodata*)
+		/* recording: writer, names, setup (the capture fed by the interrupt is MT_HOT, .fastrun) */
+		*:rec.cpp.o(.text* .rodata*)
+		*rec.cpp.o(.text* .rodata*)
 		*:project_io.cpp.o(.text*)
 		*project_io.cpp.o(.text*)
 		*:preset_io.cpp.o(.text*)
@@ -78,6 +81,11 @@ SECTIONS
 		*sample_tools.cpp.o(.text*)
 		*:render_server.cpp.o(.text* .rodata*)
 		*render_server.cpp.o(.text* .rodata*)
+		/* recording on the synth board: start / stop / writer / keepalive (loop() code) */
+		*:rec_server.cpp.o(.text* .rodata*)
+		*rec_server.cpp.o(.text* .rodata*)
+		*:codec.cpp.o(.text* .rodata*)
+		*codec.cpp.o(.text* .rodata*)
 		*:control_sgtl5000.cpp.o(.text*)
 		*control_sgtl5000.cpp.o(.text*)
 		*:control_tlv320aic3206.cpp.o(.text*)
@@ -107,6 +115,10 @@ SECTIONS
 		*synth_drum.cpp.o(.text*)
 		*:synth_drum_machines.cpp.o(.text*)
 		*synth_drum_machines.cpp.o(.text*)
+		/* DRUM BDA..HHR: render is MT_HOT (ITCM); trigger / control / done and the tables (read at the
+		   trigger and at control rate) stay in flash, off RAM1. */
+		*:synth_drum2.cpp.o(.text* .rodata*)
+		*synth_drum2.cpp.o(.text* .rodata*)
 		*:synth_eq.cpp.o(.text*)
 		*synth_eq.cpp.o(.text*)
 		*:synth_filter.cpp.o(.text*)
@@ -115,8 +127,6 @@ SECTIONS
 		*synth_fm.cpp.o(.text*)
 		*:synth_fm_machines.cpp.o(.text*)
 		*synth_fm_machines.cpp.o(.text*)
-		*:synth_macro.cpp.o(.text*)
-		*synth_macro.cpp.o(.text*)
 		*:synth_model.cpp.o(.text*)
 		*synth_model.cpp.o(.text*)
 		*:synth_modfx.cpp.o(.text*)
@@ -147,6 +157,9 @@ SECTIONS
 		*render.cpp.o(.text*)
 		*:render_link.cpp.o(.text*)
 		*render_link.cpp.o(.text*)
+		/* one-shot bounce: the ESP's event sequence (unused here, kept out of ITCM) */
+		*:bounce.cpp.o(.text* .rodata*)
+		*bounce.cpp.o(.text* .rodata*)
 		/* export: the writer and the planning (offline renders only) */
 		*:export.cpp.o(.text* .rodata*)
 		*export.cpp.o(.text* .rodata*)

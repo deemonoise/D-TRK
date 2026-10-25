@@ -10,6 +10,7 @@
 #include "fs_server.h"
 #include "link_server.h"
 #include "model.h"
+#include "rec_server.h"
 #include "sample_heads.h"
 #include "sample_set.h"
 #include "sample_store.h"
@@ -110,6 +111,9 @@ bool storeActive = false, jobActive = false;
 BankResult storeRes = BankResult::Ok;
 char project[mt::kSampleNameMax + 1] = {};
 bool migrating = false;  // the boot's move of bank samples to the store (no request)
+// importFile (a take, rec_server): a store import with no request behind it; importPoll takes its end.
+bool recImport = false;
+BankResult recRes = BankResult::Running;
 uint8_t curType = 0, curSeq = 0;
 bool parkedByUs = false;
 uint32_t lastProgress = 0;
@@ -151,6 +155,7 @@ uint32_t setsTotal() {
 }
 
 void jobProgress() {
+  if (recImport) return;  // rec_server sends the take's Progress
   if (storeActive) {
     if (curType == static_cast<uint8_t>(Msg::BankImport)) sendProgress(store.done(), store.total(), -1);
     else sendProgress(store.done(), setsTotal(), store.item());
@@ -290,6 +295,23 @@ void storeImportDone(BankResult r) {
     }
   }
   answer(p, put(m, p));
+}
+
+// A take's import (importFile) ended: registered like a BankImport, no reply (importPoll has it).
+FLASHMEM void recImportDone(BankResult r) {
+  recImport = false;
+  recRes = r;
+  if (r == BankResult::Ok) {
+    const mt::ImportOut& o = store.imported();
+    stream::add(o.crc);
+    if (inModel(o.crc)) {
+      park(true);
+      writeHeads();
+      stream::rescan(*model);
+    }
+  }
+  working = false;
+  park(false);
 }
 
 // A bank job ended: a wavetable import, or the wavetable part of a sync / save.
@@ -621,7 +643,7 @@ int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* o) {
     memcpy(o, ansBuf, ansLen);
     return ansLen;
   }
-  if (working || migrating) return resultOnly(t, BankResult::Busy, o);
+  if (working || migrating || rec::busy()) return resultOnly(t, BankResult::Busy, o);
   if (!mounted) return resultOnly(t, BankResult::NoBank, o);
   curType = type;
   curSeq = seq;
@@ -678,7 +700,26 @@ void reset() { answered = false; }
 
 mt::BankResult writable() {
   if (!card::ready()) return BankResult::NoSd;
-  return working || migrating ? BankResult::Busy : BankResult::Ok;  // the jobs' card files are shared
+  // the jobs' card files are shared; a take writes the card
+  return working || migrating || rec::busy() ? BankResult::Busy : BankResult::Ok;
+}
+
+FLASHMEM mt::BankResult importFile(const char* path) {
+  if (!card::ready()) return BankResult::NoSd;
+  if (working || migrating) return BankResult::Busy;
+  const BankResult s = store.startImport(path, nullptr);
+  if (s != BankResult::Ok) return s;
+  working = storeActive = recImport = true;
+  recRes = BankResult::Running;
+  return BankResult::Running;
+}
+
+FLASHMEM mt::BankResult importPoll(mt::ImportOut& o, uint32_t& done, uint32_t& total) {
+  done = store.done();
+  total = store.total();
+  if (recImport) return BankResult::Running;
+  o = store.imported();
+  return recRes;
 }
 
 mt::BankResult writeFrames(uint32_t frames, uint32_t rate, mt::FrameFill fill, void* ctx, mt::ImportOut& o,
@@ -701,7 +742,8 @@ bool bgStep() {
     const BankResult r = store.step();
     if (r != BankResult::Running) {
       storeActive = false;
-      if (curType == static_cast<uint8_t>(Msg::BankImport)) storeImportDone(r);
+      if (recImport) recImportDone(r);
+      else if (curType == static_cast<uint8_t>(Msg::BankImport)) storeImportDone(r);
       else storeSetsDone(r);
       return true;
     }

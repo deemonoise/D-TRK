@@ -23,7 +23,7 @@ static bool sane(const DrumParams& p) {
 
 void test_all_machines_sane() {
   const float edges[] = {0, 64, 127};
-  for (int mc = 0; mc < static_cast<int>(DrumMachine::Count); ++mc)
+  for (int mc = 0; mc < kDrum2First; ++mc)
     for (float e : edges)
       for (int note = 24; note <= 108; note += 12) {
         float mac[kFmMacros];
@@ -51,6 +51,23 @@ void test_hh8_decay_monotonic() {
   TEST_ASSERT_TRUE(pb.metalMs > pa.metalMs * 10);
 }
 
+void test_drum2_enum_names() {
+  TEST_ASSERT_EQUAL(16, static_cast<int>(DrumMachine::Bda));
+  TEST_ASSERT_EQUAL(23, static_cast<int>(DrumMachine::Hhr));
+  TEST_ASSERT_EQUAL(24, static_cast<int>(DrumMachine::Count));
+  TEST_ASSERT_EQUAL(16, kDrum2First);
+  const char* n[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "BDF", "HHR"};
+  for (int k = 0; k < 8; ++k) TEST_ASSERT_EQUAL_STRING(n[k], drumMachineName(static_cast<uint8_t>(16 + k)));
+  TEST_ASSERT_EQUAL_STRING("", drumMacroName(static_cast<uint8_t>(DrumMachine::Bda), 4));
+  TEST_ASSERT_EQUAL_STRING("PATTERN", drumMacroName(static_cast<uint8_t>(DrumMachine::Cpx), 4));
+  TEST_ASSERT_EQUAL_STRING("INDEX", drumMacroName(static_cast<uint8_t>(DrumMachine::Bdf), 3));
+  float mac[kFmMacros] = {64, 64, 64, 64, 64};
+  DrumParams p;
+  p.toneHz[0] = 123;
+  drumMachine(static_cast<uint8_t>(DrumMachine::Bds), mac, 60, p);  // not this engine: zeroed, no crash
+  TEST_ASSERT_EQUAL_FLOAT(DrumParams().toneHz[0], p.toneHz[0]);
+}
+
 void test_names() {
   TEST_ASSERT_EQUAL_STRING("BD8", drumMachineName(0));
   TEST_ASSERT_EQUAL_STRING("CY9", drumMachineName(15));
@@ -62,7 +79,7 @@ void test_names() {
 // Every machine at mid macros makes sound, stays bounded and ends (one-shot).
 void test_every_machine_sounds_and_ends() {
   static float buf[32];
-  for (int mc = 0; mc < static_cast<int>(DrumMachine::Count); ++mc) {
+  for (int mc = 0; mc < kDrum2First; ++mc) {
     float mac[kFmMacros] = {64, 64, 64, 64, 64};
     DrumParams p;
     drumMachine(static_cast<uint8_t>(mc), mac, 60, p);
@@ -136,6 +153,7 @@ int main() {
   RUN_TEST(test_bd8_base_pitch_c4);
   RUN_TEST(test_hh8_decay_monotonic);
   RUN_TEST(test_names);
+  RUN_TEST(test_drum2_enum_names);
   RUN_TEST(test_every_machine_sounds_and_ends);
   RUN_TEST(test_decay_fractional);
   RUN_TEST(test_clap_level_even);

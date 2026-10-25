@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <math.h>
+#include <string.h>
 #include <vector>
 #include "demos.h"
 #include "follow.h"
@@ -800,9 +801,143 @@ void test_song_follow_render_repeatable() {
   TEST_ASSERT_EQUAL(one.size(), two.size());
   TEST_ASSERT_TRUE(one == two);
 }
+// ---- One-shot bounce: the preview track's tap (RenderTaps::kPrev) ----
+
+static void bounceProj(Project& p, uint8_t send) {
+  Instrument& m = p.instruments[1];
+  instrSetType(m, InstrType::Fm);
+  m.send = send;
+  m.rsend = send;
+  m.release = 40;
+  p.dlyLevel = 100;
+  p.rvbLevel = 100;
+}
+
+struct PrevHash {
+  uint32_t tap = 2166136261u, master = 2166136261u;
+  float tapPeak = 0;
+};
+
+// 40 blocks of instrument 1 on kPreviewTrack through insert ins (kTracks: dry).
+static PrevHash renderPreview(Project& p, Synth& synth, uint8_t ins) {
+  static TapBufs tb(1u << RenderTaps::kPrev);
+  synth.reset();
+  synth.setTaps(&tb.t);
+  const uint8_t e0[2] = {0xF7, ins}, e1[2] = {0xC0, 1}, e2[3] = {0x90, 60, 127};
+  synth.event(0, kPreviewTrack, e0, 2);
+  synth.event(0, kPreviewTrack, e1, 2);
+  synth.event(0, kPreviewTrack, e2, 3);
+  PrevHash h;
+  int16_t l[Synth::kBlock], r[Synth::kBlock];
+  for (int b = 0; b < 40; ++b) {
+    synth.render(l, r);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      uint32_t tl, tr;
+      memcpy(&tl, &tb.l[RenderTaps::kPrev][i], 4);
+      memcpy(&tr, &tb.r[RenderTaps::kPrev][i], 4);
+      h.tap = (h.tap ^ tl ^ tr << 1) * 16777619u;
+      h.master = (h.master ^ static_cast<uint16_t>(l[i] ^ r[i] << 1)) * 16777619u;
+      const float a = fabsf(tb.l[RenderTaps::kPrev][i]);
+      if (a > h.tapPeak) h.tapPeak = a;
+    }
+  }
+  synth.setTaps(nullptr);
+  return h;
+}
+
+// The tap is the dry strip: the sends change the master, not the tap.
+void test_tap_preview_dry() {
+  Project& p = *mkProj();
+  bounceProj(p, 127);
+  Synth& synth = *fxSynth(p);
+  const PrevHash wet = renderPreview(p, synth, kTracks);
+  TEST_ASSERT_TRUE(wet.tapPeak > 0.001f);
+  bounceProj(p, 0);
+  const PrevHash dry = renderPreview(p, synth, kTracks);
+  TEST_ASSERT_EQUAL_HEX32(wet.tap, dry.tap);
+  TEST_ASSERT_NOT_EQUAL(wet.master, dry.master);
+}
+
+// Through a track's insert (drive on track 3) the tap differs from dry.
+void test_tap_preview_insert() {
+  Project& p = *mkProj();
+  bounceProj(p, 0);
+  p.tracks[3].drive = 120;
+  Synth& synth = *fxSynth(p);
+  const PrevHash dry = renderPreview(p, synth, kTracks);
+  const PrevHash ins = renderPreview(p, synth, 3);
+  TEST_ASSERT_NOT_EQUAL(dry.tap, ins.tap);
+}
+
+struct TapOut {
+  const RenderTaps* t;
+  int16_t peak = 0;
+  bool ok = true;
+};
+
+static bool tapOut(const int16_t* l, const int16_t* r, void* ctx) {
+  TapOut& o = *static_cast<TapOut*>(ctx);
+  for (int i = 0; i < Synth::kBlock; ++i) {
+    const float v = o.t->l[RenderTaps::kPrev][i] * kTapScale;
+    const int16_t want = static_cast<int16_t>(v > 32767.f ? 32767 : (v < -32768.f ? -32768 : (v < 0 ? v - 0.5f : v + 0.5f)));
+    if (l[i] != want) o.ok = false;
+    const int a = l[i] < 0 ? -l[i] : l[i];
+    if (a > o.peak) o.peak = static_cast<int16_t>(a);
+    const int b = r[i] < 0 ? -r[i] : r[i];
+    if (b > o.peak) o.peak = static_cast<int16_t>(b);
+  }
+  return true;
+}
+
+// RenderFeeder::setTap: out() and the stats see the tap, not the master.
+void test_feeder_tap_mode() {
+  Project& p = *mkProj();
+  bounceProj(p, 127);
+  Synth& synth = *fxSynth(p);
+  static TapBufs tb(1u << RenderTaps::kPrev);
+  synth.reset();
+  synth.setTaps(&tb.t);
+  RenderFeeder fd(synth);
+  fd.reset();
+  fd.setTap(&tb.t, RenderTaps::kPrev);
+  link::RenderBlocks m;
+  m.first = 0;
+  m.n = 0;
+  const uint8_t ev[3][3] = {{0xF7, kTracks, 0}, {0xC0, 1, 0}, {0x90, 60, 127}};
+  const uint8_t len[3] = {2, 2, 3};
+  for (int k = 0; k < 3; ++k) {
+    m.ev[k].off = 0;
+    m.ev[k].track = kPreviewTrack;
+    m.ev[k].len = len[k];
+    memcpy(m.ev[k].b, ev[k], 3);
+  }
+  m.evN[0] = 3;
+  for (int b = 1; b < 8; ++b) m.evN[b] = 0;
+  m.n = 8;
+  TapOut out{&tb.t};
+  TEST_ASSERT_EQUAL(static_cast<int>(link::RenderResult::Ok), static_cast<int>(fd.apply(m, tapOut, &out)));
+  TEST_ASSERT_TRUE(out.ok);
+  TEST_ASSERT_TRUE(out.peak > kSilence);
+  TEST_ASSERT_EQUAL(out.peak, fd.peak());
+  TEST_ASSERT_EQUAL(8, fd.loudBlocks());
+  TEST_ASSERT_TRUE(fd.monoPeak() > 0);
+  synth.setTaps(nullptr);
+}
+
+void test_normalize_hot() {
+  int16_t b[2] = {-3000, 1500};
+  normalizeSamples(b, 2, 3000, kNormPeakHot);
+  TEST_ASSERT_INT_WITHIN(1, -31653, b[0]);  // -0.3 dBFS (0.966 x 32767)
+  TEST_ASSERT_INT_WITHIN(1, 15827, b[1]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_pass_us);
+  RUN_TEST(test_tap_preview_dry);
+  RUN_TEST(test_tap_preview_insert);
+  RUN_TEST(test_feeder_tap_mode);
+  RUN_TEST(test_normalize_hot);
   RUN_TEST(test_song_us_sums_slot_passes);
   RUN_TEST(test_normalize_peak);
   RUN_TEST(test_trim_tail);

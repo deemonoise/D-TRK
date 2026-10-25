@@ -30,11 +30,13 @@ uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, id
 
 uint64_t songUs(const Project& p, int maxSlots) { return ticksToUs(p, songTicks(p, maxSlots)); }
 
-void normalizePeak(int16_t* b, uint32_t frames, int16_t peak) { normalizeSamples(b, 2 * frames, peak); }
+void normalizePeak(int16_t* b, uint32_t frames, int16_t peak, float target) {
+  normalizeSamples(b, 2 * frames, peak, target);
+}
 
-void normalizeSamples(int16_t* b, uint32_t n, int16_t peak) {
+void normalizeSamples(int16_t* b, uint32_t n, int16_t peak, float target) {
   if (peak <= 0) return;
-  const float g = kNormPeak / peak;
+  const float g = target / peak;
   for (uint32_t i = 0; i < n; ++i) {
     const float v = b[i] * g;
     b[i] = static_cast<int16_t>(v > 32767.f ? 32767 : (v < -32768.f ? -32768 : (v < 0 ? v - 0.5f : v + 0.5f)));
@@ -126,6 +128,10 @@ void BlockRender::render(Synth& synth, const SeqEv* ev, int n, int16_t l[Synth::
                          int16_t r[Synth::kBlock]) {
   for (int i = 0; i < n; ++i) synth.event(ev[i].off, ev[i].track, ev[i].b, ev[i].len);
   synth.render(l, r);
+  measure(l, r);
+}
+
+void BlockRender::measure(const int16_t* l, const int16_t* r) {
   for (int c = 0; c < 2; ++c) {
     const int16_t* const out = c ? r : l;
     for (int i = 0; i < Synth::kBlock; ++i) {
