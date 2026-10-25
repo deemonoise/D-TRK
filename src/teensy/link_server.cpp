@@ -61,8 +61,22 @@ uint8_t scratch[6144];
 int scratchChunk = -1;
 uint32_t scratchNext = 0;
 
+// Opened on the first frame: setup() logs (psram, bank) come before begin(), and a write to a closed
+// Serial1 waits forever once a frame does not fit its small TX buffer.
+void openPort() {
+#ifndef LINK_DESK
+  static bool open = false;
+  if (open) return;
+  open = true;
+  port.addMemoryForRead(rxMem, sizeof rxMem);
+  port.addMemoryForWrite(txMem, sizeof txMem);
+  port.begin(kBaud);
+#endif
+}
+
 template <class M>
 void send(Msg t, const M& m) {
+  openPort();
   uint8_t buf[kMaxEncoded];
   const int n = frame(t, txSeq++, m, buf);
   if (n > 0) port.write(buf, n);
@@ -339,11 +353,7 @@ void begin(mt::SynthModel& m, mt::Synth& s, SynthStream& o, uint8_t perfSeconds)
   synth = &s;
   out = &o;
   bootId = ARM_DWT_CYCCNT ^ (micros() << 12);
-#ifndef LINK_DESK
-  port.addMemoryForRead(rxMem, sizeof rxMem);
-  port.addMemoryForWrite(txMem, sizeof txMem);
-  port.begin(kBaud);
-#endif
+  openPort();
   sendHello();
 }
 
