@@ -41,6 +41,24 @@ InstrType instrTypeAt(int k) {
   return k >= 0 && k < kInstrTypesUi ? kTypeOrder[k] : InstrType::Fm;
 }
 
+const char* fmMachineName(uint8_t machine) {
+  static const char* const kNames[] = {"KICK", "SNARE", "METAL", "PERC", "TONE", "CHORD", "CLAP", "HAT"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(FmMachine::Count), "FM names");
+  return kNames[machine < static_cast<uint8_t>(FmMachine::Count) ? machine : 0];
+}
+
+void chipWaveName(uint8_t w, char* o, int n) {
+  static const char* const kNames[] = {"PULSE", "TRI", "SAW", "NOISE", "METAL"};
+  static const char* const kExt[] = {"SID TS", "SID PS", "SID PT", "SIDPTS", "SID NZ",
+                                     "AY SAW", "AY TRI", "AY NZ",  "AY TN"};
+  static_assert(sizeof(kExt) / sizeof(kExt[0]) == kWaveCount - kWaveExtFirst, "wave names");
+  constexpr int kWt = static_cast<int>(Wave::Wt1);
+  if (w >= kWaveCount) w = 0;
+  if (w < kWt) snprintf(o, n, "%s", kNames[w]);
+  else if (w < kWaveExtFirst) snprintf(o, n, "WT%d", w - kWt + 1);
+  else snprintf(o, n, "%s", kExt[w - kWaveExtFirst]);
+}
+
 const char* stringModelName(uint8_t model) {
   static const char* const kNames[] = {"STRING", "MODAL"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(StringModel::Count), "STRING model names");

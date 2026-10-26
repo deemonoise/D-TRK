@@ -31,8 +31,8 @@ class RenderFeeder {
   using Out = bool (*)(const int16_t* l, const int16_t* r, void* ctx);
   explicit RenderFeeder(Synth& s) : synth_(s) {}
   void reset();
-  // Tap mode (one-shot bounce): out() and the stats get tap k of t (x kTapScale, saturated) instead of
-  // the master; t = nullptr: the master. The caller sets t as the synth's taps (Synth::setTaps).
+  // Tap mode (one-shot bounce): out() and the stats get tap k of t (x kTapScale, the preview tap
+  // x kPrevTapScale; saturated) instead of the master; t = nullptr: the master. The caller sets t as the synth's taps (Synth::setTaps).
   void setTap(const RenderTaps* t, int k) {
     tap_ = t;
     tapK_ = k;

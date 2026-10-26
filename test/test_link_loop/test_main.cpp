@@ -20,6 +20,7 @@ class PosixBackend : public FsBackend {
  public:
   std::string root;
   bool cardIn = true;
+  int polls = 0;  // poll() calls (FsCopy keepalive)
 
   std::string real(const char* p) const { return root + p; }
 
@@ -107,6 +108,8 @@ class PosixBackend : public FsBackend {
     if (::rmdir(real(path).c_str()) == 0) return kErrOk;
     return errno == ENOTEMPTY || errno == EEXIST ? kErrNotEmpty : kErrIo;
   }
+
+  void poll() override { ++polls; }
 
   int16_t space(uint32_t& totalMb, uint32_t& freeMb) override {
     totalMb = 30436;
@@ -374,6 +377,72 @@ void test_rmdir_recursive() {
   TEST_ASSERT_EQUAL_INT16(kErrBadArg, client.rmdir("/"));
 }
 
+void test_copy_into_new_folders() {
+  std::vector<uint8_t> data(5000);  // crosses the copy's chunks
+  for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(i * 7 + (i >> 8));
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.mkdir("/mt-store"));
+  writeFile("/mt-store/1a2b.wav", data);
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.mkdir("/samples"));  // a folder already there is fine
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.copy("/mt-store/1a2b.wav", "/samples/oneshots/909/BD/K.wav"));
+  TEST_ASSERT_TRUE(readFile("/samples/oneshots/909/BD/K.wav") == data);
+  TEST_ASSERT_TRUE(readFile("/mt-store/1a2b.wav") == data);
+  TEST_ASSERT_FALSE(exists("/samples/oneshots/909/BD/K.wav.tmp"));
+  TEST_ASSERT_TRUE(listAll("/samples/oneshots/909/BD") == std::vector<std::string>({"K.wav"}));
+  // An empty file too.
+  writeFile("/mt-store/empty.wav", {});
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.copy("/mt-store/empty.wav", "/e.wav"));
+  TEST_ASSERT_TRUE(readFile("/e.wav").empty());
+  // Every slot free again.
+  uint8_t hs[kFsMaxOpen];
+  bool isDir;
+  uint32_t size;
+  for (int i = 0; i < kFsMaxOpen; ++i) {
+    char p[16];
+    snprintf(p, sizeof p, "/h%d", i);
+    TEST_ASSERT_EQUAL_INT16(kErrOk, client.open(p, FsMode::Write, hs[i], isDir, size));
+  }
+  // None free: the copy cannot run, and leaves nothing behind.
+  TEST_ASSERT_EQUAL_INT16(kErrTooMany, client.copy("/mt-store/1a2b.wav", "/x.wav"));
+  TEST_ASSERT_FALSE(exists("/x.wav"));
+  TEST_ASSERT_FALSE(exists("/x.wav.tmp"));
+  for (uint8_t x : hs) TEST_ASSERT_EQUAL_INT16(kErrOk, client.close(x));
+}
+
+// A long copy keeps the board alive: poll() once per copied chunk (2 KB).
+void test_copy_keepalive() {
+  std::vector<uint8_t> data(5000);  // 3 chunks
+  for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(i * 13);
+  writeFile("/src.wav", data);
+  backend.polls = 0;
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.copy("/src.wav", "/dst.wav"));
+  TEST_ASSERT_EQUAL_INT(3, backend.polls);
+  TEST_ASSERT_TRUE(readFile("/dst.wav") == data);
+  backend.polls = 0;
+  writeFile("/empty.wav", {});
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.copy("/empty.wav", "/e2.wav"));
+  TEST_ASSERT_EQUAL_INT(0, backend.polls);
+}
+
+void test_copy_errors() {
+  writeFile("/a.wav", {1, 2, 3});
+  writeFile("/b.wav", {9});
+  TEST_ASSERT_EQUAL_INT16(kErrExists, client.copy("/a.wav", "/b.wav"));
+  TEST_ASSERT_TRUE(readFile("/b.wav") == std::vector<uint8_t>({9}));
+  TEST_ASSERT_EQUAL_INT16(kErrNotFound, client.copy("/missing.wav", "/c.wav"));
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.mkdir("/dir"));
+  TEST_ASSERT_EQUAL_INT16(kErrIsDir, client.copy("/dir", "/c.wav"));
+  TEST_ASSERT_FALSE(exists("/c.wav"));
+  TEST_ASSERT_EQUAL_INT16(kErrBadArg, client.copy("a.wav", "/c.wav"));
+  // A stale tmp from an interrupted copy is replaced.
+  writeFile("/c.wav.tmp", {7, 7, 7, 7, 7, 7});
+  TEST_ASSERT_EQUAL_INT16(kErrOk, client.copy("/a.wav", "/c.wav"));
+  TEST_ASSERT_TRUE(readFile("/c.wav") == std::vector<uint8_t>({1, 2, 3}));
+  TEST_ASSERT_FALSE(exists("/c.wav.tmp"));
+  // to.tmp must fit a path.
+  std::string longTo = "/" + std::string(kFsPathMax - 4, 'n');  // 253 chars: fits, its .tmp does not
+  TEST_ASSERT_EQUAL_INT16(kErrBadArg, client.copy("/a.wav", longTo.c_str()));
+}
+
 void test_card_space() {
   uint32_t total = 0, free = 0;
   TEST_ASSERT_EQUAL_INT16(kErrOk, client.space(total, free));
@@ -465,6 +534,9 @@ int main() {
   RUN_TEST(test_list_restarts_and_sizes);
   RUN_TEST(test_rename_remove);
   RUN_TEST(test_rmdir_recursive);
+  RUN_TEST(test_copy_into_new_folders);
+  RUN_TEST(test_copy_keepalive);
+  RUN_TEST(test_copy_errors);
   RUN_TEST(test_errors);
   RUN_TEST(test_retried_requests_done_once);
   RUN_TEST(test_card_pulled);

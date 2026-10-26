@@ -11,6 +11,9 @@ constexpr int16_t kSilence = 33;             // -60 dBFS
 constexpr float kNormPeak = 0.891f * 32767;     // -1 dBFS
 constexpr float kNormPeakHot = 0.966f * 32767;  // -0.3 dBFS (one-shot bounce)
 constexpr float kTapScale = 32767.f * 0.25f;    // a RenderTaps tap (mix units) to int16, as MAIN 100
+// The preview tap (one-shot bounce) to int16: kTapScale with the preview fader (kPreviewVol) undone, so
+// a sampler at vol 127 plays an unnormalized one-shot back at its source's level (KIT bake).
+constexpr float kPrevTapScale = kTapScale * 127.f / kPreviewVol;
 
 constexpr int kRenderSlotsMax = 512;  // RenderSpec::maxSlots
 

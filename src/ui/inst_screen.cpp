@@ -39,17 +39,6 @@ uint8_t freeNoteFrom(const mt::Instrument& k, int lane, int n, int dir = 1) {
   return k.kit[lane].note;
 }
 
-void waveName(uint8_t w, char* o, int n) {
-  static const char* const kNames[] = {"PULSE", "TRI", "SAW", "NOISE", "METAL"};
-  static const char* const kExt[] = {"SID TS", "SID PS", "SID PT", "SIDPTS", "SID NZ",
-                                     "AY SAW", "AY TRI", "AY NZ",  "AY TN"};
-  static_assert(sizeof(kExt) / sizeof(kExt[0]) == mt::kWaveCount - mt::kWaveExtFirst, "wave names");
-  constexpr int kWt = static_cast<int>(mt::Wave::Wt1);
-  if (w < kWt) snprintf(o, n, "%s", kNames[w]);
-  else if (w < mt::kWaveExtFirst) snprintf(o, n, "WT%d", w - kWt + 1);
-  else snprintf(o, n, "%s", kExt[w - mt::kWaveExtFirst]);
-}
-
 }  // namespace
 
 InstScreen::InstScreen(App& app) : app_(app) {
@@ -105,7 +94,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                 [this](int d) { inst().send = static_cast<uint8_t>(clampi(inst().send + d, 0, 127)); }};
   }
   string_[kVelMac].label = "Vel>Dmp";  // STRING: velocity moves DAMP (the DECAY slot)
-  chip_[kWave] = {"Wave", [this](char* o, int n) { waveName(inst().wave, o, n); },
+  chip_[kWave] = {"Wave", [this](char* o, int n) { mt::chipWaveName(inst().wave, o, n); },
                   [this](int d) { inst().wave = static_cast<uint8_t>(clampi(inst().wave + d, 0, mt::kWaveCount - 1)); }};
   auto notPulse = [this] { return !mt::waveHasDuty(inst().wave); };
   chip_[kDuty] = {"Duty", [this](char* o, int n) { snprintf(o, n, "%u%%", inst().duty); },
@@ -127,11 +116,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   fm_[kMode].dim = [isTone] { return !isTone(); };
   fm_[kGlide].dim = [this, isTone] { return !inst().mono || !isTone(); };
   fm_[kMachine] = {"Machine",
-                   [this](char* o, int n) {
-                     static const char* const kNames[] = {"KICK", "SNARE", "METAL", "PERC",
-                                                          "TONE", "CHORD", "CLAP", "HAT"};
-                     snprintf(o, n, "%s", kNames[inst().machine % 8]);
-                   },
+                   [this](char* o, int n) { snprintf(o, n, "%s", mt::fmMachineName(inst().machine)); },
                    [this](int d) {
                      const int v = clampi(inst().machine + d, 0, static_cast<int>(mt::FmMachine::Count) - 1);
                      if (v != inst().machine) mt::fmSetMachine(inst(), static_cast<uint8_t>(v));
@@ -760,8 +745,16 @@ void InstScreen::openTables(int osc) {
 void InstScreen::presetMenu() {
   leaveEdit();
   if (inst().type == mt::InstrType::Kit) {  // factory kits only: no Save
-    typeSnapInstr_ = -1;
-    presets_.open(PresetBrowser::Mode::Load, instr_);
+    enum : int { kKitLoad, kKitShot };
+    const MenuItem items[] = {{"Load", kKitLoad}, {"Save one-shot...", kKitShot}};
+    app_.menu().open("PRESET", items, 2, [this](int id) {
+      if (id == kKitLoad) {
+        typeSnapInstr_ = -1;
+        presets_.open(PresetBrowser::Mode::Load, instr_);
+      } else if (id == kKitShot) {  // dry: the baked lanes play through the track's insert
+        bounce_.openKit(instr_, [this] { syncParams(); });  // the baked lanes show SAMPLE rows
+      }
+    });
     return;
   }
   enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kToWt, kMut15, kMut30, kMut60, kMutUndo, kRec, kShot };

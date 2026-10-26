@@ -10,8 +10,10 @@
 #include "link/bank_client.h"
 #include "link/link.h"
 #include "link_msg.h"
+#include "oneshot_lib.h"
 #include "render_link.h"
 #include "remote_fs.h"
+#include "sample_store.h"
 #include "sample_set.h"
 
 using namespace mt::link;
@@ -39,6 +41,29 @@ bool waitSynced() {
     if ((audio::synthUp() && !audio::versionOk()) || millis() - t0 >= kSyncWaitMs) return false;
     delay(5);
   }
+}
+
+// The synth board answering again: a long job on it (an FsCopy of the one-shot before) stops its
+// Status frames for a while.
+bool waitUp() {
+  const uint32_t t0 = millis();
+  for (;;) {
+    audio::pump();
+    if (slink::synthUp()) return true;
+    if (millis() - t0 >= kSyncWaitMs) return false;
+    delay(5);
+  }
+}
+
+bool remoteExists(const char* path, void*) { return remoteFs().exists(path); }
+
+// The bounced sample (the store's <crc>.wav) copied into /samples/oneshots/<dir of in>/.
+bool copyOneshot(const mt::Instrument& in, const char* name, uint32_t crc) {
+  char dir[mt::kOneshotDirMax], path[96], from[mt::kStorePathMax];
+  mt::oneshotDir(in, dir);
+  if (!mt::oneshotFilePath(dir, name, remoteExists, nullptr, path, sizeof path)) return false;
+  mt::storePath(crc, from);
+  return remoteCopy(from, path) == kErrOk;
 }
 
 // The sequence (a Sequencer inside, ~40 KB) and its packer live in PSRAM for the render only.
@@ -166,7 +191,7 @@ Result run(mt::Project& p, const mt::RenderSpec& spec, uint8_t target, const cha
 
 Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampleNameMax + 1], RenderStats& st,
                 RenderProgress cb, void* ctx) {
-  st = {0, 0, 0};
+  st = {0, 0, 0, false};
   name[0] = 0;
   if (!stopped()) return Result::EngineBusy;
   if (p.sampleCount >= mt::kProjSamples) return Result::BankFull;
@@ -187,18 +212,18 @@ Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampl
     name[0] = 0;
     return Result::BankFull;  // the list is full (checked above) or the name is bad (never)
   }
-  st = {rep.frames, static_cast<int16_t>(rep.peak), rep.clips};
+  st = {rep.frames, static_cast<int16_t>(rep.peak), rep.clips, false};
   return capped ? Result::Capped : Result::Ok;
 }
 
 Result bounce(mt::Project& p, const mt::BounceSpec& spec, const char* name, RenderStats& st, RenderProgress cb,
-              void* ctx) {
-  st = {0, 0, 0};
+              void* ctx, const mt::Instrument* dirOf) {
+  st = {0, 0, 0, false};
   if (!stopped()) return Result::EngineBusy;
   if (p.sampleCount >= mt::kProjSamples) return Result::BankFull;
   if (!hw::sdReady()) return Result::NoSd;  // the render goes through a file on the card
   if (!name || !validName(name)) return Result::BadFile;
-  if (!slink::synthUp() || !waitSynced()) return Result::NoSynth;
+  if (!waitUp() || !waitSynced()) return Result::NoSynth;
   Result res = Result::Ok;
   RenderRep rep;
   {
@@ -239,7 +264,7 @@ Result bounce(mt::Project& p, const mt::BounceSpec& spec, const char* name, Rend
     }
     if (cb) cb(spec.maxBlocks, spec.maxBlocks, ctx);
     RenderEndReq end;
-    end.normalize = 2;  // -0.3 dBFS
+    end.normalize = spec.normalize ? 2 : 0;  // -0.3 dBFS / as played (mt::kPrevTapScale)
     end.trim = 1;
     res = callEnd(end, rep) ? fromRender(rep) : Result::NoSynth;
   }
@@ -249,7 +274,9 @@ Result bounce(mt::Project& p, const mt::BounceSpec& spec, const char* name, Rend
   const int idx = mt::projSampleSet(p, name, rep.crc, rep.frames);
   engine::unlockProject();
   if (idx < 0) return Result::BankFull;
-  st = {rep.frames, static_cast<int16_t>(rep.peak), rep.clips};
+  st = {rep.frames, static_cast<int16_t>(rep.peak), rep.clips, false};
+  // A copy for the library: a failed one leaves the sample in the project.
+  st.copied = copyOneshot(dirOf ? *dirOf : p.instruments[spec.instr % mt::kInstruments], name, rep.crc);
   return Result::Ok;
 }
 

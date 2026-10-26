@@ -14,5 +14,9 @@ int16_t remoteLastError();
 // The card's size and free space in MB (FsStat with the space flag), asked at most every 10 s.
 // False when there is no card / no answer.
 bool remoteSpace(uint32_t& totalMb, uint32_t& freeMb);
+// from copied to to on the synth board's card (FsCopy: no bytes over the link; to's folders made,
+// to must not exist). kErrOk or the error; blocks up to 15 s per try (this call only: the board keeps
+// sending Status while it copies).
+int16_t remoteCopy(const char* from, const char* to);
 
 }  // namespace storage

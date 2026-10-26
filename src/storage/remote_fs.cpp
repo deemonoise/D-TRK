@@ -1,6 +1,7 @@
 #include "remote_fs.h"
 #include <Arduino.h>
 #include <FSImpl.h>
+#include <new>
 #include <string.h>
 #include "esp_heap_caps.h"
 #include "link/link.h"
@@ -12,16 +13,24 @@ namespace storage {
 
 namespace {
 
-constexpr uint32_t kFsTimeoutMs = 2000;  // per try: a write may wait on the card
 constexpr size_t kBuf = 4096;
 constexpr uint8_t kListPage = 32;
 
-bool xfer(void*, Msg t, const uint8_t* p, int n, uint8_t* reply, int& replyLen) {
+// The client's ctx: its wait per try.
+struct XferCfg {
+  uint32_t timeoutMs;
+};
+constexpr XferCfg kFsCfg{2000};  // a write may wait on the card
+// FsCopy: up to ~10 s sample (1.7 MB) read and written on the card in one request; a slow card does
+// ~200 KB/s each way. The board sends Status between chunks (FsBackend::poll), so synthUp holds.
+constexpr XferCfg kCopyCfg{15000};
+
+bool xfer(void* ctx, Msg t, const uint8_t* p, int n, uint8_t* reply, int& replyLen) {
   if (!slink::synthUp()) return false;  // fail at once instead of three timeouts
-  return slink::request(t, p, n, t, reply, replyLen, kFsTimeoutMs);
+  return slink::request(t, p, n, t, reply, replyLen, static_cast<const XferCfg*>(ctx)->timeoutMs);
 }
 
-FsClientCore client(xfer, nullptr);
+FsClientCore client(xfer, const_cast<XferCfg*>(&kFsCfg));
 
 FsMode modeOf(const char* m) {
   if (m && m[0] == 'w') return FsMode::Write;
@@ -264,6 +273,18 @@ fs::FS& remoteFs() {
 }
 
 int16_t remoteLastError() { return client.lastError(); }
+
+int16_t remoteCopy(const char* from, const char* to) {
+  // FsCopy only, with its own long wait (the other calls keep 2 s); ~1 KB of buffers, in PSRAM.
+  static FsClientCore* copier = nullptr;
+  if (!copier) {
+    void* m = heap_caps_malloc(sizeof(FsClientCore), MALLOC_CAP_SPIRAM);
+    if (!m) m = malloc(sizeof(FsClientCore));
+    if (!m) return kErrLink;
+    copier = new (m) FsClientCore(xfer, const_cast<XferCfg*>(&kCopyCfg));
+  }
+  return copier->copy(from, to);
+}
 
 bool remoteSpace(uint32_t& totalMb, uint32_t& freeMb) {
   constexpr uint32_t kCacheMs = 10000;

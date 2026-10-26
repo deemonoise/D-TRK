@@ -1,5 +1,6 @@
 #include "link_fs.h"
 #include <string.h>
+#include "hot.h"
 
 namespace mt::link {
 
@@ -7,6 +8,7 @@ namespace {
 
 constexpr uint8_t kNoHandle = 0xFF;  // FsOpen of a folder
 constexpr int kRmDepth = 8;          // FsRmdir: folder levels below the one removed
+constexpr int kCopyChunk = 2048;     // FsCopy: bytes per card read / write
 
 // Path argument: absolute, not cut by the length byte.
 bool readPath(Reader& r, char* out) {
@@ -38,7 +40,8 @@ bool isFsRequest(Msg t) {
     case Msg::FsRemove:
     case Msg::FsRename:
     case Msg::FsMkdir:
-    case Msg::FsRmdir: return true;
+    case Msg::FsRmdir:
+    case Msg::FsCopy: return true;
     default: return false;
   }
 }
@@ -166,6 +169,11 @@ int FsServerCore::run(Msg t, Reader& r, Writer& w, uint8_t* body) {
       if (!readPath(r, path) || !readPath(r, to)) return kErrBadArg;
       return b_.rename(path, to);
     }
+    case Msg::FsCopy: {
+      char to[kFsPathMax];
+      if (!readPath(r, path) || !readPath(r, to)) return kErrBadArg;
+      return copy(path, to);
+    }
     case Msg::FsMkdir:
       if (!readPath(r, path)) return kErrBadArg;
       return b_.mkdir(path);
@@ -235,6 +243,64 @@ int16_t FsServerCore::rmTree(const char* path, int depth) {
     if (e != kErrOk) return e;
   }
   return kErrIo;
+}
+
+int16_t FsServerCore::copy(const char* from, const char* to) {
+  static char tmp[kFsPathMax];  // static: the synth board's stack is tight (one request at a time)
+  const size_t toLen = strlen(to);
+  if (toLen + 5 > static_cast<size_t>(kFsPathMax)) return kErrBadArg;
+  bool isDir = false;
+  uint32_t size = 0;
+  int16_t e = b_.stat(from, isDir, size);
+  if (e != kErrOk) return e;
+  if (isDir) return kErrIsDir;
+  e = b_.stat(to, isDir, size);
+  if (e == kErrOk) return kErrExists;
+  if (e != kErrNotFound) return e;
+  // to's folders, one level at a time.
+  memcpy(tmp, to, toLen + 1);
+  for (size_t i = 1; i < toLen; ++i) {
+    if (tmp[i] != '/') continue;
+    tmp[i] = 0;
+    e = b_.mkdir(tmp);
+    tmp[i] = '/';
+    if (e != kErrOk && e != kErrExists) return e;
+  }
+  memcpy(tmp + toLen, ".tmp", 5);
+  int src = 0;
+  while (src < kFsMaxOpen && open_[src]) ++src;
+  int dst = src + 1;
+  while (dst < kFsMaxOpen && open_[dst]) ++dst;
+  if (dst >= kFsMaxOpen) return kErrTooMany;
+  e = b_.open(src, from, FsMode::Read, size);
+  if (e != kErrOk) return e;
+  if (b_.stat(tmp, isDir, size) == kErrOk) b_.remove(tmp);  // left by a copy cut short
+  e = b_.open(dst, tmp, FsMode::Write, size);
+  if (e != kErrOk) {
+    b_.close(src);
+    return e;
+  }
+  e = copyData(src, dst);
+  const int16_t ce = b_.close(dst);
+  b_.close(src);
+  if (e == kErrOk) e = ce;
+  if (e == kErrOk) e = b_.rename(tmp, to);
+  if (e != kErrOk) b_.remove(tmp);
+  return e;
+}
+
+// The chunk in RAM2 on the Teensy (off the tight RAM1 / DTCM; the card copies it by the CPU).
+MT_RAM2 static uint8_t copyBuf[kCopyChunk] __attribute__((aligned(32)));
+
+int16_t FsServerCore::copyData(int src, int dst) {
+  for (uint32_t pos = 0;;) {
+    const int k = b_.read(src, pos, copyBuf, kCopyChunk);
+    if (k < 0) return static_cast<int16_t>(k);
+    if (k == 0) return kErrOk;
+    if (b_.write(dst, pos, copyBuf, k) != k) return kErrIo;  // short: the card is full
+    pos += static_cast<uint32_t>(k);
+    b_.poll();
+  }
 }
 
 bool FsListPage::next(FsEntry& e) {
@@ -361,15 +427,19 @@ int16_t FsClientCore::list(const char* dir, uint16_t start, uint8_t max, FsListP
 
 int16_t FsClientCore::remove(const char* path) { return pathOp(Msg::FsRemove, path); }
 
-int16_t FsClientCore::rename(const char* from, const char* to) {
+int16_t FsClientCore::twoPathOp(Msg t, const char* from, const char* to) {
   if (strlen(from) >= static_cast<size_t>(kFsPathMax) || strlen(to) >= static_cast<size_t>(kFsPathMax))
     return last_ = kErrBadArg;
   Writer w(req_, kMaxPayload);
   w.str(from);
   w.str(to);
   Reader r(nullptr, 0);
-  return call(Msg::FsRename, w.size(), r);
+  return call(t, w.size(), r);
 }
+
+int16_t FsClientCore::rename(const char* from, const char* to) { return twoPathOp(Msg::FsRename, from, to); }
+
+int16_t FsClientCore::copy(const char* from, const char* to) { return twoPathOp(Msg::FsCopy, from, to); }
 
 int16_t FsClientCore::mkdir(const char* path) { return pathOp(Msg::FsMkdir, path); }
 

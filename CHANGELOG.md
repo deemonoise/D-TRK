@@ -24,6 +24,19 @@ Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
   12 kHz, slightly dirty, never self-oscillates. Factory presets C64 LEAD, ZX ARP, AY TN, C64 BASS, ZX BUZZ,
   SID NZ, AY HAT. The SID / AY models are our own approximations, no emulator code or data. Link protocol
   16: flash the WT32 and the Teensy together.
+- Save one-shot also copies the render to the synth board's card as `/samples/oneshots/<folder>/<name>.wav`
+  (taken name → `<name>_1`, `_2`, …), so other projects can import it; the project sample is added as
+  before. Folders by instrument: DRUM `<model>/<type>` (`909/BD`, `808/SD`, `MODAL/RS`, `CLAVE/PERC`…), FM
+  `FM/<machine>`, SYNTH `SYNTH/<osc 1>`, CHIP `CHIP/<wave>` (`CHIP/SID_PS`), STRING `STRING/STRING` /
+  `STRING/MODAL`, LOFI `LOFI/BYTE` / `LOFI/APC`, SAMPLE `SAMPLE`. Toast `SAVED, NO COPY` when the copy fails;
+  the project is now marked modified after Save one-shot.
+- KIT: **PRESET** opens **Load** / **Save one-shot…**. On a KIT Save one-shot bakes every INST lane (not
+  SAMPLE, not a lane pointing at a KIT or a SAMPLE instrument, not a lane sharing its note with an earlier
+  lane): the kit is rendered dry (no insert) and not normalized (the kit keeps its balance) at the lane's
+  note into a new sample `<lane instrument>_N`, copied to that instrument's folder, and the lane switches to
+  SAMPLE with it, Pitch 0, Volume 127 (as loud as the instrument), Decay full (Note kept). Rows Hold, Vel; header `ONE-SHOT KIT <name>`, progress `LANE i/n`; silent
+  lanes stay, CANCEL keeps the lanes already baked. Toasts `NO INSTR LANES`, `SAVED n LANES` (`, NO COPY`),
+  `SILENT`. Link protocol 17: flash the WT32 and the Teensy together.
 
 ## 2026-10-23
 - Variations per track (TRACK → VAR, a new page after EVO): every Every passes a new generation replaces

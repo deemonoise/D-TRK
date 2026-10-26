@@ -878,7 +878,7 @@ struct TapOut {
 static bool tapOut(const int16_t* l, const int16_t* r, void* ctx) {
   TapOut& o = *static_cast<TapOut*>(ctx);
   for (int i = 0; i < Synth::kBlock; ++i) {
-    const float v = o.t->l[RenderTaps::kPrev][i] * kTapScale;
+    const float v = o.t->l[RenderTaps::kPrev][i] * kPrevTapScale;
     const int16_t want = static_cast<int16_t>(v > 32767.f ? 32767 : (v < -32768.f ? -32768 : (v < 0 ? v - 0.5f : v + 0.5f)));
     if (l[i] != want) o.ok = false;
     const int a = l[i] < 0 ? -l[i] : l[i];
@@ -924,6 +924,13 @@ void test_feeder_tap_mode() {
   synth.setTaps(nullptr);
 }
 
+// The preview tap's int16 scale undoes the preview fader: a sampler at vol 127 (kSampleGain 4 per
+// 32768) plays an unnormalized one-shot back at the level of the source (KIT bake).
+void test_prev_tap_unity() {
+  const float back = kPrevTapScale * (kPreviewVol / 127.f) * (4.f / 32768.f) * (127 / 127.f);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1.f, back);
+}
+
 void test_normalize_hot() {
   int16_t b[2] = {-3000, 1500};
   normalizeSamples(b, 2, 3000, kNormPeakHot);
@@ -937,6 +944,7 @@ int main() {
   RUN_TEST(test_tap_preview_dry);
   RUN_TEST(test_tap_preview_insert);
   RUN_TEST(test_feeder_tap_mode);
+  RUN_TEST(test_prev_tap_unity);
   RUN_TEST(test_normalize_hot);
   RUN_TEST(test_song_us_sums_slot_passes);
   RUN_TEST(test_normalize_peak);

@@ -15,6 +15,7 @@ struct BounceSpec {
   uint32_t holdBlocks = 172;   // note-off after: 0.5 s (bounceHoldBlocks)
   uint32_t maxBlocks = 3446;   // 10 s
   uint32_t quietStop = 18;     // ~50 ms below -60 dBFS after the note-off ends the render
+  bool normalize = true;       // the peak to -0.3 dBFS; false: the level as played (KIT bake)
 };
 
 // Block 0 (offset 0, kPreviewTrack): 0xF7 insTrack, 0xC0 instr, 0x90 note vel; block holdBlocks:

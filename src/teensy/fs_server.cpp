@@ -3,6 +3,7 @@
 #include <SD.h>
 #include <string.h>
 #include "link_fs.h"
+#include "link_server.h"
 #include "model.h"
 #include "preset_paths.h"
 
@@ -173,6 +174,9 @@ class SdBackend : public FsBackend {
   // FAT32 counts its free clusters by reading the whole FAT (a large card: a few hundred ms in
   // loop()): done at most every kSpaceMs, the ESP caches it as well.
   void dropSpace() { spaceValid_ = false; }
+
+  // FsCopy between chunks: a Status when due and the watchdog fed (sends only; no frame is read).
+  void poll() override { ::link::statusIfDue(); }
 
   int16_t space(uint32_t& totalMb, uint32_t& freeMb) override {
     constexpr uint32_t kSpaceMs = 10000;

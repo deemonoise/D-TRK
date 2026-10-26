@@ -14,6 +14,8 @@
 //   FsList   start u16, max u8, dir str  -> err i16, more u8, count u8, count x {isDir u8, size u32, name str}
 //   FsRemove / FsMkdir / FsRmdir path    -> err i16 (FsRmdir: the folder and everything in it)
 //   FsRename from str, to str            -> err i16
+//   FsCopy   from str, to str            -> err i16 (to's folders made, written as to.tmp then renamed;
+//            FsBackend::poll between chunks)
 // Read and write carry the file position: a request done twice does the same thing twice.
 namespace mt::link {
 
@@ -49,6 +51,9 @@ class FsBackend {
   virtual int16_t rename(const char* from, const char* to) = 0;
   virtual int16_t mkdir(const char* path) = 0;
   virtual int16_t rmdir(const char* path) = 0;  // an empty folder
+  // Called once per copied chunk during FsCopy (a long request): keeps the board alive (a Status to
+  // the ESP, the watchdog fed). Must not take requests.
+  virtual void poll() {}
   // The card's size and free space in MB (FsStat with kFsStatSpace).
   virtual int16_t space(uint32_t& totalMb, uint32_t& freeMb) {
     totalMb = freeMb = 0;
@@ -75,6 +80,8 @@ class FsServerCore {
   int run(Msg t, Reader& r, Writer& w, uint8_t* body);
   int16_t list(Reader& r, Writer& w, uint8_t* body);
   int16_t rmTree(const char* path, int depth);
+  int16_t copy(const char* from, const char* to);
+  int16_t copyData(int src, int dst);
   void dropList();
 
   FsBackend& b_;
@@ -127,6 +134,8 @@ class FsClientCore {
   int16_t list(const char* dir, uint16_t start, uint8_t max, FsListPage& page);
   int16_t remove(const char* path);
   int16_t rename(const char* from, const char* to);
+  // A file copied on the card (no bytes over the link); to must not exist, its folders are made.
+  int16_t copy(const char* from, const char* to);
   int16_t mkdir(const char* path);
   int16_t rmdir(const char* path);
   int16_t lastError() const { return last_; }
@@ -135,6 +144,7 @@ class FsClientCore {
   // Sends req_[0..n) as t; on a reply r reads past its err. Returns the err.
   int16_t call(Msg t, int n, Reader& r);
   int16_t pathOp(Msg t, const char* path);
+  int16_t twoPathOp(Msg t, const char* from, const char* to);
 
   Xfer x_;
   void* ctx_;

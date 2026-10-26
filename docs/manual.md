@@ -990,7 +990,7 @@ Parameters are spread over 5 pages (6 for SYNTH). Below the header are the page 
 | Tap the arrows in the header | Previous / next instrument (wraps). |
 | <kbd>Shift</kbd>+turn outside edit mode | Also changes the instrument. The open page stays the same. |
 | **PREVIEW** button / encoder long press | Audition the instrument: note C-4, 0.3 s. Works during playback too. On the SMPL page with Slices = NOTE and a slice selected, that slice plays. |
-| **PRESET** button / <kbd>Shift</kbd>+encoder long press | Load / Save / Save one-shot / Mutate menu — [presets](#presets), [Save one-shot](#oneshot). On the SMPL page — the SAMPLE menu with the slice commands and the same Load / Save ([SAMPLE](#sample)). |
+| **PRESET** button / <kbd>Shift</kbd>+encoder long press | Load / Save / Save one-shot / Mutate menu — [presets](#presets), [Save one-shot](#oneshot); on a KIT — Load / Save one-shot ([bake the lanes](#oneshotkit)). On the SMPL page — the SAMPLE menu with the slice commands and the same Load / Save ([SAMPLE](#sample)). |
 | Turn, click, tap | As in PROJ: row, edit, value. |
 
 The page is remembered when you switch instruments and when you change Type: for example, from FILT of one instrument you land on FILT of the next.
@@ -1113,7 +1113,7 @@ The **SAMPLE** menu (on the SMPL page instead of the PRESET menu; on other INST 
 | Item | Action |
 |---|---|
 | Record… | Opens the [REC window](#rec): record from the mic, the line input or the tracker output into this instrument. |
-| Save one-shot… | Renders a note of this instrument into a new project sample — [Save one-shot](#oneshot). |
+| Save one-shot… | Renders a note of this instrument into a new project sample and copies it to `/samples/oneshots/` — [Save one-shot](#oneshot). |
 | Chop | Same as the **CHOP** button. |
 | Add slice | New slice midway between the selected marker and the next one (if there is none — the end of the sample). With <kbd>Shift</kbd> held on the click — at the next transient to the right of the selected marker. The new slice becomes selected. Toasts: `NO SAMPLE` — no sample, `NO ONSET` — no transient to the right, `NO ROOM` — 32 slices already or no space. |
 | Delete slice | Same as a **CLR** tap. Gray unless a slice is selected. |
@@ -1147,7 +1147,7 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 - **STOP** is also: encoder long press, <kbd>B</kbd>, or leaving the INST tab. During a take only Gain and Mon change; Source and Thresh are locked.
 - **Save:** `SAVING` with progress, then a toast like `REC1 12.4s, 3 CLIPS`. The take is written to the card as `/samples/rec/RECn.wav` (44.1 kHz 16-bit; stereo for LINE and RESAMPLE, mono for MIC) and imported into the project as sample **RECn** in mono, (L+R)/2 without normalization; the instrument gets it in its Sample row (slices cleared) and the editor shows it. The number is the next free one.
 - Source, Gain, Thresh and Mon are kept until reboot.
-- Both boards must run firmware with link protocol 16 (flash the WT32 and the Teensy together).
+- Both boards must run firmware with link protocol 17 (flash the WT32 and the Teensy together).
 
 | Toast | Meaning |
 |---|---|
@@ -1163,7 +1163,7 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 
 #### Save one-shot (render a note into a sample)
 
-**Save one-shot…** in the instrument's **PRESET** menu (on a SAMPLE instrument — in the **SAMPLE** menu of the SMPL page, after Record…; KIT has no such item) renders one note of the instrument into a new project sample — for example, to put a DRUM or SYNTH sound into a [KIT](#kit) lane. The window header is `ONE-SHOT <name>`, with `+FX` when the sound goes through the track insert.
+**Save one-shot…** in the instrument's **PRESET** menu (on a SAMPLE instrument — in the **SAMPLE** menu of the SMPL page, after Record…; on a KIT it bakes the lanes, see [below](#oneshotkit)) renders one note of the instrument into a new project sample — for example, to put a DRUM or SYNTH sound into a [KIT](#kit) lane — and also copies it to the synth board's card under `/samples/oneshots/`, so other projects can import it. The window header is `ONE-SHOT <name>`, with `+FX` when the sound goes through the track insert.
 
 | Row | Values | Meaning |
 |---|---|---|
@@ -1176,8 +1176,21 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 - If the transport is playing, SAVE stops it first (toast `STOPPED`): the render resets the synth.
 - The note goes through the current track's [insert](#insert) if that track plays this instrument (`+FX`), otherwise dry. No delay / reverb / MOD sends and no master.
 - The render runs until silence (below −60 dB for ≈ 50 ms after the note-off) or **10 s** at most; then silence is trimmed and the sample is normalized to −0.3 dBFS.
-- Done: toast `SAVED <name>`; the sample is in the project's sample list right away and can be picked in a KIT lane or a SAMPLE instrument. A name that is already taken asks **Overwrite**.
-- Both boards must run firmware with link protocol 16.
+- Done: toast `SAVED <name>`; the sample is in the project's sample list right away and can be picked in a KIT lane or a SAMPLE instrument. A name that is already taken asks **Overwrite**. The project is marked modified (save it to keep the sample).
+- **Copy to the library.** The same WAV is written to the synth board's card as `/samples/oneshots/<folder>/<name>.wav`, so **Import WAV…** in any project finds it. If that file already exists, the copy gets `<name>_1.wav`, `<name>_2.wav`, … (the project sample keeps its name). The folder depends on the instrument (spaces and other characters in a name become `_`):
+
+| Instrument | Folder | Examples |
+|---|---|---|
+| DRUM | `<model>/<type>`; types: KICK → BD, SNARE → SD, TOM → TOM, CLAP → CP, RIM → RS, HAT → HH, CYMBL → CY; the PERC group stays PERC | `909/BD`, `808/SD`, `RES/BD`, `MODAL/RS`, `RING/HH`, `MULTI/CP`, `CLAVE/PERC`, `BELL/PERC` |
+| FM | `FM/<machine>` | `FM/KICK` |
+| SYNTH | `SYNTH/<osc 1 wave>` | `SYNTH/SAW`, `SYNTH/SQUARE`, `SYNTH/TRI`, `SYNTH/WT` |
+| CHIP | `CHIP/<wave>` | `CHIP/SID_PS` |
+| STRING | `STRING/<machine>` | `STRING/STRING`, `STRING/MODAL` |
+| LOFI | `LOFI/<machine>` | `LOFI/BYTE`, `LOFI/APC` |
+| SAMPLE | `SAMPLE` | |
+
+- If the sample was added to the project but the copy failed, the toast is `SAVED, NO COPY`.
+- Both boards must run firmware with link protocol 17.
 
 | Toast | Meaning |
 |---|---|
@@ -1186,6 +1199,20 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 | `SYNTH DOWN` | No link to the synth board. |
 | `SAMPLE LIST FULL` | The project has no free sample slot. |
 | `SILENT` | The render came out silent (nothing saved). |
+
+<a id="oneshotkit"></a>
+
+**On a KIT** the **PRESET** menu is **Load** / **Save one-shot…**. Save one-shot bakes the kit: every lane whose Src is INST becomes a SAMPLE lane playing a render of itself. Skipped: SAMPLE lanes, lanes that point at a KIT or at a SAMPLE instrument, and lanes that share their Note with an earlier lane (the kit only ever plays the first lane with a note).
+
+- The window header is `ONE-SHOT KIT <name>`. Rows: **Hold**, **Vel**, **SAVE / CANCEL** — no Note (each lane renders the KIT at its own Note) and no Name.
+- Each lane is rendered as above, but always dry (no insert: the baked lane plays through the track's insert again) and not normalized (the kit keeps its balance), into a new project sample named `<lane instrument name>_N` (first free N), and copied to `/samples/oneshots/` into the folder of the lane's instrument. The lane then switches to Src SAMPLE with that sample, Pitch 0, Volume 127 (the sample then sounds as loud as the instrument did) and Decay 0 (full: the render's own tail); Note stays.
+- Progress shows `LANE i/n`. A silent lane is left as it was. **CANCEL** stops the bake: lanes already baked stay baked. An error (`NO SD`, `BUSY`, `SAMPLE LIST FULL`…) stops it with the usual toast.
+
+| Toast | Meaning |
+|---|---|
+| `NO INSTR LANES` | No lane has Src INST — nothing to bake. |
+| `SAVED n LANES` | n lanes baked; `SAVED n LANES, NO COPY` — at least one library copy failed (the project samples are there). |
+| `SILENT` | Every lane rendered silent (nothing changed). |
 
 <a id="slices"></a>
 
@@ -1612,14 +1639,14 @@ Self-oscillation (LADDER, MS20) sounds without any input: after the amp envelope
 
 - Each lane is mono: a repeated hit cuts off its own previous one (choke); different lanes sound at the same time — up to 8 voices per track.
 - PREVIEW plays a lane with note C-4 (the first one by default).
-- KIT has factory presets only: **PRESET** opens Load straight away, `[FACTORY]` → KIT. A factory kit fills the lanes and writes its drums (factory DRUM / FM / CHIP presets) into **INS25…INS32**, or INS17…INS24 when the kit itself is in INS25…INS32; lane k plays note C-4 + k. Whatever was in those slots is overwritten on OK (CANCEL brings them back). Your own KIT presets cannot be saved yet.
+- KIT has factory presets only: **PRESET** → **Load**, `[FACTORY]` → KIT. The same menu has **Save one-shot…**, which bakes the INST lanes into samples — [KIT bake](#oneshotkit). A factory kit fills the lanes and writes its drums (factory DRUM / FM / CHIP presets) into **INS25…INS32**, or INS17…INS24 when the kit itself is in INS25…INS32; lane k plays note C-4 + k. Whatever was in those slots is overwritten on OK (CANCEL brings them back). Your own KIT presets cannot be saved yet.
 - Renaming a sample in FILE → SAMPLES also updates the lanes; Delete leaves the name in the lane (the lane is silent, like MISSING) and asks for confirmation if the sample is used in a lane.
 
 <a id="presets"></a>
 
 ### Presets
 
-The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu (on a KIT — Load right away), then a preset browser that fills the whole tab. The same menu has **Save one-shot…** — a note of the instrument rendered into a sample, see [Save one-shot](#oneshot). A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
+The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the encoder) opens a **Load** / **Save** menu (on a KIT — **Load** / **Save one-shot…**), then a preset browser that fills the whole tab. The same menu has **Save one-shot…** — a note of the instrument rendered into a sample, see [Save one-shot](#oneshot) (on a KIT — [the lanes baked into samples](#oneshotkit)). A preset is the entire instrument: type, parameters, filter, LFO, machine and macros, slices and their modes, SYNTH oscillators and wavetable names, and the name.
 
 **Mutate.** The PRESET menu (and the SAMPLE menu of the SMPL page) also has **Mutate 15% / 30% / 60%**: the instrument's sound moves at random by up to that share of half of each parameter's range — the filter (when it is on: Cutoff, Reso, Env, its attack and decay), the envelope (CHIP, SAMPLE, SYNTH, LOFI, FM TONE / CHORD), the macros (FM, DRUM, SYNTH, LOFI), FM SAT, SYNTH Sub, Noise and Env atk / dec, CHIP pulse width and PWM. Name, type, machine, LOFI formula, volume, tuning, wave, sample, LFOs and sends stay. C-4 plays right after. **Undo mutate** puts the instrument back as it was before the last Mutate (one step; greyed out on another instrument and once the instrument was edited since — a knob, a preset load, a type or slice change; cleared by Load and New). Not on a KIT.
 
@@ -1960,6 +1987,7 @@ Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as 
 | `/last.txt` | name of the project to autoload |
 | `/midi/*.mid` | files for import (subfolders allowed) |
 | `/samples/*.wav` | WAV library for importing into projects (subfolders allowed) |
+| `/samples/oneshots/<folder>/*.wav` | copies of [Save one-shot](#oneshot) renders, by instrument (`909/BD`, `FM/KICK`, `SYNTH/SAW`…) |
 | `/wavetables/*.wav` | wavetable library for SYNTH (subfolders allowed) |
 | `/presets/TYPE/…/name.mti` | [instrument presets](#presets): folders CHIP, SAMPLE, FM, DRUM, SYNTH, STRING, LOFI, each with up to 4 levels of your own folders |
 | `/presets/ARP/name.arp` | your own [arp](#arp) patterns (Capture), text |
@@ -1979,7 +2007,7 @@ Samples belong to the project: each project has its own list (up to 128), and in
 |---|---|
 | `/projects/name.mtp` | the project and its sample list (name, length, checksum) |
 | `/projects/name/<sample>.wav` | project samples: mono, 16-bit, same sample rate as in `/mt-store/` (up to 44.1 kHz). Written by Save: missing and changed files are written, files of samples removed from the project are deleted. |
-| `/samples/` | library: samples are imported into the project from here. Import does not copy the file; the sample gets into the project folder when you save. |
+| `/samples/` | library: samples are imported into the project from here. Import does not copy the file; the sample gets into the project folder when you save. Save one-shot also copies its renders here, to `/samples/oneshots/`. |
 | `/mt-store/` on the synth board's card | where samples play from: one file per sample (named by its checksum), shared by all projects, so identical data in different projects is stored once. Import writes here, Load fills it from the project folder, Save copies from it to the folder. Do not edit by hand; Clear cache removes files no project in use needs. |
 | synth board's flash | wavetables and the first 100 ms of every sample (the start, the loop start, 25 ms at each slice), so a note starts at once while the rest loads from the card. Not erased by synth board updates (Update synth, Wi-Fi page). |
 

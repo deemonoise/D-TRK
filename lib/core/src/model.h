@@ -56,6 +56,8 @@ enum class Wave : uint8_t {
 };
 constexpr int kWaveExtFirst = static_cast<int>(Wave::SidTs);
 constexpr int kWaveCount = static_cast<int>(Wave::AyToneNoise) + 1;
+// Name of a CHIP wave into o[n]: "PULSE", "WT3", "SID TS"; out of range -> PULSE.
+void chipWaveName(uint8_t w, char* o, int n);
 // Waves with a pulse in them (DUTY / PWM act on them): PULSE, SID PS / PT / PTS, AY TN.
 constexpr bool waveHasDuty(uint8_t w) {
   return w == static_cast<uint8_t>(Wave::Pulse) || w == static_cast<uint8_t>(Wave::SidPs) ||
@@ -93,6 +95,7 @@ struct KitLane {
 static_assert(sizeof(KitLane) == kSampleNameMax + 6, "KitLane layout (file format)");
 // FM machines (Model:Cycles style). Stored in files: new machines go before Count only.
 enum class FmMachine : uint8_t { Kick, Snare, Metal, Perc, Tone, Chord, Clap, Hat, Count };
+const char* fmMachineName(uint8_t machine);  // "KICK"; out of range -> Kick
 // FM macros: Instrument::macro index, fx DEC..CON = Fx::DCY + index.
 enum FmMacro : uint8_t { kMacDec, kMacCol, kMacShp, kMacSwp, kMacCon, kFmMacros };
 // SYNTH oscillator mode. Stored in files: new modes before Count only.

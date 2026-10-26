@@ -238,12 +238,15 @@ void test_debug() {
 }
 
 void test_protocol_8_and_debug_id() {
-  TEST_ASSERT_EQUAL(16, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
+  TEST_ASSERT_EQUAL(17, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
-                                     // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP
+                                     // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
+                                     // 17: FsCopy
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
   TEST_ASSERT_EQUAL(42, static_cast<int>(Msg::WtRender));
   TEST_ASSERT_EQUAL(43, static_cast<int>(Msg::RenderOut));
+  TEST_ASSERT_EQUAL(48, static_cast<int>(Msg::RecCancel));
+  TEST_ASSERT_EQUAL(49, static_cast<int>(Msg::FsCopy));
 }
 
 void test_wt_render() {

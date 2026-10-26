@@ -17,6 +17,7 @@ struct RenderStats {
   uint32_t frames;
   int16_t peak;
   uint32_t clips;
+  bool copied;  // bounce: the copy into /samples/oneshots made
 };
 
 constexpr uint32_t kResampleMaxFrames = 60 * mt::kSynthRate;  // 60 s
@@ -43,10 +44,14 @@ Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampl
                 RenderProgress cb, void* ctx);
 // One-shot (Save one-shot...): a note of spec.instr into the sample bank. The synth board renders the
 // preview track's tap (spec.insTrack's insert or dry, fader, pan; no sends, no master) until silence
-// after the note-off or 10 s (mt::BounceSeq), trimmed, normalized to -0.3 dBFS; added to p's sample
-// list as name. The transport must be stopped (EngineBusy). Errors: BankFull (the list or the bank),
-// NoSd, AudioBusy, NoSynth, Silent (nothing above -60 dBFS: nothing added), Cancelled (cb).
+// after the note-off or 10 s (mt::BounceSeq), trimmed, normalized to -0.3 dBFS (spec.normalize; off: the
+// level as played, the preview fader undone - mt::kPrevTapScale); added to p's sample
+// list as name. Then copied on the synth board's card to /samples/oneshots/<mt::oneshotDir of dirOf
+// (nullptr: spec.instr)>/<name>.wav (_1, _2.. when taken): st.copied; a failed copy is not an error.
+// The transport must be stopped (EngineBusy). The board is waited for up to 2 s (busy with a copy
+// before). Errors: BankFull (the list or the bank), NoSd, AudioBusy, NoSynth, Silent (nothing above
+// -60 dBFS: nothing added), Cancelled (cb).
 Result bounce(mt::Project& p, const mt::BounceSpec& spec, const char* name, RenderStats& st, RenderProgress cb,
-              void* ctx);
+              void* ctx, const mt::Instrument* dirOf = nullptr);
 
 }  // namespace storage

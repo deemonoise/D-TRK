@@ -59,9 +59,10 @@ RenderResult RenderFeeder::apply(const RenderBlocks& m, Out out, void* ctx) {
     int16_t l[Synth::kBlock], r[Synth::kBlock];
     if (tap_) {
       synth_.render(l, r);
+      const float g = tapK_ == RenderTaps::kPrev ? kPrevTapScale : kTapScale;
       for (int k = 0; k < Synth::kBlock; ++k) {
-        l[k] = sat(tap_->l[tapK_][k] * kTapScale);
-        r[k] = sat(tap_->r[tapK_][k] * kTapScale);
+        l[k] = sat(tap_->l[tapK_][k] * g);
+        r[k] = sat(tap_->r[tapK_][k] * g);
       }
       stats_.measure(l, r);
     } else {

@@ -25,7 +25,8 @@ namespace ui {
 // kept across instruments and type changes (SYNTH MOD -> the type page of the others).
 // SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows). Its SAMPLE menu
 // starts with Record... (RecDialog over the work area); leaving the screen while a take runs = STOP.
-// Save one-shot... (PRESET menu; SAMPLE: the SAMPLE menu; not KIT): BounceDialog over the work area.
+// Save one-shot... (PRESET menu; SAMPLE: the SAMPLE menu): BounceDialog over the work area; on a KIT
+// (PRESET: Load, Save one-shot...) it bakes the INST lanes into samples.
 // FM: machine, macros (DECAY..CONTOUR), SAT; ADSR rows grey where the machine ignores them.
 // DRUM: machine, macros named per machine (grey "-" where unused); ADSR, mode and glide grey.
 // LOFI: machine (BYTE / APC), Formula (BYTE: the library formula by name, turn = next / previous,
