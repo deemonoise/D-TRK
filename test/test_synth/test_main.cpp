@@ -2195,7 +2195,8 @@ void test_drum_mono_choke() {
 }
 
 void test_drum_choke_mid_segment_has_no_jump() {
-  drumInstr(0, DrumMachine::Bd8);
+  // TOM8: a sine from 0 (BD8 / BD9 open with a DC spike / step of their own, a jump by design).
+  drumInstr(0, DrumMachine::Tom8);
   p->instruments[0].macro[kMacDec] = 100;
   noteOn(0, 0, 60);
   for (int k = 0; k < 30; ++k) render1(buf);
@@ -2316,8 +2317,9 @@ void test_drum_cache_static_hit_computes_once() {
   TEST_ASSERT_TRUE(s->drumMachineCalls() - c0 <= 2);
 }
 
-// The cached params are the ones drumMachine gives for the voice's inputs (noise is seeded per
-// hit, so two renders can't be compared sample by sample).
+// The voice's cached settings are the ones drumMachine gives for its inputs: setting the recomputed
+// params again changes nothing in it (noise is seeded per hit, so two renders can't be compared
+// sample by sample).
 void test_drum_cache_matches_recompute() {
   const DrumMachine ms[] = {DrumMachine::Bd8, DrumMachine::Sd9, DrumMachine::Cp8, DrumMachine::Cy9};
   for (DrumMachine mc : ms) {
@@ -2330,27 +2332,23 @@ void test_drum_cache_matches_recompute() {
     for (int k = 0; k < kFmMacros; ++k) mac[k] = m.macro[k];
     DrumParams want;
     drumMachine(static_cast<uint8_t>(mc), mac, 62, want);
-    const DrumParams& got = s->voice(s->trackVoice(0)).dp();
-    TEST_ASSERT_EQUAL_FLOAT(want.toneHz[0], got.toneHz[0]);
-    TEST_ASSERT_EQUAL_FLOAT(want.toneMs, got.toneMs);
-    TEST_ASSERT_EQUAL_FLOAT(want.metalMs, got.metalMs);
-    TEST_ASSERT_EQUAL_FLOAT(want.metalHp, got.metalHp);
-    TEST_ASSERT_EQUAL_FLOAT(want.noiseMs, got.noiseMs);
-    TEST_ASSERT_EQUAL_FLOAT(want.noiseHz, got.noiseHz);
-    TEST_ASSERT_EQUAL_FLOAT(want.pitchMs, got.pitchMs);
+    const DrumVoice& got = s->voice(s->trackVoice(0)).drv();
+    DrumVoice again = got;
+    again.set(want);
+    TEST_ASSERT_EQUAL_MEMORY(&got, &again, sizeof(DrumVoice));
   }
 }
 
 void test_drum_cache_follows_lock() {
   drumInstr(0, DrumMachine::Hh8);
-  p->instruments[0].macro[kMacDec] = 120;
+  p->instruments[0].macro[kMacDec] = 120;  // open: ~1.5 s
   noteOn(0, 0, 60);
   render1(buf);
-  const float before = s->voice(s->trackVoice(0)).dp().metalMs;
   stepStart(0, 0, 6, false);
-  fx(0, 0, Fx::DCY, 20);  // lock on the sounding voice
+  fx(0, 0, Fx::DCY, 20);  // lock on the sounding voice: ~40 ms
   render1(buf);
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).dp().metalMs < before * 0.5f);
+  for (int k = 0; k < 100 && s->activeVoices(); ++k) render1(buf);  // < 0.4 s
+  TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
 void test_heavy_voice_limit_counts_drum() {

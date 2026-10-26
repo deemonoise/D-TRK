@@ -1537,13 +1537,15 @@ MT_HOT void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int d
   bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
   for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
   if (stale) {
-    drumMachine(v.machine, mac, pitch, v.dp());
+    DrumParams dp;  // the voice keeps what it derives (DrumVoice::set), not the params
+    drumMachine(v.machine, mac, pitch, dp);
+    v.drv().set(dp);
     ++drumCalls_;
     v.fpValid = true;
     v.fpPitch = pitch;
     for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
   }
-  v.drv().control(v.dp(), dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
+  v.drv().control(dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * vol * (1.f / 127.f);
 }

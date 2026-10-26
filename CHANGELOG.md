@@ -7,6 +7,15 @@ Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
   CYMBL, PERC) and **Model** (808, 909, RES, SYN, MODAL, MULTI, RING, CLAVE, BELL). Machine numbers in
   files are unchanged. The BDF machine is gone (FM KICK covers it): an old file opens it as BDA; the BDF and
   BDF ZAP presets are removed, the ANALOG kit has BDS DIRT instead of BDF ZAP.
+- DRUM sound: every 808 / 909 machine is calibrated against recordings of the real ones (pitch, sweeps,
+  decays, partials, noise bands, clap timing). Default hits peak at about −1 dBFS (kicks ~+7 dB louder);
+  the output soft clip is always on, DRIVE is the gain into it. Renamed: SD9 TONE → TUNE, TOM9 NOISE →
+  TUNE, CY9 HP → TUNE (as the 909's Tune). HH8 DECAY goes from closed (τ 5–40 ms over 0–51) to open
+  (160–660 ms over 76–127); CY9 RIDE/CR blends ride to crash. RS9 was wrong (1700 / 3400 Hz), now 220 + 460
+  Hz. New defaults for TOM8/9, CP8/9, RS8/9, CL8, CB8, HH8, HH9, CY9: on most percussion 64 is the original
+  sound. RES / MODAL / SYN / MULTI / RING (BDA…HHR) are louder too, with the soft clip; HHR no longer loses
+  its partials at high notes; CPX claps decay 0.05–0.3 s, SPREAD also sets the tail's attack (2–100 ms).
+  The file format is unchanged, but projects and presets with DRUM sound different.
 
 ## 2026-10-23
 - Variations per track (TRACK → VAR, a new page after EVO): every Every passes a new generation replaces

@@ -10,7 +10,8 @@ int voiceCost(const Instrument& m, bool sample) {
     case InstrType::Sample: c = kCostSample; break;
     case InstrType::Fm: c = kCostFm; break;
     case InstrType::Drum:  // constant indices, no .rodata table (RAM1): see STRING below
-      static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == 8, "voiceCost: a case per machine");
+      static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == 8 && kDrum2First == 16,
+                    "voiceCost: a case per machine");
       switch (static_cast<DrumMachine>(m.machine)) {
         case DrumMachine::Bda:
         case DrumMachine::Unused22: c = kCostDrum2[0]; break;  // was BDF: plays as BDA
@@ -20,7 +21,22 @@ int voiceCost(const Instrument& m, bool sample) {
         case DrumMachine::Cpx: c = kCostDrum2[4]; break;
         case DrumMachine::Rsx: c = kCostDrum2[5]; break;
         case DrumMachine::Hhr: c = kCostDrum2[7]; break;
-        default: c = kCostDrum; break;
+        case DrumMachine::Bd8: c = kCostDrum[0]; break;
+        case DrumMachine::Sd8: c = kCostDrum[1]; break;
+        case DrumMachine::Tom8: c = kCostDrum[2]; break;
+        case DrumMachine::Cp8: c = kCostDrum[3]; break;
+        case DrumMachine::Rs8: c = kCostDrum[4]; break;
+        case DrumMachine::Cl8: c = kCostDrum[5]; break;
+        case DrumMachine::Cb8: c = kCostDrum[6]; break;
+        case DrumMachine::Hh8: c = kCostDrum[7]; break;
+        case DrumMachine::Cy8: c = kCostDrum[8]; break;
+        case DrumMachine::Bd9: c = kCostDrum[9]; break;
+        case DrumMachine::Sd9: c = kCostDrum[10]; break;
+        case DrumMachine::Tom9: c = kCostDrum[11]; break;
+        case DrumMachine::Cp9: c = kCostDrum[12]; break;
+        case DrumMachine::Rs9: c = kCostDrum[13]; break;
+        case DrumMachine::Hh9: c = kCostDrum[14]; break;
+        default: c = kCostDrum[15]; break;  // CY9 (and out of range: the last DrumVoice one)
       }
       break;
     case InstrType::Synth: {

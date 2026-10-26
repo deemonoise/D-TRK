@@ -7,16 +7,20 @@
 // (held, kPolyPerTrack per track), DRUM retriggered every 16th at 120 BPM (one voice per track), and
 // 16 wavetable SYNTH voices plus a growing CHIP pool. A ladder stops at its first step over budget:
 // average over kLoadHigh, a block over 100 %, the guard shrinking the pool below the voices played
-// or fewer voices sounding than played; its limit is the step before.
+// or fewer voices sounding than played (Hits: fewer struck than played, the fewest sounding in the
+// block after a hit: a short drum that ends before the next 16th is not over, a voice the guard or a
+// steal took is); its limit is the step before.
 // Each step lasts 4 s, the last 3 s measured (with the CPU profile); 1 s of silence between ladders
-// (longer until the guard has grown the pool back to kVoices).
+// (longer until the guard has grown the pool back to kVoices and the last voice has ended).
 // The first step starts 15 s after boot. Results go out with link::log, a summary at the end; on the
 // desk build (the env) read them with `link_desk.py status 300`.
 // Groups (-DBENCH_MAX_GROUP=g, 0 = every ladder once): 1 the ladders above; 2 the SYNTH fold / ring and
 // the filter types (CHIP LADDER / MS20 / COMB / FORMANT, WT FOLD (fold 100), WT RING (ring 64), WT
 // FOLD+RING (both), 16 WT FX + CHIP LADDER), all with an LFO on the cutoff, and fx only, CHIP LFO and WT LFO (CHIP / WT SYNTH with that LFO) as
 // references; 3: the DRUM machines BDA .. HHR (DRUM2 <machine>: hits as DRUM, every track on that one machine;
-// fx only, WT SYNTH and DRUM as references: price kCostDrum2 from them); 4 the STRING models (STRING HIT, MODAL HIT: chords
+// fx only, WT SYNTH and DRUM as references: price kCostDrum2 from them) and BD8 .. CY9 (DRUM <machine>: the
+// same, DECAY 127 so the hits ring through the 16th, built into the BD8 slot of DRUM for the ladder; price
+// kCostDrum from them, per sounding voice where a machine still ends early); 4 the STRING models (STRING HIT, MODAL HIT: chords
 // re-struck every 1/8 at 120 BPM, DAMP 100 so they ring through, BRIGHT 0.7, STRUCT 0.6, POS 0.3, EXC 100
 // (a 13 ms burst), LP 90 / reso 40; STRING LOW: the STRING chords on notes 28 .. 40, the half / quarter rate
 // string) and 16 <worst> HIT + CHIP (kStringWorst: 16 re-struck voices plus a growing held CHIP pool),
@@ -82,6 +86,7 @@ constexpr uint32_t kStrikeEvery = blocksIn(250);  // an 8th: strike ladders re-s
 constexpr uint32_t kStepBlocks = blocksIn(4000);
 constexpr uint32_t kSkipBlocks = blocksIn(1000);  // settling, not measured
 constexpr uint32_t kRestBlocks = blocksIn(1000);  // between ladders: tails die out
+constexpr uint32_t kTailBlocks = blocksIn(15000); // ... or longer, until the last voice has ended
 constexpr uint32_t kBootBlocks = blocksIn(15000); // from boot: time to start link_desk.py
 
 // How a ladder plays: nothing (the fx' own cost), held chords (kPolyPerTrack per track), drum hits
@@ -113,7 +118,13 @@ struct Ladder {
   bool strike = false;  // the held chords re-struck every kStrikeEvery
   bool low = false;     // the chords on notes 28 .. 40
   bool solo = false;    // Hits: every track on instr (one machine), not instr + t % kDrumKinds
+  int8_t machine = -1;  // solo Hits: this DrumMachine built into kDrumSoloInstr for the ladder (-1: as is)
 };
+// The slot of a DRUM <machine> ladder: DRUM's BD8 one, rebuilt as BD8 for every other ladder.
+constexpr int kDrumSoloInstr = kDrumInstr;
+#define BENCH_DRUM_SOLO(nm, mc) \
+  {"DRUM " nm, kG3, Kind::Hits, mt::kTracks, kDrumSoloInstr, -1, false, false, false, true, \
+   static_cast<int8_t>(mt::DrumMachine::mc)}
 // In flash (PROGMEM, read in place): RAM1 is short in this env.
 constexpr Ladder kLadders[] PROGMEM = {
     {"fx only", kG1 | kG2 | kG3 | kG4 | kG5, Kind::None, 0, kChipInstr, -1},
@@ -140,6 +151,12 @@ constexpr Ladder kLadders[] PROGMEM = {
     {"DRUM2 CPX", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 4, -1, false, false, false, true},
     {"DRUM2 RSX", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 5, -1, false, false, false, true},
     {"DRUM2 HHR", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 7, -1, false, false, false, true},
+    BENCH_DRUM_SOLO("BD8", Bd8), BENCH_DRUM_SOLO("SD8", Sd8), BENCH_DRUM_SOLO("TOM8", Tom8),
+    BENCH_DRUM_SOLO("CP8", Cp8), BENCH_DRUM_SOLO("RS8", Rs8), BENCH_DRUM_SOLO("CL8", Cl8),
+    BENCH_DRUM_SOLO("CB8", Cb8), BENCH_DRUM_SOLO("HH8", Hh8), BENCH_DRUM_SOLO("CY8", Cy8),
+    BENCH_DRUM_SOLO("BD9", Bd9), BENCH_DRUM_SOLO("SD9", Sd9), BENCH_DRUM_SOLO("TOM9", Tom9),
+    BENCH_DRUM_SOLO("CP9", Cp9), BENCH_DRUM_SOLO("RS9", Rs9), BENCH_DRUM_SOLO("HH9", Hh9),
+    BENCH_DRUM_SOLO("CY9", Cy9),
     {"STRING HIT", kG4, Kind::Held, kHeavyTop, kStringInstr + 0, -1, false, true},
     {"MODAL HIT", kG4, Kind::Held, kHeavyTop, kStringInstr + 1, -1, false, true},
     {"STRING LOW", kG4, Kind::Held, kHeavyTop, kStringInstr + 0, -1, false, true, true},
@@ -179,12 +196,12 @@ mt::Synth* synth = nullptr;
 int ladder = nextLadder(0), count = 0;
 bool resting = true, done = false, pending = false;  // pending: the step's notes go out next block
 uint32_t restFor = kBootBlocks;
-uint32_t blocks, n, peak, voiceSum, liveSum, capMin;
+uint32_t blocks, n, peak, voiceSum, liveSum, capMin, struck;
 uint64_t sum;
 
 struct Result {
   int ladder, count, played;
-  uint32_t avgCycles, peakCycles, voices, live, cap;
+  uint32_t avgCycles, peakCycles, voices, live, cap, struck;
   bool over;
 };
 struct Limit {
@@ -249,8 +266,24 @@ void strike() {
     notes(0x90);
 }
 
+void makeDrum(mt::Instrument& in, int kind);
+void makeDrumSolo(mt::Instrument& in, int machine);
+void setFx(mt::Instrument& in);
+
 void startStep() {
   const Ladder& l = cur();
+  // kDrumSoloInstr: this ladder's machine, or DRUM's BD8 back (a copy goes to each voice at its note-on).
+  static int8_t built = -1;
+  if (l.machine != built) {
+    mt::Instrument& in = model->instruments[kDrumSoloInstr];
+    in = mt::Instrument();
+    if (l.machine >= 0)
+      makeDrumSolo(in, l.machine);
+    else
+      makeDrum(in, 0);
+    setFx(in);
+    built = l.machine;
+  }
   synth->setVoiceBudget(l.pool ? mt::kVoiceBudgetTeensy : mt::kVoiceBudgetOff);
   for (int t = 0; t < mt::kTracks; ++t) {
     mt::TrackCfg& tr = model->tracks[t];
@@ -291,8 +324,12 @@ void tick(uint32_t last) {
   ++blocks;
   if (resting) {
     // The guard shrank the pool in the last ladder's over step: rest on (fx only, under kLoadLow)
-    // until it has grown back, or the next ladder starts with a short cap (a false over).
-    if (blocks < restFor || synth->voiceCap() < mt::kVoices) return;
+    // until it has grown back, or the next ladder starts with a short cap (a false over). And until
+    // the last ladder's tails have ended (long drums ring for seconds: they would load the next
+    // ladder's first step and fill its struck count), for at most kTailBlocks more.
+    if (blocks < restFor || synth->voiceCap() < mt::kVoices ||
+        (synth->activeVoices() > 0 && blocks < restFor + kTailBlocks))
+      return;
     resting = false;
     blocks = 0;
     startStep();
@@ -301,6 +338,7 @@ void tick(uint32_t last) {
   if (blocks == kSkipBlocks) {
     measureSeq = measureSeq + 1;
     capMin = mt::kVoices;
+    struck = mt::kVoices;
   }
   if (blocks > kSkipBlocks) {
     sum += last;
@@ -309,6 +347,9 @@ void tick(uint32_t last) {
     voiceSum += synth->activeVoices();
     for (int i = 0; i < mt::kVoices; ++i) liveSum += synth->voice(i).on && !synth->voice(i).stolen;
     if (static_cast<uint32_t>(synth->voiceCap()) < capMin) capMin = synth->voiceCap();
+    // Hits: the voices on in the block after a hit (hits() went out before the last block).
+    if ((blocks - 1) % kHitEvery == 0 && static_cast<uint32_t>(synth->activeVoices()) < struck)
+      struck = synth->activeVoices();
   }
   if (blocks % kHitEvery == 0) hits();
   // Not in the step's last block: its note-offs go out there (ons + offs would overflow kMaxEvents).
@@ -318,11 +359,14 @@ void tick(uint32_t last) {
   const uint32_t voices = n ? (voiceSum + n / 2) / n : 0;
   const uint32_t live = n ? (liveSum + n / 2) / n : 0;
   const int want = played();
-  // A pool ladder plays fewer voices than requested by design: only the CPU and the guard count.
+  // A pool ladder plays fewer voices than requested by design: only the CPU and the guard count. Hits:
+  // every hit must strike all its voices (a drum may end before the next one), held voices sound on.
+  const bool hit = cur().kind == Kind::Hits;
+  const uint32_t sounding = hit ? struck : voices;
   const bool over = pct(avg) >= 100.f * mt::Synth::kLoadHigh || peak >= SynthStream::blockCycles() ||
                     (cur().pool ? capMin < static_cast<uint32_t>(mt::kVoices)
-                                : capMin < static_cast<uint32_t>(want) || static_cast<int>(voices) < want);
-  res = {ladder, count, want, avg, peak, voices, live, capMin, over};
+                                : capMin < static_cast<uint32_t>(want) || static_cast<int>(sounding) < want);
+  res = {ladder, count, want, avg, peak, voices, live, capMin, hit ? struck : 0, over};
   if (!over) limits[ladder] = {want, pct(avg), pct(peak), live};
   resSeq = resSeq + 1;
   blocks = n = peak = voiceSum = liveSum = 0;
@@ -342,6 +386,8 @@ void foldProfile() {
 void report(const Result& r) {
   char live[24] = "";
   if (kLadders[r.ladder].pool) snprintf(live, sizeof live, PSTR(", live %2lu"), static_cast<unsigned long>(r.live));
+  if (kLadders[r.ladder].kind == Kind::Hits)
+    snprintf(live, sizeof live, PSTR(", struck %2lu"), static_cast<unsigned long>(r.struck));
   link::log(PSTR("max %-22s %2d voices: avg %5.1f %% peak %5.1f %%, sounding %2lu%s, cap min %2lu%s"), kLadders[r.ladder].name,
             r.played, pct(r.avgCycles), pct(r.peakCycles), static_cast<unsigned long>(r.voices), live,
             static_cast<unsigned long>(r.cap), r.over ? PSTR("  <- over") : "");
@@ -414,6 +460,15 @@ void makeDrum2(mt::Instrument& in, int kind) {
   mt::instrSetType(in, mt::InstrType::Drum);
   mt::drumSetMachine(in, static_cast<uint8_t>(mt::kDrum2First + kind));
   in.macro[mt::kMacDec] = 110;  // still ringing at the choke
+  in.vol = 40;
+}
+
+// A DRUM <machine> ladder's instrument (machine: a DrumVoice one, BD8 .. CY9): DECAY 127, the longest,
+// so the hits ring through the 16th (most do; the short ones still end: priced per sounding voice).
+void makeDrumSolo(mt::Instrument& in, int machine) {
+  mt::instrSetType(in, mt::InstrType::Drum);
+  mt::drumSetMachine(in, static_cast<uint8_t>(machine));
+  in.macro[mt::kMacDec] = 127;
   in.vol = 40;
 }
 

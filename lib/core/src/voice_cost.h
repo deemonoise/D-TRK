@@ -12,11 +12,16 @@ constexpr int kCostChip = 119;
 constexpr int kCostSynBl = 130;   // SYNTH without a wavetable oscillator (estimate, below WT)
 constexpr int kCostSynWt = 240;
 constexpr int kCostFm = 225;      // bench-max 2026-10-25: TONE 4 ops + detune, 2.23 %/voice
-constexpr int kCostDrum = 290;
-// DRUM BDA..HHR (Drum2Kind order): bench-max group 3, 2026-10-25 (slope of the ladders' average
-// load, 4 .. 16 voices, HHR 4 .. 12; the WT SYNTH reference in the same run gave 237 for its 240).
-// Index 6 (Unused22, was BDF) is not read: that slot plays and costs as BDA.
-constexpr int kCostDrum2[] = {310, 355, 400, 360, 285, 310, 270, 455};
+// DRUM BD8..CY9 (DrumMachine order): bench-max group 3, 2026-10-26, after the recalibration (3 tones,
+// h3 / h5, two-part envelopes, the soft clip). Slope of the DRUM <machine> ladders' average load, 4 .. 16
+// voices, DECAY 127 (the hits ring through the 16th); RS8 still ends early (9 of 16 sounding): per
+// sounding voice (per played: 202). The WT SYNTH reference in the same run gave 237 for its 240.
+constexpr int kCostDrum[] = {304, 301, 262, 259, 335, 262, 329, 397, 391, 344, 306, 356, 258, 279, 360, 394};
+static_assert(sizeof(kCostDrum) / sizeof(kCostDrum[0]) == kDrum2First, "a cost per DRUM machine BD8..CY9");
+// DRUM BDA..HHR (Drum2Kind order): bench-max group 3, 2026-10-26, with the soft clip (slope of the
+// ladders' average load, 4 .. 16 voices, HHR 4 .. 12, each ladder from silence; the same WT SYNTH
+// reference). Index 6 (Unused22, was BDF) is not read: that slot plays and costs as BDA (its value).
+constexpr int kCostDrum2[] = {352, 367, 409, 368, 300, 322, 352, 499};
 static_assert(sizeof(kCostDrum2) / sizeof(kCostDrum2[0]) ==
                   static_cast<unsigned>(DrumMachine::Count) - kDrum2First,
               "a cost per DRUM machine BDA..HHR");

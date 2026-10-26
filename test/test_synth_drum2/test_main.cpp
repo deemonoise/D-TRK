@@ -178,7 +178,8 @@ void checkMachine(const Spec& s) {
     const std::vector<float> lo = hit(s.k, d, 60, 127, kFs / 2), hi = hit(s.k, d, 72, 127, kFs / 2);
     const float r = centroidHz(hi, 0) / centroidHz(lo, 0);
     snprintf(msg, sizeof(msg), "centroid ratio %f", r);
-    TEST_ASSERT_TRUE_MESSAGE(r > 1.5f, msg);
+    // HHR: the pair ratio saturates (x / (0.01 + x)), an octave up moves it only x1.2.
+    TEST_ASSERT_TRUE_MESSAGE(r > (s.k == Drum2Kind::Hhr ? 1.12f : 1.5f), msg);
   }
 }
 
@@ -455,6 +456,56 @@ void test_edges_bounded() {
         }
 }
 
+// Every kind's default hit (velocity 127, note 60, drumSetMachine defaults) peaks at -1 +-1.5 dBFS.
+void test_default_peaks() {
+  const Spec* specs[] = {&kBda, &kSda, &kBds, &kSds, &kCpx, &kRsx, &kHhr};
+  const char* names[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "HHR"};
+  bool ok = true;
+  char msg[64];
+  for (int i = 0; i < 7; ++i) {
+    float d[5];
+    defaults(specs[i]->def, d);
+    const float db = 20.f * log10f(peak(hit(specs[i]->k, d, 60, 127, kFs)) + 1e-12f);
+    printf("%s default peak %.2f dBFS\n", names[i], db);
+    if (fabsf(db + 1.f) > 1.5f) ok = false;
+  }
+  snprintf(msg, sizeof(msg), "a default peak outside -1 +-1.5 dBFS (see output)");
+  TEST_ASSERT_TRUE_MESSAGE(ok, msg);
+}
+
+// HHR keeps all its pairs at high notes: note 96, NOISE 0 still sounds.
+void test_hhr_high_note_sounds() {
+  float d[5];
+  defaults(kHhr.def, d);
+  d[2] = 0;
+  const std::vector<float> a = hit(Drum2Kind::Hhr, d, 96, 127, kFs / 4);
+  char msg[48];
+  snprintf(msg, sizeof(msg), "note 96 rms %f dB", rmsDb(a, 0, ms(30)));
+  TEST_ASSERT_TRUE_MESSAGE(rmsDb(a, 0, ms(30)) > -40.f, msg);
+}
+
+// CPX: the clap envelope's decay (to -80 dB), estimated from its slope between 5..15 ms and 35..45 ms
+// after the first clap. SPREAD 1, pattern 10: the second clap is 80 ms out, the tail later.
+float cpxClapTail(float decay) {
+  float d[5];
+  defaults(kCpx.def, d);
+  d[0] = decay;
+  d[3] = 1.f;
+  d[4] = 10.5f / 16.f;
+  const std::vector<float> a = hit(Drum2Kind::Cpx, d, 60, 127, kFs / 4);
+  const float e0 = rmsDb(a, ms(5), ms(15)), e1 = rmsDb(a, ms(35), ms(45));
+  return 80.f / ((e0 - e1) / 30.f) / 1000.f;  // s
+}
+
+void test_cpx_clap_decay_range() {
+  const float lo = cpxClapTail(0.f), mid = cpxClapTail(0.5f), hi = cpxClapTail(1.f);
+  char msg[64];
+  snprintf(msg, sizeof(msg), "clap -80 dB: %f %f %f s", lo, mid, hi);
+  TEST_ASSERT_TRUE_MESSAGE(lo > 0.035f && lo < 0.07f, msg);
+  TEST_ASSERT_TRUE_MESSAGE(mid > lo * 1.4f && hi > mid * 1.2f, msg);
+  TEST_ASSERT_TRUE_MESSAGE(hi > 0.24f && hi < 0.36f, msg);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_stub_silent_done);
@@ -479,5 +530,8 @@ int main(int, char**) {
   RUN_TEST(test_hhr_decay_open_closed);
   RUN_TEST(test_cpx_all_patterns);
   RUN_TEST(test_edges_bounded);
+  RUN_TEST(test_default_peaks);
+  RUN_TEST(test_hhr_high_note_sounds);
+  RUN_TEST(test_cpx_clap_decay_range);
   return UNITY_END();
 }

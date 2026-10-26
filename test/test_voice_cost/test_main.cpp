@@ -59,14 +59,15 @@ void test_synth_bl() {
 
 void test_fm_drum() {
   TEST_ASSERT_EQUAL(225, voiceCost(of(InstrType::Fm), false));
-  TEST_ASSERT_EQUAL(290, voiceCost(of(InstrType::Drum), false));
+  TEST_ASSERT_EQUAL(kCostDrum[0], voiceCost(of(InstrType::Drum), false));  // machine 0: BD8
 }
 
 void test_drum2_costs() {
   Instrument m = of(InstrType::Drum);
   for (int mc = 0; mc < kDrum2First; ++mc) {
     m.machine = static_cast<uint8_t>(mc);
-    TEST_ASSERT_EQUAL(kCostDrum, voiceCost(m, false));
+    TEST_ASSERT_EQUAL(kCostDrum[mc], voiceCost(m, false));
+    TEST_ASSERT_TRUE(kCostDrum[mc] >= 200 && kCostDrum[mc] <= 600);  // bench-max: about the old 290
   }
   for (int k = 0; k < static_cast<int>(DrumMachine::Count) - kDrum2First; ++k) {
     m.machine = static_cast<uint8_t>(kDrum2First + k);

@@ -105,6 +105,13 @@ MT_INLINE float softClip(float x) {
   if (x > 3.f) return 1.f;
   return x * (27.f + x * x) * fastRcp(27.f + 9.f * x * x);
 }
+// Output soft clip (as DrumVoice): slope 1 at 0, flat at +-1 from |x| = 1.5. No division (the ESP32
+// does float division in software).
+MT_INLINE float outClip(float x) {
+  float u = x * (2.f / 3.f);
+  u = u > 1.f ? 1.f : (u < -1.f ? -1.f : u);
+  return u * (1.5f - 0.5f * u * u);
+}
 MT_INLINE float wrap1(float x) {  // x - floor(x)
   const int i = static_cast<int>(x);
   const float f = x - static_cast<float>(i);
@@ -125,8 +132,8 @@ MT_INLINE float blep(float t, float dt, float rdt) {
   return 0.f;
 }
 
-// Output trims: default knobs peak around -4 dBFS, everything stays below 0 dBFS.
-constexpr float kGainBda = 1.15f, kGainSda = 0.55f, kGainBds = 0.7f, kGainSds = 0.6f, kGainCpx = 0.5f, kGainRsx = 0.25f, kGainHhr = 0.85f;
+// Output trims: a default hit (velocity 127, note 60) peaks around -1 dBFS after the output soft clip.
+constexpr float kGainBda = 2.8f, kGainSda = 0.9f, kGainBds = 1.2f, kGainSds = 1.15f, kGainCpx = 1.0f, kGainRsx = 0.4f, kGainHhr = 1.4f;
 
 // CPX: 16 patterns x (3 clap delays + the tail's), ms at scale 1, and their amplitudes (ctag-tbd Clap,
 // (c) 2024 Robert Manzke, GPL-3.0). Cold: read at the trigger.
@@ -303,9 +310,9 @@ void Drum2Voice::control(const Drum2Params& p, int span) {
       const float f2 = minf(300.f * fastExp2(m[1] * 3.32f) * hz / kFs, 0.45f);
       svfSet(v.bp1, tanDirty(f1), 1.f + 1.5f * m[2]);
       svfSet(v.bp2, tanDirty(f2), 0.75f + 5.75f * m[2]);
-      v.k1 = adK(0.05f + 0.1f * m[0]);
+      v.k1 = adK(0.05f + 0.25f * m[0]);  // clap decay 0.05 .. 0.3 s
       v.k2 = adK(0.05f + 1.95f * m[0] * m[0]);
-      v.att2K = fastExp(kLog1e4 * fastRcp(0.002f * kFs));
+      v.att2K = fastExp(kLog1e4 * fastRcp(maxf(0.1f * m[3], 0.002f) * kFs));  // tail attack: SPREAD, >= 2 ms
       v.gain = (0.4f + 0.6f * a) * kGainCpx;
       if (latch) {
         const int pat = clapPattern(m[4]);
@@ -340,7 +347,7 @@ void Drum2Voice::control(const Drum2Params& p, int span) {
     case Drum2Kind::Hhr: {  // DECAY TONE NOISE
       Hhr& v = s_.hhr;
       static const float kPair[3][2] = {{200.f, 7530.f}, {510.f, 8075.f}, {730.f, 10500.f}};
-      const float r = 0.6667f * hz / kFs;
+      const float x = 0.02f * hz, r = x * fastRcp(0.01f + x) / kFs;  // saturates: pairs stay below Nyquist
       v.pairs = 0;
       for (int i = 0; i < 3; ++i) {
         const float fa = kPair[i][0] * r, fb = kPair[i][1] * r;
@@ -658,7 +665,7 @@ MT_HOT void Drum2Voice::render(float* __restrict out, int n, float amp) {
     float* o = out + off;
     for (int i = 0; i < m; ++i) {
       float s = buf[i];
-      s = s > 1.f ? 1.f : (s < -1.f ? -1.f : s);
+      s = outClip(s);
       const float as = fabsf(s);
       pk = as > pk ? as : pk * kPeakK;
       last = s * amp + tailV;

@@ -49,8 +49,7 @@ struct FmEngine {
   FmParams fp;
 };
 struct DrumEngine {
-  DrumVoice drv;
-  DrumParams dp;
+  DrumVoice drv;  // with what it derives from its DrumParams (set() on a change)
 };
 struct LofiEngine {
   LofiVoice lv;
@@ -163,8 +162,8 @@ struct Voice {
   bool fpValid = false;
   float fpPitch = 0;
   float fpMac[kFmMacros] = {0};
-  // DRUM instrument (machine above holds its DrumMachine). drumMachine() cache: dp for the fp*
-  // key above, as fp for FM (Synth::controlDrum).
+  // DRUM instrument (machine above holds its DrumMachine). drumMachine() cache: the DrumVoice's
+  // set() for the fp* key above, as fp for FM (Synth::controlDrum).
   bool drum = false;
   // SYNTH instrument: tables resolved at note-on (a table changed mid-note applies to the next note).
   bool syn = false;
@@ -182,8 +181,7 @@ struct Voice {
   FmVoice& fmv() { return eng.fm.fmv; }
   FmParams& fp() { return eng.fm.fp; }
   DrumVoice& drv() { return eng.drum.drv; }
-  DrumParams& dp() { return eng.drum.dp; }
-  const DrumParams& dp() const { return eng.drum.dp; }
+  const DrumVoice& drv() const { return eng.drum.drv; }
   SynVoice& sv() { return eng.syn; }
   StringVoice& stv() { return eng.stg; }
   LofiVoice& lv() { return eng.lofi.lv; }

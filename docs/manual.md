@@ -1224,7 +1224,7 @@ SAT is saved with the project (FMEX chunk) and in presets (v8); older files open
 
 ### DRUM
 
-**DRUM** — 23 machines in 8 groups: 16 "analog" machines in two sets (808 and 909), with their own synthesis (tones with a pitch envelope, a click, "metal" from 6 squares, filtered noise, drive), and 7 more — BDA, SDA, BDS, SDS, CPX, RSX, HHR (resonant and synthetic kicks and snares, a clap, a rim shot, a ring-modulated hat; [second table](#drum2)). The same 5 macro slots as FM and the same `DEC`, `COL`, `SHP`, `SWP`, `CON` locks, but each machine has its own slot names (table below). A slot that does nothing is shown as a gray "-". All values are 0–127; DECAY is a number too — its range differs between machines.
+**DRUM** — 23 machines in 8 groups: 16 "analog" machines in two sets (808 and 909), with their own synthesis (up to 3 tones with a pitch envelope, a click, "metal" from 6 squares through two band-passes, filtered noise, drive), each calibrated against recordings of the real machines, and 7 more — BDA, SDA, BDS, SDS, CPX, RSX, HHR (resonant and synthetic kicks and snares, a clap, a rim shot, a ring-modulated hat; [second table](#drum2)). The same 5 macro slots as FM and the same `DEC`, `COL`, `SHP`, `SWP`, `CON` locks, but each machine has its own slot names (table below). A slot that does nothing is shown as a gray "-". All values are 0–127; DECAY is a number too — its range differs between machines.
 
 In INST a machine is picked with two rows: **Machine** — the group, **Model** — the model in it (both wrap around; a change loads the machine's default macros). The tables below use the machine names (BD8, BDA…); the mapping:
 
@@ -1244,34 +1244,35 @@ The BDF machine (FM kick) is gone — FM KICK covers that sound; an instrument u
 - All machines are one-shot and mono per track: a new note cuts off the previous one without a click (choke); note length and note-off don't matter. Attack, Decay, Sustain, Release, Mode and Glide are gray.
 - **Note** C-4 plays the machine's base pitch, other notes are relative to it (tones and metal; clap noise does not depend on the note). Transpose and Fine work as for CHIP.
 - Closed / open hat — short and long DECAY (for example, a `DEC` lock); on the same track they cut each other off.
+- A default hit (velocity 127) peaks at about −1 dBFS. Every DRUM voice ends in a soft clip (always on, flat at full scale); DRIVE, where a machine has it, is the gain into it (×1–8).
 - Changing the machine sets its default macro values. When switching Type to FM or DRUM, the machine and macros are reset as well: the slots mean different things in each.
 - FM, DRUM, STRING, SYNTH with a wavetable (at least one oscillator in WT mode) and LOFI BYTE together play no more than 16 voices: a seventeenth steals the oldest of them (releasing ones first); CHIP, SAMPLE, SYNTH without WT and LOFI APC are not affected.
 - Hats and cymbals are fully synthesized: an inharmonic set of squares plus noise.
 
 | Machine | Pitch at C-4 | DECAY | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|
-| BD8 | 55 Hz | decay, 5 ms … 4 s | TONE: click | DRIVE | SWEEP: pitch drop up to 12 st | TIME: drop time 5–100 ms |
-| SD8 | 180 + 330 Hz, noise HP 1.8 kHz | tone decay | TONE: low / high tone balance | SNAPPY: noise level | SWEEP: up to 7 st | N.DEC: noise length 0.3–2 × DECAY |
-| TOM8 | 110 Hz | tone decay | NOISE: noise amount | DRIVE | SWEEP: up to 7 st | TIME: 10–200 ms |
-| CP8 | noise, BP | tail | FREQ: 600–2500 Hz | SPREAD: 3 claps, spacing 6–14 ms | Q: 1–6 | TAIL: tail level |
-| RS8 | 500 + 1700 Hz | 10–120 ms | TONE: tone balance | NOISE: noise click | SWEEP: up to 5 st | \- |
-| CL8 | 2.5 kHz | 10–120 ms | TONE: ±1 octave | DRIVE | SWEEP: up to 3 st | \- |
-| CB8 | 540 + 800 Hz (squares) | decay | FREQ: BP 1.5–4 kHz | BAL: 540 ↔ 800 Hz | ACCENT: peak at the start of the hit | \- |
-| HH8 | metal, set 8 (205–800 Hz) | 20 ms … 2 s | HP: 4–12 kHz | NOISE: metal ↔ noise | SPREAD: frequency spread ×0.8–1.25 | N.DEC: noise length 0.3–1.5 × DECAY |
-| CY8 | metal, set 8 × 0.7 | 0.3–4 s | HP: 2–8 kHz | NOISE | SPREAD | N.DEC |
-| BD9 | 50 Hz | decay, 5 ms … 4 s | ATTACK: beater click | DRIVE | SWEEP: up to 24 st | TIME: 10–80 ms |
-| SD9 | 190 + 345 Hz, noise HP 1 kHz | tone decay | TONE | SNAPPY | SWEEP: up to 7 st | N.DEC |
-| TOM9 | 120 Hz | tone decay | NOISE | DRIVE | SWEEP: up to 12 st | TIME: 10–200 ms |
-| CP9 | noise, BP | tail | FREQ: 800–3000 Hz | SPREAD: 4 claps | Q | TAIL |
-| RS9 | 1700 + 3400 Hz | 10–80 ms | TONE | NOISE | SWEEP: up to 5 st | \- |
-| HH9 | metal, set 9 | 20 ms … 2 s | HP: 6–14 kHz | NOISE | SPREAD | N.DEC |
-| CY9 | metal, set 9 × 0.6 | 0.4–4 s | HP: 3–10 kHz | RIDE/CR: ride (lower metal) → crash (brighter noise) | SPREAD | N.DEC |
+| BD8 | 45 Hz, near sine | hold 20–37 ms, then τ 24–230 ms (−60 dB in 0.2–1.6 s) | TONE: click | DRIVE | SWEEP: pitch drop, +215 Hz fast and +22 Hz slow at 40, ×0–3.2 | TIME: fast drop τ 2–12 ms |
+| SD8 | 165 + 322 Hz, noise BP 3 kHz | tone decays (τ 30 / 9 ms at 55, ×0.4–3.3) | TONE: upper tone −20…0 dB | SNAPPY: noise level | SWEEP: pitch drop up to 16 st (≈0 at 30) | N.DEC: noise τ 14–130 ms |
+| TOM8 | 127 Hz (MT); the note picks the drum: LT 86, HT 171, congas 191 / 264 / 367 Hz | τ 62 ms at 75 (×0.4–1.9; longer on low notes) | NOISE: LP noise (0 = none) | DRIVE | SWEEP: first-cycle blip +9.5 st at 40 | TIME: blip length ×0.5–2.9 |
+| CP8 | noise, BP 1.1 kHz | tail ×0.35–2.8 | FREQ: ±1 octave | SPREAD: 3 claps 8.5 / 10.5 / 9.5 ms apart at 64, ×0.66–1.5 | Q: ×0.5–2 | TAIL: tail level 0…2× (64 = original) |
+| RS8 | 448 + 896 Hz, a 1.75 kHz partial, noise BP 5.5 kHz | τ 4 ms at 64, ×0.5–2 | TONE: upper partials ±13 dB | NOISE: click ±15 dB | SWEEP: pitch +0…11 % at the hit | \- |
+| CL8 | 2614 Hz | τ 5 ms at 64, ×0.33–3 | TONE: ±1 octave | DRIVE | SWEEP: up to +6 st (0 = none) | \- |
+| CB8 | 422 + 632 Hz (squares), BP 675 Hz | long part τ 130 ms at 64, ×0.33–3 | FREQ: BP ±1 octave | BAL: lower square −21.5…+4.5 dB | ACCENT: attack part (τ 20 ms) 0…1.5 | \- |
+| HH8 | metal, 808 set (348–982 Hz), BP 7.1 kHz + air 11 kHz | one knob closed → open: closed τ 5–40 ms over 0–51 (18 ms at 38), open τ 160–660 ms over 76–127 | HP: 5 kHz ×0.5–2 | NOISE: band-passed noise (0 = metal only) | SPREAD: frequency spread ×0.8–1.25 | N.DEC: noise fall ×0.25–4 |
+| CY8 | metal, 808 set, bands 7.3 + 2.9 kHz | all times ×0.5–2 (−60 dB at ≈3.6–3.9 s at 90) | HP: 5 kHz ×0.5–2 | NOISE: a little noise | SPREAD | N.DEC: noise fall ×0.25–4 |
+| BD9 | 49.5 Hz, sine with h3 / h5 | hold 55–70 ms, then τ 15–96 ms | ATTACK: high-passed noise (≈30 ms) | DRIVE | SWEEP: pitch drop, +200 Hz at 60 | TIME: drop τ 8.7–31 ms (909 Tune) |
+| SD9 | 120–233 Hz + 1.455×, noise LP 9 kHz / HP 2 kHz | tone τ 28 ms at 55, ×0.4–3.3 | TUNE: 909 Tune, F1 120–233 Hz | SNAPPY: noise −40…−5.5 dB re the tone (0 = none) | SWEEP: +260 Hz at 30, τ 7 ms | N.DEC: 909 Tone, noise plateau ≈50 ms then a speeding fall (−3 dB 15–78 ms later) |
+| TOM9 | MT 81–152 Hz by TUNE, partials ×0.64 and ×1.78; the note picks the drum (LT ≈ 4 st below, HT ≈ 3 st above) | body τ 47–82 ms after a hold (~1.6× on LT) | TUNE: 909 Tune | DRIVE | SWEEP: slow +5 st at 50 (plus +1.5 st in ~3 ms) | TIME: slow sweep τ 38 ms at 50, ×0.5–2.9 |
+| CP9 | noise, BP 1 kHz | tail ×0.35–2.8 | FREQ: ±1 octave | SPREAD: 3 claps 11 / 12.5 / 9 ms apart at 64, ×0.66–1.5 | Q: ×0.5–2 | TAIL: tail level |
+| RS9 | 220 + 459 Hz (−6 dB) + 899 Hz (−15 dB) | τ 10 ms at 64, ×0.5–2 | TONE: upper partials ±13 dB | NOISE: HP click ±15 dB | SWEEP: pitch +0…8 % at the hit | \- |
+| HH9 | noise BP 6.5 kHz + metal, 909 set (526–1690 Hz) | closed τ 9–44 ms (low DECAY) → open τ 58–151 ms (high) | HP: all bands ×0.5–2 | NOISE: metal ↔ noise (65 % noise at 59) | SPREAD | N.DEC: noise fall ×0.25–4 |
+| CY9 | noise + metal, 909 set | ×0.5–2 (1 at 95) | TUNE: band up 1.2 octaves as the decay shortens (crash τ 430 → 205 ms, ride 337 → 183) | RIDE/CR: blends ride (0) to crash (127; a swell and a low clang) | SPREAD | N.DEC: noise fall ×0.25–4 |
 
-Columns 2–5 are the COLOR, SHAPE, SWEEP, CONTOUR slots (locks `COL`, `SHP`, `SWP`, `CON`); the first slot is always DECAY (`DEC`). "st" means semitones. In the LFO dest list for DRUM the slots use the generic names DECAY…CONTOUR.
+Columns 2–5 are the COLOR, SHAPE, SWEEP, CONTOUR slots (locks `COL`, `SHP`, `SWP`, `CON`); the first slot is always DECAY (`DEC`). "st" means semitones, τ a time constant (−60 dB ≈ 6.9 τ). On most percussion (TOM9, CP, RS, CL, CB, the hats and cymbals) 64 on a "×" or "±" slot is the original sound; a machine change loads its defaults. In the LFO dest list for DRUM the slots use the generic names DECAY…CONTOUR.
 
 <a id="drum2"></a>
 
-The other 7 machines. They follow the same rules (one-shot, choke, note relative to C-4, velocity as accent), but cost more in the [voice pool](#sound) (an estimate until measured on the synth board).
+The other 7 machines. They follow the same rules (one-shot, choke, note relative to C-4, velocity as accent, a default hit at about −1 dBFS, the output soft clip), but cost more in the [voice pool](#sound) (an estimate until measured on the synth board).
 
 | Machine | Sound | Pitch at C-4 | DECAY | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|---|
@@ -1279,9 +1280,9 @@ The other 7 machines. They follow the same rules (one-shot, choke, note relative
 | SDA | snare: a pulse rings 5 tuned modes, plus a band of noise | 200 Hz | length | TONE: body ↔ upper modes | SNAPPY: noise level and length | \- | \- |
 | BDS | synthetic 909-style kick: a distorted sine with an FM sweep, a saturating VCA, a click and noise | 50 Hz | body length | TONE: brightness and click | DIRT: distortion | SWEEP: FM sweep depth | TIME: sweep time |
 | SDS | synthetic snare: two distorted sines (f and 1.47 f) with a short FM, filtered noise | 180 Hz | length | TONE: noise band 0.5–2× | SNAPPY: drum ↔ noise | FM: pitch blip | \- |
-| CPX | clap: noise through two band-pass filters, a burst of claps then a tail | noise, BP | tail | FREQ: band 350–4000 Hz | TONE: filter Q | SPREAD: clap spacing | PATTERN: 16 patterns of clap timing and levels |
+| CPX | clap: noise through two band-pass filters, a burst of claps then a tail | noise, BP | each clap 0.05–0.3 s, the tail 0.05–2 s | FREQ: band 350–4000 Hz | TONE: filter Q | SPREAD: clap spacing; the tail's attack 2–100 ms | PATTERN: 16 patterns of clap timing and levels |
 | RSX | rim shot: a pulse rings 3 modes, hard-clipped, plus noise | 470 Hz | length | TONE: high-pass and body | NOISE | \- | \- |
-| HHR | ring-modulated hat: 3 pairs of square × saw oscillators, band-pass + high-pass, sample-and-hold noise | metal (200–10500 Hz) | 20 ms … ≈ 2 s | TONE: filter cutoff | NOISE: metal ↔ noise | \- | \- |
+| HHR | ring-modulated hat: 3 pairs of square × saw oscillators, band-pass + high-pass, sample-and-hold noise | metal (200–10500 Hz); higher notes raise it less and less (it never drops out) | 20 ms … ≈ 2 s | TONE: filter cutoff | NOISE: metal ↔ noise | \- | \- |
 
 Factory presets: two per machine — BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O (category ANALOG); and the kit **ANALOG** (KIT, category DRUM) built from them.
 
