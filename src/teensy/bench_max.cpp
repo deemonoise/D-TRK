@@ -72,7 +72,9 @@ static_assert(kStringModels == 2, "kLadders / kInstrs list 2 STRING models");
 constexpr int kDrum2Kinds = static_cast<int>(mt::DrumMachine::Count) - mt::kDrum2First;
 constexpr int kDrum2Instr = kStringInstr - kDrum2Kinds;  // .. kStringInstr - 1
 static_assert(kDrum2Kinds == 8, "kLadders / kInstrs list 8 DRUM2 machines");
-static_assert(kDrum2Instr >= 0, "max bench layout");
+// Group 1: FM TONE with SAT 64 (the FM SATURATION shaper's cost on top of FM TONE).
+constexpr int kFmSatInstr = kDrum2Instr - 1;
+static_assert(kFmSatInstr >= 0, "max bench layout");
 
 constexpr uint32_t blocksIn(float ms) { return static_cast<uint32_t>(ms * 1000.f / SynthStream::kBlockUs + 0.5f); }
 constexpr uint32_t kHitEvery = blocksIn(125);     // a 16th at 120 BPM
@@ -117,6 +119,7 @@ constexpr Ladder kLadders[] PROGMEM = {
     {"fx only", kG1 | kG2 | kG3 | kG4 | kG5, Kind::None, 0, kChipInstr, -1},
     {"CHIP", kG1, Kind::Held, kChipTop, kChipInstr, -1},
     {"FM TONE", kG1, Kind::Held, kHeavyTop, kFmInstr, -1},
+    {"FM TONE SAT", kG1, Kind::Held, kHeavyTop, kFmSatInstr, -1},
     {"WT SYNTH", kG1 | kG3 | kG4, Kind::Held, kHeavyTop, kWtInstr, -1},
     {"DRUM", kG1 | kG3 | kG4, Kind::Hits, mt::kTracks, kDrumInstr, -1},
     {"16 WT + CHIP", kG1, Kind::Mix, kMixTop, kChipInstr, kWtInstr},
@@ -414,12 +417,14 @@ void makeDrum2(mt::Instrument& in, int kind) {
   in.vol = 40;
 }
 
-void makeFm(mt::Instrument& fm, int) {
+// arg: FM SAT (0 = the shaper bypassed).
+void makeFm(mt::Instrument& fm, int sat) {
   mt::instrSetType(fm, mt::InstrType::Fm);
   mt::fmSetMachine(fm, static_cast<uint8_t>(mt::FmMachine::Tone));
   fm.mono = false;
   fm.sustain = 127;
   fm.vol = 30;
+  fm.fmSat = static_cast<uint8_t>(sat);
 }
 
 // Group 2: arg | kMove adds a moving cutoff. The group 1 instruments hold theirs (CHIP: the env held
@@ -514,6 +519,7 @@ constexpr InstrDef kInstrs[] PROGMEM = {
     {kDrumInstr + 6, makeDrum, 6},
     {kDrumInstr + 7, makeDrum, 7},
     {kFmInstr, makeFm, 0},
+    {kFmSatInstr, makeFm, 64},
     {kWtInstr, makeWt, 0},
     {kChipInstr, makeChip, kLp},
     {kChipLfoInstr, makeChip, kLp | kMove},
