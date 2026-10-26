@@ -1,7 +1,7 @@
 
 # D-TRK — user manual
 
-A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song of up to 128 slots with follow actions, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, analog-style drum machines, a wavetable synth, a macro oscillator, a sampler, chiptune, bytebeat and Atari Punk Console) through the synth board's stereo audio output (the Audio Shield), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
+A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S3: sequencer, screen, controls, MIDI OUT, Wi-Fi firmware updates) and a Teensy 4.1 synth board (the built-in sound, the microSD card and the sample bank). 16 tracks, a bank of 16 patterns, a song of up to 128 slots with follow actions, Fill with Euclid and arpeggio, chord and bass generators, MIDI file import. Each track plays either the built-in synthesizer (FM, analog-style drum machines, a wavetable synth, a string resonator, a sampler, chiptune, bytebeat and Atari Punk Console) through the synth board's stereo audio output (the Audio Shield), or external MIDI. Controls: a touchscreen, an encoder, the Play and Shift buttons, the chord buttons [A and B](#abkeys) and 8 [track buttons](#trackkeys).
 
 Русская версия: [manual_ru.md](manual_ru.md)
 
@@ -999,7 +999,7 @@ The page is remembered when you switch instruments and when you change Type: for
 |---|---|
 | MAIN | Name, Type, Volume, Transpose, Fine, Mode, Glide, Dly send, Rvb send |
 | ENV | Attack, Decay, Sustain, Release, Vel\>Cut, Vel\>Dec (for STRING — Vel\>Dmp) and an ADSR graph on the right |
-| OSC / SMPL / FM / DRUM / RES / LOFI | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) and [DRUM](#drum) — Machine and 5 macros; [SYNTH](#synth) — oscillators and tables; [STRING](#string) — Model, Damp, Bright, Struct, Position, Excite; [LOFI](#lofi) — Machine, Formula, Sync and 5 macros |
+| OSC / SMPL / FM / DRUM / RES / LOFI | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) — Machine and 5 macros; [DRUM](#drum) — Machine (group), Model and 5 macros; [SYNTH](#synth) — oscillators and tables; [STRING](#string) — Model, Damp, Bright, Struct, Position, Excite; [LOFI](#lofi) — Machine, Formula, Sync and 5 macros |
 | MOD (SYNTH only) | Sub, Sub oct, Noise, Ring, Fold, Env\>Shp, Env atk, Env dec |
 | FILT | Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — [filter](#filter) |
 | LFO | LFO (1–4), Wave, Sync, Retrig, Rate, Depth, Dest |
@@ -1224,7 +1224,22 @@ SAT is saved with the project (FMEX chunk) and in presets (v8); older files open
 
 ### DRUM
 
-**DRUM** — 24 machines: 16 "analog" machines in two sets (names ending in 8 and in 9), with their own synthesis (tones with a pitch envelope, a click, "metal" from 6 squares, filtered noise, drive), and 8 more after CY9 — BDA, SDA, BDS, SDS, CPX, RSX, BDF, HHR (resonant and synthetic kicks and snares, a clap, a rim shot, an FM kick, a ring-modulated hat; [second table](#drum2)). The same 5 macro slots as FM and the same `DEC`, `COL`, `SHP`, `SWP`, `CON` locks, but each machine has its own slot names (table below). A slot that does nothing is shown as a gray "-". All values are 0–127; DECAY is a number too — its range differs between machines.
+**DRUM** — 23 machines in 8 groups: 16 "analog" machines in two sets (808 and 909), with their own synthesis (tones with a pitch envelope, a click, "metal" from 6 squares, filtered noise, drive), and 7 more — BDA, SDA, BDS, SDS, CPX, RSX, HHR (resonant and synthetic kicks and snares, a clap, a rim shot, a ring-modulated hat; [second table](#drum2)). The same 5 macro slots as FM and the same `DEC`, `COL`, `SHP`, `SWP`, `CON` locks, but each machine has its own slot names (table below). A slot that does nothing is shown as a gray "-". All values are 0–127; DECAY is a number too — its range differs between machines.
+
+In INST a machine is picked with two rows: **Machine** — the group, **Model** — the model in it (both wrap around; a change loads the machine's default macros). The tables below use the machine names (BD8, BDA…); the mapping:
+
+| Machine | Model → machine |
+|---------|-----------------|
+| KICK | 808 → BD8, 909 → BD9, RES → BDA, SYN → BDS |
+| SNARE | 808 → SD8, 909 → SD9, MODAL → SDA, SYN → SDS |
+| TOM | 808 → TOM8, 909 → TOM9 |
+| CLAP | 808 → CP8, 909 → CP9, MULTI → CPX |
+| RIM | 808 → RS8, 909 → RS9, MODAL → RSX |
+| HAT | 808 → HH8, 909 → HH9, RING → HHR |
+| CYMBL | 808 → CY8, 909 → CY9 |
+| PERC | CLAVE → CL8, BELL → CB8 |
+
+The BDF machine (FM kick) is gone — FM KICK covers that sound; an instrument using it in an old file opens as BDA.
 
 - All machines are one-shot and mono per track: a new note cuts off the previous one without a click (choke); note length and note-off don't matter. Attack, Decay, Sustain, Release, Mode and Glide are gray.
 - **Note** C-4 plays the machine's base pitch, other notes are relative to it (tones and metal; clap noise does not depend on the note). Transpose and Fine work as for CHIP.
@@ -1256,7 +1271,7 @@ Columns 2–5 are the COLOR, SHAPE, SWEEP, CONTOUR slots (locks `COL`, `SHP`, `S
 
 <a id="drum2"></a>
 
-The other 8 machines. They follow the same rules (one-shot, choke, note relative to C-4, velocity as accent), but cost more in the [voice pool](#sound) (an estimate until measured on the synth board).
+The other 7 machines. They follow the same rules (one-shot, choke, note relative to C-4, velocity as accent), but cost more in the [voice pool](#sound) (an estimate until measured on the synth board).
 
 | Machine | Sound | Pitch at C-4 | DECAY | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|---|
@@ -1266,10 +1281,9 @@ The other 8 machines. They follow the same rules (one-shot, choke, note relative
 | SDS | synthetic snare: two distorted sines (f and 1.47 f) with a short FM, filtered noise | 180 Hz | length | TONE: noise band 0.5–2× | SNAPPY: drum ↔ noise | FM: pitch blip | \- |
 | CPX | clap: noise through two band-pass filters, a burst of claps then a tail | noise, BP | tail | FREQ: band 350–4000 Hz | TONE: filter Q | SPREAD: clap spacing | PATTERN: 16 patterns of clap timing and levels |
 | RSX | rim shot: a pulse rings 3 modes, hard-clipped, plus noise | 470 Hz | length | TONE: high-pass and body | NOISE | \- | \- |
-| BDF | 2-operator FM kick: carrier 20–100 Hz with a pitch sweep, the modulator with feedback | 45 Hz | length | SWEEP: pitch drop up to +1 kHz | TIME: sweep and index decay | INDEX: FM index | RATIO: modulator ratio (64 steps) |
 | HHR | ring-modulated hat: 3 pairs of square × saw oscillators, band-pass + high-pass, sample-and-hold noise | metal (200–10500 Hz) | 20 ms … ≈ 2 s | TONE: filter cutoff | NOISE: metal ↔ noise | \- | \- |
 
-Factory presets: two per machine — BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O (category ANALOG), BDF, BDF ZAP (category FM); and the kit **ANALOG** (KIT, category DRUM) built from them.
+Factory presets: two per machine — BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O (category ANALOG); and the kit **ANALOG** (KIT, category DRUM) built from them.
 
 <a id="synth"></a>
 
@@ -1628,7 +1642,6 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 | DRUM | 808 | BD808, BD808 L, SD808, CH808, OH808, CP808, CB808 |
 | DRUM | 909 | BD909, SD909, CH909, OH909, CP909 |
 | DRUM | ANALOG | BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O |
-| DRUM | FM | BDF, BDF ZAP |
 | SYNTH | BASS | BASS, ACID, SUBBASS |
 | SYNTH | LEAD | LEAD, SYNCLD |
 | SYNTH | PAD | PAD, PWMSTR, WTSWEEP |
@@ -2126,7 +2139,7 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 | Song | 128 slots |
 | Undo | 8 steps (pattern snapshots) |
 | BPM / Swing | 20–300 / 50–75% |
-| fx per step | 2 |
+| fx per step | 6 |
 | Files in a list | 128 |
 | Project / track / instrument name | 16 / 8 / 8 characters |
 | MIDI import | 512 KB, 16,384 notes, 32 sources |
@@ -2136,7 +2149,7 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 | Sample length | up to the card's free space (mono, 16-bit, up to 44.1 kHz after import) |
 | One-shot render | up to 10 s; hold 0.05–5 s |
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048 |
-| Presets | `.mti` file 236 bytes, name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 185 factory |
+| Presets | `.mti` file 236 bytes, name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 196 factory |
 | Arp patterns | up to 32 steps; 106 factory, up to 32 of your own listed, name up to 16 characters |
 | Chord progressions | up to 16 chords; 55 factory + RANDOM, 32 rhythms, up to 32 of your own listed |
 | Bass patterns | up to 32 steps; 48 factory, up to 32 of your own listed |

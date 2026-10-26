@@ -43,7 +43,7 @@ constexpr Names kNames[static_cast<int>(DrumMachine::Count)] = {
     {"SDS", {"DECAY", "TONE", "SNAPPY", "FM", ""}},
     {"CPX", {"DECAY", "FREQ", "TONE", "SPREAD", "PATTERN"}},
     {"RSX", {"DECAY", "TONE", "NOISE", "", ""}},
-    {"BDF", {"DECAY", "SWEEP", "TIME", "INDEX", "RATIO"}},
+    {"---", {"DECAY", "", "", "", ""}},  // Unused22
     {"HHR", {"DECAY", "TONE", "NOISE", "", ""}},
 };
 
@@ -135,7 +135,63 @@ MT_HOT void hat(DrumParams& o, const Mac& m, const float* set, float scale, floa
   o.noiseHz = o.metalHp;
 }
 
+using D = DrumMachine;
+struct Group {
+  const char* name;
+  uint8_t count;
+  const char* model[4];
+  D machine[4];
+};
+constexpr Group kGroups[] = {
+    {"KICK", 4, {"808", "909", "RES", "SYN"}, {D::Bd8, D::Bd9, D::Bda, D::Bds}},
+    {"SNARE", 4, {"808", "909", "MODAL", "SYN"}, {D::Sd8, D::Sd9, D::Sda, D::Sds}},
+    {"TOM", 2, {"808", "909"}, {D::Tom8, D::Tom9}},
+    {"CLAP", 3, {"808", "909", "MULTI"}, {D::Cp8, D::Cp9, D::Cpx}},
+    {"RIM", 3, {"808", "909", "MODAL"}, {D::Rs8, D::Rs9, D::Rsx}},
+    {"HAT", 3, {"808", "909", "RING"}, {D::Hh8, D::Hh9, D::Hhr}},
+    {"CYMBL", 2, {"808", "909"}, {D::Cy8, D::Cy9}},
+    {"PERC", 2, {"CLAVE", "BELL"}, {D::Cl8, D::Cb8}},
+};
+constexpr int kGroupCount = sizeof(kGroups) / sizeof(kGroups[0]);
+
+const Group& group(int g) { return kGroups[g >= 0 && g < kGroupCount ? g : 0]; }
+
+// (group, model) of a machine; Unused22 and unknown ones as BDA.
+void locate(uint8_t m, int& g, int& k) {
+  if (m >= static_cast<int>(D::Count) || m == static_cast<int>(D::Unused22)) m = static_cast<uint8_t>(D::Bda);
+  for (g = 0; g < kGroupCount; ++g)
+    for (k = 0; k < kGroups[g].count; ++k)
+      if (static_cast<uint8_t>(kGroups[g].machine[k]) == m) return;
+  g = k = 0;
+}
+
 }  // namespace
+
+int drumGroupCount() { return kGroupCount; }
+const char* drumGroupName(int g) { return group(g).name; }
+int drumModelCount(int g) { return group(g).count; }
+
+const char* drumModelName(int g, int k) {
+  const Group& gr = group(g);
+  return gr.model[k >= 0 && k < gr.count ? k : 0];
+}
+
+uint8_t drumMachineAt(int g, int k) {
+  const Group& gr = group(g);
+  return static_cast<uint8_t>(gr.machine[k >= 0 && k < gr.count ? k : 0]);
+}
+
+int drumGroupOf(uint8_t machine) {
+  int g, k;
+  locate(machine, g, k);
+  return g;
+}
+
+int drumModelOf(uint8_t machine) {
+  int g, k;
+  locate(machine, g, k);
+  return k;
+}
 
 const char* drumMachineName(uint8_t m) {
   return kNames[m < static_cast<int>(DrumMachine::Count) ? m : 0].machine;

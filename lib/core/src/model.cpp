@@ -262,11 +262,12 @@ void drumSetMachine(Instrument& m, uint8_t machine) {
       {55, 60, 70, 40, 0},   // SDS
       {60, 64, 64, 64, 0},   // CPX
       {40, 64, 40, 0, 0},    // RSX
-      {75, 50, 40, 50, 16},  // BDF
+      {80, 40, 50, 40, 0},   // Unused22: as BDA
       {30, 64, 30, 0, 0},    // HHR
   };
   constexpr int kLast = static_cast<int>(DrumMachine::Count) - 1;
   m.machine = static_cast<uint8_t>(machine > kLast ? kLast : machine);
+  if (m.machine == static_cast<uint8_t>(DrumMachine::Unused22)) m.machine = kDrum2First;  // was BDF: BDA
   for (int k = 0; k < kFmMacros; ++k) m.macro[k] = kDefaults[m.machine][k];
 }
 

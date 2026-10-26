@@ -316,6 +316,19 @@ void test_type7_preset_loads_as_chip() {
   TEST_ASSERT_EQUAL_STRING("OLD7", b.name);
 }
 
+// DRUM machine 22 (was BDF) in a file loads as BDA.
+void test_drum_unused22_loads_as_bda() {
+  Instrument a;
+  instrSetType(a, InstrType::Drum);
+  a.machine = static_cast<uint8_t>(DrumMachine::Unused22);
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Bda), b.machine);
+}
+
 void test_roundtrip_string() {
   Instrument a;
   strcpy(a.name, "BELL");
@@ -832,6 +845,7 @@ int main() {
   RUN_TEST(test_apply_preset_sample_missing_keeps_slices);
   RUN_TEST(test_v3_roundtrip_synth);
   RUN_TEST(test_type7_preset_loads_as_chip);
+  RUN_TEST(test_drum_unused22_loads_as_bda);
   RUN_TEST(test_roundtrip_string);
   RUN_TEST(test_v2_file_loads_synth_defaults);
   RUN_TEST(test_apply_synth_copies_tables);

@@ -159,14 +159,27 @@ InstScreen::InstScreen(App& app) : app_(app) {
   // DRUM: the machine shapes the whole sound; DECAY is a number (its range differs per machine).
   auto always = [] { return true; };
   for (int r : {kAttack, kDecay, kSustain, kRelease, kMode, kGlide}) drum_[r].dim = always;
+  // Machine = the group, Model = the machine in it; both wrap around and load the machine's macros.
+  auto wrap = [](int v, int n) { return ((v % n) + n) % n; };
   drum_[kMachine] = {"Machine",
-                     [this](char* o, int n) { snprintf(o, n, "%s", mt::drumMachineName(inst().machine)); },
-                     [this](int d) {
-                       const int v = clampi(inst().machine + d, 0, static_cast<int>(mt::DrumMachine::Count) - 1);
-                       if (v != inst().machine) mt::drumSetMachine(inst(), static_cast<uint8_t>(v));
+                     [this](char* o, int n) { snprintf(o, n, "%s", mt::drumGroupName(mt::drumGroupOf(inst().machine))); },
+                     [this, wrap](int d) {
+                       const int g = wrap(mt::drumGroupOf(inst().machine) + d, mt::drumGroupCount());
+                       const uint8_t v = mt::drumMachineAt(g, 0);
+                       if (v != inst().machine) mt::drumSetMachine(inst(), v);
                      }};
+  drum_[kDrumModel] = {"Model",
+                       [this](char* o, int n) {
+                         const uint8_t m = inst().machine;
+                         snprintf(o, n, "%s", mt::drumModelName(mt::drumGroupOf(m), mt::drumModelOf(m)));
+                       },
+                       [this, wrap](int d) {
+                         const int g = mt::drumGroupOf(inst().machine);
+                         const uint8_t v = mt::drumMachineAt(g, wrap(mt::drumModelOf(inst().machine) + d, mt::drumModelCount(g)));
+                         if (v != inst().machine) mt::drumSetMachine(inst(), v);
+                       }};
   for (int k = 0; k < mt::kFmMacros; ++k)
-    drum_[kMac0 + k] = {"-", macroNum(k), macroEdit(k), [this, k] { return !*mt::drumMacroName(inst().machine, k); }};
+    drum_[kDrumMac0 + k] = {"-", macroNum(k), macroEdit(k), [this, k] { return !*mt::drumMacroName(inst().machine, k); }};
   // LOFI: ADSR, mode and glide as CHIP. A machine change loads its default macros.
   lofi_[kMachine] = {"Machine",
                      [this](char* o, int n) { snprintf(o, n, "%s", mt::lofiMachineName(inst().machine)); },
@@ -296,7 +309,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   initTail(chip_ + kChipRows);
   initTail(sample_ + kCommon);
   initTail(fm_ + kFmRows);
-  initTail(drum_ + kMacRows);
+  initTail(drum_ + kDrumRows);
   initTail(syn_ + kSynRows);
   initTail(string_ + kStringRows);
   initTail(lofi_ + kLofiRows);
@@ -558,7 +571,7 @@ void InstScreen::relabel() {
   if (shown_ != mt::InstrType::Drum) return;
   for (int k = 0; k < mt::kFmMacros; ++k) {
     const char* l = mt::drumMacroName(inst().machine, k);
-    drum_[kMac0 + k].label = *l ? l : "-";
+    drum_[kDrumMac0 + k].label = *l ? l : "-";
   }
 }
 
@@ -604,7 +617,7 @@ int InstScreen::typeCount() const {
   switch (shown_) {
     case mt::InstrType::Sample: return 0;  // SampleEditor
     case mt::InstrType::Fm: return kFmRows - kCommon;
-    case mt::InstrType::Drum: return kMacRows - kCommon;
+    case mt::InstrType::Drum: return kDrumRows - kCommon;
     case mt::InstrType::Synth: return kSynRows - kCommon;
     case mt::InstrType::String: return kStringRows - kCommon;
     case mt::InstrType::Lofi: return kLofiRows - kCommon;

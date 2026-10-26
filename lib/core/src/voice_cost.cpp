@@ -12,13 +12,13 @@ int voiceCost(const Instrument& m, bool sample) {
     case InstrType::Drum:  // constant indices, no .rodata table (RAM1): see STRING below
       static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == 8, "voiceCost: a case per machine");
       switch (static_cast<DrumMachine>(m.machine)) {
-        case DrumMachine::Bda: c = kCostDrum2[0]; break;
+        case DrumMachine::Bda:
+        case DrumMachine::Unused22: c = kCostDrum2[0]; break;  // was BDF: plays as BDA
         case DrumMachine::Sda: c = kCostDrum2[1]; break;
         case DrumMachine::Bds: c = kCostDrum2[2]; break;
         case DrumMachine::Sds: c = kCostDrum2[3]; break;
         case DrumMachine::Cpx: c = kCostDrum2[4]; break;
         case DrumMachine::Rsx: c = kCostDrum2[5]; break;
-        case DrumMachine::Bdf: c = kCostDrum2[6]; break;
         case DrumMachine::Hhr: c = kCostDrum2[7]; break;
         default: c = kCostDrum; break;
       }

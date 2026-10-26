@@ -70,6 +70,10 @@ void test_drum2_costs() {
   }
   for (int k = 0; k < static_cast<int>(DrumMachine::Count) - kDrum2First; ++k) {
     m.machine = static_cast<uint8_t>(kDrum2First + k);
+    if (m.machine == static_cast<uint8_t>(DrumMachine::Unused22)) {  // was BDF: costs as BDA
+      TEST_ASSERT_EQUAL(kCostDrum2[0], voiceCost(m, false));
+      continue;
+    }
     TEST_ASSERT_EQUAL(kCostDrum2[k], voiceCost(m, false));
     TEST_ASSERT_TRUE(kCostDrum2[k] >= 200 && kCostDrum2[k] <= 600);  // bench-max: about the old DRUM
   }

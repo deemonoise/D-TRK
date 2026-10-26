@@ -127,7 +127,7 @@ Full texts: [LICENSES/](LICENSES/). Third-party libraries (ESP-IDF, Arduino-ESP3
 
 DSP derived from MIT-licensed Eurorack firmware (`lib/core/src/synth_string.*`) — see [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt).
 
-The DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, BDF, HHR (`lib/core/src/synth_drum2.*`) follow the algorithms of the drum voices collected in [ctag-tbd](https://github.com/ctag-fh-kiel/ctag-tbd):
+The DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, HHR (`lib/core/src/synth_drum2.*`) follow the algorithms of the drum voices collected in [ctag-tbd](https://github.com/ctag-fh-kiel/ctag-tbd):
 
-- BDA, SDA, BDS, SDS, HHR — after the 2016 drum voices, MIT License, Copyright 2016 Emilie Gillet; the FM operator of BDF — MIT License, Copyright 2021 Emilie Gillet (see [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt));
-- CPX, RSX, BDF — after ctag-tbd Clap, Rimshot and FmKick, © 2024 Robert Manzke, GPL-3.0.
+- BDA, SDA, BDS, SDS, HHR — after the 2016 drum voices, MIT License, Copyright 2016 Emilie Gillet (see [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt));
+- CPX, RSX — after ctag-tbd Clap and Rimshot, © 2024 Robert Manzke, GPL-3.0.

@@ -188,7 +188,6 @@ const Spec kBds = {Drum2Kind::Bds, {75, 50, 30, 60, 40}, true, 200, 500, -1};
 const Spec kSds = {Drum2Kind::Sds, {55, 60, 70, 40, 0}, true, 20, 80, 2};
 const Spec kCpx = {Drum2Kind::Cpx, {60, 64, 64, 64, 0}, false, 0, 0, -1};
 const Spec kRsx = {Drum2Kind::Rsx, {40, 64, 40, 0, 0}, true, 20, 80, 2};
-const Spec kBdf = {Drum2Kind::Bdf, {75, 50, 40, 50, 16}, true, 200, 500, -1};
 const Spec kHhr = {Drum2Kind::Hhr, {30, 64, 30, 0, 0}, false, 0, 0, -1};
 
 }  // namespace
@@ -371,22 +370,17 @@ void test_cpx_pattern_latched() {
   TEST_ASSERT_TRUE(memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
 }
 
-// ---- Task 9: BDF, HHR ----
+// ---- Task 9: HHR; the retired BDF slot ----
 
-void test_bdf() { checkMachine(kBdf); }
 void test_hhr() { checkMachine(kHhr); }
 
-void test_bdf_ratio_changes() {
+// Unused6 (was BDF) plays exactly as BDA.
+void test_unused6_plays_bda() {
   float d[5];
-  defaults(kBdf.def, d);
-  d[3] = 1;  // index up: the modulator audible
-  d[4] = 0;
-  const float c0 = centroidHz(hit(Drum2Kind::Bdf, d, 60, 127, 2048), 0);
-  d[4] = 1;
-  const float c1 = centroidHz(hit(Drum2Kind::Bdf, d, 60, 127, 2048), 0);
-  char msg[64];
-  snprintf(msg, sizeof(msg), "centroid %f -> %f", c0, c1);
-  TEST_ASSERT_TRUE_MESSAGE(c1 > 1.3f * c0 || c0 > 1.3f * c1, msg);
+  defaults(kBda.def, d);
+  const std::vector<float> a = hit(Drum2Kind::Bda, d, 60, 127, 2048);
+  const std::vector<float> b = hit(Drum2Kind::Unused6, d, 60, 127, 2048);
+  TEST_ASSERT_TRUE(memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
 }
 
 void test_hhr_decay_open_closed() {
@@ -480,9 +474,8 @@ int main(int, char**) {
   RUN_TEST(test_rsx);
   RUN_TEST(test_cpx_bursts);
   RUN_TEST(test_cpx_pattern_latched);
-  RUN_TEST(test_bdf);
   RUN_TEST(test_hhr);
-  RUN_TEST(test_bdf_ratio_changes);
+  RUN_TEST(test_unused6_plays_bda);
   RUN_TEST(test_hhr_decay_open_closed);
   RUN_TEST(test_cpx_all_patterns);
   RUN_TEST(test_edges_bounded);

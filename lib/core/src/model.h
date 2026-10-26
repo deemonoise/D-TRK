@@ -92,7 +92,7 @@ enum SynMacro : uint8_t { kMacShp1 = kMacDec, kMacShp2 = kMacCol, kMacMix = kMac
 // machines go before Count only.
 enum class DrumMachine : uint8_t {
   Bd8, Sd8, Tom8, Cp8, Rs8, Cl8, Cb8, Hh8, Cy8, Bd9, Sd9, Tom9, Cp9, Rs9, Hh9, Cy9,
-  Bda, Sda, Bds, Sds, Cpx, Rsx, Bdf, Hhr, Count
+  Bda, Sda, Bds, Sds, Cpx, Rsx, Unused22, Hhr, Count  // Unused22: was BDF, plays as BDA
 };
 // First DRUM machine of the second engine (Drum2Voice, synth_drum2.h).
 constexpr uint8_t kDrum2First = static_cast<uint8_t>(DrumMachine::Bda);

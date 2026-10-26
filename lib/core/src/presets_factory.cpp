@@ -98,7 +98,7 @@ constexpr FactoryDrum kHybrid[] = {{kD, "BD909", 115}, {kD, "SD808", 100}, {kF, 
 constexpr FactoryDrum kDub[] = {{kD, "BD909 S", 115}, {kD, "RS909", 95}, {kD, "CH909", 85},    {kD, "OH808", 80},
                                 {kD, "CP808", 90},    {kD, "TOM808 L", 95}, {kD, "CY909", 75}, {kD, "CB808", 80}};
 constexpr FactoryDrum kAnalog[] = {{kD, "BDA", 115}, {kD, "SDA", 100},  {kD, "HHR C", 85}, {kD, "HHR O", 80},
-                                   {kD, "CPX", 95},  {kD, "RSX", 90},  {kD, "BDS", 110},   {kD, "BDF ZAP", 95}};
+                                   {kD, "CPX", 95},  {kD, "RSX", 90},  {kD, "BDS", 110},   {kD, "BDS DIRT", 95}};
 void kitFill(I&) {}
 #define KIT(cat, name, d) {InstrType::Kit, cat, name, kitFill, d, sizeof(d) / sizeof(d[0])}
 
@@ -334,8 +334,6 @@ constexpr FactoryPreset kAll[] = {
     {InstrType::Drum, "ANALOG", "RSX NOIS", [](I& m) { dr(m, DrumMachine::Rsx); m.macro[kMacShp] = 110; }},
     {InstrType::Drum, "ANALOG", "HHR C", [](I& m) { dr(m, DrumMachine::Hhr); m.macro[kMacDec] = 25; }},
     {InstrType::Drum, "ANALOG", "HHR O", [](I& m) { dr(m, DrumMachine::Hhr); m.macro[kMacDec] = 95; }},
-    {InstrType::Drum, "FM", "BDF", [](I& m) { dr(m, DrumMachine::Bdf); }},
-    {InstrType::Drum, "FM", "BDF ZAP", [](I& m) { dr(m, DrumMachine::Bdf); m.macro[kMacCol] = 120; m.macro[kMacShp] = 20; }},
 
     // ================= SYNTH =================
     // Built-in wavetables only. Macros SHP1, SHP2, MIX (0 = osc 1 only), DET (64 = 0), SENV (64 = 0).

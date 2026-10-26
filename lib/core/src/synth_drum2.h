@@ -1,5 +1,5 @@
 #pragma once
-// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, BDF, HHR: a separate engine (Drum2Voice) from the
+// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, HHR: a separate engine (Drum2Voice) from the
 // parametric DrumVoice. Pure C++17, no allocation; render is the hot path. Algorithms and licences:
 // see the header of synth_drum2.cpp.
 #include <stdint.h>
@@ -8,7 +8,8 @@
 
 namespace mt {
 
-enum class Drum2Kind : uint8_t { Bda, Sda, Bds, Sds, Cpx, Rsx, Bdf, Hhr, Count };
+// Unused6 (was BDF, as DrumMachine::Unused22) triggers as BDA.
+enum class Drum2Kind : uint8_t { Bda, Sda, Bds, Sds, Cpx, Rsx, Unused6, Hhr, Count };
 static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == static_cast<int>(Drum2Kind::Count),
               "DrumMachine BDA..HHR = Drum2Kind");
 // DRUM machine (>= kDrum2First) -> engine kind.
@@ -19,8 +20,8 @@ struct Drum2Params {  // control rate
   float mac[5] = {};    // the five knobs (DECAY .. CONTOUR), 0..1
 };
 
-// Base frequency at C-4: BDA 55, SDA 200, BDS 50, SDS 180, CPX 1 (filter multiplier), RSX 470, BDF 45,
-// HHR 1 (frequency multiplier).
+// Base frequency at C-4: BDA 55, SDA 200, BDS 50, SDS 180, CPX 1 (filter multiplier), RSX 470,
+// Unused6 as BDA, HHR 1 (frequency multiplier).
 float drum2BaseHz(Drum2Kind k);
 // CPX: start of clap i (0..3) of pattern p (0..15) at SPREAD s (0..1), ms after the trigger.
 float drum2ClapBurstMs(int p, float spread, int i);
@@ -84,11 +85,6 @@ class Drum2Voice {
     float pulse, pulseH, pulseLp, env, envK, base, noise, gain;
     Svf res[3], hp;
   };
-  struct Bdf {
-    uint32_t ph[2];
-    float prev0, prev1, ampEnv, modEnv, freqEnv;
-    float ampK, modK, freqK, fb, carHz, sweepHz, ratio, index, gain;
-  };
   struct Hhr {
     float ph[6], inc[6];
     float env, noiseClock, noiseSample;
@@ -103,7 +99,6 @@ class Drum2Voice {
     Sds sds;
     Cpx cpx;
     Rsx rsx;
-    Bdf bdf;
     Hhr hhr;
   };
 
@@ -113,7 +108,6 @@ class Drum2Voice {
   void renderSds(float* o, int n);
   void renderCpx(float* o, int n);
   void renderRsx(float* o, int n);
-  void renderBdf(float* o, int n);
   void renderHhr(float* o, int n);
   float rnd();  // uniform 0..1
 

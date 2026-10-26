@@ -70,7 +70,7 @@ const M kMachines[] = {
     {Drum2Kind::Bda, "BDA", {80, 40, 50, 40, 0}, true},   {Drum2Kind::Sda, "SDA", {55, 64, 70, 0, 0}, true},
     {Drum2Kind::Bds, "BDS", {75, 50, 30, 60, 40}, true},  {Drum2Kind::Sds, "SDS", {55, 60, 70, 40, 0}, true},
     {Drum2Kind::Cpx, "CPX", {60, 64, 64, 64, 0}, false},  {Drum2Kind::Rsx, "RSX", {40, 64, 40, 0, 0}, true},
-    {Drum2Kind::Bdf, "BDF", {75, 50, 40, 50, 16}, true},  {Drum2Kind::Hhr, "HHR", {30, 64, 30, 0, 0}, false},
+    {Drum2Kind::Hhr, "HHR", {30, 64, 30, 0, 0}, false},
 };
 
 }  // namespace

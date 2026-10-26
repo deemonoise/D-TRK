@@ -136,7 +136,6 @@ constexpr Ladder kLadders[] PROGMEM = {
     {"DRUM2 SDS", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 3, -1, false, false, false, true},
     {"DRUM2 CPX", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 4, -1, false, false, false, true},
     {"DRUM2 RSX", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 5, -1, false, false, false, true},
-    {"DRUM2 BDF", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 6, -1, false, false, false, true},
     {"DRUM2 HHR", kG3, Kind::Hits, mt::kTracks, kDrum2Instr + 7, -1, false, false, false, true},
     {"STRING HIT", kG4, Kind::Held, kHeavyTop, kStringInstr + 0, -1, false, true},
     {"MODAL HIT", kG4, Kind::Held, kHeavyTop, kStringInstr + 1, -1, false, true},

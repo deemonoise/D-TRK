@@ -1,4 +1,4 @@
-// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, BDF, HHR (Drum2Voice). This project is GPL-3.0; parts of
+// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, HHR (Drum2Voice). This project is GPL-3.0; parts of
 // this file are float re-implementations at 44.1 kHz, on this project's structures, of the drum voices
 // collected in the ctag-tbd DrumRack (github.com/ctag-fh-kiel/ctag-tbd):
 //
@@ -25,15 +25,11 @@
 //   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //   THE SOFTWARE.
 //
-// - BDF: the two-operator phase-modulation loop after the FM operator of the same repository (MIT,
-//   Copyright 2021 Emilie Gillet, notice above), the kick and its 64 modulator ratios after
-//   ctag-tbd synthesis/FmKick (GPL-3.0).
 // - CPX, RSX: after ctag-tbd synthesis/Clap and synthesis/Rimshot, (c) 2024 Robert Manzke, GPL-3.0
 //   (https://www.gnu.org/licenses/gpl-3.0.txt); the clap's 16 patterns of delays and amplitudes are
 //   taken from it. RSX derives from the MIT snare above (notice above).
 //
-// Differences from the sources: envelopes run per sample (the FM kick's step every 32 samples is not
-// kept); the rim shot renders exactly n samples; noise is reseeded per hit (repeatable hits); DC
+// Differences from the sources: envelopes run per sample; the rim shot renders exactly n samples; noise is reseeded per hit (repeatable hits); DC
 // blockers after the synthetic kick / snare; knob ranges fitted to five 0..1 macros.
 #include "synth_drum2.h"
 #include <math.h>
@@ -46,7 +42,6 @@ namespace {
 
 constexpr float kFs = static_cast<float>(kSynthRate);
 constexpr float kPi = 3.14159265f;
-constexpr float kInc = 4294967296.f / kFs;   // phase units per Hz
 constexpr float kOff = 1e-4f;                // -80 dB: done
 constexpr float kChokeK = 0.92466f;          // per sample: -60 dB in 2 ms
 constexpr float kPeakK = 0.99968569f;        // peak follower: -6 dB in 50 ms
@@ -63,8 +58,6 @@ MT_INLINE float tanFast(float f) {
 MT_INLINE float onePole(float& y, float x, float g) { return y += g * (x - y); }
 // Per-sample multiplier: -80 dB after s seconds.
 MT_INLINE float adK(float s) { return fastExp(-kLog1e4 * fastRcp(s * kFs)); }
-// Per-sample multiplier: 1 / e after tau seconds.
-MT_INLINE float tauK(float tau) { return fastExp(-fastRcp(tau * kFs)); }
 
 using Svf = Drum2Voice::Svf;
 using OnePole = Drum2Voice::OnePole;
@@ -133,8 +126,7 @@ MT_INLINE float blep(float t, float dt, float rdt) {
 }
 
 // Output trims: default knobs peak around -4 dBFS, everything stays below 0 dBFS.
-constexpr float kGainBda = 1.15f, kGainSda = 0.55f, kGainBds = 0.7f, kGainSds = 0.6f, kGainCpx = 0.5f, kGainRsx = 0.25f,
-                kGainBdf = 0.65f, kGainHhr = 0.85f;
+constexpr float kGainBda = 1.15f, kGainSda = 0.55f, kGainBds = 0.7f, kGainSds = 0.6f, kGainCpx = 0.5f, kGainRsx = 0.25f, kGainHhr = 0.85f;
 
 // CPX: 16 patterns x (3 clap delays + the tail's), ms at scale 1, and their amplitudes (ctag-tbd Clap,
 // (c) 2024 Robert Manzke, GPL-3.0). Cold: read at the trigger.
@@ -150,24 +142,10 @@ const float kClapAmp[16][4] = {
 float clapScale(float spread) { return 0.5f + 1.5f * clamp01(spread); }
 int clapPattern(float knob) { return static_cast<int>(clamp01(knob) * 15.99f); }
 
-// BDF: the FM kick's 64 modulator : carrier ratios (ctag-tbd FmKick, GPL-3.0), sorted ascending so that
-// the RATIO knob sweeps up. Cold: read at control rate.
-const uint8_t kFmRatio[64][2] = {
-    {8, 5},   {13, 7},  {2, 1},   {7, 3},   {12, 5},  {5, 2},   {3, 1},   {16, 5},  {23, 7},  {27, 8},  {17, 5},
-    {31, 9},  {11, 3},  {15, 4},  {35, 9},  {39, 10}, {4, 1},   {33, 8},  {29, 7},  {25, 6},  {21, 5},  {9, 2},
-    {37, 8},  {14, 3},  {19, 4},  {5, 1},   {38, 7},  {6, 1},   {34, 5},  {7, 1},   {22, 3},  {8, 1},   {9, 1},
-    {10, 1},  {11, 1},  {12, 1},  {13, 1},  {14, 1},  {15, 1},  {16, 1},  {17, 1},  {18, 1},  {19, 1},  {20, 1},
-    {21, 1},  {22, 1},  {23, 1},  {24, 1},  {25, 1},  {26, 1},  {27, 1},  {28, 1},  {29, 1},  {30, 1},  {31, 1},
-    {32, 1},  {33, 1},  {34, 1},  {35, 1},  {36, 1},  {37, 1},  {38, 1},  {39, 1},  {40, 1}};
-float fmRatio(float knob) {
-  const int i = static_cast<int>(clamp01(knob) * 63.99f);
-  return static_cast<float>(kFmRatio[i][0]) / kFmRatio[i][1];
-}
-
 }  // namespace
 
 float drum2BaseHz(Drum2Kind k) {
-  static const float kHz[] = {55, 200, 50, 180, 1, 470, 45, 1};
+  static const float kHz[] = {55, 200, 50, 180, 1, 470, 55, 1};  // Unused6 plays as BDA
   const int i = static_cast<int>(k);
   return i < static_cast<int>(Drum2Kind::Count) ? kHz[i] : 1.f;
 }
@@ -184,7 +162,7 @@ MT_HOT float Drum2Voice::rnd() {
 
 void Drum2Voice::trigger(Drum2Kind k, float accent, bool keepTail) {
   tailV_ = keepTail ? last_ : 0.f;
-  kind_ = k < Drum2Kind::Count ? k : Drum2Kind::Bda;
+  kind_ = k < Drum2Kind::Count && k != Drum2Kind::Unused6 ? k : Drum2Kind::Bda;  // Unused6: was BDF
   accent_ = clamp01(accent);
   fresh_ = pending_ = live_ = true;
   rng_ = 0x9E3779B9u;
@@ -220,9 +198,6 @@ void Drum2Voice::trigger(Drum2Kind k, float accent, bool keepTail) {
       s_.rsx.pulseLeft = static_cast<int>(0.25e-3f * kFs);
       s_.rsx.pulseH = 3.f + 7.f * a;
       s_.rsx.env = 1.f;
-      break;
-    case Drum2Kind::Bdf:
-      s_.bdf.ampEnv = s_.bdf.modEnv = s_.bdf.freqEnv = 1.f;
       break;
     default:
       break;
@@ -360,21 +335,6 @@ void Drum2Voice::control(const Drum2Params& p, int span) {
       v.oscInc = static_cast<uint32_t>(f0 * 4294967296.f);
       v.gain = (0.5f + 0.5f * a) * kGainRsx;
       v.env = snap(v.env);
-      break;
-    }
-    case Drum2Kind::Bdf: {  // DECAY SWEEP TIME INDEX RATIO
-      Bdf& v = s_.bdf;
-      const float t2 = m[2] * m[2];
-      v.carHz = fclamp(hz, 20.f, 100.f);
-      v.sweepHz = 1000.f * m[1];
-      v.freqK = tauK(0.001f + 0.2f * t2);
-      v.modK = tauK(0.005f + 0.3f * t2);
-      v.ampK = tauK(0.01f + 0.34f * m[0] * m[0]);
-      v.index = 4.f * m[3];
-      v.ratio = fmRatio(m[4]);
-      v.fb = 0.0625f;
-      v.gain = (0.3f + 0.7f * a) * kGainBdf;
-      v.ampEnv = snap(v.ampEnv), v.modEnv = snap(v.modEnv), v.freqEnv = snap(v.freqEnv);
       break;
     }
     case Drum2Kind::Hhr: {  // DECAY TONE NOISE
@@ -643,28 +603,6 @@ MT_HOT void Drum2Voice::renderRsx(float* o, int n) {
   }
 }
 
-// ---- BDF: two-operator FM, modulator (with feedback) into carrier; pitch, index, amp envelopes ----
-
-MT_HOT void Drum2Voice::renderBdf(float* o, int n) {
-  Bdf& v = s_.bdf;
-  const float modInc = minf(v.carHz * v.ratio, 0.5f * kFs) * kInc;
-  const uint32_t mInc = static_cast<uint32_t>(modInc);
-  for (int i = 0; i < n; ++i) {
-    v.ampEnv *= v.ampK;
-    v.modEnv *= v.modK;
-    v.freqEnv *= v.freqK;
-    const uint32_t cInc = static_cast<uint32_t>(minf(v.carHz + v.sweepHz * v.freqEnv, 0.5f * kFs) * kInc);
-    const float pm = (v.prev0 + v.prev1) * v.fb;
-    v.ph[0] += mInc;
-    const float mod = phaseSine(wrap1(static_cast<float>(v.ph[0]) * (1.f / 4294967296.f) + pm)) * v.index * v.modEnv;
-    v.prev1 = v.prev0;
-    v.prev0 = mod;
-    v.ph[1] += cInc;
-    const float car = phaseSine(wrap1(static_cast<float>(v.ph[1]) * (1.f / 4294967296.f) + mod));
-    o[i] = car * v.ampEnv * v.gain;
-  }
-}
-
 // ---- HHR: three ring-modulated square x saw pairs, band-pass, S&H noise, two-stage decay, high-pass ----
 
 MT_HOT void Drum2Voice::renderHhr(float* o, int n) {
@@ -711,7 +649,6 @@ MT_HOT void Drum2Voice::render(float* __restrict out, int n, float amp) {
         case Drum2Kind::Sds: renderSds(buf, m); break;
         case Drum2Kind::Cpx: renderCpx(buf, m); break;
         case Drum2Kind::Rsx: renderRsx(buf, m); break;
-        case Drum2Kind::Bdf: renderBdf(buf, m); break;
         case Drum2Kind::Hhr: renderHhr(buf, m); break;
         default: memset(buf, 0, sizeof(float) * m); break;
       }

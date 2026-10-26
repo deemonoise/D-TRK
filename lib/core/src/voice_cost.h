@@ -15,6 +15,7 @@ constexpr int kCostFm = 225;      // bench-max 2026-10-25: TONE 4 ops + detune, 
 constexpr int kCostDrum = 290;
 // DRUM BDA..HHR (Drum2Kind order): bench-max group 3, 2026-10-25 (slope of the ladders' average
 // load, 4 .. 16 voices, HHR 4 .. 12; the WT SYNTH reference in the same run gave 237 for its 240).
+// Index 6 (Unused22, was BDF) is not read: that slot plays and costs as BDA.
 constexpr int kCostDrum2[] = {310, 355, 400, 360, 285, 310, 270, 455};
 static_assert(sizeof(kCostDrum2) / sizeof(kCostDrum2[0]) ==
                   static_cast<unsigned>(DrumMachine::Count) - kDrum2First,

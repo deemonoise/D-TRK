@@ -252,6 +252,8 @@ void fixInstrument(Instrument& m) {
   else if (m.type == InstrType::String) n = static_cast<int>(StringModel::Count);
   else if (m.type == InstrType::Lofi) n = static_cast<int>(LofiMachine::Count);
   if (n && m.machine >= n) m.machine = 0;
+  if (m.type == InstrType::Drum && m.machine == static_cast<uint8_t>(DrumMachine::Unused22))
+    m.machine = kDrum2First;  // was BDF: BDA
   // COMB needs the voice's delay line, which STRING takes (the synth would run it as Off).
   if (m.type == InstrType::String && m.fltMode == static_cast<uint8_t>(FltMode::Comb))
     m.fltMode = static_cast<uint8_t>(FltMode::Off);

@@ -47,7 +47,8 @@ void test_drum2_presets() {
     TEST_ASSERT_TRUE(m.machine < static_cast<int>(DrumMachine::Count));
     ++per[m.machine];
   }
-  for (int mc = kDrum2First; mc < static_cast<int>(DrumMachine::Count); ++mc) TEST_ASSERT_EQUAL(2, per[mc]);
+  for (int mc = kDrum2First; mc < static_cast<int>(DrumMachine::Count); ++mc)
+    TEST_ASSERT_EQUAL(mc == static_cast<int>(DrumMachine::Unused22) ? 0 : 2, per[mc]);
   bool found = false;
   for (int i = 0; i < factoryCount(InstrType::Kit); ++i) {
     const FactoryPreset& k = factoryPreset(InstrType::Kit, i);

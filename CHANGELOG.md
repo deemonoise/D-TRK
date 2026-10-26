@@ -2,6 +2,12 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-26
+- DRUM: a machine is picked by group and model — the **Machine** row (KICK, SNARE, TOM, CLAP, RIM, HAT,
+  CYMBL, PERC) and **Model** (808, 909, RES, SYN, MODAL, MULTI, RING, CLAVE, BELL). Machine numbers in
+  files are unchanged. The BDF machine is gone (FM KICK covers it): an old file opens it as BDA; the BDF and
+  BDF ZAP presets are removed, the ANALOG kit has BDS DIRT instead of BDF ZAP.
+
 ## 2026-10-23
 - Variations per track (TRACK → VAR, a new page after EVO): every Every passes a new generation replaces
   what the track plays, the pattern stays. **CA1D** — a Wolfram rule (0–255) over the track's steps,

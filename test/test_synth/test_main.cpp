@@ -5672,6 +5672,7 @@ static int peakBlocks(int n) {
 
 void test_drum2_each_machine_sounds() {
   for (int mc = kDrum2First; mc < static_cast<int>(DrumMachine::Count); ++mc) {
+    if (mc == static_cast<int>(DrumMachine::Unused22)) continue;  // retired (BDF)
     s->reset();
     drumInstr(0, static_cast<DrumMachine>(mc));
     p->instruments[0].macro[kMacDec] = 40;

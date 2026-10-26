@@ -127,7 +127,7 @@ Copyright © 2026 deemonoise.
 
 DSP на основе прошивки Eurorack-модулей под MIT (`lib/core/src/synth_string.*`) — см. [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt).
 
-Машины DRUM BDA, SDA, BDS, SDS, CPX, RSX, BDF, HHR (`lib/core/src/synth_drum2.*`) написаны по алгоритмам драм-голосов, собранных в [ctag-tbd](https://github.com/ctag-fh-kiel/ctag-tbd):
+Машины DRUM BDA, SDA, BDS, SDS, CPX, RSX, HHR (`lib/core/src/synth_drum2.*`) написаны по алгоритмам драм-голосов, собранных в [ctag-tbd](https://github.com/ctag-fh-kiel/ctag-tbd):
 
-- BDA, SDA, BDS, SDS, HHR — по драм-голосам 2016 г., лицензия MIT, Copyright 2016 Emilie Gillet; FM-оператор BDF — лицензия MIT, Copyright 2021 Emilie Gillet (см. [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt));
-- CPX, RSX, BDF — по Clap, Rimshot и FmKick из ctag-tbd, © 2024 Robert Manzke, GPL-3.0.
+- BDA, SDA, BDS, SDS, HHR — по драм-голосам 2016 г., лицензия MIT, Copyright 2016 Emilie Gillet (см. [LICENSES/MIT-eurorack.txt](LICENSES/MIT-eurorack.txt));
+- CPX, RSX — по Clap и Rimshot из ctag-tbd, © 2024 Robert Manzke, GPL-3.0.

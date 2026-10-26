@@ -56,11 +56,10 @@ void test_drum2_enum_names() {
   TEST_ASSERT_EQUAL(23, static_cast<int>(DrumMachine::Hhr));
   TEST_ASSERT_EQUAL(24, static_cast<int>(DrumMachine::Count));
   TEST_ASSERT_EQUAL(16, kDrum2First);
-  const char* n[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "BDF", "HHR"};
+  const char* n[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "---", "HHR"};
   for (int k = 0; k < 8; ++k) TEST_ASSERT_EQUAL_STRING(n[k], drumMachineName(static_cast<uint8_t>(16 + k)));
   TEST_ASSERT_EQUAL_STRING("", drumMacroName(static_cast<uint8_t>(DrumMachine::Bda), 4));
   TEST_ASSERT_EQUAL_STRING("PATTERN", drumMacroName(static_cast<uint8_t>(DrumMachine::Cpx), 4));
-  TEST_ASSERT_EQUAL_STRING("INDEX", drumMacroName(static_cast<uint8_t>(DrumMachine::Bdf), 3));
   float mac[kFmMacros] = {64, 64, 64, 64, 64};
   DrumParams p;
   p.toneHz[0] = 123;
@@ -147,6 +146,52 @@ void test_clap_level_even() {
   }
 }
 
+void test_groups_cover_every_machine_once() {
+  int seen[static_cast<int>(DrumMachine::Count)] = {};
+  TEST_ASSERT_EQUAL(8, drumGroupCount());
+  for (int g = 0; g < drumGroupCount(); ++g) {
+    TEST_ASSERT_TRUE(drumModelCount(g) >= 2 && drumModelCount(g) <= 4);
+    TEST_ASSERT_TRUE(strlen(drumGroupName(g)) <= 5);
+    for (int k = 0; k < drumModelCount(g); ++k) {
+      const uint8_t m = drumMachineAt(g, k);
+      ++seen[m];
+      TEST_ASSERT_EQUAL(g, drumGroupOf(m));
+      TEST_ASSERT_EQUAL(k, drumModelOf(m));
+      TEST_ASSERT_TRUE(strlen(drumModelName(g, k)) <= 5);
+    }
+  }
+  for (int m = 0; m < static_cast<int>(DrumMachine::Count); ++m)
+    TEST_ASSERT_EQUAL_MESSAGE(m == static_cast<int>(DrumMachine::Unused22) ? 0 : 1, seen[m],
+                              drumMachineName(static_cast<uint8_t>(m)));
+}
+
+// The retired slot (was BDF) becomes BDA with BDA's macros.
+void test_set_unused22_is_bda() {
+  Instrument a, b;
+  instrSetType(a, InstrType::Drum);
+  instrSetType(b, InstrType::Drum);
+  drumSetMachine(a, static_cast<uint8_t>(DrumMachine::Unused22));
+  drumSetMachine(b, static_cast<uint8_t>(DrumMachine::Bda));
+  TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Bda), a.machine);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(b.macro, a.macro, kFmMacros);
+}
+
+void test_group_names() {
+  TEST_ASSERT_EQUAL_STRING("KICK", drumGroupName(0));
+  TEST_ASSERT_EQUAL_STRING("909", drumModelName(0, 1));
+  TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Bd9), drumMachineAt(0, 1));
+  const uint8_t hhr = static_cast<uint8_t>(DrumMachine::Hhr);
+  TEST_ASSERT_EQUAL_STRING("HAT", drumGroupName(drumGroupOf(hhr)));
+  TEST_ASSERT_EQUAL_STRING("RING", drumModelName(drumGroupOf(hhr), drumModelOf(hhr)));
+  // Out of range: model 0 of group 0; the retired slot and unknown machines as BDA.
+  TEST_ASSERT_EQUAL(static_cast<int>(DrumMachine::Bd8), drumMachineAt(99, 99));
+  TEST_ASSERT_EQUAL_STRING("KICK", drumGroupName(99));
+  const uint8_t bda = static_cast<uint8_t>(DrumMachine::Bda);
+  TEST_ASSERT_EQUAL(drumGroupOf(bda), drumGroupOf(static_cast<uint8_t>(DrumMachine::Unused22)));
+  TEST_ASSERT_EQUAL(drumModelOf(bda), drumModelOf(static_cast<uint8_t>(DrumMachine::Unused22)));
+  TEST_ASSERT_EQUAL(drumModelOf(bda), drumModelOf(200));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_all_machines_sane);
@@ -157,5 +202,8 @@ int main() {
   RUN_TEST(test_every_machine_sounds_and_ends);
   RUN_TEST(test_decay_fractional);
   RUN_TEST(test_clap_level_even);
+  RUN_TEST(test_groups_cover_every_machine_once);
+  RUN_TEST(test_group_names);
+  RUN_TEST(test_set_unused22_is_bda);
   return UNITY_END();
 }
