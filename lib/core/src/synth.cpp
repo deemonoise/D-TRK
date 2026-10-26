@@ -20,6 +20,7 @@ constexpr float kSampleGain = 4.f;
 
 constexpr float kNoiseClock = 93.f;    // LFSR steps per note period
 constexpr float kNoiseMaxSteps = 8.f;  // per output sample (high notes)
+constexpr float kSidNoiseClock = 16.f;  // SID noise: 16 LFSR steps per note period (accumulator bit 19)
 
 constexpr uint16_t kDrumReleaseMs = 3;  // one-shot gate env: fade on all-off instead of a click
 constexpr uint16_t kChokeMs = 3;        // a SAMPLE note fading the track's older samples
@@ -46,7 +47,8 @@ static_assert(static_cast<int>(FltKind::Lp) == static_cast<int>(FltMode::Lp) - 1
                   static_cast<int>(FltKind::Ms20) == static_cast<int>(FltMode::Ms20) - 1 &&
                   static_cast<int>(FltKind::Comb) == static_cast<int>(FltMode::Comb) - 1 &&
                   static_cast<int>(FltKind::Formant) == static_cast<int>(FltMode::Formant) - 1 &&
-                  static_cast<int>(FltMode::Count) == 8,
+                  static_cast<int>(FltKind::Sid) == static_cast<int>(FltMode::Sid) - 1 &&
+                  static_cast<int>(FltMode::Count) == 9,
               "FltKind must mirror FltMode minus Off");
 
 // A voice still sounds: its note, or once the envelope has ended its filter ringing out (renderCore
@@ -1265,12 +1267,17 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   } else {
     v.inc = cachedHz(v, 0, pitch) * (1.f / kSynthRate);
     // Noise: the LFSR steps 93x the note frequency (NES-like rates, kHz), so METAL's 93-step
-    // period sounds at the played pitch and NOISE is a hiss that darkens with lower notes.
+    // period sounds at the played pitch and NOISE is a hiss that darkens with lower notes. AY NZ steps
+    // the same way; SID NZ 16x, as the chip. AY TN keeps the note: its noise clock lives in ChipOsc.
     const uint8_t w = m.wave < kWaveCount ? m.wave : 0;
-    if (w == static_cast<uint8_t>(Wave::Noise) || w == static_cast<uint8_t>(Wave::Metal))
+    if (w == static_cast<uint8_t>(Wave::Noise) || w == static_cast<uint8_t>(Wave::Metal) ||
+        w == static_cast<uint8_t>(Wave::AyNoise))
       v.inc = clampf(v.inc * kNoiseClock, 0.f, kNoiseMaxSteps);
+    else if (w == static_cast<uint8_t>(Wave::SidNoise))
+      v.inc = clampf(v.inc * kSidNoiseClock, 0.f, kNoiseMaxSteps);
   }
   v.wave = m.wave < kWaveCount ? m.wave : 0;
+  v.chipStep = m.chipStep;
   float duty = clampf(m.duty, 1, 99) * 0.01f;
   if (m.pwmRate && m.pwmDepth) {
     // Triangle sweep, pwmRate / 10 Hz.
@@ -1707,20 +1714,40 @@ MT_HOT static void chipLoop(ChipOsc& o, Env& e, float* __restrict dst, int n, fl
   e = env;
 }
 
+// The generic loop (switch per sample), one copy out of line: STEP off calls it per segment, STEP per
+// chunk (ITCM: the inlined osc.next is ~2 KB, a second copy does not fit).
+__attribute__((noinline)) MT_HOT static void chipLoopAny(ChipOsc& o, Env& e, float* __restrict dst, int n, Wave w,
+                                                         float inc, float duty, float amp) {
+  ChipOsc osc = o;
+  Env env = e;
+  for (int i = 0; i < n; ++i) dst[i] += osc.next(w, inc, duty) * env.next() * amp;
+  o = osc;
+  e = env;
+}
+
 MT_HOT void Synth::renderChip(Voice& v, float* out, int n) {
   const float inc = v.inc, duty = v.duty, amp = v.amp;
-  switch (static_cast<Wave>(v.wave)) {
-    case Wave::Pulse: chipLoop<Wave::Pulse>(v.osc, v.env, out, n, inc, duty, amp); break;
-    case Wave::Triangle: chipLoop<Wave::Triangle>(v.osc, v.env, out, n, inc, duty, amp); break;
-    case Wave::Saw: chipLoop<Wave::Saw>(v.osc, v.env, out, n, inc, duty, amp); break;
-    default: {
-      const Wave w = static_cast<Wave>(v.wave);  // noise, metal, wavetables: the generic loop
-      ChipOsc osc = v.osc;
-      Env env = v.env;
-      for (int i = 0; i < n; ++i) out[i] += osc.next(w, inc, duty) * env.next() * amp;
-      v.osc = osc;
-      v.env = env;
-    }
+  const bool step = v.chipStep;
+  switch (step ? 0xFF : v.wave) {  // STEP: the generic loop
+    case static_cast<uint8_t>(Wave::Pulse): chipLoop<Wave::Pulse>(v.osc, v.env, out, n, inc, duty, amp); break;
+    case static_cast<uint8_t>(Wave::Triangle): chipLoop<Wave::Triangle>(v.osc, v.env, out, n, inc, duty, amp); break;
+    case static_cast<uint8_t>(Wave::Saw): chipLoop<Wave::Saw>(v.osc, v.env, out, n, inc, duty, amp); break;
+    default:
+      // Noise, metal, wavetables, SID / AY: the generic loop. STEP (any wave) runs it too, per chunk of 8
+      // samples (the last one shorter): the chunk's first level snapped to the AY levels and held (0.18 ms;
+      // the env still advances per sample), so ayStep runs once per chunk and STEP off checks nothing.
+      if (!step) {
+        chipLoopAny(v.osc, v.env, out, n, static_cast<Wave>(v.wave), inc, duty, amp);
+      } else {
+        Env env = v.env, flat;
+        for (int i0 = 0; i0 < n; i0 += 8) {
+          const int len = n - i0 < 8 ? n - i0 : 8;
+          flat.hold(ayStep(env.next()));
+          for (int k = 1; k < len; ++k) env.next();
+          chipLoopAny(v.osc, flat, out + i0, len, static_cast<Wave>(v.wave), inc, duty, amp);
+        }
+        v.env = env;
+      }
   }
 }
 

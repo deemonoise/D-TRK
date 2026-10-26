@@ -679,6 +679,182 @@ void test_comb_ringing_across_echo_gaps() {
   }
 }
 
+// SID: the render of an input (gen(t)) through k, the second after a 0.5 s settle kept in gSid.
+float gSid[kSynthRate];
+template <class Gen>
+void renderSid(FltKind k, float fc, float reso127, Gen gen) {
+  VoiceFilter f;
+  float out[kBlock], in[kBlock];
+  int t = 0, w = 0;
+  while (w < kSynthRate) {
+    f.set(k, fc, reso127, resoQ(reso127));
+    for (int i = 0; i < kBlock; ++i, ++t) {
+      in[i] = gen(t);
+      out[i] = 0;
+    }
+    f.processAdd(in, out, kBlock, nullptr);
+    for (int i = 0; i < kBlock; ++i)
+      if (t - kBlock + i >= kSynthRate / 2 && w < kSynthRate) gSid[w++] = out[i];
+  }
+}
+float sidRms() {
+  double acc = 0;
+  for (float y : gSid) acc += y * y;
+  return sqrtf(static_cast<float>(acc / kSynthRate));
+}
+// Goertzel magnitude^2 at hz over gSid (a whole number of periods of 100 Hz: no window needed).
+float sidPower(float hz) {
+  const double c = 2.0 * cos(6.283185307 * hz / kSynthRate);
+  double s1 = 0, s2 = 0;
+  for (float y : gSid) {
+    const double s0 = y + c * s1 - s2;
+    s2 = s1;
+    s1 = s0;
+  }
+  return static_cast<float>(s1 * s1 + s2 * s2 - c * s1 * s2);
+}
+float saw100(int t) {
+  float ph = t * (100.f / kSynthRate);
+  ph -= static_cast<float>(static_cast<int>(ph));
+  return 2.f * ph - 1.f;
+}
+float sine100(int t) { return sinf(6.2831853f * 100.f * static_cast<float>(t % 441) / kSynthRate); }
+
+// SID: stable over the knobs' grid (cutoff x resonance, step 16 and 127), full-scale noise.
+void test_sid_stable_grid() {
+  for (int c = 0; c <= 128; c += 16)
+    for (int r = 0; r <= 128; r += 16) {
+      const float cut = c > 127 ? 127.f : static_cast<float>(c), res = r > 127 ? 127.f : static_cast<float>(r);
+      VoiceFilter f;
+      Noise nz;
+      float out[kBlock], in[kBlock];
+      for (int blk = 0; blk < kSynthRate / 2 / kBlock; ++blk) {
+        f.set(FltKind::Sid, cutoffHz(cut), res, resoQ(res));
+        for (int i = 0; i < kBlock; ++i) {
+          in[i] = nz.next();
+          out[i] = 0;
+        }
+        f.processAdd(in, out, kBlock, nullptr);
+        for (int i = 0; i < kBlock; ++i) {
+          TEST_ASSERT_FALSE(isnan(out[i]) || isinf(out[i]));
+          TEST_ASSERT_TRUE(fabsf(out[i]) < 4.f);
+        }
+      }
+    }
+}
+
+// The 6581 does not self-oscillate: resonance 127, 0.2 s of noise, then silence: the last 0.1 s of
+// half a second is under -60 dB, and the voice stops ringing.
+void test_sid_no_self_oscillation() {
+  VoiceFilter f;
+  Noise nz;
+  float out[kBlock], in[kBlock];
+  const float hz = cutoffHz(64.f);
+  for (int blk = 0; blk < kSynthRate / 5 / kBlock; ++blk) {
+    f.set(FltKind::Sid, hz, 127.f, resoQ(127.f));
+    for (int i = 0; i < kBlock; ++i) {
+      in[i] = nz.next();
+      out[i] = 0;
+    }
+    f.processAdd(in, out, kBlock, nullptr);
+  }
+  TEST_ASSERT_TRUE(f.ringing());
+  double acc = 0;
+  int cnt = 0;
+  const int blocks = kSynthRate / 2 / kBlock;
+  for (int blk = 0; blk < blocks; ++blk) {
+    f.set(FltKind::Sid, hz, 127.f, resoQ(127.f));
+    for (int i = 0; i < kBlock; ++i) out[i] = 0;
+    f.processAdd(nullptr, out, kBlock, nullptr);
+    if (blk >= blocks - kSynthRate / 10 / kBlock)
+      for (int i = 0; i < kBlock; ++i, ++cnt) acc += out[i] * out[i];
+  }
+  TEST_ASSERT_TRUE(sqrtf(static_cast<float>(acc / cnt)) < 1e-3f);
+  TEST_ASSERT_FALSE(f.ringing());
+}
+
+// Cutoff open: a full-scale 100 Hz saw comes out within 3 dB of LP's level. At cutoff 64 (~1.6 kHz)
+// it filters: the fundamental within 3 dB of open, the 30th harmonic (3 kHz) > 10 dB under open.
+void test_sid_gain_matches_lp() {
+  const float hz = cutoffHz(127.f);
+  renderSid(FltKind::Lp, hz, 0.f, saw100);
+  const float lp = sidRms();
+  renderSid(FltKind::Sid, hz, 0.f, saw100);
+  const float sid = sidRms(), open1 = sidPower(100.f), open30 = sidPower(3000.f);
+  TEST_ASSERT_TRUE(fabsf(dB(sid, lp)) <= 3.f);
+  renderSid(FltKind::Sid, cutoffHz(64.f), 0.f, saw100);
+  TEST_ASSERT_TRUE(fabsf(10.f * log10f(sidPower(100.f) / open1)) <= 3.f);
+  TEST_ASSERT_TRUE(10.f * log10f(open30 / sidPower(3000.f)) > 10.f);
+}
+
+// The 6581 curve, uniform in octaves (200 Hz x 60^(v / 127)): cutoff 0 is ~200 Hz (150 Hz passes,
+// 1 kHz is cut), 64 is ~1.6 kHz (1 kHz passes), 127 is ~12 kHz (16 kHz is cut). Small sines (0.1): the
+// clip barely bends them.
+void test_sid_cutoff_curve() {
+  const float lo = cutoffHz(0.f), mid = cutoffHz(64.f), hi = cutoffHz(127.f);
+  const float ref = rmsSine(FltKind::Sid, hi, 0.f, 150.f);
+  TEST_ASSERT_TRUE(fabsf(dB(rmsSine(FltKind::Sid, lo, 0.f, 150.f), ref)) <= 1.5f);
+  TEST_ASSERT_TRUE(dB(ref, rmsSine(FltKind::Sid, lo, 0.f, 1000.f)) > 6.f);
+  TEST_ASSERT_TRUE(fabsf(dB(rmsSine(FltKind::Sid, mid, 0.f, 1000.f), ref)) <= 1.5f);
+  TEST_ASSERT_TRUE(dB(ref, rmsSine(FltKind::Sid, mid, 0.f, 4000.f)) > 6.f);
+  TEST_ASSERT_TRUE(dB(ref, rmsSine(FltKind::Sid, hi, 0.f, 16000.f)) > 3.f);
+}
+
+// Noise into a, then reset() (or a switch from MS20): the same output as a fresh filter, bit-exact
+// (the DC blocker's estimate cleared too).
+void sidAfter(bool viaMs20) {
+  VoiceFilter a, b;
+  Noise nz;
+  float out[kBlock], in[kBlock];
+  for (int blk = 0; blk < 200; ++blk) {
+    a.set(viaMs20 ? FltKind::Ms20 : FltKind::Sid, 500.f, 100.f, resoQ(100.f));
+    for (int i = 0; i < kBlock; ++i) {
+      in[i] = 0.5f + 0.5f * nz.next();  // an offset: the DC estimate moves
+      out[i] = 0;
+    }
+    a.processAdd(in, out, kBlock, nullptr);
+  }
+  if (!viaMs20) a.reset();
+  TEST_ASSERT_TRUE(viaMs20 || !a.ringing());
+  for (int blk = 0; blk < 4; ++blk) {
+    float ya[kBlock] = {}, yb[kBlock] = {};
+    a.set(FltKind::Sid, 700.f, 60.f, resoQ(60.f));
+    b.set(FltKind::Sid, 700.f, 60.f, resoQ(60.f));
+    if (blk > 1) {  // in = nullptr: the tail, where a stale DC estimate would show alone
+      a.processAdd(nullptr, ya, kBlock, nullptr);
+      b.processAdd(nullptr, yb, kBlock, nullptr);
+    } else {
+      a.processAdd(in, ya, kBlock, nullptr);
+      b.processAdd(in, yb, kBlock, nullptr);
+    }
+    for (int i = 0; i < kBlock; ++i) TEST_ASSERT_TRUE(ya[i] == yb[i]);
+  }
+}
+void test_sid_reset_clears() { sidAfter(false); }
+void test_sid_switch_resets() { sidAfter(true); }
+
+// Dirty: the asymmetric input clip adds a 2nd harmonic to a full-scale 100 Hz sine (> -40 dB re the
+// fundamental); LP stays clean (< -80 dB).
+void test_sid_second_harmonic() {
+  const float hz = cutoffHz(127.f);
+  renderSid(FltKind::Sid, hz, 0.f, sine100);
+  TEST_ASSERT_TRUE(10.f * log10f(sidPower(200.f) / sidPower(100.f)) > -40.f);
+  renderSid(FltKind::Lp, hz, 0.f, sine100);
+  TEST_ASSERT_TRUE(10.f * log10f(sidPower(200.f) / sidPower(100.f)) < -80.f);
+}
+
+// A constant input (and the x^2 term's offset) settles: finite, bounded, no DC left after a second.
+void test_sid_dc_stable() {
+  for (const float dc : {1.f, 0.5f, -1.f}) {
+    renderSid(FltKind::Sid, cutoffHz(64.f), 127.f, [dc](int) { return dc; });
+    for (float y : gSid) {
+      TEST_ASSERT_FALSE(isnan(y) || isinf(y));
+      TEST_ASSERT_TRUE(fabsf(y) < 4.f);
+    }
+    TEST_ASSERT_TRUE(fabsf(gSid[kSynthRate - 1]) < 0.01f);
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_svf_modes_bit_exact);
@@ -714,5 +890,13 @@ int main() {
   RUN_TEST(test_comb_tuned_gain);
   RUN_TEST(test_comb_sweep_no_zipper);
   RUN_TEST(test_comb_ringing_across_echo_gaps);
+  RUN_TEST(test_sid_stable_grid);
+  RUN_TEST(test_sid_no_self_oscillation);
+  RUN_TEST(test_sid_gain_matches_lp);
+  RUN_TEST(test_sid_second_harmonic);
+  RUN_TEST(test_sid_dc_stable);
+  RUN_TEST(test_sid_cutoff_curve);
+  RUN_TEST(test_sid_reset_clears);
+  RUN_TEST(test_sid_switch_resets);
   return UNITY_END();
 }

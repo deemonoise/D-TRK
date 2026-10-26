@@ -16,6 +16,14 @@ Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
   sound. RES / MODAL / SYN / MULTI / RING (BDA…HHR) are louder too, with the soft clip; HHR no longer loses
   its partials at high notes; CPX claps decay 0.05–0.3 s, SPREAD also sets the tail's attack (2–100 ms).
   The file format is unchanged, but projects and presets with DRUM sound different.
+- CHIP: C64 SID and AY-3-8910 / YM2149 sounds. New waves **SID TS, SID PS, SID PT, SIDPTS** (SID combined
+  waves, quieter than PULSE; SID PS gets louder with DUTY), **SID NZ** (SID noise), **AY SAW, AY TRI** (the AY
+  envelope as an oscillator), **AY NZ** (AY noise), **AY TN** (tone AND noise); Duty and PWM are active on
+  the ones with a pulse in them (SID PS / PT / PTS, AY TN). New CHIP row **Step** OFF / ON: the volume envelope moves in the 16 AY
+  steps (1.5 dB apart). New filter **SID** for every INT type: a 6581-style 12 dB/oct low-pass, 200 Hz …
+  12 kHz, slightly dirty, never self-oscillates. Factory presets C64 LEAD, ZX ARP, AY TN, C64 BASS, ZX BUZZ,
+  SID NZ, AY HAT. The SID / AY models are our own approximations, no emulator code or data. Link protocol
+  16: flash the WT32 and the Teensy together.
 
 ## 2026-10-23
 - Variations per track (TRACK → VAR, a new page after EVO): every Every passes a new generation replaces

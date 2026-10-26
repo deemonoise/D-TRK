@@ -137,6 +137,13 @@ constexpr FactoryPreset kAll[] = {
        m.wave = Wt(0); env(m, 55, 70, 110, 55); lfo1(m, LfoWave::Sine, LfoDest::Pitch, 78, 2); fx(m, 0, 40); }},
     {InstrType::Chip, "LEAD", "GBLEAD", [](I& m) {  // stepped sine: Game Boy wave channel
        m.wave = Wt(7); env(m, 0, 60, 100, 40); m.mono = true; m.glide = 4; }},
+    {InstrType::Chip, "LEAD", "C64 LEAD", [](I& m) {  // SID pulse & saw, slow PWM
+       m.wave = W(Wave::SidPs); m.duty = 50; m.pwmRate = 20; m.pwmDepth = 15; env(m, 0, 60, 90, 40);
+       m.mono = true; }},
+    {InstrType::Chip, "LEAD", "ZX ARP", [](I& m) {  // square with AY 16-step volume
+       m.wave = W(Wave::Pulse); m.duty = 50; m.chipStep = true; env(m, 0, 60, 40, 40); }},
+    {InstrType::Chip, "LEAD", "AY TN", [](I& m) {  // AY tone AND noise on one channel
+       m.wave = W(Wave::AyToneNoise); env(m, 0, 80, 80, 40); }},
     {InstrType::Chip, "BASS", "TRI BASS", [](I& m) {
        m.wave = W(Wave::Triangle); m.transpose = -12; m.decay = 60; m.sustain = 110; m.release = 30;
        m.mono = true; }},
@@ -147,6 +154,11 @@ constexpr FactoryPreset kAll[] = {
     {InstrType::Chip, "BASS", "SQ BASS", [](I& m) {
        m.wave = W(Wave::Pulse); m.duty = 40; m.transpose = -12; env(m, 0, 65, 80, 30); m.mono = true;
        lp(m, 70, 20, 25, 55); }},
+    {InstrType::Chip, "BASS", "C64 BASS", [](I& m) {  // SID pulse & tri through the SID filter
+       m.wave = W(Wave::SidPt); m.duty = 50; env(m, 0, 50, 60, 30); m.mono = true;
+       m.fltMode = F(FltMode::Sid); m.cutoff = 60; m.reso = 90; }},
+    {InstrType::Chip, "BASS", "ZX BUZZ", [](I& m) {  // AY envelope as a saw oscillator
+       m.wave = W(Wave::AySaw); m.transpose = -12; env(m, 0, 70, 100, 30); m.mono = true; }},
     {InstrType::Chip, "BASS", "PLK BASS", [](I& m) {  // short and round
        m.wave = W(Wave::Saw); m.transpose = -12; env(m, 0, 70, 0, 50); lp(m, 45, 40, 50, 55); m.mono = true; }},
     {InstrType::Chip, "BASS", "SUB SINE", [](I& m) {
@@ -191,6 +203,10 @@ constexpr FactoryPreset kAll[] = {
        m.fltMode = F(FltMode::Bp); m.cutoff = 95; m.reso = 60; m.vol = 55; }},
     {InstrType::Chip, "PERC", "NOIS OH", [](I& m) {
        m.wave = W(Wave::Noise); m.transpose = 24; env(m, 0, 80, 0, 70); hp(m, 110, 10); }},
+    {InstrType::Chip, "PERC", "SID NZ", [](I& m) {
+       m.wave = W(Wave::SidNoise); env(m, 0, 30, 0, 20); }},
+    {InstrType::Chip, "PERC", "AY HAT", [](I& m) {  // AY noise, stepped decay
+       m.wave = W(Wave::AyNoise); m.chipStep = true; env(m, 0, 25, 0, 15); }},
     {InstrType::Chip, "PERC", "CHIPKICK", [](I& m) {  // triangle with a fast pitch drop (LFO saw down)
        m.wave = W(Wave::Triangle); m.transpose = -24; env(m, 0, 62, 0, 45);
        lfo1(m, LfoWave::Saw, LfoDest::Pitch, 100, -60); }},  // ~8 Hz: one fast drop per hit

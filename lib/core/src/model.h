@@ -47,9 +47,21 @@ struct ProjWavetable {
 };
 
 enum class TrackOut : uint8_t { Midi, Int, Count };
-// Wt1..Wt16 follow Metal: wave = Wave::Wt1 + n.
-enum class Wave : uint8_t { Pulse, Triangle, Saw, Noise, Metal, Wt1 };
-constexpr int kWaveCount = static_cast<int>(Wave::Wt1) + kWavetables;
+// Wt1..Wt16 follow Metal: wave = Wave::Wt1 + n. SID / AY waves (CHIP) follow the wavetables:
+// stored in files by index, so new waves go at the end only.
+enum class Wave : uint8_t {
+  Pulse, Triangle, Saw, Noise, Metal, Wt1,
+  SidTs = Wt1 + kWavetables, SidPs, SidPt, SidPts, SidNoise,  // SID combined waves, 23-bit noise
+  AySaw, AyTri, AyNoise, AyToneNoise,                          // AY buzzer, 17-bit noise, tone AND noise
+};
+constexpr int kWaveExtFirst = static_cast<int>(Wave::SidTs);
+constexpr int kWaveCount = static_cast<int>(Wave::AyToneNoise) + 1;
+// Waves with a pulse in them (DUTY / PWM act on them): PULSE, SID PS / PT / PTS, AY TN.
+constexpr bool waveHasDuty(uint8_t w) {
+  return w == static_cast<uint8_t>(Wave::Pulse) || w == static_cast<uint8_t>(Wave::SidPs) ||
+         w == static_cast<uint8_t>(Wave::SidPt) || w == static_cast<uint8_t>(Wave::SidPts) ||
+         w == static_cast<uint8_t>(Wave::AyToneNoise);
+}
 enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 // Stored in files: new values go before Count only.
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
@@ -111,7 +123,8 @@ static_assert(static_cast<int>(StringModel::Count) <= kMachineMax, "machine fiel
 // files: new machines go before Count only.
 enum class LofiMachine : uint8_t { Byte, Apc, Count };
 // Stored in files (Instrument::fltMode): new values go before Count only; loaders clamp unknown ones to Off.
-enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Count };
+// Sid: 6581-style 12 dB low-pass, dirty, no self-oscillation.
+enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
 // send, the drive, the reverb send, the bit / sample-rate reduction, the pan, the drive model, the
 // trance gate's depth, the MOD send, FM SAT (kLockSat, Instrument::fmSat).
@@ -247,6 +260,8 @@ struct Instrument {
   uint8_t lfoByte[kLfos][2] = {{0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}};
   // FM SAT 0..127: tanh saturation before the voice's amp (FmParams::sat), 0 = off. FM only; kept on any type.
   uint8_t fmSat = 0;
+  // CHIP STEP: the envelope snaps to the 16 AY volume levels (kAyLevel). FMEX byte 1; kept on any type.
+  bool chipStep = false;
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }

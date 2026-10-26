@@ -101,7 +101,7 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
     same(was.synEAtk, m.synEAtk, "synEAtk");
     same(was.synEDec, m.synEDec, "synEDec");
   }
-  if (was.type == InstrType::Chip && was.wave == static_cast<uint8_t>(Wave::Pulse)) {
+  if (was.type == InstrType::Chip && waveHasDuty(was.wave)) {
     field(was.duty, m.duty, 5, 95, s, "duty");
     field(was.pwmDepth, m.pwmDepth, 0, 49, s, "pwmDepth");
     if (was.pwmDepth > 0) field(was.pwmRate, m.pwmRate, 0, 127, s, "pwmRate");
@@ -186,6 +186,28 @@ void test_moves_something_and_is_seeded() {
   TEST_ASSERT_TRUE(moved >= 9);
 }
 
+// SID PS / PT / PTS and AY TN have a pulse in them: their duty and PWM mutate as PULSE's do.
+void test_pulse_like_waves_mutate_duty() {
+  static const Wave kWaves[] = {Wave::SidPs, Wave::SidPt, Wave::SidPts, Wave::AyToneNoise};
+  for (Wave w : kWaves) {
+    Instrument was;
+    factoryBuild(InstrType::Chip, 0, was);
+    was.wave = static_cast<uint8_t>(w);
+    was.duty = 50;
+    was.pwmDepth = 20;
+    was.pwmRate = 40;
+    int moved = 0;
+    for (uint32_t seed = 1; seed <= 10; ++seed) {
+      Instrument m;
+      memcpy(&m, &was, sizeof(Instrument));
+      mutateInstrument(m, 60, seed);
+      moved += m.duty != was.duty || m.pwmDepth != was.pwmDepth || m.pwmRate != was.pwmRate;
+      checkOne(was, 60, seed);
+    }
+    TEST_ASSERT_TRUE(moved >= 8);
+  }
+}
+
 void test_slot_undo_bit_exact() {
   p.reset();
   factoryBuild(InstrType::Synth, 3, p.instruments[5]);
@@ -255,6 +277,7 @@ int main() {
   RUN_TEST(test_kit_and_zero_strength_do_nothing);
   RUN_TEST(test_ranges_every_factory_preset);
   RUN_TEST(test_lofi_macros_not_machine_or_formula);
+  RUN_TEST(test_pulse_like_waves_mutate_duty);
   RUN_TEST(test_sample_and_reset_instruments);
   RUN_TEST(test_moves_something_and_is_seeded);
   RUN_TEST(test_slot_undo_bit_exact);

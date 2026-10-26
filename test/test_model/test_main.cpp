@@ -902,6 +902,12 @@ void test_fix_instrument_clamps_fm_sat() {
   TEST_ASSERT_EQUAL(40, m.fmSat);
 }
 
+void test_wave_ext_after_wavetables() {
+  TEST_ASSERT_EQUAL(static_cast<int>(mt::Wave::Wt1) + mt::kWavetables, mt::kWaveExtFirst);
+  TEST_ASSERT_EQUAL(mt::kWaveExtFirst, static_cast<int>(mt::Wave::SidTs));
+  TEST_ASSERT_EQUAL(static_cast<int>(mt::Wave::AyToneNoise) + 1, mt::kWaveCount);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_gate_defaults_and_presets);
@@ -961,5 +967,6 @@ int main() {
   RUN_TEST(test_gen2_defaults);
   RUN_TEST(test_fm_sat_model);
   RUN_TEST(test_fix_instrument_clamps_fm_sat);
+  RUN_TEST(test_wave_ext_after_wavetables);
   return UNITY_END();
 }

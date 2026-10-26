@@ -999,7 +999,7 @@ The page is remembered when you switch instruments and when you change Type: for
 |---|---|
 | MAIN | Name, Type, Volume, Transpose, Fine, Mode, Glide, Dly send, Rvb send |
 | ENV | Attack, Decay, Sustain, Release, Vel\>Cut, Vel\>Dec (for STRING — Vel\>Dmp) and an ADSR graph on the right |
-| OSC / SMPL / FM / DRUM / RES / LOFI | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth; [SAMPLE](#sample) — sample editor; [FM](#fm) — Machine and 5 macros; [DRUM](#drum) — Machine (group), Model and 5 macros; [SYNTH](#synth) — oscillators and tables; [STRING](#string) — Model, Damp, Bright, Struct, Position, Excite; [LOFI](#lofi) — Machine, Formula, Sync and 5 macros |
+| OSC / SMPL / FM / DRUM / RES / LOFI | Type parameters: [CHIP](#chip) — Wave, Duty, PWM rate, PWM depth, Step; [SAMPLE](#sample) — sample editor; [FM](#fm) — Machine and 5 macros; [DRUM](#drum) — Machine (group), Model and 5 macros; [SYNTH](#synth) — oscillators and tables; [STRING](#string) — Model, Damp, Bright, Struct, Position, Excite; [LOFI](#lofi) — Machine, Formula, Sync and 5 macros |
 | MOD (SYNTH only) | Sub, Sub oct, Noise, Ring, Fold, Env\>Shp, Env atk, Env dec |
 | FILT | Filter, Cutoff, Reso, Flt env, Flt attack, Flt decay, Key track — [filter](#filter) |
 | LFO | LFO (1–4), Wave, Sync, Retrig, Rate, Depth, Dest |
@@ -1038,12 +1038,25 @@ The page is remembered when you switch instruments and when you change Type: for
 
 | Parameter | Values | Meaning |
 |---|---|---|
-| Wave | PULSE, TRI, SAW, NOISE, METAL, WT1–WT16 | Waveform. NOISE is noise (higher note — brighter, lower — darker), METAL is "metallic" noise with a tone at the note's pitch, WT1–WT16 are wavetables built into the firmware. |
+| Wave | PULSE, TRI, SAW, NOISE, METAL, WT1–WT16, SID TS, SID PS, SID PT, SIDPTS, SID NZ, AY SAW, AY TRI, AY NZ, AY TN | Waveform. NOISE is noise (higher note — brighter, lower — darker), METAL is "metallic" noise with a tone at the note's pitch, WT1–WT16 are wavetables built into the firmware. SID and AY waves — see [below](#chipsid). |
 | Duty | 1–99% | PULSE duty cycle. |
 | PWM rate | 0–127 | Speed of the duty cycle sweep (0 — off). |
 | PWM depth | 0–49% | Sweep depth. |
+| Step | OFF, ON | ON: the volume envelope moves in the 16 AY volume steps (1.5 dB apart) instead of smoothly — the stepped decay of ZX Spectrum / Atari ST music. Works with every wave. |
 
-Duty, PWM rate and PWM depth are active only for PULSE; for other waves they are gray.
+Duty, PWM rate and PWM depth are active only for waves with a pulse in them (PULSE, SID PS, SID PT, SIDPTS, AY TN); for other waves they are gray.
+
+<a id="chipsid"></a>**SID and AY waves** (C64 SID and AY-3-8910 / YM2149 sounds):
+
+| Wave | What it is |
+|---|---|
+| SID TS, SID PS, SID PT, SIDPTS | SID combined waves: triangle & saw, pulse & saw, pulse & triangle, pulse & triangle & saw — thin, buzzy, "metallic" tones. They are quieter than PULSE (by design, as on the chip); SID PS gets louder as DUTY grows. |
+| SID NZ | SID noise: a multi-level noise that follows the note's pitch (low notes — rumble, high — hiss). |
+| AY SAW, AY TRI | AY "buzzer": the AY envelope played as an oscillator — a 16-step logarithmic saw / triangle. |
+| AY NZ | AY noise (a 17-bit noise generator), pitch follows the note. |
+| AY TN | AY tone AND noise on one channel: the pulse gated by the noise (DUTY works). |
+
+The SID / AY models are our own approximations from formulas: no emulator code or data.
 
 <a id="sample"></a>
 
@@ -1134,7 +1147,7 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 - **STOP** is also: encoder long press, <kbd>B</kbd>, or leaving the INST tab. During a take only Gain and Mon change; Source and Thresh are locked.
 - **Save:** `SAVING` with progress, then a toast like `REC1 12.4s, 3 CLIPS`. The take is written to the card as `/samples/rec/RECn.wav` (44.1 kHz 16-bit; stereo for LINE and RESAMPLE, mono for MIC) and imported into the project as sample **RECn** in mono, (L+R)/2 without normalization; the instrument gets it in its Sample row (slices cleared) and the editor shows it. The number is the next free one.
 - Source, Gain, Thresh and Mon are kept until reboot.
-- Both boards must run firmware with link protocol 15 (flash the WT32 and the Teensy together).
+- Both boards must run firmware with link protocol 16 (flash the WT32 and the Teensy together).
 
 | Toast | Meaning |
 |---|---|
@@ -1164,7 +1177,7 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 - The note goes through the current track's [insert](#insert) if that track plays this instrument (`+FX`), otherwise dry. No delay / reverb / MOD sends and no master.
 - The render runs until silence (below −60 dB for ≈ 50 ms after the note-off) or **10 s** at most; then silence is trimmed and the sample is normalized to −0.3 dBFS.
 - Done: toast `SAVED <name>`; the sample is in the project's sample list right away and can be picked in a KIT lane or a SAMPLE instrument. A name that is already taken asks **Overwrite**.
-- Both boards must run firmware with link protocol 15.
+- Both boards must run firmware with link protocol 16.
 
 | Toast | Meaning |
 |---|---|
@@ -1542,7 +1555,7 @@ The FILT and LFO pages exist for all types. The filter comes after the whole voi
 
 | Parameter | Values | Default | Meaning |
 |---|---|---|---|
-| Filter | OFF, LP, BP, HP, LADDER, MS20, COMB, FORMANT | OFF | Mode, see [the table below](#filtmodes). OFF — bypass: the sound is as without a filter, the other filter rows are gray. COMB is not available on [STRING](#string). |
+| Filter | OFF, LP, BP, HP, LADDER, MS20, COMB, FORMANT, SID | OFF | Mode, see [the table below](#filtmodes). OFF — bypass: the sound is as without a filter, the other filter rows are gray. COMB is not available on [STRING](#string). |
 | Cutoff | 20 Hz … 14 kHz (128 values, exponential); FORMANT: A, A\>E, E … U | 14 kHz | Cutoff frequency; COMB — the comb's pitch, FORMANT — the vowel. Lock — fx `FLT`. |
 | Reso | 0–127 | 0 | Resonance (LP / BP / HP: Q 0.5–20; other modes — the table below). High resonance is loud — lower the Volume. Lock — fx `RES`. |
 | Flt env | −64…+63 | 0 | Filter envelope depth: ±6 octaves at its peak. 0 — no envelope (attack and decay are gray). |
@@ -1573,6 +1586,7 @@ The FILT and LFO pages exist for all types. The filter comes after the whole voi
 | MS20 | 12 dB/oct low-pass in the Korg-35 style with saturation in the feedback: aggressive, "screams" at high Reso | cutoff frequency | resonance; self-oscillates from ≈121 |
 | COMB | tuned comb: a metallic tone at the cutoff and its harmonics | the comb's pitch, from 86 Hz (lower values stay at 86 Hz); Key track 100% tunes it to the note | feedback: 0 — no comb, higher — a longer, more pitched ring |
 | FORMANT | three band-passes that "say" a vowel | the vowel A → E → I → O → U across the range (screen: A, A\>E, E … U); Flt env, Vel\>Cut and LFO CUTOFF sweep it ("wah-yah"); Key track has no effect | vowel sharpness |
+| SID | 12 dB/oct low-pass in the style of the C64 SID (6581): slightly dirty, asymmetric drive; our own approximation | cutoff frequency, 200 Hz … 12 kHz | resonance up to Q ≈2; never self-oscillates |
 
 Self-oscillation (LADDER, MS20) sounds without any input: after the amp envelope ends it fades out in ≈50 ms, and any LADDER / MS20 tail lasts 2 s at most.
 
@@ -1632,11 +1646,11 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 | Type | Category | Factory presets |
 |---|---|---|
-| CHIP | LEAD | SQ LEAD, ARP PLK |
-| CHIP | BASS | TRI BASS, ACID |
+| CHIP | LEAD | SQ LEAD, ARP PLK, C64 LEAD, ZX ARP, AY TN |
+| CHIP | BASS | TRI BASS, ACID, C64 BASS, ZX BUZZ |
 | CHIP | PAD | PWM PAD, WT PAD |
 | CHIP | KEYS | WT BELL |
-| CHIP | PERC | NOIS HH, NOIS SN, METALBL |
+| CHIP | PERC | NOIS HH, NOIS SN, METALBL, SID NZ, AY HAT |
 | FM | DRUMS | KICK, SNARE, CLAP, HAT C, HAT O, WOODBLK |
 | FM | KEYS | BELL, E.PIANO, CHORD M7 |
 | FM | BASS | FM BASS |

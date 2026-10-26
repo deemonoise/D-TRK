@@ -47,7 +47,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack); SAME(send);
   SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate); SAME(driveModel);
   SAME(lofiFormula); SAME(lofiSync);
-  SAME(fmSat);
+  SAME(fmSat); SAME(chipStep);
   SAME(sliceMode); SAME(chopMode); SAME(chopN); SAME(chopThresh); SAME(sliceCount);
   for (int k = 0; k < kMaxSlices; ++k) SAME(slices[k]);
   for (int k = 0; k < 2; ++k) {
@@ -832,6 +832,29 @@ void test_fmex_preset_clamped() {
   TEST_ASSERT_EQUAL(127, b.fmSat);
 }
 
+// CHIP STEP: byte 1 of the FMEX record; a default instrument and a v7 file have it off.
+void test_fmex_chip_step_roundtrip() {
+  Instrument d;
+  TEST_ASSERT_FALSE(d.chipStep);
+  Instrument a;
+  instrSetType(a, InstrType::Chip);
+  a.chipStep = true;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  TEST_ASSERT_EQUAL(1, out.buf[kPresetSizeV7 - 3]);  // FMEX byte 1
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "step");
+  TEST_ASSERT_TRUE(b.chipStep);
+  const std::vector<uint8_t> v = asVersion(out.buf, 7, kPresetSizeV7);
+  VecSource in7(v);
+  Instrument c;
+  c.chipStep = true;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in7, c)));
+  TEST_ASSERT_FALSE(c.chipStep);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -869,5 +892,6 @@ int main() {
   RUN_TEST(test_v8_fmex_roundtrip);
   RUN_TEST(test_v7_file_loads_sat_0);
   RUN_TEST(test_fmex_preset_clamped);
+  RUN_TEST(test_fmex_chip_step_roundtrip);
   return UNITY_END();
 }

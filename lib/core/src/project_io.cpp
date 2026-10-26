@@ -518,8 +518,8 @@ LoadErr readLfob(CrcSource& in, uint32_t size, Project& p) {
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
-// FMEX (Instrument::fmSat, inst_codec kFmExRecSize): count, record size, then a record per instrument.
-// Same rules as TINS. Files without it: SAT 0.
+// FMEX (Instrument::fmSat, chipStep, inst_codec kFmExRecSize): count, record size, then a record per instrument.
+// Same rules as TINS. Files without it: SAT 0, STEP off.
 LoadErr readFmex(CrcSource& in, uint32_t size, Project& p) {
   uint8_t h[2];
   if (size < 2) return LoadErr::BadValue;

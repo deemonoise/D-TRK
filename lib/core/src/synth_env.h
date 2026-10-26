@@ -65,6 +65,11 @@ class Env {
     }
     return level_;
   }
+  // A flat envelope at l (Sustain: next() returns l, never ends). CHIP STEP's held chunk level.
+  void hold(float l) {
+    stage_ = Stage::Sustain;
+    level_ = l;
+  }
   bool idle() const { return stage_ == Stage::Idle; }
   Stage stage() const { return stage_; }
   float level() const { return level_; }

@@ -15,6 +15,13 @@ constexpr float kLadderK = 4.2f;
 // a little over it screams on its own, vfSat holds the level.
 constexpr float kMs20K = 2.1f;
 
+// SID: the 6581's resonance never reaches self-oscillation, k = 1 / Q from sqrt 2 (Q 0.707, r 0) to
+// 0.5 (Q 2, r 1); the input's x^2 term (even harmonics, +-1 in -> +1.15 / -0.85 before vfSat); the DC
+// blocker's one-pole coefficient (2 pi 3.5 Hz / rate).
+constexpr float kSidK0 = 1.4142136f, kSidK1 = 0.5f;
+constexpr float kSidEven = 0.15f;
+constexpr float kSidDc = 0.0005f;
+
 // Tail fade: -60 dB in 50 ms per sample; the cap: a tail longer than 2 s fades too (slow decays just
 // under the self-oscillation threshold).
 constexpr float kTailFade = 0.996872133f;  // 10^(-3 / (0.05 x 44100))
@@ -68,6 +75,8 @@ MT_HOT void VoiceFilter::set(FltKind k, float hz, float reso127, float q) {
       st_.ms20 = Ms20();
     else if (k == FltKind::Comb)
       st_.comb = Comb();
+    else if (k == FltKind::Sid)
+      st_.sid = Sid();
     else
       st_.formant = Formant();
     hz_ = res_ = -1;
@@ -89,6 +98,8 @@ MT_HOT void VoiceFilter::set(FltKind k, float hz, float reso127, float q) {
     setMs20(hz, r);
   else if (k == FltKind::Comb)
     setComb(hz, r);
+  else if (k == FltKind::Sid)
+    setSid(hz, r);
   else
     setFormant(hz, r);
 }
@@ -110,6 +121,9 @@ void VoiceFilter::reset() {
       break;
     case FltKind::Formant:
       for (auto& b : st_.formant.ic) b[0] = b[1] = 0;
+      break;
+    case FltKind::Sid:
+      for (float& s : st_.sid.s) s = 0;
       break;
     default: st_.svf.reset(); break;
   }
@@ -154,6 +168,20 @@ MT_HOT void VoiceFilter::setComb(float hz, float r) {
   c.dT = d > kLineLen - 1 ? static_cast<float>(kLineLen - 1) : d;
   c.fb = 0.97f * r;
   c.gain = 2.f * fastRcp(1.f + c.fb);
+}
+
+// The 6581's cutoff range, uniform in octaves: the knob's 20 Hz x 700^(v / 127) (cutoffHz, key
+// tracking, envelope) to 200 Hz x 60^(v / 127), 200 Hz .. 12 kHz (log2 60 / log2 700 = 0.6254).
+// Control rate, only on a change: not MT_HOT (flash via the .ld list, ITCM is short).
+void VoiceFilter::setSid(float hz, float r) {
+  Sid& s = st_.sid;
+  hz = hz < 20.f ? 20.f : (hz > 14000.f ? 14000.f : hz);
+  const float g = fastTan(200.f * fastPow(hz * (1.f / 20.f), 0.6254f) * (3.14159265f / kSynthRate));
+  const float k = kSidK0 - (kSidK0 - kSidK1) * r;
+  s.a1 = fastRcp(1.f + g * (g + k));  // >= 1: no __divsf3
+  s.a2 = g * s.a1;
+  s.a3 = g * s.a2;
+  osc_ = false;
 }
 
 template <bool kIn, bool kRamp>
@@ -310,6 +338,39 @@ MT_INLINE void VoiceFilter::ms20Loop(const float* __restrict in, float* __restri
   tail_ = tail;
 }
 
+// Svf::processAdd's low-pass, its update lines as they are, plus the dirt: the asymmetric input clip,
+// vfSat on the band-pass state (|ic1| <= 1: bounded at any Q) and the DC blocker after.
+template <bool kIn, bool kFade>
+MT_INLINE void VoiceFilter::sidLoop(const float* __restrict in, float* __restrict out, int n) {
+  Sid& s = st_.sid;
+  float ic1 = s.s[0], ic2 = s.s[1], dc = s.s[2], tail = tail_;
+  const float a1 = s.a1, a2 = s.a2, a3 = s.a3;
+  for (int i = 0; i < n; ++i) {
+    float v0 = 0.f;
+    if (kIn) {
+      const float x = in[i];
+      v0 = vfSat(x + kSidEven * x * x);
+    }
+    const float v3 = v0 - ic2;
+    const float v1 = a1 * ic1 + a2 * v3;
+    const float v2 = ic2 + a2 * ic1 + a3 * v3;
+    ic1 = vfSat(2.f * v1 - ic1);
+    ic2 = 2.f * v2 - ic2;
+    dc += kSidDc * (v2 - dc);
+    const float y = v2 - dc;
+    if (kFade) {
+      tail *= kTailFade;
+      out[i] += y * tail;
+    } else {
+      out[i] += y;
+    }
+  }
+  s.s[0] = ic1;
+  s.s[1] = ic2;
+  s.s[2] = dc;
+  tail_ = tail;
+}
+
 MT_HOT void VoiceFilter::processAdd(const float* __restrict in, float* __restrict out, int n, int16_t* line) {
   if (kind_ <= FltKind::Hp) {
     st_.svf.processAdd(in, out, n);
@@ -332,12 +393,14 @@ MT_HOT void VoiceFilter::processAdd(const float* __restrict in, float* __restric
       ramp ? combLoop<false, true>(nullptr, out, n, line) : combLoop<false, false>(nullptr, out, n, line);
     return;
   }
-  const bool ladder = kind_ == FltKind::Ladder;
+  const bool ladder = kind_ == FltKind::Ladder, sid = kind_ == FltKind::Sid;
   if (in) {
     tail_ = 1;
     tailN_ = 0;
     if (ladder)
       ladderLoop<true, false>(in, out, n);
+    else if (sid)
+      sidLoop<true, false>(in, out, n);
     else
       ms20Loop<true, false>(in, out, n);
     return;
@@ -350,6 +413,11 @@ MT_HOT void VoiceFilter::processAdd(const float* __restrict in, float* __restric
       ladderLoop<false, true>(nullptr, out, n);
     else
       ladderLoop<false, false>(nullptr, out, n);
+  } else if (sid) {  // never self-oscillates: fades only past the cap
+    if (fade)
+      sidLoop<false, true>(nullptr, out, n);
+    else
+      sidLoop<false, false>(nullptr, out, n);
   } else {
     if (fade)
       ms20Loop<false, true>(nullptr, out, n);

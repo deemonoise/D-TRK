@@ -5745,8 +5745,130 @@ void test_drum2_pitch_note() {
   TEST_ASSERT_FLOAT_WITHIN(0.1f, 2.f, hi / lo);
 }
 
+// ---- CHIP STEP (AY 16-step volume) ----
+
+// A decaying PULSE note: the distinct |sample| values, relative to the loudest. STEP ON: only kAyLevel steps.
+static int chipStepLevels(bool step, float* rel, int cap) {
+  Instrument& m = p->instruments[0];
+  m.wave = static_cast<uint8_t>(Wave::Pulse);
+  m.duty = 50;
+  m.decay = 90;
+  m.sustain = 0;
+  m.chipStep = step;
+  m.vol = 64;  // quieter: the master soft clip (cubic) bends the top levels less than the tolerance
+  delete s;
+  s = new Synth(*p);
+  noteOn(0, 0, 48);
+  int seen[32768] = {};
+  for (int b = 0; b < 400; ++b) {
+    render1(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) seen[abs(buf[i])] = 1;
+  }
+  int peak = 0, n = 0;
+  for (int a = 1; a < 32768; ++a)
+    if (seen[a]) peak = a;
+  for (int a = 1; a < 32768; ++a)
+    if (seen[a] && n < cap) rel[n++] = static_cast<float>(a) / peak;
+  return n;
+}
+
+void test_chip_step_quantises_envelope() {
+  float rel[512];
+  const int off = chipStepLevels(false, rel, 512);
+  TEST_ASSERT_TRUE(off > 100);  // a smooth decay
+  const int n = chipStepLevels(true, rel, 512);
+  TEST_ASSERT_TRUE(n >= 4);
+  TEST_ASSERT_TRUE(n <= 15);
+  float tol = 1;  // under a quarter of the smallest neighbour step: tells the bottom levels apart
+  for (int l = 1; l < 15; ++l) tol = fminf(tol, (kAyLevel[l + 1] - kAyLevel[l]) * 0.25f);
+  for (int k = 0; k < n; ++k) {
+    float d = 1;
+    for (int l = 1; l < 16; ++l) d = fminf(d, fabsf(rel[k] - kAyLevel[l]));
+    TEST_ASSERT_TRUE_MESSAGE(d < tol, "not an AY level");
+  }
+}
+
+// STEP holds the quantised level for a chunk of 8 samples, counted from the start of each render
+// segment (the note-on at off splits the first control period: [off, 32) has a 3-sample tail at off 5).
+// Counts the |sample| changes of a decaying PULSE (sign flips keep |s|) inside a chunk; *changes: all.
+static int chipStepMidChunk(int off, int* changes) {
+  Instrument& m = p->instruments[0];
+  m.wave = static_cast<uint8_t>(Wave::Pulse);
+  m.duty = 50;
+  m.decay = 90;
+  m.sustain = 0;
+  m.chipStep = true;
+  m.vol = 64;
+  delete s;
+  s = new Synth(*p);
+  noteOn(off, 0, 48);
+  int mid = 0, all = 0, prev = -1;
+  for (int b = 0; b < 400; ++b) {
+    render1(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      const int a = abs(buf[i]);
+      if (prev > 0 && a > 0 && a != prev) {
+        ++all;
+        const int seg = b == 0 && i < Synth::kControl ? off : i / Synth::kControl * Synth::kControl;
+        if ((i - seg) % 8) ++mid;
+      }
+      prev = a;
+    }
+  }
+  *changes = all;
+  return mid;
+}
+
+void test_chip_step_holds_per_8_samples() {
+  int all = 0;
+  TEST_ASSERT_EQUAL(0, chipStepMidChunk(0, &all));
+  TEST_ASSERT_TRUE(all >= 4);  // the decay steps through the levels
+  TEST_ASSERT_EQUAL(0, chipStepMidChunk(5, &all));
+  TEST_ASSERT_TRUE(all >= 4);
+}
+
+// ---- CHIP SID / AY waves through Synth ----
+
+// A CHIP note of wave w: 0.2 s, the float master peak (0 if any sample is not finite).
+static float chipWavePeak(uint8_t w, uint8_t note) {
+  Instrument& m = p->instruments[0];
+  m.wave = w;
+  m.duty = 50;
+  delete s;
+  s = new Synth(*p);
+  noteOn(0, 0, note);
+  float pk = 0;
+  for (int b = 0; b < 75; ++b) {
+    render1(buf);
+    for (int i = 0; i < Synth::kBlock; ++i) {
+      const float v = s->masterL()[i];
+      if (!isfinite(v)) return 0;
+      pk = fmaxf(pk, fabsf(v));
+    }
+  }
+  return pk;
+}
+
+void test_chip_ext_waves_render() {
+  const float ref = chipWavePeak(static_cast<uint8_t>(Wave::Pulse), 60);
+  TEST_ASSERT_TRUE(ref > 1000);
+  char msg[32];
+  for (int w = kWaveExtFirst; w < kWaveCount; ++w) {
+    const bool noise = w == static_cast<int>(Wave::SidNoise) || w == static_cast<int>(Wave::AyNoise);
+    const uint8_t notes[3] = {60, 24, 96};  // C4; C1 / C7 for the noises (rate clamp)
+    for (int k = 0; k < (noise ? 3 : 1); ++k) {
+      const float r = chipWavePeak(static_cast<uint8_t>(w), notes[k]) / ref;
+      snprintf(msg, sizeof msg, "wave %d note %d: %.3f", w, notes[k], r);
+      TEST_ASSERT_TRUE_MESSAGE(r > 0.05f && r < 1.5f, msg);
+    }
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_chip_step_quantises_envelope);
+  RUN_TEST(test_chip_step_holds_per_8_samples);
+  RUN_TEST(test_chip_ext_waves_render);
   RUN_TEST(test_sample_ignores_note_off);
   RUN_TEST(test_looped_sample_ignores_note_off);
   RUN_TEST(test_preview_sample_stops_on_note_off);

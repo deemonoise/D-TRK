@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <initializer_list>
 #include "model.h"
 #include "voice_cost.h"
 
@@ -31,6 +32,52 @@ void test_chip_filter_addons() {
   TEST_ASSERT_EQUAL(153, voiceCost(m, false));
   m.fltMode = static_cast<uint8_t>(FltMode::Formant);
   TEST_ASSERT_EQUAL(159, voiceCost(m, false));
+  m.fltMode = static_cast<uint8_t>(FltMode::Sid);
+  TEST_ASSERT_EQUAL(157, voiceCost(m, false));  // measured +38 over LP
+}
+
+// CHIP waves: PULSE / TRI / SAW run the templated loops (the base); the rest the generic loop (+10),
+// SID combined waves and AY TN on top of it (measured over SAW: TS +31, TN +19).
+static int chipWave(Wave w, bool step = false) {
+  Instrument m = of(InstrType::Chip);
+  m.wave = static_cast<uint8_t>(w);
+  m.chipStep = step;
+  return voiceCost(m, false);
+}
+
+void test_chip_wave_costs() {
+  TEST_ASSERT_EQUAL(119, chipWave(Wave::Pulse));
+  TEST_ASSERT_EQUAL(119, chipWave(Wave::Triangle));
+  TEST_ASSERT_EQUAL(119, chipWave(Wave::Saw));
+  for (Wave w : {Wave::Noise, Wave::Metal, Wave::Wt1, Wave::SidNoise, Wave::AySaw, Wave::AyTri, Wave::AyNoise}) {
+    TEST_ASSERT_EQUAL(119 + kCostChipGeneric, chipWave(w));
+  }
+  TEST_ASSERT_EQUAL(119 + kCostChipGeneric, chipWave(static_cast<Wave>(static_cast<int>(Wave::Wt1) + 15)));
+  for (Wave w : {Wave::SidTs, Wave::SidPs, Wave::SidPt, Wave::SidPts}) TEST_ASSERT_EQUAL(150, chipWave(w));
+  TEST_ASSERT_EQUAL(138, chipWave(Wave::AyToneNoise));
+  TEST_ASSERT_EQUAL(10, kCostChipGeneric);
+  TEST_ASSERT_EQUAL(31, kCostChipSid);
+  TEST_ASSERT_EQUAL(19, kCostChipAyTn);
+}
+
+// STEP: every wave in the generic loop (PULSE too), plus the chunked quantiser.
+void test_chip_step_cost() {
+  TEST_ASSERT_TRUE(kCostChipStep > 0);
+  TEST_ASSERT_EQUAL(119 + kCostChipGeneric + kCostChipStep, chipWave(Wave::Pulse, true));
+  TEST_ASSERT_EQUAL(119 + kCostChipGeneric + kCostChipStep, chipWave(Wave::Noise, true));
+  TEST_ASSERT_EQUAL(150 + kCostChipStep, chipWave(Wave::SidTs, true));
+}
+
+// The CHIP wave / STEP add-ons are CHIP's: a KIT or another type keeps its price whatever wave holds.
+void test_chip_wave_only_on_chip() {
+  Instrument m = of(InstrType::Kit);
+  m.wave = static_cast<uint8_t>(Wave::SidTs);
+  m.chipStep = true;
+  TEST_ASSERT_EQUAL(kCostChip, voiceCost(m, false));
+  m.type = InstrType::Fm;
+  TEST_ASSERT_EQUAL(kCostFm, voiceCost(m, false));
+  m.type = InstrType::Chip;
+  TEST_ASSERT_EQUAL(kCostSample, voiceCost(m, true));  // a sample note of a CHIP instrument
 }
 
 void test_synth_wt_addons_only_when_on() {
@@ -111,6 +158,8 @@ void test_sample_base_and_filter() {
   TEST_ASSERT_EQUAL(kCostSample + kCostLadder, voiceCost(m, true));
   m.fltMode = static_cast<uint8_t>(FltMode::Formant);
   TEST_ASSERT_EQUAL(kCostSample + kCostFormant, voiceCost(m, true));
+  m.fltMode = static_cast<uint8_t>(FltMode::Sid);
+  TEST_ASSERT_EQUAL(kCostSample + kCostSid, voiceCost(m, true));
   // A KIT sampler lane (filter off): the flag decides, not the type.
   Instrument k = of(InstrType::Kit);
   k.fltMode = static_cast<uint8_t>(FltMode::Off);
@@ -131,6 +180,9 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_chip_lp_is_base);
   RUN_TEST(test_chip_filter_addons);
+  RUN_TEST(test_chip_wave_costs);
+  RUN_TEST(test_chip_step_cost);
+  RUN_TEST(test_chip_wave_only_on_chip);
   RUN_TEST(test_synth_wt_addons_only_when_on);
   RUN_TEST(test_synth_wt_on_osc_two);
   RUN_TEST(test_synth_bl);

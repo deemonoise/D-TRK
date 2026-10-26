@@ -59,7 +59,7 @@ bool mutateInstrument(Instrument& m, int strength, uint32_t seed) {
     mv.move(m.synEAtk, 0, 100);
     mv.move(m.synEDec, 1, 127);
   }
-  if (t == InstrType::Chip && m.wave == static_cast<uint8_t>(Wave::Pulse)) {
+  if (t == InstrType::Chip && waveHasDuty(m.wave)) {
     const bool pwm = m.pwmDepth > 0;  // a PWM-less pulse gets no sweep speed
     mv.move(m.duty, 5, 95);
     mv.move(m.pwmDepth, 0, 49);

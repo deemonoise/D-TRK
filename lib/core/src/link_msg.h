@@ -5,12 +5,13 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 15;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
+constexpr uint16_t kProtocol = 16;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
                                     // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields);
                                     // 12: LOFI (InstrType::Lofi, Instrument lofiFormula / lofiSync / lfoByte);
                                     // 13: recording (Rec*)
                                     // 14: one-shot (RenderStartReq::src, RenderEndReq normalize 2)
                                     // 15: FM SAT (Instrument::fmSat; the model's layout)
+                                    // 16: CHIP SID / AY waves, SID filter, CHIP STEP (Instrument layout)
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {

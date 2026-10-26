@@ -32,6 +32,15 @@ static_assert(sizeof(kCostString) / sizeof(kCostString[0]) == static_cast<unsign
 // two counters (light, about CHIP).
 constexpr int kCostLofiByte = 200, kCostLofiApc = 120;
 constexpr int kCostLadder = 35, kCostMs20 = 23, kCostComb = 34, kCostFormant = 40;  // over LP
+constexpr int kCostSid = 38;  // over LP; measured: CHIP SID MOVE - CHIP LFO, bench-max group 6
+// CHIP waves over kCostChip (measured on SAW: PULSE / TRI / SAW run templated loops), bench-max group 6,
+// 2026-10-26, each the whole add-on over SAW. Generic: the shared loop's per-sample wave switch (NOISE,
+// METAL, WT, SID NZ, AY SAW / TRI / NZ; measured NOISE / WT). SID TS / PS / PT / PTS (measured TS) and
+// AY TN run that loop too: their figures include it.
+constexpr int kCostChipGeneric = 10, kCostChipSid = 31, kCostChipAyTn = 19;
+// CHIP STEP: every wave in the generic loop (PULSE / TRI / SAW pay kCostChipGeneric too), plus ayStep
+// once per 8 samples. Measured: CHIP STEP - CHIP PULSE - generic, 8-sample chunks, bench-max group 6.
+constexpr int kCostChipStep = 13;
 constexpr int kCostFold = 39, kCostRing = 9;  // SYNTH, only when on
 // The load around the voices with every track playing: fx, track strips (bench-max group 5,
 // 2026-10-15: load = 7.6 % + 1.00 x the live voices' cost, steps of 16 .. 27 live voices).

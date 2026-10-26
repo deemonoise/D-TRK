@@ -35,7 +35,9 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - **SYNTH**: 2 oscillators (alias-free saw / square / tri or wavetable), sub, noise, hard sync. Imports WaveEdit, Serum and Vital tables; makes your own from a sample region (one pitch period or equal windows per frame) or by drawing keyframes on the touch screen.
 - **STRING**: a physical-model resonator, 2 models (plucked string, 6 tuned modes for bars and bells) with Damp, Bright, Struct, Position and a click / noise-burst exciter.
 - **SAMPLE**: a sampler with slices, WAV import from the card. The sample editor works without the touchscreen too. Record straight into an instrument from the mic, the line input or the tracker's own output (up to 5 min, threshold start, monitoring) while the track keeps playing. Any instrument can be rendered into a one-shot sample (Save one-shot) for a KIT lane.
-- **CHIP**: pulse, triangle, noise, metal and wavetable for chiptune.
+- **CHIP**: pulse, triangle, noise, metal and wavetable for chiptune; C64 SID combined waves and noise, AY-3-8910
+  buzzer (envelope as oscillator), noise and tone+noise, the AY 16-step volume (Step) and a SID-style filter
+  (our own approximations, no emulator code or data).
 - **LOFI**: bytebeat (45 built-in formulas, from the 2011 classics to our own rhythmic ones that lock to the tempo, all with A, B, C parameters) and an Atari Punk Console with subharmonics — dirty 8-bit sound.
 - **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
 

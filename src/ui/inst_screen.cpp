@@ -41,9 +41,13 @@ uint8_t freeNoteFrom(const mt::Instrument& k, int lane, int n, int dir = 1) {
 
 void waveName(uint8_t w, char* o, int n) {
   static const char* const kNames[] = {"PULSE", "TRI", "SAW", "NOISE", "METAL"};
+  static const char* const kExt[] = {"SID TS", "SID PS", "SID PT", "SIDPTS", "SID NZ",
+                                     "AY SAW", "AY TRI", "AY NZ",  "AY TN"};
+  static_assert(sizeof(kExt) / sizeof(kExt[0]) == mt::kWaveCount - mt::kWaveExtFirst, "wave names");
   constexpr int kWt = static_cast<int>(mt::Wave::Wt1);
   if (w < kWt) snprintf(o, n, "%s", kNames[w]);
-  else snprintf(o, n, "WT%d", w - kWt + 1);
+  else if (w < mt::kWaveExtFirst) snprintf(o, n, "WT%d", w - kWt + 1);
+  else snprintf(o, n, "%s", kExt[w - mt::kWaveExtFirst]);
 }
 
 }  // namespace
@@ -103,7 +107,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   string_[kVelMac].label = "Vel>Dmp";  // STRING: velocity moves DAMP (the DECAY slot)
   chip_[kWave] = {"Wave", [this](char* o, int n) { waveName(inst().wave, o, n); },
                   [this](int d) { inst().wave = static_cast<uint8_t>(clampi(inst().wave + d, 0, mt::kWaveCount - 1)); }};
-  auto notPulse = [this] { return inst().wave != static_cast<uint8_t>(mt::Wave::Pulse); };
+  auto notPulse = [this] { return !mt::waveHasDuty(inst().wave); };
   chip_[kDuty] = {"Duty", [this](char* o, int n) { snprintf(o, n, "%u%%", inst().duty); },
                   [this](int d) { inst().duty = static_cast<uint8_t>(clampi(inst().duty + d, 1, 99)); }, notPulse};
   chip_[kPwmRate] = {"PWM rate", [this](char* o, int n) { snprintf(o, n, "%u", inst().pwmRate); },
@@ -112,6 +116,8 @@ InstScreen::InstScreen(App& app) : app_(app) {
   chip_[kPwmDepth] = {"PWM depth", [this](char* o, int n) { snprintf(o, n, "%u%%", inst().pwmDepth); },
                       [this](int d) { inst().pwmDepth = static_cast<uint8_t>(clampi(inst().pwmDepth + d, 0, 49)); },
                       notPulse};
+  chip_[kChipStep] = {"Step", [this](char* o, int n) { snprintf(o, n, "%s", inst().chipStep ? "ON" : "OFF"); },
+                      [this](int d) { inst().chipStep = d > 0; }};
   auto isTone = [this] { return inst().machine == static_cast<uint8_t>(mt::FmMachine::Tone); };
   auto drum = [this] { return !mt::fmGated(inst().machine); };
   fm_[kAttack].dim = drum;
@@ -430,7 +436,7 @@ void InstScreen::initTail(Param* t) {
   auto noEnv = [this, off] { return off() || inst().fenv == 0; };
   t[kFltMode] = {"Filter",
                  [this](char* o, int n) {
-                   static const char* const kNames[] = {"OFF", "LP", "BP", "HP", "LADDER", "MS20", "COMB", "FORMANT"};
+                   static const char* const kNames[] = {"OFF", "LP", "BP", "HP", "LADDER", "MS20", "COMB", "FORMANT", "SID"};
                    static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::FltMode::Count), "names");
                    snprintf(o, n, "%s", kNames[inst().fltMode % static_cast<int>(mt::FltMode::Count)]);
                  },

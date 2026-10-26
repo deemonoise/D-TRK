@@ -17,7 +17,11 @@
 // Groups (-DBENCH_MAX_GROUP=g, 0 = every ladder once): 1 the ladders above; 2 the SYNTH fold / ring and
 // the filter types (CHIP LADDER / MS20 / COMB / FORMANT, WT FOLD (fold 100), WT RING (ring 64), WT
 // FOLD+RING (both), 16 WT FX + CHIP LADDER), all with an LFO on the cutoff, and fx only, CHIP LFO and WT LFO (CHIP / WT SYNTH with that LFO) as
-// references; 3: the DRUM machines BDA .. HHR (DRUM2 <machine>: hits as DRUM, every track on that one machine;
+// references (and CHIP, the variants' baseline); there too the CHIP variants (the CHIP saw, LP held, unless named): CHIP SID (SID filter, held: the
+// audio cost), CHIP SID MOVE (with that LFO: setSid every control tick), CHIP SIDTS / AY TN (the SID TS and AY
+// tone+noise waves), CHIP PULSE and CHIP STEP (PULSE, STEP off / on: the generic loop's AY volume steps),
+// CHIP NOISE and CHIP WT (WT 1; STEP off, the generic loop: price the STEP branch against the same lines built before STEP, or the kCost prices);
+// 3: the DRUM machines BDA .. HHR (DRUM2 <machine>: hits as DRUM, every track on that one machine;
 // fx only, WT SYNTH and DRUM as references: price kCostDrum2 from them) and BD8 .. CY9 (DRUM <machine>: the
 // same, DECAY 127 so the hits ring through the 16th, built into the BD8 slot of DRUM for the ladder; price
 // kCostDrum from them, per sounding voice where a machine still ends early); 4 the STRING models (STRING HIT, MODAL HIT: chords
@@ -59,6 +63,8 @@ constexpr int kWtFxInstr = kWtFoldInstr - 1;          // fold 100, ring 64, LADD
 // Group 2's references: CHIP and WT SYNTH with the same moving cutoff as the ladders they price.
 constexpr int kChipLfoInstr = kWtFxInstr - 1;
 constexpr int kWtLfoInstr = kChipLfoInstr - 1;
+// Group 2's CHIP variants: one at a time in CHIP LFO's slot (kInstruments is full), CHIP LFO back otherwise.
+constexpr int kChipVarInstr = kChipLfoInstr;
 // Fold and ring priced apart (each over WT LFO).
 constexpr int kWtFoldOnlyInstr = kWtLfoInstr - 1;  // fold 100, LP
 constexpr int kWtRingInstr = kWtFoldOnlyInstr - 1;  // ring 64, LP
@@ -106,7 +112,7 @@ constexpr int kPoolTop = 16;  // group 5: kMixWt + 0 .. 16 = the 16 .. 32 voices
 static_assert(kPoolTop <= kMixTop, "max bench pool");
 
 // Group bits: a ladder runs in every group it lists (BENCH_MAX_GROUP 0 runs each ladder once).
-constexpr uint8_t kG1 = 1, kG2 = 2, kG3 = 4, kG4 = 8, kG5 = 16;
+constexpr uint8_t kG1 = 1, kG2 = 2, kG3 = 4, kG4 = 8, kG5 = 16, kG6 = 32;  // 6: group 2's CHIP variant lines only
 struct Ladder {
   char name[24];
   uint8_t groups;
@@ -119,7 +125,17 @@ struct Ladder {
   bool low = false;     // the chords on notes 28 .. 40
   bool solo = false;    // Hits: every track on instr (one machine), not instr + t % kDrumKinds
   int8_t machine = -1;  // solo Hits: this DrumMachine built into kDrumSoloInstr for the ladder (-1: as is)
+  int chip = -1;        // a CHIP variant (makeChipVar arg) built into kChipVarInstr for the ladder (-1: as is)
 };
+// Instrument args: kMove adds a moving cutoff (moveCutoff); a CHIP variant packs the wave, kChipStepOn
+// and the filter mode | kMove (makeChipVar).
+constexpr int kMove = 0x100;
+constexpr int kChipStepOn = 0x800;
+constexpr int chipVar(mt::Wave w, mt::FltMode f, int flags = 0) {
+  return static_cast<int>(w) << 16 | flags | static_cast<int>(f);
+}
+#define BENCH_CHIP_VAR(nm, ...) \
+  {"CHIP " nm, kG2 | kG6, Kind::Held, kChipTop, kChipVarInstr, -1, false, false, false, false, -1, chipVar(__VA_ARGS__)}
 // The slot of a DRUM <machine> ladder: DRUM's BD8 one, rebuilt as BD8 for every other ladder.
 constexpr int kDrumSoloInstr = kDrumInstr;
 #define BENCH_DRUM_SOLO(nm, mc) \
@@ -127,19 +143,27 @@ constexpr int kDrumSoloInstr = kDrumInstr;
    static_cast<int8_t>(mt::DrumMachine::mc)}
 // In flash (PROGMEM, read in place): RAM1 is short in this env.
 constexpr Ladder kLadders[] PROGMEM = {
-    {"fx only", kG1 | kG2 | kG3 | kG4 | kG5, Kind::None, 0, kChipInstr, -1},
-    {"CHIP", kG1, Kind::Held, kChipTop, kChipInstr, -1},
+    {"fx only", kG1 | kG2 | kG3 | kG4 | kG5 | kG6, Kind::None, 0, kChipInstr, -1},
+    {"CHIP", kG1 | kG2 | kG6, Kind::Held, kChipTop, kChipInstr, -1},
     {"FM TONE", kG1, Kind::Held, kHeavyTop, kFmInstr, -1},
     {"FM TONE SAT", kG1, Kind::Held, kHeavyTop, kFmSatInstr, -1},
     {"WT SYNTH", kG1 | kG3 | kG4, Kind::Held, kHeavyTop, kWtInstr, -1},
     {"DRUM", kG1 | kG3 | kG4, Kind::Hits, mt::kTracks, kDrumInstr, -1},
     {"16 WT + CHIP", kG1, Kind::Mix, kMixTop, kChipInstr, kWtInstr},
-    {"CHIP LFO", kG2, Kind::Held, kChipTop, kChipLfoInstr, -1},
+    {"CHIP LFO", kG2 | kG6, Kind::Held, kChipTop, kChipLfoInstr, -1},
     {"WT LFO", kG2, Kind::Held, kHeavyTop, kWtLfoInstr, -1},
     {"CHIP LADDER", kG2, Kind::Held, kChipTop, kChipLadderInstr, -1},
-    {"CHIP MS20", kG2, Kind::Held, kChipTop, kChipMs20Instr, -1},
+    {"CHIP MS20", kG2 | kG6, Kind::Held, kChipTop, kChipMs20Instr, -1},
     {"CHIP COMB", kG2, Kind::Held, kChipTop, kChipCombInstr, -1},
     {"CHIP FORMANT", kG2, Kind::Held, kChipTop, kChipFormantInstr, -1},
+    BENCH_CHIP_VAR("SID", mt::Wave::Saw, mt::FltMode::Sid),
+    BENCH_CHIP_VAR("SID MOVE", mt::Wave::Saw, mt::FltMode::Sid, kMove),
+    BENCH_CHIP_VAR("SIDTS", mt::Wave::SidTs, mt::FltMode::Lp),
+    BENCH_CHIP_VAR("AY TN", mt::Wave::AyToneNoise, mt::FltMode::Lp),
+    BENCH_CHIP_VAR("PULSE", mt::Wave::Pulse, mt::FltMode::Lp),
+    BENCH_CHIP_VAR("STEP", mt::Wave::Pulse, mt::FltMode::Lp, kChipStepOn),
+    BENCH_CHIP_VAR("NOISE", mt::Wave::Noise, mt::FltMode::Lp),
+    BENCH_CHIP_VAR("WT", mt::Wave::Wt1, mt::FltMode::Lp),
     {"WT FOLD", kG2, Kind::Held, kHeavyTop, kWtFoldOnlyInstr, -1},
     {"WT RING", kG2, Kind::Held, kHeavyTop, kWtRingInstr, -1},
     {"WT FOLD+RING", kG2, Kind::Held, kHeavyTop, kWtFoldInstr, -1},
@@ -177,7 +201,7 @@ static_assert(stringWorstLadder() < kLadderCount &&
 #ifndef BENCH_MAX_GROUP
 #define BENCH_MAX_GROUP 0
 #endif
-static_assert(BENCH_MAX_GROUP >= 0 && BENCH_MAX_GROUP <= 5, "BENCH_MAX_GROUP: 0 (all), 1 .. 5");
+static_assert(BENCH_MAX_GROUP >= 0 && BENCH_MAX_GROUP <= 6, "BENCH_MAX_GROUP: 0 (all), 1 .. 6");
 // 0: all. The inner ternary only keeps the shift count >= 0 when BENCH_MAX_GROUP is 0 (both arms are
 // compiled; GCC warns on a negative shift even in the unused one).
 constexpr uint8_t kGroupMask = BENCH_MAX_GROUP ? 1 << (BENCH_MAX_GROUP > 0 ? BENCH_MAX_GROUP - 1 : 0) : 0xFF;
@@ -268,6 +292,9 @@ void strike() {
 
 void makeDrum(mt::Instrument& in, int kind);
 void makeDrumSolo(mt::Instrument& in, int machine);
+void makeChip(mt::Instrument& chip, int arg);
+void makeChipVar(mt::Instrument& chip, int arg);
+constexpr int kLp = static_cast<int>(mt::FltMode::Lp);
 void setFx(mt::Instrument& in);
 
 void startStep() {
@@ -283,6 +310,18 @@ void startStep() {
       makeDrum(in, 0);
     setFx(in);
     built = l.machine;
+  }
+  // kChipVarInstr: this ladder's CHIP variant, or CHIP LFO back.
+  static int builtChip = -1;
+  if (l.chip != builtChip) {
+    mt::Instrument& in = model->instruments[kChipVarInstr];
+    in = mt::Instrument();
+    if (l.chip >= 0)
+      makeChipVar(in, l.chip);
+    else
+      makeChip(in, kLp | kMove);
+    setFx(in);
+    builtChip = l.chip;
   }
   synth->setVoiceBudget(l.pool ? mt::kVoiceBudgetTeensy : mt::kVoiceBudgetOff);
   for (int t = 0; t < mt::kTracks; ++t) {
@@ -487,7 +526,6 @@ void makeFm(mt::Instrument& fm, int sat) {
 // hz / reso and their ladders never time the per-control coefficient work (FORMANT's setFormant,
 // LADDER / MS20 / COMB set). LFO 1 triangle on Cutoff, +-24 steps (~+-1.8 octaves) at ~6 Hz, one
 // phase for the instrument (Retrig OFF): the cutoff changes every control tick.
-constexpr int kMove = 0x100;
 void moveCutoff(mt::Instrument& in, int arg) {
   if (!(arg & kMove)) return;
   in.lfoWave = static_cast<uint8_t>(mt::LfoWave::Tri);
@@ -540,6 +578,13 @@ void makeChip(mt::Instrument& chip, int arg) {
   moveCutoff(chip, arg);
 }
 
+// A group 2 CHIP variant (arg: chipVar): makeChip with that wave and STEP.
+void makeChipVar(mt::Instrument& chip, int arg) {
+  makeChip(chip, arg & 0xFFFF);
+  chip.wave = static_cast<uint8_t>(arg >> 16);
+  chip.chipStep = arg & kChipStepOn;
+}
+
 // Group 4: a STRING model (arg) plucked: DAMP 100 (rings through the 1/8), BRIGHT 0.7, STRUCT 0.6, POS
 // 0.3, EXC 100 (a noise burst of ~13 ms), sustain held (the natural decay), through LP 90 / reso 40.
 void makeString(mt::Instrument& in, int model) {
@@ -563,7 +608,6 @@ struct InstrDef {
   void (*make)(mt::Instrument&, int);
   int arg;
 };
-constexpr int kLp = static_cast<int>(mt::FltMode::Lp);
 constexpr InstrDef kInstrs[] PROGMEM = {
     {kDrumInstr + 0, makeDrum, 0},
     {kDrumInstr + 1, makeDrum, 1},

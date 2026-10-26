@@ -238,10 +238,12 @@ void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m) {
 void packFmEx(const Instrument& m, uint8_t* b) {
   memset(b, 0, kFmExRecSize);
   b[0] = m.fmSat;
+  b[1] = m.chipStep ? 1 : 0;
 }
 
 void unpackFmEx(const uint8_t* b, size_t n, Instrument& m) {
   if (n > 0) m.fmSat = clampu(b[0], 0, 127);
+  if (n > 1) m.chipStep = b[1] != 0;
 }
 
 void fixInstrument(Instrument& m) {

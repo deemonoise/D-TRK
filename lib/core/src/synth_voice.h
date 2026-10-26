@@ -90,6 +90,7 @@ struct Voice {
   float slideStep = 0;      // semitones per sample, 0 = none
   float gain = 1;           // velocity * VSL state
   uint8_t vel = 0;          // note-on velocity (velocity -> cutoff / DECAY)
+  bool chipStep = false;    // CHIP: Instrument::chipStep (control rate)
   // Control-rate values, refreshed every Synth::kControl samples.
   float inc = 0;            // CHIP: phase increment; SAMPLE: frames per output sample
   float duty = 0.5f;        // pulse width incl. PWM

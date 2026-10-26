@@ -73,7 +73,7 @@ class InstScreen : public Screen {
                        kVelCut = 13, kVelMac = 14, kCommon = 15;
   static constexpr int kMainRows = 9;  // MAIN = [0, 9), ENV = [9, kCommon)
   static constexpr int kWave = kCommon, kDuty = kCommon + 1, kPwmRate = kCommon + 2, kPwmDepth = kCommon + 3,
-                       kChipRows = kCommon + 4;
+                       kChipStep = kCommon + 4, kChipRows = kCommon + 5;
   static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM
   // DRUM: Machine (kMachine) is the group (KICK, SNARE, ...), then its Model, then the macros.
   static constexpr int kDrumModel = kCommon + 1, kDrumMac0 = kCommon + 2, kDrumRows = kDrumMac0 + mt::kFmMacros;

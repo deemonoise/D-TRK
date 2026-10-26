@@ -8,7 +8,7 @@
 namespace mt {
 
 // A voice's filter: FltMode minus Off, in the same order (FltKind = FltMode - 1).
-enum class FltKind : uint8_t { Lp, Bp, Hp, Ladder, Ms20, Comb, Formant };
+enum class FltKind : uint8_t { Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid };
 // LP / BP / HP pass straight to Svf::set by value.
 static_assert(static_cast<int>(FltKind::Lp) == static_cast<int>(Svf::Mode::Lp) &&
                   static_cast<int>(FltKind::Bp) == static_cast<int>(Svf::Mode::Bp) &&
@@ -40,19 +40,20 @@ class VoiceFilter {
   // hear the last one's).
   void reset();
   // Still ringing with no input: state above -80 dB of full scale, as Svf (Synth keeps the voice
-  // for it). A LADDER / MS20 tail ends when its fade does.
+  // for it). A LADDER / MS20 / SID tail ends when its fade does.
   MT_INLINE bool ringing() const {
     switch (kind_) {
       case FltKind::Ladder: return tail_ >= kTailOff && above(st_.ladder.s, 4);
       case FltKind::Ms20: return tail_ >= kTailOff && above(st_.ms20.s, 3);
       case FltKind::Comb: return st_.comb.peak > 1e-4f;
       case FltKind::Formant: return above(&st_.formant.ic[0][0], 6);
+      case FltKind::Sid: return tail_ >= kTailOff && above(st_.sid.s, 3);
       default: return st_.svf.ringing();
     }
   }
   // out[i] += filter(in[i]), in = nullptr for silence (a ringing tail). Synth applies the amp
   // envelope before the filter, so a self-oscillating LADDER / MS20 would ring forever on a released
-  // voice: its tail fades out (-60 dB in 50 ms) at once, any other LADDER / MS20 tail after 2 s.
+  // voice: its tail fades out (-60 dB in 50 ms) at once, any other LADDER / MS20 / SID tail after 2 s.
   // LP / BP / HP tails do not fade (bit-exact to Svf).
   void processAdd(const float* __restrict in, float* __restrict out, int n, int16_t* line);
 
@@ -95,12 +96,21 @@ class VoiceFilter {
     float a[3][3];   // per band: Svf's a1, a2, a3
     float k;         // 1 / q
   };
+  // SID 6581-style: Svf's TPT state-variable low-pass (12 dB/oct, as the chip), Q capped at 2 (the chip
+  // does not self-oscillate), the cutoff mapped into 200 Hz .. 12 kHz (setSid). Dirty: an asymmetric
+  // soft clip on the input (x + 0.15 x^2, then vfSat: even harmonics), vfSat on the band-pass state;
+  // a ~3.5 Hz DC blocker takes the x^2 term's offset back out. Our own model: no reSID code or data.
+  struct Sid {
+    float s[3];          // Svf's ic1 (band-pass), ic2 (low-pass), the DC blocker's estimate
+    float a1, a2, a3;    // Svf's: a1 = 1 / (1 + g (g + k)), a2 = g a1, a3 = g a2
+  };
   union State {
     Svf svf;  // LP / BP / HP
     Ladder ladder;
     Ms20 ms20;
     Comb comb;
     Formant formant;
+    Sid sid;
     State() : svf() {}
   };
 
@@ -119,6 +129,9 @@ class VoiceFilter {
   void ladderLoop(const float* __restrict in, float* __restrict out, int n);
   template <bool kIn, bool kFade>
   void ms20Loop(const float* __restrict in, float* __restrict out, int n);
+  void setSid(float hz, float r);
+  template <bool kIn, bool kFade>
+  void sidLoop(const float* __restrict in, float* __restrict out, int n);
   void setComb(float hz, float r);
   void setFormant(float hz, float r);
   template <bool kIn>
@@ -127,7 +140,7 @@ class VoiceFilter {
   void combLoop(const float* __restrict in, float* __restrict out, int n, int16_t* __restrict line);
 
   FltKind kind_ = FltKind::Lp;
-  bool osc_ = false;          // LADDER / MS20 over the self-oscillation threshold
+  bool osc_ = false;          // LADDER / MS20 over the self-oscillation threshold (never SID)
   float hz_ = -1, res_ = -1;  // last set() arguments of the non-Svf modes (Svf caches its own)
   float tail_ = 1;            // the tail fade's gain, 1 while there is input
   uint32_t tailN_ = 0;        // samples since the tail started

@@ -53,13 +53,22 @@ int voiceCost(const Instrument& m, bool sample) {
     case InstrType::Lofi:
       c = m.machine == static_cast<uint8_t>(LofiMachine::Byte) ? kCostLofiByte : kCostLofiApc;
       break;
-    default: break;                                  // CHIP, KIT
+    case InstrType::Chip: {  // the wave's loop (see renderChip); STEP runs every wave in the generic one
+      const uint8_t w = m.wave;
+      if (w >= static_cast<uint8_t>(Wave::SidTs) && w <= static_cast<uint8_t>(Wave::SidPts)) c += kCostChipSid;
+      else if (w == static_cast<uint8_t>(Wave::AyToneNoise)) c += kCostChipAyTn;
+      else if (m.chipStep || w > static_cast<uint8_t>(Wave::Saw)) c += kCostChipGeneric;
+      if (m.chipStep) c += kCostChipStep;
+      break;
+    }
+    default: break;                                  // KIT
   }
   switch (static_cast<FltMode>(m.fltMode)) {
     case FltMode::Ladder: c += kCostLadder; break;
     case FltMode::Ms20: c += kCostMs20; break;
     case FltMode::Comb: c += m.type == InstrType::String && !sample ? 0 : kCostComb; break;  // STRING: Off
     case FltMode::Formant: c += kCostFormant; break;
+    case FltMode::Sid: c += kCostSid; break;
     default: break;
   }
   return c;
