@@ -183,6 +183,8 @@ void stop() {
   releaseSlot();
 }
 
+bool active() { return streaming; }
+
 void step() {
   if (!ring.playing()) {
     closeFile();  // played to its end

@@ -13,5 +13,7 @@ void reset();
 bool isRequest(mt::link::Msg t);
 // Request t (frame seq) -> its reply payload in out (kMaxPayload), or -1 when the reply comes later.
 int handle(mt::link::Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out);
+// A task runs (it may hold a PSRAM copy or a store entry of the sample).
+bool busy();
 
 }  // namespace tools

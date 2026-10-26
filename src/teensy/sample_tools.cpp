@@ -376,6 +376,8 @@ void reset() {
   answered = false;
 }
 
+bool busy() { return task != Task::None; }
+
 bool isRequest(Msg t) { return t == Msg::WavePeaks || t == Msg::Onsets || t == Msg::WtRender; }
 
 int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out) {

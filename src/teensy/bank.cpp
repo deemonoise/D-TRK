@@ -8,12 +8,16 @@
 #include "file_rules.h"
 #include "flash_bank.h"
 #include "fs_server.h"
+#include "heads_watch.h"
 #include "link_server.h"
 #include "model.h"
+#include "preview_stream.h"
 #include "rec_server.h"
+#include "render_server.h"
 #include "sample_heads.h"
 #include "sample_set.h"
 #include "sample_store.h"
+#include "sample_tools.h"
 #include "stream.h"
 #include "synth.h"
 #include "wav.h"
@@ -86,8 +90,10 @@ class SdDisk final : public mt::BankDisk {
 };
 
 constexpr uint32_t kProgressMs = 100;
+constexpr uint32_t kRefreshPollMs = 100;
 
 mt::SynthModel* model = nullptr;
+mt::Synth* theSynth = nullptr;
 SynthStream* out = nullptr;
 FlashBank flash;
 mt::SampleBank theBank(flash);
@@ -116,6 +122,8 @@ bool recImport = false;
 BankResult recRes = BankResult::Running;
 uint8_t curType = 0, curSeq = 0;
 bool parkedByUs = false;
+// The model's sample set the heads and the PSRAM fill were last done for (refreshIfDue).
+mt::HeadsWatch watch;
 uint32_t lastProgress = 0;
 bool answered = false;
 uint8_t ansType = 0, ansSeq = 0;
@@ -247,6 +255,15 @@ void writeHeads() {
   if (written) link::log("heads: %d samples written", written);
 }
 
+// The model's store files registered (stored before: maybe not yet), their heads written, then the
+// table with heads and the PSRAM fill for the model. The synth parked.
+FLASHMEM void refreshHeads() {
+  stream::rescan(*model, false);
+  writeHeads();
+  storeFound = stream::rescan(*model);
+  watch.done(mt::sampleSetSig(*model));
+}
+
 bool inModel(uint32_t crc) {
   for (int i = 0; i < model->sampleCount; ++i)
     if (model->samples[i].crc == crc) return true;
@@ -268,11 +285,7 @@ void setsDone(BankResult jobR) {
   m.missing = static_cast<uint8_t>(missing > 255 ? 255 : missing);
   m.failed = static_cast<uint8_t>(failed > 255 ? 255 : failed);
   const int n = put(m, p);
-  if (curType == static_cast<uint8_t>(Msg::BankSync)) {  // still parked: answer() unparks
-    stream::rescan(*model, false);  // the model's store files (stored before: not registered yet)
-    writeHeads();
-    storeFound = stream::rescan(*model);
-  }
+  if (curType == static_cast<uint8_t>(Msg::BankSync)) refreshHeads();  // still parked: answer() unparks
   answer(p, n);
 }
 
@@ -290,8 +303,7 @@ void storeImportDone(BankResult r) {
     stream::add(o.crc);  // stored already (nothing written): register it all the same
     if (inModel(o.crc)) {
       park(true);
-      writeHeads();
-      stream::rescan(*model);
+      refreshHeads();
     }
   }
   answer(p, put(m, p));
@@ -306,8 +318,7 @@ FLASHMEM void recImportDone(BankResult r) {
     stream::add(o.crc);
     if (inModel(o.crc)) {
       park(true);
-      writeHeads();
-      stream::rescan(*model);
+      refreshHeads();
     }
   }
   working = false;
@@ -346,9 +357,7 @@ void migrateDone(BankResult r) {
   park(true);
   const int n = mt::bankDropMigrated(theBank, disk);
   link::log("migrated %d samples to the store (%s)", n, r == BankResult::Ok ? "ok" : "failed");
-  stream::rescan(*model, false);
-  writeHeads();
-  storeFound = stream::rescan(*model);
+  refreshHeads();
   park(false);
 }
 
@@ -570,6 +579,7 @@ struct Bg final : mt::BgWork {
 
 void begin(mt::SynthModel& m, mt::Synth& synth, SynthStream& o) {
   model = &m;
+  theSynth = &synth;
   out = &o;
   auto* legacy = new (srcMem) mt::BankSampleSource(theBank, m);
   auto* wts = new (wtMem) mt::BankWtSource(theBank, m);
@@ -582,6 +592,7 @@ void begin(mt::SynthModel& m, mt::Synth& synth, SynthStream& o) {
   auto* src = new (storeMem) mt::StoreSampleSource(stream::table(), stream::pool(), mounted ? legacy : nullptr, m);
   synth.setBank(src);
   storeFound = stream::rescan(m, false);  // the synth does not run yet; logState() tells
+  watch.done(mt::sampleSetSig(m));
   if (!mounted) return;
   if (auto* table = static_cast<int16_t*>(malloc(mt::kWtTableSamples * sizeof(int16_t)))) {
     builtinsAdded = mt::bankAddBuiltins(theBank, m, table);
@@ -729,6 +740,24 @@ mt::BankResult writeFrames(uint32_t frames, uint32_t rate, mt::FrameFill fill, v
   const BankResult r = mt::storeWriteFrames(disk, frames, rate, fill, ctx, o, keep, keepCtx);
   if (r == BankResult::Ok) stream::add(o.crc);
   return r;
+}
+
+FLASHMEM void refreshIfDue() {
+  static uint32_t last = 0;
+  const uint32_t now = millis();
+  if (now - last < kRefreshPollMs) return;
+  last = now;
+  // Nothing on the card or in the bank in use, nothing sounding, the transport stopped: the park's
+  // gap is silent.
+  const bool idle = !working && !migrating && !rec::busy() && !render::active() && !preview::active() &&
+                    !tools::busy() && !out->parked() && theSynth->gatePos() < 0 && theSynth->activeVoices() == 0;
+  if (!watch.due(mt::sampleSetSig(*model), idle, now)) return;
+  const uint32_t t0 = millis();
+  park(true);
+  refreshHeads();
+  park(false);
+  link::log("heads: refresh for %d samples (%lu ms parked)", model->sampleCount,
+            static_cast<unsigned long>(millis() - t0));
 }
 
 bool bgStep() {

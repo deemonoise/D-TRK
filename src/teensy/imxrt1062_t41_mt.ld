@@ -69,6 +69,8 @@ SECTIONS
 		*link_fs.cpp.o(.text*)
 		*:bank_ops.cpp.o(.text*)
 		*bank_ops.cpp.o(.text*)
+		*:heads_watch.cpp.o(.text*)
+		*heads_watch.cpp.o(.text*)
 		*:wt_file.cpp.o(.text*)
 		*wt_file.cpp.o(.text*)
 		*:sequencer.cpp.o(.text*)

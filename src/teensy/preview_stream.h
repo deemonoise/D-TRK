@@ -19,6 +19,7 @@ bool isRequest(mt::link::Msg t);  // PreviewFile
 // PreviewFile -> its reply payload in out (kMaxPayload), its size.
 int handle(mt::link::Msg t, const uint8_t* p, int n, uint8_t* out);
 void stop();  // PreviewStop
+bool active();  // a file is streaming
 // loop(): watches for the preview's end (the stream scheduler tops the ring up via consumer()).
 void step();
 mt::StreamConsumer* consumer();

@@ -167,6 +167,7 @@ void loop() {
   wdog::feed();
   link::poll();
   stream::step();  // voice / preview loads, then one background portion (bank job, ...)
+  bank::refreshIfDue();  // heads / PSRAM for samples added on the fly
   rec::step();     // a take's ring into its file, STOP / keepalive
   psram::step();   // the watchdog
 #if defined(LINK_DESK) && !defined(AUDIO_BENCH_MAX)

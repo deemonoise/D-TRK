@@ -58,4 +58,9 @@ void reset();
 // job runs. The stream scheduler calls it as background work (registered by begin()).
 bool bgStep();
 
+// loop(): a sample the model gained on the fly (a render, a take, an import the ESP added after it)
+// has no heads and no PSRAM copy until a BankSync; once the set holds and nothing sounds or uses the
+// card, the heads and the fill are redone as a BankSync does (the synth parked a moment).
+void refreshIfDue();
+
 }  // namespace bank
