@@ -8,7 +8,12 @@ namespace mt {
 
 constexpr uint32_t kRenderBlockUs = 1000000u * Synth::kBlock / kSynthRate;  // 4000
 constexpr int16_t kSilence = 33;             // -60 dBFS
-constexpr float kNormPeak = 0.891f * 32767;  // -1 dBFS
+constexpr float kNormPeak = 0.891f * 32767;     // -1 dBFS
+constexpr float kNormPeakHot = 0.966f * 32767;  // -0.3 dBFS (one-shot bounce)
+constexpr float kTapScale = 32767.f * 0.25f;    // a mix-units tap (Synth::setPreviewTap) to int16, as MAIN 100
+// The preview tap (one-shot bounce) to int16: kTapScale with the preview fader (kPreviewVol) undone, so
+// a sampler at vol 127 plays an unnormalized one-shot back at its source's level (KIT bake).
+constexpr float kPrevTapScale = kTapScale * 127.f / kPreviewVol;
 
 constexpr int kRenderSlotsMax = 512;  // RenderSpec::maxSlots
 
@@ -19,8 +24,9 @@ uint64_t passTicks(const Project& p, int idx);
 uint64_t songTicks(const Project& p, int maxSlots = kSongMax);
 uint64_t passUs(const Project& p, int idx);
 uint64_t songUs(const Project& p, int maxSlots = kSongMax);
-// Scales so that `peak` lands at -1 dBFS; peak 0 leaves the buffer as is.
-void normalizePeak(int16_t* b, uint32_t n, int16_t peak);
+// Scales so that `peak` lands at target (-1 dBFS; kNormPeakHot: -0.3 dBFS); peak 0 leaves the
+// buffer as is.
+void normalizePeak(int16_t* b, uint32_t n, int16_t peak, float target = kNormPeak);
 // Frames to keep: past the last sample above kSilence, rounded up to `block`, at least one block.
 uint32_t trimTail(const int16_t* b, uint32_t n, uint32_t block);
 // "RS1", "RS2", ...: the first name not in p's sample list (ignoring case).

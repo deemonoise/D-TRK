@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <type_traits>
 #include <unity.h>
@@ -408,6 +409,55 @@ void test_apc_level_matches_byte() {
   TEST_ASSERT_TRUE(r > 0.8 && r < 1.25);
 }
 
+// Golden renders: BYTE (unsigned / signed, TONE off / on, LOOP, ABC moving) and APC (WIDTH, TONE, DRIFT,
+// SMOOTH), odd spans, a retrigger. Hashes BYTE, APC; captured before inc / qInc reciprocals moved to control().
+static uint32_t goldenLofi(bool apc) {
+  static const int spans[] = {32, 32, 7, 25, 32, 1, 31, 32};
+  static float buf[4096];
+  const ByteCode u = compile("t*(t>>5|t>>8)"), sg = compile("t*((t>>9|t>>13)&25&t>>6)", kByteSigned);
+  uint32_t h = 2166136261u;
+  for (int c = 0; c < 6; ++c) {
+    LofiVoice v;
+    v.trigger(7 + c);
+    for (int i = 0; i < 4096; ++i) buf[i] = 0;
+    int pos = 0;
+    for (int k = 0; pos < 4096; ++k) {
+      const int sp = spans[k % 8] < 4096 - pos ? spans[k % 8] : 4096 - pos;
+      LofiParams p;
+      if (apc) {
+        const float note = 40.f + 8 * c + (k % 5);
+        p = apcParams(noteHz(note), (c * 0.2f + (k % 9) * 0.03f), c % 3 == 0 ? 1.f : 0.4f, c >= 2 ? 0.8f : 0,
+                      c % 2 ? 0.7f : 0);
+      } else {
+        p = byteParams(c % 2 ? &sg : &u, 48.f + 6 * c + (k % 3) * 0.3f, (k % 4) / 4.f, 0.3f, 0.6f,
+                       c >= 2 ? 0.5f : 0, c >= 4 ? 0.2f : 0);
+      }
+      if (k == 50) v.trigger(99, true);
+      v.control(p, sp);
+      v.render(buf + pos, sp, 0.8f);
+      pos += sp;
+    }
+    for (int i = 0; i < 4096; ++i) {
+      uint32_t x;
+      memcpy(&x, &buf[i], 4);
+      for (int b = 0; b < 4; ++b) h = (h ^ ((x >> (8 * b)) & 0xFFu)) * 16777619u;
+    }
+  }
+  return h;
+}
+
+void test_golden_voice() {
+  static const uint32_t kGolden[2] = {0xE0CB4BEBu, 0x74A1F16Au};
+  bool ok = true;
+  char msg[64] = "";
+  for (int m = 0; m < 2; ++m) {
+    const uint32_t g = goldenLofi(m == 1);
+    ok = ok && g == kGolden[m];
+    snprintf(msg + strlen(msg), sizeof msg - strlen(msg), " 0x%08X", static_cast<unsigned>(g));
+  }
+  TEST_ASSERT_TRUE_MESSAGE(ok, msg);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_voice_is_trivially_copyable);
@@ -437,5 +487,6 @@ int main() {
   RUN_TEST(test_apc_bounded);
   RUN_TEST(test_apc_dc_blocked);
   RUN_TEST(test_apc_level_matches_byte);
+  RUN_TEST(test_golden_voice);
   return UNITY_END();
 }

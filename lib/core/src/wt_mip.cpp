@@ -10,13 +10,22 @@ namespace {
 constexpr int kSynLen = kWtFrameLen;  // synthesis sine table (level lengths divide it)
 constexpr int kAnaLen = 4096;         // analysis sine table (power-of-two frames <= 4096)
 float gSynSin[kSynLen];
-float gAnaSin[kAnaLen];
 struct TabInit {
   TabInit() {
     for (int i = 0; i < kSynLen; ++i) gSynSin[i] = static_cast<float>(sin(6.283185307179586 * i / kSynLen));
-    for (int i = 0; i < kAnaLen; ++i) gAnaSin[i] = static_cast<float>(sin(6.283185307179586 * i / kAnaLen));
   }
 } tabInit;
+
+// 16 KB, imports only: on the heap at the first use (on the ESP32 malloc puts > 4 KB in PSRAM), not
+// in internal RAM for good.
+const float* anaSin() {
+  static const float* const t = [] {
+    float* p = new float[kAnaLen];
+    for (int i = 0; i < kAnaLen; ++i) p[i] = static_cast<float>(sin(6.283185307179586 * i / kAnaLen));
+    return p;
+  }();
+  return t;
+}
 
 constexpr bool isPow2(int v) { return v > 0 && (v & (v - 1)) == 0; }
 
@@ -40,6 +49,7 @@ void synthLevel(const float* re, const float* im, int k, float* y) {
 
 void wtAnalyze(const int16_t* x, int len, float* re, float* im) {
   const bool tab = isPow2(len) && len <= kAnaLen;
+  const float* ana = tab ? anaSin() : nullptr;
   for (int h = 1; h <= kWtHarm; ++h) {
     re[h - 1] = im[h - 1] = 0;
     if (2 * h > len) continue;
@@ -48,8 +58,8 @@ void wtAnalyze(const int16_t* x, int len, float* re, float* im) {
       const int step = h * (kAnaLen / len);
       for (int n = 0; n < len; ++n) {
         const int i = (n * step) & (kAnaLen - 1);
-        c += x[n] * gAnaSin[(i + kAnaLen / 4) & (kAnaLen - 1)];
-        s += x[n] * gAnaSin[i];
+        c += x[n] * ana[(i + kAnaLen / 4) & (kAnaLen - 1)];
+        s += x[n] * ana[i];
       }
     } else {
       // Rotation recurrence, reseeded exactly every 64 points to bound float drift.

@@ -1,4 +1,6 @@
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include <unity.h>
 #include "synth_fm.h"
 
@@ -120,8 +122,10 @@ void test_above_nyquist_is_silent() {
 }
 
 void test_max_index_falls_with_pitch() {
-  TEST_ASSERT_EQUAL_FLOAT(8, fmMaxIndex(100));
-  TEST_ASSERT_TRUE(fmMaxIndex(6000) < 1.5f);
+  TEST_ASSERT_EQUAL_FLOAT(12, fmMaxIndex(100));
+  TEST_ASSERT_EQUAL_FLOAT(12, fmMaxIndex(0));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 7.f, fmMaxIndex(2000));  // sidebands below ~16 kHz
+  TEST_ASSERT_TRUE(fmMaxIndex(6000) < 2.f);
   TEST_ASSERT_TRUE(fmMaxIndex(20000) >= 0.2f);
 }
 
@@ -204,6 +208,168 @@ void test_choke_retrigger_ramps_levels() {
   TEST_ASSERT_TRUE(jump < 0.1f);
 }
 
+// FNV-1a over the float bits of n samples.
+static uint32_t hashOf(const float* b, int n) {
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < n; ++i) {
+    uint32_t x;
+    memcpy(&x, &b[i], 4);
+    for (int k = 0; k < 4; ++k) h = (h ^ ((x >> (8 * k)) & 0xFFu)) * 16777619u;
+  }
+  return h;
+}
+
+// Every path of the core (two pairs, feedback, pitch sweep, noise through the filter, one-shot amp) with
+// indices below any fmMaxIndex limit: its render does not depend on the limits.
+static FmParams goldenPatch() {
+  FmParams p;
+  p.alg = FmAlg::TwoPairs;
+  p.hz = 220;
+  p.op[0] = {1, 0.8f, 0.2f, 300, 0};
+  p.op[1] = {2, 3, 0, 150, 0};
+  p.op[2] = {3, 0.3f, 0, 0, 0.8f};
+  p.op[3] = {1, 1, 0.5f, 400, 0};
+  p.pitchEnv = 12;
+  p.pitchMs = 50;
+  p.noise = 0.1f;
+  p.noiseMs = 100;
+  p.filterMode = Svf::Mode::Bp;
+  p.filterHz = 2000;
+  p.filterQ = 1;
+  p.ampMs = 800;
+  return p;
+}
+
+// SAT 0 (the default): the shaper is skipped, the render is bit for bit the one from before SAT.
+void test_sat_zero_bit_exact() {
+  constexpr uint32_t kGolden = 0xF2CA1ADFu;  // the hash of this render on the code before SAT (32 kHz)
+  FmVoice v;
+  v.trigger(false);
+  run(v, goldenPatch(), buf, 8192);
+  const uint32_t h = hashOf(buf, 8192);
+  char msg[32];
+  snprintf(msg, sizeof msg, "hash 0x%08X", static_cast<unsigned>(h));
+  TEST_ASSERT_EQUAL_HEX32_MESSAGE(kGolden, h, msg);
+}
+
+// SAT keeps the full-scale peak (tanh(g) / tanh(g) = 1) and fattens the wave: RMS up.
+void test_sat_fattens_keeps_peak() {
+  static float x[4410];
+  FmVoice a, b;
+  a.trigger(false);
+  b.trigger(false);
+  FmParams p = sine(220);
+  run(a, p, buf, 4410);
+  p.sat = 1;
+  run(b, p, x, 4410);
+  double ra = 0, rb = 0;
+  float peak = 0;
+  for (int i = 1000; i < 4410; ++i) {
+    ra += static_cast<double>(buf[i]) * buf[i];
+    rb += static_cast<double>(x[i]) * x[i];
+    peak = fmaxf(peak, fabsf(x[i]));
+  }
+  TEST_ASSERT_TRUE(rb > ra * 1.3);
+  TEST_ASSERT_TRUE(peak <= 1.01f);
+}
+
+// SAT jumping 0 -> 1 between two ticks ramps over the span: no step in the wave (unramped: ~0.66 here).
+void test_sat_change_ramps() {
+  static float x[2048];
+  FmVoice v;
+  v.trigger(false);
+  FmParams p = sine(110);
+  for (int i = 0; i < 2048; ++i) x[i] = 0;
+  for (int pos = 0; pos < 2048; pos += kSpan) {
+    p.sat = pos < 1024 ? 0.f : 1.f;
+    v.control(p, kSpan);
+    v.render(x + pos, kSpan, 1.f);
+  }
+  float jump = 0;
+  for (int i = 1; i < 2048; ++i) jump = fmaxf(jump, fabsf(x[i] - x[i - 1]));
+  TEST_ASSERT_TRUE(jump < 0.25f);
+}
+
+// Back to SAT 0: after one ramp span the shaper is off again, bit for bit the clean voice.
+void test_sat_back_to_zero_is_bypass() {
+  static float xa[1024], xb[1024];
+  FmVoice a, b;
+  a.trigger(false);
+  b.trigger(false);
+  FmParams pa = sine(220), pb = sine(220);
+  for (int i = 0; i < 1024; ++i) xa[i] = xb[i] = 0;
+  for (int pos = 0; pos < 1024; pos += kSpan) {
+    pb.sat = pos < 256 ? 0.5f : 0.f;
+    a.control(pa, kSpan);
+    a.render(xa + pos, kSpan, 1.f);
+    b.control(pb, kSpan);
+    b.render(xb + pos, kSpan, 1.f);
+  }
+  const int from = 256 + kSpan;
+  TEST_ASSERT_EQUAL_MEMORY(xa + from, xb + from, sizeof(float) * (1024 - from));
+}
+
+// Golden renders of every algorithm x filter (off, LP / BP / HP on the noise or on all), feedback, an operator
+// that mutes and comes back while the pitch sweeps (its phase runs on silent), odd spans, a choke, SAT, a sweep
+// over Nyquist. One hash per algorithm; captured on the code before the run() fast paths.
+static uint32_t goldenAlg(int alg) {
+  static const int spans[] = {32, 32, 7, 25, 32, 1, 31, 32};
+  uint32_t h = 2166136261u;
+  for (int f = 0; f < 7; ++f) {
+    FmVoice v;
+    v.trigger(false);
+    FmParams p;
+    p.alg = static_cast<FmAlg>(alg);
+    p.op[0] = {1, 0.9f, 0.3f, 250, 0};
+    p.op[1] = {2, 1.5f, 0, 120, 0.6f};
+    p.op[2] = {3.5f, 0.7f, 0.4f, 0, 0};
+    p.op[3] = {0.5f, 1.2f, 0, 300, 1.1f};
+    p.pitchEnv = 7;
+    p.pitchMs = 80;
+    p.fbEnv = f & 1 ? 0.5f : 0;
+    p.fbMs = 60;
+    p.noise = f == 0 ? 0 : 0.2f;
+    p.noiseMs = f & 2 ? 0 : 150;
+    p.filterHz = f == 0 ? 0 : 1500.f + 400 * f;
+    p.filterMode = static_cast<Svf::Mode>(f % 3);
+    p.filterAll = f >= 4;
+    p.filterQ = 1.5f;
+    p.ampMs = 600;
+    p.oneShot = f != 3;
+    float out[2048] = {0};
+    int pos = 0;
+    for (int k = 0; pos < 2048; ++k) {
+      const int sp = spans[k % 8] < 2048 - pos ? spans[k % 8] : 2048 - pos;
+      p.op[2].level = (k / 5) % 2 ? 0 : 0.7f;
+      p.op[1].fb = (k / 7) % 3 == 2 ? 0 : 0.6f;
+      p.hz = k < 40 ? 180.f + 30 * k : (k < 50 ? 5000.f + 800 * (k - 40) : 300.f);
+      p.sat = f >= 5 ? 0.4f : (k > 30 && f == 2 ? 0.3f : 0);
+      if (k == 45) v.trigger(true);
+      v.control(p, sp);
+      v.render(out + pos, sp, 0.8f);
+      pos += sp;
+    }
+    for (int i = 0; i < 2048; ++i) {
+      uint32_t x;
+      memcpy(&x, &out[i], 4);
+      for (int b = 0; b < 4; ++b) h = (h ^ ((x >> (8 * b)) & 0xFFu)) * 16777619u;
+    }
+  }
+  return h;
+}
+
+void test_golden_algorithms() {
+  static const uint32_t kGolden[5] = {0xB6E4C0E4u, 0xFABA4BA9u, 0x98BAEA2Bu, 0x14372B86u, 0xCF96FE7Eu};
+  bool ok = true;
+  char msg[128] = "";
+  for (int a = 0; a < 5; ++a) {
+    const uint32_t g = goldenAlg(a);
+    ok = ok && g == kGolden[a];
+    snprintf(msg + strlen(msg), sizeof msg - strlen(msg), " 0x%08X", static_cast<unsigned>(g));
+  }
+  TEST_ASSERT_TRUE_MESSAGE(ok, msg);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_carrier_frequency);
@@ -219,5 +385,10 @@ int main() {
   RUN_TEST(test_clap_bursts_retrigger_noise);
   RUN_TEST(test_choke_retrigger_has_no_jump);
   RUN_TEST(test_choke_retrigger_ramps_levels);
+  RUN_TEST(test_sat_zero_bit_exact);
+  RUN_TEST(test_sat_fattens_keeps_peak);
+  RUN_TEST(test_sat_change_ramps);
+  RUN_TEST(test_sat_back_to_zero_is_bypass);
+  RUN_TEST(test_golden_algorithms);
   return UNITY_END();
 }

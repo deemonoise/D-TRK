@@ -92,6 +92,8 @@ class App {
   static void syncProgress(const char* file, uint32_t done, uint32_t total, void* app);
   // storage::RenderProgress: "RENDER NN%"; false (cancel) on a long encoder press or Play. ctx = App*.
   static bool renderProgress(uint32_t done, uint32_t total, void* app);
+  // The same with its own label (e.g. "LANE 1/3").
+  static bool labeledProgress(const char* label, uint32_t done, uint32_t total, void* app);
   // After a long operation: drops the input it queued meanwhile and the progress label.
   void endProgress();
   void dropInput(const hw::InputEvent& ev);

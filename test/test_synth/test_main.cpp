@@ -249,12 +249,14 @@ void test_guard_sheds_one_voice_per_block_down_to_min() {
   TEST_ASSERT_EQUAL(kVoices < 2 * kTracks ? kVoices : 2 * kTracks, full);
   s->setLoad(0.5f);
   TEST_ASSERT_EQUAL(full, liveVoices());  // under the limit: nothing happens
-  s->setLoad(1.2f);  // one block over budget: the DMA absorbs it
+  // Blocks of 6 ms: half a block of debt each. The first the DMA absorbs, the second reaches kDebtMax
+  // (half the DMA slack), then one voice per block while the debt stays.
+  s->setLoad(1.5f);
   TEST_ASSERT_EQUAL(full, liveVoices());
-  s->setLoad(1.2f);  // the second in a row
+  s->setLoad(1.5f);
   TEST_ASSERT_EQUAL(full - 1, liveVoices());
   for (int k = 0; k < 100; ++k) {
-    s->setLoad(1.2f);
+    s->setLoad(1.5f);
     s->render(buf);
   }
   TEST_ASSERT_EQUAL(Synth::kMinVoices, liveVoices());
@@ -265,7 +267,7 @@ void test_guard_sheds_releasing_first_then_oldest() {
   fillVoices();
   noteOff(0, 5, 75);  // a releasing voice
   s->render(buf);
-  s->setLoad(1.6f);
+  s->setLoad(2.0f);  // a block of 8 ms: kDebtMax at once
   for (int i = 0; i < kVoices; ++i) {
     const Voice& v = s->voice(i);
     if (v.stolen) TEST_ASSERT_TRUE(v.track == 5 && v.note == 75);
@@ -275,7 +277,7 @@ void test_guard_sheds_releasing_first_then_oldest() {
     const Voice& v = s->voice(i);
     if (v.on && !v.stolen && (oldest < 0 || v.age < s->voice(oldest).age)) oldest = i;
   }
-  s->setLoad(1.6f);
+  s->setLoad(2.0f);
   TEST_ASSERT_TRUE(s->voice(oldest).stolen);
   int stolen = 0;
   for (int i = 0; i < kVoices; ++i) stolen += s->voice(i).stolen;
@@ -284,17 +286,18 @@ void test_guard_sheds_releasing_first_then_oldest() {
 
 void test_guard_cap_limits_new_notes_and_recovers() {
   fillVoices();
-  for (int k = 0; k < 6; ++k) s->setLoad(1.2f);
+  for (int k = 0; k < 60; ++k) s->setLoad(0.95f);  // sustained: the smoothed load passes kLoadHigh
   const int cap = s->voiceCap();
+  TEST_ASSERT_TRUE(cap < kVoices);
   for (int k = 0; k < 4; ++k) s->render(buf);  // the fades end
   for (int t = 0; t < kTracks; ++t) noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(90 + t));
   s->render(buf);
   TEST_ASSERT_TRUE(s->activeVoices() <= cap);
   // Between the marks the cap holds (once the smoothed load has come down below the high mark).
-  for (int k = 0; k < 20; ++k) s->setLoad(0.7f);
+  for (int k = 0; k < 60; ++k) s->setLoad(0.76f);
   const int held = s->voiceCap();
   TEST_ASSERT_TRUE(held <= cap);
-  for (int k = 0; k < 200; ++k) s->setLoad(0.7f);
+  for (int k = 0; k < 200; ++k) s->setLoad(0.76f);
   TEST_ASSERT_EQUAL(held, s->voiceCap());
   // Light load: one voice back every kCapUpBlocks, up to the whole pool.
   for (int k = 0; k < Synth::kCapUpBlocks * (kVoices + 4); ++k) s->setLoad(0.2f);
@@ -313,18 +316,30 @@ void test_guard_ignores_single_spikes() {
   TEST_ASSERT_EQUAL(kVoices, s->voiceCap());
 }
 
+// The pool bench with the budget on: ~62 % with a 5 ms hit block (12 note-ons) every 31 blocks, the
+// next one late too. Before: smoothing 0.25 unclamped took the load over kLoadHigh, the guard shed to
+// a cap of 4..7 and, under kLoadLow 0.65, never grew back. Now the spikes count as full blocks and the
+// debt (0.25 + 0.1 blocks) is repaid: nothing sheds.
+void test_guard_ignores_note_on_spikes_at_budget_load() {
+  fillVoices();
+  const int full = liveVoices();
+  for (int k = 0; k < 31 * 40; ++k) s->setLoad(k % 31 == 0 ? 1.25f : k % 31 == 1 ? 1.1f : 0.62f);
+  TEST_ASSERT_EQUAL(full, liveVoices());
+  TEST_ASSERT_EQUAL(kVoices, s->voiceCap());
+}
+
 void test_guard_hard_spike_sheds_at_once() {
   fillVoices();
   const int full = liveVoices();
-  s->setLoad(1.6f);  // over kLoadHard: no second block needed
+  s->setLoad(2.0f);  // a block of 8 ms: half the DMA slack (kDebtMax) at once
   TEST_ASSERT_EQUAL(full - 1, liveVoices());
 }
 
 void test_guard_panic_keeps_the_cap() {
   fillVoices();
   const int full = liveVoices();
-  s->setLoad(1.2f);
-  s->setLoad(1.2f);  // two in a row, the smoothed load still under kLoadHigh
+  s->setLoad(1.5f);
+  s->setLoad(1.5f);  // the debt reaches kDebtMax, the smoothed load still under kLoadHigh
   TEST_ASSERT_EQUAL(full - 1, liveVoices());
   TEST_ASSERT_EQUAL(kVoices, s->voiceCap());  // a new note still finds a free voice
 }
@@ -332,13 +347,13 @@ void test_guard_panic_keeps_the_cap() {
 void test_guard_smoothed_load_sheds_without_a_spike() {
   fillVoices();
   const int full = liveVoices();
-  for (int k = 0; k < 20; ++k) s->setLoad(0.9f);  // never over 1.0, but above kLoadHigh
+  for (int k = 0; k < 60; ++k) s->setLoad(0.9f);  // never over 1.0 (no debt), but above kLoadHigh
   TEST_ASSERT_TRUE(liveVoices() < full);
 }
 
 void test_guard_reset_restores_pool() {
   fillVoices();
-  for (int k = 0; k < 6; ++k) s->setLoad(1.2f);
+  for (int k = 0; k < 60; ++k) s->setLoad(0.95f);
   TEST_ASSERT_TRUE(s->voiceCap() < kVoices);
   s->reset();
   TEST_ASSERT_EQUAL(kVoices, s->voiceCap());
@@ -1781,7 +1796,8 @@ void test_fm_cache_lfo_macro_close_to_recompute() {
     diff = abs(fa[i] - fb[i]) > diff ? abs(fa[i] - fb[i]) : diff;
   }
   TEST_ASSERT_TRUE(peak > 1000);
-  TEST_ASSERT_TRUE(diff < peak / 50);
+  // COLOR also sets the TONE detune: the cache's 0.5-unit macro tolerance shows as a slow phase drift.
+  TEST_ASSERT_TRUE(diff < peak / 40);
 }
 
 void test_fm_cache_lfo_pitch_close_to_recompute() {
@@ -1801,6 +1817,100 @@ void test_fm_cache_lfo_pitch_close_to_recompute() {
   noteOn(0, 0, 69);
   const int cached = crossings(250);
   TEST_ASSERT_INT_WITHIN(2, plain, cached);
+}
+
+// ---- FM SAT ----
+
+static long diffOf(const int16_t* a, const int16_t* b, int n, long* sum) {
+  long d = 0;
+  *sum = 0;
+  for (int i = 0; i < n; ++i) {
+    d += abs(a[i] - b[i]);
+    *sum += abs(a[i]);
+  }
+  return d;
+}
+
+// Instrument SAT changes the sound; set outside the machine cache (no extra fmMachine calls).
+void test_fm_sat_instrument() {
+  useFm(0, FmMachine::Tone);
+  Instrument& m = p->instruments[0];
+  m.sustain = 127;
+  renderFm(fa, 40, true);
+  m.fmSat = 127;
+  const uint32_t c0 = s->fmMachineCalls();
+  renderFm(fb, 40, true);
+  TEST_ASSERT_TRUE(s->fmMachineCalls() - c0 <= 2);
+  long sum;
+  TEST_ASSERT_TRUE(diffOf(fa, fb, Synth::kBlock * 40, &sum) > sum / 10);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, s->voice(s->trackVoice(0)).eng.fm.fp.sat);
+}
+
+void test_fm_sat_lock_on_note_step() {
+  useFm(0, FmMachine::Tone);
+  stepStart(0, 0, 6, true);
+  fx(0, 0, Fx::SAT, 100);
+  noteOn(0, 0, 60);
+  render1(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL_HEX32(1u << kLockSat, v.lockMask);
+  TEST_ASSERT_EQUAL(100, v.lock[kLockSat]);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 100.f / 127.f, v.eng.fm.fp.sat);
+  stepStart(0, 0, 6, true);  // next step: no lock, the instrument's SAT (0)
+  noteOn(0, 0, 62);
+  render1(buf);
+  TEST_ASSERT_EQUAL(0, s->voice(s->trackVoice(0)).lockMask);
+  TEST_ASSERT_EQUAL_FLOAT(0, s->voice(s->trackVoice(0)).eng.fm.fp.sat);
+}
+
+void test_fm_sat_lock_on_empty_step_hits_sounding_voice() {
+  useFm(0, FmMachine::Tone);
+  stepStart(0, 0, 6, true);
+  noteOn(0, 0, 60);
+  render1(buf);
+  stepStart(0, 0, 6, false);
+  fx(0, 0, Fx::SAT, 127);
+  render1(buf);
+  const Voice& v = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL_HEX32(1u << kLockSat, v.lockMask);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, v.eng.fm.fp.sat);
+}
+
+void test_fm_sat_lfo() {
+  useFm(0, FmMachine::Tone);
+  Instrument& m = p->instruments[0];
+  m.sustain = 127;
+  renderFm(fa, 40, true);
+  m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
+  m.lfoRate = 30;
+  m.lfoDepth = 63;  // SAT 0 -> ~63 in the first half cycle
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Sat);
+  const uint32_t c0 = s->fmMachineCalls();
+  renderFm(fb, 40, true);
+  TEST_ASSERT_TRUE(s->fmMachineCalls() - c0 <= 2);  // SAT moves without recomputing the machine
+  long sum;
+  TEST_ASSERT_TRUE(diffOf(fa, fb, Synth::kBlock * 40, &sum) > sum / 20);
+  // First half cycle of the square: la = +63/64, so SAT = 0 + 63 (a wrong sign gives 0, a wrong scale not 63).
+  s->reset();
+  noteOn(0, 0, 69);
+  render1(buf);
+  TEST_ASSERT_FLOAT_WITHIN(0.5f / 127.f, 63.f / 127.f, s->voice(s->trackVoice(0)).eng.fm.fp.sat);
+}
+
+// SAT on a CHIP track: the voice takes the bit (as any non-macro lock), nothing reads it; it plays on.
+void test_fm_sat_lock_ignored_on_chip() {
+  const bool withSat[] = {false, true};
+  int16_t* outs[] = {fa, fb};
+  for (int t = 0; t < 2; ++t) {
+    s->reset();
+    stepStart(0, 0, 6, true);
+    if (withSat[t]) fx(0, 0, Fx::SAT, 127);
+    noteOn(0, 0, 60);
+    for (int k = 0; k < 20; ++k) render1(outs[t] + k * Synth::kBlock);  // CHIP voice: the bit is set, nothing reads it
+    TEST_ASSERT_FALSE(blockSilent());
+    if (withSat[t]) TEST_ASSERT_EQUAL_HEX32(1u << kLockSat, s->voice(s->trackVoice(0)).lockMask);
+  }
+  TEST_ASSERT_EQUAL_INT16_ARRAY(fa, fb, Synth::kBlock * 20);
 }
 
 // ---- FM voice limit ----
@@ -1919,7 +2029,8 @@ void test_drum_mono_choke() {
 }
 
 void test_drum_choke_mid_segment_has_no_jump() {
-  drumInstr(0, DrumMachine::Bd8);
+  // TOM8: a sine from 0 (BD8 / BD9 open with a DC spike / step of their own, a jump by design).
+  drumInstr(0, DrumMachine::Tom8);
   p->instruments[0].macro[kMacDec] = 100;
   noteOn(0, 0, 60);
   for (int k = 0; k < 30; ++k) s->render(buf);
@@ -2040,8 +2151,9 @@ void test_drum_cache_static_hit_computes_once() {
   TEST_ASSERT_TRUE(s->drumMachineCalls() - c0 <= 2);
 }
 
-// The cached params are the ones drumMachine gives for the voice's inputs (noise is seeded per
-// hit, so two renders can't be compared sample by sample).
+// The voice's cached settings are the ones drumMachine gives for its inputs: setting the recomputed
+// params again changes nothing in it (noise is seeded per hit, so two renders can't be compared
+// sample by sample).
 void test_drum_cache_matches_recompute() {
   const DrumMachine ms[] = {DrumMachine::Bd8, DrumMachine::Sd9, DrumMachine::Cp8, DrumMachine::Cy9};
   for (DrumMachine mc : ms) {
@@ -2054,27 +2166,151 @@ void test_drum_cache_matches_recompute() {
     for (int k = 0; k < kFmMacros; ++k) mac[k] = m.macro[k];
     DrumParams want;
     drumMachine(static_cast<uint8_t>(mc), mac, 62, want);
-    const DrumParams& got = s->voice(s->trackVoice(0)).dp();
-    TEST_ASSERT_EQUAL_FLOAT(want.toneHz[0], got.toneHz[0]);
-    TEST_ASSERT_EQUAL_FLOAT(want.toneMs, got.toneMs);
-    TEST_ASSERT_EQUAL_FLOAT(want.metalMs, got.metalMs);
-    TEST_ASSERT_EQUAL_FLOAT(want.metalHp, got.metalHp);
-    TEST_ASSERT_EQUAL_FLOAT(want.noiseMs, got.noiseMs);
-    TEST_ASSERT_EQUAL_FLOAT(want.noiseHz, got.noiseHz);
-    TEST_ASSERT_EQUAL_FLOAT(want.pitchMs, got.pitchMs);
+    const DrumVoice& got = s->voice(s->trackVoice(0)).drv();
+    DrumVoice again = got;
+    again.set(want);
+    TEST_ASSERT_EQUAL_MEMORY(&got, &again, sizeof(DrumVoice));
   }
 }
 
 void test_drum_cache_follows_lock() {
   drumInstr(0, DrumMachine::Hh8);
-  p->instruments[0].macro[kMacDec] = 120;
+  p->instruments[0].macro[kMacDec] = 120;  // open: ~1.5 s
   noteOn(0, 0, 60);
   s->render(buf);
-  const float before = s->voice(s->trackVoice(0)).dp().metalMs;
   stepStart(0, 0, 6, false);
-  fx(0, 0, Fx::DCY, 20);  // lock on the sounding voice
+  fx(0, 0, Fx::DCY, 20);  // lock on the sounding voice: ~40 ms
   s->render(buf);
-  TEST_ASSERT_TRUE(s->voice(s->trackVoice(0)).dp().metalMs < before * 0.5f);
+  for (int k = 0; k < 100 && s->activeVoices(); ++k) s->render(buf);  // < 0.4 s
+  TEST_ASSERT_EQUAL(0, s->activeVoices());
+}
+
+// Params cache across hits (Voice::fpExact): a retrigger with the same inputs reuses them.
+static int16_t ha[Synth::kBlock * 120], hb[Synth::kBlock * 120];
+
+void test_drum_cache_retrigger_reuses_params() {
+  drumInstr(0, DrumMachine::Bd8);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  const int vi = s->trackVoice(0);
+  const uint32_t c0 = s->drumMachineCalls();
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  TEST_ASSERT_EQUAL(vi, s->trackVoice(0));
+  TEST_ASSERT_EQUAL_UINT32(c0, s->drumMachineCalls());
+}
+
+void test_drum_cache_retrigger_recomputes_on_change() {
+  drumInstr(0, DrumMachine::Bd8);
+  noteOn(0, 0, 60);
+  s->render(buf);
+  uint32_t c = s->drumMachineCalls();
+  noteOn(0, 0, 61);  // another pitch
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->drumMachineCalls() > c);
+  c = s->drumMachineCalls();
+  p->instruments[0].macro[0] += 1;  // a macro
+  noteOn(0, 0, 61);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->drumMachineCalls() > c);
+  c = s->drumMachineCalls();
+  drumSetMachine(p->instruments[0], static_cast<uint8_t>(DrumMachine::Sd9));  // the machine
+  noteOn(0, 0, 61);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->drumMachineCalls() > c);
+  const Voice& v = s->voice(s->trackVoice(0));
+  float mac[kFmMacros];
+  for (int k = 0; k < kFmMacros; ++k) mac[k] = p->instruments[0].macro[k];
+  DrumParams want;
+  drumMachine(static_cast<uint8_t>(DrumMachine::Sd9), mac, 61, want);
+  DrumVoice again = v.drv();
+  again.set(want);
+  TEST_ASSERT_EQUAL_MEMORY(&v.drv(), &again, sizeof(DrumVoice));
+}
+
+void test_fm_cache_retrigger_reuses_params() {
+  useFm(0, FmMachine::Kick);
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  const uint32_t c0 = s->fmMachineCalls();
+  noteOn(0, 0, 60);
+  for (int k = 0; k < 10; ++k) s->render(buf);
+  TEST_ASSERT_EQUAL_UINT32(c0, s->fmMachineCalls());
+  useFm(0, FmMachine::Snare);  // the machine
+  noteOn(0, 0, 60);
+  s->render(buf);
+  TEST_ASSERT_TRUE(s->fmMachineCalls() > c0);
+}
+
+// DRUM, FM, DRUM, FM hits on one voice: each engine switch recomputes, and the whole render
+// (repeated retriggers included) matches one with the cache off.
+static void renderSwitch(int16_t* a, bool cache, uint32_t& calls) {
+  s->reset();
+  s->setFmCache(cache);
+  const uint32_t d0 = s->drumMachineCalls(), f0 = s->fmMachineCalls();
+  const uint8_t ins[] = {0, 0, 1, 1, 0, 1, 0};
+  int vi = -1;
+  for (int h = 0; h < 7; ++h) {
+    p->tracks[0].instr = ins[h];
+    noteOn(0, 0, 62);
+    for (int k = 0; k < 15; ++k) s->render(a + (h * 15 + k) * Synth::kBlock);
+    noteOff(0, 0, 62);
+    if (vi < 0) vi = s->trackVoice(0);
+    TEST_ASSERT_EQUAL(vi, s->trackVoice(0));
+  }
+  calls = (s->drumMachineCalls() - d0) + (s->fmMachineCalls() - f0);
+}
+
+void test_cache_engine_switch_matches_recompute() {
+  // Machine 0 on both, same macros: only the engine switch tells the cached params apart.
+  drumInstr(0, DrumMachine::Bd8);
+  useFm(1, FmMachine::Kick);
+  for (int k = 0; k < kFmMacros; ++k) p->instruments[1].macro[k] = p->instruments[0].macro[k];
+  p->instruments[1].velMac = p->instruments[0].velMac;
+  p->instruments[0].mono = p->instruments[1].mono = true;  // the track keeps its voice
+  uint32_t off = 0, on = 0;
+  renderSwitch(ha, false, off);
+  renderSwitch(hb, true, on);
+  TEST_ASSERT_EQUAL_INT16_ARRAY(ha, hb, Synth::kBlock * 105);
+  TEST_ASSERT_TRUE(on >= 5);   // first hit + 4 switches
+  TEST_ASSERT_TRUE(on < off);  // the 2nd DRUM hit reuses
+}
+
+// Shared machine params (setMachineCache): heavy hits past kFmVoiceMax steal voices across DRUM and
+// FM instruments, so a hit seldom finds its own voice's params; the render matches one without the
+// shared params, with fewer machine calls.
+static Synth::MachineCache mcMem;
+
+static uint32_t renderSteals(int16_t* a, bool shared) {
+  s->reset();
+  s->setMachineCache(shared ? &mcMem : nullptr);
+  const uint32_t c0 = s->drumMachineCalls() + s->fmMachineCalls();
+  for (int b = 0; b < 120; ++b) {
+    if (b % 10 == 0)
+      for (int t = 0; t < 12; ++t) noteOn(0, static_cast<uint8_t>(t), static_cast<uint8_t>(60 + b / 40));
+    s->render(a + b * Synth::kBlock);
+  }
+  s->setMachineCache(nullptr);
+  return s->drumMachineCalls() + s->fmMachineCalls() - c0;
+}
+
+void test_machine_cache_matches_without() {
+  const DrumMachine ms[] = {DrumMachine::Bd8, DrumMachine::Sd8, DrumMachine::Hh8,
+                            DrumMachine::Cy9, DrumMachine::Cp8, DrumMachine::Tom9};
+  for (int t = 0; t < 12; ++t) {
+    if (t % 2) {
+      useFm(t, FmMachine::Hat);
+    } else {
+      drumInstr(t, ms[t / 2]);
+    }
+    p->instruments[t].macro[kMacDec] = 110;
+    p->tracks[t].instr = static_cast<uint8_t>(t);
+  }
+  const uint32_t off = renderSteals(ha, false);
+  const uint32_t on = renderSteals(hb, true);
+  TEST_ASSERT_EQUAL_INT16_ARRAY(ha, hb, Synth::kBlock * 120);
+  TEST_ASSERT_TRUE(on > 0);
+  TEST_ASSERT_TRUE(on * 2 < off);  // a pitch's first hit per instrument only
 }
 
 void test_heavy_voice_limit_counts_drum() {
@@ -4802,6 +5038,240 @@ void test_scene_master_vol_morph() {
   TEST_ASSERT_FLOAT_WITHIN(0.05f * base, base, rmsBlocks(8));
 }
 
+// ---- Voice pool by cost (setVoiceBudget) ----
+
+static void poolInstr(Instrument& m) {
+  m.sustain = 127;
+  m.release = 100;
+  m.mono = false;
+}
+static void poolWt(Instrument& w) {
+  instrSetType(w, InstrType::Synth);
+  w.sustain = 127;
+  w.mono = false;
+  w.synOsc[0] = static_cast<uint8_t>(SynOsc::Wt);
+  w.fltMode = static_cast<uint8_t>(FltMode::Lp);
+}
+constexpr int kPoolWtCost = kCostSynWt + kCostFilter;
+
+void test_pool_budget_off_by_default() {
+  TEST_ASSERT_EQUAL(kVoiceBudgetOff, s->voiceBudget());
+  fillVoices();  // CHIP SAW notes, filter off
+  TEST_ASSERT_EQUAL(kVoices < 2 * kTracks ? kVoices : 2 * kTracks, liveVoices());
+  for (int i = 0; i < kVoices; ++i)
+    if (s->voice(i).on) TEST_ASSERT_EQUAL(kCostChip, s->voice(i).cost);
+}
+
+void test_pool_budget_steals_oldest_chip() {
+  s->setVoiceBudget(4 * kCostChip + kCostChip / 2);  // four CHIP notes fit, the fifth does not
+  for (int t = 0; t < 5; ++t) {
+    poolInstr(p->instruments[t]);
+    p->tracks[t].instr = static_cast<uint8_t>(t);
+  }
+  for (int t = 0; t < 4; ++t) noteOn(0, static_cast<uint8_t>(t), 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(4, liveVoices());
+  noteOn(0, 4, 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(4, liveVoices());
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& v = s->voice(i);
+    if (v.on && v.stolen) TEST_ASSERT_EQUAL(0, v.track);  // the oldest
+    if (v.on && v.track == 4) TEST_ASSERT_FALSE(v.stolen);  // the new note plays
+  }
+}
+
+// Cheap notes under the budget steal nothing.
+void test_pool_budget_under_steals_nothing() {
+  s->setVoiceBudget(8 * kCostChip);
+  for (int t = 0; t < 8; ++t) {
+    poolInstr(p->instruments[t]);
+    p->tracks[t].instr = static_cast<uint8_t>(t);
+    noteOn(0, static_cast<uint8_t>(t), 60);
+  }
+  render1(buf);
+  TEST_ASSERT_EQUAL(8, liveVoices());
+  for (int i = 0; i < kVoices; ++i) TEST_ASSERT_FALSE(s->voice(i).on && s->voice(i).stolen);
+}
+
+// A releasing voice goes before an older held one.
+void test_pool_budget_steals_releasing_first() {
+  s->setVoiceBudget(3 * kCostChip);
+  for (int t = 0; t < 4; ++t) {
+    poolInstr(p->instruments[t]);
+    p->tracks[t].instr = static_cast<uint8_t>(t);
+  }
+  for (int t = 0; t < 3; ++t) noteOn(0, static_cast<uint8_t>(t), 60);
+  render1(buf);
+  noteOff(0, 1, 60);  // track 1 releases (release 100: still on)
+  render1(buf);
+  noteOn(0, 3, 60);
+  render1(buf);
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& v = s->voice(i);
+    if (!v.on) continue;
+    if (v.track == 1) TEST_ASSERT_TRUE(v.stolen);
+    else TEST_ASSERT_FALSE(v.stolen);
+  }
+}
+
+// Mono legato reuses the track's voice: its cost is given back, nothing is stolen.
+void test_pool_budget_mono_legato_no_double_count() {
+  s->setVoiceBudget(2 * kCostChip);
+  for (int t = 0; t < 2; ++t) {
+    poolInstr(p->instruments[t]);
+    p->instruments[t].mono = true;
+    p->tracks[t].instr = static_cast<uint8_t>(t);
+    noteOn(0, static_cast<uint8_t>(t), 60);
+  }
+  render1(buf);
+  noteOn(0, 1, 64);  // legato on track 1's voice
+  render1(buf);
+  TEST_ASSERT_EQUAL(2, liveVoices());
+  for (int i = 0; i < kVoices; ++i) TEST_ASSERT_FALSE(s->voice(i).on && s->voice(i).stolen);
+}
+
+// The per-track poly steal reuses the track's oldest voice: no extra steal.
+void test_pool_budget_poly_track_steal_no_double_count() {
+  s->setVoiceBudget(kPolyPerTrack * kCostChip);
+  poolInstr(p->instruments[0]);
+  p->tracks[0].instr = 0;
+  for (int k = 0; k <= kPolyPerTrack; ++k) noteOn(0, 0, static_cast<uint8_t>(48 + k));
+  render1(buf);
+  TEST_ASSERT_EQUAL(kPolyPerTrack, liveVoices());
+  for (int i = 0; i < kVoices; ++i) TEST_ASSERT_FALSE(s->voice(i).on && s->voice(i).stolen);
+}
+
+// WT SYNTH on tracks 0..7 and a growing CHIP LP pool on tracks 8.., the notes ended and started again
+// each step: at every block the live voices stay within the budget.
+void test_pool_budget_holds_through_ladder_steps() {
+  Instrument& w = p->instruments[1];
+  poolWt(w);
+  w.synOsc[1] = static_cast<uint8_t>(SynOsc::Wt);
+  Instrument& c = p->instruments[2];
+  c.fltMode = static_cast<uint8_t>(FltMode::Lp);
+  c.sustain = 127;
+  c.mono = false;
+  const int chip = kCostChip + kCostFilter;
+  for (int t = 0; t < kTracks; ++t) p->tracks[t].instr = t < 8 ? 1 : 2;
+  const int budget = kFmVoiceMax * kPoolWtCost + 3 * chip + 50;
+  s->setVoiceBudget(budget);
+  auto chord = [](int first, int voices, uint8_t on) {
+    for (int i = 0; i < voices; ++i) {
+      const int t = first + i / kPolyPerTrack, k = i % kPolyPerTrack;
+      const uint8_t key = static_cast<uint8_t>(48 + (t % 4) * 3 + k * 5);
+      if (on) noteOn(0, static_cast<uint8_t>(t), key, 100);
+      else noteOff(0, static_cast<uint8_t>(t), key);
+    }
+  };
+  int prev = 0, top = 0;
+  for (int count = 0; count <= 16; count += 4) {
+    if (count) {
+      chord(0, 16, 0);
+      chord(8, prev, 0);
+      render1(buf);
+    }
+    chord(0, 16, 1);
+    chord(8, count, 1);
+    for (int b = 0; b < 40; ++b) {
+      render1(buf);
+      int used = 0;
+      for (int i = 0; i < kVoices; ++i)
+        if (s->voice(i).on && !s->voice(i).stolen) used += s->voice(i).cost;
+      TEST_ASSERT_TRUE(used <= budget);
+      if (used > top) top = used;
+    }
+    prev = count;
+  }
+  // The budget, not the pool, set the limit: no room left for one more WT voice.
+  TEST_ASSERT_TRUE(top + kPoolWtCost > budget);
+}
+
+void test_pool_budget_wt_synth_ladder() {
+  poolWt(p->instruments[0]);
+  poolInstr(p->instruments[0]);
+  s->setVoiceBudget(3 * kPoolWtCost);  // three fit, the fourth steals one
+  p->tracks[0].instr = 0;
+  p->tracks[1].instr = 0;
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  noteOn(0, 0, 64);
+  render1(buf);
+  TEST_ASSERT_EQUAL(3, liveVoices());
+  for (int i = 0; i < kVoices; ++i)
+    if (s->voice(i).on) TEST_ASSERT_EQUAL(kPoolWtCost, s->voice(i).cost);
+  noteOn(0, 1, 64);
+  render1(buf);
+  TEST_ASSERT_EQUAL(3, liveVoices());
+}
+
+// SLD takes the held voice without allocVoice: the voice's cost follows the new note's instrument.
+void test_pool_sld_held_voice_takes_new_cost() {
+  p->tracks[0].instr = 0;
+  noteOn(0, 0, 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(kCostChip, s->voice(0).cost);
+  poolWt(p->instruments[1]);
+  p->tracks[0].instr = 1;
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::SLD, 25);
+  noteOn(0, 0, 72);
+  render1(buf);
+  TEST_ASSERT_EQUAL(1, s->activeVoices());
+  TEST_ASSERT_TRUE(s->voice(0).on);
+  TEST_ASSERT_EQUAL(kPoolWtCost, s->voice(0).cost);
+}
+
+// SLD into an expensive note keeps the budget: the oldest other voice fades out.
+void test_pool_sld_into_expensive_note_steals() {
+  for (int t = 0; t < 3; ++t) {
+    p->tracks[t].instr = 0;
+    p->instruments[t].mono = false;
+  }
+  const int budget = kPoolWtCost + kCostChip + kCostChip / 4;
+  // The premise: three CHIP notes fit, the WT note with two of them does not.
+  TEST_ASSERT_TRUE(3 * kCostChip <= budget && kPoolWtCost + 2 * kCostChip > budget);
+  s->setVoiceBudget(budget);
+  noteOn(0, 1, 50);  // the oldest
+  noteOn(0, 2, 52);
+  noteOn(0, 0, 60);
+  render1(buf);
+  TEST_ASSERT_EQUAL(3, liveVoices());
+  poolWt(p->instruments[1]);
+  p->tracks[0].instr = 1;
+  stepStart(0, 0, 24, true);
+  fx(0, 0, Fx::SLD, 25);
+  noteOn(0, 0, 72);  // only track 1's (oldest) voice goes
+  render1(buf);
+  TEST_ASSERT_EQUAL(2, liveVoices());
+  for (int i = 0; i < kVoices; ++i) {
+    const Voice& v = s->voice(i);
+    if (!v.on) continue;
+    if (v.track == 1) TEST_ASSERT_TRUE(v.stolen);
+    else TEST_ASSERT_FALSE(v.stolen);
+    if (v.track == 0) TEST_ASSERT_EQUAL(kPoolWtCost, v.cost);
+  }
+}
+
+// A KIT lane note is priced by its lane: a sampler lane as a sample, an instrument lane by that
+// instrument (not by the KIT).
+void test_kit_lane_voice_cost() {
+  kitSetup(0, 0);
+  poolWt(p->instruments[5]);
+  p->instruments[0].kit[1].instr = 5;
+  noteOn(0, 0, 60, 100);  // lane 0: sampler
+  noteOn(0, 0, 61, 100);  // lane 1: instrument 5
+  render1(buf);
+  int seen = 0;
+  for (int v = 0; v < kVoices; ++v) {
+    const Voice& x = s->voice(v);
+    if (!x.on) continue;
+    ++seen;
+    TEST_ASSERT_EQUAL(x.laneIdx == 0 ? kCostSample : kPoolWtCost, x.cost);
+  }
+  TEST_ASSERT_EQUAL(2, seen);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sample_ignores_note_off);
@@ -4826,10 +5296,22 @@ int main() {
   RUN_TEST(test_guard_sheds_releasing_first_then_oldest);
   RUN_TEST(test_guard_cap_limits_new_notes_and_recovers);
   RUN_TEST(test_guard_ignores_single_spikes);
+  RUN_TEST(test_guard_ignores_note_on_spikes_at_budget_load);
   RUN_TEST(test_guard_hard_spike_sheds_at_once);
   RUN_TEST(test_guard_panic_keeps_the_cap);
   RUN_TEST(test_guard_smoothed_load_sheds_without_a_spike);
   RUN_TEST(test_guard_reset_restores_pool);
+  RUN_TEST(test_pool_budget_off_by_default);
+  RUN_TEST(test_pool_budget_steals_oldest_chip);
+  RUN_TEST(test_pool_budget_under_steals_nothing);
+  RUN_TEST(test_pool_budget_steals_releasing_first);
+  RUN_TEST(test_pool_budget_mono_legato_no_double_count);
+  RUN_TEST(test_pool_budget_poly_track_steal_no_double_count);
+  RUN_TEST(test_pool_budget_holds_through_ladder_steps);
+  RUN_TEST(test_pool_budget_wt_synth_ladder);
+  RUN_TEST(test_pool_sld_held_voice_takes_new_cost);
+  RUN_TEST(test_pool_sld_into_expensive_note_steals);
+  RUN_TEST(test_kit_lane_voice_cost);
   RUN_TEST(test_sixteen_voices_soft_clip);
   RUN_TEST(test_program_change_selects_instrument);
   RUN_TEST(test_default_instrument_from_track_cfg);
@@ -4891,6 +5373,11 @@ int main() {
   RUN_TEST(test_fm_cache_static_note_matches_recompute);
   RUN_TEST(test_fm_cache_lfo_macro_close_to_recompute);
   RUN_TEST(test_fm_cache_lfo_pitch_close_to_recompute);
+  RUN_TEST(test_fm_sat_instrument);
+  RUN_TEST(test_fm_sat_lock_on_note_step);
+  RUN_TEST(test_fm_sat_lock_on_empty_step_hits_sounding_voice);
+  RUN_TEST(test_fm_sat_lfo);
+  RUN_TEST(test_fm_sat_lock_ignored_on_chip);
   RUN_TEST(test_fm_ninth_note_steals_oldest_fm_keeps_chip);
   RUN_TEST(test_fm_voices_never_exceed_cap);
   RUN_TEST(test_filter_off_is_bit_identical);
@@ -4940,6 +5427,11 @@ int main() {
   RUN_TEST(test_drum_cache_static_hit_computes_once);
   RUN_TEST(test_drum_cache_matches_recompute);
   RUN_TEST(test_drum_cache_follows_lock);
+  RUN_TEST(test_drum_cache_retrigger_reuses_params);
+  RUN_TEST(test_drum_cache_retrigger_recomputes_on_change);
+  RUN_TEST(test_fm_cache_retrigger_reuses_params);
+  RUN_TEST(test_cache_engine_switch_matches_recompute);
+  RUN_TEST(test_machine_cache_matches_without);
   RUN_TEST(test_slice_note_mode_plays_slice_of_note);
   RUN_TEST(test_slice_note_mode_out_of_range_is_silent);
   RUN_TEST(test_slice_note_mode_ignores_loop);

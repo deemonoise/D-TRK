@@ -680,8 +680,12 @@ void App::syncProgress(const char* file, uint32_t done, uint32_t total, void* ap
 }
 
 bool App::renderProgress(uint32_t done, uint32_t total, void* app) {
+  return labeledProgress("RENDER", done, total, app);
+}
+
+bool App::labeledProgress(const char* label, uint32_t done, uint32_t total, void* app) {
   App& a = *static_cast<App*>(app);
-  a.showProgress("RENDER", done, total);
+  a.showProgress(label, done, total);
   // Renders run for up to a minute on this task: let the idle task (watchdog) run now and then.
   static uint32_t lastYield = 0;
   if (millis() - lastYield >= 100) {

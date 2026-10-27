@@ -48,8 +48,10 @@ static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() an
 static_assert(sizeof(mt::TrackCfg) == 40, "TrackCfg changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Instrument) == 390, "Instrument changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Project) == 480764, "Project changed: update snapshot() and project_io");
+// 392: fmSat (FMEX chunk).
+static_assert(sizeof(mt::Instrument) == 392, "Instrument changed: update snapshot() and project_io");
+// 480828: Instrument::fmSat (FMEX chunk).
+static_assert(sizeof(mt::Project) == 480828, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -317,6 +319,7 @@ const char* resultText(Result r) {
     case Result::Capped: return "SAMPLE CAP";
     case Result::BankFull: return "BANK FULL";
     case Result::NoBank: return "NO SAMPLE BANK";
+    case Result::Silent: return "SILENT";
   }
   return "?";
 }

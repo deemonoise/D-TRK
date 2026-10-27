@@ -88,6 +88,8 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
     if (macros(was, k)) field(was.macro[k], m.macro[k], 0, 127, s, "macro");
     else same(was.macro[k], m.macro[k], "macro");
   }
+  if (was.type == InstrType::Fm) field(was.fmSat, m.fmSat, 0, 127, s, "fmSat");
+  else same(was.fmSat, m.fmSat, "fmSat");
   if (was.type == InstrType::Synth) {
     field(was.synSub, m.synSub, 0, 127, s, "synSub");
     field(was.synNoise, m.synNoise, 0, 80, s, "synNoise");
@@ -115,6 +117,7 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
   x.attack = was.attack, x.decay = was.decay, x.sustain = was.sustain, x.release = was.release;
   x.cutoff = was.cutoff, x.reso = was.reso, x.fenv = was.fenv, x.fAtk = was.fAtk, x.fDec = was.fDec;
   memcpy(x.macro, was.macro, sizeof(x.macro));
+  x.fmSat = was.fmSat;
   x.synSub = was.synSub, x.synNoise = was.synNoise, x.synEAtk = was.synEAtk, x.synEDec = was.synEDec;
   x.duty = was.duty, x.pwmDepth = was.pwmDepth, x.pwmRate = was.pwmRate;
   TEST_ASSERT_EQUAL_MEMORY(&was, &x, sizeof(Instrument));
@@ -227,6 +230,26 @@ void test_slot_undo_refused_after_edit() {
   TEST_ASSERT_TRUE(mutateRestore(p, u));
 }
 
+// FM: SAT moves with the macros; DRUM keeps it.
+void test_fm_sat_moves() {
+  Instrument fm;
+  instrSetType(fm, InstrType::Fm);
+  fm.fmSat = 64;
+  int moved = 0;
+  for (uint32_t seed = 1; seed <= 10; ++seed) {
+    checkOne(fm, 100, seed);
+    Instrument a;
+    memcpy(&a, &fm, sizeof(Instrument));
+    mutateInstrument(a, 100, seed);
+    moved += a.fmSat != fm.fmSat;
+  }
+  TEST_ASSERT_TRUE(moved >= 8);
+  Instrument d;
+  instrSetType(d, InstrType::Drum);
+  d.fmSat = 64;
+  for (uint32_t seed = 1; seed <= 5; ++seed) checkOne(d, 100, seed);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_kit_and_zero_strength_do_nothing);
@@ -236,5 +259,6 @@ int main() {
   RUN_TEST(test_moves_something_and_is_seeded);
   RUN_TEST(test_slot_undo_bit_exact);
   RUN_TEST(test_slot_undo_refused_after_edit);
+  RUN_TEST(test_fm_sat_moves);
   return UNITY_END();
 }

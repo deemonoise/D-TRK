@@ -270,7 +270,7 @@ void test_lfo_fx() {
   TEST_ASSERT_EQUAL(static_cast<int>(LfoDest::Count) - 1, fxStep(Fx::LFT, 0, 40));
   TEST_ASSERT_EQUAL_STRING(" 80", fmt(Fx::LFR, 0x80));
   for (int f = static_cast<int>(Fx::LFO); f <= static_cast<int>(Fx::LFR); ++f) TEST_ASSERT_TRUE(fxSynthOnly(static_cast<Fx>(f)));
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::LFO);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::SAT, 1) == Fx::LFO);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::LFR, 1) == Fx::OFS);
 }
 
@@ -380,7 +380,6 @@ void test_gte_fx() {
 
 void test_flp_fx() {
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::MOD) + 1, static_cast<int>(Fx::FLP));
-  TEST_ASSERT_EQUAL(static_cast<int>(Fx::FLP) + 1, static_cast<int>(Fx::Count));
   TEST_ASSERT_EQUAL_STRING("FLP", fxName(Fx::FLP));
   TEST_ASSERT_EQUAL_STRING("GEN FLIP", fxLongName(Fx::FLP));
   TEST_ASSERT_EQUAL(50, fxDefault(Fx::FLP));
@@ -392,6 +391,23 @@ void test_flp_fx() {
   TEST_ASSERT_FALSE(fxDrumOnly(Fx::FLP));
   TEST_ASSERT_TRUE(fxNextCmd(Fx::NRN, 1) == Fx::FLP);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::FLP, 1) == Fx::SLD);
+}
+
+// SAT: the FM SAT lock, 0..127, INT tracks only; appended to the enum, after CON in the list.
+void test_sat_fx() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::FLP) + 1, static_cast<int>(Fx::SAT));
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::SAT) + 1, static_cast<int>(Fx::Count));
+  TEST_ASSERT_EQUAL_STRING("SAT", fxName(Fx::SAT));
+  TEST_ASSERT_EQUAL_STRING("FM SATURATION", fxLongName(Fx::SAT));
+  TEST_ASSERT_EQUAL(64, fxDefault(Fx::SAT));
+  TEST_ASSERT_EQUAL_STRING(" 90", fmt(Fx::SAT, 90));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::SAT, 120, 20));
+  TEST_ASSERT_EQUAL(0, fxStep(Fx::SAT, 3, -5));
+  TEST_ASSERT_TRUE(fxSynthOnly(Fx::SAT));
+  TEST_ASSERT_FALSE(fxDrumOnly(Fx::SAT));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::CON, 1) == Fx::SAT);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::SAT, 1) == Fx::LFO);
+  TEST_ASSERT_EQUAL_STRING("SAT", fmt(Fx::LFT, static_cast<uint8_t>(LfoDest::Sat)));
 }
 
 int main() {
@@ -421,5 +437,6 @@ int main() {
   RUN_TEST(test_lfo_fx);
   RUN_TEST(test_pan_fx);
   RUN_TEST(test_mod_fx);
+  RUN_TEST(test_sat_fx);
   return UNITY_END();
 }

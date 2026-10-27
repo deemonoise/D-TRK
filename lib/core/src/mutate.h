@@ -10,6 +10,7 @@ namespace mt {
 //     release 0..110
 //   filter (fltMode not OFF): cutoff 10..127, reso 0..110, fenv -64..63, fAtk 0..100, fDec 1..127
 //   macros (FM, DRUM, SYNTH): macro[0..4] 0..127; LOFI: the machine's named macros 0..127 (APC: not slot 5)
+//   FM: fmSat (SAT) 0..127
 //   SYNTH: synSub 0..127, synNoise 0..80, synEAtk 0..100, synEDec 1..127
 //   CHIP with a PULSE wave: duty 5..95, pwmDepth 0..49, pwmRate 0..127 (only when pwmDepth was > 0)
 // Everything else (name, type, machine, LOFI formula, vol, tuning, wave, sample, slices, LFOs, sends, KIT

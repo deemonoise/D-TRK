@@ -52,15 +52,24 @@
 // wt32-pool32): first 16 CHIP voices alone (their cost per voice), then the whole N-voice pool
 // with 8, 10, H heavy voices (DRUM and FM HAT on alternate tracks, retriggered every 16th), the
 // rest CHIP saw voices through a resonant LP filter with an envelope; drive and reverb on all,
-// reverb 100, compressor on. The CPU guard (Synth::setLoad) sheds what does not fit.
+// reverb 100, compressor on. The voice budget (kVoiceBudgetEsp, as the firmware) steals past it, the CPU
+// guard (Synth::setLoad) sheds what still does not fit; each line adds the live voices and their cost.
 // Each step lasts 10 s; the last 8 s are measured (with the CPU profile), printed to Serial and
 // appended to /diag/cpuprof.txt with the profile. Then the bench stops (all notes off).
 // It overwrites instruments 16..28 and every track's out / instrument, like the FM bench.
+// Cost bench: -DAUDIO_BENCH_COST prices the voices for voice_cost.h. 10 s after boot: an fx-only
+// step, then per variant (CHIP SAW / PULSE / NOISE / WT1 / SAW LP / SAW one per track, SAMPLE (the
+// project's first bank sample), FM per machine, DRUM per machine (DECAY 127, every 16th), SYNTH BL /
+// WT, LOFI BYTE / APC) 4 steps of top / 4 .. top voices, ~1.6 s each (0.5 s settling). Budget and
+// CPU guard off, delay / reverb at the defaults, no inserts. Per step and per variant (the slope per
+// sounding voice in us and cost units, the intercept) on Serial, then constexpr lines for
+// voice_cost.h; ~4 min, then quiet. It overwrites instrument 32 and the tracks' out / instrument / insert
+// and the master fx, like the FM bench.
 #if defined(AUDIO_BENCH_FX) && !defined(AUDIO_BENCH_DRUM)
 #define AUDIO_BENCH_DRUM
 #endif
 #if defined(AUDIO_BENCH) || defined(AUDIO_BENCH_FM) || defined(AUDIO_BENCH_DRUM) || defined(AUDIO_BENCH_SYN) || \
-    defined(AUDIO_BENCH_POOL) || defined(AUDIO_BENCH_LOFI)
+    defined(AUDIO_BENCH_POOL) || defined(AUDIO_BENCH_LOFI) || defined(AUDIO_BENCH_COST)
 #define AUDIO_BENCH_ANY
 #endif
 
@@ -236,8 +245,80 @@ void drain(Ring& q) {
 // out: interleaved stereo, 2 * kBlock samples.
 std::atomic<uint32_t> profPeak{0};  // the slowest block's cycles while profiling
 
+#ifdef AUDIO_PEAK_DIAG
+// Peak diagnostics (-DAUDIO_PEAK_DIAG with a bench): while profiling, the slowest block's stages and
+// note-on steps (cycles) since the window began (the profiler armed, or the last take), with noteOn's
+// per-kind sums and maxima (Synth::noteDiag). pollLog asks for a copy (pdReq); the audio task hands
+// it over at a block's end (pdSeq) and starts a new window.
+using NoteDiag = mt::Synth::NoteDiag;
+constexpr int kNoteSteps = mt::Synth::kNoteSteps;
+struct PeakDiag {
+  uint32_t cycles;  // the slowest block (queue, render, preview mix)
+  uint32_t blocks;  // profiled blocks in the window
+  uint32_t stage[kProfStages];
+  uint32_t step[kNoteSteps];  // its note-ons' steps, all kinds
+  uint32_t notes;             // its note-ons
+  int voices, cap;            // after it
+  NoteDiag nd;                // the window's note-ons
+};
+PeakDiag pdWin, pdOut;
+uint32_t pdStage0[kProfStages], pdStep0[kNoteSteps], pdNotes0;
+std::atomic<uint32_t> pdReq{0}, pdSeq{0};
+uint32_t pdSeen;
+
+void pdNoteSums(uint32_t step[kNoteSteps], uint32_t& notes) {
+  const NoteDiag& nd = synth->noteDiag();
+  notes = 0;
+  for (int s = 0; s < kNoteSteps; ++s) step[s] = 0;
+  for (int k = 0; k < mt::Synth::kNoteKinds; ++k) {
+    notes += nd.n[k];
+    for (int s = 0; s < kNoteSteps; ++s) step[s] += nd.sum[k][s];
+  }
+}
+
+void peakDiagBegin(bool armed) {
+  if (armed) {
+    pdWin = PeakDiag{};
+    synth->clearNoteDiag();
+  }
+  if (!synth->profiling()) return;
+  memcpy(pdStage0, synth->profSums(), sizeof(pdStage0));
+  pdNoteSums(pdStep0, pdNotes0);
+}
+
+void peakDiagEnd(uint32_t cycles) {
+  if (synth->profiling()) {
+    ++pdWin.blocks;
+    if (cycles > pdWin.cycles) {
+      pdWin.cycles = cycles;
+      const uint32_t* p = synth->profSums();
+      for (int i = 0; i < kProfStages; ++i) pdWin.stage[i] = p[i] - pdStage0[i];
+      uint32_t step[kNoteSteps], notes;
+      pdNoteSums(step, notes);
+      for (int s = 0; s < kNoteSteps; ++s) pdWin.step[s] = step[s] - pdStep0[s];
+      pdWin.notes = notes - pdNotes0;
+      pdWin.voices = synth->activeVoices();
+      pdWin.cap = synth->voiceCap();
+    }
+  }
+  const uint32_t req = pdReq.load(std::memory_order_acquire);
+  if (req != pdSeen) {
+    pdSeen = req;
+    pdOut = pdWin;
+    pdOut.nd = synth->noteDiag();
+    pdWin = PeakDiag{};
+    synth->clearNoteDiag();
+    pdSeq.store(req, std::memory_order_release);
+  }
+}
+#endif
+
 [[maybe_unused]] void renderSynth(int16_t* out) {
-  if (synth->syncProfiler()) profPeak.store(0, std::memory_order_relaxed);  // armed: from this block
+  const bool armed = synth->syncProfiler();
+  if (armed) profPeak.store(0, std::memory_order_relaxed);  // armed: from this block
+#ifdef AUDIO_PEAK_DIAG
+  peakDiagBegin(armed);
+#endif
   const uint32_t q0 = synth->profNow();
   advanceClock();
   takePerfRequest();
@@ -255,6 +336,11 @@ std::atomic<uint32_t> profPeak{0};  // the slowest block's cycles while profilin
   if (synth->profiling()) {
     const uint32_t c = synth->profNow() - q0;
     if (c > profPeak.load(std::memory_order_relaxed)) profPeak.store(c, std::memory_order_relaxed);
+#ifdef AUDIO_PEAK_DIAG
+    peakDiagEnd(c);
+  } else {
+    peakDiagEnd(0);
+#endif
   }
 }
 
@@ -569,9 +655,9 @@ constexpr uint32_t kPoolStepCount = sizeof(kPoolSteps) / sizeof(kPoolSteps[0]);
 
 uint32_t poolStepsDone;
 int poolHeavy = kPoolSteps[0].heavy, poolLightN = kPoolSteps[0].light;
-uint32_t poolBlocks, poolSum, poolN, poolPeak, poolVoiceSum, poolCapMin;
+uint32_t poolBlocks, poolSum, poolN, poolPeak, poolVoiceSum, poolCapMin, poolLiveSum, poolCostSum;
 std::atomic<uint32_t> poolSeq{0}, poolResHeavy{0}, poolResLight{0}, poolResAvg{0}, poolResPeak{0},
-    poolResVoices{0}, poolResCap{0};
+    poolResVoices{0}, poolResCap{0}, poolResLive{0}, poolResCost{0};
 std::atomic<uint32_t> poolMeasureSeq{0};  // a step's measured part began: pollLog starts the profile
 
 void poolNote(int track, uint8_t status, uint8_t note) {
@@ -659,6 +745,12 @@ void benchPoolTick() {
     ++poolN;
     if (us > poolPeak) poolPeak = us;
     poolVoiceSum += synth->activeVoices();
+    for (int i = 0; i < mt::kVoices; ++i) {  // live: on, not stolen (the budget's sum)
+      const mt::Voice& x = synth->voice(i);
+      if (!x.on || x.stolen) continue;
+      ++poolLiveSum;
+      poolCostSum += x.cost;
+    }
     if (static_cast<uint32_t>(synth->voiceCap()) < poolCapMin) poolCapMin = synth->voiceCap();
   }
   if (poolBlocks % kPoolHitEvery == 0) poolHits();
@@ -669,13 +761,388 @@ void benchPoolTick() {
   poolResPeak.store(poolPeak, std::memory_order_relaxed);
   poolResVoices.store(poolN ? (poolVoiceSum + poolN / 2) / poolN : 0, std::memory_order_relaxed);
   poolResCap.store(poolCapMin, std::memory_order_relaxed);
+  poolResLive.store(poolN ? (poolLiveSum + poolN / 2) / poolN : 0, std::memory_order_relaxed);
+  poolResCost.store(poolN ? (poolCostSum + poolN / 2) / poolN : 0, std::memory_order_relaxed);
   poolSeq.fetch_add(1, std::memory_order_release);
-  poolBlocks = poolSum = poolN = poolPeak = poolVoiceSum = 0;
+  poolBlocks = poolSum = poolN = poolPeak = poolVoiceSum = poolLiveSum = poolCostSum = 0;
   poolLight([](int track, uint8_t note) { poolNote(track, 0x80, note); });
   if (++poolStepsDone >= kPoolStepCount) return;  // quiet: the drums decay on their own
   poolHeavy = kPoolSteps[poolStepsDone].heavy;
   poolLightN = kPoolSteps[poolStepsDone].light;
   poolStep();
+}
+#endif
+
+#ifdef AUDIO_BENCH_COST
+// Voice cost bench: each variant as a ladder of 4 steps, top / 4 .. top voices (top: 16, the pool,
+// kPolyPerTrack per track for held chords, one per track for drums / mono machines, kFmVoiceMax for
+// heavy ones). Budget off, CPU guard off (run() skips setLoad): raw voices. Each step: settle, then
+// the average render us per block; the slope over the sounding voices (activeVoices) is the price.
+enum class CostEng : uint8_t { Chip, Sample, Fm, Drum, SynBl, SynWt, Lofi };
+// Held: kPolyPerTrack held notes per track; Mono: one held note per track; Hits: one note per track
+// retriggered every 16th (DECAY 127).
+enum class CostKind : uint8_t { Held, Mono, Hits };
+struct CostLadder {
+  CostEng eng;
+  uint8_t arg;  // CHIP wave, FM / DRUM / LOFI machine
+  bool lp;      // filter LP (resonant, env held at its peak)
+  CostKind kind;
+  char name[12];
+};
+constexpr int kCostFmN = static_cast<int>(mt::FmMachine::Count);
+constexpr int kCostDrumN = static_cast<int>(mt::DrumMachine::Count);
+constexpr int kCostChipN = 6;  // SAW, PULSE, NOISE, WT1, SAW LP, SAW 1/TRK
+constexpr int kCostLadders = kCostChipN + 1 + kCostFmN + kCostDrumN + 2 + 2;
+constexpr int kCostSteps = 4;
+constexpr uint32_t kCostHitEvery = 31;                 // blocks, ~124 ms: a 16th at 120 BPM
+constexpr uint32_t kCostSettle = 4 * kCostHitEvery;    // ~0.5 s, not measured
+constexpr uint32_t kCostMeasure = 9 * kCostHitEvery;   // ~1.1 s, whole 16ths
+constexpr uint32_t kCostRest = 63;                     // ~0.25 s after the reset between ladders
+constexpr uint32_t kCostBoot = 2500;                   // 10 s: time to open the monitor
+constexpr uint8_t kCostInstr = mt::kInstruments - 1;
+constexpr float kCostUs = kBlockUs / 10000.f;          // us per cost unit (0.4)
+
+struct CostStep {
+  int played;
+  float us, sounding;
+  uint32_t peak;
+};
+struct CostRes {
+  CostStep st[kCostSteps];
+  float slope, slopePlayed, icept;  // us per sounding / played voice, us at 0 voices
+  bool skipped;                     // SAMPLE without a sample in the project
+};
+CostLadder costL[kCostLadders];
+CostRes costRes[kCostLadders];
+float costFxUs;
+uint32_t costFxPeak;
+char costSample[mt::kSampleNameMax + 1];
+std::atomic<uint32_t> costSeq{0};  // 1: the fx-only step done, 2 + i: ladder i done
+
+int costLadder = -1;  // -1: the fx-only step
+int costStepI, costPrevN;
+bool costWait = true, costDone;
+uint32_t costBlocks, costWaitFor = kCostBoot;
+uint64_t costSum;
+uint32_t costN, costPeak, costVoiceSum;
+
+bool costHeavy(const CostLadder& l) {
+  return l.eng == CostEng::Fm || l.eng == CostEng::Drum || l.eng == CostEng::SynWt ||
+         (l.eng == CostEng::Lofi && l.arg == static_cast<uint8_t>(mt::LofiMachine::Byte));
+}
+int costTop(const CostLadder& l) {
+  const int per = l.kind == CostKind::Held ? mt::kPolyPerTrack : 1;
+  int top = 16;
+  if (top > mt::kVoices) top = mt::kVoices;
+  if (top > per * mt::kTracks) top = per * mt::kTracks;
+  if (costHeavy(l) && top > mt::kFmVoiceMax) top = mt::kFmVoiceMax;
+  return top;
+}
+int costCount(int ladder, int step) { return costTop(costL[ladder]) * (step + 1) / kCostSteps; }
+
+void costAdd(CostEng e, uint8_t arg, bool lp, CostKind k, const char* name, int& i) {
+  CostLadder& l = costL[i++];
+  l.eng = e;
+  l.arg = arg;
+  l.lp = lp;
+  l.kind = k;
+  snprintf(l.name, sizeof l.name, "%s", name);
+}
+
+void costNote(int track, uint8_t status, uint8_t key) {
+  const uint8_t b[3] = {status, key, 100};
+  synth->event(0, static_cast<uint8_t>(track), b, 3);
+}
+
+// The first project sample the bank holds (looped by the instrument), "" if none.
+void costFindSample() {
+  costSample[0] = 0;
+  const mt::SampleSource* src = sampleSource();
+  if (!src) return;
+  for (const auto& ps : project->samples) {
+    if (!ps.name[0]) continue;
+    uint32_t frames = 0, rate = 0;
+    if (src->find(ps.name, frames, rate) && frames >= 1024 && rate) {
+      snprintf(costSample, sizeof costSample, "%s", ps.name);
+      return;
+    }
+  }
+}
+
+// The ladder's instrument into kCostInstr, every track on it.
+void costBuild(const CostLadder& l) {
+  mt::Instrument& m = project->instruments[kCostInstr];
+  m = mt::Instrument();
+  switch (l.eng) {
+    case CostEng::Chip:
+      mt::instrSetType(m, mt::InstrType::Chip);
+      m.wave = l.arg;
+      break;
+    case CostEng::Sample:
+      mt::instrSetType(m, mt::InstrType::Sample);
+      snprintf(m.sample, sizeof m.sample, "%s", costSample);
+      m.loop = static_cast<uint8_t>(mt::LoopMode::Forward);
+      break;
+    case CostEng::Fm:
+      mt::instrSetType(m, mt::InstrType::Fm);
+      mt::fmSetMachine(m, l.arg);
+      if (!mt::fmGated(l.arg)) m.macro[mt::kMacDec] = 127;  // 4 s: rings through the 16th
+      break;
+    case CostEng::Drum:
+      mt::instrSetType(m, mt::InstrType::Drum);
+      mt::drumSetMachine(m, l.arg);
+      m.macro[mt::kMacDec] = 127;
+      break;
+    case CostEng::SynBl:
+    case CostEng::SynWt:
+      mt::instrSetType(m, mt::InstrType::Synth);
+      if (l.eng == CostEng::SynWt) {
+        m.synOsc[0] = m.synOsc[1] = static_cast<uint8_t>(mt::SynOsc::Wt);
+        snprintf(m.synWt[0], sizeof m.synWt[0], "*SAWSQR");
+        snprintf(m.synWt[1], sizeof m.synWt[1], "*FORMANT");
+      } else {
+        m.synOsc[0] = static_cast<uint8_t>(mt::SynOsc::Saw);
+        m.synOsc[1] = static_cast<uint8_t>(mt::SynOsc::Square);
+      }
+      m.macro[mt::kMacMix] = 64;
+      m.macro[mt::kMacDet] = 80;
+      m.macro[mt::kMacShp1] = 70;
+      m.macro[mt::kMacShp2] = 40;
+      break;
+    case CostEng::Lofi:
+      mt::instrSetType(m, mt::InstrType::Lofi);
+      mt::lofiSetMachine(m, l.arg);
+      if (l.arg == static_cast<uint8_t>(mt::LofiMachine::Byte)) {
+        m.lofiFormula = 1;
+        mt::lofiLoadFormulaDefaults(m);
+        m.macro[3] = 40;  // TONE: interpolation + LP, the dearer path
+      }
+      break;
+  }
+  m.sustain = 127;
+  m.mono = false;
+  m.vol = 40;
+  m.send = m.rsend = 40;
+  if (l.lp) {
+    m.fltMode = static_cast<uint8_t>(mt::FltMode::Lp);
+    m.cutoff = 60;
+    m.reso = 100;
+    m.fenv = 40;
+    m.fDec = 0;  // held
+  }
+  for (int t = 0; t < mt::kTracks; ++t) {
+    project->tracks[t].out = mt::TrackOut::Int;
+    project->tracks[t].instr = kCostInstr;
+    const uint8_t pgm[2] = {0xC0, kCostInstr};  // over a pattern's program change
+    synth->event(0, static_cast<uint8_t>(t), pgm, 2);
+  }
+}
+
+// Notes of the step: the held ones from the last step's count up (they stay), the hits at once.
+void costStepStart() {
+  if (costLadder < 0) return;
+  const CostLadder& l = costL[costLadder];
+  const int n = costCount(costLadder, costStepI);
+  if (l.kind == CostKind::Hits) {
+    for (int t = 0; t < n; ++t) costNote(t, 0x90, 60);
+  } else {
+    const int per = l.kind == CostKind::Held ? mt::kPolyPerTrack : 1;
+    for (int i = costPrevN; i < n; ++i) {
+      const int t = i / per, k = i % per;
+      costNote(t, 0x90, static_cast<uint8_t>(48 + (t % 4) * 3 + k * 5));
+    }
+  }
+  costPrevN = n;
+}
+
+void costFit(CostRes& r) {
+  float sx = 0, sp = 0, sy = 0, sxx = 0, spp = 0, sxy = 0, spy = 0;
+  for (const CostStep& s : r.st) {
+    sx += s.sounding;
+    sp += s.played;
+    sy += s.us;
+    sxx += s.sounding * s.sounding;
+    spp += static_cast<float>(s.played) * s.played;
+    sxy += s.sounding * s.us;
+    spy += s.played * s.us;
+  }
+  constexpr float n = kCostSteps;
+  const float vx = sxx - sx * sx / n, vp = spp - sp * sp / n;
+  r.slope = vx > 1e-3f ? (sxy - sx * sy / n) / vx : 0.f;
+  r.slopePlayed = vp > 1e-3f ? (spy - sp * sy / n) / vp : 0.f;
+  r.icept = (sy - r.slope * sx) / n;
+}
+
+// The next ladder (after a reset: no tails), or the end.
+void costNextLadder() {
+  synth->reset();
+  for (;;) {
+    if (++costLadder >= kCostLadders) {
+      costDone = true;
+      return;
+    }
+    if (costL[costLadder].eng != CostEng::Sample) break;
+    costFindSample();
+    if (costSample[0]) break;
+    costRes[costLadder].skipped = true;
+    costSeq.store(2 + costLadder, std::memory_order_release);
+  }
+  costBuild(costL[costLadder]);
+  costStepI = costPrevN = 0;
+  costWait = true;
+  costWaitFor = kCostRest;
+  costBlocks = 0;
+}
+
+void benchCostBegin() {
+  int i = 0;
+  using mt::Wave;
+  costAdd(CostEng::Chip, static_cast<uint8_t>(Wave::Saw), false, CostKind::Held, "CHIP SAW", i);
+  costAdd(CostEng::Chip, static_cast<uint8_t>(Wave::Pulse), false, CostKind::Held, "CHIP PULSE", i);
+  costAdd(CostEng::Chip, static_cast<uint8_t>(Wave::Noise), false, CostKind::Held, "CHIP NOISE", i);
+  costAdd(CostEng::Chip, static_cast<uint8_t>(Wave::Wt1), false, CostKind::Held, "CHIP WT1", i);
+  costAdd(CostEng::Chip, static_cast<uint8_t>(Wave::Saw), true, CostKind::Held, "CHIP SAW LP", i);
+  costAdd(CostEng::Chip, static_cast<uint8_t>(Wave::Saw), false, CostKind::Mono, "CHIP 1/TRK", i);
+  costAdd(CostEng::Sample, 0, false, CostKind::Held, "SAMPLE", i);
+  char nm[12];
+  for (int k = 0; k < kCostFmN; ++k) {
+    snprintf(nm, sizeof nm, "FM %s", mt::fmMachineName(static_cast<uint8_t>(k)));
+    const CostKind kind = !mt::fmGated(static_cast<uint8_t>(k))                     ? CostKind::Hits
+                          : k == static_cast<int>(mt::FmMachine::Tone) ? CostKind::Held
+                                                                        : CostKind::Mono;  // CHORD: mono
+    costAdd(CostEng::Fm, static_cast<uint8_t>(k), false, kind, nm, i);
+  }
+  for (int k = 0; k < kCostDrumN; ++k) {
+    snprintf(nm, sizeof nm, "DRUM %s", mt::drumMachineName(static_cast<uint8_t>(k)));
+    costAdd(CostEng::Drum, static_cast<uint8_t>(k), false, CostKind::Hits, nm, i);
+  }
+  costAdd(CostEng::SynBl, 0, false, CostKind::Held, "SYNTH BL", i);
+  costAdd(CostEng::SynWt, 0, false, CostKind::Held, "SYNTH WT", i);
+  costAdd(CostEng::Lofi, static_cast<uint8_t>(mt::LofiMachine::Byte), false, CostKind::Held, "LOFI BYTE", i);
+  costAdd(CostEng::Lofi, static_cast<uint8_t>(mt::LofiMachine::Apc), false, CostKind::Held, "LOFI APC", i);
+  // The bench's fx: delay and reverb at the defaults (sends 40 per instrument), plain modes, no MOD,
+  // EQ, compressor or track inserts.
+  project->dlyMode = project->rvbMode = project->modType = 0;
+  project->dlyLevel = 100;
+  project->rvbLevel = 80;
+  project->eqLow = project->eqHigh = 64;
+  project->compAmt = 0;
+  for (auto& c : project->tracks) {
+    c.drive = c.crushBits = c.crushRate = 0;
+    c.gateDepth = 0;
+    c.modSend = 0;
+  }
+  costBuild(costL[0]);  // the fx-only step: nothing plays
+}
+
+// Audio task, before the block is rendered: renderUs holds the previous block.
+void benchCostTick() {
+  if (costDone) return;
+  ++costBlocks;
+  if (costWait) {
+    if (costBlocks < costWaitFor) return;
+    costWait = false;
+    costBlocks = 0;
+    costSum = costN = costPeak = costVoiceSum = 0;
+    costStepStart();
+    return;
+  }
+  if (costBlocks > kCostSettle) {
+    const uint32_t us = renderUs.load(std::memory_order_relaxed);
+    costSum += us;
+    ++costN;
+    if (us > costPeak) costPeak = us;
+    costVoiceSum += synth->activeVoices();
+  }
+  const bool hits = costLadder >= 0 && costL[costLadder].kind == CostKind::Hits;
+  if (hits && costBlocks % kCostHitEvery == 0) costStepStart();
+  if (costBlocks < kCostSettle + kCostMeasure) return;
+  const float avg = costN ? static_cast<float>(costSum) / costN : 0.f;
+  if (costLadder < 0) {
+    costFxUs = avg;
+    costFxPeak = costPeak;
+    costSeq.store(1, std::memory_order_release);
+    costNextLadder();
+    return;
+  }
+  CostRes& r = costRes[costLadder];
+  r.st[costStepI] = {costCount(costLadder, costStepI), avg, costN ? static_cast<float>(costVoiceSum) / costN : 0.f,
+                     costPeak};
+  costBlocks = 0;
+  costSum = costN = costPeak = costVoiceSum = 0;
+  if (++costStepI < kCostSteps) {
+    costStepStart();
+    return;
+  }
+  costFit(r);
+  costSeq.store(2 + costLadder, std::memory_order_release);
+  costNextLadder();
+}
+
+int costUnits(float us) { return static_cast<int>(us / kCostUs + 0.5f); }
+
+void costPrintLadder(int i) {
+  const CostLadder& l = costL[i];
+  const CostRes& r = costRes[i];
+  if (r.skipped) {
+    Serial.printf("cost %-11s skipped: no project sample in the bank\n", l.name);
+    return;
+  }
+  for (const CostStep& s : r.st)
+    Serial.printf("cost %-11s %2d played: avg %6.1f us, peak %4u us, sounding %4.1f%s\n", l.name, s.played, s.us,
+                  static_cast<unsigned>(s.peak), s.sounding, s.us > kBlockUs ? "  <- over" : "");
+  Serial.printf("cost %-11s => %5.1f us/sounding voice = cost %d (per played %d), intercept %6.1f us (%d)\n", l.name,
+                r.slope, costUnits(r.slope), costUnits(r.slopePlayed), r.icept, costUnits(r.icept));
+}
+
+int costOf(int i) { return costRes[i].skipped ? -1 : costUnits(costRes[i].slope); }
+int costMax(int a, int b) { return a > b ? a : b; }
+
+void costSummary() {
+  // Ladder indices, in benchCostBegin's order.
+  constexpr int kSaw = 0, kPulse = 1, kNoise = 2, kWt = 3, kSawLp = 4, kSaw1 = 5, kSmp = 6;
+  constexpr int kFm0 = kCostChipN + 1, kDrum0 = kFm0 + kCostFmN, kSynBl = kDrum0 + kCostDrumN;
+  constexpr int kSynWt = kSynBl + 1, kByte = kSynWt + 1, kApc = kByte + 1;
+  static_assert(kApc + 1 == kCostLadders, "cost bench layout");
+  float ic[kCostLadders];
+  int n = 0;
+  for (int i = 0; i < kCostLadders; ++i)
+    if (!costRes[i].skipped) ic[n++] = costRes[i].icept;
+  for (int a = 1; a < n; ++a)  // insertion sort: the median intercept
+    for (int b = a; b > 0 && ic[b] < ic[b - 1]; --b) {
+      const float t = ic[b];
+      ic[b] = ic[b - 1];
+      ic[b - 1] = t;
+    }
+  const float med = n ? ic[n / 2] : 0.f;
+  const int chip = costMax(costOf(kSaw), costOf(kPulse));
+  Serial.printf("cost bench done: pool %d, heavy %d, %d us block; fx only (silent) %.1f us (peak %u)\n", mt::kVoices,
+                mt::kFmVoiceMax, static_cast<int>(kBlockUs), costFxUs, static_cast<unsigned>(costFxPeak));
+  Serial.println("// ---- voice_cost.h (AUDIO_BENCH_COST) ----");
+  Serial.println("constexpr bool kVoiceCostEspMeasured = true;");
+  Serial.printf("constexpr int kCostChip = %d;  // SAW %d, PULSE %d\n", chip, costOf(kSaw), costOf(kPulse));
+  Serial.printf("constexpr int kCostChipGeneric = %d;  // NOISE %d, WT1 %d over kCostChip\n",
+                costMax(0, costMax(costOf(kNoise), costOf(kWt)) - chip), costOf(kNoise), costOf(kWt));
+  if (costOf(kSmp) >= 0)
+    Serial.printf("constexpr int kCostSample = %d;  // %s\n", costOf(kSmp), costSample);
+  else
+    Serial.println("// kCostSample: not measured (no project sample in the bank)");
+  Serial.printf("constexpr int kCostSynBl = %d;\n", costOf(kSynBl));
+  Serial.printf("constexpr int kCostSynWt = %d;\n", costOf(kSynWt));
+  Serial.printf("constexpr int kCostLofiByte = %d, kCostLofiApc = %d;\n", costOf(kByte), costOf(kApc));
+  Serial.printf("constexpr int kCostFilter = %d;  // CHIP SAW LP %d - CHIP SAW %d\n",
+                costMax(0, costOf(kSawLp) - costOf(kSaw)), costOf(kSawLp), costOf(kSaw));
+  Serial.print("constexpr int kCostFm[] = {");
+  for (int k = 0; k < kCostFmN; ++k) Serial.printf("%s%d", k ? ", " : "", costOf(kFm0 + k));
+  Serial.println("};");
+  Serial.print("constexpr int kCostDrum[] = {");
+  for (int k = 0; k < kCostDrumN; ++k) Serial.printf("%s%d", k ? ", " : "", costOf(kDrum0 + k));
+  Serial.println("};");
+  Serial.printf("constexpr int kCostFixedEsp = %d;  // median intercept (%.1f us); fx only silent %d\n",
+                costUnits(med), med, costUnits(costFxUs));
+  Serial.printf("// track strip, per track: CHIP 1/TRK %d - CHIP SAW %d (4 per track) -> ~%d\n", costOf(kSaw1),
+                costOf(kSaw), costMax(0, (costOf(kSaw1) - costOf(kSaw)) * 4 / 3));
+  Serial.println("// ----");
 }
 #endif
 
@@ -695,6 +1162,9 @@ void render(int16_t* out) {
 #endif
 #ifdef AUDIO_BENCH_POOL
   benchPoolTick();
+#endif
+#ifdef AUDIO_BENCH_COST
+  benchCostTick();
 #endif
   renderSynth(out);
 #endif
@@ -754,7 +1224,9 @@ void run(void*) {
     std::atomic<uint32_t>& pk = blockEvents ? cpuPeakEv : cpuPeakQuiet;
     if (us > pk.load(std::memory_order_relaxed)) pk.store(us, std::memory_order_relaxed);
 #endif
+#ifndef AUDIO_BENCH_COST  // the cost bench prices raw voices: no guard
     if (synth) synth->setLoad(us * (1.f / kBlockUs));  // CPU guard
+#endif
     // Single writer: a reset by the UI between load and store at worst keeps this block's time.
     loadSum.fetch_add(us, std::memory_order_relaxed);
     loadBlocks.fetch_add(1, std::memory_order_relaxed);
@@ -942,10 +1414,20 @@ void begin(mt::Project* p) {
   // Internal RAM: the synth state is touched on every sample. reserve() handed it over at boot.
   if (!synthMem) Serial.println("audio: no internal RAM for the synth, PSRAM (slower)");
   synth = synthMem ? new (synthMem) mt::Synth(*p) : new mt::Synth(*p);
+  // Voice pool by cost (voice_cost.h): on once its figures are the AUDIO_BENCH_COST ones. Off in the
+  // benches (they price raw voices) but the pool one (it checks the budget with the guard).
+#if !defined(AUDIO_BENCH_ANY) || defined(AUDIO_BENCH_POOL)
+  if (mt::kVoiceCostEspMeasured) synth->setVoiceBudget(mt::kVoiceBudgetEsp);
+#endif
   bankSetProject(p);
   bankBegin();
   synth->setBank(sampleSource());
   synth->setWavetables(wavetableSource());
+  // FM / DRUM machine params shared across voices (3.6 KB): PSRAM, read once per hit.
+  if (void* mc = heap_caps_malloc(sizeof(mt::Synth::MachineCache), MALLOC_CAP_SPIRAM))
+    synth->setMachineCache(new (mc) mt::Synth::MachineCache());
+  else
+    Serial.println("audio: no PSRAM for the machine cache");
   // Delay line in PSRAM: 4 s holds 16/16 down to 60 BPM. Read and written once per sample.
   constexpr uint32_t kDelayLen = 4 * kRate;
   if (auto* line = static_cast<int16_t*>(heap_caps_malloc(kDelayLen * sizeof(int16_t), MALLOC_CAP_SPIRAM)))
@@ -984,6 +1466,9 @@ void begin(mt::Project* p) {
 #endif
 #ifdef AUDIO_BENCH_POOL
   benchPoolBegin();
+#endif
+#ifdef AUDIO_BENCH_COST
+  benchCostBegin();
 #endif
   if (!initI2s()) {
     Serial.println("audio: I2S init failed");
@@ -1176,21 +1661,34 @@ void microBench() {
   float dmac[mt::kFmMacros] = {110, 64, 64, 64, 64};
   for (int m = 0; m < static_cast<int>(mt::DrumMachine::Count); ++m) {
     int64_t tm = 0, tc = 0, tr = 0;
+    // set() runs only on a drumMachine() cache miss in the synth: timed once, not per block.
+    mt::drumMachine(m, dmac, 60, dp);
+    const int64_t s0 = esp_timer_get_time();
+    dv.set(dp);
+    const int64_t ts = esp_timer_get_time() - s0;
+    int64_t hit = 0, peak = 0;  // render of the block a trigger starts; the dearest block
     for (int b = 0; b < 100; ++b) {
       if (b % 31 == 0) dv.trigger(b != 0);
+      int64_t blk = 0;
       for (int c = 0; c < kBlock / 32; ++c) {
         int64_t t0 = esp_timer_get_time();
         mt::drumMachine(m, dmac, 60, dp);
         int64_t t1 = esp_timer_get_time();
-        dv.control(dp, 32);
+        dv.control(32);
         int64_t t2 = esp_timer_get_time();
         dv.render(buf + c * 32, 32, 1.f);
         int64_t t3 = esp_timer_get_time();
         tm += t1 - t0; tc += t2 - t1; tr += t3 - t2;
+        blk += t3 - t2;
       }
+      if (b == 31) hit = blk;
+      if (blk > peak) peak = blk;
     }
-    Serial.printf("micro drum %s: per block machine %u us, control %u us, render %u us\n", mt::drumMachineName(m),
-                  static_cast<unsigned>(tm / 100), static_cast<unsigned>(tc / 100), static_cast<unsigned>(tr / 100));
+    Serial.printf("micro drum %s: set %u us once; per block machine %u us, control %u us, render %u us"
+                  " (hit %u, peak %u)\n",
+                  mt::drumMachineName(m), static_cast<unsigned>(ts), static_cast<unsigned>(tm / 100),
+                  static_cast<unsigned>(tc / 100), static_cast<unsigned>(tr / 100), static_cast<unsigned>(hit),
+                  static_cast<unsigned>(peak));
   }
   {
     // Voice filter: set (tanf) once per 32 samples + process per sample.
@@ -1217,15 +1715,73 @@ void microBench() {
 }
 #endif
 
+#ifdef AUDIO_PEAK_DIAG
+// pollLog: takes the peak window from the audio task and prints it (us). False: no block answered.
+bool peakDiagPrint(const char* tag) {
+  const uint32_t req = pdReq.fetch_add(1, std::memory_order_acq_rel) + 1;
+  for (int i = 0; i < 40 && pdSeq.load(std::memory_order_acquire) != req; ++i) vTaskDelay(pdMS_TO_TICKS(5));
+  if (pdSeq.load(std::memory_order_acquire) != req) return false;
+  const PeakDiag& d = pdOut;
+  const float k = 1.f / static_cast<float>(getCpuFrequencyMhz());
+  Serial.printf("%s diag peak block: %.0f us of %u blocks, voices %d cap %d, note-ons %u; stage us:", tag, d.cycles * k,
+                static_cast<unsigned>(d.blocks), d.voices, d.cap, static_cast<unsigned>(d.notes));
+  for (int i = 0; i < kProfStages; ++i)
+    if (d.stage[i] * k >= 0.5f) Serial.printf(" %s %.0f", mt::Synth::profName(i), d.stage[i] * k);
+  Serial.printf("\n%s diag peak block note-on us:", tag);
+  for (int s = 0; s < kNoteSteps; ++s) Serial.printf(" %s %.1f", mt::Synth::noteStepName(s), d.step[s] * k);
+  Serial.println();
+  for (int n = 0; n < mt::Synth::kNoteKinds; ++n) {
+    const uint32_t cnt = d.nd.n[n];
+    if (!cnt) continue;
+    Serial.printf("%s diag note %s: n %u, whole max %.1f us; max/avg us:", tag, mt::Synth::noteKindName(n),
+                  static_cast<unsigned>(cnt), d.nd.totMax[n] * k);
+    for (int s = 0; s < kNoteSteps; ++s)
+      Serial.printf(" %s %.1f/%.1f", mt::Synth::noteStepName(s), d.nd.max[n][s] * k, d.nd.sum[n][s] * k / cnt);
+    Serial.println();
+  }
+  return true;
+}
+#endif
+
 void pollLog() {
   const int64_t now = esp_timer_get_time();
-#ifdef AUDIO_BENCH_ANY
+#if defined(AUDIO_PEAK_DIAG) && !defined(AUDIO_BENCH_POOL) && !defined(AUDIO_BENCH_LOFI) && \
+    !defined(AUDIO_BENCH_COST)  // the cost bench: no profiler in its timings
+  // Every 5 s: the average stages of the last 5 s and the peak window.
+  static int64_t lastDiag;
+  if (now - lastDiag >= 5000000) {
+    lastDiag = now;
+    Profile pr;
+    if (profileRunning() && profileStop(pr)) {
+      Serial.printf("diag: %u blocks, peak %u us; avg us per block:", static_cast<unsigned>(pr.blocks),
+                    static_cast<unsigned>(pr.peakUs));
+      for (int i = 0; i < kProfStages; ++i)
+        if (pr.us[i] >= 0.5f) Serial.printf(" %s %u", mt::Synth::profName(i), static_cast<unsigned>(pr.us[i] + 0.5f));
+      Serial.println();
+      peakDiagPrint("bench");
+    }
+    profileStart();
+  }
+#endif
+#if defined(AUDIO_BENCH_ANY) && !defined(AUDIO_BENCH_COST)
   static int64_t lastBench;
   if (now - lastBench >= 1000000) {
     lastBench = now;
     Serial.printf("audio bench: render %u us (peak %u) / 4000 us\n",
                   static_cast<unsigned>(renderUs.load(std::memory_order_relaxed)),
                   static_cast<unsigned>(benchPeak.exchange(0, std::memory_order_relaxed)));
+  }
+#endif
+#ifdef AUDIO_BENCH_COST
+  static uint32_t costPrinted;
+  const uint32_t cseq = costSeq.load(std::memory_order_acquire);
+  while (costPrinted < cseq) {  // in order, a late poll catches up
+    ++costPrinted;
+    if (costPrinted == 1)
+      Serial.printf("cost fx only (silent): avg %.1f us, peak %u us\n", costFxUs, static_cast<unsigned>(costFxPeak));
+    else
+      costPrintLadder(static_cast<int>(costPrinted) - 2);
+    if (costPrinted == 1 + kCostLadders) costSummary();
   }
 #endif
 #ifdef AUDIO_BENCH_LOFI
@@ -1240,6 +1796,9 @@ void pollLog() {
       for (int i = 0; i < kProfStages; ++i)
         if (pr.us[i] >= 0.5f) Serial.printf(" %s %u", mt::Synth::profName(i), static_cast<unsigned>(pr.us[i] + 0.5f));
       Serial.println();
+#ifdef AUDIO_PEAK_DIAG
+      peakDiagPrint("lofi");
+#endif
     }
     profileStart();
   }
@@ -1258,16 +1817,22 @@ void pollLog() {
     Profile pr;
     const bool prof = profileRunning() && profileStop(pr);
     const unsigned avg = poolResAvg.load(std::memory_order_relaxed);
-    char line[200];
+    char line[260];
     snprintf(line, sizeof(line),
-             "pool bench %s, pool %d: heavy %u + light %u, sounding %u (guard cap min %u): avg %u us (%u%%), "
-             "peak %u us / 4000 us\n",
+             "pool bench %s, pool %d: heavy %u + light %u, sounding %u (guard cap min %u), live %u cost %u / "
+             "budget %d: avg %u us (%u%%), peak %u us / 4000 us\n",
              storage::firmwareRev(), mt::kVoices, static_cast<unsigned>(poolResHeavy.load(std::memory_order_relaxed)),
              static_cast<unsigned>(poolResLight.load(std::memory_order_relaxed)),
              static_cast<unsigned>(poolResVoices.load(std::memory_order_relaxed)),
-             static_cast<unsigned>(poolResCap.load(std::memory_order_relaxed)), avg, avg / 40,
+             static_cast<unsigned>(poolResCap.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(poolResLive.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(poolResCost.load(std::memory_order_relaxed)),
+             synth->voiceBudget() >= mt::kVoiceBudgetOff ? -1 : synth->voiceBudget(), avg, avg / 40,
              static_cast<unsigned>(poolResPeak.load(std::memory_order_relaxed)));
     Serial.print(line);
+#ifdef AUDIO_PEAK_DIAG
+    if (prof) peakDiagPrint("pool");
+#endif
     if (prof) storage::appendCpuProfile(line, pr);
     if (seq >= kPoolStepCount) Serial.println("pool bench: done, quiet");
   }
@@ -1278,12 +1843,14 @@ void pollLog() {
     lastCpu = now;
     const uint32_t n = cpuBlocks.exchange(0, std::memory_order_relaxed);
     const uint32_t sum = cpuSum.exchange(0, std::memory_order_relaxed);
-    Serial.printf("cpu: blocks %u avg %u us, over4ms %u, peak ev %u quiet %u, resyncs %u, voices %d\n",
+    // Stack: the audio task's least free so far, bytes (ESP-IDF counts the stack in bytes).
+    const unsigned stk = task ? static_cast<unsigned>(uxTaskGetStackHighWaterMark(task)) : 0;
+    Serial.printf("cpu: blocks %u avg %u us, over4ms %u, peak ev %u quiet %u, resyncs %u, voices %d, stack free %u\n",
                   static_cast<unsigned>(n), static_cast<unsigned>(n ? sum / n : 0),
                   static_cast<unsigned>(cpuOver.exchange(0, std::memory_order_relaxed)),
                   static_cast<unsigned>(cpuPeakEv.exchange(0, std::memory_order_relaxed)),
                   static_cast<unsigned>(cpuPeakQuiet.exchange(0, std::memory_order_relaxed)),
-                  static_cast<unsigned>(resyncs.load(std::memory_order_relaxed)), synth ? synth->activeVoices() : -1);
+                  static_cast<unsigned>(resyncs.load(std::memory_order_relaxed)), synth ? synth->activeVoices() : -1, stk);
   }
 #endif
 #ifdef AUDIO_CPU_LOG

@@ -157,6 +157,7 @@ static void fillFull(Project& p) {
   i3.type = InstrType::Fm;
   i3.machine = static_cast<uint8_t>(FmMachine::Clap);
   for (int k = 0; k < kFmMacros; ++k) i3.macro[k] = static_cast<uint8_t>(10 + k * 20);
+  i3.fmSat = 77;
   i3.lfoWave = static_cast<uint8_t>(LfoWave::Random);
   i3.lfoRate = 127;
   i3.lfoDepth = -64;
@@ -257,6 +258,7 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(m.reverse, n.reverse);
     TEST_ASSERT_EQUAL(m.machine, n.machine);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(m.macro, n.macro, kFmMacros);
+    TEST_ASSERT_EQUAL(m.fmSat, n.fmSat);
     TEST_ASSERT_EQUAL(m.lfoWave, n.lfoWave);
     TEST_ASSERT_EQUAL(m.lfoRate, n.lfoRate);
     TEST_ASSERT_EQUAL(m.lfoDepth, n.lfoDepth);
@@ -324,9 +326,9 @@ void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   // Everything but patterns: project, track and audio chunks (< 2 KB) plus the instrument records
-  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LOFI 8, LFOX 16, KITS 176 = 392 bytes each). One written
-  // empty pattern would add ~28 KB, so the bound proves none is.
-  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 400);
+  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LOFI 8, LFOX 16, LFOB 8, FMEX 4, KITS 176 = 404 bytes each).
+  // One written empty pattern would add ~28 KB, so the bound proves none is.
+  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 410);
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
@@ -2810,6 +2812,72 @@ void test_lfob_garbage_clamped_and_sizes() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// ---- FMEX: FM SAT per instrument ----
+
+void test_fmex_round_trip_and_missing() {
+  instrSetType(a.instruments[2], InstrType::Fm);
+  a.instruments[2].fmSat = 90;
+  a.instruments[7].fmSat = 5;  // kept on any type
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "FMEX"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  TEST_ASSERT_EQUAL(90, b.instruments[2].fmSat);
+  TEST_ASSERT_EQUAL(5, b.instruments[7].fmSat);
+  TEST_ASSERT_EQUAL(0, b.instruments[0].fmSat);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"FMEX"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.instruments[2].fmSat);  // an older file: SAT off
+}
+
+// FMEX: count, record size, then 4-byte records (SAT, 3 reserved). Longer: the known part; shorter: what it
+// has; SAT over 127 -> 127; record size 0 or fewer records than the count: bad value.
+void test_fmex_garbage_clamped_and_sizes() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "FMEX", {2, 6, 200, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 40, 1, 2, 3, 4, 5});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(127, b.instruments[0].fmSat);
+  TEST_ASSERT_EQUAL(40, b.instruments[1].fmSat);
+  TEST_ASSERT_EQUAL(0, b.instruments[2].fmSat);  // not in the chunk: default
+  f = fileHeader();
+  putChunk(f, "FMEX", {1, 1, 77});  // a 1-byte record
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(77, b.instruments[0].fmSat);
+  f = fileHeader();
+  putChunk(f, "FMEX", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "FMEX", {3, 4, 1, 0, 0, 0});  // says 3 records, holds 1
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+// A teensy-written FMEX (its b[1] is the CHIP step, b[2..3] reserved): SAT from b[0], the rest ignored.
+void test_fmex_teensy_layout_loads() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "FMEX", {2, 4, 60, 1, 0, 0, 0, 1, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(60, b.instruments[0].fmSat);
+  TEST_ASSERT_EQUAL(0, b.instruments[1].fmSat);
+  // Written back in the shared layout: count kInstruments, record size 4, SAT then 3 zero bytes.
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(b, out));
+  const std::vector<uint8_t>& o = out.buf;
+  size_t pos = 8;
+  while (pos + 8 <= o.size() && memcmp(o.data() + pos, "FMEX", 4) != 0)
+    pos += 8 + (o[pos + 4] | (o[pos + 5] << 8) | (o[pos + 6] << 16) | (static_cast<uint32_t>(o[pos + 7]) << 24));
+  TEST_ASSERT_TRUE(pos + 8 + 2 + kInstruments * 4 <= o.size());
+  const uint8_t* c = o.data() + pos + 8;
+  TEST_ASSERT_EQUAL(kInstruments, c[0]);
+  TEST_ASSERT_EQUAL(4, c[1]);
+  const uint8_t rec0[4] = {60, 0, 0, 0};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(rec0, c + 2, 4);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -2916,5 +2984,8 @@ int main() {
   RUN_TEST(test_tgen_byte_fields);
   RUN_TEST(test_lfob_round_trip_and_missing);
   RUN_TEST(test_lfob_garbage_clamped_and_sizes);
+  RUN_TEST(test_fmex_round_trip_and_missing);
+  RUN_TEST(test_fmex_garbage_clamped_and_sizes);
+  RUN_TEST(test_fmex_teensy_layout_loads);
   return UNITY_END();
 }

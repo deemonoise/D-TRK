@@ -54,6 +54,10 @@ void test_normalize_peak() {
   int16_t z[2] = {0, 0};
   normalizePeak(z, 2, 0);  // silence: unchanged
   TEST_ASSERT_EQUAL(0, z[0]);
+  int16_t h[2] = {-3000, 1500};
+  normalizePeak(h, 2, 3000, kNormPeakHot);  // the one-shot target: -0.3 dBFS
+  TEST_ASSERT_INT_WITHIN(1, -31653, h[0]);
+  TEST_ASSERT_INT_WITHIN(1, 15827, h[1]);
 }
 
 void test_trim_tail() {

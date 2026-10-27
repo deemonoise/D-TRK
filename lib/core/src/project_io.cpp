@@ -518,6 +518,24 @@ LoadErr readLfob(CrcSource& in, uint32_t size, Project& p) {
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
+// FMEX (Instrument::fmSat, inst_codec kFmExRecSize): count, record size, then a record per instrument.
+// Same rules as TINS. Files without it: SAT 0.
+LoadErr readFmex(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kInstruments ? h[0] : kInstruments;
+  const uint32_t take = rec < kFmExRecSize ? rec : kFmExRecSize;
+  for (int i = 0; i < n; ++i) {
+    uint8_t b[kFmExRecSize] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    unpackFmEx(b, take, p.instruments[i]);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 // LFOX: the LFO record of each instrument (LFO 1 sync, LFO 2..4); files without it: LFO 1 free, 2..4 off.
 LoadErr readLfox(CrcSource& in, uint32_t size, Project& p) {
   return readRecords(in, size, kLfoRecSize, kInstruments,
@@ -917,6 +935,14 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  const uint8_t xh[2] = {static_cast<uint8_t>(kInstruments), static_cast<uint8_t>(kFmExRecSize)};
+  if (!o.chunk("FMEX", 2 + kInstruments * kFmExRecSize) || !o.write(xh, 2)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kFmExRecSize];
+    packFmEx(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
   if (!o.chunk("KITS", 1 + kInstruments * kKitRecSize) || !o.write(&count, 1)) return false;
   for (const Instrument& m : p.instruments)
     for (const KitLane& l : m.kit) {
@@ -1199,6 +1225,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "LFOX", 4) == 0) e = readLfox(in, size, out);
     else if (memcmp(ch, "LOFI", 4) == 0) e = readLofi(in, size, out);
     else if (memcmp(ch, "LFOB", 4) == 0) e = readLfob(in, size, out);
+    else if (memcmp(ch, "FMEX", 4) == 0) e = readFmex(in, size, out);
     else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, legacy);
