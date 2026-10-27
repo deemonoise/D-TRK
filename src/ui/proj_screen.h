@@ -51,6 +51,7 @@ class ProjScreen : public Screen {
   void snapPattern();
   void showPage(int page, bool bar);  // bar: the page bar keeps the cursor, else the first row
   int bpm();  // local target while it is ahead of the engine, else p.bpm
+  int bpmFrom(int cur);  // bpm() from the project BPM read by the caller
   void editBpm(int delta);
 
   static constexpr int kDiceX0 = 384, kDiceX1 = 472;  // header DICE button

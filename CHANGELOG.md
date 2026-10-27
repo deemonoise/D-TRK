@@ -3,6 +3,20 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## 2026-10-27
+- **SONG: slot TRN and BPM.** A second SONG view (<kbd>Shift</kbd>+click outside an edit, or menu →
+  **View**): `01  P03  +5  128 … FOL`. **TRN** −24…+24 semitones: while the slot plays, the tracks' notes and
+  the scale root move (CHD, NRN, GEN, MUT in the new key, MIDI tracks too), a note past 0–127 does not sound;
+  KIT is never transposed, and a track can opt out with TRACK → MAIN → **Song trn** OFF. **BPM** 20–300 or
+  `---` (the tempo stays): the live tempo from the slot's start; Stop and LOOP bring back the project BPM, which
+  the song never changes (PROJ shows and saves it; the status bar shows the live tempo, delay / LFO TEMPO /
+  PERF follow it). Edited like FOL (<kbd>Shift</kbd>+turn: an octave / ×10), undo, Add / insert / delete move
+  the fields; view 1 marks `Pxx` with a dot, the header shows `T+5 B128` while playing. A song Export follows
+  the slot tempos. File: a new SSLT chunk (older firmware skips it); link protocol unchanged, no Teensy flash.
+- Manual, limits: 32 voices, up to 16 heavy, and the load is capped by the voice cost budget (on overload the
+  oldest voices fade out); the SYNTH, STRING, LOFI and built-in sound sections say the same.
+- Status bar BPM edit: while a slot's BPM holds, it is live only (until the next slot with its own BPM, LOOP or
+  Stop; the project BPM stays, PROJ edits it); otherwise it edits the project BPM as before. The <kbd>Shift</kbd>+click
+  cancel brings back the tempo from before the edit, and only after a turn.
 - GRID: GAT value with <kbd>Shift</kbd> moves ±10 % of the shown value (to the nearest GAT value in the turn's direction) instead of ×10 raw units; the piano roll's A + turn steps the same way.
 - GRID **piano roll**: a third view (<kbd>Shift</kbd>+click cycles Overview → Detail → Roll, or menu → **Piano
   roll**) shows the current track as a horizontal roll — keys on the left (root accented, out-of-scale ones greyed:

@@ -70,7 +70,7 @@ class TrackScreen : public Screen {
   // Rows in page order: MAIN, INS (the INT track's insert chain, then its MOD send), FOL (its envelope follower), NOTE,
   // MIDI (contiguous runs, see
   // kPageFirst).
-  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kDrive, kDriveType, kBitCrush, kDownsample,
+  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kSongTrn, kDrive, kDriveType, kBitCrush, kDownsample,
                    kTrance, kTrPattern, kTrSteps, kTrRate, kTrLen, kTrAtk, kTrRel, kModSend,
                    kFolSrc, kFolDest, kFolAmt, kFolAtk, kFolRel, kVel,
                    kGate, kPatLen, kSpeed, kHumanize,

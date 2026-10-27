@@ -2602,6 +2602,67 @@ void test_sfol_records_and_garbage() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// SSLT: the Song trn mask and each slot's TRN / BPM round trip; a file without SSLT: TRN 0, BPM "-", every
+// track follows.
+void test_sslt_round_trip_and_missing() {
+  a.songLen = 3;
+  a.songTrn[0] = 5;
+  a.songTrn[2] = -24;
+  a.songBpm[1] = 140;
+  a.songBpm[2] = 300;
+  a.songTrnMask = 0xA5F0;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SSLT"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL_HEX16(0xA5F0, b.songTrnMask);
+  TEST_ASSERT_EQUAL_INT8_ARRAY(a.songTrn, b.songTrn, 3);
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(a.songBpm, b.songBpm, 3);
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SNG3", {1, 4, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.songTrn[0]);
+  TEST_ASSERT_EQUAL(0, b.songBpm[0]);
+  TEST_ASSERT_EQUAL_HEX16(0xFFFF, b.songTrnMask);
+}
+
+// TRN clamps to +-24, BPM to 0 or 20..300; a longer record reads the known part, a shorter one keeps the
+// defaults; record size 0 with records or a short chunk is bad. Empty song: the mask alone.
+void test_sslt_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SSLT", {0x34, 0x12, 3, 4,  30, 10, 0, 9,  0xD0, 0x2C, 0x01, 9,  0xFD, 0xFF, 0xFF, 9});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL_HEX16(0x1234, b.songTrnMask);
+  TEST_ASSERT_EQUAL(kSongTrnMax, b.songTrn[0]);
+  TEST_ASSERT_EQUAL(kSongBpmMin, b.songBpm[0]);
+  TEST_ASSERT_EQUAL(-kSongTrnMax, b.songTrn[1]);
+  TEST_ASSERT_EQUAL(300, b.songBpm[1]);
+  TEST_ASSERT_EQUAL(-3, b.songTrn[2]);
+  TEST_ASSERT_EQUAL(kSongBpmMax, b.songBpm[2]);
+  f = fileHeader();
+  putChunk(f, "SSLT", {0xFF, 0xFF, 1, 1, 7});  // a shorter record: BPM stays "-"
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(7, b.songTrn[0]);
+  TEST_ASSERT_EQUAL(0, b.songBpm[0]);
+  f = fileHeader();
+  putChunk(f, "SSLT", {0x03, 0x00, 0, 3});  // no slots: the mask alone
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL_HEX16(0x0003, b.songTrnMask);
+  f = fileHeader();
+  putChunk(f, "SSLT", {1, 0, 2, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "SSLT", {1, 0, 2, 3, 0, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
 // ---- SCEN (scenes and the crossfader) ----
 
 void test_scen_round_trip() {
@@ -3101,6 +3162,8 @@ int main() {
   RUN_TEST(test_tins_mod_send);
   RUN_TEST(test_sfol_round_trip_and_missing);
   RUN_TEST(test_sfol_records_and_garbage);
+  RUN_TEST(test_sslt_round_trip_and_missing);
+  RUN_TEST(test_sslt_records_and_garbage);
   RUN_TEST(test_tune_round_trip);
   RUN_TEST(test_tune_12tet_not_written);
   RUN_TEST(test_tune_bad_chunks_reset_to_12tet);

@@ -74,6 +74,7 @@ struct ExpandCtx {
   bool pre = false;   // CND PRE: the track's last condition passed
   bool nei = false;   // CND NEI: the left track's last condition passed
   uint8_t velPct = 100;  // groove accent of the step: velocities x velPct / 100
+  int8_t trn = 0;  // song slot TRN (melodic notes; scaleRoot is already the moved root): a note past 0..127 is dropped
 };
 
 // Expands one step of one track into events. Control events (CC, pitch bend,

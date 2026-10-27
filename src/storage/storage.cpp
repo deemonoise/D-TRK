@@ -53,14 +53,16 @@ static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt
 static_assert(sizeof(mt::Instrument) == 394, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
 // 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO). 480828: var (TVAR), LOFI instrument fields.
-// 480892: Instrument::fmSat (FMEX chunk).
-static_assert(sizeof(mt::Project) == 480892, "Project changed: update snapshot() and project_io");
+// 480892: Instrument::fmSat (FMEX chunk). 481276: songTrn, songBpm, songTrnMask (SSLT).
+static_assert(sizeof(mt::Project) == 481276, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
   engine::lockProject();
   memcpy(out.name, live.name, sizeof(out.name));
   out.bpm = live.bpm;
+  uint16_t projBpm;
+  if (engine::savedBpm(projBpm)) out.bpm = projBpm;  // a song slot's BPM plays: the project's, not the slot's
   out.scaleRoot = live.scaleRoot;
   out.scaleType = live.scaleType;
   memcpy(out.tracks, live.tracks, sizeof(out.tracks));
@@ -71,6 +73,9 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.songMute, live.songMute, sizeof(out.songMute));
   out.songLen = live.songLen;
   memcpy(out.songFol, live.songFol, sizeof(out.songFol));
+  memcpy(out.songTrn, live.songTrn, sizeof(out.songTrn));
+  memcpy(out.songBpm, live.songBpm, sizeof(out.songBpm));
+  out.songTrnMask = live.songTrnMask;
   out.seed = live.seed;
   memcpy(out.instruments, live.instruments, sizeof(out.instruments));
   out.masterVol = live.masterVol;
@@ -498,7 +503,7 @@ Result autosave(const mt::Project& live) {
   if (!hw::sdReady()) return Result::NoSd;
   if (!validName(live.name)) return Result::BadFile;
   const Path tmp(live.name, ".atm"), dst(live.name, ".auto");
-  const Result r = writeTmp(tmp.s, live);  // the engine is stopped: it changes nothing meanwhile
+  const Result r = writeTmp(tmp.s, live);  // the engine is stopped (not paused): p.bpm and the mutes are the project's
   fs::FS& fs = hw::sdFs();
   if (r != Result::Ok) {
     fs.remove(tmp.s);

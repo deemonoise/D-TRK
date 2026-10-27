@@ -197,7 +197,8 @@ bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, 
     return true;
   }
 
-  int root = s.note;
+  int root = s.note + c.trn;
+  if (root < 0 || root > 127) return out.count > 0 || off;  // TRN past the range: the note is dropped
   if (const FxSlot* f = s.find(Fx::NRN)) {
     root = moveDegrees(root, spread(rng, f->val), c.scaleRoot, c.scale);
   }

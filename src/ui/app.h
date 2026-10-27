@@ -247,7 +247,8 @@ class App {
   bool batChg_ = false;
   int bpmTarget_ = 120;  // local while editing: p_->bpm lags behind the engine queue
   bool bpmEdit_ = false;
-  int bpmOrig_ = 120;  // BPM when the edit began (Shift+click puts it back)
+  int bpmOrig_ = 120;  // project BPM when the edit began (Shift+click puts it back)
+  bool bpmTurned_ = false;  // the edit changed the BPM
   uint8_t curTrack_ = 0;
   int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
   int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)

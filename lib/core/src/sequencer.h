@@ -100,6 +100,9 @@ class Sequencer {
   void queuePattern(uint8_t idx);   // switch at the end of the current pass; ignored while the song plays
   void selectPattern(uint8_t idx);  // switch from the next step
   void setBpm(uint16_t bpm);
+  // The header BPM: while a song slot's BPM holds the live tempo, the live tempo only (until the next slot
+  // with its own BPM, leaving the song or Stop; the project BPM stays); else setBpm.
+  void setLiveBpm(uint16_t bpm);
   // Program change of one track, sent now (nothing for kNoProgram).
   void sendProgram(uint64_t now, int track, MidiSink& out);
   // Replans the unheard steps from the (edited) pattern, then ends every held TIE now
@@ -117,6 +120,13 @@ class Sequencer {
   bool savedMutes(uint16_t& bits) const {
     bits = savedMute_;
     return muteHeld_;
+  }
+  // The project BPM while a song slot's BPM holds the live tempo (p.bpm); false when none holds (p.bpm is
+  // the project's). A slot with its BPM sets the live tempo from its start ("-" keeps it); a BPM edit
+  // (setBpm, a write to p.bpm) sets both; Stop and leaving the song go back to the project BPM.
+  bool savedBpm(uint16_t& bpm) const {
+    bpm = projBpm_;
+    return bpmHeld_;
   }
   // After TrackCfg::out of a track changed: ends its sounding notes on both outputs.
   void trackOutChanged(uint64_t now, int track, MidiSink& out);
@@ -205,6 +215,14 @@ class Sequencer {
     uint64_t onT = 0;  // the held NoteOn's time: a release must not come before it
   };
 
+  // A tick clock: the time of tick is us + rem / (1000 * bpm) us; the ticks after it run at bpm.
+  struct Anchor {
+    uint64_t us, rem, tick;
+    uint16_t bpm;
+  };
+  // Anchors before the current one (tempo changes whose clocks or steps are still to come), oldest first.
+  static constexpr int kOldAnchors = 4;
+
   struct Sched {  // a scheduled step and the state just before it, to undo it
     uint64_t t;      // step time incl. swing
     uint64_t first;  // earliest event it pushed (t if none)
@@ -230,6 +248,11 @@ class Sequencer {
     bool muteSet;         // the step's pass end started a slot or left the song (mutes written)
     bool held;            // muteHeld_ before
     uint16_t saved;       // savedMute_ before
+    Anchor anchor;                  // the tick clock before (a tempo change among the undone steps is undone)
+    Anchor old[kOldAnchors];        // old_ before
+    uint8_t oldN;
+    uint16_t tempo;        // the step's tempo (p.bpm once it is heard)
+    bool bpmHeld;          // bpmHeld_ before
   };
   static constexpr int kHist = 16;           // covers every scheduled but unheard step
   static_assert((kHist & (kHist - 1)) == 0, "hist ring");
@@ -247,15 +270,23 @@ class Sequencer {
   uint16_t ticks() const { return ticksPerStep(p_.patterns[cur_].res); }
   uint32_t stepUs() const { return 625000u * ticks() / bpm_; }
   uint32_t lookUs() const { return 625000u * kLookTicks / bpm_; }
-  // Time of tick relative to the anchor, in ns*bpm (exact).
-  int64_t span(uint64_t tick) const {
-    return tick >= anchorTick_ ? static_cast<int64_t>((tick - anchorTick_) * kTickNs)
-                               : -static_cast<int64_t>((anchorTick_ - tick) * kTickNs);
+  // Time of tick relative to tick base, in ns*bpm (exact).
+  static int64_t span(uint64_t tick, uint64_t base) {
+    return tick >= base ? static_cast<int64_t>((tick - base) * kTickNs) : -static_cast<int64_t>((base - tick) * kTickNs);
   }
+  // The clock of tick: the current anchor, before it the older anchor it follows (the oldest for earlier
+  // ticks). idx: its old_ index, -1 = the current one.
+  Anchor anchorOf(uint64_t tick, int& idx) const;
   uint64_t tickTime(uint64_t tick) const;
+  // Moves the anchor to tick, keeping every tick's time.
   void reanchor(uint64_t tick);
+  void pushOld();       // the current anchor into old_ (full: the oldest drops)
+  void pruneAnchors();  // drops old anchors only ticks before the next clock and step use
+  // A tempo change at tick (reanchored there): the ticks before it keep their time and tempo.
+  void tempoAt(uint64_t tick, uint16_t bpm);
   void anchorAt(uint64_t now);
   void applyBpm(uint64_t now);
+  uint16_t slotBpm(int slot) const { return slot >= 0 && slot < songLen() ? songBpmClamp(p_.songBpm[slot]) : 0; }
   bool rewind(uint64_t now);
   void scheduleStep(uint64_t now);
   void skipStep(uint64_t now);
@@ -297,6 +328,11 @@ class Sequencer {
   void synthTransport(uint64_t now, MidiSink& out, uint8_t msg);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
   bool expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex);
+  // TRN of the planned step's song slot for track (0 outside the song and with its Song trn bit off).
+  int songTrn(int track) const {
+    if (songPos_ < 0 || songPos_ >= songLen() || !((p_.songTrnMask >> track) & 1)) return 0;
+    return songTrnClamp(p_.songTrn[songPos_]);
+  }
   // A track's sub-steps per pattern step (mul) and its own step: su us, tps ticks (TrackSpeed).
   struct TrackTiming {
     int mul;
@@ -373,6 +409,13 @@ class Sequencer {
   uint64_t anchorUs_ = 0;   // time of anchorTick_ is anchorUs_ + anchorRem_ / (1000 * bpm_) us
   uint64_t anchorRem_ = 0;  // < 1000 * bpm_
   uint64_t anchorTick_ = 0;
+  Anchor old_[kOldAnchors];  // see kOldAnchors
+  uint8_t oldN_ = 0;
+  uint16_t projBpm_;    // the project BPM (savedBpm)
+  uint16_t bpmSeen_;    // p.bpm as the sequencer wrote or took it: another value is a BPM edit
+  uint32_t heardSerial_ = 0;  // serial of the heard step: a newly heard one publishes its tempo
+  bool bpmHeld_ = false;  // a slot's BPM holds the live tempo (savedBpm)
+  bool liveBpm_ = false;  // the pending p.bpm write is setLiveBpm's: the project BPM stays
   uint64_t stepTick_ = 0;   // tick of the next step to schedule
   // Ticks since start() to the next step (not pass-relative, not reset by resume): the song clock
   // of the trance gates (Synth 0xF6 5), rewound with the steps.

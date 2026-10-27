@@ -20,7 +20,7 @@ namespace engine {
 // whose MUT mode changed starts over (no EVO changes, VAR generation 0). Sequencer::mutEdited.
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
-  Fill, SetSong, GenEdit, GenReseed, MutEdit
+  Fill, SetSong, GenEdit, GenReseed, MutEdit, SetLiveBpm
 };
 
 struct Command {
@@ -70,6 +70,12 @@ void unlockProject();
 // While the song plays: the mutes from before it (bit = track), see Sequencer::savedMutes.
 // Call holding lockProject().
 bool savedMutes(uint16_t& bits);
+// While a song slot's BPM holds the live tempo (p.bpm): the project BPM, see Sequencer::savedBpm. Call
+// holding lockProject().
+bool savedBpm(uint16_t& bpm);
+// The project BPM (PROJ shows and edits it): p.bpm unless a song slot's BPM holds the live tempo. Takes
+// lockProject() itself: do not call holding it.
+uint16_t projectBpm(const mt::Project& p);
 // Track generators, holding lockProject(): the register after the heard step (the reset one while
 // stopped), and the register the next planned step starts from with that step of `track` in pattern pat
 // (Capture; step 0 while stopped or another pattern plays; stopped: the reset register).

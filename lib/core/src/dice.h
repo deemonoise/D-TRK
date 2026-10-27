@@ -83,15 +83,17 @@ struct DiceResult {
   uint16_t written = 0;  // tracks whose sound or steps changed (cfgMask | patMask)
 };
 
+// bpm (all four): the project BPM when a song slot's BPM holds the live tempo p.bpm (0 = p.bpm). The roll
+// reads it, and the undo keeps it, instead of p.bpm.
 // Rolls the layers into s.parts (pattern: 0..kPatterns-1, else 0), seeded; p is only read. Drops the
 // previous roll's undo.
-DiceResult diceDraft(const Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s);
+DiceResult diceDraft(const Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s, uint16_t bpm = 0);
 // Swaps the draft into p (what it wrote only). Returns its layers, 0 = no draft.
-uint8_t diceApply(Project& p, DiceSnap& s);
+uint8_t diceApply(Project& p, DiceSnap& s, uint16_t bpm = 0);
 // diceDraft + diceApply.
-DiceResult diceRoll(Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s);
+DiceResult diceRoll(Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s, uint16_t bpm = 0);
 // Puts back what the last applied roll wrote and empties the undo. Returns its layers, 0 = nothing.
 // Edits made since elsewhere stay; edits to the rolled parts are lost.
-uint8_t diceUndo(Project& p, DiceSnap& s);
+uint8_t diceUndo(Project& p, DiceSnap& s, uint16_t bpm = 0);
 
 }  // namespace mt

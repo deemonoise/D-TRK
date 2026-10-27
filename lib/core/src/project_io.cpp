@@ -79,6 +79,10 @@ constexpr size_t kSng3Rec = 3;    // pattern, mute u16
 // keeps the defaults of what it lacks; the seed is clamped to 1..9999. Files without SFOL: every slot NEXT
 // 100 %, seed 1.
 constexpr size_t kSfolRec = 3;
+// SSLT (Project::songTrnMask, songTrn, songBpm): u16 mask, count, record size, then a record per slot: TRN
+// (int8, clamped to +-kSongTrnMax), BPM u16 (0 = "-", else clamped to kSongBpmMin..kSongBpmMax). Read as SFOL.
+// Files without SSLT: TRN 0, BPM "-", every track follows TRN.
+constexpr size_t kSsltRec = 3;
 static_assert(kSynRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kWtblSize <= kMaxRec, "readRecords buffer");
 
@@ -663,6 +667,24 @@ LoadErr readSfol(CrcSource& in, uint32_t size, Project& p) {
   return in.skip(size - 4 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
+LoadErr readSslt(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[4];
+  if (size < 4) return LoadErr::BadValue;
+  if (!in.read(h, 4)) return LoadErr::Truncated;
+  const uint32_t rec = h[3];
+  if ((rec == 0 && h[2] > 0) || size < 4 + h[2] * rec) return LoadErr::BadValue;
+  p.songTrnMask = static_cast<uint16_t>(h[0] | (h[1] << 8));
+  const int n = h[2] < kSongMax ? h[2] : kSongMax;
+  const uint32_t take = rec < kSsltRec ? rec : kSsltRec;
+  for (int i = 0; i < n; ++i) {
+    uint8_t b[kSsltRec] = {0, 0, 0};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    p.songTrn[i] = songTrnClamp(static_cast<int8_t>(b[0]));
+    p.songBpm[i] = songBpmClamp(b[1] | (b[2] << 8));
+  }
+  return in.skip(size - 4 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 // CHN2 (legacy): count, then per item pattern, transpose (int8), repeat, scene. Replaces PROJ's chain.
 LoadErr readChn2(CrcSource& in, uint32_t size, LegacySong& ls) {
   ls.chn2 = true;
@@ -866,6 +888,14 @@ bool saveProject(const Project& p, ByteSink& out) {
   for (int i = 0; i < songN; ++i) {
     const SongFollow& f = p.songFol[i];
     const uint8_t b[kSfolRec] = {f.act, f.target, f.chance};
+    if (!o.write(b, sizeof(b))) return false;
+  }
+  wr16(sh, p.songTrnMask);
+  sh[3] = static_cast<uint8_t>(kSsltRec);
+  if (!o.chunk("SSLT", 4 + songN * kSsltRec) || !o.write(sh, sizeof(sh))) return false;
+  for (int i = 0; i < songN; ++i) {
+    uint8_t b[kSsltRec] = {static_cast<uint8_t>(p.songTrn[i])};
+    wr16(b + 1, p.songBpm[i]);
     if (!o.write(b, sizeof(b))) return false;
   }
 
@@ -1258,6 +1288,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       e = readSng3(in, size, out);
     }
     else if (memcmp(ch, "SFOL", 4) == 0) e = readSfol(in, size, out);
+    else if (memcmp(ch, "SSLT", 4) == 0) e = readSslt(in, size, out);
     else if (memcmp(ch, "TLEN", 4) == 0) e = readTlen(in, size, out);
     else if (memcmp(ch, "TSPD", 4) == 0) e = readTspd(in, size, out);
     else if (memcmp(ch, "GROV", 4) == 0) e = readGrov(in, size, out);

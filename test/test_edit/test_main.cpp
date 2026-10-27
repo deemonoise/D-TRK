@@ -337,6 +337,33 @@ void test_song_delete_middle_and_past_end() {
   TEST_ASSERT_EQUAL(3, p.song[1]);
 }
 
+// TRN and BPM move with their slot; the freed slot is zeroed; values clamp (BPM 0 = "-" stays).
+void test_song_insert_delete_move_trn_bpm() {
+  static Project p;
+  p.reset();
+  songInsert(p, 0, 1, 0, SongFollow(), 3, 90);
+  songInsert(p, 1, 2, 0, SongFollow(), -2, 0);
+  TEST_ASSERT_TRUE(songInsert(p, 1, 7, 0, SongFollow(), -5, 140));
+  TEST_ASSERT_EQUAL(3, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(90, p.songBpm[0]);
+  TEST_ASSERT_EQUAL(-5, p.songTrn[1]);
+  TEST_ASSERT_EQUAL(140, p.songBpm[1]);
+  TEST_ASSERT_EQUAL(-2, p.songTrn[2]);
+  TEST_ASSERT_EQUAL(0, p.songBpm[2]);
+  songDelete(p, 0);
+  TEST_ASSERT_EQUAL(-5, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(140, p.songBpm[0]);
+  TEST_ASSERT_EQUAL(-2, p.songTrn[1]);
+  TEST_ASSERT_EQUAL(0, p.songTrn[2]);
+  TEST_ASSERT_EQUAL(0, p.songBpm[2]);
+  songInsert(p, 0, 1, 0, SongFollow(), 99, 5);
+  TEST_ASSERT_EQUAL(kSongTrnMax, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(kSongBpmMin, p.songBpm[0]);
+  songInsert(p, 0, 1, 0, SongFollow(), -99, 999);
+  TEST_ASSERT_EQUAL(-kSongTrnMax, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(kSongBpmMax, p.songBpm[0]);
+}
+
 void test_song_insert_clamps_pattern() {
   static Project p;
   p.reset();
@@ -500,6 +527,7 @@ int main(int, char**) {
   RUN_TEST(test_song_insert_middle_shifts);
   RUN_TEST(test_song_insert_full_fails);
   RUN_TEST(test_song_delete_middle_and_past_end);
+  RUN_TEST(test_song_insert_delete_move_trn_bpm);
   RUN_TEST(test_song_insert_clamps_pattern);
   RUN_TEST(test_song_insert_moves_follow_and_jump_targets);
   RUN_TEST(test_song_delete_moves_follow_and_jump_targets);

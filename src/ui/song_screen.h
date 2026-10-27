@@ -12,7 +12,10 @@ namespace ui {
 // 100 %). Turn = row (in pattern edit: the pattern), Shift + turn = column, click = PAT: pattern edit /
 // track: mute / FOL: follow edit (turn = value, Shift + turn = field, click / B = done, Shift + click =
 // cancel; the header shows "FOLLOW JUMP >07 75%"), A = add a copy below, A + turn = pattern edit (on
-// FOL: follow edit; B cancels), long = row menu. Track
+// FOL: follow edit; B cancels), long = row menu. Shift + click (no edit) = the other view: view 1 the
+// mutes and FOL (a mark after Pxx: the slot has a TRN or a BPM), view 2 "01  P03  +5  128 ... FOL": the
+// slot's TRN ("..." = 0) and BPM ("---" = keeps the tempo), edited as FOL (click / A + turn; Shift + turn:
+// an octave / x10). While the song plays the header shows the heard slot's TRN and the live BPM. Track
 // buttons toggle the cursor slot's mutes; with PERF on (App::perf(), shared with GRID) they hold
 // its effects while playing. Every write is under engine::lockProject() + SongEdit.
 class SongScreen : public Screen {
@@ -35,7 +38,7 @@ class SongScreen : public Screen {
 
  private:
   enum MenuId : int {
-    kAdd, kInsert, kDelete, kMutesLive, kMutesClear, kClear, kClearConfirm, kFolReset, kCancel, kPerf
+    kAdd, kInsert, kDelete, kMutesLive, kMutesClear, kClear, kClearConfirm, kFolReset, kCancel, kPerf, kView
   };
   static constexpr int kHeadH = 24, kRowH = 24;
   static constexpr int kRows = (kAreaH - kHeadH) / kRowH;  // 10
@@ -45,6 +48,9 @@ class SongScreen : public Screen {
   static constexpr int kFolW = 20;
   static constexpr int kFolCol = 1 + mt::kTracks;  // column index of FOL
   static constexpr int kCols = 2 + mt::kTracks;    // PAT + tracks + FOL
+  // View 2: PAT, TRN, BPM, FOL (col_ 0, kTrnCol, kBpmCol, kFolCol).
+  static constexpr int kTrnCol = kCols, kBpmCol = kCols + 1;
+  static constexpr int kTrnX = 78, kBpmX = 126, kValW = 4 * kCharW;
   static constexpr uint32_t kFollowMs = 2000;    // no auto-scroll this long after user input
   static constexpr int kUndoDepth = 8;
   static_assert(kFolX + kFolW <= 476, "cells and the follow column fit (scroll bar at 476)");
@@ -56,6 +62,8 @@ class SongScreen : public Screen {
     uint8_t song[mt::kSongMax];
     uint16_t mute[mt::kSongMax];
     mt::SongFollow fol[mt::kSongMax];
+    int8_t trn[mt::kSongMax];
+    uint16_t bpm[mt::kSongMax];
   };
 
   int len() const;
@@ -64,6 +72,9 @@ class SongScreen : public Screen {
   int rowAt(int y) const;  // slot index (may be >= len), -1 = header / below the rows
   void setRow(int r);      // clamps, scrolls, follows (stopped)
   void setCol(int c);
+  void stepCol(int dir);  // Shift + turn: the next column of the view
+  void toggleView();
+  static bool valCol(int c) { return c == kTrnCol || c == kBpmCol; }
   void showRow(int r);
   void clampRow();
   void follow();  // stopped: GRID shows the cursor slot's pattern
@@ -75,7 +86,8 @@ class SongScreen : public Screen {
   void endWrite(int row, mt::SongOp op);
   void pushSongUndo(int row, mt::SongOp op);
   void add();
-  void insertAt(int at, uint8_t pat, uint16_t mute, mt::SongFollow fol = mt::SongFollow());
+  void insertAt(int at, uint8_t pat, uint16_t mute, mt::SongFollow fol = mt::SongFollow(), int8_t trn = 0,
+                uint16_t bpm = 0);
   void deleteRow();
   void toggleMute(int track);
   void setMask(uint16_t m);
@@ -91,6 +103,12 @@ class SongScreen : public Screen {
   void cancelFol();
   void setFol(const mt::SongFollow& f);  // one undo step per edit (editPushed_)
   void drawFol(LGFX_Sprite& s, int y, const mt::SongFollow& f, bool cur);
+  // TRN / BPM edit of the cursor slot (view 2, valEdit_ = its column): as the follow edit.
+  void snapVal();
+  void editVal(int delta, bool coarse);  // coarse: TRN an octave, BPM x10; BPM "-" up = the project BPM
+  void cancelVal();
+  void setVal(int8_t trn, uint16_t bpm);  // one undo step per edit (editPushed_)
+  void drawVals(LGFX_Sprite& s, int y, int idx, bool cur);
   int drawFolHeader(LGFX_Sprite& s, int x, int y);
   void openMenu();
   void onMenu(int id);
@@ -107,6 +125,12 @@ class SongScreen : public Screen {
   bool holdFol_ = false;      // follow edit by A + turn (A release ends it)
   mt::SongFollow origFol_;
   int origFolRow_ = -1;
+  bool view2_ = false;        // TRN / BPM in place of the mutes
+  int valEdit_ = -1;          // TRN / BPM edit: its column, -1 off
+  bool holdVal_ = false;      // the edit by A + turn (A release ends it)
+  int origValRow_ = -1;
+  int8_t origTrn_ = 0;
+  uint16_t origBpm_ = 0;
   uint16_t gesture_ = 0;      // touch gesture id seen last
   bool dragPat_ = false;      // the drag edits the pattern
   int dragAcc_ = 0;

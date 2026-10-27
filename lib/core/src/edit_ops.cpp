@@ -54,7 +54,7 @@ namespace {
 bool isJump(const SongFollow& f) { return f.act == static_cast<uint8_t>(FollowAct::Jump); }
 }  // namespace
 
-bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute, SongFollow fol) {
+bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute, SongFollow fol, int8_t trn, uint16_t bpm) {
   const int n = p.songLen;
   if (n >= kSongMax) return false;
   at = clampi(at, 0, n);
@@ -65,9 +65,13 @@ bool songInsert(Project& p, int at, uint8_t pat, uint16_t mute, SongFollow fol) 
   memmove(p.song + at + 1, p.song + at, k);
   memmove(p.songMute + at + 1, p.songMute + at, k * sizeof(p.songMute[0]));
   memmove(p.songFol + at + 1, p.songFol + at, k * sizeof(p.songFol[0]));
+  memmove(p.songTrn + at + 1, p.songTrn + at, k * sizeof(p.songTrn[0]));
+  memmove(p.songBpm + at + 1, p.songBpm + at, k * sizeof(p.songBpm[0]));
   p.song[at] = pat < kPatterns ? pat : kPatterns - 1;
   p.songMute[at] = mute;
   p.songFol[at] = fol;
+  p.songTrn[at] = songTrnClamp(trn);
+  p.songBpm[at] = songBpmClamp(bpm);
   p.songLen = static_cast<uint8_t>(n + 1);
   return true;
 }
@@ -86,9 +90,13 @@ void songDelete(Project& p, int at) {
   memmove(p.song + at, p.song + at + 1, k);
   memmove(p.songMute + at, p.songMute + at + 1, k * sizeof(p.songMute[0]));
   memmove(p.songFol + at, p.songFol + at + 1, k * sizeof(p.songFol[0]));
+  memmove(p.songTrn + at, p.songTrn + at + 1, k * sizeof(p.songTrn[0]));
+  memmove(p.songBpm + at, p.songBpm + at + 1, k * sizeof(p.songBpm[0]));
   p.song[n - 1] = 0;
   p.songMute[n - 1] = 0;
   p.songFol[n - 1] = SongFollow();
+  p.songTrn[n - 1] = 0;
+  p.songBpm[n - 1] = 0;
   p.songLen = static_cast<uint8_t>(n - 1);
 }
 

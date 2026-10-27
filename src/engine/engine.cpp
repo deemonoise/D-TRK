@@ -61,6 +61,7 @@ void handle(const Command& c) {
     case Cmd::QueuePattern: seq->queuePattern(c.arg); break;
     case Cmd::SelectPattern: seq->selectPattern(c.arg); break;
     case Cmd::SetBpm: seq->setBpm(c.arg); break;
+    case Cmd::SetLiveBpm: seq->setLiveBpm(c.arg); break;
     case Cmd::SendProgram: seq->sendProgram(now, c.arg, midi); break;
     case Cmd::ReleaseTies: seq->releaseTies(now, midi); break;
     case Cmd::TrackOut: seq->trackOutChanged(now, c.arg, midi); break;
@@ -179,6 +180,15 @@ uint8_t stepPhase(const Status& s) { return mt::stepPhase256(nowUs(), s.stepT, s
 void lockProject() { xSemaphoreTake(projMutex, portMAX_DELAY); }
 void unlockProject() { xSemaphoreGive(projMutex); }
 bool savedMutes(uint16_t& bits) { return seq && seq->savedMutes(bits); }
+bool savedBpm(uint16_t& bpm) { return seq && seq->savedBpm(bpm); }
+
+uint16_t projectBpm(const mt::Project& p) {
+  lockProject();
+  uint16_t b;
+  if (!savedBpm(b)) b = p.bpm;
+  unlockProject();
+  return b;
+}
 
 mt::GenState heardGen(int track) { return seq ? seq->heardGen(track) : mt::GenState{}; }
 

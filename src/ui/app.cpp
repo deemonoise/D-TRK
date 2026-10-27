@@ -146,7 +146,13 @@ void App::postSong(bool on) {
 }
 
 void App::setBpmEdit(bool on) {
-  if (on && !bpmEdit_) bpmTarget_ = bpmOrig_ = p_->bpm;
+  // From the live tempo shown; Shift+click puts it back. While a song slot's BPM holds the live tempo, the
+  // edit is live only (SetLiveBpm): the project BPM stays (PROJ edits it).
+  if (on && !bpmEdit_) {
+    bpmTarget_ = p_->bpm;
+    bpmOrig_ = p_->bpm;
+    bpmTurned_ = false;
+  }
   bpmEdit_ = on;
 }
 
@@ -252,12 +258,13 @@ void App::onInput(const hw::InputEvent& ev) {
     if (ev.type == InputType::EncTurn || ev.type == InputType::EditTurn) {
       const int bpm = bpmTarget_ + ev.delta * (ev.shift ? 10 : 1);
       bpmTarget_ = bpm < 20 ? 20 : (bpm > 300 ? 300 : bpm);
-      engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
+      engine::post(engine::Cmd::SetLiveBpm, static_cast<uint16_t>(bpmTarget_));
+      bpmTurned_ = true;
       markDirty();
     } else {
-      if (ev.type == InputType::EncClick && ev.shift && bpmTarget_ != bpmOrig_) {
+      if (ev.type == InputType::EncClick && ev.shift && bpmTurned_) {
         bpmTarget_ = bpmOrig_;
-        engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
+        engine::post(engine::Cmd::SetLiveBpm, static_cast<uint16_t>(bpmTarget_));
         toast("CANCEL");
       }
       setBpmEdit(false);
@@ -697,8 +704,9 @@ void App::saveSettingsIdle(uint32_t now) {
   savedVisuals_ = visuals_;
 }
 
-// Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
-// stands (no project copy needed) and after 3 s without input (the write takes a moment).
+// Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while stopped (no project
+// copy needed; paused, a song slot's BPM and mutes would still hold p.bpm and the mutes) and after 3 s
+// without input (the write takes a moment).
 void App::autosaveIdle(uint32_t now) {
   if (autosaveMin_ == 0 || !projectDirty() || editSeq_ == autosavedSeq_ || !hw::sdReady()) {
     autosaveDue_ = 0;
@@ -709,7 +717,7 @@ void App::autosaveIdle(uint32_t now) {
     return;
   }
   if (static_cast<int32_t>(now - autosaveDue_) < 0) return;
-  if (status_.playing || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000) return;
+  if (status_.playing || status_.paused || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000) return;
   showBusy("AUTOSAVE...");
   const storage::Result r = storage::autosave(*p_);
   autosavedSeq_ = editSeq_;

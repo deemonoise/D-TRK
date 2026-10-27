@@ -2861,6 +2861,379 @@ void test_int_sample_steps_send_a_hint_one_step_ahead() {
   for (const auto& r : sink->log) TEST_ASSERT_NOT_EQUAL(kSynthHint, r.b[0]);
 }
 
+// ---- song slot TRN ----
+
+void test_song_trn_transposes_its_slot() {
+  songSetup({1, 2});
+  p->songTrn[1] = 2;
+  seq->start(0, *sink);
+  run(0, 990000);
+  const std::vector<int> want = {61, 64};  // slot 0 as written, slot 1 (P3: 62) + 2
+  TEST_ASSERT_TRUE(notesOn(0x90) == want);
+}
+
+// The scale root moves with TRN: a CHD triad of C major from C, 2 up, is D major (D F# A), not D F A.
+void test_song_trn_moves_scale_root_for_chd() {
+  songSetup({1});
+  p->scaleType = static_cast<uint8_t>(ScaleType::Major);
+  Step& st = p->patterns[1].steps[0][0];
+  st.note = 60;
+  st.fx[0] = {Fx::CHD, kChordTriad};
+  p->songTrn[0] = 2;
+  seq->start(0, *sink);
+  run(0, 400000);
+  const std::vector<int> want = {62, 66, 69};
+  TEST_ASSERT_TRUE(notesOn(0x90) == want);
+}
+
+// KIT tracks never follow TRN, nor tracks with their Song trn bit off.
+void test_song_trn_skips_kit_and_masked_tracks() {
+  songSetup({1});
+  p->tracks[1].instr = 5;
+  instrSetType(p->instruments[5], InstrType::Kit);
+  Step& d = p->patterns[1].steps[1][0];
+  d.note = 0;
+  d.vel = 0b00000001;  // lane 0: note 60
+  p->patterns[1].steps[2][0].note = 50;
+  p->songTrnMask = static_cast<uint16_t>(~(1u << 2));
+  p->songTrn[0] = 5;
+  seq->start(0, *sink);
+  run(0, 400000);
+  TEST_ASSERT_TRUE(notesOn(0x90) == std::vector<int>{66});
+  TEST_ASSERT_TRUE(notesOn(0x91) == std::vector<int>{60});
+  TEST_ASSERT_TRUE(notesOn(0x92) == std::vector<int>{50});
+}
+
+// TRACK -> MAIN Song trn off the way the UI does it (the mask, then songEdited(0, Edit)), playing on a
+// slot with TRN and BPM and then stopped: the unheard steps follow the new mask, nothing hangs.
+void test_song_trn_mask_toggle_replans() {
+  songSetup({1});
+  p->patterns[1].steps[2][0].note = 50;
+  p->songTrn[0] = 5;
+  p->songBpm[0] = 140;
+  seq->start(0, *sink);
+  run(0, 300000);
+  p->songTrnMask = static_cast<uint16_t>(~(1u << 2));
+  sink->now = 300000;
+  seq->songEdited(300000, *sink, 0, SongOp::Edit);
+  run(300000, 700000);
+  TEST_ASSERT_TRUE(notesOn(0x92) == (std::vector<int>{55, 50}));
+  seq->stop(700000, *sink);
+  p->songTrnMask = 0xFFFF;
+  seq->songEdited(700000, *sink, 0, SongOp::Edit);
+  sink->log.clear();
+  seq->start(800000, *sink);
+  run(800000, 1000000);
+  TEST_ASSERT_TRUE(notesOn(0x92) == std::vector<int>{55});
+}
+
+// A transposed note past 0..127 is dropped.
+void test_song_trn_drops_notes_out_of_range() {
+  songSetup({1, 2});
+  p->patterns[1].steps[0][0].note = 120;
+  p->patterns[2].steps[0][0].note = 10;
+  p->songTrn[0] = 24;
+  p->songTrn[1] = -24;
+  seq->start(0, *sink);
+  run(0, 990000);
+  TEST_ASSERT_EQUAL(0, notesOn(0x90).size());
+}
+
+// LOOP plays the pattern as written.
+void test_song_trn_not_in_loop() {
+  songSetup({0});
+  p->songTrn[0] = 7;
+  seq->setSong(0, *sink, false, 0);
+  seq->start(0, *sink);
+  run(0, 400000);
+  TEST_ASSERT_TRUE(notesOn(0x90) == std::vector<int>{60});
+}
+
+// ---- song slot BPM ----
+
+static void near(uint64_t want, uint64_t got) {
+  const int64_t d = static_cast<int64_t>(got) - static_cast<int64_t>(want);
+  TEST_ASSERT_TRUE_MESSAGE(d >= -1 && d <= 1, "time off by more than 1 us");
+}
+
+// Slot 1 (P3, BPM 60) starts on the beat of 120: its steps and clocks at 60; the clocks before it at 120;
+// p->bpm (the live tempo the synth gets) turns 60 only once the slot is heard. Slot 0 "-" keeps 60.
+void test_song_slot_bpm_sets_tempo_at_its_start() {
+  songSetup({1, 2});
+  fillSteps(2, 62);
+  p->songBpm[1] = 60;
+  seq->start(0, *sink);
+  run(0, 450000);
+  TEST_ASSERT_EQUAL(120, p->bpm);  // slot 1 is planned, not heard
+  run(450000, 1800000);
+  const auto on = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(4, on.size());
+  for (int i = 0; i < 4; ++i) near(500000 + 250000ull * i, on[i]);
+  near(1500000, sink->times(0x90, 61)[1]);  // slot 0 again, still at 60
+  const auto clk = sink->times(0xF8);
+  const auto before = between(clk, 400000, 500000), after = between(clk, 500000, 600000);
+  TEST_ASSERT_EQUAL(4, before.size());  // 416666 437500 458333 479166
+  near(479166, before.back());
+  TEST_ASSERT_EQUAL(500000, after[0]);
+  near(541666, after[1]);
+  TEST_ASSERT_EQUAL(60, p->bpm);
+  uint16_t b = 0;
+  TEST_ASSERT_TRUE(seq->savedBpm(b));
+  TEST_ASSERT_EQUAL(120, b);
+}
+
+void test_song_stop_restores_project_bpm() {
+  songSetup({1});
+  p->songBpm[0] = 90;
+  seq->start(0, *sink);
+  run(0, 700000);
+  TEST_ASSERT_EQUAL(90, p->bpm);  // the entry slot's tempo from the start
+  const auto on = sink->times(0x90, 61);
+  TEST_ASSERT_EQUAL(2, on.size());
+  near(4 * 625000ull * 24 / 90, on[1]);  // pass of 4 steps at 90
+  seq->stop(700000, *sink);
+  TEST_ASSERT_EQUAL(120, p->bpm);
+  uint16_t b = 0;
+  TEST_ASSERT_FALSE(seq->savedBpm(b));
+  sink->log.clear();
+  seq->setSong(700000, *sink, false, 0);
+  sink->now = 1000000;
+  seq->start(1000000, *sink);  // LOOP: the project tempo
+  run(1000000, 1600000);
+  const auto loop = sink->times(0x90, 61);  // P2 (still the pattern) step 0, a pass of 500 ms at 120
+  TEST_ASSERT_EQUAL(2, loop.size());
+  TEST_ASSERT_EQUAL(1000000, loop[0]);
+  near(1500000, loop[1]);
+}
+
+// A BPM edit while a slot's tempo holds: the project BPM and the live tempo until a slot with its own BPM.
+void test_song_bpm_edit_while_slot_tempo_holds() {
+  songSetup({1, 2, 3});
+  p->songBpm[1] = 60;
+  p->songBpm[2] = 80;
+  seq->start(0, *sink);
+  run(0, 600000);
+  TEST_ASSERT_EQUAL(60, p->bpm);
+  seq->setBpm(100);
+  run(600000, 900000);
+  TEST_ASSERT_EQUAL(100, p->bpm);
+  uint16_t b = 0;
+  TEST_ASSERT_TRUE(seq->savedBpm(b));
+  TEST_ASSERT_EQUAL(100, b);
+  run(900000, 1300000);
+  TEST_ASSERT_EQUAL(80, p->bpm);
+  seq->stop(1300000, *sink);
+  TEST_ASSERT_EQUAL(100, p->bpm);
+}
+
+// The header BPM while a slot's BPM holds: the live tempo only, until the next slot with its own BPM; the
+// project BPM stays. With no slot BPM holding it is a project BPM edit.
+void test_song_live_bpm_while_slot_tempo_holds() {
+  songSetup({1, 2, 3});
+  p->bpm = 120;
+  p->songBpm[1] = 60;
+  p->songBpm[2] = 80;
+  seq->start(0, *sink);
+  run(0, 600000);
+  TEST_ASSERT_EQUAL(60, p->bpm);
+  seq->setLiveBpm(100);
+  run(600000, 900000);
+  TEST_ASSERT_EQUAL(100, p->bpm);
+  uint16_t b = 0;
+  TEST_ASSERT_TRUE(seq->savedBpm(b));
+  TEST_ASSERT_EQUAL(120, b);
+  run(900000, 1300000);
+  TEST_ASSERT_EQUAL(80, p->bpm);
+  seq->stop(1300000, *sink);
+  TEST_ASSERT_EQUAL(120, p->bpm);
+  seq->setLiveBpm(90);  // nothing holds: the project BPM
+  TEST_ASSERT_EQUAL(90, p->bpm);
+  TEST_ASSERT_FALSE(seq->savedBpm(b));
+  seq->start(2000000, *sink);
+  seq->stop(2100000, *sink);
+  TEST_ASSERT_EQUAL(90, p->bpm);
+}
+
+// Leaving the song (LOOP) goes back to the project tempo at the pass end.
+void test_song_off_restores_bpm() {
+  songSetup({1, 2});
+  fillSteps(1, 61);
+  p->songBpm[0] = 60;
+  seq->start(0, *sink);
+  setSongAt(300000, false, 0);
+  run(300000, 1300000);
+  const auto on = between(sink->times(0x90, 61), 1000000, 1300000);
+  TEST_ASSERT_EQUAL(3, on.size());
+  TEST_ASSERT_EQUAL(1000000, on[0]);
+  near(1125000, on[1]);
+  TEST_ASSERT_EQUAL(120, p->bpm);
+  uint16_t b = 0;
+  TEST_ASSERT_FALSE(seq->savedBpm(b));
+}
+
+// A slot's tempo planned but unheard is undone with its steps: a replan (edit) or a pause decides again.
+void test_song_slot_bpm_replanned_and_resumed() {
+  songSetup({1, 2});
+  fillSteps(2, 62);
+  p->songBpm[1] = 60;
+  seq->start(0, *sink);
+  run(0, 200000);
+  p->songBpm[1] = 150;  // slot 1 already decided (at the plan of step 3) at 60
+  sink->now = 200000;
+  seq->songEdited(200000, *sink, 1, SongOp::Edit);
+  run(200000, 700000);
+  auto on = sink->times(0x90, 62);
+  near(500000, on[0]);
+  near(600000, on[1]);  // a step at 150 is 100 ms
+  TEST_ASSERT_EQUAL(150, p->bpm);
+  tearDown();
+  setUp();
+  songSetup({1, 2});
+  fillSteps(2, 62);
+  p->songBpm[1] = 60;
+  seq->start(0, *sink);
+  run(0, 450000);
+  sink->now = 450000;
+  seq->pause(450000, *sink);
+  TEST_ASSERT_EQUAL(120, p->bpm);
+  sink->now = 2000000;
+  seq->resume(2000000, *sink);
+  run(2000000, 2600000);
+  on = sink->times(0x90, 62);
+  TEST_ASSERT_EQUAL(3, on.size());
+  TEST_ASSERT_EQUAL(2000000, on[0]);
+  near(2250000, on[1]);
+  TEST_ASSERT_EQUAL(60, p->bpm);
+}
+
+// Short passes, any resolution, a tempo per slot, BPM edits and pauses at random: the clocks never go back in
+// time, every NoteOn gets its NoteOff, and the slot tempo is the live one once heard.
+void test_song_slot_bpm_fuzz() {
+  for (uint32_t seed = 1; seed <= 40; ++seed) {
+    tearDown();
+    setUp();
+    Rng r(seed * 2654435761u + 7);
+    p->songLen = 6;
+    for (int i = 0; i < 6; ++i) {
+      Pattern& pt = p->patterns[i];
+      pt.length = static_cast<uint8_t>(4 + r.below(5));
+      pt.res = static_cast<Resolution>(r.below(static_cast<uint32_t>(Resolution::Count)));
+      for (int k = 0; k < pt.length; ++k) pt.steps[0][k].note = static_cast<uint8_t>(40 + r.below(40));
+      p->song[i] = static_cast<uint8_t>(i);
+      p->songBpm[i] = r.below(3) ? static_cast<uint16_t>(20 + r.below(281)) : 0;
+      p->songTrn[i] = static_cast<int8_t>(static_cast<int>(r.below(49)) - 24);
+    }
+    seq->setSong(0, *sink, true, 0);
+    seq->start(0, *sink);
+    uint64_t t = 0;
+    uint16_t proj = p->bpm;
+    for (int k = 0; k < 30; ++k) {
+      const uint64_t to = t + 50000 + r.below(400000);
+      run(t, to);
+      t = to;
+      sink->now = t;
+      const uint32_t a = r.below(8);
+      if (a == 0) {
+        proj = static_cast<uint16_t>(20 + r.below(281));
+        seq->setBpm(proj);
+      } else if (a == 1) {
+        seq->pause(t, *sink);
+        t += 100000;
+        sink->now = t;
+        seq->resume(t, *sink);
+      } else if (a == 2) {
+        p->songBpm[r.below(6)] = static_cast<uint16_t>(r.below(2) ? 20 + r.below(281) : 0);
+        seq->songEdited(t, *sink, 0, SongOp::Edit);
+      }
+    }
+    seq->stop(t, *sink);
+    const auto clk = sink->times(0xF8);
+    for (size_t i = 1; i < clk.size(); ++i) TEST_ASSERT_TRUE_MESSAGE(clk[i] >= clk[i - 1], "clock back in time");
+    int open[128] = {0};
+    for (const auto& e : sink->log) {
+      if ((e.b[0] & 0xF0) == 0x90 && e.b[2] > 0) ++open[e.b[1]];
+      else if ((e.b[0] & 0xF0) == 0x80 || (e.b[0] & 0xF0) == 0x90) open[e.b[1]] = 0;
+    }
+    for (int n = 0; n < 128; ++n) TEST_ASSERT_EQUAL_MESSAGE(0, open[n], "stuck note");
+    uint16_t b = 0;
+    TEST_ASSERT_FALSE(seq->savedBpm(b));
+    TEST_ASSERT_EQUAL(proj, p->bpm);
+  }
+}
+
+// Passes of 48 ticks (the lookahead) with a tempo per slot: two tempo changes can wait for their clocks
+// at once; every clock still lands at its tick on the slots' tempo map.
+static void shortPassesClocksExact(int len) {
+  const uint16_t bpms[4] = {60, 240, 90, 300};
+  const uint64_t pass = 12u * len;
+  p->songLen = 4;
+  for (int i = 0; i < 4; ++i) {
+    p->patterns[i].length = static_cast<uint8_t>(len);
+    p->patterns[i].res = Resolution::ThirtySecond;
+    p->song[i] = static_cast<uint8_t>(i);
+    p->songBpm[i] = bpms[i];
+  }
+  seq->setSong(0, *sink, true, 0);
+  seq->start(0, *sink);
+  run(0, 3000000);
+  const auto clk = sink->times(0xF8);
+  TEST_ASSERT_TRUE(clk.size() > 60);
+  double slotT = 0;  // us
+  for (size_t n = 0; n < clk.size(); ++n) {
+    const uint64_t tick = 4 * n;
+    const int k = static_cast<int>(tick / pass);
+    if (n > 0 && tick % pass == 0) slotT += pass * 625000.0 / bpms[(k - 1) % 4];
+    const double want = slotT + (tick - static_cast<double>(pass) * k) * 625000.0 / bpms[k % 4];
+    const double d = static_cast<double>(clk[n]) - want;
+    if (d < -1.5 || d > 1.5) {
+      char m[64];
+      snprintf(m, sizeof m, "clock %u at %llu, want %.0f", static_cast<unsigned>(n),
+               static_cast<unsigned long long>(clk[n]), want);
+      TEST_FAIL_MESSAGE(m);
+    }
+  }
+}
+
+void test_song_slot_bpm_short_passes_clocks_exact() { shortPassesClocksExact(4); }
+// Passes of 24 and 12 ticks: three and more tempo changes wait inside the lookahead.
+void test_song_slot_bpm_shorter_passes_clocks_exact() {
+  shortPassesClocksExact(2);
+}
+void test_song_slot_bpm_one_step_passes_clocks_exact() { shortPassesClocksExact(1); }
+
+// A BPM edit after the clock passed the grid of a swung, still unheard step: the step stays on the old
+// tempo's grid (125 ms), only its swing follows the new step length.
+void test_set_bpm_keeps_swung_step_grid() {
+  p->patterns[0].swing = 75;
+  fillSteps(0, 60);
+  seq->start(0, *sink);
+  run(0, 150000);  // clocks up to tick 28 sent; step 1 (tick 24) sounds at 187500
+  seq->setBpm(60);
+  run(150000, 400000);
+  const auto on = sink->times(0x90, 60);
+  TEST_ASSERT_TRUE(on.size() >= 2);
+  near(250000, on[1]);
+}
+
+// A tied note followed by a step whose note TRN drops (its CC still goes out): the tie ends there.
+void test_song_trn_dropped_note_ends_tie() {
+  songSetup({1});
+  Step& a = p->patterns[1].steps[0][0];
+  a.note = 60;
+  a.fx[0] = {Fx::TIE, 0};
+  Step& b = p->patterns[1].steps[0][1];
+  b.note = 120;
+  b.fx[0] = {Fx::CCA, 77};
+  p->songTrn[0] = 24;
+  seq->start(0, *sink);
+  run(0, 300000);
+  const auto on = sink->times(0x90, 84), off = sink->times(0x80, 84);
+  TEST_ASSERT_EQUAL(1, on.size());
+  TEST_ASSERT_EQUAL(1, off.size());
+  TEST_ASSERT_TRUE(off[0] <= 125000 + kTieOverlapUs);
+  TEST_ASSERT_EQUAL(1, sink->times(0xB0).size());  // the CC
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -3031,5 +3404,23 @@ int main() {
   RUN_TEST(test_speed_half_rewind_across_pass_end);
   RUN_TEST(test_hint_time_one_step_ahead);
   RUN_TEST(test_int_sample_steps_send_a_hint_one_step_ahead);
+  RUN_TEST(test_song_trn_transposes_its_slot);
+  RUN_TEST(test_song_trn_moves_scale_root_for_chd);
+  RUN_TEST(test_song_trn_skips_kit_and_masked_tracks);
+  RUN_TEST(test_song_trn_mask_toggle_replans);
+  RUN_TEST(test_song_trn_drops_notes_out_of_range);
+  RUN_TEST(test_song_trn_not_in_loop);
+  RUN_TEST(test_song_slot_bpm_sets_tempo_at_its_start);
+  RUN_TEST(test_song_stop_restores_project_bpm);
+  RUN_TEST(test_song_bpm_edit_while_slot_tempo_holds);
+  RUN_TEST(test_song_live_bpm_while_slot_tempo_holds);
+  RUN_TEST(test_song_off_restores_bpm);
+  RUN_TEST(test_song_slot_bpm_replanned_and_resumed);
+  RUN_TEST(test_song_slot_bpm_fuzz);
+  RUN_TEST(test_song_slot_bpm_short_passes_clocks_exact);
+  RUN_TEST(test_song_slot_bpm_shorter_passes_clocks_exact);
+  RUN_TEST(test_song_slot_bpm_one_step_passes_clocks_exact);
+  RUN_TEST(test_set_bpm_keeps_swung_step_grid);
+  RUN_TEST(test_song_trn_dropped_note_ends_tie);
   return UNITY_END();
 }

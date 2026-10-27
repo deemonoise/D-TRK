@@ -66,6 +66,17 @@ void test_undo_restores_tempo_one_step() {
   TEST_ASSERT_EQUAL_MEMORY(&before, &p, sizeof(Project));
 }
 
+// A song slot's BPM holds the live tempo (p.bpm 60, project 77): the undo puts the project BPM back.
+void test_undo_restores_project_bpm_not_slot_tempo() {
+  templateBuild(1, p);
+  p.bpm = 60;
+  diceRoll(p, kDiceTempo, 0, 3, snap, 77);
+  const uint16_t rolled = p.bpm;
+  p.bpm = 90;  // another slot's BPM since
+  TEST_ASSERT_EQUAL(kDiceTempo, diceUndo(p, snap, rolled));
+  TEST_ASSERT_EQUAL(77, p.bpm);
+}
+
 void test_nothing_rolled_nothing_to_undo() {
   p.reset();
   memcpy(&before, &p, sizeof(Project));
@@ -540,6 +551,7 @@ int main() {
   RUN_TEST(test_tempo_layer_in_ranges);
   RUN_TEST(test_tempo_touches_nothing_else);
   RUN_TEST(test_undo_restores_tempo_one_step);
+  RUN_TEST(test_undo_restores_project_bpm_not_slot_tempo);
   RUN_TEST(test_nothing_rolled_nothing_to_undo);
   RUN_TEST(test_draft_then_apply);
   RUN_TEST(test_slots_default_and_conflicts);

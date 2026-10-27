@@ -139,6 +139,9 @@ void Project::reset() {
   memset(songMute, 0, sizeof(songMute));
   songLen = 0;
   for (SongFollow& f : songFol) f = SongFollow();
+  memset(songTrn, 0, sizeof(songTrn));
+  memset(songBpm, 0, sizeof(songBpm));
+  songTrnMask = 0xFFFF;
   seed = 1;
 }
 

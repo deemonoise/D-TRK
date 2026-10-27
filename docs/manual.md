@@ -121,7 +121,7 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 | `P05` | The pattern currently playing (LOOP mode). In SONG mode — `S03 P05`: third song slot, pattern 5; `S--` — the song has not been heard yet. During play, tapping this part of the status bar toggles SONG / LOOP at the end of the current pass — see [SONG](#song). |
 | `*` | There are unsaved changes. |
 | `>P07` | Queued pattern: switches at the end of the pass. Not shown in SONG mode. |
-| `120 BPM` | Tempo. A tap enters tempo editing (red): encoder ±1, ±10 with Shift, range 20–300. Leave with a click, a tap on the work area or a tab change. |
+| `120 BPM` | Tempo. A tap enters tempo editing (red): encoder ±1, ±10 with Shift, range 20–300. Leave with a click, a tap on the work area or a tab change; <kbd>Shift</kbd>+click after a turn cancels (the tempo from before the edit). While a [slot's BPM](#songtrn) holds, the edit is live only (the project BPM stays). |
 | `5/16` | Step / pattern length. |
 | `PLAY` | State: PLAY, STOP. A tap works like the Play button; <kbd>Shift</kbd>+tap, like <kbd>Shift</kbd>+<kbd>Play</kbd> (the song from the SONG cursor). |
 | `L3` | Pattern pass counter. The CND condition uses it. Up to `L9999`, beyond that `L10K+`. While fill is held — `FILL`. |
@@ -796,6 +796,7 @@ Parameters are on seven pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **
 | Volume | 0–127, INT only | 100 |
 | Pan | L64…C…R63, INT only | C |
 | Mute / Solo | ON / OFF | OFF |
+| Song trn | ON / OFF: the track follows the [song slots' TRN](#songtrn); a KIT track shows `DRUM` (dim, drums are never transposed) | ON |
 | **INS** | | |
 | Drive | OFF, 1–127, INT only | OFF |
 | Drive type | TANH, CLIP, FOLD, RECT, ASYM, INT only; gray while Drive = OFF | TANH |
@@ -1384,7 +1385,7 @@ Factory presets: two per machine — BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT
 
 ### SYNTH: oscillators and wavetables
 
-**SYNTH** — an "analog" synthesizer: 2 oscillators, a sub-oscillator, noise, hard sync, a ring modulator, a wavefolder and a dedicated envelope on SHAPE, followed by the shared ADSR, [filter and LFO](#filter). Each oscillator's mode: **SAW**, **SQR**, **TRI** — classic alias-free waveforms (PolyBLEP), or **WT** — a wavetable (64 frames of 256 points, the frame position is SHAPE). The amplitude envelope is Attack, Decay, Sustain, Release from the ENV page; Mode (POLY / MONO) and Glide work as for CHIP. A SYNTH with a wavetable (at least one oscillator in WT) shares the limit of 16 "heavy" voices with FM, DRUM and STRING; a SYNTH using only SAW / SQR / TRI is light and has the whole pool of 32 available.
+**SYNTH** — an "analog" synthesizer: 2 oscillators, a sub-oscillator, noise, hard sync, a ring modulator, a wavefolder and a dedicated envelope on SHAPE, followed by the shared ADSR, [filter and LFO](#filter). Each oscillator's mode: **SAW**, **SQR**, **TRI** — classic alias-free waveforms (PolyBLEP), or **WT** — a wavetable (64 frames of 256 points, the frame position is SHAPE). The amplitude envelope is Attack, Decay, Sustain, Release from the ENV page; Mode (POLY / MONO) and Glide work as for CHIP. A SYNTH with a wavetable (at least one oscillator in WT) is a "heavy" voice: together with FM, DRUM, STRING and LOFI BYTE no more than 16 of them sound; a SYNTH using only SAW / SQR / TRI is light and does not count toward that limit. How many voices actually sound is up to the [voice cost budget](#sound) (WT costs about twice as much as SAW / SQR / TRI): on overload the oldest voices fade out.
 
 SYNTH has 6 pages: **MAIN**, **ENV**, **OSC**, **MOD**, **FILT**, **LFO**. When Type is changed to another type, the MOD page becomes the type page.
 
@@ -1426,7 +1427,7 @@ A lock on a step with a note applies to that note; on a step without a note — 
 
 ### STRING
 
-**STRING** — a physical-model resonator: a string or a set of tuned modes, struck by a built-in exciter (a click or a short noise burst) at each note. There are 2 **models**: **STRING** — a plucked string (a delay line with damping and stiffness), **MODAL** — 6 tuned resonant modes (bars, bells, plates). Then come the shared ADSR, [filter and LFO](#filter); Mode (POLY / MONO) and Glide work as for SYNTH. STRING is a heavy voice: together with FM, DRUM and SYNTH with a wavetable it shares the limit of 16 heavy voices, and on the synth board it is among the most expensive types (see [voice pool by cost](#sound)).
+**STRING** — a physical-model resonator: a string or a set of tuned modes, struck by a built-in exciter (a click or a short noise burst) at each note. There are 2 **models**: **STRING** — a plucked string (a delay line with damping and stiffness), **MODAL** — 6 tuned resonant modes (bars, bells, plates). Then come the shared ADSR, [filter and LFO](#filter); Mode (POLY / MONO) and Glide work as for SYNTH. STRING is a heavy voice: together with FM, DRUM, SYNTH with a wavetable and LOFI BYTE no more than 16 of them sound; it costs about twice as much as CHIP, and how many voices actually sound is up to the [voice cost budget](#sound).
 
 STRING has 5 pages: **MAIN**, **ENV**, **RES**, **FILT**, **LFO**.
 
@@ -1558,7 +1559,7 @@ OK after a stop (the editor stays open).
 - **BYTE** — the counter `t` runs at a speed set by the note: 8000 values per second at C-4, like the classic formulas, so on C-4 the tunes play at their "native" tempo; an octave up is twice as fast and an octave higher. A new note starts the formula at `t = 0` (MONO legato keeps `t` running, only the speed changes). The formula is evaluated only when `t` changes; above 44,100 values per second (roughly above F#-6) intermediate values are skipped — the dirty aliasing is part of the sound.
 - **Sync** (BYTE only, gray on APC) — OFF / ON. ON: `t` runs from the project tempo, 1024 values per 1/16 step, so rhythmic formulas (`t>>10` is the step, `t>>14` the bar of 16) lock to the sequencer grid; the note only picks the octave from C-4 (an octave up doubles the speed), semitones are ignored. LOOP then shows the loop length in steps (OFF, 1 … 1024 st).
 - **APC** — an oscillator at the note frequency; each of its edges starts a pulse of length WIDTH. While the pulse runs, new edges are skipped: WIDTH shorter than the period plays the note, longer gives subharmonics (octaves and fifths down, "broken" tones).
-- **Voices:** BYTE counts as a heavy voice — together with FM, DRUM, STRING and SYNTH with WT no more than 16; APC is light and gets the whole pool of 32, like CHIP.
+- **Voices:** BYTE is a heavy voice (together with FM, DRUM, STRING and SYNTH with WT no more than 16); APC is light and does not count toward that limit, like CHIP. How many voices actually sound is up to the [voice cost budget](#sound) (the LOFI costs are estimates so far).
 - Changing Machine sets the machine's default macros (BYTE: A, B, C — the defaults of the current formula, TONE 0, LOOP 0; APC: WIDTH 20, TONE 100, DRIFT 0, SMOOTH 0). Turning Formula loads the new formula's defaults into A, B, C (TONE, LOOP and Sync stay); loading a project or preset keeps the stored values.
 
 | Slot (fx) | BYTE | APC |
@@ -1760,7 +1761,7 @@ Six pages: **SONG** (tempo, scale, tuning, seed, pattern, groove), **DLY** ([del
 | Parameter | Values | Scope |
 |---|---|---|
 | **SONG** | | |
-| BPM | 20–300 | project |
+| BPM | 20–300 | project: while a [slot BPM](#songtrn) holds the live tempo (shown in the status bar), this is still the project BPM |
 | Scale root | C…B | project |
 | Scale | 13 scales | project |
 | Tuning | 12-TET, 10 factory, your own `.scl` files from the card; default 12-TET | project: the built-in sound's [tuning](#tuning). The encoder scrolls the list, a pick applies at once |
@@ -1892,10 +1893,11 @@ Any pattern change clears TIE. The pass counter is reset.
 
 ## SONG: the song
 
-A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the 16 tracks. Repeats are equal slots in a row.
+A song has up to 128 slots. A slot is a pattern (P01–P16), the mutes of the 16 tracks, a [follow action](#follow), a [transpose TRN and a tempo BPM](#songtrn). Repeats are equal slots in a row.
 
-- Header: `n/128` and the track numbers 1–16 above the columns. With [PERF](#live) on, the yellow `PERF` badge with the held effects replaces `n/128` (and covers the track numbers it reaches). With the cursor on FOL the header shows the slot's follow instead of the track numbers: `FOLLOW JUMP >07 75%`.
-- Row: slot number, `Pxx`, then 16 cells:
+- **Two views**, switched by <kbd>Shift</kbd>+click (outside an edit) or the row menu's **View**: **view 1**: the track mutes and FOL (as below), **view 2**: `01  P03  +5  128 … FOL`: columns PAT, TRN, BPM, FOL ([below](#songtrn)).
+- Header: `n/128` and the track numbers 1–16 above the columns (view 2: `TRN` and `BPM`). While the song plays, `n/128` gives way to the heard slot's TRN and the live tempo: `T+5 B128`. With [PERF](#live) on, the yellow `PERF` badge with the held effects replaces `n/128` (and covers the track numbers it reaches). With the cursor on FOL the header shows the slot's follow instead of the track numbers: `FOLLOW JUMP >07 75%`.
+- Row: slot number, `Pxx` (a yellow dot after it: the slot has a TRN or a BPM), then 16 cells:
   - filled: the track plays;
   - outline: the track is muted in this slot;
   - dim dot: the track has no steps in this pattern (mute can still be set);
@@ -1909,19 +1911,21 @@ A song has up to 128 slots. A slot is a pattern (P01–P16) and the mutes of the
 | Input | Action |
 |---|---|
 | Turn | Row (in pattern edit: change the pattern). While a [PERF](#live) effect is held: its depth. |
-| <kbd>Shift</kbd>+turn | Column. |
+| <kbd>Shift</kbd>+turn | Column (in a TRN / BPM edit: the step, an octave / ×10). |
+| <kbd>Shift</kbd>+click outside an edit | View 1 / view 2. |
 | Click on PAT | Pattern edit on / off; <kbd>Shift</kbd>+click in pattern edit cancels it (the old pattern returns). |
 | Click on a track cell | Mute / unmute that track in this slot. |
 | Click on FOL | [Follow](#follow) edit. |
-| Hold <kbd>A</kbd> + turn | Change the slot's pattern (on FOL: its follow action); <kbd>A</kbd>+<kbd>B</kbd> cancels. With [PERF](#live) on and no effect held: the [scene crossfader](#scenes) (<kbd>Shift</kbd> ×8), except in the FOL column. |
-| Tap on a cell | Move the cursor there; on a track cell, also toggle mute; on FOL, follow edit. |
+| Click on TRN / BPM (view 2) | [TRN / BPM](#songtrn) edit: turn — the value, click or <kbd>B</kbd> — done, <kbd>Shift</kbd>+click — cancel. |
+| Hold <kbd>A</kbd> + turn | Change the slot's pattern (on FOL: its follow action, on TRN / BPM: the value); <kbd>A</kbd>+<kbd>B</kbd> cancels. With [PERF](#live) on and no effect held: the [scene crossfader](#scenes) (<kbd>Shift</kbd> ×8), except in the FOL, TRN and BPM columns. |
+| Tap on a cell | Move the cursor there; on a track cell, also toggle mute; on FOL, TRN or BPM, edit it. |
 | Vertical drag starting on PAT of the selected row | Change the pattern. |
 | Other drag | Scroll. |
 | [Track button](#trackkeys) <kbd>N</kbd> | Mute / unmute track N in the selected slot. The half 1–8 / 9–16 is the one holding the current track (as in GRID and TRACK), not the cursor column. With [PERF](#live) on and the transport playing: hold its PERF effect (release ends it). |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Live mute, as on every tab (with PERF on too); lasts until the next slot starts. |
 | <kbd>A</kbd> tap | **Add**: a copy of the selected slot right below it, and the cursor moves to it (toast `SONG FULL` at 128). |
 | Long press / long tap | Row menu. |
-| <kbd>B</kbd> tap | Leave pattern / follow edit; otherwise PERF off. |
+| <kbd>B</kbd> tap | Leave pattern / follow / TRN / BPM edit; otherwise PERF off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | Undo song edits (8 steps). |
 
 <a id="follow"></a>
@@ -1934,6 +1938,17 @@ After every pass of a slot the song goes on as its action says: **NEXT** — the
 - **Add** (<kbd>A</kbd> tap) copies the follow too. Inserting or deleting slots keeps JUMP pointing at the same slot; a JUMP to a deleted slot goes to the slot in its place (the new last one when the last was deleted).
 - **Randomness:** decided from the project **Seed** (PROJ → SONG) mixed with a hardware random number at every Play / <kbd>Shift</kbd>+<kbd>Play</kbd> — every start is a new path. Pause keeps it. Export uses the Seed alone — the same file every time.
 
+<a id="songtrn"></a>
+
+### Slot TRN and BPM
+
+View 2 shows two more columns per slot: **TRN**, a transpose of −24…+24 semitones (`...`: none), and **BPM**, a tempo of 20–300 or `---` (the tempo stays).
+
+- **TRN:** while the slot plays, the tracks' notes sound TRN semitones higher / lower and the scale root (PROJ → Scale) moves with them: CHD, NRN, GEN and MUT play in the new key. MIDI tracks get the transposed note. A note pushed past 0–127 does not sound. KIT tracks are never transposed, nor are tracks with TRACK → MAIN → **Song trn** = OFF. LOOP has no transpose; GRID and the roll show the notes as written.
+- **BPM:** a slot with a BPM sets the live tempo from its first step, `---` leaves it alone (the previous slot's tempo goes on). Stop and switching to LOOP bring back the project BPM. The song never changes the project BPM: PROJ shows and saves it, the status bar shows the live tempo. A BPM edit on PROJ while playing changes the project BPM and the live tempo, until the next slot with its own BPM. The status bar BPM edit while a slot's BPM holds is live only: the tempo changes until the next slot with its own BPM, LOOP or Stop, the project BPM stays; with no slot BPM holding it edits the project BPM, as PROJ does. Delay, LFO TEMPO and PERF follow the live tempo. A song Export follows the slot tempos.
+- **Edit:** put the cursor on TRN or BPM and click (or tap): the value turns red. Turn — steps of 1, <kbd>Shift</kbd>+turn — an octave (TRN) / ×10 (BPM). From `---` a turn right lands on the project BPM, below 20 it is `---` again. Click or <kbd>B</kbd> — done, <kbd>Shift</kbd>+click — cancel (toast `CANCEL`); hold <kbd>A</kbd> + turn edits for as long as <kbd>A</kbd> is held. One edit is one undo step. While playing, edits are picked up like other song edits (a slot about to start is already decided: its edit applies from its next start).
+- **Add** copies TRN and BPM; inserting and deleting slots move them with their slot.
+
 **Row menu:**
 
 - **Add**: same as an <kbd>A</kbd> tap.
@@ -1944,6 +1959,7 @@ After every pass of a slot the song goes on as its action says: **NEXT** — the
 - **Follow: NEXT**: reset the slot's [follow action](#follow).
 - **Clear song**, with confirmation.
 - **Perf: ON/OFF**: [PERF](#live), shared with the GRID menu.
+- **View: TRN BPM / View: MUTES**: view 2 / view 1 (as <kbd>Shift</kbd>+click).
 
 ### How the song plays
 
@@ -2217,7 +2233,7 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 
 - **Volume:** voice × instrument Volume × track Volume × MAIN on the [MIX](#mixer) tab (default 100%), with soft limiting. Track Volume comes after its [insert](#insert) (Drive, Bit crush, Downsample).
 - **Pan:** the track's mono sum is placed by the track's Pan (or the step's PAN lock) plus LFO PAN, constant power normalised to the centre: at `C` both channels get the voice at full level, hard left is +3 dB on the left and silence on the right. The delay, reverb and MOD bus sends are taken before pan (mono); the delay returns to the centre (PING-PONG — alternating sides), the reverb in pseudo-stereo, the MOD bus in stereo. The compressor is stereo-linked; the PERF effects, MAIN and the soft clip work on both channels.
-- **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM, STRING, SYNTH with a WT oscillator and LOFI BYTE together: no more than 16 voices; SYNTH using only SAW / SQR / TRI and LOFI APC do not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track. Sample voices stream from the card, up to 16 at once (samples copied to PSRAM do not count), see [Samples and SD cards](#streaming).
+- **Voices:** a shared pool of 32. POLY: up to 4 voices per track (an extra note takes the track's oldest voice); MONO: one voice with legato. FM: drums and CHORD are always mono on a track, and Mode applies only to TONE; DRUM is always mono. FM, DRUM, STRING, SYNTH with a WT oscillator and LOFI BYTE together: no more than 16 voices; SYNTH using only SAW / SQR / TRI and LOFI APC do not count toward this limit. A seventeenth heavy voice fades out the oldest heavy one in 4 ms (no click); filter tails do not count toward the limit. If the pool is full, a voice is stolen from another track. Above both limits is the voice cost budget (below): expensive voices (DRUM, SYNTH with WT) can hit it before 16 heavy ones. Sample voices stream from the card, up to 16 at once (samples copied to PSRAM do not count), see [Samples and SD cards](#streaming).
 - **CPU guard:** when the audio render nears its time budget (above 80 % on average, or one block over 100 %), the oldest voice fades out in 4 ms (releasing voices first) and the pool shrinks to the voices left; once the load drops below 65 % it grows back by one voice every 0.1 s. A heavy project thins out instead of crackling or restarting the device.
 - **Voice pool by cost (Teensy synth board):** every note is priced at note-on by its engine and settings (CHIP and samples are cheapest; wavetable SYNTH with fold, ring and LADDER, DRUM (the BDA…HHR machines about the same as the others, HHR and BDS a little more) and STRING cost two to three times more). The summed price of the sounding voices stays under about 65 % of the CPU (the effects and track strips take the rest, about 73 % in all): a note that does not fit fades out the oldest voices in 4 ms (releasing ones first), as many as needed, and always plays. A dense project thins out before the load gets near the CPU guard, which stays as the backstop. The price is fixed when the note starts: an LFO moving fold or cutoff later does not change it. The ESP32-S3 has no such budget.
 - **Latency:** events reach the synth board and play about 4 ms after the sequencer step (a fixed delay that absorbs the link), plus the audio output buffer: the internal sound lags the MIDI tracks by about 10 ms, constantly, without jitter. MIDI tracks are not delayed.
@@ -2241,7 +2257,7 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 | Files in a list | 128 |
 | Project / track / instrument name | 16 / 8 / 8 characters |
 | MIDI import | 512 KB, 16,384 notes, 32 sources |
-| Instruments / voices | 32 / 32, of them up to 16 heavy (FM, DRUM, STRING, wavetable SYNTH, LOFI BYTE) (POLY: up to 4 per track; fewer under the CPU guard) |
+| Instruments / voices | 32 / 32 voices, of them up to 16 heavy (FM, DRUM, STRING, wavetable SYNTH, LOFI BYTE); the load is capped by a budget of [voice costs](#sound), on overload the oldest voices fade out (POLY: up to 4 per track; fewer under the CPU guard) |
 | Sample voices streaming at once | 16 (samples in PSRAM do not count) |
 | Samples | 128 per project, name up to 16 characters |
 | Sample length | up to the card's free space (mono, 16-bit, up to 44.1 kHz after import) |

@@ -120,6 +120,8 @@ void templateStrip(Project& p) {
     p.song[i] = 0;
     p.songMute[i] = 0;
     p.songFol[i] = SongFollow();
+    p.songTrn[i] = 0;
+    p.songBpm[i] = 0;
   }
   strncpy(p.name, "untitled", sizeof(p.name) - 1);
   p.name[sizeof(p.name) - 1] = 0;

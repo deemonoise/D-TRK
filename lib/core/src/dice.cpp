@@ -317,11 +317,13 @@ void swapBytes(void* a, void* b, size_t n) {
   }
 }
 
-// Swaps the parts the roll wrote (s.layers, the masks) between p and s.parts.
-void swapWritten(Project& p, DiceSnap& s) {
+// Swaps the parts the roll wrote (s.layers, the masks) between p and s.parts. bpm: the project BPM (p.bpm
+// may be a song slot's live tempo); it goes into s.parts, not p.bpm.
+void swapWritten(Project& p, DiceSnap& s, uint16_t bpm) {
   DiceParts& d = s.parts;
   if (s.layers & kDiceTempo) {
-    swapBytes(&p.bpm, &d.bpm, sizeof(p.bpm));
+    p.bpm = d.bpm;
+    d.bpm = bpm;
     swapBytes(&p.scaleRoot, &d.scaleRoot, 1);
     swapBytes(&p.scaleType, &d.scaleType, 1);
   }
@@ -364,7 +366,7 @@ int diceGenreOfBpm(uint16_t bpm) {
 
 void diceSlots(const Project& p, uint8_t out[kDiceRoles]) { slotsOf(p.tracks, p.instruments, out); }
 
-DiceResult diceDraft(const Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s) {
+DiceResult diceDraft(const Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s, uint16_t bpm) {
   DiceResult res;
   layers &= kDiceAll;
   if (pattern < 0 || pattern >= kPatterns) pattern = 0;
@@ -375,6 +377,7 @@ DiceResult diceDraft(const Project& p, uint8_t layers, int pattern, uint32_t see
   s.instrMask = 0;
   s.patMask = 0;
   load(p, pattern, s.parts);
+  if (bpm) s.parts.bpm = bpm;
   Rng r(seed);
   if (layers & kDiceTempo) res.genre = rollTempo(s.parts, r);
   if (layers & kDiceSounds) rollSounds(s.parts, res.genre >= 0 ? res.genre : diceGenreOfBpm(s.parts.bpm), r, s);
@@ -383,25 +386,25 @@ DiceResult diceDraft(const Project& p, uint8_t layers, int pattern, uint32_t see
   return res;
 }
 
-uint8_t diceApply(Project& p, DiceSnap& s) {
+uint8_t diceApply(Project& p, DiceSnap& s, uint16_t bpm) {
   const uint8_t l = s.drafted;
   if (!l) return 0;  // nothing drafted: the applied roll's undo stays
   s.drafted = 0;
   s.layers = l;
-  swapWritten(p, s);
+  swapWritten(p, s, bpm ? bpm : p.bpm);
   return l;
 }
 
-DiceResult diceRoll(Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s) {
-  const DiceResult res = diceDraft(p, layers, pattern, seed, s);
-  diceApply(p, s);
+DiceResult diceRoll(Project& p, uint8_t layers, int pattern, uint32_t seed, DiceSnap& s, uint16_t bpm) {
+  const DiceResult res = diceDraft(p, layers, pattern, seed, s, bpm);
+  diceApply(p, s, bpm);
   return res;
 }
 
-uint8_t diceUndo(Project& p, DiceSnap& s) {
+uint8_t diceUndo(Project& p, DiceSnap& s, uint16_t bpm) {
   const uint8_t l = s.layers;
   if (!l) return 0;
-  swapWritten(p, s);
+  swapWritten(p, s, bpm ? bpm : p.bpm);
   s.layers = 0;
   s.cfgMask = 0;
   s.instrMask = 0;

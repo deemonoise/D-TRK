@@ -11,6 +11,16 @@ constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
 constexpr int kPatterns = 16;
 constexpr int kSongMax = 128;  // song slots
+// Song slot key and tempo (Project::songTrn / songBpm): TRN -kSongTrnMax..kSongTrnMax semitones, BPM 0 ("-")
+// or kSongBpmMin..kSongBpmMax.
+constexpr int kSongTrnMax = 24;
+constexpr uint16_t kSongBpmMin = 20, kSongBpmMax = 300;
+inline int8_t songTrnClamp(int v) {
+  return static_cast<int8_t>(v < -kSongTrnMax ? -kSongTrnMax : (v > kSongTrnMax ? kSongTrnMax : v));
+}
+inline uint16_t songBpmClamp(int v) {  // 0 stays "-"
+  return static_cast<uint16_t>(v <= 0 ? 0 : (v < kSongBpmMin ? kSongBpmMin : (v > kSongBpmMax ? kSongBpmMax : v)));
+}
 // Follow action of a song slot (Project::songFol, follow.h): what plays after the slot's pass.
 // In files (SFOL): new actions before Count only.
 enum class FollowAct : uint8_t { Next, Prev, Stay, Jump, Random, Count };
@@ -712,6 +722,13 @@ struct Project : SynthModel {
   // After slot i's pass the song goes on as songFol[i] says (follow.h). The defaults (NEXT 100 %)
   // play the slots in order. Saved in SFOL.
   SongFollow songFol[kSongMax];
+  // Slot i's key and tempo, for as long as it plays in the song. Notes of the tracks in songTrnMask (KIT
+  // tracks never) sound songTrn[i] semitones higher, the scale root moving with them (CHD, NRN, GEN, MUT
+  // in the new key); a note past 0..127 is dropped. songBpm[i] (kSongBpmMin..kSongBpmMax) is the live tempo
+  // from the slot's start, 0 keeps the tempo; the project BPM stays (Stop restores it). Saved in SSLT.
+  int8_t songTrn[kSongMax] = {0};
+  uint16_t songBpm[kSongMax] = {0};
+  uint16_t songTrnMask = 0xFFFF;  // bit t: track t follows songTrn (TRACK -> MAIN, Song trn)
   // Project seed (UI 1..9999): the follow decisions (follow.h); evolve shares it. Saved in SFOL.
   uint16_t seed = 1;
   // Scenes (scene.h): the ends of the crossfader, indices into scenes. Saved in SCEN.

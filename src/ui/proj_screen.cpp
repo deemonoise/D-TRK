@@ -290,21 +290,27 @@ void ProjScreen::snapPattern() {
   patIdx_ = app_.editPattern();
 }
 
-int ProjScreen::bpm() {
-  const int cur = app_.project().bpm;
+// The project BPM: while a song slot's BPM holds the live tempo, not the live one (the status bar shows that).
+// Not holding lockProject() (projectBpm takes it).
+int ProjScreen::bpm() { return bpmFrom(engine::projectBpm(app_.project())); }
+
+int ProjScreen::bpmFrom(int cur) {
   if (bpmTarget_ != cur && millis() - bpmPostMs_ >= kBpmSettleMs) bpmTarget_ = cur;  // changed elsewhere
   return bpmTarget_;
 }
 
+// Holding lockProject() (ParamList::edit; the mutex is not recursive): savedBpm, not projectBpm.
 void ProjScreen::editBpm(int delta) {
-  bpmTarget_ = clampi(bpm() + delta, 20, 300);
+  uint16_t pb = 0;
+  const int cur = engine::savedBpm(pb) ? pb : app_.project().bpm;
+  bpmTarget_ = clampi(bpmFrom(cur) + delta, 20, 300);
   bpmPostMs_ = millis();
   engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
 }
 
 void ProjScreen::onEnter() {
   list_.setEdit(false);
-  bpmTarget_ = app_.project().bpm;
+  bpmTarget_ = engine::projectBpm(app_.project());
   if (!tunUser_) tunUser_ = new (std::nothrow) char[kTunUserMax][hw::kNameMax];
   tunUserN_ = tunUser_ ? storage::listTunings(tunUser_, kTunUserMax) : 0;
   tunPick_ = -1;
@@ -422,9 +428,11 @@ void ProjScreen::roll(uint8_t layers) {
   mt::Project& p = app_.project();
   // The generators run without the lock (the UI is the only writer of what they read); the engine only
   // waits for the swap.
-  const mt::DiceResult r = mt::diceDraft(p, layers, app_.editPattern(), esp_random(), *dice_);
+  // A song slot's BPM may hold the live tempo p.bpm: the roll reads and its undo keeps the project BPM.
+  const mt::DiceResult r = mt::diceDraft(p, layers, app_.editPattern(), esp_random(), *dice_, engine::projectBpm(p));
   engine::lockProject();
-  mt::diceApply(p, *dice_);
+  uint16_t pb = 0;
+  mt::diceApply(p, *dice_, engine::savedBpm(pb) ? pb : 0);
   evoClearTracks(dice_->patMask);
   engine::unlockProject();
   afterDice(layers);
@@ -443,7 +451,8 @@ void ProjScreen::undoDice() {
   if (!dice_) return;
   engine::lockProject();
   const uint16_t rolled = dice_->patMask;  // diceUndo empties it
-  const uint8_t l = mt::diceUndo(app_.project(), *dice_);
+  uint16_t pb = 0;
+  const uint8_t l = mt::diceUndo(app_.project(), *dice_, engine::savedBpm(pb) ? pb : 0);
   if (l) evoClearTracks(rolled);
   engine::unlockProject();
   if (!l) return;

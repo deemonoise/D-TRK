@@ -28,7 +28,21 @@ uint64_t songTicks(const Project& p, int maxSlots) {
 
 uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, idx)); }
 
-uint64_t songUs(const Project& p, int maxSlots) { return ticksToUs(p, songTicks(p, maxSlots)); }
+// A slot's BPM is the tempo from its start ("-" keeps it), as the sequencer plays it.
+uint64_t songUs(const Project& p, int maxSlots) {
+  uint64_t us = 0, ticks = 0;  // ticks: since the last tempo change
+  uint16_t bpm = p.bpm < 20 ? 20 : (p.bpm > 300 ? 300 : p.bpm);
+  followWalk(p, followRunSeed(p.seed, 0), maxSlots, [&](int slot) {
+    const uint16_t b = songBpmClamp(p.songBpm[slot]);
+    if (b && b != bpm) {
+      us += ticks * 625000ull / bpm;
+      ticks = 0;
+      bpm = b;
+    }
+    ticks += passTicks(p, p.song[slot] < kPatterns ? p.song[slot] : kPatterns - 1);
+  });
+  return us + ticks * 625000ull / bpm;
+}
 
 void normalizePeak(int16_t* b, uint32_t frames, int16_t peak, float target) {
   normalizeSamples(b, 2 * frames, peak, target);
@@ -58,12 +72,13 @@ void nextResampleName(const Project& p, char out[kSampleNameMax + 1]) {
   }
 }
 
-OfflineSequence::Guard::Guard(Project& pr) : p(pr) {
+OfflineSequence::Guard::Guard(Project& pr) : p(pr), bpm(pr.bpm) {
   for (int t = 0; t < kTracks; ++t) mute[t] = p.tracks[t].mute;
 }
 
 OfflineSequence::Guard::~Guard() {
   for (int t = 0; t < kTracks; ++t) p.tracks[t].mute = mute[t];
+  p.bpm = bpm;  // a slot's BPM
 }
 
 OfflineSequence::OfflineSequence(Project& p, const RenderSpec& spec) : spec_(spec), seq_(p) {

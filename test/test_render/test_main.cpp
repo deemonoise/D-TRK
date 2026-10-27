@@ -54,6 +54,22 @@ void test_song_us_sums_slot_passes() {
   TEST_ASSERT_EQUAL_UINT64(2000000ull + 2 * 4000000ull + 2000000ull, songUs(p));
 }
 
+// A slot's BPM is the tempo from its start ("-" keeps it); the project BPM stays.
+void test_song_us_follows_slot_bpm() {
+  Project& p = *mkProj();
+  p.patterns[1].length = 32;
+  p.song[0] = 0;
+  p.song[1] = 1;
+  p.song[2] = 1;
+  p.song[3] = 0;
+  p.songLen = 4;
+  p.songBpm[1] = 60;
+  TEST_ASSERT_EQUAL_UINT64(2000000ull + 2 * 8000000ull + 4000000ull, songUs(p));
+  p.songBpm[0] = 240;
+  TEST_ASSERT_EQUAL_UINT64(1000000ull + 2 * 8000000ull + 4000000ull, songUs(p));
+  TEST_ASSERT_EQUAL(120, p.bpm);
+}
+
 void test_normalize_peak() {
   int16_t b[4] = {100, -3000, 1500, 0};  // 2 frames, L R
   normalizePeak(b, 2, 3000);
@@ -947,6 +963,7 @@ int main() {
   RUN_TEST(test_prev_tap_unity);
   RUN_TEST(test_normalize_hot);
   RUN_TEST(test_song_us_sums_slot_passes);
+  RUN_TEST(test_song_us_follows_slot_bpm);
   RUN_TEST(test_normalize_peak);
   RUN_TEST(test_trim_tail);
   RUN_TEST(test_next_resample_name);

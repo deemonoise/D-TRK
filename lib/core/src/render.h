@@ -19,7 +19,7 @@ constexpr int kRenderSlotsMax = 512;  // RenderSpec::maxSlots
 
 // Length of one pass of pattern idx / of the song, in ticks and in us. The song: the follow-action path
 // from slot 0 with Project::seed (followWalk, salt 0), at most maxSlots passes (a song of NEXT slots:
-// each slot once).
+// each slot once). songUs: each slot's BPM is the tempo from its start ("-" keeps it).
 uint64_t passTicks(const Project& p, int idx);
 uint64_t songTicks(const Project& p, int maxSlots = kSongMax);
 uint64_t passUs(const Project& p, int idx);
@@ -70,7 +70,7 @@ class OfflineSequence : public MidiSink {
   void send(const uint8_t*, uint8_t) override {}
   void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) override;
 
-  // Restores the track mutes (written by the song's slot masks) at the end of the render.
+  // Restores the track mutes (written by the song's slot masks) and the BPM (slot tempos) at the end of the render.
   struct Guard {
     explicit Guard(Project& p);
     ~Guard();
@@ -78,6 +78,7 @@ class OfflineSequence : public MidiSink {
     Guard& operator=(const Guard&) = delete;
     Project& p;
     bool mute[kTracks];
+    uint16_t bpm;
   };
 
  private:

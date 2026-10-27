@@ -456,6 +456,24 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                     [this](int d) { cfg().mute = d > 0; }};
   params_[kSolo] = {"Solo", [this](char* o, int n) { onOff(cfg().solo, o, n); },
                     [this](int d) { cfg().solo = d > 0; }};
+  // The song slots' TRN plays on this track (Project::songTrnMask); a KIT track never follows it.
+  params_[kSongTrn] = {"Song trn",
+                       [this](char* o, int n) {
+                         if (app_.project().trackIsDrum(app_.curTrack())) snprintf(o, n, "DRUM");
+                         else onOff((app_.project().songTrnMask >> app_.curTrack()) & 1, o, n);
+                       },
+                       [this](int d) {
+                         mt::Project& p = app_.project();
+                         const uint16_t bit = static_cast<uint16_t>(1u << app_.curTrack());
+                         const uint16_t m = d > 0 ? static_cast<uint16_t>(p.songTrnMask | bit)
+                                                  : static_cast<uint16_t>(p.songTrnMask & ~bit);
+                         if (m == p.songTrnMask) return;
+                         // Already under lockProject() (ParamList::edit; the mutex is not recursive):
+                         // the replan is posted before the engine plans on the new mask.
+                         p.songTrnMask = m;
+                         engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));  // replan
+                       },
+                       [this] { return app_.project().trackIsDrum(app_.curTrack()); }};
   list_.setOnEdit([this] { app_.markDirty(); });
   // Cancel: the name is copied back (several characters may have changed); the other rows step
   // back through their edit(), which also sends what they send (program, output).
