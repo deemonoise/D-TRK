@@ -293,6 +293,11 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::Both:
       if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
+    case AbAction::AThenB:  // GRID, PERF off: hold A + B clears the step / selection; else Both follows
+      if (tab_ == Tab::Grid && !perf_.on() && !xyMode() && !menu_.isOpen() && !bpmEdit_ &&
+          grid_.chordClear())
+        ab_.dropBoth();
+      return;
     default: return;
   }
   onInput(hw::InputEvent{t, o.delta, o.shift});
@@ -413,10 +418,11 @@ void App::onTouch(const TouchEvent& ev) {
   screen()->onTouch(ev);
 }
 
-void App::pushUndo(uint8_t pat) {
+void App::pushUndo(uint8_t pat, int genTrack) {
   if (!undoBuf_ || pat >= mt::kPatterns) return;
-  // No lock: the engine never writes pattern data (only p_->bpm), so reading it is safe.
-  undo_.push(pat, p_->patterns[pat]);
+  // No lock: the engine never writes pattern data (only p_->bpm) nor GenCfg, so reading them is safe.
+  const bool g = genTrack >= 0 && genTrack < mt::kTracks;
+  undo_.push(pat, p_->patterns[pat], g ? genTrack : -1, g ? p_->gen[genTrack] : mt::GenCfg());
 }
 
 void App::projectReplaced() {
@@ -439,10 +445,14 @@ bool App::doUndo() {
   if (!undoBuf_) return false;
   uint8_t pat;
   mt::Pattern& scratch = undoBuf_[mt::Undo::kDepth].data;
-  if (!undo_.pop(pat, scratch)) return false;
+  int genTrack = -1;
+  mt::GenCfg gen;
+  if (!undo_.pop(pat, scratch, &genTrack, &gen)) return false;
   engine::lockProject();
   p_->patterns[pat] = scratch;
+  if (genTrack >= 0) p_->gen[genTrack] = gen;  // Capture live: GEN back on
   engine::unlockProject();
+  if (genTrack >= 0) engine::post(engine::Cmd::GenEdit);
   markDirty();
   return true;
 }

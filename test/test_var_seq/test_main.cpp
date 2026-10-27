@@ -1,5 +1,5 @@
-// The sequencer side of VAR (var_gen.h): generations at pass ends, playing, order VAR -> EVO -> GEN, rewind,
-// reset, Capture.
+// The sequencer side of VAR (var_gen.h): generations at pass ends, playing, order VAR -> GEN, rewind,
+// reset.
 #include <string.h>
 #include <unity.h>
 #include <set>
@@ -128,7 +128,7 @@ void tearDown() {
   delete p;
 }
 
-// VAR off (any other field) plays the pattern, with EVO exactly as without VAR.
+// MUT off (any other VAR / EVO field) plays the pattern.
 void test_off_is_the_pattern() {
   melody();
   p->evo[0] = EvoCfg{100, 1, 10, kEvoMaskAll};
@@ -252,7 +252,7 @@ void test_rewind_markov() {
     const uint64_t t = (k + 1) * kPassUs - 130000;
     run(sink->now, t);
     sink->now = t;
-    seq->varEdited(t, *sink);
+    seq->mutEdited(t, *sink);
   }
   run(sink->now, 6 * kPassUs - 1);
   TEST_ASSERT_TRUE(same(ref, sink->on));
@@ -294,28 +294,6 @@ void test_render_twice_identical() {
   TEST_ASSERT_FALSE(same(m, play(8, 1, 77)));
 }
 
-// EVO works on VAR's output: NOTE alone moves pitches only at VAR's steps.
-void test_var_and_evo_stack() {
-  p->patterns[0].steps[0][3].note = 64;
-  p->scaleType = static_cast<uint8_t>(ScaleType::Major);
-  p->var[0] = ca1d(90);
-  const std::vector<On> varOnly = play(8);
-  p->evo[0] = EvoCfg{100, 1, 0, kEvoNote};
-  const std::vector<On> v = play(8);
-  bool moved = false;
-  for (int k = 0; k < 8; ++k) {
-    TEST_ASSERT_TRUE(steps(pass(v, k)) == steps(pass(varOnly, k)));
-    for (const On& o : pass(v, k)) moved |= o.note != 64;
-  }
-  TEST_ASSERT_TRUE(moved);
-  // RHYTHM drops / ghosts on top of VAR's steps.
-  p->evo[0] = EvoCfg{100, 1, 0, kEvoRhythm};
-  const std::vector<On> r = play(8);
-  bool differs = false;
-  for (int k = 1; k < 8; ++k) differs |= steps(pass(r, k)) != steps(pass(varOnly, k));
-  TEST_ASSERT_TRUE(differs);
-}
-
 // GEN PITCH over a VAR track: VAR's rhythm, GEN's notes.
 void test_gen_pitch_takes_var_rhythm() {
   p->scaleType = static_cast<uint8_t>(ScaleType::Major);
@@ -333,8 +311,8 @@ void test_gen_pitch_takes_var_rhythm() {
   TEST_ASSERT_TRUE(other);
 }
 
-// varClear: the heard state back to generation 0, n goes on.
-void test_var_clear() {
+// mutClear: the heard state back to generation 0, n goes on.
+void test_mut_clear() {
   p->patterns[0].steps[0][3].note = 64;
   p->var[0] = ca1d(90);
   play(3);
@@ -342,32 +320,9 @@ void test_var_clear() {
   TEST_ASSERT_TRUE(seq->heardVar(0).sinceReset > 0);
   const uint32_t n = seq->heardVar(0).n;
   sink->now = t;
-  seq->varClear(t, *sink, 0);
+  seq->mutClear(t, *sink, 0);
   TEST_ASSERT_EQUAL(0, seq->heardVar(0).sinceReset);
   TEST_ASSERT_EQUAL_UINT32(n, seq->heardVar(0).n);
-}
-
-// Capture: the heard state (VAR, then EVO) written into the pattern plays as heard without VAR / EVO.
-void test_capture_writes_var_then_evo() {
-  melody();
-  p->var[0] = ca1d(90);
-  p->patterns[0].steps[0][5].note = kNoteEmpty;
-  p->patterns[0].steps[0][9].note = kNoteEmpty;
-  p->patterns[0].steps[0][10].note = kNoteEmpty;
-  p->evo[0] = EvoCfg{100, 1, 0, kEvoNote | kEvoRtrgVol};
-  const std::vector<On> ref = play(4);
-  play(3);  // the heard state at the end of pass 2: the one pass 3 plays
-  static VarTrack vt;
-  static EvoTrack et;
-  vt = seq->heardVar(0);
-  et = seq->heardEvo(0);
-  TEST_ASSERT_TRUE(vt.sinceReset > 0);
-  static Step scratch[kMaxSteps];
-  varCapture(p->patterns[0], 0, vt, varApplyOf(*p, 0), et, evoApplyOf(*p, 0), scratch);
-  p->var[0].mode = 0;
-  p->evo[0].mask = 0;
-  const std::vector<On> v = play(1);
-  TEST_ASSERT_TRUE(same(pass(ref, 3), v));
 }
 
 // Another pattern next restarts VAR at its generation 0 (the pass count too); the same pattern again goes on.
@@ -439,10 +394,8 @@ int main() {
   RUN_TEST(test_rewind_markov);
   RUN_TEST(test_stop_resets);
   RUN_TEST(test_render_twice_identical);
-  RUN_TEST(test_var_and_evo_stack);
   RUN_TEST(test_gen_pitch_takes_var_rhythm);
-  RUN_TEST(test_var_clear);
-  RUN_TEST(test_capture_writes_var_then_evo);
+  RUN_TEST(test_mut_clear);
   RUN_TEST(test_pattern_change_restarts);
   RUN_TEST(test_same_pattern_queued_goes_on);
   RUN_TEST(test_pattern_untouched);

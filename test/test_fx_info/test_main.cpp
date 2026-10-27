@@ -14,6 +14,44 @@ static const char* fmt(Fx f, uint8_t v) {
   return b;
 }
 
+void test_gat_step() {
+  // Fine: one unit per detent, as fxStep.
+  TEST_ASSERT_EQUAL(51, gatStep(50, 1, false));
+  TEST_ASSERT_EQUAL(47, gatStep(50, -3, false));
+  TEST_ASSERT_EQUAL(101, gatStep(100, 1, false));  // 107 %
+  TEST_ASSERT_EQUAL(1, gatStep(1, -1, false));
+  TEST_ASSERT_EQUAL(200, gatStep(200, 1, false));
+  // Coarse below 100: exact +-10 %.
+  TEST_ASSERT_EQUAL(60, gatStep(50, 1, true));
+  TEST_ASSERT_EQUAL(30, gatStep(50, -2, true));
+  TEST_ASSERT_EQUAL(100, gatStep(90, 1, true));
+  TEST_ASSERT_EQUAL(90, gatStep(100, -1, true));
+  // Across 100: the nearest value in the turn's direction.
+  TEST_ASSERT_EQUAL(101, gatStep(95, 1, true));    // 105: 107 (2) over 100 (5)
+  TEST_ASSERT_EQUAL(101, gatStep(100, 1, true));   // 110: 107 (3) over 114 (4)
+  TEST_ASSERT_EQUAL(97, gatStep(101, -1, true));   // 107 -> 97 exact
+  TEST_ASSERT_EQUAL(101, gatStep(102, -1, true));  // 114 -> 104: 107 (3) over 100 (4)
+  TEST_ASSERT_EQUAL(100, gatStep(91, 1, true));    // 101: 100 (1)
+  // Above 100: 7 % units, so one unit per detent.
+  TEST_ASSERT_EQUAL(102, gatStep(101, 1, true));
+  TEST_ASSERT_EQUAL(150, gatStep(149, 1, true));
+  TEST_ASSERT_EQUAL(148, gatStep(149, -1, true));
+  TEST_ASSERT_EQUAL(104, gatStep(101, 3, true));
+  // Clamps, no stall, never against the turn.
+  TEST_ASSERT_EQUAL(1, gatStep(5, -1, true));
+  TEST_ASSERT_EQUAL(1, gatStep(20, -5, true));
+  TEST_ASSERT_EQUAL(1, gatStep(1, -1, true));
+  TEST_ASSERT_EQUAL(200, gatStep(199, 1, true));
+  TEST_ASSERT_EQUAL(200, gatStep(200, 3, true));
+  TEST_ASSERT_EQUAL(199, gatStep(200, -1, true));
+  TEST_ASSERT_EQUAL(1, gatStep(0, -1, true));  // out of range: clamped first
+  for (int v = 1; v <= 200; ++v) {
+    const uint8_t u = gatStep(static_cast<uint8_t>(v), 1, true), d = gatStep(static_cast<uint8_t>(v), -1, true);
+    TEST_ASSERT_TRUE(v == 200 ? u == 200 : u > v);
+    TEST_ASSERT_TRUE(v == 1 ? d == 1 : d < v);
+  }
+}
+
 void test_names_and_defaults() {
   TEST_ASSERT_EQUAL_STRING("RAT", fxName(Fx::RAT));
   TEST_ASSERT_EQUAL_STRING("...", fxName(Fx::None));
@@ -417,6 +455,7 @@ int main() {
   RUN_TEST(test_gte_fx);
   RUN_TEST(test_long_names);
   RUN_TEST(test_names_and_defaults);
+  RUN_TEST(test_gat_step);
   RUN_TEST(test_format);
   RUN_TEST(test_step_clamps_and_signed);
   RUN_TEST(test_cnd_order);

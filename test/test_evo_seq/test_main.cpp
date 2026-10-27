@@ -74,6 +74,7 @@ static std::vector<On> play(int passes, uint32_t rngSeed = 1, uint32_t salt = 0)
 void setUp() {
   p = new Project();
   for (TrackCfg& c : p->tracks) c.out = TrackOut::Midi;
+  for (VarCfg& v : p->var) v.mode = static_cast<uint8_t>(VarMode::Evo);  // MUT EVO everywhere
   p->seed = 1234u;
   seq = nullptr;
   sink = nullptr;
@@ -246,7 +247,7 @@ void test_pause_resume_keeps_the_drift() {
   }
 }
 
-void test_evo_clear_zeroes_heard_state() {
+void test_mut_clear_zeroes_heard_state() {
   melody();
   p->evo[0] = EvoCfg{100, 1, 0, kEvoMaskAll};
   play(3);
@@ -255,7 +256,7 @@ void test_evo_clear_zeroes_heard_state() {
   const uint32_t n = seq->heardEvo(0).n;
   TEST_ASSERT_TRUE(n >= 1);
   sink->now = t;
-  seq->evoClear(t, *sink, 0);
+  seq->mutClear(t, *sink, 0);
   TEST_ASSERT_TRUE(evoIdle(seq->heardEvo(0)));
   TEST_ASSERT_EQUAL(n, seq->heardEvo(0).n);
 }
@@ -320,7 +321,7 @@ int main() {
   RUN_TEST(test_restart_replays_the_same_drift);
   RUN_TEST(test_replan_over_a_mutation_is_exact);
   RUN_TEST(test_pause_resume_keeps_the_drift);
-  RUN_TEST(test_evo_clear_zeroes_heard_state);
+  RUN_TEST(test_mut_clear_zeroes_heard_state);
   RUN_TEST(test_drum_track_note_mask_is_silent);
   RUN_TEST(test_drum_track_rhythm_drops);
   RUN_TEST(test_gen_track_ignores_note_mask);

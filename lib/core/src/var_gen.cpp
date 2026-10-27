@@ -51,6 +51,7 @@ uint32_t varRand(uint32_t seed, int track, uint32_t n, int i, uint32_t salt) {
 VarMode varModeOf(const VarCfg& c, bool kit) {
   if (c.mode >= static_cast<uint8_t>(VarMode::Count)) return VarMode::Off;
   const VarMode m = static_cast<VarMode>(c.mode);
+  if (m == VarMode::Evo) return VarMode::Off;  // MUT plays EVO: the VAR engine is off
   return m == VarMode::Ca2d && !kit ? VarMode::Ca1d : m;
 }
 
@@ -295,30 +296,6 @@ const Step& varStep(const Pattern& pt, int tr, int idx, const VarTrack& s, const
   if (a.kit) tmp.vel = from.vel;
   else tmp.note = from.note;
   return tmp;
-}
-
-namespace {
-const Step& viewGet(const void* ctx, int k, Step& tmp) {
-  const VarView& v = *static_cast<const VarView*>(ctx);
-  return varStep(*v.pt, v.tr, k, *v.s, v.a, tmp);
-}
-}  // namespace
-
-EvoSrc varSrc(const VarView& v) {
-  EvoSrc s;
-  s.get = viewGet;
-  s.ctx = &v;
-  return s;
-}
-
-void varCapture(Pattern& pt, int tr, const VarTrack& v, const VarApply& va, const EvoTrack& e, const EvoApply& ea,
-                Step* scratch) {
-  VarView w;
-  w.pt = &pt;
-  w.tr = tr;
-  w.s = &v;
-  w.a = va;
-  evoCapture(pt, tr, e, ea, scratch, varSrc(w));
 }
 
 }  // namespace mt

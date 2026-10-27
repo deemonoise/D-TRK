@@ -388,8 +388,7 @@ void ProjScreen::diceMenu() {
 void ProjScreen::evoClearTracks(uint16_t mask) {
   for (int t = 0; t < mt::kTracks; ++t)
     if (mask & (1u << t)) {
-      engine::evoClear(t);
-      engine::varClear(t);  // a rewritten track starts over at VAR generation 0 too
+      engine::mutClear(t);  // a rewritten track starts over: no EVO changes, VAR generation 0
     }
 }
 

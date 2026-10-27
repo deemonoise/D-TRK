@@ -6,6 +6,7 @@
 #include "audio/audio.h"
 #include "bytebeat_lib.h"
 #include "fx_info.h"
+#include "mut.h"
 #include "name_edit.h"
 #include "note_name.h"
 #include "esp_random.h"
@@ -338,88 +339,74 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                          genEdited();
                        },
                        byteDimF};
-  // EVO page (Project::evo): every edit replans the unheard steps. Evolve OFF greys all but Home (it still
-  // pulls the drift back).
-  auto evoDimF = [this] { return evoDim(); };
-  params_[kEvoAmt] = {"Evolve",
-                      [this](char* o, int n) {
-                        if (evo().amount) snprintf(o, n, "%u%%", evo().amount);
-                        else snprintf(o, n, "OFF");
-                      },
+  // MUT page (mut.h): Mut = the mode, one per turn with wrap through the modes the track offers (mutCycle); the
+  // rows below are the active mode's (mutRows). Every edit replans the unheard steps.
+  params_[kMutMode] = {"Mut",
+                       [this](char* o, int n) {
+                         static const char* const kN[] = {"OFF", "CA1D", "CA2D", "MARKOV", "EVO"};
+                         static_assert(sizeof(kN) / sizeof(kN[0]) == static_cast<int>(mt::VarMode::Count), "Mut");
+                         snprintf(o, n, "%s", kN[static_cast<int>(mutMode())]);
+                       },
+                       [this](int d) {  // one mode per turn (Shift too), from the shown one
+                         const mt::VarMode next = mt::mutCycle(app_.project(), app_.curTrack(), d);
+                         if (next == mutMode()) return;
+                         mt::mutSetMode(app_.project(), app_.curTrack(), next);
+                         mutEdited();
+                       }};
+  // EVO (Project::evo). Amount 1..100: OFF is the Mut row's (mutSetMode turns 0 into kEvoAmountOn).
+  params_[kEvoAmt] = {"Amount", [this](char* o, int n) { snprintf(o, n, "%u%%", evo().amount); },
                       [this](int d) {
-                        evo().amount = static_cast<uint8_t>(clampi(evo().amount + d, 0, 100));
-                        evoEdited();
+                        evo().amount = static_cast<uint8_t>(clampi(evo().amount + d, 1, 100));
+                        mutEdited();
                       }};
   params_[kEvoEvery] = {"Every", [this](char* o, int n) { snprintf(o, n, "%u PASS", evo().every); },
                         [this](int d) {
                           evo().every = static_cast<uint8_t>(clampi(evo().every + d, 1, mt::kEvoEveryMax));
-                          evoEdited();
-                        },
-                        evoDimF};
+                          mutEdited();
+                        }};
   params_[kEvoHome] = {"Home", [this](char* o, int n) { snprintf(o, n, "%u%%", evo().home); },
                        [this](int d) {
                          evo().home = static_cast<uint8_t>(clampi(evo().home + d, 0, 100));
-                         evoEdited();
+                         mutEdited();
                        }};
   auto evoBit = [this](const char* label, uint8_t b, std::function<bool()> dim) {
     return Param{label, [this, b](char* o, int n) { snprintf(o, n, "%s", (evo().mask & b) ? "ON" : "OFF"); },
                  [this, b](int d) {
                    if (d > 0) evo().mask = static_cast<uint8_t>(evo().mask | b);
                    else if (d < 0) evo().mask = static_cast<uint8_t>(evo().mask & ~b);
-                   evoEdited();
+                   mutEdited();
                  },
                  dim};
   };
   params_[kEvoNote] = evoBit("Note", mt::kEvoNote, [this] {  // drum / GEN tracks: never
     const mt::Project& p = app_.project();
-    return evoDim() || p.trackIsDrum(app_.curTrack()) || p.genOn(app_.curTrack());
+    return p.trackIsDrum(app_.curTrack()) || p.genOn(app_.curTrack());
   });
   params_[kEvoRhythm] = evoBit("Rhythm", mt::kEvoRhythm, [this] {  // GEN GATE makes the rhythm
-    return evoDim() || !mt::evoRhythmOk(app_.project(), app_.curTrack());
+    return !mt::evoRhythmOk(app_.project(), app_.curTrack());
   });
-  params_[kEvoRtrg] = evoBit("Rtrg+Vol", mt::kEvoRtrgVol, evoDimF);
-  params_[kEvoShift] = evoBit("Shift", mt::kEvoShift, evoDimF);
-  // VAR page (Project::var): every edit replans the unheard steps. Rows the playing mode does not use are
-  // grey (all of them but Var when OFF). CA2D on a melodic track plays as CA1D: Rule is then its number.
-  auto varNot = [this](unsigned on) {  // grey unless the playing mode's bit (1 << VarMode) is in on
-    return [this, on] { return !(on >> static_cast<int>(varMode()) & 1); };
-  };
-  constexpr unsigned kCa = 1u << static_cast<int>(mt::VarMode::Ca1d) | 1u << static_cast<int>(mt::VarMode::Ca2d);
-  constexpr unsigned kMarkov = 1u << static_cast<int>(mt::VarMode::Markov);
-  params_[kVarMode] = {"Var",
-                       [this](char* o, int n) {
-                         static const char* const kN[] = {"OFF", "CA1D", "CA2D", "MARKOV"};
-                         static_assert(sizeof(kN) / sizeof(kN[0]) == static_cast<int>(mt::VarMode::Count), "Var");
-                         const int m = var().mode < static_cast<int>(mt::VarMode::Count) ? var().mode : 0;
-                         if (m == static_cast<int>(mt::VarMode::Ca2d) && varMode() == mt::VarMode::Ca1d)
-                           snprintf(o, n, "CA2D (AS 1D)");
-                         else snprintf(o, n, "%s", kN[m]);
-                       },
-                       [this](int d) {
-                         var().mode = static_cast<uint8_t>(clampi(var().mode + d, 0, static_cast<int>(mt::VarMode::Count) - 1));
-                         varEdited();
-                       }};
+  params_[kEvoRtrg] = evoBit("Rtrg+Vol", mt::kEvoRtrgVol, nullptr);
+  params_[kEvoShift] = evoBit("Shift", mt::kEvoShift, nullptr);
+  // CA1D / CA2D / MARKOV (Project::var). Every: both; Rule: CA1D's number, CA2D's rule2 name.
   params_[kVarEvery] = {"Every", [this](char* o, int n) { snprintf(o, n, "%u PASS", var().every); },
                         [this](int d) {
                           var().every = static_cast<uint8_t>(clampi(var().every + d, 1, mt::kVarEveryMax));
-                          varEdited();
-                        },
-                        [this] { return varMode() == mt::VarMode::Off; }};
+                          mutEdited();
+                        }};
   params_[kVarRule] = {"Rule",
                        [this](char* o, int n) {
                          static const char* const kN[] = {"LIFE", "HIGHLIFE", "SEEDS", "DAYNIGHT", "MAZE"};
                          static_assert(sizeof(kN) / sizeof(kN[0]) == static_cast<int>(mt::VarRule2::Count), "Rule2");
-                         if (varMode() == mt::VarMode::Ca2d)
+                         if (mutMode() == mt::VarMode::Ca2d)
                            snprintf(o, n, "%s", kN[var().rule2 < static_cast<int>(mt::VarRule2::Count) ? var().rule2 : 0]);
                          else snprintf(o, n, "%u", var().rule);
                        },
                        [this](int d) {
-                         if (varMode() == mt::VarMode::Ca2d)
+                         if (mutMode() == mt::VarMode::Ca2d)
                            var().rule2 = static_cast<uint8_t>(clampi(var().rule2 + d, 0, static_cast<int>(mt::VarRule2::Count) - 1));
                          else var().rule = static_cast<uint8_t>(clampi(var().rule + d, 0, 255));
-                         varEdited();
-                       },
-                       varNot(kCa)};
+                         mutEdited();
+                       }};
   params_[kVarReset] = {"Reset",
                         [this](char* o, int n) {
                           if (var().reset) snprintf(o, n, "%u GEN", var().reset);
@@ -427,33 +414,28 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                         },
                         [this](int d) {
                           var().reset = static_cast<uint8_t>(clampi(var().reset + d, 0, mt::kVarResetMax));
-                          varEdited();
-                        },
-                        varNot(kCa)};
+                          mutEdited();
+                        }};
   params_[kVarNoise] = {"Noise", [this](char* o, int n) { snprintf(o, n, "%u%%", var().noise); },
                         [this](int d) {
                           var().noise = static_cast<uint8_t>(clampi(var().noise + d, 0, 100));
-                          varEdited();
-                        },
-                        varNot(kCa)};
+                          mutEdited();
+                        }};
   params_[kVarAmt] = {"Amount", [this](char* o, int n) { snprintf(o, n, "%u%%", var().amount); },
                       [this](int d) {
                         var().amount = static_cast<uint8_t>(clampi(var().amount + d, 0, 100));
-                        varEdited();
-                      },
-                      varNot(kMarkov)};
+                        mutEdited();
+                      }};
   params_[kVarOrder] = {"Order", [this](char* o, int n) { snprintf(o, n, "%u", var().order); },
                         [this](int d) {
                           var().order = static_cast<uint8_t>(clampi(var().order + d, 1, 2));
-                          varEdited();
-                        },
-                        varNot(kMarkov)};
+                          mutEdited();
+                        }};
   params_[kVarRhythm] = {"Rhythm", [this](char* o, int n) { onOff(var().rhythm, o, n); },
                          [this](int d) {
                            var().rhythm = d > 0;
-                           varEdited();
-                         },
-                         varNot(kMarkov)};
+                           mutEdited();
+                         }};
   params_[kCcA] = {"CC A", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccA); },
                    [this](int d) { cfg().ccA = static_cast<uint8_t>(clampi(cfg().ccA + d, 0, 127)); }, midiOnly};
   params_[kCcB] = {"CC B", [this](char* o, int n) { snprintf(o, n, "%u", cfg().ccB); },
@@ -495,7 +477,8 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
 void TrackScreen::setPageRows(int page, bool bar) {
   page_ = (page % kPages + kPages) % kPages;
   list_.setPageBar(true);
-  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
+  if (page_ == kPgMut) syncMut(false);
+  else list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
   list_.setVisibleRows(kVisibleRows);
   if (bar) list_.selectBar();
   else list_.setSel(0);
@@ -526,9 +509,50 @@ void TrackScreen::reseed() {
 
 mt::EvoCfg& TrackScreen::evo() { return app_.project().evo[app_.curTrack()]; }
 
-bool TrackScreen::evoDim() { return evo().amount == 0; }
+mt::VarMode TrackScreen::mutMode() { return mt::mutMode(app_.project(), app_.curTrack()); }
 
-void TrackScreen::evoEdited() { engine::post(engine::Cmd::EvoEdit); }
+void TrackScreen::mutEdited() { engine::post(engine::Cmd::MutEdit); }
+
+int TrackScreen::mutRows(mt::VarMode m, int* out) {
+  static constexpr int kEvo[] = {kEvoAmt, kEvoEvery, kEvoHome, kEvoNote, kEvoRhythm, kEvoRtrg, kEvoShift};
+  static constexpr int kCa[] = {kVarEvery, kVarRule, kVarReset, kVarNoise};
+  static constexpr int kMarkov[] = {kVarEvery, kVarAmt, kVarOrder, kVarRhythm};
+  const int* r = nullptr;
+  int c = 0;
+  switch (m) {
+    case mt::VarMode::Evo: r = kEvo, c = sizeof(kEvo) / sizeof(kEvo[0]); break;
+    case mt::VarMode::Ca1d:
+    case mt::VarMode::Ca2d: r = kCa, c = sizeof(kCa) / sizeof(kCa[0]); break;
+    case mt::VarMode::Markov: r = kMarkov, c = sizeof(kMarkov) / sizeof(kMarkov[0]); break;
+    default: break;
+  }
+  int n = 0;
+  out[n++] = kMutMode;
+  for (int i = 0; i < c && n < kMutRowsMax; ++i) out[n++] = r[i];
+  return n;
+}
+
+// Not from inside a row's edit (it replaces the Params): from draw / onInput / onTouch, and setPageRows.
+void TrackScreen::syncMut(bool keep) {
+  const mt::VarMode m = mutMode();
+  if (keep && m == shownMut_) return;
+  if (keep && list_.editing() && list_.sel() != 0) leaveEdit();  // the edited row may be gone
+  shownMut_ = m;
+  const int sel = list_.sel();
+  const int was = keep && sel >= 0 && sel < mutShownN_ ? mutShownIds_[sel] : -1;  // the Row under the cursor
+  mutShownN_ = mutRows(m, mutShownIds_);
+  for (int i = 0; i < mutShownN_; ++i) mutShown_[i] = params_[mutShownIds_[i]];
+  if (!keep) {
+    list_.setParams(mutShown_, mutShownN_);
+    return;
+  }
+  list_.replaceParams(mutShown_, mutShownN_);
+  if (sel < 0) return;  // the page bar
+  int at = 0;           // the row gone: Mut
+  for (int i = 0; i < mutShownN_; ++i)
+    if (mutShownIds_[i] == was) at = i;
+  list_.setSel(at);
+}
 
 engine::EvoInfo TrackScreen::heardEvo(int& len) {
   engine::lockProject();
@@ -538,7 +562,7 @@ engine::EvoInfo TrackScreen::heardEvo(int& len) {
   return e;
 }
 
-// EVO page header: "MUT n  PASS c/every" left of the title, "CHG k/len" right of it (the heard state).
+// MUT header in EVO: "MUT n  PASS c/every" left of the title, "CHG k/len" right of it (the heard state).
 void TrackScreen::drawEvo(LGFX_Sprite& s, int y0) {
   int len = 0;
   const engine::EvoInfo e = heardEvo(len);
@@ -547,7 +571,7 @@ void TrackScreen::drawEvo(LGFX_Sprite& s, int y0) {
   shownEvoChg_ = e.changed;
   char buf[24];
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
-  s.setTextColor(evoDim() ? kDim : kCursor);
+  s.setTextColor(kCursor);
   snprintf(buf, sizeof(buf), "MUT %lu  PASS %u/%u", static_cast<unsigned long>(e.n), e.passes + 1u,
            static_cast<unsigned>(evo().every));
   s.drawString(buf, 44, ty);
@@ -557,10 +581,6 @@ void TrackScreen::drawEvo(LGFX_Sprite& s, int y0) {
 
 mt::VarCfg& TrackScreen::var() { return app_.project().var[app_.curTrack()]; }
 
-mt::VarMode TrackScreen::varMode() { return mt::varModeOf(var(), app_.project().trackIsDrum(app_.curTrack())); }
-
-void TrackScreen::varEdited() { engine::post(engine::Cmd::VarEdit); }
-
 engine::VarInfo TrackScreen::heardVarInfo() {
   engine::lockProject();
   const engine::VarInfo v = engine::heardVarInfo(app_.curTrack());
@@ -568,13 +588,13 @@ engine::VarInfo TrackScreen::heardVarInfo() {
   return v;
 }
 
-// VAR page header: "GEN g  PASS c/every" left of the title (g: generations since generation 0; MARKOV: since
+// MUT header in CA / MARKOV: "GEN g  PASS c/every" left of the title (g: generations since generation 0; MARKOV: since
 // the start), right of it the heard state over the track's length: CA alive cells (KIT: lane 1 on top),
 // MARKOV changed steps. Generation 0 (or a state of another mode) plays the pattern: its cells, no change.
 void TrackScreen::drawVar(LGFX_Sprite& s, int y0) {
   const mt::Project& p = app_.project();
   const int tr = app_.curTrack();
-  const mt::VarMode m = varMode();
+  const mt::VarMode m = mutMode();
   uint8_t passes = 0;
   int len = 0;
   mt::VarApply a;
@@ -729,6 +749,7 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     mixerInput(ev);
     return;
   }
+  if (page_ == kPgMut) syncMut(true);
   syncSteps();
   // Steps editor: turn = cursor, Shift + turn = rotate, A + turn = toggle and step on.
   if (page_ == kPgIns && list_.sel() == kStepsRow) {
@@ -912,6 +933,7 @@ void TrackScreen::onTouch(const TouchEvent& ev) {
     mixerTouch(ev);
     return;
   }
+  if (page_ == kPgMut) syncMut(true);
   if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
     if (ev.x < kArrowW) changeTrack(-1);
     else if (ev.x >= kScreenW - kArrowW) changeTrack(1);
@@ -962,7 +984,8 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   s.setTextColor(kText);
   s.drawString(buf, (kScreenW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
 
-  static const char* const kNames[kPages] = {"MAIN", "INS", "FOL", "NOTE", "GEN", "EVO", "VAR", "MIDI"};
+  static const char* const kNames[kPages] = {"MAIN", "INS", "FOL", "NOTE", "GEN", "MUT", "MIDI"};
+  if (page_ == kPgMut) syncMut(true);  // a Mut edit, a track change or a load: the mode's rows
   PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
@@ -973,8 +996,10 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   if (page_ == kPgIns) drawSteps(s);
   if (page_ == kPgFol) drawFolBar(s, y0);
   if (page_ == kPgGen) drawGen(s, y0);
-  if (page_ == kPgEvo) drawEvo(s, y0);
-  if (page_ == kPgVar) drawVar(s, y0);
+  if (page_ == kPgMut) {  // the active mode's state (syncMut ran above)
+    if (shownMut_ == mt::VarMode::Evo) drawEvo(s, y0);
+    else if (shownMut_ != mt::VarMode::Off) drawVar(s, y0);
+  }
 }
 
 int TrackScreen::folBarPx() const {
@@ -1034,12 +1059,15 @@ bool TrackScreen::wantsRedraw(const engine::Status&) {
       const bool blink = flipAt_ && millis() - flipAt_ < kFlipMs;
       return g.reg != shownGen_ || g.n != shownGenN_ || blink != flipShown_;
     }
-    if (page_ == kPgEvo) {  // a mutation, a pass counted or a Capture
-      int len = 0;
-      const engine::EvoInfo e = heardEvo(len);
-      return e.n != shownEvoN_ || e.passes != shownEvoPass_ || e.changed != shownEvoChg_;
-    }
-    if (page_ == kPgVar) {  // a generation, a pass counted or a Capture
+    if (page_ == kPgMut) {  // the mode changed (other rows), a mutation / generation, a pass counted or a Capture
+      const mt::VarMode m = mutMode();
+      if (m != shownMut_) return true;
+      if (m == mt::VarMode::Off) return false;
+      if (m == mt::VarMode::Evo) {
+        int len = 0;
+        const engine::EvoInfo e = heardEvo(len);
+        return e.n != shownEvoN_ || e.passes != shownEvoPass_ || e.changed != shownEvoChg_;
+      }
       const engine::VarInfo v = heardVarInfo();
       return v.n != shownVarN_ || v.sinceReset != shownVarGen_ || v.passes != shownVarPass_;
     }

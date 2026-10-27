@@ -2,6 +2,32 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-27
+- GRID: GAT value with <kbd>Shift</kbd> moves ±10 % of the shown value (to the nearest GAT value in the turn's direction) instead of ×10 raw units; the piano roll's A + turn steps the same way.
+- GRID **piano roll**: a third view (<kbd>Shift</kbd>+click cycles Overview → Detail → Roll, or menu → **Piano
+  roll**) shows the current track as a horizontal roll — keys on the left (root accented, out-of-scale ones greyed:
+  white keys darker, black keys lighter), each octave's root row a tinted stripe across the grid, 16 semitones × 16 steps, paged after the cursor; a crosshair on the cursor's row and column. Notes are bars
+  as long as their gate (GAT, else Def gate), cut by the next note, as bright as their velocity; CHD notes as
+  outlines. A places the row's note (a note step keeps fx and velocity, an empty one plays Def gate), A + turn
+  moves the GAT value as the grid's GAT edit does (±1, <kbd>Shift</kbd> ±10 % of the shown value; 1..200; Def gate removes GAT; toast `GATE n`) (`NO FX SLOT` when all slots are taken), hold A + B clears the step; one undo step per A press. KIT
+  tracks show their 8 lanes, A toggles the lane. File format unchanged.
+- GRID: clearing a step is **hold A + B** in every view (Overview, Detail, Roll, KIT tracks), replacing
+  Shift+A (Shift+A now does nothing in GRID). With a selection it clears the selection. One undo step; after
+  A + turn the press and the clear are one step (B while holding A used to cancel the edit). With PERF on,
+  A then B without a turn still toggles the XY pad.
+- Undo is only <kbd>Shift</kbd>+<kbd>B</kbd> (and the menu's **Undo**): in GRID (all views, the roll too)
+  <kbd>Shift</kbd>+encoder long press and <kbd>Shift</kbd>+long tap no longer undo and do nothing.
+- FILE → SAMPLES → Import WAV… and FILE → Import MIDI…: B in a subfolder goes up one folder (the cursor on
+  the folder you left); at the top it closes the list as before.
+- **MUT**: EVO and VAR are one mutator per track — the TRACK page **MUT** (tabs MAIN INS FOL NOTE GEN MUT
+  MIDI) replaces EVO and VAR. The **Mut** row picks OFF / EVO / CA1D / CA2D (KIT tracks only) / MARKOV; only
+  the chosen mode's rows are shown, the header shows its state. The modes no longer stack. Old projects with
+  both EVO and VAR on open as VAR; CA2D on a melodic track opens as CA1D (same rule). TEVO marks EVO settings kept outside MUT EVO with mask
+  bit 0x80 (older firmware ignores the bit).
+- GRID menu: one **Capture live** replaces Capture gen / evo / var: writes what the track plays (MUT, then
+  GEN) into the pattern (undo), then GEN turns OFF and MUT goes on from a fresh state — no jump in the sound. Undo brings back the pattern
+  and GEN.
+
 ## 2026-10-26
 - DRUM: a machine is picked by group and model — the **Machine** row (KICK, SNARE, TOM, CLAP, RIM, HAT,
   CYMBL, PERC) and **Model** (808, 909, CLAVE, BELL); both wrap around. Machine numbers in files are

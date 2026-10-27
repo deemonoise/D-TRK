@@ -196,6 +196,19 @@ void test_sounds_keep_mute_solo() {
   TEST_ASSERT_EQUAL_STRING(before.tracks[1].name, p.tracks[1].name);  // the rest is undone
 }
 
+// A SOUNDS roll and its undo leave the MUT modes as stored (CA2D plays as CA1D on a melodic track, it is
+// never rewritten): back on KIT after the undo, CA2D again.
+void test_sounds_keep_mut_modes() {
+  for (uint32_t seed = 1; seed <= 20; ++seed) {
+    p.reset();
+    for (VarCfg& v : p.var) v.mode = static_cast<uint8_t>(VarMode::Ca2d);
+    diceRoll(p, kDiceSounds, 0, seed, snap);
+    for (const VarCfg& v : p.var) TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Ca2d), v.mode);
+    TEST_ASSERT_EQUAL(kDiceSounds, diceUndo(p, snap));
+    for (const VarCfg& v : p.var) TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Ca2d), v.mode);
+  }
+}
+
 void test_sounds_roles() {
   for (uint32_t seed = 1; seed <= 60; ++seed) {
     p.reset();
@@ -390,11 +403,14 @@ void test_pattern_turns_var_off() {
   templateBuild(1, p);
   p.var[1].mode = static_cast<uint8_t>(VarMode::Ca1d);
   p.var[7].mode = static_cast<uint8_t>(VarMode::Markov);
+  p.var[2].mode = static_cast<uint8_t>(VarMode::Evo);  // MUT EVO is turned off the same way
   diceRoll(p, kDicePattern, 0, 3, snap);
   TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Off), p.var[1].mode);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Off), p.var[2].mode);
   TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Markov), p.var[7].mode);
   diceUndo(p, snap);
   TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Ca1d), p.var[1].mode);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Evo), p.var[2].mode);
 }
 
 namespace {
@@ -530,6 +546,7 @@ int main() {
   RUN_TEST(test_slots_spare_other_tracks);
   RUN_TEST(test_slots_kit_block_in_use);
   RUN_TEST(test_sounds_keep_mute_solo);
+  RUN_TEST(test_sounds_keep_mut_modes);
   RUN_TEST(test_sounds_roles);
   RUN_TEST(test_sounds_vary_with_seed);
   RUN_TEST(test_genre_kits);
