@@ -169,7 +169,7 @@ struct Shot {
   bool max = false;
 };
 
-static bool noOut(const int16_t*, const int16_t*, void*) { return true; }
+static bool noOut(const int16_t*, const int16_t*, int, void*) { return true; }
 
 static Shot bounce(Project& p, Synth& synth, const BounceSpec& s) {
   static float l[Synth::kBlock], r[Synth::kBlock];

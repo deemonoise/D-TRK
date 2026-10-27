@@ -95,7 +95,7 @@ Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and t
 | Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. In MIX in the SCENE view: the master parameter MAIN … EQHI instead (the tab stays). |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ, section in FILE (wraps). The cursor stays on the page tabs if it was there, otherwise it goes to the first row. |
 | <kbd>A</kbd>+<kbd>B</kbd> (press both, release) on GRID, SONG, MIX | With [PERF](#live) on: XY pad on / off (see [XY pad](#xypad)). Nothing happens if a turn or a track button came in between. On GRID with PERF off, A held first and then B clears instead (see above). |
-| <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker, Import WAV… and Import MIDI… it steps back one folder (at the top level it closes the list). In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. In MIX: with the [REC window](#recsd) open — STOP the take, the window stays open (no take: close the window); else leave the SCENE view (in CPY mode, cancel the copy first) → drop the pan or crossfader selection → PERF on / off. |
+| <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the [file browsers](#browsers) (Load, Import WAV…, Import MIDI…, presets, the wavetable picker) it steps back one folder (at the top level it closes the list; preset Load — cancels). In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. In MIX: with the [REC window](#recsd) open — STOP the take, the window stays open (no take: close the window); else leave the SCENE view (in CPY mode, cancel the copy first) → drop the pan or crossfader selection → PERF on / off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
 | Hold <kbd>B</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end B (toast `B = SCENE 3`), as A + N. Elsewhere it does nothing. |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. While the song plays (SONG mode) a queue is ignored (toast `SONG MODE`). |
@@ -136,6 +136,19 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar (battery and CPU) for 1.5 seconds; `● REC` stays visible over them.
 
 **Menus** open in the center of the screen and show up to 12 items; long lists scroll by dragging. Encoder: turn to select (wraps around: after the last item comes the first), click to execute, long press to close. All parameter and file lists wrap around the same way. A tap outside the menu also closes it. Gray items are currently unavailable.
+
+<a id="browsers"></a>
+
+**File browsers** — FILE → Load / Import MIDI / Import WAV, the [preset](#presets) browser and the wavetable picker with its IMPORT… list ([wavetables](#wavetables)) — look and work the same:
+
+- **Header:** the title (`LOAD`, `IMPORT`, `IMPORT WAV`, `IMPORT WT`, `SAVE CHIP`…) and the tail of the current path (`...` when it does not fit), `SD OK` / `NO SD CARD` on the right (the preset browser: before its buttons).
+- **Rows:** the first is **\< Back** at the top of the browser, **\< Up (..)** inside a folder. Folders first, with `/` (`name/`), then files, both alphabetical without regard to case; hidden files (macOS `._*`) and names with non-Latin characters (shown as `?`, they cannot be opened) are not listed. Long names are cut with `~` before the `^` / `v` scroll marks.
+- **Encoder:** turn — next / previous row, round and round; <kbd>Shift</kbd>+turn — a page; click — open the folder / take the file.
+- **<kbd>B</kbd> or a long press:** up one folder, the cursor on the folder you left; at the top — close the browser (the preset Load browser: cancel, the instrument comes back; its **CANCEL** button cancels from anywhere).
+- **Touch:** a tap on a folder or on Back opens it at once; the first tap on a file selects it (Import WAV and IMPORT… also play it, the preset browser auditions it), a tap on the selected file takes it. Dragging scrolls.
+- **Play:** in Import WAV and in the wavetable IMPORT… list — audition the file under the cursor (see [Import WAV](#samples)); Play again or moving the cursor stops it.
+- **Empty folder:** a dim `EMPTY FOLDER` row (`NO SD CARD` without a card); a toast only at the top of the browser (`NO /samples/*.wav`, `NO PROJECTS`…).
+- **Memory:** each browser reopens in its last folder with the cursor on the last row (presets: per instrument type, Load and Save apart) until power-off; if the folder is gone, at the top. Up to 4 levels of folders ("TOO DEEP"; a too long path — "PATH TOO LONG").
 
 <a id="grid"></a>
 
@@ -284,11 +297,11 @@ The header shows the held effects in press order by short name: `PERF RPT FLT CR
 
 ### Resample
 
-**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new project sample: only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name), normalized to −1 dBFS, trailing silence is trimmed, and there is no delay / reverb tail past the end of the pattern. The sample is mono (the bank is mono): left and right are mixed, (L + R) / 2. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
+**Resample track** and **Resample pattern** in the GRID menu record the playing pattern with the built-in sound into a new project sample: only the current track, or all audible tracks (respecting mute / solo). The sample is named `RS1`, `RS2`… (the first free name). It is exactly one loop: the pattern's length, or for **Resample track** the track's own length (its Pat len at its Speed: x2 / x4 loop faster; a 1/2 or 1/4 track: the pattern). The delay / reverb tail **wraps** into the start, as Export's `WRAP`: the loop is rendered twice and the first pass is dropped, so the sample loops seamlessly. No normalizing and no trimming — the level is as played. The sample is mono (the bank is mono): left and right are mixed, (L + R) / 2. You can then select it in INST (SAMPLE or a KIT lane) and save it with the project.
 
-- Only when stopped (`STOP FIRST`). The pattern is rendered twice (measuring, then recording), each pass roughly in real time — progress `RENDER nn%`; a long encoder press or Play cancels (`CANCELLED`).
-- Nothing longer than 60 s is recorded: `SAMPLE CAP`, the sample is still added. No room in the synth board's flash — `BANK FULL`; the same if the list already has 128 samples.
-- The result: `RS3 2.1s`. The render matches playback (without the output latency); notes pushed past the end of the pattern by NDG / swing are cut off.
+- If the transport is playing, it is stopped first (toast `STOPPED`). Refused during a REC take (`REC BUSY`). Both passes run roughly in real time — progress `RENDER nn%`; a long encoder press or Play cancels (`CANCELLED`).
+- Nothing longer than 60 s is recorded: one pass without the wrap, cut at 60 s, `, 60 S CAP` in the toast; the sample is still added. Silence — `SILENT`, nothing added. No room in the synth board's flash — `BANK FULL`; the list already has 128 samples — `SAMPLE LIST FULL`; no room on its card for the temporary file — `CARD FULL`.
+- The result: `RS3 2.1s` (`, 4 CLIPS` when it clipped). The render matches playback (without the output latency); notes pushed past the end of the pattern by NDG / swing are cut off.
 
 <a id="undo"></a>
 
@@ -1198,7 +1211,7 @@ Below the rows: the big **START / STOP** button — a silent tap for mic takes, 
 | `NO PSRAM` | The synth board has no working PSRAM for the recording buffer. |
 | `CARD TOO SLOW` | The card could not keep up: the take stops, what was recorded is saved. |
 | `TOO SHORT` | A take under 50 ms: nothing is saved. |
-| `SAMPLE LIST FULL` | The project has no free sample slot: the file stays in `/samples/rec/` and can be imported later. |
+| `SAMPLE LIST FULL` | The project has no free sample slot: START refuses before the take (free a slot first). |
 | `REC KEPT ON CARD` | The project was replaced during the take: the board finishes the file in `/samples/rec/`, the project does not get it. The same happens if the display board reboots: after 2 s the synth board closes the file. |
 
 <a id="recsd"></a>
@@ -1228,10 +1241,10 @@ For field recordings and long takes: MIX → the **REC** button (or an encoder l
 | Name | | Sample name on the keyboard. Default `<NAME>_N` from the instrument name with the first free N; only A–Z a–z 0–9 \_ - (spaces and other characters become `_`). |
 | SAVE / CANCEL | | Render and save / close (also an encoder long press). |
 
-- If the transport is playing, SAVE stops it first (toast `STOPPED`): the render resets the synth.
+- If the transport is playing, SAVE stops it first (toast `STOPPED`): the render resets the synth. Refused during a REC take (`REC BUSY`). Progress: `SHOT 0.4s` — the time rendered so far (the length is known only at the end).
 - The note goes through the current track's [insert](#insert) if that track plays this instrument (`+FX`), otherwise dry. No delay / reverb / MOD sends and no master.
 - The render runs until silence (below −60 dB for ≈ 50 ms after the note-off) or **10 s** at most; then silence is trimmed and the sample is normalized to −0.3 dBFS.
-- Done: toast `SAVED <name>`; the sample is in the project's sample list right away and can be picked in a KIT lane or a SAMPLE instrument. A name that is already taken asks **Overwrite**. The project is marked modified (save it to keep the sample).
+- Done: toast `<name> 0.8s` (`, 3 CLIPS` when it clipped); the sample is in the project's sample list right away and can be picked in a KIT lane or a SAMPLE instrument. A name that is already taken asks **Overwrite**. The project is marked modified (save it to keep the sample).
 - **Copy to the library.** The same WAV is written to the synth board's card as `/samples/oneshots/<folder>/<name>.wav`, so **Import WAV…** in any project finds it. If that file already exists, the copy gets `<name>_1.wav`, `<name>_2.wav`, … (the project sample keeps its name). The folder depends on the instrument (spaces and other characters in a name become `_`):
 
 | Instrument | Folder | Examples |
@@ -1244,14 +1257,16 @@ For field recordings and long takes: MIX → the **REC** button (or an encoder l
 | LOFI | `LOFI/<machine>` | `LOFI/BYTE`, `LOFI/APC` |
 | SAMPLE | `SAMPLE` | |
 
-- If the sample was added to the project but the copy failed, the toast is `SAVED, NO COPY`.
+- If the sample was added to the project but the copy failed, the toast ends with `, NO COPY`.
 - Both boards must run firmware with link protocol 18.
 
 | Toast | Meaning |
 |---|---|
-| `NO SD` | No card. |
-| `BUSY` | The card or the synth is busy (sync, import, export, recording) — try again later. |
-| `SYNTH DOWN` | No link to the synth board. |
+| `NO SD CARD` | No card. |
+| `BUSY` | The card or the synth is busy (sync, import, export) — try again later. |
+| `REC BUSY` | A REC take is running. |
+| `NO SYNTH` | No link to the synth board. |
+| `CARD FULL` | No room on the synth board's card for the temporary file. |
 | `SAMPLE LIST FULL` | The project has no free sample slot. |
 | `SILENT` | The render came out silent (nothing saved). |
 
@@ -1261,7 +1276,7 @@ For field recordings and long takes: MIX → the **REC** button (or an encoder l
 
 - The window header is `ONE-SHOT KIT <name>`. Rows: **Hold**, **Vel**, **SAVE / CANCEL** — no Note (each lane renders the KIT at its own Note) and no Name.
 - Each lane is rendered as above, but always dry (no insert: the baked lane plays through the track's insert again) and not normalized (the kit keeps its balance), into a new project sample named `<lane instrument name>_N` (first free N), and copied to `/samples/oneshots/` into the folder of the lane's instrument. The lane then switches to Src SAMPLE with that sample, Pitch 0, Volume 127 (the sample then sounds as loud as the instrument did) and Decay 0 (full: the render's own tail); Note stays.
-- Progress shows `LANE i/n`. A silent lane is left as it was. **CANCEL** stops the bake: lanes already baked stay baked. An error (`NO SD`, `BUSY`, `SAMPLE LIST FULL`…) stops it with the usual toast.
+- Progress shows `LANE i/n 0.4s`. A silent lane is left as it was. **CANCEL** stops the bake: lanes already baked stay baked. An error (`NO SD CARD`, `BUSY`, `SAMPLE LIST FULL`…) stops it with the usual toast.
 
 | Toast | Meaning |
 |---|---|
@@ -1483,7 +1498,7 @@ A table is 64 frames of 256 points (one period per frame). In the synth board's 
 | Click, **OK** button | Keep the selection and close. |
 | **CANCEL** button, long press | Restore the previous table. |
 | **DRAW…** | Drawing editor: a new table from keyframes, see [Your own tables](#wtmake). |
-| **IMPORT…** | The `/wavetables` list: folders first (up to 4 levels), then `.wav` files; the `..` row goes up (from the root — back to the table list). Click or tap a file — import with progress, toast "IMPORTED name", the table is set on the oscillator. Buttons **OPEN** and **BACK**. |
+| **IMPORT…** | The `/wavetables` list, a [file browser](#browsers): folders first (up to 4 levels), then `.wav` files; **\< Up (..)** / <kbd>B</kbd> goes up (from the root, **\< Back** — back to the table list, the cursor on IMPORT…). **Play** (or the first tap) auditions the file; click or a tap on the selected file — import with progress, toast "IMPORTED name", the table is set on the oscillator. Reopens in the last folder. |
 
 - **Library on the card:** `/wavetables` (created automatically), subfolders up to 4 levels are allowed. Files are copied on a computer: take the card out of the synth board. Importing does not copy the file: the table goes into the project folder when you save.
 - **Formats:** WAV PCM 8 / 16 / 24 bit, mono or stereo (mixed down to mono); the sample rate in the header doesn't matter. The frame layout is detected by length:
@@ -1707,16 +1722,16 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 **Recommended insert.** A preset also stores the track insert it was designed with: Drive, Drive type, Bit crush, Downsample. Load (a factory or your own preset) **overwrites** the current track's [insert](#insert) with them if that track plays this instrument (already while auditioning; CANCEL restores the insert too). A preset without a recommendation (Drive and lo-fi off) turns the track insert off. Save writes the current track's insert into the preset (if that track plays this instrument; otherwise — without an insert), so the preset loads with the same sound. Factory presets with drive and lo-fi (GRIT BAS, KICK PNC, BD808 D, BD909 H, BD DIST, SD NOISE, HH HARSH, the LOFI drums, REESE, FM GROWL, CHIPPLK, ROBOT and others) recommend their former Drive / Bit crush / Downsample. A factory KIT applies the kit's own insert to its track (off on the factory kits), and the drums in its lanes carry no insert. A preset loaded into the instrument of a KIT lane does **not change** the KIT track's insert (a lane has no insert of its own; the preset's recommendation is dropped). Templates and demo songs set the track inserts themselves.
 
-**Browser header:** the path and three buttons (Save: the type, then the path inside the type folder). Load always opens at the top: a `[FACTORY]` row, then a folder per type (FM, SYNTH, STRING, DRUM, SAMPLE, CHIP, LOFI) with your own folders (`name/`) and files; inside a folder the first row is `..` (up one level). `[FACTORY]` holds the factory presets built into the firmware, by type (including KIT) and category; they cannot be changed or deleted. A preset of another type changes the instrument's type. Save opens in the folder of the instrument's type.
+**Browser** — one of the [file browsers](#browsers). **Header:** `LOAD` and the path (Save: `SAVE <type>` and the path inside the type folder), `SD OK` / `NO SD CARD` and three buttons. The top of Load: a `[FACTORY]` row, then a folder per type (FM, SYNTH, STRING, DRUM, SAMPLE, CHIP, LOFI) with your own folders (`name/`) and files; the first row is **\< Back** at the top, **\< Up (..)** inside a folder. `[FACTORY]` holds the factory presets built into the firmware, by type (including KIT) and category; they cannot be changed or deleted. A preset of another type changes the instrument's type. The browser reopens where it was left for the instrument's type (Load and Save apart); the first time Load opens at the top and Save in the folder of the instrument's type.
 
 | Input | Load | Save |
 |---|---|---|
-| Turn | Row; the preset under the cursor is applied to the instrument at once and plays C-4 (audition, marked `>`). | Row. |
-| Tap on a preset | Audition (same as turning). | Write over it (asks Overwrite). |
+| Turn | Row, round and round (<kbd>Shift</kbd> — a page); the preset under the cursor is applied to the instrument at once and plays C-4 (audition, marked `>`). | Row. |
+| Tap on a preset | First tap — audition (same as turning); a tap on the selected one — take it and close. | First tap — select; a tap on the selected one — write over it (asks Overwrite). |
 | Click on a preset | Take it and close. | Write over it (asks Overwrite). |
-| Click / tap on a folder | Enter; `..` goes up. | |
+| Click / tap on a folder | Enter; **\< Up (..)** goes up. | |
 | Buttons | **OK** keeps the selected preset, **DEL** deletes your own preset under the cursor (with confirmation), **CANCEL** restores the instrument as it was. | **SAVE**: name on the keyboard (defaults to the instrument name; if the file exists, asks Overwrite), **+DIR**: new folder inside the current one, **CANCEL**: close. |
-| Long press of the encoder | Same as CANCEL. | Close. |
+| <kbd>B</kbd> / long press of the encoder | Up one folder; at the top — same as CANCEL. | Up one folder; in the type folder — close. |
 
 - **Load** changes the instrument immediately; CANCEL brings the previous one back. Auditioning works during playback too: tracks using this instrument play with the new sound.
 - **Save** always writes to the folder of the instrument's type; `[FACTORY]` is not shown. File name: up to 16 characters, A–Z 0–9 \_ -; the first 8 characters also become the instrument name.
@@ -1986,7 +2001,7 @@ View 2 shows two more columns per slot: **TRN**, a transpose of −24…+24 semi
 |---|---|
 | Save | Save under the current name. Without a name it works like Save As. Works during playback. The project's sample folder is written along with the project (see [below](#samples)). |
 | Save As… | On-screen keyboard, then OK. If a file with that name already exists, asks Overwrite. The sample folder is written in full under the new name. |
-| Load… | Project list. If there are unsaved changes, asks for confirmation. Stops playback. Samples and wavetables missing from the synth board's flash are pulled in from the project folder. |
+| Load… | Project list (a [file browser](#browsers), header `LOAD`; a click or a second tap loads, the cursor stays on the last project). If there are unsaved changes, asks for confirmation. Stops playback. Samples and wavetables missing from the synth board's flash are pulled in from the project folder. |
 | New | Template menu: **EMPTY** (blank), built-in **808 SET**, **909 SET**, **FM SET** (a drum KIT on track 1 and melodic instruments on the following ones), **CHIPTUNE**, **MIDI 8** (8 MIDI tracks on channels 1–8), then your own templates (`> NAME`), **Demo songs…** and **Save as template…**, which saves the current project without notes (instruments, tracks, settings) to `/templates`. Asks about unsaved changes after you choose. |
 | Import MIDI… | Import a `.mid` from the `/midi` folder. |
 | Export… | Record the internal sound to WAV on the card: the master and track stems; see [below](#render). |
@@ -2026,10 +2041,10 @@ A demo opens as a new project named after it: Save writes `DEMO-….mtp` to the 
 Files go to `/export/<project>/<src>/`, where `<src>` is `P01`, `P01x4` (a pattern with Loops > 1) or `SONG`: `<project>_<src>_MASTER.wav`, `<project>_<src>_03_BASS.wav` (track number and name; characters other than A–Z 0–9 _ - become `_`, without a name `<project>_<src>_03.wav`), `<project>_<src>_FX_MOD.wav`, `_FX_DLY.wav`, `_FX_RVB.wav`. Take them on a computer (pull the card out of the synth board) or from the [Wi-Fi page](#wifi).
 
 - **Stems are dry:** the track's voices → insert (drive, crush, gate) → volume → pan, without sends (their sound is in the FX files), without the master compressor, EQ and soft clip; MAIN volume applies. With the compressor and EQ off, the stems plus FX sum to the master. Sidechain ducking is not heard in the stems.
-- Only when stopped (`STOP FIRST`). Progress shows `EXPORT nn%` (with several passes `EXPORT 1/4`), roughly in real time; a long encoder press or Play cancels (`CANCELLED`, the files of this export are removed).
+- If the transport is playing, it is stopped first (toast `STOPPED`); refused during a REC take (`REC BUSY`). Progress shows `EXPORT nn%` (with several passes `EXPORT 1/4`), roughly in real time; a long encoder press or Play cancels (`CANCELLED`, the files of this export are removed).
 - **Passes.** With PSRAM on the synth board all files are written in one render (up to 20). Without PSRAM, 6 files per pass: the render repeats until all are written (same result, just longer).
 - If the folder exists it asks `OVERWRITE P01?`; after a successful export the other `.wav` files in it (tracks no longer in the set) are removed.
-- Done: `4:12 PEAK -1.3dB 17 FILES`; `CLIP` means there was clipping (lower MAIN or the volumes; stems have no soft clip and can clip with MAIN > 100%). Errors: `DISK FULL` (the estimate does not fit the card), `WRITE FAILED`, `AUDIO BUSY` (the sound did not stop within 0.5 s — try again), `NO INT TRACK WITH NOTES` (stems asked, but no such tracks). MIDI tracks are not in the export.
+- Done: `4:12 PEAK -1.3dB 17 FILES`; `, 12 CLIPS` means there was clipping (lower MAIN or the volumes; stems have no soft clip and can clip with MAIN > 100%). Errors: `CARD FULL` (the estimate does not fit the card), `WRITE FAILED`, `BUSY` (the sound did not stop within 0.5 s, or the synth board is busy — try again), `NO SYNTH`, `NO INT TRACK WITH NOTES` (stems asked, but no such tracks). MIDI tracks are not in the export.
 - The render reproduces playback, just without the output latency; PRB / NRN / VRN are random but identical from render to render; the [generator](#gen) sounds as on Play from stop, [MUT](#mut) follows the project Seed, the same from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
 
 Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn. PROJECTS holds the items above, SAMPLES the [project samples](#samples), SYSTEM the [device settings](#system).
@@ -2085,7 +2100,7 @@ Samples belong to the project: each project has its own list (up to 128), and in
 Screen rows:
 
 - At the top: `FREE n / m KB CACHE k KB` and a bar showing used space. It is about the synth board's flash, which now holds wavetables and sample starts: FREE is its free space, CACHE is how much other projects' entries take up. If there is not enough room in flash for an import or load, the cache is evicted automatically, largest entries first, never touching the current project's samples; if it still does not fit, "BANK FULL".
-- **Import WAV…**: a list of `.wav` files from `/samples`. Subfolders first (`name/`, select to enter), then files; in a subfolder the first row **\< Up (..)** or <kbd>B</kbd> goes up one level (the cursor lands on the folder you left), and the path is shown in the header; at the top of `/samples` <kbd>B</kbd> closes the list. Up to 4 levels of nesting; hidden files (macOS `._*`) are not shown. Selecting a file opens the keyboard with the sample name (defaults to the file name without extension, up to 16 characters A–Z a–z 0–9 \_ -). If the project already has that name, asks **Overwrite**. Import progress is shown in percent. When the list is full, "SAMPLE LIST FULL". **Play** on a file auditions it without importing: the first 8 seconds at the sample's volume with Vol at full (Master applies); Play again or moving the cursor stops it. Works during playback too; in this list the Play button does not start the transport (the button in the header does).
+- **Import WAV…**: a list of `.wav` files from `/samples`, a [file browser](#browsers). Subfolders first (`name/`, select to enter), then files; in a subfolder the first row **\< Up (..)** or <kbd>B</kbd> goes up one level (the cursor lands on the folder you left), and the path is shown in the header; at the top of `/samples` <kbd>B</kbd> closes the list. Up to 4 levels of nesting; hidden files (macOS `._*`) are not shown; reopens in the last folder on the last file. Taking a file (click, or a tap on the selected one; the first tap plays it) opens the keyboard with the sample name (defaults to the file name without extension, up to 16 characters A–Z a–z 0–9 \_ -). If the project already has that name, asks **Overwrite**. Import progress is shown in percent. When the list is full, "SAMPLE LIST FULL". **Play** on a file auditions it without importing: the first 8 seconds at the sample's volume with Vol at full (Master applies); Play again or moving the cursor stops it. Works during playback too; in this list the Play button does not start the transport (the button in the header does).
 - **Compact**: defragment flash by moving samples to the start so the free space becomes one block. Usually not needed: import and load compact on their own when gaps get in the way.
 - **Clear cache**: remove everything from flash and from `/mt-store/` that is not part of the current project (toast "CLEARED n"). Other projects' samples stay in their folders on the card and are pulled back in when those projects are loaded.
 - Project sample rows: name, duration, size. A red `MISSING` label means the data is not in `/mt-store/` and could not be taken from the folder: the voice is silent. Click or tap opens the **Rename** / **Delete** menu.
@@ -2181,7 +2196,7 @@ The page has three sections; in the first two, drag the file with the mouse into
 
 Put the file in `/midi` and choose **FILE → Import MIDI…**. SMF format 0 and 1 are supported, up to 512 KB and 16,384 notes. A source is a "file track + channel" pair; there can be up to 32 of them.
 
-Subfolders: the list shows folders first (`name/`), then files. Click a folder to enter, **\< Up** or <kbd>B</kbd> goes up one level, and at the root of `/midi` it is **\< Back** (<kbd>B</kbd> closes the list). The header shows the current path; the last opened folder is remembered until power-off. Files .mid and .midi; folder and file names up to 95 characters, Latin characters only (long ones are truncated on screen).
+Subfolders: the list is a [file browser](#browsers) — folders first (`name/`), then files. Click a folder to enter (up to 4 levels), **\< Up** or <kbd>B</kbd> goes up one level, and at the root of `/midi` it is **\< Back** (<kbd>B</kbd> closes the list). A file: click, or the first tap selects and a second takes it. The header shows the current path; the last opened folder and file are remembered until power-off. Files .mid and .midi; folder and file names up to 95 characters, Latin characters only (long ones are truncated on screen).
 
 ### Mapping screen
 

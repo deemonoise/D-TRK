@@ -278,6 +278,10 @@ void RecDialog::start() {
       return;
     }
   } else {
+    if (app_.project().sampleCount >= mt::kProjSamples) {  // the take would have nowhere to go
+      app_.toast("SAMPLE LIST FULL");
+      return;
+    }
     mt::link::RecStartReq q;
     q.source = static_cast<uint8_t>(src_);
     q.gain = g;

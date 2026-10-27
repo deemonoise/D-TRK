@@ -3,6 +3,29 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## 2026-10-27
+- **Renders unified** ([Resample](docs/manual.md#resample), Export, [Save one-shot](docs/manual.md#oneshot), KIT
+  bake): one client driver and one readiness check. A playing transport is stopped (toast `STOPPED`, no more
+  `STOP FIRST`); a REC take refuses with `REC BUSY` (the synth board too, for every render); the card space is
+  checked. One set of toasts: `BUSY`, `NO SYNTH`, `CARD FULL`, `REC BUSY`, `SILENT`, `SAMPLE LIST FULL` /
+  `BANK FULL`; done: `RS3 2.1s, 4 CLIPS` (one-shot: `<name> 0.8s`, `, NO COPY` when the library copy failed;
+  Export: `, N CLIPS` instead of `CLIP`). One-shot progress shows the time rendered (`SHOT 0.4s`), no jump at the end.
+- **Resample is a loop now:** exactly the pattern (Resample track: the track's own length, Pat len at its
+  Speed), the delay / reverb tail wrapped into the start (two passes, the first dropped, as Export WRAP), no
+  normalizing, no trimming; silence — `SILENT`, nothing added. 60 s cap as before.
+- REC SAMPLE: a full sample list is refused before the take (`SAMPLE LIST FULL`), not after it.
+- Link protocol unchanged; **Teensy flash needed** (the bank render honours the skip and the cut, REC busy
+  check; the unused file target removed).
+- **Browsers unified** ([manual](docs/manual.md#browsers)): FILE Load / Import MIDI / Import WAV, the preset
+  browser and the wavetable picker (with IMPORT…) are one list component (`ui::FileList`, rules in `file_rules`).
+  Row 0 is `< Back` / `< Up (..)` everywhere (presets too, instead of `..`); the encoder wraps (presets used to
+  stop at the ends), <kbd>Shift</kbd>+turn pages; <kbd>B</kbd> / a long press goes up a folder with the cursor on
+  the folder left and closes at the top (Load used to close at once; preset Load: cancel at the top only). Tap:
+  folders and Back open at once, a file's first tap selects (WAV / WT import also play it, presets audition),
+  a tap on the selected one takes it. Play previews in WT import too. Long names are cut with `~`; header: title
+  (`LOAD`, `IMPORT WAV`, `SAVE CHIP`…) + path tail + SD status; an empty folder shows `EMPTY FOLDER` in the list
+  (a toast only at the top). Each browser reopens in its last folder on its last row (presets per instrument
+  type, Load / Save apart); a folder gone — the top. 4 folder levels everywhere (MIDI too); names with `?` are
+  never listed. File format and link protocol unchanged, no Teensy flash.
 - **SONG: slot TRN and BPM.** A second SONG view (<kbd>Shift</kbd>+click outside an edit, or menu →
   **View**): `01  P03  +5  128 … FOL`. **TRN** −24…+24 semitones: while the slot plays, the tracks' notes and
   the scale root move (CHD, NRN, GEN, MUT in the new key, MIDI tracks too), a note past 0–127 does not sound;

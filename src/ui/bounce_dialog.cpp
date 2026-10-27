@@ -8,6 +8,7 @@
 #include "menu.h"
 #include "note_name.h"
 #include "oneshot_lib.h"
+#include "render_ui.h"
 #include "sample_set.h"
 #include "storage/render_io.h"
 #include "storage/storage.h"
@@ -91,7 +92,7 @@ void BounceDialog::cancel() {
 
 void BounceDialog::save() {
   if (!hw::sdReady()) {
-    app_.toast("NO SD");
+    renderResultToast(app_, storage::Result::NoSd);
     return;
   }
   if (app_.project().sampleCount >= mt::kProjSamples) {
@@ -113,37 +114,8 @@ void BounceDialog::save() {
   run();
 }
 
-bool BounceDialog::stopTransport() {
-  const engine::Status st = engine::status();
-  if (st.playing || st.paused) {  // the render resets the synth
-    if (!storage::stopEngine()) {
-      app_.toast("BUSY");
-      return false;
-    }
-    app_.toast("STOPPED");
-  }
-  return true;
-}
-
-void BounceDialog::resultToast(int res) {
-  const storage::Result r = static_cast<storage::Result>(res);
-  switch (r) {
-    case storage::Result::NoSd: app_.toast("NO SD"); break;
-    case storage::Result::EngineBusy:
-    case storage::Result::AudioBusy: app_.toast("BUSY"); break;
-    case storage::Result::NoSynth: app_.toast("SYNTH DOWN"); break;
-    case storage::Result::BankFull: app_.toast("SAMPLE LIST FULL"); break;
-    case storage::Result::Silent: app_.toast("SILENT"); break;
-    case storage::Result::Cancelled: break;
-    default:
-      if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdRecover();
-      app_.toast(storage::resultText(r));
-      break;
-  }
-}
-
 void BounceDialog::run() {
-  if (!stopTransport()) return;
+  if (!renderReady(app_)) return;
   mt::BounceSpec spec;
   spec.instr = static_cast<uint8_t>(instr_);
   spec.note = note_;
@@ -157,13 +129,13 @@ void BounceDialog::run() {
   app_.endProgress();
   if (r == storage::Result::Ok) {
     app_.markDirty();
-    char msg[40];
-    if (rs.copied) snprintf(msg, sizeof(msg), "SAVED %s", name_);
-    else snprintf(msg, sizeof(msg), "SAVED, NO COPY");
+    char msg[48];
+    mt::renderDoneText(name_, rs.frames, rs.clips, msg, sizeof msg);
+    if (!rs.copied) strlcat(msg, ", NO COPY", sizeof msg);
     app_.toast(msg);
     cancel();
   } else {
-    resultToast(static_cast<int>(r));
+    renderResultToast(app_, r);
   }
   app_.invalidate();
 }
@@ -178,7 +150,7 @@ void BounceDialog::runKit() {
     app_.toast("NO INSTR LANES");
     return;
   }
-  if (!stopTransport()) return;
+  if (!renderReady(app_)) return;
   int baked = 0;
   bool noCopy = false;
   storage::Result err = storage::Result::Ok;
@@ -214,7 +186,7 @@ void BounceDialog::runKit() {
   app_.endProgress();
   if (baked > 0 && onBaked_) onBaked_();
   if (err != storage::Result::Ok && !(err == storage::Result::Cancelled && baked > 0)) {
-    resultToast(static_cast<int>(err));
+    renderResultToast(app_, err);
   } else if (baked == 0) {
     app_.toast("SILENT");  // every lane
   } else {

@@ -51,6 +51,18 @@ uint32_t exportEstFrames(const Project& p, const ExportSpec& s);
 // AUTO: the ESP stops sending blocks (body done, a second of silence or the 30 s cap).
 bool exportAutoDone(const Project& p, const ExportSpec& s, uint32_t rendered, uint32_t quiet);
 
+// Resample (GRID -> Resample track / pattern): exactly one loop of the source - the pattern's pass, or
+// track's own loop (trackLoopTicks) - with its delay / reverb tail wrapped into its start, as Export's
+// WRAP: two passes rendered (loops 2, the second cut at the loop's end), the first skipped (skipFrames).
+// No normalizing, no trim. Over maxFrames: one pass, no skip, cut at maxFrames (capped). blocks: what
+// to render (skip + frames, rounded up; never past the sequence).
+struct ResamplePlan {
+  RenderSpec spec;
+  uint32_t skipFrames = 0, frames = 0, blocks = 0;
+  bool capped = false;
+};
+ResamplePlan resamplePlan(const Project& p, int pattern, uint16_t tracksMask, int track, uint32_t maxFrames);
+
 // INT tracks that get a stem: audible (mute / solo, tracksMask), with notes in the source's patterns.
 uint16_t exportStemTracks(const Project& p, const ExportSpec& s);
 // MIDI tracks with notes in the source's patterns (not exported).

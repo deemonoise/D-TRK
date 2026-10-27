@@ -23,7 +23,11 @@ constexpr int kRenderSlotsMax = 512;  // RenderSpec::maxSlots
 uint64_t passTicks(const Project& p, int idx);
 uint64_t songTicks(const Project& p, int maxSlots = kSongMax);
 uint64_t passUs(const Project& p, int idx);
+uint64_t ticksToUs(const Project& p, uint64_t ticks);  // at p's BPM
 uint64_t songUs(const Project& p, int maxSlots = kSongMax);
+// Ticks of track's own loop in pt: its length (Pattern::trackLen, polymeter) at its speed (x2 / x4). The
+// whole pass when that is not shorter or the track is slow (1/2, 1/4: it counts through pass ends).
+uint64_t trackLoopTicks(const Pattern& pt, int track);
 // Interleaved stereo (L, R) of `frames` frames: scales so that `peak` lands at -1 dBFS; peak 0 leaves
 // the buffer as is.
 void normalizePeak(int16_t* lr, uint32_t frames, int16_t peak, float target = kNormPeak);
@@ -32,6 +36,9 @@ void normalizeSamples(int16_t* b, uint32_t n, int16_t peak, float target = kNorm
 // Frames to keep of interleaved stereo: past the last frame with a sample above kSilence, rounded up
 // to `block`, at least one block.
 uint32_t trimTail(const int16_t* lr, uint32_t frames, uint32_t block);
+// The toast of a render into the bank (Resample, one-shot): "NAME 3.2s" (tenths cut), ", N CLIPS" when
+// clips (", 1 CLIP"). Cut to n.
+void renderDoneText(const char* name, uint32_t frames, uint32_t clips, char* out, int n);
 // "RS1", "RS2", ...: the first name not in p's sample list (ignoring case).
 void nextResampleName(const Project& p, char out[kSampleNameMax + 1]);
 
@@ -43,6 +50,7 @@ struct RenderSpec {
   uint16_t maxSlots = kSongMax;  // Mode::Song: at most this many slot passes (1..kRenderSlotsMax)
   uint32_t tailBlocks = 0;       // blocks after the end: delay / reverb ring-out (689 = 2 s)
   uint8_t loops = 1;             // Mode::Pattern: passes of the pattern in the body (1..17)
+  uint32_t cutTicks = 0;         // Mode::Pattern: the body ends this far into its last pass (0: the whole pass)
 };
 
 // One synth event of a rendered block: its sample offset in the block and the message.
@@ -102,7 +110,7 @@ struct BlockRender {
   uint32_t clips = 0;
   void render(Synth& synth, const SeqEv* ev, int n, int16_t l[Synth::kBlock], int16_t r[Synth::kBlock]);
   // Peak and clips of a block (render() calls it on the master).
-  void measure(const int16_t* l, const int16_t* r);
+  void measure(const int16_t* l, const int16_t* r, int n = Synth::kBlock);
 };
 
 // Offline render of the INT tracks: OfflineSequence through `synth`. Two renders of the same spec are

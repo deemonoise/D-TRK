@@ -27,8 +27,9 @@ class RenderPacker {
 // rendered and handed to out. The caller resets the synth with reset().
 class RenderFeeder {
  public:
-  // l, r: one block; false stops the render (the write failed).
-  using Out = bool (*)(const int16_t* l, const int16_t* r, void* ctx);
+  // l, r: n frames of one block (kBlock, fewer in the block where a skip ends); false stops the render
+  // (the write failed).
+  using Out = bool (*)(const int16_t* l, const int16_t* r, int n, void* ctx);
   explicit RenderFeeder(Synth& s) : synth_(s) {}
   void reset();
   // Tap mode (one-shot bounce): out() and the stats get tap k of t (x kTapScale, the preview tap
@@ -37,6 +38,9 @@ class RenderFeeder {
     tap_ = t;
     tapK_ = k;
   }
+  // The first frames of the render (Resample's wrap pass, RenderStartReq::skipFrames) are rendered but
+  // neither go out nor count in the stats (peak, clips, loud blocks). reset() clears it.
+  void setSkip(uint32_t frames) { skip_ = frames; }
   // Ok; BadOrder when m does not start at the block being filled (nothing applied); WriteFail when
   // out said stop.
   link::RenderResult apply(const link::RenderBlocks& m, Out out, void* ctx);
@@ -51,7 +55,7 @@ class RenderFeeder {
  private:
   Synth& synth_;
   BlockRender stats_;
-  uint32_t blocks_ = 0, loud_ = 0, loudMono_ = 0;
+  uint32_t blocks_ = 0, loud_ = 0, loudMono_ = 0, skip_ = 0;
   int16_t monoPeak_ = 0;
   const RenderTaps* tap_ = nullptr;
   int tapK_ = 0;

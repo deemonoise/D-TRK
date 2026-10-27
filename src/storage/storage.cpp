@@ -331,6 +331,7 @@ const char* resultText(Result r) {
     case Result::Capped: return "SAMPLE CAP";
     case Result::BankFull: return "BANK FULL";
     case Result::NoBank: return "NO SAMPLE BANK";
+    case Result::RecBusy: return "REC BUSY";
   }
   return "?";
 }

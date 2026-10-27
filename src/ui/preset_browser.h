@@ -3,6 +3,7 @@
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "hw/sdcard.h"
+#include "file_list.h"
 #include "keyboard.h"
 #include "model.h"
 #include "preset_paths.h"
@@ -13,17 +14,19 @@ namespace ui {
 
 class App;
 
-// Preset browser over the work area (INST). Load opens at the top: [FACTORY] (built-in, type ->
-// category -> preset) and a folder per type with the user's folders and .mti files of
-// /presets/<TYPE>; ".." goes up. A preset of another type changes the instrument's type; a factory
-// KIT also writes its drums into INS25..32 (INS17..24 for a kit there). Selecting a preset applies it
-// at once and plays C4; OK keeps it, CANCEL (or EncLong) puts the instrument (and the drum block)
-// back. A preset's recommended insert (drive, bits, rate, drive model) overwrites the current track's
+// Preset browser over the work area (INST), a FileList like every browser. Load's top: [FACTORY]
+// (built-in, type -> category -> preset) and a folder per type with the user's folders and .mti
+// files of /presets/<TYPE>; row 0 goes up ("< Up (..)"), at the top "< Back" cancels. A preset of
+// another type changes the instrument's type; a factory KIT also writes its drums into INS25..32
+// (INS17..24 for a kit there). Selecting a preset (turn, first tap) applies it at once and plays C4;
+// a click / a tap on it again or OK keeps it and closes; CANCEL, or B / a long press at the top,
+// puts the instrument (and the drum block) back. Each browser opens where it was left for the
+// instrument's type (Load and Save apart; a folder gone: the type's root). A preset's recommended insert (drive, bits, rate, drive model) overwrites the current track's
 // insert when that track plays the instrument (not for a KIT lane's instrument: the KIT track keeps
 // its insert); CANCEL puts it back too. Save stores that track's insert as the recommendation.
-// DEL removes a user preset (menu confirm). Save: the instrument's type root, user folders
-// only; SAVE asks the name (keyboard) and confirms an overwrite, a click on a file saves over it;
-// +DIR makes a folder.
+// DEL removes a user preset (menu confirm). Save: the instrument's type's user folders only
+// (B at its root closes); SAVE asks the name (keyboard) and confirms an overwrite, a click on a file
+// (a tap on the selected one) saves over it; +DIR makes a folder.
 class PresetBrowser {
  public:
   enum class Mode : uint8_t { Load, Save };
@@ -38,28 +41,40 @@ class PresetBrowser {
   void draw(LGFX_Sprite& s, int y0);
 
  private:
-  static constexpr int kMaxEntries = 64;
-  static constexpr int kHeaderH = 28, kRowH = 24;
-  static constexpr int kRows = (kAreaH - kHeaderH) / kRowH;
+  static constexpr int kMaxEntries = 512;
+  static constexpr int kHeaderH = FileList::kHeaderH;
   static constexpr int kPreviewNote = 60;
-  // Header: path (Save: after the type), three buttons (Load: OK DEL CANCEL, Save: SAVE +DIR CANCEL).
-  static constexpr int kPathX = 144;
+  // Header: LOAD / SAVE <TYPE>, the path, SD status, three buttons (Load: OK DEL CANCEL, Save: SAVE +DIR CANCEL).
   static constexpr int kBtnX[3] = {296, 344, 392};
   static constexpr int kBtnX1[3] = {340, 388, 472};
-  enum class Kind : uint8_t { Up, Factory, FactoryType, Category, UserType, Folder, File, FactoryFile };
-  struct Entry {
-    Kind kind;
-    int16_t index;  // factory preset index / category ordinal / InstrType (FactoryType, UserType)
+  // FileList tags; index: factory preset index / category ordinal / InstrType (FactoryType, UserType).
+  enum class Kind : uint8_t { Factory, FactoryType, Category, UserType, Folder, File, FactoryFile };
+  // Where a browser was left (per mode and instrument type, PSRAM while powered).
+  struct Place {
+    bool valid;
+    bool inFactory;
+    mt::InstrType type, facType;
+    char category[17];
+    char dir[mt::kPresetDirMax];
+    char cursor[hw::kNameMax];
   };
   enum MenuId : int { kCancel, kOverwrite, kDelete };
 
   mt::Instrument& inst();
-  void list();          // fills the entries for type_ / dir_ / inFactory_ / facType_ / category_
+  // Fills the list for type_ / dir_ / inFactory_ / facType_ / category_, the cursor on that name.
+  void list(const char* cursor);
   void add(Kind k, int index, const char* name);
-  void enter(int i);    // folder / type / factory type / category / [FACTORY] / ".."
+  Kind kindOf(int i) const { return static_cast<Kind>(list_.tag(i)); }
+  bool isPreset(int i) const { return i >= 0 && i < list_.count() && list_.kind(i) == FileList::Kind::File; }
+  bool atTop() const;   // Load: the type list; Save: the type's root
+  void enter(int i);    // folder / type / factory type / category / [FACTORY]
+  void back();          // row 0, long press, B: up (the cursor on the folder left); the top: cancel
+  void act(FileList::Act a);
   void pick(int i);     // Load: apply + preview
-  void choose(int i);   // click / tap on a row
-  void moveSel(int d);
+  void choose();        // click / tap on the selected row
+  Place* place();       // this mode's for backup_.type, nullptr without memory
+  void remember();
+  void restore();       // the remembered place, or the default one
   void apply(const mt::Instrument& src);  // applyPreset under lockProject, markDirty, preview
   void applyKit(int index);  // factory KIT: the kit + its drums in INS block_.., preview
   // The preview's insert: the current track when it plays instr_, else none (mt::kTracks).
@@ -84,9 +99,7 @@ class PresetBrowser {
   bool inFactory_ = false;
   mt::InstrType facType_ = mt::InstrType::Count;  // inside [FACTORY]: Count = type list
   char category_[17] = {0};  // inside a factory type: "" = category list
-  Entry entries_[kMaxEntries];
-  char (*names_)[hw::kNameMax] = nullptr;  // PSRAM, kMaxEntries, while open
-  int count_ = 0, sel_ = 0, top_ = 0, dragAcc_ = 0;
+  FileList list_{app_, kMaxEntries};
   int picked_ = -1;  // entry applied last (Load), -1 after a new listing
   int y0_ = kAreaY;
   mt::Instrument backup_;
@@ -98,7 +111,6 @@ class PresetBrowser {
   uint32_t seqBefore_ = 0, seqAfter_ = 0;
   bool changed_ = false;
   char pending_[17] = {0};  // name a confirmation menu acts on
-  // Last folder per type (RAM).
 };
 
 }  // namespace ui

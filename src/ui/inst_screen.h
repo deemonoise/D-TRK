@@ -55,6 +55,7 @@ class InstScreen : public Screen {
   void onInput(const hw::InputEvent& ev) override;
   void onPage(int d) override;
   void onBack() override;
+  bool onPlay() override;  // the table picker's WT import: Play previews the file
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;

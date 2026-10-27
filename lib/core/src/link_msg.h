@@ -333,8 +333,8 @@ struct PreviewFileRep {
 };
 
 // Render (WAV / resample) on the synth board. RenderStart parks the live output, resets the synth and
-// opens <path>.tmp (target file: stereo 16-bit) or a temporary file for the bank (target bank: the
-// mono mix goes into the cache at the end; path unused). RenderBlocks carry the events of the next
+// opens a temporary file for the bank (target bank: the mono mix goes into the cache at the end; path
+// unused; kFile is refused: OpenFail; Busy while a REC take runs, any target). RenderBlocks carry the events of the next
 // blocks (mt::OfflineSequence on the ESP), rendered and written before the reply; a block with more
 // events than fit a frame goes on in the next one (kCont on its count, the frame's last record).
 // RenderEnd finalises (or aborts: the file removed) and the live output resumes. Every reply is a
@@ -347,8 +347,8 @@ enum class RenderResult : uint8_t {
 };
 // Target kExport (mt::ExportWriter): path is the folder; RenderOut adds the pass's files (stereo, bits
 // 16 / 24) before the first RenderBlocks; outs: the files wanted, the reply's outMax: how many this pass
-// takes (the PERF ring in PSRAM: up to 20, RAM2: up to 6); skipFrames: not written (WRAP); estFrames:
-// the expected length (preallocation).
+// takes (the PERF ring in PSRAM: up to 20, RAM2: up to 6); skipFrames: not written (WRAP; also the bank
+// target: Resample's wrap pass, out of the stats too); estFrames: the expected length (preallocation).
 // src: kSrcMaster = the master mix; kSrcPreview (target kBank only, one-shot bounce) = the preview
 // track's strip (its insert, fader, pan; no sends, no master: mt::RenderTaps::kPrev).
 struct RenderStartReq {
@@ -381,7 +381,7 @@ struct RenderBlocks {
 // normalize: 1 scaled so the peak lands at -1 dBFS (the bank: the mono mix's peak), 2 at -0.3 dBFS
 // (mt::kNormPeakHot, one-shot); trim: cut after
 // the last block above -60 dBFS.
-// Export: frames = the files' length (0 = all written).
+// Export: frames = the files' length (0 = all written); the bank: at most frames kept (0 = no cut).
 struct RenderEndReq {
   uint8_t abort = 0, normalize = 0, trim = 0;
   uint32_t frames = 0;

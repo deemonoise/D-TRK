@@ -10,6 +10,7 @@
 #include "link_server.h"
 #include "preview_stream.h"
 #include "psram.h"
+#include "rec_server.h"
 #include "render.h"
 #include "render_link.h"
 #include "stream.h"
@@ -34,11 +35,12 @@ mt::RenderFeeder* feeder = nullptr;
 
 bool running = false;
 uint8_t target = 0;
-char path[sizeof(RenderStartReq::path)] = {};
 char tmp[sizeof(RenderStartReq::path) + 4] = {};
 FsFile file;
 int16_t* buf = nullptr;  // interleaved L, R
 uint32_t bufFrames = 0;  // filled
+uint32_t written = 0;    // frames into the file (after the skip)
+uint32_t skipFrames = 0; // the bank target: Resample's wrap pass, not written
 uint32_t lastMs = 0;
 
 // Export (target kExport): the files on the card, the writer, its buffers. Write buffers: the PERF ring in
@@ -182,8 +184,9 @@ bool flushBuf() {
   return file.write(buf, bytes) == bytes;
 }
 
-bool writeBlock(const int16_t* l, const int16_t* r, void*) {
-  for (int i = 0; i < mt::Synth::kBlock; ++i) {
+bool writeBlock(const int16_t* l, const int16_t* r, int n, void*) {
+  written += static_cast<uint32_t>(n);
+  for (int i = 0; i < n; ++i) {
     buf[2 * bufFrames] = l[i];
     buf[2 * bufFrames + 1] = r[i];
     ++bufFrames;
@@ -202,7 +205,7 @@ bool makeParent(const char* p) {
   return SD.sdfs.exists(dir) || SD.sdfs.mkdir(dir, true);
 }
 
-bool exportBlock(const int16_t*, const int16_t*, void*) { return ex->w.block(*synth); }
+bool exportBlock(const int16_t*, const int16_t*, int, void*) { return ex->w.block(*synth); }
 
 // The live output parked, the synth reset: the render starts at block 0.
 void beginRender() {
@@ -212,6 +215,8 @@ void beginRender() {
   synth->reset();
   feeder->reset();
   bufFrames = 0;
+  written = 0;
+  skipFrames = 0;
   running = true;
 }
 
@@ -251,7 +256,6 @@ RenderResult startExport(const RenderStartReq& q, uint8_t& outMax) {
   ex->w.begin(q.path, exBits, q.skipFrames, mem, cap, exTaps, n);
   outMax = static_cast<uint8_t>(n);
   target = q.target;
-  strcpy(path, q.path);
   beginRender();  // parked first: the interrupt no longer touches the synth
   if (ring) {
     exRing = ring;
@@ -266,17 +270,13 @@ RenderResult start(Reader& r, uint8_t& outMax) {
   RenderStartReq q;
   if (!decode(r, q)) return RenderResult::OpenFail;
   abortRender();
+  if (rec::busy()) return RenderResult::Busy;  // a take on the card / into the bank
   if (!card::ready()) return RenderResult::NoSd;
   if (q.target == RenderStartReq::kExport) return startExport(q, outMax);
-  if (q.target == RenderStartReq::kBank) {
-    if (bank::writable() != mt::BankResult::Ok) return RenderResult::Busy;
-    strcpy(tmp, kBankTmp);
-  } else {
-    if (!q.path[0] || q.path[0] != '/') return RenderResult::OpenFail;
-    snprintf(tmp, sizeof tmp, "%s.tmp", q.path);
-  }
+  if (q.target != RenderStartReq::kBank) return RenderResult::OpenFail;
+  if (bank::writable() != mt::BankResult::Ok) return RenderResult::Busy;
+  strcpy(tmp, kBankTmp);
   target = q.target;
-  strcpy(path, q.path);
   if (!makeParent(tmp)) return RenderResult::WriteFail;
   buf = static_cast<int16_t*>(malloc(kBufFrames * 4));
   if (!buf) return RenderResult::WriteFail;
@@ -292,6 +292,8 @@ RenderResult start(Reader& r, uint8_t& outMax) {
     return RenderResult::WriteFail;
   }
   beginRender();
+  skipFrames = q.skipFrames;
+  feeder->setSkip(skipFrames);
   if (q.src == RenderStartReq::kSrcPreview) {
     prevTap = static_cast<PrevTap*>(malloc(sizeof(PrevTap)));
     if (!prevTap) {
@@ -308,45 +310,20 @@ RenderResult start(Reader& r, uint8_t& outMax) {
   return RenderResult::Ok;
 }
 
-// Kept frames: past the last loud block when trimming (one block at least), else all.
-uint32_t keptFrames(bool trim) {
-  const uint32_t all = feeder->blocks() * mt::Synth::kBlock;
-  if (!trim) return all;
-  const uint32_t loud = target == RenderStartReq::kBank ? feeder->loudBlocksMono() : feeder->loudBlocks();
-  const uint32_t keep = (loud ? loud : 1) * mt::Synth::kBlock;
-  return keep < all ? keep : all;
+// Kept frames of the file (after the skip): past the last loud block when trimming (one block at
+// least), else all; at most cut (RenderEndReq::frames, 0: no cut).
+uint32_t keptFrames(bool trim, uint32_t cut) {
+  uint32_t keep = written;
+  if (trim) {
+    const uint32_t loud = feeder->loudBlocksMono() * mt::Synth::kBlock;
+    const uint32_t k = loud > skipFrames + mt::Synth::kBlock ? loud - skipFrames : mt::Synth::kBlock;
+    if (k < keep) keep = k;
+  }
+  return cut && cut < keep ? cut : keep;
 }
 
-// The file target: the kept frames read back (scaled in place when normalizing), the mono mix's crc
-// for "mtcr", the header, then <path>.tmp renamed to path.
 // normalize (RenderEndReq): 0 off, 1 -1 dBFS, 2 -0.3 dBFS.
 float normTarget(uint8_t normalize) { return normalize == 2 ? mt::kNormPeakHot : mt::kNormPeak; }
-
-RenderResult endFile(uint8_t normalize, uint32_t frames, uint32_t& crc) {
-  crc = 0;
-  const int16_t peak = normalize ? feeder->peak() : 0;
-  for (uint32_t at = 0; at < frames;) {
-    const uint32_t n = frames - at < kBufFrames ? frames - at : kBufFrames;
-    const uint64_t pos = mt::kWavHeaderBytes + static_cast<uint64_t>(at) * 4;
-    if (!file.seekSet(pos) || file.read(buf, n * 4) != static_cast<int>(n * 4)) return RenderResult::ReadFail;
-    if (peak > 0) {
-      mt::normalizePeak(buf, n, peak, normTarget(normalize));
-      if (!file.seekSet(pos) || file.write(buf, n * 4) != n * 4) return RenderResult::WriteFail;
-    }
-    for (uint32_t i = 0; i < n; ++i) buf[i] = static_cast<int16_t>((buf[2 * i] + buf[2 * i + 1]) / 2);
-    crc = mt::sampleCrc(buf, n, crc);
-    at += n;
-    keepalive(at, frames, nullptr);
-  }
-  uint8_t hdr[mt::kWavHeaderBytes];
-  mt::wavHeader(hdr, frames, mt::kSynthRate, 60, crc, 2);
-  if (!file.truncate(mt::kWavHeaderBytes + static_cast<uint64_t>(frames) * 4) || !file.seekSet(0) ||
-      file.write(hdr, sizeof hdr) != sizeof hdr)
-    return RenderResult::WriteFail;
-  if (!file.close()) return RenderResult::WriteFail;
-  if (SD.sdfs.exists(path)) SD.sdfs.remove(path);
-  return SD.sdfs.rename(tmp, path) ? RenderResult::Ok : RenderResult::WriteFail;
-}
 
 // The bank target: the mono mix of the kept frames, normalized to its own peak.
 struct BankFill {
@@ -421,21 +398,15 @@ RenderRep end(Reader& r, uint8_t seq) {
   RenderRep m = rep(RenderResult::Ok);
   m.clips = feeder->clips();
   RenderResult res = flushBuf() && file.sync() ? RenderResult::Ok : RenderResult::WriteFail;
-  const uint32_t frames = keptFrames(q.trim != 0);
+  const uint32_t frames = keptFrames(q.trim != 0, q.frames);
   if (res == RenderResult::Ok) {
-    if (target == RenderStartReq::kBank) {
-      mt::ImportOut o;
-      mt::BankResult br = mt::BankResult::Ok;
-      res = endBank(q.normalize, frames, o, br);
-      m.bank = static_cast<uint8_t>(br);
-      m.crc = o.crc;
-      m.frames = o.frames;
-      m.peak = static_cast<uint16_t>(feeder->monoPeak());
-    } else {
-      res = endFile(q.normalize, frames, m.crc);
-      m.frames = frames;
-      m.peak = static_cast<uint16_t>(feeder->peak());
-    }
+    mt::ImportOut o;
+    mt::BankResult br = mt::BankResult::Ok;
+    res = endBank(q.normalize, frames, o, br);
+    m.bank = static_cast<uint8_t>(br);
+    m.crc = o.crc;
+    m.frames = o.frames;
+    m.peak = static_cast<uint16_t>(feeder->monoPeak());
   }
   m.result = static_cast<uint8_t>(res);
   if (res != RenderResult::Ok) {

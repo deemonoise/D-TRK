@@ -754,7 +754,17 @@ bool App::renderProgress(uint32_t done, uint32_t total, void* app) {
 
 bool App::labeledProgress(const char* label, uint32_t done, uint32_t total, void* app) {
   App& a = *static_cast<App*>(app);
-  a.showProgress(label, done, total);
+  if (total) {
+    a.showProgress(label, done, total);
+  } else {
+    static uint32_t lastShown = 0;
+    if (millis() - lastShown >= 200) {
+      lastShown = millis();
+      snprintf(a.progMsg_, sizeof(a.progMsg_), "%s %lu.%lus", label, static_cast<unsigned long>(done / mt::kSynthRate),
+               static_cast<unsigned long>(done % mt::kSynthRate / (mt::kSynthRate / 10)));
+      a.showBusy(a.progMsg_);
+    }
+  }
   // Renders run for up to a minute on this task: let the idle task (watchdog) run now and then.
   static uint32_t lastYield = 0;
   if (millis() - lastYield >= 100) {

@@ -77,6 +77,32 @@ RenderSpec exportRenderSpec(const Project& p, const ExportSpec& s) {
   return r;
 }
 
+ResamplePlan resamplePlan(const Project& p, int pattern, uint16_t tracksMask, int track, uint32_t maxFrames) {
+  ResamplePlan r;
+  const int pat = pattern >= 0 && pattern < kPatterns ? pattern : 0;
+  r.spec.pattern = static_cast<uint8_t>(pat);
+  r.spec.tracksMask = tracksMask;
+  r.spec.tailBlocks = 1;  // the frames' rounding never runs past the render
+  const uint64_t pass = passTicks(p, pat), loop = trackLoopTicks(p.patterns[pat], track);
+  const uint64_t passUsV = passUs(p, pat);
+  const uint64_t loopUs = loop < pass ? ticksToUs(p, loop) : passUsV;
+  const uint32_t skip = usToFrames(passUsV);
+  const uint32_t frames = usToFrames(passUsV + loopUs) - skip;
+  if (frames <= maxFrames) {
+    r.spec.loops = 2;
+    r.spec.cutTicks = loop < pass ? static_cast<uint32_t>(loop) : 0;
+    r.skipFrames = skip;
+    r.frames = frames;
+  } else {
+    r.spec.loops = 1;
+    r.spec.cutTicks = loop < pass ? static_cast<uint32_t>(loop) : 0;
+    r.frames = maxFrames;
+    r.capped = true;
+  }
+  r.blocks = static_cast<uint32_t>((static_cast<uint64_t>(r.skipFrames) + r.frames + Synth::kBlock - 1) / Synth::kBlock);
+  return r;
+}
+
 uint32_t exportBodyFrames(const Project& p, const ExportSpec& s) { return usToFrames(passOf(p, s) * loopsOf(s)); }
 
 uint32_t exportSkipFrames(const Project& p, const ExportSpec& s) { return wrap(s) ? usToFrames(passOf(p, s)) : 0; }

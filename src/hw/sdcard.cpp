@@ -17,7 +17,8 @@ int cmpName(const void* a, const void* b) {
 // alphabetically last entry if it sorts before it. So a full list holds the first max names in
 // sorted order, not the first max the directory happens to return. Returns the new count.
 int keepName(char (*names)[kNameMax], int n, int max, const char* name, size_t len) {
-  if (max <= 0) return n;
+  // A name the card cannot give back (non-ASCII, shown as "?") would not open: never listed.
+  if (max <= 0 || memchr(name, '?', len)) return n;
   if (n < max) {
     memcpy(names[n], name, len);
     names[n][len] = 0;

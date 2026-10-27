@@ -45,7 +45,8 @@ class FileSource : public mt::ByteSource {
 bool sdNextEntry(fs::File& dir, String& name, bool& isDir);
 
 constexpr int kNameMax = 96;  // listed file / folder name, incl. terminator
-// The listings below keep the alphabetically first max names when a folder holds more.
+// The listings below keep the alphabetically first max names when a folder holds more (sorted
+// without case); hidden names (".*") and names with "?" (non-ASCII: they would not open) are skipped.
 // Names in dir ending with ext (e.g. ".mtp"), extension stripped, sorted. Returns the count.
 // accept (optional) filters base names, e.g. storage::validName.
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max,

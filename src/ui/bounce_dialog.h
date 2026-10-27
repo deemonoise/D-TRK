@@ -49,8 +49,6 @@ class BounceDialog {
   void save();  // checks, then Overwrite? or run()
   void run();
   void runKit();
-  bool stopTransport();  // false: busy (toasted)
-  void resultToast(int r);  // a failed storage::Result as a toast (nothing for Cancelled)
   int rowId(int listRow) const;  // a list row as a Row (KIT mode shows a subset)
   bool action(int row);
   static bool progress(uint32_t done, uint32_t total, void* ctx);

@@ -6,12 +6,10 @@
 
 namespace mt {
 
-namespace {
 uint64_t ticksToUs(const Project& p, uint64_t ticks) {
   const uint16_t bpm = p.bpm < 20 ? 20 : (p.bpm > 300 ? 300 : p.bpm);  // as the sequencer clamps
   return ticks * 625000ull / bpm;
 }
-}  // namespace
 
 uint64_t passTicks(const Project& p, int idx) {
   const Pattern& pt = p.patterns[idx >= 0 && idx < kPatterns ? idx : 0];
@@ -27,6 +25,26 @@ uint64_t songTicks(const Project& p, int maxSlots) {
 }
 
 uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, idx)); }
+
+void renderDoneText(const char* name, uint32_t frames, uint32_t clips, char* out, int n) {
+  if (n <= 0) return;
+  int k = snprintf(out, n, "%s %lu.%lus", name ? name : "", static_cast<unsigned long>(frames / kSynthRate),
+                   static_cast<unsigned long>(frames % kSynthRate / (kSynthRate / 10)));
+  if (clips && k >= 0 && k < n)
+    snprintf(out + k, n - k, ", %lu CLIP%s", static_cast<unsigned long>(clips), clips == 1 ? "" : "S");
+}
+
+uint64_t trackLoopTicks(const Pattern& pt, int track) {
+  const uint64_t len = pt.length < kMinSteps ? kMinSteps : (pt.length > kMaxSteps ? kMaxSteps : pt.length);
+  const uint64_t pass = len * ticksPerStep(pt.res);
+  if (track < 0 || track >= kTracks) return pass;
+  const TrackSpeed s = toSpeed(pt.trackSpeed[track]);
+  if (speedDiv(s) > 1) return pass;
+  const uint8_t n = pt.trackLen[track];
+  const uint64_t steps = n && n < len ? n : len;
+  const uint64_t ticks = steps * ticksPerStep(pt.res) / static_cast<uint64_t>(speedMul(s));
+  return ticks && ticks < pass ? ticks : pass;
+}
 
 // A slot's BPM is the tempo from its start ("-" keeps it), as the sequencer plays it.
 uint64_t songUs(const Project& p, int maxSlots) {
@@ -89,10 +107,15 @@ OfflineSequence::OfflineSequence(Project& p, const RenderSpec& spec) : spec_(spe
   seq_.setSong(0, *this, spec.mode == RenderSpec::Mode::Song, 0);
   if (spec.mode == RenderSpec::Mode::Pattern) seq_.queuePattern(spec.pattern < kPatterns ? spec.pattern : 0);
   const uint64_t loops = spec.mode == RenderSpec::Mode::Song || spec.loops < 1 ? 1 : spec.loops;
-  bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p, slots) : passUs(p, spec.pattern) * loops;
+  const uint64_t pass = passTicks(p, spec.pattern);
+  const uint64_t cut = spec.mode == RenderSpec::Mode::Pattern && spec.cutTicks && spec.cutTicks < pass ? spec.cutTicks : 0;
+  bodyUs_ = spec.mode == RenderSpec::Mode::Song ? songUs(p, slots)
+            : cut ? passUs(p, spec.pattern) * (loops - 1) + ticksToUs(p, cut)
+                  : passUs(p, spec.pattern) * loops;
   bodyBlocks_ = static_cast<uint32_t>((bodyUs_ + kRenderBlockUs - 1) / kRenderBlockUs);
   // Steps of the next pass are never planned (a negative NDG would land inside the body).
-  seq_.setEndTick(spec.mode == RenderSpec::Mode::Song ? songTicks(p, slots) : passTicks(p, spec.pattern) * loops);
+  seq_.setEndTick(spec.mode == RenderSpec::Mode::Song ? songTicks(p, slots)
+                  : cut ? pass * (loops - 1) + cut : pass * loops);
   seq_.start(0, *this);
   seq_.process(0, *this);  // step 0 planned at 0, not clamped to the first block's end
 }
@@ -146,10 +169,10 @@ void BlockRender::render(Synth& synth, const SeqEv* ev, int n, int16_t l[Synth::
   measure(l, r);
 }
 
-void BlockRender::measure(const int16_t* l, const int16_t* r) {
+void BlockRender::measure(const int16_t* l, const int16_t* r, int n) {
   for (int c = 0; c < 2; ++c) {
     const int16_t* const out = c ? r : l;
-    for (int i = 0; i < Synth::kBlock; ++i) {
+    for (int i = 0; i < n; ++i) {
       const int a = out[i] < 0 ? -out[i] : out[i];
       if (a > peak) peak = static_cast<int16_t>(a > 32767 ? 32767 : a);
       if (out[i] >= 32767 || out[i] <= -32767) ++clips;

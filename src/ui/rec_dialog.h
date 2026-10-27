@@ -50,6 +50,7 @@ class RecDialog {
   bool shownIn(Mode m) const { return open_ && mode_ == m; }  // the window, for the screen that shows it
   Mode mode() const { return mode_; }
   bool taking() const { return taking_; }
+  bool busy() const { return taking_ || adoptUntil_; }  // a take on, or a Sd start waiting for its answer
   bool sdTaking() const { return taking_ && mode_ == Mode::Sd; }  // the status bar's REC
   bool recording() const { return taking_ && state_ == mt::RecState::Rec; }
   uint32_t frames() const { return taking_ ? frames_ : 0; }

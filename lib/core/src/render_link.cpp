@@ -45,7 +45,7 @@ bool RenderPacker::next(RenderBlocks& m) {
 
 void RenderFeeder::reset() {
   stats_ = BlockRender();
-  blocks_ = loud_ = loudMono_ = 0;
+  blocks_ = loud_ = loudMono_ = skip_ = 0;
   monoPeak_ = 0;
 }
 
@@ -57,26 +57,27 @@ RenderResult RenderFeeder::apply(const RenderBlocks& m, Out out, void* ctx) {
     for (int k = 0; k < n; ++k, ++ev) synth_.event(ev->off, ev->track, ev->b, ev->len);
     if (m.evN[i] & RenderBlocks::kCont) break;
     int16_t l[Synth::kBlock], r[Synth::kBlock];
+    synth_.render(l, r);
     if (tap_) {
-      synth_.render(l, r);
       const float g = tapK_ == RenderTaps::kPrev ? kPrevTapScale : kTapScale;
       for (int k = 0; k < Synth::kBlock; ++k) {
         l[k] = sat(tap_->l[tapK_][k] * g);
         r[k] = sat(tap_->r[tapK_][k] * g);
       }
-      stats_.measure(l, r);
-    } else {
-      stats_.render(synth_, nullptr, 0, l, r);
     }
+    const uint64_t at = static_cast<uint64_t>(blocks_) * Synth::kBlock;
+    const int from = skip_ <= at ? 0 : (skip_ - at >= Synth::kBlock ? Synth::kBlock : static_cast<int>(skip_ - at));
     ++blocks_;
-    for (int k = 0; k < Synth::kBlock; ++k) {
+    if (from == Synth::kBlock) continue;  // skipped
+    stats_.measure(l + from, r + from, Synth::kBlock - from);
+    for (int k = from; k < Synth::kBlock; ++k) {
       if (l[k] > kSilence || l[k] < -kSilence || r[k] > kSilence || r[k] < -kSilence) loud_ = blocks_;
       const int mono = (l[k] + r[k]) / 2;
       const int a = mono < 0 ? -mono : mono;
       if (a > monoPeak_) monoPeak_ = static_cast<int16_t>(a);
       if (a > kSilence) loudMono_ = blocks_;
     }
-    if (!out(l, r, ctx)) return RenderResult::WriteFail;
+    if (!out(l + from, r + from, Synth::kBlock - from, ctx)) return RenderResult::WriteFail;
   }
   return RenderResult::Ok;
 }

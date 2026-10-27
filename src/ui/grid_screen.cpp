@@ -10,6 +10,7 @@
 #include "record.h"
 #include "roll.h"
 #include "scale.h"
+#include "render_ui.h"
 #include "storage/render_io.h"
 
 namespace ui {
@@ -938,36 +939,33 @@ void GridScreen::captureLive() {
   app_.toast("LIVE CAPTURED");
 }
 
-// Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
-// project's samples, normalized to -1 dBFS with the silent end cut: RS1, RS2, ...
+// Renders the heard pattern offline (the track alone, or every audible track) into a project sample
+// RS1, RS2, ...: exactly one loop (the pattern, or the track's own length), the delay / reverb tail
+// wrapped into its start, at the level as played (mt::resamplePlan). Playback is stopped first.
 void GridScreen::resample(bool wholePattern) {
-  const engine::Status& st = app_.status();
-  if (st.playing || st.paused) {
-    app_.toast("STOP FIRST");
-    return;
-  }
   mt::Project& p = app_.project();
-  mt::RenderSpec s;
-  s.pattern = app_.editPattern();
-  s.tracksMask = 0;
-  for (int t = 0; t < mt::kTracks; ++t)
-    if (wholePattern ? p.trackAudible(t) : t == track()) s.tracksMask |= static_cast<uint16_t>(1u << t);
   if (!wholePattern && !p.trackInternal(track())) {
     app_.toast("MIDI TRACK");
     return;
   }
+  if (!renderReady(app_)) return;
+  uint16_t mask = 0;
+  for (int t = 0; t < mt::kTracks; ++t)
+    if (wholePattern ? p.trackAudible(t) : t == track()) mask |= static_cast<uint16_t>(1u << t);
+  const mt::ResamplePlan plan =
+      mt::resamplePlan(p, app_.editPattern(), mask, wholePattern ? -1 : track(), storage::kResampleMaxFrames);
   char name[mt::kSampleNameMax + 1];
   storage::RenderStats rs;
-  const storage::Result r = storage::resample(p, s, name, rs, App::renderProgress, &app_);
+  const storage::Result r = storage::resample(p, plan, name, rs, App::renderProgress, &app_);
   app_.endProgress();
   if (r != storage::Result::Ok && r != storage::Result::Capped) {
-    app_.toast(storage::resultText(r));
+    renderResultToast(app_, r);
     return;
   }
   app_.markDirty();
-  char msg[40];
-  snprintf(msg, sizeof(msg), "%s %lu.%lus%s", name, static_cast<unsigned long>(rs.frames / mt::kSynthRate),
-           static_cast<unsigned long>(rs.frames % mt::kSynthRate / (mt::kSynthRate / 10)), r == storage::Result::Capped ? "  60 S CAP" : "");
+  char msg[48];
+  mt::renderDoneText(name, rs.frames, rs.clips, msg, sizeof msg);
+  if (r == storage::Result::Capped) strlcat(msg, ", 60 S CAP", sizeof msg);
   app_.toast(msg);
 }
 

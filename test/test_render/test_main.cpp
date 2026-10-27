@@ -2,7 +2,9 @@
 #include <math.h>
 #include <string.h>
 #include <vector>
+#include <algorithm>
 #include "demos.h"
+#include "export.h"
 #include "follow.h"
 #include "render.h"
 #include "render_link.h"
@@ -495,8 +497,9 @@ void test_sequence_plus_synth_matches_render() {
 struct FeedOut {
   std::vector<int16_t> pcm;
 };
-static bool feedOut(const int16_t* l, const int16_t* r, void* ctx) {
+static bool feedOut(const int16_t* l, const int16_t* r, int n, void* ctx) {
   FeedOut& o = *static_cast<FeedOut*>(ctx);
+  TEST_ASSERT_EQUAL(Synth::kBlock, n);
   o.pcm.insert(o.pcm.end(), l, l + Synth::kBlock);
   o.pcm.insert(o.pcm.end(), r, r + Synth::kBlock);
   return true;
@@ -891,7 +894,7 @@ struct TapOut {
   bool ok = true;
 };
 
-static bool tapOut(const int16_t* l, const int16_t* r, void* ctx) {
+static bool tapOut(const int16_t* l, const int16_t* r, int, void* ctx) {
   TapOut& o = *static_cast<TapOut*>(ctx);
   for (int i = 0; i < Synth::kBlock; ++i) {
     const float v = o.t->l[RenderTaps::kPrev][i] * kPrevTapScale;
@@ -954,6 +957,158 @@ void test_normalize_hot() {
   TEST_ASSERT_INT_WITHIN(1, 15827, b[1]);
 }
 
+// RenderSpec::cutTicks: the body ends that far into its last pass; later steps never sound.
+void test_cut_ticks_body() {
+  Project& p = *mkProj();
+  RenderSpec s;
+  s.loops = 2;
+  s.cutTicks = 5 * 24;
+  OfflineSequence q(p, s);
+  TEST_ASSERT_EQUAL(blocksFor(static_cast<uint32_t>(passUs(p, 0) + 5 * 24 * 625000ull / 120)), q.blocksTotal());
+  s.cutTicks = 0;
+  OfflineSequence whole(p, s);
+  TEST_ASSERT_EQUAL(blocksFor(static_cast<uint32_t>(passUs(p, 0) * 2)), whole.blocksTotal());
+}
+
+// A track's own loop: its length (polymeter) at its speed; slow tracks and full-length x1 ones: the pass.
+void test_track_loop_ticks() {
+  Project& p = *mkProj();
+  Pattern& pt = p.patterns[0];
+  TEST_ASSERT_EQUAL(16 * 24, static_cast<int>(trackLoopTicks(pt, 0)));
+  pt.trackLen[0] = 5;
+  TEST_ASSERT_EQUAL(5 * 24, static_cast<int>(trackLoopTicks(pt, 0)));
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X2);
+  TEST_ASSERT_EQUAL(5 * 12, static_cast<int>(trackLoopTicks(pt, 0)));
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::Half);
+  TEST_ASSERT_EQUAL(16 * 24, static_cast<int>(trackLoopTicks(pt, 0)));
+  pt.trackLen[0] = 0;
+  pt.trackSpeed[0] = static_cast<uint8_t>(TrackSpeed::X4);
+  TEST_ASSERT_EQUAL(16 * 6, static_cast<int>(trackLoopTicks(pt, 0)));  // 4 loops of the track per pass
+}
+
+// Resample: one loop of the source after a skipped first pass (the tail wraps into the start).
+void test_resample_plan_pattern() {
+  Project& p = *mkProj();
+  const ResamplePlan r = resamplePlan(p, 0, 0x3, -1, 60 * kSynthRate);
+  TEST_ASSERT_EQUAL(2, r.spec.loops);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(r.spec.cutTicks));
+  TEST_ASSERT_EQUAL(0x3, r.spec.tracksMask);
+  TEST_ASSERT_EQUAL(usToFrames(passUs(p, 0)), r.skipFrames);
+  TEST_ASSERT_EQUAL(usToFrames(passUs(p, 0) * 2) - r.skipFrames, r.frames);
+  TEST_ASSERT_FALSE(r.capped);
+  OfflineSequence q(p, r.spec);
+  TEST_ASSERT_TRUE(static_cast<uint64_t>(q.blocksTotal()) * Synth::kBlock >= r.skipFrames + r.frames);
+  TEST_ASSERT_TRUE(r.blocks <= q.blocksTotal());
+  TEST_ASSERT_TRUE(static_cast<uint64_t>(r.blocks) * Synth::kBlock >= r.skipFrames + r.frames);
+}
+
+void test_resample_plan_track() {
+  Project& p = *mkProj();
+  p.patterns[0].trackLen[1] = 4;
+  const ResamplePlan r = resamplePlan(p, 0, 0x2, 1, 60 * kSynthRate);
+  TEST_ASSERT_EQUAL(2, r.spec.loops);
+  TEST_ASSERT_EQUAL(4 * 24, static_cast<int>(r.spec.cutTicks));
+  TEST_ASSERT_EQUAL(usToFrames(passUs(p, 0)), r.skipFrames);
+  TEST_ASSERT_EQUAL(usToFrames(passUs(p, 0) + 4 * 24 * 625000ull / 120) - r.skipFrames, r.frames);
+  OfflineSequence q(p, r.spec);
+  TEST_ASSERT_TRUE(r.blocks <= q.blocksTotal());
+}
+
+// Longer than the cap: no wrap pass, cut at the cap.
+void test_resample_plan_capped() {
+  Project& p = *mkProj();
+  const ResamplePlan r = resamplePlan(p, 0, 0x1, -1, 1000);
+  TEST_ASSERT_TRUE(r.capped);
+  TEST_ASSERT_EQUAL(1, r.spec.loops);
+  TEST_ASSERT_EQUAL(0u, r.skipFrames);
+  TEST_ASSERT_EQUAL(1000u, r.frames);
+  TEST_ASSERT_EQUAL((1000 + Synth::kBlock - 1) / Synth::kBlock, static_cast<int>(r.blocks));
+}
+
+// RenderFeeder::setSkip: the first frames neither go out nor count; the rest equals the full render.
+struct SkipOut {
+  std::vector<int16_t> l, r;
+};
+static bool skipOut(const int16_t* l, const int16_t* r, int n, void* ctx) {
+  SkipOut& o = *static_cast<SkipOut*>(ctx);
+  o.l.insert(o.l.end(), l, l + n);
+  o.r.insert(o.r.end(), r, r + n);
+  return true;
+}
+
+static void feedAll(uint32_t skip, SkipOut& out, RenderFeeder*& fdOut) {
+  static int16_t dline[kSynthRate / 4];
+  Project& p = *mkProj();
+  fillSeqProj(p);
+  Synth& synth = *synthFor(p);
+  synth.setDelayBuffer(dline, kSynthRate / 4);
+  OfflineRender::Guard g(p);
+  RenderSpec s;
+  s.loops = 2;
+  s.tailBlocks = 1;
+  static OfflineSequence* q = nullptr;
+  delete q;
+  q = new OfflineSequence(p, s);
+  RenderPacker pk(*q);
+  static RenderFeeder* fd = nullptr;
+  delete fd;
+  fd = new RenderFeeder(synth);
+  fd->reset();
+  fd->setSkip(skip);
+  static link::RenderBlocks m;
+  while (pk.next(m)) TEST_ASSERT_EQUAL(static_cast<int>(link::RenderResult::Ok), static_cast<int>(fd->apply(m, skipOut, &out)));
+  fdOut = fd;
+}
+
+void test_feeder_skip() {
+  SkipOut all, cut;
+  RenderFeeder* fd = nullptr;
+  feedAll(0, all, fd);
+  const uint32_t blocks = fd->blocks();
+  const uint32_t skip = usToFrames(passUs(*mkProj(), 0));  // not a block multiple
+  TEST_ASSERT_TRUE(skip % Synth::kBlock != 0);
+  feedAll(skip, cut, fd);
+  TEST_ASSERT_EQUAL(blocks, fd->blocks());
+  TEST_ASSERT_EQUAL(all.l.size() - skip, cut.l.size());
+  TEST_ASSERT_TRUE(std::equal(cut.l.begin(), cut.l.end(), all.l.begin() + skip));
+  TEST_ASSERT_TRUE(std::equal(cut.r.begin(), cut.r.end(), all.r.begin() + skip));
+  int16_t peak = 0;
+  uint32_t clips = 0;
+  for (size_t i = 0; i < cut.l.size(); ++i)
+    for (int c = 0; c < 2; ++c) {
+      const int v = c ? cut.r[i] : cut.l[i];
+      const int a = v < 0 ? -v : v;
+      if (a > peak) peak = static_cast<int16_t>(a > 32767 ? 32767 : a);
+      if (v >= 32767 || v <= -32767) ++clips;
+    }
+  TEST_ASSERT_EQUAL(peak, fd->peak());
+  TEST_ASSERT_EQUAL(clips, fd->clips());
+  TEST_ASSERT_TRUE(fd->loudBlocks() > skip / Synth::kBlock);
+}
+
+// Everything skipped: nothing out, all quiet (the ESP reads SILENT).
+void test_feeder_skip_all_quiet() {
+  SkipOut cut;
+  RenderFeeder* fd = nullptr;
+  feedAll(0xFFFFFFF0u, cut, fd);
+  TEST_ASSERT_EQUAL(0u, static_cast<uint32_t>(cut.l.size()));
+  TEST_ASSERT_EQUAL(0u, fd->loudBlocks());
+  TEST_ASSERT_EQUAL(0, fd->peak());
+}
+
+// The toast of a render into the bank: "NAME 3.2s", ", N CLIPS" when it clipped.
+void test_render_done_text() {
+  char b[40];
+  renderDoneText("RS1", kSynthRate * 3 + kSynthRate / 5, 0, b, sizeof b);
+  TEST_ASSERT_EQUAL_STRING("RS1 3.2s", b);
+  renderDoneText("KICK_1", kSynthRate / 20, 12, b, sizeof b);
+  TEST_ASSERT_EQUAL_STRING("KICK_1 0.0s, 12 CLIPS", b);
+  renderDoneText("X", kSynthRate, 1, b, sizeof b);
+  TEST_ASSERT_EQUAL_STRING("X 1.0s, 1 CLIP", b);
+  renderDoneText("LONGNAME12345678", 60 * kSynthRate, 99999, b, 12);
+  TEST_ASSERT_EQUAL(11, static_cast<int>(strlen(b)));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_pass_us);
@@ -994,5 +1149,13 @@ int main() {
   RUN_TEST(test_song_follow_stay_limited_by_max_slots);
   RUN_TEST(test_song_follow_jump_path_length);
   RUN_TEST(test_song_follow_render_repeatable);
+  RUN_TEST(test_cut_ticks_body);
+  RUN_TEST(test_track_loop_ticks);
+  RUN_TEST(test_resample_plan_pattern);
+  RUN_TEST(test_resample_plan_track);
+  RUN_TEST(test_resample_plan_capped);
+  RUN_TEST(test_feeder_skip);
+  RUN_TEST(test_feeder_skip_all_quiet);
+  RUN_TEST(test_render_done_text);
   return UNITY_END();
 }

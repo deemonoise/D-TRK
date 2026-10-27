@@ -7,7 +7,8 @@ namespace storage {
 enum class Result : uint8_t { Ok, NoSd, NoMemory, NotFound, WriteFail, ReadFail, BadCrc, BadVersion, BadFile, EngineBusy,
                             SamplesNotSaved, AudioBusy, DiskFull, Cancelled, Capped, BankFull, NoBank,
                             NoSynth,   // the synth board did not answer
-                            Silent };  // a render gave silence (one-shot bounce)
+                            Silent,    // a render gave silence (Resample, one-shot bounce)
+                            RecBusy }; // a REC take runs (renders refused)
 
 const char* resultText(Result r);  // short, upper case, for toasts
 

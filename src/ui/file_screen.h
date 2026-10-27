@@ -1,5 +1,6 @@
 #pragma once
 #include "hw/sdcard.h"
+#include "file_list.h"
 #include "import_dialog.h"
 #include "keyboard.h"
 #include "render_dialog.h"
@@ -17,7 +18,7 @@ namespace ui {
 // card, link, last reset, RAM, battery, CPU profile).
 class FileScreen : public Screen {
  public:
-  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app) { initSystem(); }
+  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app), list_(app, kMaxFiles) { initSystem(); }
   void onEnter() override;
   void onLeave() override;
   void onProjectReplaced() override;
@@ -50,8 +51,6 @@ class FileScreen : public Screen {
   static constexpr int kActionH = 27;  // kActions rows fit under the header and the page bar
   static constexpr int kRowH = 24;
   static constexpr int kMaxFiles = 512;
-  static constexpr int kWavDepthMax = 4;  // subfolders below /samples
-  static constexpr int kListRows = (kAreaH - kHeaderH) / kRowH;  // incl. the Back row
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
   static constexpr int kSampleRows = (kAreaH - kHeaderH - PageBar::kH - kInfoH) / kRowH;
   static_assert(kHeaderH + PageBar::kH + kActions * kActionH <= kAreaH, "FILE actions fit");
@@ -73,19 +72,20 @@ class FileScreen : public Screen {
   void doSave(const char* name);
   void openList(bool midi);
   void closeList();
-  void chooseFile(int idx);
+  void listAct(FileList::Act a);  // Back: up / close; Open: the selected entry
+  void listOpen();                // the selected entry: a folder, a project / MIDI / WAV file
   void doLoad(bool bak);
   void doNew();
   void startWifi();
-  void listScroll(int rows);
-  // Folder browsing (MIDI import from /midi, WAV import from /samples).
+  // Folder browsing (MIDI import from /midi, WAV import from /samples; Load: /projects only).
   bool browsing() const { return midiList_ || wavList_; }
   char* curDir() { return midiList_ ? midiDir_ : wavDir_; }
   const char* curDir() const { return midiList_ ? midiDir_ : wavDir_; }
   size_t curDirCap() const { return midiList_ ? sizeof(midiDir_) : sizeof(wavDir_); }
   const char* rootDir() const { return midiList_ ? "/midi" : "/samples"; }
   bool atRoot() const;
-  void reopenList();  // lists curDir() again
+  void listDir(const char* cursor);  // lists curDir() (Load: /projects), the cursor on that name
+  char* curCursor() { return midiList_ ? midiCur_ : (wavList_ ? wavCur_ : loadCur_); }
   bool listUp();      // to the parent folder; false at the root
   void drawHeader(LGFX_Sprite& s, int y0);
   void setSection(int section);  // wraps around; the encoder focus goes to the page bar
@@ -103,9 +103,6 @@ class FileScreen : public Screen {
   void sampleMove(int delta);
   void sampleRun(int row);
   void openWavList();
-  // WAV preview in the import list (Play): streamed from the card by the synth board.
-  void togglePreview();
-  void stopPreview();
   void importAs(const char* initial);
   void doImport(const char* name);
   void renameSample(const char* initial);
@@ -127,24 +124,20 @@ class FileScreen : public Screen {
   WifiDialog wifi_;
   int sel_ = kSave;
   int y0_ = kAreaY;
-  // Load / import list, PSRAM while open.
-  char (*names_)[hw::kNameMax] = nullptr;
-  int count_ = 0;
-  int listSel_ = 0;  // 0 = Back, i + 1 = names_[i]
-  int listTop_ = 0;
-  int dragAcc_ = 0;
-  bool midiList_ = false;  // names_ lists folders, then *.mid in midiDir_
-  int dirCount_ = 0;       // folders at the start of names_
+  // Load / import list (PSRAM while open). WAV: Play / the first tap previews on the synth board.
+  FileList list_;
+  int dragAcc_ = 0;        // SAMPLES drag
+  bool midiList_ = false;  // list_ holds folders, then *.mid in midiDir_
   char midiDir_[160] = "/midi";  // kept between imports
+  // The cursor's name when each list closed (kept while powered).
+  char loadCur_[hw::kNameMax] = {0}, midiCur_[hw::kNameMax] = {0}, wavCur_[hw::kNameMax] = {0};
   char pending_[hw::kNameMax] = {0};  // target of a confirmation menu
   int section_ = kSecProjects;        // Section shown
   int ssel_ = kImportRow;             // SampleRow or kFirstSample + project sample index
   int stop_ = 0;                      // first visible SAMPLES row
-  bool wavList_ = false;              // names_ lists folders, then *.wav in wavDir_
+  bool wavList_ = false;              // list_ holds folders, then *.wav in wavDir_
   char wavDir_[128] = "/samples";     // kept between imports
   char wavFile_[hw::kNameMax] = {0};  // WAV being imported
-  int pvSel_ = -1;                    // listSel_ of the WAV previewed on the synth board, -1 none
-  uint32_t pvEndMs_ = 0;              // millis() when it has played to its end
   const char* busyLabel_ = "";
   // New: template menu ids are the built-in index, kTplUser + k (userTplNames_[k]), kTplSave,
   // kTplDemos (the demo songs menu) or kTplDemo + i (demo song i).

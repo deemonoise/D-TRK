@@ -5,6 +5,7 @@
 #include "app.h"
 #include "audio/audio.h"
 #include "hw/sdcard.h"
+#include "render_ui.h"
 #include "storage/render_io.h"
 
 namespace ui {
@@ -129,13 +130,8 @@ bool RenderDialog::action(int row) {
 }
 
 void RenderDialog::confirm() {
-  const engine::Status& st = app_.status();
-  if (st.playing || st.paused) {
-    app_.toast("STOP FIRST");
-    return;
-  }
   if (!hw::sdReady()) {
-    app_.toast(storage::resultText(storage::Result::NoSd));
+    renderResultToast(app_, storage::Result::NoSd);
     return;
   }
   if (isSong() && !songOk()) source_ = app_.editPattern();
@@ -160,6 +156,7 @@ void RenderDialog::confirm() {
 }
 
 void RenderDialog::run() {
+  if (!renderReady(app_)) return;  // stops the transport
   mt::Project& p = app_.project();
   const mt::ExportSpec s = spec();
   storage::ExportStats st;
@@ -167,14 +164,18 @@ void RenderDialog::run() {
   const storage::Result r = storage::exportSet(p, s, st, progress, &prog);
   app_.endProgress();
   if (r != storage::Result::Ok) {
-    app_.toast(storage::resultText(r));
+    renderResultToast(app_, r);
     return;
   }
   char msg[48];
   const float db = st.peak > 0 ? 20.f * log10f(st.peak / 32767.f) : -96.f;
   const uint32_t sec = st.frames / mt::kSynthRate;
-  snprintf(msg, sizeof(msg), "%lu:%02lu PEAK %.1fdB %d FILES%s", static_cast<unsigned long>(sec / 60),
-           static_cast<unsigned long>(sec % 60), db, st.files, st.clips ? " CLIP" : "");
+  snprintf(msg, sizeof(msg), "%lu:%02lu PEAK %.1fdB %d FILES", static_cast<unsigned long>(sec / 60),
+           static_cast<unsigned long>(sec % 60), db, st.files);
+  if (st.clips) {
+    const size_t k = strlen(msg);
+    snprintf(msg + k, sizeof(msg) - k, ", %lu CLIP%s", static_cast<unsigned long>(st.clips), st.clips == 1 ? "" : "S");
+  }
   app_.toast(msg);
   close();
 }

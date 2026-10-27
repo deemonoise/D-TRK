@@ -953,7 +953,11 @@ void InstScreen::onPage(int d) {
   showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
 }
 
-// B: closes the browser (as its long press), else leaves the edit with the value kept.
+bool InstScreen::onPlay() {
+  return !recShown() && !presets_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && wt_.isOpen() && wt_.onPlay();
+}
+
+// B: the browser's long press (up a folder / back / close), else leaves the edit with the value kept.
 void InstScreen::onBack() {
   if (recShown()) app_.rec().stop();  // a take: saved and bound (the window stays); none: it closes
   else if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
