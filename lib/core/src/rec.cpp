@@ -142,6 +142,15 @@ void RecCapture::feed(const int16_t* l, const int16_t* r, uint32_t n) {
   }
 }
 
+uint32_t recSdLimitFrames(uint64_t freeBytes, uint8_t channels) {
+  const uint64_t frameBytes = channels == 1 ? 2 : 4;
+  if (freeBytes <= kRecSdReserveBytes) return 0;
+  uint64_t file = freeBytes - kRecSdReserveBytes;
+  if (file > kRecSdMaxFileBytes) file = kRecSdMaxFileBytes;
+  if (file <= kWavHeaderBytes) return 0;
+  return static_cast<uint32_t>((file - kWavHeaderBytes) / frameBytes);  // < 2^31 frames
+}
+
 // --- mono mix, writer ---
 
 void recMonoMix(const int16_t* lr, uint32_t n, int16_t* out) {

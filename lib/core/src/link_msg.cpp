@@ -760,6 +760,7 @@ void encode(const RecStartReq& m, Writer& w) {
   w.u8(static_cast<uint8_t>(m.thresh));
   w.u8(m.mon);
   w.u16(m.number);
+  w.u8(m.toSd);
 }
 
 bool decode(Reader& r, RecStartReq& m) {
@@ -768,6 +769,7 @@ bool decode(Reader& r, RecStartReq& m) {
   m.thresh = static_cast<int8_t>(r.u8());
   m.mon = r.u8();
   m.number = r.u16();
+  m.toSd = r.left() > 0 ? r.u8() : 0;  // appended in 18
   return r.ok();
 }
 
@@ -802,6 +804,7 @@ void encode(const RecLevelRep& m, Writer& w) {
   w.u32(m.clips);
   w.u32(m.frames);
   w.u8(m.codec);
+  w.u32(m.left);
 }
 
 bool decode(Reader& r, RecLevelRep& m) {
@@ -811,6 +814,7 @@ bool decode(Reader& r, RecLevelRep& m) {
   m.clips = r.u32();
   m.frames = r.u32();
   m.codec = r.u8();
+  m.left = r.left() > 0 ? r.u32() : 0;  // appended in 18
   return r.ok();
 }
 
@@ -822,6 +826,7 @@ void encode(const RecStopRep& m, Writer& w) {
   w.u32(m.frames);
   w.u16(m.peak);
   w.u32(m.clips);
+  w.u8(m.ended);
 }
 
 bool decode(Reader& r, RecStopRep& m) {
@@ -832,6 +837,7 @@ bool decode(Reader& r, RecStopRep& m) {
   m.frames = r.u32();
   m.peak = r.u16();
   m.clips = r.u32();
+  m.ended = r.left() > 0 ? r.u8() : 0;  // appended in 18
   return r.ok();
 }
 

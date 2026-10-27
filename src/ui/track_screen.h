@@ -35,6 +35,10 @@ namespace ui {
 // master parameter, A + turn = its value (Shift x8), A + click = unset it; long press = menu CAP / CLR /
 // CPY. Touch: drag a fader = set, Shift + tap = unset, a strip name = cursor, MAIN = the next master
 // parameter. While open, the fader parks on the edited scene's end (when it is A or B).
+// REC (MAIN column, beside the crossfader; red while a take records): a tap, or an encoder long press
+// outside the SCENE view, opens App's REC window in its SD mode over the mixer (the big START button); the
+// take goes only to the card (/samples/rec/RECn.wav) and records on when the window closes or the tab
+// changes. A long press while a take runs = STOP; in the window B = STOP (no take: back to the mixer), a long press = START / STOP.
 class TrackScreen : public Screen {
  public:
   explicit TrackScreen(App& app);
@@ -60,6 +64,7 @@ class TrackScreen : public Screen {
   void setSceneEnd(bool b, int idx);     // scene idx on crossfader end A / B (A / B + track button), toast
   void onATap(bool shift) override;      // MIX: Shift + A = the SCENE view on / off
   void trackUp(int n);                   // track button n released (MIX)
+  void openRec();                        // MIX: the REC window in its SD mode (also the status bar's REC)
 
  private:
   // Rows in page order: MAIN, INS (the INT track's insert chain, then its MOD send), FOL (its envelope follower), NOTE,
@@ -197,6 +202,8 @@ class TrackScreen : public Screen {
   void setMasterVol(int v);  // project data: saved with it, in Render WAV
   void toggleMuteSolo(int track, bool solo);
   void togglePerf();  // MIX: B (no pan bar selected) or a tap on the PERF box
+  bool recShown() const;  // App's REC window in its SD mode: it has the work area
+  void drawRecBtn(LGFX_Sprite& s, int y0);
   uint32_t mixSignature() const;
   bool mixer_ = false;
   int panSel_ = -1;  // track whose pan bar the encoder turns, -1 = none (the encoder turns MAIN)

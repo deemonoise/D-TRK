@@ -691,6 +691,7 @@ void TrackScreen::leaveEdit() {
 }
 
 void TrackScreen::onLeave() {
+  if (recShown()) app_.rec().hide();  // a SD take records on (App polls it)
   leaveEdit();
   panSel_ = -1;
   xfSel_ = kXfNone;
@@ -745,6 +746,10 @@ void TrackScreen::setMixer(bool on) {
 
 void TrackScreen::onInput(const hw::InputEvent& ev) {
   followTrack();
+  if (mixer_ && recShown()) {
+    app_.rec().onInput(ev);
+    return;
+  }
   if (mixer_) {
     mixerInput(ev);
     return;
@@ -907,7 +912,10 @@ void TrackScreen::onPage(int d) {
 // B: leaves the edit with the value kept (as the second click), a name edit gets fixNames(). MIX:
 // drops the pan bar / crossfader selection, else PERF on / off.
 void TrackScreen::onBack() {
-  if (mixer_ && scnView_) {
+  if (mixer_ && recShown()) {
+    app_.rec().stop();  // a take: saved (the window stays, READY); none: back to the mixer
+    app_.invalidate();
+  } else if (mixer_ && scnView_) {
     if (scnCopy_) scnCopy_ = false;
     else setSceneView(false);
     app_.invalidate();
@@ -920,6 +928,28 @@ void TrackScreen::onBack() {
   else if (list_.editing()) leaveEdit();
 }
 
+bool TrackScreen::recShown() const { return app_.rec().shownIn(RecDialog::Mode::Sd); }
+
+void TrackScreen::openRec() {
+  if (!mixer_) return;
+  setSceneView(false);
+  panSel_ = -1;
+  xfSel_ = kXfNone;
+  app_.rec().openSd();
+  app_.invalidate();
+}
+
+// REC: red and filled while a SD take records (blinking while armed), else a red outline.
+void TrackScreen::drawRecBtn(LGFX_Sprite& s, int y0) {
+  const RecDialog& r = app_.rec();
+  const bool on = r.sdTaking() && (r.recording() || (millis() / 300) & 1);
+  const int x = kMasterX + 2, y = y0 + kXfY + (kXfH - kBtnH) / 2, w = kMasterW - 4;
+  if (on) s.fillRect(x, y, w, kBtnH, kRed);
+  else s.drawRect(x, y, w, kBtnH, kRed);
+  s.setTextColor(on ? kText : kRed);
+  s.drawString("REC", x + (w - 3 * kCharW) / 2, y + (kBtnH - kCharH) / 2);
+}
+
 void TrackScreen::togglePerf() {
   const bool on = !app_.perf().on();
   app_.perf().setOn(on);
@@ -929,6 +959,10 @@ void TrackScreen::togglePerf() {
 
 void TrackScreen::onTouch(const TouchEvent& ev) {
   followTrack();
+  if (mixer_ && recShown()) {
+    if (ev.type != TouchType::HDrag) app_.rec().onTouch(ev);
+    return;
+  }
   if (mixer_) {
     mixerTouch(ev);
     return;
@@ -970,6 +1004,10 @@ void TrackScreen::onTouch(const TouchEvent& ev) {
 void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
   followTrack();
+  if (mixer_ && recShown()) {
+    app_.rec().draw(s, y0);
+    return;
+  }
   if (mixer_) {
     drawMixer(s, y0);
     return;
@@ -1142,6 +1180,12 @@ void TrackScreen::mixerInput(const hw::InputEvent& ev) {
     else setXfade(app_.project().xfade + ev.delta * (ev.shift ? 8 : 1));
     return;
   }
+  if (ev.type == hw::InputType::EncLong) {  // REC: a running SD take stops, else its window opens
+    if (app_.rec().sdTaking()) app_.rec().stop();
+    else openRec();
+    app_.invalidate();
+    return;
+  }
   if (ev.type != hw::InputType::EncTurn) return;
   if (app_.perf().turn(ev.delta, ev.shift)) return;  // a held PERF effect's depth
   if (ev.shift) {  // A / B: the same strip in the other half
@@ -1180,6 +1224,11 @@ void TrackScreen::mixerTouch(const TouchEvent& ev) {
   if (xfTouch(ev)) return;
   if (scnView_) {
     sceneTouch(ev);
+    return;
+  }
+  // REC, beside the crossfader in the MAIN column.
+  if (ev.type == TouchType::Tap && ev.x >= kMasterX && ev.y >= y0_ + kXfY && ev.y < y0_ + kXfY + kXfH + 2) {
+    openRec();
     return;
   }
   int strip;
@@ -1371,6 +1420,7 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
   s.fillRect(kMasterX + 2, y0 + kBtnY, kMasterW - 4, kBtnH, perf ? kYellow : kBeatBg);
   s.setTextColor(perf ? kBg : kDim);
   s.drawString("PERF", kMasterX + (kMasterW - 4 * kCharW) / 2, y0 + kBtnY + (kBtnH - kCharH) / 2);
+  drawRecBtn(s, y0);
   drawScope(s, y0);
 }
 
@@ -1557,7 +1607,7 @@ void TrackScreen::sceneMasterUnset() {
 }
 
 void TrackScreen::onATap(bool shift) {
-  if (!mixer_ || !shift) return;
+  if (!mixer_ || !shift || recShown()) return;
   setSceneView(!scnView_);
   app_.invalidate();
 }

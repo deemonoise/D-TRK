@@ -1,4 +1,5 @@
 #include "file_rules.h"
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 
@@ -49,6 +50,23 @@ bool parseRangeStart(const char* range, uint32_t& at) {
   }
   if (!digits || *p != '-') return false;
   at = static_cast<uint32_t>(v);
+  return true;
+}
+
+bool browseUp(char* dir, const char* root, char* left, size_t leftCap) {
+  if (leftCap) left[0] = 0;
+  const size_t rn = strlen(root), dn = strlen(dir);
+  if (dn <= rn || strncmp(dir, root, rn) != 0 || dir[rn] != '/') {
+    if (strcmp(dir, root) == 0) return false;
+    if (dn > rn) {  // not below root: back to it
+      memcpy(dir, root, rn + 1);
+      return true;
+    }
+    return false;
+  }
+  char* slash = strrchr(dir, '/');  // after root's end: dir[rn] is a '/'
+  if (leftCap) snprintf(left, leftCap, "%s", slash + 1);
+  *slash = 0;
   return true;
 }
 

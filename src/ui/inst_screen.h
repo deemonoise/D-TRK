@@ -59,15 +59,14 @@ class InstScreen : public Screen {
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   bool wantsHDrag() const override {
-    return !rec_.isOpen() &&
+    return !recShown() &&
            (wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor()));
   }
-  void poll() override { rec_.poll(); }
-  bool wantsRedraw(const engine::Status&) override { return rec_.isOpen(); }  // the meter
   // Track button n: on the sample editor plays slices (see SampleEditor::playSlice). False = not taken.
   bool trackKey(int n, bool shift);
 
  private:
+  bool recShown() const;  // App's REC window in its SAMPLE mode: it has the work area
   // Rows of every type first, then the type's own. Plain ints: they are added across groups.
   static constexpr int kName = 0, kType = 1, kVol = 2, kTranspose = 3, kFine = 4, kMode = 5, kGlide = 6,
                        kSend = 7, kRsend = 8, kAttack = 9, kDecay = 10, kSustain = 11, kRelease = 12,
@@ -180,7 +179,6 @@ class InstScreen : public Screen {
   int y0_ = kAreaY;
   int namePos_ = 0;
   SampleEditor editor_{app_, kAreaY + kHeaderH + kPageBarH};
-  RecDialog rec_{app_};
 };
 
 }  // namespace ui

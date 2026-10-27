@@ -18,6 +18,7 @@ const char* recResultText(link::RecResult r) {
     case RecResult::WriteFail: return "WRITE FAIL";
     case RecResult::Bank: return "BANK FAIL";
     case RecResult::BadArg: return "BAD REQUEST";
+    case RecResult::CardFull: return "CARD FULL";
   }
   return "REC FAILED";
 }
@@ -80,6 +81,116 @@ void recToast(int number, uint32_t frames, uint32_t clips, bool cardSlow, char* 
   if (clips && k < n)
     k += snprintf(out + k, n - k, ", %lu CLIP%s", static_cast<unsigned long>(clips), clips == 1 ? "" : "S");
   if (cardSlow && k < n) snprintf(out + k, n - k, ", CARD TOO SLOW");
+}
+
+void recFmtClock(uint32_t seconds, bool pad, char* out, int n) {
+  const unsigned long h = seconds / 3600, m = seconds / 60 % 60, sec = seconds % 60;
+  if (h) snprintf(out, n, "%lu:%02lu:%02lu", h, m, sec);
+  else snprintf(out, n, pad ? "%02lu:%02lu" : "%lu:%02lu", m, sec);
+}
+
+void recSdToast(int number, uint32_t frames, uint32_t clips, link::RecResult r, link::RecEnd ended, char* out,
+                int n) {
+  using link::RecEnd;
+  using link::RecResult;
+  if (r != RecResult::Ok && r != RecResult::CardSlow) {
+    snprintf(out, n, "%s", recResultText(r));
+    return;
+  }
+  char t[16];
+  recFmtClock(frames / kRecRate, false, t, sizeof t);
+  const char* how = ended == RecEnd::Space ? "CARD FULL" : (ended == RecEnd::Length ? "4GB LIMIT" : "SAVED");
+  int k = snprintf(out, n, "REC%d.WAV %s %s", number, t, how);
+  if (clips && k >= 0 && k < n)
+    k += snprintf(out + k, n - k, ", %lu CLIP%s", static_cast<unsigned long>(clips), clips == 1 ? "" : "S");
+  if (r == RecResult::CardSlow && k >= 0 && k < n) snprintf(out + k, n - k, ", CARD TOO SLOW");
+}
+
+RecRect recBtnRect(int screenW, int rowsBottom, int areaBottom, int margin) {
+  RecRect r;
+  r.x = margin;
+  r.y = rowsBottom + margin;
+  r.w = screenW - 2 * margin;
+  r.h = areaBottom - margin - r.y;
+  if (r.w < 0) r.w = 0;
+  if (r.h < 0) r.h = 0;
+  return r;
+}
+
+RecBtn recBtnState(bool taking, bool starting, RecState st, bool thresh, bool waitPlay) {
+  if (taking && st == RecState::Saving) return RecBtn::Saving;
+  if (starting && !taking) return RecBtn::Starting;
+  if (taking) return st == RecState::Armed ? RecBtn::Armed : RecBtn::Stop;
+  if (waitPlay) return RecBtn::WaitPlay;
+  return thresh ? RecBtn::Arm : RecBtn::Start;
+}
+
+RecTap recTap(RecBtn b, RecSource src, bool playing) {
+  switch (b) {
+    case RecBtn::Start:
+    case RecBtn::Arm: return src == RecSource::Resample && !playing ? RecTap::WaitPlay : RecTap::Start;
+    case RecBtn::WaitPlay: return RecTap::Unwait;
+    case RecBtn::Armed:
+    case RecBtn::Stop: return RecTap::Stop;
+    default: return RecTap::None;
+  }
+}
+
+RecCancel recCancelAct(RecBtn b) {
+  switch (b) {
+    case RecBtn::Start:
+    case RecBtn::Arm: return RecCancel::Close;
+    case RecBtn::WaitPlay: return RecCancel::Unwait;
+    case RecBtn::Armed:
+    case RecBtn::Stop:
+    case RecBtn::Starting: return RecCancel::Drop;
+    default: return RecCancel::None;
+  }
+}
+
+const char* recCancelText(RecBtn b) {
+  switch (b) {
+    case RecBtn::Start:
+    case RecBtn::Arm: return "CLOSE";
+    case RecBtn::WaitPlay: return "CANCEL WAIT";
+    case RecBtn::Armed: return "CANCEL ARM";
+    case RecBtn::Saving: return "SAVING...";
+    default: return "DROP THE TAKE";
+  }
+}
+
+void recBtnText(RecBtn b, uint32_t frames, char* out, int n) {
+  switch (b) {
+    case RecBtn::Start: snprintf(out, n, "START"); break;
+    case RecBtn::Arm: snprintf(out, n, "ARM"); break;
+    case RecBtn::Armed: snprintf(out, n, "ARMED"); break;
+    case RecBtn::WaitPlay: snprintf(out, n, "ARMED: PLAY"); break;
+    case RecBtn::Stop: {
+      char t[16];
+      recFmtClock(frames / kRecRate, true, t, sizeof t);
+      snprintf(out, n, "STOP %s", t);
+      break;
+    }
+    case RecBtn::Starting: snprintf(out, n, "STARTING"); break;
+    case RecBtn::Saving: snprintf(out, n, "SAVING..."); break;
+  }
+}
+
+int recBtnScale(int cols, int charW, int charH, int w, int h, int maxScale) {
+  int s = maxScale;
+  while (s > 1 && (cols * charW * s > w || charH * s > h)) --s;
+  return s < 1 ? 1 : s;
+}
+
+RecPrefs recPrefsFrom(uint8_t src, uint8_t micGain, uint8_t lineGain, uint8_t thresh, uint8_t mon) {
+  RecPrefs p;
+  if (src <= static_cast<uint8_t>(RecSource::Resample)) p.src = static_cast<RecSource>(src);
+  p.micGain = static_cast<int8_t>(recGainClamp(RecSource::Mic, micGain));
+  p.lineGain = static_cast<int8_t>(recGainClamp(RecSource::Line, lineGain));
+  const int8_t th = static_cast<int8_t>(thresh);
+  p.thresh = th > 0 ? kRecThreshOff : recThreshStep(th, 0);  // OFF stays OFF
+  p.mon = mon != 0;
+  return p;
 }
 
 }  // namespace mt

@@ -16,6 +16,7 @@
 #include "perf_pad.h"
 #include "perf_vis.h"
 #include "proj_screen.h"
+#include "rec_dialog.h"
 #include "screen.h"
 #include "song_screen.h"
 #include "touch.h"
@@ -48,6 +49,10 @@ class App {
   // PERF, shared by GRID, SONG and MIX (the tabs that play it).
   PerfPad& perf() { return perf_; }
   InstScreen& inst() { return inst_; }
+  // The one recorder (SAMPLE page and MIX): polled here every frame, shown by the screen that opened it.
+  RecDialog& rec() { return rec_; }
+  // A device setting changed outside the setters below (the REC window's): saved once it stays put.
+  void settingsChanged() { settingsChangedAt_ = millis() | 1; }
 
   // Shared by screens; nullptr when the allocation failed.
   mt::Undo* undo() { return undoBuf_ ? &undo_ : nullptr; }
@@ -133,6 +138,7 @@ class App {
   static constexpr int kModeX0 = 0, kModeX1 = 64;  // SONG / LOOP
   static constexpr int kBpmX0 = 64, kBpmX1 = 176;
   static constexpr int kTransX0 = 256, kTransX1 = 320;
+  static constexpr int kRecX0 = 384;  // a REC -> SD take: "REC mm:ss" over the battery % and CPU, to the end
   // Synth version screen: its Wi-Fi button.
   static constexpr int kBarrierBtnW = 148, kBarrierBtnH = 36;
   static constexpr int kBarrierBtnY = kAreaY + 176;
@@ -180,6 +186,7 @@ class App {
   void draw();
   void drawStatus();
   void drawBattery();  // status bar, right of the loop counter
+  void drawRec();      // status bar: a REC -> SD take's red dot and time
   void drawTabs();
   void drawBusy();
 
@@ -200,6 +207,9 @@ class App {
   InstScreen inst_{*this};
   ProjScreen proj_{*this};
   FileScreen file_{*this};
+  RecDialog rec_{*this};
+  mt::RecPrefs savedRec_;     // the REC window's settings as stored (device settings)
+  uint32_t recShownSec_ = 0;  // the status bar's REC time as drawn
   Screen* screens_[static_cast<int>(Tab::Count)] = {&grid_, &track_, &inst_, &track_, &bank_, &song_,
                                                        &proj_, &file_};
   Tab tab_ = Tab::Grid;

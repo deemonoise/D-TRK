@@ -703,6 +703,8 @@ void InstScreen::leaveEdit() {
   fixNames();
 }
 
+bool InstScreen::recShown() const { return app_.rec().shownIn(RecDialog::Mode::Sample); }
+
 void InstScreen::onEnter() {
   leaveEdit();
   typeSnapInstr_ = -1;
@@ -712,7 +714,10 @@ void InstScreen::onEnter() {
 }
 
 void InstScreen::onLeave() {
-  if (rec_.isOpen()) rec_.stop();  // a running take is saved and bound
+  if (recShown()) {
+    app_.rec().stop();  // a running take is saved and bound
+    app_.rec().hide();  // the window stays after a STOP: closed here
+  }
   if (presets_.isOpen()) presets_.close(false);
   if (wt_.isOpen()) wt_.close();
   wtMake_.cancel();
@@ -727,7 +732,6 @@ void InstScreen::onProjectReplaced() {
   if (wt_.isOpen()) wt_.close();
   wtMake_.cancel();
   bounce_.cancel();
-  rec_.detach();  // the take belongs to the old project: the board seals it into its file
   onEnter();
 }
 
@@ -761,7 +765,7 @@ void InstScreen::presetMenu() {
   auto choose = [this](int id) {
     switch (id) {
       case kChop: editor_.chop(); break;
-      case kRec: rec_.open(instr_, [this] { editor_.bind(instr_); }); break;
+      case kRec: app_.rec().open(instr_, [this] { editor_.bind(instr_); }); break;  // REC BUSY during a SD take
       case kShot: {  // through the current track's insert when it plays this instrument (as preview())
         const int t = app_.curTrack();
         const uint8_t ins = app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
@@ -857,7 +861,7 @@ void InstScreen::undoMutate() {
 }
 
 void InstScreen::onATap(bool shift) {
-  if (rec_.isOpen() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || bounce_.isOpen() || !onEditor()) return;
+  if (recShown() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || bounce_.isOpen() || !onEditor()) return;
   editor_.bind(instr_);
   editor_.stepMarker(shift ? -1 : 1);
 }
@@ -869,10 +873,10 @@ void InstScreen::changeInstr(int d) {
   syncParams();
 }
 
-bool InstScreen::buttonsBusy() const { return !rec_.isOpen() && !presets_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor(); }
+bool InstScreen::buttonsBusy() const { return !recShown() && !presets_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor(); }
 
 bool InstScreen::trackKey(int n, bool shift) {
-  if (shift || rec_.isOpen() || presets_.isOpen() || wtMake_.isOpen() || bounce_.isOpen() || !onEditor()) return false;
+  if (shift || recShown() || presets_.isOpen() || wtMake_.isOpen() || bounce_.isOpen() || !onEditor()) return false;
   editor_.playSlice(n);
   return true;
 }
@@ -885,8 +889,8 @@ void InstScreen::preview() {
 }
 
 void InstScreen::onInput(const hw::InputEvent& ev) {
-  if (rec_.isOpen()) {
-    rec_.onInput(ev);
+  if (recShown()) {
+    app_.rec().onInput(ev);
     return;
   }
   if (presets_.isOpen()) {
@@ -945,13 +949,13 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
 
 // B + Shift + turn: the previous / next page (not over the browsers); the cursor stays on the page bar.
 void InstScreen::onPage(int d) {
-  if (rec_.isOpen() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || bounce_.isOpen()) return;
+  if (recShown() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || bounce_.isOpen()) return;
   showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
 }
 
 // B: closes the browser (as its long press), else leaves the edit with the value kept.
 void InstScreen::onBack() {
-  if (rec_.isOpen()) rec_.onInput({hw::InputType::EncLong, 0, false});
+  if (recShown()) app_.rec().stop();  // a take: saved and bound (the window stays); none: it closes
   else if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
   else if (wtMake_.isOpen()) wtMake_.onInput({hw::InputType::EncLong, 0, false});
   else if (bounce_.isOpen()) bounce_.onInput({hw::InputType::EncLong, 0, false});
@@ -960,8 +964,8 @@ void InstScreen::onBack() {
 }
 
 void InstScreen::onTouch(const TouchEvent& ev) {
-  if (rec_.isOpen()) {
-    rec_.onTouch(ev);
+  if (recShown()) {
+    app_.rec().onTouch(ev);
     return;
   }
   if (presets_.isOpen()) {
@@ -1092,8 +1096,8 @@ void InstScreen::drawOsc(LGFX_Sprite& s, int y) {
 
 void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
-  if (rec_.isOpen()) {
-    rec_.draw(s, y0);
+  if (recShown()) {
+    app_.rec().draw(s, y0);
     return;
   }
   if (presets_.isOpen()) {

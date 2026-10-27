@@ -60,11 +60,36 @@ void test_range_start() {
   TEST_ASSERT_FALSE(parseRangeStart(nullptr, at));
 }
 
+void test_browse_up() {
+  char dir[64], left[16];
+  strcpy(dir, "/samples/drums/909");
+  TEST_ASSERT_TRUE(browseUp(dir, "/samples", left, sizeof left));
+  TEST_ASSERT_EQUAL_STRING("/samples/drums", dir);
+  TEST_ASSERT_EQUAL_STRING("909", left);
+  TEST_ASSERT_TRUE(browseUp(dir, "/samples", left, sizeof left));
+  TEST_ASSERT_EQUAL_STRING("/samples", dir);
+  TEST_ASSERT_EQUAL_STRING("drums", left);
+  TEST_ASSERT_FALSE(browseUp(dir, "/samples", left, sizeof left));  // the root: B closes
+  TEST_ASSERT_EQUAL_STRING("/samples", dir);
+  TEST_ASSERT_EQUAL_STRING("", left);
+  strcpy(dir, "/samplesX/a");  // not below root, only a prefix
+  TEST_ASSERT_TRUE(browseUp(dir, "/samples", left, sizeof left));
+  TEST_ASSERT_EQUAL_STRING("/samples", dir);
+  TEST_ASSERT_EQUAL_STRING("", left);
+  strcpy(dir, "/mid");  // shorter than root
+  TEST_ASSERT_FALSE(browseUp(dir, "/midi", left, sizeof left));
+  strcpy(dir, "/midi/a long folder name here");  // left cut to its size
+  TEST_ASSERT_TRUE(browseUp(dir, "/midi", left, sizeof left));
+  TEST_ASSERT_EQUAL_STRING("/midi", dir);
+  TEST_ASSERT_EQUAL_STRING("a long folder n", left);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_project_base);
   RUN_TEST(test_firmware_names);
   RUN_TEST(test_web_export_path);
   RUN_TEST(test_range_start);
+  RUN_TEST(test_browse_up);
   return UNITY_END();
 }

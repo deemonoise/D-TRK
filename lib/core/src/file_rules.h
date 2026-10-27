@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 namespace mt {
@@ -17,5 +18,10 @@ bool webSynthFirmwareName(const char* name);
 bool webExportPath(const char* path);
 // HTTP Range "bytes=N-" (or "bytes=N-M": served from N to the end): N. Other forms: false.
 bool parseRangeStart(const char* range, uint32_t& at);
+
+// A folder browser's B / Back: dir one level up towards root ("/samples/drums/909" -> "/samples/drums",
+// left = "909", the folder to put the cursor on). At root (or not below it): false, dir unchanged.
+// A dir outside root's tree: root, left empty.
+bool browseUp(char* dir, const char* root, char* left, size_t leftCap);
 
 }  // namespace mt

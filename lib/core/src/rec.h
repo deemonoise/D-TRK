@@ -18,6 +18,10 @@ constexpr uint32_t kRecPreRollFrames = kRecRate / 50;    // 20 ms kept before th
 constexpr uint32_t kRecMinFrames = kRecRate / 20;        // shorter takes are TOO SHORT
 constexpr uint32_t kRecRingBytes = 1u << 20;             // ring in PSRAM (~6 s stereo)
 constexpr int8_t kRecThreshOff = -128;                   // THRESH OFF: recording starts at once
+// REC -> SD (a take only into the card's file): stops on its own with kRecSdReserveBytes still free,
+// and before the file reaches the 32-bit sizes of RIFF / FAT32 (4 GB less 1 MB of margin).
+constexpr uint64_t kRecSdReserveBytes = 8ull << 20;
+constexpr uint64_t kRecSdMaxFileBytes = 0xFFFFFFFFull - (1ull << 20);
 enum class RecSource : uint8_t { Mic, Line, Resample };
 enum class RecState : uint8_t { Idle, Armed, Rec, Saving };
 
@@ -92,6 +96,10 @@ class RecCapture {
   std::atomic<uint32_t> frames_{0};
   std::atomic<bool> overflow_{false}, autoStopped_{false};
 };
+
+// Frames a take to the card may have (channels 1 / 2, 16 bit) with freeBytes free when it starts: the
+// file (header + data) within freeBytes - kRecSdReserveBytes and kRecSdMaxFileBytes; 0 when none fit.
+uint32_t recSdLimitFrames(uint64_t freeBytes, uint8_t channels);
 
 // Mono mix of n interleaved stereo frames, as the bank imports a stereo WAV (wavToMono: the sum / 2
 // toward zero, no normalization).

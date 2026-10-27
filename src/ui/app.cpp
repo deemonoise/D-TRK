@@ -64,6 +64,14 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   audio::setPhones(static_cast<uint8_t>(phones_));
   preview_ = savedPreview_ = storage::loadSetting("preview", 1) != 0;
   visuals_ = savedVisuals_ = storage::loadSetting("perfvis", 1) != 0;
+  // The REC window's Source, MIC / LINE gains, Thresh and Mon (both of its modes).
+  const mt::RecPrefs rd;
+  savedRec_ = mt::recPrefsFrom(storage::loadSetting("recsrc", static_cast<uint8_t>(rd.src)),
+                               storage::loadSetting("recmic", static_cast<uint8_t>(rd.micGain)),
+                               storage::loadSetting("recline", static_cast<uint8_t>(rd.lineGain)),
+                               storage::loadSetting("recthr", static_cast<uint8_t>(rd.thresh)),
+                               storage::loadSetting("recmon", rd.mon ? 1 : 0));
+  rec_.setPrefs(savedRec_);
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -118,6 +126,7 @@ void App::postStart(engine::Cmd c) {
     toast("SYNCING...");
     return;
   }
+  if (!status_.playing) rec_.onPlay();  // a REC waiting for Play: the take runs before the first note
   engine::post(c);
 }
 
@@ -300,7 +309,9 @@ void App::abAction(const mt::AbOut& o) {
       return;
     case AbAction::ATap:
       if (xyMode()) return;  // the pad hides the screen
-      if (!menu_.isOpen() && !bpmEdit_) screen()->onATap(o.shift);
+      if (menu_.isOpen() || bpmEdit_) return;
+      if (rec_.isOpen()) rec_.aTap();  // the REC window: A = the big START / STOP button
+      else screen()->onATap(o.shift);
       return;
     case AbAction::Solo:
       if (!menu_.isOpen()) soloKey(o.delta);
@@ -420,6 +431,11 @@ void App::onTouch(const TouchEvent& ev) {
       toast(on ? "SONG" : "LOOP");
     } else if (ev.x >= kBpmX0 && ev.x < kBpmX1) setBpmEdit(!bpmEdit_);
     else if (ev.x >= kTransX0 && ev.x < kTransX1) transport();
+    else if (ev.x >= kRecX0 && rec_.sdTaking()) {  // the REC indicator: MIX and its window
+      menu_.close();
+      setTab(Tab::Mix);
+      track_.openRec();
+    }
     return;
   }
   if (ev.y >= kTabY) {
@@ -457,6 +473,7 @@ void App::projectReplaced() {
   // Let the sequencer re-read the song (stopped: no slot shown).
   engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
   perf_.allOff();  // the loaded project does not inherit the held effects
+  rec_.detach();   // a SAMPLE take belonged to the old project (the board seals it); a SD take goes on
   for (Screen* sc : screens_)
     if (sc) sc->onProjectReplaced();
   for (Screen* sc : screens_)
@@ -645,12 +662,21 @@ void App::setPerfVisuals(bool on) {
   settingsChangedAt_ = millis() | 1;
 }
 
-// Device settings (theme, autosave, phones, preview, perf visuals): written once they stay put for a second (an encoder
-// sweep = one write) and the transport is stopped. An NVS write can erase a flash sector with the
-// caches off: never while playing.
+// Device settings (theme, autosave, phones, preview, perf visuals, the REC window's): written once they
+// stay put for a second (an encoder sweep = one write), the transport is stopped and no take runs. An NVS
+// write can erase a flash sector with the caches off: never while playing or recording.
 void App::saveSettingsIdle(uint32_t now) {
-  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
+  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing || rec_.taking()) return;
   settingsChangedAt_ = 0;
+  const mt::RecPrefs rp = rec_.prefs();
+  if (rp != savedRec_) {
+    if (rp.src != savedRec_.src) storage::saveSetting("recsrc", static_cast<uint8_t>(rp.src));
+    if (rp.micGain != savedRec_.micGain) storage::saveSetting("recmic", static_cast<uint8_t>(rp.micGain));
+    if (rp.lineGain != savedRec_.lineGain) storage::saveSetting("recline", static_cast<uint8_t>(rp.lineGain));
+    if (rp.thresh != savedRec_.thresh) storage::saveSetting("recthr", static_cast<uint8_t>(rp.thresh));
+    if (rp.mon != savedRec_.mon) storage::saveSetting("recmon", rp.mon ? 1 : 0);
+    savedRec_ = rp;
+  }
   if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_ &&
       preview_ == savedPreview_ && visuals_ == savedVisuals_)
     return;
@@ -832,6 +858,13 @@ void App::tick() {
     dirty_ = true;
   }
   perf_.poll(status_.playing);
+  rec_.poll();  // every tab: the board's keepalive and a take that ends on its own
+  if (rec_.isOpen()) dirty_ = true;  // the meter
+  const uint32_t recSec = rec_.sdTaking() ? rec_.frames() / mt::kRecRate + 1 : 0;
+  if (recSec != recShownSec_ || (rec_.sdTaking() && !rec_.recording())) {  // a second on; ARMED blinks
+    recShownSec_ = recSec;
+    dirty_ = true;
+  }
   screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
   if (perfVisible() || vis_.engaged()) dirty_ = true;  // moving while held; the last frame goes back to plain
@@ -884,6 +917,7 @@ void App::pollSynth(uint32_t now) {
   }
   // Down or mismatched it will not sync: start anyway (MIDI OUT tracks still play).
   if (playWait_ >= 0 && (!syncing || now - playWaitAt_ >= kSyncWaitMs)) {
+    if (!status_.playing) rec_.onPlay();
     engine::post(static_cast<engine::Cmd>(playWait_));
     playWait_ = -1;
     dirty_ = true;
@@ -1017,7 +1051,14 @@ void App::drawStatus() {
 
   if (toast_[0]) {
     spr_->setTextColor(kCursor);
-    spr_->drawString(toast_, 192, 4);
+    if (rec_.sdTaking()) {  // the REC time stays: the toast cut short of it
+      spr_->setClipRect(0, 0, kRecX0 - 4, kStatusH);
+      spr_->drawString(toast_, 192, 4);
+      spr_->clearClipRect();
+      drawRec();
+    } else {
+      spr_->drawString(toast_, 192, 4);
+    }
     return;
   }
   spr_->setTextColor(kText);
@@ -1042,6 +1083,10 @@ void App::drawStatus() {
     spr_->drawString(buf, 312, 4);  // up to 5 chars before the battery
   }
   drawBattery();
+  if (rec_.sdTaking()) {  // over the battery's % and the CPU field
+    drawRec();
+    return;
+  }
   // The CPU field tells when the synth board is not there or not yet up to date.
   if (synth_ == Synth::Down || synth_ == Synth::Mismatch) {
     spr_->setTextColor(kRed);
@@ -1087,6 +1132,19 @@ void App::drawBattery() {
   snprintf(buf, sizeof(buf), "%d%%", pct);
   spr_->setTextColor(c);
   spr_->drawString(buf, 380, 4);  // up to "100%", ends at 412
+}
+
+// "(dot) REC 03:41" (past an hour "(dot) 1:02:03"): red while recording, the dot blinking while armed (THRESH).
+void App::drawRec() {
+  spr_->fillRect(kRecX0, 0, kScreenW - kRecX0, kStatusH, kStatusBg);
+  const bool armed = !rec_.recording();
+  if (!armed || (millis() / 300) & 1) spr_->fillCircle(kRecX0 + 6, kStatusH / 2, 4, kRed);
+  char t[12], buf[20];
+  const uint32_t sec = rec_.frames() / mt::kRecRate;
+  mt::recFmtClock(sec, true, t, sizeof t);
+  snprintf(buf, sizeof buf, sec < 3600 ? "REC %s" : "%s", t);  // "1:02:03" alone fits
+  spr_->setTextColor(kRed);
+  spr_->drawString(buf, kRecX0 + 14, 4);
 }
 
 void App::drawTabs() {

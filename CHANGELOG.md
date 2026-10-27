@@ -3,6 +3,26 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## 2026-10-27
+- **REC -> SD** from MIX: the **REC** button in the MAIN column (or an encoder long press on MIX) records
+  straight to `/samples/rec/RECn.wav` on the synth card, no import, up to 4 GB or the card's space. Records on
+  in the background on any tab (status bar `● REC 03:41`, tap = back to it); stop with STOP / B / long press.
+  Toast `REC12.WAV 3:41 SAVED`. REC settings (Source, gains, Thresh, Mon) are now remembered after power-off.
+  Link protocol 18: flash both boards.
+- REC window (SAMPLE and REC -> SD): a big touch **START / STOP** button below the rows replaces the REC row
+  — a silent tap for mic takes (red outline START / ARM, ARMED blinks, filled STOP with the time, grey
+  SAVING). An encoder long press in the window also starts / arms / stops; B before a take closes it.
+  RESAMPLE with the transport stopped: START waits for Play (`ARMED: PLAY` blinks), and Play starts the
+  take just before the transport, so the first note is in it; a tap while waiting = back to READY.
+- REC window Cancel row: during a take, an arm, a start or a wait for Play it drops the take (DROP THE
+  TAKE / CANCEL ARM, the file deleted) or ends the wait (CANCEL WAIT) and the window stays open in READY;
+  in READY it reads CLOSE and closes the window.
+- REC window: STOP (the button, B, a long press, or a take that ends itself) saves with its toast and leaves
+  the window open in READY for the next take (SAMPLE still binds the take to the instrument). B in READY and
+  leaving INST close it.
+- REC window: an A tap (pressed and released with no turn) starts / arms / stops like the big button; A's
+  usual meaning (marker step, Shift+A SCENE view) is off while the window is open.
+- FILE → SAMPLES → Import WAV… and FILE → Import MIDI…: B in a subfolder goes up one folder (the cursor on
+  the folder you left); at the top it closes the list as before.
 - **MUT**: EVO and VAR are one mutator per track — the TRACK page **MUT** (tabs MAIN INS FOL NOTE GEN MUT
   MIDI) replaces EVO and VAR. The **Mut** row picks OFF / EVO / CA1D / CA2D (KIT tracks only) / MARKOV; only
   the chosen mode's rows are shown, the header shows its state. The modes no longer stack. Old projects with

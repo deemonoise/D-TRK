@@ -5,7 +5,7 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 17;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
+constexpr uint16_t kProtocol = 18;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
                                     // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields);
                                     // 12: LOFI (InstrType::Lofi, Instrument lofiFormula / lofiSync / lfoByte);
                                     // 13: recording (Rec*)
@@ -13,6 +13,8 @@ constexpr uint16_t kProtocol = 17;  // 8: SynthModel Tuning chunk; 9: xfade + Sc
                                     // 15: FM SAT (Instrument::fmSat; the model's layout)
                                     // 16: CHIP SID / AY waves, SID filter, CHIP STEP (Instrument layout)
                                     // 17: FsCopy
+                                    // 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left, RecStopRep::ended,
+                                    //     RecResult::CardFull)
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -411,6 +413,11 @@ struct RenderRep {
 // the file without the bank. RecStop is long: Progress {op = RecStop} every 100 ms, then RecStopRep
 // (the mono mix's crc / frames in the bank, the take's peak / clips). RecCancel (no payload) drops
 // the take and its file. RecSet / RecCancel reply with a RecLevelRep.
+// toSd (REC -> SD, from MIX): the take is only the file on the card, never the store: no 5-minute
+// limit, it ends on its own at the WAV's 4 GB or when the card's free space (taken at RecStart) is
+// down to mt::kRecSdReserveBytes (mt::recSdLimitFrames); RecStopRep has number / frames / peak /
+// clips, bank and crc 0. Either kind ending on its own shows RecState::Saving until the RecStop, whose
+// reply says why in ended.
 enum class RecResult : uint8_t {
   Ok, NoSd, Busy, NoCodec,
   NoPsram,   // no PSRAM for the ring: no take
@@ -420,12 +427,20 @@ enum class RecResult : uint8_t {
   WriteFail,  // the card failed
   Bank,      // the bank import failed: RecStopRep::bank has the mt::BankResult
   BadArg,
+  CardFull,  // RecStart toSd: under a second fits on the card
+};
+// RecStopRep::ended: how the capture ended before the reply.
+enum class RecEnd : uint8_t {
+  Stop,    // the RecStop (or a CardSlow / WriteFail end: see result)
+  Length,  // on its own at its maximum: 5 min (store take) or the WAV's 4 GB (toSd)
+  Space,   // toSd: on its own, the card's free space down to mt::kRecSdReserveBytes
 };
 struct RecStartReq {
   uint8_t source = 0;
   int8_t gain = 0, thresh = -128;
   uint8_t mon = 0;
   uint16_t number = 1;
+  uint8_t toSd = 0;  // 1: REC -> SD (see above); left out by an older sender: 0
 };
 struct RecStartRep {
   uint8_t result = 0;
@@ -442,6 +457,7 @@ struct RecLevelRep {
   uint16_t peak = 0;
   uint32_t clips = 0, frames = 0;
   uint8_t codec = 0;  // the codec answers: MIC / LINE available
+  uint32_t left = 0;  // frames before the take ends on its own (time / 4 GB / card space); 0 without one
 };
 struct RecStopRep {
   uint8_t result = 0, bank = 0;
@@ -449,6 +465,7 @@ struct RecStopRep {
   uint32_t crc = 0, frames = 0;
   uint16_t peak = 0;
   uint32_t clips = 0;
+  uint8_t ended = 0;  // RecEnd
 };
 
 // FwFromFile: a .hex on the card (Intel HEX of this board's firmware) into the OTA area of the flash,

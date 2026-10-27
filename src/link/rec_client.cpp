@@ -19,7 +19,7 @@ bool shortReq(Msg t, const Req* q, uint8_t* reply, int& len) {
 }
 
 RecResult res(uint8_t r) {
-  return r <= static_cast<uint8_t>(RecResult::BadArg) ? static_cast<RecResult>(r) : RecResult::BadArg;
+  return r <= static_cast<uint8_t>(RecResult::CardFull) ? static_cast<RecResult>(r) : RecResult::BadArg;
 }
 
 void setLink(bool* link, bool v) {
@@ -93,6 +93,17 @@ RecResult recStop(RecStopRep& rep, BankProgressFn cb, void* ctx, bool* link) {
   setLink(link, ok);
   if (!ok) return RecResult::BadArg;
   return res(rep.result);
+}
+
+RecResult recStartSd(uint8_t source, int8_t gain, int8_t thresh, bool mon, uint16_t& number, bool* link) {
+  RecStartReq q;
+  q.source = source;
+  q.gain = gain;
+  q.thresh = thresh;
+  q.mon = mon ? 1 : 0;
+  q.number = 1;  // the first free on the card: the project has no part in it
+  q.toSd = 1;
+  return recStart(q, number, link);
 }
 
 RecResult recCancel() {

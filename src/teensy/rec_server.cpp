@@ -35,7 +35,9 @@ mt::RecCapture cap;
 bool ringOk = false;
 Phase phase = Phase::None;
 bool watching = false;  // the window's meter (out->setRec) runs
-bool keepOnly = false;  // sealing for the keepalive / Hello: the file, not the store
+bool keepOnly = false;  // REC -> SD (RecStartReq::toSd): the take is the file, never the store
+bool spaceBound = false;  // keepOnly: the card's free space, not the 4 GB, sets the take's maximum
+uint32_t maxFrames = 0;   // the take's maximum (RecLevelRep::left)
 uint32_t lastLevelMs = 0, lastProgress = 0, lastMemLog = 0;
 
 FsFile file;
@@ -50,7 +52,7 @@ MT_RAM2 int16_t buf[kChunkFrames * 2];
 uint8_t stopSeq = 0;
 bool stopPending = false, haveStopRep = false;
 int stopRepLen = 0;
-uint8_t stopRep[32];  // a RecStopRep is 20 bytes
+uint8_t stopRep[32];  // a RecStopRep is 21 bytes
 RecStopRep stopRes;
 
 template <class M>
@@ -128,6 +130,7 @@ int levelRep(RecResult r, uint8_t* o) {
   takeMeter(m.peak, m.clips);
   m.frames = phase != Phase::None ? cap.frames() : 0;
   m.codec = codec::present() ? 1 : 0;
+  if (phase == Phase::Take) m.left = maxFrames > m.frames ? maxFrames - m.frames : 0;
   return put(m, o);
 }
 
@@ -205,6 +208,17 @@ void keep(const char* why) {
   stopPending = false;
 }
 
+// The card's free bytes; false when the volume does not tell. FAT32 counts its whole FAT the first
+// time (SdFat keeps the count up to date after that, MAINTAIN_FREE_CLUSTER_COUNT); exFAT reads its
+// bitmap each time (a few hundred sectors on a big card): once per take, at RecStart.
+bool freeBytes(uint64_t& out) {
+  const uint64_t cl = SD.sdfs.bytesPerCluster();
+  const int32_t freeCl = static_cast<int32_t>(SD.sdfs.freeClusterCount());
+  if (cl == 0 || freeCl < 0) return false;
+  out = cl * static_cast<uint32_t>(freeCl);
+  return true;
+}
+
 RecResult start(Reader& r, uint16_t& n) {
   RecStartReq q;
   if (!decode(r, q) || q.source > static_cast<uint8_t>(mt::RecSource::Resample) || q.thresh > 0)
@@ -217,6 +231,16 @@ RecResult start(Reader& r, uint16_t& n) {
   if (inputSource(src) && !codec::present()) return RecResult::NoCodec;
   if (!ringOk || !psram::recRing()) return RecResult::NoPsram;
   if (!SD.sdfs.exists("/samples/rec") && !SD.sdfs.mkdir("/samples/rec", true)) return RecResult::WriteFail;
+  const uint8_t ch = src == mt::RecSource::Mic ? 1 : 2;
+  uint32_t limit = mt::kRecMaxFrames;
+  bool bySpace = false;
+  if (q.toSd) {
+    uint64_t fb = 0;
+    if (!freeBytes(fb)) return RecResult::WriteFail;
+    limit = mt::recSdLimitFrames(fb, ch);
+    bySpace = limit < mt::recSdLimitFrames(~0ull, ch);
+    if (limit < mt::kRecRate) return RecResult::CardFull;
+  }
   // The first free number from q.number on, wrapping to 1: at most kRecNumberMax tries.
   const int from = q.number < 1 || q.number > mt::kRecNumberMax ? 1 : q.number;
   int k = 0;
@@ -230,20 +254,24 @@ RecResult start(Reader& r, uint16_t& n) {
   file = SD.sdfs.open(tmp, O_RDWR | O_CREAT | O_TRUNC);
   if (!file) return RecResult::WriteFail;
   const uint8_t zeros[mt::kWavHeaderBytes] = {};
-  const uint8_t ch = src == mt::RecSource::Mic ? 1 : 2;
   if (file.write(zeros, sizeof zeros) != sizeof zeros) {
     dropFile();
     return RecResult::WriteFail;
   }
-  file.preAllocate(mt::kWavHeaderBytes + static_cast<uint64_t>(mt::kRecMaxFrames) * ch * 2);  // a hint
+  // A hint (seal truncates); an SD take past 5 min grows from there.
+  const uint32_t pre = limit < mt::kRecMaxFrames ? limit : mt::kRecMaxFrames;
+  file.preAllocate(mt::kWavHeaderBytes + static_cast<uint64_t>(pre) * ch * 2);
   number = k;
   n = static_cast<uint16_t>(k);
   if (inputSource(src)) setInput(src, q.gain);
   writer.begin(ch, sink, &file);
   takePeak = 0;
   takeClips = 0;
+  keepOnly = q.toSd != 0;
+  spaceBound = bySpace;
+  maxFrames = limit;
   AudioNoInterrupts();
-  cap.arm(src, q.thresh, mt::kRecMaxFrames);
+  cap.arm(src, q.thresh, limit);
   AudioInterrupts();
   uint16_t pk;
   uint32_t cl;
@@ -251,7 +279,9 @@ RecResult start(Reader& r, uint16_t& n) {
   phase = Phase::Take;
   haveStopRep = false;
   watch(src, q.mon);
-  link::log("rec: REC%d armed (%s)", k, src == mt::RecSource::Mic ? "MIC" : src == mt::RecSource::Line ? "LINE" : "RESAMPLE");
+  link::log("rec: REC%d armed (%s%s, max %lu s)", k,
+            src == mt::RecSource::Mic ? "MIC" : src == mt::RecSource::Line ? "LINE" : "RESAMPLE",
+            keepOnly ? ", to SD" : "", static_cast<unsigned long>(limit / mt::kRecRate));
   return RecResult::Ok;
 }
 
@@ -318,14 +348,15 @@ int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* o) {
         m.result = static_cast<uint8_t>(phase == Phase::None ? RecResult::NotRec : RecResult::Busy);
         return put(m, o);
       }
+      stopRes = RecStopRep{};
+      if (cap.autoStopped())  // ended on its own before this RecStop
+        stopRes.ended = static_cast<uint8_t>(keepOnly && spaceBound ? RecEnd::Space : RecEnd::Length);
       stopCapture();
       stopSeq = seq;
       stopPending = true;
       haveStopRep = false;
-      stopRes = RecStopRep{};
       stopRes.result = static_cast<uint8_t>(cap.overflow() ? RecResult::CardSlow : RecResult::Ok);
       phase = Phase::Sealing;
-      keepOnly = false;
       lastProgress = millis();
       return -1;
     default: return -1;
@@ -372,8 +403,17 @@ void step() {
         file.close();
         card::spaceChanged();
       }
-      if (res == RecResult::Ok) {
-        if (stopRes.result == static_cast<uint8_t>(RecResult::CardSlow)) res = RecResult::CardSlow;
+      if (res == RecResult::Ok && stopRes.result == static_cast<uint8_t>(RecResult::CardSlow)) res = RecResult::CardSlow;
+      if (keepOnly) {  // REC -> SD: the file is the take; no bank / crc
+        if (res == RecResult::Ok || res == RecResult::CardSlow) stopRes.frames = writer.frames();
+        stopRes.result = static_cast<uint8_t>(res);
+        phase = Phase::None;
+        link::log("rec: REC%d on the card, %lu frames, result %u", number, static_cast<unsigned long>(writer.frames()),
+                  static_cast<unsigned>(res));
+        if (stopPending) sendStop();
+        return;
+      }
+      if (res == RecResult::Ok || res == RecResult::CardSlow) {
         const mt::BankResult b = bank::importFile(path);
         if (b == mt::BankResult::Running) {
           stopRes.result = static_cast<uint8_t>(res);

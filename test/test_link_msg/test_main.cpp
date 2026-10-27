@@ -238,10 +238,11 @@ void test_debug() {
 }
 
 void test_protocol_8_and_debug_id() {
-  TEST_ASSERT_EQUAL(17, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
+  TEST_ASSERT_EQUAL(18, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
-                                     // 17: FsCopy
+                                     // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,
+                                     // RecStopRep::ended, RecResult::CardFull)
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
   TEST_ASSERT_EQUAL(42, static_cast<int>(Msg::WtRender));
   TEST_ASSERT_EQUAL(43, static_cast<int>(Msg::RenderOut));
@@ -815,7 +816,20 @@ void test_rec_msgs_roundtrip() {
   TEST_ASSERT_EQUAL(-40, a2.thresh);
   TEST_ASSERT_EQUAL(1, a2.mon);
   TEST_ASSERT_EQUAL(4321, a2.number);
-  checkTruncated<RecStartReq>(n);
+  TEST_ASSERT_EQUAL(0, a2.toSd);
+  checkTruncated<RecStartReq>(n - 1);  // toSd may be left out (an older ESP): 0
+  a.toSd = 1;
+  n = put(a);
+  TEST_ASSERT_EQUAL(7, n);
+  Reader ra(buf, n);
+  TEST_ASSERT_TRUE(decode(ra, a2));
+  TEST_ASSERT_EQUAL(1, a2.toSd);
+  TEST_ASSERT_EQUAL(4321, a2.number);
+  Reader ra6(buf, n - 1);
+  RecStartReq a3;
+  a3.toSd = 1;
+  TEST_ASSERT_TRUE(decode(ra6, a3));
+  TEST_ASSERT_EQUAL(0, a3.toSd);
 
   RecStartRep b;
   b.result = static_cast<uint8_t>(RecResult::NoPsram);
@@ -848,6 +862,7 @@ void test_rec_msgs_roundtrip() {
   d.clips = 0x01020304;
   d.frames = 13230000;
   d.codec = 1;
+  d.left = 0xF0E0D0C0;
   n = put(d);
   RecLevelRep d2;
   Reader rd(buf, n);
@@ -858,7 +873,18 @@ void test_rec_msgs_roundtrip() {
   TEST_ASSERT_EQUAL_HEX32(0x01020304, d2.clips);
   TEST_ASSERT_EQUAL(13230000, d2.frames);
   TEST_ASSERT_EQUAL(1, d2.codec);
-  checkTruncated<RecLevelRep>(n);
+  TEST_ASSERT_EQUAL_HEX32(0xF0E0D0C0, d2.left);
+  checkTruncated<RecLevelRep>(n - 4);
+  for (int k = n - 3; k < n; ++k) {  // a cut field: no
+    Reader rk(buf, k);
+    RecLevelRep dk;
+    TEST_ASSERT_FALSE(decode(rk, dk));
+  }
+  Reader rd0(buf, n - 4);  // no left at all: 0
+  RecLevelRep d3;
+  d3.left = 5;
+  TEST_ASSERT_TRUE(decode(rd0, d3));
+  TEST_ASSERT_EQUAL_UINT32(0, d3.left);
 
   RecStopRep e;
   e.result = static_cast<uint8_t>(RecResult::Bank);
@@ -868,6 +894,7 @@ void test_rec_msgs_roundtrip() {
   e.frames = 547200;
   e.peak = 20000;
   e.clips = 7;
+  e.ended = static_cast<uint8_t>(RecEnd::Space);
   n = put(e);
   RecStopRep e2;
   Reader re(buf, n);
@@ -879,7 +906,13 @@ void test_rec_msgs_roundtrip() {
   TEST_ASSERT_EQUAL(547200, e2.frames);
   TEST_ASSERT_EQUAL(20000, e2.peak);
   TEST_ASSERT_EQUAL(7, e2.clips);
-  checkTruncated<RecStopRep>(n);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(RecEnd::Space), e2.ended);
+  checkTruncated<RecStopRep>(n - 1);
+  Reader re0(buf, n - 1);
+  RecStopRep e3;
+  e3.ended = 2;
+  TEST_ASSERT_TRUE(decode(re0, e3));
+  TEST_ASSERT_EQUAL(0, e3.ended);
 }
 
 void test_msg_rec_ids() {
@@ -889,6 +922,10 @@ void test_msg_rec_ids() {
   TEST_ASSERT_EQUAL(static_cast<int>(Msg::RecLevel) + 1, static_cast<int>(Msg::RecStop));
   TEST_ASSERT_EQUAL(static_cast<int>(Msg::RecStop) + 1, static_cast<int>(Msg::RecCancel));
   TEST_ASSERT_EQUAL(48, static_cast<int>(Msg::RecCancel));
+  TEST_ASSERT_EQUAL(static_cast<int>(RecResult::BadArg) + 1, static_cast<int>(RecResult::CardFull));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(RecEnd::Stop));
+  TEST_ASSERT_EQUAL(1, static_cast<int>(RecEnd::Length));
+  TEST_ASSERT_EQUAL(2, static_cast<int>(RecEnd::Space));
 }
 
 // 14: the one-shot source (the preview track's tap), bank only; normalize 2 = -0.3 dBFS.

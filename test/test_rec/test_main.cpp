@@ -449,6 +449,68 @@ static void test_rec_bind() {
   TEST_ASSERT_EQUAL_INT(-1, recBind(q, kInstruments, "S1", 1, 10, 60));  // bad instrument
 }
 
+static uint32_t rd32le(const uint8_t* p) {
+  return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+// A take straight to the card (REC -> SD): the free space less kRecSdReserveBytes, at most the WAV's
+// 4 GB (RIFF / FAT32 sizes are 32 bit), in whole frames past the header.
+static void test_sd_limit_frames() {
+  TEST_ASSERT_EQUAL_UINT32(0, recSdLimitFrames(0, 2));
+  TEST_ASSERT_EQUAL_UINT32(0, recSdLimitFrames(kRecSdReserveBytes, 2));
+  TEST_ASSERT_EQUAL_UINT32(0, recSdLimitFrames(kRecSdReserveBytes + kWavHeaderBytes, 2));
+  TEST_ASSERT_EQUAL_UINT32(1, recSdLimitFrames(kRecSdReserveBytes + kWavHeaderBytes + 4, 2));
+  TEST_ASSERT_EQUAL_UINT32(0, recSdLimitFrames(kRecSdReserveBytes + kWavHeaderBytes + 3, 2));
+  TEST_ASSERT_EQUAL_UINT32(2, recSdLimitFrames(kRecSdReserveBytes + kWavHeaderBytes + 4, 1));
+  const uint64_t mb100 = 100ull << 20;
+  TEST_ASSERT_EQUAL_UINT32((mb100 - kRecSdReserveBytes - kWavHeaderBytes) / 4, recSdLimitFrames(mb100, 2));
+  TEST_ASSERT_EQUAL_UINT32((mb100 - kRecSdReserveBytes - kWavHeaderBytes) / 2, recSdLimitFrames(mb100, 1));
+  // A big card: the 4 GB file ends it, with the margin; the same past any size.
+  const uint64_t big = 1ull << 40;
+  for (uint8_t ch = 1; ch <= 2; ++ch) {
+    const uint32_t f = recSdLimitFrames(big, ch);
+    const uint64_t file = kWavHeaderBytes + static_cast<uint64_t>(f) * ch * 2;
+    TEST_ASSERT_TRUE(file <= kRecSdMaxFileBytes);
+    TEST_ASSERT_TRUE(file > kRecSdMaxFileBytes - 2u * ch);
+    TEST_ASSERT_TRUE(kRecSdMaxFileBytes < 0xFFFFFFFFull);
+    TEST_ASSERT_EQUAL_UINT32(f, recSdLimitFrames(~0ull, ch));
+  }
+  // Hours of stereo fit: more than 6 h at 44.1 kHz.
+  TEST_ASSERT_TRUE(recSdLimitFrames(big, 2) > 6u * 3600u * kRecRate);
+  TEST_ASSERT_TRUE(recSdLimitFrames(big, 2) > kRecMaxFrames);
+}
+
+// The header of a take over 2 GB: unsigned 32-bit sizes, no wrap.
+static void test_header_over_2gb() {
+  for (uint16_t ch = 1; ch <= 2; ++ch) {
+    const uint32_t f = recSdLimitFrames(1ull << 40, static_cast<uint8_t>(ch));
+    uint8_t h[kWavHeaderBytes];
+    wavHeader(h, f, kRecRate, 60, 0x1234, ch);
+    const uint64_t data = static_cast<uint64_t>(f) * ch * 2;
+    TEST_ASSERT_TRUE(data > 0x80000000ull);
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(kWavHeaderBytes - 8 + data), rd32le(h + 4));
+    TEST_ASSERT_EQUAL_UINT64(kWavHeaderBytes - 8 + data, rd32le(h + 4));
+    TEST_ASSERT_EQUAL_UINT64(data, rd32le(h + kWavHeaderBytes - 4));
+    TEST_ASSERT_EQUAL_UINT32(f, rd32le(h + kWavHeaderBytes - 12));  // mtcr frames
+  }
+}
+
+// The capture runs to a limit far past the 5 minutes when asked (SD takes).
+static void test_capture_long_limit() {
+  static std::vector<int16_t> mem(4096 * 2);
+  RecCapture c;
+  c.init(mem.data(), 4096);
+  const uint32_t lim = recSdLimitFrames(1ull << 40, 2);
+  c.arm(RecSource::Line, kRecThreshOff, lim);
+  std::vector<int16_t> lr(2048 * 2);
+  for (int b = 0; b < 8; ++b) {
+    feedBlock(c, 1, 1);
+    c.ring().pop(lr.data(), 2048);
+  }
+  TEST_ASSERT_FALSE(c.autoStopped());
+  TEST_ASSERT_EQUAL(RecState::Rec, c.state());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_ring_push_pop);
@@ -471,5 +533,8 @@ int main(int, char**) {
   RUN_TEST(test_writer_sink_fail);
   RUN_TEST(test_rec_name);
   RUN_TEST(test_rec_bind);
+  RUN_TEST(test_sd_limit_frames);
+  RUN_TEST(test_header_over_2gb);
+  RUN_TEST(test_capture_long_limit);
   return UNITY_END();
 }

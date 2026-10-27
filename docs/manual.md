@@ -44,7 +44,7 @@ A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S
 | Encoder turn | Moves the cursor or selects a row. In edit mode, changes the value. With Shift, a coarse step (usually ×10). |
 | Encoder click | Enter or leave edit mode, choose a menu item. With a track button held — switch that button's turn between volume and pan (see [Track buttons](#trackkeys)). |
 | Hold <kbd>A</kbd> + turn | Edit the value under the cursor without a click; releasing A commits it. See [Buttons A and B](#abkeys). |
-| Encoder long press | 0.5 s: context menu or close a dialog. |
+| Encoder long press | 0.5 s: context menu or close a dialog. On MIX (outside the SCENE view): opens the [REC -> SD](#recsd) window; while that take records — STOP. In the [REC window](#rec): START / ARM / STOP, as its big button. |
 | Tap | Select. Tapping the selected item again enters edit mode. |
 | Long tap | 0.5 s: context menu. |
 | Drag | Scroll. In edit mode, changes the value: up increases, down decreases. |
@@ -89,12 +89,13 @@ Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and t
 | <kbd>Shift</kbd>+<kbd>A</kbd> in GRID | Clear the step under the cursor. |
 | <kbd>Shift</kbd>+<kbd>A</kbd> in MIX | Open / close the [SCENE view](#scenes). |
 | <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> in the sample editor (INST, SMPL page) | Next / previous marker, like **\>** / **\<** — see [SAMPLE](#sample). |
+| <kbd>A</kbd> tap in the [REC window](#rec) (SAMPLE and MIX) | START / STOP, like the big button (with or without Shift). A + turn still edits. |
 | Hold <kbd>Shift</kbd> + <kbd>A</kbd> + <kbd>N</kbd> | Solo / unsolo track N of the visible half; toast `TRACK n SOLO` / `TRACK n ON`. |
 | Hold <kbd>A</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end A (toast `A = SCENE 3`), also in the SCENE view and with the XY pad open; see [scenes](#scenes). Elsewhere it does nothing (the press does not reach the screen). |
 | Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. In MIX in the SCENE view: the master parameter MAIN … EQHI instead (the tab stays). |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ, section in FILE (wraps). The cursor stays on the page tabs if it was there, otherwise it goes to the first row. |
 | <kbd>A</kbd>+<kbd>B</kbd> (press both, release) on GRID, SONG, MIX | With [PERF](#live) on: XY pad on / off (see [XY pad](#xypad)). Nothing happens if a turn or a track button came in between. |
-| <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker it steps back one level. In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. In MIX: leave the SCENE view (in CPY mode, cancel the copy first) → drop the pan or crossfader selection → PERF on / off. |
+| <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker, Import WAV… and Import MIDI… it steps back one folder (at the top level it closes the list). In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. In MIX: with the [REC window](#recsd) open — STOP the take, the window stays open (no take: close the window); else leave the SCENE view (in CPY mode, cancel the copy first) → drop the pan or crossfader selection → PERF on / off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
 | Hold <kbd>B</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end B (toast `B = SCENE 3`), as A + N. Elsewhere it does nothing. |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Queue pattern N of the current bank of 8 (patterns 1–8 or 9–16, the bank holding the pattern being edited). While playing it switches at the end of the pattern (toast `PATTERN 05 NEXT`); when stopped, at once. While the song plays (SONG mode) a queue is ignored (toast `SONG MODE`). |
@@ -130,8 +131,9 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 | `SYNTH FW` | Red, in place of CPU: the synth board's firmware protocol does not match the tracker's. A full-screen notice blocks the UI; a click or a tap on **UPDATE** opens a menu: **Update synth…** (flash from `/firmware/teensy.hex` on the synth card, as FILE → SYSTEM → Update synth) or **Wi-Fi firmware…** (see [below](#wifi)). |
 | `SD!` | Red, in place of `CPU` for 2 s (`SD! 42%`): a sample voice ran out of data (the synth board's card fell behind) and faded out for a moment. Playback goes on. Often: a slow card, many long samples pitched up. See [Samples and SD cards](#streaming). |
 | `SYNC` | Yellow, in place of CPU: the sound state (instruments, mixer, samples) is being sent to the synth board. Play waits for it for a moment. |
+| `● REC 03:41` | Red, in place of the battery % and CPU, on every tab: a [REC -> SD](#recsd) take is recording in the background (the dot blinks while it is armed and waits for the threshold; past an hour `● 1:02:03`). A tap opens MIX with the REC window. |
 
-Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar (battery and CPU) for 1.5 seconds.
+Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar (battery and CPU) for 1.5 seconds; `● REC` stays visible over them.
 
 **Menus** open in the center of the screen and show up to 12 items; long lists scroll by dragging. Encoder: turn to select (wraps around: after the last item comes the first), click to execute, long press to close. All parameter and file lists wrap around the same way. A tap outside the menu also closes it. Gray items are currently unavailable.
 
@@ -937,6 +939,7 @@ A separate tab at the bottom of the screen, between INST and BANK: tap **MIX**. 
 - **Touch:** tap or drag on a fader — volume set by finger position (in 8 px steps; for precise values use the track button and encoder); tap M / S.
 - **PERF:** the **PERF** button under the MAIN strip (yellow — on) or <kbd>B</kbd> (when neither a pan nor the crossfader is selected) turns [PERF](#live) on / off — the same mode as in GRID and SONG. While playing, a track button holds its effect, the encoder changes the held effect's depth instead of MAIN, <kbd>Shift</kbd>+button still mutes; holding a button does not turn the volume in PERF.
 - **Scope** across the full width at the bottom: the last ≈ 14 ms of the audio output (left and right summed), ~20 frames per second. Auto-gain (up to ×32, value at top left) stretches a quiet signal to the full height; the real level is the meter on the right (yellow near the top); `CLIP` means a full-scale sample occurred (shown for one second).
+- **REC** — the button in the MAIN column beside the crossfader (red outline; filled red while a take records). A tap or an encoder long press (outside the SCENE view) opens the [REC -> SD](#recsd) window: a take straight onto the card, without the sample store. While a take records, an encoder long press on MIX is STOP.
 - **Scene crossfader** — the bar between the M / S buttons and the scope, under the eight strips (it stays out of the MAIN column); the SCENE view: <kbd>Shift</kbd>+<kbd>A</kbd>; see [Scenes and crossfader](#scenes).
 - Track volume and pan without going to MIX: hold its button and turn the encoder; a click while holding switches to pan (see [track buttons](#trackkeys)).
 
@@ -1151,17 +1154,17 @@ SAMPLE instrument → SMPL page → the **SAMPLE** menu → **Record…** opens 
 |---|---|---|
 | Source | MIC, LINE, RESAMPLE | MIC — the Audio Shield microphone, LINE — its line input, RESAMPLE — the tracker's own output (INT tracks, with PERF and knobs, as you hear it). Without the shield only RESAMPLE: `RESAMPLE (NO SHIELD)`. |
 | Gain | MIC 0..+63 dB (default +32), LINE 0..15 (default 5), RESAMPLE — | Input gain. Can be changed during the take. |
-| Thresh | OFF, −60..−6 dB (step 2) | OFF (default) — recording starts at once. A level — REC arms the take (`ARMED` blinks) and it starts when the input crosses the threshold; the 20 ms before it are kept, so the attack is not cut. |
+| Thresh | OFF, −60..−6 dB (step 2) | OFF (default) — recording starts at once. A level — the button **ARM**s the take (`ARMED` blinks) and it starts when the input crosses the threshold; the 20 ms before it are kept, so the attack is not cut. |
 | Mon | OFF / ON | Hear the input mixed over the track (a few ms of delay). OFF by default. With MIC and loud headphones or a speaker MON ON can howl (feedback) — keep the level low. Can be changed during the take. |
-| REC | ARM / START NOW → STOP | Starts the take; during it the row becomes **STOP** (save the take). |
-| Cancel | | Drops the take: nothing in the project, the file is deleted. Without a take — just closes the window. |
+| Cancel | DROP THE TAKE, CANCEL ARM, CANCEL WAIT, CLOSE | During a take (REC, `ARMED`, `STARTING`) — **DROP THE TAKE** / **CANCEL ARM**: the take is dropped (nothing in the project, the file is deleted) and the window stays open in READY for the next try. Waiting for Play (`ARMED: PLAY`) — **CANCEL WAIT**: back to READY. In READY — **CLOSE** closes the window. |
 
-Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip counter, the state (READY, ARMED, REC, SAVING) and the time against the **5:00** limit. At 5 minutes the take stops by itself and is saved.
+Below the rows: the big **START / STOP** button — a silent tap for mic takes, no encoder clicks on the recording: `● START` (`● ARM` with a Thresh) as a red outline, `ARMED` blinking, `■ STOP 00:12` filled red with the time (saves the take), grey `STARTING` / `SAVING…`. An encoder long press or an <kbd>A</kbd> tap (A pressed and released with no turn) does the same; in the window A has no other meaning. **RESAMPLE with the transport stopped:** START waits for Play — `ARMED: PLAY` blinks on the button and in the header; then Play (also <kbd>Shift</kbd>+Play, the song start) starts the take first and the transport right after, so the first note is in it. A tap (or a long press) while waiting goes back to READY; if the take cannot start, a toast tells why and the transport plays anyway. Playing already, START records at once; MIC and LINE always start at once. Above the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip counter, the state (READY, ARMED, REC, SAVING) and the time against the **5:00** limit. At 5 minutes the take stops by itself and is saved.
 
-- **STOP** is also: encoder long press, <kbd>B</kbd>, or leaving the INST tab. During a take only Gain and Mon change; Source and Thresh are locked.
+- **STOP** is also: encoder long press, <kbd>B</kbd>, or leaving the INST tab (that also closes the window). After a STOP (or a take that stopped by itself) the window stays open in READY for the next take; in READY <kbd>B</kbd> closes it. During a take only Gain and Mon change; Source and Thresh are locked.
 - **Save:** `SAVING` with progress, then a toast like `REC1 12.4s, 3 CLIPS`. The take is written to the card as `/samples/rec/RECn.wav` (44.1 kHz 16-bit; stereo for LINE and RESAMPLE, mono for MIC) and imported into the project as sample **RECn** in mono, (L+R)/2 without normalization; the instrument gets it in its Sample row (slices cleared) and the editor shows it. The number is the next free one.
-- Source, Gain, Thresh and Mon are kept until reboot.
-- Both boards must run firmware with link protocol 17 (flash the WT32 and the Teensy together).
+- Source, Gain (MIC and LINE each), Thresh and Mon are device settings: remembered after power-off and shared with [REC -> SD](#recsd).
+- While a REC -> SD take records, **Record…** answers `REC BUSY`.
+- Both boards must run firmware with link protocol 18 (flash the WT32 and the Teensy together).
 
 | Toast | Meaning |
 |---|---|
@@ -1172,6 +1175,19 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 | `TOO SHORT` | A take under 50 ms: nothing is saved. |
 | `SAMPLE LIST FULL` | The project has no free sample slot: the file stays in `/samples/rec/` and can be imported later. |
 | `REC KEPT ON CARD` | The project was replaced during the take: the board finishes the file in `/samples/rec/`, the project does not get it. The same happens if the display board reboots: after 2 s the synth board closes the file. |
+
+<a id="recsd"></a>
+
+#### REC -> SD: recording straight onto the card (from MIX)
+
+For field recordings and long takes: MIX → the **REC** button (or an encoder long press on MIX) opens the same window titled `REC -> SD`: a tap on the big **START** button (or an encoder long press) starts (RESAMPLE with the transport stopped: waits for Play, as above). The rows, the button, the meter and the settings are the same as above.
+
+- **No import.** The take is only the file `/samples/rec/RECn.wav` on the synth board's card (n is the first free number on the card): no project sample, no instrument, no store copy. Import it later via FILE → SAMPLES → **Import WAV…** (the `rec/` folder).
+- **Length:** no 5-minute limit. The take stops by itself at the WAV's 4 GB (about 6.7 h stereo, 13.5 h for mono MIC) or when the card's free space is almost gone (8 MB is kept). The header shows the time and `LEFT 1:23:45` — the time left; before the start it is counted from the card's free space. Under a second free: `CARD FULL`, no take.
+- **In the background.** Closing the window (B before the start, Cancel → CLOSE in READY) returns to the mixer; once a take runs, it keeps recording when you leave MIX or close the window: on every tab the status bar shows a red `● REC 03:41`, a tap on it opens MIX and the window again.
+- **STOP:** the big STOP button, <kbd>B</kbd> or an encoder long press in the window, or an encoder long press on MIX. Toast `REC12.WAV 3:41 SAVED` (`, 3 CLIPS` if it clipped); an open window stays in READY for the next take. Stopped by itself: `REC12.WAV 3:41 CARD FULL` or `… 4GB LIMIT`. **Cancel** during a take deletes the file and leaves the window open in READY.
+- One take at a time: during a REC -> SD take, **Record…** in SAMPLE answers `REC BUSY`. Sample sync, import and export on the synth board answer `BUSY` until the take ends.
+- Long blocking operations on the display board (loading a project, a sample sync with progress) pause its polls: after 2 s the synth board closes the file by itself (toast `REC12.WAV KEPT ON CARD`).
 
 <a id="oneshot"></a>
 
@@ -1204,7 +1220,7 @@ Below the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip co
 | SAMPLE | `SAMPLE` | |
 
 - If the sample was added to the project but the copy failed, the toast is `SAVED, NO COPY`.
-- Both boards must run firmware with link protocol 17.
+- Both boards must run firmware with link protocol 18.
 
 | Toast | Meaning |
 |---|---|
@@ -2001,6 +2017,7 @@ Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as 
 | `/last.txt` | name of the project to autoload |
 | `/midi/*.mid` | files for import (subfolders allowed) |
 | `/samples/*.wav` | WAV library for importing into projects (subfolders allowed) |
+| `/samples/rec/RECn.wav` | [REC](#rec) takes: SAMPLE takes (also imported into the project) and [REC -> SD](#recsd) takes (only here) |
 | `/samples/oneshots/<folder>/*.wav` | copies of [Save one-shot](#oneshot) renders, by instrument (`909/BD`, `FM/KICK`, `SYNTH/SAW`…) |
 | `/wavetables/*.wav` | wavetable library for SYNTH (subfolders allowed) |
 | `/presets/TYPE/…/name.mti` | [instrument presets](#presets): folders CHIP, SAMPLE, FM, DRUM, SYNTH, STRING, LOFI, each with up to 4 levels of your own folders |
@@ -2028,7 +2045,7 @@ Samples belong to the project: each project has its own list (up to 128), and in
 Screen rows:
 
 - At the top: `FREE n / m KB CACHE k KB` and a bar showing used space. It is about the synth board's flash, which now holds wavetables and sample starts: FREE is its free space, CACHE is how much other projects' entries take up. If there is not enough room in flash for an import or load, the cache is evicted automatically, largest entries first, never touching the current project's samples; if it still does not fit, "BANK FULL".
-- **Import WAV…**: a list of `.wav` files from `/samples`. Subfolders first (`name/`, select to enter), then files; in a subfolder the first row **\< Up (..)** goes up one level, and the path is shown in the header. Up to 4 levels of nesting; hidden files (macOS `._*`) are not shown. Selecting a file opens the keyboard with the sample name (defaults to the file name without extension, up to 16 characters A–Z a–z 0–9 \_ -). If the project already has that name, asks **Overwrite**. Import progress is shown in percent. When the list is full, "SAMPLE LIST FULL". **Play** on a file auditions it without importing: the first 8 seconds at the sample's volume with Vol at full (Master applies); Play again or moving the cursor stops it. Works during playback too; in this list the Play button does not start the transport (the button in the header does).
+- **Import WAV…**: a list of `.wav` files from `/samples`. Subfolders first (`name/`, select to enter), then files; in a subfolder the first row **\< Up (..)** or <kbd>B</kbd> goes up one level (the cursor lands on the folder you left), and the path is shown in the header; at the top of `/samples` <kbd>B</kbd> closes the list. Up to 4 levels of nesting; hidden files (macOS `._*`) are not shown. Selecting a file opens the keyboard with the sample name (defaults to the file name without extension, up to 16 characters A–Z a–z 0–9 \_ -). If the project already has that name, asks **Overwrite**. Import progress is shown in percent. When the list is full, "SAMPLE LIST FULL". **Play** on a file auditions it without importing: the first 8 seconds at the sample's volume with Vol at full (Master applies); Play again or moving the cursor stops it. Works during playback too; in this list the Play button does not start the transport (the button in the header does).
 - **Compact**: defragment flash by moving samples to the start so the free space becomes one block. Usually not needed: import and load compact on their own when gaps get in the way.
 - **Clear cache**: remove everything from flash and from `/mt-store/` that is not part of the current project (toast "CLEARED n"). Other projects' samples stay in their folders on the card and are pulled back in when those projects are loaded.
 - Project sample rows: name, duration, size. A red `MISSING` label means the data is not in `/mt-store/` and could not be taken from the folder: the voice is silent. Click or tap opens the **Rename** / **Delete** menu.
@@ -2124,7 +2141,7 @@ The page has three sections; in the first two, drag the file with the mouse into
 
 Put the file in `/midi` and choose **FILE → Import MIDI…**. SMF format 0 and 1 are supported, up to 512 KB and 16,384 notes. A source is a "file track + channel" pair; there can be up to 32 of them.
 
-Subfolders: the list shows folders first (`name/`), then files. Click a folder to enter, **\< Up** goes up one level, and at the root of `/midi` it is **\< Back**. The header shows the current path; the last opened folder is remembered until power-off. Files .mid and .midi; folder and file names up to 95 characters, Latin characters only (long ones are truncated on screen).
+Subfolders: the list shows folders first (`name/`), then files. Click a folder to enter, **\< Up** or <kbd>B</kbd> goes up one level, and at the root of `/midi` it is **\< Back** (<kbd>B</kbd> closes the list). The header shows the current path; the last opened folder is remembered until power-off. Files .mid and .midi; folder and file names up to 95 characters, Latin characters only (long ones are truncated on screen).
 
 ### Mapping screen
 
