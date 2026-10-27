@@ -5,10 +5,10 @@
 // Печать верхом на стол, без поддержек: шток растёт от потолка вверх.
 // Рендер: openscad -o stl/keycap.stl keycap.scad
 //         openscad -o stl/keycap_test.stl -D 'part="test"' keycap.scad   (пластина подбора зазора креста)
-//         openscad -o stl/keycap_play.stl -D 'legend="PLAY"' keycap.scad
+//         openscad -o stl/keycap_play.stl -D 'legend="play"' keycap.scad   (подписи: play, shift, A, B, 1…8)
 
 part   = "cap";   // "cap" — кейкап для печати, "test" — тестовая пластина
-legend = "";      // подпись, гравировка в верхней грани ("" — без)
+legend = "";      // подпись, гравировка в верхней грани: "play" — треугольник, "shift" — звезда, иначе текст ("" — без)
 
 $fn = 64;
 
@@ -31,7 +31,12 @@ cross_cham = 0.3;   // фаска на входе креста
 
 // ---------- Подпись ----------
 legend_h  = 2.8;    // высота букв
+legend_h1 = 6.0;    // высота подписи из 1–2 символов (штрих ~0,85 — держит краску)
 legend_dp = 0.6;    // глубина гравировки
+play_w    = 5.6;    // треугольник ▶: ширина
+play_h    = 6.5;    //   высота
+star_d    = 7.4;    // звезда ✱: размах лучей
+star_w    = 1.3;    //   ширина луча
 
 // ---------- Тестовая пластина ----------
 test_clr = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30];
@@ -83,6 +88,19 @@ module cross_socket(z_open, clr) {
     }
 }
 
+// подпись в плане, как видна сверху
+module legend_2d() {
+    if (legend == "play")
+        // центр масс в начале координат — на глаз стоит по центру
+        offset(0.3) offset(-0.3) polygon([[-play_w/3, -play_h/2], [-play_w/3, play_h/2], [2*play_w/3, 0]]);
+    else if (legend == "shift")
+        for (a = [0, 60, 120]) rotate(a + 90) hull()
+            for (x = [-1, 1]) translate([x * (star_d - star_w)/2, 0]) circle(d = star_w);
+    else
+        text(legend, size = len(legend) <= 2 ? legend_h1 : legend_h, font = "Liberation Sans:style=Bold",
+             halign = "center", valign = "center");
+}
+
 module keycap() {
     difference() {
         union() {
@@ -95,8 +113,7 @@ module keycap() {
         cross_socket(cap_h, cross_clr);
         // подпись в верхней грани, читается при виде сверху (в печати — зеркально, лицом на стол)
         if (legend != "")
-            translate([0, 0, -0.01]) linear_extrude(legend_dp + 0.01) mirror([1, 0, 0])
-                text(legend, size = legend_h, font = "Liberation Sans:style=Bold", halign = "center", valign = "center");
+            translate([0, 0, -0.01]) linear_extrude(legend_dp + 0.01) mirror([1, 0, 0]) legend_2d();
     }
 }
 

@@ -106,7 +106,7 @@ $OS -o stl/knob_spline.stl -D 'shaft="spline"' knob.scad
 
 ## Keycaps
 
-[keycap.scad](keycap.scad): 1u for an MX stem (Outemu, Cherry, Gateron), flat top — printed top down on the bed with no supports, the stem growing up from the ceiling. 18 × 18 × 7.4 mm, top 12.7 × 12.7, a 0.6 mm chamfer on the top edge (it sits on the bed — against elephant's foot), 1.5 mm walls. Legend: `legend`, engraved 0.6 mm into the top face.
+[keycap.scad](keycap.scad): 1u for an MX stem (Outemu, Cherry, Gateron), flat top — printed top down on the bed with no supports, the stem growing up from the ceiling. 18 × 18 × 7.4 mm, top 12.7 × 12.7, a 0.6 mm chamfer on the top edge (it sits on the bed — against elephant's foot), 1.5 mm walls. Legend: `legend`, engraved 0.6 mm into the top face: `play` is a ▶ triangle, `shift` a ✱ star, anything else is text (1–2 characters 6 mm tall, longer ones 2.8 mm). Ready-made: `keycap_play`, `keycap_shift`, `keycap_a`, `keycap_b`, `keycap_1`…`keycap_8`.
 
 Print the test plate `keycap_test.stl` first, with the same filament and settings: 6 stems with a cross socket, clearance per side 0.05…0.30 mm (the number next to a stem is in hundredths of a mm). Try each on a switch, pick the one that goes on firmly without force and does not wobble, and put it in `cross_clr`. Default 0.10 — fitted for ABS GF on Outemu MX Brown (0.15 already wobbles). The switch cross is nominally 4.0 × 1.17 (`cross_l`, `cross_w`) — Outemu can be slightly thicker, measure it.
 
@@ -115,8 +115,12 @@ ABS GF: hardened nozzle, 0.12–0.16 layers, 3–4 perimeters, minimal cooling, 
 ```
 $OS -o stl/keycap_test.stl -D 'part="test"' keycap.scad
 $OS -o stl/keycap.stl keycap.scad
-$OS -o stl/keycap_play.stl -D 'legend="PLAY"' keycap.scad
+for l in play shift A B 1 2 3 4 5 6 7 8; do
+  $OS -o stl/keycap_$(echo $l | tr A-Z a-z).stl -D "legend=\"$l\"" keycap.scad
+done
 ```
+
+Filling the legend: after printing, overfill the engraving with acrylic paint or a Posca marker, let it set for 5–10 min, then wipe the excess off with a tissue and isopropyl alcohol (ABS doesn't mind it), wiping along the surface. If paint smears into the texture, sand the top with P400–600 on a flat block. Finish with acrylic or 2K clear coat, or fingers will wear the paint off.
 
 ## Hardware and materials
 
