@@ -163,28 +163,26 @@ const Step& Sequencer::genStep(int tr, const Step& s, Step& tmp) {
   return tmp;
 }
 
+// The stored mode (out of range: OFF), not mutModeOf's: a track's instrument changing type (CA2D <->
+// CA1D in effect) is no mode change here. The VAR state knows the mode that built it (VarTrack::mode):
+// varStep plays the pattern for a state of another mode and varNext starts again from generation 0.
+uint8_t Sequencer::mutKey(int tr) const {
+  const uint8_t m = p_.var[tr].mode;
+  return m < static_cast<uint8_t>(VarMode::Count) ? m : static_cast<uint8_t>(VarMode::Off);
+}
+
 void Sequencer::evoResetAll() {
   for (int tr = 0; tr < kTracks; ++tr) {
     for (int k = 0; k < kEvoRing; ++k) cold_->evo[tr][k].n = kEvoNone;
     evoReset(cold_->evo[tr][0]);  // n = 0
     evoN_[tr] = 0;
     evoCnt_[tr] = 0;
+    mutMode_[tr] = mutKey(tr);
   }
 }
 
 const Step& Sequencer::evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const {
-  VarApply va;  // mode Off
-  if (p_.var[tr].mode != static_cast<uint8_t>(VarMode::Off)) va = varApplyOf(p_, tr);  // VAR off: no lookups
-  const bool var = va.mode != static_cast<uint8_t>(VarMode::Off);
-  if (!(p_.evo[tr].mask & kEvoMaskAll))
-    return var ? varStep(pt, tr, idx, varAt(tr, varN_[tr]), va, tmp) : pt.steps[tr][idx];
-  if (!var) return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp);
-  VarView v;
-  v.pt = &pt;
-  v.tr = tr;
-  v.s = &varAt(tr, varN_[tr]);
-  v.a = va;
-  return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp, varSrc(v));
+  return mutStep(p_, pt, tr, idx, evoAt(tr, evoN_[tr]), varAt(tr, varN_[tr]), tmp);
 }
 
 const EvoTrack& Sequencer::heardEvo(int tr) const {
@@ -200,13 +198,51 @@ const EvoTrack& Sequencer::heardEvo(int tr) const {
   return e.n == n ? e : evoAt(tr, evoN_[tr]);
 }
 
-void Sequencer::evoClear(uint64_t now, MidiSink& out, int tr) {
-  if (tr < 0 || tr >= kTracks) return;
-  replan(now, out);  // back to the heard step: its state is the one Capture wrote
+void Sequencer::mutReset(int tr) {
   EvoTrack& e = evoAt(tr, evoN_[tr]);
   evoClearDeltas(e);
-  for (int k = 0; k < kEvoRing; ++k)  // older states would bring the changes back on a rewind
+  VarTrack& v = varAt(tr, varN_[tr]);
+  v.sinceReset = 0;                    // generation 0: the (captured) pattern
+  for (int k = 0; k < kEvoRing; ++k) {  // older states would bring the changes back on a rewind
     if (&cold_->evo[tr][k] != &e) cold_->evo[tr][k].n = kEvoNone;
+    if (&cold_->var[tr][k] != &v) cold_->var[tr][k].n = kEvoNone;
+  }
+  mutMode_[tr] = mutKey(tr);
+}
+
+void Sequencer::mutClear(uint64_t now, MidiSink& out, int tr) {
+  if (tr < 0 || tr >= kTracks) return;
+  replan(now, out);  // back to the heard step: its state is the one to clear
+  mutReset(tr);
+}
+
+void Sequencer::mutEdited(uint64_t now, MidiSink& out) {
+  replan(now, out);
+  for (int tr = 0; tr < kTracks; ++tr)
+    if (mutKey(tr) != mutMode_[tr]) {
+      mutReset(tr);
+      evoCnt_[tr] = 0;
+      varCnt_[tr] = 0;
+    }
+}
+
+void Sequencer::replanQuiet(uint64_t now) {
+  if (state_ != State::Playing) return;  // paused: already rewound
+  if (rewind(now)) {
+    tag_ = stepSerial_ - 1;
+    releaseAllTies(tickTime(stepTick_));
+  }
+}
+
+LiveCapture Sequencer::captureLive(uint64_t now, int tr, int pat, Step* scratch) {
+  if (tr < 0 || tr >= kTracks || pat < 0 || pat >= kPatterns) return LiveCapture::Off;
+  if (!p_.genOn(tr) && !mutOn(p_, tr)) return LiveCapture::Off;
+  if (state_ != State::Stopped && pat != heardPattern()) return LiveCapture::OtherPattern;
+  replanQuiet(now);  // the next planned step is the next unheard one now: its state is what plays
+  mt::captureLive(p_, p_.patterns[pat], tr, evoAt(tr, evoN_[tr]), varAt(tr, varN_[tr]), genNext(tr),
+              genFromStep(tr, pat), scratch);
+  mutReset(tr);
+  return LiveCapture::Ok;
 }
 
 void Sequencer::varResetAll() {
@@ -229,15 +265,6 @@ const VarTrack& Sequencer::heardVar(int tr) const {
       }
   const VarTrack& v = varAt(tr, n);
   return v.n == n ? v : varAt(tr, varN_[tr]);
-}
-
-void Sequencer::varClear(uint64_t now, MidiSink& out, int tr) {
-  if (tr < 0 || tr >= kTracks) return;
-  replan(now, out);  // back to the heard step: its state is the one Capture wrote
-  VarTrack& v = varAt(tr, varN_[tr]);
-  v.sinceReset = 0;  // generation 0: the (captured) pattern
-  for (int k = 0; k < kEvoRing; ++k)  // older states would bring the changes back on a rewind
-    if (&cold_->var[tr][k] != &v) cold_->var[tr][k].n = kEvoNone;
 }
 
 // A pass ended (the pattern that plays next is cur_): each track with VAR on counts it and, every `every`
@@ -269,15 +296,15 @@ void Sequencer::varPass(bool newPat) {
   }
 }
 
-// A pass ended (the pattern that plays next is cur_): each track with something in its mask counts it
-// and, every `every` passes, mutates its state into the next ring slot. The mask in effect (evoApplyOf:
-// no RHYTHM on a GEN GATE track) is what may change.
+// A pass ended (the pattern that plays next is cur_): each track in MUT mode EVO with something in its
+// mask counts it and, every `every` passes, mutates its state into the next ring slot. The mask in effect
+// (evoApplyOf: no RHYTHM on a GEN GATE track) is what may change.
 void Sequencer::evoPass() {
   const Pattern& pt = p_.patterns[cur_];
   for (int tr = 0; tr < kTracks; ++tr) {
     EvoCfg c = p_.evo[tr];
     evoClamp(c);
-    if (!c.mask) {
+    if (!c.mask || !p_.evoOn(tr)) {
       evoCnt_[tr] = 0;
       continue;
     }
@@ -287,14 +314,7 @@ void Sequencer::evoPass() {
     c.mask = a.mask;
     const EvoTrack& from = evoAt(tr, evoN_[tr]);
     EvoTrack& to = evoAt(tr, evoN_[tr] + 1);
-    const VarApply va = varApplyOf(p_, tr);
-    VarView v;  // EVO looks at the steps as VAR plays them
-    v.pt = &pt;
-    v.tr = tr;
-    v.s = &varAt(tr, varN_[tr]);
-    v.a = va;
-    evoMakeView(pt, tr, from, c.mask, a.noteOk, a.scale, evoView_,
-                va.mode != static_cast<uint8_t>(VarMode::Off) ? varSrc(v) : EvoSrc());
+    evoMakeView(pt, tr, from, c.mask, a.noteOk, a.scale, evoView_);
     to = from;
     evoMutate(to, c, evoView_, runSeed_, tr);
     evoN_[tr] = to.n;

@@ -671,8 +671,9 @@ struct GenCfg {
 };
 
 // Evolve of a track (evolve.h): the track's steps drift on the fly every `every` pattern passes, by
-// `amount`, pulled back to the pattern by `home`; mask = what may change. A project setting per track
-// (sequencer only, never sent to the synth). In files (TEVO): new mask bits after the last only.
+// `amount`, pulled back to the pattern by `home`; mask = what may change. Plays only in MUT mode EVO
+// (VarCfg::mode == VarMode::Evo). A project setting per track (sequencer only, never sent to the synth).
+// In files (TEVO): new mask bits after the last only.
 constexpr uint8_t kEvoNote = 1, kEvoRhythm = 2, kEvoRtrgVol = 4, kEvoShift = 8, kEvoMaskAll = 15;
 constexpr uint8_t kEvoEveryMax = 16;
 struct EvoCfg {
@@ -682,10 +683,11 @@ struct EvoCfg {
   uint8_t mask = kEvoNote | kEvoRhythm | kEvoRtrgVol;  // kEvoNote .. kEvoShift
 };
 
-// VAR of a track (var_gen.h): every `every` passes a new generation of a cellular automaton (CA1D, CA2D
-// on a KIT track) or a Markov chain from the track's pattern replaces what it plays. A project setting
-// per track (sequencer only). New modes / rules before Count only.
-enum class VarMode : uint8_t { Off, Ca1d, Ca2d, Markov, Count };
+// MUT of a track (var_gen.h, mutModeOf): one mutator per track, VarCfg::mode picks it. VAR modes: every
+// `every` passes a new generation of a cellular automaton (CA1D, CA2D on a KIT track) or a Markov chain
+// from the track's pattern replaces what it plays. EVO: the track's EvoCfg drifts it (evolve.h). A project
+// setting per track (sequencer only). In files (TVAR mode byte): new modes / rules before Count only.
+enum class VarMode : uint8_t { Off, Ca1d, Ca2d, Markov, Evo, Count };
 enum class VarRule2 : uint8_t { Life, HighLife, Seeds, DayNight, Maze, Count };
 constexpr uint8_t kVarEveryMax = 16, kVarResetMax = 64;
 struct VarCfg {
@@ -725,8 +727,8 @@ struct Project : SynthModel {
   // Saved in PXY. Follows perfDepth (PROJ's Shift+click cancel restores the PERF page as one block).
   uint8_t perfXy[2] = {kPerfXyDefault[0], kPerfXyDefault[1]};
   GenCfg gen[kTracks];  // reset(): all OFF, seed = track + 1. Saved in TGEN.
-  EvoCfg evo[kTracks];  // reset(): all off (amount 0). Saved in TEVO.
-  VarCfg var[kTracks];  // reset(): all off. Saved in TVAR.
+  EvoCfg evo[kTracks];  // reset(): amount 0; plays only in MUT mode EVO (var[t]). Saved in TEVO.
+  VarCfg var[kTracks];  // MUT: reset(): all off. Saved in TVAR.
   // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
   // whose instrument sample names still have to be migrated (and after reset()).
   bool hasSampleList = false;
@@ -744,8 +746,8 @@ struct Project : SynthModel {
     return t >= 0 && t < kTracks && gen[t].mode != 0 && gen[t].mode < static_cast<uint8_t>(GenMode::Count) &&
            !trackIsDrum(t);
   }
-  // The track's evolve makes new changes (amount > 0 and something in the mask).
-  bool evoOn(int t) const { return t >= 0 && t < kTracks && evo[t].amount > 0 && (evo[t].mask & kEvoMaskAll); }
+  // The track's MUT mode is EVO (its EvoCfg plays; var_gen.h mutModeOf).
+  bool evoOn(int t) const { return t >= 0 && t < kTracks && var[t].mode == static_cast<uint8_t>(VarMode::Evo); }
   // The KIT of track t, nullptr when its instrument is another type (or t out of range).
   const Instrument* kitOf(int t) const {
     if (t < 0 || t >= kTracks) return nullptr;

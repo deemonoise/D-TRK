@@ -70,7 +70,7 @@ class App {
   bool perfVisuals() const { return visuals_; }
   void setPerfVisuals(bool on);
   void pushUndo() { pushUndo(editPattern()); }  // snapshot editPattern() before an edit
-  void pushUndo(uint8_t pattern);                // no lock taken: callers may hold it
+  void pushUndo(uint8_t pattern, int genTrack = -1);  // no lock taken: callers may hold it; genTrack: its GenCfg too
   bool doUndo();    // false when there is nothing to undo
   void dropUndo() {  // forget the last pushUndo() (edit cancelled)
     if (undoBuf_) undo_.drop();

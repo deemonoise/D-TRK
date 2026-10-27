@@ -49,6 +49,8 @@ SECTIONS
 		/* track generators: the sequencer's and the file reader's (render runs on the ESP) */
 		*:shift_gen.cpp.o(.text* .rodata*)
 		*shift_gen.cpp.o(.text* .rodata*)
+		*:mut.cpp.o(.text* .rodata*)
+		*mut.cpp.o(.text* .rodata*)
 		/* wavetable maker (WtRender, a background job with the transport stopped) */
 		*:wt_make.cpp.o(.text* .rodata*)
 		*wt_make.cpp.o(.text* .rodata*)

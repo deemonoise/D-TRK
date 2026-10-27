@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "evolve.h"
 #include "model.h"
+#include "mut.h"
 #include "shift_gen.h"
 #include "var_gen.h"
 
@@ -15,11 +16,11 @@ namespace engine {
 // Fill: arg 1 = fill held, 0 = released.
 // GenEdit: after a Project::gen edit while playing: the unheard steps are planned again with it.
 // GenReseed: arg = track, after its GenCfg::seed changed: replanned, its register reset from the next step.
-// EvoEdit: after a Project::evo edit while playing: the unheard steps are planned again with it.
-// VarEdit: the same after a Project::var edit.
+// MutEdit: after a Project::evo / var (MUT) edit: the unheard steps are planned again with it; a track
+// whose MUT mode changed starts over (no EVO changes, VAR generation 0). Sequencer::mutEdited.
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
-  Fill, SetSong, GenEdit, GenReseed, EvoEdit, VarEdit
+  Fill, SetSong, GenEdit, GenReseed, MutEdit
 };
 
 struct Command {
@@ -84,9 +85,6 @@ struct EvoInfo {
   uint8_t passes;
 };
 EvoInfo heardEvoInfo(int track, int len);
-// Clears the track's evolve changes (Capture evo, a rewritten track), holding lockProject(): the engine
-// does it before it plans again. A flag, not a command: it cannot be lost to a full queue.
-void evoClear(int track);
 // Track VAR, holding lockProject(): the state after the heard step of `track` (copied; the reset one while
 // stopped) and the passes counted towards its next generation.
 void heardVar(int track, mt::VarTrack& out, uint8_t& passes);
@@ -97,7 +95,13 @@ struct VarInfo {
   uint8_t passes;
 };
 VarInfo heardVarInfo(int track);
-// Back to generation 0 after Capture (Sequencer::varClear), holding lockProject(): a flag, as evoClear.
-void varClear(int track);
+// Clears the track's MUT state (no EVO changes, VAR generation 0; a rewritten track: Dice), holding
+// lockProject(): the engine does it before it plans again (Sequencer::mutClear). A flag, not a command:
+// it cannot be lost to a full queue.
+void mutClear(int track);
+// Capture live (Sequencer::captureLive), holding lockProject(): writes what `track` plays now (MUT, then
+// GEN) into pattern pat, GEN off, MUT state cleared; the engine plans the unheard steps again from it.
+// scratch: kMaxSteps steps (App::undoScratch). Push the undo before, post Cmd::ReleaseTies after.
+mt::LiveCapture captureLive(int track, int pat, mt::Step* scratch);
 
 }  // namespace engine

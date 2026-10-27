@@ -210,12 +210,10 @@ Menu → **Select** sets a selection corner at the cell under the cursor. While 
 
 | Without selection | With selection |
 |-------------------|----------------|
-| Copy step · Paste · Clear step · Note OFF · Select · Copy track · Clear track · Transpose track… · **Fill…** · **Capture gen** (on a track with a generator) · **Capture evo** (on a track with Evolve on) · **Capture var** (on a track with VAR on, instead of Capture evo) · **Resample track** · **Resample pattern** · **Rec: ON/OFF** · **Perf: ON/OFF** · Detail view / Overview · Follow: ON/OFF · Undo | Copy sel · Paste · Clear sel · Note OFF sel · Transpose… · **Fill…** · Undo · Clear selection |
+| Copy step · Paste · Clear step · Note OFF · Select · Copy track · Clear track · Transpose track… · **Fill…** · **Capture live** (on a track with GEN or MUT on) · **Resample track** · **Resample pattern** · **Rec: ON/OFF** · **Perf: ON/OFF** · Detail view / Overview · Follow: ON/OFF · Undo | Copy sel · Paste · Clear sel · Note OFF sel · Transpose… · **Fill…** · Undo · Clear selection |
 
 - **Transpose…** opens a dialog: **Amount** and **Mode** (SCALE — scale degrees, CHROMATIC — semitones), with OK / CANCEL buttons. The range is two octaves up and down (in SCALE that is 2 × the number of scale notes; ±14 for major). <kbd>Shift</kbd>+turn changes Amount by an octave. Long press — Cancel. Affects only steps with a note; without a selection, the whole track; one undo step. It is a shift, not a state: Amount starts at 0 every time the dialog opens; to restore the notes, apply the opposite shift (+12, then −12). Mode is remembered until power-off.
-- **Capture gen** (a track with a [generator](#gen), not a drum track) writes the generator's loop into the pattern: one pass of the track length. PITCH replaces the notes of steps with a note; GATE puts a note on the hit steps and removes it from the others; OFF and step fx stay, Flip is not applied (the loop as it is). While playing, the loop is taken from where it is now; when stopped, from the start (from the seed). Then Gen is turned off so the pattern sounds as written; toast `GEN CAPTURED`, one undo step. While [Evolve](#evolve) has changes on the track the heard notes differ from the loop: it refuses with `EVO: CAPTURE EVO FIRST` (Capture evo first, or wait for a stop); likewise with a [VAR](#var) generation other than 0 — `VAR: CAPTURE VAR FIRST`. In BYTE PITCH / BYTE GATE, Capture gen writes the formula's notes the same way as PITCH / GATE.
-- **Capture evo** (a track with [Evolve](#evolve) on) writes the track's heard drift into the edited pattern, then the drift starts over; see [Capture evo](#captureevo).
-- **Capture var** (a track with [VAR](#var) on) writes what the track plays now (VAR, and EVO on top of it) into the edited pattern; see [Capture var](#capturevar).
+- <a id="capturelive"></a>**Capture live** (a track with [GEN](#gen) or [MUT](#mut) on) writes what the track plays now into the edited pattern, all steps of its length: first MUT (the heard drift or generation), then the generator on top of it — PITCH replaces the notes of steps with a note, GATE puts a note on the hit steps and removes it from the others (BYTE modes the same way); OFF and step fx stay, Flip is not applied. While playing, the state is taken from the next step to play; when stopped, from the start (the generator from its seed, MUT as written). One undo step, toast `LIVE CAPTURED`. Then GEN turns OFF and MUT keeps running in its mode from a fresh state of the written pattern (EVO with no drift, CA / MARKOV at generation 0), so the sound does not jump. Undo restores the pattern and GEN; MUT restarts from a fresh state. Only while the edited pattern is the one playing (else toast `CAPTURE: OTHER PATTERN`).
 - Paste inserts at the cursor position or at the top-left corner of the selection. It doesn't go past track 16 or the pattern length; the selection is also clipped at track 16.
 - The clipboard survives loading another project — so you can move parts between projects.
 - If the pattern changed while the menu was open, the action is not performed (toast "PATTERN CHANGED").
@@ -761,7 +759,7 @@ The next chord: with PROGRESSION the next one of the progression, with SELECTION
 
 The track is the one under the cursor in GRID. To switch: tap the arrows in the header or <kbd>Shift</kbd>+turn outside edit mode. The mixer for all tracks is the [MIX](#mixer) tab.
 
-Parameters are on eight pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **EVO**, **VAR**, **MIDI**. To pick a page, tap its tab below the header; with the encoder, a turn cycles through the rows and the page tabs (above the first row, framed); there, <kbd>A</kbd> held + turn goes to the next / previous page (the cursor stays on the page tabs); a click does nothing. From anywhere on the screen: <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
+Parameters are on seven pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **MUT**, **MIDI**. To pick a page, tap its tab below the header; with the encoder, a turn cycles through the rows and the page tabs (above the first row, framed); there, <kbd>A</kbd> held + turn goes to the next / previous page (the cursor stays on the page tabs); a click does nothing. From anywhere on the screen: <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
 
 | Parameter | Values | Default |
 |-----------|--------|---------|
@@ -796,8 +794,7 @@ Parameters are on eight pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **
 | Speed | 1/4, 1/2, x1, x2, x4 (in the playing pattern) | x1 |
 | Humanize | OFF, 1–100: each note of the track is randomly shifted in time (up to ±10% of a step at 100) and in velocity (up to ±20) — a "live" feel | OFF |
 | **GEN** | see [GEN: shift-register generator](#gen) | |
-| **EVO** | see [EVO: evolve](#evolve) | |
-| **VAR** | see [VAR: cellular automaton and Markov chain](#var) | |
+| **MUT** | see [MUT: mutator](#mut) | |
 | **MIDI** | | |
 | Channel | 1–16 | track number |
 | CC A / CC B | CC number 0–127 | 74 / 71 |
@@ -824,7 +821,7 @@ A live melody generator on a track: a looping shift register 2–16 bits long. O
 
 The **BYTE PITCH** and **BYTE GATE** modes read a bytebeat formula instead of the register — one of the 45 [LOFI](#lofi) formulas: each generator clock listens to its own stretch of the formula, which gives a scale degree and a hit loudness (see [below](#genbyte)).
 
-The generator **plays live and leaves the pattern alone**, unlike Fill, which writes notes once. The track stays an ordinary one: MIDI or INT, its own instrument, insert, mute / solo, every step fx works. To write the loop into the pattern, use **Capture gen** in the GRID menu.
+The generator **plays live and leaves the pattern alone**, unlike Fill, which writes notes once. The track stays an ordinary one: MIDI or INT, its own instrument, insert, mute / solo, every step fx works. To write the loop into the pattern, use [**Capture live**](#capturelive) in the GRID menu.
 
 | Parameter | Values | Default |
 |-----------|--------|---------|
@@ -849,17 +846,36 @@ The generator **plays live and leaves the pattern alone**, unlike Fill, which wr
 - Live edits (every row, Flip from a track button, a new seed) apply from the next unheard step.
 - **Live Flip:** hold a track button and click the encoder — the turn switches volume → pan → Flip (see [Track buttons](#trackkeys)); `FLP` on a step is a per-step "lock" (see [fx](#fx)).
 - In GRID a track with a generator has a yellow `G` by its name; in Detail its note column is dim: the generator sets the pitch.
-- **Render and Resample** sound like "Play from stop": the register from the start, flips from the seed, so two renders give the same bytes. To keep the live loop, use Capture gen.
+- **Render and Resample** sound like "Play from stop": the register from the start, flips from the seed, so two renders give the same bytes. To keep the live loop, use Capture live.
 - The generator is saved with the project (TGEN chunk); its rows have no undo (like Volume). Older files open with the generators OFF; older firmware skips TGEN and reads FLP as an empty slot. The TGEN record grew (Formula, A, B, C, Zoom): older files lack these fields and get the defaults.
 
-<a id="evolve"></a>
-### EVO: evolve
+<a id="mut"></a>
+### MUT: mutator (EVO, CA1D, CA2D, MARKOV)
 
-The track's pattern slowly drifts by itself while it plays: notes move along the scale, hits drop out and quiet ghost notes appear, retriggers and velocity change, steps swap or the track turns. Like GEN, evolve **plays live and leaves the pattern alone**: GRID shows the notes as written. To keep a variant you like, use **Capture evo** in the GRID menu.
+The track plays variations of its pattern. The **Mut** row picks one mutator per track: **EVO** — the pattern slowly drifts (notes along the scale, drops and ghost notes, retriggers, swapped steps); **CA1D** / **CA2D** — every few passes a new generation of a cellular automaton grown from the pattern's notes; **MARKOV** — every few passes a new sequence from a Markov chain of the pattern's own note transitions. Like GEN, MUT **plays live and leaves the pattern alone**: GRID shows the notes as written. To keep a variant you like, use [**Capture live**](#capturelive) in the GRID menu.
 
 | Parameter | Values | Default |
 |-----------|--------|---------|
-| Evolve | OFF, 1–100%: how strong each change step is | OFF |
+| Mut | OFF, EVO, CA1D, CA2D (KIT tracks only), MARKOV; one mode per turn (Shift too), wrapping around | OFF |
+
+Below Mut the page shows **only the rows of the chosen mode** (OFF — none): EVO — Amount, Every, Home, Note, Rhythm, Rtrg+Vol, Shift; CA1D / CA2D — Every, Rule, Reset, Noise; MARKOV — Every, Amount, Order, Rhythm. Each mode keeps its settings while another one is chosen.
+
+- **One mode per track:** the modes do not stack. Choosing another mode starts it fresh: EVO with no drift, CA / MARKOV at generation 0.
+- **Order:** pattern → MUT → [GEN](#gen): the generator acts last (PITCH replaces the pitch of the notes MUT played). CND, PRB, Humanize and groove apply after both. MIDI tracks work like INT ones.
+- **What a pass is:** one pass of the pattern (or one song slot). The first pass after Play always sounds as written. Stop (and <kbd>Shift</kbd>+<kbd>Play</kbd>) resets MUT; pause keeps it.
+- **Randomness:** from the project **Seed** (PROJ → SONG), mixed with a random number at every Play like the [follow actions](#follow): each start goes its own way. **Export and Resample** use the Seed alone: the same file every time.
+- **The header** shows the heard state of the mode: EVO — `MUT` (change steps since Play), `PASS` (passes counted towards the next one), `CHG` (changed steps of the track's length); CA — `GEN` (generations since generation 0), `PASS` and a mini grid of the live cells (on a KIT track 8 rows, lane 1 on top); MARKOV — `GEN` (generations since Play), `PASS` and the steps that differ from the pattern. Live edits apply from the next unheard step.
+- **NRN or EVO Note:** the step fx [NRN](#fx) throws a new random note on every pass and never moves away from the written one; EVO Note keeps its drift — each change starts from the previous, until Home pulls it back or the drift is captured.
+- **Old projects:** files from before MUT had EVO and VAR as two generators on top of each other. A track with both on opens in its VAR mode (EVO off); EVO alone opens as EVO. CA2D on a melodic track opens as CA1D with the same rule number (CA2D needs the 8 KIT lanes); a track that leaves KIT (another instrument or type) plays and shows CA2D as CA1D, and is CA2D again when it gets a KIT back (until the project is saved and opened again). EVO settings kept while another mode is chosen are saved and come back with the project.
+- **Dice** (PROJ) → Pattern turns MUT off on the rewritten tracks.
+- MUT is saved with the project (TVAR chunk for the mode and CA / MARKOV, TEVO for EVO); its rows have no undo (like Volume).
+
+<a id="mutevo"></a>
+#### EVO: drift
+
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| Amount | 1–100%: how strong each change step is | 25% |
 | Every | 1–16 PASS: a change step every that many pattern passes | 4 PASS |
 | Home | 0–100%: the chance that each change steps back towards the pattern at every change step | 25% |
 | Note | ON / OFF: notes move ±1–2 scale degrees, now and then an octave | ON |
@@ -867,48 +883,46 @@ The track's pattern slowly drifts by itself while it plays: notes move along the
 | Rtrg+Vol | ON / OFF: retriggers x2 / x3 (RAT) and velocity ±8…24 | ON |
 | Shift | ON / OFF: the track turns by a step, or two neighbouring steps swap | OFF |
 
-- **What a pass is:** one pass of the pattern (or one song slot). The count goes on across pattern changes and song slots: evolve runs over the song. The first pass after Play always sounds as written; with Every 1 the second one already changes. All tracks change at the same pass end.
+- **Passes:** the count goes on across pattern changes and song slots: evolve runs over the song. With Every 1 the second pass already changes. All tracks change at the same pass end.
 - **What changes:** the drift builds up from change to change (each one starts from the previous). Notes stay in the project scale (PROJ → Scale; Chromatic moves by semitones). A ghost note is the neighbour's note at 40% of Def vel, without its fx. A drop keeps the step's fx. A retrigger is added as `RAT` in a free fx slot unless the step already has one. Velocity is clamped to 1–127.
-- **Home** pulls back: each change moves one unit back (a degree, 8 of velocity, a drop / ghost / retrigger / swap removed, the turn one step back) with this chance. Evolve OFF with Home on lets the track return to the pattern smoothly; Home 0 keeps the drift as it is.
+- **Home** pulls back: each change moves one unit back (a degree, 8 of velocity, a drop / ghost / retrigger / swap removed, the turn one step back) with this chance. A low Amount with a high Home keeps the track close to the pattern; Home 0 keeps the drift as it is.
 - **Polymeter and Speed:** the changes are per step of the track's own length (Pat len): a short track plays the same variant on each of its loops within a pass. A slow track (1/2, 1/4) may change in the middle of its own loop; x2 / x4 tracks use one variant for the whole pass.
-- **Track types:** a drum track — no Note (its steps hold velocity); Rhythm drops the whole step, a ghost copies the neighbour's lanes quietly. A [GEN](#gen) track — no Note (the generator sets the pitch), evolve acts before the generator; on GATE also no Rhythm (the generator makes the rhythm). The grey rows show this. MIDI tracks drift like INT ones.
-- **Step fx:** CHD builds the chord on the moved root; a ghost plays a single note. A moved note after TIE starts the note again (TIE only goes on at the same pitch); a dropped step under a TIE lets the note ring on. ARS arpeggiates from the moved root; a ghost note stops a running arp like a real note. CND, PRB, Humanize and groove apply after evolve.
-- **Reset and randomness:** Stop (and <kbd>Shift</kbd>+<kbd>Play</kbd>) clears the drift; pause keeps it. The changes come from the project **Seed** (PROJ → SONG), mixed with a random number at every Play like the [follow actions](#follow): each start drifts its own way. **Export and Resample** use the Seed alone: the same file every time.
-- The header shows `MUT` (change steps since Play), `PASS` (passes counted towards the next one) and `CHG` (changed steps of the track's length) of the heard drift. Live edits apply from the next unheard step; turning a kind off silences its changes at once (they come back when it is turned on).
-- <a id="captureevo"></a>**Capture evo** (GRID menu, on a track with Evolve on) writes what the track plays now into the edited pattern, all steps of its length (one undo step, toast `EVO CAPTURED`). Then the track's drift starts over from the written pattern. Only while the edited pattern is the one playing (else toast `EVO: OTHER PATTERN`); with no drift, `EVO: NO CHANGES`.
-- Evolve is saved with the project (TEVO chunk); its rows have no undo (like Volume). Older files open with evolve OFF; older firmware skips TEVO.
+- **Track types:** a drum track — no Note (its steps hold velocity); Rhythm drops the whole step, a ghost copies the neighbour's lanes quietly. A [GEN](#gen) track — no Note (the generator sets the pitch); on GATE also no Rhythm (the generator makes the rhythm). The grey rows show this.
+- **Step fx:** CHD builds the chord on the moved root; a ghost plays a single note. A moved note after TIE starts the note again (TIE only goes on at the same pitch); a dropped step under a TIE lets the note ring on. ARS arpeggiates from the moved root; a ghost note stops a running arp like a real note.
+- Turning a kind off silences its changes at once (they come back when it is turned on).
 
-<a id="var"></a>
-### VAR: cellular automaton and Markov chain
-
-The track plays variations of its pattern: every few passes a new **generation** comes in — of a cellular automaton grown from the pattern's notes, or of a Markov chain built from the transitions between its own notes. Like GEN and EVO, VAR **plays live and leaves the pattern alone**: GRID shows the notes as written. To keep a variant you like, use **Capture var** in the GRID menu.
+<a id="mutca"></a>
+#### CA1D / CA2D: cellular automaton
 
 | Parameter | Values | Default |
 |-----------|--------|---------|
-| Var | OFF, CA1D, CA2D, MARKOV (CA2D on a melodic track — `CA2D (AS 1D)`) | OFF |
 | Every | 1–16 PASS: a new generation every that many pattern passes | 2 PASS |
-| Rule | CA1D: Wolfram rule 0–255; CA2D: LIFE, HIGHLIFE, SEEDS, DAYNIGHT, MAZE; CA only | 90 / LIFE |
-| Reset | NEVER, 1–64 GEN: after that many generations, back to generation 0; CA only | 16 GEN |
-| Noise | 0–100%: the chance that one random cell flips in a generation; CA only | 0% |
-| Amount | 0–100%: the chance that a step takes the chain's note instead of the pattern's; MARKOV only | 50% |
-| Order | 1–2: how many previous notes the chain remembers; MARKOV only | 1 |
-| Rhythm | ON / OFF: rests are links of the chain too, the rhythm changes as well; MARKOV only | OFF |
+| Rule | CA1D: Wolfram rule 0–255; CA2D: LIFE, HIGHLIFE, SEEDS, DAYNIGHT, MAZE | 90 / LIFE |
+| Reset | NEVER, 1–64 GEN: after that many generations, back to generation 0 | 16 GEN |
+| Noise | 0–100%: the chance that one random cell flips in a generation | 0% |
 
-Rows the mode does not use are grey (with Var OFF, all but Var). The CA1D rule number and the CA2D rule are kept apart: switching modes does not lose them.
+The CA1D rule number and the CA2D rule are kept apart: switching modes does not lose them.
 
-- **Cells (CA1D, CA2D):** each step of the track (within its length, Pat len) is a cell, alive or dead. **Generation 0** is the pattern itself: steps with a note are alive. On a drum track the cells are 8 rows, one per KIT lane: the lanes a step plays are alive.
+- **Cells:** each step of the track (within its length, Pat len) is a cell, alive or dead. **Generation 0** is the pattern itself: steps with a note are alive. On a drum track the cells are 8 rows, one per KIT lane: the lanes a step plays are alive.
 - **CA1D** — a one-dimensional automaton on a Wolfram rule: a cell of the next generation depends on itself and its two neighbouring steps, wrapping round the end of the track. For example, 90 — a Sierpinski pattern, 30 — chaos, 110 — complex moving structures; many rules die out or freeze quickly. On a drum track each lane follows the rule on its own.
-- **CA2D** — a Life-like automaton on a field of 8 lanes × the track's steps, wrapped into a torus (the last lane borders the first, the end of the track the start); a cell has 8 neighbours. **LIFE** — the classic Game of Life (B3/S23); **HIGHLIFE** — close to it, with self-replicating shapes (B36/S23); **SEEDS** — every live cell dies at once, births burst out (B2/S); **DAYNIGHT** — live and dead behave alike (B3678/S34678); **MAZE** — grows into mazes (B3/S12345). Drum tracks only: a melodic track has one row, so CA2D plays as CA1D (the Var row shows `CA2D (AS 1D)`, Rule is the CA1D rule number).
+- **CA2D** (KIT tracks only) — a Life-like automaton on a field of 8 lanes × the track's steps, wrapped into a torus (the last lane borders the first, the end of the track the start); a cell has 8 neighbours. **LIFE** — the classic Game of Life (B3/S23); **HIGHLIFE** — close to it, with self-replicating shapes (B36/S23); **SEEDS** — every live cell dies at once, births burst out (B2/S); **DAYNIGHT** — live and dead behave alike (B3678/S34678); **MAZE** — grows into mazes (B3/S12345). A melodic track has one row, so the Mut row does not offer CA2D there.
 - **Back to generation 0:** after **Reset** generations (NEVER — never; Reset 1 goes back right after the first generation, so the track sounds as written), when every cell has died and when a generation did not change (stasis). **Noise** flips one random cell per generation with its chance — a frozen field comes back to life.
 - **How the cells sound:** a live cell with a note — the step as written; a live empty one — a copy of the nearest step with a note to its left (wrapping), whole, with its velocity and fx; on a track with no notes at all — the project scale's root in the C-4 octave at the default velocity. A dead cell is silent: the note is dropped, the step's fx stay. On a drum track a step plays the lanes whose cells are alive.
-- **MARKOV:** each generation builds a transition table from the track's pattern: which notes (up to 16 distinct ones; on a drum track, lane sets) follow which, wrapping round the end of the track. **Order** 1 — the next note depends on one previous note, 2 — on two (closer to the original). Then a new sequence of the track's length is built: it starts on the pattern's first note, and each next step takes a note from the chain with chance **Amount** (the more often a transition occurs in the pattern, the likelier it is), otherwise the pattern's. Amount 0 — the pattern as is. A note from the chain plays with the velocity and fx of the first pattern step holding that note. **Rhythm** OFF — only the pitch of the steps with a note changes (on a drum track, their lanes), the rhythm stays as written; ON — rests are links of the chain too, so notes can move onto empty steps and back. Each MARKOV generation is built afresh from the pattern; Reset and Noise do not apply. If a note has no transitions in the pattern, the step plays the pattern.
-- **Passes and generations:** the first pass after Play always sounds as written; with Every 2 the first generation sounds from the third pass. Generations go on across song slots with the same pattern. Another pattern (queued, or the next song slot) — generation 0 of the new pattern, the pass count from zero. Stop (and <kbd>Shift</kbd>+<kbd>Play</kbd>) resets VAR; pause keeps it.
-- **Order:** pattern → VAR → [EVO](#evolve) → [GEN](#gen). Evolve drifts what VAR plays (both change the rhythm and stack); the generator acts last (PITCH replaces the pitch of the notes VAR played). CND, PRB, Humanize and groove apply after all of them. MIDI tracks work like INT ones.
-- **Randomness:** as for EVO — from the project **Seed** (PROJ → SONG), mixed with a random number at every Play: each start goes its own way. **Export and Resample** use the Seed alone: the same file every time.
-- The header shows `GEN` (generations since generation 0; for MARKOV, since Play) and `PASS` (passes counted towards the next generation); on the right, a mini grid of the heard state over the track's length: CA live cells (on a drum track 8 rows, lane 1 on top), MARKOV the steps that differ from the pattern. Live edits apply from the next unheard step.
-- <a id="capturevar"></a>**Capture var** (GRID menu, on a track with VAR on; it replaces Capture evo) writes what the track plays now — VAR, and the EVO drift on top of it — into the edited pattern, all steps of its length (one undo step, toast `VAR CAPTURED`). Then VAR starts from generation 0 of the written pattern (and the EVO drift starts over). Only while the edited pattern is the one playing (else toast `VAR: OTHER PATTERN`); at generation 0 with no drift, `VAR: NO CHANGES`. Capture gen on a track whose VAR is not at generation 0 refuses with `VAR: CAPTURE VAR FIRST`.
-- **Dice** (PROJ) → Pattern turns VAR off on the rewritten tracks.
-- VAR is saved with the project (TVAR chunk); its rows have no undo (like Volume). Older files open with Var OFF; older firmware skips TVAR.
+- **Passes and generations:** with Every 2 the first generation sounds from the third pass. Generations go on across song slots with the same pattern. Another pattern (queued, or the next song slot) — generation 0 of the new pattern, the pass count from zero.
+
+<a id="mutmarkov"></a>
+#### MARKOV: Markov chain
+
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| Every | 1–16 PASS: a new generation every that many pattern passes | 2 PASS |
+| Amount | 0–100%: the chance that a step takes the chain's note instead of the pattern's | 50% |
+| Order | 1–2: how many previous notes the chain remembers | 1 |
+| Rhythm | ON / OFF: rests are links of the chain too, the rhythm changes as well | OFF |
+
+- Each generation builds a transition table from the track's pattern: which notes (up to 16 distinct ones; on a drum track, lane sets) follow which, wrapping round the end of the track. **Order** 1 — the next note depends on one previous note, 2 — on two (closer to the original). Then a new sequence of the track's length is built: it starts on the pattern's first note, and each next step takes a note from the chain with chance **Amount** (the more often a transition occurs in the pattern, the likelier it is), otherwise the pattern's. Amount 0 — the pattern as is. A note from the chain plays with the velocity and fx of the first pattern step holding that note.
+- **Rhythm** OFF — only the pitch of the steps with a note changes (on a drum track, their lanes), the rhythm stays as written; ON — rests are links of the chain too, so notes can move onto empty steps and back.
+- Each generation is built afresh from the pattern. If a note has no transitions in the pattern, the step plays the pattern. Passes and pattern changes count as for CA.
 
 <a id="mixer"></a>
 
@@ -1711,7 +1725,7 @@ Six pages: **SONG** (tempo, scale, tuning, seed, pattern, groove), **DLY** ([del
 | Scale | 13 scales | project |
 | Tuning | 12-TET, 10 factory, your own `.scl` files from the card; default 12-TET | project: the built-in sound's [tuning](#tuning). The encoder scrolls the list, a pick applies at once |
 | Tuning root | AUTO, C-m…G-9; default AUTO | project: the key that keeps its 12-TET pitch; AUTO is C-4 + Scale root. Grey in 12-TET |
-| Seed | 1–9999, default 1 | project: seed of the song's [follow actions](#follow) (and [evolve](#evolve), [VAR](#var)); live play mixes it with a random number at every start, Export uses it as is. Takes effect at the next Play |
+| Seed | 1–9999, default 1 | project: seed of the song's [follow actions](#follow) (and [MUT](#mut)); live play mixes it with a random number at every start, Export uses it as is. Takes effect at the next Play |
 | Length | 4–128 | playing pattern |
 | Resolution | 1/4, 1/8, 1/16, 1/32, 1/8T, 1/16T | playing pattern |
 | Swing | 50–75% | playing pattern (grayed out when a Groove is selected) |
@@ -1805,7 +1819,7 @@ The project stores the name and the table itself: it plays in tune without the f
 | Roll all | Tempo + scale, sounds and the pattern in one go. |
 | Tempo + scale | A genre (HOUSE, TECHNO, TRANCE, DNB, HIPHOP, SYNTHPOP, DOWNTEMPO): BPM from its range, one of its scales, a random root. |
 | Sounds | Factory presets on tracks 1–4: T1 **DRUMS** a factory KIT (its drums go to INS25–32, or INS17–24 when the kit itself is there), T2 **BASS**, T3 **CHORDS** (a PAD / KEYS preset), T4 **LEAD** (LEAD / PLUCK). The kit mostly suits the genre (TECHNO / HOUSE / TRANCE a 909, HIPHOP the 808 DEEP or LOFI, DOWNTEMPO DUB / LOFI…; about 70 % of rolls, the rest any kit); without Tempo + scale the genre is the one whose BPM range holds the project tempo. The tracks become INT and take the preset's recommended insert. An instrument another track plays (or a lane of its KIT uses) is never overwritten: the role moves to a free slot, or is skipped when none is left; DRUMS is skipped when another track plays the kit or one of the INS slots its drums would go to. |
-| Pattern | Tracks 1–4 of the pattern you hear, rewritten from the generators: Euclid hits on the KIT lanes (kick, snare, hats, clap), a random chord progression ([CHORDS](#chords)), a bass against it ([BASS](#bass)), an arp over the chords ([ARP](#arp)). The pattern length stays; GEN and [VAR](#var) of these tracks are turned off and their [Evolve](#evolve) changes are cleared. Notes stay in the project scale. Drums are written only when track 1 plays a KIT. |
+| Pattern | Tracks 1–4 of the pattern you hear, rewritten from the generators: Euclid hits on the KIT lanes (kick, snare, hats, clap), a random chord progression ([CHORDS](#chords)), a bass against it ([BASS](#bass)), an arp over the chords ([ARP](#arp)). The pattern length stays; GEN and [MUT](#mut) of these tracks are turned off. Notes stay in the project scale. Drums are written only when track 1 plays a KIT. |
 | Sounds + pattern | Both. |
 | Undo dice | Puts back what the last roll changed (one step). Edits elsewhere made since stay; edits to the rolled parts are lost. Load and New clear it. |
 
@@ -1960,7 +1974,7 @@ Files go to `/export/<project>/<src>/`, where `<src>` is `P01`, `P01x4` (a patte
 - **Passes.** With PSRAM on the synth board all files are written in one render (up to 20). Without PSRAM, 6 files per pass: the render repeats until all are written (same result, just longer).
 - If the folder exists it asks `OVERWRITE P01?`; after a successful export the other `.wav` files in it (tracks no longer in the set) are removed.
 - Done: `4:12 PEAK -1.3dB 17 FILES`; `CLIP` means there was clipping (lower MAIN or the volumes; stems have no soft clip and can clip with MAIN > 100%). Errors: `DISK FULL` (the estimate does not fit the card), `WRITE FAILED`, `AUDIO BUSY` (the sound did not stop within 0.5 s — try again), `NO INT TRACK WITH NOTES` (stems asked, but no such tracks). MIDI tracks are not in the export.
-- The render reproduces playback, just without the output latency; PRB / NRN / VRN are random but identical from render to render; the [generator](#gen) sounds as on Play from stop, [evolve](#evolve) and [VAR](#var) follow the project Seed, the same from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
+- The render reproduces playback, just without the output latency; PRB / NRN / VRN are random but identical from render to render; the [generator](#gen) sounds as on Play from stop, [MUT](#mut) follows the project Seed, the same from render to render. Notes pushed past the end of the pattern (NDG, swing) are cut off.
 
 Below the header are the **PROJECTS**, **SAMPLES** and **SYSTEM** page tabs, as in TRACK and PROJ: tap a tab, or put the encoder on them (frame) and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn. PROJECTS holds the items above, SAMPLES the [project samples](#samples), SYSTEM the [device settings](#system).
 
@@ -2198,8 +2212,8 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 | Bass patterns | up to 32 steps; 48 factory, up to 32 of your own listed |
 | Tuning | up to 64 degrees, period up to 4800 cents; `.scl` file up to 8 KB; up to 64 of your own listed; 10 factory |
 | Scenes | 8 per project; 12 track parameters, 14 master; fader 0–127, ~30 ms travel |
-| Shift-register generator | 1 per track (not on drum tracks); 2–16 bits, 1–4 octaves; Capture writes one pass of the track length |
-| Evolve | 1 per track, up to 128 steps of the track's length; 4 versions kept for live edits: an edit while more than 3 change steps are planned but not heard yet (only a very short, fast pattern with Every 1) starts that track's drift over |
+| Shift-register generator | 1 per track (not on drum tracks); 2–16 bits, 1–4 octaves; Capture live writes one pass of the track length |
+| MUT | 1 mode per track (OFF, EVO, CA1D, CA2D on KIT, MARKOV); EVO: up to 128 steps of the track's length; 4 versions kept for live edits: an edit while more than 3 change steps are planned but not heard yet (only a very short, fast pattern with Every 1) starts that track's drift over |
 | CHD | 36 types × 4 inversions |
 | Long press | 0.5 s |
 

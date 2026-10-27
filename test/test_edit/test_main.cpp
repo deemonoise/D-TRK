@@ -235,6 +235,32 @@ void test_undo_drop_after_wrap() {
   delete[] store;
 }
 
+// An entry may carry one track's GenCfg (Capture live turns GEN off): popped with it; a plain push
+// reusing that slot carries none.
+void test_undo_gen_cfg() {
+  Undo::Entry* store = new Undo::Entry[Undo::kDepth];
+  Undo u(store);
+  static Pattern a, out;
+  GenCfg g;
+  g.mode = static_cast<uint8_t>(GenMode::Pitch);
+  g.seed = 777;
+  g.flip = 33;
+  u.push(2, a, 5, g);
+  uint8_t idx = 0;
+  int tr = -2;
+  GenCfg got;
+  TEST_ASSERT_TRUE(u.pop(idx, out, &tr, &got));
+  TEST_ASSERT_EQUAL(2, idx);
+  TEST_ASSERT_EQUAL(5, tr);
+  TEST_ASSERT_EQUAL(static_cast<int>(GenMode::Pitch), got.mode);
+  TEST_ASSERT_EQUAL(777, got.seed);
+  TEST_ASSERT_EQUAL(33, got.flip);
+  u.push(1, a);  // the same slot again, no GenCfg
+  TEST_ASSERT_TRUE(u.pop(idx, out, &tr, &got));
+  TEST_ASSERT_EQUAL(-1, tr);
+  delete[] store;
+}
+
 void test_transpose_skips_drum_tracks() {
   pat.steps[0][0].note = 60;
   pat.steps[1][0].note = 100;
@@ -467,6 +493,7 @@ int main(int, char**) {
   RUN_TEST(test_undo_overflow);
   RUN_TEST(test_undo_drop);
   RUN_TEST(test_undo_drop_after_wrap);
+  RUN_TEST(test_undo_gen_cfg);
   RUN_TEST(test_transpose_skips_drum_tracks);
   RUN_TEST(test_copy_paste_drum_step_byte_exact);
   RUN_TEST(test_song_insert_into_empty);

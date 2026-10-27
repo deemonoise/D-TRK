@@ -2,6 +2,16 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-27
+- **MUT**: EVO and VAR are one mutator per track — the TRACK page **MUT** (tabs MAIN INS FOL NOTE GEN MUT
+  MIDI) replaces EVO and VAR. The **Mut** row picks OFF / EVO / CA1D / CA2D (KIT tracks only) / MARKOV; only
+  the chosen mode's rows are shown, the header shows its state. The modes no longer stack. Old projects with
+  both EVO and VAR on open as VAR; CA2D on a melodic track opens as CA1D (same rule). TEVO marks EVO settings kept outside MUT EVO with mask
+  bit 0x80 (older firmware ignores the bit).
+- GRID menu: one **Capture live** replaces Capture gen / evo / var: writes what the track plays (MUT, then
+  GEN) into the pattern (undo), then GEN turns OFF and MUT goes on from a fresh state — no jump in the sound. Undo brings back the pattern
+  and GEN.
+
 ## 2026-10-26
 - DRUM: a machine is picked by group and model — the **Machine** row (KICK, SNARE, TOM, CLAP, RIM, HAT,
   CYMBL, PERC) and **Model** (808, 909, RES, SYN, MODAL, MULTI, RING, CLAVE, BELL). Machine numbers in

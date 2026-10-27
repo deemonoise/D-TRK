@@ -1,5 +1,6 @@
 #include "project_io.h"
 #include "evolve.h"
+#include "mut.h"
 #include "shift_gen.h"
 #include "var_gen.h"
 #include <string.h>
@@ -41,8 +42,12 @@ constexpr size_t kTfolRec = 5;
 // BYTE defaults); values clamped (genClamp).
 constexpr size_t kTgenRec = 13;
 // TEVO (track evolve, EvoCfg): count, record size, then a record per track: amount, every, home, mask.
-// Same rules as TINS; values clamped (evoClamp). Files without it: evolve off.
+// Same rules as TINS; values clamped (evoClamp). Files without it: evolve off. MUT files set mask bit
+// kTevoParked on a track whose MUT mode is not EVO: its settings, kept, not an old file's EVO on (mutFix).
+// Older firmware's evoClamp masks the bit away (mask &= kEvoMaskAll).
 constexpr size_t kTevoRec = 4;
+constexpr uint8_t kTevoParked = 0x80;
+static_assert((kTevoParked & kEvoMaskAll) == 0, "TEVO parked bit");
 // TVAR (track VAR, VarCfg): count, record size, then a record per track: mode, every, rule, rule2, reset,
 // noise, amount, order, rhythm. Same rules as TINS; values clamped (varClamp). Files without it: VAR off.
 constexpr size_t kTvarRec = 9;
@@ -387,7 +392,8 @@ LoadErr readTgen(CrcSource& in, uint32_t size, Project& p) {
 }
 
 // TEVO (see kTevoRec); tracks it lacks (and files without it) keep evolve off.
-LoadErr readTevo(CrcSource& in, uint32_t size, Project& p) {
+// parked: bit t set for a record with kTevoParked.
+LoadErr readTevo(CrcSource& in, uint32_t size, Project& p, uint16_t& parked) {
   uint8_t h[2];
   if (size < 2) return LoadErr::BadValue;
   if (!in.read(h, 2)) return LoadErr::Truncated;
@@ -401,6 +407,7 @@ LoadErr readTevo(CrcSource& in, uint32_t size, Project& p) {
     EvoCfg& c = p.evo[t];
     uint8_t* const f[kTevoRec] = {&c.amount, &c.every, &c.home, &c.mask};
     for (uint32_t i = 0; i < take; ++i) *f[i] = b[i];
+    if (c.mask & kTevoParked) parked = static_cast<uint16_t>(parked | (1u << t));
     evoClamp(c);
   }
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
@@ -993,8 +1000,11 @@ bool saveProject(const Project& p, ByteSink& out) {
 
   const uint8_t eh[2] = {static_cast<uint8_t>(kTracks), static_cast<uint8_t>(kTevoRec)};
   if (!o.chunk("TEVO", 2 + kTracks * kTevoRec) || !o.write(eh, 2)) return false;
-  for (const EvoCfg& c : p.evo) {
-    const uint8_t b[kTevoRec] = {c.amount, c.every, c.home, c.mask};
+  for (int t = 0; t < kTracks; ++t) {
+    const EvoCfg& c = p.evo[t];
+    // Outside MUT mode EVO the mask gets kTevoParked: else mutFix would take it for an old file's EVO on.
+    const bool parked = p.var[t].mode != static_cast<uint8_t>(VarMode::Evo);
+    const uint8_t b[kTevoRec] = {c.amount, c.every, c.home, static_cast<uint8_t>((c.mask & kEvoMaskAll) | (parked ? kTevoParked : 0))};
     if (!o.write(b, sizeof(b))) return false;
   }
 
@@ -1187,6 +1197,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
   bool sng3 = false;
   bool prf2 = false;  // a PRF2 chunk was read: PRFM no longer applies
   bool tins = false;  // a TINS chunk was read: no insert migration
+  uint16_t evoParked = 0;  // TEVO: tracks whose EvoCfg is not the active MUT mode (mutFix)
   for (;;) {
     uint8_t ch[8];
     if (!in.raw().read(ch, 8)) return LoadErr::Truncated;
@@ -1210,6 +1221,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
         for (Pattern& pt : out.patterns)
           for (Step& st : pt.steps[t]) st.vel &= 0x7F;
       }
+      mutFix(out, evoParked);  // old files: EVO and VAR stacked; CA2D on melodic tracks
       return LoadErr::Ok;
     }
     in.add(ch, 8);
@@ -1229,7 +1241,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     }
     else if (memcmp(ch, "TFOL", 4) == 0) e = readTfol(in, size, out);
     else if (memcmp(ch, "TGEN", 4) == 0) e = readTgen(in, size, out);
-    else if (memcmp(ch, "TEVO", 4) == 0) e = readTevo(in, size, out);
+    else if (memcmp(ch, "TEVO", 4) == 0) e = readTevo(in, size, out, evoParked);
     else if (memcmp(ch, "TVAR", 4) == 0) e = readTvar(in, size, out);
     else if (memcmp(ch, "AUDI", 4) == 0) e = readAudi(in, size, out);
     else if (memcmp(ch, "SMPL", 4) == 0) e = readSmpl(in, size, out);

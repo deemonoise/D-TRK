@@ -3,6 +3,7 @@
 #include "event_heap.h"
 #include "evolve.h"
 #include "follow.h"
+#include "mut.h"
 #include "model.h"
 #include "rng.h"
 #include "shift_gen.h"
@@ -165,38 +166,35 @@ class Sequencer {
   GenState heardGen(int tr) const;
   uint32_t stepDuration() const { return stepUs(); }
 
-  // Evolve (Project::evo, evolve.h). A pass = a pattern pass (endOfPass: the pattern's end or a song slot's),
-  // counted per track from start() across pattern / slot changes. Every `every` passes the track's state
-  // mutates from the one before (the follow run seed, not rng_); every track step plays through it
-  // (evoStep) before GEN; the pattern is never written. start() / stop() reset every state; rewound
-  // with the unheard steps.
-  // After an EvoCfg edit while playing: the unheard steps are planned again with it.
-  void evoEdited(uint64_t now, MidiSink& out) { replan(now, out); }
-  // After Capture of track tr: replanned, then its changes and rotation cleared (n and the pass count go on).
-  void evoClear(uint64_t now, MidiSink& out, int tr);
-  // The state after the heard step of tr (UI, Capture); the reset one while stopped. Valid until the next
-  // call on the sequencer (hold the project lock).
+  // MUT (mut.h): one mutator per track, Project::var[t].mode: EVO (Project::evo, evolve.h) or a VAR mode
+  // (var_gen.h). A pass = a pattern pass (endOfPass: the pattern's end or a song slot's), counted per
+  // track from start() across pattern / slot changes; only the active mode counts and, every `every`
+  // passes, advances its state from the one before (the follow run seed, not rng_): EVO mutates, VAR takes
+  // its next generation (another pattern next: VAR back to generation 0, the pass count from 0). A track
+  // step plays pattern -> MUT (mutStep) -> GEN; the pattern is never written. start() / stop() reset every
+  // state; rewound with the unheard steps.
+  // After a Project::evo / var edit (engine Cmd::MutEdit): the unheard steps are planned again with it; a
+  // track whose stored mode (VarCfg::mode) changed restarts from no EVO changes and VAR generation 0. An
+  // instrument type change (CA2D <-> CA1D in effect) needs no command: the VAR state carries its mode.
+  void mutEdited(uint64_t now, MidiSink& out);
+  // Replanned, then track tr's MUT state cleared: EVO changes and rotation, VAR generation 0 (n and the
+  // pass counts go on). A rewritten track (Dice).
+  void mutClear(uint64_t now, MidiSink& out, int tr);
+  // Capture live of track tr into pattern pat (holding the project lock, any task): the unheard steps
+  // are undone (no events sent: the engine plans them again from the result), then mt::captureLive from
+  // the state the next step plays (MUT, the GEN register, its track step), GEN off, the MUT state
+  // cleared as mutClear. Off: nothing plays on the track; OtherPattern: playing / paused and pat is not
+  // the heard pattern. scratch: kMaxSteps steps of the caller's.
+  LiveCapture captureLive(uint64_t now, int tr, int pat, Step* scratch);
+  // The state after the heard step of tr (UI); the reset one while stopped. Valid until the next call
+  // on the sequencer (hold the project lock).
   const EvoTrack& heardEvo(int tr) const;
-  // Passes counted towards the next mutation of tr (0..every-1).
+  const VarTrack& heardVar(int tr) const;
+  // Passes counted towards the next EVO mutation / VAR generation of tr (0..every-1).
   uint8_t evoPasses(int tr) const { return tr >= 0 && tr < kTracks ? evoCnt_[tr] : 0; }
+  uint8_t varPasses(int tr) const { return tr >= 0 && tr < kTracks ? varCnt_[tr] : 0; }
   // Tests only: the state the next planned step of tr plays.
   EvoTrack& evoDebugState(int tr) { return evoAt(tr, evoN_[tr]); }
-
-  // VAR (Project::var, var_gen.h). Passes as for Evolve: every `every` passes the track's state takes its
-  // next generation (varNext, the follow run seed), at the pass end before Evolve mutates. A track step
-  // plays pattern -> VAR (varStep) -> EVO (on VAR's output) -> GEN. Another pattern next (a queued one, a
-  // song slot with another pattern): back to generation 0, the pass count from 0. start() / stop() reset
-  // every state; rewound with the unheard steps; the pattern is never written.
-  // After a VarCfg edit while playing: the unheard steps are planned again with it.
-  void varEdited(uint64_t now, MidiSink& out) { replan(now, out); }
-  // After Capture of track tr (varCapture): replanned, then its state back to generation 0 (n and the pass
-  // count go on).
-  void varClear(uint64_t now, MidiSink& out, int tr);
-  // The state after the heard step of tr (UI, Capture); the reset one while stopped. Valid until the next
-  // call on the sequencer (hold the project lock).
-  const VarTrack& heardVar(int tr) const;
-  // Passes counted towards the next generation of tr (0..every-1).
-  uint8_t varPasses(int tr) const { return tr >= 0 && tr < kTracks ? varCnt_[tr] : 0; }
 
  private:
   enum class State : uint8_t { Stopped, Playing, Paused };
@@ -274,8 +272,12 @@ class Sequencer {
   EvoTrack& evoAt(int tr, uint32_t n) { return cold_->evo[tr][n % kEvoRing]; }
   const EvoTrack& evoAt(int tr, uint32_t n) const { return cold_->evo[tr][n % kEvoRing]; }
   void evoResetAll();
-  // The step a track step plays before GEN: the pattern's through VAR, then EVO (pt's step or tmp).
+  // The step a track step plays before GEN: the pattern's through the active MUT mode (pt's step or tmp).
   const Step& evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const;
+  // Track tr's MUT state cleared (no replan): EVO changes, VAR generation 0, older ring states dropped.
+  void mutReset(int tr);
+  // Unheard steps undone without sending (captureLive: any task); their tie releases kept.
+  void replanQuiet(uint64_t now);
   void evoPass();  // endOfPass: counts the pass, mutates the tracks due
   // VAR: generation n of tr in the ring (as Evolve's).
   VarTrack& varAt(int tr, uint32_t n) { return cold_->var[tr][n % kEvoRing]; }
@@ -396,6 +398,8 @@ class Sequencer {
   EvoView evoView_;               // scratch for evoPass
   uint32_t varN_[kTracks] = {};   // VAR: each track's generation, as the next step to plan finds it
   uint8_t varCnt_[kTracks] = {};  // passes since the last generation
+  uint8_t mutMode_[kTracks] = {};  // the stored MUT mode (mutKey) each track's state is for: mutEdited
+  uint8_t mutKey(int tr) const;
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };
 
