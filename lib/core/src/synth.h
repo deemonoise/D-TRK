@@ -114,12 +114,25 @@ class Synth {
   void startTrack(uint8_t track);
   // Silences everything at once, clears the queue and the delay line.
   void reset();
+  // The state reset() keeps (audio park mid-play) as in a new Synth: the LFO Random generator back to
+  // its seed, the Retrig OFF LFOs at phase 0, the transport stopped (not paused, gates bypassed, song
+  // clock 0). reset() + reseed(): an offline render repeats exactly, whatever ran before (bounce).
+  void reseed();
   // Renders kBlock stereo frames, interleaved L R (lr[2 * kBlock]), applying pending events at
   // their offsets.
   void renderStereo(int16_t* lr);
   // Renders kBlock mono samples: the downmix (L + R) >> 1 of the same block (centre pan and no
   // reverb: bit-exact to either side).
   void render(int16_t* out);
+  // Preview tap (one-shot / KIT bake): each render() / renderStereo() clears l / r (kBlock floats
+  // each, caller-owned) and adds kPreviewTrack's strip alone: after its insert (0xF7), the fader
+  // (kPreviewVol) and the pan (centre: L == R), without the sends and the master chain. Mix units,
+  // as the strip adds into the mix: with no sends / fx and MAIN 100 % the output is
+  // softClip(tap x 0.25) x 32767. nullptr (the default): off, the buffers untouched.
+  void setPreviewTap(float* l, float* r) {
+    tapL_ = l;
+    tapR_ = r;
+  }
 
   int activeVoices() const;
 
@@ -155,18 +168,25 @@ class Synth {
   // update (0 = off or silent source). Read by the UI without a lock.
   float followerLevel(uint8_t t) const { return t < kTracks ? folEnv_[t] : 0.f; }
 
-  // CPU guard: load = the last block's render time / the block's duration, after every block.
-  // Above kLoadHigh (smoothed) the oldest voice, releasing first, fades out (kStealMs) and the
-  // pool shrinks to the voices left; below kLoadLow it grows back by one every kCapUpBlocks, up
-  // to kVoices. A late block alone is a spike the DMA buffers absorb (audio.cpp, kDmaBlocks): over
-  // kLoadPanic for kPanicBlocks blocks in a row, or over kLoadHard once, a voice fades the same
-  // way but the pool keeps its size. Not called (tests, offline render): the whole pool.
-  static constexpr float kLoadHigh = 0.80f, kLoadPanic = 1.0f, kLoadHard = 1.5f, kLoadLow = 0.65f;
-  static constexpr int kPanicBlocks = 2;
+  // CPU guard, the backstop behind the voice budget: load = the last block's render time / the block's
+  // duration, after every block. The smoothed load (each block clamped to 1.0, so a note-on spike counts
+  // as a full block, not more; kLoadSmooth per block, ~16 blocks) above kLoadHigh fades the oldest voice,
+  // releasing first (kStealMs), one per kShedBlocks, and shrinks the pool to the voices left; below
+  // kLoadLow it grows back by one every kCapUpBlocks, up to kVoices. Real underruns: the DMA holds
+  // kDmaBlocks - 1 = 2 blocks of slack (audio.cpp), so the time over budget is summed as a debt
+  // (blocks, repaid by fast blocks); at kDebtMax (half the slack) a voice fades every block, the pool
+  // keeps its size. Not called (tests, offline render): the whole pool.
+  static constexpr float kLoadHigh = 0.80f, kLoadLow = 0.72f, kLoadSmooth = 1.f / 16, kDebtMax = 1.0f;
+  static constexpr int kShedBlocks = 4;
   static constexpr int kCapUpBlocks = 25;  // 100 ms
   static constexpr int kMinVoices = 4;     // never shed below
   void setLoad(float load);
   int voiceCap() const { return cap_; }
+  // Voice pool by cost (voice_cost.h): the summed voiceCost of the live voices stays under the
+  // budget, new notes steal the oldest (releasing first). kVoiceBudgetOff (default): no limit; the
+  // ESP firmware sets kVoiceBudgetEsp. The heavy limit and the CPU guard above stay the backstop.
+  void setVoiceBudget(int b) { budget_ = b; }
+  int voiceBudget() const { return budget_; }
 
   // Level meters (MIX): the peak of each pattern track's voices since the last call, before the
   // master gain (1.0 = full scale at MAIN 100 %), then cleared. Read without a lock: a block may land
@@ -208,12 +228,46 @@ class Synth {
   // Copies the sums, counts (and the blocks rendered) and clears them.
   void takeProfile(uint32_t out[kProfStages], uint32_t count[kProfStages], uint32_t& blocks);
   uint32_t profNow() const { return clock_ ? clock_() : 0; }
+  // The running sums of the stages (cycles, as takeProfile copies them): diagnostics diff them per block.
+  const uint32_t* profSums() const { return prof_; }
+#ifdef AUDIO_PEAK_DIAG
+  // Peak diagnostics (-DAUDIO_PEAK_DIAG, audio.cpp): cycles of noteOn's sub-steps while profiling, per
+  // voice kind. pre: up to the voice pick; alloc: held / choke / allocVoice (steal); setup: the voice's
+  // fields; engine: useEngine; trig: the engine's trigger; wt: SYNTH names + findWt; rest: sample / env /
+  // filter; machine / set: control(v, 0)'s fmMachine / drumMachine and the engine's set / control;
+  // ctl: the rest of control(v, 0). Audio task only (audio.cpp copies and clears it there).
+  enum NoteStep : uint8_t { kNsPre, kNsAlloc, kNsSetup, kNsEngine, kNsTrig, kNsWt, kNsRest, kNsMachine, kNsSet,
+                            kNsCtl, kNoteSteps };
+  enum NoteKind : uint8_t { kNkChip, kNkSample, kNkFm, kNkDrum, kNkSyn, kNkLofi, kNoteKinds };
+  struct NoteDiag {
+    uint32_t n[kNoteKinds];
+    uint32_t sum[kNoteKinds][kNoteSteps];
+    uint32_t max[kNoteKinds][kNoteSteps];
+    uint32_t totMax[kNoteKinds];  // the slowest note-on, whole
+  };
+  static const char* noteStepName(int s);
+  static const char* noteKindName(int k);
+  const NoteDiag& noteDiag() const { return nd_; }
+  void clearNoteDiag() { nd_ = NoteDiag{}; }
+#endif
   // Newest allocated voice of the track, or -1.
   int trackVoice(uint8_t track) const;
   int voiceInstr(int v) const { return voices_[v].instr; }
   const Voice& voice(int v) const { return voices_[v]; }
   // FM / DRUM params cache (on by default); off recomputes every control update (tests, diagnostics).
   void setFmCache(bool on) { fmCache_ = on; }
+  // Shared machine params (FM / DRUM): the last fmMachine / drumMachine results by their exact inputs
+  // (machine, macros, pitch bits), for all voices: a note-on on another voice (a steal, an engine
+  // switch) takes the params instead of running the machine again (flash: ~100 us a DRUM call on the
+  // ESP32 with a cold cache). The machines are pure: the output is the same with or without. mem:
+  // their storage, the caller's (PSRAM on the ESP32; the keys stay here); nullptr (the default) = off.
+  // Off as well with setFmCache(false). Set before rendering (audio task parked).
+  static constexpr int kMcSlots = 8;  // per engine, replaced round robin
+  struct MachineCache {
+    DrumParams drum[kMcSlots];
+    FmParams fm[kMcSlots];
+  };
+  void setMachineCache(MachineCache* mem);
   // fmMachine() / drumMachine() evaluations so far.
   uint32_t fmMachineCalls() const { return fmCalls_; }
   uint32_t drumMachineCalls() const { return drumCalls_; }
@@ -248,7 +302,7 @@ class Synth {
     bool slcSet;
     uint8_t slc;       // SLC: slice of the next SAMPLE note-on
     float lastPitch;   // of the last note-on, < 0 = none (SLD)
-    uint16_t lockMask;  // LockBit: this step's note-ons
+    uint32_t lockMask;  // LockBit: this step's note-ons
     uint8_t lock[kLocks];
     uint8_t lfoSel;         // LFO fx: LFO 0..kLfos-1 this step's LFD .. LFR act on
     uint16_t lfoLockMask;   // LFO locks (see Voice::lfoLockMask): this step's note-ons
@@ -270,7 +324,7 @@ class Synth {
   void noteOff(uint8_t track, uint8_t note);
   void releaseTrack(uint8_t track);
   void control(Voice& v, int dt);
-  void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
+  void controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
   void controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
   void controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol, const float* la);
   void controlLofi(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol);
@@ -377,8 +431,10 @@ class Synth {
   Voice voices_[kVoices];
   float load_ = 0;  // smoothed render load (setLoad)
   int cap_ = kVoices;
+  int budget_ = kVoiceBudgetOff;  // setVoiceBudget
   int capUp_ = 0;
-  int over_ = 0;  // blocks in a row over kLoadPanic
+  float debt_ = 0;   // blocks of render time over budget not yet repaid (setLoad)
+  int shedWait_ = 0;  // blocks until the smoothed path may shed again
   uint32_t age_ = 0;
   TrackRt rt_[kSynthTracks];
   Ev ev_[kMaxEvents];
@@ -397,6 +453,8 @@ class Synth {
   TrackStrip strips_[kSynthTracks];
   uint32_t stripDirty_ = 0;
   uint8_t previewIns_ = kTracks;
+  float* tapL_ = nullptr;  // setPreviewTap (both set or both null)
+  float* tapR_ = nullptr;
   static_assert(kSynthTracks <= 32, "stripDirty_ / hot masks are uint32_t");
   Reverb reverb_;
   Compressor comp_;
@@ -436,7 +494,8 @@ class Synth {
     profT_ = now;
   }
   int ctlLeft_ = kControl;     // samples to the next control update (FM ramps of mid-segment updates)
-  uint32_t rng_ = 0x2545F491;  // LFO Random
+  static constexpr uint32_t kRngSeed = 0x2545F491;
+  uint32_t rng_ = kRngSeed;  // LFO Random
   // Retrig OFF LFOs (lfoFree): one phase (and Random value) per instrument, shared by its voices;
   // advanceInstLfos moves them once per control update, before the voices read them. Kept by reset()
   // (audio park mid-play): only 0xFA restarts the TEMPO ones.
@@ -473,6 +532,50 @@ class Synth {
   bool fmCache_ = true;
   uint32_t fmCalls_ = 0;
   uint32_t drumCalls_ = 0;
+  // setMachineCache: [0] DRUM, [1] FM. in: the macros' and the pitch's bits.
+  struct McKey {
+    uint32_t in[kFmMacros + 1];
+    uint8_t machine;
+    bool valid;
+  };
+  // SYNTH note-ons' findWt within one block (renderCore clears it): a chord looks each name up once.
+  // The bank and the list may change between blocks, never seen inside one.
+  struct WtMemo {
+    char name[kSampleNameMax + 1];
+    const int16_t* t;
+  };
+  static constexpr int kWtMemo = 4;
+  WtMemo wtMemo_[kWtMemo];
+  uint8_t wtMemoN_ = 0;
+  const int16_t* findWtMemo(const char* name);
+  MachineCache* mc_ = nullptr;
+  McKey mcKey_[2][kMcSlots] = {};
+  uint8_t mcNext_[2] = {};
+  int mcFind(int kind, const McKey& k) const;
+  int mcStore(int kind, const McKey& k);
+#ifdef AUDIO_PEAK_DIAG
+  NoteDiag nd_{};
+  uint32_t ndCur_[kNoteSteps] = {};
+  uint32_t ndT_ = 0;
+  bool ndIn_ = false;  // inside a profiled noteOn
+  void ndBegin() {
+    ndIn_ = clock_ != nullptr;
+    if (!ndIn_) return;
+    for (auto& c : ndCur_) c = 0;
+    ndT_ = clock_();
+  }
+  // Books the cycles since the last ndMark to step s (inside noteOn only).
+  MT_INLINE void ndMark(int s) {
+    if (!ndIn_) return;
+    const uint32_t now = clock_();
+    ndCur_[s] += now - ndT_;
+    ndT_ = now;
+  }
+  void ndCommit(int kind);
+#define MT_ND(s) ndMark(s)
+#else
+#define MT_ND(s) ((void)0)
+#endif
 };
 
 // Where an event stamped t (us) lands in the block that starts playing at blockT: sample offset,

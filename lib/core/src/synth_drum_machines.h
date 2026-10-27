@@ -13,4 +13,14 @@ const char* drumMachineName(uint8_t machine);  // "BD8"
 // Macro label of the machine, e.g. "SNAPPY"; "" = the slot does nothing on it.
 const char* drumMacroName(uint8_t machine, int macro);
 
+// INST picker: machines in groups (KICK, SNARE, ...), each of a few models (808, 909, ...). Machine
+// numbers are unchanged; unknown machines map as BD8.
+int drumGroupCount();
+const char* drumGroupName(int g);         // "KICK"; out of range -> group 0
+int drumModelCount(int g);
+const char* drumModelName(int g, int k);  // "909"
+uint8_t drumMachineAt(int g, int k);      // out of range -> model 0 of group 0
+int drumGroupOf(uint8_t machine);
+int drumModelOf(uint8_t machine);
+
 }  // namespace mt

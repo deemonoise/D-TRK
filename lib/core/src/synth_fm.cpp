@@ -2,6 +2,7 @@
 #include <math.h>
 #include "fastmath.h"
 #include "hot.h"
+#include "synth_drive.h"
 
 namespace mt {
 namespace {
@@ -23,7 +24,8 @@ MT_HOT float decayAt(float ms, float t) {
 }
 
 // One operator's per-sample state, in locals for the duration of a block.
-// mode: 0 = silent all block (output 0, phase only), 1 = sounding without feedback, 2 = with feedback.
+// mode: 0 = silent all block (output 0, phase advanced after the loop), 1 = sounding without feedback,
+// 2 = with feedback.
 struct OpRun {
   uint32_t ph, inc;
   int32_t dInc;
@@ -31,10 +33,11 @@ struct OpRun {
   int mode;
 };
 
-MT_INLINE float opStep(OpRun& s, float mod) {
-  if (s.mode == 0) return 0;
+// mode: s.mode, from a register (s stays in memory).
+MT_INLINE float opStep(OpRun& s, int mode, float mod) {
+  if (mode == 0) return 0;
   float r;
-  if (s.mode == 2) {
+  if (mode == 2) {
     r = tableSine(s.ph + cycles(mod + s.fb * s.fbIn));
     s.fbIn = 0.5f * (r + s.last);
     s.last = r;
@@ -46,6 +49,8 @@ MT_INLINE float opStep(OpRun& s, float mod) {
   }
   const float y = r * s.lvl;
   s.lvl += s.dLvl;
+  s.ph += s.inc;
+  s.inc += static_cast<uint32_t>(s.dInc);
   return y;
 }
 
@@ -62,16 +67,17 @@ MT_HOT bool fmCarrier(FmAlg a, int op) {
 }
 
 MT_HOT float fmMaxIndex(float hz) {
-  if (hz <= 0) return 8;
-  const float m = 12000.f * fastRcp(hz < 1e-30f ? 1e-30f : hz) - 1.f;  // per modulator per tick: no __divsf3
-  return m < 0.2f ? 0.2f : (m > 8.f ? 8.f : m);
+  if (hz <= 0) return 12;
+  const float m = 16000.f * fastRcp(hz < 1e-30f ? 1e-30f : hz) - 1.f;  // per modulator per tick: no __divsf3
+  return m < 0.2f ? 0.2f : (m > 12.f ? 12.f : m);
 }
 
-void FmVoice::trigger(bool keepPhase) {
+MT_HOT void FmVoice::trigger(bool keepPhase) {  // note-on: IRAM
   ampStart_ = keepPhase ? amp_ : 0;
   t_ = 0;
   choke_ = keepPhase;
   if (keepPhase) return;
+  satSnap_ = true;
   for (int i = 0; i < kFmOps; ++i) ph_[i] = 0, last_[i] = fbIn_[i] = 0;
   amp_ = 0;
   svf_.reset();
@@ -185,7 +191,8 @@ MT_HOT void FmVoice::control(const FmParams& p, int span) {
       l0 = o.level * (s + (1.f - s) * d0);
       l1 = o.level * (s + (1.f - s) * d1);
       if (!fmCarrier(p.alg, i)) {
-        const float m = fmMaxIndex(hz);
+        // The limit of the highest pitch this tick reaches: a sweep starts octaves up (KICK, PERC).
+        const float m = fmMaxIndex(hz * (bend0 > bend1 ? bend0 : bend1));
         l0 = (l0 < m ? l0 : m) * kInvTwoPi;
         l1 = (l1 < m ? l1 : m) * kInvTwoPi;
       }
@@ -222,19 +229,38 @@ MT_HOT void FmVoice::control(const FmParams& p, int span) {
     svf_.set(p.filterMode, p.filterHz, p.filterQ);
     filterHz_ = p.filterHz, filterQ_ = p.filterQ, filterMode_ = p.filterMode;
   }
+  // SAT: this tick's targets (tanh only when SAT moves), ramped from the last tick's; a fresh trigger
+  // starts at them.
+  const float su = p.sat <= 0 ? 0.f : (p.sat >= 1 ? 1.f : p.sat);
+  float sg0 = satGT_, sn0 = satNT_, sw0 = satWT_;
+  if (su != satU_) {
+    satU_ = su;
+    satGT_ = 1.f + 7.f * su * su;
+    satNT_ = fastRcp(fastTanh(satGT_));
+    satWT_ = su * 8.f < 1.f ? su * 8.f : 1.f;
+  }
+  if (satSnap_) sg0 = satGT_, sn0 = satNT_, sw0 = satWT_, satSnap_ = false;
+  satG_ = sg0, satN_ = sn0, satW_ = sw0;
+  dSatG_ = (satGT_ - sg0) * inv;
+  dSatN_ = (satNT_ - sn0) * inv;
+  dSatW_ = (satWT_ - sw0) * inv;
 }
 
 template <FmAlg A>
 MT_INLINE void FmVoice::run(float* __restrict out, int n, float gain) {
   // State in locals: out cannot alias it, so it stays in registers across the loop.
-  OpRun o[kFmOps];
+  OpRun ops[kFmOps];
   for (int i = 0; i < kFmOps; ++i) {
-    OpRun& s = o[i];
+    OpRun& s = ops[i];
     s.ph = ph_[i], s.inc = inc_[i], s.dInc = dInc_[i];
     s.lvl = lvl_[i], s.dLvl = dLvl_[i], s.fb = fb_[i], s.dFb = dFb_[i];
     s.last = s.prev = last_[i], s.fbIn = fbIn_[i];
     s.mode = s.lvl == 0 && s.dLvl == 0 ? 0 : (s.fb == 0 && s.dFb == 0 ? 1 : 2);
   }
+  // Operators through an opaque pointer: in memory, not scalarised (that spills more, render() +4 KB).
+  OpRun* o = ops;
+  asm("" : "+r"(o));
+  const int m0 = ops[0].mode, m1 = ops[1].mode, m2 = ops[2].mode, m3 = ops[3].mode;
   float noise = noise_, amp = amp_;
   const float dNoise = dNoise_, dAmp = dAmp_;
   uint32_t rng = rng_;
@@ -244,21 +270,27 @@ MT_INLINE void FmVoice::run(float* __restrict out, int n, float gain) {
   const bool filterOn = filterOn_, filterAll = filterAll_;
   const bool noiseOn = noisy || (filterOn && filterAll);
   Svf svf = svf_;
+  // SAT: off (w 0 all block) skips the shaper: bit-exact without it.
+  float sg = satG_, sn = satN_, sw = satW_;
+  const float dsg = dSatG_, dsn = dSatN_, dsw = dSatW_;
+  const bool satOn = sw != 0 || dsw != 0;
+  const float *tt = nullptr, *ts = nullptr;
+  if (satOn) Drive::tables(tt, ts);
   for (int s = 0; s < n; ++s) {
     float y;
     if (A == FmAlg::Stack) {
-      y = opStep(o[0], opStep(o[1], opStep(o[2], opStep(o[3], 0))));
+      y = opStep(o[0], m0, opStep(o[1], m1, opStep(o[2], m2, opStep(o[3], m3, 0))));
     } else if (A == FmAlg::TwoToOne) {
-      const float a = opStep(o[2], opStep(o[3], 0));
-      y = opStep(o[0], a + opStep(o[1], 0));
+      const float a = opStep(o[2], m2, opStep(o[3], m3, 0));
+      y = opStep(o[0], m0, a + opStep(o[1], m1, 0));
     } else if (A == FmAlg::TwoPairs) {
-      const float hi = opStep(o[2], opStep(o[3], 0));
-      y = opStep(o[0], opStep(o[1], 0)) + hi;
+      const float hi = opStep(o[2], m2, opStep(o[3], m3, 0));
+      y = opStep(o[0], m0, opStep(o[1], m1, 0)) + hi;
     } else if (A == FmAlg::OneToThree) {
-      const float m = opStep(o[3], 0);
-      y = opStep(o[0], m) + opStep(o[1], m) + opStep(o[2], m);
+      const float m = opStep(o[3], m3, 0);
+      y = opStep(o[0], m0, m) + opStep(o[1], m1, m) + opStep(o[2], m2, m);
     } else {
-      y = opStep(o[0], 0) + opStep(o[1], 0) + opStep(o[2], 0) + opStep(o[3], 0);
+      y = opStep(o[0], m0, 0) + opStep(o[1], m1, 0) + opStep(o[2], m2, 0) + opStep(o[3], m3, 0);
     }
     if (noiseOn) {
       rng ^= rng << 13;
@@ -269,22 +301,32 @@ MT_INLINE void FmVoice::run(float* __restrict out, int n, float gain) {
       else if (filterAll) y = svf.process(y + nz);
       else y += svf.process(nz);
     }
-    out[s] += y * amp * gain;
-    for (int i = 0; i < kFmOps; ++i) {
-      o[i].ph += o[i].inc;
-      o[i].inc += static_cast<uint32_t>(o[i].dInc);
+    if (satOn) {
+      y += sw * (Drive::tanhLut(sg * y, tt, ts) * sn - y);
+      sg += dsg;
+      sn += dsn;
+      sw += dsw;
     }
+    out[s] += y * amp * gain;
     noise += dNoise;
     amp += dAmp;
   }
+  // Silent operators: n samples of the phase ramp at once (exact, mod 2^32).
+  const uint32_t un = static_cast<uint32_t>(n), tri = un * (un - 1) / 2;
   for (int i = 0; i < kFmOps; ++i) {
-    const OpRun& s = o[i];
+    OpRun& s = o[i];
+    if (s.mode == 0) {
+      const uint32_t d = static_cast<uint32_t>(s.dInc);
+      s.ph += un * s.inc + d * tri;
+      s.inc += un * d;
+    }
     ph_[i] = s.ph, inc_[i] = s.inc, lvl_[i] = s.lvl, fb_[i] = s.fb;
     if (s.mode == 2) last_[i] = s.last, fbIn_[i] = s.fbIn;
     else if (s.mode == 1 && n > 0) last_[i] = s.last, fbIn_[i] = 0.5f * (s.last + s.prev);
   }
   noise_ = noise;
   amp_ = amp;
+  satG_ = sg, satN_ = sn, satW_ = sw;
   rng_ = rng;
   svf_ = svf;
   t_ += static_cast<uint32_t>(n);

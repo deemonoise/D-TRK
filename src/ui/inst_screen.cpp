@@ -39,13 +39,6 @@ uint8_t freeNoteFrom(const mt::Instrument& k, int lane, int n, int dir = 1) {
   return k.kit[lane].note;
 }
 
-void waveName(uint8_t w, char* o, int n) {
-  static const char* const kNames[] = {"PULSE", "TRI", "SAW", "NOISE", "METAL"};
-  constexpr int kWt = static_cast<int>(mt::Wave::Wt1);
-  if (w < kWt) snprintf(o, n, "%s", kNames[w]);
-  else snprintf(o, n, "WT%d", w - kWt + 1);
-}
-
 }  // namespace
 
 InstScreen::InstScreen(App& app) : app_(app) {
@@ -99,7 +92,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
     p[kSend] = {"Dly send", [this](char* o, int n) { snprintf(o, n, "%u", inst().send); },
                 [this](int d) { inst().send = static_cast<uint8_t>(clampi(inst().send + d, 0, 127)); }};
   }
-  chip_[kWave] = {"Wave", [this](char* o, int n) { waveName(inst().wave, o, n); },
+  chip_[kWave] = {"Wave", [this](char* o, int n) { mt::chipWaveName(inst().wave, o, n); },
                   [this](int d) { inst().wave = static_cast<uint8_t>(clampi(inst().wave + d, 0, mt::kWaveCount - 1)); }};
   auto notPulse = [this] { return inst().wave != static_cast<uint8_t>(mt::Wave::Pulse); };
   chip_[kDuty] = {"Duty", [this](char* o, int n) { snprintf(o, n, "%u%%", inst().duty); },
@@ -119,11 +112,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   fm_[kMode].dim = [isTone] { return !isTone(); };
   fm_[kGlide].dim = [this, isTone] { return !inst().mono || !isTone(); };
   fm_[kMachine] = {"Machine",
-                   [this](char* o, int n) {
-                     static const char* const kNames[] = {"KICK", "SNARE", "METAL", "PERC",
-                                                          "TONE", "CHORD", "CLAP", "HAT"};
-                     snprintf(o, n, "%s", kNames[inst().machine % 8]);
-                   },
+                   [this](char* o, int n) { snprintf(o, n, "%s", mt::fmMachineName(inst().machine)); },
                    [this](int d) {
                      const int v = clampi(inst().machine + d, 0, static_cast<int>(mt::FmMachine::Count) - 1);
                      if (v != inst().machine) mt::fmSetMachine(inst(), static_cast<uint8_t>(v));
@@ -152,17 +141,32 @@ InstScreen::InstScreen(App& app) : app_(app) {
                               macroEdit(mt::kMacShp)};
   fm_[kMac0 + mt::kMacSwp] = {"SWEEP", macroNum(mt::kMacSwp), macroEdit(mt::kMacSwp)};
   fm_[kMac0 + mt::kMacCon] = {"CONTOUR", macroNum(mt::kMacCon), macroEdit(mt::kMacCon)};
+  fm_[kFmSat] = {"SAT", [this](char* o, int n) { snprintf(o, n, "%u", inst().fmSat); },
+                 [this](int d) { inst().fmSat = static_cast<uint8_t>(clampi(inst().fmSat + d, 0, 127)); }};
   // DRUM: the machine shapes the whole sound; DECAY is a number (its range differs per machine).
   auto always = [] { return true; };
   for (int r : {kAttack, kDecay, kSustain, kRelease, kMode, kGlide}) drum_[r].dim = always;
+  // Machine = the group, Model = the machine in it; both wrap around and load the machine's macros.
+  auto wrap = [](int v, int n) { return ((v % n) + n) % n; };
   drum_[kMachine] = {"Machine",
-                     [this](char* o, int n) { snprintf(o, n, "%s", mt::drumMachineName(inst().machine)); },
-                     [this](int d) {
-                       const int v = clampi(inst().machine + d, 0, static_cast<int>(mt::DrumMachine::Count) - 1);
-                       if (v != inst().machine) mt::drumSetMachine(inst(), static_cast<uint8_t>(v));
+                     [this](char* o, int n) { snprintf(o, n, "%s", mt::drumGroupName(mt::drumGroupOf(inst().machine))); },
+                     [this, wrap](int d) {
+                       const int g = wrap(mt::drumGroupOf(inst().machine) + d, mt::drumGroupCount());
+                       const uint8_t v = mt::drumMachineAt(g, 0);
+                       if (v != inst().machine) mt::drumSetMachine(inst(), v);
                      }};
+  drum_[kDrumModel] = {"Model",
+                       [this](char* o, int n) {
+                         const uint8_t m = inst().machine;
+                         snprintf(o, n, "%s", mt::drumModelName(mt::drumGroupOf(m), mt::drumModelOf(m)));
+                       },
+                       [this, wrap](int d) {
+                         const int g = mt::drumGroupOf(inst().machine);
+                         const uint8_t v = mt::drumMachineAt(g, wrap(mt::drumModelOf(inst().machine) + d, mt::drumModelCount(g)));
+                         if (v != inst().machine) mt::drumSetMachine(inst(), v);
+                       }};
   for (int k = 0; k < mt::kFmMacros; ++k)
-    drum_[kMac0 + k] = {"-", macroNum(k), macroEdit(k), [this, k] { return !*mt::drumMacroName(inst().machine, k); }};
+    drum_[kDrumMac0 + k] = {"-", macroNum(k), macroEdit(k), [this, k] { return !*mt::drumMacroName(inst().machine, k); }};
   // LOFI: ADSR, mode and glide as CHIP. A machine change loads its default macros.
   lofi_[kMachine] = {"Machine",
                      [this](char* o, int n) { snprintf(o, n, "%s", mt::lofiMachineName(inst().machine)); },
@@ -255,8 +259,8 @@ InstScreen::InstScreen(App& app) : app_(app) {
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
   initTail(chip_ + kChipRows);
   initTail(sample_ + kCommon);
-  initTail(fm_ + kMacRows);
-  initTail(drum_ + kMacRows);
+  initTail(fm_ + kFmRows);
+  initTail(drum_ + kDrumRows);
   initTail(syn_ + kSynRows);
   initTail(lofi_ + kLofiRows);
   initKit();
@@ -504,7 +508,7 @@ void InstScreen::relabel() {
   if (shown_ != mt::InstrType::Drum) return;
   for (int k = 0; k < mt::kFmMacros; ++k) {
     const char* l = mt::drumMacroName(inst().machine, k);
-    drum_[kMac0 + k].label = *l ? l : "-";
+    drum_[kDrumMac0 + k].label = *l ? l : "-";
   }
 }
 
@@ -548,8 +552,8 @@ Param* InstScreen::typeRows() {
 int InstScreen::typeCount() const {
   switch (shown_) {
     case mt::InstrType::Sample: return 0;  // SampleEditor
-    case mt::InstrType::Fm:
-    case mt::InstrType::Drum: return kMacRows - kCommon;
+    case mt::InstrType::Fm: return kFmRows - kCommon;
+    case mt::InstrType::Drum: return kDrumRows - kCommon;
     case mt::InstrType::Synth: return kSynRows - kCommon;
     case mt::InstrType::Lofi: return kLofiRows - kCommon;
     default: return kChipRows - kCommon;
@@ -654,6 +658,7 @@ void InstScreen::onEnter() {
 void InstScreen::onLeave() {
   if (presets_.isOpen()) presets_.close(false);
   if (wt_.isOpen()) wt_.close();
+  bounce_.cancel();
 }
 
 void InstScreen::onProjectReplaced() {
@@ -662,6 +667,7 @@ void InstScreen::onProjectReplaced() {
   // The instrument the browsers would restore / set belongs to the old project.
   if (presets_.isOpen()) presets_.close(true);
   if (wt_.isOpen()) wt_.close();
+  bounce_.cancel();
   onEnter();
 }
 
@@ -679,14 +685,23 @@ void InstScreen::openTables(int osc) {
 void InstScreen::presetMenu() {
   leaveEdit();
   if (inst().type == mt::InstrType::Kit) {  // factory kits only: no Save
-    typeSnapInstr_ = -1;
-    presets_.open(PresetBrowser::Mode::Load, instr_);
+    enum : int { kKitLoad, kKitShot };
+    const MenuItem items[] = {{"Load", kKitLoad}, {"Save one-shot...", kKitShot}};
+    app_.menu().open("PRESET", items, 2, [this](int id) {
+      if (id == kKitLoad) {
+        typeSnapInstr_ = -1;
+        presets_.open(PresetBrowser::Mode::Load, instr_);
+      } else if (id == kKitShot) {  // dry: the baked lanes play through the track's insert
+        bounce_.openKit(instr_, [this] { syncParams(); });  // the baked lanes show SAMPLE rows
+      }
+    });
     return;
   }
-  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kMut15, kMut30, kMut60, kMutUndo };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kMut15, kMut30, kMut60, kMutUndo, kShot };
   auto choose = [this](int id) {
     switch (id) {
       case kChop: editor_.chop(); break;
+      case kShot: bounce_.open(instr_, onEditor() ? editor_.previewNote() : kPreviewNote, previewIns()); break;
       case kAdd: editor_.addSlice(app_.shift()); break;  // Shift held on the click: at a transient
       case kDel: editor_.deleteSlice(); break;
       case kClear: {
@@ -711,7 +726,8 @@ void InstScreen::presetMenu() {
   const bool canUndo = mut_.slot == instr_ && mt::mutateCanRestore(app_.project(), mut_);  // not edited since
   if (onEditor()) {
     editor_.bind(instr_);
-    const MenuItem items[] = {{"Chop", kChop},
+    const MenuItem items[] = {{"Save one-shot...", kShot},
+                              {"Chop", kChop},
                               {"Add slice", kAdd},
                               {"Delete slice", kDel, editor_.sliceSelected()},
                               {"Clear slices", kClear, editor_.hasSlices()},
@@ -721,12 +737,17 @@ void InstScreen::presetMenu() {
                               {"Mutate 30%", kMut30},
                               {"Mutate 60%", kMut60},
                               {"Undo mutate", kMutUndo, canUndo}};
-    app_.menu().open("SAMPLE", items, 10, choose);
+    app_.menu().open("SAMPLE", items, 11, choose);
     return;
   }
-  const MenuItem items[] = {{"Load", kLoad},        {"Save", kSave},        {"Mutate 15%", kMut15},
-                            {"Mutate 30%", kMut30}, {"Mutate 60%", kMut60}, {"Undo mutate", kMutUndo, canUndo}};
-  app_.menu().open("PRESET", items, 6, choose);
+  const MenuItem items[] = {{"Load", kLoad},
+                            {"Save", kSave},
+                            {"Save one-shot...", kShot},
+                            {"Mutate 15%", kMut15},
+                            {"Mutate 30%", kMut30},
+                            {"Mutate 60%", kMut60},
+                            {"Undo mutate", kMutUndo, canUndo}};
+  app_.menu().open("PRESET", items, 7, choose);
 }
 
 void InstScreen::mutate(int strength) {
@@ -760,7 +781,7 @@ void InstScreen::undoMutate() {
 }
 
 void InstScreen::onATap(bool shift) {
-  if (presets_.isOpen() || wt_.isOpen() || !onEditor()) return;
+  if (presets_.isOpen() || wt_.isOpen() || bounce_.isOpen() || !onEditor()) return;
   editor_.bind(instr_);
   editor_.stepMarker(shift ? -1 : 1);
 }
@@ -772,24 +793,31 @@ void InstScreen::changeInstr(int d) {
   syncParams();
 }
 
-bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && onEditor(); }
+bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && !bounce_.isOpen() && onEditor(); }
 
 bool InstScreen::trackKey(int n, bool shift) {
-  if (shift || presets_.isOpen() || !onEditor()) return false;
+  if (shift || presets_.isOpen() || bounce_.isOpen() || !onEditor()) return false;
   editor_.playSlice(n);
   return true;
 }
 
-void InstScreen::preview() {
-  // Through the current track's insert when that track plays this instrument.
+// Through the current track's insert when that track plays this instrument, else dry (kTracks).
+uint8_t InstScreen::previewIns() {
   const int t = app_.curTrack();
-  const uint8_t ins = app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
-  audio::preview(static_cast<uint8_t>(instr_), onEditor() ? editor_.previewNote() : kPreviewNote, ins);
+  return app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
+}
+
+void InstScreen::preview() {
+  audio::preview(static_cast<uint8_t>(instr_), onEditor() ? editor_.previewNote() : kPreviewNote, previewIns());
 }
 
 void InstScreen::onInput(const hw::InputEvent& ev) {
   if (presets_.isOpen()) {
     presets_.onInput(ev);
+    return;
+  }
+  if (bounce_.isOpen()) {
+    bounce_.onInput(ev);
     return;
   }
   if (wt_.isOpen()) {
@@ -836,13 +864,14 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
 
 // B + Shift + turn: the previous / next page (not over the browsers); the cursor stays on the page bar.
 void InstScreen::onPage(int d) {
-  if (presets_.isOpen() || wt_.isOpen()) return;
+  if (presets_.isOpen() || wt_.isOpen() || bounce_.isOpen()) return;
   showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
 }
 
 // B: closes the browser (as its long press), else leaves the edit with the value kept.
 void InstScreen::onBack() {
   if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
+  else if (bounce_.isOpen()) bounce_.onInput({hw::InputType::EncLong, 0, false});
   else if (wt_.isOpen()) wt_.onInput({hw::InputType::EncLong, 0, false});
   else if (onEditor() ? editor_.editing() : list_.editing()) leaveEdit();
 }
@@ -850,6 +879,10 @@ void InstScreen::onBack() {
 void InstScreen::onTouch(const TouchEvent& ev) {
   if (presets_.isOpen()) {
     presets_.onTouch(ev);
+    return;
+  }
+  if (bounce_.isOpen()) {
+    bounce_.onTouch(ev);
     return;
   }
   if (wt_.isOpen()) {
@@ -970,6 +1003,10 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
   if (presets_.isOpen()) {
     presets_.draw(s, y0);
+    return;
+  }
+  if (bounce_.isOpen()) {
+    bounce_.draw(s, y0);
     return;
   }
   if (wt_.isOpen()) {

@@ -5,7 +5,7 @@
 
 namespace mt {
 
-// Instrument records shared by .mtp (INST, FMIN, FLTR, SLCE chunks) and .mti presets. Little-endian.
+// Instrument records shared by .mtp (INST, FMIN, FLTR, SLCE, FMEX chunks) and .mti presets. Little-endian.
 // Unpack clamps every value to its valid range.
 constexpr size_t kInstRecSize = 48;  // 47 bytes of fields + driveModel at 47 (once reserved)
 constexpr size_t kFmRecSize = 16;    // drive, rsend, velCut, velMac at 10..13, crushBits, crushRate at 14, 15
@@ -17,6 +17,7 @@ constexpr size_t kSynRecSize = 48;  // SYNTH: 41 bytes of fields + reserved
 constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, depth, dest, sync (bits)
 constexpr size_t kLofiRecSize = 8;  // LOFI: formula, sync, 6 reserved (0)
 constexpr size_t kLfoByteRecSize = 2 * kLfos;  // LFO BYTE: formula, A of LFO 1..4
+constexpr size_t kFmExRecSize = 4;  // FM extension: SAT, 3 reserved (0)
 
 void packInst(const Instrument& m, uint8_t* b);
 void unpackInst(const uint8_t* b, Instrument& m);
@@ -37,6 +38,9 @@ void unpackLofi(const uint8_t* b, size_t n, Instrument& m);
 // LFO BYTE (Instrument::lfoByte). unpackLfoByte reads n bytes of a record (shorter: the rest keeps its value).
 void packLfoByte(const Instrument& m, uint8_t* b);
 void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m);
+// FM extension (Instrument::fmSat). unpackFmEx reads n bytes of a record (shorter: the rest keeps its value).
+void packFmEx(const Instrument& m, uint8_t* b);
+void unpackFmEx(const uint8_t* b, size_t n, Instrument& m);
 // Count is cut to the longest strictly ascending prefix of the positions.
 void packSlices(const Instrument& m, uint8_t* b);
 void unpackSlices(const uint8_t* b, Instrument& m);

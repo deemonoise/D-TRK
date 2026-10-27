@@ -16,7 +16,7 @@ enum class FmAlg : uint8_t {
   Count
 };
 bool fmCarrier(FmAlg a, int op);
-// Largest modulation index (radians) of a modulator at hz: keeps the sidebands below ~12 kHz.
+// Largest modulation index (radians) of a modulator at hz: keeps the sidebands below ~16 kHz.
 float fmMaxIndex(float hz);
 
 // Times are to -60 dB, ms; 0 = no decay.
@@ -48,6 +48,10 @@ struct FmParams {
   bool filterAll = false;  // filter the operators too, else the noise only
   bool oneShot = true;     // own amplitude envelope; false = held at 1 (the caller's ADSR shapes it)
   float ampMs = 0;
+  // SAT 0..1: a tanh shaper before the amplitude, y -> y + w (tanh(g y) / tanh(g) - y), g = 1 + 7 sat^2,
+  // w = min(1, 8 sat) (fades the shaper in from 0, no step). 0 = bypass, bit-exact. Not a machine's:
+  // Synth::controlFm sets it after fmMachine (outside the params cache).
+  float sat = 0;
 };
 
 // Runtime of one FM voice. control() takes the values at the current time and ramps them
@@ -99,6 +103,11 @@ class FmVoice {
   float filterHz_ = -1, filterQ_ = 0;  // svf_ coefficients set for these (skips tanf)
   Svf::Mode filterMode_ = Svf::Mode::Lp;  // last pitch bend: exp2 of bendEnv_ x bendD_ / 12
   Svf svf_;
+  // SAT (see FmParams::sat): drive g, 1 / tanh(g), wet w at the block start and per sample. *T_: the
+  // last control()'s targets, where the next ramp starts exactly (no drift keeps the bypass off).
+  float satG_ = 1, dSatG_ = 0, satN_ = 1, dSatN_ = 0, satW_ = 0, dSatW_ = 0;
+  float satU_ = 0, satGT_ = 1, satNT_ = 1, satWT_ = 0;
+  bool satSnap_ = true;  // next control() starts at its targets (a fresh trigger)
 };
 
 }  // namespace mt

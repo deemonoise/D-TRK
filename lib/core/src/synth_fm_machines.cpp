@@ -7,7 +7,7 @@ namespace mt {
 namespace {
 
 constexpr float kTopHz = 13000.f;  // highest partial a machine makes (the core drops what aliases)
-constexpr float kFbMax = 1.7f;     // carrier feedback peak, rad: above ~2 the saw turns to noise
+constexpr float kFbMax = 2.4f;     // carrier feedback peak, rad: above ~2.5 the saw turns to noise
 
 float u(float v) { return v <= 0 ? 0 : (v >= 127 ? 1 : v * (1.f / 127.f)); }
 float lerp(float a, float b, float x) { return a + (b - a) * x; }
@@ -54,15 +54,26 @@ FmOp modulator(float ratio, float index, float decay, float sustain = 0) { retur
 
 void kick(const float* m, float pitch, FmParams& p) {
   const float c = u(m[kMacCol]), s = u(m[kMacShp]);
-  p.alg = FmAlg::Stack;
+  p.alg = FmAlg::TwoPairs;
   p.hz = 55.f * toC4(pitch);
+  p.ampMs = decayMs(m[kMacDec]);
   // SHAPE: modulator ratio 0.5..2 ("body"), upper half adds carrier feedback ("909").
   const float ratio = s < 0.5f ? lerp(0.5f, 1, s * 2) : lerp(1, 2, (s - 0.5f) * 2);
   p.op[0] = carrier(1, 1, 0, s > 0.5f ? (s - 0.5f) * 2.f : 0);
   p.op[1] = modulator(ratio, c * c * 6, lerp(15, 150, c));
-  p.pitchEnv = sweepCap(u(m[kMacSwp]) * 48, p.hz * (ratio > 1 ? ratio : 1));
+  // Body: a short carrier at x2.5..3 (SHAPE) with its own short modulator, level 0..0.5 with COLOR,
+  // 30..80 ms with DECAY. COLOR 0: silent, the 2-operator kick.
+  const float body = lerp(2.5f, 3.f, s);
+  p.op[2] = carrier(body, 0.5f * c, within(lerp(30, 80, u(m[kMacDec])), p.ampMs));
+  p.op[3] = modulator(body, 1.5f * c, 15);
+  // Sweep cap by the highest partial: the sub's (x1, or its modulator above x1) at COLOR 0, the body's
+  // (x2.5..3, above the sub's) once it sounds. In between the cap's partial glides from one to the other in
+  // equal semitone steps until the body level (0.5 x COLOR) reaches 0.05 (COLOR ~13): no jump in the sweep
+  // at high notes from COLOR 0 to 1, where the body is all but silent. COLOR 0: exactly the 2-operator kick.
+  const float sub = ratio > 1 ? ratio : 1, toBody = 10.f * c;  // 0.5 x COLOR / 0.05
+  const float top = toBody >= 1 ? body : (c > 0 ? sub * fastPow(body / sub, toBody) : sub);
+  p.pitchEnv = sweepCap(u(m[kMacSwp]) * 48, p.hz * top);
   p.pitchMs = expMap(5, 200, u(m[kMacCon]));
-  p.ampMs = decayMs(m[kMacDec]);
 }
 
 void snare(const float* m, float pitch, FmParams& p) {
@@ -120,6 +131,9 @@ void perc(const float* m, float pitch, FmParams& p) {
   p.ampMs = amp;
 }
 
+// Pitch ratio of a detune in cents.
+float cents(float c) { return fastExp2(c * (1.f / 1200.f)); }
+
 void tone(const float* m, float pitch, FmParams& p) {
   const float c = u(m[kMacCol]), w = u(m[kMacSwp]);
   const float envMs = expMap(20, 2000, u(m[kMacCon]));
@@ -129,25 +143,41 @@ void tone(const float* m, float pitch, FmParams& p) {
     const float sum = held + pluck;
     return modulator(ratio, sum, envMs, sum > 0 ? held / sum : 0);
   };
+  // Two voices -d / +d cents apart (the stack zone: its modulators), wider with COLOR.
+  const float d = 4.f + 8.f * c;
+  const float lo = cents(-d), hi = cents(d);
+  constexpr float kPair = 0.7071f;  // two carriers at equal power
   p.oneShot = false;
-  p.alg = FmAlg::Stack;
   p.hz = noteHz(pitch);
-  p.op[0] = carrier(1, 1);
   int zone = static_cast<int>(u(m[kMacShp]) * 5);
   if (zone > 4) zone = 4;
+  // Carrier + one modulator: two pairs, op1 / op2 at -d, op3 / op4 at +d, the same timbre.
+  auto pairs = [&](float ratio, float scale) {
+    p.alg = FmAlg::TwoPairs;
+    p.op[0] = carrier(lo, kPair);
+    p.op[1] = mod(ratio * lo, scale);
+    p.op[2] = carrier(hi, kPair);
+    p.op[3] = mod(ratio * hi, scale);
+  };
   switch (zone) {
-    case 0: p.op[1] = mod(1, 1.5f); break;  // sine, brighter with COLOR
-    case 1:                                 // saw-like: feedback
-      p.op[0].fb = fbLimit(p.hz) * fbHeld(c, w);
+    case 0: pairs(1, 1.5f); break;  // sine, brighter with COLOR
+    case 1: {                       // saw-like: two feedback carriers
+      p.alg = FmAlg::Additive;
+      const float fb = fbLimit(p.hz * hi) * fbHeld(c, w);
+      p.op[0] = carrier(lo, kPair, 0, fb);
+      p.op[1] = carrier(hi, kPair, 0, fb);
       p.fbEnv = fbEnvOf(c, w);
       p.fbMs = envMs;
       break;
-    case 2: p.op[1] = mod(2, 3); break;  // square-like: odd harmonics
-    case 3:                              // stack
-      p.op[1] = mod(1, 2);
-      p.op[2] = mod(2, 1.5f);
+    }
+    case 2: pairs(2, 3); break;  // square-like: odd harmonics
+    case 3:                      // stack, the modulators detuned
+      p.alg = FmAlg::Stack;
+      p.op[0] = carrier(1, 1);
+      p.op[1] = mod(hi, 2);
+      p.op[2] = mod(2 * lo, 1.5f);
       break;
-    default: p.op[1] = mod(3.5f, 3); break;  // bell
+    default: pairs(3.5f, 3); break;  // bell
   }
 }
 
@@ -162,6 +192,9 @@ int chordIndex(float shape) {
   return i >= kFmChords ? kFmChords - 1 : i;
 }
 
+// Fixed detune of the chord's carriers, cents: a slightly loose ensemble.
+const int8_t kChordCents[kFmOps] = {-6, 4, -2, 7};
+
 void chord(const float* m, float pitch, FmParams& p) {
   const float c = u(m[kMacCol]), w = u(m[kMacSwp]);
   const int8_t* iv = kChords[chordIndex(m[kMacShp])];
@@ -170,7 +203,7 @@ void chord(const float* m, float pitch, FmParams& p) {
   p.hz = noteHz(pitch);
   const float held = fbHeld(c, w);
   for (int i = 0; i < kFmOps; ++i) {
-    const float ratio = fastExp2(iv[i] * (1.f / 12.f));
+    const float ratio = fastExp2(iv[i] * (1.f / 12.f)) * cents(kChordCents[i]);
     p.op[i] = carrier(ratio, 0.3f, 0, fbLimit(p.hz * ratio) * held);
   }
   p.fbEnv = fbEnvOf(c, w);

@@ -239,20 +239,20 @@ void drumSetMachine(Instrument& m, uint8_t machine) {
   static const uint8_t kDefaults[static_cast<int>(DrumMachine::Count)][kFmMacros] = {
       {90, 20, 10, 40, 50},  // BD8
       {55, 50, 70, 30, 64},  // SD8
-      {75, 20, 0, 40, 50},   // TOM8
-      {60, 64, 64, 40, 50},  // CP8
-      {40, 64, 30, 20, 0},   // RS8
-      {50, 64, 0, 10, 0},    // CL8
-      {70, 64, 64, 50, 0},   // CB8
-      {30, 64, 30, 64, 64},  // HH8: closed
+      {75, 0, 0, 40, 50},    // TOM8
+      {64, 64, 64, 64, 64},  // CP8
+      {64, 64, 64, 64, 0},   // RS8
+      {64, 64, 0, 0, 0},     // CL8
+      {64, 64, 64, 64, 0},   // CB8
+      {38, 64, 30, 64, 64},  // HH8: closed
       {90, 64, 40, 64, 64},  // CY8
       {75, 70, 40, 60, 40},  // BD9
       {55, 64, 80, 30, 64},  // SD9
-      {70, 20, 10, 50, 50},  // TOM9
-      {60, 70, 64, 50, 50},  // CP9
-      {35, 64, 30, 20, 0},   // RS9
-      {30, 70, 50, 64, 64},  // HH9: closed
-      {95, 64, 50, 64, 64},  // CY9
+      {70, 64, 0, 50, 50},   // TOM9
+      {64, 64, 64, 64, 64},  // CP9
+      {64, 64, 64, 64, 0},   // RS9
+      {30, 64, 59, 64, 64},  // HH9: closed
+      {95, 64, 127, 64, 64}, // CY9: crash
   };
   constexpr int kLast = static_cast<int>(DrumMachine::Count) - 1;
   m.machine = static_cast<uint8_t>(machine > kLast ? kLast : machine);
@@ -276,6 +276,21 @@ void lofiLoadFormulaDefaults(Instrument& m) {
   m.macro[0] = f.a;
   m.macro[1] = f.b;
   m.macro[2] = f.c;
+}
+
+const char* fmMachineName(uint8_t machine) {
+  static const char* const kNames[] = {"KICK", "SNARE", "METAL", "PERC", "TONE", "CHORD", "CLAP", "HAT"};
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(FmMachine::Count), "FM names");
+  return kNames[machine < static_cast<uint8_t>(FmMachine::Count) ? machine : 0];
+}
+
+void chipWaveName(uint8_t w, char* o, int n) {
+  static const char* const kNames[] = {"PULSE", "TRI", "SAW", "NOISE", "METAL"};
+  constexpr int kWt = static_cast<int>(Wave::Wt1);
+  static_assert(sizeof(kNames) / sizeof(kNames[0]) == kWt, "wave names");
+  if (w >= kWaveCount) w = 0;
+  if (w < kWt) snprintf(o, n, "%s", kNames[w]);
+  else snprintf(o, n, "WT%d", w - kWt + 1);
 }
 
 const char* lofiMachineName(uint8_t machine) {
@@ -326,17 +341,21 @@ bool lfoDestValid(uint8_t dest, InstrType t) {
     return t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth || t == InstrType::Lofi;
   if (d == LfoDest::Duty) return t == InstrType::Chip;
   if (d == LfoDest::Sub || d == LfoDest::Noise || d == LfoDest::Semi2) return t == InstrType::Synth;
+  if (d == LfoDest::Fold || d == LfoDest::Ring) return false;  // the teensy's SYNTH targets: none here
+  if (d == LfoDest::Sat) return t == InstrType::Fm;
   return true;
 }
 
-// The Dest list order: the enum's, with PAN and MOD (appended for the file format) next to the sends.
+// The Dest list order: the enum's, with PAN and MOD (appended for the file format) next to the sends
+// and FOLD, RING (likewise; never valid, so never shown) after SEMI2, and SAT (likewise) after CONTOUR.
 constexpr LfoDest kDestOrder[] = {
-    LfoDest::Pitch, LfoDest::Dec,    LfoDest::Col,    LfoDest::Shp,    LfoDest::Swp,    LfoDest::Con,
-    LfoDest::Vol,   LfoDest::Cutoff, LfoDest::Drive,  LfoDest::Reso,   LfoDest::Fenv,   LfoDest::Dly,
-    LfoDest::Rvb,   LfoDest::ModSend, LfoDest::Pan,  LfoDest::Bit,    LfoDest::Srr,    LfoDest::Fine,   LfoDest::Duty,
-    LfoDest::Sub,   LfoDest::Noise,  LfoDest::Semi2,  LfoDest::Rate1,  LfoDest::Rate2,  LfoDest::Rate3,
-    LfoDest::Rate4, LfoDest::Depth1, LfoDest::Depth2, LfoDest::Depth3, LfoDest::Depth4, LfoDest::Rtrg1,
-    LfoDest::Rtrg2, LfoDest::Rtrg3,  LfoDest::Rtrg4};
+    LfoDest::Pitch,   LfoDest::Dec,     LfoDest::Col,     LfoDest::Shp,     LfoDest::Swp,     LfoDest::Con,
+    LfoDest::Sat,     LfoDest::Vol,     LfoDest::Cutoff,  LfoDest::Drive,   LfoDest::Reso,    LfoDest::Fenv,
+    LfoDest::Dly,     LfoDest::Rvb,     LfoDest::ModSend, LfoDest::Pan,     LfoDest::Bit,     LfoDest::Srr,
+    LfoDest::Fine,    LfoDest::Duty,    LfoDest::Sub,     LfoDest::Noise,   LfoDest::Semi2,   LfoDest::Fold,
+    LfoDest::Ring,    LfoDest::Rate1,   LfoDest::Rate2,   LfoDest::Rate3,   LfoDest::Rate4,   LfoDest::Depth1,
+    LfoDest::Depth2,  LfoDest::Depth3,  LfoDest::Depth4,  LfoDest::Rtrg1,   LfoDest::Rtrg2,   LfoDest::Rtrg3,
+    LfoDest::Rtrg4};
 constexpr int kDestN = sizeof(kDestOrder) / sizeof(kDestOrder[0]);
 static_assert(kDestN == static_cast<int>(LfoDest::Count), "kDestOrder must list every LfoDest once");
 
@@ -362,7 +381,7 @@ const char* lfoDestName(uint8_t dest, InstrType t) {
       "PITCH", "DECAY", "COLOR", "SHAPE", "SWEEP", "CONTOUR", "VOL", "CUTOFF", "DRIVE",
       "RESO", "FENV", "DLY", "RVB", "BIT", "SRR", "FINE", "DUTY", "SUB", "NOISE", "SEMI2",
       "L1 RATE", "L2 RATE", "L3 RATE", "L4 RATE", "L1 DEPTH", "L2 DEPTH", "L3 DEPTH", "L4 DEPTH",
-      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD"};
+      "L1 RTRG", "L2 RTRG", "L3 RTRG", "L4 RTRG", "PAN", "MOD", "FOLD", "RING", "SAT"};
   static const char* const kSyn[] = {"SHP1", "SHP2", "MIX", "DET", "SENV"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");
   if (dest >= static_cast<uint8_t>(LfoDest::Count)) dest = 0;

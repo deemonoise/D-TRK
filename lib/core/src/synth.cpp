@@ -27,6 +27,41 @@ constexpr float kFmCacheCents = 0.01f;  // semitones
 
 MT_INLINE float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+// FM / DRUM params cache (Voice::fp*): a miss when off, for another machine, or with inputs past the
+// tolerance; the first update after a note-on hits only on the very same inputs.
+MT_INLINE bool fpStale(Voice& v, bool on, const float (&mac)[kFmMacros], float pitch) {
+  const bool exact = v.fpExact;
+  v.fpExact = false;
+  if (!v.fpValid || !on || v.fpMachine != v.machine) return true;
+  if (exact) {
+    if (pitch != v.fpPitch) return true;
+    for (int k = 0; k < kFmMacros; ++k)
+      if (mac[k] != v.fpMac[k]) return true;
+    return false;
+  }
+  if (fabsf(pitch - v.fpPitch) >= kFmCacheCents) return true;
+  for (int k = 0; k < kFmMacros; ++k)
+    if (fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro) return true;
+  return false;
+}
+
+// The shared params' key (Synth::setMachineCache): the inputs' bits, so a hit is the very same call.
+template <typename K>
+MT_INLINE const K& mcKeyOf(K& k, uint8_t machine, const float (&mac)[kFmMacros], float pitch) {
+  for (int i = 0; i < kFmMacros; ++i) k.in[i] = fbits(mac[i]);
+  k.in[kFmMacros] = fbits(pitch);
+  k.machine = machine;
+  k.valid = true;
+  return k;
+}
+
+MT_INLINE void fpKey(Voice& v, const float (&mac)[kFmMacros], float pitch) {
+  v.fpValid = true;
+  v.fpMachine = v.machine;
+  v.fpPitch = pitch;
+  for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
+}
+
 constexpr int kLfoDests = static_cast<int>(LfoDest::Count);
 constexpr int ld(LfoDest d) { return static_cast<int>(d); }
 // 0..127 parameter + LFO offset, rounded and clamped.
@@ -116,8 +151,47 @@ Synth::Synth(const SynthModel& p) : p_(p) {
   tuneSeen_.count = 0xFF;  // never a valid table: the first syncTuning builds
   syncTuning();
   reset();
-  for (auto& r : instLfoRnd_)
-    for (float& x : r) x = rnd();
+  reseed();
+}
+
+void Synth::reseed() {
+  rng_ = kRngSeed;
+  for (int m = 0; m < kInstruments; ++m) {
+    for (int i = 0; i < kLfos; ++i) {
+      instLfoPhase_[m][i] = 0;
+      instLfoRnd_[m][i] = rnd();
+      instLfoOut_[m][i] = 0;
+    }
+    instLfoWrap_[m] = 0;
+  }
+  paused_ = running_ = false;
+  gatePos_ = 0;
+  gateOut_ = -1;
+}
+
+void Synth::setMachineCache(MachineCache* mem) {
+  mc_ = mem;
+  for (auto& ks : mcKey_)
+    for (auto& k : ks) k.valid = false;
+  mcNext_[0] = mcNext_[1] = 0;
+}
+
+MT_HOT int Synth::mcFind(int kind, const McKey& k) const {
+  for (int i = 0; i < kMcSlots; ++i) {
+    const McKey& c = mcKey_[kind][i];
+    if (!c.valid || c.machine != k.machine) continue;
+    bool same = true;
+    for (int j = 0; j <= kFmMacros && same; ++j) same = c.in[j] == k.in[j];
+    if (same) return i;
+  }
+  return -1;
+}
+
+MT_HOT int Synth::mcStore(int kind, const McKey& k) {
+  const int i = mcNext_[kind];
+  mcNext_[kind] = static_cast<uint8_t>((i + 1) % kMcSlots);
+  mcKey_[kind][i] = k;
+  return i;
 }
 
 void Synth::reset() {
@@ -127,7 +201,9 @@ void Synth::reset() {
   load_ = 0;
   cap_ = kVoices;
   capUp_ = 0;
-  over_ = 0;
+  drumResetNoise();  // a render repeats exactly
+  debt_ = 0;
+  shedWait_ = 0;
   delay_.clear();
   reverb_.clear();
   comp_.reset();
@@ -154,11 +230,15 @@ void Synth::reset() {
   for (int t = 0; t < kSynthTracks; ++t) startTrack(static_cast<uint8_t>(t));
 }
 
-MT_HOT void Synth::setLoad(float load) {
-  load_ += (load - load_) * 0.25f;
-  over_ = load > kLoadPanic ? over_ + 1 : 0;
-  const bool high = load_ > kLoadHigh;
-  if (!high && over_ < kPanicBlocks && load <= kLoadHard) {
+// Once a block (audio task): flash.
+void Synth::setLoad(float load) {
+  load_ += ((load < 1.f ? load : 1.f) - load_) * kLoadSmooth;
+  debt_ += load - 1.f;
+  if (debt_ < 0) debt_ = 0;
+  if (shedWait_) --shedWait_;
+  const bool panic = debt_ >= kDebtMax;
+  const bool high = load_ > kLoadHigh && !shedWait_;
+  if (!panic && !high) {
     if (load_ < kLoadLow && cap_ < kVoices && ++capUp_ >= kCapUpBlocks) {
       ++cap_;
       capUp_ = 0;
@@ -166,8 +246,8 @@ MT_HOT void Synth::setLoad(float load) {
     return;
   }
   capUp_ = 0;
-  // Shed one voice per block while over: releasing ones first, the oldest of each. A note that
-  // has ended (a filter tail) costs only the filter and cannot be faded without a click.
+  // Shed one voice: releasing ones first, the oldest of each. A note that has ended (a filter
+  // tail) costs only the filter and cannot be faded without a click.
   int live = 0, victim = -1;
   bool victimRel = false;
   for (int i = 0; i < kVoices; ++i) {
@@ -183,7 +263,10 @@ MT_HOT void Synth::setLoad(float load) {
   if (live <= kMinVoices || victim < 0) return;
   voices_[victim].env.fade(kStealMs);
   voices_[victim].stolen = true;
-  if (high) cap_ = live - 1;
+  if (high) {  // the smoothed load lags the shed voice: wait before the next
+    cap_ = live - 1;
+    shedWait_ = kShedBlocks;
+  }
 }
 
 void Synth::startTrack(uint8_t track) {
@@ -393,8 +476,8 @@ MT_HOT float Synth::tickSamples() const {
   return kSynthRate * 0.625f / bpm;  // 625000 / bpm us
 }
 
-// Project::dlyTime sixteenths (24 ticks each); Delay clamps it to its line.
-MT_HOT uint32_t Synth::delaySamples() const {
+// Project::dlyTime sixteenths (24 ticks each); Delay clamps it to its line. Once a block: flash.
+uint32_t Synth::delaySamples() const {
   const uint8_t dt = morphM(kScnDTime, p_.dlyTime);
   const uint8_t t = dt < 1 ? 1 : (dt > kDlyTimeMax ? kDlyTimeMax : dt);
   return static_cast<uint32_t>(t * 24 * tickSamples() + 0.5f);
@@ -499,8 +582,10 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
     case Fx::PAN:
     case Fx::DTY:
     case Fx::GTE:
-    case Fx::MOD: {
+    case Fx::MOD:
+    case Fx::SAT: {
       // Lock: this step's note-ons, or the track's sounding voices. Macros: FM / DRUM / SYNTH voices only.
+      // SAT: every voice takes the bit, only FM reads it.
       const int k = cmd == static_cast<uint8_t>(Fx::DLY)   ? kLockDly
                     : cmd == static_cast<uint8_t>(Fx::DRV) ? kLockDrv
                     : cmd == static_cast<uint8_t>(Fx::RVB) ? kLockRvb
@@ -510,6 +595,7 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
                     : cmd == static_cast<uint8_t>(Fx::DTY) ? kLockDty
                     : cmd == static_cast<uint8_t>(Fx::GTE) ? kLockGte
                     : cmd == static_cast<uint8_t>(Fx::MOD) ? kLockMod
+                    : cmd == static_cast<uint8_t>(Fx::SAT) ? kLockSat
                                                            : cmd - static_cast<uint8_t>(Fx::DCY);
       const bool macro = k < kFmMacros;
       const uint8_t lv = val > 127 ? 127 : val;
@@ -517,14 +603,14 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
         for (auto& x : voices_)
           if (x.on && x.track == track && (!macro || x.fm || x.drum || x.syn || x.lofi)) {
             x.lock[k] = lv;
-            x.lockMask |= static_cast<uint16_t>(1u << k);
+            x.lockMask |= 1u << k;
             // PAN ramps from here to the control boundary (apply() marks the strip for a refresh;
             // the others wait for the next update).
             if (k == kLockPan) control(x, 0);
           }
       } else {
         r.lock[k] = lv;
-        r.lockMask |= static_cast<uint16_t>(1u << k);
+        r.lockMask |= 1u << k;
       }
       break;
     }
@@ -632,6 +718,8 @@ MT_HOT static void buildLane(Instrument& out, const Instrument& k, const KitLane
   out.rsend = k.rsend;
 }
 
+// Once a block per sounding instrument and at note-ons; with cacheLfos / cacheInstruments, IRAM (a
+// note-on burst after a block of rendering finds flash code cold).
 MT_HOT void Synth::cacheInstrument(uint8_t i) {
   if (i >= kInstruments) return;
   int s = instSlot_[i];
@@ -670,6 +758,13 @@ const Instrument& Synth::laneOf(const Voice& v) const {
 }
 
 void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
+#ifdef AUDIO_PEAK_DIAG
+  ndBegin();
+  struct NdEnd {  // early returns: no commit, and control() outside a note-on books nothing
+    bool& in;
+    ~NdEnd() { in = false; }
+  } ndEnd{ndIn_};
+#endif
   uint8_t ii = trackInstr(track);
   bool kitLane = false;  // a KIT lane: mono per lane (choke on the same note), poly across lanes
   int laneIdx = 0;
@@ -753,6 +848,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   const float pitch = tuned ? static_cast<float>(note + static_cast<int>(clampf(m.transpose, -24, 24)))
                             : (slicePitch ? m.root : note) + clampf(m.transpose, -24, 24) + clampf(m.fine, -50, 50) * 0.01f;
   bool legato;
+  MT_ND(kNsPre);
   // SLD: the track's sounding voice glides to the note (like legato), else a new one from the last note.
   // A KIT lane never takes another lane's voice: only its own (same note) glides or chokes.
   int held = r.sld && !kitLane ? trackVoice(track) : -1;
@@ -773,14 +869,20 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       if (x.on && x.track == track && x.sample && x.env.stage() != Env::Stage::Release &&
           (x.gen != r.gen || x.note == note))
         x.env.fade(kChokeMs);
+  // The price for the pool's budget: m is the lane's instrument for a KIT lane (a sampler lane is
+  // a SAMPLE), so sample covers both.
+  const int cost = voiceCost(m, sample);
   int vi;
-  if (held >= 0) {
+  if (held >= 0) {  // no allocVoice: the held voice takes the new note's cost, within the budget
     vi = held;
     legato = true;
     voices_[vi].age = ++age_;
+    voices_[vi].cost = static_cast<uint16_t>(enforceBudget(voices_, vi, cost, budget_));
   } else {
-    vi = allocVoice(voices_, track, mono, age_, legato, heavy, kitLane ? kKitLanes : kPolyPerTrack, cap_);
+    vi = allocVoice(voices_, track, mono, age_, legato, heavy, kitLane ? kKitLanes : kPolyPerTrack, cap_,
+                    cost, budget_);
   }
+  MT_ND(kNsAlloc);
   Voice& v = voices_[vi];
   v.stolen = false;  // SLD may take a fading voice back
   const bool keepFm = legato && v.fm;  // a sounding FM voice: choke without a click
@@ -864,10 +966,12 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   }
   v.lfoLockMask = r.lfoLockMask;
   for (int i = 0; i < kLfos; ++i) v.lfoLock[i] = r.lfoLock[i];
+  MT_ND(kNsSetup);
   if (fm || drumT || synT || lofiT)
     v.useEngine(fm ? EngineKind::Fm : drumT ? EngineKind::Drum : synT ? EngineKind::Syn : EngineKind::Lofi);
+  MT_ND(kNsEngine);
+  if (fm || drumT) v.fpExact = true;
   if (fm) {
-    v.fpValid = false;
     if (!overlap || !keepFm) {  // legato from a CHIP / SAMPLE voice starts the FM voice afresh
       // A held machine after a drum starts afresh too: its level is 1 at once, ramping the
       // drum's operators into it would jump from the drum's decayed level.
@@ -875,15 +979,17 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       resetLfos(v);
     }
   }
+  MT_ND(kNsTrig);
   for (int i = 0; i < kLfos; ++i)  // LFR: this step's note-ons start there, after the restart above
     if (r.lfoRst & (1u << i)) {
       v.lfoPhase[i] = r.lfoRstPh[i] * (1.f / 256.f);
       v.lfoRnd[i] = rnd();
     }
+  MT_ND(kNsSetup);
   if (drumT) {
-    v.fpValid = false;
     v.drv().trigger(wasDrum);
   }
+  MT_ND(kNsTrig);
   if (synT) {
     // The UI may be editing the names: copy them first. Only WT oscillators look a table up.
     for (int k = 0; k < 2; ++k) {
@@ -891,8 +997,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       for (int i = 0; i < kSampleNameMax; ++i) name[i] = m.synWt[k][i];
       name[kSampleNameMax] = 0;
       const bool wtMode = m.synOsc[k] == static_cast<uint8_t>(SynOsc::Wt);
-      v.synWt[k] = (wt_ && wtMode && name[0]) ? wt_->findWt(name) : nullptr;
+      v.synWt[k] = (wt_ && wtMode && name[0]) ? findWtMemo(name) : nullptr;
     }
+    MT_ND(kNsWt);
     if (!overlap) {  // legato keeps the phases and the env -> SHAPE running, as the filter env
       v.sv().trigger();
       v.senvT = 0;
@@ -900,6 +1007,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   }
   // Legato keeps t / the oscillator running; from a CHIP / SAMPLE voice it starts afresh. age_: drift seed
   if (lofiT && (!overlap || !wasLofi)) v.lv().trigger(age_, wasLofi);
+  MT_ND(kNsTrig);
   if (restartSmp) startSample(v, m);
   if (!overlap) {
     const uint8_t sus = m.sustain > 127 ? 127 : m.sustain;
@@ -919,7 +1027,49 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     v.fenvDone = false;
   }
   if (!legato) v.flt.reset();
+  MT_ND(kNsRest);
   control(v, 0);
+#ifdef AUDIO_PEAK_DIAG
+  MT_ND(kNsCtl);
+  if (ndIn_)
+    ndCommit(fm ? kNkFm : drumT ? kNkDrum : synT ? kNkSyn : lofiT ? kNkLofi : sample ? kNkSample : kNkChip);
+#endif
+}
+
+#ifdef AUDIO_PEAK_DIAG
+void Synth::ndCommit(int kind) {
+  uint32_t tot = 0;
+  ++nd_.n[kind];
+  for (int s = 0; s < kNoteSteps; ++s) {
+    const uint32_t c = ndCur_[s];
+    tot += c;
+    nd_.sum[kind][s] += c;
+    if (c > nd_.max[kind][s]) nd_.max[kind][s] = c;
+  }
+  if (tot > nd_.totMax[kind]) nd_.totMax[kind] = tot;
+}
+
+const char* Synth::noteStepName(int s) {
+  static const char* const kNames[kNoteSteps] = {"pre", "alloc", "setup", "engine", "trig",
+                                                 "wt",  "rest",  "machine", "set", "ctl"};
+  return s >= 0 && s < kNoteSteps ? kNames[s] : "";
+}
+
+const char* Synth::noteKindName(int k) {
+  static const char* const kNames[kNoteKinds] = {"CHIP", "SAMPLE", "FM", "DRUM", "SYNTH", "LOFI"};
+  return k >= 0 && k < kNoteKinds ? kNames[k] : "";
+}
+#endif
+
+// name: terminated, at most kSampleNameMax characters.
+const int16_t* Synth::findWtMemo(const char* name) {
+  for (int i = 0; i < wtMemoN_; ++i)
+    if (strcmp(wtMemo_[i].name, name) == 0) return wtMemo_[i].t;
+  const int16_t* t = wt_->findWt(name);
+  WtMemo& w = wtMemo_[wtMemoN_ < kWtMemo ? wtMemoN_++ : kWtMemo - 1];
+  memcpy(w.name, name, sizeof(w.name));
+  w.t = t;
+  return t;
 }
 
 void Synth::startSample(Voice& v, const Instrument& m) const {
@@ -1048,7 +1198,8 @@ MT_HOT void Synth::control(Voice& v, int dt) {
     v.vibPhase = 0;
   }
   // LFOs 1..4 summed per target (la: -1..1 x depth / 64 each; VOL multiplies). Macro targets go to
-  // controlFm / controlDrum / controlSyn (lm: macro offsets), SUB / NOISE / SEMI2 to controlSyn.
+  // controlFm / controlDrum / controlSyn (lm: macro offsets), SAT to controlFm, SUB / NOISE / SEMI2 to
+  // controlSyn.
   // Targets invalid for the type are summed and never read, so are L1..L4 RATE / DEPTH / RTRG: they
   // act through mods, LFO -> LFO from the last update's outputs and wraps (shared LFOs' wraps: advanceInstLfos). A
   // dt = 0 update (note-on, fx) neither restarts nor consumes the wraps.
@@ -1113,7 +1264,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   controlFilter(v, m, pitch, la);
   if (dt) mark(kProfCtlFlt);
   if (v.fm) {
-    controlFm(v, m, pitch, dt, lm, lfoVol);  // sets v.amp too
+    controlFm(v, m, pitch, dt, lm, lfoVol, la);  // sets v.amp too
     if (dt) mark(kProfCtlEng);
     return;
   }
@@ -1376,24 +1527,38 @@ MT_HOT void Synth::macros(const Voice& v, const Instrument& m, const float* lm, 
     if (lm[k] != 0) mac[k] = clampf(mac[k] + lm[k], 0.f, 127.f);
 }
 
-// pitch includes the LFO's PITCH target, vol its VOL target; l moves the macro targets here.
-MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
+// pitch includes the LFO's PITCH target, vol its VOL target; l moves the macro targets here, la (LFO sums
+// per target) the SAT one.
+MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
+                             const float* la) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   // fmMachine is pure and costly (tens of us): reuse the last params while the inputs stay
   // within half a macro step and a cent of the ones they were made from.
-  bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
-  for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
-  if (stale) {
-    fmMachine(v.machine, mac, pitch, v.fp());
-    ++fmCalls_;
-    v.fpValid = true;
-    v.fpPitch = pitch;
-    for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
+  if (fpStale(v, fmCache_, mac, pitch)) {
+    MT_ND(kNsCtl);
+    McKey key;
+    const bool shared = mc_ && fmCache_;
+    const int slot = shared ? mcFind(1, mcKeyOf(key, v.machine, mac, pitch)) : -1;
+    if (slot >= 0) {
+      v.fp() = mc_->fm[slot];  // as fmMachine leaves it: sat 0
+    } else {
+      fmMachine(v.machine, mac, pitch, v.fp());
+      ++fmCalls_;
+      if (shared) mc_->fm[mcStore(1, key)] = v.fp();
+    }
+    MT_ND(kNsMachine);
+    fpKey(v, mac, pitch);
   }
+  // SAT (FmParams::sat): outside the cache, so a lock or an LFO on it costs no fmMachine call; set every
+  // update (a recomputed fp() comes back with sat 0).
+  const uint8_t sb = (v.lockMask & (1u << kLockSat)) ? v.lock[kLockSat] : m.fmSat;
+  v.fp().sat = u7(sb + 64.f * la[ld(LfoDest::Sat)]) * (1.f / 127.f);
   // Ramp to the next control update: a full period from render(), the rest of it mid-segment
   // (note-on, bend), so a choke ramp ends exactly where the next update starts.
+  MT_ND(kNsCtl);
   v.fmv().control(v.fp(), dt ? dt : ctlLeft_);
+  MT_ND(kNsSet);
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * vol * (1.f / 127.f);
 }
@@ -1402,16 +1567,26 @@ MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt,
 MT_HOT void Synth::controlDrum(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
-  bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
-  for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
-  if (stale) {
-    drumMachine(v.machine, mac, pitch, v.dp());
-    ++drumCalls_;
-    v.fpValid = true;
-    v.fpPitch = pitch;
-    for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
+  if (fpStale(v, fmCache_, mac, pitch)) {
+    MT_ND(kNsCtl);
+    McKey key;
+    const bool shared = mc_ && fmCache_;
+    const int slot = shared ? mcFind(0, mcKeyOf(key, v.machine, mac, pitch)) : -1;
+    if (slot >= 0) {
+      MT_ND(kNsMachine);
+      v.drv().set(mc_->drum[slot]);
+    } else {
+      DrumParams dp;  // the voice keeps what it derives (DrumVoice::set), not the params
+      drumMachine(v.machine, mac, pitch, dp);
+      ++drumCalls_;
+      if (shared) mc_->drum[mcStore(0, key)] = dp;
+      MT_ND(kNsMachine);
+      v.drv().set(dp);
+    }
+    MT_ND(kNsSet);
+    fpKey(v, mac, pitch);
   }
-  v.drv().control(v.dp(), dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
+  v.drv().control(dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * vol * (1.f / 127.f);
 }
@@ -1440,7 +1615,9 @@ MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt
   sp.sub = u7(m.synSub + 64.f * la[ld(LfoDest::Sub)]) * (1.f / 127.f);
   sp.subOct = m.synSubOct ? 2 : 1;
   sp.noise = u7(m.synNoise + 64.f * la[ld(LfoDest::Noise)]) * (1.f / 127.f);
+  MT_ND(kNsCtl);
   v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
+  MT_ND(kNsSet);
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * vol * (1.f / 127.f);
 }
@@ -1491,14 +1668,25 @@ MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
   // Env and oscillator state are copied to locals for the loops: through v every dst store would
   // force a reload (dst may alias the voice as far as the compiler knows).
   if (v.fm || v.drum || v.syn || v.lofi) {
-    float tmp[kControl] = {0};
-    if (v.fm) v.fmv().render(tmp, n, v.amp);
-    else if (v.drum) v.drv().render(tmp, n, v.amp);  // the gate env scales a choke tail too
-    else if (v.syn) v.sv().render(tmp, n, v.amp);
-    else v.lv().render(tmp, n, v.amp);
-    Env env = v.env;
-    for (int i = 0; i < n; ++i) dst[i] += tmp[i] * env.next();
-    v.env = env;
+    // Held at full level: x 1 skipped (dst + tmp x 1 = dst + tmp, fused or not). DRUM then straight
+    // into dst: it stores dst + its sample unfused, and dst arrives zeroed as tmp (0 + -0 = +0 alike).
+    const bool full = v.env.stage() == Env::Stage::Sustain && v.env.level() == 1.f;
+    if (full && v.drum) {
+      v.drv().render(dst, n, v.amp);
+    } else {
+      float tmp[kControl] = {0};
+      if (v.fm) v.fmv().render(tmp, n, v.amp);
+      else if (v.drum) v.drv().render(tmp, n, v.amp);  // the gate env scales a choke tail too
+      else if (v.syn) v.sv().render(tmp, n, v.amp);
+      else v.lv().render(tmp, n, v.amp);
+      if (full) {
+        for (int i = 0; i < n; ++i) dst[i] += tmp[i];
+      } else {
+        Env env = v.env;
+        for (int i = 0; i < n; ++i) dst[i] += tmp[i] * env.next();
+        v.env = env;
+      }
+    }
     if ((v.fm && v.fmv().done()) || (v.drum && v.drv().done())) v.env.kill();
   } else if (v.sample) {
     renderSample(v, dst, n);
@@ -1676,6 +1864,10 @@ MT_HOT void Synth::runStrip(uint8_t track, int pos, int n, int scTrack, bool key
     panAdd(x, scL_ + pos, scR_ + pos, n, a, b, s.dgl, s.dgr);
   }
   const bool key = sc && keyAround;
+  if (tapL_ && track == kPreviewTrack) {  // the preview tap: the same gains (the preview is never the key)
+    float a = gl, b = gr;
+    panAdd(x, tapL_ + pos, tapR_ + pos, n, a, b, s.dgl, s.dgr);
+  }
   panAdd(x, (key ? scL_ : mixL_) + pos, (key ? scR_ : mixR_) + pos, n, gl, gr, s.dgl, s.dgr);
   s.gl = gl;
   s.gr = gr;
@@ -1794,8 +1986,8 @@ bool Synth::applyProfiler() {
 }
 
 // A changed table (the link's Tuning chunk, the UI) or scale root (AUTO root): rebuild the key map. A
-// memcmp of ~280 bytes per block; nothing per sample.
-MT_HOT void Synth::syncTuning() {
+// memcmp of ~280 bytes per block; nothing per sample (flash).
+void Synth::syncTuning() {
   if (p_.scaleRoot == tuneRootSeen_ && memcmp(&p_.tuning, &tuneSeen_, sizeof tuneSeen_) == 0) return;
   memcpy(&tuneSeen_, &p_.tuning, sizeof tuneSeen_);
   tuneRootSeen_ = p_.scaleRoot;
@@ -1805,6 +1997,7 @@ MT_HOT void Synth::syncTuning() {
 MT_HOT void Synth::renderCore() {
   // Profiling: mark(stage) books the time since the last mark. The clock only changes here.
   syncProfiler();
+  wtMemoN_ = 0;
   const bool clk = clock_ != nullptr;
   if (clk) {
     for (const auto& v : voices_)
@@ -1826,6 +2019,8 @@ MT_HOT void Synth::renderCore() {
   for (auto& x : msend_) x = 0;
   for (auto& x : scL_) x = 0;
   for (auto& x : scR_) x = 0;
+  if (tapL_)
+    for (int i = 0; i < kBlock; ++i) tapL_[i] = tapR_[i] = 0;
   const int scTrack = p_.scTrack >= 1 && p_.scTrack <= kTracks ? p_.scTrack - 1 : -1;
   // Sidechain ducking: the key track goes around the compressor (into sc only, added back after it),
   // so it ducks the rest of the mix without squashing itself.

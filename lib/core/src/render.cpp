@@ -30,9 +30,9 @@ uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, id
 
 uint64_t songUs(const Project& p, int maxSlots) { return ticksToUs(p, songTicks(p, maxSlots)); }
 
-void normalizePeak(int16_t* b, uint32_t n, int16_t peak) {
+void normalizePeak(int16_t* b, uint32_t n, int16_t peak, float target) {
   if (peak <= 0) return;
-  const float g = kNormPeak / peak;
+  const float g = target / peak;
   for (uint32_t i = 0; i < n; ++i) {
     const float v = b[i] * g;
     b[i] = static_cast<int16_t>(v > 32767.f ? 32767 : (v < -32768.f ? -32768 : (v < 0 ? v - 0.5f : v + 0.5f)));

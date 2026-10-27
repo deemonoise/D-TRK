@@ -8,7 +8,9 @@
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "hw/sdcard.h"
+#include "oneshot_lib.h"
 #include "sample_set.h"
+#include "storage.h"
 #include "wav.h"
 
 namespace storage {
@@ -41,16 +43,22 @@ struct RenderMem {
   }
 };
 
-// Audio parked, project locked, mutes saved for the render; undone in reverse order.
+// Audio parked, project locked, mutes saved for the render; undone in reverse order. busy: the
+// transport started after the caller's check (the engine runs commands under the lock, so it stays
+// as seen here): no synth, nothing reset.
 struct Session {
   audio::Paused paused;
   mt::Synth* synth = nullptr;
-  bool locked = false;
+  bool locked = false, busy = false;
   explicit Session() {
     if (!paused.ok) return;
-    synth = audio::liveSynth();
     engine::lockProject();
     locked = true;
+    if (!stopped()) {
+      busy = true;
+      return;
+    }
+    synth = audio::liveSynth();
   }
   ~Session() {
     if (synth) synth->reset();
@@ -69,7 +77,7 @@ void renderPath(const mt::Project& p, const mt::RenderSpec& spec, char* out, int
 
 Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, RenderStats& st, RenderProgress cb,
                  void* ctx) {
-  st = {0, 0, 0};
+  st = {0, 0, 0, false};
   if (!hw::sdReady()) return Result::NoSd;
   if (!stopped()) return Result::EngineBusy;
   fs::FS& fs = hw::sdFs();
@@ -94,7 +102,7 @@ Result renderWav(mt::Project& p, const mt::RenderSpec& spec, const char* path, R
     Session ses;
     if (!ses.synth) {
       heap_caps_free(buf);
-      return Result::AudioBusy;
+      return ses.busy ? Result::EngineBusy : Result::AudioBusy;
     }
     mt::OfflineRender::Guard guard(p);
     fs::File f = fs.open(tmp, FILE_WRITE);
@@ -175,7 +183,7 @@ Result fromBank(audio::BankResult b) {
 
 Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampleNameMax + 1], RenderStats& st,
                 RenderProgress cb, void* ctx) {
-  st = {0, 0, 0};
+  st = {0, 0, 0, false};
   name[0] = 0;
   if (!audio::bankMounted()) return Result::NoBank;
   if (!stopped()) return Result::EngineBusy;
@@ -183,6 +191,7 @@ Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampl
   RenderMem rm;
   if (!rm.mem) return Result::NoMemory;
   Session ses;
+  if (ses.busy) return Result::EngineBusy;
   if (!ses.synth) return Result::AudioBusy;
   mt::OfflineRender::Guard guard(p);
   // Pass 1: peak and the last block above -60 dBFS.
@@ -216,7 +225,138 @@ Result resample(mt::Project& p, const mt::RenderSpec& spec, char name[mt::kSampl
     name[0] = 0;
     return Result::BankFull;  // the list is full (checked above) or the name is bad (never)
   }
-  st = {out.frames, peak, 0};
+  st = {out.frames, peak, 0, false};
+  return capped ? Result::Capped : Result::Ok;
+}
+
+namespace {
+
+// Pass 2 of a bounce: the bank asks for consecutive pieces, served from rendered blocks (scaled by
+// gain when normalizing).
+struct BounceFill {
+  mt::BounceRender* ren;
+  int16_t peak;  // 0: as played
+  int16_t block[kBlock];
+  int at = kBlock;
+  uint32_t base, total;  // progress: blocks of pass 1, of both passes
+  RenderProgress cb;
+  void* ctx;
+  bool cancelled = false, diverged = false;
+};
+
+bool fillBounce(int16_t* out, uint32_t, uint32_t n, void* c) {
+  BounceFill& f = *static_cast<BounceFill*>(c);
+  for (uint32_t i = 0; i < n; ++i) {
+    if (f.at == kBlock) {
+      if (!f.ren->next(f.block)) {  // ended early or an event refused: not the render of pass 1
+        f.diverged = true;
+        return false;  // cacheWrite aborts the entry
+      }
+      if (f.peak) mt::normalizePeak(f.block, kBlock, f.peak, mt::kNormPeakHot);
+      f.at = 0;
+      if (f.cb && !f.cb(f.base + f.ren->blocks(), f.total, f.ctx)) {
+        f.cancelled = true;
+        return false;
+      }
+    }
+    out[i] = f.block[f.at++];
+  }
+  return true;
+}
+
+// The render (~1.1 KB of tap buffers) off the UI task's stack, for the render only.
+struct BounceMem {
+  void* mem = heap_caps_malloc(sizeof(mt::BounceRender), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  mt::BounceRender* r = nullptr;
+  ~BounceMem() {
+    end();
+    heap_caps_free(mem);
+  }
+  mt::BounceRender* start(mt::Synth& s, const mt::BounceSpec& b) {
+    end();
+    return r = new (mem) mt::BounceRender(s, b);  // resets s, sets its tap
+  }
+  void end() {
+    if (r) r->~BounceRender();  // the tap off
+    r = nullptr;
+  }
+};
+
+bool sdExists(const char* path, void*) { return hw::sdFs().exists(path); }
+
+// Every level of dir ("/samples/oneshots/909/BD") made.
+bool makeDirs(const char* dir) {
+  fs::FS& fs = hw::sdFs();
+  char d[96];
+  const int n = snprintf(d, sizeof d, "%s", dir);
+  if (n <= 0 || n >= static_cast<int>(sizeof d)) return false;
+  for (int i = 1; i <= n; ++i) {
+    if (d[i] != '/' && d[i] != 0) continue;
+    const char c = d[i];
+    d[i] = 0;
+    const bool ok = fs.exists(d) || fs.mkdir(d);
+    d[i] = c;
+    if (!ok) return false;
+  }
+  return true;
+}
+
+// Project sample `name` (cached) as /samples/oneshots/<oneshotDir(in)>/<name>[_N].wav.
+bool copyOneshot(const mt::Project& p, const mt::Instrument& in, const char* name) {
+  if (!hw::sdReady()) return false;
+  const int si = mt::projSampleFind(p, name);
+  const int bi = si >= 0 ? mt::projSampleBank(p, audio::bank(), si) : -1;
+  if (bi < 0) return false;
+  char dir[mt::kOneshotDirMax], path[96], folder[80];
+  mt::oneshotDir(in, dir);
+  snprintf(folder, sizeof folder, "/samples/oneshots/%s", dir);
+  if (!makeDirs(folder)) return false;
+  if (!mt::oneshotFilePath(dir, name, sdExists, nullptr, path, sizeof path)) return false;
+  return audio::exportWav(bi, path) == audio::BankResult::Ok;
+}
+
+}  // namespace
+
+Result bounce(mt::Project& p, const mt::BounceSpec& spec, const char* name, RenderStats& st, RenderProgress cb,
+              void* ctx, const mt::Instrument* dirOf, bool libCopy) {
+  st = {0, 0, 0, false};
+  if (!name || !validName(name)) return Result::BadFile;
+  if (!audio::bankMounted()) return Result::NoBank;
+  if (!stopped()) return Result::EngineBusy;
+  if (p.sampleCount >= mt::kProjSamples && mt::projSampleFind(p, name) < 0) return Result::BankFull;
+  audio::ImportOut out{};
+  int16_t peak = 0;
+  bool capped = false;
+  {
+    Session ses;
+    if (ses.busy) return Result::EngineBusy;
+    if (!ses.synth) return Result::AudioBusy;
+    BounceMem rm;  // inside the session: the tap is off before the audio task runs again
+    if (!rm.mem) return Result::NoMemory;
+    // Pass 1: the stop, the peak, the kept frames.
+    mt::BounceRender* ren = rm.start(*ses.synth, spec);
+    int16_t block[kBlock];
+    while (ren->next(block))
+      if (cb && !cb(ren->blocks(), spec.maxBlocks, ctx)) return Result::Cancelled;
+    if (ren->failed()) return Result::AudioBusy;
+    if (ren->silent()) return Result::Silent;
+    peak = ren->peak();
+    capped = ren->hitMax();
+    const uint32_t frames = ren->keepFrames();
+    const uint32_t n1 = ren->blocks();
+    // Pass 2: the same render (BounceRender repeats exactly), into the bank.
+    BounceFill fill{rm.start(*ses.synth, spec), spec.normalize ? peak : static_cast<int16_t>(0), {}, kBlock,
+                    n1, n1 + frames / kBlock, cb, ctx};
+    const audio::BankResult br = audio::cacheWrite(p, frames, fillBounce, &fill, out);
+    rm.end();
+    if (fill.cancelled) return Result::Cancelled;
+    if (fill.diverged) return Result::AudioBusy;  // never: BounceRender repeats exactly
+    if (br != audio::BankResult::Ok) return fromBank(br);
+    if (mt::projSampleSet(p, name, out.crc, out.frames) < 0) return Result::BankFull;  // checked above
+  }
+  st = {out.frames, peak, 0, false};
+  // A copy for the library (audio running again): a failed one leaves the sample in the project.
+  if (libCopy) st.copied = copyOneshot(p, dirOf ? *dirOf : p.instruments[spec.instr % mt::kInstruments], name);
   return capped ? Result::Capped : Result::Ok;
 }
 

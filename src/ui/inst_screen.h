@@ -1,4 +1,5 @@
 #pragma once
+#include "bounce_dialog.h"
 #include "model.h"
 #include "mutate.h"
 #include "param_list.h"
@@ -12,8 +13,9 @@ namespace ui {
 // Instrument editor. Shift+turn (or a tap on the header arrows) = instrument -+1; entering the tab
 // selects the instrument of App::curTrack(). PREVIEW (tap, or a long press) plays C4 for 300 ms.
 // PRESET (tap, or Shift + long press): LOAD / SAVE menu, then the PresetBrowser over the list.
-// On the SMPL page that menu is SAMPLE: Chop, Add slice (Shift on the click: at a transient), Delete
-// slice, Clear slices (confirm), Load / Save preset; A tap / Shift + A tap = next / previous marker.
+// On the SMPL page that menu is SAMPLE: Save one-shot..., Chop, Add slice (Shift on the click: at a
+// transient), Delete slice, Clear slices (confirm), Load / Save preset; A tap / Shift + A tap = next /
+// previous marker.
 // PRESET menu (not on a KIT): also Mutate 15 / 30 / 60 % (mutateSlot: filter, envelopes, macros of
 // this instrument, seeded by esp_random) and Undo mutate (one step, this instrument only).
 // Name: click to edit, turn = character, Shift+turn = position.
@@ -21,7 +23,9 @@ namespace ui {
 // ADSR graph), the type's own (OSC / SMPL / FM / DRUM / LOFI; SYNTH: OSC and MOD), FILT, LFO. The page is
 // kept across instruments and type changes (SYNTH MOD -> the type page of the others).
 // SAMPLE type page: SampleEditor (waveform with markers, zoom, slices, the sample rows).
-// FM: machine, macros (DECAY..CONTOUR); ADSR rows grey where the machine ignores them.
+// Save one-shot... (PRESET menu; SAMPLE: the SAMPLE menu): BounceDialog over the work area; on a KIT
+// (PRESET: Load, Save one-shot...) it bakes the INST lanes into samples.
+// FM: machine, macros (DECAY..CONTOUR), SAT; ADSR rows grey where the machine ignores them.
 // DRUM: machine, macros named per machine (grey "-" where unused); ADSR, mode and glide grey.
 // LOFI: machine (BYTE / APC), Formula (BYTE: the library formula by name, turn = next / previous,
 // wrapping, loads its default A B C; grey on APC), Sync (BYTE: t from the tempo, LOOP in steps; grey on
@@ -50,7 +54,7 @@ class InstScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
-  bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && onEditor(); }
+  bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && !bounce_.isOpen() && onEditor(); }
   // Track button n: on the sample editor plays slices (see SampleEditor::playSlice). False = not taken.
   bool trackKey(int n, bool shift);
 
@@ -62,7 +66,10 @@ class InstScreen : public Screen {
   static constexpr int kMainRows = 9;  // MAIN = [0, 9), ENV = [9, kCommon)
   static constexpr int kWave = kCommon, kDuty = kCommon + 1, kPwmRate = kCommon + 2, kPwmDepth = kCommon + 3,
                        kChipRows = kCommon + 4;
-  static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM, DRUM
+  static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM
+  static constexpr int kFmSat = kMacRows, kFmRows = kFmSat + 1;  // FM: SAT after the macros
+  // DRUM: Machine (kMachine) is the group (KICK, SNARE, ...), then its Model, then the macros.
+  static constexpr int kDrumModel = kCommon + 1, kDrumMac0 = kCommon + 2, kDrumRows = kDrumMac0 + mt::kFmMacros;
   // LOFI: Machine (kMachine), Formula, Sync, then the macros.
   static constexpr int kFormula = kCommon + 1, kLofiSync = kCommon + 2, kLofiMac0 = kCommon + 3,
                        kLofiRows = kLofiMac0 + mt::kFmMacros;
@@ -129,6 +136,7 @@ class InstScreen : public Screen {
   void fixNames();  // empty name -> INSn
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
   void preview();
+  uint8_t previewIns();  // the insert preview() and Save one-shot use: the current track's, or kTracks (dry)
   void presetMenu();
   void mutate(int strength);  // mutateSlot under the lock, toast, preview
   void undoMutate();
@@ -138,8 +146,8 @@ class InstScreen : public Screen {
   App& app_;
   Param chip_[kChipRows + kTailRows];
   Param sample_[kCommon + kTailRows];  // the type page is editor_
-  Param fm_[kMacRows + kTailRows];
-  Param drum_[kMacRows + kTailRows];
+  Param fm_[kFmRows + kTailRows];
+  Param drum_[kDrumRows + kTailRows];
   Param lofi_[kLofiRows + kTailRows];
   Param syn_[kSynRows + kTailRows];
   Param kit_[kKitRows];       // every KIT row
@@ -149,6 +157,7 @@ class InstScreen : public Screen {
   int page_ = kPgMain;
   PresetBrowser presets_{app_};
   WtPicker wt_{app_};
+  BounceDialog bounce_{app_};  // Save one-shot... / KIT bake
   int instr_ = 0;
   int lfoSel_ = 0;  // LFO page: which of the 4 LFOs the rows edit
   mt::Instrument typeSnap_;     // the instrument as it was in the type being left (setType)

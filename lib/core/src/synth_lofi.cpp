@@ -24,7 +24,7 @@ MT_INLINE int u7(float m) {
 
 }  // namespace
 
-void LofiVoice::trigger(uint32_t seed, bool sounding) {
+MT_HOT void LofiVoice::trigger(uint32_t seed, bool sounding) {  // note-on: IRAM
   t_ = frac_ = 0;
   prime_ = true;
   if (!sounding) dcy_ = 0;
@@ -59,9 +59,14 @@ void LofiVoice::control(const LofiParams& p, int n) {
     const float drift = p.mac[2] > 0 ? (p.mac[2] < 1 ? p.mac[2] : 1.f) : 0.f;
     if (drift > 0) hzD *= fastExp2(drift * dVal_ * (kDriftCents / 1200.f));
     float inc = hzD * (1.f / kSynthRate);
-    inc_ = inc < 0.49f ? inc : 0.49f;
+    inc = inc < 0.49f ? inc : 0.49f;
     const float w = p.mac[0] > 0 ? (p.mac[0] < 1 ? p.mac[0] : 1.f) : 0.f;
-    qInc_ = inc_ / (kApcWidthMin * fastExp2(w * kApcWidthOct));
+    if (inc != inc_ || w != w_) {  // the divisions only when the pitch or WIDTH moved
+      inc_ = inc, w_ = w;
+      qInc_ = inc_ / (kApcWidthMin * fastExp2(w * kApcWidthOct));
+      inv_ = inc_ > 0 ? 1.f / inc_ : 0.f;
+      qInv_ = qInc_ > 0 ? 1.f / qInc_ : 0.f;
+    }
     const float tone = p.mac[1] > 0 ? (p.mac[1] < 1 ? p.mac[1] : 1.f) : 0.f;
     g_ = fastExp2(-6.f * (1.f - tone));  // 127 = open
     smooth_ = p.mac[3] > 0 ? (p.mac[3] < 1 ? p.mac[3] : 1.f) : 0.f;
@@ -128,8 +133,7 @@ MT_HOT void LofiVoice::renderByte(float* out, int n, float amp) {
 MT_HOT void LofiVoice::renderApc(float* out, int n, float amp) {
   float lp = lp_, dcx = dcx_, dcy = dcy_, ph = ph_, q = q_;
   bool on = on_;
-  const float inc = inc_, qInc = qInc_, sm = smooth_, g = g_;
-  const float inv = inc > 0 ? 1.f / inc : 0.f, qInv = qInc > 0 ? 1.f / qInc : 0.f;
+  const float inc = inc_, qInc = qInc_, sm = smooth_, g = g_, inv = inv_, qInv = qInv_;
   for (int i = 0; i < n; ++i) {
     if (on) {
       q += qInc;

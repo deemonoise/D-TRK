@@ -50,6 +50,8 @@ enum class TrackOut : uint8_t { Midi, Int, Count };
 // Wt1..Wt16 follow Metal: wave = Wave::Wt1 + n.
 enum class Wave : uint8_t { Pulse, Triangle, Saw, Noise, Metal, Wt1 };
 constexpr int kWaveCount = static_cast<int>(Wave::Wt1) + kWavetables;
+// Name of a CHIP wave into o[n]: "PULSE", "WT3"; out of range -> PULSE.
+void chipWaveName(uint8_t w, char* o, int n);
 enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 // Stored in files: new values go before Count only.
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
@@ -77,6 +79,7 @@ struct KitLane {
 static_assert(sizeof(KitLane) == kSampleNameMax + 6, "KitLane layout (file format)");
 // FM machines (Model:Cycles style). Stored in files: new machines go before Count only.
 enum class FmMachine : uint8_t { Kick, Snare, Metal, Perc, Tone, Chord, Clap, Hat, Count };
+const char* fmMachineName(uint8_t machine);  // "KICK"; out of range -> Kick
 // FM macros: Instrument::macro index, fx DEC..CON = Fx::DCY + index.
 enum FmMacro : uint8_t { kMacDec, kMacCol, kMacShp, kMacSwp, kMacCon, kFmMacros };
 // SYNTH oscillator mode. Stored in files: new modes before Count only.
@@ -99,12 +102,12 @@ static_assert(static_cast<int>(LofiMachine::Count) <= kMachineMax, "machine fiel
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
 // send, the drive, the reverb send, the bit / sample-rate reduction, the pan, the drive model, the
-// trance gate's depth, the MOD send (the last bit: lockMask is full).
+// trance gate's depth, the MOD send, FM SAT (kLockSat, Instrument::fmSat).
 enum LockBit : uint8_t {
   kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLockPan, kLockDty, kLockGte,
-  kLockMod, kLocks
+  kLockMod, kLockSat, kLocks
 };
-static_assert(kLocks <= 16, "lockMask is a uint16_t");
+static_assert(kLocks <= 32, "lockMask is a uint32_t");
 // Byte: a bytebeat formula over the phase (Instrument::lfoByte). Stored in files: new waves before Count only.
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Byte, Count };
 // TrackCfg::driveModel, fx DTY: the curve of the track insert's drive (see ModelDrive, synth_drive.h).
@@ -112,12 +115,15 @@ enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Byte, Count };
 enum class DriveModel : uint8_t { Tanh, Clip, Fold, Rect, Asym, Count };
 // Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2: SYNTH (osc 2);
 // RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Pan: the track's
-// pan (+-64 at full depth). ModSend: the track's MOD send (TrackCfg::modSend). Stored in files: new targets before Count only (the Dest list shows them
-// in its own order, see lfoDestStep).
+// pan (+-64 at full depth). ModSend: the track's MOD send (TrackCfg::modSend). Fold, Ring: the teensy
+// build's SYNTH targets, kept so the values match its files (never valid here). Sat: FM SAT
+// (Instrument::fmSat), FM only. Stored in files: new targets before Count only (the Dest list shows
+// them in its own order, see lfoDestStep).
 enum class LfoDest : uint8_t {
   Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive,
   Reso, Fenv, Dly, Rvb, Bit, Srr, Fine, Duty, Sub, Noise, Semi2,
   Rate1, Rate2, Rate3, Rate4, Depth1, Depth2, Depth3, Depth4, Rtrg1, Rtrg2, Rtrg3, Rtrg4, Pan, ModSend,
+  Fold, Ring, Sat,
   Count
 };
 
@@ -226,6 +232,8 @@ struct Instrument {
   // LFO 1..4 wave BYTE: {formula (bytebeat_lib.h), A 0..127}; B / C are the formula's defaults. Default:
   // formula 0 and its A (kByteDef*).
   uint8_t lfoByte[kLfos][2] = {{0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}};
+  // FM SAT 0..127: tanh saturation before the voice's amp (FmParams::sat), 0 = off. FM only; kept on any type.
+  uint8_t fmSat = 0;
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }
@@ -311,7 +319,7 @@ float folCoef(uint8_t v);
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
-  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, Count
+  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, SAT, Count
 };
 // LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
@@ -326,6 +334,7 @@ enum class Fx : uint8_t {
 // DTY locks the track insert's drive model (kLockDty, DriveModel: TNH CLP FLD RCT ASY), INT tracks only.
 // GTE locks the trance gate's depth (kLockGte, TrackCfg::gateDepth: 0 = OFF, 1..127), INT tracks only.
 // MOD locks the MOD bus send (kLockMod, TrackCfg::modSend), INT tracks only.
+// SAT locks the FM instrument's SAT (kLockSat, Instrument::fmSat), INT tracks only; other types ignore it.
 // FLP (0..100 %): the track generator's register shift on this step flips with this chance instead of
 // GenCfg::flip (shift_gen.h). The sequencer's; never sent to the synth.
 // ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.

@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <unity.h>
 #include "synth_osc.h"
@@ -149,6 +150,63 @@ void test_voice_bounded_above_sample_rate() {
   }
 }
 
+// Golden renders: osc 1 mode x osc 2 mode x sync x (sub, noise), shape and mix ramps (holds at 0 and 1),
+// odd spans. One hash per osc 1 mode; captured on the code before the oscBlock loop variants.
+static uint32_t goldenSyn(int m1) {
+  static int16_t t[kWtTableSamples];
+  static bool built = false;
+  if (!built) {
+    WtBuiltinSrc src(1);
+    wtBuild(src, t);
+    built = true;
+  }
+  static const int spans[] = {32, 32, 7, 25, 64, 1, 31, 128};
+  static float buf[2048];
+  uint32_t h = 2166136261u;
+  for (int m2 = 0; m2 < 4; ++m2)
+    for (int sync = 0; sync < 2; ++sync)
+      for (int ex = 0; ex < 2; ++ex) {
+        SynVoice v;
+        v.trigger();
+        for (int i = 0; i < 2048; ++i) buf[i] = 0;
+        int pos = 0;
+        for (int k = 0; pos < 2048; ++k) {
+          const int sp = spans[k % 8] < 2048 - pos ? spans[k % 8] : 2048 - pos;
+          SynParams p;
+          p.mode[0] = static_cast<uint8_t>(m1), p.mode[1] = static_cast<uint8_t>(m2);
+          p.wt[0] = p.wt[1] = t;
+          p.hz[0] = 110.f + 13 * k;
+          p.hz[1] = p.hz[0] * (sync ? 2.37f : 1.01f);
+          p.shape[0] = (k % 11) / 10.f, p.shape[1] = (k % 7) / 6.f;
+          p.mix = k < 10 ? 0 : (k < 20 ? (k - 10) / 10.f : (k < 30 ? 1 : 0.5f));
+          p.sync = sync;
+          p.sub = ex ? 0.5f : 0, p.subOct = k % 2 ? 1 : 2;
+          p.noise = ex ? 0.1f : 0;
+          v.control(p, sp);
+          v.render(buf + pos, sp, 0.7f);
+          pos += sp;
+        }
+        for (int i = 0; i < 2048; ++i) {
+          uint32_t x;
+          memcpy(&x, &buf[i], 4);
+          for (int b = 0; b < 4; ++b) h = (h ^ ((x >> (8 * b)) & 0xFFu)) * 16777619u;
+        }
+      }
+  return h;
+}
+
+void test_golden_voice() {
+  static const uint32_t kGolden[4] = {0xE0AB1A5Bu, 0xD42BE9E4u, 0x8A4C2A2Cu, 0xEEB73EB1u};
+  bool ok = true;
+  char msg[96] = "";
+  for (int m = 0; m < 4; ++m) {
+    const uint32_t g = goldenSyn(m);
+    ok = ok && g == kGolden[m];
+    snprintf(msg + strlen(msg), sizeof msg - strlen(msg), " 0x%08X", static_cast<unsigned>(g));
+  }
+  TEST_ASSERT_TRUE_MESSAGE(ok, msg);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_bl_saw_alias_below_naive);
@@ -160,5 +218,6 @@ int main() {
   RUN_TEST(test_wt_level_choice);
   RUN_TEST(test_voice_mix_and_silence);
   RUN_TEST(test_voice_bounded_above_sample_rate);
+  RUN_TEST(test_golden_voice);
   return UNITY_END();
 }

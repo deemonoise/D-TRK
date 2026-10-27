@@ -10,6 +10,7 @@
 #include "synth_lofi.h"
 #include "synth_osc.h"
 #include "synth_syn.h"
+#include "voice_cost.h"
 
 namespace mt {
 
@@ -35,8 +36,7 @@ struct FmEngine {
   FmParams fp;
 };
 struct DrumEngine {
-  DrumVoice drv;
-  DrumParams dp;
+  DrumVoice drv;  // with what it derives from its DrumParams (set() on a change)
 };
 struct LofiEngine {
   LofiVoice lv;
@@ -113,7 +113,7 @@ struct Voice {
   // FM instrument.
   bool fm = false;
   uint8_t machine = 0;               // FmMachine / DrumMachine, latched at note-on: a sounding note keeps it
-  uint16_t lockMask = 0;             // locked for this note: bit = LockBit (macros: FM / DRUM only)
+  uint32_t lockMask = 0;             // locked for this note: bit = LockBit (macros: FM / DRUM only)
   uint8_t lock[kLocks] = {0};
   float lfoPhase[kLfos] = {};        // 0..1, per LFO (Retrig OFF ones use the instrument's)
   float lfoRnd[kLfos] = {};          // Random wave: value of the current cycle
@@ -122,17 +122,22 @@ struct Voice {
   float lfoOut[kLfos] = {};          // last update's output (-1..1 x depth / 64): LFO -> LFO source
   uint8_t lfoWrap = 0;               // bit i: LFO i's phase wrapped since the last update (RTRG source)
   // fmMachine() cache: params for the key below, recomputed when a macro moves >= 0.5 or the
-  // pitch >= 1 cent from it (Synth::controlFm). fpValid = false forces a recompute (note-on).
+  // pitch >= 1 cent from it (Synth::controlFm). fpValid = false forces a recompute (engine
+  // switch). A note-on sets fpExact: a hit reuses them only for the very same machine, macros and
+  // pitch, so it plays as with a recompute.
   bool fpValid = false;
+  bool fpExact = false;
+  uint8_t fpMachine = 0;
   float fpPitch = 0;
   float fpMac[kFmMacros] = {0};
-  // DRUM instrument (machine above holds its DrumMachine). drumMachine() cache: dp for the fp*
-  // key above, as fp for FM (Synth::controlDrum).
+  // DRUM instrument (machine above holds its DrumMachine). drumMachine() cache: the DrumVoice's
+  // set() for the fp* key above, as fp for FM (Synth::controlDrum).
   bool drum = false;
   // SYNTH instrument: tables resolved at note-on (a table changed mid-note applies to the next note).
   bool syn = false;
   bool synHeavy = false;  // SYNTH with a wavetable oscillator: counts against kFmVoiceMax
-  bool stolen = false;    // fading out (kStealMs) for a heavy note past kFmVoiceMax
+  bool stolen = false;    // fading out (kStealMs): a heavy note past kFmVoiceMax, the budget, the guard
+  uint16_t cost = 0;      // voiceCost at note-on (allocVoice / enforceBudget, Synth::voiceBudget)
   uint32_t senvT = 0;                // samples since the env -> SHAPE trigger
   const int16_t* synWt[2] = {nullptr, nullptr};
   // Melodic voice in a project tuning (Synth::tune_ on at note-on, not a drum / KIT lane / NOTE slice):
@@ -144,14 +149,15 @@ struct Voice {
   FmVoice& fmv() { return eng.fm.fmv; }
   FmParams& fp() { return eng.fm.fp; }
   DrumVoice& drv() { return eng.drum.drv; }
-  DrumParams& dp() { return eng.drum.dp; }
-  const DrumParams& dp() const { return eng.drum.dp; }
+  const DrumVoice& drv() const { return eng.drum.drv; }
   SynVoice& sv() { return eng.syn; }
   LofiVoice& lv() { return eng.lofi.lv; }
   LofiParams& lp() { return eng.lofi.lp; }
-  // Makes the engine of kind k current: constructed afresh when another one is held.
+  // Makes the engine of kind k current: constructed afresh when another one is held (its params
+  // cache with it).
   void useEngine(EngineKind k) {
     if (k == engKind) return;
+    fpValid = false;
     if (k == EngineKind::Fm) new (&eng.fm) FmEngine();
     else if (k == EngineKind::Drum) new (&eng.drum) DrumEngine();
     else if (k == EngineKind::Syn) new (&eng.syn) SynVoice();
@@ -186,7 +192,15 @@ inline bool heavyLoad(const Voice& x) {
 // polyMax: poly voices the track may hold (KIT lanes: kKitLanes).
 // cap: voices that may sound (CPU guard, Synth::setLoad); with cap voices on (stolen ones not
 // counted) there is no free voice.
+// cost, budget: the note's voiceCost and the pool's budget (voice_cost.h), see enforceBudget. The
+// pick stores cost (Voice::cost).
 int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato,
-               bool heavy = false, int polyMax = kPolyPerTrack, int cap = kVoices);
+               bool heavy = false, int polyMax = kPolyPerTrack, int cap = kVoices, int cost = 0,
+               int budget = kVoiceBudgetOff);
+// The budget part of allocVoice, also for a voice taken without it (SLD, a KIT lane choke): with
+// the live voices' costs (stolen ones and v[pick] not counted) plus cost over budget, the oldest
+// live voices but pick, releasing first, fade over kStealMs (stolen) until it fits or none is left:
+// the note always plays. Returns cost clamped to Voice::cost's range (the caller stores it).
+int enforceBudget(Voice (&v)[kVoices], int pick, int cost, int budget);
 
 }  // namespace mt

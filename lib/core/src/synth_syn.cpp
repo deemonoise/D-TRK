@@ -23,7 +23,7 @@ MT_HOT void WtOsc::setLevel(float hz) {
   while ((1 << lb) < wtLevelLen(k)) ++lb;
 }
 
-void SynVoice::trigger() {
+MT_HOT void SynVoice::trigger() {  // note-on: IRAM
   for (auto& o : bl_) o.reset();
   for (auto& o : wt_) o.reset();
   sub_.reset();
@@ -54,36 +54,53 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
   const float inv = dt > 1e-30f ? fastRcp(dt) : 0.f;  // the edge distances: no '/' per wrap
   float s = shape_[k];
   const float ds = shapeStep_[k];
+  // Loops per role (sync slave / sync master / free): no per-sample sync or wrap tests. A slave
+  // reports no wraps of its own (render() never asks). Oscillators in locals: dst / wrap stores
+  // would force reloads through this.
   switch (static_cast<SynOsc>(p_.mode[k])) {
     case SynOsc::Square: {
-      BlOsc& o = bl_[k];
-      for (int i = 0; i < n; ++i, s += ds) {
-        const BlOut r = o.square(dt, inv, 0.5f + 0.45f * s, sync ? sync[i] : -1.f);
-        dst[i] = r.v;
-        if (wrap) wrap[i] = r.wrap;
+      BlOsc o = bl_[k];
+      if (sync) {
+        for (int i = 0; i < n; ++i, s += ds) dst[i] = o.square(dt, inv, 0.5f + 0.45f * s, sync[i]).v;
+      } else if (wrap) {
+        for (int i = 0; i < n; ++i, s += ds) {
+          const BlOut r = o.square(dt, inv, 0.5f + 0.45f * s, -1.f);
+          dst[i] = r.v;
+          wrap[i] = r.wrap;
+        }
+      } else {
+        for (int i = 0; i < n; ++i, s += ds) dst[i] = o.square(dt, inv, 0.5f + 0.45f * s, -1.f).v;
       }
+      bl_[k] = o;
       break;
     }
     case SynOsc::Tri: {
-      BlOsc& o = bl_[k];
-      for (int i = 0; i < n; ++i) {
-        const BlOut r = o.tri(dt, inv);
-        dst[i] = r.v;
-        if (wrap) wrap[i] = r.wrap;
+      BlOsc o = bl_[k];
+      if (wrap) {
+        for (int i = 0; i < n; ++i) {
+          const BlOut r = o.tri(dt, inv);
+          dst[i] = r.v;
+          wrap[i] = r.wrap;
+        }
+      } else {
+        for (int i = 0; i < n; ++i) dst[i] = o.tri(dt, inv).v;
       }
+      bl_[k] = o;
       break;
     }
     case SynOsc::Wt: {
-      WtOsc& o = wt_[k];
+      WtOsc o = wt_[k];
       const int16_t* tab = p_.wt[k];
       const float fs = kWtFrames - 1;
       if (sync) {  // slave: no wraps of its own needed
         for (int i = 0; i < n; ++i, s += ds) dst[i] = o.next(tab, dt, s * fs, sync[i]);
+        wt_[k] = o;
         break;
       }
       const uint32_t dph = WtOsc::step(dt);
       if (!wrap) {
         for (int i = 0; i < n; ++i, s += ds) dst[i] = o.next(tab, dph, s * fs);
+        wt_[k] = o;
         break;
       }
       // Master of a sync: where the phase wrapped in this step.
@@ -92,15 +109,23 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
         dst[i] = o.next(tab, dph, s * fs);
         wrap[i] = o.ph < before ? o.phase() * inv : -1.f;
       }
+      wt_[k] = o;
       break;
     }
     default: {
-      BlOsc& o = bl_[k];
-      for (int i = 0; i < n; ++i) {
-        const BlOut r = o.saw(dt, inv, sync ? sync[i] : -1.f);
-        dst[i] = r.v;
-        if (wrap) wrap[i] = r.wrap;
+      BlOsc o = bl_[k];
+      if (sync) {
+        for (int i = 0; i < n; ++i) dst[i] = o.saw(dt, inv, sync[i]).v;
+      } else if (wrap) {
+        for (int i = 0; i < n; ++i) {
+          const BlOut r = o.saw(dt, inv, -1.f);
+          dst[i] = r.v;
+          wrap[i] = r.wrap;
+        }
+      } else {
+        for (int i = 0; i < n; ++i) dst[i] = o.saw(dt, inv, -1.f).v;
       }
+      bl_[k] = o;
       break;
     }
   }
@@ -116,16 +141,19 @@ MT_HOT void SynVoice::render(float* out, int n, float amp) {
   const float mixEnd = mix_ + mixStep_ * n;
   const bool need1 = mix_ < 1.f || mixEnd < 1.f || p_.sync;
   const bool need2 = mix_ > 0.f || mixEnd > 0.f;
+  // Mix held at 0: osc 1 as is, a + (b - a) x 0 = a (a -0 turns +0, absorbed by out + it).
+  const bool mixOn = mix_ != 0.f || mixStep_ != 0.f;
   float a[kChunk], b[kChunk], w[kChunk];
   for (int pos = 0; pos < n; pos += kChunk) {
     const int m = n - pos < kChunk ? n - pos : kChunk;
     if (need1) oscBlock(0, a, nullptr, p_.sync ? w : nullptr, m);
     else for (int i = 0; i < m; ++i) a[i] = 0;
     if (need2) oscBlock(1, b, p_.sync ? w : nullptr, nullptr, m);
-    else for (int i = 0; i < m; ++i) b[i] = 0;
+    else if (mixOn) for (int i = 0; i < m; ++i) b[i] = 0;
     float mx = mix_;
     const float dm = mixStep_;
-    for (int i = 0; i < m; ++i, mx += dm) a[i] += (b[i] - a[i]) * mx;
+    if (mixOn)
+      for (int i = 0; i < m; ++i, mx += dm) a[i] += (b[i] - a[i]) * mx;
     if (p_.sub > 0) {
       const float sg = p_.sub;
       for (int i = 0; i < m; ++i) a[i] += sub_.square(subDt, subInv, 0.5f, -1).v * sg;

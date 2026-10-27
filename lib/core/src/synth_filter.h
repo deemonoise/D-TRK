@@ -39,6 +39,33 @@ struct Svf {
     ic1_ = ic1;
     ic2_ = ic2;
   }
+  // A loop's copy of the state and coefficients (run(), bp() / hp() per sample, store()): the
+  // mode picked by the caller, the state in registers. Same arithmetic as process(), bit for bit.
+  struct Run {
+    float ic1, ic2, a1, a2, a3, k;
+    MT_INLINE void step(float v0, float& v1, float& v2) {
+      const float v3 = v0 - ic2;
+      v1 = a1 * ic1 + a2 * v3;
+      v2 = ic2 + a2 * ic1 + a3 * v3;
+      ic1 = 2.f * v1 - ic1;
+      ic2 = 2.f * v2 - ic2;
+    }
+    MT_INLINE float bp(float v0) {
+      float v1, v2;
+      step(v0, v1, v2);
+      return v1;
+    }
+    MT_INLINE float hp(float v0) {
+      float v1, v2;
+      step(v0, v1, v2);
+      return v0 - k * v1 - v2;
+    }
+  };
+  MT_INLINE Run run() const { return {ic1_, ic2_, a1_, a2_, a3_, k_}; }
+  MT_INLINE void store(const Run& r) {
+    ic1_ = r.ic1;
+    ic2_ = r.ic2;
+  }
   MT_HOT MT_INLINE float process(float v0) {
     const float v3 = v0 - ic2_;
     const float v1 = a1_ * ic1_ + a2_ * v3;

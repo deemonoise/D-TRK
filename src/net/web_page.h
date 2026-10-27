@@ -72,7 +72,7 @@ progress{width:100%;display:none;margin-top:8px}
 <div class="list"><table></table></div></section>
 
 <section id="samples"><h2>Samples (/samples)</h2>
-<p class="note">Only .wav, up to 4 MB. Import into the bank on the tracker: FILE &rarr; SAMPLES. Folders allowed (up to 4 levels).</p>
+<p class="note">Only .wav, up to 4 MB. Import into the bank on the tracker: FILE &rarr; SAMPLES. Folders allowed (up to 4 levels). Save one-shot copies its renders into oneshots/.</p>
 <div class="crumb"><span></span><button>New folder</button></div>
 <div class="drop">Drop files here or click to choose<input type="file" accept=".wav" multiple hidden></div>
 <progress max="100"></progress><div class="st"></div>

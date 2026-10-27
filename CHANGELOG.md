@@ -2,6 +2,39 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-26
+- DRUM: a machine is picked by group and model — the **Machine** row (KICK, SNARE, TOM, CLAP, RIM, HAT,
+  CYMBL, PERC) and **Model** (808, 909, CLAVE, BELL); both wrap around. Machine numbers in files are
+  unchanged.
+- DRUM sound: every 808 / 909 machine is calibrated against recordings of the real ones (pitch, sweeps,
+  decays, partials, noise bands, clap timing). Default hits peak at about −1 dBFS (kicks ~+7 dB louder);
+  the output soft clip is always on, DRIVE is the gain into it. Renamed: SD9 TONE → TUNE, TOM9 NOISE →
+  TUNE, CY9 HP → TUNE (as the 909's Tune). HH8 DECAY goes from closed (τ 5–40 ms over 0–51) to open
+  (160–660 ms over 76–127); CY9 RIDE/CR blends ride to crash. RS9 was wrong (1700 / 3400 Hz), now 220 + 460
+  Hz. New defaults for TOM8/9, CP8/9, RS8/9, CL8, CB8, HH8, HH9, CY9: on most percussion 64 is the original
+  sound. The file format is unchanged, but projects and presets with DRUM sound different.
+- Fatter FM: TONE and CHORD play detuned operator pairs (TONE: COLOR sets 4–12 cents; CHORD: fixed
+  −6 / +4 / −2 / +7 cents); higher modulation index (to 12 rad) and feedback (to 2.4) limits. **SAT** — a
+  new FM row (0–127): tanh saturation before the volume, 0 = off; P-lock fx `SAT`, LFO target SAT. KICK
+  gets an upper body (a second carrier at ×2.5–3, level with COLOR; COLOR 0 is the old kick). Saved in the
+  project (`FMEX` chunk) and in presets (v8); older files load with SAT 0. FM sounds a little different.
+
+- **Save one-shot…** (INST → PRESET; on the SMPL page in the SAMPLE menu): one note of the instrument
+  rendered offline into a new project sample — through the current track's insert when that track plays
+  the instrument (`+FX`), else dry; no sends, no master; until silence after the note-off or 10 s, trimmed
+  and normalized to −0.3 dBFS. Rows Note, Hold (0.05–5 s), Vel, Name (default `<instrument>_N`); a playing
+  transport is stopped first (`STOPPED`); a taken name asks Overwrite. The render is also copied to
+  `/samples/oneshots/<folder>/<name>.wav` (taken name → `<name>_1`, `_2`, …) for other projects: DRUM
+  `<model>/<type>` (`909/BD`, `808/SD`, `CLAVE/PERC`…), FM `FM/<machine>`, SYNTH `SYNTH/<osc 1>`, CHIP
+  `CHIP/<wave>`, LOFI `LOFI/BYTE` / `LOFI/APC`, SAMPLE `SAMPLE`; toast `SAVED, NO COPY` when the copy fails.
+- KIT: **PRESET** opens **Load** / **Save one-shot…**. On a KIT Save one-shot bakes every INST lane (not
+  SAMPLE, not a lane pointing at a KIT or a SAMPLE instrument, not a lane sharing its note with an earlier
+  lane): the kit is rendered dry (no insert) and not normalized (the kit keeps its balance) at the lane's
+  note into a new sample `<lane instrument>_N`, copied to that instrument's folder, and the lane switches to
+  SAMPLE with it, Pitch 0, Volume 127 (as loud as the instrument), Decay full (Note kept). Rows Hold, Vel;
+  header `ONE-SHOT KIT <name>`, progress `LANE i/n`; silent lanes stay, CANCEL keeps the lanes already
+  baked. Toasts `NO INSTR LANES`, `SAVED n LANES` (`, NO COPY`), `SILENT`.
+
 ## 2026-10-23
 - Variations per track (TRACK → VAR, a new page after EVO): every Every passes a new generation replaces
   what the track plays, the pattern stays. **CA1D** — a Wolfram rule (0–255) over the track's steps,

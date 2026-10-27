@@ -66,6 +66,8 @@ class LofiVoice {
   // APC.
   float ph_ = 1, inc_ = 0;      // oscillator phase 0..1, per sample (1 = an edge on the next sample)
   float q_ = 0, qInc_ = 0;      // one-shot progress 0..1, per sample
+  float inv_ = 0, qInv_ = 0;    // 1 / inc_, 1 / qInc_ (0 for 0)
+  float w_ = -1;                // WIDTH qInc_ belongs to, -1 = none yet
   bool on_ = false;             // the pulse runs
   float smooth_ = 0;            // PolyBLEP amount
   float bPrev_ = 0, bCorr_ = 0; // one sample late output and the correction due for the next

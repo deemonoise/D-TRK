@@ -47,6 +47,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack); SAME(send);
   SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate); SAME(driveModel);
   SAME(lofiFormula); SAME(lofiSync);
+  SAME(fmSat);
   SAME(sliceMode); SAME(chopMode); SAME(chopN); SAME(chopThresh); SAME(sliceCount);
   for (int k = 0; k < kMaxSlices; ++k) SAME(slices[k]);
   for (int k = 0; k < 2; ++k) {
@@ -87,7 +88,8 @@ void test_roundtrip() {
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(236, kPresetSize);
+  TEST_ASSERT_EQUAL(240, kPresetSize);
+  TEST_ASSERT_EQUAL(236, kPresetSizeV7);
   TEST_ASSERT_EQUAL(228, kPresetSizeV6);
   TEST_ASSERT_EQUAL(220, kPresetSizeV5);
   TEST_ASSERT_EQUAL(204, kPresetSizeV3);
@@ -660,11 +662,9 @@ void test_v7_lfob_roundtrip() {
   }
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
-  TEST_ASSERT_EQUAL(7, kPresetVersion);
-  TEST_ASSERT_EQUAL(7, out.buf[4]);
-  TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(kPresetSizeV6 + kLfoByteRecSize, kPresetSize);
-  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(kPresetSizeV6 + kLfoByteRecSize, kPresetSizeV7);
+  const std::vector<uint8_t> v = asVersion(out.buf, 7, kPresetSizeV7);  // a v7 file: no FMEX record
+  VecSource in(v);
   Instrument b;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
   assertSameInst(a, b, "v7");
@@ -703,6 +703,54 @@ void test_lfob_preset_clamped() {
   TEST_ASSERT_EQUAL(byteFormulaCount() - 1, b.lfoByte[3][0]);
 }
 
+// ---- Version 8: the FMEX record (FM SAT) ----
+
+void test_v8_fmex_roundtrip() {
+  Instrument a;
+  strcpy(a.name, "FATKICK");
+  instrSetType(a, InstrType::Fm);
+  fmSetMachine(a, static_cast<uint8_t>(FmMachine::Kick));
+  a.fmSat = 99;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  TEST_ASSERT_EQUAL(8, kPresetVersion);
+  TEST_ASSERT_EQUAL(8, out.buf[4]);
+  TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
+  TEST_ASSERT_EQUAL(kPresetSizeV7 + kFmExRecSize, kPresetSize);
+  TEST_ASSERT_EQUAL(99, out.buf[kPresetSizeV7 - 4]);  // SAT: byte 0 of the FMEX record, after LFOB
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  assertSameInst(a, b, "v8");
+  TEST_ASSERT_EQUAL(99, b.fmSat);
+}
+
+void test_v7_file_loads_sat_0() {
+  Instrument a;
+  instrSetType(a, InstrType::Fm);
+  a.fmSat = 50;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  const std::vector<uint8_t> v = asVersion(out.buf, 7, kPresetSizeV7);
+  VecSource in(v);
+  Instrument b;
+  b.fmSat = 9;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(0, b.fmSat);
+}
+
+void test_fmex_preset_clamped() {
+  Instrument a;
+  instrSetType(a, InstrType::Fm);
+  a.fmSat = 200;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(127, b.fmSat);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_roundtrip);
@@ -733,5 +781,8 @@ int main() {
   RUN_TEST(test_v7_lfob_roundtrip);
   RUN_TEST(test_v6_file_loads_lfob_defaults);
   RUN_TEST(test_lfob_preset_clamped);
+  RUN_TEST(test_v8_fmex_roundtrip);
+  RUN_TEST(test_v7_file_loads_sat_0);
+  RUN_TEST(test_fmex_preset_clamped);
   return UNITY_END();
 }
