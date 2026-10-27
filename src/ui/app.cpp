@@ -326,6 +326,11 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::Both:
       if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
+    case AbAction::AThenB:  // GRID, PERF off: hold A + B clears the step / selection; else Both follows
+      if (tab_ == Tab::Grid && !perf_.on() && !xyMode() && !menu_.isOpen() && !bpmEdit_ && !rec_.isOpen() &&
+          !versionBarrier() && grid_.chordClear())
+        ab_.dropBoth();
+      return;
     default: return;
   }
   onInput(hw::InputEvent{t, o.delta, o.shift});

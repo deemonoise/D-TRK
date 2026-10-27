@@ -3,6 +3,20 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## 2026-10-27
+- GRID: GAT value with <kbd>Shift</kbd> moves ±10 % of the shown value (to the nearest GAT value in the turn's direction) instead of ×10 raw units; the piano roll's A + turn steps the same way.
+- GRID **piano roll**: a third view (<kbd>Shift</kbd>+click cycles Overview → Detail → Roll, or menu → **Piano
+  roll**) shows the current track as a horizontal roll — keys on the left (root accented, out-of-scale ones greyed:
+  white keys darker, black keys lighter), each octave's root row a tinted stripe across the grid, 16 semitones × 16 steps, paged after the cursor; a crosshair on the cursor's row and column. Notes are bars
+  as long as their gate (GAT, else Def gate), cut by the next note, as bright as their velocity; CHD notes as
+  outlines. A places the row's note (a note step keeps fx and velocity, an empty one plays Def gate), A + turn
+  moves the GAT value as the grid's GAT edit does (±1, <kbd>Shift</kbd> ±10 % of the shown value; 1..200; Def gate removes GAT; toast `GATE n`) (`NO FX SLOT` when all slots are taken), hold A + B clears the step; one undo step per A press. KIT
+  tracks show their 8 lanes, A toggles the lane. File format and link protocol unchanged.
+- GRID: clearing a step is **hold A + B** in every view (Overview, Detail, Roll, KIT tracks), replacing
+  Shift+A (Shift+A now does nothing in GRID). With a selection it clears the selection. One undo step; after
+  A + turn the press and the clear are one step (B while holding A used to cancel the edit). With PERF on,
+  A then B without a turn still toggles the XY pad.
+- Undo is only <kbd>Shift</kbd>+<kbd>B</kbd> (and the menu's **Undo**): in GRID (all views, the roll too)
+  <kbd>Shift</kbd>+encoder long press and <kbd>Shift</kbd>+long tap no longer undo and do nothing.
 - **REC -> SD** from MIX: the **REC** button in the MAIN column (or an encoder long press on MIX) records
   straight to `/samples/rec/RECn.wav` on the synth card, no import, up to 4 GB or the card's space. Records on
   in the background on any tab (status bar `● REC 03:41`, tap = back to it); stop with STOP / B / long press.

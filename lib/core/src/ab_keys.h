@@ -20,6 +20,8 @@ enum class AbAction : uint8_t {
   BTrack,        // B + track button, no Shift (delta = button; MIX: scene N on crossfader end B)
   Both,          // A and B pressed together and released, nothing else meanwhile (on the first release)
   AClick,        // A held alone + encoder click (aClick: only where the screen asks for it)
+  AThenB,        // B pressed while A is held alone (A first, nothing else yet): GRID clears the step;
+                 // Both still follows on release unless the app calls dropBoth()
 };
 
 struct AbOut {
@@ -59,9 +61,10 @@ class AbKeys {
     b_ = true;
     bUsed_ = false;
     if (!a_) return out(AbAction::None);
-    if (!editing_) both_ = !aUsed_;  // alone (A not used yet): Both
+    const bool alone = !aUsed_;
+    if (!editing_) both_ = alone;  // alone (A not used yet): Both
     aUsed_ = bUsed_ = true;
-    if (!editing_) return out(AbAction::None);
+    if (!editing_) return out(alone ? AbAction::AThenB : AbAction::None);
     editing_ = false;
     return out(AbAction::EditCancel);
   }
@@ -109,6 +112,8 @@ class AbKeys {
     aUsed_ = true;
     return out(AbAction::AClick);
   }
+  // The AThenB press was taken (GRID clear): no Both on release; A and B stay used (no tap, no Back).
+  void dropBoth() { both_ = false; }
   bool aHeld() const { return a_; }
   bool bHeld() const { return b_; }
   // Input was dropped (long operation): forget held buttons.

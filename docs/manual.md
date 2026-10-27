@@ -84,9 +84,9 @@ Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and t
 | Hold <kbd>A</kbd> + turn | Edit the value under the cursor: enters edit mode if it is off and changes the value at once. Releasing A commits the value and leaves edit mode (if A entered it). Works on parameter lists, the GRID cell, name rows, SONG (the slot's pattern), sample markers, MIX (the [scene crossfader](#scenes), or the selected pan). With [PERF](#live) on and no effect held, on GRID and SONG (except in the FOL column) it moves the crossfader too. |
 | Hold <kbd>A</kbd> + encoder click in MIX, SCENE view | Unset the master parameter's lock in the edited scene (see [SCENE view](#scenes)). Elsewhere the click works as usual. |
 | Hold <kbd>A</kbd> + <kbd>Shift</kbd> + turn | Whatever <kbd>Shift</kbd>+turn does in edit mode: ×10, a note by octaves, a sample marker to the nearest onset, the cursor position on a name row. |
-| Hold <kbd>A</kbd>, press <kbd>B</kbd> | Cancel the edit: the value made with A is restored. |
+| Hold <kbd>A</kbd>, press <kbd>B</kbd> | Cancel the edit: the value made with A is restored. In GRID it clears instead (next rows). |
 | <kbd>A</kbd> tap in GRID | Empty step: put the track's last note (on a [drum track](#drumtrack), toggle the lane under the cursor). Step with a note: hear it. |
-| <kbd>Shift</kbd>+<kbd>A</kbd> in GRID | Clear the step under the cursor. |
+| Hold <kbd>A</kbd>, press <kbd>B</kbd> in GRID (all three views, KIT tracks too) | Clear: the selection if there is one, else the whole step under the cursor (note, velocity, fx). One undo step; after A + turn the press and the clear are one undo step together, and the edit mode A entered ends. B does not go Back and A does not tap. With [PERF](#live) on, A then B without a turn stays the [XY pad](#xypad) toggle (clear through the menu). <kbd>Shift</kbd>+<kbd>A</kbd> does nothing in GRID. |
 | <kbd>Shift</kbd>+<kbd>A</kbd> in MIX | Open / close the [SCENE view](#scenes). |
 | <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> in the sample editor (INST, SMPL page) | Next / previous marker, like **\>** / **\<** — see [SAMPLE](#sample). |
 | <kbd>A</kbd> tap in the [REC window](#rec) (SAMPLE and MIX) | START / STOP, like the big button (with or without Shift). A + turn still edits. |
@@ -94,7 +94,7 @@ Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and t
 | Hold <kbd>A</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end A (toast `A = SCENE 3`), also in the SCENE view and with the XY pad open; see [scenes](#scenes). Elsewhere it does nothing (the press does not reach the screen). |
 | Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. In MIX in the SCENE view: the master parameter MAIN … EQHI instead (the tab stays). |
 | Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ, section in FILE (wraps). The cursor stays on the page tabs if it was there, otherwise it goes to the first row. |
-| <kbd>A</kbd>+<kbd>B</kbd> (press both, release) on GRID, SONG, MIX | With [PERF](#live) on: XY pad on / off (see [XY pad](#xypad)). Nothing happens if a turn or a track button came in between. |
+| <kbd>A</kbd>+<kbd>B</kbd> (press both, release) on GRID, SONG, MIX | With [PERF](#live) on: XY pad on / off (see [XY pad](#xypad)). Nothing happens if a turn or a track button came in between. On GRID with PERF off, A held first and then B clears instead (see above). |
 | <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the wavetable picker, Import WAV… and Import MIDI… it steps back one folder (at the top level it closes the list). In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. In MIX: with the [REC window](#recsd) open — STOP the take, the window stays open (no take: close the window); else leave the SCENE view (in CPY mode, cancel the copy first) → drop the pan or crossfader selection → PERF on / off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
 | Hold <kbd>B</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end B (toast `B = SCENE 3`), as A + N. Elsewhere it does nothing. |
@@ -143,10 +143,11 @@ Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A 
 
 GRID always edits the pattern that is playing. When the pattern changes (queue, song, loading), the cursor moves to step 1, edit mode turns off and the selection is cleared.
 
-### Two views
+### Three views
 
 - **Overview** (default): 8 columns — one half of the 16 tracks, the one the cursor is in: 1–8 or 9–16. Which half is on screen is shown on the left above the step numbers: `1-8` or `9-16`. The half is not a separate mode: when the cursor moves from track 8 to track 9 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a [track button](#trackkeys)), the second half is shown; move back and the first returns. The [track buttons](#trackkeys) follow the same half. A cell shows the note, a velocity bar and a yellow dot if the step has fx. The dot is gray if all of the step's fx are synth fx on a MIDI track (they have no effect there). Every fourth step is highlighted, and the playback row is marked.
 - **Detail**: one (the current) track across the full width, 14 fields: NOTE, VEL and six pairs FX1…FX6 with their values. The track number (`T3`) is above the step numbers, the name above NOTE/VEL. <kbd>Shift</kbd>+turn past the last field moves to the next track; the track buttons switch it too. Tapping the name row mutes (with <kbd>Shift</kbd>, solos) that track. Synth fx on a MIDI track are shown in gray. The playback row and follow show the track's own step (Pat len, [Speed](#track)): a x2 / x4 track moves 2 / 4 rows per pattern step. Overview shows the pattern step.
+- **Piano roll**: the current track as a piano roll, see [below](#pianoroll).
 
 Track name color: yellow — solo, gray — not audible, white — normal.
 
@@ -157,17 +158,17 @@ Track name color: yellow — solo, gray — not audible, white — normal.
 | Turn | Step up/down (wraps around) | Change the field value |
 | <kbd>Shift</kbd>+turn | Overview: another track. Detail: another field | Coarse step |
 | Click | Enter edit mode (toast with the field name) | Leave edit mode |
-| <kbd>Shift</kbd>+click | Toggle Overview / Detail | |
+| <kbd>Shift</kbd>+click | Next view: Overview → Detail → [Piano roll](#pianoroll) → Overview | |
 | Long press | Context menu | |
-| <kbd>Shift</kbd>+long press | Undo | |
 | Hold <kbd>A</kbd> + turn | Enter edit mode and change the value (the mini keyboard / lane pad stays hidden); releasing A leaves edit mode | Change the value; releasing A keeps edit mode on |
+| Hold <kbd>A</kbd>, press <kbd>B</kbd> | Clear the selection, else the step under the cursor | Clear the step; edit mode stays (if A entered it, it ends) |
 
 ### What a turn changes in edit mode
 
 - **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on (FILE → SYSTEM).
 - **VEL.** 0–127, ×10 with Shift. A value of 0 is shown as `...` and means "the track's default velocity".
 - **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN, FLP; pitch and volume SLD, VIB, PBN, VSL, ACC; sound FLT, RES, DRV, DTY, BIT, SRR, GTE, DEC, COL, SHP, SWP, CON, SAT; LFO LFO, LFD, LFS, LFW, LFT, LFR; sample OFS, SLC; sends and pan DLY, RVB, MOD, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
-- **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
+- **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. For GAT Shift moves ±10 % of the shown value, to the nearest GAT value in the turn's direction (below 100 % exactly ±10 %; above 100 % the values go 7 % apart, so Shift moves one value: 95 → 107, 100 → 107, 114 → 107). On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
 
 One edit session (from entering to leaving edit mode) is one undo step.
 
@@ -191,6 +192,30 @@ A track whose TRACK → Instr is set to a [KIT](#kit) instrument is a drum track
 - Copy / Paste between drum and regular tracks copies the bytes as is: a lane mask becomes a velocity and vice versa. Likewise, switching a track's instrument between KIT and non-KIT reinterprets the steps already written.
 - On a MIDI track each lane goes out as its own note (the lane's Note) on the track's channel — this way a KIT drives an external drum machine (GM map: 36 — kick, 38 — snare, 42 — closed hat…).
 
+<a id="pianoroll"></a>
+
+### Piano roll
+
+The third view (<kbd>Shift</kbd>+click from Detail, or menu → **Piano roll**): the current track as a horizontal piano roll. The [track buttons](#trackkeys) switch the track as in Detail.
+
+- **Screen:** keys with note names on the left (white / black), step numbers on top, 16 rows of semitones × 16 steps. The scale root (PROJ → Root) is the key tinted in the cursor colour, and its row in every octave is a stripe of the same tint across the grid. With a scale other than Chromatic, out-of-scale keys are grey: white keys darker, black keys lighter (between a black and a white key). A pattern longer than 16 steps is shown a page of 16 at a time — the cursor's page; the pitch range scrolls with the cursor (drag scrolls it too). Every 4th step is lighter, the heard step is lit, steps past the track's own length (Pat len) are grey, a yellow line marks where it loops. A red mark under a step number = OFF. The cursor's row and column are highlighted (a crosshair), the cell itself is framed. While playing, follow shows the page of the heard step once the cursor has been left alone for 2 seconds.
+- **Notes** are bars as long as the step's gate: GAT 300 % = 3 cells, under 100 % a part of the cell, no GAT = the track's Def gate. The next note (or OFF) cuts the bar: the track is mono. Brightness = velocity. A CHD step shows the chord's other notes as outlines (view only).
+- **KIT track:** 8 rows, one per lane, the lane names on the left; a block = the lane hits, brightness = the step velocity.
+
+| Input | Melodic track | KIT track |
+|-------|---------------|-----------|
+| Turn | Cursor by steps (wraps around) | Same |
+| <kbd>Shift</kbd>+turn | Cursor by semitones | Cursor by lanes |
+| <kbd>A</kbd> tap | The row's note into the step: a note step keeps its fx and velocity (only the pitch changes), an empty step takes the track's velocity and length (no GAT: Def gate) | Toggles the lane in the step (an empty step: the track's velocity) |
+| Hold <kbd>A</kbd> + turn | Places the row's note (if the step holds another), then the GAT value exactly as editing GAT in the grid: ±1 per detent, with <kbd>Shift</kbd> ±10 % of the shown value (see FX VAL), 1..200 (from the step's GAT, else Def gate; 1..100 = %, above that 7 % per unit, 200 = 800 %), toast `GATE n` as the fx column shows it; Def gate itself removes GAT. All six fx slots taken: toast `NO FX SLOT` | — |
+| Hold <kbd>A</kbd>, press <kbd>B</kbd> | Clear step (the whole step, fx too); after A + turn too — the step ends up empty, one undo step for the press | Clear step |
+| Click | — (no edit mode in the roll) | Same |
+| <kbd>Shift</kbd>+click | Back to Overview | Same |
+| Long press | Context menu (<kbd>Shift</kbd>+long press does nothing) | Same |
+| Tap a cell | Cursor there (long tap: and the menu) | Same |
+
+One press of A (placing plus stretching) is one undo step.
+
 ### Touch
 
 | Gesture | Action |
@@ -198,7 +223,6 @@ A track whose TRACK → Instr is set to a [KIT](#kit) instrument is a drum track
 | Tap a cell | Moves the cursor there. Tapping the cell under the cursor toggles edit mode. Clears the selection. |
 | <kbd>Shift</kbd>+tap | Selection: the first tap sets a corner, subsequent taps move the opposite corner. |
 | Long tap | Moves the cursor there and opens the context menu. |
-| <kbd>Shift</kbd>+long tap | Undo. |
 | Tap a track name | Mute. With Shift — solo. |
 | Drag | Scrolls rows. Disables follow until the next start. |
 
@@ -212,7 +236,7 @@ Menu → **Select** sets a selection corner at the cell under the cursor. While 
 
 | Without selection | With selection |
 |-------------------|----------------|
-| Copy step · Paste · Clear step · Note OFF · Select · Copy track · Clear track · Transpose track… · **Fill…** · **Capture live** (on a track with GEN or MUT on) · **Resample track** · **Resample pattern** · **Rec: ON/OFF** · **Perf: ON/OFF** · Detail view / Overview · Follow: ON/OFF · Undo | Copy sel · Paste · Clear sel · Note OFF sel · Transpose… · **Fill…** · Undo · Clear selection |
+| Copy step · Paste · Clear step · Note OFF · Select · Copy track · Clear track · Transpose track… · **Fill…** · **Capture live** (on a track with GEN or MUT on) · **Resample track** · **Resample pattern** · **Rec: ON/OFF** · **Perf: ON/OFF** · Detail view / Overview · **Piano roll** · Follow: ON/OFF · Undo | Copy sel · Paste · Clear sel · Note OFF sel · Transpose… · **Fill…** · Undo · Clear selection |
 
 - **Transpose…** opens a dialog: **Amount** and **Mode** (SCALE — scale degrees, CHROMATIC — semitones), with OK / CANCEL buttons. The range is two octaves up and down (in SCALE that is 2 × the number of scale notes; ±14 for major). <kbd>Shift</kbd>+turn changes Amount by an octave. Long press — Cancel. Affects only steps with a note; without a selection, the whole track; one undo step. It is a shift, not a state: Amount starts at 0 every time the dialog opens; to restore the notes, apply the opposite shift (+12, then −12). Mode is remembered until power-off.
 - <a id="capturelive"></a>**Capture live** (a track with [GEN](#gen) or [MUT](#mut) on) writes what the track plays now into the edited pattern, all steps of its length: first MUT (the heard drift or generation), then the generator on top of it — PITCH replaces the notes of steps with a note, GATE puts a note on the hit steps and removes it from the others (BYTE modes the same way); OFF and step fx stay, Flip is not applied. While playing, the state is taken from the next step to play; when stopped, from the start (the generator from its seed, MUT as written). One undo step, toast `LIVE CAPTURED`. Then GEN turns OFF and MUT keeps running in its mode from a fresh state of the written pattern (EVO with no drift, CA / MARKOV at generation 0), so the sound does not jump. Undo restores the pattern and GEN; MUT restarts from a fresh state. Only while the edited pattern is the one playing (else toast `CAPTURE: OTHER PATTERN`).
@@ -270,7 +294,7 @@ The header shows the held effects in press order by short name: `PERF RPT FLT CR
 
 ### Undo
 
-<kbd>Shift</kbd>+long press in GRID or <kbd>Shift</kbd>+<kbd>B</kbd> on any screen. 8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo and mute/solo are not undone. Song edits have their own history on the [SONG](#song) tab (also <kbd>Shift</kbd>+<kbd>B</kbd>, 8 steps). There is no redo. Load, New and import clear the history.
+<kbd>Shift</kbd>+<kbd>B</kbd> on any screen — the only undo gesture (the GRID context menu also has **Undo**); <kbd>Shift</kbd>+long press and <kbd>Shift</kbd>+long tap in GRID do nothing. 8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo and mute/solo are not undone. Song edits have their own history on the [SONG](#song) tab (also <kbd>Shift</kbd>+<kbd>B</kbd>, 8 steps). There is no redo. Load, New and import clear the history.
 
 ### Step
 

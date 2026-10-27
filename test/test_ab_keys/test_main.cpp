@@ -47,9 +47,34 @@ void test_b_during_a_edit_cancels() {
 void test_a_then_b_is_both() {
   AbKeys k;
   k.aDown();
-  expect(AbAction::None, k.bDown());
+  expect(AbAction::AThenB, k.bDown());  // reported on B's press; not taken: Both on release
   expect(AbAction::Both, k.bUp(false));
   expect(AbAction::None, k.aUp(false));
+}
+
+// A held, then B, taken by the app (GRID clear): no Both, no Back, no tap, in either release order.
+void test_a_then_b_taken_drops_both() {
+  AbKeys k;
+  k.aDown();
+  expect(AbAction::AThenB, k.bDown());
+  k.dropBoth();
+  expect(AbAction::None, k.bUp(false));
+  expect(AbAction::None, k.aUp(false));
+  k.aDown();
+  expect(AbAction::AThenB, k.bDown());
+  k.dropBoth();
+  expect(AbAction::None, k.aUp(true));
+  expect(AbAction::None, k.bUp(true));
+  // B first, then A: not AThenB; A used before B (track chord): not AThenB either.
+  k.bDown();
+  expect(AbAction::None, k.aDown());
+  expect(AbAction::Both, k.aUp(false));
+  k.bUp(false);
+  k.aDown();
+  k.track(1, false);
+  expect(AbAction::None, k.bDown());
+  k.bUp(false);
+  k.aUp(false);
 }
 
 void test_b_turn_tabs_and_pages() {
@@ -223,6 +248,7 @@ int main(int, char**) {
   RUN_TEST(test_a_tap);
   RUN_TEST(test_b_during_a_edit_cancels);
   RUN_TEST(test_a_then_b_is_both);
+  RUN_TEST(test_a_then_b_taken_drops_both);
   RUN_TEST(test_b_turn_tabs_and_pages);
   RUN_TEST(test_b_tap_back_and_shift_undo);
   RUN_TEST(test_track_chords);

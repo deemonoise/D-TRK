@@ -243,6 +243,27 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   return static_cast<uint8_t>(cur);
 }
 
+uint8_t gatStep(uint8_t v, int delta, bool coarse) {
+  if (!coarse) return fxStep(Fx::GAT, v, delta);
+  int cur = v < 1 ? 1 : (v > 200 ? 200 : v);
+  const int dir = delta < 0 ? -1 : 1;
+  for (int k = delta < 0 ? -delta : delta; k > 0; --k) {
+    const int target = gatePercent(static_cast<uint8_t>(cur)) + dir * 10;
+    int best = cur, bestDist = 0;
+    for (int n = cur + dir; n >= 1 && n <= 200; n += dir) {
+      int dist = gatePercent(static_cast<uint8_t>(n)) - target;
+      if (dist < 0) dist = -dist;
+      if (best == cur || dist < bestDist) {
+        best = n;
+        bestDist = dist;
+      }
+    }
+    if (best == cur) break;  // at the clamp
+    cur = best;
+  }
+  return static_cast<uint8_t>(cur);
+}
+
 bool fxSynthOnly(Fx f) {
   return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR ||
          (f >= Fx::LFO && f <= Fx::LFR) || f == Fx::PAN || f == Fx::DTY || f == Fx::GTE ||
