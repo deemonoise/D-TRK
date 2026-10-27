@@ -296,4 +296,21 @@ bool jsonAppendDir(char* buf, size_t cap, size_t& len, const char* name, bool fi
   return false;
 }
 
+bool browseUp(char* dir, const char* root, char* left, size_t leftCap) {
+  if (leftCap) left[0] = 0;
+  const size_t rn = strlen(root), dn = strlen(dir);
+  if (dn <= rn || strncmp(dir, root, rn) != 0 || dir[rn] != '/') {
+    if (strcmp(dir, root) == 0) return false;
+    if (dn > rn) {  // not below root: back to it
+      memcpy(dir, root, rn + 1);
+      return true;
+    }
+    return false;
+  }
+  char* slash = strrchr(dir, '/');  // after root's end: dir[rn] is a '/'
+  if (leftCap) snprintf(left, leftCap, "%s", slash + 1);
+  *slash = 0;
+  return true;
+}
+
 }  // namespace mt

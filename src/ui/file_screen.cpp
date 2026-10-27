@@ -1,4 +1,5 @@
 #include "file_screen.h"
+#include "file_rules.h"
 #include "engine/engine.h"
 #include <Arduino.h>
 #include <math.h>
@@ -262,13 +263,8 @@ void FileScreen::reopenList() {
 }
 
 bool FileScreen::listUp() {
-  if (!browsing() || atRoot()) return false;
-  char* dir = curDir();
-  char* slash = strrchr(dir, '/');
   char left[hw::kNameMax];
-  strlcpy(left, slash + 1, sizeof(left));
-  if (slash == dir) strlcpy(dir, rootDir(), curDirCap());  // should not happen
-  else *slash = 0;
+  if (!browsing() || !mt::browseUp(curDir(), rootDir(), left, sizeof(left))) return false;
   reopenList();
   // Put the cursor on the folder we came from.
   for (int i = 0; i < dirCount_; ++i)
@@ -526,7 +522,8 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
   }
 }
 
-// B: the open dialog / keyboard gets its long press (close / cancel), else the file list closes;
+// B: the open dialog / keyboard gets its long press (close / cancel), else the file list goes up a
+// folder (WAV / MIDI import below /samples, /midi) or closes;
 // SYSTEM: leaves the edit with the value kept.
 void FileScreen::onBack() {
   const hw::InputEvent lp{hw::InputType::EncLong, 0, false};
@@ -534,8 +531,10 @@ void FileScreen::onBack() {
   else if (import_.isOpen()) import_.onInput(lp);
   else if (render_.isOpen()) render_.onInput(lp);
   else if (wifi_.isOpen()) wifi_.onInput(lp);
-  else if (names_) closeList();
-  else if (section_ == kSecSystem) sysList_.setEdit(false);
+  else if (names_) {  // a subfolder: one level up (the cursor on the folder left); the top: the list closes
+    stopPreview();
+    if (!listUp()) closeList();
+  } else if (section_ == kSecSystem) sysList_.setEdit(false);
 }
 
 // B + Shift + turn: the previous / next section.

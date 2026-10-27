@@ -5,8 +5,10 @@
 #include "app.h"
 #include "audio/audio.h"
 #include "fx_info.h"
+#include "mut.h"
 #include "note_name.h"
 #include "record.h"
+#include "roll.h"
 #include "scale.h"
 #include "storage/render_io.h"
 
@@ -20,6 +22,15 @@ static_assert(sizeof(kFieldNames) / sizeof(kFieldNames[0]) == 2 + 2 * mt::kFxSlo
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 bool isBlackKey(int pc) { return pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10; }
+
+// A KIT lane's label: its instrument's or sample's name (4 chars), "-" when empty or no kit.
+void laneName(const mt::Project& p, const mt::Instrument* k, int lane, char out[8]) {
+  snprintf(out, 8, "-");
+  if (!k) return;
+  const mt::KitLane& ln = k->kit[lane];
+  if (ln.instr < mt::kInstruments) snprintf(out, 8, "%.4s", p.instruments[ln.instr].name);
+  else if (ln.sample[0]) snprintf(out, 8, "%.4s", ln.sample);
+}
 
 // Text and "has content" flag of one Detail field; out holds 4 chars + 0.
 bool fieldText(const mt::Step& c, int field, char out[5]) {
@@ -42,15 +53,6 @@ bool fieldText(const mt::Step& c, int field, char out[5]) {
     }
   }
 }
-
-mt::EvoTrack heardEvoSt;  // UI task only (Capture gen / evo)
-mt::VarTrack heardVarSt;  // UI task only (Capture gen / var)
-
-bool varOn(const mt::Project& p, int tr) {
-  return mt::varModeOf(p.var[tr], p.trackIsDrum(tr)) != mt::VarMode::Off;
-}
-// The heard VAR state plays the pattern as is (generation 0, or built by another mode).
-bool varIdle(const mt::VarTrack& s, const mt::VarApply& a) { return s.sinceReset == 0 || s.mode != a.mode; }
 
 }  // namespace
 
@@ -102,6 +104,7 @@ void GridScreen::onPatternChange() {
   edit_ = false;
   holdEdit_ = false;
   editPushed_ = false;
+  rollHeld_ = false;
   selOn_ = false;
   needVisible_ = true;
 }
@@ -190,9 +193,19 @@ void GridScreen::cancelCell() {
 }
 
 void GridScreen::toggleView() {
-  detail_ = !detail_;
-  if (!detail_) curField_ = kNote;
+  setView(view_ == View::Overview ? View::Detail : (view_ == View::Detail ? View::Roll : View::Overview));
+}
+
+void GridScreen::setView(View v) {
+  view_ = v;
+  if (v != View::Detail) curField_ = kNote;
   setEdit(false);
+  rollHeld_ = false;
+  if (v == View::Roll) {  // the cursor row: the note under the cursor, else the track's last one
+    const mt::Step& st = pat().steps[track()][cur()];
+    rollNote_ = st.hasNote() && !drum() ? st.note : lastNote_[track()];
+    needVisible_ = true;
+  }
 }
 
 void GridScreen::undo() {
@@ -354,6 +367,95 @@ bool GridScreen::recordKey(int n, bool shift) {
   return true;
 }
 
+// ---- piano roll ----
+
+void GridScreen::rollMove(int d) {
+  if (drum()) lane_ = clampi(lane_ + d, 0, mt::kKitLanes - 1);
+  else rollNote_ = clampi(rollNote_ + d, 0, 127);
+  needVisible_ = true;
+  lastMoveMs_ = millis();
+}
+
+// The row's note into the cursor step: a note step keeps its fx and velocity, an empty (or OFF) one
+// takes the track's velocity and length (its GAT goes: the track's Def gate plays).
+void GridScreen::rollPlace() {
+  const int tr = track();
+  mt::Step st = pat().steps[tr][cur()];
+  const uint8_t note = static_cast<uint8_t>(rollNote_);
+  lastNote_[tr] = note;
+  if (st.note != note) {
+    if (!st.hasNote()) {
+      st.vel = mt::kVelDefault;
+      for (mt::FxSlot& f : st.fx)
+        if (f.cmd == mt::Fx::GAT) f = mt::FxSlot();
+    }
+    st.note = note;
+    writeStep(st);
+  }
+  previewNote(note);
+}
+
+// A + turn: the first turn of the press places the row's note (if the step holds another), then each
+// turn moves its GAT value as GRID's GAT value edit does (gatStep: a unit, Shift +-10 % as shown),
+// from the step's GAT, else Def gate; Def gate itself removes GAT. KIT: no lengths.
+void GridScreen::rollStretch(int d, bool shift) {
+  if (!rollHeld_) {  // a new A press: its own undo snapshot, the cell kept for A + B (chordClear)
+    rollHeld_ = true;
+    editPushed_ = false;
+    snapCell();
+  }
+  if (drum()) return;
+  const int tr = track();
+  if (pat().steps[tr][cur()].note != rollNote_) rollPlace();
+  mt::Step st = pat().steps[tr][cur()];
+  const uint8_t def = app_.project().tracks[tr].defGate;
+  const int was = mt::rollGateVal(st, def);
+  const int v = mt::gatStep(static_cast<uint8_t>(was), d, shift);
+  if (v == was) return;
+  if (mt::rollSetGate(st, static_cast<uint8_t>(v), def) == mt::RollLen::NoSlot) {
+    app_.toast("NO FX SLOT");
+    return;
+  }
+  writeStep(st);
+  char val[5], msg[16];
+  mt::fxFormat(mt::Fx::GAT, static_cast<uint8_t>(v), val);  // as the fx column shows it
+  const char* t = val;
+  while (*t == ' ') ++t;
+  snprintf(msg, sizeof(msg), "GATE %s", t);
+  app_.toast(msg);
+}
+
+int GridScreen::rollRows(int h) const {
+  if (drum()) return mt::kKitLanes;
+  const int r = (h - kNamesH) / kRowH;
+  return r > 128 ? 128 : (r < 1 ? 1 : r);
+}
+
+// Tap: the cursor to the cell (step and row). Long tap: there, then the menu. Drag: scrolls the pitch.
+void GridScreen::rollTouch(const TouchEvent& ev) {
+  const int rows = rollRows(h_);
+  if (ev.type == TouchType::Drag) {
+    if (!drum()) rollLow_ = clampi(rollLow_ + ev.dy / kRowH, 0, 128 - rows);
+    needVisible_ = false;
+    return;
+  }
+  if (ev.type == TouchType::LongPress && app_.shift()) return;  // nothing (undo is Shift + B only)
+  const int gridY = y0_ + kNamesH;
+  if (ev.x < kNumW || ev.y < gridY) return;
+  const int col = (ev.x - kNumW) / kRollColW;
+  const int rowH = drum() ? (h_ - kNamesH) / mt::kKitLanes : kRowH;
+  const int row = (ev.y - gridY) / (rowH > 0 ? rowH : 1);
+  const int step = rollLeft_ + col;
+  if (col >= kRollCols || step >= len() || row >= rows) return;
+  if (ev.type != TouchType::Tap && ev.type != TouchType::LongPress) return;
+  curStep_ = step;
+  if (drum()) lane_ = row;
+  else rollNote_ = clampi(rollLow_ + rows - 1 - row, 0, 127);
+  selOn_ = false;
+  cursorMoved();
+  if (ev.type == TouchType::LongPress) openMenu();
+}
+
 void GridScreen::editTurn(int delta, bool shift) {
   const int tr = track();
   mt::Step st = pat().steps[tr][cur()];
@@ -394,7 +496,8 @@ void GridScreen::editTurn(int delta, bool shift) {
       } else {
         if (f.cmd == mt::Fx::None) return;
         const int mult = shift && f.cmd != mt::Fx::CND ? 10 : 1;
-        f.val = mt::fxStep(f.cmd, f.val, delta * mult);
+        f.val = f.cmd == mt::Fx::GAT ? mt::gatStep(f.val, delta, shift)  // Shift: +-10 % as shown
+                                     : mt::fxStep(f.cmd, f.val, delta * mult);
       }
       if (f.cmd != mt::Fx::None) last = f;
       if (isCmd) fxCycled_ = true;
@@ -423,25 +526,27 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
       if (app_.perf().turn(ev.delta, ev.shift)) break;  // the last pressed effect's depth; the cursor stays
       if (edit_) editTurn(ev.delta, ev.shift);
       else if (!ev.shift) moveStep(ev.delta);
-      else if (detail_) moveField(ev.delta);
+      else if (roll()) rollMove(ev.delta);
+      else if (detail()) moveField(ev.delta);
       else moveTrack(ev.delta);
       break;
     case InputType::EncClick:
       if (ev.shift && edit_) cancelCell();
       else if (ev.shift) toggleView();
       else if (selOn_) selOn_ = false;  // click ends a selection instead of entering edit
-      else setEdit(!edit_);
+      else if (!roll()) setEdit(!edit_);  // Roll has no edit mode: A writes
       break;
     case InputType::EncLong:
-      if (ev.shift) {
-        undo();
-      } else {
-        setEdit(false);
-        openMenu();
-      }
+      if (ev.shift) break;  // nothing: undo is Shift + B only
+      setEdit(false);
+      openMenu();
       break;
     case InputType::EditTurn:  // A + turn: edits the cell, entering edit for as long as A is held
       if (app_.perf().xfadeTurn(ev.delta, ev.shift)) break;  // PERF, nothing held: the scene crossfader
+      if (roll()) {
+        rollStretch(ev.delta, ev.shift);
+        break;
+      }
       if (!edit_) {
         selOn_ = false;
         setEdit(true);
@@ -452,26 +557,53 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
     case InputType::EditEnd:
       if (holdEdit_ && edit_) setEdit(false);
       holdEdit_ = false;
+      if (rollHeld_) editPushed_ = false;  // the next A press is its own undo step
+      rollHeld_ = false;
       break;
-    case InputType::EditCancel:
-      if (edit_) cancelCell();
+    case InputType::EditCancel:  // B while A + turn edits: A + B clears (the edit mode entered by A ends)
+      if (edit_ || rollHeld_) {
+        chordClear();
+        if (holdEdit_) setEdit(false);
+      }
       holdEdit_ = false;
+      rollHeld_ = false;
       break;
     default: break;
   }
 }
 
-// A tap: empty step = the track's last note (drum: the lane under the cursor), a note step = hear it;
-// Shift + A = Clear step. In edit, an entered note moves the cursor by Edit step like a track button.
+// Hold A + B: the selection, else the whole step under the cursor (fx too). One undo step: an A press
+// that already wrote this cell (A + turn) shares its snapshot with the clear, and a cell left as it was
+// before the press drops it. An empty step outside such a press: no snapshot.
+bool GridScreen::chordClear() {
+  if (dialogOpen()) return false;
+  const int tr = track(), step = cur();
+  const bool own = (holdEdit_ || rollHeld_) && editPushed_ && !cellOthers_ && cellPat_ == app_.editPattern() &&
+                   cellTr_ == tr && cellStep_ == step;
+  const mt::Sel sel = selOn_ ? curSel() : mt::makeSel(tr, step, tr, step);
+  if (!own && !selOn_ && pat().steps[tr][step].isEmpty()) return true;  // nothing to clear
+  if (!own) app_.pushUndo();
+  engine::lockProject();
+  mt::clearSel(pat(), sel);
+  engine::unlockProject();
+  engine::post(engine::Cmd::ReleaseTies);  // a held TIE may have lost its step
+  if (own && !selOn_ && memcmp(&pat().steps[tr][step], &cellOrig_, sizeof(mt::Step)) == 0) app_.dropUndo();
+  else app_.markDirty();
+  editPushed_ = false;  // the clear has its own snapshot; edit continues from the cleared cell
+  if (edit_) snapCell();
+  return true;
+}
+
+// A tap: empty step = the track's last note (drum: the lane under the cursor), a note step = hear it.
+// Shift + A does nothing here (clear is hold A + B). In edit, an entered note moves the cursor by Edit
+// step like a track button.
 void GridScreen::onATap(bool shift) {
-  if (dialogOpen()) return;
+  if (dialogOpen() || shift) return;
   const int tr = track(), step = cur();
   if (!edit_) editPushed_ = false;  // outside edit every tap is its own undo step
-  if (shift) {
-    if (pat().steps[tr][step].isEmpty()) return;  // nothing to clear: no undo snapshot
-    apply(mt::makeSel(tr, step, tr, step), kClearStep);
-    editPushed_ = false;  // the clear has its own snapshot; edit continues from the cleared cell
-    if (edit_) snapCell();
+  if (roll()) {  // the row's note, KIT: the lane's bit
+    if (drum()) toggleLane(lane_);
+    else rollPlace();
     return;
   }
   const mt::Step& st = pat().steps[tr][step];
@@ -541,7 +673,7 @@ bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
   if (row >= rows_) return false;
   step = top_ + row;
   if (step >= len()) return false;
-  if (!detail_) {
+  if (!detail()) {
     const int col = (x - kNumW) / kColW;
     if (col >= kOverviewTracks) return false;
     tr = firstTrack() + col;
@@ -563,6 +695,10 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     return;
   }
   cur();
+  if (roll()) {
+    rollTouch(ev);
+    return;
+  }
   if (ev.type == TouchType::Drag) {
     const int n = len();
     const int maxTop = n > rows_ ? n - rows_ : 0;
@@ -571,10 +707,7 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     needVisible_ = false;
     return;
   }
-  if (ev.type == TouchType::LongPress && app_.shift()) {
-    undo();
-    return;
-  }
+  if (ev.type == TouchType::LongPress && app_.shift()) return;  // nothing (undo is Shift + B only)
 
   // Lane pad.
   if (padShown() && ev.y >= y0_ + h_ - kKbH) {
@@ -596,8 +729,8 @@ void GridScreen::onTouch(const TouchEvent& ev) {
   if (ev.y < y0_ + kNamesH) {
     if (ev.type != TouchType::Tap || ev.x < kNumW) return;
     const int col = (ev.x - kNumW) / kColW;
-    if (!detail_ && col >= kOverviewTracks) return;
-    const int tr = detail_ ? track() : firstTrack() + col;
+    if (!detail() && col >= kOverviewTracks) return;
+    const int tr = detail() ? track() : firstTrack() + col;
     if (rec_ && !app_.shift()) {
       app_.setCurTrack(tr);
       cursorMoved();
@@ -703,12 +836,11 @@ void GridScreen::openMenu() {
     add("Clear track", kClearTrack, true);
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
-    if (app_.project().genOn(track())) add("Capture gen", kCaptureGen, true);
-    if (varOn(app_.project(), track())) add("Capture var", kCaptureVar, true);  // takes EVO's too
-    else if (app_.project().evoOn(track())) add("Capture evo", kCaptureEvo, true);
+    if (app_.project().genOn(track()) || mt::mutOn(app_.project(), track())) add("Capture live", kCaptureLive, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
-    add(detail_ ? "Overview" : "Detail view", kToggleView, true);
+    add(view_ == View::Overview ? "Detail view" : "Overview", kToggleView, true);
+    if (!roll()) add("Piano roll", kRollView, true);
     add(follow_ ? "Follow: ON" : "Follow: OFF", kToggleFollow, true);
     add("Resample track", kResampleTrack, true);
     add("Resample pattern", kResamplePattern, true);
@@ -780,79 +912,11 @@ void GridScreen::openFill() {
   if (!fill_.open(app_.editPattern(), sel, &f, &arpSpec_, &chordSpec_, &bassSpec_, drum())) app_.toast("NO MEMORY");
 }
 
-// Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
-// project's samples, normalized to -1 dBFS with the silent end cut: RS1, RS2, ...
-void GridScreen::captureGen() {
-  const int tr = track();
-  mt::Project& p = app_.project();
-  if (!p.genOn(tr)) return;
-  uint8_t passes = 0;
-  engine::lockProject();
-  engine::heardEvo(tr, heardEvoSt, passes);
-  engine::unlockProject();
-  if (!mt::evoIdle(heardEvoSt)) {  // the notes heard went through the drift: captureGen would miss it
-    app_.toast("EVO: CAPTURE EVO FIRST");
-    return;
-  }
-  engine::lockProject();
-  engine::heardVar(tr, heardVarSt, passes);
-  const bool varBusy = !varIdle(heardVarSt, mt::varApplyOf(p, tr));
-  engine::unlockProject();
-  if (varBusy) {  // the same for the VAR generation
-    app_.toast("VAR: CAPTURE VAR FIRST");
-    return;
-  }
-  app_.pushUndo();
-  engine::lockProject();
-  int from = 0;
-  const mt::GenState st = engine::nextGen(tr, app_.editPattern(), from);
-  mt::captureGen(pat(), tr, p.gen[tr], st, from, p.scaleRoot, static_cast<mt::ScaleType>(p.scaleType));
-  p.gen[tr].mode = static_cast<uint8_t>(mt::GenMode::Off);  // else it would replace the notes just written
-  engine::unlockProject();
-  app_.markDirty();
-  engine::post(engine::Cmd::ReleaseTies);
-  app_.toast("GEN CAPTURED");
-}
-
-void GridScreen::captureEvo() {
-  const int tr = track();
-  if (varOn(app_.project(), tr)) {  // EVO works on VAR's output: both together
-    captureVar();
-    return;
-  }
-  const engine::Status& es = app_.status();
-  if ((es.playing || es.paused) && es.pattern != app_.editPattern()) {  // the drift is the heard pattern's
-    app_.toast("EVO: OTHER PATTERN");
-    return;
-  }
-  mt::Pattern* scratch = app_.undoScratch();  // free outside the undo calls
-  if (!scratch) {
-    app_.toast("NO MEMORY");
-    return;
-  }
-  uint8_t passes = 0;
-  engine::lockProject();
-  engine::heardEvo(tr, heardEvoSt, passes);
-  engine::unlockProject();
-  if (mt::evoIdle(heardEvoSt)) {
-    app_.toast("EVO: NO CHANGES");
-    return;
-  }
-  app_.pushUndo();
-  engine::lockProject();
-  mt::evoCapture(pat(), tr, heardEvoSt, mt::evoApplyOf(app_.project(), tr), scratch->steps[0]);
-  engine::evoClear(tr);  // under the lock: before the next plan
-  engine::unlockProject();
-  app_.markDirty();
-  engine::post(engine::Cmd::ReleaseTies);
-  app_.toast("EVO CAPTURED");
-}
-
-void GridScreen::captureVar() {
+void GridScreen::captureLive() {
   const int tr = track();
   const engine::Status& es = app_.status();
   if ((es.playing || es.paused) && es.pattern != app_.editPattern()) {  // the state is the heard pattern's
-    app_.toast("VAR: OTHER PATTERN");
+    app_.toast("CAPTURE: OTHER PATTERN");
     return;
   }
   mt::Pattern* scratch = app_.undoScratch();  // free outside the undo calls
@@ -860,28 +924,22 @@ void GridScreen::captureVar() {
     app_.toast("NO MEMORY");
     return;
   }
-  uint8_t passes = 0;
+  app_.pushUndo(app_.editPattern(), tr);  // the GenCfg too: the capture turns GEN off
   engine::lockProject();
-  engine::heardVar(tr, heardVarSt, passes);
-  engine::heardEvo(tr, heardEvoSt, passes);
-  const mt::VarApply va = mt::varApplyOf(app_.project(), tr);
+  const mt::LiveCapture r = engine::captureLive(tr, app_.editPattern(), scratch->steps[0]);
   engine::unlockProject();
-  const bool evoIdle = mt::evoIdle(heardEvoSt);
-  if (varIdle(heardVarSt, va) && evoIdle) {
-    app_.toast("VAR: NO CHANGES");
+  if (r != mt::LiveCapture::Ok) {
+    app_.dropUndo();
+    app_.toast(r == mt::LiveCapture::OtherPattern ? "CAPTURE: OTHER PATTERN" : "CAPTURE: GEN / MUT OFF");
     return;
   }
-  app_.pushUndo();
-  engine::lockProject();
-  mt::varCapture(pat(), tr, heardVarSt, va, heardEvoSt, mt::evoApplyOf(app_.project(), tr), scratch->steps[0]);
-  engine::varClear(tr);  // under the lock: before the next plan
-  if (!evoIdle) engine::evoClear(tr);
-  engine::unlockProject();
   app_.markDirty();
   engine::post(engine::Cmd::ReleaseTies);
-  app_.toast("VAR CAPTURED");
+  app_.toast("LIVE CAPTURED");
 }
 
+// Renders the heard pattern offline (the track alone, or every audible track) and adds it to the
+// project's samples, normalized to -1 dBFS with the silent end cut: RS1, RS2, ...
 void GridScreen::resample(bool wholePattern) {
   const engine::Status& st = app_.status();
   if (st.playing || st.paused) {
@@ -984,7 +1042,7 @@ void GridScreen::onMenu(int id) {
     app_.toast(msg);
     return;
   }
-  const bool anyPattern = id == kToggleView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
+  const bool anyPattern = id == kToggleView || id == kRollView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
                           id == kDropSel;
   if (!anyPattern && app_.editPattern() != menuPattern_) {
     app_.toast("PATTERN CHANGED");
@@ -1032,7 +1090,8 @@ void GridScreen::onMenu(int id) {
       selS0_ = selS1_ = step;
       app_.toast("SELECT: TURN TO EXTEND");
       break;
-    case kToggleView: toggleView(); break;
+    case kToggleView: setView(view_ == View::Overview ? View::Detail : View::Overview); break;
+    case kRollView: setView(View::Roll); break;
     case kToggleFollow:
       follow_ = !follow_;
       dragFrozen_ = false;
@@ -1041,9 +1100,7 @@ void GridScreen::onMenu(int id) {
     case kUndo: undo(); break;
     case kDropSel: selOn_ = false; break;
     case kFill: openFill(); break;
-    case kCaptureGen: captureGen(); break;
-    case kCaptureEvo: captureEvo(); break;
-    case kCaptureVar: captureVar(); break;
+    case kCaptureLive: captureLive(); break;
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
     case kRec:
@@ -1073,6 +1130,10 @@ void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
   y0_ = y0;
   h_ = h;
   rows_ = rowsFor(h);
+  if (roll()) {
+    drawRoll(s, y0, h);
+    return;
+  }
   const engine::Status& st = app_.status();
   const int n = len();
   const int step = cur();
@@ -1085,17 +1146,185 @@ void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
              millis() - lastMoveMs_ >= kFollowPauseMs) {
     // Smooth follow: play row stays in the middle, view scrolls one row per step (detail: the
     // track's own step).
-    top_ = (detail_ ? heardTrackStep(track()) : st.pos) - rows_ / 2;
+    top_ = (detail() ? heardTrackStep(track()) : st.pos) - rows_ / 2;
     if (top_ > n - rows_) top_ = n - rows_;
   }
   if (top_ >= n) top_ = n > rows_ ? n - rows_ : 0;
   if (top_ < 0) top_ = 0;
 
   const int gridY = y0 + kNamesH;
-  if (detail_) drawDetail(s, gridY);
+  if (detail()) drawDetail(s, gridY);
   else drawOverview(s, gridY);
   if (padShown()) drawPad(s, y0 + h - kKbH);
   else if (keyboardShown()) drawKeyboard(s, y0 + h - kKbH);
+}
+
+// Piano roll of the current track: step numbers on top, keys (KIT: lane names) on the left, a row per
+// semitone (KIT: per lane). Cells: every 4th step lighter, the scale root's rows (each octave) a stripe
+// tinted toward the cursor colour, the cursor's row and column highlighted over it, the heard step lit,
+// steps past the track's own length grey, the cursor cell framed. Keys: out-of-scale ones greyed (white
+// keys darker, black keys lighter: a step between black and white), the root tinted.
+// Notes are bars as long as their gate (cut by the next note), as bright as their velocity; CHD's other
+// notes are outlines.
+void GridScreen::drawRoll(LGFX_Sprite& s, int y0, int h) {
+  const mt::Project& p = app_.project();
+  const engine::Status& st = app_.status();
+  const mt::Pattern& pt = pat();
+  const int n = len();
+  const int tr = track();
+  const int step = cur();
+  const mt::TrackCfg& t = p.tracks[tr];
+  const bool drumTr = drum();
+  const bool audible = p.trackAudible(tr);
+  const mt::ScaleType scale = static_cast<mt::ScaleType>(p.scaleType);
+  const int tl = pt.trackLen[tr] && pt.trackLen[tr] < n ? pt.trackLen[tr] : n;
+  const int heard = st.playing || st.paused ? heardTrackStep(tr) : -1;
+  const int rows = rollRows(h);
+  const int rowH = drumTr ? (h - kNamesH) / mt::kKitLanes : kRowH;
+  const int gridY = y0 + kNamesH;
+  char buf[8];
+
+  // The page: the cursor's, or the heard step's while following (as Detail does).
+  if (follow_ && !dragFrozen_ && st.playing && millis() - lastMoveMs_ >= kFollowPauseMs && heard >= 0)
+    rollLeft_ = mt::rollPage(heard, kRollCols);
+  else rollLeft_ = mt::rollPage(step, kRollCols);
+  if (needVisible_) {
+    rollLow_ = mt::rollFollow(rollLow_, rollNote_, rows, 128);
+    needVisible_ = false;
+  }
+  rollLow_ = clampi(rollLow_, 0, 128 - rows > 0 ? 128 - rows : 0);
+  const int cols = n - rollLeft_ < kRollCols ? n - rollLeft_ : kRollCols;
+
+  // Header: the track number (or the REC / PERF badge), the step numbers.
+  const int badgeW = drawBadge(s, y0);
+  if (!badgeW) {
+    s.setTextColor(t.solo ? kCursor : (audible ? kText : kDim));
+    snprintf(buf, sizeof(buf), "T%d", tr + 1);
+    s.drawString(buf, 2, y0);
+  }
+  for (int c = 0; c < cols; ++c) {
+    const int i = rollLeft_ + c;
+    const int x = kNumW + c * kRollColW;
+    if (x < badgeW) continue;
+    if (i == heard) s.fillRect(x, y0, kRollColW - 1, kNamesH, kPlayBg);
+    s.setTextColor(i == step ? kCursor : (i < tl && i % 4 == 0 ? kText : kDim));
+    snprintf(buf, sizeof(buf), "%d", i + 1);
+    s.drawString(buf, x + (kRollColW - 1 - static_cast<int>(strlen(buf)) * kCharW) / 2, y0);
+    if (pt.steps[tr][i].note == mt::kNoteOff) s.fillRect(x, gridY - 2, kRollColW - 1, 2, kRed);  // OFF
+  }
+
+  // Keys / lane names and the cells.
+  const mt::Instrument* kit = drumTr ? p.kitOf(tr) : nullptr;
+  constexpr int kBlackW = kNumW * 6 / 10;  // 19 px of 32
+  const uint16_t keyLine = mt::rollMix565(kKeyWhite, kKeyBlack, 110);
+  auto whiteKey = [&](int nt) -> uint16_t {  // a white key's surface by the scale
+    const mt::RollKey k = mt::rollKey(nt, p.scaleRoot, scale);
+    if (k == mt::RollKey::Root) return mt::rollMix565(kKeyWhite, kCursor, 110);
+    if (k == mt::RollKey::Out) return mt::rollMix565(kKeyWhite, kKeyBlack, 80);
+    return kKeyWhite;
+  };
+  // The cells' backgrounds once per frame: plain / beat, and the root stripe over each (a third toward
+  // the cursor colour: seen in every theme, still darker than the note bars).
+  const uint16_t cellBg = kBg, beatBg = mt::rollMix565(kBg, kBeatBg, 200);
+  const uint16_t rootBg = mt::rollMix565(cellBg, kCursor, 80), rootBeatBg = mt::rollMix565(beatBg, kCursor, 80);
+  for (int r = 0; r < rows; ++r) {
+    const int y = gridY + r * rowH;
+    const int note = drumTr ? -1 : rollLow_ + rows - 1 - r;
+    const bool curRow = drumTr ? r == lane_ : note == rollNote_;
+    const mt::RollKey key = drumTr ? mt::RollKey::Chromatic : mt::rollKey(note, p.scaleRoot, scale);
+    if (drumTr) {
+      s.fillRect(0, y, kNumW - 1, rowH - 1, kBeatBg);
+      laneName(p, kit, r, buf);
+      s.setTextColor(curRow ? kCursor : kText);
+      s.drawString(buf, 0, y + 1);
+      snprintf(buf, sizeof(buf), "%d", r + 1);
+      s.setTextColor(kDim);
+      if (rowH >= 2 * kCharH) s.drawString(buf, 0, y + kCharH);
+    } else {
+      // A vertical piano: white keys one light surface, black bars over its left kBlackW.
+      const mt::RollKeyRow kr = mt::rollKeyRow(note);
+      if (kr.black) {
+        const int half = rowH / 2;
+        s.fillRect(0, y, kNumW - 1, half, whiteKey(kr.upper));
+        s.fillRect(0, y + half, kNumW - 1, rowH - half, whiteKey(kr.lower));
+        s.drawFastHLine(kBlackW, y + half, kNumW - 1 - kBlackW, keyLine);  // the two white keys meet
+        uint16_t bc = kKeyBlack;
+        if (key == mt::RollKey::Root) bc = mt::rollMix565(kKeyBlack, kCursor, 150);
+        else if (key == mt::RollKey::Out) bc = mt::rollMix565(kKeyBlack, kKeyWhite, 90);
+        s.fillRect(0, y + 1, kBlackW, rowH - 2, bc);
+      } else {
+        s.fillRect(0, y, kNumW - 1, rowH, whiteKey(note));
+        if (kr.lineBelow) s.drawFastHLine(0, y + rowH - 1, kNumW - 1, keyLine);
+        if (note % 12 == 0) {  // C only: "C4", octave -1 as 'm'
+          mt::noteName(static_cast<uint8_t>(note), buf);
+          buf[1] = buf[2];
+          buf[2] = 0;
+          s.setTextColor(kKeyBlack);
+          s.drawString(buf, kNumW - 4 - 2 * kCharW, y);  // clear of the cursor strip
+        }
+      }
+      if (curRow) s.fillRect(kNumW - 4, y, 3, rowH, kCursor);  // the cursor row, as the crosshair
+      s.drawFastVLine(kNumW - 1, y, rowH, keyLine);  // the edge to the grid
+    }
+    const bool rootRow = key == mt::RollKey::Root;
+    for (int c = 0; c < cols; ++c) {
+      const int i = rollLeft_ + c;
+      uint16_t bg = i % 4 == 0 ? (rootRow ? rootBeatBg : beatBg) : (rootRow ? rootBg : cellBg);
+      if (curRow || i == step) bg = mt::rollMix565(bg, kSelBg, 160);  // the crosshair
+      if (i == heard) bg = kPlayBg;
+      if (i >= tl) bg = mt::rollMix565(bg, kDim, 64);  // never played
+      s.fillRect(kNumW + c * kRollColW, y, kRollColW - 1, rowH - 1, bg);
+    }
+  }
+
+  auto velColor = [&](int vel, bool lit) {
+    return lit ? mt::rollMix565(kDim, kText, 64 + vel * 192 / 127) : kDim;
+  };
+  const int x0 = kNumW, x1 = kNumW + cols * kRollColW;  // the cells' span
+  if (drumTr) {  // KIT: a block per lane hit, the step velocity (note) as brightness
+    for (int c = 0; c < cols; ++c) {
+      const int i = rollLeft_ + c;
+      const mt::Step& cs = pt.steps[tr][i];
+      if (!cs.hasNote()) continue;
+      const uint16_t col = velColor(cs.note ? cs.note : t.defVel, audible && i < tl);
+      for (int l = 0; l < mt::kKitLanes; ++l)
+        if (cs.vel & (1u << l))
+          s.fillRect(kNumW + c * kRollColW + 3, gridY + l * rowH + 3, kRollColW - 7, rowH - 7, col);
+    }
+  } else {  // bars, from every step: one that starts on an earlier page may reach this one
+    for (int i = 0; i < n && i < rollLeft_ + cols; ++i) {
+      const mt::Step& cs = pt.steps[tr][i];
+      if (!cs.hasNote()) continue;
+      const int span = mt::rollSpan(pt.steps[tr], i < tl ? tl : n, i, t.defGate);
+      int bx = kNumW + (i - rollLeft_) * kRollColW;
+      int bw = span * kRollColW / 100 - 1;
+      if (bw < 2) bw = 2;
+      if (bx + bw <= x0) continue;
+      if (bx < x0) {
+        bw -= x0 - bx;
+        bx = x0;
+      }
+      if (bx + bw > x1) bw = x1 - bx;
+      if (bw <= 0) continue;
+      const uint16_t col = velColor(cs.vel ? cs.vel : t.defVel, audible && i < tl);
+      auto rowOf = [&](int nt) { return rollLow_ + rows - 1 - nt; };
+      const int r = rowOf(cs.note);
+      if (r >= 0 && r < rows) s.fillRect(bx, gridY + r * rowH + 2, bw, rowH - 5, col);
+      uint8_t extra[4];
+      const int k = mt::rollChordExtra(cs, p.scaleRoot, scale, extra);
+      for (int e = 0; e < k; ++e) {
+        const int er = rowOf(extra[e]);
+        if (er >= 0 && er < rows) s.drawRect(bx, gridY + er * rowH + 2, bw, rowH - 5, col);
+      }
+    }
+  }
+  // Where the track loops, and the cursor cell.
+  if (tl < n && tl >= rollLeft_ && tl < rollLeft_ + cols)
+    s.drawFastVLine(kNumW + (tl - rollLeft_) * kRollColW - 1, gridY, rows * rowH, kCursor);
+  const int cr = drumTr ? lane_ : rollLow_ + rows - 1 - rollNote_;
+  if (cr >= 0 && cr < rows && step >= rollLeft_ && step < rollLeft_ + cols)
+    s.drawRect(kNumW + (step - rollLeft_) * kRollColW - 1, gridY + cr * rowH - 1, kRollColW + 1, rowH + 1,
+               rollHeld_ ? kEditCursor : kCursor);
 }
 
 void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
@@ -1302,12 +1531,8 @@ void GridScreen::drawPad(LGFX_Sprite& s, int y) {
     const bool on = c.hasNote() && (c.vel & (1u << l));
     s.fillRect(x + 1, y + 1, kPadW - 2, kKbH - 2, on ? kPlayBg : kBeatBg);
     if (l == lane_) s.drawRect(x, y, kPadW, kKbH, kEditCursor);
-    char nm[8] = "-";
-    if (k) {
-      const mt::KitLane& ln = k->kit[l];
-      if (ln.instr < mt::kInstruments) snprintf(nm, sizeof(nm), "%.4s", p.instruments[ln.instr].name);
-      else if (ln.sample[0]) snprintf(nm, sizeof(nm), "%.4s", ln.sample);
-    }
+    char nm[8];
+    laneName(p, k, l, nm);
     s.setTextColor(on ? kText : kDim);
     s.drawString(nm, x + 4, y + 4);
     snprintf(nm, sizeof(nm), "%d", l + 1);

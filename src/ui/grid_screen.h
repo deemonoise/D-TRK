@@ -30,6 +30,8 @@ class GridScreen : public Screen {
   bool buttonsBusy() const;
   void undo();  // with a toast; the next edit takes a fresh snapshot
   bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen(); }  // Fill / Transpose preview
+  // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.
+  bool chordClear();
 
  private:
   // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
@@ -38,7 +40,7 @@ class GridScreen : public Screen {
   enum MenuId : int {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
-    kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureGen, kCaptureEvo, kCaptureVar,
+    kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive, kRollView,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;
@@ -57,6 +59,13 @@ class GridScreen : public Screen {
   static constexpr int kKeyW = 40;
   static constexpr int kPadW = kScreenW / mt::kKitLanes;  // lane pad button (drum track)
   static constexpr uint32_t kFollowPauseMs = 2000;
+  // Piano roll: keys (kNumW) | kRollCols steps of kRollColW; a semitone per kRowH row, KIT: a lane per row.
+  static constexpr int kRollColW = 28;
+  static constexpr int kRollCols = 16;
+  static_assert(kNumW + kRollCols * kRollColW <= kScreenW, "Roll columns must fit");
+
+  // Shift + click cycles them. Roll: the current track as a piano roll (KIT: its 8 lanes).
+  enum class View : uint8_t { Overview, Detail, Roll };
 
   mt::Pattern& pat();
   int len() const;  // pattern length clamped to kMinSteps..kMaxSteps
@@ -74,7 +83,10 @@ class GridScreen : public Screen {
   void snapCell();    // edit: the cell under the cursor as it is now, for cancelCell()
   void cancelCell();  // Shift+click in edit: the cell back as it was, edit off
   void openEditStepMenu();
-  void toggleView();
+  void toggleView();  // Overview -> Detail -> Roll -> Overview
+  void setView(View v);
+  bool detail() const { return view_ == View::Detail; }
+  bool roll() const { return view_ == View::Roll; }
   void editTurn(int delta, bool shift);
   void setNote(uint8_t note);
   void previewNote(uint8_t note);
@@ -88,14 +100,9 @@ class GridScreen : public Screen {
   void writeStep(const mt::Step& st);
   void openMenu();
   void openFill();
-  // Capture gen: the track generator's loop into the edited pattern (one undo step), then Gen OFF.
-  void captureGen();
-  // Capture evo: the heard drift of the track into the edited pattern (one undo step), then its drift
-  // starts over from the result. Only while the edited pattern is the heard one.
-  void captureEvo();
-  // Capture var: the track as VAR, then EVO play it (var_gen.h varCapture) into the edited pattern (one undo
-  // step), then both start over from the result (VAR at generation 0). Also Capture evo while VAR is on.
-  void captureVar();
+  // Capture live: what the track plays now (MUT, then GEN) into the edited pattern (one undo step), then
+  // GEN OFF and MUT on from the result (engine::captureLive). Only while the edited pattern is the heard one.
+  void captureLive();
   void resample(bool wholePattern);  // the pattern (current track / audible tracks) into a sample RSn
   void openTranspose();
   void transpose(const mt::Sel& sel, int amount, bool degrees);
@@ -112,6 +119,14 @@ class GridScreen : public Screen {
   bool keyboardShown() const { return edit_ && !holdEdit_ && curField_ == kNote && !drum(); }
   bool padShown() const { return edit_ && !holdEdit_ && curField_ == kNote && drum(); }  // lane pad instead of the keyboard
   void toggleLane(int lane);
+  // Roll: Shift + turn moves the pitch (KIT: the lane); A places the row's note (KIT: toggles the lane),
+  // A + turn sets its GAT value (10 per detent); one undo snapshot per A press.
+  void rollMove(int d);
+  void rollPlace();
+  void rollStretch(int d, bool shift);
+  void rollTouch(const TouchEvent& ev);
+  int rollRows(int h) const;  // visible rows: semitones, KIT: its lanes
+  void drawRoll(LGFX_Sprite& s, int y0, int h);
   void drawOverview(LGFX_Sprite& s, int gridY);
   void drawDetail(LGFX_Sprite& s, int gridY);
   void drawKeyboard(LGFX_Sprite& s, int y);
@@ -128,7 +143,7 @@ class GridScreen : public Screen {
   int curStep_ = 0;
   int curField_ = kNote;
   int top_ = 0;
-  bool detail_ = false;
+  View view_ = View::Overview;
   bool edit_ = false;
   bool editPushed_ = false;    // undo snapshot taken in this edit session
   bool holdEdit_ = false;      // edit entered by A + turn: releasing A ends it
@@ -144,7 +159,11 @@ class GridScreen : public Screen {
   bool wasPlaying_ = false;
   uint32_t lastMoveMs_ = 0;
   uint8_t lastNote_[mt::kTracks];  // set to 60 in the constructor
-  int lane_ = 0;  // drum track, NOTE field in edit: the lane under the encoder
+  int lane_ = 0;  // drum track, NOTE field in edit: the lane under the encoder (Roll: the cursor row)
+  int rollNote_ = 60;   // Roll: the pitch of the cursor row
+  int rollLow_ = 52;    // Roll: the lowest note on screen
+  int rollLeft_ = 0;    // Roll: the first step on screen (a page of kRollCols), set by draw
+  bool rollHeld_ = false;  // Roll: A + turn began (the cell snapshot taken: A + B shares its undo step)
   // Live modes, exclusive with each other and with edit. REC: track buttons write into the heard
   // step while playing (one undo snapshot per pass). PERF (App::perf(), shared with SONG): a held
   // button = punch-in effect.

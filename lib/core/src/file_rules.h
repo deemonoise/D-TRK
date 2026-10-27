@@ -90,4 +90,9 @@ bool jsonAppendFile(char* buf, size_t cap, size_t& len, const char* name, uint32
 // Same for a folder: {"name":"..","dir":1}.
 bool jsonAppendDir(char* buf, size_t cap, size_t& len, const char* name, bool first);
 
+// A folder browser's B / Back: dir one level up towards root ("/samples/drums/909" -> "/samples/drums",
+// left = "909", the folder to put the cursor on). At root (or not below it): false, dir unchanged.
+// A dir outside root's tree: root, left empty.
+bool browseUp(char* dir, const char* root, char* left, size_t leftCap);
+
 }  // namespace mt
