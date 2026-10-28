@@ -72,6 +72,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
                                storage::loadSetting("recthr", static_cast<uint8_t>(rd.thresh)),
                                storage::loadSetting("recmon", rd.mon ? 1 : 0));
   rec_.setPrefs(savedRec_);
+  proj_.loadDicePrefs();  // the DICE window's Genre / Style / Variety / Length / Scope / Song
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -674,12 +675,13 @@ void App::setPerfVisuals(bool on) {
   settingsChangedAt_ = millis() | 1;
 }
 
-// Device settings (theme, autosave, phones, preview, perf visuals, the REC window's): written once they
+// Device settings (theme, autosave, phones, preview, perf visuals, the REC and DICE windows'): written once they
 // stay put for a second (an encoder sweep = one write), the transport is stopped and no take runs. An NVS
 // write can erase a flash sector with the caches off: never while playing or recording.
 void App::saveSettingsIdle(uint32_t now) {
   if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing || rec_.taking()) return;
   settingsChangedAt_ = 0;
+  proj_.saveDicePrefs();
   const mt::RecPrefs rp = rec_.prefs();
   if (rp != savedRec_) {
     if (rp.src != savedRec_.src) storage::saveSetting("recsrc", static_cast<uint8_t>(rp.src));

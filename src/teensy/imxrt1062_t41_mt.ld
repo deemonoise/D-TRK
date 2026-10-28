@@ -34,8 +34,8 @@ SECTIONS
 		*bass_gen.cpp.o(.text*)
 		*:chord_gen.cpp.o(.text*)
 		*chord_gen.cpp.o(.text*)
-		*:presets_factory.cpp.o(.text*)
-		*presets_factory.cpp.o(.text*)
+		*:presets_factory*.cpp.o(.text* .rodata*)
+		*presets_factory*.cpp.o(.text* .rodata*)
 		*:scala.cpp.o(.text* .rodata*)
 		*scala.cpp.o(.text* .rodata*)
 		/* the factory tunings' .scl texts: constants read only by cold code, kept out of DTCM */

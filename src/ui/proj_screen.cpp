@@ -14,6 +14,7 @@
 #include "groove.h"
 #include "names.h"
 #include "scale.h"
+#include "sequencer.h"
 #include "synth_eq.h"
 #include "synth_fxutil.h"
 #include "note_name.h"
@@ -29,7 +30,9 @@ int wrapi(int v, int n) { return ((v % n) + n) % n; }
 
 }  // namespace
 
-ProjScreen::ProjScreen(App& app) : app_(app) {
+ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
+  diceDlg_.setHost({[this](const mt::DiceOpts& o) { roll(o); }, [this] { undoDice(); },
+                    [this] { return dice_ && dice_->layers != 0; }});
   params_[kBpm] = {"BPM", [this](char* o, int n) { snprintf(o, n, "%d", bpm()); }, [this](int d) { editBpm(d); }};
   params_[kRoot] = {"Scale root", [this](char* o, int n) { snprintf(o, n, "%s", kRootNames[app_.project().scaleRoot % 12]); },
                     [this](int d) { app_.project().scaleRoot = static_cast<uint8_t>(wrapi(app_.project().scaleRoot + d, 12)); }};
@@ -309,6 +312,7 @@ void ProjScreen::editBpm(int delta) {
 }
 
 void ProjScreen::onEnter() {
+  diceDlg_.close();
   list_.setEdit(false);
   bpmTarget_ = engine::projectBpm(app_.project());
   if (!tunUser_) tunUser_ = new (std::nothrow) char[kTunUserMax][hw::kNameMax];
@@ -374,21 +378,6 @@ void ProjScreen::onProjectReplaced() {
   }
 }
 
-void ProjScreen::diceMenu() {
-  list_.setEdit(false);
-  constexpr int kUndoDice = 100;
-  const MenuItem items[] = {{"Roll all", mt::kDiceAll},
-                            {"Tempo + scale", mt::kDiceTempo},
-                            {"Sounds", mt::kDiceSounds},
-                            {"Pattern", mt::kDicePattern},
-                            {"Sounds + pattern", mt::kDiceSounds | mt::kDicePattern},
-                            {"Undo dice", kUndoDice, dice_ && dice_->layers != 0}};
-  app_.menu().open("DICE", items, 6, [this](int id) {
-    if (id == kUndoDice) undoDice();
-    else roll(static_cast<uint8_t>(id));
-  });
-}
-
 // The evolve drift is indexed by step: on steps a roll (or its undo) rewrote it would play over notes it
 // never saw. Holding lockProject(): cleared before the next plan.
 void ProjScreen::evoClearTracks(uint16_t mask) {
@@ -413,10 +402,12 @@ void ProjScreen::afterDice(uint8_t layers) {
     }
   // The planned steps of the rolled tracks (and their GEN, now OFF) are planned again.
   if (layers & mt::kDicePattern) engine::postWait(engine::Cmd::GenEdit);
+  // A new (or restored) song: the sequencer re-reads it. The role tracks' mutes need no message.
+  if (layers & mt::kDiceSong) engine::postWait(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
   app_.markDirty();
 }
 
-void ProjScreen::roll(uint8_t layers) {
+void ProjScreen::roll(const mt::DiceOpts& o) {
   if (!dice_) {
     void* m = heap_caps_malloc(sizeof(mt::DiceSnap), MALLOC_CAP_SPIRAM);
     if (!m) {
@@ -429,21 +420,18 @@ void ProjScreen::roll(uint8_t layers) {
   // The generators run without the lock (the UI is the only writer of what they read); the engine only
   // waits for the swap.
   // A song slot's BPM may hold the live tempo p.bpm: the roll reads and its undo keeps the project BPM.
-  const mt::DiceResult r = mt::diceDraft(p, layers, app_.editPattern(), esp_random(), *dice_, engine::projectBpm(p));
+  const mt::DiceResult r = mt::diceDraft(p, o, app_.editPattern(), esp_random(), *dice_, engine::projectBpm(p));
   engine::lockProject();
   uint16_t pb = 0;
-  mt::diceApply(p, *dice_, engine::savedBpm(pb) ? pb : 0);
+  // o.layers as the roll took them (SONG only with PATTERN)
+  const uint8_t applied = mt::diceApply(p, *dice_, engine::savedBpm(pb) ? pb : 0);
   evoClearTracks(dice_->patMask);
   engine::unlockProject();
-  afterDice(layers);
+  afterDice(applied);
   char msg[48];
-  if (r.genre >= 0) {
-    snprintf(msg, sizeof(msg), "DICE %s %u %s %s", mt::diceGenre(r.genre).name, static_cast<unsigned>(p.bpm),
-             kRootNames[p.scaleRoot % 12], mt::scaleName(static_cast<mt::ScaleType>(p.scaleType)));
-  } else {
-    snprintf(msg, sizeof(msg), "DICE %s",
-             layers == mt::kDiceSounds ? "SOUNDS" : (layers == mt::kDicePattern ? "PATTERN" : "SOUNDS+PATTERN"));
-  }
+  snprintf(msg, sizeof(msg), "DICE %s %s %u %s %s", mt::diceGenreName(r.genre), mt::diceStyleName(r.genre, r.style),
+           static_cast<unsigned>(p.bpm), kRootNames[p.scaleRoot % 12],
+           mt::scaleName(static_cast<mt::ScaleType>(p.scaleType)));
   app_.toast(msg);
 }
 
@@ -462,22 +450,40 @@ void ProjScreen::undoDice() {
 
 // A + turn on the page bar: the previous / next page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
-  if (ev.type == hw::InputType::EncLong) {  // the DICE menu (the list has no long press)
-    diceMenu();
+  if (diceDlg_.isOpen()) {
+    diceDlg_.onInput(ev);
+    return;
+  }
+  if (ev.type == hw::InputType::EncLong) {  // the DICE window (the list has no long press)
+    list_.setEdit(false);
+    diceDlg_.open();
     return;
   }
   if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
 }
 
 // B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
-void ProjScreen::onPage(int d) { showPage(page_ + d, list_.barSelected()); }
+void ProjScreen::onPage(int d) {
+  if (diceDlg_.isOpen()) return;
+  showPage(page_ + d, list_.barSelected());
+}
 
-// B: leaves the edit with the value kept.
-void ProjScreen::onBack() { list_.setEdit(false); }
+// B: the DICE window closes; else leaves the edit with the value kept.
+void ProjScreen::onBack() {
+  if (diceDlg_.isOpen()) diceDlg_.onInput(hw::InputEvent{hw::InputType::EncLong, 0, false});
+  else list_.setEdit(false);
+}
 
 void ProjScreen::onTouch(const TouchEvent& ev) {
+  if (diceDlg_.isOpen()) {
+    diceDlg_.onTouch(ev);
+    return;
+  }
   if (ev.type == TouchType::Tap && ev.y < kAreaY + kHeaderH) {
-    if (ev.x >= kDiceX0 && ev.x < kDiceX1) diceMenu();
+    if (ev.x >= kDiceX0 && ev.x < kDiceX1) {
+      list_.setEdit(false);
+      diceDlg_.open();
+    }
     return;
   }
   const int barY = kAreaY + kHeaderH;
@@ -490,6 +496,10 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   if (tunPick_ >= 0) applyTuning();
+  if (diceDlg_.isOpen()) {
+    diceDlg_.draw(s, y0);
+    return;
+  }
   char buf[24];
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);

@@ -1,5 +1,6 @@
 #pragma once
 #include "dice.h"
+#include "dice_dialog.h"
 #include "hw/sdcard.h"
 #include "model.h"
 #include "page_bar.h"
@@ -13,8 +14,8 @@ namespace ui {
 // PERF mode);
 // length / resolution / swing apply to the heard pattern. Device settings and diagnostics are on
 // FILE > SYSTEM.
-// Header DICE (tap, or a long encoder press): Roll all / Tempo + scale / Sounds / Pattern /
-// Sounds + pattern / Undo dice (mt::diceDraft on the heard pattern outside the project lock, then
+// Header DICE (tap, or a long encoder press): the DICE window (DiceDialog: genre / style / variety /
+// scope / song, ROLL / UNDO; mt::diceDraft from the heard pattern outside the project lock, then
 // mt::diceApply under it; one undo step, PSRAM).
 class ProjScreen : public Screen {
  public:
@@ -26,6 +27,8 @@ class ProjScreen : public Screen {
   void onPage(int d) override;
   void onBack() override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  void loadDicePrefs() { diceDlg_.loadPrefs(); }  // NVS, at boot
+  void saveDicePrefs() { diceDlg_.savePrefs(); }  // App::saveSettingsIdle
 
  private:
   enum Row : int {
@@ -55,12 +58,12 @@ class ProjScreen : public Screen {
   void editBpm(int delta);
 
   static constexpr int kDiceX0 = 384, kDiceX1 = 472;  // header DICE button
-  void diceMenu();
-  void roll(uint8_t layers);
+  void roll(const mt::DiceOpts& o);
   void undoDice();
   static void evoClearTracks(uint16_t mask);  // holding lockProject()
   void afterDice(uint8_t layers);  // engine messages for what a roll / its undo wrote
   mt::DiceSnap* dice_ = nullptr;   // PSRAM, on the first roll; nullptr = never rolled
+  DiceDialog diceDlg_;
 
   // Tuning row: 0 = 12-TET, then the factory tunings, then the card's /presets/TUN files (listed at
   // onEnter). An edit (under the project lock) only picks; draw() loads and applies the pick, outside it.

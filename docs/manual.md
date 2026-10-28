@@ -907,7 +907,7 @@ Below Mut the page shows **only the rows of the chosen mode** (OFF — none): EV
 - **The header** shows the heard state of the mode: EVO — `MUT` (change steps since Play), `PASS` (passes counted towards the next one), `CHG` (changed steps of the track's length); CA — `GEN` (generations since generation 0), `PASS` and a mini grid of the live cells (on a KIT track 8 rows, lane 1 on top); MARKOV — `GEN` (generations since Play), `PASS` and the steps that differ from the pattern. Live edits apply from the next unheard step.
 - **NRN or EVO Note:** the step fx [NRN](#fx) throws a new random note on every pass and never moves away from the written one; EVO Note keeps its drift — each change starts from the previous, until Home pulls it back or the drift is captured.
 - **Old projects:** files from before MUT had EVO and VAR as two generators on top of each other. A track with both on opens in its VAR mode (EVO off); EVO alone opens as EVO. CA2D on a melodic track opens as CA1D with the same rule number (CA2D needs the 8 KIT lanes); a track that leaves KIT (another instrument or type) plays and shows CA2D as CA1D, and is CA2D again when it gets a KIT back (until the project is saved and opened again). EVO settings kept while another mode is chosen are saved and come back with the project.
-- **Dice** (PROJ) → Pattern turns MUT off on the rewritten tracks.
+- **Dice** (PROJ) → Scope PATTERNS (or ALL) turns MUT off on the rewritten tracks.
 - MUT is saved with the project (TVAR chunk for the mode and CA / MARKOV, TEVO for EVO); its rows have no undo (like Volume).
 
 <a id="mutevo"></a>
@@ -1741,31 +1741,63 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 - **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP").
 - Without a card, Load shows only `[FACTORY]` and Save does not open ("NO SD CARD").
 
+**Factory presets:** 582 — SYNTH 123, FM 141, DRUM 149, CHIP 65, STRING 25, LOFI 30, KIT 49; in each category the first are the basic ones, then presets made for the [Dice](#dice) styles (named after them: DEEPHSE, PSYBASS, KICK DNB, SD GATE...). The number of presets in a category is in brackets.
+
 | Type | Category | Factory presets |
 |---|---|---|
-| CHIP | LEAD | SQ LEAD, ARP PLK, C64 LEAD, ZX ARP, AY TN |
-| CHIP | BASS | TRI BASS, ACID, C64 BASS, ZX BUZZ |
-| CHIP | PAD | PWM PAD, WT PAD |
-| CHIP | KEYS | WT BELL |
-| CHIP | PERC | NOIS HH, NOIS SN, METALBL, SID NZ, AY HAT |
-| FM | DRUMS | KICK, SNARE, CLAP, HAT C, HAT O, WOODBLK |
-| FM | KEYS | BELL, E.PIANO, CHORD M7 |
-| FM | BASS | FM BASS |
-| DRUM | 808 | BD808, BD808 L, SD808, CH808, OH808, CP808, CB808 |
-| DRUM | 909 | BD909, SD909, CH909, OH909, CP909 |
-| DRUM | ANALOG | BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O |
-| SYNTH | BASS | BASS, ACID, SUBBASS |
-| SYNTH | LEAD | LEAD, SYNCLD |
-| SYNTH | PAD | PAD, PWMSTR, WTSWEEP |
-| SYNTH | KEYS | PLUCK, BELL |
-| STRING | PLUCK | NYLON, HARP, PIZZ |
-| STRING | KEYS | MARIMBA, BELL, KALIMBA |
-| LOFI | BYTE | 42 MELDY, VIZNUT, SIERPNSK, LOSTSPC, NIBBLES, MASK 27, SQ DUET, FRACBELL, LOOP ARP, BYTEBASS, SYNCBEAT, SYNCHATS, SYNCARP, SYNCBASS |
-| LOFI | APC | APC, APC SUB, APC DRFT, APC SOFT |
-| KIT | DRUM | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT, ANALOG |
-| KIT | FM | FM KIT, FM PUNCH, FM PERC |
-| KIT | CHIP | CHIP KIT |
-| KIT | MIX | HYBRID, DUB KIT |
+| CHIP | LEAD (16) | SQ LEAD, ARP PLK, NES LEAD, THIN LD, SAW LD, FLUTE, GBLEAD, C64 LEAD, ZX ARP, AY TN, SOFT SQ, OUTRUN, WARM PWM, SOFT SIN, HOLLOW, DARKLEAD |
+| CHIP | BASS (13) | TRI BASS, ACID, SQ BASS, C64 BASS, ZX BUZZ, PLK BASS, SUB SINE, GRIT BAS, ROUND SB, OUTBASS, SOFTACID, PWM BASS, GB BASS |
+| CHIP | PAD (9) | PWM PAD, WT PAD, GLASSPAD, ORGAN, STRINGS, SOFT PAD, DRIFTPAD, CHOIR, DARKPAD |
+| CHIP | KEYS (8) | WT BELL, CHIPKEYS, MARIMBA, MUSICBOX, CLAV, EP SOFT, VIBES, CHIPSTAB |
+| CHIP | PERC (8) | NOIS HH, NOIS SN, METALBL, NOIS OH, SID NZ, AY HAT, CHIPKICK, BLIP |
+| CHIP | FX (4) | LASER, SIREN, WIND, COIN |
+| CHIP | ARP (7) | SOFT ARP, GLASSARP, BELL ARP, 4BIT ARP, SID ARP, PLINK, RND BLIP |
+| FM | DRUMS (49) | KICK, KICK SUB, KICK PNC, SNARE, SNR TGHT, SNR FAT, CLAP, CLAP BIG, HAT C, HAT O, RIDE, WOODBLK, KICK DEP, KICK TCH, KICK 909, KICK BOM, KICK TRP, KICK DNB, KICK PSY, KICK HRD, KICK LOF, KICK ELC, KICK MIN, KICK DUB, SNR HOUS, SNR DNB, SNR BRK, SNR BOOM, SNR LOFI, SNR TRAP, SNR ELEC, SNR NEUR, SNR TRNC, SNR GHST, CLAP HSE, CLAP TGT, CLAP 909, CLAP WRM, CLAP TRP, CLAP DUB, SNAP, HAT TGHT, HAT SOFT, HAT MTL, HAT TRAP, HAT O LG, HAT 909O, HAT DUST, CRASH |
+| FM | PERC (19) | TOM, CONGA, COWBELL, GONG, ZAP, TOM LO, TOM HI, TOM ELEC, RIM, RIM SOFT, SHAKER, SHKR SFT, CLAVE, BONGO, TABLA, BLIP, CLICK, AGOGO, TRIANGL |
+| FM | KEYS (29) | BELL, E.PIANO, EP SOFT, DX BELL, GLOCK, MARIMBA, ORGAN, CHORD M7, CHRD MIN, CHRD MI9, CHRD 5TH, EP DEEP, EP BELL, EP DX, EP LOFI, VIBES, KALIMBA, MALLET, CELESTA, TUBEBELL, PLUCK FM, PLK SOFT, PLK PSY, CHRD MI7, CHRD DUB, CHRD SU4, CHRD HSE, ORGAN HS, CHRD STB |
+| FM | BASS (22) | FM BASS, DX BASS, SUB FM, WOBBLE, DEEP SUB, BASS DEP, ACID FM, TECH BAS, DISCO BS, PSY BASS, GOA BASS, REESE FM, NEURO, GROWL FM, JUMPUP, HALF SUB, 808 FM, BS ROUND, DUB BASS, OUTRUN B, DARK BS, ELEC BS |
+| FM | LEAD (10) | FM LEAD, SQ LEAD, BRASS, LEAD SFT, TRNC LD, PSY LEAD, FLUTE FM, RUN LEAD, CHILL LD, GLASS LD |
+| FM | PAD (10) | FM PAD, CHRD PAD, PAD WARM, PAD GLAS, PAD DARK, DRONE FM, DREAM PD, PAD MI7, PAD MI9, STRNG FM |
+| FM | FX (2) | RISER, LASER |
+| DRUM | 808 (15) | BD808, BD808 L, BD808 S, BD808 D, SD808, SD808 S, TOM808, TOM808 L, CH808, OH808, CY808, CP808, RS808, CL808, CB808 |
+| DRUM | 909 (12) | BD909, BD909 H, BD909 S, SD909, SD909 T, TOM909, TOM909 H, CH909, OH909, CY909, CP909, RS909 |
+| DRUM | LOFI (5) | BD DUSTY, SD DUSTY, HH DUSTY, CP DUSTY, RIM BIT |
+| DRUM | HARD (6) | BD DIST, BD RUMBL, SD NOISE, CLAP VRB, HH HARSH, METAL HT |
+| DRUM | ANALOG (14) | BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O |
+| DRUM | HOUSE (14) | BD DEEP, BD HOUSE, BD DISCO, SD HOUSE, CP HOUSE, CP DEEP, CH HOUSE, OH HOUSE, SHAKER, TAMB, RIM DEEP, CONGA M, CONGA H, CB DISCO |
+| DRUM | TECHNO (14) | BD TECH, BD MINI, BD DUB, BD PEAK, BD HTEK, BD TAIL, SD HTEK, CP TECH, CP DUB, CH TECH, OH TECH, RIDE TEC, RIM DUB, PERC TEC |
+| DRUM | TRANCE (8) | BD TRNC, BD PSY, BD GOA, CP TRNC, SD TRNC, OH TRNC, CH PSY, CRASH SF |
+| DRUM | DNB (13) | BD DNB, BD LIQ, BD NEURO, BD JUNG, SD DNB, SD LIQ, SD NEURO, SD JUMP, SD JUNG, SD GHOST, SD HALF, CH DNB, RIDE DNB |
+| DRUM | BREAKS (11) | BD BREAK, SD BREAK, BD 2STEP, SD 2STEP, RIM UKG, BD ELECT, SD ELECT, CP ELECT, CB ELECT, CL ELECT, TOM ELEC |
+| DRUM | HIPHOP (13) | BD BOOM, SD BOOM, BD LOFI, SD LOFI, HH LOFI, RIM LOFI, 808 SUB, 808 DIST, 808 SHRT, SD TRAP, CP TRAP, HH TRAP, OH TRAP |
+| DRUM | IDM (9) | BD GLTCH, BD IDM, SD GLTCH, SD BRAIN, HH GLTCH, TICK, CLICK, BLIP, TOM ZAP |
+| DRUM | AMBIENT (8) | BD SOFT, BD PULSE, SD AIR, HH SOFT, RIM AIR, CB GLASS, CY WASH, TOM AMB |
+| DRUM | SYNTHWAVE (7) | BD OUTRN, BD DARKS, SD GATE, CP 80S, TOM 80S, SD CHILL, HH 80S |
+| SYNTH | BASS (31) | BASS, ACID, SUBBASS, MOOGISH, REESE, PLUCKBAS, WOBBLE, FM GROWL, DEEPSUB, 808 BASS, 808 GLD, DEEPHSE, ACIDSOFT, ACIDSQ, REESEWRM, NEURO, WOBBLE2, DUBTECH, PSYBASS, TRANCEBS, GOABASS, DISCOBAS, ELECBASS, OUTRUNBS, DARKBASS, JUNGLSUB, MINIBASS, RUMBLE, LOFIBASS, UKGBASS, MOOGFAT |
+| SYNTH | LEAD (21) | LEAD, SYNCLD, SUPERSAW, SQ LEAD, SOLO, WT LEAD, HOOVER, SOFTLEAD, UPLIFT, SAWSOFT, PSYLEAD, GOALEAD, OUTRUNLD, FLUTE, SINELEAD, MELOLEAD, BRAINLD, GLIDELD, DARKLEAD, ELECTRLD, PROGLEAD |
+| SYNTH | PAD (23) | PAD, PWMSTR, WTSWEEP, WARM PAD, CHOIR, ORGAN, DARK PAD, SHIMMER, DREAMPAD, DEEP PAD, VOX PAD, STRINGS, STRNGDRK, TRANCEPD, DRONE, DRONEDRK, GLASSPAD, CHILLPAD, OUTRUNPD, PROGPAD, SPACEPAD, ABYSS, HALO |
+| SYNTH | KEYS (18) | PLUCK, BELL, STAB, E.PIANO, KALIMBA, HARP, EP SOFT, EP DEEP, HOUSEORG, DUBCHORD, KORGPNO, RAVESTB, TRANCSTB, CLAV, VIBES, LOFIKEYS, POLYSYN, BRASS |
+| SYNTH | PLUCK (16) | PLUCK WT, PING, CHIPPLK, SYNCPLK, SOFTPLK, MARIMBA, DEEPPLK, MELOPLK, ARPPLK, PSYPLK, GLITCHPL, BLIP, DREAMPLK, UKGPLK, PROGPLK, DUBPLK |
+| SYNTH | FX (14) | RISER, NOISESWP, ROBOT, SCIFI, UPLIFTER, DOWNLIFT, WHOOSH, WIND, ZAP, SWEEPUP, SIREN, LASER, SPACEDRN, IMPACT |
+| STRING | PLUCK (11) | NYLON, HARP, PIZZ, SOFTPLK, KOTO, LOFIGTR, DUB PLK, MUTED, AIRHARP, SITAR, STR BASS |
+| STRING | KEYS (9) | MARIMBA, BELL, KALIMBA, VIBRA, GLOCK, STEELPAN, WOOD, TINE EP, GAMELAN |
+| STRING | PAD (5) | BOWED, GLASDRON, DARKDRON, CHIMES, SHIMMER |
+| LOFI | BYTE (14) | 42 MELDY, VIZNUT, SIERPNSK, LOSTSPC, NIBBLES, MASK 27, SQ DUET, FRACBELL, LOOP ARP, BYTEBASS, SYNCBEAT, SYNCHATS, SYNCARP, SYNCBASS |
+| LOFI | APC (4) | APC, APC SUB, APC DRFT, APC SOFT |
+| LOFI | TEXTURE (12) | SIERPAD, BELLHAZE, LOSTFOG, RAINBYTE, BUZZDRON, TRIHOP, GLITCHLP, SOFTARP, SYNCCHRD, SYNCMEL, APCDRONE, APC HUM |
+| KIT | DRUM (7) | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT, ANALOG |
+| KIT | FM (3) | FM KIT, FM PUNCH, FM PERC |
+| KIT | CHIP (1) | CHIP KIT |
+| KIT | MIX (2) | HYBRID, DUB KIT |
+| KIT | HOUSE (5) | DEEP HSE, TECH HSE, ACID HSE, DISCO, PROG HSE |
+| KIT | TECHNO (6) | MINIMAL, DUB TECH, PEAK, HARD TEC, ACID TEC, MELO TEC |
+| KIT | TRANCE (5) | UPLIFT, FULLON, DARK PSY, GOA, PROG TRN |
+| KIT | DNB (5) | LIQUID, JUMPUP, NEURO, JUNGLE, HALFTIME |
+| KIT | BREAKS (3) | BREAKBT, 2STEP, ELECTRO |
+| KIT | HIPHOP (3) | BOOMBAP, LOFI HOP, TRAP |
+| KIT | IDM (3) | BRAINDNC, GLITCH, ELECTRON |
+| KIT | AMBIENT (3) | DREAM, DARK AMB, DRONE |
+| KIT | SYNTHWAVE (3) | OUTRUN, DARKSYN, CHILLWV |
 
 <a id="proj"></a>
 
@@ -1866,20 +1898,51 @@ The built-in sound can play in tunings other than 12-tone equal temperament. The
 
 The project stores the name and the table itself: it plays in tune without the file on the card (the Tuning row then shows the name from the project). Editing a `.scl` on a computer does not change projects; pick the tuning again. A broken tuning in a project file falls back to 12-TET (toast `TUNING RESET`). The tuning is not part of instrument presets; a new project is 12-TET. WAV export plays in tune, MIDI export does not. Older firmware opens a tuned project in 12-TET.
 
+<a id="dice"></a>
+
 ### Dice
 
-**DICE** in the PROJ header (or a long press of the encoder on PROJ) rolls a random starting point for the project:
+**DICE** in the PROJ header (or a long press of the encoder on PROJ) opens the DICE window: a starter track in a chosen genre and style. B or a long press closes it.
 
-| Item | What it does |
+| Row | What it does |
 |---|---|
-| Roll all | Tempo + scale, sounds and the pattern in one go. |
-| Tempo + scale | A genre (HOUSE, TECHNO, TRANCE, DNB, HIPHOP, SYNTHPOP, DOWNTEMPO): BPM from its range, one of its scales, a random root. |
-| Sounds | Factory presets on tracks 1–4: T1 **DRUMS** a factory KIT (its drums go to INS25–32, or INS17–24 when the kit itself is there), T2 **BASS**, T3 **CHORDS** (a PAD / KEYS preset), T4 **LEAD** (LEAD / PLUCK). The kit mostly suits the genre (TECHNO / HOUSE / TRANCE a 909, HIPHOP the 808 DEEP or LOFI, DOWNTEMPO DUB / LOFI…; about 70 % of rolls, the rest any kit); without Tempo + scale the genre is the one whose BPM range holds the project tempo. The tracks become INT and take the preset's recommended insert. An instrument another track plays (or a lane of its KIT uses) is never overwritten: the role moves to a free slot, or is skipped when none is left; DRUMS is skipped when another track plays the kit or one of the INS slots its drums would go to. |
-| Pattern | Tracks 1–4 of the pattern you hear, rewritten from the generators: Euclid hits on the KIT lanes (kick, snare, hats, clap), a random chord progression ([CHORDS](#chords)), a bass against it ([BASS](#bass)), an arp over the chords ([ARP](#arp)). The pattern length stays; GEN and [MUT](#mut) of these tracks are turned off. Notes stay in the project scale. Drums are written only when track 1 plays a KIT. |
-| Sounds + pattern | Both. |
-| Undo dice | Puts back what the last roll changed (one step). Edits elsewhere made since stay; edits to the rolled parts are lost. Load and New clear it. |
+| Genre | HOUSE, TECHNO, TRANCE, DNB, BREAKS, HIPHOP, IDM, AMBIENT, SYNTHWAVE. A new genre starts at its first style. |
+| Style | The genre's styles (table below). |
+| Variety | 0..100 (Shift ×10), default 30. 0 = the canon: the style's main BPM and its most likely kit, presets, grooves and parts, nothing mutated. Higher: the rarer options come up more often, the BPM moves within the style's range, drums get ghost notes, shifts and probabilities, lead / arp notes move by scale steps. |
+| Length | AUTO, 16, 32, 64, 128: the steps of all four patterns. AUTO = the style's length: 64 for the melodic styles, 32 for the groove ones (tech house, minimal / peak / hard / acid / dub techno, UKG, electro, neuro, jungle, jumpup, trap, glitch, breakbeat, dark psy). Grey unless Scope writes patterns. |
+| Scope | **ALL** (all three below), **TEMPO** (BPM and one of the style's scales, a random tonic), **SOUNDS** (the style's KIT on track 1, its presets on tracks 2–6), **PATTERNS** (four patterns, below). |
+| Song | ON: the song becomes MAIN ×2, FILL, BREAK, DROP ×2, FILL (it replaces the whole song). OFF: the song stays. Grey (ignored) unless Scope writes patterns. |
+| Roll / ROLL | Rolls with these settings. The window stays open: ROLL again for another take (a new seed every time). |
+| Undo dice / UNDO | Puts back the last roll (one step, below). Grey when there is nothing to undo. |
+| Close / CLOSE | Closes the window. |
 
-The toast names the result (`DICE HOUSE 122 A Dorian`). Every roll is different (hardware random). Tracks 5–16, the other patterns, the song, the tuning and the project seed are never touched; mutes and solos stay as they are (neither a roll nor its undo changes them). The roll is computed aside and swapped in at once, so playback does not stutter. Shift+B (pattern undo) does not undo a roll — use **Undo dice**.
+The settings are remembered on the device (not in the project).
+
+**Roles — tracks 1–6:** 1 **DRUMS** (a KIT built for the style, named after it: kick, snare, clap, closed / open hat and perc on lanes 1–6, each a factory DRUM / FM / CHIP drum with the style's length and click; its drums go to INS25–32, or INS17–24 when the kit itself is there), 2 **BASS**, 3 **CHORDS** / pad, 4 **LEAD** (an arp over the chords, a motif by scale degrees, or none), 5 **ARP** / pluck, 6 **FX** (a riser, percussion or noise). SOUNDS makes these tracks INT with the preset's recommended insert. An instrument another track plays (or a lane of its KIT uses) is never overwritten: the role moves to a free slot, or is skipped when none is left; DRUMS is skipped when another track plays the kit or one of the INS slots its drums would go to. A role the style does not have leaves its track empty and muted (the others are unmuted). Tracks 7–16 are never touched.
+
+**Sound choice:** every style has its own list per role (4–16 presets of SYNTH, FM, CHIP and STRING, many of them made for the style) and per drum lane (3–13 DRUM / FM drums), each with a weight: the style's most typical sound is the heaviest and is the canon at Variety 0; harsh, aggressive ones are rare outside the styles built on them. A roll picks each role and lane on its own, so the same style comes out with a different kit and set of sounds.
+
+**Mix and tone:** SOUNDS also sets each role's track volume and pan from the style (kick and snare carry the groove, hats 7–8 dB under the kick, bass under the kick, pads quieter, lead a little above, arp off-centre) and softens the melodic presets: the filter is capped (a preset without one gets a low-pass), resonance, filter env, drive / fold / ring / SAT and bit / rate reduction are kept moderate, pads get a longer attack and release, and the delay / reverb sends follow the role and style. Drum hits get velocities by their place in the beat (accents on the beat, ghost notes about −14 dB), Variety adds a velocity spread, drum humanize and a small spread of the drums' length and tone around the style's canon. A KIT lane playing an instrument has no choke: an open hat rings out over the closed one.
+
+**Patterns:** four patterns from the one you edit: **MAIN** (the lead plainer and quieter: only A / A′, below), **FILL** (MAIN with a fill in its last bar), **BREAK** (no kick, no lead: pad + FX), **DROP** (everything, the full lead). Near the end of the bank they go back from it so that all four fit (editing P15 → `P13-P16`); the window header shows the range. All four get the same length (the Length row), the style's resolution, swing and groove; only the role tracks' steps are written, and their GEN and [MUT](#mut) are turned off. When any of the four holds notes, ROLL first asks `OVERWRITE Pxx-Pyy?` — once per range while the window is open, so re-rolls do not ask again. Other patterns are never touched.
+
+**Phrases:** a bar is 16 steps, a phrase is four bars **A A′ A B** (32 steps: A B; 16: half a bar each; 128: two phrases, bar 8 a bigger fill). A′ changes a little, B answers. Chords: about one per bar, inversions led to the nearest voicing, added notes by style (7 / 9 in deep, liquid, ambient, lofi, chillwave, electronica; sus in trance; none in techno, hard, neuro), the last bar of a phrase pushed ahead; a long progression may end differently the second time. Bass: in bars 2 and 4 the last beat walks to the next chord's root (a step or a semitone), now and then an octave jump; A′ syncopates or drops a note. Arp: bar 4 changes octave or direction. Lead: A is a motif, A′ changes its tail, B is an answer with another rhythm ending on the tonic or fifth; chord notes on the strong beats, scale steps between. Drums: A′ moves a kick, adds a snare ghost or shifts the open hat; B ends in a mini-fill (snare roll, flam, kick rest, crash / perc); perc and hats vary per bar (16ths, triplet or swung lifts in DNB, breaks, hiphop, IDM). Techno and minimal vary barely, breaks / DNB / IDM the most. Variety 0 keeps these variations but fixed (the same every roll); higher makes them more varied and more frequent.
+
+| Genre | Styles (BPM range; roles if not all six) |
+|---|---|
+| HOUSE | DEEP 118–124, TECH 124–128 (1 2 3 5 6), ACID 120–126 (1 2 3 6), DISCO 115–124, PROG 122–128 |
+| TECHNO | MINIMAL 124–130 (1 2 5 6), DUB 118–126 (1 2 3 6), PEAK 128–135 (1 2 5 6), HARD 140–150 (1 2 3 6), ACID 130–140 (1 2 5 6), MELODIC 120–126 |
+| TRANCE | UPLIFT 136–140, FULLON 140–146 (1 2 4 5 6), DARK PSY 146–155 (1 2 5 6), GOA 140–148 (1 2 4 5 6), PROG 130–136 |
+| DNB | LIQUID 170–176, JUMPUP 172–176 (1 2 4 6), NEURO 172–176 (1 2 3 6), JUNGLE 160–170 (1 2 3 6), HALFTIME 170–175 (1 2 3 5 6) |
+| BREAKS | BREAKBEAT 126–136 (1 2 3 5 6), UKG 2STEP 128–136 (1 2 3 6), ELECTRO 120–132 (1 2 4 5 6) |
+| HIPHOP | BOOMBAP 86–96 (1 2 3 4 6), LOFI 70–90 (1 2 3 5 6), TRAP 130–150 (1 2 3 5 6) |
+| IDM | BRAINDANCE 135–165, GLITCH 100–130 (1 2 3 5 6), ELECTRONICA 100–124 |
+| AMBIENT | DREAM 60–80 (3 4 5 6), DARK 55–75 (1 2 3 6), DRONE 40–70 (2 3 6) |
+| SYNTHWAVE | OUTRUN 100–118, DARKSYNTH 110–130, CHILLWAVE 80–100 |
+
+**Undo** is one step and puts back everything the last roll wrote: the four patterns, the sounds and mutes of tracks 1–6, tempo and scale, the song. Edits elsewhere made since stay; edits to the rolled parts are lost. Load and New clear it. Shift+B (pattern undo) does not undo a roll.
+
+The toast names the result (`DICE TRANCE FULLON 142 F# Minor`). The tuning, the project seed and solos are never touched. The roll is computed aside and swapped in at once, so playback does not stutter.
 
 <a id="bank"></a>
 
@@ -2278,7 +2341,7 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 | Sample length | up to the card's free space (mono, 16-bit, up to 44.1 kHz after import) |
 | One-shot render | up to 10 s; hold 0.05–5 s |
 | Wavetables | 32 per project, name up to 16 characters; 64 frames × 256 points, 96 KB of flash per table (in the cache shared with samples); 8 built-in; import file up to 256 frames × 2048 |
-| Presets | `.mti` file 236 bytes, name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 196 factory |
+| Presets | `.mti` file 236 bytes, name up to 16 characters, up to 4 levels of folders in a type folder, up to 64 rows in one folder; 582 factory |
 | Arp patterns | up to 32 steps; 106 factory, up to 32 of your own listed, name up to 16 characters |
 | Chord progressions | up to 16 chords; 55 factory + RANDOM, 32 rhythms, up to 32 of your own listed |
 | Bass patterns | up to 32 steps; 48 factory, up to 32 of your own listed |

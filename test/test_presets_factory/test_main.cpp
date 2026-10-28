@@ -302,7 +302,14 @@ void test_unused7_has_no_presets() { TEST_ASSERT_EQUAL(0, factoryCount(InstrType
 
 // STRING: 3 STRING + 3 MODAL presets, generic names.
 void test_string_presets() {
-  TEST_ASSERT_EQUAL(6, factoryCount(InstrType::String));
+  TEST_ASSERT_TRUE(factoryCount(InstrType::String) >= 6);
+  // the original six stay (songs and DICE recipes refer to them by name)
+  for (const char* nm : {"NYLON", "HARP", "PIZZ", "MARIMBA", "BELL", "KALIMBA"}) {
+    bool found = false;
+    for (int i = 0; i < factoryCount(InstrType::String); ++i)
+      found = found || strcmp(factoryPreset(InstrType::String, i).name, nm) == 0;
+    TEST_ASSERT_TRUE_MESSAGE(found, nm);
+  }
   int perModel[static_cast<int>(StringModel::Count)] = {};
   for (int i = 0; i < factoryCount(InstrType::String); ++i) {
     const FactoryPreset& a = factoryPreset(InstrType::String, i);
@@ -315,8 +322,8 @@ void test_string_presets() {
     for (int j = i + 1; j < factoryCount(InstrType::String); ++j)
       TEST_ASSERT_TRUE_MESSAGE(strcmp(a.name, factoryPreset(InstrType::String, j).name) != 0, a.name);
   }
-  TEST_ASSERT_EQUAL(3, perModel[static_cast<int>(StringModel::String)]);
-  TEST_ASSERT_EQUAL(3, perModel[static_cast<int>(StringModel::Modal)]);
+  TEST_ASSERT_TRUE(perModel[static_cast<int>(StringModel::String)] >= 3);
+  TEST_ASSERT_TRUE(perModel[static_cast<int>(StringModel::Modal)] >= 3);
 }
 
 void test_kit_block() {
@@ -361,6 +368,29 @@ void test_kit_lanes() {
   }
 }
 
+// A lane that plays an instrument sounds at that instrument's vol (the lane's vol drives only sampler
+// lanes): a factory KIT gives its drums the lane levels, so the mix is the one the kit lists, whatever
+// vol the drum preset has on its own (a driven preset's lowered vol goes with its drive).
+void test_kit_lane_levels_reach_instruments() {
+  static Project p;
+  for (int i = 0; i < factoryCount(InstrType::Kit); ++i) {
+    const FactoryPreset& f = factoryPreset(InstrType::Kit, i);
+    p.reset();
+    factoryBuildKit(i, p, 0);
+    const Instrument& k = p.instruments[0];
+    for (int l = 0; l < f.drumCount; ++l) {
+      const Instrument& d = p.instruments[k.kit[l].instr];
+      TEST_ASSERT_EQUAL_MESSAGE(f.drums[l].vol, d.vol, f.drums[l].name);
+      TEST_ASSERT_EQUAL_MESSAGE(k.kit[l].vol, d.vol, f.drums[l].name);
+    }
+    // Lanes: kick, snare, closed hat (KIT lane order).
+    if (f.drumCount >= 3) {
+      TEST_ASSERT_TRUE_MESSAGE(p.instruments[k.kit[0].instr].vol > p.instruments[k.kit[2].instr].vol, f.name);
+      TEST_ASSERT_TRUE_MESSAGE(p.instruments[k.kit[0].instr].vol >= 100, f.name);
+    }
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_counts);
@@ -380,5 +410,6 @@ int main() {
   RUN_TEST(test_string_presets);
   RUN_TEST(test_kit_block);
   RUN_TEST(test_kit_lanes);
+  RUN_TEST(test_kit_lane_levels_reach_instruments);
   return UNITY_END();
 }

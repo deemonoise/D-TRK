@@ -909,7 +909,7 @@ TRIPLET, PSY TRIPL и TE HYPNO3 — по 12 шагов (поверх 16 шаго
 - **Шапка** показывает слышимое состояние режима: EVO — `MUT` (шагов изменений с Play), `PASS` (проходов, отсчитанных до следующего) и `CHG` (изменённых шагов в длине дорожки); CA — `GEN` (поколений с поколения 0), `PASS` и мини-сетку живых клеток (на дорожке KIT 8 рядов, лейн 1 сверху); MARKOV — `GEN` (поколений с Play), `PASS` и шаги, которые отличаются от паттерна. Правки на ходу действуют с ближайшего несыгранного шага.
 - **NRN или EVO Note:** fx шага [NRN](#fx) на каждом проходе бросает новую случайную ноту и никуда не уходит от записанной; EVO Note держит дрейф — каждое изменение начинается с предыдущего, пока Home не вернёт его или дрейф не будет записан.
 - **Старые проекты:** в файлах до MUT EVO и VAR были двумя генераторами друг на друге. Дорожка, где включены оба, открывается в своём режиме VAR (EVO выключен); только EVO — открывается как EVO. CA2D на мелодической дорожке открывается как CA1D с тем же номером правила (CA2D нужны 8 лейнов KIT); дорожка, которая уходит с KIT (другой инструмент или тип), играет и показывает CA2D как CA1D, а с KIT снова получает CA2D (пока проект не сохранён и не открыт заново). Настройки EVO, оставленные при другом режиме, сохраняются вместе с проектом.
-- **Dice** (PROJ) → Pattern выключает MUT на переписанных треках.
+- **Dice** (PROJ) → Scope PATTERNS (или ALL) выключает MUT на переписанных треках.
 - MUT хранится в проекте (чанк TVAR — режим и CA / MARKOV, TEVO — EVO), undo для его строк нет (как для Volume).
 
 <a id="mutevo"></a>
@@ -1743,31 +1743,63 @@ Vel\>Dmp на странице ENV сдвигает DAMP по громкости
 - **Папки:** внутри папки типа — до 4 уровней (глубже — «TOO DEEP»).
 - Без карты Load показывает только `[FACTORY]`, Save не открывается («NO SD CARD»).
 
-| Тип    | Категория | Заводские пресеты                                                                                                                   |
-|--------|-----------|-------------------------------------------------------------------------------------------------------------------------------------|
-| CHIP   | LEAD      | SQ LEAD, ARP PLK, C64 LEAD, ZX ARP, AY TN                                                                                                           |
-| CHIP   | BASS      | TRI BASS, ACID, C64 BASS, ZX BUZZ                                                                                                           |
-| CHIP   | PAD       | PWM PAD, WT PAD                                                                                                                     |
-| CHIP   | KEYS      | WT BELL                                                                                                                             |
-| CHIP   | PERC      | NOIS HH, NOIS SN, METALBL, SID NZ, AY HAT                                                                                                           |
-| FM     | DRUMS     | KICK, SNARE, CLAP, HAT C, HAT O, WOODBLK                                                                                            |
-| FM     | KEYS      | BELL, E.PIANO, CHORD M7                                                                                                             |
-| FM     | BASS      | FM BASS                                                                                                                             |
-| DRUM   | 808       | BD808, BD808 L, SD808, CH808, OH808, CP808, CB808                                                                                   |
-| DRUM   | 909       | BD909, SD909, CH909, OH909, CP909                                                                                                   |
-| DRUM   | ANALOG    | BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O                                 |
-| SYNTH  | BASS      | BASS, ACID, SUBBASS                                                                                                                 |
-| SYNTH  | LEAD      | LEAD, SYNCLD                                                                                                                        |
-| SYNTH  | PAD       | PAD, PWMSTR, WTSWEEP                                                                                                                |
-| SYNTH  | KEYS      | PLUCK, BELL                                                                                                                         |
-| STRING | PLUCK     | NYLON, HARP, PIZZ                                                                                                                   |
-| STRING | KEYS      | MARIMBA, BELL, KALIMBA                                                                                                              |
-| LOFI   | BYTE      | 42 MELDY, VIZNUT, SIERPNSK, LOSTSPC, NIBBLES, MASK 27, SQ DUET, FRACBELL, LOOP ARP, BYTEBASS, SYNCBEAT, SYNCHATS, SYNCARP, SYNCBASS |
-| LOFI   | APC       | APC, APC SUB, APC DRFT, APC SOFT                                                                                                    |
-| KIT    | DRUM      | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT, ANALOG                                                                    |
-| KIT    | FM        | FM KIT, FM PUNCH, FM PERC                                                                                                           |
-| KIT    | CHIP      | CHIP KIT                                                                                                                            |
-| KIT    | MIX       | HYBRID, DUB KIT                                                                                                                     |
+**Заводские пресеты:** 582 — SYNTH 123, FM 141, DRUM 149, CHIP 65, STRING 25, LOFI 30, KIT 49; в каждой категории сначала базовые, затем сделанные под стили [Dice](#dice) (названы по ним: DEEPHSE, PSYBASS, KICK DNB, SD GATE...). В скобках — сколько пресетов в категории.
+
+| Тип | Категория | Заводские пресеты |
+|---|---|---|
+| CHIP | LEAD (16) | SQ LEAD, ARP PLK, NES LEAD, THIN LD, SAW LD, FLUTE, GBLEAD, C64 LEAD, ZX ARP, AY TN, SOFT SQ, OUTRUN, WARM PWM, SOFT SIN, HOLLOW, DARKLEAD |
+| CHIP | BASS (13) | TRI BASS, ACID, SQ BASS, C64 BASS, ZX BUZZ, PLK BASS, SUB SINE, GRIT BAS, ROUND SB, OUTBASS, SOFTACID, PWM BASS, GB BASS |
+| CHIP | PAD (9) | PWM PAD, WT PAD, GLASSPAD, ORGAN, STRINGS, SOFT PAD, DRIFTPAD, CHOIR, DARKPAD |
+| CHIP | KEYS (8) | WT BELL, CHIPKEYS, MARIMBA, MUSICBOX, CLAV, EP SOFT, VIBES, CHIPSTAB |
+| CHIP | PERC (8) | NOIS HH, NOIS SN, METALBL, NOIS OH, SID NZ, AY HAT, CHIPKICK, BLIP |
+| CHIP | FX (4) | LASER, SIREN, WIND, COIN |
+| CHIP | ARP (7) | SOFT ARP, GLASSARP, BELL ARP, 4BIT ARP, SID ARP, PLINK, RND BLIP |
+| FM | DRUMS (49) | KICK, KICK SUB, KICK PNC, SNARE, SNR TGHT, SNR FAT, CLAP, CLAP BIG, HAT C, HAT O, RIDE, WOODBLK, KICK DEP, KICK TCH, KICK 909, KICK BOM, KICK TRP, KICK DNB, KICK PSY, KICK HRD, KICK LOF, KICK ELC, KICK MIN, KICK DUB, SNR HOUS, SNR DNB, SNR BRK, SNR BOOM, SNR LOFI, SNR TRAP, SNR ELEC, SNR NEUR, SNR TRNC, SNR GHST, CLAP HSE, CLAP TGT, CLAP 909, CLAP WRM, CLAP TRP, CLAP DUB, SNAP, HAT TGHT, HAT SOFT, HAT MTL, HAT TRAP, HAT O LG, HAT 909O, HAT DUST, CRASH |
+| FM | PERC (19) | TOM, CONGA, COWBELL, GONG, ZAP, TOM LO, TOM HI, TOM ELEC, RIM, RIM SOFT, SHAKER, SHKR SFT, CLAVE, BONGO, TABLA, BLIP, CLICK, AGOGO, TRIANGL |
+| FM | KEYS (29) | BELL, E.PIANO, EP SOFT, DX BELL, GLOCK, MARIMBA, ORGAN, CHORD M7, CHRD MIN, CHRD MI9, CHRD 5TH, EP DEEP, EP BELL, EP DX, EP LOFI, VIBES, KALIMBA, MALLET, CELESTA, TUBEBELL, PLUCK FM, PLK SOFT, PLK PSY, CHRD MI7, CHRD DUB, CHRD SU4, CHRD HSE, ORGAN HS, CHRD STB |
+| FM | BASS (22) | FM BASS, DX BASS, SUB FM, WOBBLE, DEEP SUB, BASS DEP, ACID FM, TECH BAS, DISCO BS, PSY BASS, GOA BASS, REESE FM, NEURO, GROWL FM, JUMPUP, HALF SUB, 808 FM, BS ROUND, DUB BASS, OUTRUN B, DARK BS, ELEC BS |
+| FM | LEAD (10) | FM LEAD, SQ LEAD, BRASS, LEAD SFT, TRNC LD, PSY LEAD, FLUTE FM, RUN LEAD, CHILL LD, GLASS LD |
+| FM | PAD (10) | FM PAD, CHRD PAD, PAD WARM, PAD GLAS, PAD DARK, DRONE FM, DREAM PD, PAD MI7, PAD MI9, STRNG FM |
+| FM | FX (2) | RISER, LASER |
+| DRUM | 808 (15) | BD808, BD808 L, BD808 S, BD808 D, SD808, SD808 S, TOM808, TOM808 L, CH808, OH808, CY808, CP808, RS808, CL808, CB808 |
+| DRUM | 909 (12) | BD909, BD909 H, BD909 S, SD909, SD909 T, TOM909, TOM909 H, CH909, OH909, CY909, CP909, RS909 |
+| DRUM | LOFI (5) | BD DUSTY, SD DUSTY, HH DUSTY, CP DUSTY, RIM BIT |
+| DRUM | HARD (6) | BD DIST, BD RUMBL, SD NOISE, CLAP VRB, HH HARSH, METAL HT |
+| DRUM | ANALOG (14) | BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O |
+| DRUM | HOUSE (14) | BD DEEP, BD HOUSE, BD DISCO, SD HOUSE, CP HOUSE, CP DEEP, CH HOUSE, OH HOUSE, SHAKER, TAMB, RIM DEEP, CONGA M, CONGA H, CB DISCO |
+| DRUM | TECHNO (14) | BD TECH, BD MINI, BD DUB, BD PEAK, BD HTEK, BD TAIL, SD HTEK, CP TECH, CP DUB, CH TECH, OH TECH, RIDE TEC, RIM DUB, PERC TEC |
+| DRUM | TRANCE (8) | BD TRNC, BD PSY, BD GOA, CP TRNC, SD TRNC, OH TRNC, CH PSY, CRASH SF |
+| DRUM | DNB (13) | BD DNB, BD LIQ, BD NEURO, BD JUNG, SD DNB, SD LIQ, SD NEURO, SD JUMP, SD JUNG, SD GHOST, SD HALF, CH DNB, RIDE DNB |
+| DRUM | BREAKS (11) | BD BREAK, SD BREAK, BD 2STEP, SD 2STEP, RIM UKG, BD ELECT, SD ELECT, CP ELECT, CB ELECT, CL ELECT, TOM ELEC |
+| DRUM | HIPHOP (13) | BD BOOM, SD BOOM, BD LOFI, SD LOFI, HH LOFI, RIM LOFI, 808 SUB, 808 DIST, 808 SHRT, SD TRAP, CP TRAP, HH TRAP, OH TRAP |
+| DRUM | IDM (9) | BD GLTCH, BD IDM, SD GLTCH, SD BRAIN, HH GLTCH, TICK, CLICK, BLIP, TOM ZAP |
+| DRUM | AMBIENT (8) | BD SOFT, BD PULSE, SD AIR, HH SOFT, RIM AIR, CB GLASS, CY WASH, TOM AMB |
+| DRUM | SYNTHWAVE (7) | BD OUTRN, BD DARKS, SD GATE, CP 80S, TOM 80S, SD CHILL, HH 80S |
+| SYNTH | BASS (31) | BASS, ACID, SUBBASS, MOOGISH, REESE, PLUCKBAS, WOBBLE, FM GROWL, DEEPSUB, 808 BASS, 808 GLD, DEEPHSE, ACIDSOFT, ACIDSQ, REESEWRM, NEURO, WOBBLE2, DUBTECH, PSYBASS, TRANCEBS, GOABASS, DISCOBAS, ELECBASS, OUTRUNBS, DARKBASS, JUNGLSUB, MINIBASS, RUMBLE, LOFIBASS, UKGBASS, MOOGFAT |
+| SYNTH | LEAD (21) | LEAD, SYNCLD, SUPERSAW, SQ LEAD, SOLO, WT LEAD, HOOVER, SOFTLEAD, UPLIFT, SAWSOFT, PSYLEAD, GOALEAD, OUTRUNLD, FLUTE, SINELEAD, MELOLEAD, BRAINLD, GLIDELD, DARKLEAD, ELECTRLD, PROGLEAD |
+| SYNTH | PAD (23) | PAD, PWMSTR, WTSWEEP, WARM PAD, CHOIR, ORGAN, DARK PAD, SHIMMER, DREAMPAD, DEEP PAD, VOX PAD, STRINGS, STRNGDRK, TRANCEPD, DRONE, DRONEDRK, GLASSPAD, CHILLPAD, OUTRUNPD, PROGPAD, SPACEPAD, ABYSS, HALO |
+| SYNTH | KEYS (18) | PLUCK, BELL, STAB, E.PIANO, KALIMBA, HARP, EP SOFT, EP DEEP, HOUSEORG, DUBCHORD, KORGPNO, RAVESTB, TRANCSTB, CLAV, VIBES, LOFIKEYS, POLYSYN, BRASS |
+| SYNTH | PLUCK (16) | PLUCK WT, PING, CHIPPLK, SYNCPLK, SOFTPLK, MARIMBA, DEEPPLK, MELOPLK, ARPPLK, PSYPLK, GLITCHPL, BLIP, DREAMPLK, UKGPLK, PROGPLK, DUBPLK |
+| SYNTH | FX (14) | RISER, NOISESWP, ROBOT, SCIFI, UPLIFTER, DOWNLIFT, WHOOSH, WIND, ZAP, SWEEPUP, SIREN, LASER, SPACEDRN, IMPACT |
+| STRING | PLUCK (11) | NYLON, HARP, PIZZ, SOFTPLK, KOTO, LOFIGTR, DUB PLK, MUTED, AIRHARP, SITAR, STR BASS |
+| STRING | KEYS (9) | MARIMBA, BELL, KALIMBA, VIBRA, GLOCK, STEELPAN, WOOD, TINE EP, GAMELAN |
+| STRING | PAD (5) | BOWED, GLASDRON, DARKDRON, CHIMES, SHIMMER |
+| LOFI | BYTE (14) | 42 MELDY, VIZNUT, SIERPNSK, LOSTSPC, NIBBLES, MASK 27, SQ DUET, FRACBELL, LOOP ARP, BYTEBASS, SYNCBEAT, SYNCHATS, SYNCARP, SYNCBASS |
+| LOFI | APC (4) | APC, APC SUB, APC DRFT, APC SOFT |
+| LOFI | TEXTURE (12) | SIERPAD, BELLHAZE, LOSTFOG, RAINBYTE, BUZZDRON, TRIHOP, GLITCHLP, SOFTARP, SYNCCHRD, SYNCMEL, APCDRONE, APC HUM |
+| KIT | DRUM (7) | 808 KIT, 808 DEEP, 909 KIT, 909 HARD, LOFI KIT, HARD KIT, ANALOG |
+| KIT | FM (3) | FM KIT, FM PUNCH, FM PERC |
+| KIT | CHIP (1) | CHIP KIT |
+| KIT | MIX (2) | HYBRID, DUB KIT |
+| KIT | HOUSE (5) | DEEP HSE, TECH HSE, ACID HSE, DISCO, PROG HSE |
+| KIT | TECHNO (6) | MINIMAL, DUB TECH, PEAK, HARD TEC, ACID TEC, MELO TEC |
+| KIT | TRANCE (5) | UPLIFT, FULLON, DARK PSY, GOA, PROG TRN |
+| KIT | DNB (5) | LIQUID, JUMPUP, NEURO, JUNGLE, HALFTIME |
+| KIT | BREAKS (3) | BREAKBT, 2STEP, ELECTRO |
+| KIT | HIPHOP (3) | BOOMBAP, LOFI HOP, TRAP |
+| KIT | IDM (3) | BRAINDNC, GLITCH, ELECTRON |
+| KIT | AMBIENT (3) | DREAM, DARK AMB, DRONE |
+| KIT | SYNTHWAVE (3) | OUTRUN, DARKSYN, CHILLWV |
 
 <a id="proj"></a>
 
@@ -1868,20 +1900,51 @@ Vel\>Dmp на странице ENV сдвигает DAMP по громкости
 
 Проект хранит имя и саму таблицу: он играет в строе и без файла на карте (строка Tuning тогда показывает имя из проекта). Правка `.scl` на компьютере проекты не меняет — выберите строй заново. Битый строй в файле проекта сбрасывается в 12-TET (toast `TUNING RESET`). Строй не входит в пресеты инструментов; новый проект — 12-TET. Экспорт WAV звучит в строе, экспорт MIDI — нет. Старая прошивка открывает проект со строем в 12-TET.
 
+<a id="dice"></a>
+
 ### Dice
 
-**DICE** в шапке PROJ (или долгое нажатие энкодера на PROJ) бросает случайную затравку проекта:
+**DICE** в шапке PROJ (или долгое нажатие энкодера на PROJ) открывает окно DICE: затравка трека в выбранном жанре и поджанре. B или долгое нажатие закрывают его.
 
-| Пункт | Что делает |
+| Строка | Что делает |
 |---|---|
-| Roll all | Темп и лад, звуки и паттерн разом. |
-| Tempo + scale | Жанр (HOUSE, TECHNO, TRANCE, DNB, HIPHOP, SYNTHPOP, DOWNTEMPO): BPM из его диапазона, один из его ладов, случайная тоника. |
-| Sounds | Заводские пресеты на треки 1–4: T1 **DRUMS** — заводской KIT (его барабаны ложатся в INS25–32, или в INS17–24, если сам кит там), T2 **BASS**, T3 **CHORDS** (пресет PAD / KEYS), T4 **LEAD** (LEAD / PLUCK). Кит чаще всего под жанр (TECHNO / HOUSE / TRANCE — 909, HIPHOP — 808 DEEP или LOFI, DOWNTEMPO — DUB / LOFI…; примерно 70 % бросков, остальные — любой кит); без Tempo + scale жанр — тот, в чей диапазон BPM попадает темп проекта. Треки становятся INT и берут рекомендованный insert пресета. Инструмент, который играет другой трек (или его берёт дорожка чужого KIT), не перезаписывается: роль уходит в свободный слот, а если его нет — пропускается; DRUMS пропускается, если другой трек играет сам кит или один из слотов INS, куда легли бы его барабаны. |
-| Pattern | Треки 1–4 слышимого паттерна переписываются генераторами: евклидовы удары по дорожкам KIT (бочка, снейр, хэты, клэп), случайная прогрессия ([CHORDS](#chords)), бас по ней ([BASS](#bass)), арпеджио по аккордам ([ARP](#arp)). Длина паттерна не меняется, GEN и [MUT](#mut) этих треков выключаются, ноты — в ладу проекта. Ударные пишутся, только если трек 1 играет KIT. |
-| Sounds + pattern | И то, и другое. |
-| Undo dice | Возвращает то, что изменил последний бросок (один шаг). Правки в других местах после броска остаются, правки брошенных частей теряются. Load и New сбрасывают отмену. |
+| Genre | HOUSE, TECHNO, TRANCE, DNB, BREAKS, HIPHOP, IDM, AMBIENT, SYNTHWAVE. Новый жанр начинается с первого поджанра. |
+| Style | Поджанры жанра (таблица ниже). |
+| Variety | 0..100 (Shift ×10), по умолчанию 30. 0 — канон: основной BPM поджанра и самые вероятные кит, пресеты, грувы и партии, без мутаций. Выше — редкие варианты выпадают чаще, BPM гуляет в диапазоне поджанра, у барабанов гост-ноты, сдвиги и вероятности, ноты лида / арпа сдвигаются по ступеням лада. |
+| Length | AUTO, 16, 32, 64, 128 — шагов во всех четырёх паттернах. AUTO — длина поджанра: 64 у мелодичных, 32 у грувовых (tech house, techno minimal / peak / hard / acid / dub, UKG, electro, neuro, jungle, jumpup, trap, glitch, breakbeat, dark psy). Серая, если Scope не пишет паттерны. |
+| Scope | **ALL** (всё ниже), **TEMPO** (BPM и один из ладов поджанра, случайная тоника), **SOUNDS** (KIT поджанра на треке 1, его пресеты на треках 2–6), **PATTERNS** (четыре паттерна, ниже). |
+| Song | ON — песня становится MAIN ×2, FILL, BREAK, DROP ×2, FILL (заменяет всю песню). OFF — песня не трогается. Серая (не действует), если Scope не пишет паттерны. |
+| Roll / ROLL | Бросок с этими настройками. Окно остаётся открытым: ещё ROLL — другой вариант (каждый раз новый seed). |
+| Undo dice / UNDO | Возвращает последний бросок (один шаг, ниже). Серая, когда отменять нечего. |
+| Close / CLOSE | Закрывает окно. |
 
-Тост называет результат (`DICE HOUSE 122 A Dorian`). Каждый бросок разный (аппаратный random). Треки 5–16, другие паттерны, песня, строй и сид проекта не трогаются; mute и solo остаются как есть (их не меняет ни бросок, ни его отмена). Бросок считается в стороне и подменяется разом — воспроизведение не запинается. Shift+B (undo паттерна) бросок не отменяет — для этого **Undo dice**.
+Настройки запоминаются в устройстве (не в проекте).
+
+**Роли — треки 1–6:** 1 **DRUMS** (KIT, собранный под стиль и названный по нему: кик, снейр, клэп, закрытый / открытый хэт и перк на дорожках 1–6, каждый — заводской барабан DRUM / FM / CHIP с длиной и щелчком стиля; его барабаны ложатся в INS25–32, или в INS17–24, если сам кит там), 2 **BASS**, 3 **CHORDS** / пэд, 4 **LEAD** (арп по аккордам, мотив по ступеням или ничего), 5 **ARP** / плак, 6 **FX** (райзер, перкуссия или шум). SOUNDS делает эти треки INT с рекомендованным инсертом пресета. Инструмент, на котором играет другой трек (или который использует дорожка его KIT), не перезаписывается: роль переезжает в свободный слот или пропускается, если его нет; DRUMS пропускается, если другой трек играет на ките или на одном из слотов INS, куда легли бы его барабаны. Роль, которой нет в поджанре, оставляет свой трек пустым и в mute (остальные размьючиваются). Треки 7–16 не трогаются никогда.
+
+**Выбор звука:** у каждого стиля свой список на роль (4–16 пресетов SYNTH, FM, CHIP и STRING, многие сделаны под этот стиль) и на дорожку кита (3–13 барабанов DRUM / FM), у каждого вес: самый типичный для стиля звук самый тяжёлый и при Variety 0 берётся он; жёсткие, агрессивные редки вне стилей, которые на них построены. Каждая роль и дорожка выбираются отдельно, так что один и тот же стиль выходит с разным китом и набором звуков.
+
+**Микс и тембр:** SOUNDS также ставит громкость и панораму трека каждой роли по стилю (кик и снейр — опора, хэты на 7–8 dB тише кика, бас под киком, пэд тише, лид чуть выше, арп сбоку) и смягчает мелодические пресеты: срез фильтра ограничен (пресет без фильтра получает low-pass), резонанс, огибающая фильтра, drive / fold / ring / SAT и bit / rate умеренные, у пэдов длиннее атака и релиз, посылы дилея / ревера — по роли и стилю. Удары барабанов получают velocity по месту в такте (акценты на долях, гост-ноты около −14 dB); Variety добавляет разброс velocity, humanize барабанов и небольшой разброс длины и тона барабанов вокруг канона стиля. Дорожка KIT на инструменте не душится: открытый хэт звучит поверх закрытого.
+
+**Паттерны:** четыре паттерна от редактируемого: **MAIN** (лид проще и тише: только A / A′, ниже), **FILL** (MAIN со сбивкой в последнем такте), **BREAK** (без бочки и лида: пэд + FX), **DROP** (всё, лид целиком). У конца банка они отсчитываются назад, чтобы влезли все четыре (редактируется P15 → `P13-P16`); диапазон виден в шапке окна. Все четыре одной длины (строка Length), разрешение поджанра, свинг и грув; пишутся только шаги треков ролей, их GEN и [MUT](#mut) выключаются. Если в каком-то из четырёх есть ноты, ROLL сначала спрашивает `OVERWRITE Pxx-Pyy?` — один раз на диапазон, пока окно открыто, повторные броски не спрашивают. Другие паттерны не трогаются.
+
+**Фразы:** такт — 16 шагов, фраза — четыре такта **A A′ A B** (32 шага: A B; 16: по полтакта; 128: две фразы, 8-й такт — сбивка крупнее). A′ чуть изменён, B — ответ. Аккорды: примерно по такту, обращения ведутся к ближайшему голосоведению, добавленные ноты по стилю (7 / 9 в deep, liquid, ambient, lofi, chillwave, electronica; sus в trance; ничего в techno, hard, neuro), последний такт фразы с упреждением; длинная прогрессия на втором проходе может кончиться иначе. Бас: в тактах 2 и 4 последняя доля подходит к корню следующего аккорда (ступенью или полутоном), изредка октавный скачок; в A′ — синкопа или пропуск ноты. Арп: в 4-м такте другая октава или направление. Лид: A — мотив, A′ — изменённый хвост, B — ответ другим ритмом с каденцией на тонику или квинту; на сильных долях ноты аккорда, между ними ступени лада. Барабаны: в A′ сдвинут кик, гост снейра или открытый хэт на другой доле; B кончается мини-сбивкой (дробь снейра, флэм, пауза кика, крэш / перк); перк и хэты меняются по тактам (16-е, триольный или свинговый подъём в DNB, breaks, hiphop, IDM). Techno и minimal меняются едва заметно, breaks / DNB / IDM — сильнее всего. При Variety 0 вариации есть, но одни и те же при каждом броске; выше — разнообразнее и чаще.
+
+| Жанр | Поджанры (диапазон BPM; роли, если не все шесть) |
+|---|---|
+| HOUSE | DEEP 118–124, TECH 124–128 (1 2 3 5 6), ACID 120–126 (1 2 3 6), DISCO 115–124, PROG 122–128 |
+| TECHNO | MINIMAL 124–130 (1 2 5 6), DUB 118–126 (1 2 3 6), PEAK 128–135 (1 2 5 6), HARD 140–150 (1 2 3 6), ACID 130–140 (1 2 5 6), MELODIC 120–126 |
+| TRANCE | UPLIFT 136–140, FULLON 140–146 (1 2 4 5 6), DARK PSY 146–155 (1 2 5 6), GOA 140–148 (1 2 4 5 6), PROG 130–136 |
+| DNB | LIQUID 170–176, JUMPUP 172–176 (1 2 4 6), NEURO 172–176 (1 2 3 6), JUNGLE 160–170 (1 2 3 6), HALFTIME 170–175 (1 2 3 5 6) |
+| BREAKS | BREAKBEAT 126–136 (1 2 3 5 6), UKG 2STEP 128–136 (1 2 3 6), ELECTRO 120–132 (1 2 4 5 6) |
+| HIPHOP | BOOMBAP 86–96 (1 2 3 4 6), LOFI 70–90 (1 2 3 5 6), TRAP 130–150 (1 2 3 5 6) |
+| IDM | BRAINDANCE 135–165, GLITCH 100–130 (1 2 3 5 6), ELECTRONICA 100–124 |
+| AMBIENT | DREAM 60–80 (3 4 5 6), DARK 55–75 (1 2 3 6), DRONE 40–70 (2 3 6) |
+| SYNTHWAVE | OUTRUN 100–118, DARKSYNTH 110–130, CHILLWAVE 80–100 |
+
+**Undo** — один шаг, возвращает всё, что записал последний бросок: четыре паттерна, звуки и mute треков 1–6, темп и лад, песню. Правки в других местах после броска остаются, правки брошенных частей теряются. Load и New сбрасывают отмену. Shift+B (отмена в паттерне) бросок не отменяет.
+
+Тост называет результат (`DICE TRANCE FULLON 142 F# Minor`). Строй, сид проекта и solo не трогаются никогда. Бросок считается в стороне и подменяется разом, так что воспроизведение не запинается.
 
 <a id="bank"></a>
 
@@ -2281,7 +2344,7 @@ FILE → **Wi-Fi firmware…** подключает трекер к домашн
 | Длина сэмпла                        | сколько свободно на карте (моно, 16 бит, до 44,1 кГц после импорта)                                                                                            |
 | Рендер ваншота                      | до 10 с; удержание 0,05–5 с                                                                                                                                    |
 | Волновые таблицы                    | 32 в проекте, имя до 16 символов; 64 кадра × 256 точек, во flash 96 КБ на таблицу (в общем кэше с сэмплами); 8 вшитых; файл для импорта — до 256 кадров × 2048 |
-| Пресеты                             | файл `.mti` 236 байт, имя до 16 символов, до 4 уровней папок в папке типа, до 64 строк в одной папке; 196 заводских                                            |
+| Пресеты                             | файл `.mti` 236 байт, имя до 16 символов, до 4 уровней папок в папке типа, до 64 строк в одной папке; 582 заводских                                            |
 | Арп-паттерны                        | до 32 шагов; 106 заводских, до 32 своих в списке, имя до 16 символов                                                                                           |
 | Прогрессии аккордов                 | до 16 аккордов; 55 заводских + RANDOM, 32 ритма, до 32 своих в списке                                                                                          |
 | Бас-паттерны                        | до 32 шагов; 48 заводских, до 32 своих в списке                                                                                                                |

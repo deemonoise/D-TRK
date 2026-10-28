@@ -2,7 +2,35 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## 2026-10-28
+- **DICE phrases** ([manual](docs/manual.md#dice)): a Length row (AUTO / 16 / 32 / 64 / 128; AUTO = 64 for
+  melodic styles, 32 for groove ones), kept on the device; all four patterns share it. Parts are built as
+  four-bar phrases A A′ A B: chords with led inversions, added notes by style and a push in the last bar; bass
+  walks to the next root; arp turns in bar 4; the lead answers in B and ends on the tonic or fifth, and plays
+  in MAIN too (simpler, quieter); drums vary per bar with a mini-fill at the phrase end. Variety 0 keeps the
+  variations but fixed.
+
 ## 2026-10-27
+- **DICE by genre** ([manual](docs/manual.md#dice)): the DICE button / a long press on PROJ opens a window
+  instead of the menu: Genre (HOUSE, TECHNO, TRANCE, DNB, BREAKS, HIPHOP, IDM, AMBIENT, SYNTHWAVE), Style
+  (36 styles, each a recipe of BPM, scales, groove, kits, presets, progressions, bass / arp / lead parts),
+  Variety 0..100 (0 = canon), Scope ALL / TEMPO / SOUNDS / PATTERNS, Song ON / OFF; ROLL (the window stays,
+  ROLL again = a new take), UNDO, CLOSE. Settings kept on the device. Six roles on tracks 1–6 (DRUMS, BASS,
+  CHORDS, LEAD, ARP, FX); a role the style lacks leaves its track empty and muted. Four patterns from the
+  edited one: MAIN, FILL, BREAK, DROP (`OVERWRITE Pxx-Pyy?` before notes are replaced); Song ON makes the
+  song MAIN ×2, FILL, BREAK, DROP ×2, FILL. One undo step for all of it. File format and link protocol
+  unchanged. Sound: the DRUMS kit is built per style lane by lane (FM drums first in most styles, 808 / 909
+  where the style is built on them) with levels (hats 7–8 dB under the kick) and macro offsets; role volume
+  and pan per style; melodic presets softened (filter, resonance, env, drive / crush capped, longer pad
+  envelopes, sends by role) and soft presets weighted up; drum velocities by beat position with ghost notes,
+  Variety adds velocity spread and humanize.
+- **More factory presets** ([list](docs/manual.md#presets)): 582 in all, SYNTH 123, FM 141, DRUM 149, KIT 49,
+  CHIP 65, STRING 25, LOFI 30 (was 196). New ones are tuned for the DICE styles: deep / acid / psy / reese /
+  808 basses, trance / psy / outrun leads, dub chords, drones and pads, plucks, risers and impacts; new DRUM
+  categories HOUSE, TECHNO, TRANCE, DNB, BREAKS, HIPHOP, IDM, AMBIENT, SYNTHWAVE; FM drums, perc and an FX
+  category; CHIP ARP, STRING PAD, LOFI TEXTURE; a factory KIT per style. Harsh ones sit at lower volume.
+  DICE uses them: every style has its own sound list per role and more drums per kit lane, weighted with the
+  most typical first, so rolls vary more. Factory KIT lane levels now reach the drum's volume.
 - **Renders unified** ([Resample](docs/manual.md#resample), Export, [Save one-shot](docs/manual.md#oneshot), KIT
   bake): one client driver and one readiness check. A playing transport is stopped (toast `STOPPED`, no more
   `STOP FIRST`); a REC take refuses with `REC BUSY` (the synth board too, for every render); the card space is
