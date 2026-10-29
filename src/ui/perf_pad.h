@@ -10,7 +10,8 @@ class App;
 
 // PERF: punch-in effects on the master, held on the track buttons while playing. One mode shared
 // by GRID, SONG and MIX (App owns it): the on flag, the held effects as the synth has them and the
-// ring buffer, held only while PERF is on and a PERF tab (attach()) is shown.
+// ring buffer, held only while PERF is on and a PERF tab (attach()) is shown. The BLE controller's
+// PERF pads (padPress) hold effects from any tab and with PERF off; they keep the buffer while held.
 class PerfPad {
  public:
   explicit PerfPad(App& app) : app_(app) {
@@ -18,13 +19,21 @@ class PerfPad {
   }
   bool on() const { return on_; }
   void setOn(bool on);  // off releases everything and frees the buffer
-  // A PERF tab is shown / left: the buffer is taken (PERF on) / freed, leaving releases everything.
+  // A PERF tab is shown / left: the buffer is taken (PERF on) / freed. Leaving (detach, or
+  // buttonsOff between PERF tabs) ends the button and XY effects; controller pad effects go on.
   void attach();
   void detach();
+  void buttonsOff();
   // Button n (0-7) pressed: its PROJ -> PERF effect at its start Value, with a toast. False (not
   // handled) when PERF is off or the transport is not playing.
   bool press(int n);
   void release(int n);  // the effect button n held ends (unless another button holds it too)
+  // Controller PERF pad n (0-7): as press(), from any tab and with PERF off; stopped: a toast. What
+  // the pad held before (a release lost) ends first.
+  bool padPress(int n);
+  void padRelease(int n);
+  void padsOff();          // every pad's effect ends (unless a button or axis holds it too)
+  bool padsHeld() const;   // a pad holds an effect
   // Encoder: the last pressed effect's depth (Shift x10 on coarse ranges), with a toast. False
   // (not consumed) when nothing is held.
   bool turn(int delta, bool shift);
@@ -50,7 +59,8 @@ class PerfPad {
   void poll(bool playing);
   int heldCount() const { return stack_.count(); }
   const mt::PerfStack& stack() const { return stack_; }  // the held effects and depths (PerfVis)
-  // "PERF RPT FLT" (held shorts in press order) into out, as many as fit; "" when off. Its length.
+  // "PERF RPT FLT" (held shorts in press order) into out, as many as fit; "" when off and no pad
+  // holds an effect. Its length.
   int badge(char* out, int size) const;
   // The badge in yellow at x, y; its right edge (x when off).
   int drawBadge(LGFX_Sprite& s, int x, int y) const;
@@ -58,8 +68,11 @@ class PerfPad {
  private:
   void takeBuffer();  // a toast when there is none
   void freeBuffer();
+  void fitBuffer();  // freed unless PERF is on on a PERF tab or a pad holds an effect
   static constexpr int kXyHolder = mt::kPerfButtons;  // held_[kXyHolder + a]: axis a
-  static constexpr int kHolders = mt::kPerfButtons + 2;
+  static constexpr int kPadHolder = mt::kPerfButtons + 2;  // held_[kPadHolder + n]: controller pad n
+  static constexpr int kHolders = 2 * mt::kPerfButtons + 2;
+  bool hold(int h, int n);  // press() / padPress(): holder h takes perfMap[n] with its start value
   void releaseHolder(int h);  // h's effect ends unless another holder has it
   void xyApply(int x, int y, int w, int h);
   void send(const mt::PerfMsg* m, int n);

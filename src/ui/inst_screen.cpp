@@ -28,17 +28,6 @@ void envTime(uint8_t v, char* o, int n) {
   else snprintf(o, n, "%u.%u s", ms / 1000, ms % 1000 / 100);
 }
 
-// Lane note n, or the next one in direction dir that no other lane of the kit holds (unique lane
-// notes); the lane's own note if there is none in 0..127.
-uint8_t freeNoteFrom(const mt::Instrument& k, int lane, int n, int dir = 1) {
-  for (; n >= 0 && n <= 127; n += dir) {
-    bool taken = false;
-    for (int l = 0; l < mt::kKitLanes && !taken; ++l) taken = l != lane && k.kit[l].note == n;
-    if (!taken) return static_cast<uint8_t>(n);
-  }
-  return k.kit[lane].note;
-}
-
 }  // namespace
 
 InstScreen::InstScreen(App& app) : app_(app) {
@@ -324,8 +313,9 @@ void InstScreen::initKit() {
   kit_[1] = chip_[kType];
   kit_[2] = chip_[kSend];
   kit_[3] = chip_[kRsend];
-  static const char* const kSrcLabels[] = {"L1 Src", "L2 Src", "L3 Src", "L4 Src",
-                                           "L5 Src", "L6 Src", "L7 Src", "L8 Src"};
+  static const char* const kSrcLabels[] = {"L1 Src",  "L2 Src",  "L3 Src",  "L4 Src",  "L5 Src",  "L6 Src",
+                                           "L7 Src",  "L8 Src",  "L9 Src",  "L10 Src", "L11 Src", "L12 Src",
+                                           "L13 Src", "L14 Src", "L15 Src", "L16 Src"};
   static_assert(sizeof(kSrcLabels) / sizeof(kSrcLabels[0]) == mt::kKitLanes, "a label per lane");
   for (int l = 0; l < mt::kKitLanes; ++l) {
     Param* r = kit_ + kKitMain + l * kLaneRows;
@@ -370,7 +360,7 @@ void InstScreen::initKit() {
                        mt::KitLane& ln = lane();
                        ln.instr = static_cast<uint8_t>(clampi(ln.instr + d, 0, mt::kInstruments - 1));
                        const mt::Instrument& m = app_.project().instruments[ln.instr];
-                       if (m.type == mt::InstrType::Sample) ln.note = freeNoteFrom(inst(), l, m.root);
+                       if (m.type == mt::InstrType::Sample) ln.note = mt::kitFreeNote(inst(), l, m.root);
                      },
                      {},
                      [this, lane] {
@@ -396,14 +386,14 @@ void InstScreen::initKit() {
                     },
                     [this, l, lane](int d) {
                       const int dir = d > 0 ? 1 : -1;
-                      lane().note = freeNoteFrom(inst(), l, lane().note + d, dir);
+                      lane().note = mt::kitFreeNote(inst(), l, lane().note + d, dir);
                     }};
   }
 }
 
-void InstScreen::buildLanes(bool keep) {
+void InstScreen::buildLanes(int first, bool keep) {
   int n = 0;
-  for (int l = 0; l < mt::kKitLanes; ++l) {
+  for (int l = first; l < first + kLanesPerPage && l < mt::kKitLanes; ++l) {
     const Param* r = kit_ + kKitMain + l * kLaneRows;
     const bool instMode = inst().kit[l].instr < mt::kInstruments;
     for (int k = 0; k < kLaneRows; ++k) {
@@ -592,8 +582,8 @@ void InstScreen::setType(mt::InstrType v) {
 }
 const mt::Instrument& InstScreen::inst() const { return app_.project().instruments[instr_]; }
 
-Param* InstScreen::typeRows() {
-  switch (shown_) {
+Param* InstScreen::rowsOf(mt::InstrType t) {
+  switch (t) {
     case mt::InstrType::Sample: return sample_;
     case mt::InstrType::Fm: return fm_;
     case mt::InstrType::Drum: return drum_;
@@ -604,8 +594,8 @@ Param* InstScreen::typeRows() {
   }
 }
 
-int InstScreen::typeCount() const {
-  switch (shown_) {
+int InstScreen::countOf(mt::InstrType t) {
+  switch (t) {
     case mt::InstrType::Sample: return 0;  // SampleEditor
     case mt::InstrType::Fm: return kFmRows - kCommon;
     case mt::InstrType::Drum: return kDrumRows - kCommon;
@@ -616,11 +606,38 @@ int InstScreen::typeCount() const {
   }
 }
 
+Param* InstScreen::rowsFor(mt::InstrType t, int page, int& count) {
+  count = 0;
+  if (t == mt::InstrType::Kit) {
+    if (page != kPgMain) return nullptr;  // LANES: built from the lane modes
+    count = kKitMain;
+    return kit_;
+  }
+  if (t == mt::InstrType::Sample && page == kPgType) return nullptr;  // SampleEditor
+  const bool syn = t == mt::InstrType::Synth;
+  const int tail = kCommon + countOf(t);
+  int off = 0, c = kMainRows;
+  switch (page) {
+    case kPgMain: break;
+    case kPgEnv: off = kMainRows, c = kCommon - kMainRows; break;
+    case kPgType: off = kCommon, c = syn ? kSynOscRows : countOf(t); break;
+    case kPgType2:  // SYNTH only
+      if (!syn) return nullptr;
+      off = kSub, c = kSynRows - kSub;
+      break;
+    case kPgFilt: off = tail, c = kFiltRows; break;
+    case kPgLfo: off = tail + kFiltRows, c = kTailRows - kFiltRows; break;
+    default: return nullptr;
+  }
+  count = c;
+  return rowsOf(t) + off;
+}
+
 void InstScreen::syncParams() {
   const mt::InstrType t = inst().type;
   if (t == shown_) {
     // KIT lanes: a Src change or another KIT shows other rows.
-    if (kit() && page_ == kPgType) buildLanes(true);
+    if (kit() && page_ != kPgMain) buildLanes(firstLane(), true);
     return;
   }
   shown_ = t;
@@ -637,13 +654,13 @@ void InstScreen::syncParams() {
 }
 
 int InstScreen::physPage() const {
-  if (kit()) return page_ == kPgMain ? 0 : 1;
+  if (kit()) return page_ == kPgMain ? 0 : (page_ == kPgType2 ? 2 : 1);
   if (synth() || page_ < kPgType2) return page_;
   return page_ == kPgType2 ? kPgType : page_ - 1;  // no MOD page: its rows are the type page's
 }
 
 int InstScreen::logicalPage(int phys) const {
-  if (kit()) return phys ? kPgType : kPgMain;
+  if (kit()) return phys == 0 ? kPgMain : (phys == 1 ? kPgType : kPgType2);
   return synth() || phys < kPgType2 ? phys : phys + 1;
 }
 
@@ -663,24 +680,15 @@ void InstScreen::showPage(int phys, bool bar) {
   }
   if (kit()) {
     if (page_ == kPgMain) list_.setParams(kit_, kKitMain);
-    else buildLanes(false);
+    else buildLanes(firstLane(), false);
     list_.setVisibleRows(kListRows);
     if (bar) list_.selectBar();
     else list_.setSel(0);
     return;
   }
-  Param* const rows = typeRows();
-  const int tail = kCommon + typeCount();
-  int off = 0, count = kMainRows;
-  switch (page_) {
-    case kPgEnv: off = kMainRows, count = kCommon - kMainRows; break;
-    case kPgType: off = kCommon, count = synth() ? kSynOscRows : typeCount(); break;
-    case kPgType2: off = kSub, count = kSynRows - kSub; break;  // SYNTH only
-    case kPgFilt: off = tail, count = kFiltRows; break;
-    case kPgLfo: off = tail + kFiltRows, count = kTailRows - kFiltRows; break;
-    default: break;
-  }
-  list_.setParams(rows + off, count);
+  int count = 0;
+  Param* const rows = rowsFor(shown_, page_, count);
+  list_.setParams(rows, count);
   list_.setVisibleRows(kListRows);
   if (bar) list_.selectBar();
   else list_.setSel(0);
@@ -875,6 +883,50 @@ void InstScreen::changeInstr(int d) {
 
 bool InstScreen::buttonsBusy() const { return !recShown() && !presets_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor(); }
 
+bool InstScreen::knobRow(int& page, const char*& label) {
+  if (recShown() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || bounce_.isOpen()) return false;
+  if (!onTrackInstr() || onEditor() || (kit() && page_ != kPgMain) || page_ == kPgLfo) return false;
+  if (page_ == kPgMain && (list_.sel() == kName || list_.sel() == kType)) return false;  // KIT MAIN too
+  relabel();  // the label as knobTurn's relabel() for this instrument gives it (DRUM / LOFI macros)
+  const Param* r = list_.knobRow(mt::kKnobLabel - 1);
+  if (!r) return false;
+  page = page_;
+  label = r->label;
+  return true;
+}
+
+bool InstScreen::knobBusy(int track) {
+  if (track < 0 || track >= mt::kTracks) return false;
+  if (app_.project().tracks[track].instr % mt::kInstruments != instr_) return false;
+  return list_.editing() || editor_.editing() || recShown() || presets_.isOpen() || wt_.isOpen() ||
+         wtMake_.isOpen() || bounce_.isOpen();
+}
+
+bool InstScreen::onTrackInstr() const {
+  return instr_ == app_.project().tracks[app_.curTrack()].instr % mt::kInstruments;
+}
+
+// The track's instrument, shown for the call only: inst() and the rows' closures read instr_ / shown_.
+bool InstScreen::knobTurn(int track, int page, const char* label, int delta, char* val, int n) {
+  if (track < 0 || track >= mt::kTracks) return false;
+  const int target = app_.project().tracks[track].instr % mt::kInstruments;
+  const mt::InstrType t = app_.project().instruments[target].type;
+  int count = 0;
+  Param* const rows = rowsFor(t, page, count);
+  if (!rows) return false;
+  const int savedInstr = instr_;
+  const mt::InstrType savedShown = shown_;
+  instr_ = target;
+  shown_ = t;
+  relabel();  // the macro names of that instrument's machine
+  const bool ok = turnRow(rows, count, label, mt::kKnobLabel - 1, delta, val, n);
+  instr_ = savedInstr;
+  shown_ = savedShown;
+  relabel();
+  if (ok && target == instr_) syncParams();  // the shown instrument: a Type edit shows other rows
+  return ok;
+}
+
 bool InstScreen::trackKey(int n, bool shift) {
   if (shift || recShown() || presets_.isOpen() || wtMake_.isOpen() || bounce_.isOpen() || !onEditor()) return false;
   editor_.playSlice(n);
@@ -1025,7 +1077,8 @@ void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
   static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "LOFI", "", "RES"};
   static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
-  const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};
+  const char* names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};
+  if (kit()) names[kPgType] = "LN1-8", names[kPgType2] = "LN9-16";
   const int ty = y + (kPageBarH - 4 - kCharH) / 2;
   const int n = pageCount(), w = pageW(), cur = physPage();
   for (int i = 0; i < n; ++i) {

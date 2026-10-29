@@ -2,6 +2,43 @@
 
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
+## Unreleased
+- MIDI IN: unassigned notes play the current track with original pitch and velocity. Removed NOTE learning and its UI row, retaining saved PAT / PERF / MUTE assignments. PERF reserves only 8 notes; held sources are tracked by channel and note.
+- MIDI devices: removed the EXIT / PAGE / action button strip. Shared title and focused PageBar, A + turn and B + Shift + turn; B goes back, long-press opens context actions, Add device is a list row.
+- MIDI REC HOLD: durations beyond 8 steps use TIE and OFF at release, including track-end wrapping; occupied steps are protected and duration is capped at one track pass.
+- MIDI devices: shared page tabs and 24 px rows; LEARN only the selected function, with row actions for learning / editing / unassigning. REC LENGTH TRACK / HOLD records held melodic pad duration into GAT (1–800%; KIT keeps the track gate). Device preference is saved.
+- **KIT: 16 lanes** ([manual](docs/manual.md#kit)): a kit has 16 lanes (was 8), default notes 60…75. INST KIT
+  pages MAIN | LN1-8 | LN9-16. GRID: the Detail lane pad is 2 rows of 8, the Overview / Detail mask 8 × 2, the
+  piano roll 16 rows; in edit mode <kbd>Shift</kbd>+track button N toggles lane N + 8 (REC track buttons still
+  reach lanes 1–8; lanes 9–16 are recorded from BLE pads or by touch). New fx **AC2** — accent mask of lanes 9–16
+  (hex, bit 0 = lane 9), drum tracks only; ACC keeps lanes 1–8, each covers its half, a missing one leaves that
+  half at the step velocity. MIDI import into a kit puts notes matching lanes 9–16 (default 68…75) on them
+  instead of dropping them. MUT: the CA field of a KIT track is always 16 rows (header in 4 groups of 4), so
+  CA1D / CA2D patterns of older projects may evolve differently; noise lands only on lanes with an instrument or
+  sample. Factory KIT presets and DICE still fill lanes 1–8. Old projects load (lanes 9–16 empty, notes 68…75, a
+  clashing note moves to a free one); **new projects do not open on older firmware** (the step format grew).
+  Link protocol 19: flash both boards (ESP + Teensy by OTA). A step with all 16 lanes × RAT 8 is 256
+  events: three such KIT tracks on one step can drop note-ons (event queue 1024, 256 kept for note-offs).
+- **Bluetooth MIDI controller** ([manual](docs/manual.md#ble)): the tracker connects to BLE MIDI devices by
+  itself (M-VAVE SMC-PAD / FM-1 class, a Mac with Bluetooth Advertise); always the clock master, no clock in.
+  Pad banks are learned per device (LEARN: hit pad 1 of the bank for NOTE / PAT / PERF / MUTE): **NOTE** plays
+  the current track with velocity (melodic: 16 scale degrees from the track's octave; KIT: pads 1–16 = lanes 1–16) and
+  records into the heard step with GRID REC on; **PAT** queues patterns 1–16; **PERF** pads 1–8 hold the PERF
+  effects from any tab while playing; **MUTE** toggles tracks 1–16. **Knobs:** select a row on INST / TRACK /
+  PROJ, hold <kbd>Shift</kbd>, turn the controller knob — `KNOB CC21 > TRK2 CUTOFF`; bound to that track, works
+  from any tab, ABS or relative (REL1 / REL2) found by the next turn, no jumps; <kbd>Shift</kbd>+turn on its own
+  row unbinds. Up to 16 binds, kept in the project (new `KNOB` chunk; old files load). A dropped controller ends
+  its notes and effects; reconnects every 2 s. Status bar `BT`; FILE → SYSTEM **Internal RAM min**. Bluetooth is
+  off while the Wi-Fi dialog is open.
+- **Bluetooth MIDI out** ([manual](docs/manual.md#bleout)): with an OUT device connected, the MIDI tracks' notes,
+  CC, Program Change and Start / Stop go to it as well as to MIDI OUT; clock too with **BLE clock** ON (default).
+  All Notes Off on every MIDI track channel when the OUT device reconnects; dropped messages counted in the monitor.
+- **MIDI devices…** in FILE ([manual](docs/manual.md#ble)): pages DEVICES / PADS / KNOBS (PAGE). Up to 6 remembered
+  devices with a role IN / OUT / IN+OUT: ADD (scan, pick, role), TURN ON / OFF (off survives a reboot), MORE (role,
+  delete, BLE clock); one IN and one OUT at a time, turning on another turns the clashing one off (`FM-1 OFF`).
+  PADS: learn or edit each bank's channel and first note, CLEAR / CLEAR ALL. KNOBS: edit CC / CH / TRK / MODE,
+  DELETE, CLEAR ALL. A monitor of the last messages in and the drops. Link protocol unchanged, no Teensy flash.
+
 ## 2026-10-28
 - **DICE phrases** ([manual](docs/manual.md#dice)): a Length row (AUTO / 16 / 32 / 64 / 128; AUTO = 64 for
   melodic styles, 32 for groove ones), kept on the device; all four patterns share it. Parts are built as

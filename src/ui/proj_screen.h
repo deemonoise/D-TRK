@@ -29,6 +29,10 @@ class ProjScreen : public Screen {
   void draw(LGFX_Sprite& s, int y0, int h) override;
   void loadDicePrefs() { diceDlg_.loadPrefs(); }  // NVS, at boot
   void saveDicePrefs() { diceDlg_.savePrefs(); }  // App::saveSettingsIdle
+  // MIDI knobs: project rows, the track is ignored. No learn on Tuning (draw() applies its pick).
+  bool knobRow(int& page, const char*& label) override;
+  bool knobTurn(int track, int page, const char* label, int delta, char* val, int n) override;
+  bool knobBusy(int) override { return list_.editing(); }  // an edit open (its cancel would undo the knob)
 
  private:
   enum Row : int {

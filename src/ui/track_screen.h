@@ -65,6 +65,11 @@ class TrackScreen : public Screen {
   void onATap(bool shift) override;      // MIX: Shift + A = the SCENE view on / off
   void trackUp(int n);                   // track button n released (MIX)
   void openRec();                        // MIX: the REC window in its SD mode (also the status bar's REC)
+  // MIDI knobs (TRACK view only): the rows read App::curTrack(), which App sets to the bound track. No
+  // learn on Name and Steps (they edit at the screen's cursor).
+  bool knobRow(int& page, const char*& label) override;
+  bool knobTurn(int track, int page, const char* label, int delta, char* val, int n) override;
+  bool knobBusy(int track) override { return list_.editing() && track == editTrack_; }  // its edit open
 
  private:
   // Rows in page order: MAIN, INS (the INT track's insert chain, then its MOD send), FOL (its envelope follower), NOTE,

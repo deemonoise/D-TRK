@@ -44,17 +44,19 @@ void freeProject(mt::Project* p) {
 
 // If one of these fires, a field was added/removed: update snapshot() below and
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
-static_assert(sizeof(mt::Step) == 14, "Step layout changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Step) == 15, "Step layout changed: update snapshot() and project_io");
 static_assert(sizeof(mt::TrackCfg) == 40, "TrackCfg changed: update snapshot() and project_io");
 static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 // 382: synFold, synRing (SYNI bytes 41, 42; snapshot copies instruments whole).
 // 392: lofiFormula, lofiSync, lfoByte (LOFI chunk). 394: fmSat, chipStep (FMEX chunk; chipStep: tail padding).
-static_assert(sizeof(mt::Instrument) == 394, "Instrument changed: update snapshot() and project_io");
+// 570: kit 16 lanes (KITS chunk, 352-byte records).
+static_assert(sizeof(mt::Instrument) == 570, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
 // 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO). 480828: var (TVAR), LOFI instrument fields.
 // 480892: Instrument::fmSat (FMEX chunk). 481276: songTrn, songBpm, songTrnMask (SSLT).
-static_assert(sizeof(mt::Project) == 481276, "Project changed: update snapshot() and project_io");
+// 481628: knobs (KNOB). 520028: Step::lanesHi (PATN 15-byte steps), kit 16 lanes (KITS).
+static_assert(sizeof(mt::Project) == 520028, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -94,6 +96,7 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));
   memcpy(out.perfDepth, live.perfDepth, sizeof(out.perfDepth));
   memcpy(out.perfXy, live.perfXy, sizeof(out.perfXy));
+  memcpy(out.knobs, live.knobs, sizeof(out.knobs));
   memcpy(out.gen, live.gen, sizeof(out.gen));
   memcpy(out.evo, live.evo, sizeof(out.evo));
   memcpy(out.var, live.var, sizeof(out.var));

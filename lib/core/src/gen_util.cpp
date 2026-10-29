@@ -55,8 +55,7 @@ bool putFx(Step& s, Fx f, uint8_t v) {
 void clearGenRange(Step* track, int s0, int s1) {
   for (int s = s0; s <= s1; ++s) {
     Step& st = track[s];
-    st.note = kNoteEmpty;
-    st.vel = kVelDefault;
+    clearNote(st);
     for (FxSlot& sl : st.fx)
       if (genFx(sl.cmd)) sl = FxSlot{};
   }

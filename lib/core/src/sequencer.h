@@ -131,6 +131,20 @@ class Sequencer {
   // After TrackCfg::out of a track changed: ends its sounding notes on both outputs.
   void trackOutChanged(uint64_t now, int track, MidiSink& out);
 
+  // A note played live (controller pad) on `track`, now: routed by the track's output like a pattern
+  // note (INT: the synth through intVoices_, channel = track; MIDI: the UART on the track's channel),
+  // also while stopped. vel 0 = its note-off (none held: ignored). The same (track, note) again while
+  // held: the old one is let go first. Up to kLiveHeld notes held at once; more: the oldest is let go.
+  // Out-of-range track or note > 127: ignored. silence() and trackOutChanged() drop the held entries
+  // (they release the voices themselves).
+  static constexpr int kLiveHeld = 16;
+  void liveNote(uint64_t now, int track, uint8_t note, uint8_t vel, MidiSink& out);
+  // Every held live note ends (controller lost).
+  void liveAllOff(uint64_t now, MidiSink& out);
+  // All Notes Off (CC 123) once on every channel a MIDI track uses (a new OUT link: notes from
+  // before it may hang). INT tracks send nothing.
+  void midiPanic(uint64_t now, MidiSink& out);
+
   uint64_t process(uint64_t now, MidiSink& out);
 
   bool playing() const { return state_ == State::Playing; }
@@ -368,6 +382,9 @@ class Sequencer {
   bool push(uint64_t t, uint8_t s, uint8_t d1, uint8_t d2, uint32_t id, bool cont = false, uint8_t len = 3,
             uint8_t track = kNoTrack);
   void dispatch(const SchedEvent& e, MidiSink& out);
+  void liveSend(uint64_t now, int track, uint8_t note, uint8_t vel, uint32_t id, MidiSink& out);
+  void liveRelease(uint64_t now, int i, MidiSink& out);
+  void liveDrop(int track);
   uint32_t newId();
 
   // Rarely touched, kept out of the object (see the constructor).
@@ -435,6 +452,13 @@ class Sequencer {
   uint32_t nextId_ = 1;
   Tie ties_[kTracks];
   StepArp arps_[kTracks];  // running ARS per track (n = 0: none)
+  // Held live notes (liveNote), in start order: [0] oldest; liveN_ in use.
+  struct LiveHeld {
+    uint32_t id;
+    uint8_t track, note;
+  };
+  LiveHeld live_[kLiveHeld] = {};
+  uint8_t liveN_ = 0;
   GenState gen_[kTracks];  // generator registers, as the next step to plan finds them
   uint32_t evoN_[kTracks] = {};   // each track's state number, as the next step to plan finds it
   uint8_t evoCnt_[kTracks] = {};  // passes since the last mutation

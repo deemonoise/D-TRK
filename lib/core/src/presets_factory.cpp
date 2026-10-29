@@ -44,7 +44,7 @@ void factoryBuild(InstrType t, int i, Instrument& out) {
 }
 
 int factoryKitBlock(int kitSlot) {
-  return kitSlot >= kInstruments - kKitLanes ? kInstruments - 2 * kKitLanes : kInstruments - kKitLanes;
+  return kitSlot >= kInstruments - kKitBlock ? kInstruments - 2 * kKitBlock : kInstruments - kKitBlock;
 }
 
 void factoryBuildKit(int i, Project& p, int kitSlot) { factoryBuildKit(i, p.instruments, kitSlot); }

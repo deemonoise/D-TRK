@@ -339,9 +339,9 @@ void test_kit_lanes() {
   for (int slot : {0, 30}) {
     for (int i = 0; i < factoryCount(InstrType::Kit); ++i) {
       const FactoryPreset& f = factoryPreset(InstrType::Kit, i);
-      TEST_ASSERT_TRUE_MESSAGE(f.drumCount >= 1 && f.drumCount <= kKitLanes, f.name);
+      TEST_ASSERT_TRUE_MESSAGE(f.drumCount >= 1 && f.drumCount <= kKitBlock, f.name);
       p.reset();
-      strcpy(p.instruments[factoryKitBlock(slot) + kKitLanes - 1].name, "KEEP");
+      strcpy(p.instruments[factoryKitBlock(slot) + kKitBlock - 1].name, "KEEP");
       factoryBuildKit(i, p, slot);
       const Instrument& k = p.instruments[slot];
       TEST_ASSERT_TRUE(k.type == InstrType::Kit);
@@ -363,7 +363,7 @@ void test_kit_lanes() {
           if (strcmp(factoryPreset(d.type, j).name, d.name) == 0) factoryBuild(d.type, j, ref);
         TEST_ASSERT_EQUAL(ref.transpose - l, d.transpose);
       }
-      if (f.drumCount < kKitLanes) TEST_ASSERT_EQUAL_STRING("KEEP", p.instruments[first + kKitLanes - 1].name);
+      if (f.drumCount < kKitBlock) TEST_ASSERT_EQUAL_STRING("KEEP", p.instruments[first + kKitBlock - 1].name);
     }
   }
 }

@@ -27,9 +27,18 @@ void PerfPad::attach() {
 }
 
 void PerfPad::detach() {
-  allOff();
+  buttonsOff();
   attached_ = false;
-  freeBuffer();  // the other screens need the PSRAM (imports, renders)
+  fitBuffer();  // the other screens need the PSRAM (imports, renders); a pad's effect keeps it
+}
+
+void PerfPad::buttonsOff() {
+  if (!padsHeld()) {
+    allOff();  // release all goes out even with nothing held
+    return;
+  }
+  xyTouch_ = false;
+  for (int h = 0; h < kPadHolder; ++h) releaseHolder(h);
 }
 
 // Without a buffer the buffer effects are silent: say so.
@@ -48,15 +57,55 @@ void PerfPad::freeBuffer() {
   audio::perfBuffer(false);
 }
 
+void PerfPad::fitBuffer() {
+  if (!(on_ && attached_) && !padsHeld()) freeBuffer();
+}
+
 bool PerfPad::press(int n) {
   if (!on_ || !app_.status().playing || n < 0) return false;
+  return hold(n, n);
+}
+
+bool PerfPad::padPress(int n) {
+  if (n < 0 || n >= mt::kPerfButtons) return false;
+  releaseHolder(kPadHolder + n);  // a lost release (perfMap changed meanwhile) must not leak it
+  if (!app_.status().playing) {
+    fitBuffer();
+    app_.toast("PERF: PRESS PLAY");
+    return false;
+  }
+  const uint8_t fx = app_.project().perfMap[n];
+  if (fx != 0 && fx < static_cast<uint8_t>(mt::PerfFx::Count)) takeBuffer();  // no-op when held
+  const bool r = hold(kPadHolder + n, n);
+  fitBuffer();  // "PERF ---": nothing held
+  return r;
+}
+
+void PerfPad::padRelease(int n) {
+  if (n < 0 || n >= mt::kPerfButtons) return;
+  releaseHolder(kPadHolder + n);
+  fitBuffer();
+}
+
+void PerfPad::padsOff() {
+  for (int n = 0; n < mt::kPerfButtons; ++n) releaseHolder(kPadHolder + n);
+  fitBuffer();
+}
+
+bool PerfPad::padsHeld() const {
+  for (int n = 0; n < mt::kPerfButtons; ++n)
+    if (held_[kPadHolder + n] >= 0) return true;
+  return false;
+}
+
+bool PerfPad::hold(int h, int n) {
   const uint8_t fx = n < mt::kPerfButtons ? app_.project().perfMap[n] : 0;
   if (fx == 0 || fx >= static_cast<uint8_t>(mt::PerfFx::Count)) {
     app_.toast("PERF ---");
     return true;
   }
   const mt::PerfFx f = static_cast<mt::PerfFx>(fx);
-  held_[n] = static_cast<int8_t>(fx);
+  held_[h] = static_cast<int8_t>(fx);
   stack_.press(f);
   if (!audio::perf(0, fx)) lost_ = true;
   // The button's start value (PROJ -> PERF): a turn in the same audio block, so the default never sounds.
@@ -169,6 +218,7 @@ void PerfPad::allOff() {
   xyTouch_ = false;
   stack_.releaseAll();
   lost_ = !audio::perf(3, 0);
+  fitBuffer();  // a pad's effect may have kept it off a PERF tab
 }
 
 // The transport stopped under held effects (Play, a stop from elsewhere) or the audio parked (the
@@ -188,7 +238,7 @@ void PerfPad::poll(bool playing) {
 int PerfPad::badge(char* out, int size) const {
   if (size <= 0) return 0;
   out[0] = 0;
-  if (!on_) return 0;
+  if (!on_ && !padsHeld()) return 0;  // pad effects show with PERF off too
   const uint8_t xf = app_.project().xfade;
   int n = xf ? snprintf(out, size, "PERF X%u", xf) : snprintf(out, size, "PERF");  // the crossfader off A
   if (n >= size) return size - 1;

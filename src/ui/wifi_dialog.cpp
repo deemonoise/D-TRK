@@ -5,6 +5,7 @@
 #include "audio/audio.h"
 #include "core_ram.h"
 #include "engine/engine.h"
+#include "hw/ble_midi.h"
 #include "esp_heap_caps.h"
 #include "net/web.h"
 #include "storage/storage.h"
@@ -22,6 +23,11 @@ bool WifiDialog::open() {
     return false;
   }
   app_.lockTransport(true);
+  // BLE and Wi-Fi exclusive when possible (internal RAM): stack down before anything moves or
+  // allocates. A stuck BLE task leaves the stack up and Wi-Fi still opens — measured to fit.
+  bleWasOn_ = hw::ble::running();
+  if (bleWasOn_) app_.showBusy("BLUETOOTH OFF...");  // end() may wait up to 8 s on a stuck task
+  hw::ble::end();
   core_ram::toPsram();  // Wi-Fi needs the internal RAM
   open_ = true;
   logCount_ = 0;
@@ -53,6 +59,11 @@ void WifiDialog::close() {
   core_ram::toInternal();
   app_.lockTransport(false);
   open_ = false;
+  // BLE back only now: Wi-Fi off and the sequencer back in internal RAM (its block is reserved first).
+  if (bleWasOn_ || hw::ble::wanted()) {
+    hw::ble::begin();
+    if (!hw::ble::running()) app_.toast("BLUETOOTH FAILED");
+  }
 }
 
 void WifiDialog::setState(St s) {

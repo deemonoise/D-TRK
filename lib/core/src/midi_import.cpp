@@ -173,11 +173,11 @@ ImportResult importSmf(const SmfInfo& info, const SmfNote* notes, uint32_t n, co
         continue;
       }
       if (s.hasNote()) {
-        s.vel |= static_cast<uint8_t>(1u << lane);
+        setLane(s, lane, true);
         continue;
       }
       ns.note = sn.vel == tc.defVel ? 0 : sn.vel;
-      ns.vel = static_cast<uint8_t>(1u << lane);
+      setLane(ns, lane, true);  // ns: a fresh step, no lanes
     } else {
       if (s.hasNote()) {
         ++r.notesDropped;

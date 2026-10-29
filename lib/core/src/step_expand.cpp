@@ -72,21 +72,24 @@ int32_t noteOffAt(int32_t on, uint32_t gateUs, const FxSlot* off, int32_t offUs)
   return offT;
 }
 
-// Drum track: vel = lane mask, note = step velocity (0 = default). One NoteOn per set lane per
-// ratchet, note = the lane's note, velocity x 0.6 for lanes outside ACC. TIE, CHD, NRN, STR are ignored.
+// Drum track: laneMask(s) = the lanes, note = step velocity (0 = default). One NoteOn per set lane per
+// ratchet, note = the lane's note, velocity x 0.6 for lanes outside the accent: ACC masks lanes 1-8,
+// AC2 lanes 9-16, each only its half (a missing one = its half accented). TIE, CHD, NRN, STR are ignored.
 void expandDrum(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, uint8_t ch, int32_t nudge,
                 const FxSlot* off, ExpandOut& out) {
   const Instrument& k = *c.kit;
   const int vel = stepVelocity(s, s.note, t, c, rng);
-  uint8_t accent = 0xFF;
-  if (const FxSlot* f = s.find(Fx::ACC)) accent = f->val;
+  const uint16_t mask = laneMask(s);
+  uint16_t accent = 0xFFFF;
+  if (const FxSlot* f = s.find(Fx::ACC)) accent = static_cast<uint16_t>((accent & 0xFF00) | f->val);
+  if (const FxSlot* f = s.find(Fx::AC2)) accent = static_cast<uint16_t>((accent & 0x00FF) | (f->val << kKitLanesLo));
   const Hits h = noteHits(s, t, c.stepUs);
   for (int i = 0; i < h.rat; ++i) {
     const int32_t on = nudge + static_cast<int32_t>(h.sub * i);
     if (off && on >= out.offUs) continue;  // after OFF: silent
     for (int l = 0; l < kKitLanes && out.count < kMaxStepEvents - 1; ++l) {
-      if (!(s.vel & (1u << l))) continue;
-      int v = (accent & (1u << l)) ? vel : vel * 3 / 5;
+      if (!((mask >> l) & 1)) continue;
+      int v = ((accent >> l) & 1) ? vel : vel * 3 / 5;
       v = hitVel(v, i, h);
       if (v < 1) v = 1;
       const uint8_t n = k.kit[l].note;

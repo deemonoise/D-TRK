@@ -11,6 +11,7 @@
 #include "link/bank_client.h"
 #include "esp_heap_caps.h"
 #include "hw/battery.h"
+#include "hw/ble_midi.h"
 #include "link/link.h"
 #include "link/synth_fw.h"
 #include "sample_set.h"
@@ -26,7 +27,7 @@ namespace ui {
 namespace {
 
 constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
-                                   "Import MIDI...", "Export...", "Wi-Fi firmware...", "Retry"};
+                                   "Import MIDI...", "Export...", "Wi-Fi firmware...", "MIDI devices...", "Retry"};
 // The last row: Retry without a card, Restore autosave with one (they never need the row together).
 constexpr const char* kRestoreLabel = "Restore autosave";
 
@@ -44,10 +45,12 @@ void FileScreen::onEnter() {
   import_.close();
   render_.close();
   wifi_.close();
+  midiDlg_.close();
   closeList();
   autoAvail_ = storage::autosaveExists(app_.project().name);
   if (!enabled(sel_)) moveSel(1);
   audio::bankViewStale();
+  midiDlg_.projectReplaced();  // a KNOBS edit of the old project's bind
   if (section_ == kSecSamples) sampleMove(0);  // the bank may have changed
   sysList_.setEdit(false);
 }
@@ -62,6 +65,7 @@ void FileScreen::onLeave() {
   import_.close();  // frees the file / note buffers
   render_.close();
   wifi_.close();    // leaving the tab ends Wi-Fi mode
+  midiDlg_.close();
   closeList();
 }
 
@@ -70,6 +74,7 @@ bool FileScreen::enabled(int a) const {
   switch (a) {
     case kSectionSel: return true;
     case kWifi: return true;  // the firmware page: no card needed
+    case kMidi: return true;
     case kRetry: return !sd || autoAvail_;
     default: return sd;
   }
@@ -103,6 +108,7 @@ void FileScreen::run(int a) {
     case kLoad: openList(false); break;
     case kImport: openList(true); break;
     case kRender: render_.open(); break;
+    case kMidi: midiDlg_.open(); break;
     case kNew: openNewMenu(); break;
       break;
     case kWifi:
@@ -176,7 +182,10 @@ void FileScreen::onMenu(int id) {
   app_.invalidate();
 }
 
-void FileScreen::startWifi() { wifi_.open(); }
+void FileScreen::startWifi() {
+  midiDlg_.close();  // the synth version screen can open Wi-Fi over it
+  wifi_.open();
+}
 
 void FileScreen::save() {
   const char* name = app_.project().name;
@@ -470,6 +479,10 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
     wifi_.onInput(ev);
     return;
   }
+  if (midiDlg_.isOpen()) {
+    midiDlg_.onInput(ev);
+    return;
+  }
   if (list_.ready()) {
     listAct(list_.onInput(ev));
     return;
@@ -503,13 +516,16 @@ void FileScreen::onBack() {
   else if (import_.isOpen()) import_.onInput(lp);
   else if (render_.isOpen()) render_.onInput(lp);
   else if (wifi_.isOpen()) wifi_.onInput(lp);
+  else if (midiDlg_.isOpen()) midiDlg_.onBack();  // learning: skips the step, else closes
   else if (list_.ready()) listAct(FileList::Act::Back);  // a subfolder: one level up; the top: closes
   else if (section_ == kSecSystem) sysList_.setEdit(false);
 }
 
 // B + Shift + turn: the previous / next section.
 void FileScreen::onPage(int d) {
-  if (kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() || list_.ready()) return;
+  if (midiDlg_.isOpen()) { midiDlg_.onPage(d); return; }
+  if (kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() || list_.ready())
+    return;
   setSection(section_ + d);
 }
 
@@ -528,6 +544,10 @@ void FileScreen::onTouch(const TouchEvent& ev) {
   }
   if (wifi_.isOpen()) {
     wifi_.onTouch(ev);
+    return;
+  }
+  if (midiDlg_.isOpen()) {
+    midiDlg_.onTouch(ev);
     return;
   }
   const int top = y0_ + kHeaderH + (list_.ready() ? 0 : PageBar::kH);
@@ -568,6 +588,10 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   if (wifi_.isOpen()) {
     wifi_.draw(s, y0);
+    return;
+  }
+  if (midiDlg_.isOpen()) {
+    midiDlg_.draw(s, y0);
     return;
   }
   const bool sd = hw::sdReady();
@@ -712,7 +736,7 @@ void FileScreen::openWavList() {
 
 // WAV import: Play previews the selected file (again: stops); Load / MIDI: the transport.
 bool FileScreen::onPlay() {
-  if (kb_.isOpen() || import_.isOpen() || wifi_.isOpen() || !list_.ready()) return false;
+  if (kb_.isOpen() || import_.isOpen() || wifi_.isOpen() || midiDlg_.isOpen() || !list_.ready()) return false;
   return list_.onPlay();
 }
 
@@ -1026,6 +1050,21 @@ void FileScreen::initSystem() {
                              snprintf(o, n, "SEQ %s, %uK FREE", engine::seqInternal() ? "INTERNAL" : "PSRAM", kb);
                            },
                            [](int) {}};
+  // The lowest free internal RAM since boot and now (BLE, Wi-Fi, import, render, REC all take from it).
+  // BLE up: "MIN/NOW BLE a/b", the untouched stack of its connect task / OUT writer in bytes (0: no
+  // writer); short, the value column holds 35 characters and ParamList's buffer 31.
+  sysParams_[kRamMin] = {"Internal RAM min",
+                         [](char* o, int n) {
+                           const unsigned mn =
+                               static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024);
+                           const unsigned now = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+                           if (hw::ble::running())
+                             snprintf(o, n, "%uK/%uK BLE %lu/%lu", mn, now, static_cast<unsigned long>(hw::ble::stackFree()),
+                                      static_cast<unsigned long>(hw::ble::outStackFree()));
+                           else
+                             snprintf(o, n, "%uK, NOW %uK FREE", mn, now);
+                         },
+                         [](int) {}};
   // Sensor voltage, current (CHG while charging) and the gauge's percent; redrawn per sample.
   sysParams_[kBattery] = {"Battery",
                           [this](char* o, int n) {
@@ -1183,8 +1222,9 @@ void FileScreen::toggleProfile() {
 
 // SYSTEM: a new battery sample, and the running CPU profile's seconds.
 bool FileScreen::wantsRedraw(const engine::Status&) {
-  if (wifi_.wantsRedraw()) return true;
-  if (section_ != kSecSystem || list_.ready() || kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen())
+  if (wifi_.wantsRedraw() || midiDlg_.wantsRedraw()) return true;
+  if (section_ != kSecSystem || list_.ready() || kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() ||
+      midiDlg_.isOpen())
     return false;
   return app_.batterySeq() != batSeqDrawn_ || (audio::profileRunning() && profSecs() != profSecDrawn_);
 }

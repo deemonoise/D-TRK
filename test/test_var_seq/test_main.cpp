@@ -193,6 +193,28 @@ void test_kit_ca2d_masks() {
   }
 }
 
+// The same blinker across lanes 8..10 (vel bit 7, lanesHi bits 0..1): lanes 9-16 play.
+void test_kit_ca2d_masks_lanes_hi() {
+  instrSetType(p->instruments[0], InstrType::Kit);
+  p->tracks[0].instr = 0;
+  for (int l = 0; l < kKitLanes; ++l) p->instruments[0].kit[l].note = static_cast<uint8_t>(36 + l);
+  p->patterns[0].steps[0][1].note = 100;
+  setLaneMask(p->patterns[0].steps[0][1], 0x0380);  // lanes 8, 9, 10
+  p->var[0] = ca1d();
+  p->var[0].mode = static_cast<uint8_t>(VarMode::Ca2d);
+  p->var[0].rule2 = static_cast<uint8_t>(VarRule2::Life);
+  const std::vector<On> v = play(3);
+  for (int k = 0; k < 3; ++k) {
+    std::set<std::pair<int, int>> got, want;
+    for (const On& o : pass(v, k)) got.insert({static_cast<int>((o.t + kStepUs / 2) / kStepUs), o.note});
+    if (k % 2 == 0)
+      for (int l = 7; l < 10; ++l) want.insert({1, 36 + l});
+    else
+      for (int s = 0; s < 3; ++s) want.insert({s, 36 + 8});
+    TEST_ASSERT_TRUE_MESSAGE(got == want, "blinker lanes 8-10");
+  }
+}
+
 // Track 0: a line with branching transitions (a Markov chain over it has choices).
 static void branching() {
   static const uint8_t kLine[16] = {60, 62, 60, 64, 60, 67, 62, 64, 60, 62, 67, 60, 64, 62, 60, 67};
@@ -389,6 +411,7 @@ int main() {
   RUN_TEST(test_ca1d_plays_alive_cells);
   RUN_TEST(test_every_counts_passes);
   RUN_TEST(test_kit_ca2d_masks);
+  RUN_TEST(test_kit_ca2d_masks_lanes_hi);
   RUN_TEST(test_markov_amount_0_is_the_pattern);
   RUN_TEST(test_rewind_returns_the_earlier_generation);
   RUN_TEST(test_rewind_markov);

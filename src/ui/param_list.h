@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <functional>
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
@@ -14,6 +15,11 @@ struct Param {
   std::function<bool()> dim;            // true: drawn grey (does not apply now); empty = never
   std::function<bool()> warn;           // true: value drawn red (e.g. missing sample); empty = never
 };
+
+// MIDI knob: turns the row of rows[0, count) whose label matches `label` in its first maxLen chars by
+// delta under engine::lockProject() (as ParamList::edit), then its value text into out. False when there
+// is no such row or it has no edit.
+bool turnRow(const Param* rows, int count, const char* label, size_t maxLen, int delta, char* out, int n);
 
 // Rows of "label  value". Turn = select, click = edit (value red), turn while editing = edit(delta),
 // Shift = x10, Shift+click while editing = cancel (the value as it was when the edit began: the
@@ -56,6 +62,11 @@ class ParamList {
     ensureVisible();
   }
   int sel() const { return sel_; }
+  // The selected row, nullptr on the page bar or with no rows.
+  const Param* selected() const { return sel_ >= 0 && sel_ < count_ ? &params_[sel_] : nullptr; }
+  // MIDI learn: the selected row if a knob can find it again by label (turnRow): it has an edit, its label
+  // is not "-" and no other row of the list matches it in the first maxLen chars; else nullptr.
+  const Param* knobRow(size_t maxLen) const;
   void setSel(int row) {
     sel_ = row < 0 ? 0 : (row >= count_ ? count_ - 1 : row);
     if (sel_ < 0) sel_ = 0;

@@ -204,6 +204,23 @@ void test_drum_lane_and_velocity() {
   TEST_ASSERT_EQUAL(0x04, P.steps[0][0].vel);
 }
 
+// Lanes 9-16 go to lanesHi; an empty step's stale lanesHi does not survive.
+void test_drum_lane_eleven() {
+  resetP();
+  bool drum[kTracks] = {true};
+  P.steps[0][0].lanesHi = 0x80;  // stale: no note
+  P.steps[0][4].note = 90;
+  P.steps[0][4].vel = 0x01;
+  P.steps[0][4].lanesHi = 0x01;
+  FillSpec f;
+  f.every = 4;
+  f.lane = 10;
+  applyFill(P, track0(), f, 0, ScaleType::Chromatic, drum);
+  TEST_ASSERT_EQUAL_UINT16(0x0400, laneMask(P.steps[0][0]));
+  TEST_ASSERT_EQUAL_UINT8(0x04, P.steps[0][0].lanesHi);
+  TEST_ASSERT_EQUAL_UINT16(0x0501, laneMask(P.steps[0][4]));
+}
+
 void test_selection_offsets_and_tracks() {
   resetP();
   FillSpec f;
@@ -238,6 +255,7 @@ int main() {
   RUN_TEST(test_fx_slot_ramp_and_empty_mode);
   RUN_TEST(test_fx_signed_ramp);
   RUN_TEST(test_drum_lane_and_velocity);
+  RUN_TEST(test_drum_lane_eleven);
   RUN_TEST(test_selection_offsets_and_tracks);
   RUN_TEST(test_clamps_to_pattern_length);
   return UNITY_END();

@@ -61,6 +61,7 @@ class WifiDialog {
   int sel_ = kExit;
   int y0_ = kAreaY;
   bool open_ = false;
+  bool bleWasOn_ = false;  // BLE stack was up when the dialog opened: back up on close
   bool redraw_ = false;
 };
 

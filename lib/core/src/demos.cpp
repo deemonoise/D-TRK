@@ -71,8 +71,9 @@ void hits(Pattern& pt, int t, int lane, const char* s, int from = 0, int to = -1
     if (c != 'x' && c != 'X' && c != 'o') continue;
     const uint8_t v = c == 'X' ? 127 : c == 'o' ? 45 : 0;
     Step& st = pt.steps[t][i];
+    if (!st.hasNote()) setLaneMask(st, 0);
     if (!st.hasNote() || effVel(v) > effVel(st.note)) st.note = v;
-    st.vel = static_cast<uint8_t>(st.vel | (1u << lane));
+    setLane(st, lane, true);
   }
 }
 
@@ -148,8 +149,9 @@ void roll(Pattern& pt, int t, int lane, int from, int to, int every, uint8_t lo,
   const int n = (to - from + every - 1) / every;
   for (int k = 0; k < n; ++k) {
     Step& st = pt.steps[t][from + k * every];
+    if (!st.hasNote()) setLaneMask(st, 0);
     st.note = static_cast<uint8_t>(lo + (hi - lo) * k / (n > 1 ? n - 1 : 1));
-    st.vel = static_cast<uint8_t>(st.vel | (1u << lane));
+    setLane(st, lane, true);
   }
 }
 

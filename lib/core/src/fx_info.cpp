@@ -65,6 +65,7 @@ constexpr Info kInfo[] = {
     {"MOD", "MOD SEND", 0, 127, 64, false},       // MOD: MOD bus send lock
     {"FLP", "GEN FLIP", 0, 100, 50, false},       // FLP: the track generator's flip chance on this step
     {"SAT", "FM SATURATION", 0, 127, 64, false},  // SAT: FM SAT lock (kLockSat)
+    {"AC2", "ACCENT 9-16", 0, 255, 0xFF, false},  // AC2: lanes 9-16 accent mask (hex), drum tracks
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -110,7 +111,7 @@ constexpr Fx kOrder[] = {
     Fx::CHD, Fx::STR, Fx::ARP, Fx::ARM, Fx::ARS,
     Fx::RAT, Fx::NDG, Fx::GAT, Fx::TIE, Fx::OFF, Fx::CUT,
     Fx::PRB, Fx::CND, Fx::VRN, Fx::NRN, Fx::FLP,
-    Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
+    Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC, Fx::AC2,
     Fx::FLT, Fx::RES, Fx::DRV, Fx::DTY, Fx::BIT, Fx::SRR, Fx::GTE, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON, Fx::SAT,
     Fx::LFO, Fx::LFD, Fx::LFS, Fx::LFW, Fx::LFT, Fx::LFR,
     Fx::OFS, Fx::SLC,
@@ -151,6 +152,7 @@ void fxFormat(Fx f, uint8_t v, char out[5]) {
     case Fx::VIB:
     case Fx::ARP:
     case Fx::ACC:
+    case Fx::AC2:
     case Fx::LFR: snprintf(out, 5, " %02X", v); return;
     case Fx::LFD: snprintf(out, 5, "%+3d", fxSigned(v)); return;
     case Fx::LFW: {
@@ -270,7 +272,7 @@ bool fxSynthOnly(Fx f) {
          f == Fx::MOD || f == Fx::SAT;
 }
 
-bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
+bool fxDrumOnly(Fx f) { return f == Fx::ACC || f == Fx::AC2; }
 
 Fx fxNextCmd(Fx f, int delta) {
   int at = 0;

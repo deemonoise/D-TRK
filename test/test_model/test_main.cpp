@@ -11,9 +11,10 @@ using namespace mt;
 void setUp() {}
 void tearDown() {}
 
-void test_step_is_14_bytes_and_empty_by_default() {
+void test_step_is_15_bytes_and_empty_by_default() {
   TEST_ASSERT_EQUAL(6, kFxSlots);
-  TEST_ASSERT_EQUAL(14, sizeof(Step));
+  TEST_ASSERT_EQUAL(15, sizeof(Step));
+  TEST_ASSERT_EQUAL(0, Step().lanesHi);
   Step s;
   TEST_ASSERT_TRUE(s.isEmpty());
   TEST_ASSERT_FALSE(s.hasNote());
@@ -506,6 +507,74 @@ void test_sixteen_tracks_defaults() {
   delete p;
 }
 
+void test_lane_mask_helpers() {
+  Step s;
+  setLaneMask(s, 0x8101);
+  TEST_ASSERT_EQUAL_HEX8(0x01, s.vel);
+  TEST_ASSERT_EQUAL_HEX8(0x81, s.lanesHi);
+  TEST_ASSERT_EQUAL_HEX16(0x8101, laneMask(s));
+  TEST_ASSERT_TRUE(laneOn(s, 15));
+  TEST_ASSERT_TRUE(laneOn(s, 8));
+  TEST_ASSERT_FALSE(laneOn(s, 9));
+  setLane(s, 9, true);
+  TEST_ASSERT_EQUAL_HEX8(0x83, s.lanesHi);
+  setLane(s, 0, false);
+  TEST_ASSERT_EQUAL_HEX8(0x00, s.vel);
+  // Out of range: no-op / false.
+  setLane(s, -1, true);
+  setLane(s, 16, true);
+  TEST_ASSERT_EQUAL_HEX16(0x8300, laneMask(s));
+  TEST_ASSERT_FALSE(laneOn(s, -1));
+  TEST_ASSERT_FALSE(laneOn(s, 16));
+}
+
+void test_step_is_empty_sees_lanes_hi() {
+  Step s;
+  TEST_ASSERT_TRUE(s.isEmpty());
+  s.lanesHi = 1;
+  TEST_ASSERT_FALSE(s.isEmpty());
+  s.note = 64;
+  s.vel = 3;
+  s.fx[2] = {Fx::ACC, 7};
+  clearNote(s);
+  TEST_ASSERT_EQUAL(kNoteEmpty, s.note);
+  TEST_ASSERT_EQUAL(kVelDefault, s.vel);
+  TEST_ASSERT_EQUAL(0, s.lanesHi);
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::ACC), static_cast<int>(s.fx[2].cmd));
+  TEST_ASSERT_EQUAL(7, s.fx[2].val);
+}
+
+void test_kit_defaults_sixteen_lanes() {
+  TEST_ASSERT_EQUAL(16, kKitLanes);
+  Instrument m;
+  kitSetDefaults(m);
+  for (int k = 0; k < 16; ++k) TEST_ASSERT_EQUAL(60 + k, m.kit[k].note);
+}
+
+void test_kit_lanes_used() {
+  Instrument k;
+  instrSetType(k, InstrType::Kit);
+  TEST_ASSERT_EQUAL_HEX16(0, kitLanesUsed(k));
+  k.kit[0].instr = 3;
+  strcpy(k.kit[9].sample, "KICK");
+  k.kit[15].instr = 0;
+  TEST_ASSERT_EQUAL_HEX16(0x8201, kitLanesUsed(k));
+}
+
+void test_kit_free_note() {
+  Instrument m;
+  kitSetDefaults(m);  // lanes 60..75
+  TEST_ASSERT_EQUAL(61, kitFreeNote(m, 1, 61));        // its own note
+  TEST_ASSERT_EQUAL(63, kitFreeNote(m, 3, 61, +1));    // 61, 62 taken; 63 is the lane's own
+  TEST_ASSERT_EQUAL(76, kitFreeNote(m, 3, 64, +1));
+  TEST_ASSERT_EQUAL(59, kitFreeNote(m, 3, 61, -1));
+  TEST_ASSERT_EQUAL(63, kitFreeNote(m, 3, 128, +1));   // out of range: the lane's own
+  // No free note left in direction dir: the lane's own note.
+  for (int k = 0; k < kKitLanes; ++k) m.kit[k].note = static_cast<uint8_t>(k);  // 0..15
+  TEST_ASSERT_EQUAL(3, kitFreeNote(m, 3, 2, -1));
+  TEST_ASSERT_EQUAL(16, kitFreeNote(m, 3, 4, +1));
+}
+
 void test_kit_defaults_and_drum_track() {
   Project* p = new Project();
   Instrument& k = p->instruments[3];
@@ -917,7 +986,7 @@ void test_wave_ext_after_wavetables() {
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_gate_defaults_and_presets);
-  RUN_TEST(test_step_is_14_bytes_and_empty_by_default);
+  RUN_TEST(test_step_is_15_bytes_and_empty_by_default);
   RUN_TEST(test_fx_in_last_slot);
   RUN_TEST(test_find_fx);
   RUN_TEST(test_ticks_per_step);
@@ -953,6 +1022,11 @@ int main() {
   RUN_TEST(test_project_reset_clears_wavetables);
   RUN_TEST(test_sixteen_tracks_defaults);
   RUN_TEST(test_kit_defaults_and_drum_track);
+  RUN_TEST(test_lane_mask_helpers);
+  RUN_TEST(test_step_is_empty_sees_lanes_hi);
+  RUN_TEST(test_kit_defaults_sixteen_lanes);
+  RUN_TEST(test_kit_lanes_used);
+  RUN_TEST(test_kit_free_note);
   RUN_TEST(test_sound_fx_defaults);
   RUN_TEST(test_lfo_sync_and_refs);
   RUN_TEST(test_track_speed_factors);

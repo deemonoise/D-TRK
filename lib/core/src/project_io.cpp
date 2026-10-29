@@ -27,6 +27,7 @@ constexpr size_t kTrackSize = 9 + 6 + 1;
 constexpr size_t kTrksSize = 1 + kTracks * kTrackSize;
 constexpr size_t kPatHeader = 4;
 constexpr uint32_t kOldStepBytes = 6;  // PATN before 6 fx slots: note, vel, 2 x (cmd, val)
+constexpr uint32_t kStepBytes14 = 14;  // PATN before KIT 16 lanes: 6 slots, no lanesHi
 constexpr int kOldTracks = 8;          // PATN of the 8-track firmware
 constexpr size_t kToutSize = 3;
 // TINS: count, record size, then a record per track: drive, crushBits, crushRate, driveModel,
@@ -62,7 +63,8 @@ constexpr size_t kAudiDlySize = 6;  // older files: up to dlyLevel
 constexpr size_t kAudiMinSize = 2;  // older files: masterVol, preview
 constexpr size_t kSmplSize = 24;  // name[16] u32 crc u32 frames
 constexpr size_t kKitLaneSize = sizeof(KitLane);         // 22: name[16], pad, instr, vol, pitch, decay, note
-constexpr size_t kKitRecSize = kKitLanes * kKitLaneSize;  // 176: one KIT instrument
+constexpr size_t kKitRecSize = kKitLanes * kKitLaneSize;  // 352: one KIT instrument (16 lanes)
+constexpr size_t kKitRecSize8 = 8 * kKitLaneSize;          // 176: older files, 8 lanes
 constexpr size_t kMaxRecA = kSliceRecSize > kInstRecSize ? kSliceRecSize : kInstRecSize;
 constexpr size_t kMaxRec = kKitRecSize > kMaxRecA ? kKitRecSize : kMaxRecA;
 static_assert(kInstRecSize <= kMaxRec, "readRecords buffer");
@@ -553,10 +555,25 @@ LoadErr readLfox(CrcSource& in, uint32_t size, Project& p) {
                      [&](int i, const uint8_t* b) { unpackLfo(b, p.instruments[i]); });
 }
 
+// KITS: count, then count records of 16 lanes (352 bytes) or, older files, 8 lanes (176), told apart
+// by the chunk size. An 8-lane record's lanes 9-16 get KitLane() with note 60 + k, or the next note
+// no other lane holds when lanes 1-8 took it.
 LoadErr readKits(CrcSource& in, uint32_t size, Project& p) {
-  return readRecords(in, size, kKitRecSize, kInstruments, [&](int i, const uint8_t* b) {
-    for (int k = 0; k < kKitLanes; ++k, b += kKitLaneSize) {
-      KitLane& l = p.instruments[i].kit[k];
+  uint8_t count;
+  if (size < 1) return LoadErr::BadValue;
+  if (!in.read(&count, 1)) return LoadErr::Truncated;
+  const uint32_t n16 = 1 + static_cast<uint32_t>(count) * kKitRecSize;
+  const uint32_t n8 = 1 + static_cast<uint32_t>(count) * kKitRecSize8;
+  const size_t rec = size == n16 ? kKitRecSize : (size == n8 ? kKitRecSize8 : 0);
+  if (!rec) return LoadErr::BadValue;
+  const int lanes = static_cast<int>(rec / kKitLaneSize);
+  const int n = count < kInstruments ? count : kInstruments;
+  for (int i = 0; i < n; ++i) {
+    Instrument& m = p.instruments[i];
+    for (int k = 0; k < lanes; ++k) {
+      uint8_t b[kKitLaneSize];
+      if (!in.read(b, sizeof(b))) return LoadErr::Truncated;
+      KitLane& l = m.kit[k];
       memcpy(l.sample, b, kSampleNameMax);
       l.sample[kSampleNameMax] = 0;
       l.instr = b[17] < kInstruments ? b[17] : kNoInstr;
@@ -566,7 +583,15 @@ LoadErr readKits(CrcSource& in, uint32_t size, Project& p) {
       l.decay = b[20];
       l.note = b[21] < 128 ? b[21] : static_cast<uint8_t>(60 + k);
     }
-  });
+    for (int k = lanes; k < kKitLanes; ++k) {
+      m.kit[k] = KitLane();
+      m.kit[k].note = static_cast<uint8_t>(60 + k);
+    }
+    // Only lanes 9-16 of an 8-lane record are moved; stored lanes keep their notes as the file has them.
+    for (int k = lanes; k < kKitLanes; ++k)  // in order: later lanes see the earlier ones' moved notes
+      m.kit[k].note = kitFreeNote(m, k, 60 + k);
+  }
+  return in.skip(size - 1 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
 LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
@@ -757,6 +782,36 @@ LoadErr readPxy(CrcSource& in, uint32_t size, Project& p) {
   return in.skip(size - sizeof(b)) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
+// KNOB (Project::knobs, the bound controller knobs): count, record size, then a record per bound knob
+// (ch cc track screen page rel label[16], kKnobRecSize), packed from slot 0. Longer records: the known part;
+// shorter, record size 0 or the chunk shorter than count records: bad value. Records past kKnobBinds are skipped;
+// track >= kTracks, cc > 127, ch > 15 or screen 0: dropped (takes no slot). The label is always terminated.
+// Files without it (written only when a knob is bound): all knobs unused (reset()).
+constexpr uint32_t kKnobRecSize = 6 + kKnobLabel;
+LoadErr readKnob(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec < kKnobRecSize || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  int slot = 0;
+  for (int i = 0; i < h[0]; ++i) {
+    uint8_t b[kKnobRecSize];
+    if (!in.read(b, kKnobRecSize) || !in.skip(rec - kKnobRecSize)) return LoadErr::Truncated;
+    if (slot >= kKnobBinds || b[0] > 15 || b[1] > 127 || b[2] >= kTracks || b[3] == 0) continue;
+    KnobBind& k = p.knobs[slot++];
+    k.ch = b[0];
+    k.cc = b[1];
+    k.track = b[2];
+    k.screen = b[3];
+    k.page = b[4];
+    k.rel = b[5];
+    memcpy(k.label, b + 6, kKnobLabel);
+    k.label[kKnobLabel - 1] = 0;
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(h[0]) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 constexpr size_t kGrovSize = kPatterns + kTracks;
 LoadErr readGrov(CrcSource& in, uint32_t size, Project& p) {
   uint8_t b[kGrovSize];
@@ -804,7 +859,8 @@ LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
   if (!in.read(h, sizeof(h))) return LoadErr::Truncated;
   const int len = h[1];
   // Track count and step size from the body size: kTracks or kOldTracks (files of the 8-track
-  // firmware) x 14-byte (6 slots) or 6-byte (2 slots, older) steps. The four products differ.
+  // firmware) x 15-byte (6 slots + lanesHi), 14-byte (6 slots, older) or 6-byte (2 slots, oldest)
+  // steps. The six products (240, 224, 96, 120, 112, 48 per step) differ.
   const uint32_t body = size - kPatHeader;
   int tracks = 0;
   uint32_t stepBytes = 0;
@@ -814,8 +870,10 @@ LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
     stepBytes = sb;
   };
   match(kTracks, sizeof(Step));
+  match(kTracks, kStepBytes14);
   match(kTracks, kOldStepBytes);
   match(kOldTracks, sizeof(Step));
+  match(kOldTracks, kStepBytes14);
   match(kOldTracks, kOldStepBytes);
   if (!stepBytes && body != 0) return LoadErr::BadValue;
   if (h[0] >= kPatterns) return in.skip(body) ? LoadErr::Ok : LoadErr::Truncated;
@@ -824,7 +882,7 @@ LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
   pt.length = clampu(len, kMinSteps, kMaxSteps);
   pt.res = h[2] < static_cast<int>(Resolution::Count) ? static_cast<Resolution>(h[2]) : Resolution::Sixteenth;
   pt.swing = h[3] < 50 || h[3] > 75 ? 50 : h[3];
-  const int slots = (static_cast<int>(stepBytes) - 2) / 2;
+  const int slots = stepBytes == kOldStepBytes ? 2 : kFxSlots;
   for (int t = 0; t < tracks; ++t)  // clear() above emptied the tracks a kOldTracks file lacks
     for (int s = 0; s < len; ++s) {
       uint8_t b[sizeof(Step)];
@@ -838,6 +896,7 @@ LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
         st.fx[k].cmd = cmd < static_cast<int>(Fx::Count) ? static_cast<Fx>(cmd) : Fx::None;
         st.fx[k].val = st.fx[k].cmd == Fx::None ? 0 : b[3 + k * 2];
       }
+      st.lanesHi = stepBytes == sizeof(Step) ? b[2 + 2 * kFxSlots] : 0;  // melodic: cleared in loadProject
     }
   return LoadErr::Ok;
 }
@@ -1094,6 +1153,7 @@ bool saveProject(const Project& p, ByteSink& out) {
           b[2 + k * 2] = static_cast<uint8_t>(st.fx[k].cmd);
           b[3 + k * 2] = st.fx[k].val;
         }
+        b[2 + 2 * kFxSlots] = st.lanesHi;
         if (!o.write(b, sizeof(b))) return false;
       }
     if (trackLenSet(pt)) {
@@ -1120,6 +1180,20 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.chunk("PRF2", sizeof(pf)) || !o.write(pf, sizeof(pf))) return false;
   }
   if (!o.chunk("PXY ", sizeof(p.perfXy)) || !o.write(p.perfXy, sizeof(p.perfXy))) return false;
+  {
+    uint8_t n = 0;
+    for (const KnobBind& k : p.knobs) n += k.screen != 0;
+    if (n > 0) {
+      const uint8_t h[2] = {n, static_cast<uint8_t>(kKnobRecSize)};
+      if (!o.chunk("KNOB", 2 + n * kKnobRecSize) || !o.write(h, sizeof(h))) return false;
+      for (const KnobBind& k : p.knobs) {
+        if (k.screen == 0) continue;
+        uint8_t r[kKnobRecSize] = {k.ch, k.cc, k.track, k.screen, k.page, k.rel};
+        memcpy(r + 6, k.label, strnlen(k.label, kKnobLabel - 1));  // rest zero: no stale bytes
+        if (!o.write(r, sizeof(r))) return false;
+      }
+    }
+  }
 
   if (tuningValid(p.tuning)) {
     const TuningTable& t = p.tuning;
@@ -1245,11 +1319,15 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       for (Pattern& pt : out.patterns)  // a PATN after its TLEN may have shortened the pattern
         for (uint8_t& n : pt.trackLen)
           if (n > pt.length) n = pt.length;
-      // Drum tracks are known only now: their steps keep vel as a lane mask, the others' are 0..127.
+      // Drum tracks are known only now: their steps keep vel / lanesHi as a lane mask, the others'
+      // vel is 0..127 and lanesHi 0.
       for (int t = 0; t < kTracks; ++t) {
         if (out.trackIsDrum(t)) continue;
         for (Pattern& pt : out.patterns)
-          for (Step& st : pt.steps[t]) st.vel &= 0x7F;
+          for (Step& st : pt.steps[t]) {
+            st.vel &= 0x7F;
+            st.lanesHi = 0;
+          }
       }
       mutFix(out, evoParked);  // old files: EVO and VAR stacked; CA2D on melodic tracks
       return LoadErr::Ok;
@@ -1295,6 +1373,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "PRF2", 4) == 0) e = readPrf2(in, size, out, prf2);
     else if (memcmp(ch, "PRFM", 4) == 0) e = readPrfm(in, size, out, prf2);
     else if (memcmp(ch, "PXY ", 4) == 0) e = readPxy(in, size, out);
+    else if (memcmp(ch, "KNOB", 4) == 0) e = readKnob(in, size, out);
     else if (memcmp(ch, "SCNS", 4) == 0) e = readScns(in, size, legacy);
     else if (memcmp(ch, "TUNE", 4) == 0) e = readTune(in, size, out, notes);
     else if (memcmp(ch, "SCEN", 4) == 0) e = readScen(in, size, out);

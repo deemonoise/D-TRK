@@ -424,6 +424,19 @@ void test_notes_to_kit_lanes() {
   TEST_ASSERT_EQUAL(1u, r.notesDropped);
 }
 
+// Lanes 9-16 (notes 68..75): note 74 = lane 15 (lanesHi 0x40), OR-ed with lane 1 on one step.
+void test_notes_to_kit_lanes_hi() {
+  instrSetType(P.instruments[3], InstrType::Kit);  // lanes 60..75
+  P.tracks[0].instr = 3;
+  add(0, 74, 12, 90);
+  add(24, 60, 12, 90);
+  add(24, 69, 12, 90);
+  run();
+  TEST_ASSERT_EQUAL_HEX8(0, st(0, 0, 0).vel);
+  TEST_ASSERT_EQUAL_HEX8(0x40, st(0, 0, 0).lanesHi);
+  TEST_ASSERT_EQUAL_HEX16(0x0201, laneMask(st(0, 0, 1)));
+}
+
 // importPlan: the pattern count and tempo of importSmf, without touching the project.
 void test_plan_matches_import() {
   M.firstPattern = 3;
@@ -489,5 +502,6 @@ int main() {
   RUN_TEST(test_note_slightly_before_offset);
   RUN_TEST(test_nearest_gate_matches_search);
   RUN_TEST(test_notes_to_kit_lanes);
+  RUN_TEST(test_notes_to_kit_lanes_hi);
   return UNITY_END();
 }

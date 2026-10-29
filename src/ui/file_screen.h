@@ -7,18 +7,19 @@
 #include "page_bar.h"
 #include "param_list.h"
 #include "screen.h"
+#include "midi_dialog.h"
 #include "wifi_dialog.h"
 
 namespace ui {
 
 // Three sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
-// firmware; Load shows /projects/*.mtp), SAMPLES (the project's samples: import WAV from /samples and its
-// subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries) and SYSTEM
-// (device settings saved in NVS, not in the project, and diagnostics: firmware, the synth board and its
-// card, link, last reset, RAM, battery, CPU profile).
+// firmware / MIDI devices; Load shows /projects/*.mtp), SAMPLES (the project's samples: import WAV from
+// /samples and its subfolders, rename, delete; the flash bank is their cache: compact, clear unused
+// entries) and SYSTEM (device settings saved in NVS, not in the project, and diagnostics: firmware, the
+// synth board and its card, link, last reset, RAM, battery, CPU profile).
 class FileScreen : public Screen {
  public:
-  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app), list_(app, kMaxFiles) { initSystem(); }
+  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app), midiDlg_(app), list_(app, kMaxFiles) { initSystem(); }
   void onEnter() override;
   void onLeave() override;
   void onProjectReplaced() override;
@@ -28,8 +29,11 @@ class FileScreen : public Screen {
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
   void onPage(int d) override;
-  void poll() override { wifi_.poll(); }
-  bool wantsRedraw(const engine::Status&) override;  // Wi-Fi, SYSTEM: Battery / CPU profile rows
+  void poll() override {
+    wifi_.poll();
+    midiDlg_.poll();
+  }
+  bool wantsRedraw(const engine::Status&) override;  // Wi-Fi, MIDI, SYSTEM: Battery / CPU profile rows
   // FILE -> Wi-Fi as if chosen (asks about unsaved changes first); the synth version screen uses it.
   void openWifi() { run(kWifi); }
   bool wifiOpen() const { return wifi_.isOpen(); }
@@ -38,7 +42,7 @@ class FileScreen : public Screen {
   void askUpdateSynth();
 
  private:
-  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kRetry, kActions };
+  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kMidi, kRetry, kActions };
   enum MenuId : int {
     kCancel, kDiscardLoad, kDiscardNew, kRestoreAuto, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
@@ -48,7 +52,7 @@ class FileScreen : public Screen {
   // SAMPLES rows: Import, Compact, Clear cache, then the project's samples.
   enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kClearRow, kFirstSample };
   static constexpr int kHeaderH = 28;
-  static constexpr int kActionH = 27;  // kActions rows fit under the header and the page bar
+  static constexpr int kActionH = 24;  // kActions rows fit under the header and the page bar
   static constexpr int kRowH = 24;
   static constexpr int kMaxFiles = 512;
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
@@ -59,7 +63,7 @@ class FileScreen : public Screen {
 
   // SYSTEM rows.
   enum SysRow : int {
-    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kFirmware, kSynthFw, kUpdSynth, kCard, kSamples, kLink, kLastReset, kAudioRam, kBattery, kCpuProf, kSysRows
+    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kFirmware, kSynthFw, kUpdSynth, kCard, kSamples, kLink, kLastReset, kAudioRam, kRamMin, kBattery, kCpuProf, kSysRows
   };
   static constexpr int kSysListRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;
 
@@ -122,6 +126,7 @@ class FileScreen : public Screen {
   ImportDialog import_;
   RenderDialog render_;
   WifiDialog wifi_;
+  MidiDialog midiDlg_;
   int sel_ = kSave;
   int y0_ = kAreaY;
   // Load / import list (PSRAM while open). WAV: Play / the first tap previews on the synth board.

@@ -31,7 +31,7 @@ static_assert(sizeof(SchedEvent) == 24, "seq must fit the padding");
 class EventHeap {
  public:
   static constexpr int kCap = 1024;
-  static constexpr int kOffReserve = 256;
+  static constexpr int kOffReserve = 256;  // a 16-lane x8 ratchet KIT step is 256 events: three on one step fill the NoteOn share
 
   bool push(const SchedEvent& e);
   void pop();

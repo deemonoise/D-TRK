@@ -8,6 +8,9 @@
 #include "file_screen.h"
 #include "grid_screen.h"
 #include "hw/battery.h"
+#include "ble_midi_parse.h"
+#include "midi_devices.h"
+#include "midi_router.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "inst_screen.h"
@@ -37,6 +40,7 @@ class App {
   Tab tab() const { return tab_; }
   Menu& menu() { return menu_; }
   mt::Project& project() { return *p_; }
+  const mt::Project& project() const { return *p_; }
   const engine::Status& status() const { return status_; }
   bool shift() const { return shift_; }
   void invalidate() { dirty_ = true; }
@@ -125,6 +129,35 @@ class App {
   // After load / new: clears undo and the dirty flag, resets screen state.
   void projectReplaced();
 
+  // BLE MIDI controller (MIDI dialog): the router (learn arming), the learned pad banks, and the
+  // last kMonitor IN messages oldest first (n = count); monitorSeq() bumps with every message.
+  static constexpr int kMonitor = 8;
+  bool midiRecHold() const { return midiRecHold_; }
+  void setMidiRecHold(bool on);
+  mt::MidiRouter& midiRouter() { return midi_; }
+  // The active IN device's learned pad banks (all unlearned when there is none).
+  const mt::PadLearn& pads() const;
+  void padsForget(mt::PadMode m);  // that bank not learned (saved); the pads sounding end
+  // The remembered BLE MIDI devices (UI task only). After any change: devicesChanged() saves the list
+  // and hands the active IN / OUT to hw::ble; a new active IN ends the sounding pads.
+  mt::MidiDevices& devices() { return devs_; }
+  void devicesChanged();
+  void devicesSave();  // the list to NVS only (a pad table or name edit: hw::ble and the router keep going)
+  // The active IN / OUT to hw::ble without saving; a new active IN ends the sounding pads and drops
+  // the old controller's queued messages.
+  void applyDevices();
+  void padsAllOff();  // every sounding NOTE pad and held PERF pad ends
+  // A bind edited / deleted outside a learn (MIDI dialog): a pending learn of that slot (its rel still
+  // to decide) ends; -1 = every slot.
+  void knobEdited(int slot) {
+    if (slot < 0 || slot == learnSlot_) learnSlot_ = -1;
+  }
+  bool padsHeld() const;  // a NOTE pad sounds or a PERF pad is held
+  uint32_t devNamesGen() const { return devNamesGen_; }  // bumps when a device takes its GAP name
+  uint32_t midiConnects() const { return bleConnects_; }  // the IN connection pollMidi saw last
+  int monitor(mt::MidiMsg* out, int max) const;
+  uint32_t monitorSeq() const { return monSeq_; }
+
  private:
   static constexpr uint32_t kFrameMs = 25;
   static constexpr uint32_t kToastMs = 1500;
@@ -184,9 +217,31 @@ class App {
   void cycleTab(int d);
   void soloKey(int n);
   void queueKey(int n);
+  void queuePattern(int pat);  // "PATTERN nn [NEXT]" (SONG plays: "SONG MODE")
+  void toggleMute(int track);  // with a toast
+  // BLE MIDI controller: drains its IN queue every tick (pads, learn); a lost connection ends what
+  // the pads hold.
+  void pollMidi();
+  void midiAction(const mt::Action& a, const mt::MidiMsg& m);  // m: the message routed into a
+  // Knobs (KnobBind::screen: 1 INST, 2 TRACK / MIX, 3 PROJ). Shift + turn on a selected row learns the
+  // knob (rebinds a bound one; the row it is bound to already: unbinds), once per turn (not per Shift
+  // press: the turn's first Shift message); the rest of that turn edits nothing. Else a bound knob turns
+  // its row for its track, whatever the tab.
+  static constexpr uint32_t kTurnGapMs = 300;  // a pause this long between a knob's messages ends its turn
+  int knobScreenId(const Screen* s) const;
+  Screen* knobScreen(int id);
+  void knobLearn(const mt::MidiMsg& m);
+  void knobTurn(int bind, int delta);
+  bool knobRelDecide(const mt::MidiMsg& m);  // a pending learn's rel; true = m taken
+  void knobNote(const char* msg);  // a toast at most once a second (hints, skipped turns)
+  void padNoteOn(int note, uint8_t vel, uint8_t ch);
+  void padNoteOff(int note, uint8_t ch);
+  void releaseMidiSlot(int slot);
+  void monitorPush(const mt::MidiMsg& m);
   void draw();
   void drawStatus();
   void drawBattery();  // status bar, right of the loop counter
+  int btMark() const;  // status bar BT: 0 none, 1 searching, 2 every set slot connected
   void drawRec();      // status bar: a REC -> SD take's red dot and time
   void drawTabs();
   void drawBusy();
@@ -270,6 +325,42 @@ class App {
   bool transportLocked_ = false;
   bool dirty_ = true;
   uint32_t lastDraw_ = 0;
+
+  mt::MidiRouter midi_;
+  mt::PadLearn* padsMut();  // the active IN device's banks, a scratch set when there is none
+  void adoptBleNames();  // address-named devices take the connected GAP name
+  mt::MidiDevices devs_;
+  char activeIn_[mt::kDevAddr] = {};  // the active IN address hw::ble got last ("" = none)
+  bool panicPending_ = false;  // a MIDI panic for a fresh OUT the engine queue refused: retried
+  uint32_t bleConnects_ = 0;  // hw::ble::connects() last seen
+  int btDrawn_ = 0;           // btMark() as last drawn
+  uint8_t turnCh_ = 0xFF, turnCc_ = 0xFF;  // the knob turned last and its last message
+  uint32_t turnMs_ = 0;
+  bool turnLearned_ = false;  // this turn learned / unbound already
+  // The bind learned last, until its knob's next message decides rel. Learning another knob before that
+  // drops the decision (the first stays absolute; relearning it fixes that).
+  int8_t learnSlot_ = -1;
+  uint32_t devNamesGen_ = 0;
+  uint8_t learnVal_ = 0;      // the value it was learned from
+  uint32_t knobHintMs_ = 0;   // the last "SHIFT+TURN TO LEARN" toast
+  // What each NOTE pad started (its release ends that note even after the octave or the current
+  // track changed); padTrack_ -1 = not sounding.
+  static constexpr int kLiveNotes = 32;
+  uint8_t padChannel_[kLiveNotes] = {};
+  bool midiRecHold_ = false, savedMidiRecHold_ = false;
+  struct PadRecording {
+    bool active = false;
+    uint8_t pattern = 0, track = 0, step = 0;
+    mt::Step written;
+    uint64_t started = 0;
+    uint32_t stepUs = 0;
+  } padRec_[kLiveNotes];
+  void finishPadRecording(int pad);
+  uint8_t padNote_[kLiveNotes] = {};
+  int8_t padTrack_[kLiveNotes] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+  mt::MidiMsg mon_[kMonitor] = {};
+  uint8_t monHead_ = 0, monCount_ = 0;  // ring: next slot, messages in it
+  uint32_t monSeq_ = 0;
 };
 
 }  // namespace ui

@@ -430,7 +430,7 @@ void test_off_follows_nudge() {
 }
 
 // Drum track (KIT instrument): vel = lane mask, note = step velocity.
-static Instrument kit() { Instrument k; instrSetType(k, InstrType::Kit); return k; }  // notes 60..67
+static Instrument kit() { Instrument k; instrSetType(k, InstrType::Kit); return k; }  // notes 60..75
 static Step drumStep(uint8_t mask, uint8_t vel = 0) { Step s; s.note = vel; s.vel = mask; return s; }
 
 void test_drum_mask_to_lane_notes() {
@@ -478,6 +478,78 @@ void test_drum_ratchet_fits_and_tie_ignored() {
   TEST_ASSERT_FALSE(out.tie);
   // Hits must not overlap: every NoteOff before the next ratchet's NoteOn.
   TEST_ASSERT_TRUE(out.ev[1].offsetUs < out.ev[16].offsetUs);
+}
+
+void test_drum_sixteen_lanes() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  Step s;
+  s.note = 100;
+  setLaneMask(s, 0x8001);  // lanes 1 and 16
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(4, out.count);
+  TEST_ASSERT_TRUE(out.ev[0].kind == EvKind::NoteOn);
+  TEST_ASSERT_EQUAL(60, out.ev[0].note);
+  TEST_ASSERT_EQUAL(100, out.ev[0].vel);
+  TEST_ASSERT_TRUE(out.ev[1].kind == EvKind::NoteOff);
+  TEST_ASSERT_EQUAL(60, out.ev[1].note);
+  TEST_ASSERT_TRUE(out.ev[2].kind == EvKind::NoteOn);
+  TEST_ASSERT_EQUAL(75, out.ev[2].note);
+  TEST_ASSERT_EQUAL(100, out.ev[2].vel);
+  TEST_ASSERT_TRUE(out.ev[3].kind == EvKind::NoteOff);
+  TEST_ASSERT_EQUAL(75, out.ev[3].note);
+}
+
+// ACC governs lanes 1-8, AC2 lanes 9-16; a missing fx leaves its half accented.
+void test_drum_ac2_accent_hi() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  Step s;
+  s.note = 100;
+  setLaneMask(s, 0x0301);  // lanes 1, 9, 10
+  s.fx[0] = {Fx::ACC, 0x00};
+  s.fx[1] = {Fx::AC2, 0x01};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(6, out.count);
+  TEST_ASSERT_EQUAL(60, out.ev[0].note);
+  TEST_ASSERT_EQUAL(60, out.ev[0].vel);   // lane 1 outside ACC: 100 * 3 / 5
+  TEST_ASSERT_EQUAL(68, out.ev[2].note);
+  TEST_ASSERT_EQUAL(100, out.ev[2].vel);  // lane 9 in AC2
+  TEST_ASSERT_EQUAL(69, out.ev[4].note);
+  TEST_ASSERT_EQUAL(60, out.ev[4].vel);   // lane 10 outside AC2
+
+  s.fx[1] = {};  // ACC only: lanes 9-16 accented
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(60, out.ev[0].vel);
+  TEST_ASSERT_EQUAL(100, out.ev[2].vel);
+  TEST_ASSERT_EQUAL(100, out.ev[4].vel);
+
+  s.fx[0] = {Fx::AC2, 0x00};  // AC2 only: lanes 1-8 accented
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(100, out.ev[0].vel);
+  TEST_ASSERT_EQUAL(60, out.ev[2].vel);
+  TEST_ASSERT_EQUAL(60, out.ev[4].vel);
+}
+
+void test_drum_sixteen_lanes_ratchet_fits() {
+  const Instrument k = kit();
+  ExpandCtx c = ctx;
+  c.kit = &k;
+  Step s;
+  s.note = 0;  // track default velocity
+  setLaneMask(s, 0xFFFF);
+  s.fx[0] = {Fx::RAT, 8};
+  ExpandOut out;
+  TEST_ASSERT_TRUE(expandStep(s, track, c, rng, out));
+  TEST_ASSERT_EQUAL(8 * 16 * 2, out.count);
+  TEST_ASSERT_TRUE(out.count <= kMaxStepEvents);
+  TEST_ASSERT_EQUAL(8 * 16, countKind(out, EvKind::NoteOn));
+  TEST_ASSERT_EQUAL(75, out.ev[2 * 15].note);           // last lane of hit 1
+  TEST_ASSERT_EQUAL(75, out.ev[8 * 16 * 2 - 2].note);  // last lane of hit 8
 }
 
 void test_drum_empty_mask_is_note_step() {
@@ -800,6 +872,9 @@ int main() {
   RUN_TEST(test_drum_velocity_and_accent);
   RUN_TEST(test_drum_ratchet_fits_and_tie_ignored);
   RUN_TEST(test_drum_empty_mask_is_note_step);
+  RUN_TEST(test_drum_sixteen_lanes);
+  RUN_TEST(test_drum_ac2_accent_hi);
+  RUN_TEST(test_drum_sixteen_lanes_ratchet_fits);
   RUN_TEST(test_drum_off_cuts_notes);
   RUN_TEST(test_acc_ignored_on_melodic_track);
   RUN_TEST(test_cnd_fill_values);

@@ -129,6 +129,25 @@ void test_toggle_lane() {
   TEST_ASSERT_EQUAL_UINT8(0x80, s.vel);
 }
 
+// Lane 12 lives in lanesHi (bit 3); a stale lanesHi on a note-off step is cleared with the mask.
+void test_roll_toggle_lane_twelve() {
+  Step s;
+  TEST_ASSERT_TRUE(rollToggleLane(s, 11));
+  TEST_ASSERT_EQUAL_UINT8(0, s.note);
+  TEST_ASSERT_EQUAL_UINT8(0, s.vel);
+  TEST_ASSERT_EQUAL_UINT8(0x08, s.lanesHi);
+  TEST_ASSERT_TRUE(laneOn(s, 11));
+  TEST_ASSERT_FALSE(rollToggleLane(s, 11));
+  TEST_ASSERT_EQUAL_UINT8(0, s.lanesHi);
+  TEST_ASSERT_FALSE(rollToggleLane(s, 16));  // out of range: nothing
+  TEST_ASSERT_FALSE(rollToggleLane(s, -1));
+  TEST_ASSERT_EQUAL_UINT16(0, laneMask(s));
+  s.note = kNoteOff;
+  s.lanesHi = 0x40;
+  TEST_ASSERT_TRUE(rollToggleLane(s, 0));
+  TEST_ASSERT_EQUAL_UINT16(0x0001, laneMask(s));
+}
+
 static void test_follow() {
   TEST_ASSERT_EQUAL(0, rollFollow(0, 5, 16, 128));
   TEST_ASSERT_EQUAL(5, rollFollow(10, 5, 16, 128));    // up to the cursor
@@ -151,6 +170,7 @@ static void test_mix() {
 
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_roll_toggle_lane_twelve);
   RUN_TEST(test_gate_val);
   RUN_TEST(test_set_gate);
   RUN_TEST(test_span);

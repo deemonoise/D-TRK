@@ -32,6 +32,13 @@ class GridScreen : public Screen {
   bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen(); }  // Fill / Transpose preview
   // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.
   bool chordClear();
+  // Controller pads (App): REC is on and no Fill / Transpose dialog is open (App adds "playing").
+  bool recording() const { return rec_ && !dialogOpen(); }
+  uint8_t lastNote(int tr) const { return lastNote_[tr]; }  // the octave melodic pads play in
+  // A controller pad into the heard step of track tr (REC, playing): lane >= 0 sets that drum lane,
+  // else the melodic note with velocity vel (1..127). No preview (the pad sounds by itself).
+  // GRID's octave (lastNote_) stays: the pads keep their notes while recording.
+  int recordPad(int tr, int lane, uint8_t note, uint8_t vel) { return recordAt(tr, lane, note, vel, false, false, false); }
 
  private:
   // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
@@ -57,14 +64,19 @@ class GridScreen : public Screen {
   static_assert(kFields * kFieldW <= kDetW, "Detail fields must fit");
   static constexpr int kKbH = 48;      // mini keyboard height
   static constexpr int kKeyW = 40;
-  static constexpr int kPadW = kScreenW / mt::kKitLanes;  // lane pad button (drum track)
+  // Lane pad (drum track): 2 rows of 8, lanes 1-8 on top, 9-16 below; 60 x 24 px buttons.
+  static constexpr int kPadCols = 8;
+  static constexpr int kPadW = kScreenW / kPadCols;
+  static constexpr int kPadRowH = kKbH / 2;
+  static_assert(kPadCols * 2 >= mt::kKitLanes, "lane pad rows must hold every lane");
+  static_assert(kPadRowH >= kCharH + 4, "lane pad row must hold a text line");
   static constexpr uint32_t kFollowPauseMs = 2000;
   // Piano roll: keys (kNumW) | kRollCols steps of kRollColW; a semitone per kRowH row, KIT: a lane per row.
   static constexpr int kRollColW = 28;
   static constexpr int kRollCols = 16;
   static_assert(kNumW + kRollCols * kRollColW <= kScreenW, "Roll columns must fit");
 
-  // Shift + click cycles them. Roll: the current track as a piano roll (KIT: its 8 lanes).
+  // Shift + click cycles them. Roll: the current track as a piano roll (KIT: its 16 lanes).
   enum class View : uint8_t { Overview, Detail, Roll };
 
   mt::Pattern& pat();
@@ -96,6 +108,11 @@ class GridScreen : public Screen {
   void setPerf(bool on);  // the shared PERF (App::perf()); on turns REC and edit off
   bool perf() const;
   bool recordKey(int n, bool shift);  // REC while playing: button N into the heard step
+  // REC: one write into the heard step of track tr (buttons and pads share it, with the undo per pass).
+  // lane >= 0: drum lane bit set (clear: cleared); lane < 0: melodic note at vel (0 = the step keeps
+  // its velocity), lastNote_ follows when setLast; clear: the step's note goes. preview: the written
+  // note sounds.
+  int recordAt(int tr, int lane, uint8_t note, uint8_t vel, bool clear, bool preview, bool setLast);
   int heardTrackStep(int tr);  // the heard step of track tr (own length and speed); slow: the last one played
   void writeStep(const mt::Step& st);
   void openMenu();
@@ -130,8 +147,8 @@ class GridScreen : public Screen {
   void drawOverview(LGFX_Sprite& s, int gridY);
   void drawDetail(LGFX_Sprite& s, int gridY);
   void drawKeyboard(LGFX_Sprite& s, int y);
-  // Lane mask as squares: one row of 8 (Overview column) or compact 2 x 4 (Detail NOTE field).
-  void drawMask(LGFX_Sprite& s, int x, int y, uint8_t mask, bool audible, int cursorLane, bool compact);
+  // Lane mask as squares: 2 rows of 8 in both modes (Overview column; compact: Detail NOTE field).
+  void drawMask(LGFX_Sprite& s, int x, int y, uint16_t mask, bool audible, int cursorLane, bool compact);
   void drawPad(LGFX_Sprite& s, int y);
   int drawBadge(LGFX_Sprite& s, int y);  // its width in px, 0 when neither REC nor PERF
   bool selected(int tr, int step) const;

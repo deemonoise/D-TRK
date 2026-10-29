@@ -37,6 +37,31 @@ class Screen {
   virtual void poll() {}
   // Extra redraw request on top of App's own (status changes already redraw).
   virtual bool wantsRedraw(const engine::Status&) { return false; }
+  // MIDI learn: the selected row's label and page, false when none (no list, page bar selected).
+  virtual bool knobRow(int& page, const char*& label) {
+    (void)page;
+    (void)label;
+    return false;
+  }
+  // A knob turn on `track`'s rows now would fight an edit open here (cancel restores its snapshot, a
+  // browser restores the instrument): App skips it. App makes `track` current for the call.
+  virtual bool knobBusy(int track) {
+    (void)track;
+    return false;
+  }
+  // Turns the row `label` of `page` as it is for `track` by delta (under lockProject, as ParamList
+  // does), its value text after into val; false when that row is not there for that track (another
+  // instrument type). App makes `track` current for the call. The screen's own state (current track,
+  // shown instrument, page, selection) is the same afterwards.
+  virtual bool knobTurn(int track, int page, const char* label, int delta, char* val, int n) {
+    (void)track;
+    (void)page;
+    (void)label;
+    (void)delta;
+    (void)val;
+    (void)n;
+    return false;
+  }
 };
 
 // Stand-in for screens that are not implemented yet.

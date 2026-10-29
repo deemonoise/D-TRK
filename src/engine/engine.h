@@ -18,13 +18,17 @@ namespace engine {
 // GenReseed: arg = track, after its GenCfg::seed changed: replanned, its register reset from the next step.
 // MutEdit: after a Project::evo / var (MUT) edit: the unheard steps are planned again with it; a track
 // whose MUT mode changed starts over (no EVO changes, VAR generation 0). Sequencer::mutEdited.
+// LiveNote: arg = track << 8 | note, arg2 = velocity (0 = off): played now, also stopped (Sequencer::liveNote).
+// LiveAllOff: ends every live note (Sequencer::liveAllOff).
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
-  Fill, SetSong, GenEdit, GenReseed, MutEdit, SetLiveBpm
+  Fill, SetSong, GenEdit, GenReseed, MutEdit, SetLiveBpm,
+  LiveNote, LiveAllOff, MidiPanic
 };
 
 struct Command {
   Cmd cmd;
+  uint8_t arg2;
   uint16_t arg;
 };
 
@@ -55,9 +59,9 @@ bool seqInternal();  // the sequencer ended up in internal RAM
 // it left (the caller frees it). core_ram uses it for Wi-Fi (transport stopped).
 void* moveSeq(void* dst);
 // False when the command queue was full (the command is lost).
-bool post(Cmd c, uint16_t arg = 0);
+bool post(Cmd c, uint16_t arg = 0, uint8_t arg2 = 0);
 // As post, waiting up to 50 ms for room: for commands that must not be lost (fill / perf release).
-bool postWait(Cmd c, uint16_t arg = 0);
+bool postWait(Cmd c, uint16_t arg = 0, uint8_t arg2 = 0);
 Status status();
 // Engine timer time, us (time stamps of synth events).
 uint64_t nowUs();

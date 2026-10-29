@@ -1,6 +1,8 @@
 #include "audio.h"
 #include <Arduino.h>
 #include <string.h>
+#include <new>
+#include "esp_heap_caps.h"
 #include "link/link.h"
 #include "link_msg.h"
 #include "model.h"
@@ -17,13 +19,14 @@ constexpr uint32_t kReplyMs = 500;  // no Ack / Nack for a StateSet this long: s
 constexpr uint32_t kBlockUs = kBlock * 1000000u / kRate;
 
 mt::Project* project = nullptr;
-StateMirror mirror;
+StateMirror* mirror = nullptr;  // PSRAM (begin): a whole SynthModel, too big for internal RAM
 uint32_t seenBoot = 0;
 
 // The chunk in flight (one at a time) and its bytes as sent, for StateMirror::acked.
 int pending = -1;
 uint32_t pendingAt = 0;
-uint8_t sent[6144];  // the synth board buffers a chunk in as much
+constexpr uint32_t kSentMax = 6144;  // the synth board buffers a chunk in as much
+uint8_t* sent = nullptr;             // kSentMax bytes, PSRAM (begin)
 
 // Device state the synth board forgets on a reboot: sent again with the sound state.
 bool meters = false;
@@ -57,7 +60,7 @@ void sendDevice() {
 // Sends chunk id as StateSet pieces; false when the bulk queue stayed full.
 bool sendChunk(uint16_t id) {
   uint32_t off, len;
-  if (!mt::chunkRange(id, off, len) || len > sizeof sent) return false;
+  if (!mt::chunkRange(id, off, len) || len > kSentMax) return false;
   memcpy(sent, reinterpret_cast<const uint8_t*>(static_cast<const mt::SynthModel*>(project)) + off, len);
   static StateSet s;
   s.chunk = id;
@@ -71,46 +74,58 @@ bool sendChunk(uint16_t id) {
   return true;
 }
 
+// PSRAM, internal RAM if there is none; null if neither has room.
+void* bigAlloc(size_t n) {
+  void* m = heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+  return m ? m : heap_caps_malloc(n, MALLOC_CAP_8BIT);
+}
+
 }  // namespace
 
 void begin(mt::Project* p) {
+  if (!mirror) {
+    void* m = bigAlloc(sizeof(StateMirror));
+    if (m) mirror = new (m) StateMirror();
+  }
+  if (!sent) sent = static_cast<uint8_t*>(bigAlloc(kSentMax));
+  if (!mirror || !sent) Serial.println("audio: no memory for the state mirror, sound state not sent");
   project = p;
   slink::begin();
 }
 
 void pump() {
-  if (!project) return;
+  if (!project || !mirror || !sent) return;
   const uint32_t boot = slink::bootId();
   if (boot != seenBoot) {
     seenBoot = boot;
-    mirror.invalidate();
+    mirror->invalidate();
     pending = -1;
     if (boot) sendDevice();
   }
   slink::Reply r;
   while (slink::takeReply(r)) {
     if (pending < 0 || r.id != pending) continue;  // a reply from before a reboot / timeout
-    if (r.ok) mirror.acked(r.id, sent);
-    else mirror.failed(r.id);
+    if (r.ok) mirror->acked(r.id, sent);
+    else mirror->failed(r.id);
     pending = -1;
   }
   const uint32_t now = millis();
   if (pending >= 0 && now - pendingAt >= kReplyMs) {
-    mirror.failed(static_cast<uint16_t>(pending));
+    mirror->failed(static_cast<uint16_t>(pending));
     pending = -1;
   }
   if (pending >= 0 || !slink::synthUp() || !slink::versionOk()) return;
-  const int id = mirror.nextDirty(*project);
+  const int id = mirror->nextDirty(*project);
   if (id < 0) return;
   if (!sendChunk(static_cast<uint16_t>(id))) {
-    mirror.failed(static_cast<uint16_t>(id));
+    mirror->failed(static_cast<uint16_t>(id));
     return;
   }
   pending = id;
   pendingAt = now;
 }
 
-bool synced() { return project && pending < 0 && mirror.synced(*project); }
+bool synced() { return project && mirror && pending < 0 && mirror->synced(*project); }
 
 const mt::Project* mirrorProject() { return project; }
 

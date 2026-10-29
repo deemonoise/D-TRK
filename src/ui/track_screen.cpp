@@ -640,14 +640,17 @@ void TrackScreen::drawVar(LGFX_Sprite& s, int y0) {
   const int w = cw >= 3 ? cw - 1 : cw;
   const bool markov = m == mt::VarMode::Markov;
   const int rows = a.kit && !markov ? mt::kVarRows : 1;
-  const int rh = rows > 1 ? 2 : 8, rp = rows > 1 ? 3 : 8;
-  const int top = y0 + (kHeaderH - 4 - (rows * rp - (rp - rh))) / 2;
+  // KIT: 16 rows of 1 px in groups of 4 lanes, 2 px between groups: 16 + 3 * 2 = 22 px of the 24 px header.
+  const int rh = rows > 1 ? 1 : 8, gap = 2;
+  const int h = rows > 1 ? rows * rh + (rows / 4 - 1) * gap : rh;
+  static_assert(mt::kVarRows * 1 + (mt::kVarRows / 4 - 1) * 2 <= kHeaderH - 4, "MUT CA rows fit the header");
+  const int top = y0 + (kHeaderH - 4 - h) / 2;
   for (int r = 0; r < rows; ++r)
     for (int i = 0; i < len; ++i) {
       bool on;
       if (markov) on = !gen0 && heardVarSt.src[i] != i;
       else on = mt::varBit(heardVarSt.cells.r[r], i);
-      s.fillRect(x0 + i * cw, top + r * rp, w, rh, on ? kCursor : kDim);
+      s.fillRect(x0 + i * cw, top + r * rh + (r / 4) * gap, w, rh, on ? kCursor : kDim);
     }
 }
 
@@ -724,6 +727,30 @@ void TrackScreen::onProjectReplaced() {
   scnPending_ = -1;
   xfSel_ = kXfNone;
   panSel_ = -1;
+}
+
+bool TrackScreen::knobRow(int& page, const char*& label) {
+  if (mixer_) return false;
+  // Name (the cursor's character) and Steps (the cursor) edit what the screen points at.
+  if ((page_ == kPgMain && list_.sel() == kName) || (page_ == kPgIns && list_.sel() == kStepsRow)) return false;
+  const Param* r = list_.knobRow(mt::kKnobLabel - 1);
+  if (!r) return false;
+  page = page_;
+  label = r->label;
+  return true;
+}
+
+bool TrackScreen::knobTurn(int, int page, const char* label, int delta, char* val, int n) {
+  if (page < 0 || page >= kPages) return false;
+  if (page == kPgMut) {  // the rows of the track's mode
+    int ids[kMutRowsMax];
+    const int c = mutRows(mutMode(), ids);
+    for (int i = 0; i < c; ++i)
+      if (turnRow(&params_[ids[i]], 1, label, mt::kKnobLabel - 1, delta, val, n)) return true;
+    return false;
+  }
+  return turnRow(params_ + kPageFirst[page], kPageFirst[page + 1] - kPageFirst[page], label, mt::kKnobLabel - 1,
+                 delta, val, n);
 }
 
 void TrackScreen::showPage(int page, bool bar) {

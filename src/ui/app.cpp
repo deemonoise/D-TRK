@@ -2,12 +2,17 @@
 #include <new>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include "audio/audio.h"
 #include "fx_info.h"
 #include "scene.h"
 #include "esp_heap_caps.h"
 #include "hw/battery.h"
+#include "hw/ble_midi.h"
 #include "hw/trackio.h"
+#include "scale.h"
+#include "record.h"
+#include "roll.h"
 #include "storage/settings.h"
 #include "storage/storage.h"
 #include "hw/sdcard.h"
@@ -63,6 +68,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   phones_ = savedPhones_ = ph <= 100 ? ph : 100;
   audio::setPhones(static_cast<uint8_t>(phones_));
   preview_ = savedPreview_ = storage::loadSetting("preview", 1) != 0;
+  midiRecHold_ = savedMidiRecHold_ = storage::loadSetting("midihold", 0) != 0;
   visuals_ = savedVisuals_ = storage::loadSetting("perfvis", 1) != 0;
   // The REC window's Source, MIC / LINE gains, Thresh and Mon (both of its modes).
   const mt::RecPrefs rd;
@@ -73,6 +79,12 @@ void App::begin(LGFX* lcd, mt::Project* p) {
                                storage::loadSetting("recmon", rd.mon ? 1 : 0));
   rec_.setPrefs(savedRec_);
   proj_.loadDicePrefs();  // the DICE window's Genre / Style / Variety / Length / Scope / Song
+  // The remembered BLE MIDI devices and their pad banks; hw::ble gets the active ones (main starts
+  // the stack when one is set).
+  storage::loadDevices(devs_);
+  const int in = devs_.activeIn();
+  if (in >= 0) strlcpy(activeIn_, devs_.at(in).addr, sizeof(activeIn_));  // nothing sounds yet: no pads off
+  applyDevices();
 
   status_ = engine::status();
   lastBpm_ = p_->bpm;
@@ -88,7 +100,7 @@ void App::setTab(Tab t) {
   perf_.setXy(false);  // the pad belongs to the tab it was opened on
   xyPad_.clear();
   menu_.close();
-  if (perfTab(tab_)) perf_.allOff();  // leaving releases the held effects
+  if (perfTab(tab_)) perf_.buttonsOff();  // leaving releases the held effects; controller pads' go on
   screen()->onLeave();
   // GRID / SONG / MIX keep the PERF buffer between them; any other tab frees it (its PSRAM is needed there).
   if (perfTab(t)) perf_.attach();
@@ -368,7 +380,11 @@ void App::soloKey(int n) {
 void App::queueKey(int n) {
   if (n < 0 || n >= mt::kTrackButtons) return;
   const int pat = (editPattern() / mt::kTrackButtons) * mt::kTrackButtons + n;
-  if (pat >= mt::kPatterns) return;
+  queuePattern(pat);
+}
+
+void App::queuePattern(int pat) {
+  if (pat < 0 || pat >= mt::kPatterns) return;
   if (songPlays()) {  // the sequencer ignores a queue while the song plays
     toast("SONG MODE");
     return;
@@ -478,13 +494,17 @@ void App::pushUndo(uint8_t pat, int genTrack) {
 }
 
 void App::projectReplaced() {
+  for (auto& r : padRec_) r.active = false;
   if (mt::Undo* u = undo()) u->clear();
+  learnSlot_ = -1;  // knob learn: the binds are the old project's
+  turnLearned_ = false;
   markSaved();
   setBpmEdit(false);
   lastBpm_ = p_->bpm;
   mt::syncSceneLive(*p_);  // the crossfader's live ends (load / template / demo already match)
   // Let the sequencer re-read the song (stopped: no slot shown).
   engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
+  padsAllOff();    // the controller's notes belonged to the old tracks
   perf_.allOff();  // the loaded project does not inherit the held effects
   rec_.detach();   // a SAMPLE take belonged to the old project (the board seals it); a SD take goes on
   for (Screen* sc : screens_)
@@ -526,6 +546,11 @@ void App::trackKey(int n, bool shift) {
     setCurTrack(track);
     return;
   }
+  toggleMute(track);
+}
+
+void App::toggleMute(int track) {
+  if (track < 0 || track >= mt::kTracks) return;
   mt::TrackCfg& t = p_->tracks[track];
   engine::lockProject();
   t.mute = !t.mute;
@@ -619,6 +644,410 @@ void App::holdToast(int track) {
   toast(msg);
 }
 
+// ---- BLE MIDI controller ----
+
+void App::pollMidi() {
+  if (!status_.playing || !grid_.recording())
+    for (int i = 0; i < kLiveNotes; ++i) finishPadRecording(i);
+  if (hw::ble::connects() != bleConnects_) {  // a new connection: knob references and learn start over
+    bleConnects_ = hw::ble::connects();
+    midi_.reset();
+    learnSlot_ = -1;  // a controller may resend its knob values on connect
+    padsAllOff();  // a drop and reconnect between two polls lost the releases
+  }
+  // A new OUT link: notes the module got before a drop may hang.
+  if (hw::ble::takeOutFresh()) panicPending_ = true;
+  adoptBleNames();  // a string compare per connected slot; NVS only on the one change
+  if (panicPending_ && engine::post(engine::Cmd::MidiPanic)) panicPending_ = false;  // queue full: next poll
+  mt::MidiMsg m;
+  for (int n = 0; n < 32 && hw::ble::next(m); ++n) {
+    monitorPush(m);
+    bool decided = false;
+    if ((m.status & 0xF0) == 0xB0) {  // a knob turn: its messages without a kTurnGapMs pause
+      const uint32_t now = millis();
+      if ((m.status & 0x0F) != turnCh_ || m.d1 != turnCc_ || now - turnMs_ >= kTurnGapMs) turnLearned_ = false;
+      turnCh_ = m.status & 0x0F;
+      turnCc_ = m.d1;
+      turnMs_ = now;
+      decided = knobRelDecide(m);
+    }
+    if (!decided) midiAction(midi_.route(m, *padsMut(), *p_), m);
+  }
+  // Gone mid-press: the releases will never come.
+  if (hw::ble::state(hw::ble::Slot::In) != hw::ble::State::Connected && padsHeld()) padsAllOff();
+}
+
+void App::midiAction(const mt::Action& a, const mt::MidiMsg& m) {
+  switch (a.kind) {
+    case mt::ActKind::NoteOn: padNoteOn(a.a, static_cast<uint8_t>(a.b), m.status & 0x0F); break;
+    case mt::ActKind::NoteOff: padNoteOff(a.a, m.status & 0x0F); break;
+    case mt::ActKind::Pat: queuePattern(a.a); break;
+    case mt::ActKind::Mute: toggleMute(a.a); break;
+    case mt::ActKind::PerfOn: perf_.padPress(a.a); break;
+    case mt::ActKind::PerfOff: perf_.padRelease(a.a); break;
+    case mt::ActKind::LearnPad: {
+      if (devs_.activeIn() < 0) break;  // learned into the scratch banks: nothing to keep
+      // A pad held across the relearn would look its release up in the new bank and hang.
+      padsAllOff();
+      devicesChanged();  // saves the bank into the active IN device
+      char msg[32];
+      snprintf(msg, sizeof(msg), "PADS: %s LEARNED", mt::padModeName(static_cast<mt::PadMode>(a.a)));
+      toast(msg);
+      break;
+    }
+    case mt::ActKind::Knob:
+      if (shift_ || turnLearned_) knobLearn(m);  // the learn turn edits nothing, Shift released or not
+      else knobTurn(a.a, a.b);
+      break;
+    case mt::ActKind::KnobUnbound:
+      if (shift_) {
+        knobLearn(m);
+      } else {
+        char msg[32];
+        snprintf(msg, sizeof(msg), "CC%u: SHIFT+TURN TO LEARN", a.a);
+        knobNote(msg);
+      }
+      break;
+    case mt::ActKind::None: break;
+  }
+}
+
+namespace {
+
+using mt::kKnobInst;
+using mt::kKnobProj;
+using mt::kKnobTrack;
+using mt::knobLabel;
+
+}  // namespace
+
+// The learned knob's next message, whatever the gap or other CCs between: a relative knob repeats its
+// step value (the same 1 / 127 = two's complement, 63 / 65 = offset 64), an absolute one moves (equal
+// values only: a centred absolute knob going 64 -> 65 stays absolute). True = taken (no edit).
+bool App::knobRelDecide(const mt::MidiMsg& m) {
+  if (learnSlot_ < 0) return false;
+  mt::KnobBind& k = p_->knobs[learnSlot_];
+  if (!k.screen) {  // gone meanwhile
+    learnSlot_ = -1;
+    return false;
+  }
+  if (k.ch != (m.status & 0x0F) || k.cc != m.d1) return false;
+  const uint8_t v = m.d2;
+  const uint8_t rel = v != learnVal_ ? 0 : ((v == 1 || v == 127) ? 1 : ((v == 63 || v == 65) ? 2 : 0));
+  learnSlot_ = -1;
+  if (rel) {
+    engine::lockProject();
+    k.rel = rel;
+    engine::unlockProject();
+    markDirty();
+  }
+  midi_.forget(&k - p_->knobs);  // not routed: the next value only sets the reference
+  return true;
+}
+
+void App::knobNote(const char* msg) {
+  if (millis() - knobHintMs_ < 1000) return;
+  knobHintMs_ = millis();
+  toast(msg);
+}
+
+int App::knobScreenId(const Screen* s) const {
+  if (s == &inst_) return kKnobInst;
+  if (s == &track_) return kKnobTrack;
+  if (s == &proj_) return kKnobProj;
+  return 0;
+}
+
+Screen* App::knobScreen(int id) {
+  switch (id) {
+    case kKnobInst: return &inst_;
+    case kKnobTrack: return &track_;
+    case kKnobProj: return &proj_;
+    default: return nullptr;
+  }
+}
+
+// The first message of a Shift turn: the knob's bind follows the selected row, absolute (a rebind too);
+// the row it is bound to already: unbound. The knob's next message decides rel (knobRelDecide).
+void App::knobLearn(const mt::MidiMsg& m) {
+  if (turnLearned_) return;
+  turnLearned_ = true;
+  const int ch = m.status & 0x0F, cc = m.d1;
+  int page = 0;
+  const char* label = nullptr;
+  const int id = menu_.isOpen() ? 0 : knobScreenId(screen());
+  if (id == kKnobInst && !inst_.onTrackInstr()) {
+    toast("KNOB: INST NOT ON TRACK");
+    return;
+  }
+  if (!id || !screen()->knobRow(page, label) || !label || page < 0 || page > 255) {
+    toast("KNOB: SELECT A ROW");
+    return;
+  }
+  const uint8_t track = id == kKnobProj ? 0 : curTrack_;  // PROJ rows ignore the track
+  int slot = -1, freeSlot = -1;
+  for (int i = 0; i < mt::kKnobBinds; ++i) {
+    const mt::KnobBind& k = p_->knobs[i];
+    if (k.screen && k.ch == ch && k.cc == cc) slot = i;
+    else if (!k.screen && freeSlot < 0) freeSlot = i;
+  }
+  char name[mt::kKnobLabel];
+  knobLabel(label, name, sizeof(name));
+  char msg[48];
+  if (slot >= 0) {
+    mt::KnobBind& k = p_->knobs[slot];
+    if (k.screen == id && k.page == page && k.track == track && strncmp(k.label, label, mt::kKnobLabel - 1) == 0) {
+      engine::lockProject();
+      k = mt::KnobBind{};
+      engine::unlockProject();
+      learnSlot_ = -1;
+      markDirty();
+      snprintf(msg, sizeof(msg), "KNOB CC%d UNBOUND", cc);
+      toast(msg);
+      return;
+    }
+  } else if (freeSlot < 0) {
+    toast("KNOBS: ALL 16 BOUND");
+    return;
+  }
+  if (slot < 0) slot = freeSlot;
+  mt::KnobBind& k = p_->knobs[slot];
+  engine::lockProject();
+  k.ch = static_cast<uint8_t>(ch);
+  k.cc = static_cast<uint8_t>(cc);
+  k.rel = 0;
+  k.screen = static_cast<uint8_t>(id);
+  k.page = static_cast<uint8_t>(page);
+  k.track = track;
+  strncpy(k.label, label, mt::kKnobLabel - 1);
+  k.label[mt::kKnobLabel - 1] = 0;
+  engine::unlockProject();
+  midi_.forget(slot);  // a freed slot's old reference, or the rel just changed
+  learnSlot_ = static_cast<int8_t>(slot);
+  learnVal_ = m.d2;
+  markDirty();
+  if (id == kKnobProj) snprintf(msg, sizeof(msg), "KNOB CC%d > %s", cc, name);
+  else snprintf(msg, sizeof(msg), "KNOB CC%d > TRK%d %s", cc, track + 1, name);
+  toast(msg);
+}
+
+// curTrack_ is the bound track for the call (the rows read App::curTrack()); the raw member, no
+// setter: nothing outside this call sees it.
+void App::knobTurn(int bind, int delta) {
+  if (bind < 0 || bind >= mt::kKnobBinds || delta == 0) return;
+  const mt::KnobBind& k = p_->knobs[bind];
+  Screen* const s = knobScreen(k.screen);
+  const bool proj = k.screen == kKnobProj;
+  char val[24] = {0};
+  bool ok = false, busy = false;
+  if (s && k.track < mt::kTracks) {
+    const uint8_t cur = curTrack_;
+    curTrack_ = k.track;
+    busy = s->knobBusy(k.track);
+    if (!busy) ok = s->knobTurn(k.track, k.page, k.label, delta, val, sizeof(val));
+    curTrack_ = cur;
+  }
+  char msg[48];
+  if (busy) {
+    knobNote("KNOB: EDIT OPEN");
+    return;
+  }
+  if (!ok) {
+    if (proj) snprintf(msg, sizeof(msg), "KNOB: -");
+    else snprintf(msg, sizeof(msg), "KNOB: - (TRK%d)", k.track + 1);
+    knobNote(msg);
+    return;
+  }
+  markDirty();  // also the redraw of the screen showing the row
+  char name[mt::kKnobLabel];
+  knobLabel(k.label, name, sizeof(name));
+  if (proj) snprintf(msg, sizeof(msg), "%s %s", name, val);
+  else snprintf(msg, sizeof(msg), "TRK%d %s %s", k.track + 1, name, val);
+  toast(msg);
+}
+
+// Unassigned MIDI notes play their original pitch on the current track.
+// Held sources are keyed by channel + note; releases remember the original destination track.
+void App::padNoteOn(int note, uint8_t vel, uint8_t ch) {
+  if (note < 0 || note > 127 || ch > 15) return;
+  const int tr = curTrack_;
+  int lane = -1;
+  if (const mt::Instrument* k = p_->kitOf(tr)) {
+    for (int i = 0; i < mt::kKitLanes; ++i)
+      if (k->kit[i].note == note) { lane = i; break; }
+    if (lane < 0) return;
+  }
+  padNoteOff(note, ch);
+  int pad = 0;
+  while (pad < kLiveNotes && padTrack_[pad] >= 0) ++pad;
+  if (pad == kLiveNotes) { pad = 0; releaseMidiSlot(pad); }
+  if (!engine::post(engine::Cmd::LiveNote, static_cast<uint16_t>(tr << 8 | note), vel)) return;
+  padNote_[pad] = note;
+  padChannel_[pad] = ch;
+  padTrack_[pad] = static_cast<int8_t>(tr);
+  if (tab_ == Tab::Grid && grid_.recording() && status_.playing) {
+    const int step = grid_.recordPad(tr, lane, note, vel);
+    // KIT has one GAT shared by all lanes: keep its track gate, as for the piano roll.
+    if (midiRecHold_ && lane < 0) {
+      PadRecording& r = padRec_[pad];
+      r.active = true;
+      r.pattern = editPattern();
+      r.track = tr;
+      r.step = step;
+      r.written = p_->patterns[r.pattern].steps[tr][step];
+      r.started = engine::nowUs();
+      const mt::TrackSpeed sp = mt::toSpeed(p_->patterns[r.pattern].trackSpeed[tr]);
+      r.stepUs = status_.stepUs * mt::speedDiv(sp) / mt::speedMul(sp);
+    }
+  }
+}
+
+void App::padNoteOff(int note, uint8_t ch) {
+  for (int pad = 0; pad < kLiveNotes; ++pad)
+    if (padTrack_[pad] >= 0 && padNote_[pad] == note && padChannel_[pad] == ch) releaseMidiSlot(pad);
+}
+
+void App::releaseMidiSlot(int pad) {
+  if (pad < 0 || pad >= kLiveNotes || padTrack_[pad] < 0) return;
+  finishPadRecording(pad);
+  const int8_t tr = padTrack_[pad];
+  padTrack_[pad] = -1;
+  for (int i = 0; i < kLiveNotes; ++i)
+    if (padTrack_[i] == tr && padNote_[i] == padNote_[pad]) return;  // another pad still holds that note
+  engine::postWait(engine::Cmd::LiveNote, static_cast<uint16_t>(tr << 8 | padNote_[pad]), 0);
+}
+
+void App::finishPadRecording(int pad) {
+  PadRecording& r = padRec_[pad];
+  if (!r.active) return;
+  r.active = false;
+  // A subsequent edit must not be overwritten; projectReplaced discards pending recordings.
+  engine::lockProject();
+  mt::Step& s = p_->patterns[r.pattern].steps[r.track][r.step];
+  const bool same = memcmp(&s, &r.written, sizeof(s)) == 0;
+  const mt::Pattern& pt = p_->patterns[r.pattern];
+  const int len = pt.trackLen[r.track] && pt.trackLen[r.track] < pt.length ? pt.trackLen[r.track] : pt.length;
+  const mt::TrackSpeed sp = mt::toSpeed(pt.trackSpeed[r.track]);
+  const uint16_t tps = mt::ticksPerStep(pt.res) / mt::speedMul(sp) * mt::speedDiv(sp);
+  const mt::RecordHold result = same
+      ? mt::recordHold(p_->patterns[r.pattern].steps[r.track], len, r.step,
+                       engine::nowUs() - r.started, r.stepUs, tps, p_->tracks[r.track].defGate)
+      : mt::RecordHold::Occupied;
+  engine::unlockProject();
+  if (!same) return;
+  if (result == mt::RecordHold::NoSlot) toast("NO FX SLOT FOR HOLD");
+  else if (result == mt::RecordHold::Occupied) toast("HOLD PATH OCCUPIED");
+  else {
+    markDirty();
+    if (result == mt::RecordHold::Clipped) toast("HOLD: PATTERN LIMIT");
+  }
+}
+
+void App::setMidiRecHold(bool on) {
+  for (int i = 0; i < kLiveNotes; ++i) finishPadRecording(i);
+  midiRecHold_ = on;
+  settingsChangedAt_ = millis() | 1;
+  dirty_ = true;
+}
+
+bool App::padsHeld() const {
+  for (const int8_t t : padTrack_)
+    if (t >= 0) return true;
+  return perf_.padsHeld();
+}
+
+void App::padsAllOff() {
+  for (int i = 0; i < kLiveNotes; ++i) finishPadRecording(i);
+  for (int8_t& t : padTrack_) t = -1;
+  engine::postWait(engine::Cmd::LiveAllOff);  // one message ends every live note (no wait per pad)
+  perf_.padsOff();
+}
+
+void App::padsForget(mt::PadMode m) {
+  const int k = static_cast<int>(m);
+  if (k >= static_cast<int>(mt::PadMode::Count)) return;
+  padsAllOff();  // a held pad would look its release up in the changed banks
+  mt::PadLearn& pl = *padsMut();
+  pl.ch[k] = 0;
+  pl.base[k] = 0xFF;
+  devicesChanged();
+}
+
+mt::PadLearn* App::padsMut() {
+  static mt::PadLearn none;  // no active IN: learns land here and are dropped
+  const int i = devs_.activeIn();
+  if (i >= 0) return &devs_.at(i).pads;
+  none.clear();
+  return &none;
+}
+
+const mt::PadLearn& App::pads() const {
+  static const mt::PadLearn none;
+  const int i = devs_.activeIn();
+  return i >= 0 ? devs_.at(i).pads : none;
+}
+
+void App::devicesChanged() {
+  storage::saveDevices(devs_);
+  applyDevices();
+}
+
+void App::devicesSave() { storage::saveDevices(devs_); }
+
+// A device still named by its address (migrated from the old slots) takes the GAP name once
+// connected; saved once (the name then differs from the address), nothing re-applied.
+void App::adoptBleNames() {
+  bool changed = false;
+  for (int s = 0; s < static_cast<int>(hw::ble::Slot::Count); ++s) {
+    const hw::ble::Slot slot = static_cast<hw::ble::Slot>(s);
+    if (hw::ble::state(slot) != hw::ble::State::Connected) continue;
+    const int i = slot == hw::ble::Slot::In ? devs_.activeIn() : devs_.activeOut();
+    if (i < 0) continue;
+    mt::MidiDevice& d = devs_.at(i);
+    if (strcasecmp(d.name, d.addr) != 0) continue;  // named already: the usual case, nothing more
+    const char* gap = hw::ble::name(slot);
+    if (!gap[0] || strcasecmp(gap, d.addr) == 0) continue;
+    strlcpy(d.name, gap, sizeof(d.name));
+    changed = true;
+  }
+  if (changed) {
+    devicesSave();
+    ++devNamesGen_;  // the MIDI dialog redraws
+  }
+}
+
+void App::applyDevices() {
+  const int in = devs_.activeIn(), out = devs_.activeOut();
+  const mt::MidiDevice* di = in >= 0 ? &devs_.at(in) : nullptr;
+  const mt::MidiDevice* dout = out >= 0 ? &devs_.at(out) : nullptr;
+  hw::ble::setActive(di ? di->addr : nullptr, di ? di->addrType : 0, di ? di->name : nullptr,
+                     dout ? dout->addr : nullptr, dout ? dout->addrType : 0, dout ? dout->name : nullptr);
+  const char* inAddr = di ? di->addr : "";
+  if (strcasecmp(inAddr, activeIn_) != 0) {
+    // Another controller (or none): its pads look releases up in other banks, its knobs start over.
+    strlcpy(activeIn_, inAddr, sizeof(activeIn_));
+    padsAllOff();
+    midi_.reset();
+    learnSlot_ = -1;
+    mt::MidiMsg m;
+    while (hw::ble::next(m)) {
+    }  // the old controller's messages would play into the new banks
+  }
+}
+
+void App::monitorPush(const mt::MidiMsg& m) {
+  mon_[monHead_] = m;
+  monHead_ = static_cast<uint8_t>((monHead_ + 1) % kMonitor);
+  if (monCount_ < kMonitor) ++monCount_;
+  ++monSeq_;
+}
+
+int App::monitor(mt::MidiMsg* out, int max) const {
+  const int n = monCount_ < max ? monCount_ : max;
+  for (int i = 0; i < n; ++i) out[i] = mon_[(monHead_ + kMonitor - n + i) % kMonitor];  // the newest n
+  return n;
+}
+
 void App::trackRelease(int n) {
   if (n < 0 || n >= mt::kTrackButtons) return;
   if (perfTab(tab_)) perf_.release(n);  // PERF: the effect the button held ends
@@ -681,6 +1110,10 @@ void App::setPerfVisuals(bool on) {
 void App::saveSettingsIdle(uint32_t now) {
   if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing || rec_.taking()) return;
   settingsChangedAt_ = 0;
+  if (midiRecHold_ != savedMidiRecHold_) {
+    storage::saveSetting("midihold", midiRecHold_ ? 1 : 0);
+    savedMidiRecHold_ = midiRecHold_;
+  }
   proj_.saveDicePrefs();
   const mt::RecPrefs rp = rec_.prefs();
   if (rp != savedRec_) {
@@ -882,6 +1315,8 @@ void App::tick() {
     toast_[0] = 0;
     dirty_ = true;
   }
+  pollMidi();
+  if (btMark() != btDrawn_) dirty_ = true;  // the status bar BT
   perf_.poll(status_.playing);
   rec_.poll();  // every tab: the board's keepalive and a take that ends on its own
   if (rec_.isOpen()) dirty_ = true;  // the meter
@@ -1051,8 +1486,25 @@ void App::drawBusy() {
   spr_->drawString(busy_, x + 24, y + 16);
 }
 
+// 0: no BLE MIDI slot set (or the stack is down), 1: a set slot is searching, 2: every set slot connected.
+int App::btMark() const {
+  using hw::ble::Slot;
+  using hw::ble::State;
+  bool any = false, searching = false, down = false;
+  for (int i = 0; i < static_cast<int>(Slot::Count); ++i) {
+    if ((i == 0 ? devs_.activeIn() : devs_.activeOut()) < 0) continue;
+    any = true;
+    const State st = hw::ble::state(static_cast<Slot>(i));
+    if (st == State::Searching) searching = true;
+    else if (st != State::Connected) down = true;
+  }
+  if (searching) return 1;
+  return any && !down ? 2 : 0;
+}
+
 void App::drawStatus() {
   char buf[24];
+  const int bt = btDrawn_ = btMark();
   spr_->fillRect(0, 0, kScreenW, kStatusH, kStatusBg);
   spr_->setTextColor(kText);
   // Song: "S03 P05" (heard slot, "S--" before the song is heard); no queue in song mode.
@@ -1100,12 +1552,18 @@ void App::drawStatus() {
   }
   if (status_.fill) {
     spr_->setTextColor(kCursor);
-    spr_->drawString("FILL", 312, 4);
+    spr_->drawString("FILL", bt ? 308 : 312, 4);
     spr_->setTextColor(kText);
   } else {
-    if (status_.loop <= 9999) snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
-    else snprintf(buf, sizeof(buf), "L10K+");
-    spr_->drawString(buf, 312, 4);  // up to 5 chars before the battery
+    // Up to 5 chars before the battery, 4 with the BT mark.
+    if (status_.loop <= (bt ? 999u : 9999u))
+      snprintf(buf, sizeof(buf), "L%lu", static_cast<unsigned long>(status_.loop));
+    else snprintf(buf, sizeof(buf), bt ? "L1K+" : "L10K+");
+    spr_->drawString(buf, bt ? 308 : 312, 4);  // with BT: 4 px left, after PAUSE (ends 304)
+  }
+  if (bt) {  // BLE MIDI: dim while a set slot searches, the accent when all set slots are up
+    spr_->setTextColor(bt == 1 ? kDim : kCursor);
+    spr_->drawString("BT", 340, 4);  // a 4 px gap to the battery at 360
   }
   drawBattery();
   if (rec_.sdTaking()) {  // over the battery's % and the CPU field

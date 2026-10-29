@@ -16,8 +16,8 @@ struct StepEvent {
   uint8_t vel;   // Cc: value; PitchBend: MSB; SynthFx: value
 };
 
-// 8 ratchets x 8 KIT lanes x (on, off) (a melodic step needs 8 x 4 chord notes x 2), plus controls
-// from the other fx slots.
+// 8 ratchets x 16 KIT lanes x (on, off) = 256 (a melodic step needs 8 x 4 chord notes x 2), plus
+// controls from the other fx slots. The sequencer's event heap (1024) holds such a full step.
 constexpr int kMaxStepEvents = 8 * kKitLanes * 2 + kFxSlots;
 constexpr uint32_t kMinGateUs = 1000;
 
@@ -82,9 +82,10 @@ struct ExpandCtx {
 // ratchet hit and per chord note, each NoteOn is directly followed by its
 // NoteOff (except a tied last note). OFF sets offUs (not before kMinGateUs on a step with a note),
 // cuts the step's notes there and cancels TIE. Returns false if nothing plays and there is no OFF.
-// On a drum track (c.kit set) Step::vel is the lane mask and Step::note the step velocity (0 =
-// defVel): one NoteOn per set lane per ratchet with the lane's note, 60 % velocity for lanes outside
-// ACC; TIE, CHD, NRN, STR and ARS are ignored. An empty mask is still a note step (returns true).
+// On a drum track (c.kit set) laneMask(s) (Step::vel lanes 1-8 + Step::lanesHi lanes 9-16) is the
+// lane mask and Step::note the step velocity (0 = defVel): one NoteOn per set lane per ratchet with the
+// lane's note, 60 % velocity for lanes outside the accent (ACC: lanes 1-8, AC2: lanes 9-16, a missing
+// one = its half accented); TIE, CHD, NRN, STR and ARS are ignored. An empty mask is still a note step (returns true).
 // ARS on a melodic note step: the arp notes (CHD chord, else ARP 0 x y, else root and an octave up)
 // with ARS's octaves go to out.arp and the step plays the first one alone (no chord, TIE, STR; ARP / ARM are not sent).
 bool expandStep(const Step& s, const TrackCfg& t, const ExpandCtx& c, Rng& rng, ExpandOut& out);

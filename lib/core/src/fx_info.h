@@ -18,6 +18,6 @@ uint8_t fxStep(Fx f, uint8_t v, int delta);  // encoder step, clamped, signed-aw
 uint8_t gatStep(uint8_t v, int delta, bool coarse);
 Fx fxNextCmd(Fx f, int delta);               // cycles every command, grouped (not the enum order)
 bool fxSynthOnly(Fx f);                      // SLD..SLC, DLY, DRV..ARM, BIT, SRR, LFO..LFR, PAN, DTY, GTE, MOD: INT tracks only
-bool fxDrumOnly(Fx f);                       // ACC: drum tracks only (KIT instrument), ignored elsewhere
+bool fxDrumOnly(Fx f);                       // ACC, AC2: drum tracks only (KIT instrument), ignored elsewhere
 
 }  // namespace mt

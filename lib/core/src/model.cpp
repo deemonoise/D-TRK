@@ -105,6 +105,7 @@ void Project::reset() {
   memcpy(perfMap, kPerfDefaultMap, sizeof(perfMap));
   perfDefaultDepths();
   memcpy(perfXy, kPerfXyDefault, sizeof(perfXy));
+  for (KnobBind& k : knobs) k = KnobBind{};
   for (int i = 0; i < kTracks; ++i) {
     gen[i] = GenCfg();
     gen[i].seed = static_cast<uint16_t>(i + 1);
@@ -356,6 +357,22 @@ void kitSetDefaults(Instrument& m) {
     m.kit[k] = KitLane();
     m.kit[k].note = static_cast<uint8_t>(60 + k);
   }
+}
+
+uint16_t kitLanesUsed(const Instrument& k) {
+  uint16_t m = 0;
+  for (int l = 0; l < kKitLanes; ++l)
+    if (k.kit[l].instr != kNoInstr || k.kit[l].sample[0]) m = static_cast<uint16_t>(m | (1u << l));
+  return m;
+}
+
+uint8_t kitFreeNote(const Instrument& k, int lane, int n, int dir) {
+  for (; n >= 0 && n <= 127; n += dir) {
+    bool taken = false;
+    for (int l = 0; l < kKitLanes && !taken; ++l) taken = l != lane && k.kit[l].note == n;
+    if (!taken) return static_cast<uint8_t>(n);
+  }
+  return k.kit[lane].note;
 }
 
 bool lfoDestValid(uint8_t dest, InstrType t) {

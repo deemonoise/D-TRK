@@ -19,8 +19,9 @@ A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S
 12. [FILE: saving and loading](#file)
 13. [MIDI import](#import)
 14. [MIDI output](#midi)
-15. [Built-in sound](#sound)
-16. [Limits](#limits)
+15. [Bluetooth MIDI](#ble)
+16. [Built-in sound](#sound)
+17. [Limits](#limits)
 
 <a id="start"></a>
 
@@ -69,7 +70,7 @@ A block of 8 buttons. There are 16 tracks, so the buttons work on the **visible 
 | <kbd>N</kbd> in GRID edit mode | Write the project scale degree into the step under the cursor and move the cursor one step down. On an INT track the note sounds immediately if Preview is on (FILE → SYSTEM). Buttons 1–7 are degrees I–VII, 8 is I an octave up. In scales with fewer than 7 notes (pentatonics, blues) the extra buttons continue the scale into the next octave; Chromatic enters major-scale degrees. The octave follows the note under the cursor, or on an empty step, the track's last entered note. |
 | <kbd>N</kbd> in the sample editor (INST, SMPL page) | Play a slice to the end: 1 — the selected slice (if no slice is selected, the first one), 2 — the one after it, and so on. Works with any Slices setting (OFF, NOTE, FX), at the original pitch. Toast "SLICE n"; no such slice — "NO SLICE n"; no slices at all — "NO SLICES". |
 | <kbd>Shift</kbd>+<kbd>N</kbd> in GRID edit mode | The same degree an octave up. |
-| <kbd>N</kbd> in GRID edit mode on a [drum track](#drumtrack) | Toggle lane N in the step under the cursor. The cursor doesn't move; no Shift needed. |
+| <kbd>N</kbd> in GRID edit mode on a [drum track](#drumtrack) | Toggle lane N in the step under the cursor; <kbd>Shift</kbd>+<kbd>N</kbd> toggles lane N + 8 (lanes 9–16). The cursor doesn't move. |
 
 Degree entry and slices in the sample editor don't depend on the half — there the button number is what counts. OFF and clearing a step work as before, through the menu.
 
@@ -131,6 +132,7 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 | `SYNTH FW` | Red, in place of CPU: the synth board's firmware protocol does not match the tracker's. A full-screen notice blocks the UI; a click or a tap on **UPDATE** opens a menu: **Update synth…** (flash from `/firmware/teensy.hex` on the synth card, as FILE → SYSTEM → Update synth) or **Wi-Fi firmware…** (see [below](#wifi)). |
 | `SD!` | Red, in place of `CPU` for 2 s (`SD! 42%`): a sample voice ran out of data (the synth board's card fell behind) and faded out for a moment. Playback goes on. Often: a slow card, many long samples pitched up. See [Samples and SD cards](#streaming). |
 | `SYNC` | Yellow, in place of CPU: the sound state (instruments, mixer, samples) is being sent to the synth board. Play waits for it for a moment. |
+| `BT` | Left of the battery: [Bluetooth MIDI](#ble). Dim while a device that is on is still being searched for, in the cursor colour once every device that is on is connected; not shown when no device is on or Bluetooth is off (Wi-Fi dialog). While it shows, the pass counter goes to `L1K+` past `L999`. |
 | `● REC 03:41` | Red, in place of the battery % and CPU, on every tab: a [REC -> SD](#recsd) take is recording in the background (the dot blinks while it is armed and waits for the threshold; past an hour `● 1:02:03`). A tap opens MIX with the REC window. |
 
 Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A and B](#abkeys)). Yellow messages (toasts) cover the right part of the status bar (battery and CPU) for 1.5 seconds; `● REC` stays visible over them.
@@ -180,7 +182,7 @@ Track name color: yellow — solo, gray — not audible, white — normal.
 
 - **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on (FILE → SYSTEM).
 - **VEL.** 0–127, ×10 with Shift. A value of 0 is shown as `...` and means "the track's default velocity".
-- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN, FLP; pitch and volume SLD, VIB, PBN, VSL, ACC; sound FLT, RES, DRV, DTY, BIT, SRR, GTE, DEC, COL, SHP, SWP, CON, SAT; LFO LFO, LFD, LFS, LFW, LFT, LFR; sample OFS, SLC; sends and pan DLY, RVB, MOD, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
+- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN, FLP; pitch and volume SLD, VIB, PBN, VSL, ACC, AC2; sound FLT, RES, DRV, DTY, BIT, SRR, GTE, DEC, COL, SHP, SWP, CON, SAT; LFO LFO, LFD, LFS, LFW, LFT, LFR; sample OFS, SLC; sends and pan DLY, RVB, MOD, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
 - **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. For GAT Shift moves ±10 % of the shown value, to the nearest GAT value in the turn's direction (below 100 % exactly ±10 %; above 100 % the values go 7 % apart, so Shift moves one value: 95 → 107, 100 → 107, 114 → 107). On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
 
 One edit session (from entering to leaving edit mode) is one undo step.
@@ -193,14 +195,14 @@ Appears at the bottom of the screen when editing the NOTE field. Twelve keys —
 
 ### Drum track
 
-A track whose TRACK → Instr is set to a [KIT](#kit) instrument is a drum track: a step holds not a note but a set of 8 lanes (kick, snare, hats…). The step stores a lane mask and one velocity for all of the step's lanes.
+A track whose TRACK → Instr is set to a [KIT](#kit) instrument is a drum track: a step holds not a note but a set of 16 lanes (kick, snare, hats…). The step stores a lane mask and one velocity for all of the step's lanes.
 
-- **Overview:** the cell shows 8 small squares; a filled one means the lane sounds. There is no velocity bar; the fx dot is in the top corner of the cell.
+- **Overview:** the cell shows 16 small squares in two rows of 8 (lanes 1–8 on top, 9–16 below); a filled one means the lane sounds. There is no velocity bar; the fx dot is in the top corner of the cell.
 - **Detail:** the NOTE field shows the same squares, the VEL field the step velocity (`...` — the track's Def vel).
-- **Editing NOTE:** a turn moves the red frame across lanes, <kbd>Shift</kbd>+turn toggles the lane under the frame. Instead of the mini keyboard, the bottom shows a **pad of 8 buttons** with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same in edit mode. A lane sounds as soon as it's turned on (Preview in FILE → SYSTEM).
+- **Editing NOTE:** a turn moves the red frame across lanes, <kbd>Shift</kbd>+turn toggles the lane under the frame. Instead of the mini keyboard, the bottom shows a **pad of 16 buttons** in two rows of 8 (lanes 1–8 on top, 9–16 below) with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same for lanes 1–8 in edit mode, <kbd>Shift</kbd>+button N for lane N + 8. A lane sounds as soon as it's turned on (Preview in FILE → SYSTEM).
 - **Editing VEL:** 1–127, ×10 with Shift.
 - A step with all lanes turned off stays (silent, fx still work) — remove it with Clear step. OFF is set as usual through the menu and releases all lanes.
-- A step's fx apply to all its lanes: RAT repeats each one, NDG shifts them, PRB and CND decide for the whole step, DEC / FLT / DLY and other locks apply per voice. CHD, NRN, STR, TIE, ARP, SLD, VIB and SLC do nothing on a drum track. The **ACC** fx is for drum tracks only.
+- A step's fx apply to all its lanes: RAT repeats each one, NDG shifts them, PRB and CND decide for the whole step, DEC / FLT / DLY and other locks apply per voice. CHD, NRN, STR, TIE, ARP, SLD, VIB and SLC do nothing on a drum track. The **ACC** and **AC2** fx are for drum tracks only.
 - **Transpose** skips drum tracks (toast "DRUM TRACK" if the selection contains only them).
 - Copy / Paste between drum and regular tracks copies the bytes as is: a lane mask becomes a velocity and vice versa. Likewise, switching a track's instrument between KIT and non-KIT reinterprets the steps already written.
 - On a MIDI track each lane goes out as its own note (the lane's Note) on the track's channel — this way a KIT drives an external drum machine (GM map: 36 — kick, 38 — snare, 42 — closed hat…).
@@ -213,7 +215,7 @@ The third view (<kbd>Shift</kbd>+click from Detail, or menu → **Piano roll**):
 
 - **Screen:** keys with note names on the left (white / black), step numbers on top, 16 rows of semitones × 16 steps. The scale root (PROJ → Root) is the key tinted in the cursor colour, and its row in every octave is a stripe of the same tint across the grid. With a scale other than Chromatic, out-of-scale keys are grey: white keys darker, black keys lighter (between a black and a white key). A pattern longer than 16 steps is shown a page of 16 at a time — the cursor's page; the pitch range scrolls with the cursor (drag scrolls it too). Every 4th step is lighter, the heard step is lit, steps past the track's own length (Pat len) are grey, a yellow line marks where it loops. A red mark under a step number = OFF. The cursor's row and column are highlighted (a crosshair), the cell itself is framed. While playing, follow shows the page of the heard step once the cursor has been left alone for 2 seconds.
 - **Notes** are bars as long as the step's gate: GAT 300 % = 3 cells, under 100 % a part of the cell, no GAT = the track's Def gate. The next note (or OFF) cuts the bar: the track is mono. Brightness = velocity. A CHD step shows the chord's other notes as outlines (view only).
-- **KIT track:** 8 rows, one per lane, the lane names on the left; a block = the lane hits, brightness = the step velocity.
+- **KIT track:** 16 rows, one per lane, the lane names on the left; a block = the lane hits, brightness = the step velocity.
 
 | Input | Melodic track | KIT track |
 |-------|---------------|-----------|
@@ -265,7 +267,7 @@ Two modes from the GRID context menu. They exclude each other and edit mode: tur
 
 PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row menu too, and it is one shared mode — turned on in either menu it is on in both (turning it on in SONG leaves pattern edit; GRID turns REC off when you come back). In SONG with PERF on, button N holds its effect while playing, the encoder turns a held effect's depth instead of moving the cursor, and <kbd>Shift</kbd>+N mutes the track live. The SONG header shows the same `PERF …` badge in place of `n/128`.
 
-- **REC** — records from the track buttons into the current track. Button N writes scale degree N (in the octave of the track's last note) into the playing step; a press in the second half of a step lands in the next one. On a track with its own Speed this is the track's own step that is sounding. <kbd>Shift</kbd>+N erases that step's note. On a drum track button N sets lane N, <kbd>Shift</kbd>+N removes it. Each pattern pass is one undo step. Choose the track to record into by tapping its name (in REC this is not mute) or with <kbd>Shift</kbd>+turn. The recorded note sounds immediately if Preview is on.
+- **REC** — records from the track buttons into the current track. Button N writes scale degree N (in the octave of the track's last note) into the playing step; a press in the second half of a step lands in the next one. On a track with its own Speed this is the track's own step that is sounding. <kbd>Shift</kbd>+N erases that step's note. On a drum track button N sets lane N, <kbd>Shift</kbd>+N removes it; the buttons reach lanes 1–8 only (record lanes 9–16 from [BLE pads](#ble) or by touch). Each pattern pass is one undo step. Choose the track to record into by tapping its name (in REC this is not mute) or with <kbd>Shift</kbd>+turn. The recorded note sounds immediately if Preview is on.
 - **PERF** (GRID and SONG) — punch-in effects on the whole internal mix while a button is held. Which effect is on which button, and the Value it starts at, is set in [PROJ → PERF](#proj) and stored in the project: button 1 can hold REPEAT 1/8 and button 2 REPEAT 1/32. The press starts the effect at the button's Value and shows it (`PERF REPEAT 1/8`); turning the encoder while the button is held changes the depth (<kbd>Shift</kbd> ×10 on the wide ranges: FILTER, DRIVE, DELAY THROW, REVERB THROW, FREEZE). The turn is not remembered: every press starts at the button's Value (PROJ → PERF). Release — the effect is gone. <kbd>Shift</kbd>+N still mutes. While no button is held, <kbd>A</kbd> + turn moves the [scene crossfader](#scenes) (<kbd>Shift</kbd> ×8).
 
 | Effect | What it does | Encoder | Default |
@@ -347,7 +349,8 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `VIB` | 00–FF (xy) | INT | Vibrato: x — rate (x × 0.5 Hz), y — depth (up to ±2 semitones at F). |
 | `PBN` | −64…+63 | both | Pitch bend: 8192 + v×128. Doesn't reset by itself; return to 0 with a separate step. On INT — shifts the pitch of the track's voices by up to ±2 semitones. |
 | `VSL` | −64…+63 | INT | Smooth volume change over one step: ±64 spans the full range. |
-| `ACC` | 00–FF | both | [Drum tracks](#drumtrack) only: a mask of lanes at full step velocity (bit 0 — lane 1); the step's other lanes sound at 60%. On other tracks it is shown in gray and has no effect. |
+| `ACC` | 00–FF | both | [Drum tracks](#drumtrack) only: a mask of lanes 1–8 at full step velocity (bit 0 — lane 1); the step's other lanes 1–8 sound at 60%. Without ACC lanes 1–8 play at the step velocity. On other tracks it is shown in gray and has no effect. |
+| `AC2` | 00–FF | both | The same for lanes 9–16 (bit 0 — lane 9): ACC covers lanes 1–8, AC2 lanes 9–16, each half on its own; without AC2 lanes 9–16 play at the step velocity. Drum tracks only. |
 | **Sound (instrument locks)** | | | |
 | `FLT` | 0–127 | INT | [Filter](#filter) cutoff for the step's note, any instrument type. |
 | `RES` | 0–127 | INT | Filter reso for the step's note, any instrument type. |
@@ -502,7 +505,7 @@ Quick track filling: notes, velocity or any FX slot on every N-th step, in a Euc
 
 - Steps Fill didn't hit stay as they were. To rewrite a track completely, Clear track first.
 - VELOCITY is written only to steps with a note: velocity without a note doesn't sound. Accents are done like this: Fill VELOCITY, EVERY 4, Value 127.
-- On a [drum track](#drumtrack) NOTE sets a lane (the **Lane** row, 1–8; by default the lane under the cursor), other lanes are left alone; new steps get the track velocity. VELOCITY writes the step velocity.
+- On a [drum track](#drumtrack) NOTE sets a lane (the **Lane** row, 1–16; by default the lane under the cursor), other lanes are left alone; new steps get the track velocity. VELOCITY writes the step velocity.
 - Every change is written to the track immediately and sounds. **OK** keeps the result (one undo step). **CANCEL**, a long press or leaving GRID restore everything as it was.
 - Settings are remembered until power-off; they are not saved to a file.
 
@@ -827,7 +830,6 @@ Parameters are on seven pages: **MAIN**, **INS**, **FOL**, **NOTE**, **GEN**, **
 | Target | a target as for the LFO of the track's instrument (CUTOFF, VOL, PAN, DRIVE, …, L1–L4 RATE / DEPTH; no RTRG) | CUTOFF |
 | Amount | −64…+63: + opens / raises, − lowers | +0 |
 | Attack / Release | 0 ms – 10 s: how fast the envelope follows a louder and a quieter source | 0 ms / 160 ms |
-| **NOTE** | | |
 | Def vel | 1–127 | 100 |
 | Def gate | 1–800% | 50% |
 | Pat len | OFF or 1…length−1 (in the playing pattern) | OFF |
@@ -904,9 +906,9 @@ Below Mut the page shows **only the rows of the chosen mode** (OFF — none): EV
 - **Order:** pattern → MUT → [GEN](#gen): the generator acts last (PITCH replaces the pitch of the notes MUT played). CND, PRB, Humanize and groove apply after both. MIDI tracks work like INT ones.
 - **What a pass is:** one pass of the pattern (or one song slot). The first pass after Play always sounds as written. Stop (and <kbd>Shift</kbd>+<kbd>Play</kbd>) resets MUT; pause keeps it.
 - **Randomness:** from the project **Seed** (PROJ → SONG), mixed with a random number at every Play like the [follow actions](#follow): each start goes its own way. **Export and Resample** use the Seed alone: the same file every time.
-- **The header** shows the heard state of the mode: EVO — `MUT` (change steps since Play), `PASS` (passes counted towards the next one), `CHG` (changed steps of the track's length); CA — `GEN` (generations since generation 0), `PASS` and a mini grid of the live cells (on a KIT track 8 rows, lane 1 on top); MARKOV — `GEN` (generations since Play), `PASS` and the steps that differ from the pattern. Live edits apply from the next unheard step.
+- **The header** shows the heard state of the mode: EVO — `MUT` (change steps since Play), `PASS` (passes counted towards the next one), `CHG` (changed steps of the track's length); CA — `GEN` (generations since generation 0), `PASS` and a mini grid of the live cells (on a KIT track 16 rows in 4 groups of 4, lane 1 on top); MARKOV — `GEN` (generations since Play), `PASS` and the steps that differ from the pattern. Live edits apply from the next unheard step.
 - **NRN or EVO Note:** the step fx [NRN](#fx) throws a new random note on every pass and never moves away from the written one; EVO Note keeps its drift — each change starts from the previous, until Home pulls it back or the drift is captured.
-- **Old projects:** files from before MUT had EVO and VAR as two generators on top of each other. A track with both on opens in its VAR mode (EVO off); EVO alone opens as EVO. CA2D on a melodic track opens as CA1D with the same rule number (CA2D needs the 8 KIT lanes); a track that leaves KIT (another instrument or type) plays and shows CA2D as CA1D, and is CA2D again when it gets a KIT back (until the project is saved and opened again). EVO settings kept while another mode is chosen are saved and come back with the project.
+- **Old projects:** files from before MUT had EVO and VAR as two generators on top of each other. A track with both on opens in its VAR mode (EVO off); EVO alone opens as EVO. CA2D on a melodic track opens as CA1D with the same rule number (CA2D needs the KIT lanes); a track that leaves KIT (another instrument or type) plays and shows CA2D as CA1D, and is CA2D again when it gets a KIT back (until the project is saved and opened again). EVO settings kept while another mode is chosen are saved and come back with the project. Since KIT has 16 lanes the CA field of a KIT track always has 16 rows, so a CA1D / CA2D pattern of an older project may evolve differently (an 8-lane kit leaves rows 9–16 empty).
 - **Dice** (PROJ) → Scope PATTERNS (or ALL) turns MUT off on the rewritten tracks.
 - MUT is saved with the project (TVAR chunk for the mode and CA / MARKOV, TEVO for EVO); its rows have no undo (like Volume).
 
@@ -943,10 +945,10 @@ Below Mut the page shows **only the rows of the chosen mode** (OFF — none): EV
 
 The CA1D rule number and the CA2D rule are kept apart: switching modes does not lose them.
 
-- **Cells:** each step of the track (within its length, Pat len) is a cell, alive or dead. **Generation 0** is the pattern itself: steps with a note are alive. On a drum track the cells are 8 rows, one per KIT lane: the lanes a step plays are alive.
+- **Cells:** each step of the track (within its length, Pat len) is a cell, alive or dead. **Generation 0** is the pattern itself: steps with a note are alive. On a drum track the cells are 16 rows, one per KIT lane: the lanes a step plays are alive.
 - **CA1D** — a one-dimensional automaton on a Wolfram rule: a cell of the next generation depends on itself and its two neighbouring steps, wrapping round the end of the track. For example, 90 — a Sierpinski pattern, 30 — chaos, 110 — complex moving structures; many rules die out or freeze quickly. On a drum track each lane follows the rule on its own.
-- **CA2D** (KIT tracks only) — a Life-like automaton on a field of 8 lanes × the track's steps, wrapped into a torus (the last lane borders the first, the end of the track the start); a cell has 8 neighbours. **LIFE** — the classic Game of Life (B3/S23); **HIGHLIFE** — close to it, with self-replicating shapes (B36/S23); **SEEDS** — every live cell dies at once, births burst out (B2/S); **DAYNIGHT** — live and dead behave alike (B3678/S34678); **MAZE** — grows into mazes (B3/S12345). A melodic track has one row, so the Mut row does not offer CA2D there.
-- **Back to generation 0:** after **Reset** generations (NEVER — never; Reset 1 goes back right after the first generation, so the track sounds as written), when every cell has died and when a generation did not change (stasis). **Noise** flips one random cell per generation with its chance — a frozen field comes back to life.
+- **CA2D** (KIT tracks only) — a Life-like automaton on a field of 16 lanes × the track's steps, wrapped into a torus (the last lane borders the first, the end of the track the start); a cell has 8 neighbours. **LIFE** — the classic Game of Life (B3/S23); **HIGHLIFE** — close to it, with self-replicating shapes (B36/S23); **SEEDS** — every live cell dies at once, births burst out (B2/S); **DAYNIGHT** — live and dead behave alike (B3678/S34678); **MAZE** — grows into mazes (B3/S12345). A melodic track has one row, so the Mut row does not offer CA2D there.
+- **Back to generation 0:** after **Reset** generations (NEVER — never; Reset 1 goes back right after the first generation, so the track sounds as written), when every cell has died and when a generation did not change (stasis). **Noise** flips one random cell per generation with its chance — a frozen field comes back to life. On a KIT track noise only lands on lanes that have an instrument or a sample.
 - **How the cells sound:** a live cell with a note — the step as written; a live empty one — a copy of the nearest step with a note to its left (wrapping), whole, with its velocity and fx; on a track with no notes at all — the project scale's root in the C-4 octave at the default velocity. A dead cell is silent: the note is dropped, the step's fx stay. On a drum track a step plays the lanes whose cells are alive.
 - **Passes and generations:** with Every 2 the first generation sounds from the third pass. Generations go on across song slots with the same pattern. Another pattern (queued, or the next song slot) — generation 0 of the new pattern, the pass count from zero.
 
@@ -1695,21 +1697,22 @@ Self-oscillation (LADDER, MS20) sounds without any input: after the amp envelope
 
 ### KIT (drum kit)
 
-**KIT** — a set of 8 lanes for a [drum track](#drumtrack). It makes no sound on its own: each lane is either its own mini-sampler on a project sample or a reference to one of the 16 instruments. There are two pages: **MAIN** (Name, Type, Dly send — the delay send for the whole kit) and **LANES** — a scrolling list of lanes.
+**KIT** — a set of 16 lanes for a [drum track](#drumtrack). It makes no sound on its own: each lane is either its own mini-sampler on a project sample or a reference to one of the 16 instruments. There are three pages: **MAIN** (Name, Type, Dly send — the delay send for the whole kit), **LN1-8** and **LN9-16** — scrolling lists of lanes 1–8 and 9–16.
 
 | Row | Values | Meaning |
 |---|---|---|
-| L1…L8 Src | SAMPLE / INST | Lane source. Rows for the other mode are hidden. |
+| L1…L16 Src | SAMPLE / INST | Lane source. Rows for the other mode are hidden. |
 | Sample | --- or a project sample | SAMPLE: what the lane plays. Red — the sample is not in flash (the lane is silent). |
 | Volume | 0–127 | SAMPLE: lane volume. |
 | Pitch | −24…+24 | SAMPLE: offset in semitones from the sample's original pitch. |
 | Decay | FULL, 1 ms … 10 s | SAMPLE: FULL — the sample plays to the end, otherwise it fades out over this time. |
 | Instr | INS1…INS32 | INST: the lane's instrument (with its own parameters, macros, filter). A KIT inside a KIT is silent and shown in red. Selecting a SAMPLE instrument sets the lane's Note to its Root. |
-| Note | 0–127 | The lane's note: sent to MIDI on a MIDI track, and used by the lane to play its INST instrument. Lanes in a kit have different notes — turning skips taken ones. Default C-4…G-4. |
+| Note | 0–127 | The lane's note: sent to MIDI on a MIDI track, and used by the lane to play its INST instrument. Lanes in a kit have different notes — turning skips taken ones. Default C-4…D#5 (60…75). |
 
-- Each lane is mono: a repeated hit cuts off its own previous one (choke); different lanes sound at the same time — up to 8 voices per track.
+- Each lane is mono: a repeated hit cuts off its own previous one (choke); different lanes sound at the same time — up to 16 voices per track.
 - PREVIEW plays a lane with note C-4 (the first one by default).
-- KIT has factory presets only: **PRESET** → **Load**, `[FACTORY]` → KIT. The same menu has **Save one-shot…**, which bakes the INST lanes into samples — [KIT bake](#oneshotkit). A factory kit fills the lanes and writes its drums (factory DRUM / FM / CHIP presets) into **INS25…INS32**, or INS17…INS24 when the kit itself is in INS25…INS32; lane k plays note C-4 + k. Whatever was in those slots is overwritten on OK (CANCEL brings them back). Your own KIT presets cannot be saved yet.
+- KIT has factory presets only: **PRESET** → **Load**, `[FACTORY]` → KIT. The same menu has **Save one-shot…**, which bakes the INST lanes into samples — [KIT bake](#oneshotkit). A factory kit fills the lanes and writes its drums (factory DRUM / FM / CHIP presets) into **INS25…INS32**, or INS17…INS24 when the kit itself is in INS25…INS32; lane k plays note C-4 + k. Factory kits fill lanes 1–8 only; lanes 9–16 stay empty. Whatever was in those slots is overwritten on OK (CANCEL brings them back). Your own KIT presets cannot be saved yet.
+- **Older projects** (8-lane KIT) open as before: lanes 9–16 are empty with notes 68…75 (a note already taken by lanes 1–8 moves to a free one). A project saved by this firmware does not open on older firmware.
 - Renaming a sample in FILE → SAMPLES also updates the lanes; Delete leaves the name in the lane (the lane is silent, like MISSING) and asks for confirmation if the sample is used in a lane.
 
 <a id="presets"></a>
@@ -2069,6 +2072,7 @@ View 2 shows two more columns per slot: **TRN**, a transpose of −24…+24 semi
 | Import MIDI… | Import a `.mid` from the `/midi` folder. |
 | Export… | Record the internal sound to WAV on the card: the master and track stems; see [below](#render). |
 | Wi-Fi firmware… | Firmware update of the tracker and the synth board over Wi-Fi. See [below](#wifi). |
+| MIDI devices… | Bluetooth MIDI controllers and sound modules, pad banks, knob binds. See [Bluetooth MIDI](#ble). |
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
 **Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play on the SONG tab plays the song. Each one shows off part of the device:
@@ -2224,6 +2228,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 | Link | LOST n LATE n CRC n | display only: link counters since power-on: events lost, events that came too late to play on time, damaged frames |
 | Last reset | POWER ON, SOFTWARE, PANIC, WATCHDOG, BROWNOUT… | display only: reason for the last reboot of the tracker (crashes are logged to crashlog.txt on the card in the synth board) |
 | Audio RAM | SEQ INTERNAL / PSRAM, free K | display only: where the sequencer lives (it should be in internal memory; in PSRAM it costs more) and the tracker's free internal RAM |
+| Internal RAM min | `24K, NOW 31K FREE`; with Bluetooth on `24K/31K BLE a/b` | display only: the lowest free internal RAM since power-on and the free now. Bluetooth, Wi-Fi, import, render and REC to SD all take from it. With [Bluetooth MIDI](#ble) on, `a/b` is the unused stack of its connection task and of its MIDI out writer, in bytes (0: no writer) |
 | Battery | `3.92V 120mA 85%`, `4.05V CHG 820mA 64%`, NOT FOUND, --- | display only: battery voltage, current and charge from the [INA226](wiring.md#ina226-battery-monitor); CHG — charging; NOT FOUND — no sensor (the boot log says `battery: INA226 at 0x44` (address 0x40–0x4F) / `battery: INA226 not found`); --- — no reading yet. With the stock 0.1 Ω shunt the current tops out at about 820 mA, so while charging it shows ~820 mA |
 | CPU profile | CLICK TO START / RUNNING | diagnostics: click to start, click again and the synth board's audio time broken down by stage (queue, events, voice management, voices by type, delay, reverb, PERF, master) is appended to /diag/cpuprof.txt on the card |
 
@@ -2264,7 +2269,7 @@ Subfolders: the list is a [file browser](#browsers) — folders first (`name/`),
 ### Mapping screen
 
 - For each source with notes: a row `name chN → T1…T16 / skip` with the note count and range, with **transpose** ±24 semitones below it. By default the first 16 sources go to T1–T16.
-- Drum tracks are marked with an asterisk (`T5*`). A source note (after transpose) goes to the lane with the same Note; notes without a lane are dropped, several notes on one step are combined into a mask, and the step volume is taken from the first note. GAT is not written to a drum track.
+- Drum tracks are marked with an asterisk (`T5*`). A source note (after transpose) goes to the lane with the same Note; notes without a lane are dropped (notes matching lanes 9–16, by default 68…75, land there), several notes on one step are combined into a mask, and the step volume is taken from the first note. GAT is not written to a drum track.
 
 | Parameter | Values | Meaning |
 |---|---|---|
@@ -2293,6 +2298,80 @@ Subfolders: the list is a [file browser](#browsers) — folders first (`name/`),
 - **Play (stop):** Note Off for all sounding notes, then Stop. Position goes to step 1.
 - **Shift+Play while playing (song restart):** Note Off and Stop, then Start, as stop + start.
 - Retriggering a note that is already sounding first sends its Note Off.
+- With a Bluetooth OUT device connected, all of this also goes to it — see [Bluetooth MIDI](#ble).
+
+<a id="ble"></a>
+
+## Bluetooth MIDI
+
+The tracker talks to Bluetooth LE MIDI devices on its own (no adapter): a **controller** in (pads, keys, knobs — made for pad controllers like the M-VAVE SMC-PAD; checked with the M-VAVE FM-1 and a Mac) and a **sound module** out (the MIDI tracks, e.g. to an FM-1). A Mac shows up as a device after Audio MIDI Setup → MIDI Studio → Bluetooth → **Advertise**. The tracker is always the clock master: clock coming from a controller is ignored.
+
+- **IN** — pads play the current track, queue patterns, hold PERF effects or mute tracks ([pads](#blepads)); knobs turn parameter rows ([knobs](#bleknobs)).
+- **OUT** — the MIDI tracks' messages go to the device as well as to the MIDI OUT socket ([MIDI out](#bleout)).
+
+One device can be both (IN+OUT). The status bar shows `BT` ([above](#screen)). Bluetooth is off while the [Wi-Fi dialog](#wifi) is open (it needs the same internal RAM): opening Wi-Fi closes the MIDI dialog, the devices reconnect after **EXIT** (toast `BLUETOOTH FAILED` if it does not come up). With no device on, Bluetooth stays off.
+
+### FILE → MIDI devices…
+
+Three pages: **DEVICES**, **PADS**, **KNOBS**. Navigation matches the other screens: the encoder selects rows and the page bar; <kbd>A</kbd>+turn on the bar or <kbd>B</kbd>+<kbd>Shift</kbd>+turn switches pages, and tapping a tab selects it. Click a row (or tap it again) to act or edit. Long-press the encoder or a row for its context menu; <kbd>B</kbd> ends editing / cancels learning, then closes the window. There is no bottom button strip. At the bottom, the **monitor**: the last messages in (`9 NOTE 36 100`, `1 CC 21 64`; channel 1–16), `NO MIDI IN` when none, and in red `DROP IN n OUT n` once messages were lost (queue full).
+
+**DEVICES** — up to 6 remembered devices, one row each: `FM-1   IN+OUT   CONNECTED`.
+
+| State | Meaning |
+|---|---|
+| `OFF` | dim: the device is kept, not connected (survives power-off) |
+| `SEARCHING` | on, not connected yet: the tracker retries every 2 s in the background, also after power-on |
+| `CONNECTED` | on and up (an IN+OUT device: both directions) |
+| `BT OFF` | on, but Bluetooth is off (the Wi-Fi dialog) |
+
+- **Add device…**, a list row or context-menu item — a 3 s scan (`SCANNING...`) for BLE MIDI devices, a menu of the ones not in the list yet, then **USE AS** IN / OUT / IN+OUT. The device is added turned on. Toasts: `NO BLE MIDI DEVICES`, `NO NEW DEVICES`, `6 DEVICES MAX, DELETE ONE`.
+- **Turn on / Turn off** in the device menu — the selected device. Off stays off after a reboot.
+- **MORE** (or a click on the row) — **Turn on / off**, **Role IN / OUT / IN+OUT**, **Delete** (at once, no question), **BLE clock: ON / OFF** (see [MIDI out](#bleout); a device setting).
+- **One IN and one OUT at a time.** Turning on a device (or changing its role) turns off the one that held that direction: toast `FM-1 OFF`.
+
+<a id="blepads"></a>
+
+**PADS** — the pad banks of the device selected on DEVICES (its name is in the header); each device keeps its own. A controller's bank buttons change the notes / channel its pads send; the tracker tells the banks apart by them. Three assignable functions: `PAT  CH 1  C-2` — the channel and the note of pad 1; the bank is the 16 notes from it. `UNASSIGNED` — not learned.
+
+**Notes work without learning.** Any Note On / Off outside the assigned PAT / PERF / MUTE ranges plays the current track at its original MIDI pitch and velocity. Input channels distinguish held sources; the currently selected track receives the note and its output MIDI channel remains the TRACK setting. KIT accepts its configured lane notes (60–75 by default). GRID REC records incoming notes using REC LENGTH. Legacy NOTE assignments are ignored; other assignments remain intact.
+
+- **LEARN** teaches only the selected PAT / PERF / MUTE row: select the function, choose Learn this bank from the row menu and hit the first pad of its bank. Other assignments stay unchanged; no assignment is needed to play notes. Assign just MUTE if desired; other notes still play. Click a row for Learn this bank / Edit channel / note / Unassign. **Stop learning** in the context menu or <kbd>B</kbd> cancels learning and keeps the previous assignment. The device must be connected as IN.
+
+**REC LENGTH** on PADS: **TRACK** (default) keeps the existing step-length recording; **HOLD** writes the held pad duration into the melodic step’s GAT on release. This device preference is saved. Durations up to eight steps use GAT; longer holds use TIE at note-on and OFF at release (an OFF effect stores an offset within the release step). Track speed and tempo at note-on are accounted for. A very slow quarter grid can exceed the OFF byte range; a same-pitch continuation with GAT then ends the tie without a new attack. KIT keeps the track gate because GAT is shared by its lanes. If all FX slots are occupied, `NO FX SLOT FOR HOLD` is shown and the note stays recorded. Release never overwrites the starting step edited since note-on. A long tie requires an empty path to release (`HOLD PATH OCCUPIED` on conflict), preserving existing steps. Holds are limited to one track pass: release is placed before the starting step repeats and `HOLD: PATTERN LIMIT` is shown.
+
+- **By hand:** choose Edit channel / note from the row menu to edit CH; the next click edits the note, then leaves (saved); <kbd>A</kbd>+turn edits CH, <kbd>Shift</kbd>+<kbd>A</kbd>+turn the note. A cleared row starts at CH 1, C-2. Two banks on one channel sharing notes: toast `OVERLAPS PAT` — the first in the order PAT, PERF, MUTE takes the note.
+- **Unassign** in the row menu clears that function; **Clear all pads** in the context menu clears all three (asks).
+
+| Bank | Pads |
+|---|---|
+| **PAT** | Pads 1–16 queue patterns 1–16, as a tap on a [BANK](#bank) tile (`PATTERN 05 NEXT`); while the song plays: `SONG MODE`. |
+| **PERF** | Pads 1–8 hold the effects of PERF buttons 1–8 ([PROJ → PERF](#proj)) while pressed, on any tab, with or without PERF mode; 9–16 play ordinary notes unless assigned to another function. Needs playing (`PERF: PRESS PLAY`). Stop ends them. |
+| **MUTE** | Pads 1–16 mute / unmute tracks 1–16 (`TRACK 3 MUTE`). |
+
+A controller dropping off ends the notes and effects its pads held.
+
+<a id="bleknobs"></a>
+
+**Knobs (MIDI learn).** A controller knob (a CC) turns a parameter row of INST, TRACK or PROJ.
+
+- **Learn:** select the row, hold <kbd>Shift</kbd> on the tracker (do not turn the tracker's encoder) and turn the controller knob: the first CC binds — toast `KNOB CC21 > TRK2 CUTOFF` (PROJ rows: `KNOB CC21 > SWING`). Shift + the same knob on another row moves the bind there.
+- **Absolute or relative** is decided by the knob's next message (not applied): the same value again, 1 / 127 → REL1 (two's complement), 63 / 65 → REL2 (offset 64); otherwise ABS. An ABS knob moves the parameter by how much it turned (one CC step = one encoder detent), so it never jumps; its first value after a connect or a bind only sets where it is.
+- **Bound to the track:** a knob learned on cutoff of track 2 turns track 2's cutoff from any tab, whatever track is current: toast `TRK2 CUTOFF 1200`. If track 2 has no such row now (another instrument type): `KNOB: - (TRK2)`; the row open in an edit on screen: `KNOB: EDIT OPEN`.
+- **Unbind:** <kbd>Shift</kbd> + turn the bound knob on its own row: `KNOB CC21 UNBOUND`.
+- An unbound CC hints `CC21: SHIFT+TURN TO LEARN`. Refused: `KNOB: SELECT A ROW` (not INST / TRACK / PROJ, a menu open, or a row a knob cannot hold: names, Type, the LFO page, Tuning…), `KNOB: INST NOT ON TRACK` (INST browsing an instrument the track does not play), `KNOBS: ALL 16 BOUND`.
+- Up to 16 binds, stored in the project (another project, other binds).
+
+**KNOBS** — the current project's binds: `CC21  CH1  TRK2  INST  CUTOFF  ABS` (PROJ rows without TRK), 7 rows on screen, scrolled. A click on a row edits CC, then CH, TRK, MODE (ABS / REL1 / REL2), then leaves; <kbd>A</kbd>+turn edits CC, <kbd>Shift</kbd>+<kbd>A</kbd>+turn CH. The target row changes only by learn. Two binds on the same CC and channel: toast `CC21 CH1 ALSO ON <row>` — the upper one in the list turns. **Delete binding** in the context menu deletes the row; **Clear all knobs** clears all (asks). Changes mark the project (`*`).
+
+<a id="bleout"></a>
+
+### MIDI out over Bluetooth
+
+With an OUT device connected, everything the MIDI tracks send to the MIDI OUT socket goes to it too: notes (NOTE pads on a MIDI track as well), CC, Program Change, Start / Stop. There is no per-track choice: the tracks' channels pick what plays on the module.
+
+- **Clock** (0xF8) goes only with **BLE clock: ON** (device menu; default on, kept on the device). Start and Stop go either way.
+- **Reconnect:** when the OUT device connects again, All Notes Off (CC 123) goes once on every MIDI track channel, so nothing it held before the drop hangs.
+- **Queue full:** clock ticks are dropped first, note-offs and Stop are kept; the count is the monitor's `OUT n`.
 
 <a id="sound"></a>
 
@@ -2348,6 +2427,7 @@ Full wiring: [wiring.md](wiring.md#audio-shield-rev-d).
 | Tuning | up to 64 degrees, period up to 4800 cents; `.scl` file up to 8 KB; up to 64 of your own listed; 10 factory |
 | Scenes | 8 per project; 12 track parameters, 14 master; fader 0–127, ~30 ms travel |
 | Shift-register generator | 1 per track (not on drum tracks); 2–16 bits, 1–4 octaves; Capture live writes one pass of the track length |
+| KIT | 16 lanes; a step with all 16 lanes × RAT 8 is 256 events, so three such KIT tracks on one step can drop note-ons (event queue 1024, 256 of them kept for note-offs) |
 | MUT | 1 mode per track (OFF, EVO, CA1D, CA2D on KIT, MARKOV); EVO: up to 128 steps of the track's length; 4 versions kept for live edits: an edit while more than 3 change steps are planned but not heard yet (only a very short, fast pattern with Every 1) starts that track's drift over |
 | CHD | 36 types × 4 inversions |
 | Long press | 0.5 s |

@@ -64,13 +64,14 @@ RollKey rollKey(int note, uint8_t root, ScaleType t) {
 }
 
 bool rollToggleLane(Step& s, int lane) {
+  if (lane < 0 || lane >= kKitLanes) return false;
   if (!s.hasNote()) {
     s.note = 0;
-    s.vel = 0;
+    setLaneMask(s, 0);
   }
-  const uint8_t bit = static_cast<uint8_t>(1u << (lane & 7));
-  s.vel ^= bit;
-  return (s.vel & bit) != 0;
+  const bool on = !laneOn(s, lane);
+  setLane(s, lane, on);
+  return on;
 }
 
 int rollFollow(int first, int cur, int visible, int total) {

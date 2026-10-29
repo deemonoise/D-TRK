@@ -6,6 +6,21 @@
 
 namespace ui {
 
+bool turnRow(const Param* rows, int count, const char* label, size_t maxLen, int delta, char* out, int n) {
+  for (int i = 0; i < count; ++i) {
+    const Param& r = rows[i];
+    if (!r.label || strncmp(r.label, label, maxLen) != 0) continue;
+    if (!r.edit) return false;
+    engine::lockProject();
+    r.edit(delta);
+    engine::unlockProject();
+    if (n > 0) out[0] = 0;
+    if (r.format && n > 0) r.format(out, n);
+    return true;
+  }
+  return false;
+}
+
 void ParamList::edit(int delta) {
   if (sel_ < 0 || sel_ >= count_ || !params_[sel_].edit || delta == 0) return;
   engine::lockProject();
@@ -13,6 +28,14 @@ void ParamList::edit(int delta) {
   engine::unlockProject();
   net_ += delta;
   if (onEdit_) onEdit_();
+}
+
+const Param* ParamList::knobRow(size_t maxLen) const {
+  const Param* r = selected();
+  if (!r || !r->edit || !r->label || strcmp(r->label, "-") == 0) return nullptr;
+  for (int i = 0; i < count_; ++i)
+    if (i != sel_ && params_[i].label && strncmp(params_[i].label, r->label, maxLen) == 0) return nullptr;
+  return r;
 }
 
 void ParamList::beginEdit() {

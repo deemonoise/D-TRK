@@ -97,8 +97,7 @@ const Step& evoStep(const Pattern& pt, int tr, int idx, const EvoTrack& s, const
   tmp = base;
   if (a.mask & kEvoRhythm) {
     if ((d.flags & kEvoDrop) && tmp.hasNote()) {
-      tmp.note = kNoteEmpty;
-      tmp.vel = kVelDefault;
+      clearNote(tmp);
     } else if ((d.flags & kEvoGhost) && tmp.note == kNoteEmpty && len > 1) {
       const int j = (d.flags & kEvoGhostNext) ? (idx + 1) % len : (idx + len - 1) % len;
       const Step& nb = pt.steps[tr][evoSource(s, j, len, a.mask)];
@@ -106,7 +105,7 @@ const Step& evoStep(const Pattern& pt, int tr, int idx, const EvoTrack& s, const
         const uint8_t gv = static_cast<uint8_t>(clampi(a.defVel * kEvoGhostPct / 100, 1, 127));
         if (a.drum) {
           tmp.note = gv;
-          tmp.vel = nb.vel;
+          setLaneMask(tmp, laneMask(nb));
         } else {
           tmp.note = nb.note;
           tmp.vel = gv;

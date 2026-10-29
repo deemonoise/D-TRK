@@ -332,13 +332,13 @@ void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   // Everything but patterns: project, track and audio chunks (< 2 KB) plus the instrument records
-  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LOFI 8, LFOX 16, LFOB 8, FMEX 4, KITS 176 = 404 bytes each).
+  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LOFI 8, LFOX 16, LFOB 8, FMEX 4, KITS 352 = 580 bytes each).
   // One written empty pattern would add ~28 KB, so the bound proves none is.
-  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 410);
+  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 586);
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
-  // One pattern of 16 steps: 8 + 4 + 16 tracks * 16 * 14 bytes.
+  // One pattern of 16 steps: 8 + 4 + 16 tracks * 16 * 15 bytes.
   TEST_ASSERT_EQUAL(out.buf.size() + 8 + 4 + kTracks * 16 * sizeof(Step), out2.buf.size());
 }
 
@@ -515,7 +515,8 @@ static void finish(std::vector<uint8_t>& f) {
   f.insert(f.end(), tail, tail + 12);
 }
 
-// A PATN body: `tracks` tracks of `stepBytes`-byte steps (6 = the 2-slot format, 14 = current).
+// A PATN body: `tracks` tracks of `stepBytes`-byte steps (6 = the 2-slot format, 14 = 6 slots without
+// lanesHi, 15 = current).
 static std::vector<uint8_t> patn(uint8_t idx, uint8_t len, int extraBytes = 0, int tracks = kTracks,
                                  int stepBytes = 6) {
   std::vector<uint8_t> p = {idx, len, static_cast<uint8_t>(Resolution::Eighth), 60};
@@ -581,9 +582,9 @@ void test_patn_header_only_len_nonzero() {
   TEST_ASSERT_TRUE(b.patterns[2].isEmpty());
 }
 
-// Files from the 8-track firmware: tracks 1-8 load, 9-16 stay clear. Both step formats.
+// Files from the 8-track firmware: tracks 1-8 load, 9-16 stay clear. Every step format.
 void test_patn_eight_tracks_loads() {
-  for (int stepBytes : {6, 14}) {
+  for (int stepBytes : {6, 14, 15}) {
     std::vector<uint8_t> f = fileHeader();
     putChunk(f, "PATN", patn(3, 16, 0, 8, stepBytes));
     finish(f);
@@ -607,6 +608,46 @@ void test_patn_sixteen_tracks_round_trip() {
   TEST_ASSERT_EQUAL(71, b.patterns[5].steps[15][23].note);
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::DLY), static_cast<int>(b.patterns[5].steps[8][0].fx[5].cmd));
   TEST_ASSERT_EQUAL(99, b.patterns[5].steps[8][0].fx[5].val);
+}
+
+// lanesHi round trip on a drum track; a melodic track's garbage lanesHi loads as 0.
+void test_patn_lanes_hi_round_trip() {
+  a.reset();
+  instrSetType(a.instruments[2], InstrType::Kit);
+  a.tracks[1].instr = 2;
+  Step& st = a.patterns[0].steps[1][4];
+  st.note = 90;
+  setLaneMask(st, 0xC003);
+  a.patterns[0].steps[0][4].note = 60;
+  a.patterns[0].steps[0][4].lanesHi = 0x55;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(90, b.patterns[0].steps[1][4].note);
+  TEST_ASSERT_EQUAL_HEX16(0xC003, laneMask(b.patterns[0].steps[1][4]));
+  TEST_ASSERT_EQUAL(60, b.patterns[0].steps[0][4].note);
+  TEST_ASSERT_EQUAL_HEX8(0, b.patterns[0].steps[0][4].lanesHi);
+}
+
+// 14-byte steps (6 slots, before lanesHi): notes, vel and 6 fx load, lanesHi 0.
+void test_patn_fourteen_byte_steps_load() {
+  std::vector<uint8_t> body = patn(2, 16, 0, kTracks, 14);
+  const size_t st0 = 4 + (3 * 16 + 5) * 14;  // track 3, step 5
+  body[st0 + 1] = 77;
+  body[st0 + 2 + 5 * 2] = static_cast<uint8_t>(Fx::DLY);
+  body[st0 + 3 + 5 * 2] = 42;
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "PATN", body);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const Step& st = b.patterns[2].steps[3][5];
+  TEST_ASSERT_EQUAL((3 + 5) % 128, st.note);
+  TEST_ASSERT_EQUAL(77, st.vel);
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::DLY), static_cast<int>(st.fx[5].cmd));
+  TEST_ASSERT_EQUAL(42, st.fx[5].val);
+  for (int t = 0; t < kTracks; ++t)
+    for (int s = 0; s < 16; ++s) TEST_ASSERT_EQUAL(0, b.patterns[2].steps[t][s].lanesHi);
 }
 
 static std::vector<uint8_t> trks(uint8_t count, int stored) {
@@ -1473,26 +1514,120 @@ void test_kits_round_trip_and_defaults() {
   TEST_ASSERT_EQUAL(60, b.instruments[0].kit[7].note);
 }
 
+// Records of 8 lanes (176 bytes, older files) and 16 lanes (352): the same clamps.
 void test_kits_garbage_clamped() {
-  std::vector<uint8_t> rec(16 * 176, 0);
-  rec[17] = 40;   // lane 0 instr -> kNoInstr
-  rec[18] = 200;  // vol -> 127
-  rec[19] = 100;  // pitch -> 24
-  rec[21] = 200;  // note -> 60
-  rec[22 + 19] = static_cast<uint8_t>(-100);  // lane 1 pitch -> -24
-  rec[22 + 21] = 200;                         // lane 1 note -> 61
-  std::vector<uint8_t> body = {16};
+  for (int recSize : {176, 352}) {
+    std::vector<uint8_t> rec(16 * recSize, 0);
+    rec[17] = 40;   // lane 0 instr -> kNoInstr
+    rec[18] = 200;  // vol -> 127
+    rec[19] = 100;  // pitch -> 24
+    rec[21] = 200;  // note -> 60
+    rec[22 + 19] = static_cast<uint8_t>(-100);  // lane 1 pitch -> -24
+    rec[22 + 21] = 200;                         // lane 1 note -> 61
+    std::vector<uint8_t> body = {16};
+    body.insert(body.end(), rec.begin(), rec.end());
+    std::vector<uint8_t> f = fileHeader();
+    putChunk(f, "KITS", body);
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+    TEST_ASSERT_EQUAL(kNoInstr, b.instruments[0].kit[0].instr);
+    TEST_ASSERT_EQUAL(127, b.instruments[0].kit[0].vol);
+    TEST_ASSERT_EQUAL(24, b.instruments[0].kit[0].pitch);
+    TEST_ASSERT_EQUAL(60, b.instruments[0].kit[0].note);
+    TEST_ASSERT_EQUAL(-24, b.instruments[0].kit[1].pitch);
+    TEST_ASSERT_EQUAL(61, b.instruments[0].kit[1].note);
+  }
+}
+
+void test_kits_sixteen_lanes_round_trip() {
+  a.reset();
+  Instrument& k = a.instruments[4];
+  instrSetType(k, InstrType::Kit);
+  strcpy(k.kit[12].sample, "tom");
+  k.kit[12].note = 90;
+  k.kit[12].instr = 5;
+  k.kit[15].vol = 70;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  const Instrument& r = b.instruments[4];
+  TEST_ASSERT_EQUAL_STRING("tom", r.kit[12].sample);
+  TEST_ASSERT_EQUAL(90, r.kit[12].note);
+  TEST_ASSERT_EQUAL(5, r.kit[12].instr);
+  TEST_ASSERT_EQUAL(70, r.kit[15].vol);
+  TEST_ASSERT_EQUAL(75, r.kit[15].note);
+  TEST_ASSERT_EQUAL_MEMORY(k.kit, r.kit, sizeof(k.kit));
+}
+
+// An 8-lane KITS (older files): lanes 1-8 as stored, 9-16 default with notes 68..75, moved to the next
+// free note when lanes 1-8 hold it.
+void test_kits_eight_lane_file_loads() {
+  std::vector<uint8_t> rec(2 * 176, 0);
+  for (int r = 0; r < 2; ++r)
+    for (int l = 0; l < 8; ++l) {
+      rec[r * 176 + l * 22 + 18] = 100;
+      rec[r * 176 + l * 22 + 21] = static_cast<uint8_t>(60 + l);
+    }
+  rec[0 * 22 + 21] = 68;  // lane 0 note 68
+  rec[7 * 22 + 21] = 67;  // lane 7 note 67 (as default)
+  rec[1 * 22 + 17] = 9;   // lane 1 instr 9
+  std::vector<uint8_t> body = {2};
   body.insert(body.end(), rec.begin(), rec.end());
   std::vector<uint8_t> f = fileHeader();
   putChunk(f, "KITS", body);
   finish(f);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
-  TEST_ASSERT_EQUAL(kNoInstr, b.instruments[0].kit[0].instr);
-  TEST_ASSERT_EQUAL(127, b.instruments[0].kit[0].vol);
-  TEST_ASSERT_EQUAL(24, b.instruments[0].kit[0].pitch);
-  TEST_ASSERT_EQUAL(60, b.instruments[0].kit[0].note);
-  TEST_ASSERT_EQUAL(-24, b.instruments[0].kit[1].pitch);
-  TEST_ASSERT_EQUAL(61, b.instruments[0].kit[1].note);
+  const Instrument& r = b.instruments[0];
+  TEST_ASSERT_EQUAL(68, r.kit[0].note);
+  TEST_ASSERT_EQUAL(9, r.kit[1].instr);
+  TEST_ASSERT_EQUAL(61, r.kit[1].note);
+  TEST_ASSERT_EQUAL(67, r.kit[7].note);
+  TEST_ASSERT_EQUAL(76, r.kit[8].note);  // 68 is lane 0's
+  for (int l = 9; l < 16; ++l) TEST_ASSERT_EQUAL(60 + l, r.kit[l].note);
+  for (int l = 8; l < 16; ++l) {
+    TEST_ASSERT_EQUAL(kNoInstr, r.kit[l].instr);
+    TEST_ASSERT_EQUAL(100, r.kit[l].vol);
+    TEST_ASSERT_EQUAL_STRING("", r.kit[l].sample);
+  }
+  // Instrument 1: lanes 9-16 at 68..75.
+  for (int l = 8; l < 16; ++l) TEST_ASSERT_EQUAL(60 + l, b.instruments[1].kit[l].note);
+}
+
+// An 8-lane KITS with more records than kInstruments: the extra ones are skipped.
+void test_kits_eight_lane_count_over_max() {
+  const int count = kInstruments + 3;
+  std::vector<uint8_t> body = {static_cast<uint8_t>(count)};
+  for (int r = 0; r < count; ++r) {
+    std::vector<uint8_t> rec(176, 0);
+    for (int l = 0; l < 8; ++l) rec[l * 22 + 21] = static_cast<uint8_t>(r < kInstruments ? 40 + l : 10 + l);
+    body.insert(body.end(), rec.begin(), rec.end());
+  }
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "KITS", body);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const Instrument& last = b.instruments[kInstruments - 1];
+  TEST_ASSERT_EQUAL(40, last.kit[0].note);
+  TEST_ASSERT_EQUAL(47, last.kit[7].note);
+  TEST_ASSERT_EQUAL(68, last.kit[8].note);
+  TEST_ASSERT_EQUAL(75, last.kit[15].note);
+}
+
+// A KITS body that is neither 1 + n x 176 nor 1 + n x 352: BadValue. count 0 with size 1 is fine.
+void test_kits_bad_record_size() {
+  for (int size : {1 + 2 * 176 + 1, 1 + 2 * 352 - 1, 1 + 2 * 200, 1 + 176}) {
+    std::vector<uint8_t> body(size, 0);
+    body[0] = 2;
+    std::vector<uint8_t> f = fileHeader();
+    putChunk(f, "KITS", body);
+    finish(f);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  }
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "KITS", {0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
 }
 
 void test_patn_vel_mask_only_on_drum_tracks() {
@@ -3065,6 +3200,101 @@ void test_fmex_garbage_clamped_and_sizes() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// ---- KNOB: controller knobs (BLE MIDI learn) ----
+
+void test_knob_round_trip_and_missing() {
+  KnobBind& k = a.knobs[3];
+  k.ch = 9; k.cc = 21; k.track = 1; k.screen = 2; k.page = 4; k.rel = 1;
+  strcpy(k.label, "Cutoff");
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "KNOB"));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  const KnobBind& g = b.knobs[0];  // written packed: first slot
+  TEST_ASSERT_EQUAL(9, g.ch); TEST_ASSERT_EQUAL(21, g.cc); TEST_ASSERT_EQUAL(1, g.track); TEST_ASSERT_EQUAL(2, g.screen);
+  TEST_ASSERT_EQUAL(4, g.page); TEST_ASSERT_EQUAL(1, g.rel); TEST_ASSERT_EQUAL_STRING("Cutoff", g.label);
+  TEST_ASSERT_EQUAL(0, b.knobs[1].screen);
+  const std::vector<uint8_t> f = withoutChunks(out.buf, {"KNOB"});
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.knobs[0].screen);
+}
+
+void test_knob_none_bound_not_written() {
+  a.knobs[5].cc = 10;  // screen 0: an unused slot
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_FALSE(hasChunk(out.buf, "KNOB"));
+}
+
+// A 22-byte KNOB record: ch cc track screen page rel label[16].
+static std::vector<uint8_t> knobRec(uint8_t ch, uint8_t cc, uint8_t track, uint8_t screen, const char* label,
+                                    size_t recSize = 22) {
+  std::vector<uint8_t> r = {ch, cc, track, screen, 1, 2};
+  r.resize(22, 0);
+  memcpy(r.data() + 6, label, strnlen(label, kKnobLabel));
+  r.resize(recSize, 0xEE);
+  return r;
+}
+
+static std::vector<uint8_t> knobChunk(uint8_t count, uint8_t recSize, const std::vector<std::vector<uint8_t>>& recs) {
+  std::vector<uint8_t> c = {count, recSize};
+  for (const auto& r : recs) c.insert(c.end(), r.begin(), r.end());
+  return c;
+}
+
+// KNOB: longer records -> the known 22 bytes; bad track/cc/ch or screen 0 -> dropped; label forced NUL;
+// shorter records, record size 0 or fewer records than the count -> bad value; past kKnobBinds -> skipped.
+void test_knob_garbage_and_sizes() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "KNOB", knobChunk(2, 23, {knobRec(0, 1, 99, 1, "Bad", 23), knobRec(15, 127, 2, 3, "ABCDEFGHIJKLMNOPQ", 23)}));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(15, b.knobs[0].ch);
+  TEST_ASSERT_EQUAL(127, b.knobs[0].cc);
+  TEST_ASSERT_EQUAL(2, b.knobs[0].track);
+  TEST_ASSERT_EQUAL(3, b.knobs[0].screen);
+  TEST_ASSERT_EQUAL(1, b.knobs[0].page);
+  TEST_ASSERT_EQUAL(2, b.knobs[0].rel);
+  TEST_ASSERT_EQUAL_STRING("ABCDEFGHIJKLMNO", b.knobs[0].label);  // 15 chars + forced NUL
+  TEST_ASSERT_EQUAL(0, b.knobs[1].screen);
+
+  f = fileHeader();
+  putChunk(f, "KNOB", knobChunk(1, 21, {knobRec(0, 1, 0, 1, "X", 21)}));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "KNOB", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "KNOB", knobChunk(3, 22, {knobRec(0, 1, 0, 1, "X")}));  // says 3 records, holds 1
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+void test_knob_too_many_and_dropped() {
+  std::vector<std::vector<uint8_t>> recs;
+  for (int i = 0; i < kKnobBinds + 1; ++i) recs.push_back(knobRec(0, static_cast<uint8_t>(i), 0, 1, "K"));
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "KNOB", knobChunk(static_cast<uint8_t>(recs.size()), 22, recs));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  for (int i = 0; i < kKnobBinds; ++i) {
+    TEST_ASSERT_EQUAL(1, b.knobs[i].screen);
+    TEST_ASSERT_EQUAL(i, b.knobs[i].cc);
+  }
+
+  f = fileHeader();
+  putChunk(f, "KNOB", knobChunk(4, 22, {knobRec(0, 5, 0, 0, "Off"), knobRec(0, 200, 0, 1, "BadCC"),
+                                        knobRec(16, 5, 0, 1, "BadCh"), knobRec(3, 7, 1, 1, "Ok")}));
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(3, b.knobs[0].ch);
+  TEST_ASSERT_EQUAL(7, b.knobs[0].cc);
+  TEST_ASSERT_EQUAL_STRING("Ok", b.knobs[0].label);
+  TEST_ASSERT_EQUAL(0, b.knobs[1].screen);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc32_reference);
@@ -3085,6 +3315,8 @@ int main() {
   RUN_TEST(test_patn_header_only_len_nonzero);
   RUN_TEST(test_patn_eight_tracks_loads);
   RUN_TEST(test_patn_sixteen_tracks_round_trip);
+  RUN_TEST(test_patn_lanes_hi_round_trip);
+  RUN_TEST(test_patn_fourteen_byte_steps_load);
   RUN_TEST(test_trks_count_not_eight);
   RUN_TEST(test_unknown_chunk_huge_size);
   RUN_TEST(test_proj_chunk_larger_is_skipped);
@@ -3121,6 +3353,10 @@ int main() {
   RUN_TEST(test_wtbl_dup_bad_and_repeat);
   RUN_TEST(test_kits_round_trip_and_defaults);
   RUN_TEST(test_kits_garbage_clamped);
+  RUN_TEST(test_kits_sixteen_lanes_round_trip);
+  RUN_TEST(test_kits_eight_lane_file_loads);
+  RUN_TEST(test_kits_bad_record_size);
+  RUN_TEST(test_kits_eight_lane_count_over_max);
   RUN_TEST(test_patn_vel_mask_only_on_drum_tracks);
   RUN_TEST(test_sng3_round_trip);
   RUN_TEST(test_sng3_garbage_clamped);
@@ -3180,5 +3416,9 @@ int main() {
   RUN_TEST(test_lfob_garbage_clamped_and_sizes);
   RUN_TEST(test_fmex_round_trip_and_missing);
   RUN_TEST(test_fmex_garbage_clamped_and_sizes);
+  RUN_TEST(test_knob_round_trip_and_missing);
+  RUN_TEST(test_knob_none_bound_not_written);
+  RUN_TEST(test_knob_garbage_and_sizes);
+  RUN_TEST(test_knob_too_many_and_dropped);
   return UNITY_END();
 }

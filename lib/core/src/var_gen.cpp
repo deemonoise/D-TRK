@@ -22,9 +22,9 @@ constexpr LifeRule kLife[] = {
 static_assert(sizeof(kLife) / sizeof(kLife[0]) == static_cast<int>(VarRule2::Count), "a rule per VarRule2");
 
 int clampLen(int len) { return len < 0 ? 0 : (len > kMaxSteps ? kMaxSteps : len); }
-int popcount8(uint8_t v) {
+int popcount16(uint16_t v) {
   int k = 0;
-  for (; v; v &= static_cast<uint8_t>(v - 1)) ++k;
+  for (; v; v &= static_cast<uint16_t>(v - 1)) ++k;
   return k;
 }
 bool allDead(const VarCells& c) {
@@ -37,8 +37,7 @@ bool allDead(const VarCells& c) {
 const Step& dropNote(const Step& base, Step& tmp) {
   if (!base.hasNote()) return base;
   tmp = base;
-  tmp.note = kNoteEmpty;
-  tmp.vel = kVelDefault;
+  clearNote(tmp);
   return tmp;
 }
 }  // namespace
@@ -88,17 +87,25 @@ void varCa1d(uint8_t* row, int len, uint8_t rule) {
 void varCa2d(VarCells& c, int len, uint8_t rule2) {
   len = clampLen(len);
   const LifeRule& lr = kLife[rule2 < static_cast<uint8_t>(VarRule2::Count) ? rule2 : 0];
-  VarCells out = {};
-  for (int r = 0; r < kVarRows; ++r)
+  // In place, row by row (stack: 3 rows, not a VarCells): prev = row r - 1 as it was, first = row 0 as it
+  // was (the torus' row below the last).
+  uint8_t first[kVarRowBytes], prev[kVarRowBytes], out[kVarRowBytes];
+  memcpy(first, c.r[0], sizeof(first));
+  memcpy(prev, c.r[kVarRows - 1], sizeof(prev));
+  for (int r = 0; r < kVarRows; ++r) {
+    const uint8_t* const nb[3] = {prev, c.r[r], r + 1 < kVarRows ? c.r[r + 1] : first};
+    memset(out, 0, sizeof(out));
     for (int i = 0; i < len; ++i) {
       int k = 0;
-      for (int dr = -1; dr <= 1; ++dr)
+      for (int dr = 0; dr < 3; ++dr)
         for (int di = -1; di <= 1; ++di)
-          if (dr || di) k += varBit(c.r[(r + dr + kVarRows) % kVarRows], (i + di + len) % len);
+          if (dr != 1 || di) k += varBit(nb[dr], (i + di + len) % len);
       const uint16_t m = varBit(c.r[r], i) ? lr.survive : lr.born;
-      if ((m >> k) & 1) varSetBit(out.r[r], i, true);
+      if ((m >> k) & 1) varSetBit(out, i, true);
     }
-  c = out;
+    memcpy(prev, c.r[r], sizeof(prev));
+    memcpy(c.r[r], out, sizeof(out));
+  }
 }
 
 void varGen0(const Pattern& pt, int tr, bool kit, VarCells& out) {
@@ -110,11 +117,12 @@ void varGen0(const Pattern& pt, int tr, bool kit, VarCells& out) {
     if (!kit) varSetBit(out.r[0], i, true);
     else
       for (int k = 0; k < kVarRows; ++k)
-        if ((st.vel >> k) & 1) varSetBit(out.r[k], i, true);
+        if (laneOn(st, k)) varSetBit(out.r[k], i, true);
   }
 }
 
-void varCaNext(VarTrack& s, const VarCfg& cfg, const VarCells& gen0, int len, bool kit, uint32_t seed, int track) {
+void varCaNext(VarTrack& s, const VarCfg& cfg, const VarCells& gen0, int len, bool kit, uint32_t seed, int track,
+               uint16_t lanes) {
   VarCfg c = cfg;
   varClamp(c);
   len = clampLen(len);
@@ -130,9 +138,19 @@ void varCaNext(VarTrack& s, const VarCfg& cfg, const VarCells& gen0, int len, bo
   if (len > 0) {
     const uint32_t h = varRand(seed, track, n, 0, kSaltNoise);
     if (h % 100u < c.noise) {
-      const int cell = static_cast<int>((h / 100u) % static_cast<uint32_t>(rows * len));
-      uint8_t* row = next.r[cell / len];
-      varSetBit(row, cell % len, !varBit(row, cell % len));
+      uint16_t live = 1;  // rows the noise may flip
+      if (kit) {
+        live = lanes;
+        for (int r = 0; r < kVarRows; ++r)
+          for (int b = 0; b < kVarRowBytes; ++b)
+            if (gen0.r[r][b]) live = static_cast<uint16_t>(live | (1u << r));
+        if (!live) live = 0x00FF;  // nothing in use: lanes 1-8 (as with 8 lanes)
+      }
+      const int cell = static_cast<int>((h / 100u) % static_cast<uint32_t>(popcount16(live) * len));
+      int r = 0;
+      for (int k = cell / len;; ++r)
+        if (((live >> r) & 1) && k-- == 0) break;
+      varSetBit(next.r[r], cell % len, !varBit(next.r[r], cell % len));
     }
   }
   s.mode = static_cast<uint8_t>(mode);
@@ -150,18 +168,18 @@ const Step& varCellStep(const Pattern& pt, int tr, int idx, const VarCells& c, b
   const int len = evoLen(pt, tr);
   const Step& base = pt.steps[tr][idx < 0 ? 0 : idx];
   if (idx < 0 || idx >= len) return base;
-  uint8_t mask = 0;
+  uint16_t mask = 0;
   if (kit) {
     for (int k = 0; k < kVarRows; ++k)
-      if (varBit(c.r[k], idx)) mask = static_cast<uint8_t>(mask | (1u << k));
+      if (varBit(c.r[k], idx)) mask = static_cast<uint16_t>(mask | (1u << k));
   } else {
     mask = varBit(c.r[0], idx);
   }
   if (!mask) return dropNote(base, tmp);
   if (base.hasNote()) {
-    if (!kit || base.vel == mask) return base;
+    if (!kit || laneMask(base) == mask) return base;
     tmp = base;
-    tmp.vel = mask;
+    setLaneMask(tmp, mask);
     return tmp;
   }
   int j = -1;
@@ -175,7 +193,7 @@ const Step& varCellStep(const Pattern& pt, int tr, int idx, const VarCells& c, b
     tmp = Step();
     tmp.note = kit ? 0 : static_cast<uint8_t>(root % 12 + kVarRootOct);  // KIT: 0 = the track's velocity
   }
-  if (kit) tmp.vel = mask;
+  if (kit) setLaneMask(tmp, mask);
   return tmp;
 }
 
@@ -186,7 +204,7 @@ void varSeq(const Pattern& pt, int tr, bool kit, bool rhythm, VarSeq& q) {
   for (int i = 0; i < len; ++i) {  // the tokens, in order of appearance
     const Step& st = pt.steps[tr][i];
     if (!st.hasNote() || q.ntok >= kVarTokMax) continue;
-    const uint8_t v = kit ? st.vel : st.note;
+    const uint16_t v = kit ? laneMask(st) : st.note;
     bool have = false;
     for (int t = 0; t < q.ntok && !have; ++t) have = q.val[t] == v;
     if (have) continue;
@@ -198,10 +216,10 @@ void varSeq(const Pattern& pt, int tr, bool kit, bool rhythm, VarSeq& q) {
     const Step& st = pt.steps[tr][i];
     uint8_t t = q.ntok;  // REST
     if (st.hasNote()) {
-      const uint8_t v = kit ? st.vel : st.note;
+      const uint16_t v = kit ? laneMask(st) : st.note;
       int best = 1 << 10;
       for (int k = 0; k < q.ntok; ++k) {
-        const int d = kit ? popcount8(static_cast<uint8_t>(v ^ q.val[k])) : (v > q.val[k] ? v - q.val[k] : q.val[k] - v);
+        const int d = kit ? popcount16(static_cast<uint16_t>(v ^ q.val[k])) : (v > q.val[k] ? v - q.val[k] : q.val[k] - v);
         if (d < best) {
           best = d;
           t = static_cast<uint8_t>(k);
@@ -246,7 +264,7 @@ void varMarkov(const Pattern& pt, int tr, const VarCfg& cfg, bool kit, uint32_t 
     if (out[k] != q.tok[k]) src[q.pos[k]] = out[k] == q.ntok ? kVarRest : q.first[out[k]];
 }
 
-void varNext(VarTrack& s, const VarCfg& cfg, const Pattern& pt, int tr, bool kit, uint32_t seed) {
+void varNext(VarTrack& s, const VarCfg& cfg, const Pattern& pt, int tr, bool kit, uint32_t seed, uint16_t lanes) {
   VarCfg c = cfg;
   varClamp(c);
   const VarMode mode = varModeOf(c, kit);
@@ -261,7 +279,7 @@ void varNext(VarTrack& s, const VarCfg& cfg, const Pattern& pt, int tr, bool kit
   }
   VarCells g0;
   varGen0(pt, tr, kit, g0);
-  varCaNext(s, c, g0, evoLen(pt, tr), kit, seed, tr);
+  varCaNext(s, c, g0, evoLen(pt, tr), kit, seed, tr, lanes);
 }
 
 VarApply varApply(const VarCfg& c, bool kit, uint8_t root) {
@@ -293,7 +311,7 @@ const Step& varStep(const Pattern& pt, int tr, int idx, const VarTrack& s, const
   if (a.rhythm) return from;
   if (!base.hasNote()) return base;
   tmp = base;
-  if (a.kit) tmp.vel = from.vel;
+  if (a.kit) setLaneMask(tmp, laneMask(from));
   else tmp.note = from.note;
   return tmp;
 }

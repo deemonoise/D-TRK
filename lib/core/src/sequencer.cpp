@@ -350,7 +350,7 @@ void Sequencer::varPass(bool newPat) {
       ++to.n;
       to.sinceReset = 0;
     } else {
-      varNext(to, c, pt, tr, kit, runSeed_);
+      varNext(to, c, pt, tr, kit, runSeed_, kit ? kitLanesUsed(*p_.kitOf(tr)) : 0);
     }
     varN_[tr] = to.n;
   }
@@ -597,6 +597,7 @@ void Sequencer::trackOutChanged(uint64_t now, int track, MidiSink& out) {
   }
   ties_[track].on = false;
   arps_[track].n = 0;
+  liveDrop(track);
 }
 
 // A BPM edit: the project BPM, and the live tempo until a slot with its own BPM.
@@ -1158,6 +1159,74 @@ void Sequencer::arpStep(int track, uint64_t t, int64_t earliest, bool aud, uint3
     push(on + gate, 0x80 | a.ch, note, 0, id, false, 3, static_cast<uint8_t>(track));
 }
 
+// A live note goes straight to dispatch (no heap): it plays now, also while stopped. Its id keeps
+// it from ending a pattern note that took the voice since.
+void Sequencer::liveSend(uint64_t now, int track, uint8_t note, uint8_t vel, uint32_t id, MidiSink& out) {
+  const uint8_t ch = internal(track) ? static_cast<uint8_t>(track) : (p_.tracks[track].channel & 15);
+  SchedEvent e{};
+  e.t = now;
+  e.id = id;
+  e.b[0] = static_cast<uint8_t>((vel ? 0x90 : 0x80) | ch);
+  e.b[1] = note;
+  e.b[2] = vel;
+  e.len = 3;
+  e.track = static_cast<uint8_t>(track);
+  dispatch(e, out);
+}
+
+// Lets held entry i go (its note-off) and removes it, keeping the start order.
+void Sequencer::liveRelease(uint64_t now, int i, MidiSink& out) {
+  const LiveHeld h = live_[i];
+  for (int j = i + 1; j < liveN_; ++j) live_[j - 1] = live_[j];
+  --liveN_;
+  liveSend(now, h.track, h.note, 0, h.id, out);
+}
+
+void Sequencer::liveNote(uint64_t now, int track, uint8_t note, uint8_t vel, MidiSink& out) {
+  if (track < 0 || track >= kTracks || note > 127) return;
+  for (int i = 0; i < liveN_; ++i) {
+    if (live_[i].track == track && live_[i].note == note) {
+      liveRelease(now, i, out);
+      break;
+    }
+  }
+  if (!vel) return;
+  if (vel > 127) vel = 127;  // a data byte never carries bit 7
+  if (liveN_ == kLiveHeld) liveRelease(now, 0, out);
+  const uint32_t id = newId();
+  live_[liveN_++] = LiveHeld{id, static_cast<uint8_t>(track), note};
+  liveSend(now, track, note, vel, id, out);
+}
+
+// Newest first: no shifting.
+void Sequencer::liveAllOff(uint64_t now, MidiSink& out) {
+  while (liveN_) liveRelease(now, liveN_ - 1, out);
+}
+
+void Sequencer::midiPanic(uint64_t, MidiSink& out) {
+  uint16_t sent = 0;  // bit = channel
+  for (int t = 0; t < kTracks; ++t) {
+    if (internal(t)) continue;
+    const uint8_t ch = p_.tracks[t].channel & 15;
+    if ((sent >> ch) & 1) continue;
+    sent |= static_cast<uint16_t>(1u << ch);
+    const uint8_t m[3] = {static_cast<uint8_t>(0xB0 | ch), 123, 0};
+    out.send(m, 3);
+  }
+}
+
+// Forgets the held entries of `track` (-1: all); the caller releases the voices.
+void Sequencer::liveDrop(int track) {
+  if (track < 0) {
+    liveN_ = 0;
+    return;
+  }
+  int n = 0;
+  for (int i = 0; i < liveN_; ++i)
+    if (live_[i].track != track) live_[n++] = live_[i];
+  liveN_ = static_cast<uint8_t>(n);
+}
+
 void Sequencer::silence(uint64_t now, MidiSink& out) {
   heap_.clear();
   cold_->voices.releaseAll([&](uint8_t ch, uint8_t note) {
@@ -1175,6 +1244,7 @@ void Sequencer::silence(uint64_t now, MidiSink& out) {
   }
   for (auto& t : ties_) t.on = false;
   stopArps();
+  liveDrop(-1);
 }
 
 // expandStep with the track's instrument (a KIT makes it a drum track) and routing: on an INT

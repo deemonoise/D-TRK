@@ -117,6 +117,16 @@ void test_put_and_clear() {
   TEST_ASSERT_EQUAL(kNoteEmpty, tr[1].note);
 }
 
+// A drum step's lanes 9-16 go with the note.
+void test_clear_lanes_hi() {
+  Step tr[2];
+  tr[0].note = 0;
+  setLaneMask(tr[0], 0x8001);
+  clearGenRange(tr, 0, 1);
+  TEST_ASSERT_EQUAL_HEX8(0, tr[0].lanesHi);
+  TEST_ASSERT_TRUE(tr[0].isEmpty());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_token_round_trip);
@@ -126,5 +136,6 @@ int main() {
   RUN_TEST(test_velocity);
   RUN_TEST(test_gate);
   RUN_TEST(test_put_and_clear);
+  RUN_TEST(test_clear_lanes_hi);
   return UNITY_END();
 }

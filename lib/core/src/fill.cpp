@@ -106,9 +106,9 @@ void applyFill(Pattern& p, const Sel& sel, const FillSpec& f, uint8_t root, Scal
           if (drum) {
             if (!st.hasNote()) {
               st.note = 0;
-              st.vel = 0;
+              setLaneMask(st, 0);
             }
-            st.vel |= static_cast<uint8_t>(1u << (f.lane % kKitLanes));
+            setLane(st, f.lane % kKitLanes, true);
             break;
           }
           int note;

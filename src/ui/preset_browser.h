@@ -105,7 +105,7 @@ class PresetBrowser {
   mt::Instrument backup_;
   int track_ = 0;              // the current track on open: takes the preset's insert (takePresetInsert)
   mt::TrackCfg trackBackup_;   // its insert on open (Load), restored by CANCEL
-  mt::Instrument* blockBackup_ = nullptr;  // PSRAM, kKitLanes, Load while open: INS block_.. on open
+  mt::Instrument* blockBackup_ = nullptr;  // PSRAM, kKitBlock, Load while open: INS block_.. on open
   int block_ = 0;                          // factoryKitBlock(instr_)
   bool blockChanged_ = false;              // a factory KIT wrote its drums there
   uint32_t seqBefore_ = 0, seqAfter_ = 0;

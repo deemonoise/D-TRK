@@ -4,6 +4,7 @@
 #include "core_ram.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
+#include "hw/ble_midi.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "hw/pins.h"
@@ -12,6 +13,7 @@
 #include "model.h"
 #include "net/wifi.h"
 #include "storage/crashlog.h"
+#include "storage/settings.h"
 #include "storage/storage.h"
 #include "ui/app.h"
 
@@ -115,6 +117,10 @@ void setup() {
   } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped() || storage::tuningDropped()) {
     app->loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
+  // BLE radio only when a device is active (App::begin handed hw::ble the list's active IN / OUT; it
+  // costs internal RAM); last, so boot is not delayed.
+  hw::ble::setClock(storage::loadBleClock());  // also for a later begin() (MIDI / Wi-Fi dialogs)
+  if (hw::ble::wanted()) hw::ble::begin();
 }
 
 void loop() {

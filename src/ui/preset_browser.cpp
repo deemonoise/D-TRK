@@ -36,7 +36,7 @@ void PresetBrowser::open(Mode mode, int instr) {
   }
   if (!list_.alloc()) return;
   if (mode == Mode::Load) {
-    blockBackup_ = static_cast<mt::Instrument*>(heap_caps_malloc(mt::kKitLanes * sizeof(mt::Instrument), MALLOC_CAP_SPIRAM));
+    blockBackup_ = static_cast<mt::Instrument*>(heap_caps_malloc(mt::kKitBlock * sizeof(mt::Instrument), MALLOC_CAP_SPIRAM));
     if (!blockBackup_) {
       list_.free();
       app_.toast(storage::resultText(storage::Result::NoMemory));
@@ -51,7 +51,7 @@ void PresetBrowser::open(Mode mode, int instr) {
   trackBackup_ = app_.project().tracks[track_];
   block_ = mt::factoryKitBlock(instr_);
   blockChanged_ = false;
-  if (blockBackup_) memcpy(blockBackup_, &app_.project().instruments[block_], mt::kKitLanes * sizeof(mt::Instrument));
+  if (blockBackup_) memcpy(blockBackup_, &app_.project().instruments[block_], mt::kKitBlock * sizeof(mt::Instrument));
   seqBefore_ = seqAfter_ = app_.editSeq();
   changed_ = false;
   restore();
@@ -70,7 +70,7 @@ void PresetBrowser::close(bool keep) {
     c.crushRate = trackBackup_.crushRate;
     c.driveModel = trackBackup_.driveModel;
     if (blockChanged_)
-      memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
+      memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitBlock * sizeof(mt::Instrument));
     engine::unlockProject();
     // Nothing else edited since the audition: the project is as clean as before.
     if (app_.editSeq() == seqAfter_) app_.rewindEditSeq(seqBefore_);
@@ -243,7 +243,7 @@ void PresetBrowser::apply(const mt::Instrument& src) {
   const bool found = mt::projSampleFind(app_.project(), src.sample) >= 0;
   engine::lockProject();
   if (blockChanged_) {  // a kit picked before: its drums go
-    memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
+    memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitBlock * sizeof(mt::Instrument));
     blockChanged_ = false;
   }
   mt::applyPreset(inst(), src, found);
@@ -265,7 +265,7 @@ void PresetBrowser::applyKit(int index) {
   engine::lockProject();
   // A kit picked before: its drums go, the block is back as on open.
   if (blockChanged_)
-    memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitLanes * sizeof(mt::Instrument));
+    memcpy(&app_.project().instruments[block_], blockBackup_, mt::kKitBlock * sizeof(mt::Instrument));
   mt::factoryBuildKit(index, app_.project(), instr_);
   mt::takePresetInsert(app_.project(), instr_, track_);  // the KIT track takes the kit's insert
   engine::unlockProject();

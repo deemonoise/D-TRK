@@ -171,6 +171,19 @@ void test_bake_lanes() {
   TEST_ASSERT_EQUAL_UINT8(7, lanes[2]);
 }
 
+void test_bake_lanes_sixteen() {  // lanes 9-16 bake too
+  Project& p = *mkProj();
+  Instrument& k = p.instruments[5];
+  instrSetType(k, InstrType::Kit);  // notes 60..75: all distinct
+  p.instruments[1].type = InstrType::Fm;
+  k.kit[12].instr = 1;
+  k.kit[15].instr = 1;
+  uint8_t lanes[kKitLanes];
+  TEST_ASSERT_EQUAL_INT(2, kitBakeLanes(p, 5, lanes));
+  TEST_ASSERT_EQUAL_UINT8(12, lanes[0]);
+  TEST_ASSERT_EQUAL_UINT8(15, lanes[1]);
+}
+
 void test_bake_lanes_shared_note() {  // the note-on takes the first lane with the note
   Project& p = *mkProj();
   Instrument& k = p.instruments[5];
@@ -230,6 +243,7 @@ int main(int, char**) {
   RUN_TEST(test_path_none_free);
   RUN_TEST(test_path_no_fit);
   RUN_TEST(test_bake_lanes);
+  RUN_TEST(test_bake_lanes_sixteen);
   RUN_TEST(test_bake_lanes_shared_note);
   RUN_TEST(test_lane_to_sample);
   return UNITY_END();

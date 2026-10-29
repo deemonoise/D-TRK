@@ -87,7 +87,8 @@ constexpr int kInstrTypesUi = 8;
 // UI order of the types (FM, SYNTH, STRING, DRUM, SAMPLE, CHIP, LOFI, KIT): position k -> type, type -> position.
 InstrType instrTypeAt(int k);
 int instrTypePos(InstrType t);
-constexpr int kKitLanes = 8;
+constexpr int kKitLanes = 16;
+constexpr int kKitLanesLo = 8;  // lanes 1-8: Step::vel; lanes 9-16: Step::lanesHi
 constexpr uint8_t kNoInstr = 0xFF;
 
 // A KIT lane. instr == kNoInstr: a mini sampler on the project sample `sample` (empty / missing =
@@ -329,8 +330,13 @@ const char* lofiMacroName(uint8_t machine, int k);
 // things per type); SYNTH: its default macros; KIT: its default lanes; LOFI: BYTE with its default
 // macros, formula 0, sync off. A LFO target the type lacks (lfoDestValid) becomes PITCH.
 void instrSetType(Instrument& m, InstrType t);
-// KIT: every lane a silent sampler (no sample, no instrument), notes 60..67.
+// KIT: every lane a silent sampler (no sample, no instrument), notes 60..75.
 void kitSetDefaults(Instrument& m);
+// KIT lane note n, or the next one in direction dir that no other lane holds (lane notes are unique);
+// the lane's own note if there is none in 0..127.
+uint8_t kitFreeNote(const Instrument& k, int lane, int n, int dir = 1);
+// Lanes of a KIT that sound (bit l: lane l has an instrument or a sample name).
+uint16_t kitLanesUsed(const Instrument& k);
 // LFO target valid for the type (DEC..CON: FM / DRUM / SYNTH / STRING / LOFI; DUTY: CHIP; SUB, NOISE, SEMI2: SYNTH).
 bool lfoDestValid(uint8_t dest, InstrType t);
 // LFO target d steps from dest over the targets valid for t, in the display order (PAN after RVB;
@@ -357,11 +363,13 @@ float folStepMs();  // 32 samples at kSynthRate: 1 ms at 32 kHz, 0.726 ms at 44.
 // DLY locks the delay send (lock bit kLockDly), INT tracks only (see fxSynthOnly).
 // OFF: note off val ticks after the step start, MIDI and INT (on INT it releases every voice of the
 // track, samples too, see expandStep / Sequencer::pushOff).
-// ACC: drum tracks, lane mask: lanes in it play at the step velocity, the others at 60 % (fxDrumOnly).
+// ACC: drum tracks, mask of KIT lanes 1-8: lanes in it play at the step velocity, the others at 60 %
+// (fxDrumOnly). AC2: the same for lanes 9-16 (bit 0 = lane 9). Each governs only its half; a step
+// without one plays that half at the step velocity.
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
-  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, SAT, Count
+  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, SAT, AC2, Count
 };
 // LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
@@ -416,19 +424,22 @@ constexpr int kFxSlots = 6;
 // Drum tracks (the track's instrument is a KIT, see Project::trackIsDrum), same layout:
 //   note: kNoteEmpty = empty, kNoteOff = note off (releases every lane), else 0..127 = the step's
 //         velocity for all its lanes (0 = the track's defVel); hasNote() still means note < 128.
-//   vel:  8-bit lane mask, bit k = lane k + 1 hits. A note step with mask 0 plays nothing (its fx
-//         still run). Melodic tracks' steps never carry bit 7 in vel.
+//   vel:  mask of lanes 1-8, bit k = lane k + 1 hits; lanesHi: lanes 9-16 (bit k = lane 9 + k). Read
+//         and write them through laneMask() / setLaneMask() / laneOn() / setLane(). A note step with
+//         mask 0 plays nothing (its fx still run). Melodic tracks' steps never carry bit 7 in vel and
+//         always have lanesHi 0.
 struct Step {
   uint8_t note = kNoteEmpty;
   uint8_t vel = kVelDefault;
   FxSlot fx[kFxSlots];
+  uint8_t lanesHi = 0;  // drum tracks: mask of lanes 9-16; melodic: always 0
 
   bool hasFx() const {
     for (const FxSlot& f : fx)
       if (f.cmd != Fx::None) return true;
     return false;
   }
-  bool isEmpty() const { return note == kNoteEmpty && vel == kVelDefault && !hasFx(); }
+  bool isEmpty() const { return note == kNoteEmpty && vel == kVelDefault && lanesHi == 0 && !hasFx(); }
   bool hasNote() const { return note < 128; }
   // The first slot with f.
   const FxSlot* find(Fx f) const {
@@ -437,8 +448,29 @@ struct Step {
     return nullptr;
   }
 };
-// Files store a step as note, vel, then cmd / val per slot (older files: 2 slots, see readPatn).
-static_assert(sizeof(Step) == 2 + 2 * kFxSlots, "Step layout (file format)");
+// Files store a step as note, vel, cmd / val per slot, then lanesHi (older files: 14 bytes without it,
+// 6 bytes with 2 slots; see readPatn).
+static_assert(sizeof(Step) == 3 + 2 * kFxSlots, "Step layout (file format)");
+
+// Drum-track lane mask (bit k = lane k + 1) over vel (lanes 1-8) and lanesHi (lanes 9-16).
+inline uint16_t laneMask(const Step& s) { return static_cast<uint16_t>(s.vel | (s.lanesHi << kKitLanesLo)); }
+inline void setLaneMask(Step& s, uint16_t m) {
+  s.vel = static_cast<uint8_t>(m);
+  s.lanesHi = static_cast<uint8_t>(m >> kKitLanesLo);
+}
+inline bool laneOn(const Step& s, int l) { return l >= 0 && l < kKitLanes && ((laneMask(s) >> l) & 1); }
+// Out of range lane: no-op.
+inline void setLane(Step& s, int l, bool on) {
+  if (l < 0 || l >= kKitLanes) return;
+  const uint16_t b = static_cast<uint16_t>(1u << l);
+  setLaneMask(s, on ? (laneMask(s) | b) : (laneMask(s) & ~b));
+}
+// No note: note kNoteEmpty, vel kVelDefault, no lanes; fx kept.
+inline void clearNote(Step& s) {
+  s.note = kNoteEmpty;
+  s.vel = kVelDefault;
+  s.lanesHi = 0;
+}
 
 enum class Resolution : uint8_t {
   Quarter, Eighth, Sixteenth, ThirtySecond, EighthTriplet, SixteenthTriplet, Count
@@ -712,6 +744,33 @@ struct VarCfg {
   uint8_t rhythm = 0;   // MARKOV: 1 = REST is a token (the rhythm changes too)
 };
 
+// A controller knob (MIDI learn, BLE MIDI): CC cc on channel ch turns the row `label` of page
+// `page` of screen `screen` for track `track`, whatever track is current. screen 0 = unused slot.
+// rel: 0 absolute 0..127 (the change since the last value is the delta), 1 relative two's
+// complement (1..63 up, 65..127 down, 0 and 64 no move), 2 relative offset 64 (65 = +1, 63 = -1,
+// 64 no move). Any other rel counts as absolute. Saved in KNOB.
+constexpr int kKnobBinds = 16;
+constexpr int kKnobLabel = 16;
+struct KnobBind {
+  uint8_t ch = 0, cc = 0, track = 0, screen = 0, page = 0, rel = 0;
+  char label[kKnobLabel] = {0};
+};
+enum KnobScreen : uint8_t { kKnobNone, kKnobInst, kKnobTrack, kKnobProj };  // KnobBind::screen
+inline const char* knobScreenName(uint8_t screen) {  // "INST", "TRACK", "PROJ"; "" unused, "?" bad
+  static const char* const kNames[] = {"", "INST", "TRACK", "PROJ"};
+  return screen <= kKnobProj ? kNames[screen] : "?";
+}
+// A bind's row label for the UI: no leading blanks, upper case, at most the stored length.
+inline void knobLabel(const char* label, char* out, int n) {
+  while (*label == ' ') ++label;
+  int i = 0;
+  for (; i < n - 1 && i < kKnobLabel - 1 && label[i]; ++i) {
+    const char c = label[i];
+    out[i] = c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+  }
+  out[i] = 0;
+}
+
 struct Project : SynthModel {
   char name[17] = {0};
   Pattern patterns[kPatterns];
@@ -743,6 +802,7 @@ struct Project : SynthModel {
   // XY pad (PERF, A + B): the effect on its X and Y axis (PerfFx; None = that axis does nothing).
   // Saved in PXY. Follows perfDepth (PROJ's Shift+click cancel restores the PERF page as one block).
   uint8_t perfXy[2] = {kPerfXyDefault[0], kPerfXyDefault[1]};
+  KnobBind knobs[kKnobBinds];  // controller knobs (BLE MIDI learn); reset(): all unused
   GenCfg gen[kTracks];  // reset(): all OFF, seed = track + 1. Saved in TGEN.
   EvoCfg evo[kTracks];  // reset(): amount 0; plays only in MUT mode EVO (var[t]). Saved in TEVO.
   VarCfg var[kTracks];  // MUT: reset(): all off. Saved in TVAR.

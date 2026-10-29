@@ -3234,6 +3234,185 @@ void test_song_trn_dropped_note_ends_tie() {
   TEST_ASSERT_EQUAL(1, sink->times(0xB0).size());  // the CC
 }
 
+// --- liveNote: a controller pad plays a note now, held until its off ---
+
+void test_live_note_int_track_on_and_off() {
+  p->tracks[3].out = TrackOut::Int;
+  p->tracks[3].channel = 9;  // ignored on INT: the nibble is the track
+  seq->liveNote(1000, 3, 60, 100, *sink);
+  TEST_ASSERT_EQUAL(1, sink->syn.size());
+  TEST_ASSERT_EQUAL(3, sink->syn[0].track);
+  TEST_ASSERT_EQUAL(1000, sink->syn[0].t);
+  TEST_ASSERT_EQUAL_HEX8(0x93, sink->syn[0].b[0]);
+  TEST_ASSERT_EQUAL(60, sink->syn[0].b[1]);
+  TEST_ASSERT_EQUAL(100, sink->syn[0].b[2]);
+  seq->liveNote(2000, 3, 60, 0, *sink);
+  TEST_ASSERT_EQUAL(2, sink->syn.size());
+  TEST_ASSERT_EQUAL_HEX8(0x83, sink->syn[1].b[0]);
+  TEST_ASSERT_EQUAL(60, sink->syn[1].b[1]);
+  TEST_ASSERT_EQUAL(0, sink->syn[1].b[2]);
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+}
+
+void test_live_note_midi_track_uses_its_channel() {
+  p->tracks[2].channel = 4;
+  seq->liveNote(0, 2, 64, 90, *sink);
+  seq->liveNote(10, 2, 64, 0, *sink);
+  TEST_ASSERT_EQUAL(2, sink->log.size());
+  TEST_ASSERT_EQUAL_HEX8(0x94, sink->log[0].b[0]);
+  TEST_ASSERT_EQUAL(64, sink->log[0].b[1]);
+  TEST_ASSERT_EQUAL(90, sink->log[0].b[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x84, sink->log[1].b[0]);
+  TEST_ASSERT_EQUAL(64, sink->log[1].b[1]);
+  TEST_ASSERT_EQUAL(0, sink->syn.size());
+}
+
+void test_live_note_velocity_clamped_to_127() {
+  seq->liveNote(0, 2, 64, 200, *sink);
+  TEST_ASSERT_EQUAL(1, sink->log.size());
+  TEST_ASSERT_EQUAL(127, sink->log[0].b[2]);
+}
+
+void test_live_note_off_without_on_sends_nothing() {
+  seq->liveNote(0, 1, 60, 0, *sink);
+  p->tracks[2].out = TrackOut::Int;
+  seq->liveNote(0, 2, 60, 0, *sink);
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+  TEST_ASSERT_EQUAL(0, sink->syn.size());
+}
+
+void test_live_all_off_ends_every_held_note() {
+  seq->liveNote(0, 0, 60, 100, *sink);
+  seq->liveNote(0, 1, 62, 100, *sink);
+  seq->liveNote(0, 1, 63, 100, *sink);
+  seq->liveNote(5, 1, 63, 0, *sink);  // already let go
+  sink->log.clear();
+  seq->liveAllOff(10, *sink);
+  TEST_ASSERT_EQUAL(2, sink->log.size());
+  TEST_ASSERT_EQUAL_HEX8(0x80, sink->log[0].b[0] & 0xF0);
+  TEST_ASSERT_EQUAL_HEX8(0x80, sink->log[1].b[0] & 0xF0);
+  const int a = sink->log[0].b[1], b = sink->log[1].b[1];
+  TEST_ASSERT_TRUE((a == 60 && b == 62) || (a == 62 && b == 60));
+  sink->log.clear();
+  seq->liveAllOff(20, *sink);
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+}
+
+void test_live_note_plays_while_stopped() {
+  TEST_ASSERT_FALSE(seq->playing());
+  seq->liveNote(0, 0, 48, 127, *sink);
+  TEST_ASSERT_EQUAL(1, sink->log.size());
+  TEST_ASSERT_EQUAL_HEX8(0x90, sink->log[0].b[0]);
+  TEST_ASSERT_FALSE(seq->playing());
+}
+
+void test_live_note_same_note_twice_lets_first_go() {
+  seq->liveNote(0, 0, 60, 100, *sink);
+  seq->liveNote(5, 0, 60, 80, *sink);
+  TEST_ASSERT_EQUAL(3, sink->log.size());
+  TEST_ASSERT_EQUAL_HEX8(0x80, sink->log[1].b[0]);
+  TEST_ASSERT_EQUAL(60, sink->log[1].b[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x90, sink->log[2].b[0]);
+  TEST_ASSERT_EQUAL(80, sink->log[2].b[2]);
+  seq->liveNote(10, 0, 60, 0, *sink);  // the second one ends
+  TEST_ASSERT_EQUAL(4, sink->log.size());
+  TEST_ASSERT_EQUAL_HEX8(0x80, sink->log[3].b[0]);
+  seq->liveAllOff(20, *sink);
+  TEST_ASSERT_EQUAL(4, sink->log.size());
+}
+
+void test_live_note_table_full_lets_oldest_go() {
+  for (int i = 0; i < Sequencer::kLiveHeld; ++i) seq->liveNote(i, 0, static_cast<uint8_t>(40 + i), 100, *sink);
+  TEST_ASSERT_EQUAL(Sequencer::kLiveHeld, sink->log.size());
+  seq->liveNote(100, 0, 90, 100, *sink);
+  TEST_ASSERT_EQUAL(Sequencer::kLiveHeld + 2, sink->log.size());
+  TEST_ASSERT_EQUAL_HEX8(0x80, sink->log[Sequencer::kLiveHeld].b[0]);
+  TEST_ASSERT_EQUAL(40, sink->log[Sequencer::kLiveHeld].b[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x90, sink->log[Sequencer::kLiveHeld + 1].b[0]);
+  TEST_ASSERT_EQUAL(90, sink->log[Sequencer::kLiveHeld + 1].b[1]);
+  sink->log.clear();
+  seq->liveNote(200, 0, 40, 0, *sink);  // the oldest is no longer held
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+}
+
+void test_live_note_out_of_range_ignored() {
+  seq->liveNote(0, -1, 60, 100, *sink);
+  seq->liveNote(0, kTracks, 60, 100, *sink);
+  seq->liveNote(0, 0, 128, 100, *sink);
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+  TEST_ASSERT_EQUAL(0, sink->syn.size());
+}
+
+void test_live_note_dropped_on_track_out_change() {
+  seq->liveNote(0, 1, 60, 100, *sink);
+  p->tracks[1].out = TrackOut::Int;
+  seq->trackOutChanged(10, 1, *sink);
+  sink->log.clear();
+  sink->syn.clear();
+  seq->liveNote(20, 1, 60, 0, *sink);
+  seq->liveAllOff(30, *sink);
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+  TEST_ASSERT_EQUAL(0, sink->syn.size());
+}
+
+void test_live_note_dropped_on_stop_silence() {
+  seq->start(0, *sink);
+  seq->liveNote(0, 0, 60, 100, *sink);
+  seq->stop(10, *sink);  // playing: silence() ends every note
+  sink->log.clear();
+  seq->liveAllOff(20, *sink);
+  TEST_ASSERT_EQUAL(0, sink->log.size());
+}
+
+// MIDI panic (a new BLE OUT link): All Notes Off once per channel a MIDI track uses; INT tracks none.
+void test_midi_panic_each_midi_channel_once() {
+  for (TrackCfg& c : p->tracks) c.out = TrackOut::Int;
+  p->tracks[0].out = TrackOut::Midi;
+  p->tracks[0].channel = 0;  // CH 1
+  p->tracks[3].out = TrackOut::Midi;
+  p->tracks[3].channel = 4;  // CH 5
+  p->tracks[1].channel = 7;  // INT: ignored
+  seq->midiPanic(0, *sink);
+  TEST_ASSERT_EQUAL(2, sink->log.size());
+  TEST_ASSERT_EQUAL(0, sink->syn.size());
+  const uint8_t a[3] = {0xB0, 0x7B, 0x00}, b[3] = {0xB4, 0x7B, 0x00};
+  TEST_ASSERT_EQUAL(3, sink->log[0].len);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(a, sink->log[0].b, 3);
+  TEST_ASSERT_EQUAL(3, sink->log[1].len);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(b, sink->log[1].b, 3);
+}
+
+void test_midi_panic_shared_channel_sent_once() {
+  for (TrackCfg& c : p->tracks) c.out = TrackOut::Int;
+  p->tracks[2].out = TrackOut::Midi;
+  p->tracks[2].channel = 9;
+  p->tracks[6].out = TrackOut::Midi;
+  p->tracks[6].channel = 9;
+  seq->midiPanic(0, *sink);
+  TEST_ASSERT_EQUAL(1, sink->log.size());
+  const uint8_t a[3] = {0xB9, 0x7B, 0x00};
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(a, sink->log[0].b, 3);
+}
+
+// A pattern note retaking the live note's voice owns it: the live off sends nothing, the pattern's
+// own off still ends it.
+void test_live_note_voice_retaken_by_pattern_note() {
+  p->patterns[0].steps[0][0].note = 60;
+  seq->liveNote(0, 0, 60, 100, *sink);
+  seq->start(0, *sink);
+  run(0, 1000);
+  // live on, then the pattern's on retakes the voice: its off first
+  TEST_ASSERT_EQUAL(1, sink->times(0x80, 60).size());
+  TEST_ASSERT_EQUAL(2, sink->times(0x90, 60).size());
+  sink->now = 2000;
+  seq->liveNote(2000, 0, 60, 0, *sink);
+  TEST_ASSERT_EQUAL(1, sink->times(0x80, 60).size());  // the live off: nothing
+  run(2000, 100000);
+  auto off = sink->times(0x80, 60);
+  TEST_ASSERT_EQUAL(2, off.size());
+  TEST_ASSERT_EQUAL(62500, off[1]);  // the pattern note's own off
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_start_sends_start_then_clock);
@@ -3422,5 +3601,19 @@ int main() {
   RUN_TEST(test_song_slot_bpm_one_step_passes_clocks_exact);
   RUN_TEST(test_set_bpm_keeps_swung_step_grid);
   RUN_TEST(test_song_trn_dropped_note_ends_tie);
+  RUN_TEST(test_live_note_int_track_on_and_off);
+  RUN_TEST(test_live_note_midi_track_uses_its_channel);
+  RUN_TEST(test_live_note_velocity_clamped_to_127);
+  RUN_TEST(test_live_note_off_without_on_sends_nothing);
+  RUN_TEST(test_live_all_off_ends_every_held_note);
+  RUN_TEST(test_live_note_plays_while_stopped);
+  RUN_TEST(test_live_note_same_note_twice_lets_first_go);
+  RUN_TEST(test_live_note_table_full_lets_oldest_go);
+  RUN_TEST(test_live_note_out_of_range_ignored);
+  RUN_TEST(test_live_note_dropped_on_track_out_change);
+  RUN_TEST(test_live_note_dropped_on_stop_silence);
+  RUN_TEST(test_live_note_voice_retaken_by_pattern_note);
+  RUN_TEST(test_midi_panic_each_midi_channel_once);
+  RUN_TEST(test_midi_panic_shared_channel_sent_once);
   return UNITY_END();
 }

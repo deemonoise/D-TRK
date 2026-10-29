@@ -3108,21 +3108,50 @@ void test_kit_in_kit_lane_silent() {
   TEST_ASSERT_EQUAL(-1, onlyVoice());
 }
 
-void test_kit_eight_lanes_sound_and_rehit_chokes() {
+// Lane 16 (note 75 by default) plays its own lane.
+void test_kit_lane_sixteen_plays() {
+  kitSetup(0, 0);
+  noteOn(0, 0, 75, 100);
+  render1(buf);
+  const int v = onlyVoice();
+  TEST_ASSERT_TRUE(v >= 0);
+  TEST_ASSERT_TRUE(s->voice(v).lane);
+  TEST_ASSERT_EQUAL(15, s->voice(v).laneIdx);
+  TEST_ASSERT_EQUAL(75, s->voice(v).note);
+}
+
+// All 16 lanes sound at once on one KIT track (poly kKitLanes), within the voice pool.
+void test_kit_sixteen_lanes_poly() {
   kitSetup(0, 0);
   for (int l = 0; l < kKitLanes; ++l) noteOn(0, 0, static_cast<uint8_t>(60 + l), 100);
   render1(buf);
-  TEST_ASSERT_EQUAL(8, trackVoices(0));
-  int lane0 = -1;
+  const int want = kKitLanes < kVoices ? kKitLanes : kVoices;
+  TEST_ASSERT_EQUAL(want, trackVoices(0));
+  bool seen[kKitLanes] = {};
   for (int v = 0; v < kVoices; ++v)
-    if (s->voice(v).on && s->voice(v).note == 60) lane0 = v;
-  noteOn(0, 0, 60, 100);
+    if (s->voice(v).on && s->voice(v).track == 0) {
+      TEST_ASSERT_TRUE(s->voice(v).laneIdx < kKitLanes);
+      seen[s->voice(v).laneIdx] = true;
+    }
+  for (int l = 0; l < want; ++l) TEST_ASSERT_TRUE(seen[l]);
+}
+
+// A lane re-hit chokes itself: its own voice restarts, the other lanes keep sounding.
+void test_kit_lane_chokes_itself() {
+  kitSetup(0, 0);
+  for (int l = 0; l < kKitLanes; ++l) noteOn(0, 0, static_cast<uint8_t>(60 + l), 100);
   render1(buf);
-  TEST_ASSERT_EQUAL(8, trackVoices(0));
-  int again = -1;
+  int first = -1;
   for (int v = 0; v < kVoices; ++v)
-    if (s->voice(v).on && s->voice(v).note == 60) again = v;
-  TEST_ASSERT_EQUAL(lane0, again);  // the lane's own voice, restarted
+    if (s->voice(v).on && s->voice(v).note == 70) first = v;
+  noteOn(0, 0, 70, 100);
+  render1(buf);
+  int n = 0, again = -1;
+  for (int v = 0; v < kVoices; ++v)
+    if (s->voice(v).on && s->voice(v).note == 70) { ++n; again = v; }
+  TEST_ASSERT_EQUAL(1, n);
+  TEST_ASSERT_EQUAL(first, again);
+  TEST_ASSERT_EQUAL(kKitLanes, trackVoices(0));
 }
 
 void test_kit_unknown_note_silent() {
@@ -6066,7 +6095,9 @@ int main() {
   RUN_TEST(test_kit_inst_lane_plays_instrument);
   RUN_TEST(test_kit_lane_voice_cost);
   RUN_TEST(test_kit_in_kit_lane_silent);
-  RUN_TEST(test_kit_eight_lanes_sound_and_rehit_chokes);
+  RUN_TEST(test_kit_lane_sixteen_plays);
+  RUN_TEST(test_kit_sixteen_lanes_poly);
+  RUN_TEST(test_kit_lane_chokes_itself);
   RUN_TEST(test_kit_unknown_note_silent);
   RUN_TEST(test_drive_zero_is_bit_identical);
   RUN_TEST(test_drive_changes_waveform);

@@ -583,6 +583,38 @@ void test_scopes() {
   TEST_ASSERT_TRUE(noteCount(p.patterns[0], 0) > 0);
 }
 
+// A kit whose drums sit on lanes 9-16 (lanes 1-8 empty): the same roll, lane masks shifted into
+// lanesHi (hits, BREAK's kick removal, single-lane RAT / PRB checks).
+void test_kit_on_lanes_hi() {
+  static Pattern lo[kDicePats];
+  p.reset();
+  kitOnDrums(p, 0);
+  diceRoll(p, opts(0, 0, 60, kDicePattern), 0, 3, snap);
+  for (int i = 0; i < kDicePats; ++i) lo[i] = p.patterns[i];
+  p.reset();
+  kitOnDrums(p, 0);
+  Instrument& kit = p.instruments[p.tracks[0].instr];
+  for (int l = 0; l < kKitLanesLo; ++l) {
+    kit.kit[l + kKitLanesLo].instr = kit.kit[l].instr;
+    kit.kit[l].instr = kNoInstr;
+  }
+  diceRoll(p, opts(0, 0, 60, kDicePattern), 0, 3, snap);
+  int hits = 0;
+  for (int i = 0; i < kDicePats; ++i)
+    for (int k = 0; k < kMaxSteps; ++k) {
+      const Step& a = lo[i].steps[0][k];
+      const Step& b = p.patterns[i].steps[0][k];
+      TEST_ASSERT_EQUAL(a.note, b.note);
+      TEST_ASSERT_EQUAL_HEX16(static_cast<uint16_t>(laneMask(a) << 8), laneMask(b));
+      TEST_ASSERT_EQUAL_MEMORY(a.fx, b.fx, sizeof(a.fx));
+      if (b.hasNote()) {
+        TEST_ASSERT_EQUAL_HEX8(0, b.vel);
+        ++hits;
+      }
+    }
+  TEST_ASSERT_TRUE(hits > 0);
+}
+
 void test_draft_then_apply() {
   p.reset();
   memcpy(&before, &p, sizeof(Project));
@@ -616,7 +648,7 @@ void test_slots() {
   memcpy(&before, &p, sizeof(Project));
   diceRoll(p, opts(0, 0, 0, kDiceSounds), 0, 5, snap);
   TEST_ASSERT_EQUAL_MEMORY(&before.tracks[0], &p.tracks[0], sizeof(TrackCfg));
-  TEST_ASSERT_EQUAL_MEMORY(&before.instruments[24], &p.instruments[24], sizeof(Instrument) * kKitLanes);
+  TEST_ASSERT_EQUAL_MEMORY(&before.instruments[24], &p.instruments[24], sizeof(Instrument) * kKitBlock);
   p.reset();
   p.tracks[9].instr = 1;  // track 10 shares BASS' instrument: BASS moves to a free slot
   diceSlots(p, s);
@@ -788,6 +820,7 @@ int main() {
   RUN_TEST(test_undo_bit_exact);
   RUN_TEST(test_song_write);
   RUN_TEST(test_scopes);
+  RUN_TEST(test_kit_on_lanes_hi);
   RUN_TEST(test_draft_then_apply);
   RUN_TEST(test_undo_keeps_project_bpm);
   RUN_TEST(test_slots);

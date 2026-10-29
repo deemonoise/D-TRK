@@ -199,6 +199,30 @@ void test_step_drum_ghost_and_vol() {
   TEST_ASSERT_EQUAL(0x05, v.vel);
 }
 
+// Lanes 9-16: a ghost copies the neighbour's whole mask, a drop clears lanesHi too.
+void test_step_drum_lanes_hi() {
+  Pattern& pt = proj.patterns[0];
+  pt.length = 4;
+  for (int i = 0; i < 4; ++i) pt.steps[0][i] = Step{};
+  pt.steps[0][0].note = 0;
+  setLaneMask(pt.steps[0][0], 0x0100);  // lane 9
+  static EvoTrack s;
+  evoReset(s);
+  EvoApply a = melodic();
+  a.drum = true;
+  a.noteOk = false;
+  Step tmp;
+  s.step[1].flags = kEvoGhost;
+  const Step& g = evoStep(pt, 0, 1, s, a, tmp);
+  TEST_ASSERT_EQUAL(40, g.note);
+  TEST_ASSERT_EQUAL_HEX16(0x0100, laneMask(g));
+  s.step[0].flags = kEvoDrop;
+  const Step& d = evoStep(pt, 0, 0, s, a, tmp);
+  TEST_ASSERT_EQUAL(kNoteEmpty, d.note);
+  TEST_ASSERT_EQUAL_HEX8(0, d.lanesHi);
+  TEST_ASSERT_TRUE(d.isEmpty());
+}
+
 void test_step_degrees_vol_rtrg() {
   Pattern& pt = proj.patterns[0];
   pt.length = 4;
@@ -478,6 +502,7 @@ int main() {
   RUN_TEST(test_step_idle_is_the_pattern_step);
   RUN_TEST(test_step_drop_and_ghost);
   RUN_TEST(test_step_drum_ghost_and_vol);
+  RUN_TEST(test_step_drum_lanes_hi);
   RUN_TEST(test_step_degrees_vol_rtrg);
   RUN_TEST(test_step_shift_reads_the_source);
   RUN_TEST(test_apply_of_track_kinds);

@@ -281,6 +281,22 @@ void ProjScreen::showPage(int page, bool bar) {
   else list_.setSel(0);
 }
 
+bool ProjScreen::knobRow(int& page, const char*& label) {
+  if (diceDlg_.isOpen()) return false;
+  if (page_ == kPgSong && list_.sel() == kTuning - kPageFirst[kPgSong]) return false;  // a pick applied by draw()
+  const Param* r = list_.knobRow(mt::kKnobLabel - 1);
+  if (!r) return false;
+  page = page_;
+  label = r->label;
+  return true;
+}
+
+bool ProjScreen::knobTurn(int, int page, const char* label, int delta, char* val, int n) {
+  if (page < 0 || page >= kPages) return false;
+  return turnRow(params_ + kPageFirst[page], kPageFirst[page + 1] - kPageFirst[page], label, mt::kKnobLabel - 1,
+                 delta, val, n);
+}
+
 const mt::Project& ProjScreen::P() { return app_.project(); }
 
 mt::Pattern& ProjScreen::pat() { return app_.project().patterns[app_.editPattern()]; }

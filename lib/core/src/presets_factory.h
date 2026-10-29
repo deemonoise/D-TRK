@@ -9,7 +9,7 @@
 //   (KIT: kitSetDefaults and the lane vols too). Helpers (presets_factory_fill.h, namespace pf):
 //   fm dr mac sy st bb tl apc lp hp bp env lfo1 lfoN fx, W F D LW Wt for the enum fields.
 //   KIT rows: KIT(category, name, drums) with a FactoryDrum[] {type, preset name, lane level}, lanes
-//   kick, snare, closed hat, open hat, clap, extras (<= kKitLanes); the lane level becomes the drum's vol.
+//   kick, snare, closed hat, open hat, clap, extras (<= kKitBlock); the lane level becomes the drum's vol.
 // - name: 1..8 chars (Instrument::name is char[9]), unique within its type, upper case like the rest.
 //   Names are the key: DICE recipes (dice_recipes.cpp), demos.cpp, templates.cpp and the KIT tables
 //   find presets by type + name, so never rename or remove one; the index is only the browser's.
@@ -41,7 +41,7 @@ struct FactoryPreset {
   const char* name;             // <= 8 chars, also the instrument name
   void (*fill)(Instrument& m);  // on top of Instrument{} with type and name set
   const FactoryDrum* drums = nullptr;  // KIT: lane k plays drums[k]
-  uint8_t drumCount = 0;               // <= kKitLanes
+  uint8_t drumCount = 0;               // <= kKitBlock
 };
 
 int factoryCount(InstrType t);
@@ -51,7 +51,10 @@ const FactoryPreset& factoryPreset(InstrType t, int i);  // 0 <= i < factoryCoun
 // KIT: the lanes' notes (60 + k) and volumes; no instruments (see factoryBuildKit).
 void factoryBuild(InstrType t, int i, Instrument& out);
 
-// First of the kKitLanes instrument slots a factory KIT in `kitSlot` fills: INS25..32, INS17..24 when
+// Instrument slots a factory KIT (and DICE) fills with its drums: 8, so lanes 9-16 of a factory KIT
+// stay empty (a 16-slot block would take INS17..32).
+constexpr int kKitBlock = 8;
+// First of the kKitBlock instrument slots a factory KIT in `kitSlot` fills: INS25..32, INS17..24 when
 // the kit itself is in INS25..32.
 int factoryKitBlock(int kitSlot);
 // KIT preset i into p.instruments[kitSlot], its drums into the block from factoryKitBlock (lane k ->

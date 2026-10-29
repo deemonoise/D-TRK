@@ -8,6 +8,7 @@
 #include "esp_memory_utils.h"
 #include "audio/audio.h"
 #include "esp_random.h"
+#include "hw/ble_midi.h"
 #include "hw/midi_uart.h"
 #include "record.h"
 #include "sequencer.h"
@@ -15,11 +16,15 @@
 namespace engine {
 namespace {
 
-// MIDI tracks go to the UART, INT tracks to the synth queue (stamped with their scheduled time:
-// the synth plays them there, whatever the jitter of the engine wakeup).
+// MIDI tracks go to the UART and to the BLE OUT device when one is up (one atomic load otherwise),
+// INT tracks to the synth queue (stamped with their scheduled time: the synth plays them there,
+// whatever the jitter of the engine wakeup).
 struct Router : mt::MidiSink {
   hw::MidiUart uart;
-  void send(const uint8_t* b, uint8_t len) override { uart.send(b, len); }
+  void send(const uint8_t* b, uint8_t len) override {
+    uart.send(b, len);
+    if (hw::ble::outReady()) hw::ble::send(nowUs(), b, len);
+  }
   void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) override { audio::post(t, track, b, len); }
 };
 
@@ -71,6 +76,9 @@ void handle(const Command& c) {
     case Cmd::GenEdit: seq->genEdited(now, midi); break;
     case Cmd::GenReseed: seq->genReseed(now, midi, c.arg); break;
     case Cmd::MutEdit: seq->mutEdited(now, midi); break;
+    case Cmd::LiveNote: seq->liveNote(now, c.arg >> 8, c.arg & 0xFF, c.arg2, midi); break;
+    case Cmd::LiveAllOff: seq->liveAllOff(now, midi); break;
+    case Cmd::MidiPanic: seq->midiPanic(now, midi); break;
   }
 }
 
@@ -152,15 +160,15 @@ void begin(mt::Project* p) {
   xTaskCreatePinnedToCore(run, "engine", 6144, nullptr, configMAX_PRIORITIES - 2, &task, 0);
 }
 
-bool post(Cmd c, uint16_t arg) {
-  const Command cmd{c, arg};
+bool post(Cmd c, uint16_t arg, uint8_t arg2) {
+  const Command cmd{c, arg2, arg};
   const bool ok = xQueueSend(cmds, &cmd, 0) == pdTRUE;
   xTaskNotifyGive(task);
   return ok;
 }
 
-bool postWait(Cmd c, uint16_t arg) {
-  const Command cmd{c, arg};
+bool postWait(Cmd c, uint16_t arg, uint8_t arg2) {
+  const Command cmd{c, arg2, arg};
   xTaskNotifyGive(task);  // a full queue drains while we wait
   const bool ok = xQueueSend(cmds, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
   xTaskNotifyGive(task);

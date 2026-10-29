@@ -100,11 +100,11 @@ void slotsOf(const TrackCfg* role, const TrackCfg* all, const Instrument* instru
   const int kit = role[0].instr % kInstruments;
   const int block = factoryKitBlock(kit);
   bool free = !used[kit];
-  for (int l = 0; l < kKitLanes; ++l) free &= !used[block + l];
+  for (int l = 0; l < kKitBlock; ++l) free &= !used[block + l];
   if (free) {
     out[0] = static_cast<uint8_t>(kit);
     used[kit] = true;
-    for (int l = 0; l < kKitLanes; ++l) used[block + l] = true;
+    for (int l = 0; l < kKitBlock; ++l) used[block + l] = true;
   } else {
     out[0] = kNoInstr;
     markPlayed(all, instruments, role[0], used);  // the kit stays, so do its lanes
@@ -143,8 +143,18 @@ uint8_t feelVel(const DiceFeel& f, char c, int i) { return c == 'X' ? f.accent :
 
 // Lane hit at step i: the step's velocity is its loudest hit's.
 void drumHit(Step& st, int lane, uint8_t v) {
-  if (!st.hasNote() || effVel(v) > effVel(st.note)) st.note = v;
-  st.vel = static_cast<uint8_t>(st.vel | (1u << lane));
+  if (!st.hasNote()) {
+    st.note = v;
+    setLaneMask(st, 0);
+  } else if (effVel(v) > effVel(st.note)) {
+    st.note = v;
+  }
+  setLane(st, lane, true);
+}
+// Exactly one lane hits.
+bool oneLane(const Step& st) {
+  const uint16_t m = laneMask(st);
+  return st.hasNote() && m && !(m & (m - 1));
 }
 
 void clearSteps(Step* tr) {
@@ -352,18 +362,16 @@ void writeFill(Ctx& c, Step* tr, const int8_t lane[kDiceLanes], int fill, int fr
       if (ch >= '2' && ch <= '4') rat[i] = static_cast<uint8_t>(ch - '0');
     }
   }
-  for (int i = 0; i < n; ++i) {
-    const uint8_t m = tr[from + i].vel;
-    if (rat[i] && tr[from + i].hasNote() && m && !(m & (m - 1))) putFx(tr[from + i], Fx::RAT, rat[i]);
-  }
+  for (int i = 0; i < n; ++i)
+    if (rat[i] && oneLane(tr[from + i])) putFx(tr[from + i], Fx::RAT, rat[i]);
 }
 
 // ---- Phrase variations ---------------------------------------------------------------------------
-bool hasLane(const Step& st, int l) { return l >= 0 && st.hasNote() && (st.vel & (1u << l)); }
+bool hasLane(const Step& st, int l) { return st.hasNote() && laneOn(st, l); }
 void dropLane(Step& st, int l) {
   if (!hasLane(st, l)) return;
-  st.vel = static_cast<uint8_t>(st.vel & ~(1u << l));
-  if (!st.vel) st = Step();
+  setLane(st, l, false);
+  if (!laneMask(st)) st = Step();
 }
 // Adds lane l at s[o] (b + o in the pattern); false: already there.
 bool addLane(const DiceFeel& f, Step* s, int b, int o, int l, uint8_t vel = 0) {
@@ -372,7 +380,7 @@ bool addLane(const DiceFeel& f, Step* s, int b, int o, int l, uint8_t vel = 0) {
   return true;
 }
 void solo(Step& st, int l, uint8_t rat) {
-  if (l >= 0 && st.hasNote() && st.vel == (1u << l)) putFx(st, Fx::RAT, rat);
+  if (hasLane(st, l) && oneLane(st)) putFx(st, Fx::RAT, rat);
 }
 
 // A' edit kind on unit s (u steps from b): 0 an extra kick, 1 a snare ghost, 2 the open hat on another
@@ -501,11 +509,11 @@ void writeDrums(Ctx& c, Step* tr, const int8_t lane[kDiceLanes]) {
     const int hat = lane[kDiceHat], sn = lane[kDiceSnare], kick = lane[kDiceKick];
     for (int i = 0; i < len; ++i) {
       Step& st = tr[i];
-      const uint8_t m = st.hasNote() ? st.vel : 0;
-      if (hat >= 0 && !(m & (1u << hat)) && (i & 1) && c.mr.below(100) < static_cast<uint32_t>(v / 5))
+      const uint16_t m = st.hasNote() ? laneMask(st) : 0;
+      if (hat >= 0 && !hasLane(st, hat) && (i & 1) && c.mr.below(100) < static_cast<uint32_t>(v / 5))
         drumHit(st, hat, f.ghost);
       if (sn >= 0 && !m && c.mr.below(100) < static_cast<uint32_t>(v / 10)) drumHit(st, sn, f.ghost);
-      if (hat >= 0 && st.hasNote() && st.vel == (1u << hat) && c.mr.below(100) < static_cast<uint32_t>(v / 4))
+      if (hasLane(st, hat) && oneLane(st) && c.mr.below(100) < static_cast<uint32_t>(v / 4))
         putFx(st, Fx::PRB, static_cast<uint8_t>(50 + c.mr.below(41)));
       (void)kick;
       // Velocity spread grows with Variety: up to +-v/7 (+-14 at 100).
@@ -516,10 +524,8 @@ void writeDrums(Ctx& c, Step* tr, const int8_t lane[kDiceLanes]) {
       }
     }
   }
-  for (int i = 0; i < len; ++i) {
-    const uint8_t m = tr[i].vel;
-    if (rat[i] && tr[i].hasNote() && m && !(m & (m - 1))) putFx(tr[i], Fx::RAT, rat[i]);
-  }
+  for (int i = 0; i < len; ++i)
+    if (rat[i] && oneLane(tr[i])) putFx(tr[i], Fx::RAT, rat[i]);
   phraseDrums(c, tr, lane);
 }
 
@@ -896,8 +902,8 @@ void removeLane(Step* tr, int len, int lane) {
   for (int i = 0; i < len; ++i) {
     Step& st = tr[i];
     if (!st.hasNote()) continue;
-    st.vel = static_cast<uint8_t>(st.vel & ~(1u << lane));
-    if (!st.vel) st = Step();
+    setLane(st, lane, false);
+    if (!laneMask(st)) st = Step();
   }
 }
 

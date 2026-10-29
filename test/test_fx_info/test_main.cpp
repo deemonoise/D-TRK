@@ -326,6 +326,19 @@ void test_acc_lane_mask() {
   TEST_ASSERT_FALSE(fxSynthOnly(Fx::ACC));
 }
 
+// AC2: accent mask of KIT lanes 9-16, drum tracks only, next to ACC in the picker.
+void test_ac2_info() {
+  TEST_ASSERT_EQUAL_STRING("AC2", fxName(Fx::AC2));
+  TEST_ASSERT_EQUAL_STRING("ACCENT 9-16", fxLongName(Fx::AC2));
+  TEST_ASSERT_EQUAL(0xFF, fxDefault(Fx::AC2));
+  TEST_ASSERT_EQUAL_STRING(" 0F", fmt(Fx::AC2, 0x0F));
+  TEST_ASSERT_TRUE(fxDrumOnly(Fx::AC2));
+  TEST_ASSERT_FALSE(fxSynthOnly(Fx::AC2));
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::ACC, 1) == Fx::AC2);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::AC2, -1) == Fx::ACC);
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::AC2) + 1, static_cast<int>(Fx::Count));
+}
+
 void test_cnd_pre_nei() {
   TEST_ASSERT_EQUAL_STRING("PRE", fmt(Fx::CND, kCndPre));
   TEST_ASSERT_EQUAL_STRING("!PR", fmt(Fx::CND, kCndNotPre));
@@ -436,7 +449,7 @@ void test_flp_fx() {
 // SAT: the FM SAT lock, 0..127, INT tracks only; appended to the enum, after CON in the list.
 void test_sat_fx() {
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::FLP) + 1, static_cast<int>(Fx::SAT));
-  TEST_ASSERT_EQUAL(static_cast<int>(Fx::SAT) + 1, static_cast<int>(Fx::Count));
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::SAT) + 1, static_cast<int>(Fx::AC2));
   TEST_ASSERT_EQUAL_STRING("SAT", fxName(Fx::SAT));
   TEST_ASSERT_EQUAL_STRING("FM SATURATION", fxLongName(Fx::SAT));
   TEST_ASSERT_EQUAL(64, fxDefault(Fx::SAT));
@@ -472,6 +485,7 @@ int main() {
   RUN_TEST(test_slc_fx);
   RUN_TEST(test_dly_fx);
   RUN_TEST(test_acc_lane_mask);
+  RUN_TEST(test_ac2_info);
   RUN_TEST(test_cnd_order_has_fill);
   RUN_TEST(test_new_sound_fx);
   RUN_TEST(test_arm_format_and_step);

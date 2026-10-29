@@ -7,11 +7,11 @@ namespace mt {
 
 // VAR (VarCfg): every `every` pattern passes the track's state takes a new generation (varNext) and the
 // sequencer plays each track step through it (varStep); the pattern stays as it is. CA: cells are bits
-// per track step, 1 row on a melodic track, 8 rows (KIT lanes) on a drum track; generation 0 is the
+// per track step, 1 row on a melodic track, 16 rows (KIT lanes 1-16) on a drum track; generation 0 is the
 // pattern (steps with a note, KIT: lane bits). MARKOV: a new sequence from the pattern's own transitions.
 // Every random choice is varRand(run seed, track, generation n, step, kind): no shared generator. See
 // docs/plans/2026-10-23-generative-2-design.md.
-constexpr int kVarRows = 8;                  // CA rows: KIT lanes (melodic: row 0 only)
+constexpr int kVarRows = kKitLanes;          // CA rows: KIT lanes, always 16 (melodic: row 0 only)
 constexpr int kVarRowBytes = kMaxSteps / 8;  // bit i of a row = step i
 constexpr int kVarTokMax = 16;               // MARKOV: distinct tokens (+ REST)
 constexpr uint8_t kVarRest = 0xFF;           // MARKOV src: the step plays no note
@@ -54,9 +54,11 @@ void varCa2d(VarCells& c, int len, uint8_t rule2);
 // Generation 0 of track tr: melodic: row 0 = steps with a note; KIT: row k = lane k of note steps.
 void varGen0(const Pattern& pt, int tr, bool kit, VarCells& out);
 // One CA generation (n -> n + 1) from the state (generation 0 = gen0): the rule (KIT CA1D: each row on
-// its own), then with chance noise % one random cell flips. Back to generation 0 (sinceReset = 0) after
-// `reset` generations (0 = never), when all cells die or when nothing changed. c is clamped.
-void varCaNext(VarTrack& s, const VarCfg& c, const VarCells& gen0, int len, bool kit, uint32_t seed, int track);
+// its own), then with chance noise % one random cell flips: melodic row 0; KIT the rows of `lanes` (lanes in
+// use, kitLanesUsed) and of gen0's cells, none of them: rows 1-8. Back to generation 0 (sinceReset = 0)
+// after `reset` generations (0 = never), when all cells die or when nothing changed. c is clamped.
+void varCaNext(VarTrack& s, const VarCfg& c, const VarCells& gen0, int len, bool kit, uint32_t seed, int track,
+               uint16_t lanes = 0xFFFF);
 
 // The step output step idx of track tr plays from cells c: alive + a note: the step; alive + no note: a
 // copy of the nearest step with a note to the left (circular), whole; no note on the track: root % 12 +
@@ -72,7 +74,7 @@ const Step& varCellStep(const Pattern& pt, int tr, int idx, const VarCells& c, b
 struct VarSeq {
   uint8_t m = 0;     // sequence length
   uint8_t ntok = 0;  // distinct tokens (REST not counted)
-  uint8_t val[kVarTokMax] = {};    // token -> note / lane mask
+  uint16_t val[kVarTokMax] = {};   // token -> note / lane mask (16 lanes)
   uint8_t first[kVarTokMax] = {};  // token -> step
   uint8_t pos[kMaxSteps] = {};     // sequence -> step
   uint8_t tok[kMaxSteps] = {};     // sequence -> token (ntok = REST)
@@ -86,8 +88,9 @@ void varSeq(const Pattern& pt, int tr, bool kit, bool rhythm, VarSeq& q);
 void varMarkov(const Pattern& pt, int tr, const VarCfg& c, bool kit, uint32_t seed, uint32_t n, uint8_t* src);
 
 // One generation of track tr's state as c says (varCaNext from the pattern's generation 0, or a new
-// varMarkov with sinceReset = 1). A changed mode starts from generation 0. Off: nothing.
-void varNext(VarTrack& s, const VarCfg& c, const Pattern& pt, int tr, bool kit, uint32_t seed);
+// varMarkov with sinceReset = 1). A changed mode starts from generation 0. Off: nothing. lanes: see varCaNext.
+void varNext(VarTrack& s, const VarCfg& c, const Pattern& pt, int tr, bool kit, uint32_t seed,
+             uint16_t lanes = 0xFFFF);
 
 // How a track plays its state: the mode in effect (varModeOf), a drum track, MARKOV rhythm, scale root.
 struct VarApply {
