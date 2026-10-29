@@ -48,12 +48,10 @@ inline const uint16_t& kKeyBlack = gTheme.keyBlack;
 
 constexpr int kScreenW = 480;
 constexpr int kScreenH = 320;
-constexpr int kStatusMainH = 24;
-constexpr int kMessageH = 20;
-constexpr int kStatusH = kStatusMainH + kMessageH;
+constexpr int kStatusH = 24;
 constexpr int kTabH = 24;
 constexpr int kAreaY = kStatusH;
-constexpr int kAreaH = kScreenH - kStatusH - kTabH;  // 252
+constexpr int kAreaH = kScreenH - kStatusH - kTabH;  // 272
 constexpr int kTabY = kAreaY + kAreaH;               // 296
 constexpr int kCharW = 8;
 constexpr int kCharH = 16;

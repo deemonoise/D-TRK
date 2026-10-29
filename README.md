@@ -25,7 +25,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - Motion REC records parameter movements as step locks; Automation view provides value bars, ramps and parameter-only copy/paste.
 - Note timing quantize with strength, live timing stored as NDG, separate note/automation clearing and temporary automation bypass.
 - Circular step rotation, fragment duplication, pattern doubling, selective paste and velocity processing (Set/Add/Ramp/Humanize).
-- Consistent menu navigation, persistent form actions, inactive-parameter explanations and a message row that preserves transport status.
+- Consistent menu navigation, persistent form actions, inactive-parameter explanations and compact status messages that preserve transport status.
 - One- or two-bar count-in, recording/playback metronome and one-pass recording that leaves playback running.
 - Microtonal project tuning: 10 factory tunings (just, meantone, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce…) and your own Scala `.scl` files from the card.
 - Scenes and an A↔B crossfader: 8 scenes of mix and sound locks per project, morphed live on MIX or in PERF.

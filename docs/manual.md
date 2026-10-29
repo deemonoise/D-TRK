@@ -113,7 +113,7 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 
 ### Shared interface rules
 
-- The status area is 44 pixels: the top 24 keep transport, position, battery and synth state visible; the next 20 show messages. Messages never replace PLAY/STOP or errors. With no message, this row shows the project name and unsaved marker. The message row has no transport touch controls.
+- The status bar is 24 pixels high, with no dedicated message row. GRID shows 16 steps without the keyboard open. Toasts temporarily replace the left side (project, BPM and position), preserving PLAY/STOP, battery and critical indicators on the right. Covered controls do not respond to taps.
 - **B** / tapping **<** returns through nested menus with selection restored. Long encoder press or tapping outside closes the menu tree.
 - Rotate, Velocity, Transpose, Fill, Import, Export, Save one-shot, Wavetable Make and Dice have persistent action/cancel buttons at the bottom. Encoder focus reaches them after the last parameter row. Fill retains its live preview and restoration on cancel.
 - Selecting inactive rows explains the condition (e.g. Enable Filter or INT tracks only). Preconfiguring an inactive value remains possible where previously supported. Read-only rows do not enter edit mode.

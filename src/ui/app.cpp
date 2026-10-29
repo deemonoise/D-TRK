@@ -473,7 +473,7 @@ void App::onTouch(const TouchEvent& ev) {
     return;
   }
   if (ev.y < kStatusH) {
-    if (ev.y >= kStatusMainH) return;  // message strip has no hidden transport controls
+    if (toast_[0] && ev.x < kTransX0) return;  // covered project/BPM controls are not tappable
     if (ev.type != TouchType::Tap) return;
     if (ev.x >= kModeX0 && ev.x < kModeX1) {
       if (!status_.playing && !status_.paused) return;  // stopped, Play picks the mode by tab
@@ -1628,7 +1628,6 @@ void App::drawStatus() {
   char buf[24];
   const int bt = btDrawn_ = btMark();
   spr_->fillRect(0, 0, kScreenW, kStatusH, kStatusBg);
-  drawMessageStrip();
   spr_->setTextColor(kText);
   // Song: "S03 P05" (heard slot, "S--" before the song is heard); no queue in song mode.
   // Stopped: Play picks the mode by tab, so no "S" here. No lock: the UI is the only writer of songLen.
@@ -1652,6 +1651,15 @@ void App::drawStatus() {
   spr_->setTextColor(kText);
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
   spr_->drawString(buf, 200, 4);  // up to "128/128"
+  if (toast_[0]) {
+    // Reuse the left side of the status bar; never cover transport or critical indicators.
+    spr_->fillRect(0, 0, kTransX0 - 4, kStatusH, kStatusBg);
+    spr_->setTextColor(kCursor);
+    spr_->setClipRect(8, 0, kTransX0 - 12, kStatusH);
+    spr_->drawString(toast_, 8, 4);
+    spr_->clearClipRect();
+    spr_->setTextColor(kText);
+  }
   if (status_.playing) {
     // Playing: PLAY on a green box, readable at a glance.
     spr_->fillRect(260, 3, 40, 18, kGreen);
@@ -1705,17 +1713,6 @@ void App::drawStatus() {
   spr_->drawString(buf, 416, 4);
 }
 
-// Dedicated, non-interactive message row: transport, position, battery and errors remain visible.
-void App::drawMessageStrip() {
-  spr_->fillRect(0, kStatusMainH, kScreenW, kMessageH, kBeatBg);
-  spr_->setTextColor(toast_[0] ? kCursor : kDim);
-  char label[40];
-  snprintf(label, sizeof(label), "PROJECT %s%s", p_->name, projectDirty() ? " *" : "");
-  spr_->setClipRect(8, kStatusMainH, kScreenW-16, kMessageH);
-  spr_->drawString(toast_[0] ? toast_ : label, 8, kStatusMainH+2);
-  spr_->clearClipRect();
-}
-
 // Status bar battery: icon (body 14x10, nub, fill by percent, a bolt while charging) and "85%".
 // Green while charging, red <= 10 %, yellow <= 20 %. Nothing without the sensor or a fresh sample.
 void App::drawBattery() {
@@ -1749,9 +1746,9 @@ void App::drawBattery() {
 
 // "(dot) REC 03:41" (past an hour "(dot) 1:02:03"): red while recording, the dot blinking while armed (THRESH).
 void App::drawRec() {
-  spr_->fillRect(kRecX0, 0, kScreenW - kRecX0, kStatusMainH, kStatusBg);
+  spr_->fillRect(kRecX0, 0, kScreenW - kRecX0, kStatusH, kStatusBg);
   const bool armed = !rec_.recording();
-  if (!armed || (millis() / 300) & 1) spr_->fillCircle(kRecX0 + 6, kStatusMainH / 2, 4, kRed);
+  if (!armed || (millis() / 300) & 1) spr_->fillCircle(kRecX0 + 6, kStatusH / 2, 4, kRed);
   char t[12], buf[20];
   const uint32_t sec = rec_.frames() / mt::kRecRate;
   mt::recFmtClock(sec, true, t, sizeof t);

@@ -253,7 +253,6 @@ class App {
   void monitorPush(const mt::MidiMsg& m);
   void draw();
   void drawStatus();
-  void drawMessageStrip();
   void drawBattery();  // status bar, right of the loop counter
   int btMark() const;  // status bar BT: 0 none, 1 searching, 2 every set slot connected
   void drawRec();      // status bar: a REC -> SD take's red dot and time
