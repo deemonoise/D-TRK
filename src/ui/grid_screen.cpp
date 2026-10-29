@@ -92,11 +92,13 @@ void GridScreen::onEnter() {
 void GridScreen::onLeave() {
   fill_.cancel();
   transpose_.cancel();
+  action_.cancel();
 }
 
 void GridScreen::onProjectReplaced() {
   fill_.abandon();
   transpose_.cancel();
+  action_.cancel();
 }
 
 // The Fill dialog keeps editing the pattern it was opened for.
@@ -540,6 +542,7 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
     fill_.onInput(ev);
     return;
   }
+  if (action_.isOpen()) { action_.onInput(ev); return; }
   if (transpose_.isOpen()) {
     transpose_.onInput(ev);
     return;
@@ -672,6 +675,7 @@ void GridScreen::onBack() {
     fill_.onInput({hw::InputType::EncLong, 0, false});
     return;
   }
+  if (action_.isOpen()) { action_.cancel(); app_.invalidate(); return; }
   if (transpose_.isOpen()) {
     transpose_.onInput({hw::InputType::EncLong, 0, false});
     return;
@@ -691,7 +695,7 @@ void GridScreen::onBack() {
 }
 
 bool GridScreen::trackKey(int n, bool shift) {
-  if (fill_.isOpen() || transpose_.isOpen()) return true;
+  if (dialogOpen()) return true;
   cur();
   const bool playing = app_.status().playing;
   if (view_ == View::Automation) {
@@ -739,6 +743,7 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     fill_.onTouch(ev);
     return;
   }
+  if (action_.isOpen()) { action_.onTouch(ev); return; }
   if (transpose_.isOpen()) {
     transpose_.onTouch(ev);
     return;
@@ -863,7 +868,7 @@ void GridScreen::openMenu() {
   const auto* cb = app_.clipboard();
   const MenuItem items[] = {
     {selOn_ ? "Copy selection" : "Copy step", selOn_ ? kCopySel : kCopyStep, cb != nullptr},
-    {"Paste", kPaste, cb && cb->tracks > 0 && cb->steps > 0},
+    {"Paste...", kPaste, cb && cb->tracks > 0 && cb->steps > 0},
     {selOn_ ? "End selection" : "Select", selOn_ ? kDropSel : kSelect},
     {selOn_ ? "Edit selection..." : "Edit step...", kEditTools},
     {selOn_ ? "Process selection..." : "Process track...", kProcessMenu},
@@ -889,10 +894,15 @@ void GridScreen::menuScopeTitle(char* title, size_t size, const mt::Sel& scope, 
 
 void GridScreen::openProcessMenu() {
   char title[28]; menuScopeTitle(title, sizeof(title), menuCtx_.processScope(), !menuCtx_.selected);
-  const MenuItem items[] = {{"Fill...", kFill}, {"Transpose...", kTranspose}, {"Quantize...", kQuantize, app_.undoScratch()!=nullptr}};
-  app_.menu().openChild(title, items, 3, [this](int id) {
+  const MenuItem items[] = {{"Fill...", kFill}, {"Transpose...", kTranspose},
+    {"Quantize...", kQuantize, app_.undoScratch()!=nullptr}, {"Rotate...",kRotate}, {"Velocity...",kVelocity},
+    {"Pattern x2...",kDoublePattern,menuCtx_.length*2<=mt::kMaxSteps}};
+  app_.menu().openChild(title, items, 6, [this](int id) {
     if (!menuTargetValid()) return;
     if (id == kQuantize) { quantizeSel_=menuCtx_.processScope(); quantizePattern_=menuCtx_.pattern; openQuantizeMenu(); }
+    else if (id == kRotate) openRotateDialog();
+    else if (id == kVelocity) openVelocityDialog();
+    else if (id == kDoublePattern) openDoublePattern();
     else onMenu(id);
   });
 }
@@ -1127,21 +1137,7 @@ void GridScreen::onMenu(int id) {
       if (id == kCopySel) selOn_ = false;  // free the cursor to pick the paste position
       app_.toast("COPIED");
       break;
-    case kPaste:
-      if (!cb || !cb->tracks || !cb->steps) return;
-      app_.pushUndo();
-      engine::lockProject();
-      if (menuCtx_.selected) {
-        const mt::Sel s = menuCtx_.selection;
-        mt::pasteAt(pat(), *cb, s.t0, s.s0);
-      } else {
-        mt::pasteAt(pat(), *cb, tr, step);
-      }
-      engine::unlockProject();
-      app_.markDirty();
-      engine::post(engine::Cmd::ReleaseTies);
-      app_.toast("PASTED");
-      break;
+    case kPaste: openPasteMenu(); break;
     case kTranspose: openTranspose(); break;
     case kSelect:
       selOn_ = true;
@@ -1181,6 +1177,7 @@ void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
     fill_.draw(s, y0);
     return;
   }
+  if (action_.isOpen()) { action_.draw(s,y0); return; }
   if (transpose_.isOpen()) {
     transpose_.draw(s, y0);
     return;

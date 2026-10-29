@@ -3,6 +3,8 @@
 #include "grid_context.h"
 #include "automation.h"
 #include "quantize.h"
+#include "pattern_tools.h"
+#include "action_dialog.h"
 #include "fill.h"
 #include "fill_dialog.h"
 #include "model.h"
@@ -33,10 +35,10 @@ class GridScreen : public Screen {
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
   bool buttonsBusy() const;
   void undo();  // with a toast; the next edit takes a fresh snapshot
-  bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen(); }  // Fill / Transpose preview
+  bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen() || action_.isOpen(); }  // modal pattern operations
   // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.
   bool chordClear();
-  // Controller pads (App): REC is on and no Fill / Transpose dialog is open (App adds "playing").
+  // Controller pads (App): REC is on and no operation dialog is open (App adds "playing").
   void setNoteRecording(bool on) {
     if (on && view_ == View::Automation) setView(View::Overview);
     setRec(on);
@@ -58,7 +60,7 @@ class GridScreen : public Screen {
     kToggleFollow, kCopySel, kClearSel, kDropSel, kNoteOff, kFill,
     kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive,
     kRecordingSetup, kEditTools, kProcessMenu, kTrackMenu, kResampleMenu, kGridSettings,
-    kQuantize, kAutomationToggle,
+    kQuantize, kAutomationToggle, kRotate, kVelocity, kDoublePattern,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;
@@ -104,6 +106,16 @@ class GridScreen : public Screen {
   bool menuTargetValid();
   void menuScopeTitle(char* title, size_t size, const mt::Sel& scope, bool wholeTrack = false) const;
   void openQuantizeMenu(bool refresh = false);
+  void openPasteMenu();
+  void openRotateDialog();
+  void openVelocityDialog();
+  void openDoublePattern();
+  mt::Sel toolScope() const;
+  void applyTool(std::function<mt::ToolResult(mt::Pattern&, mt::Pattern&)> operation);
+  int rotateAmount_ = 0;
+  mt::StepPart rotatePart_ = mt::StepPart::All;
+  mt::VelocitySpec velocitySpec_;
+
   mt::Sel quantizeSel_{};
   int quantizePattern_ = -1;
   mt::QuantizeSpec quantizeSpec_;
@@ -188,6 +200,7 @@ class GridScreen : public Screen {
   bool selected(int tr, int step) const;
 
   App& app_;
+  ActionDialog action_{app_};
   int y0_ = kAreaY;
   int h_ = kAreaH;
   int rows_ = (kAreaH - kNamesH) / kRowH;

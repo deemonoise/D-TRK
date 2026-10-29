@@ -12,9 +12,10 @@ void App::toggleAutomationMute(int tr) {
 }
 void GridScreen::openEditTools(const mt::Sel& scope, bool wholeTrack) {
   char title[28]; menuScopeTitle(title,sizeof(title),scope,wholeTrack);
-  const MenuItem items[] = {{"Note OFF",3,!wholeTrack},{"Clear notes",0},{"Clear automation",1},{"Clear all",4}};
-  app_.menu().openChild(title,items + (wholeTrack ? 1 : 0),wholeTrack ? 3 : 4,[this,scope](int id) {
+  const MenuItem items[] = {{"Note OFF",3,!wholeTrack},{"Clear notes",0},{"Clear automation",1},{"Clear all",4},{menuCtx_.selected ? "Duplicate selection" : "Duplicate step",5,!wholeTrack}};
+  app_.menu().openChild(title,items + (wholeTrack ? 1 : 0),wholeTrack ? 3 : 5,[this,scope](int id) {
     if (!menuTargetValid()) return;
+    if(id==5){applyTool([scope](mt::Pattern& p,mt::Pattern&){return mt::duplicateSteps(p,scope);});return;}
     app_.setRecording(false,false);
     if (id == 3 || id == 4) { apply(scope,id == 3 ? kNoteOff : kClearSel); editPushed_=false; return; }
     app_.pushUndo();

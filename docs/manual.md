@@ -355,8 +355,8 @@ The main menu has 10 rows without scrolling: Copy step / Copy selection, Paste, 
 
 | Group | Commands and scope |
 |---|---|
-| Edit step / selection | Note OFF, Clear notes, Clear automation, Clear all — step or selection |
-| Process track / selection | Fill, Transpose, Quantize — track or selection |
+| Edit step / selection | Note OFF, Clear notes, Clear automation, Clear all, Duplicate — step or selection |
+| Process track / selection | Fill, Transpose, Quantize, Rotate, Velocity — track or selection |
 | Track | Copy track, Clear (Clear notes / Clear automation / Clear all), Automation ON/OFF, Capture live — entire track; Capture live requires GEN/MUT |
 | Recording setup | Count-in, Metronome, Click volume, Record length |
 | Resample | Track, Pattern |
@@ -369,6 +369,25 @@ The title shows STEP / SEL / TRACK scope, captured when opening the menu. **B** 
 - Paste inserts at the cursor position or at the top-left corner of the selection. It doesn't go past track 16 or the pattern length; the selection is also clipped at track 16.
 - The clipboard survives loading another project — so you can move parts between projects.
 - If the pattern changed while the menu was open, the action is not performed (toast "TARGET CHANGED").
+
+### Rotate, Duplicate, Paste and Velocity
+
+**Process track / selection → Rotate…** rotates the scope: positive steps move later, negative earlier. Without a selection it uses the track's own length; a selection defines an exact range of stored steps. **Move: ALL** moves complete steps, **NOTES ONLY** moves note, velocity and KIT masks while keeping every FX in place, **AUTOMATION** moves supported parameter/LFO locks only. Apply commits; Cancel, B or long encoder press leaves the pattern unchanged.
+
+**Edit step / selection → Duplicate** copies the step or selection rectangle immediately after itself, replacing the destination. Source and clipboard stay intact. Pattern length does not grow; `NOT ENOUGH STEPS` rejects the whole operation if the entire copy does not fit.
+
+**Process → Pattern x2…** shows a separate PATTERN target and doubles the entire pattern, repeating all 16 tracks. Maximum: 128 steps. Explicit track lengths and speeds stay unchanged; tracks inheriting the pattern length follow the new length.
+
+**Paste…** offers **Paste all**, **Paste notes only**, **Paste automation only**. The origin is the cursor or the selection's top-left corner, clipped at the pattern/track-16 boundary. Notes replaces note, velocity and KIT masks, preserving every destination FX including NDG/GAT. Automation replaces parameter/LFO locks, preserving notes and musical FX. Empty source cells clear the chosen part of the destination. Insufficient FX slots reject the entire paste or automation rotation: `FX FULL: NO CHANGE`.
+
+**Process → Velocity…** changes existing note hits only:
+
+- **SET:** a common value, 1–127.
+- **ADD:** add/subtract up to 127; DEF starts from the track's Def vel.
+- **RAMP:** Value / amount is the start, Ramp end the end. Values follow step positions across the range; empty steps stay empty.
+- **HUMANIZE:** random variation ±Value / amount around the current velocity, clamped to 1–127.
+
+On KIT tracks this changes hit strength, preserving all 16 pad masks. Apply commits; Cancel/B leaves the pattern intact. Each successful operation is one Undo (Shift+B); failure or no change consumes no history. Applying an operation disarms note and motion recording.
 
 <a id="live"></a>
 
