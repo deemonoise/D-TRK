@@ -468,17 +468,18 @@ void SongScreen::openMenu() {
   const bool room = n < mt::kSongMax;
   patEdit_ = holdRow_ = holdFol_ = holdVal_ = false;
   folField_ = valEdit_ = -1;
-  char ins[32], title[28];
+  char ins[32], append[28], title[28];
+  snprintf(append,sizeof(append),"Append P%02u",app_.editPattern()+1u);
   snprintf(ins, sizeof(ins), "Insert P%02u above", app_.editPattern() + 1u);
   const MenuItem items[] = {
-      {"Add", kAdd, room},           {ins, kInsert, room},
-      {"Delete", kDelete, valid},    {"Mutes <- live", kMutesLive, valid},
-      {"Clear mutes", kMutesClear, valid}, {"Follow: NEXT", kFolReset, valid},
+      {append, kAdd, room},           {ins, kInsert, room},
+      {"Delete", kDelete, valid},    {"Slot mutes <- live", kMutesLive, valid},
+      {"Clear slot mutes", kMutesClear, valid}, {"Follow: NEXT", kFolReset, valid},
       {"Clear song", kClear, valid},
       {app_.perf().on() ? "Perf: ON" : "Perf: OFF", kPerf},
       {view2_ ? "View: MUTES" : "View: TRN BPM", kView},
   };
-  if (valid) snprintf(title, sizeof(title), "SLOT %02d: P%02u", row_ + 1, app_.project().song[row_] + 1u);
+  if (valid) snprintf(title, sizeof(title), "S%02d P%02u (%d/%d)", row_ + 1, app_.project().song[row_] + 1u,n,mt::kSongMax);
   else snprintf(title, sizeof(title), "SONG");
   app_.menu().open(title, items, sizeof(items) / sizeof(items[0]), [this](int id) { onMenu(id); });
 }
@@ -503,7 +504,7 @@ void SongScreen::onMenu(int id) {
       break;
     case kClear: {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Clear song: sure?", kClearConfirm}};
-      app_.menu().open("CLEAR SONG?", items, 2, [this](int i) { onMenu(i); });
+      app_.menu().openChild("CLEAR SONG?", items, 2, [this](int i) { onMenu(i); });
       break;
     }
     case kClearConfirm: clearSong(); break;
@@ -657,6 +658,7 @@ void SongScreen::onTouch(const TouchEvent& ev) {
   clampRow();
   const int n = len();
   touched();
+  if(ev.type==TouchType::Tap && ev.y<y0_+kHeadH && ev.x<kCellX0){toggleView();return;}
   if (ev.type == TouchType::Drag) {
     if (ev.id != gesture_) {  // first drag event of this gesture: pattern drag or scroll
       gesture_ = ev.id;
@@ -718,19 +720,17 @@ void SongScreen::draw(LGFX_Sprite& s, int y0, int) {
   showRow(top_);  // the song may have shrunk
   char buf[16];
 
-  // Header: count (the song plays: the heard slot's TRN and the live BPM, "T+5 B128"), track numbers
-  // (view 2: TRN / BPM titles; cursor on FOL: the slot's follow instead). The PERF badge replaces the
-  // count, grows with the held effects and covers the numbers it reaches.
-  int badgeR = app_.perf().drawBadge(s, kNumX, y0 + 4);
-  if (badgeR == kNumX) {
-    s.setTextColor(kText);
-    if (heard >= 0 && (st.playing || st.paused))
-      snprintf(buf, sizeof(buf), "T%+d B%u", mt::songTrnClamp(p.songTrn[heard]), static_cast<unsigned>(p.bpm));
-    else snprintf(buf, sizeof(buf), "%d/%d", n, mt::kSongMax);
-    s.drawString(buf, kNumX, y0 + 4);
-    const int r = kNumX + static_cast<int>(strlen(buf)) * kCharW;
-    if (r > kCellX0) badgeR = r;  // the numbers it reaches give way
+  // Tapping the always visible left caption switches views; slot count is in the menu title.
+  s.setTextColor(kCursor);
+  s.drawString(view2_ ? "TRN BPM" : "MUTES",kNumX,y0+4);
+  if(heard>=0 && col_!=kFolCol && (st.playing || st.paused)){
+    const int transpose=mt::songTrnClamp(p.songTrn[heard]);
+    if(view2_){snprintf(buf,sizeof(buf),"T%+d",transpose);s.setTextColor(kDim);s.drawString(buf,168,y0+4);}
+    else if(transpose){snprintf(buf,sizeof(buf),"%+d",transpose);s.setTextColor(kDim);s.drawString(buf,44,y0+4);}
   }
+  const int badgeR=kCellX0;
+  char perf[35];
+  const int perfLength=col_!=kFolCol ? app_.perf().badge(perf,sizeof(perf)) : 0;
   if (view2_) {
     s.setTextColor(col_ == kTrnCol ? kCursor : kDim);
     s.drawString("TRN", kTrnX, y0 + 4);
@@ -744,10 +744,11 @@ void SongScreen::draw(LGFX_Sprite& s, int y0, int) {
     snprintf(buf, sizeof(buf), "%d", t + 1);
     const int w = static_cast<int>(strlen(buf)) * kCharW;
     const int x = cellX(t) + (kCellW - w) / 2;
-    if (x < badgeR + kCharW) continue;
+    if (x < badgeR + kCharW || (perfLength && x>=208)) continue;
     s.setTextColor(col_ == t + 1 ? kCursor : kDim);
     s.drawString(buf, x, y0 + 4);
   }
+  if(perfLength){s.setTextColor(kYellow);s.drawString(perf,208,y0+4);}
   s.drawFastHLine(0, y0 + kHeadH - 1, kScreenW, kDim);
 
   const int ly = y0 + kHeadH;

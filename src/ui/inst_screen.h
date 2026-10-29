@@ -116,7 +116,7 @@ class InstScreen : public Screen {
   enum Page : int { kPgMain, kPgEnv, kPgType, kPgType2, kPgFilt, kPgLfo };
   static constexpr int kHeaderH = 28;
   static constexpr int kPageBarH = 24;
-  static constexpr int kListRows = 9;  // (kAreaH - kHeaderH - kPageBarH) / ParamList::kRowH
+  static constexpr int kListRows = (kAreaH - kHeaderH - kPageBarH) / ParamList::kRowH;
   // ENV page ADSR graph, right of the values; y from the list top.
   static constexpr int kEnvX0 = 280, kEnvX1 = 470, kEnvY0 = 8, kEnvY1 = 112;
   static constexpr int kEnvHold = 30;  // sustain plateau width
@@ -125,10 +125,10 @@ class InstScreen : public Screen {
   static constexpr int kNameLen = 8;
   static constexpr int kPreviewNote = 60;
   // Header hit areas: left arrow, right arrow, PRESET and PREVIEW buttons.
-  static constexpr int kLeftX1 = 56;
-  static constexpr int kRightX0 = 232, kRightX1 = 288;
-  static constexpr int kPresetX0 = 296, kPresetX1 = 376;
-  static constexpr int kPrevX0 = 384, kPrevX1 = 472;
+  static constexpr int kLeftX1 = 48;
+  static constexpr int kRightX0 = 280, kRightX1 = 320;
+  static constexpr int kPresetX0 = 328, kPresetX1 = 392;
+  static constexpr int kPrevX0 = 400, kPrevX1 = 472;
 
   mt::Instrument& inst();
   void setType(mt::InstrType v);  // under the lock (a ParamList edit)
@@ -165,6 +165,8 @@ class InstScreen : public Screen {
   bool nameEdit() const { return page_ == kPgMain && list_.editing() && list_.sel() == kName; }
   void preview();
   void presetMenu();
+  void openMutateMenu(bool refresh = false);
+  int mutateStrength_ = 30;
   void mutate(int strength);  // mutateSlot under the lock, toast, preview
   void undoMutate();
   void afterPresets();  // the browser closed: the type may have changed

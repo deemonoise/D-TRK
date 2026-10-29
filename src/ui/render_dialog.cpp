@@ -69,10 +69,8 @@ RenderDialog::RenderDialog(App& app) : app_(app) {
                      }};
   params_[kFormat] = {"Format", [this](char* o, int n) { snprintf(o, n, "%s", bits16_ ? "16 BIT" : "24 BIT"); },
                       [this](int d) { bits16_ = d > 0; }};
-  params_[kExport] = {"EXPORT", [](char* o, int n) { snprintf(o, n, "LONG PRESS: STOP"); }, nullptr};
-  params_[kCancel] = {"Cancel", nullptr, nullptr};
-  list_.setParams(params_, kRows);
-  list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
+  list_.setParams(params_, kExport);
+  list_.setVisibleRows(actions_.listRows(kHeaderH));
 }
 
 bool RenderDialog::songOk() const { return app_.project().songLen > 0; }
@@ -82,6 +80,7 @@ void RenderDialog::open() {
   soloed_ = false;
   list_.setEdit(false);
   list_.setSel(kSource);
+  actions_.reset(list_);
   open_ = true;
 }
 
@@ -187,25 +186,19 @@ void RenderDialog::onInput(const hw::InputEvent& ev) {
     close();
     return;
   }
-  if (ev.type == InputType::EncClick && !list_.editing() && action(list_.sel())) return;
-  list_.onInput(ev);
+  const int result=actions_.input(list_,kExport,ev);
+  if(result>=0)action(result==0?kExport:kCancel);
 }
 
 void RenderDialog::onTouch(const TouchEvent& ev) {
   if (!open_) return;
-  if (ev.type == TouchType::Tap) {
-    const int r = list_.rowAt(ev.y);
-    if (r == kExport || r == kCancel) {
-      list_.setSel(r);
-      action(r);
-      return;
-    }
-  }
-  list_.onTouch(ev);
+  const int result=actions_.touch(list_,ev,y0_);
+  if(result>=0)action(result==0?kExport:kCancel);
 }
 
 void RenderDialog::draw(LGFX_Sprite& s, int y0) {
   if (!open_) return;
+  y0_=y0;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   char dir[128], line[64];
   mt::exportDir(app_.project(), spec(), dir, sizeof dir);
@@ -216,6 +209,7 @@ void RenderDialog::draw(LGFX_Sprite& s, int y0) {
   s.setTextColor(kDim);
   s.drawString(line, ParamList::kLabelX, y0 + 2 + kCharH + 2);
   list_.draw(s, y0 + kHeaderH);
+  actions_.draw(s,y0,"EXPORT");
 }
 
 }  // namespace ui

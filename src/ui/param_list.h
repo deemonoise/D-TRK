@@ -10,6 +10,7 @@ namespace ui {
 
 // UI task only. Called outside the project mutex, immediately before/after a row edit.
 void setParamEditObserver(std::function<void(bool before)> observer);
+void setParamHintObserver(std::function<void(const char*)> observer);
 
 struct Param {
   const char* label;
@@ -17,6 +18,7 @@ struct Param {
   std::function<void(int delta)> edit;  // called under engine::lockProject()
   std::function<bool()> dim;            // true: drawn grey (does not apply now); empty = never
   std::function<bool()> warn;           // true: value drawn red (e.g. missing sample); empty = never
+  std::function<const char*()> hint;    // explanation while dim (display only; editing semantics unchanged)
 };
 
 // MIDI knob: turns the row of rows[0, count) whose label matches `label` in its first maxLen chars by
@@ -118,11 +120,14 @@ class ParamList {
   int rowAt(int y) const;
   int rowY(int row) const { return y_ + (row - top_) * kRowH; }
   void draw(LGFX_Sprite& s, int y);
+  void setFocusVisible(bool visible) { focusVisible_ = visible; }
+  void selectRow(int row) { setSel(row); notifyHint(); }
 
  private:
   int shown() const { return visible_ > 0 && visible_ < count_ ? visible_ : count_; }
   void ensureVisible();
   void beginEdit();  // remembers the value for cancelEdit()
+  void notifyHint(bool attempted = false) const;
 
   const Param* params_ = nullptr;
   int count_ = 0;
@@ -132,6 +137,7 @@ class ParamList {
   int dragAcc_ = 0;  // drag px not yet turned into rows
   bool edit_ = false;
   bool hold_ = false;  // edit_ entered by holdEdit(): EditEnd leaves it
+  bool focusVisible_ = true;
   bool bar_ = false;  // setPageBar: position -1 is the screen's page bar
   int y_;  // top of the first row, updated by draw()
   std::function<void()> onEdit_;

@@ -12,11 +12,9 @@
 
 namespace ui {
 
-// Three sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
-// firmware / MIDI devices; Load shows /projects/*.mtp), SAMPLES (the project's samples: import WAV from
-// /samples and its subfolders, rename, delete; the flash bank is their cache: compact, clear unused
-// entries) and SYSTEM (device settings saved in NVS, not in the project, and diagnostics: firmware, the
-// synth board and its card, link, last reset, RAM, battery, CPU profile).
+// PROJECTS: Save / Save As / Load / New / Import MIDI / Export. SAMPLES: project sample
+// management. SYSTEM: device preferences and connection/update actions; Diagnostics is a
+// nested list (B returns to SYSTEM). None of the SYSTEM rows is project data.
 class FileScreen : public Screen {
  public:
   explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app), midiDlg_(app), list_(app, kMaxFiles) { initSystem(); }
@@ -42,7 +40,7 @@ class FileScreen : public Screen {
   void askUpdateSynth();
 
  private:
-  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kMidi, kRetry, kActions };
+  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kRetry, kActions, kWifi = 100, kMidi };
   enum MenuId : int {
     kCancel, kDiscardLoad, kDiscardNew, kRestoreAuto, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
@@ -63,7 +61,8 @@ class FileScreen : public Screen {
 
   // SYSTEM rows.
   enum SysRow : int {
-    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kFirmware, kSynthFw, kUpdSynth, kCard, kSamples, kLink, kLastReset, kAudioRam, kRamMin, kBattery, kCpuProf, kSysRows
+    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kWifiRow, kMidiRow, kUpdSynth, kDiagnostics,
+    kFirmware, kSynthFw, kCard, kSamples, kLink, kLastReset, kAudioRam, kRamMin, kBattery, kCpuProf, kDiagBack, kSysRows
   };
   static constexpr int kSysListRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;
 
@@ -95,6 +94,10 @@ class FileScreen : public Screen {
   void setSection(int section);  // wraps around; the encoder focus goes to the page bar
   // SYSTEM
   void initSystem();
+  void showSystem(bool diagnostics);
+  int systemRow() const { return (diagnostics_ ? kFirmware : 0) + sysList_.sel(); }
+  bool diagnostics_ = false;
+  int systemSel_ = kDiagnostics;
   void systemInput(const hw::InputEvent& ev);
   void systemTouch(const TouchEvent& ev);
   void toggleProfile();  // start, or stop and append the result to /diag/cpuprof.txt

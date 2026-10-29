@@ -1,4 +1,5 @@
 #include "inst_screen.h"
+#include "ui_context.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -539,6 +540,17 @@ void InstScreen::initTail(Param* t) {
                 b[1] = static_cast<uint8_t>(clampi(b[1] + d, 0, 127));
               },
               [this, notByte] { return notByte() || !(mt::byteUses(mt::byteCode(inst().lfoByte[lfoSel_][0])) & 1); }};
+  for (int r : {kCutoff, kReso, kFEnv}) t[r].hint = [] { return "Enable Filter"; };
+  for (int r : {kFAtk, kFDec})
+    t[r].hint = [off] { return off() ? "Enable Filter" : "Set Flt env above/below zero"; };
+  t[kKeytrack].hint = [off] { return off() ? "Enable Filter" : "FORMANT has no key tracking"; };
+  for (int r : {kLfoWave, kLfoSync, kLfoRetrig, kLfoRate, kLfoDest})
+    t[r].hint = [] { return "Set LFO Depth above/below zero"; };
+  t[kLfoFormula].hint = [noLfo] { return noLfo() ? "Set LFO Depth above/below zero" : "Select LFO Wave BYTE"; };
+  t[kLfoA].hint = [noLfo, notByte] {
+    return noLfo() ? "Set LFO Depth above/below zero" : notByte() ? "Select LFO Wave BYTE" : "Formula does not use A";
+  };
+
 }
 
 void InstScreen::relabel() {
@@ -758,8 +770,10 @@ void InstScreen::presetMenu() {
   leaveEdit();
   if (inst().type == mt::InstrType::Kit) {  // factory kits only: no Save
     enum : int { kKitLoad, kKitShot };
-    const MenuItem items[] = {{"Load", kKitLoad}, {"Save one-shot...", kKitShot}};
-    app_.menu().open("PRESET", items, 2, [this](int id) {
+    const MenuItem items[] = {{"Load kit...", kKitLoad}, {"Save one-shot...", kKitShot}};
+    char title[28];
+    snprintf(title, sizeof(title), "KIT I%02d %s", instr_ + 1, inst().name);
+    app_.menu().open(title, items, 2, [this](int id) {
       if (id == kKitLoad) {
         typeSnapInstr_ = -1;
         presets_.open(PresetBrowser::Mode::Load, instr_);
@@ -769,12 +783,13 @@ void InstScreen::presetMenu() {
     });
     return;
   }
-  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kToWt, kMut15, kMut30, kMut60, kMutUndo, kRec, kShot };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kToWt, kRec, kShot,
+               kRecordGroup, kSlicesGroup, kConvertGroup, kPresetsGroup, kMutateGroup };
   auto choose = [this](int id) {
     switch (id) {
       case kChop: editor_.chop(); break;
-      case kRec: app_.rec().open(instr_, [this] { editor_.bind(instr_); }); break;  // REC BUSY during a SD take
-      case kShot: {  // through the current track's insert when it plays this instrument (as preview())
+      case kRec: app_.rec().open(instr_, [this] { editor_.bind(instr_); }); break;
+      case kShot: {
         const int t = app_.curTrack();
         const uint8_t ins = app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
         bounce_.open(instr_, onEditor() ? editor_.previewNote() : kPreviewNote, ins);
@@ -786,56 +801,83 @@ void InstScreen::presetMenu() {
         if (editor_.wtSource(idx, from, to, rate)) wtMake_.open(idx, from, to, rate, inst().sample);
         break;
       }
-      case kAdd: editor_.addSlice(app_.shift()); break;  // Shift held on the click: at a transient
+      case kAdd: editor_.addSlice(app_.shift()); break;
       case kDel: editor_.deleteSlice(); break;
       case kClear: {
-        const MenuItem confirm[] = {{"Cancel", kCancel}, {"Clear! (confirm)", kClearConfirm}};
-        app_.menu().open("CLEAR SLICES?", confirm, 2, [this](int i) {
+        const MenuItem confirm[] = {{"Cancel", kCancel}, {"Clear slices", kClearConfirm}};
+        app_.menu().openChild("CLEAR SLICES?", confirm, 2, [this](int i) {
           if (i == kClearConfirm) editor_.clearSlices();
         });
         break;
       }
       case kLoad:
       case kSave:
-        typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
+        typeSnapInstr_ = -1;
         presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
         break;
-      case kMut15: mutate(15); break;
-      case kMut30: mutate(30); break;
-      case kMut60: mutate(60); break;
-      case kMutUndo: undoMutate(); break;
+      case kMutateGroup: openMutateMenu(); break;
       default: break;
     }
   };
-  const bool canUndo = mut_.slot == instr_ && mt::mutateCanRestore(app_.project(), mut_);  // not edited since
   if (onEditor()) {
     editor_.bind(instr_);
-    int wi;
-    uint32_t wf, wt, wr;
-    const MenuItem items[] = {{"Record...", kRec},
-                              {"Save one-shot...", kShot},
-                              {"Chop", kChop},
-                              {"Add slice", kAdd},
-                              {"Delete slice", kDel, editor_.sliceSelected()},
-                              {"Clear slices", kClear, editor_.hasSlices()},
-                              {"To wavetable...", kToWt, editor_.wtSource(wi, wf, wt, wr)},
-                              {"Load preset", kLoad},
-                              {"Save preset", kSave},
-                              {"Mutate 15%", kMut15},
-                              {"Mutate 30%", kMut30},
-                              {"Mutate 60%", kMut60},
-                              {"Undo mutate", kMutUndo, canUndo}};
-    app_.menu().open("SAMPLE", items, 13, choose);
+    const MenuItem groups[] = {{"Record / render...", kRecordGroup}, {"Slices...", kSlicesGroup},
+                               {"Convert...", kConvertGroup}, {"Presets...", kPresetsGroup},
+                               {"Mutate...", kMutateGroup}};
+    char title[28];
+    snprintf(title, sizeof(title), "SAMPLE I%02d %s", instr_ + 1, inst().name);
+    app_.menu().open(title, groups, 5, [this, choose](int group) {
+      char title[28];
+      if (group == kMutateGroup) { openMutateMenu(); return; }
+      if (group == kRecordGroup) {
+        const MenuItem rows[] = {{"Record sample...", kRec}, {"Save one-shot...", kShot}};
+        snprintf(title, sizeof(title), "RECORD / RENDER I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, 2, choose);
+      } else if (group == kSlicesGroup) {
+        const MenuItem rows[] = {{"Chop", kChop}, {"Add slice", kAdd},
+                                {"Delete slice", kDel, editor_.sliceSelected()},
+                                {"Clear slices...", kClear, editor_.hasSlices()}};
+        snprintf(title, sizeof(title), "SLICES I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, 4, choose);
+      } else if (group == kConvertGroup) {
+        int wi; uint32_t wf, wt, wr;
+        const MenuItem rows[] = {{"To wavetable...", kToWt, editor_.wtSource(wi, wf, wt, wr)}};
+        snprintf(title, sizeof(title), "CONVERT I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, 1, choose);
+      } else if (group == kPresetsGroup) {
+        const MenuItem rows[] = {{"Load preset...", kLoad}, {"Save preset...", kSave}};
+        snprintf(title, sizeof(title), "PRESETS I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, 2, choose);
+      }
+    });
     return;
   }
-  const MenuItem items[] = {{"Load", kLoad},
-                            {"Save", kSave},
-                            {"Save one-shot...", kShot},
-                            {"Mutate 15%", kMut15},
-                            {"Mutate 30%", kMut30},
-                            {"Mutate 60%", kMut60},
-                            {"Undo mutate", kMutUndo, canUndo}};
-  app_.menu().open("PRESET", items, 7, choose);
+  const MenuItem items[] = {{"Load preset...", kLoad}, {"Save preset...", kSave},
+                            {"Save one-shot...", kShot}, {"Mutate...", kMutateGroup}};
+  char title[28];
+  snprintf(title, sizeof(title), "PRESET I%02d %s", instr_ + 1, inst().name);
+  app_.menu().open(title, items, 4, choose);
+}
+
+void InstScreen::openMutateMenu(bool refresh) {
+  char strength[28], title[28];
+  snprintf(strength, sizeof(strength), "Strength: %d%%", mutateStrength_);
+  snprintf(title, sizeof(title), "MUTATE I%02d", instr_ + 1);
+  const bool canUndo = mut_.slot == instr_ && mt::mutateCanRestore(app_.project(), mut_);
+  const MenuItem rows[] = {{strength, 0}, {"Apply mutation", 1}, {"Undo mutation", 2, canUndo}};
+  auto choose = [this](int id) {
+    if (id == 0) {
+      const MenuItem choices[] = {{"15%", 15}, {"30%", 30}, {"60%", 60}};
+      app_.menu().openChild("MUTATE STRENGTH", choices, 3, [this](int strength) {
+        mutateStrength_ = strength;
+        app_.menu().back();
+        openMutateMenu(true);
+      });
+    } else if (id == 1) mutate(mutateStrength_);
+    else if (id == 2) undoMutate();
+  };
+  if (refresh) app_.menu().replace(title, rows, 3, choose);
+  else app_.menu().openChild(title, rows, 3, choose);
 }
 
 void InstScreen::mutate(int strength) {
@@ -1173,13 +1215,18 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
     bounce_.draw(s, y0);
     return;
   }
-  char buf[24];
+  char buf[48];
   const int cy = y0 + kHeaderH / 2;
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.fillTriangle(24, cy - 2, 36, cy - 9, 36, cy + 5, kCursor);
-  s.fillTriangle(kRightX0 + 36, cy - 2, kRightX0 + 24, cy - 9, kRightX0 + 24, cy + 5, kCursor);
-  snprintf(buf, sizeof(buf), "INS%d %s", instr_ + 1, inst().name);
+  s.fillTriangle(kRightX0 + 24, cy - 2, kRightX0 + 12, cy - 9, kRightX0 + 12, cy + 5, kCursor);
+  const int tr = app_.curTrack();
+  const auto use = mt::instrumentUse(app_.project(), instr_, tr);
+  char relation[20];
+  snprintf(relation, sizeof(relation), !use.current ? "NOT ON T%02d" : use.currentViaKit ? "T%02d/KIT" : "T%02d", tr + 1);
+  if (use.count > 1) snprintf(buf, sizeof(buf), "I%02d %s %s x%d", instr_ + 1, inst().name, relation, use.count);
+  else snprintf(buf, sizeof(buf), "I%02d %s %s", instr_ + 1, inst().name, relation);
   s.setTextColor(kText);
   const int mid = (kLeftX1 + kRightX0) / 2;
   s.drawString(buf, mid - static_cast<int>(strlen(buf)) * kCharW / 2, ty);

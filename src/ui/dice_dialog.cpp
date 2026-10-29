@@ -55,7 +55,8 @@ DiceDialog::DiceDialog(App& app) : app_(app) {
   params_[kRoll] = {"Roll", [](char* o, int n) { snprintf(o, n, "NEW SEED"); }, nullptr};
   params_[kUndo] = {"Undo dice", nullptr, nullptr, [this] { return !(host_.canUndo && host_.canUndo()); }};
   params_[kClose] = {"Close", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
-  list_.setParams(params_, kRows);
+  list_.setParams(params_, kRoll);
+  list_.setVisibleRows(actions_.listRows(kHeaderH));
 }
 
 void DiceDialog::clampPrefs() {
@@ -103,7 +104,8 @@ void DiceDialog::open() {
   clampPrefs();
   confirmed_ = -1;  // a new session asks again
   list_.setEdit(false);
-  list_.setSel(kRoll);
+  list_.setSel(kGenre);
+  actions_.reset(list_);
   open_ = true;
 }
 
@@ -169,40 +171,29 @@ void DiceDialog::onInput(const hw::InputEvent& ev) {
       app_.invalidate();
       return;
     case InputType::EncClick:
-      if (!list_.editing() && action(list_.sel())) return;
+      if (!actions_.footerFocused() && !list_.editing() && action(list_.sel())) return;
       break;
     default: break;
   }
-  list_.onInput(ev);
+  const int result=actions_.input(list_,kRoll,ev);
+  if(result>=0)action(result==0?kRoll:kClose);
 }
 
 void DiceDialog::onTouch(const TouchEvent& ev) {
   if (!open_) return;
-  if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
-    const int by = y0_ + kBtnY;
-    if (ev.y >= by && ev.y < by + kBtnH) {
-      if (ev.x >= kUndoX && ev.x < kUndoX + kUndoW) action(kUndo);
-      else if (ev.x >= kCloseX && ev.x < kCloseX + kCloseW) action(kClose);
-      else if (ev.x >= kRollX && ev.x < kRollX + kRollW) action(kRoll);
-    }
-    return;
+  if(ev.y>=y0_+kAreaH-DialogActions::kH){
+    const int result=actions_.touch(list_,ev,y0_);if(result>=0)action(result==0?kRoll:kClose);return;
   }
   if (ev.type == TouchType::Tap) {
     const int r = list_.rowAt(ev.y);
-    if (r == kRoll || r == kUndo || r == kClose) {
+    if (r == kUndo) {
+      actions_.focusList(list_);
       list_.setSel(r);
       action(r);
       return;
     }
   }
-  list_.onTouch(ev);
-}
-
-void DiceDialog::drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel, bool dim) {
-  s.fillRect(x, y, w, kBtnH, sel ? kPlayBg : kMenuBg);
-  s.drawRect(x, y, w, kBtnH, sel ? kCursor : kDim);
-  s.setTextColor(dim ? kDim : (sel ? kCursor : kText));
-  s.drawString(label, x + (w - static_cast<int>(strlen(label)) * kCharW) / 2, y + (kBtnH - kCharH) / 2);
+  actions_.touch(list_,ev,y0_);
 }
 
 void DiceDialog::draw(LGFX_Sprite& s, int y0) {
@@ -215,11 +206,8 @@ void DiceDialog::draw(LGFX_Sprite& s, int y0) {
   else snprintf(buf, sizeof(buf), "DICE");
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  const bool canUndo = host_.canUndo && host_.canUndo();
-  drawButton(s, kUndoX, y0 + kBtnY, kUndoW, "UNDO", list_.sel() == kUndo, !canUndo);
-  drawButton(s, kCloseX, y0 + kBtnY, kCloseW, "CLOSE", list_.sel() == kClose, false);
-  drawButton(s, kRollX, y0 + kBtnY, kRollW, "ROLL", list_.sel() == kRoll, false);
   list_.draw(s, y0 + kHeaderH);
+  actions_.draw(s,y0,"ROLL","CLOSE");
 }
 
 }  // namespace ui

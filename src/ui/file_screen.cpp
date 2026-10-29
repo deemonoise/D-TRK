@@ -27,7 +27,7 @@ namespace ui {
 namespace {
 
 constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
-                                   "Import MIDI...", "Export...", "Wi-Fi firmware...", "MIDI devices...", "Retry"};
+                                   "Import MIDI...", "Export...", "Retry"};
 // The last row: Retry without a card, Restore autosave with one (they never need the row together).
 constexpr const char* kRestoreLabel = "Restore autosave";
 
@@ -73,8 +73,8 @@ bool FileScreen::enabled(int a) const {
   const bool sd = hw::sdReady();
   switch (a) {
     case kSectionSel: return true;
-    case kWifi: return true;  // the firmware page: no card needed
-    case kMidi: return true;
+    case kMidi:
+    case kWifi: return true;  // connections do not need an SD card
     case kRetry: return !sd || autoAvail_;
     default: return sd;
   }
@@ -96,7 +96,7 @@ void FileScreen::moveSel(int delta) {
 
 void FileScreen::run(int a) {
   if (!enabled(a)) return;
-  sel_ = a;
+  if (a >= 0 && a < kActions) sel_ = a;
   switch (a) {
     case kSectionSel: return;  // switched by A + turn / a tap on the page bar
     case kSave: save(); break;
@@ -170,7 +170,7 @@ void FileScreen::onMenu(int id) {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Delete", kDeleteUsed}};
       char title[28];
       snprintf(title, sizeof(title), "USED BY INS%d. DELETE?", ins + 1);
-      app_.menu().open(title, items, 2, [this](int id) { onMenu(id); });
+      app_.menu().openChild(title, items, 2, [this](int id) { onMenu(id); });
       break;
     }
     case kDeleteUsed: doDelete(pending_); break;
@@ -207,7 +207,7 @@ void FileScreen::saveAs(const char* initial) {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Overwrite", kOverwrite}};
       char title[28];
       snprintf(title, sizeof(title), "%s EXISTS", nm);
-      app_.menu().open(title, items, 2, [this](int id) { onMenu(id); });
+      app_.menu().openChild(title, items, 2, [this](int id) { onMenu(id); });
       return;
     }
     doSave(nm);
@@ -328,7 +328,7 @@ void FileScreen::listOpen() {
   strlcpy(pending_, nm, sizeof(pending_));
   if (app_.projectDirty()) {
     const MenuItem items[] = {{"Cancel", kCancel}, {"Discard & load", kDiscardLoad}};
-    app_.menu().open("DISCARD CHANGES?", items, 2, [this](int id) { onMenu(id); });
+    app_.menu().openChild("DISCARD CHANGES?", items, 2, [this](int id) { onMenu(id); });
   } else {
     doLoad(false);
   }
@@ -372,7 +372,7 @@ void FileScreen::doLoad(bool bak) {
                            r != Result::EngineBusy;
   if (fileProblem && !bak && storage::exists(pending_, true)) {
     const MenuItem items[] = {{"Cancel", kCancel}, {"Load backup", kLoadBak}};
-    app_.menu().open(storage::resultText(r), items, 2, [this](int id) { onMenu(id); });
+    app_.menu().openChild(storage::resultText(r), items, 2, [this](int id) { onMenu(id); });
     return;
   }
   if (!hw::sdReady()) closeList();
@@ -409,13 +409,13 @@ void FileScreen::onNewChoice(int id) {
     MenuItem demos[Menu::kMaxItems];
     int n = 0;
     for (int i = 0; i < mt::demoCount() && n < Menu::kMaxItems; ++i) demos[n++] = {mt::demoName(i), kTplDemo + i};
-    app_.menu().open("DEMO SONGS", demos, n, [this](int d) { onNewChoice(d); });
+    app_.menu().openChild("DEMO SONGS", demos, n, [this](int d) { onNewChoice(d); });
     return;
   }
   newChoice_ = id;
   if (app_.projectDirty()) {
     const MenuItem confirm[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
-    app_.menu().open("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
+    app_.menu().openChild("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
   } else {
     doNew();
   }
@@ -518,7 +518,9 @@ void FileScreen::onBack() {
   else if (wifi_.isOpen()) wifi_.onInput(lp);
   else if (midiDlg_.isOpen()) midiDlg_.onBack();  // learning: skips the step, else closes
   else if (list_.ready()) listAct(FileList::Act::Back);  // a subfolder: one level up; the top: closes
-  else if (section_ == kSecSystem) sysList_.setEdit(false);
+  else if (section_ == kSecSystem) {
+    if (diagnostics_) showSystem(false); else sysList_.setEdit(false);
+  }
 }
 
 // B + Shift + turn: the previous / next section.
@@ -556,7 +558,10 @@ void FileScreen::onTouch(const TouchEvent& ev) {
     return;
   }
   if (ev.y >= y0_ + kHeaderH && ev.y < top) {
-    if (ev.type == TouchType::Tap) setSection(PageBar::at(ev.x, kSections));
+    if (ev.type == TouchType::Tap) {
+      if (section_ == kSecSystem && diagnostics_) showSystem(false);
+      else setSection(PageBar::at(ev.x, kSections));
+    }
     return;
   }
   if (section_ == kSecSamples) {
@@ -638,6 +643,10 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
     // Sections: a page bar; with the encoder focus on it, an outline (A + turn = previous / next section).
     static const char* const kNames[kSections] = {"PROJECTS", "SAMPLES", "SYSTEM"};
     const int by = y0 + kHeaderH;
+    if (section_ == kSecSystem && diagnostics_) {
+      s.setTextColor(kCursor); s.drawString("< SYSTEM / DIAGNOSTICS",16,by+2);
+      return;
+    }
     PageBar::draw(s, by, kNames, kSections, section_);
     const bool focus = section_ == kSecSamples  ? ssel_ == kSwitchRow
                        : section_ == kSecSystem ? sysList_.barSelected()
@@ -658,6 +667,7 @@ void FileScreen::setSection(int section) {
       stop_ = 0;
       break;
     case kSecSystem:
+      showSystem(false);
       sysList_.setEdit(false);
       sysList_.selectBar();
       break;
@@ -753,7 +763,7 @@ void FileScreen::importAs(const char* initial) {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Overwrite", kOverwriteSample}};
       char title[28];
       snprintf(title, sizeof(title), "%s EXISTS", nm);
-      app_.menu().open(title, items, 2, [this](int id) { onMenu(id); });
+      app_.menu().openChild(title, items, 2, [this](int id) { onMenu(id); });
       return;
     }
     doImport(nm);
@@ -995,7 +1005,7 @@ void FileScreen::initSystem() {
                            }};
   // Read only: the firmware version and why the device last restarted (crash log: /diag/crashlog.txt).
   sysParams_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); },
-                           [](int) {}};
+                           nullptr};
   // The synth board: its firmware ("NO SYNTH" while it does not answer; "!" = another protocol).
   sysParams_[kSynthFw] = {"Synth fw",
                           [](char* o, int n) {
@@ -1003,11 +1013,11 @@ void FileScreen::initSystem() {
                             else snprintf(o, n, "%s P%u%s", audio::synthFw(), audio::synthProtocol(),
                                           audio::versionOk() ? "" : " !");
                           },
-                          [](int) {}};
+                          nullptr};
   // Click: flash the synth board with /firmware/teensy.hex from its card (Wi-Fi page puts it there).
   sysParams_[kUpdSynth] = {"Update synth",
                            [](char* o, int n) { snprintf(o, n, "%s", audio::synthUp() ? "CLICK" : "NO SYNTH"); },
-                           [](int) {}};
+                           nullptr};
   // The card in the synth board: size and free space.
   sysParams_[kCard] = {"Card",
                        [](char* o, int n) {
@@ -1019,7 +1029,7 @@ void FileScreen::initSystem() {
                                        static_cast<unsigned long>(total / 1024),
                                        static_cast<unsigned long>(total % 1024 * 10 / 1024));
                        },
-                       [](int) {}};
+                       nullptr};
   // Samples: where they play from (the synth board's SD, plus PSRAM copies) and the voices that ran out
   // of data since it came up (an underrun: that voice faded out for a moment).
   sysParams_[kSamples] = {"Samples",
@@ -1031,7 +1041,7 @@ void FileScreen::initSystem() {
                             const audio::StreamInfo s = audio::streamInfo();
                             mt::streamLine(o, n, s.psram, s.psramFill, s.underruns);
                           },
-                          [](int) {}};
+                          nullptr};
   // The link counters since boot: events lost / late on the synth, bad frames here.
   sysParams_[kLink] = {"Link",
                        [](char* o, int n) {
@@ -1039,9 +1049,9 @@ void FileScreen::initSystem() {
                          snprintf(o, n, "LOST %lu LATE %lu CRC %lu", static_cast<unsigned long>(c.lost + c.dropped),
                                   static_cast<unsigned long>(c.late), static_cast<unsigned long>(c.crcErrors));
                        },
-                       [](int) {}};
+                       nullptr};
   sysParams_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
-                            [](int) {}};
+                            nullptr};
   // Where the sequencer lives (PSRAM = it costs more) and the free internal RAM.
   sysParams_[kAudioRam] = {"Audio RAM",
                            [](char* o, int n) {
@@ -1049,7 +1059,7 @@ void FileScreen::initSystem() {
                                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
                              snprintf(o, n, "SEQ %s, %uK FREE", engine::seqInternal() ? "INTERNAL" : "PSRAM", kb);
                            },
-                           [](int) {}};
+                           nullptr};
   // The lowest free internal RAM since boot and now (BLE, Wi-Fi, import, render, REC all take from it).
   // BLE up: "MIN/NOW BLE a/b", the untouched stack of its connect task / OUT writer in bytes (0: no
   // writer); short, the value column holds 35 characters and ParamList's buffer 31.
@@ -1064,7 +1074,7 @@ void FileScreen::initSystem() {
                            else
                              snprintf(o, n, "%uK, NOW %uK FREE", mn, now);
                          },
-                         [](int) {}};
+                         nullptr};
   // Sensor voltage, current (CHG while charging) and the gauge's percent; redrawn per sample.
   sysParams_[kBattery] = {"Battery",
                           [this](char* o, int n) {
@@ -1084,7 +1094,7 @@ void FileScreen::initSystem() {
                             else snprintf(pct, sizeof(pct), "--%%");
                             snprintf(o, n, "%.2fV %s%dmA %s", b.volts, g.charging() ? "CHG " : "", ma, pct);
                           },
-                          [](int) {}};
+                          nullptr};
   // Click: start; play a while (on the screen to measure), click again: the time per stage of the
   // audio render goes to /diag/cpuprof.txt.
   sysParams_[kCpuProf] = {"CPU profile",
@@ -1094,10 +1104,14 @@ void FileScreen::initSystem() {
                             else
                               snprintf(o, n, "CLICK TO START");
                           },
-                          [](int) {}};
+                          nullptr};
+  sysParams_[kWifiRow] = {"Wi-Fi firmware...",nullptr,nullptr};
+  sysParams_[kMidiRow] = {"MIDI devices...",nullptr,nullptr};
+  sysParams_[kDiagnostics] = {"Diagnostics...",nullptr,nullptr};
+  sysParams_[kDiagBack] = {"Back to SYSTEM",nullptr,nullptr};
   sysList_.setOnCancel([this] { app_.toast("CANCEL"); });
   sysList_.setPageBar(true);
-  sysList_.setParams(sysParams_, kSysRows);
+  sysList_.setParams(sysParams_, kFirmware);
   sysList_.setVisibleRows(kSysListRows);
   sysList_.selectBar();
 }
@@ -1106,29 +1120,43 @@ uint32_t FileScreen::profSecs() const { return (millis() - profStartMs_) / 1000;
 
 // A + turn on the page bar: the previous / next section; a click on CPU profile starts / stops it,
 // on Update synth asks to flash the synth board.
+void FileScreen::showSystem(bool diagnostics) {
+  if (diagnostics && !diagnostics_) systemSel_=sysList_.sel();
+  diagnostics_=diagnostics;
+  sysList_.setEdit(false);
+  sysList_.setPageBar(!diagnostics);
+  sysList_.setParams(sysParams_+(diagnostics?kFirmware:0),diagnostics?kSysRows-kFirmware:kFirmware);
+  sysList_.setVisibleRows(kSysListRows);
+  sysList_.setSel(diagnostics?0:systemSel_);
+  app_.invalidate();
+}
+
 void FileScreen::systemInput(const hw::InputEvent& ev) {
-  if (ev.type == hw::InputType::EncClick && !sysList_.editing() &&
-      (sysList_.sel() == kCpuProf || sysList_.sel() == kUpdSynth)) {
-    sysAction(sysList_.sel());
-    return;
+  if (ev.type==hw::InputType::EncClick && !sysList_.editing()) {
+    const int row=systemRow();
+    if(row==kCpuProf || row==kUpdSynth || row==kWifiRow || row==kMidiRow || row==kDiagnostics || row==kDiagBack) {
+      sysAction(row);return;
+    }
   }
-  if (const int ov = sysList_.onInput(ev)) setSection(section_ + ov);
+  if(const int ov=sysList_.onInput(ev)) setSection(section_+ov);
 }
 
 void FileScreen::systemTouch(const TouchEvent& ev) {
-  const int r = sysList_.rowAt(ev.y);
-  if (ev.type == TouchType::Tap && (r == kCpuProf || r == kUpdSynth)) {
-    sysList_.setEdit(false);
-    sysList_.setSel(r);
-    sysAction(r);
-    return;
+  const int r=sysList_.rowAt(ev.y);
+  const int row=(diagnostics_?kFirmware:0)+r;
+  if(ev.type==TouchType::Tap && r>=0 && (row==kCpuProf || row==kUpdSynth || row==kWifiRow || row==kMidiRow || row==kDiagnostics || row==kDiagBack)) {
+    sysList_.setEdit(false);sysList_.setSel(r);sysAction(row);return;
   }
   sysList_.onTouch(ev);
 }
 
 void FileScreen::sysAction(int row) {
-  if (row == kUpdSynth) askUpdateSynth();
-  else toggleProfile();
+  if(row==kUpdSynth) askUpdateSynth();
+  else if(row==kCpuProf) toggleProfile();
+  else if(row==kWifiRow) run(kWifi);
+  else if(row==kMidiRow) run(kMidi);
+  else if(row==kDiagnostics) showSystem(true);
+  else if(row==kDiagBack) showSystem(false);
 }
 
 void FileScreen::askUpdateSynth() {
@@ -1149,7 +1177,7 @@ void FileScreen::askUpdateSynth() {
   snprintf(title, sizeof(title), "UPDATE SYNTH (%lu KB)?", kb);
   enum : int { kCancel, kUpdate };
   const MenuItem items[] = {{"Cancel", kCancel}, {"Update", kUpdate}};
-  app_.menu().open(title, items, 2, [this](int id) {
+  app_.menu().openChild(title, items, 2, [this](int id) {
     if (id == kUpdate) updateSynth();
   });
 }

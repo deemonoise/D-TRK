@@ -207,8 +207,9 @@ void ImportDialog::buildRows() {
   p[r++] = {"IMPORT", nullptr, nullptr};
   cancelRow_ = r;
   p[r++] = {"CANCEL", nullptr, nullptr};
-  list_.setParams(p, r);
-  list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
+  list_.setParams(p, importRow_);
+  actions_.reset(list_);
+  list_.setVisibleRows(actions_.listRows(kHeaderH));
   list_.setSel(0);
   list_.setEdit(false);
 }
@@ -271,31 +272,21 @@ void ImportDialog::commit() {
 void ImportDialog::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
   if (ev.type == InputType::EncLong) {
-    if (list_.editing()) list_.setEdit(false);
-    else close();
+    close();
     return;
   }
-  if (ev.type == InputType::EncClick && isAction(list_.sel())) {
-    action(list_.sel());
-    return;
-  }
-  list_.onInput(ev);
+  const int result=actions_.input(list_,importRow_,ev);
+  if(result>=0)action(result==0?importRow_:cancelRow_);
 }
 
 void ImportDialog::onTouch(const TouchEvent& ev) {
-  if (ev.type == TouchType::Tap) {
-    const int r = list_.rowAt(ev.y);
-    if (isAction(r)) {
-      list_.setSel(r);
-      action(r);
-      return;
-    }
-  }
-  list_.onTouch(ev);
+  const int result=actions_.touch(list_,ev,y0_);
+  if(result>=0)action(result==0?importRow_:cancelRow_);
 }
 
 void ImportDialog::draw(LGFX_Sprite& s, int y0) {
   if (!state_ || !isOpen()) return;
+  y0_=y0;
   char buf[48];
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.setTextColor(kText);
@@ -305,6 +296,7 @@ void ImportDialog::draw(LGFX_Sprite& s, int y0) {
   snprintf(buf, sizeof(buf), "%lu notes%s", static_cast<unsigned long>(noteCount_), state_->cut ? " CUT" : "");
   s.drawString(buf, kScreenW - 16 - static_cast<int>(strlen(buf)) * kCharW, y0 + (kHeaderH - 4 - kCharH) / 2);
   list_.draw(s, y0 + kHeaderH);
+  actions_.draw(s,y0,"IMPORT");
 }
 
 }  // namespace ui

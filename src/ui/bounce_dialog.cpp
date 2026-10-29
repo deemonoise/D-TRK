@@ -43,7 +43,8 @@ BounceDialog::BounceDialog(App& app) : app_(app) {
   kitParams_[1] = params_[kVel];
   kitParams_[2] = params_[kSave];
   kitParams_[3] = params_[kCancel];
-  list_.setParams(params_, kRows);
+  list_.setParams(params_, kSave);
+  list_.setVisibleRows(actions_.listRows(kHeaderH));
 }
 
 bool BounceDialog::progress(uint32_t done, uint32_t total, void* ctx) {
@@ -65,9 +66,10 @@ void BounceDialog::open(int instr, uint8_t note, uint8_t insTrack) {
   kit_ = false;
   onBaked_ = nullptr;
   mt::nextBounceName(app_.project(), app_.project().instruments[instr].name, name_);
-  list_.setParams(params_, kRows);
+  list_.setParams(params_, kSave);
   list_.setEdit(false);
-  list_.setSel(kSave);
+  list_.setSel(0);
+  actions_.reset(list_);
   open_ = true;
 }
 
@@ -77,9 +79,10 @@ void BounceDialog::openKit(int kit, std::function<void()> onBaked) {
   vel_ = 127;
   kit_ = true;
   onBaked_ = std::move(onBaked);
-  list_.setParams(kitParams_, kKitRows);
+  list_.setParams(kitParams_, kKitRows-2);
   list_.setEdit(false);
-  list_.setSel(2);  // SAVE
+  list_.setSel(0);
+  actions_.reset(list_);
   open_ = true;
 }
 
@@ -227,11 +230,12 @@ void BounceDialog::onInput(const hw::InputEvent& ev) {
       app_.invalidate();
       return;
     case InputType::EncClick:
-      if (!list_.editing() && action(rowId(list_.sel()))) return;
+      if (!actions_.footerFocused() && !list_.editing() && action(rowId(list_.sel()))) return;
       break;
     default: break;
   }
-  list_.onInput(ev);
+  const int result=actions_.input(list_,kit_ ? kKitRows-2 : kSave,ev);
+  if(result>=0)action(result==0?kSave:kCancel);
 }
 
 void BounceDialog::onTouch(const TouchEvent& ev) {
@@ -241,31 +245,20 @@ void BounceDialog::onTouch(const TouchEvent& ev) {
     app_.invalidate();
     return;
   }
-  if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
-    const int by = y0_ + kBtnY;
-    if (ev.y >= by && ev.y < by + kBtnH) {
-      if (ev.x >= kCancelX && ev.x < kCancelX + kCancelW) action(kCancel);
-      else if (ev.x >= kOkX && ev.x < kOkX + kOkW) action(kSave);
-    }
-    return;
+  if(ev.y>=y0_+kAreaH-DialogActions::kH){
+    const int result=actions_.touch(list_,ev,y0_);if(result>=0)action(result==0?kSave:kCancel);return;
   }
   if (ev.type == TouchType::Tap) {
     const int r = list_.rowAt(ev.y);
     const int id = rowId(r);
-    if (id == kSave || id == kCancel || id == kName) {
+    if (id == kName) {
+      actions_.focusList(list_);
       list_.setSel(r);
       action(id);
       return;
     }
   }
-  list_.onTouch(ev);
-}
-
-void BounceDialog::drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel) {
-  s.fillRect(x, y, w, kBtnH, sel ? kPlayBg : kMenuBg);
-  s.drawRect(x, y, w, kBtnH, sel ? kCursor : kDim);
-  s.setTextColor(sel ? kCursor : kText);
-  s.drawString(label, x + (w - static_cast<int>(strlen(label)) * kCharW) / 2, y + (kBtnH - kCharH) / 2);
+  actions_.touch(list_,ev,y0_);
 }
 
 void BounceDialog::draw(LGFX_Sprite& s, int y0) {
@@ -281,9 +274,8 @@ void BounceDialog::draw(LGFX_Sprite& s, int y0) {
            !kit_ && ins_ < mt::kTracks ? " +FX" : "");
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  drawButton(s, kCancelX, y0 + kBtnY, kCancelW, "CANCEL", rowId(list_.sel()) == kCancel);
-  drawButton(s, kOkX, y0 + kBtnY, kOkW, "SAVE", rowId(list_.sel()) == kSave);
   list_.draw(s, y0 + kHeaderH);
+  actions_.draw(s,y0,"SAVE");
 }
 
 }  // namespace ui

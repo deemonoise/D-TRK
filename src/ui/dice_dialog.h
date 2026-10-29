@@ -1,4 +1,5 @@
 #pragma once
+#include "dialog_actions.h"
 #include <functional>
 #include <stdint.h>
 #include "dice.h"
@@ -39,7 +40,7 @@ class DiceDialog {
   void draw(LGFX_Sprite& s, int y0);
 
  private:
-  enum Row : int { kGenre, kStyle, kVariety, kLength, kScope, kSong, kRoll, kUndo, kClose, kRows };
+  enum Row : int { kGenre, kStyle, kVariety, kLength, kScope, kSong, kUndo, kRoll, kClose, kRows };
   enum Scope : uint8_t { kScAll, kScTempo, kScSounds, kScPatterns, kScopes };
   struct Prefs {
     uint8_t genre = 0, style = 0, variety = mt::kDiceVarietyDefault, scope = kScAll, song = 1;
@@ -50,10 +51,6 @@ class DiceDialog {
     }
   };
   static constexpr int kHeaderH = 28;
-  static constexpr int kBtnY = 2, kBtnH = 20;
-  static constexpr int kUndoX = 248, kUndoW = 64;
-  static constexpr int kCloseX = 320, kCloseW = 72;
-  static constexpr int kRollX = 400, kRollW = 64;
 
   uint8_t layers() const;  // kDice* bits of Scope + Song
   bool patterns() const { return pr_.scope == kScAll || pr_.scope == kScPatterns; }
@@ -62,8 +59,8 @@ class DiceDialog {
   void rollNow(int first);
   void undo();
   bool action(int row);  // ROLL / UNDO / CLOSE row: runs it, true when handled
-  void drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel, bool dim);
 
+  DialogActions actions_;
   App& app_;
   Host host_;
   Param params_[kRows];

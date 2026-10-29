@@ -1,4 +1,5 @@
 #pragma once
+#include "dialog_actions.h"
 #include "export.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
@@ -42,8 +43,10 @@ class RenderDialog {
   void run();
   void estimate(char* out, int n) const;
 
+  DialogActions actions_;
+  int y0_=kAreaY;
   App& app_;
-  Param params_[kRows];
+  Param params_[kExport];
   ParamList list_{kAreaY + kHeaderH};
   int source_ = 0;  // 0..kPatterns-1 = pattern, kPatterns = SONG
   int loops_ = 0;   // index into 1 2 4 8 16

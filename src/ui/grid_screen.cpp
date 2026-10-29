@@ -198,6 +198,18 @@ void GridScreen::cancelCell() {
   app_.toast("CANCEL");
 }
 
+const char* GridScreen::viewTabLabel() const {
+  static const char* const labels[] = {"G:OVR", "G:DTL", "G:ROL", "G:AUT"};
+  return labels[static_cast<int>(view_)];
+}
+void GridScreen::nextView() {
+  if (dialogOpen()) return;
+  toggleView();
+  static const char* const names[] = {"GRID: OVERVIEW", "GRID: DETAIL", "GRID: PIANO ROLL", "GRID: AUTOMATION"};
+  app_.toast(names[static_cast<int>(view_)]);
+  app_.invalidate();
+}
+
 void GridScreen::toggleView() {
   switch (view_) {
     case View::Overview: setView(View::Detail); break;
@@ -895,14 +907,12 @@ void GridScreen::menuScopeTitle(char* title, size_t size, const mt::Sel& scope, 
 void GridScreen::openProcessMenu() {
   char title[28]; menuScopeTitle(title, sizeof(title), menuCtx_.processScope(), !menuCtx_.selected);
   const MenuItem items[] = {{"Fill...", kFill}, {"Transpose...", kTranspose},
-    {"Quantize...", kQuantize, app_.undoScratch()!=nullptr}, {"Rotate...",kRotate}, {"Velocity...",kVelocity},
-    {"Pattern x2...",kDoublePattern,menuCtx_.length*2<=mt::kMaxSteps}};
-  app_.menu().openChild(title, items, 6, [this](int id) {
+    {"Quantize...", kQuantize, app_.undoScratch()!=nullptr}, {"Rotate...",kRotate}, {"Velocity...",kVelocity}};
+  app_.menu().openChild(title, items, 5, [this](int id) {
     if (!menuTargetValid()) return;
     if (id == kQuantize) { quantizeSel_=menuCtx_.processScope(); quantizePattern_=menuCtx_.pattern; openQuantizeMenu(); }
     else if (id == kRotate) openRotateDialog();
     else if (id == kVelocity) openVelocityDialog();
-    else if (id == kDoublePattern) openDoublePattern();
     else onMenu(id);
   });
 }

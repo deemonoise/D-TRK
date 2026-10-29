@@ -4,12 +4,13 @@
 #include "hw/sdcard.h"
 #include "model.h"
 #include "page_bar.h"
+#include "proj_pages.h"
 #include "param_list.h"
 #include "screen.h"
 
 namespace ui {
 
-// Project settings on pages SONG, DLY (send delay), RVB (reverb, shimmer), MOD (the MOD send bus),
+// Project settings on pages MAIN, PAT, DLY (send delay), RVB (reverb, shimmer), MOD (the MOD send bus),
 // MSTR (compressor, sidechain, master EQ), PERF (the effect and start value of each track button in
 // PERF mode);
 // length / resolution / swing apply to the heard pattern. Device settings and diagnostics are on
@@ -46,11 +47,19 @@ class ProjScreen : public Screen {
     kRows
   };
   // Pages: contiguous runs of rows.
-  enum Page : int { kPgSong, kPgDly, kPgRvb, kPgMod, kPgMstr, kPgPerf, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kBpm, kDlyTime, kRvbSize, kModType, kCompAmt, kPerf1, kRows};
+  // Keep the original six logical IDs: MIDI bindings store these numbers.
+  enum Page : int { kPgSong=mt::kProjectMain, kPgDly=mt::kProjectDelay, kPgRvb=mt::kProjectReverb,
+    kPgMod=mt::kProjectMod, kPgMstr=mt::kProjectMaster, kPgPerf=mt::kProjectPerf,
+    kPgPattern=mt::kProjectPattern, kPages=mt::kProjectPageCount };
+  static_assert(kPgSong == 0 && kPgDly == 1 && kPgPerf == 5, "Stored MIDI page IDs stay stable");
+  int physicalPage() const;
+  int firstRow(int page) const;
+  int rowCount(int page) const;
+  void stepPage(int delta, bool bar);
+  static constexpr int kPageFirst[7] = {kBpm, kDlyTime, kRvbSize, kModType, kCompAmt, kPerf1, kRows};
   char perfLabels_[8][10] = {};  // "Button 1".. (Param labels must outlive the list)
   static constexpr int kHeaderH = 28;
-  static constexpr int kListRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
+  static constexpr int kListRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;
   static constexpr uint32_t kBpmSettleMs = 300;
 
   mt::Pattern& pat();

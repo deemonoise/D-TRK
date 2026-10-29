@@ -111,6 +111,21 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 
 <a id="screen"></a>
 
+### Shared interface rules
+
+- The status area is 44 pixels: the top 24 keep transport, position, battery and synth state visible; the next 20 show messages. Messages never replace PLAY/STOP or errors. With no message, this row shows the project name and unsaved marker. The message row has no transport touch controls.
+- **B** / tapping **<** returns through nested menus with selection restored. Long encoder press or tapping outside closes the menu tree.
+- Rotate, Velocity, Transpose, Fill, Import, Export, Save one-shot, Wavetable Make and Dice have persistent action/cancel buttons at the bottom. Encoder focus reaches them after the last parameter row. Fill retains its live preview and restoration on cancel.
+- Selecting inactive rows explains the condition (e.g. Enable Filter or INT tracks only). Preconfiguring an inactive value remains possible where previously supported. Read-only rows do not enter edit mode.
+- The active GRID tab shows **G:OVR / G:DTL / G:ROL / G:AUT**. Tapping it again cycles views, like Shift+encoder click; tapping from another tab opens GRID without changing its view.
+- TRACK shows the track and assigned instrument. INST shows its relationship to the current track, `/KIT` for a lane reference and `xN` for multiple INT-track consumers. Shared instruments remain shared.
+- FILE → PROJECTS contains project operations. **Wi-Fi firmware…**, **MIDI devices…** and **Update synth** live in **FILE → SYSTEM**. Firmware/card/memory/link/reset/battery/CPU diagnostics are in **SYSTEM → Diagnostics…**; B returns to SYSTEM.
+- PROJ: **MAIN** holds BPM/scale/tuning/seed; **PAT** holds Length/Resolution/Swing/Groove for Pxx, followed by DLY/RVB/MOD/MSTR/PERF. Existing MIDI bindings remain compatible.
+- SAMPLE uses **Record / render**, **Slices**, **Convert**, **Presets**, **Mutate** groups. Mutate has Strength (15/30/60%), Apply mutation and Undo mutation. Selected marker positions show percent and seconds.
+- The preset browser shows **AUDITION** after temporarily applying a sound. **APPLY** keeps it; **CANCEL** restores the original; **DELETE** confirms deletion of a user preset.
+- BANK: **Length…** marks the current value, **Pattern x2…** repeats all tracks and grows length in one Undo. SONG's **MUTES / TRN BPM** header switches views; **Append Pxx** and **Clear slot mutes** name their targets. MIX distinguishes **EDIT n** from fader endpoints **A:n / B:n**.
+- MIDI DEVICES has one **Role…** picker (IN/OUT/IN+OUT). KNOBS shows the selected binding's full target below the list.
+
 ## Screen and status bar
 
     S03 P05*  >P07  120 BPM  5/16  PLAY  L3  [=] 85%  CPU  42%
@@ -364,7 +379,7 @@ The main menu has 10 rows without scrolling: Copy step / Copy selection, Paste, 
 
 The title shows STEP / SEL / TRACK scope, captured when opening the menu. **B** or tapping **<** returns to the parent menu, preserving its selection and scroll; B closes the root menu. Long encoder press or tapping outside closes the entire menu. Undo remains **Shift+B**, recording **A+Play / B+Play**, views **Shift+encoder click**.
 
-- **Transpose…** opens a dialog: **Amount** and **Mode** (SCALE — scale degrees, CHROMATIC — semitones), with OK / CANCEL buttons. The range is two octaves up and down (in SCALE that is 2 × the number of scale notes; ±14 for major). <kbd>Shift</kbd>+turn changes Amount by an octave. Long press — Cancel. Affects only steps with a note; without a selection, the whole track; one undo step. It is a shift, not a state: Amount starts at 0 every time the dialog opens; to restore the notes, apply the opposite shift (+12, then −12). Mode is remembered until power-off.
+- **Transpose…** opens a dialog: **Amount** and **Mode** (SCALE — scale degrees, CHROMATIC — semitones), with APPLY / CANCEL buttons. The range is two octaves up and down (in SCALE that is 2 × the number of scale notes; ±14 for major). <kbd>Shift</kbd>+turn changes Amount by an octave. Long press — Cancel. Affects only steps with a note; without a selection, the whole track; one undo step. It is a shift, not a state: Amount starts at 0 every time the dialog opens; to restore the notes, apply the opposite shift (+12, then −12). Mode is remembered until power-off.
 - <a id="capturelive"></a>**Capture live** (a track with [GEN](#gen) or [MUT](#mut) on) writes what the track plays now into the edited pattern, all steps of its length: first MUT (the heard drift or generation), then the generator on top of it — PITCH replaces the notes of steps with a note, GATE puts a note on the hit steps and removes it from the others (BYTE modes the same way); OFF and step fx stay, Flip is not applied. While playing, the state is taken from the next step to play; when stopped, from the start (the generator from its seed, MUT as written). One undo step, toast `LIVE CAPTURED`. Then GEN turns OFF and MUT keeps running in its mode from a fresh state of the written pattern (EVO with no drift, CA / MARKOV at generation 0), so the sound does not jump. Undo restores the pattern and GEN; MUT restarts from a fresh state. Only while the edited pattern is the one playing (else toast `CAPTURE: OTHER PATTERN`).
 - Paste inserts at the cursor position or at the top-left corner of the selection. It doesn't go past track 16 or the pattern length; the selection is also clipped at track 16.
 - The clipboard survives loading another project — so you can move parts between projects.
@@ -376,7 +391,7 @@ The title shows STEP / SEL / TRACK scope, captured when opening the menu. **B** 
 
 **Edit step / selection → Duplicate** copies the step or selection rectangle immediately after itself, replacing the destination. Source and clipboard stay intact. Pattern length does not grow; `NOT ENOUGH STEPS` rejects the whole operation if the entire copy does not fit.
 
-**Process → Pattern x2…** shows a separate PATTERN target and doubles the entire pattern, repeating all 16 tracks. Maximum: 128 steps. Explicit track lengths and speeds stay unchanged; tracks inheriting the pattern length follow the new length.
+**BANK → Pattern x2…** shows a separate PATTERN target and doubles the entire pattern, repeating all 16 tracks. Maximum: 128 steps. Explicit track lengths and speeds stay unchanged; tracks inheriting the pattern length follow the new length.
 
 **Paste…** offers **Paste all**, **Paste notes only**, **Paste automation only**. The origin is the cursor or the selection's top-left corner, clipped at the pattern/track-16 boundary. Notes replaces note, velocity and KIT masks, preserving every destination FX including NDG/GAT. Automation replaces parameter/LFO locks, preserving notes and musical FX. Empty source cells clear the chosen part of the destination. Insufficient FX slots reject the entire paste or automation rotation: `FX FULL: NO CHANGE`.
 
@@ -636,7 +651,7 @@ Quick track filling: notes, velocity or any FX slot on every N-th step, in a Euc
 - Steps Fill didn't hit stay as they were. To rewrite a track completely, Clear track first.
 - VELOCITY is written only to steps with a note: velocity without a note doesn't sound. Accents are done like this: Fill VELOCITY, EVERY 4, Value 127.
 - On a [drum track](#drumtrack) NOTE sets a lane (the **Lane** row, 1–16; by default the lane under the cursor), other lanes are left alone; new steps get the track velocity. VELOCITY writes the step velocity.
-- Every change is written to the track immediately and sounds. **OK** keeps the result (one undo step). **CANCEL**, a long press or leaving GRID restore everything as it was.
+- Every change is written to the track immediately and sounds. **APPLY** keeps the result (one undo step). **CANCEL**, a long press or leaving GRID restore everything as it was.
 - Settings are remembered until power-off; they are not saved to a file.
 
 The list works the same as in PROJ: turn — row, click — edit, turn in edit mode — value. A tap selects a row, a second tap edits, dragging in edit mode changes the value.
@@ -645,7 +660,7 @@ The list works the same as in PROJ: turn — row, click — edit, turn in edit m
 
 ### Arp (Type: ARP)
 
-The first row of the Fill dialog is **Type**: `FILL` (filling, see above) or `ARP`, an arpeggio generator in the spirit of the Access Virus. It does not play live: it writes the arpeggio as notes and fx onto one track (**Dest**). A rhythm pattern (factory or your own) runs over the "held" notes: the chord from the Root and Chord rows, or the notes of the selection. The step range is the same as Fill's: the selection or, without one, the track under the cursor for its length. Preview, **OK** (one undo step, toast `ARP`) and **CANCEL** work as in Fill. The header shows where it writes and where it reads: `ARP T4 1-16`, with Source SELECTION `ARP T4 1-16 < T1-3`.
+The first row of the Fill dialog is **Type**: `FILL` (filling, see above) or `ARP`, an arpeggio generator in the spirit of the Access Virus. It does not play live: it writes the arpeggio as notes and fx onto one track (**Dest**). A rhythm pattern (factory or your own) runs over the "held" notes: the chord from the Root and Chord rows, or the notes of the selection. The step range is the same as Fill's: the selection or, without one, the track under the cursor for its length. Preview, **APPLY** (one undo step, toast `ARP`) and **CANCEL** work as in Fill. The header shows where it writes and where it reads: `ARP T4 1-16`, with Source SELECTION `ARP T4 1-16 < T1-3`.
 
 | Row | Values | Default | Meaning |
 |-----|--------|---------|---------|
@@ -758,7 +773,7 @@ TRIPLET, PSY TRIPL and TE HYPNO3 are 12 steps long (over 16 steps they make a po
 
 ### Chords (Type: CHORDS)
 
-`CHORDS` writes a chord progression onto one track (**Dest**): on every hit of a rhythm, the chord's root as the step note and its type with inversion as [CHD](#chd). The roots come from the project scale and its root (PROJ → SONG), so one progression follows the key of any project: `1 5 6 4` in A minor is Am Em F Dm (degrees of the scale), `1 b7 b6 5` is a fixed "Roman" line in any scale. The range, Preview, **OK** (one undo step, toast `CHORDS`) and **CANCEL** work as in ARP; the header reads `CHORDS T4 1-16`. A drum Dest turns the row red and nothing is written.
+`CHORDS` writes a chord progression onto one track (**Dest**): on every hit of a rhythm, the chord's root as the step note and its type with inversion as [CHD](#chd). The roots come from the project scale and its root (PROJ → MAIN), so one progression follows the key of any project: `1 5 6 4` in A minor is Am Em F Dm (degrees of the scale), `1 b7 b6 5` is a fixed "Roman" line in any scale. The range, Preview, **APPLY** (one undo step, toast `CHORDS`) and **CANCEL** work as in ARP; the header reads `CHORDS T4 1-16`. A drum Dest turns the row red and nothing is written.
 
 | Row | Values | Default | Meaning |
 |-----|--------|---------|---------|
@@ -846,7 +861,7 @@ The MIN, DEEP, TRNC and SW progressions are meant for a minor project scale, the
 
 ### Bass (Type: BASS)
 
-`BASS` writes a bass line in harmony with chords onto Dest. The pattern is an ARP rhythm in which a note is not a pitch but a role against the chord of its step: root, third, fifth, seventh, a lead-in to the next chord. The chords come from a fixed root, from the selected tracks or from the CHORDS progression. The range, Preview, **OK** (one undo step, toast `BASS`) and **CANCEL** work as in ARP; the header reads `BASS T4 1-16`, with Source SELECTION `BASS T4 1-16 < T1-3`.
+`BASS` writes a bass line in harmony with chords onto Dest. The pattern is an ARP rhythm in which a note is not a pitch but a role against the chord of its step: root, third, fifth, seventh, a lead-in to the next chord. The chords come from a fixed root, from the selected tracks or from the CHORDS progression. The range, Preview, **APPLY** (one undo step, toast `BASS`) and **CANCEL** work as in ARP; the header reads `BASS T4 1-16`, with Source SELECTION `BASS T4 1-16 < T1-3`.
 
 | Row | Values | Default | Meaning |
 |-----|--------|---------|---------|
@@ -1035,7 +1050,7 @@ Below Mut the page shows **only the rows of the chosen mode** (OFF — none): EV
 - **One mode per track:** the modes do not stack. Choosing another mode starts it fresh: EVO with no drift, CA / MARKOV at generation 0.
 - **Order:** pattern → MUT → [GEN](#gen): the generator acts last (PITCH replaces the pitch of the notes MUT played). CND, PRB, Humanize and groove apply after both. MIDI tracks work like INT ones.
 - **What a pass is:** one pass of the pattern (or one song slot). The first pass after Play always sounds as written. Stop (and <kbd>Shift</kbd>+<kbd>Play</kbd>) resets MUT; pause keeps it.
-- **Randomness:** from the project **Seed** (PROJ → SONG), mixed with a random number at every Play like the [follow actions](#follow): each start goes its own way. **Export and Resample** use the Seed alone: the same file every time.
+- **Randomness:** from the project **Seed** (PROJ → MAIN), mixed with a random number at every Play like the [follow actions](#follow): each start goes its own way. **Export and Resample** use the Seed alone: the same file every time.
 - **The header** shows the heard state of the mode: EVO — `MUT` (change steps since Play), `PASS` (passes counted towards the next one), `CHG` (changed steps of the track's length); CA — `GEN` (generations since generation 0), `PASS` and a mini grid of the live cells (on a KIT track 16 rows in 4 groups of 4, lane 1 on top); MARKOV — `GEN` (generations since Play), `PASS` and the steps that differ from the pattern. Live edits apply from the next unheard step.
 - **NRN or EVO Note:** the step fx [NRN](#fx) throws a new random note on every pass and never moves away from the written one; EVO Note keeps its drift — each change starts from the previous, until Home pulls it back or the drift is captured.
 - **Old projects:** files from before MUT had EVO and VAR as two generators on top of each other. A track with both on opens in its VAR mode (EVO off); EVO alone opens as EVO. CA2D on a melodic track opens as CA1D with the same rule number (CA2D needs the KIT lanes); a track that leaves KIT (another instrument or type) plays and shows CA2D as CA1D, and is CA2D again when it gets a KIT back (until the project is saved and opened again). EVO settings kept while another mode is chosen are saved and come back with the project. Since KIT has 16 lanes the CA field of a KIT track always has 16 rows, so a CA1D / CA2D pattern of an older project may evolve differently (an 8-lane kit leaves rows 9–16 empty).
@@ -1863,7 +1878,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 | Tap on a preset | First tap — audition (same as turning); a tap on the selected one — take it and close. | First tap — select; a tap on the selected one — write over it (asks Overwrite). |
 | Click on a preset | Take it and close. | Write over it (asks Overwrite). |
 | Click / tap on a folder | Enter; **\< Up (..)** goes up. | |
-| Buttons | **OK** keeps the selected preset, **DEL** deletes your own preset under the cursor (with confirmation), **CANCEL** restores the instrument as it was. | **SAVE**: name on the keyboard (defaults to the instrument name; if the file exists, asks Overwrite), **+DIR**: new folder inside the current one, **CANCEL**: close. |
+| Buttons | **APPLY** keeps the selected preset, **DELETE** deletes your own preset under the cursor (with confirmation), **CANCEL** restores the instrument as it was. | **SAVE**: name on the keyboard (defaults to the instrument name; if the file exists, asks Overwrite), **+DIR**: new folder inside the current one, **CANCEL**: close. |
 | <kbd>B</kbd> / long press of the encoder | Up one folder; at the top — same as CANCEL. | Up one folder; in the type folder — close. |
 
 - **Load** changes the instrument immediately; CANCEL brings the previous one back. Auditioning works during playback too: tracks using this instrument play with the new sound.
@@ -1936,7 +1951,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 
 ## PROJ: project and pattern
 
-Six pages: **SONG** (tempo, scale, tuning, seed, pattern, groove), **DLY** ([delay](#delay)), **RVB** ([reverb](#reverb) and shimmer), **MOD** ([MOD bus](#modbus)), **MSTR** (compressor, sidechain, master EQ), **PERF** (button effects and their start values). Device settings (Phones, Preview, theme, autosave, versions, synth board, card, diagnostics) are in [FILE → SYSTEM](#system). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
+Seven pages: **MAIN** (tempo, scale, tuning, seed), **PAT** (current pattern length, resolution, swing and groove), **DLY** ([delay](#delay)), **RVB** ([reverb](#reverb) and shimmer), **MOD** ([MOD bus](#modbus)), **MSTR** (compressor, sidechain, master EQ), **PERF** (button effects and their start values). Device settings (Phones, Preview, theme, autosave, versions, synth board, card, diagnostics) are in [FILE → SYSTEM](#system). Switch pages as in TRACK and FILE: tap a page tab, or put the encoder on the page tabs and hold <kbd>A</kbd> + turn, or <kbd>B</kbd>+<kbd>Shift</kbd>+turn.
 
 | Parameter | Values | Scope |
 |---|---|---|
@@ -2017,7 +2032,7 @@ The **MOD bus** is the third shared send effect for the internal sound, for modu
 
 ### Tuning
 
-The built-in sound can play in tunings other than 12-tone equal temperament. The tuning belongs to the project (PROJ → SONG → Tuning): **12-TET** (default, the sound exactly as without a tuning), a factory tuning or your own file in the Scala `.scl` format from the card. MIDI out is always 12-TET.
+The built-in sound can play in tunings other than 12-tone equal temperament. The tuning belongs to the project (PROJ → MAIN → Tuning): **12-TET** (default, the sound exactly as without a tuning), a factory tuning or your own file in the Scala `.scl` format from the card. MIDI out is always 12-TET.
 
 **Factory tunings:** JUST 5-LIMIT (5-limit just intonation), PYTHAGOREAN (wolf fifth G#–Eb), MEANTONE 1/4 (quarter-comma meantone), WERCKMEISTER3 (a well temperament, every key playable), 19-EDO, 24-EDO, 31-EDO (equal divisions), SLENDRO (5 degrees) and PELOG (7 degrees), gamelan approximations, BOHLEN-PIERCE (13 degrees, the period is a twelfth, 3/1). The Tuning list: 12-TET, the factory tunings, then the files in `/presets/TUN` alphabetically.
 
@@ -2147,7 +2162,7 @@ After every pass of a slot the song goes on as its action says: **NEXT** — the
 
 - **Edit:** put the cursor on FOL and click (or tap): the edited field in the header turns red. Turn — the value (chance in steps of 5 %), <kbd>Shift</kbd>+turn — the next field (action → target for JUMP → chance; NEXT has no chance), click or <kbd>B</kbd> — done, <kbd>Shift</kbd>+click — cancel (toast `CANCEL`). Hold <kbd>A</kbd> + turn on FOL changes the action at once (release keeps it, <kbd>A</kbd>+<kbd>B</kbd> cancels). One edit is one undo step (<kbd>Shift</kbd>+<kbd>B</kbd>). Row menu **Follow: NEXT** resets the slot.
 - **Add** (<kbd>A</kbd> tap) copies the follow too. Inserting or deleting slots keeps JUMP pointing at the same slot; a JUMP to a deleted slot goes to the slot in its place (the new last one when the last was deleted).
-- **Randomness:** decided from the project **Seed** (PROJ → SONG) mixed with a hardware random number at every Play / <kbd>Shift</kbd>+<kbd>Play</kbd> — every start is a new path. Pause keeps it. Export uses the Seed alone — the same file every time.
+- **Randomness:** decided from the project **Seed** (PROJ → MAIN) mixed with a hardware random number at every Play / <kbd>Shift</kbd>+<kbd>Play</kbd> — every start is a new path. Pause keeps it. Export uses the Seed alone — the same file every time.
 
 <a id="songtrn"></a>
 
@@ -2201,8 +2216,6 @@ View 2 shows two more columns per slot: **TRN**, a transpose of −24…+24 semi
 | New | Template menu: **EMPTY** (blank), built-in **808 SET**, **909 SET**, **FM SET** (a drum KIT on track 1 and melodic instruments on the following ones), **CHIPTUNE**, **MIDI 8** (8 MIDI tracks on channels 1–8), then your own templates (`> NAME`), **Demo songs…** and **Save as template…**, which saves the current project without notes (instruments, tracks, settings) to `/templates`. Asks about unsaved changes after you choose. |
 | Import MIDI… | Import a `.mid` from the `/midi` folder. |
 | Export… | Record the internal sound to WAV on the card: the master and track stems; see [below](#render). |
-| Wi-Fi firmware… | Firmware update of the tracker and the synth board over Wi-Fi. See [below](#wifi). |
-| MIDI devices… | Bluetooth MIDI controllers and sound modules, pad banks, knob binds. See [Bluetooth MIDI](#ble). |
 | Retry / Restore autosave | Without a card, Retry: reconnect the card. With a card, if this project has an autosave, **Restore autosave**: load it (the project stays unsaved; Save makes it permanent). |
 
 **Demo songs** (FILE → New → Demo songs…) — eight finished projects built into the firmware, no samples needed; Play on the SONG tab plays the song. Each one shows off part of the device:
@@ -2441,7 +2454,7 @@ The tracker talks to Bluetooth LE MIDI devices on its own (no adapter): a **cont
 
 One device can be both (IN+OUT). The status bar shows `BT` ([above](#screen)). Bluetooth is off while the [Wi-Fi dialog](#wifi) is open (it needs the same internal RAM): opening Wi-Fi closes the MIDI dialog, the devices reconnect after **EXIT** (toast `BLUETOOTH FAILED` if it does not come up). With no device on, Bluetooth stays off.
 
-### FILE → MIDI devices…
+### FILE → SYSTEM → MIDI devices…
 
 Three pages: **DEVICES**, **PADS**, **KNOBS**. Navigation matches the other screens: the encoder selects rows and the page bar; <kbd>A</kbd>+turn on the bar or <kbd>B</kbd>+<kbd>Shift</kbd>+turn switches pages, and tapping a tab selects it. Click a row (or tap it again) to act or edit. Long-press the encoder or a row for its context menu; <kbd>B</kbd> ends editing / cancels learning, then closes the window. There is no bottom button strip. At the bottom, the **monitor**: the last messages in (`9 NOTE 36 100`, `1 CC 21 64`; channel 1–16), `NO MIDI IN` when none, and in red `DROP IN n OUT n` once messages were lost (queue full).
 

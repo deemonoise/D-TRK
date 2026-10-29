@@ -21,7 +21,7 @@ void reprobe(storage::Result r) {
   if (r == storage::Result::WriteFail || r == storage::Result::ReadFail) hw::sdRecover();
 }
 
-constexpr const char* kLoadBtns[3] = {"OK", "DEL", "CANCEL"};
+constexpr const char* kLoadBtns[3] = {"APPLY", "DELETE", "CANCEL"};
 constexpr const char* kSaveBtns[3] = {"SAVE", "+DIR", "CANCEL"};
 
 }  // namespace
@@ -446,7 +446,7 @@ void PresetBrowser::button(int b) {
   if (mode_ == Mode::Load) {
     switch (b) {
       case 0:
-        // OK on a preset row not auditioned yet takes it first.
+        // APPLY on a preset row not auditioned yet takes it first.
         if (isPreset(list_.entry()) && picked_ != list_.entry()) choose();
         else close(true);
         break;
@@ -494,7 +494,7 @@ void PresetBrowser::drawHeader(LGFX_Sprite& s, int y0) {
     snprintf(title, sizeof(title), "SAVE %s", mt::presetTypeName(type_));
     snprintf(path, sizeof(path), "%s", mt::presetSubPath(dir_)[0] ? mt::presetSubPath(dir_) : "/");
   } else {
-    strlcpy(title, "LOAD", sizeof(title));
+    strlcpy(title, changed_ ? "AUDITION" : "PRESETS", sizeof(title));
     if (inFactory_) {
       snprintf(path, sizeof(path), "[FACTORY]%s%s%s%s", facType_ != mt::InstrType::Count ? "/" : "",
                facType_ != mt::InstrType::Count ? mt::presetTypeName(facType_) : "", category_[0] ? "/" : "",

@@ -26,7 +26,8 @@ class SampleEditor {
  public:
   static constexpr int kWaveH = 100;
   static constexpr int kToolH = 24;
-  static constexpr int kListRows = 4;  // (page area 220 - kWaveH - kToolH) / ParamList::kRowH
+  // INST reserves 28 px for its header and 24 px for its page bar.
+  static constexpr int kListRows = (kAreaH - 52 - kWaveH - kToolH) / ParamList::kRowH;
 
   explicit SampleEditor(App& app, int y = kAreaY + 52);
   void bind(int instr);         // instrument index; resets zoom when the sample data changes

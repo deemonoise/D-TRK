@@ -474,6 +474,17 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                          engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));  // replan
                        },
                        [this] { return app_.project().trackIsDrum(app_.curTrack()); }};
+  for (int r : {kInstr, kVol, kPan, kDrive, kBitCrush, kDownsample, kTrance, kFolSrc})
+    params_[r].hint = [] { return "INT tracks only"; };
+  params_[kDriveType].hint = [this] { return !internal() ? "INT tracks only" : "Enable Drive"; };
+  for (int r : {kTrPattern, kTrSteps, kTrRate, kTrLen, kTrAtk, kTrRel})
+    params_[r].hint = [this] { return !internal() ? "INT tracks only" : "Enable Trance gate"; };
+  params_[kModSend].hint = [this] { return !internal() ? "INT tracks only" : "Enable PROJ > MOD"; };
+  for (int r : {kFolDest, kFolAmt, kFolAtk, kFolRel})
+    params_[r].hint = [this] { return !internal() ? "INT tracks only" : "Choose follower Source"; };
+  for (int r : {kChannel, kCcA, kCcB, kProgram})
+    params_[r].hint = [] { return "MIDI tracks only"; };
+  params_[kSongTrn].hint = [] { return "KIT tracks do not transpose"; };
   list_.setOnEdit([this] { app_.markDirty(); });
   // Cancel: the name is copied back (several characters may have changed); the other rows step
   // back through their edit(), which also sends what they send (program, output).
@@ -1057,13 +1068,18 @@ void TrackScreen::draw(LGFX_Sprite& s, int y0, int) {
     drawMixer(s, y0);
     return;
   }
-  char buf[24];
+  char buf[48];
   const int t = app_.curTrack();
   const int cy = y0 + kHeaderH / 2;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.fillTriangle(24, cy - 2, 36, cy - 9, 36, cy + 5, kCursor);
   s.fillTriangle(kScreenW - 24, cy - 2, kScreenW - 36, cy - 9, kScreenW - 36, cy + 5, kCursor);
-  snprintf(buf, sizeof(buf), "TRACK %d", t + 1);
+  const auto& track = app_.project().tracks[t];
+  if (track.out == mt::TrackOut::Int) {
+    const int instrument = track.instr % mt::kInstruments;
+    snprintf(buf, sizeof(buf), "T%02d %s | I%02d %s", t + 1, track.name, instrument + 1,
+             app_.project().instruments[instrument].name);
+  } else snprintf(buf, sizeof(buf), "T%02d %s | MIDI CH%02d", t + 1, track.name, track.channel + 1);
   s.setTextColor(kText);
   s.drawString(buf, (kScreenW - static_cast<int>(strlen(buf)) * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
 
@@ -1533,11 +1549,11 @@ void TrackScreen::drawXfade(LGFX_Sprite& s, int y0) {
   const int y = y0 + kXfY, ty = y + (kXfH - kCharH) / 2;
   char buf[24];
   const bool live = !mt::sceneEmpty(p.sceneLive[0]) || !mt::sceneEmpty(p.sceneLive[1]);
-  snprintf(buf, sizeof(buf), "A%d", p.sceneA + 1);
+  snprintf(buf, sizeof(buf), "A:%d", p.sceneA + 1);
   s.setTextColor(xfSel_ == kXfEndA ? kCursor : kText);
   if (xfSel_ == kXfEndA) s.fillRect(kStripX0, y, kXfLabW, kXfH, kBeatBg);
   s.drawString(buf, kStripX0 + 4, ty);
-  snprintf(buf, sizeof(buf), "B%d", p.sceneB + 1);
+  snprintf(buf, sizeof(buf), "B:%d", p.sceneB + 1);
   s.setTextColor(xfSel_ == kXfEndB ? kCursor : kText);
   if (xfSel_ == kXfEndB) s.fillRect(kXfX1 - kXfLabW, y, kXfLabW, kXfH, kBeatBg);
   s.drawString(buf, kXfX1 - kXfLabW + 4, ty);
@@ -1852,17 +1868,17 @@ void TrackScreen::drawPanel(LGFX_Sprite& s, int y0) {
     s.drawRect(x, y, kPnlBtnW, kPnlRowH, info ? kBeatBg : kDim);
     uint16_t col = on ? kBg : kText;
     switch (b) {
-      case kPbScn: snprintf(buf, sizeof(buf), "SCN %d", scnEdit_ + 1); col = kCursor; break;
+      case kPbScn: snprintf(buf, sizeof(buf), "EDIT %d", scnEdit_ + 1); col = kCursor; break;
       case kPbPar: snprintf(buf, sizeof(buf), "%s", mt::sceneTrkName(scnPar_)); break;
       case kPbEnd:
-        snprintf(buf, sizeof(buf), "%s", scnEdit_ == p.sceneA ? "=A" : (scnEdit_ == p.sceneB ? "=B" : "--"));
+        snprintf(buf, sizeof(buf), "A:%d B:%d", p.sceneA + 1, p.sceneB + 1);
         col = kDim;
         break;
       case kPbXf: snprintf(buf, sizeof(buf), "X%d", p.xfade); col = kDim; break;
-      case kPbCap: snprintf(buf, sizeof(buf), "CAP"); break;
-      case kPbClr: snprintf(buf, sizeof(buf), "CLR"); break;
-      case kPbCpy: snprintf(buf, sizeof(buf), "CPY"); break;
-      default: snprintf(buf, sizeof(buf), "END"); break;
+      case kPbCap: snprintf(buf, sizeof(buf), "CAPTURE"); break;
+      case kPbClr: snprintf(buf, sizeof(buf), "CLEAR"); break;
+      case kPbCpy: snprintf(buf, sizeof(buf), "COPY"); break;
+      default: snprintf(buf, sizeof(buf), "DONE"); break;
     }
     const int ty = y + (kPnlRowH - kCharH) / 2;
     s.setTextColor(col);

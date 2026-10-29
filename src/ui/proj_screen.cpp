@@ -257,6 +257,34 @@ ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
                              const uint8_t* xy = app_.project().perfXy;
                              return a == 1 && xy[1] != 0 && mt::perfXyAxis(xy, 1) == mt::PerfFx::None;
                            }};
+  params_[kTuneRoot].hint = [] { return "Select a non-12-TET tuning first"; };
+  params_[kSwing].hint = [] { return "Groove overrides swing; set Groove OFF"; };
+  for (int r=kDlyTime;r<kDlyLevel;++r)
+    params_[r].hint = [] { return "Raise Dly level to hear this parameter"; };
+  params_[kDlyChar].hint = [this] {
+    return P().dlyLevel == 0 ? "Raise Dly level to hear this parameter" : "Wear needs TAPE; Width needs PING-PONG";
+  };
+  for (int r=kRvbSize;r<kRvbLevel;++r)
+    params_[r].hint = [] { return "Raise Rvb level to hear this parameter"; };
+  params_[kRvbShim].hint = params_[kShimInt].hint = [this] {
+    return P().rvbLevel == 0 ? "Raise Rvb level first" : "Select SHIMMER reverb mode";
+  };
+  for (int r=kModRate;r<=kModLevel;++r) params_[r].hint = [this] {
+    return P().modType == 0 ? "Select a Mod type first" : "Raise Mod level first";
+  };
+  params_[kModFb].hint = [this] {
+    if (P().modType == 0) return "Select FLANGER or PHASER first";
+    return P().modLevel == 0 ? "Raise Mod level first" : "Feedback needs FLANGER or PHASER";
+  };
+  params_[kCompRel].hint = params_[kScTrack].hint = [] { return "Enable the master compressor first"; };
+  params_[kScDepth].hint = [this] {
+    return P().compAmt == 0 ? "Enable the master compressor first" : "Select a sidechain source track first";
+  };
+  for (int b=0;b<mt::kPerfButtons;++b)
+    params_[kPerf1+2*b+1].hint = [] { return "Assign this button's PERF effect first"; };
+  params_[kPerfY].hint = [this] {
+    return P().perfXy[0] == P().perfXy[1] ? "X already controls this effect" : "Only one buffer effect can use the XY pad";
+  };
   // Shift+click cancel on PERF restores the effect and its depth together (a new effect resets the depth),
   // and the XY axes.
   static_assert(offsetof(mt::Project, perfDepth) == offsetof(mt::Project, perfMap) + sizeof(mt::Project::perfMap),
@@ -271,11 +299,16 @@ ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
   showPage(kPgSong, false);
 }
 
+int ProjScreen::physicalPage() const { return mt::projectPagePosition(page_); }
+int ProjScreen::firstRow(int page) const { return mt::projectPageRows(page,kPageFirst,kLength).first; }
+int ProjScreen::rowCount(int page) const { return mt::projectPageRows(page,kPageFirst,kLength).count; }
+void ProjScreen::stepPage(int delta,bool bar) { showPage(mt::projectPageAt(physicalPage()+delta),bar); }
+
 void ProjScreen::showPage(int page, bool bar) {
   page_ = (page % kPages + kPages) % kPages;
   list_.setEdit(false);
   list_.setPageBar(true);
-  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
+  list_.setParams(params_ + firstRow(page_), rowCount(page_));
   list_.setVisibleRows(kListRows);
   if (bar) list_.selectBar();
   else list_.setSel(0);
@@ -286,14 +319,15 @@ bool ProjScreen::knobRow(int& page, const char*& label) {
   if (page_ == kPgSong && list_.sel() == kTuning - kPageFirst[kPgSong]) return false;  // a pick applied by draw()
   const Param* r = list_.knobRow(mt::kKnobLabel - 1);
   if (!r) return false;
-  page = page_;
+  page = mt::projectBindingPage(page_);
   label = r->label;
   return true;
 }
 
 bool ProjScreen::knobTurn(int, int page, const char* label, int delta, char* val, int n) {
   if (page < 0 || page >= kPages) return false;
-  return turnRow(params_ + kPageFirst[page], kPageFirst[page + 1] - kPageFirst[page], label, mt::kKnobLabel - 1,
+  const auto rows=mt::projectPageRows(page,kPageFirst,kLength,true);
+  return turnRow(params_ + rows.first, rows.count, label, mt::kKnobLabel - 1,
                  delta, val, n);
 }
 
@@ -475,13 +509,13 @@ void ProjScreen::onInput(const hw::InputEvent& ev) {
     diceDlg_.open();
     return;
   }
-  if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
+  if (const int ov = list_.onInput(ev)) stepPage(ov, true);
 }
 
 // B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
 void ProjScreen::onPage(int d) {
   if (diceDlg_.isOpen()) return;
-  showPage(page_ + d, list_.barSelected());
+  stepPage(d, list_.barSelected());
 }
 
 // B: the DICE window closes; else leaves the edit with the value kept.
@@ -504,7 +538,7 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
   }
   const int barY = kAreaY + kHeaderH;
   if (ev.y >= barY && ev.y < barY + PageBar::kH) {
-    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
+    if (ev.type == TouchType::Tap) showPage(mt::projectPageAt(PageBar::at(ev.x, kPages)), true);
     return;
   }
   list_.onTouch(ev);
@@ -518,15 +552,16 @@ void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   char buf[24];
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
-  snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
+  if (page_ == kPgPattern) snprintf(buf, sizeof(buf), "PAT P%02d", app_.editPattern() + 1);
+  else snprintf(buf, sizeof(buf), "PROJECT");
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
   s.fillRect(kDiceX0, y0 + 2, kDiceX1 - kDiceX0, kHeaderH - 8, kPlayBg);
   s.setTextColor(kCursor);
   s.drawString("DICE", kDiceX0 + (kDiceX1 - kDiceX0 - 4 * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
-  static const char* const kNames[kPages] = {"SONG", "DLY", "RVB", "MOD", "MSTR", "PERF"};
+  static const char* const kNames[kPages] = {"MAIN", "PAT", "DLY", "RVB", "MOD", "MSTR", "PERF"};
   params_[kDlyChar].label = app_.project().dlyMode == static_cast<uint8_t>(mt::DlyMode::PingPong) ? "Width" : "Wear";
-  PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
+  PageBar::draw(s, y0 + kHeaderH, kNames, kPages, physicalPage());
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
 }

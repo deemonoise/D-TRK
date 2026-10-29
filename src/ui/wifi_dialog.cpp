@@ -277,7 +277,12 @@ void WifiDialog::draw(LGFX_Sprite& s, int y0) {
   s.drawString("ANYONE ON THIS NETWORK CAN USE IT.", 16, y + 3 * kLineH - 2);
 
   s.setTextColor(kText);
-  for (int i = 0; i < logCount_; ++i) s.drawString(log_[i], 16, y0 + kLogY + 8 + i * kLogH);
+  // Keep the full log buffer, but only draw its newest rows above the fixed buttons.
+  constexpr int kVisibleLogs = (kAreaH - kBtnH - 4 - kLogY - 8 - kCharH) / kLogH + 1;
+  static_assert(kVisibleLogs > 0, "Wi-Fi needs room for at least one log line");
+  const int first = logCount_ > kVisibleLogs ? logCount_ - kVisibleLogs : 0;
+  for (int i = first; i < logCount_; ++i)
+    s.drawString(log_[i], 16, y0 + kLogY + 8 + (i - first) * kLogH);
 
   const int by = y0 + kAreaH - kBtnH - 4;
   const int left = (kScreenW - kButtons * kBtnW - (kButtons - 1) * 8) / 2;

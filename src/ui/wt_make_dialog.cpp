@@ -26,7 +26,8 @@ WtMakeDialog::WtMakeDialog(App& app) : app_(app) {
   params_[kName] = {"Name", [this](char* o, int n) { snprintf(o, n, "%s", name_); }, nullptr};
   params_[kMake] = {"MAKE", nullptr, nullptr};
   params_[kCancel] = {"Cancel", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
-  list_.setParams(params_, kRows);
+  list_.setParams(params_, kMake);
+  list_.setVisibleRows(actions_.listRows(kHeaderH));
 }
 
 void WtMakeDialog::open(int index, uint32_t from, uint32_t to, uint32_t rate, const char* name) {
@@ -37,6 +38,7 @@ void WtMakeDialog::open(int index, uint32_t from, uint32_t to, uint32_t rate, co
   if (!storage::sanitize(name ? name : "", name_)) strlcpy(name_, "WT", sizeof(name_));
   list_.setEdit(false);
   list_.setSel(kMode);
+  actions_.reset(list_);
   open_ = true;
 }
 
@@ -131,11 +133,12 @@ void WtMakeDialog::onInput(const hw::InputEvent& ev) {
       app_.invalidate();
       return;
     case InputType::EncClick:
-      if (!list_.editing() && action(list_.sel())) return;
+      if (!actions_.footerFocused() && !list_.editing() && action(list_.sel())) return;
       break;
     default: break;
   }
-  list_.onInput(ev);
+  const int result=actions_.input(list_,kMake,ev);
+  if(result>=0)action(result==0?kMake:kCancel);
 }
 
 void WtMakeDialog::onTouch(const TouchEvent& ev) {
@@ -145,30 +148,19 @@ void WtMakeDialog::onTouch(const TouchEvent& ev) {
     app_.invalidate();
     return;
   }
-  if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
-    const int by = y0_ + kBtnY;
-    if (ev.y >= by && ev.y < by + kBtnH) {
-      if (ev.x >= kCancelX && ev.x < kCancelX + kCancelW) action(kCancel);
-      else if (ev.x >= kOkX && ev.x < kOkX + kOkW) action(kMake);
-    }
-    return;
+  if(ev.y>=y0_+kAreaH-DialogActions::kH){
+    const int result=actions_.touch(list_,ev,y0_);if(result>=0)action(result==0?kMake:kCancel);return;
   }
   if (ev.type == TouchType::Tap) {
     const int r = list_.rowAt(ev.y);
-    if (r == kMake || r == kCancel || r == kName) {
+    if (r == kName) {
+      actions_.focusList(list_);
       list_.setSel(r);
       action(r);
       return;
     }
   }
-  list_.onTouch(ev);
-}
-
-void WtMakeDialog::drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel) {
-  s.fillRect(x, y, w, kBtnH, sel ? kPlayBg : kMenuBg);
-  s.drawRect(x, y, w, kBtnH, sel ? kCursor : kDim);
-  s.setTextColor(sel ? kCursor : kText);
-  s.drawString(label, x + (w - static_cast<int>(strlen(label)) * kCharW) / 2, y + (kBtnH - kCharH) / 2);
+  actions_.touch(list_,ev,y0_);
 }
 
 void WtMakeDialog::draw(LGFX_Sprite& s, int y0) {
@@ -184,9 +176,8 @@ void WtMakeDialog::draw(LGFX_Sprite& s, int y0) {
   snprintf(buf, sizeof(buf), "TO WAVETABLE %lu MS", static_cast<unsigned long>(ms));
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  drawButton(s, kCancelX, y0 + kBtnY, kCancelW, "CANCEL", list_.sel() == kCancel);
-  drawButton(s, kOkX, y0 + kBtnY, kOkW, "MAKE", list_.sel() == kMake);
   list_.draw(s, y0 + kHeaderH);
+  actions_.draw(s,y0,"CREATE");
 }
 
 }  // namespace ui

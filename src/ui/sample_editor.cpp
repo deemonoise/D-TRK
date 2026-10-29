@@ -1,4 +1,5 @@
 #include "sample_editor.h"
+#include "ui_context.h"
 #include <Arduino.h>
 #include <math.h>
 #include <stdio.h>
@@ -28,8 +29,8 @@ void permille(uint16_t v, char* o, int n) {
 
 SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToolH), y_(y) {
   rows_[kMarkerRow] = {"Marker", [this](char* o, int n) {
-                         char p[12];
-                         permille(markerFrac(sel_), p, sizeof(p));
+                         char p[32];
+                         mt::markerPosition(markerFrac(sel_), frames_, rate_, p, sizeof(p));
                          if (sel_ >= kSlice0) snprintf(o, n, "#%d %s", sel_ - kSlice0 + 1, p);
                          else snprintf(o, n, "%c %s", "SEL"[sel_], p);
                        },
@@ -708,7 +709,7 @@ void SampleEditor::drawWave(LGFX_Sprite& s, int y) {
 }
 
 void SampleEditor::drawTools(LGFX_Sprite& s, int y) {
-  static const char* const kNames[] = {"<", ">", "-", "+", "CHOP", "CLR"};
+  static const char* const kNames[] = {"PREV", "NEXT", "ZOOM-", "ZOOM+", "CHOP", "DELETE"};
   const int ty = y + (kToolH - 4 - kCharH) / 2 + 2;
   s.setTextColor(kCursor);
   for (int i = 0; i <= kClr; ++i) {

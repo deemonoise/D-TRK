@@ -39,6 +39,7 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   lcd_ = lcd;
   p_ = p;
   setParamEditObserver([this](bool before) { motionObserve(before); });
+  setParamHintObserver([this](const char* text) { toast(text); });
 
   undoBuf_ = allocArray<mt::Undo::Entry>(mt::Undo::kDepth + 1);
   if (undoBuf_) undo_ = mt::Undo(undoBuf_);
@@ -472,6 +473,7 @@ void App::onTouch(const TouchEvent& ev) {
     return;
   }
   if (ev.y < kStatusH) {
+    if (ev.y >= kStatusMainH) return;  // message strip has no hidden transport controls
     if (ev.type != TouchType::Tap) return;
     if (ev.x >= kModeX0 && ev.x < kModeX1) {
       if (!status_.playing && !status_.paused) return;  // stopped, Play picks the mode by tab
@@ -496,7 +498,8 @@ void App::onTouch(const TouchEvent& ev) {
       int i = ev.x / kTabW;
       if (i < 0) i = 0;
       if (i >= static_cast<int>(Tab::Count)) i = static_cast<int>(Tab::Count) - 1;
-      setTab(static_cast<Tab>(i));
+      if (i == static_cast<int>(Tab::Grid) && tab_ == Tab::Grid) grid_.nextView();
+      else setTab(static_cast<Tab>(i));
     }
     return;
   }
@@ -1625,6 +1628,7 @@ void App::drawStatus() {
   char buf[24];
   const int bt = btDrawn_ = btMark();
   spr_->fillRect(0, 0, kScreenW, kStatusH, kStatusBg);
+  drawMessageStrip();
   spr_->setTextColor(kText);
   // Song: "S03 P05" (heard slot, "S--" before the song is heard); no queue in song mode.
   // Stopped: Play picks the mode by tab, so no "S" here. No lock: the UI is the only writer of songLen.
@@ -1645,18 +1649,6 @@ void App::drawStatus() {
   snprintf(buf, sizeof(buf), "%3u BPM", bpmEdit_ ? static_cast<unsigned>(bpmTarget_) : p_->bpm);
   spr_->drawString(buf, 80, 4);
 
-  if (toast_[0]) {
-    spr_->setTextColor(kCursor);
-    if (rec_.sdTaking()) {  // the REC time stays: the toast cut short of it
-      spr_->setClipRect(0, 0, kRecX0 - 4, kStatusH);
-      spr_->drawString(toast_, 192, 4);
-      spr_->clearClipRect();
-      drawRec();
-    } else {
-      spr_->drawString(toast_, 192, 4);
-    }
-    return;
-  }
   spr_->setTextColor(kText);
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
   spr_->drawString(buf, 200, 4);  // up to "128/128"
@@ -1713,6 +1705,17 @@ void App::drawStatus() {
   spr_->drawString(buf, 416, 4);
 }
 
+// Dedicated, non-interactive message row: transport, position, battery and errors remain visible.
+void App::drawMessageStrip() {
+  spr_->fillRect(0, kStatusMainH, kScreenW, kMessageH, kBeatBg);
+  spr_->setTextColor(toast_[0] ? kCursor : kDim);
+  char label[40];
+  snprintf(label, sizeof(label), "PROJECT %s%s", p_->name, projectDirty() ? " *" : "");
+  spr_->setClipRect(8, kStatusMainH, kScreenW-16, kMessageH);
+  spr_->drawString(toast_[0] ? toast_ : label, 8, kStatusMainH+2);
+  spr_->clearClipRect();
+}
+
 // Status bar battery: icon (body 14x10, nub, fill by percent, a bolt while charging) and "85%".
 // Green while charging, red <= 10 %, yellow <= 20 %. Nothing without the sensor or a fresh sample.
 void App::drawBattery() {
@@ -1737,6 +1740,7 @@ void App::drawBattery() {
     }
     spr_->clearClipRect();
   }
+  if (rec_.sdTaking()) return;  // keep the icon; percentage shares space with the take clock
   char buf[8];
   snprintf(buf, sizeof(buf), "%d%%", pct);
   spr_->setTextColor(c);
@@ -1745,9 +1749,9 @@ void App::drawBattery() {
 
 // "(dot) REC 03:41" (past an hour "(dot) 1:02:03"): red while recording, the dot blinking while armed (THRESH).
 void App::drawRec() {
-  spr_->fillRect(kRecX0, 0, kScreenW - kRecX0, kStatusH, kStatusBg);
+  spr_->fillRect(kRecX0, 0, kScreenW - kRecX0, kStatusMainH, kStatusBg);
   const bool armed = !rec_.recording();
-  if (!armed || (millis() / 300) & 1) spr_->fillCircle(kRecX0 + 6, kStatusH / 2, 4, kRed);
+  if (!armed || (millis() / 300) & 1) spr_->fillCircle(kRecX0 + 6, kStatusMainH / 2, 4, kRed);
   char t[12], buf[20];
   const uint32_t sec = rec_.frames() / mt::kRecRate;
   mt::recFmtClock(sec, true, t, sizeof t);
@@ -1765,7 +1769,7 @@ void App::drawTabs() {
     const bool active = i == static_cast<int>(tab_);
     if (active) spr_->fillRect(x, kTabY, kTabW, kTabH, kPlayBg);
     if (i > 0) spr_->drawFastVLine(x, kTabY + 4, kTabH - 8, kDim);
-    const char* label = kNames[i];
+    const char* label = active && tab_ == Tab::Grid ? grid_.viewTabLabel() : kNames[i];
     uint16_t color = !screens_[i] ? kDim : (active ? kCursor : kText);
     if (shift_ && i == static_cast<int>(Tab::Count) - 1) {  // SHIFT indicator over the last tab
       label = "SHIFT";

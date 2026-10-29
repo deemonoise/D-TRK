@@ -39,14 +39,6 @@ void GridScreen::openPasteMenu(){
     });
   });
 }
-void GridScreen::openDoublePattern(){
-  char label[28],title[28];snprintf(label,sizeof(label),"Apply: %d -> %d steps",menuCtx_.length,menuCtx_.length*2);
-  snprintf(title,sizeof(title),"PATTERN P%d x2",menuCtx_.pattern+1);
-  const MenuItem rows[]={{"All 16 tracks",0,false},{label,1,menuCtx_.length*2<=mt::kMaxSteps}};
-  app_.menu().openChild(title,rows,2,[this](int){
-    applyTool([](mt::Pattern& p,mt::Pattern&){return mt::doublePattern(p);});
-  });
-}
 void GridScreen::openRotateDialog(){
   const auto s=toolScope();const int max=s.s1-s.s0;
   rotateAmount_=0;
@@ -70,8 +62,9 @@ void GridScreen::openVelocityDialog(){
         if(mode==static_cast<int>(velocitySpec_.mode))return;
         velocitySpec_.mode=static_cast<mt::VelocityMode>(mode);
         velocitySpec_.amount=mode==0?100:mode==1?0:mode==2?40:5;
+        action_.setParamLabel(1,mode==0 ? "Value" : mode==1 ? "Offset" : mode==2 ? "Start" : "Variation");
       }},
-    {"Value / amount",[this](char* o,int n){
+    {velocitySpec_.mode==mt::VelocityMode::Add ? "Offset" : velocitySpec_.mode==mt::VelocityMode::Ramp ? "Start" : velocitySpec_.mode==mt::VelocityMode::Humanize ? "Variation" : "Value",[this](char* o,int n){
         const auto mode=velocitySpec_.mode;
         snprintf(o,n,mode==mt::VelocityMode::Humanize?"+/-%d":mode==mt::VelocityMode::Add?"%+d":"%d",velocitySpec_.amount);
       },[this](int d){
@@ -80,7 +73,7 @@ void GridScreen::openVelocityDialog(){
       }},
     {"Ramp end",[this](char* o,int n){snprintf(o,n,"%d",velocitySpec_.end);},
       [this](int d){if(velocitySpec_.mode==mt::VelocityMode::Ramp)velocitySpec_.end=clamp(velocitySpec_.end+d,1,127);},
-      [this]{return velocitySpec_.mode!=mt::VelocityMode::Ramp;}}};
+      [this]{return velocitySpec_.mode!=mt::VelocityMode::Ramp;}, {}, []{return "SELECT RAMP MODE";}}};
   char scope[28],title[48];menuScopeTitle(scope,sizeof(scope),s,!menuCtx_.selected);
   snprintf(title,sizeof(title),"VELOCITY %s",scope);setEdit(false);
   action_.open(title,rows,3,[this,s]{

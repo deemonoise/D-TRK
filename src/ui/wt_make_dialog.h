@@ -1,4 +1,5 @@
 #pragma once
+#include "dialog_actions.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "keyboard.h"
@@ -29,15 +30,12 @@ class WtMakeDialog {
  private:
   enum Row : int { kMode, kNorm, kSeam, kName, kMake, kCancel, kRows };
   static constexpr int kHeaderH = 28;
-  static constexpr int kBtnY = 2, kBtnH = 20;
-  static constexpr int kCancelX = 320, kCancelW = 72;
-  static constexpr int kOkX = 400, kOkW = 64;
 
   void make();  // checks, then Overwrite? or run()
   void run();
   bool action(int row);
-  void drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel);
 
+  DialogActions actions_;
   App& app_;
   Param params_[kRows];
   ParamList list_{kAreaY + kHeaderH};

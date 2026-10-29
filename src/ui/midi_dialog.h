@@ -32,7 +32,7 @@ class MidiDialog {
  private:
   enum Page : int { kPgDevices, kPgPads, kPgKnobs, kPages };
   enum MenuId : int {
-    kMenuOnOff = 100, kMenuRoleIn, kMenuRoleOut, kMenuRoleBoth, kMenuDelete, kMenuClock, kMenuClearAll, kMenuAdd, kMenuLearn, kMenuEdit, kMenuClear, kMenuKnobDelete, kMenuKnobClearAll, kMenuCancel
+    kMenuOnOff = 100, kMenuRoleIn, kMenuRoleOut, kMenuRoleBoth, kMenuDelete, kMenuClock, kMenuClearAll, kMenuAdd, kMenuLearn, kMenuEdit, kMenuClear, kMenuKnobDelete, kMenuKnobClearAll, kMenuCancel, kMenuRolePick
   };
   // The edited field, in click order. PADS: CH, note. KNOBS: CC, CH, TRK (not for PROJ), MODE.
   enum Edit : int { kEditNone, kEditCh = 1, kEditNote, kEditLength, kKnobCc = 1, kKnobCh, kKnobTrk, kKnobMode };
@@ -41,8 +41,10 @@ class MidiDialog {
   static constexpr int kTitleH = 24;
   static constexpr int kHeaderH = kTitleH + 24;  // title, then the shared PageBar
   static constexpr int kRowH = 24;
-  static constexpr int kMonY = 232;
-  static constexpr int kMonH = 18;
+  // Reserve two complete monitor lines above the tabs in either status-bar layout.
+  static constexpr int kMonH = kAreaH < 272 ? 16 : 18;
+  static constexpr int kMonY = kAreaH - kMonLines * kMonH - 2;
+  static_assert(kHeaderH + (mt::kDevMax + 1) * kRowH <= kMonY, "Device rows and monitor must not overlap");
   static constexpr int kKnobRows = 7;
   static constexpr int kKnobMonY = kMonY;
   static constexpr int kKnobMonLines = 2;
@@ -88,7 +90,7 @@ class MidiDialog {
   void drawDevices(LGFX_Sprite& s, int y0);
   void drawPads(LGFX_Sprite& s, int y0);
   void drawKnobs(LGFX_Sprite& s, int y0);
-  void drawMonitor(LGFX_Sprite& s, int y, int lines);
+  void drawMonitor(LGFX_Sprite& s, int y, int lines, bool divider = true);
 
   App& app_;
   hw::ble::Found found_[kMaxFound] = {};

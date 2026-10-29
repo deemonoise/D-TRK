@@ -17,10 +17,11 @@ class BankScreen : public Screen {
   bool wantsRedraw(const engine::Status& st) override;
 
  private:
-  enum MenuId : int { kCopyTo, kClear, kClearConfirm, kCancel, kLen16, kLen32, kLen64, kLen128 };
+  enum MenuId : int { kCopyTo, kClear, kClearConfirm, kCancel, kLen16, kLen32, kLen64, kLen128, kLength, kDouble, kDoubleApply };
   static constexpr int kCols = 4;
-  static constexpr int kTileW = 112, kTileH = 64;
   static constexpr int kGapX = 6, kGapY = 4;
+  static constexpr int kTileW = 112, kTileH = (kAreaH-kCols*kGapY)/kCols;
+  static_assert(kTileH >= 58, "Pattern tile labels and two track-dot rows fit");
   static constexpr int kMarginX = (kScreenW - kCols * kTileW - (kCols - 1) * kGapX) / 2;
   static constexpr uint32_t kBlinkMs = 250;
 
@@ -28,6 +29,8 @@ class BankScreen : public Screen {
   void activate(int idx, bool shift);  // queue / select, or the copy target
   void openMenu(int idx);
   void onMenu(int id);
+  void openLengthMenu();
+  void openDoubleMenu();
   void copyTo(int dst);
   void snapshot(int pat);  // undo entry for any pattern, marks the project dirty
   void releaseTiesIfHeard(int pat);

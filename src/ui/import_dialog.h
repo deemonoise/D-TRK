@@ -1,4 +1,5 @@
 #pragma once
+#include "dialog_actions.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "midi_import.h"
@@ -42,6 +43,8 @@ class ImportDialog {
   void confirm();
   void commit();
 
+  DialogActions actions_;
+  int y0_=kAreaY;
   App& app_;
   State* state_ = nullptr;        // PSRAM
   mt::SmfNote* notes_ = nullptr;  // PSRAM, up to kNoteCap (sized from the file)

@@ -183,7 +183,7 @@ class App {
   // Status bar hit areas.
   static constexpr int kModeX0 = 0, kModeX1 = 64;  // SONG / LOOP
   static constexpr int kBpmX0 = 64, kBpmX1 = 176;
-  static constexpr int kTransX0 = 256, kTransX1 = 320;
+  static constexpr int kTransX0 = 256, kTransX1 = 306;
   static constexpr int kRecX0 = 384;  // a REC -> SD take: "REC mm:ss" over the battery % and CPU, to the end
   // Synth version screen: its Wi-Fi button.
   static constexpr int kBarrierBtnW = 148, kBarrierBtnH = 36;
@@ -253,6 +253,7 @@ class App {
   void monitorPush(const mt::MidiMsg& m);
   void draw();
   void drawStatus();
+  void drawMessageStrip();
   void drawBattery();  // status bar, right of the loop counter
   int btMark() const;  // status bar BT: 0 none, 1 searching, 2 every set slot connected
   void drawRec();      // status bar: a REC -> SD take's red dot and time

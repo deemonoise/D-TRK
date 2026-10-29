@@ -35,6 +35,8 @@ class GridScreen : public Screen {
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
   bool buttonsBusy() const;
   void undo();  // with a toast; the next edit takes a fresh snapshot
+  const char* viewTabLabel() const;
+  void nextView();
   bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen() || action_.isOpen(); }  // modal pattern operations
   // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.
   bool chordClear();
@@ -60,7 +62,7 @@ class GridScreen : public Screen {
     kToggleFollow, kCopySel, kClearSel, kDropSel, kNoteOff, kFill,
     kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive,
     kRecordingSetup, kEditTools, kProcessMenu, kTrackMenu, kResampleMenu, kGridSettings,
-    kQuantize, kAutomationToggle, kRotate, kVelocity, kDoublePattern,
+    kQuantize, kAutomationToggle, kRotate, kVelocity,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;
@@ -109,7 +111,6 @@ class GridScreen : public Screen {
   void openPasteMenu();
   void openRotateDialog();
   void openVelocityDialog();
-  void openDoublePattern();
   mt::Sel toolScope() const;
   void applyTool(std::function<mt::ToolResult(mt::Pattern&, mt::Pattern&)> operation);
   int rotateAmount_ = 0;

@@ -238,11 +238,11 @@ void MidiDialog::addDevice() {
   }
   items[k++] = {"Cancel", kMenuCancel};
   menuOpen_ = true;  // poll() ends an idle stack once the menus close (chosen or not)
-  app_.menu().open("ADD DEVICE", items, k, [this](int id) {
+  app_.menu().openChild("ADD DEVICE", items, k, [this](int id) {
     if (id < 0 || id >= kMaxFound) return;
     foundPick_ = id;
     const MenuItem roles[] = {{"IN", kMenuRoleIn}, {"OUT", kMenuRoleOut}, {"IN+OUT", kMenuRoleBoth}, {"Cancel", kMenuCancel}};
-    app_.menu().open("USE AS", roles, 4, [this](int r) {
+    app_.menu().openChild("USE AS", roles, 4, [this](int r) {
       if (r >= kMenuRoleIn && r <= kMenuRoleBoth) addFound(r);
     });
   });
@@ -293,12 +293,11 @@ void MidiDialog::moreMenu() {
   const mt::MidiDevices& devs = app_.devices();
   const bool has = !bar_ && deviceRow_ >= 0 && deviceRow_ < devs.count() && dev_ >= 0 && dev_ < devs.count();
   const mt::DevRole cur = has ? devs.at(dev_).role : mt::DevRole::In;
+  char role[28]; snprintf(role,sizeof(role),"Role: %s...",roleName(cur));
   const MenuItem items[] = {
       {"Add device...", kMenuAdd, devs.count() < mt::kDevMax},
       {has && devs.at(dev_).on ? "Turn off" : "Turn on", kMenuOnOff, has},
-      {"Role IN", kMenuRoleIn, has && cur != mt::DevRole::In},
-      {"Role OUT", kMenuRoleOut, has && cur != mt::DevRole::Out},
-      {"Role IN+OUT", kMenuRoleBoth, has && cur != mt::DevRole::Both},
+      {role, kMenuRolePick, has},
       {"Delete", kMenuDelete, has},
       {hw::ble::clock() ? "BLE clock: ON" : "BLE clock: OFF", kMenuClock},
       {"Cancel", kMenuCancel},
@@ -308,6 +307,11 @@ void MidiDialog::moreMenu() {
     switch (id) {
       case kMenuAdd: addDevice(); break;
       case kMenuOnOff: toggleOn(); break;
+      case kMenuRolePick: {
+        const MenuItem roles[] = {{"IN",kMenuRoleIn},{"OUT",kMenuRoleOut},{"IN+OUT",kMenuRoleBoth}};
+        app_.menu().openChild("DEVICE ROLE",roles,3,[this](int r){setRole(r);redraw_=true;});
+        break;
+      }
       case kMenuRoleIn:
       case kMenuRoleOut:
       case kMenuRoleBoth: setRole(id); break;
@@ -401,7 +405,7 @@ void MidiDialog::clearAll() {
   stopLearn();
   leaveEdit();
   const MenuItem items[] = {{"Clear all pads", kMenuClearAll}, {"Cancel", kMenuCancel}};
-  app_.menu().open("CLEAR ALL PADS?", items, 2, [this](int id) {
+  app_.menu().openChild("CLEAR ALL PADS?", items, 2, [this](int id) {
     mt::MidiDevice* d = padDev();
     if (id != kMenuClearAll || !d) return;
     if (padDevIsIn()) app_.padsAllOff();
@@ -522,7 +526,7 @@ void MidiDialog::knobClearAll() {
   int slots[mt::kKnobBinds];
   if (knobList(slots) == 0) return;
   const MenuItem items[] = {{"Clear all knobs", kMenuClearAll}, {"Cancel", kMenuCancel}};
-  app_.menu().open("CLEAR ALL KNOBS?", items, 2, [this](int id) {
+  app_.menu().openChild("CLEAR ALL KNOBS?", items, 2, [this](int id) {
     if (id != kMenuClearAll) return;
     engine::lockProject();
     for (mt::KnobBind& k : app_.project().knobs) k = mt::KnobBind{};
@@ -804,9 +808,9 @@ void MidiDialog::drawDevices(LGFX_Sprite& s, int y0) {
 }
 
 // The newest IN messages from y, the drop counters on the first line.
-void MidiDialog::drawMonitor(LGFX_Sprite& s, int y, int lines) {
+void MidiDialog::drawMonitor(LGFX_Sprite& s, int y, int lines, bool divider) {
   char buf[64];
-  s.drawFastHLine(16, y - 2, kScreenW - 32, kSelBg);
+  if (divider) s.drawFastHLine(16, y - 2, kScreenW - 32, kSelBg);
   mt::MidiMsg mon[kMonLines];
   const int n = app_.monitor(mon, lines < kMonLines ? lines : kMonLines);
   s.setTextColor(kText);
@@ -914,7 +918,15 @@ void MidiDialog::drawKnobs(LGFX_Sprite& s, int y0) {
   s.setTextColor(kDim);
   if (knobTop_ > 0) s.drawString("^", kScreenW - 10, y0 + kHeaderH);
   if (knobTop_ + kKnobRows < n) s.drawString("v", kScreenW - 10, y0 + kHeaderH + (kKnobRows - 1) * kRowH);
-  drawMonitor(s, y0 + kKnobMonY, kKnobMonLines);
+  const int selected=knobSlot();
+  if(!bar_ && selected>=0) {
+    const auto& bind=p.knobs[selected];
+    char target[60],label[mt::kKnobLabel+1];mt::knobLabel(bind.label,label,sizeof(label));
+    if(bind.screen==mt::kKnobProj) snprintf(target,sizeof(target),"CC%u CH%u > PROJ %s",bind.cc,bind.ch+1,label);
+    else snprintf(target,sizeof(target),"CC%u CH%u > T%u %s %s",bind.cc,bind.ch+1,bind.track+1,mt::knobScreenName(bind.screen),label);
+    s.setTextColor(kCursor);s.drawString(target,16,y0+kKnobMonY+2);
+    drawMonitor(s,y0+kKnobMonY+kMonH,1,false);
+  } else drawMonitor(s, y0 + kKnobMonY, kKnobMonLines);
 }
 
 void MidiDialog::draw(LGFX_Sprite& s, int y0) {

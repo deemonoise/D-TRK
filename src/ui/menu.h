@@ -4,6 +4,7 @@
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "touch.h"
+#include "theme.h"
 
 namespace ui {
 
@@ -18,7 +19,7 @@ struct MenuItem {
 class Menu {
  public:
   static constexpr int kMaxItems = 24;
-  static constexpr int kVisible = 12;
+  static constexpr int kVisible = (kAreaH - 24) / 20;
   static constexpr int kW = 240;
   static constexpr int kRowH = 20;
 

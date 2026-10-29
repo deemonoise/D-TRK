@@ -74,7 +74,7 @@ void Menu::close() {
 }
 
 int Menu::left() const { return (kScreenW - kW) / 2; }
-int Menu::topY() const { return (kScreenH - height()) / 2; }
+int Menu::topY() const { return kAreaY + (kAreaH - height()) / 2; }
 
 void Menu::move(int delta) {
   if (count_ == 0) return;

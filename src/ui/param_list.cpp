@@ -1,4 +1,5 @@
 #include "param_list.h"
+#include "ui_controls.h"
 #include <string.h>
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
@@ -7,8 +8,18 @@
 namespace ui {
 namespace {
 std::function<void(bool)> editObserver;
+std::function<void(const char*)> hintObserver;
 }  // namespace
 void setParamEditObserver(std::function<void(bool)> observer) { editObserver = std::move(observer); }
+void setParamHintObserver(std::function<void(const char*)> observer) { hintObserver = std::move(observer); }
+void ParamList::notifyHint(bool attempted) const {
+  const auto* p=selected();
+  if (!p || !hintObserver) return;
+  const bool inactive=p->dim && p->dim();
+  if (!inactive && !attempted) return;
+  const char* hint=mt::parameterHint(inactive,static_cast<bool>(p->edit),p->hint ? p->hint() : nullptr);
+  if (hint) hintObserver(hint);
+}
 
 bool turnRow(const Param* rows, int count, const char* label, size_t maxLen, int delta, char* out, int n) {
   for (int i = 0; i < count; ++i) {
@@ -111,8 +122,10 @@ void ParamList::ensureVisible() {
 }
 
 bool ParamList::holdEdit() {
-  if (sel_ < 0 || sel_ >= count_ || !params_[sel_].edit) return false;
+  if (sel_ < 0 || sel_ >= count_) return false;
+  if (!params_[sel_].edit) { notifyHint(true); return false; }
   if (!edit_) {
+    notifyHint();
     ensureVisible();  // never edit a row scrolled out of sight
     edit_ = true;
     hold_ = true;
@@ -136,11 +149,14 @@ int ParamList::onInput(const hw::InputEvent& ev) {
       if (n <= 0) break;
       sel_ = ((sel_ - first + ev.delta) % n + n) % n + first;
       ensureVisible();
+      notifyHint();
       break;
     }
     case InputType::EncClick:
       if (bar_ && sel_ < 0) break;
       if (count_ == 0) break;
+      if (!params_[sel_].edit) { notifyHint(true); break; }
+      if (!edit_) notifyHint();
       if (edit_ && ev.shift) {
         cancelEdit();
         break;
@@ -193,11 +209,14 @@ void ParamList::onTouch(const TouchEvent& ev) {
   if (r < 0) return;
   hold_ = false;
   if (r == sel_) {
+    notifyHint();
+    if (!params_[r].edit) { notifyHint(true); return; }
     edit_ = !edit_;
     if (edit_) beginEdit();
   } else {
     sel_ = r;
     edit_ = false;
+    notifyHint();
   }
 }
 
@@ -207,7 +226,7 @@ void ParamList::draw(LGFX_Sprite& s, int y) {
   const int n = shown();
   for (int i = top_; i < top_ + n; ++i) {
     const int ry = y + (i - top_) * kRowH;
-    const bool sel = i == sel_;
+    const bool sel = focusVisible_ && i == sel_;
     const bool dim = params_[i].dim && params_[i].dim();
     if (sel) s.fillRect(0, ry, kScreenW, kRowH, kSelBg);
     s.setTextColor(sel ? kCursor : (dim ? kDim : kText));

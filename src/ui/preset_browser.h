@@ -19,12 +19,12 @@ class App;
 // files of /presets/<TYPE>; row 0 goes up ("< Up (..)"), at the top "< Back" cancels. A preset of
 // another type changes the instrument's type; a factory KIT also writes its drums into INS25..32
 // (INS17..24 for a kit there). Selecting a preset (turn, first tap) applies it at once and plays C4;
-// a click / a tap on it again or OK keeps it and closes; CANCEL, or B / a long press at the top,
+// a click / a tap on it again or APPLY keeps it and closes; CANCEL, or B / a long press at the top,
 // puts the instrument (and the drum block) back. Each browser opens where it was left for the
 // instrument's type (Load and Save apart; a folder gone: the type's root). A preset's recommended insert (drive, bits, rate, drive model) overwrites the current track's
 // insert when that track plays the instrument (not for a KIT lane's instrument: the KIT track keeps
 // its insert); CANCEL puts it back too. Save stores that track's insert as the recommendation.
-// DEL removes a user preset (menu confirm). Save: the instrument's type's user folders only
+// DELETE removes a user preset (menu confirm). Save: the instrument's type's user folders only
 // (B at its root closes); SAVE asks the name (keyboard) and confirms an overwrite, a click on a file
 // (a tap on the selected one) saves over it; +DIR makes a folder.
 class PresetBrowser {
@@ -44,9 +44,9 @@ class PresetBrowser {
   static constexpr int kMaxEntries = 512;
   static constexpr int kHeaderH = FileList::kHeaderH;
   static constexpr int kPreviewNote = 60;
-  // Header: LOAD / SAVE <TYPE>, the path, SD status, three buttons (Load: OK DEL CANCEL, Save: SAVE +DIR CANCEL).
-  static constexpr int kBtnX[3] = {296, 344, 392};
-  static constexpr int kBtnX1[3] = {340, 388, 472};
+  // Header: LOAD / SAVE <TYPE>, the path, SD status, three buttons (Load: APPLY DELETE CANCEL, Save: SAVE +DIR CANCEL).
+  static constexpr int kBtnX[3] = {288, 344, 408};
+  static constexpr int kBtnX1[3] = {336, 400, 472};
   // FileList tags; index: factory preset index / category ordinal / InstrType (FactoryType, UserType).
   enum class Kind : uint8_t { Factory, FactoryType, Category, UserType, Folder, File, FactoryFile };
   // Where a browser was left (per mode and instrument type, PSRAM while powered).

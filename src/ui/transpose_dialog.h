@@ -1,4 +1,5 @@
 #pragma once
+#include "dialog_actions.h"
 #include <functional>
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
@@ -27,18 +28,15 @@ class TransposeDialog {
  private:
   enum Row : int { kAmount, kMode, kOk, kCancel, kRows };
   static constexpr int kHeaderH = 28;
-  static constexpr int kBtnY = 2, kBtnH = 20;
-  static constexpr int kCancelX = 320, kCancelW = 72;
-  static constexpr int kOkX = 400, kOkW = 64;
 
   int octave() const;  // amount step of one octave in the current mode
   void clampAmount();
   void ok();
   bool action(int row);  // OK / Cancel row: runs it, true when handled
-  void drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel);
 
+  DialogActions actions_;
   App& app_;
-  Param params_[kRows];
+  Param params_[kOk];
   ParamList list_{kAreaY + kHeaderH};
   std::function<void(int, bool)> onOk_;
   char title_[28] = {0};
