@@ -207,6 +207,39 @@ means no lock, rather than zero.
 
 Manual automation edits disarm Motion REC. Locks use the existing project format and WAV render path.
 
+### Count-in, metronome and one-pass recording
+
+GRID context menu → **Recording setup…** contains device settings saved across power cycles:
+
+| Setting | Values |
+|---|---|
+| Count-in | OFF / 1 BAR (4 beats) / 2 BARS (8 beats) |
+| Metronome | OFF / REC ONLY / PLAY + REC |
+| Click volume | MUTE / LOW (32) / MEDIUM (64) / HIGH (96) / MAX (127) |
+| Record | LOOP / ONE PASS |
+
+Defaults: count-in OFF, metronome OFF, click volume 64, LOOP. These settings govern notes and
+motion recording, rather than SAMPLE / SD audio capture.
+
+Starting recording from stopped (A + Play, B + Play, or regular Play with REC armed) runs the
+count-in first. The status bar shows COUNT 4 … COUNT 1 (8 … 1 for two bars). Pattern playback,
+MIDI transport and note/lock writing have not started yet. Count-in clicks sound regardless of
+the metronome mode, at its click volume. Play cancels the count-in and leaves REC armed.
+Each bar has four quarter notes; the count-in tempo is captured at its start and uses the SONG
+entry slot BPM when set. Enabling recording during playback starts recording immediately.
+
+ONE PASS records until the next pattern boundary, then disarms notes and motion with
+`ONE PASS: REC FINISHED`, while playback continues. If armed midway through playback, it records
+the rest of the current pass. Switching patterns also ends the take. Held MIDI note lengths are
+clamped to that boundary. Use a recording chord again for another take. LOOP keeps recording
+on subsequent passes.
+
+The metronome plays quarter notes with a four-beat accent, independent of swing, track speed
+and length. REC ONLY sounds during active recording; PLAY + REC also sounds during playback.
+The click goes directly to the output: no instrument or voice slot, no project effects, and no
+click in WAV, stems or internal resampling. Headphone volume controls it. Without the synth board,
+only the visual count-in is available. Both WT32 and Teensy need protocol **20** firmware.
+
 ### Encoder
 
 | Input | Outside edit mode | In edit mode |

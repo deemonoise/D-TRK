@@ -295,11 +295,13 @@ void GridScreen::setRec(bool on) {
     recLoop_ = UINT32_MAX;
   }
   rec_ = on;
+  app_.syncRecordArm();
 }
 
 void GridScreen::setPerf(bool on) {
   if (on) {
     rec_ = false;
+    app_.syncRecordArm();
     edit_ = false;
     holdEdit_ = false;
   }
@@ -335,6 +337,7 @@ bool GridScreen::recordKey(int n, bool shift) {
 }
 
 int GridScreen::recordAt(int tr, int lane, uint8_t note, uint8_t vel, bool clear, bool preview, bool setLast) {
+  if (!app_.recordPermit()) return -1;
   const engine::Status& st = app_.status();
   const mt::Pattern& pt = pat();
   const int tl = pt.trackLen[tr] && pt.trackLen[tr] < len() ? pt.trackLen[tr] : len();
@@ -885,6 +888,7 @@ void GridScreen::openMenu() {
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
     if (app_.project().genOn(track()) || mt::mutOn(app_.project(), track())) add("Capture live", kCaptureLive, true);
+    add("Recording setup...", kRecordingSetup, true);
     add(app_.motionRecording() ? "Motion REC: ON" : "Motion REC: OFF", kMotionRec, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
@@ -1090,7 +1094,7 @@ void GridScreen::onMenu(int id) {
     return;
   }
   const bool anyPattern = id == kToggleView || id == kRollView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
-                          id == kDropSel || id == kMotionRec;
+                          id == kDropSel || id == kMotionRec || id == kRecordingSetup;
   if (!anyPattern && app_.editPattern() != menuPattern_) {
     app_.toast("PATTERN CHANGED");
     return;
@@ -1139,6 +1143,7 @@ void GridScreen::onMenu(int id) {
       break;
     case kToggleView: setView(view_ == View::Overview ? View::Detail : View::Overview); break;
     case kRollView: setView(View::Roll); break;
+    case kRecordingSetup: app_.openRecordingSetup(); break;
     case kMotionRec:
       app_.setMotionRecording(!app_.motionRecording());
       app_.toast(app_.motionRecording() ? "MOTION REC ARMED" : "MOTION REC OFF");
@@ -1155,8 +1160,7 @@ void GridScreen::onMenu(int id) {
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
     case kRec:
-      setNoteRecording(!rec_);
-      app_.setMotionRecording(rec_);
+      app_.setRecording(!rec_, !rec_);
       app_.toast(rec_ ? "REC: NOTES + MOTION" : "REC OFF");
       break;
     case kPerf:

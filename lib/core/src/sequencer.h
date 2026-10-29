@@ -17,6 +17,8 @@ class MidiSink {
  public:
   virtual ~MidiSink() = default;
   virtual void send(const uint8_t* b, uint8_t len) = 0;
+  // Live monitor clock. Offline sinks ignore it; never becomes MIDI or rendered audio.
+  virtual void beat(uint64_t time, bool accent) { (void)time; (void)accent; }
   // Message for the internal synth (INT tracks), see Synth::event. t: when it should sound, us
   // (the scheduled time, at or a little before the call; the time passed to the call otherwise).
   virtual void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) {
@@ -91,6 +93,11 @@ class Sequencer {
   Sequencer& operator=(const Sequencer&) = delete;
   static size_t coldBytes();
 
+  // Tempo the next stopped start uses (count-in must match a SONG entry slot).
+  uint16_t startTempo() const {
+    const auto slot = songActive() ? slotBpm(songEntry()) : 0;
+    return slot ? slot : clampBpm(p_.bpm);
+  }
   void start(uint64_t now, MidiSink& out);
   void pause(uint64_t now, MidiSink& out);
   void resume(uint64_t now, MidiSink& out);

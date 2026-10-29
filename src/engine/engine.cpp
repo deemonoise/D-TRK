@@ -16,11 +16,21 @@
 namespace engine {
 namespace {
 
+mt::RecordPractice practice;
+mt::PracticePrefs practicePrefs;
+void click(uint64_t t, bool accent) {
+  const uint8_t b[3] = {mt::kMetronomeMsg, static_cast<uint8_t>(accent), practicePrefs.clickLevel};
+  audio::post(t, mt::kTracks, b, 3);
+}
+
 // MIDI tracks go to the UART and to the BLE OUT device when one is up (one atomic load otherwise),
 // INT tracks to the synth queue (stamped with their scheduled time: the synth plays them there,
 // whatever the jitter of the engine wakeup).
 struct Router : mt::MidiSink {
   hw::MidiUart uart;
+  void beat(uint64_t t, bool accent) override {
+    if (practicePrefs.clickMode == 2 || (practicePrefs.clickMode == 1 && practice.active())) click(t, accent);
+  }
   void send(const uint8_t* b, uint8_t len) override {
     uart.send(b, len);
     if (hw::ble::outReady()) hw::ble::send(nowUs(), b, len);
@@ -51,18 +61,26 @@ void handle(const Command& c) {
   const uint64_t now = nowUs();
   switch (c.cmd) {
     case Cmd::StartStop:
+      if (practice.counting()) { practice.stop(); break; }
       if (seq->playing()) {
         seq->stop(now, midi);
+        practice.stop();
+      } else if (practice.armed() && practicePrefs.countBars && !seq->paused()) {
+        practice.startCount(now, seq->startTempo(), practicePrefs.countBars);
       } else {
-        seq->setFollowSalt(esp_random());  // live: a new follow path on every start
+        seq->setFollowSalt(esp_random());
         seq->start(now, midi);
+        practice.started(seq->heardPattern(), seq->heardLoop());
       }
       break;
     case Cmd::TogglePlay:
-      if (!seq->playing() && !seq->paused()) seq->setFollowSalt(esp_random());  // resume keeps the path
+      if (practice.counting()) { practice.stop(); break; }
+      if (!seq->playing() && !seq->paused()) seq->setFollowSalt(esp_random());
       seq->togglePlay(now, midi);
+      if (seq->playing()) practice.started(seq->heardPattern(), seq->heardLoop());
+      else practice.stop();
       break;
-    case Cmd::Stop: seq->stop(now, midi); break;
+    case Cmd::Stop: practice.stop(); seq->stop(now, midi); break;
     case Cmd::QueuePattern: seq->queuePattern(c.arg); break;
     case Cmd::SelectPattern: seq->selectPattern(c.arg); break;
     case Cmd::SetBpm: seq->setBpm(c.arg); break;
@@ -79,6 +97,10 @@ void handle(const Command& c) {
     case Cmd::LiveNote: seq->liveNote(now, c.arg >> 8, c.arg & 0xFF, c.arg2, midi); break;
     case Cmd::LiveAllOff: seq->liveAllOff(now, midi); break;
     case Cmd::MidiPanic: seq->midiPanic(now, midi); break;
+    case Cmd::PracticeSettings: practicePrefs = mt::practicePrefs(static_cast<uint8_t>(c.arg), c.arg2); break;
+    case Cmd::PracticeArm:
+      practice.arm(c.arg != 0, seq->playing(), seq->heardPattern(), seq->heardLoop());
+      break;
   }
 }
 
@@ -86,7 +108,8 @@ void publish() {
   const Status s{seq->playing(),       seq->paused(),       seq->heardPattern(),
                  static_cast<int8_t>(seq->pendingPattern()), seq->playPos(), seq->heardLoop(),
                  static_cast<int8_t>(seq->heardSongPos()), seq->fill(), seq->song(),
-                 seq->heardStepTime(),  seq->stepDuration()};
+                 seq->heardStepTime(), seq->stepDuration(), practice.remaining(), practice.active(),
+                 practice.completed(), practice.endedAt()};
   portENTER_CRITICAL(&statusMux);
   st = s;
   portEXIT_CRITICAL(&statusMux);
@@ -98,7 +121,19 @@ void run(void*) {
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
     for (uint32_t b = mutClearBits.exchange(0); b; b &= b - 1) seq->mutClear(nowUs(), midi, __builtin_ctz(b));
-    const uint64_t next = seq->process(nowUs(), midi);
+    const uint64_t now = nowUs();
+    while (practice.counting() && practice.next() <= now) {
+      const uint64_t at = practice.next();
+      const auto beat = practice.tick(now);
+      if (beat == mt::RecordPractice::Tick::Start) {
+        seq->setFollowSalt(esp_random());
+        seq->start(at, midi);
+        practice.started(seq->heardPattern(), seq->heardLoop());
+      } else if (now - at < 100000) click(at, beat == mt::RecordPractice::Tick::Accent);
+    }
+    uint64_t next = seq->process(now, midi);
+    practice.observe(seq->playing(), seq->heardPattern(), seq->heardLoop(), seq->heardStepTime(), practicePrefs.onePass);
+    if (practice.next() < next) next = practice.next();
     publish();  // under the mutex: core_ram may move seq (moveSeq)
     xSemaphoreGive(projMutex);
 

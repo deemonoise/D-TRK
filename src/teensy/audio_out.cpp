@@ -34,6 +34,7 @@ void SynthStream::update() {
   }
   const uint32_t c0 = ARM_DWT_CYCCNT;
   if (synth_ && parked_) {
+    click_.reset();
     const uint64_t blockUs = micros64();
     while (const QEv* e = q_.peek()) {
       if (offsetIn(e->localUs, blockUs) < 0) break;
@@ -44,6 +45,7 @@ void SynthStream::update() {
   } else if (synth_) {
     if (resetPending_) {
       synth_->reset();
+      click_.reset();
       resetPending_ = false;
     }
     if (hook_) hook_(lastCycles_);
@@ -61,7 +63,8 @@ void SynthStream::update() {
           continue;
         }
       }
-      if (!synth_->event(off, e->track, e->b, e->len)) lost_++;
+      if (e->b[0] == mt::kMetronomeMsg && e->len == 3) click_.trigger(off, e->b[1] != 0, e->b[2]);
+      else if (!synth_->event(off, e->track, e->b, e->len)) lost_++;
       q_.pop();
     }
     synth_->render(l->data, r->data);
@@ -86,6 +89,7 @@ void SynthStream::update() {
   }
   if (inL) release(inL);
   if (inR) release(inR);
+  if (!parked_) click_.mix(l->data, r->data, AUDIO_BLOCK_SAMPLES);
   if (preview_) preview_->mix(l->data, r->data, AUDIO_BLOCK_SAMPLES, previewGain_);
   const uint32_t c = ARM_DWT_CYCCNT - c0;
   lastCycles_ = c;

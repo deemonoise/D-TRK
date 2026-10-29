@@ -39,6 +39,7 @@ class GridScreen : public Screen {
     if (on && view_ == View::Automation) setView(View::Overview);
     setRec(on);
   }
+  bool notesArmed() const { return rec_; }
   bool recording() const { return rec_ && !dialogOpen(); }
   uint8_t lastNote(int tr) const { return lastNote_[tr]; }  // the octave melodic pads play in
   // A controller pad into the heard step of track tr (REC, playing): lane >= 0 sets that drum lane,
@@ -54,7 +55,7 @@ class GridScreen : public Screen {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
     kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive, kRollView,
-    kMotionRec,
+    kMotionRec, kRecordingSetup,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;

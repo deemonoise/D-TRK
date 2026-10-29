@@ -3413,8 +3413,41 @@ void test_live_note_voice_retaken_by_pattern_note() {
   TEST_ASSERT_EQUAL(62500, off[1]);  // the pattern note's own off
 }
 
+void test_monitor_beats_follow_quarters_and_stop_with_transport() {
+  struct Beats : MidiSink {
+    std::vector<uint64_t> times;
+    std::vector<bool> accents;
+    void send(const uint8_t*, uint8_t) override {}
+    void beat(uint64_t t, bool a) override { times.push_back(t); accents.push_back(a); }
+  } b;
+  p->bpm = 120;
+  seq->start(1000,b);
+  for(uint64_t t=1000;t<=2001000;) {
+    const auto next=seq->process(t,b);
+    if(next==kNever) break;
+    t=next>t?next:t+1;
+  }
+  TEST_ASSERT_EQUAL(5,b.times.size());
+  for(int n=0;n<5;++n) {
+    TEST_ASSERT_EQUAL_UINT64(1000+n*500000ull,b.times[n]);
+    TEST_ASSERT_EQUAL(n%4==0,b.accents[n]);
+  }
+  seq->stop(2001000,b); seq->process(4000000,b);
+  TEST_ASSERT_EQUAL(5,b.times.size());
+}
+
+void test_start_tempo_for_count_in_uses_song_entry_bpm() {
+  p->bpm=120; p->songLen=2; p->songBpm[1]=180;
+  seq->setSong(0,*sink,true,1);
+  TEST_ASSERT_EQUAL(180,seq->startTempo());
+  seq->setSong(0,*sink,false,0);
+  TEST_ASSERT_EQUAL(120,seq->startTempo());
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_start_tempo_for_count_in_uses_song_entry_bpm);
+  RUN_TEST(test_monitor_beats_follow_quarters_and_stop_with_transport);
   RUN_TEST(test_start_sends_start_then_clock);
   RUN_TEST(test_clock_24ppqn_at_120);
   RUN_TEST(test_sixteenths_at_120);

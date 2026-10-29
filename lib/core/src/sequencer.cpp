@@ -688,6 +688,7 @@ bool Sequencer::rewind(uint64_t now) {
 // notes missed by more than the lookahead are dropped, their NoteOffs are no-ops.
 void Sequencer::emitDue(uint64_t now, MidiSink& out) {
   while (tickTime(clockTick_) <= now) {
+    if (clockTick_ % kPpqn == 0) out.beat(tickTime(clockTick_), (clockTick_ / kPpqn) % 4 == 0);
     const uint8_t c = 0xF8;
     out.send(&c, 1);
     clockTick_ += kPpqn / 24;

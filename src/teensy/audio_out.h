@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <AudioStream.h>
 #include "ev_queue.h"
+#include "practice.h"
 
 namespace mt {
 class Synth;
@@ -71,6 +72,7 @@ class SynthStream : public AudioStream {
   void setBlockHook(void (*f)(uint32_t lastCycles)) { hook_ = f; }
 
  private:
+  mt::MetronomeVoice click_;
   mt::Synth* synth_ = nullptr;
   mt::StreamRing* preview_ = nullptr;
   audio_block_t* inQ_[2];

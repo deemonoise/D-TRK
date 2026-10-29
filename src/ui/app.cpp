@@ -71,6 +71,10 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   preview_ = savedPreview_ = storage::loadSetting("preview", 1) != 0;
   midiRecHold_ = savedMidiRecHold_ = storage::loadSetting("midihold", 0) != 0;
   visuals_ = savedVisuals_ = storage::loadSetting("perfvis", 1) != 0;
+  practicePrefs_ = mt::practicePrefs(storage::loadSetting("practice", 0), storage::loadSetting("clickvol", 64));
+  savedPracticeBits_ = mt::practiceBits(practicePrefs_);
+  savedClickLevel_ = practicePrefs_.clickLevel;
+  engine::post(engine::Cmd::PracticeSettings, savedPracticeBits_, savedClickLevel_);
   // The REC window's Source, MIC / LINE gains, Thresh and Mon (both of its modes).
   const mt::RecPrefs rd;
   savedRec_ = mt::recPrefsFrom(storage::loadSetting("recsrc", static_cast<uint8_t>(rd.src)),
@@ -119,8 +123,7 @@ void App::recordShortcut(bool motionOnly) {
     return;
   }
   const auto mode = mt::recordModeToggle({grid_.recording(), motionRecording()}, motionOnly);
-  grid_.setNoteRecording(mode.notes);
-  setMotionRecording(mode.motion);
+  setRecording(mode.notes, mode.motion);
   if (mode.motion && !status_.playing && playWait_ < 0) {
     if (!status_.paused) postSong(tab_ == Tab::Song && p_->songLen > 0);
     postStart(engine::Cmd::StartStop);
@@ -515,7 +518,7 @@ void App::pushUndo(uint8_t pat, int genTrack) {
 }
 
 void App::projectReplaced() {
-  setMotionRecording(false);
+  setRecording(false, false);
   for (auto& r : padRec_) r.active = false;
   if (mt::Undo* u = undo()) u->clear();
   learnSlot_ = -1;  // knob learn: the binds are the old project's
@@ -910,8 +913,9 @@ void App::padNoteOn(int note, uint8_t vel, uint8_t ch) {
   padNote_[pad] = note;
   padChannel_[pad] = ch;
   padTrack_[pad] = static_cast<int8_t>(tr);
-  if (grid_.recording() && status_.playing) {
+  if (grid_.recording() && status_.playing && recordPermit()) {
     const int step = grid_.recordPad(tr, lane, note, vel);
+    if (step < 0) return;
     // KIT has one GAT shared by all lanes: keep its track gate, as for the piano roll.
     if (midiRecHold_ && lane < 0) {
       PadRecording& r = padRec_[pad];
@@ -954,9 +958,12 @@ void App::finishPadRecording(int pad) {
   const int len = pt.trackLen[r.track] && pt.trackLen[r.track] < pt.length ? pt.trackLen[r.track] : pt.length;
   const mt::TrackSpeed sp = mt::toSpeed(pt.trackSpeed[r.track]);
   const uint16_t tps = mt::ticksPerStep(pt.res) / mt::speedMul(sp) * mt::speedDiv(sp);
+  const uint64_t now = engine::nowUs();
+  const uint64_t boundary = engine::status().recordEndedAt;
+  const uint64_t end = boundary > r.started && boundary < now ? boundary : now;
   const mt::RecordHold result = same
       ? mt::recordHold(p_->patterns[r.pattern].steps[r.track], len, r.step,
-                       engine::nowUs() - r.started, r.stepUs, tps, p_->tracks[r.track].defGate)
+                       end - r.started, r.stepUs, tps, p_->tracks[r.track].defGate)
       : mt::RecordHold::Occupied;
   engine::unlockProject();
   if (!same) return;
@@ -1133,12 +1140,17 @@ void App::setPerfVisuals(bool on) {
 // stay put for a second (an encoder sweep = one write), the transport is stopped and no take runs. An NVS
 // write can erase a flash sector with the caches off: never while playing or recording.
 void App::saveSettingsIdle(uint32_t now) {
-  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing || rec_.taking()) return;
+  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing || status_.countIn || rec_.taking()) return;
   settingsChangedAt_ = 0;
   if (midiRecHold_ != savedMidiRecHold_) {
     storage::saveSetting("midihold", midiRecHold_ ? 1 : 0);
     savedMidiRecHold_ = midiRecHold_;
   }
+  const uint8_t bits = mt::practiceBits(practicePrefs_);
+  if (bits != savedPracticeBits_) storage::saveSetting("practice", bits);
+  if (practicePrefs_.clickLevel != savedClickLevel_) storage::saveSetting("clickvol", practicePrefs_.clickLevel);
+  savedPracticeBits_ = bits;
+  savedClickLevel_ = practicePrefs_.clickLevel;
   proj_.saveDicePrefs();
   const mt::RecPrefs rp = rec_.prefs();
   if (rp != savedRec_) {
@@ -1168,7 +1180,7 @@ void App::saveSettingsIdle(uint32_t now) {
 // copy needed; paused, a song slot's BPM and mutes would still hold p.bpm and the mutes) and after 3 s
 // without input (the write takes a moment).
 void App::autosaveIdle(uint32_t now) {
-  if (autosaveMin_ == 0 || !projectDirty() || editSeq_ == autosavedSeq_ || !hw::sdReady()) {
+  if (status_.countIn || autosaveMin_ == 0 || !projectDirty() || editSeq_ == autosavedSeq_ || !hw::sdReady()) {
     autosaveDue_ = 0;
     return;
   }
@@ -1314,6 +1326,7 @@ void App::showBusy(const char* msg) {
 
 void App::setMotionRecording(bool on) {
   motionRec_ = on;
+  syncRecordArm();
   motionObserving_ = false;
   motionPattern_ = -1;
   motionLoop_ = UINT32_MAX;
@@ -1323,7 +1336,7 @@ void App::setMotionRecording(bool on) {
 
 void App::motionObserve(bool before, int track) {
   if (before) {
-    motionObserving_ = motionRec_ && engine::status().playing &&
+    motionObserving_ = motionRec_ && recordPermit() &&
         (track >= 0 || tab_ != Tab::Inst || inst_.onTrackInstr());
     if (!motionObserving_) return;
     motionTrack_ = track >= 0 && track < mt::kTracks ? track : curTrack_;
@@ -1353,7 +1366,7 @@ void App::motionObserve(bool before, int track) {
 void App::pollMotion() {
   if (!motionRec_) return;
   const auto st = engine::status();
-  if (!st.playing) {
+  if (!st.playing || !recordPermit()) {
     for (auto& m : motion_) m.clear();
     motionPattern_ = -1;
     motionLoop_ = UINT32_MAX;
@@ -1396,6 +1409,12 @@ void App::tick() {
       for (Screen* sc : screens_)
         if (sc) sc->onPatternChange();
     dirty_ = true;
+  }
+  if (status_.recordDone != recordDoneSeen_) {
+    recordDoneSeen_ = status_.recordDone;
+    for (int i = 0; i < kLiveNotes; ++i) finishPadRecording(i);
+    setRecording(false, false);
+    toast("ONE PASS: REC FINISHED");
   }
   if (p_->bpm != lastBpm_) {
     lastBpm_ = p_->bpm;
@@ -1677,6 +1696,13 @@ void App::drawStatus() {
   if (synth_ == Synth::Sync || playWait_ >= 0) {
     spr_->setTextColor(kYellow);
     spr_->drawString("SYNC", 416, 4);
+    return;
+  }
+  if (status_.countIn) {
+    char count[12];
+    snprintf(count, sizeof(count), "COUNT %u", status_.countIn);
+    spr_->setTextColor(kYellow);
+    spr_->drawString(count, 416, 4);
     return;
   }
   if (motionRec_) {

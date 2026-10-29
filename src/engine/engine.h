@@ -3,6 +3,7 @@
 #include "evolve.h"
 #include "model.h"
 #include "mut.h"
+#include "practice.h"
 #include "shift_gen.h"
 #include "var_gen.h"
 
@@ -20,10 +21,12 @@ namespace engine {
 // whose MUT mode changed starts over (no EVO changes, VAR generation 0). Sequencer::mutEdited.
 // LiveNote: arg = track << 8 | note, arg2 = velocity (0 = off): played now, also stopped (Sequencer::liveNote).
 // LiveAllOff: ends every live note (Sequencer::liveAllOff).
+// PracticeSettings: arg = practiceBits(prefs), arg2 = click volume (0..127).
+// PracticeArm: arg = note REC or motion REC armed; same state does not restart a take.
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
   Fill, SetSong, GenEdit, GenReseed, MutEdit, SetLiveBpm,
-  LiveNote, LiveAllOff, MidiPanic
+  LiveNote, LiveAllOff, MidiPanic, PracticeSettings, PracticeArm
 };
 
 struct Command {
@@ -45,9 +48,14 @@ struct Status {
   // The heard step: start (nowUs() time) and length, for stepPhase() (not compared: no redraws).
   uint64_t stepT;
   uint32_t stepUs;
+  uint8_t countIn;
+  bool recordActive;
+  uint32_t recordDone;
+  uint64_t recordEndedAt;
   bool operator==(const Status& o) const {
     return playing == o.playing && paused == o.paused && pattern == o.pattern && queued == o.queued &&
-           pos == o.pos && loop == o.loop && songPos == o.songPos && fill == o.fill && song == o.song;
+           pos == o.pos && loop == o.loop && songPos == o.songPos && fill == o.fill && song == o.song &&
+           countIn == o.countIn && recordActive == o.recordActive && recordDone == o.recordDone;
   }
 };
 

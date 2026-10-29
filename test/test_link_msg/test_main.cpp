@@ -237,12 +237,13 @@ void test_debug() {
   checkTruncated<Debug>(n);
 }
 
-void test_protocol_8_and_debug_id() {
-  TEST_ASSERT_EQUAL(19, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
+void test_protocol_and_debug_id() {
+  TEST_ASSERT_EQUAL(20, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
                                      // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,
-                                     // RecStopRep::ended, RecResult::CardFull); 19: KIT 16 lanes (SynthModel size)
+                                     // RecStopRep::ended, RecResult::CardFull); 19: KIT 16 lanes (SynthModel size);
+                                     // 20: live monitor metronome (0xF9 accent level)
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
   TEST_ASSERT_EQUAL(42, static_cast<int>(Msg::WtRender));
   TEST_ASSERT_EQUAL(43, static_cast<int>(Msg::RenderOut));
@@ -992,7 +993,7 @@ int main(int, char**) {
   RUN_TEST(test_fw_messages);
   RUN_TEST(test_ev_batch_carries_a_hint);
   RUN_TEST(test_debug);
-  RUN_TEST(test_protocol_8_and_debug_id);
+  RUN_TEST(test_protocol_and_debug_id);
   RUN_TEST(test_wt_render);
   RUN_TEST(test_rec_msgs_roundtrip);
   RUN_TEST(test_msg_rec_ids);
