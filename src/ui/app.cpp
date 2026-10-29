@@ -900,23 +900,25 @@ void App::knobTurn(int bind, int delta) {
   toast(msg);
 }
 
-// Unassigned MIDI notes play their original pitch on the current track.
+// Ordinary MIDI notes retain their pitch, except for optional KIT lane addressing.
 // Held sources are keyed by channel + note; releases remember the original destination track.
 void App::padNoteOn(int note, uint8_t vel, uint8_t ch) {
   if (note < 0 || note > 127 || ch > 15) return;
   const int tr = curTrack_;
-  int lane = -1;
-  if (const mt::Instrument* k = p_->kitOf(tr)) {
-    for (int i = 0; i < mt::kKitLanes; ++i)
-      if (k->kit[i].note == note) { lane = i; break; }
-    if (lane < 0) return;
-  }
-  padNoteOff(note, ch);
+  const int sourceNote = note;
+  const int dev = devs_.activeIn();
+  const uint8_t base = dev >= 0 ? devs_.at(dev).kitMidiBase : 0xFF;
+  const auto target = mt::midiNoteTarget(note, p_->trackInternal(tr) ? p_->kitOf(tr) : nullptr, base);
+  if (target.note < 0) return;
+  const int lane = target.lane;
+  note = target.note;
+  padNoteOff(sourceNote, ch);
   int pad = 0;
   while (pad < kLiveNotes && padTrack_[pad] >= 0) ++pad;
   if (pad == kLiveNotes) { pad = 0; releaseMidiSlot(pad); }
   if (!engine::post(engine::Cmd::LiveNote, static_cast<uint16_t>(tr << 8 | note), vel)) return;
   padNote_[pad] = note;
+  padSourceNote_[pad] = sourceNote;
   padChannel_[pad] = ch;
   padTrack_[pad] = static_cast<int8_t>(tr);
   if (grid_.recording() && status_.playing && recordPermit()) {
@@ -939,7 +941,7 @@ void App::padNoteOn(int note, uint8_t vel, uint8_t ch) {
 
 void App::padNoteOff(int note, uint8_t ch) {
   for (int pad = 0; pad < kLiveNotes; ++pad)
-    if (padTrack_[pad] >= 0 && padNote_[pad] == note && padChannel_[pad] == ch) releaseMidiSlot(pad);
+    if (padTrack_[pad] >= 0 && padSourceNote_[pad] == note && padChannel_[pad] == ch) releaseMidiSlot(pad);
 }
 
 void App::releaseMidiSlot(int pad) {

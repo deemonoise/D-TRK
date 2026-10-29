@@ -17,6 +17,7 @@ struct MidiDevice {
   char name[kDevName];
   DevRole role;
   bool on;
+  uint8_t kitMidiBase = 0xFF;  // 0..112: KIT lane addressing; 0xFF: original trigger notes
   PadLearn pads;  // the controller's learned banks (meaningful for an In role)
 };
 
@@ -44,10 +45,10 @@ class MidiDevices {
   int activeIn() const;   // the on device with the In bit, -1 = none
   int activeOut() const;  // the on device with the Out bit, -1 = none
 
-  // Blob (stable byte layout, no struct copies): version 1, count, then count records of kDevRec
-  // bytes: addr 17, addrType 1, name 23, role 1, on 1, pads ch[4] base[4]. Returns the bytes
+  // Blob (stable byte layout, no struct copies): version 2, count, then count records of kDevRec
+  // bytes: addr 17, addrType 1, name 23, role 1, on 1, pads ch[4] base[4], KIT base 1. Version 1 loads with KIT base OFF. Returns the bytes
   // written, 0 when cap is too small.
-  static constexpr int kDevRec = 17 + 1 + 23 + 1 + 1 + 8;
+  static constexpr int kDevRec = 17 + 1 + 23 + 1 + 1 + 8 + 1;
   static constexpr int kBlobHead = 2;
   static constexpr int kBlobMax = kBlobHead + kDevMax * kDevRec;
   int save(uint8_t* out, int cap) const;

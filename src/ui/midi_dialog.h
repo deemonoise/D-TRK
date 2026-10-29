@@ -35,7 +35,7 @@ class MidiDialog {
     kMenuOnOff = 100, kMenuRoleIn, kMenuRoleOut, kMenuRoleBoth, kMenuDelete, kMenuClock, kMenuClearAll, kMenuAdd, kMenuLearn, kMenuEdit, kMenuClear, kMenuKnobDelete, kMenuKnobClearAll, kMenuCancel, kMenuRolePick
   };
   // The edited field, in click order. PADS: CH, note. KNOBS: CC, CH, TRK (not for PROJ), MODE.
-  enum Edit : int { kEditNone, kEditCh = 1, kEditNote, kEditLength, kKnobCc = 1, kKnobCh, kKnobTrk, kKnobMode };
+  enum Edit : int { kEditNone, kEditCh = 1, kEditNote, kEditLength, kEditKitBase, kKnobCc = 1, kKnobCh, kKnobTrk, kKnobMode };
   static constexpr int kMaxFound = 8;
   static constexpr int kMonLines = 2;
   static constexpr int kTitleH = 24;

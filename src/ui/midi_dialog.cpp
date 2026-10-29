@@ -548,6 +548,7 @@ void MidiDialog::editOpen(int field) {
     mt::MidiDevice* d = padDev();
     if (!d) return;
     stopLearn();
+    if (padRow_ == kSteps) { edit_ = kEditKitBase; redraw_ = true; return; }
     if (d->pads.base[padRow_ + 1] == 0xFF) {
       padTouch();
       d->pads.ch[padRow_ + 1] = 0;
@@ -566,7 +567,15 @@ void MidiDialog::editOpen(int field) {
 void MidiDialog::editTurn(int delta) {
   if (edit_ == kEditNone || !delta) return;
   if (page_ == kPgPads && edit_ == kEditLength) app_.setMidiRecHold(delta > 0);
-  else if (page_ == kPgPads) padTurn(delta);
+  else if (page_ == kPgPads && edit_ == kEditKitBase) {
+    if (auto* d = padDev()) {
+      padTouch();
+      int base = (d->kitMidiBase == 0xFF ? -1 : d->kitMidiBase) + delta;
+      if (base < -1) base = -1;
+      if (base > 128 - mt::kKitLanes) base = 128 - mt::kKitLanes;
+      d->kitMidiBase = base < 0 ? 0xFF : static_cast<uint8_t>(base);
+    }
+  } else if (page_ == kPgPads) padTurn(delta);
   else if (page_ == kPgKnobs) knobTurn(delta);
   redraw_ = true;
 }
@@ -581,7 +590,8 @@ void MidiDialog::projectReplaced() {
 void MidiDialog::leaveEdit() {
   if (edit_ == kEditNone) return;
   if (editTouched_) {
-    if (page_ == kPgPads && edit_ != kEditLength) padLeave();
+    if (page_ == kPgPads && edit_ == kEditKitBase) app_.devicesSave();
+    else if (page_ == kPgPads && edit_ != kEditLength) padLeave();
     else if (page_ == kPgKnobs) knobLeave();
   }
   edit_ = kEditNone;
@@ -596,7 +606,7 @@ int MidiDialog::rows() const {
   const int n = app_.devices().count();
   switch (page_) {
     case kPgDevices: return n + 1;
-    case kPgPads: return n > 0 ? kSteps : 0;
+    case kPgPads: return n > 0 ? kSteps + 1 : 0;
     default: {
       int slots[mt::kKnobBinds];
       return knobList(slots);
@@ -659,6 +669,11 @@ void MidiDialog::rowClick() {
       else { dev_ = deviceRow_; moreMenu(); }
       return;
     case kPgPads:
+      if (padRow_ == kSteps) {
+        if (edit_ == kEditKitBase) leaveEdit();
+        else editOpen(kEditKitBase);
+        return;
+      }
       if (padRow_ == kSteps - 1) { edit_ = edit_ == kEditLength ? kEditNone : kEditLength; redraw_ = true; return; }
       if (edit_ == kEditNone) {
         const MenuItem items[] = {{"Learn this bank", 0}, {"Edit channel / note", 1}, {"Unassign", 2}, {"Cancel", 3}};
@@ -866,8 +881,17 @@ void MidiDialog::drawPads(LGFX_Sprite& s, int y0) {
   s.drawString("REC LENGTH", 16, recY + 4);
   s.setTextColor(!bar_ && padRow_ == kSteps - 1 && edit_ == kEditLength ? kEditCursor : kText);
   s.drawString(app_.midiRecHold() ? "HOLD" : "TRACK", 240, recY + 4);
+  const int baseY = recY + kRowH;
+  const bool baseSel = !bar_ && padRow_ == kSteps;
+  if (baseSel) s.fillRect(0, baseY, kScreenW, kRowH, kSelBg);
+  s.setTextColor(baseSel ? kCursor : kDim);
+  s.drawString("KIT MIDI BASE", 16, baseY + 4);
+  s.setTextColor(baseSel && edit_ == kEditKitBase ? kEditCursor : kText);
+  if (d->kitMidiBase == 0xFF) snprintf(buf, sizeof(buf), "OFF");
+  else snprintf(buf, sizeof(buf), "%u", d->kitMidiBase);
+  s.drawString(buf, 240, baseY + 4);
   if (learnStep_ >= 0) {
-    const int ty = recY + kRowH + 2;
+    const int ty = recY + 2 * kRowH + 2;
     char msg[64];
     snprintf(msg, sizeof(msg), "%s: HIT FIRST PAD",
              mt::padModeName(static_cast<mt::PadMode>(learnStep_)));

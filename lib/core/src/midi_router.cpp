@@ -49,6 +49,19 @@ Action release(const PadLearn& pads, int ch, int note) {
 
 }  // namespace
 
+MidiNoteTarget midiNoteTarget(int note, const Instrument* kit, uint8_t base) {
+  if (note < 0 || note > 127) return {-1, -1};
+  if (!kit) return {note, -1};
+  if (base <= 128 - kKitLanes) {
+    const int lane = note - base;
+    if (lane < 0 || lane >= kKitLanes) return {-1, -1};
+    return {kit->kit[lane].note, lane};
+  }
+  for (int lane = 0; lane < kKitLanes; ++lane)
+    if (kit->kit[lane].note == note) return {note, lane};
+  return {-1, -1};
+}
+
 const char* padModeName(PadMode m) {
   static const char* const kNames[] = {"NOTE", "PAT", "PERF", "MUTE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == kModes, "pad modes");

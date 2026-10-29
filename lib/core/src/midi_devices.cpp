@@ -6,7 +6,7 @@ namespace mt {
 
 namespace {
 
-constexpr uint8_t kBlobVersion = 1;
+constexpr uint8_t kBlobVersion = 2;
 constexpr int kAddrLen = kDevAddr - 1, kNameLen = kDevName - 1;
 constexpr int kModes = static_cast<int>(PadMode::Count);
 
@@ -65,6 +65,7 @@ int MidiDevices::add(const char* addr, uint8_t type, const char* name, DevRole r
   d.role = role;
   d.on = true;
   d.pads.clear();
+  d.kitMidiBase = 0xFF;
   const int i = n_++;
   offMask = enforce(i);
   return i;
@@ -117,17 +118,20 @@ int MidiDevices::save(uint8_t* out, int cap) const {
     *o++ = d.on ? 1 : 0;
     for (int m = 0; m < kModes; ++m) *o++ = d.pads.ch[m];
     for (int m = 0; m < kModes; ++m) *o++ = d.pads.base[m];
+    *o++ = d.kitMidiBase;
   }
   return size;
 }
 
 bool MidiDevices::load(const uint8_t* in, int n) {
   n_ = 0;
-  if (!in || n < kBlobHead || in[0] != kBlobVersion || in[1] > kDevMax) return false;
+  if (!in || n < kBlobHead || (in[0] != 1 && in[0] != kBlobVersion) || in[1] > kDevMax) return false;
   const int count = in[1];
-  if (n != kBlobHead + count * kDevRec) return false;
+  const int rec = in[0] == 1 ? kDevRec - 1 : kDevRec;
+  const bool hasKitBase = in[0] >= 2;
+  if (n != kBlobHead + count * rec) return false;
   for (int i = 0; i < count; ++i)
-    if (!validRole(in[kBlobHead + i * kDevRec + kAddrLen + 1 + kNameLen])) return false;
+    if (!validRole(in[kBlobHead + i * rec + kAddrLen + 1 + kNameLen])) return false;
   // A record with an empty or repeated address is dropped; a pad bank with a bad channel / note is
   // forgotten (the rest of the list stays).
   const uint8_t* p = in + kBlobHead;
@@ -140,6 +144,8 @@ bool MidiDevices::load(const uint8_t* in, int n) {
     d.on = *p++ != 0;
     for (int m = 0; m < kModes; ++m) d.pads.ch[m] = *p++;
     for (int m = 0; m < kModes; ++m) d.pads.base[m] = *p++;
+    d.kitMidiBase = hasKitBase ? *p++ : 0xFF;
+    if (d.kitMidiBase > 128 - kKitLanes) d.kitMidiBase = 0xFF;
     for (int m = 0; m < kModes; ++m)
       if (d.pads.ch[m] > 15 || (d.pads.base[m] > 127 && d.pads.base[m] != 0xFF)) {
         d.pads.ch[m] = 0;

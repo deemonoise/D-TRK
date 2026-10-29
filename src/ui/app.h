@@ -380,7 +380,8 @@ class App {
     uint32_t stepUs = 0;
   } padRec_[kLiveNotes];
   void finishPadRecording(int pad);
-  uint8_t padNote_[kLiveNotes] = {};
+  uint8_t padNote_[kLiveNotes] = {};  // sounding note
+  uint8_t padSourceNote_[kLiveNotes] = {};  // source note, before KIT remapping
   int8_t padTrack_[kLiveNotes] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
   mt::MidiMsg mon_[kMonitor] = {};
   uint8_t monHead_ = 0, monCount_ = 0;  // ring: next slot, messages in it

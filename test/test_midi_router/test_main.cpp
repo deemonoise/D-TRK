@@ -262,8 +262,28 @@ void test_kit_pad_lane() {
   TEST_ASSERT_EQUAL(-1, mt::kitPadLane(-1));
 }
 
+void test_kit_midi_base_maps_lanes_and_preserves_melody() {
+  Instrument kit;
+  kitSetDefaults(kit);
+  kit.kit[0].note = 80;
+  for (int i = 0; i < kKitLanes; ++i) {
+    auto target = midiNoteTarget(36 + i, &kit, 36);
+    TEST_ASSERT_EQUAL(i, target.lane);
+    TEST_ASSERT_EQUAL(kit.kit[i].note, target.note);
+  }
+  TEST_ASSERT_EQUAL(-1, midiNoteTarget(35, &kit, 36).note);
+  TEST_ASSERT_EQUAL(-1, midiNoteTarget(52, &kit, 36).note);
+  TEST_ASSERT_EQUAL(36, midiNoteTarget(36, nullptr, 36).note);
+  TEST_ASSERT_EQUAL(-1, midiNoteTarget(36, nullptr, 36).lane);
+  TEST_ASSERT_EQUAL(80, midiNoteTarget(80, &kit, 255).note);
+  TEST_ASSERT_EQUAL(0, midiNoteTarget(80, &kit, 255).lane);
+  TEST_ASSERT_EQUAL(-1, midiNoteTarget(36, &kit, 255).note);
+  TEST_ASSERT_EQUAL(15, midiNoteTarget(127, &kit, 112).lane);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_kit_midi_base_maps_lanes_and_preserves_melody);
   RUN_TEST(test_learn_sets_bank);
   RUN_TEST(test_learn_routes_releases_and_cc_stays_armed);
   RUN_TEST(test_disarm_and_invalid_mode);

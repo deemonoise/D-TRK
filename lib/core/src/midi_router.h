@@ -11,6 +11,10 @@ enum class PadMode : uint8_t { Note, Pat, Perf, Mute, Count };
 constexpr int kPads = 16;
 // NOTE pad on a KIT track: pads 1-16 are its lanes 1-16; -1 = no lane.
 inline int kitPadLane(int pad) { return pad >= 0 && pad < kKitLanes && pad < kPads ? pad : -1; }
+// Destination of an ordinary incoming MIDI note; note -1 means ignored.
+struct MidiNoteTarget { int note; int lane; };
+MidiNoteTarget midiNoteTarget(int note, const Instrument* kit, uint8_t base);
+
 const char* padModeName(PadMode m);  // "NOTE", "PAT", "PERF", "MUTE"; "?" for Count
 
 // Device setting (NVS): the first note and channel each pad bank of the controller sends; a pad

@@ -163,7 +163,7 @@ void test_blob_round_trip() {
   uint8_t buf[MidiDevices::kBlobMax];
   const int n = d.save(buf, sizeof buf);
   TEST_ASSERT_EQUAL(MidiDevices::kBlobHead + 3 * MidiDevices::kDevRec, n);
-  TEST_ASSERT_EQUAL(1, buf[0]);
+  TEST_ASSERT_EQUAL(2, buf[0]);
   TEST_ASSERT_EQUAL(3, buf[1]);
   TEST_ASSERT_EQUAL(0, d.save(buf, n - 1));
 
@@ -194,11 +194,11 @@ void test_blob_bad_rejected() {
   const int n = d.save(buf, sizeof buf);
   MidiDevices e;
   // bad version
-  buf[0] = 2;
+  buf[0] = 3;
   e.add(kC, 0, "x", DevRole::In, off);
   TEST_ASSERT_FALSE(e.load(buf, n));
   TEST_ASSERT_EQUAL(0, e.count());
-  buf[0] = 1;
+  buf[0] = 2;
   // short / long
   e.add(kC, 0, "x", DevRole::In, off);
   TEST_ASSERT_FALSE(e.load(buf, n - 1));
@@ -358,8 +358,36 @@ void test_load_drops_empty_and_duplicate_addr() {
   TEST_ASSERT_EQUAL_STRING("dd:dd:dd:dd:dd:04", e.at(1).addr);
 }
 
+void test_kit_base_roundtrip_and_legacy_devices() {
+  add(kA, DevRole::In);
+  add(kB, DevRole::Out);
+  TEST_ASSERT_EQUAL(255, d.at(0).kitMidiBase);
+  d.at(0).kitMidiBase = 36;
+  d.at(1).kitMidiBase = 112;
+  uint8_t buf[MidiDevices::kBlobMax];
+  int n = d.save(buf, sizeof buf);
+  MidiDevices e;
+  TEST_ASSERT_TRUE(e.load(buf, n));
+  TEST_ASSERT_EQUAL(36, e.at(0).kitMidiBase);
+  TEST_ASSERT_EQUAL(112, e.at(1).kitMidiBase);
+  // Convert each record into the exact old v1 layout, removing the appended byte.
+  uint8_t old[MidiDevices::kBlobMax] = {1, 2};
+  const int oldRec = MidiDevices::kDevRec - 1;
+  for (int i = 0; i < 2; ++i)
+    memcpy(old + 2 + i * oldRec, buf + 2 + i * MidiDevices::kDevRec, oldRec);
+  TEST_ASSERT_TRUE(e.load(old, 2 + 2 * oldRec));
+  TEST_ASSERT_EQUAL(255, e.at(0).kitMidiBase);
+  TEST_ASSERT_EQUAL(255, e.at(1).kitMidiBase);
+  TEST_ASSERT_EQUAL_STRING(kB, e.at(1).addr);
+  buf[2 + MidiDevices::kDevRec - 1] = 113;
+  TEST_ASSERT_TRUE(e.load(buf, n));
+  TEST_ASSERT_EQUAL(255, e.at(0).kitMidiBase);
+  TEST_ASSERT_EQUAL(112, e.at(1).kitMidiBase);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_kit_base_roundtrip_and_legacy_devices);
   RUN_TEST(test_load_clears_bad_pads);
   RUN_TEST(test_find_and_migrate_ignore_case);
   RUN_TEST(test_add_refuses_bad_role);
