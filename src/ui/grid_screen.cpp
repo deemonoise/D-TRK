@@ -379,10 +379,13 @@ int GridScreen::recordAt(int tr, int lane, uint8_t note, uint8_t vel, bool clear
     if (setLast) lastNote_[tr] = s.note;
     sound = s.note;
   }
+  const bool writeTiming = !clear && (lane < 0 || !pt.steps[tr][step].hasNote() || !mt::laneMask(pt.steps[tr][step]));
+  const bool timingOk = !writeTiming || mt::recordTiming(s, static_cast<uint8_t>((phase * mul) % 256));
   engine::lockProject();
   pat().steps[tr][step] = s;
   engine::unlockProject();
   app_.markDirty();
+  if (!timingOk) app_.toast("NO FX SLOT FOR TIMING");
   if (preview && sound <= 127) previewNote(sound);
   return step;
 }
@@ -854,56 +857,72 @@ mt::Sel GridScreen::trackSel() const {
 }
 
 void GridScreen::openMenu() {
-  mt::Clipboard* cb = app_.clipboard();
-  const bool canCopy = cb != nullptr;
-  const bool canPaste = cb && cb->tracks > 0 && cb->steps > 0;
-  const bool canUndo = app_.undo() && app_.undo()->size() > 0;
-  MenuItem items[Menu::kMaxItems];
-  int n = 0;
-  auto add = [&](const char* label, int id, bool en) { items[n++] = MenuItem{label, id, en}; };
-  char title[28];
-  char stepLabel[20];
-  if (selOn_) {
-    const mt::Sel s = curSel();
-    snprintf(title, sizeof(title), "SEL T%d-%d  %d-%d", s.t0 + 1, s.t1 + 1, s.s0 + 1, s.s1 + 1);
-    add("Copy sel", kCopySel, canCopy);
-    add("Paste", kPaste, canPaste);
-    add("Clear sel", kClearSel, true);
-    add("Note OFF sel", kNoteOffSel, true);
-    add("Transpose...", kTranspose, true);
-    add("Fill...", kFill, true);
-  } else {
-    // Most used first (the first 12 show without scrolling); slow / rare ones at the end.
-    snprintf(title, sizeof(title), "STEP %d  %s", cur() + 1, app_.project().tracks[track()].name);
-    snprintf(stepLabel, sizeof(stepLabel), "Edit step: %d", editStep_);
-    add(stepLabel, kEditStep, true);
-    add("Copy step", kCopyStep, canCopy);
-    add("Paste", kPaste, canPaste);
-    add("Clear step", kClearStep, true);
-    add("Note OFF", kNoteOff, true);
-    add("Undo", kUndo, canUndo);
-    add("Select", kSelect, true);
-    add("Copy track", kCopyTrack, canCopy);
-    add("Clear track", kClearTrack, true);
-    add("Transpose track...", kTranspose, true);
-    add("Fill...", kFill, true);
-    if (app_.project().genOn(track()) || mt::mutOn(app_.project(), track())) add("Capture live", kCaptureLive, true);
-    add("Recording setup...", kRecordingSetup, true);
-    add(app_.motionRecording() ? "Motion REC: ON" : "Motion REC: OFF", kMotionRec, true);
-    add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
-    add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
-    add(view_ == View::Overview ? "Detail view" : "Overview", kToggleView, true);
-    if (!roll()) add("Piano roll", kRollView, true);
-    add(follow_ ? "Follow: ON" : "Follow: OFF", kToggleFollow, true);
-    add("Resample track", kResampleTrack, true);
-    add("Resample pattern", kResamplePattern, true);
-  }
-  if (selOn_) {
-    add("Undo", kUndo, canUndo);
-    add("Clear selection", kDropSel, true);
-  }
-  menuPattern_ = app_.editPattern();
-  app_.menu().open(title, items, n, [this](int id) { onMenu(id); });
+  menuCtx_.pattern = app_.editPattern();
+  menuCtx_.track = track(); menuCtx_.step = cur(); menuCtx_.length = len();
+  menuCtx_.selected = selOn_; menuCtx_.selection = curSel();
+  const auto* cb = app_.clipboard();
+  const MenuItem items[] = {
+    {selOn_ ? "Copy selection" : "Copy step", selOn_ ? kCopySel : kCopyStep, cb != nullptr},
+    {"Paste", kPaste, cb && cb->tracks > 0 && cb->steps > 0},
+    {selOn_ ? "End selection" : "Select", selOn_ ? kDropSel : kSelect},
+    {selOn_ ? "Edit selection..." : "Edit step...", kEditTools},
+    {selOn_ ? "Process selection..." : "Process track...", kProcessMenu},
+    {"Track...", kTrackMenu},
+    {perf() ? "PERF: ON" : "PERF: OFF", kPerf},
+    {"Recording setup...", kRecordingSetup},
+    {"Resample...", kResampleMenu},
+    {"Grid settings...", kGridSettings}};
+  char title[28]; menuScopeTitle(title, sizeof(title), menuCtx_.editScope());
+  app_.menu().open(title, items, 10, [this](int id) { onMenu(id); });
+}
+
+bool GridScreen::menuTargetValid() {
+  if (app_.editPattern() == menuCtx_.pattern && len() == menuCtx_.length) return true;
+  app_.toast("TARGET CHANGED"); return false;
+}
+
+void GridScreen::menuScopeTitle(char* title, size_t size, const mt::Sel& scope, bool wholeTrack) const {
+  if (wholeTrack) snprintf(title, size, "TRACK T%d", scope.t0 + 1);
+  else if (menuCtx_.selected) snprintf(title, size, "SEL T%d-%d %02d-%02d", scope.t0+1, scope.t1+1, scope.s0+1, scope.s1+1);
+  else snprintf(title, size, "STEP %02d T%d", scope.s0+1, scope.t0+1);
+}
+
+void GridScreen::openProcessMenu() {
+  char title[28]; menuScopeTitle(title, sizeof(title), menuCtx_.processScope(), !menuCtx_.selected);
+  const MenuItem items[] = {{"Fill...", kFill}, {"Transpose...", kTranspose}, {"Quantize...", kQuantize, app_.undoScratch()!=nullptr}};
+  app_.menu().openChild(title, items, 3, [this](int id) {
+    if (!menuTargetValid()) return;
+    if (id == kQuantize) { quantizeSel_=menuCtx_.processScope(); quantizePattern_=menuCtx_.pattern; openQuantizeMenu(); }
+    else onMenu(id);
+  });
+}
+
+void GridScreen::openTrackMenu() {
+  const int tr=menuCtx_.track;
+  char title[28]; menuScopeTitle(title, sizeof(title), menuCtx_.trackScope(), true);
+  const MenuItem items[] = {{"Copy track", kCopyTrack, app_.clipboard()!=nullptr}, {"Clear...", kClearTrack},
+    {app_.automationMuted(tr) ? "Automation: OFF" : "Automation: ON", kAutomationToggle, app_.project().trackInternal(tr)},
+    {"Capture live", kCaptureLive, app_.project().genOn(tr) || mt::mutOn(app_.project(),tr)}};
+  app_.menu().openChild(title, items, 4, [this,tr](int id) {
+    if (!menuTargetValid()) return;
+    if (id == kAutomationToggle) app_.toggleAutomationMute(tr);
+    else if (id == kClearTrack) openEditTools(menuCtx_.trackScope(), true);
+    else onMenu(id);
+  });
+}
+
+void GridScreen::openResampleMenu() {
+  const MenuItem items[] = {{"Resample track",kResampleTrack}, {"Resample pattern",kResamplePattern}};
+  char title[28]; snprintf(title,sizeof(title),"RESAMPLE P%d T%d",menuCtx_.pattern+1,menuCtx_.track+1);
+  app_.menu().openChild(title,items,2,[this](int id){onMenu(id);});
+}
+
+void GridScreen::openGridSettings(bool refresh) {
+  char step[28]; snprintf(step,sizeof(step),"Edit step: %d",editStep_);
+  const MenuItem items[] = {{step,kEditStep},{follow_ ? "Follow: ON" : "Follow: OFF",kToggleFollow}};
+  auto cb=[this](int id){onMenu(id);};
+  if (refresh) app_.menu().replace("GRID SETTINGS",items,2,cb);
+  else app_.menu().openChild("GRID SETTINGS",items,2,cb);
 }
 
 // 0..kEditStepMax: how far the cursor moves after a note entered with a track button.
@@ -915,15 +934,15 @@ void GridScreen::openEditStepMenu() {
     snprintf(labels[v], sizeof(labels[v]), "%s%d%s", v == editStep_ ? "> " : "  ", v, v == 0 ? " (stay)" : "");
     items[v] = MenuItem{labels[v], kEditStepVal + v, true};
   }
-  app_.menu().open("EDIT STEP", items, kEditStepMax + 1, [this](int id) { onMenu(id); });
+  app_.menu().openChild("EDIT STEP", items, kEditStepMax + 1, [this](int id) { onMenu(id); });
 }
 
 // The selection, else the current track up to its own length (polymeter). The column under the
 // cursor picks what is filled.
 void GridScreen::openFill() {
-  const int tr = track();
-  mt::Sel sel = selOn_ ? curSel() : trackSel();
-  if (!selOn_) {
+  const int tr = menuCtx_.track;
+  mt::Sel sel = menuCtx_.processScope();
+  if (!menuCtx_.selected) {
     const int tl = pat().trackLen[tr];
     if (tl > 0 && tl - 1 < sel.s1) sel.s1 = static_cast<uint8_t>(tl - 1);
   }
@@ -947,7 +966,7 @@ void GridScreen::openFill() {
       f.from = 100;
       f.to = 127;
     } else {  // the command in that slot under the cursor, else the last one written there
-      const mt::FxSlot& here = pat().steps[tr][cur()].fx[f.slot];
+      const mt::FxSlot& here = pat().steps[tr][menuCtx_.step].fx[f.slot];
       const mt::FxSlot& src = here.cmd != mt::Fx::None ? here : lastFx_[tr][f.slot];
       f.cmd = src.cmd;
       f.from = f.to = src.cmd == mt::Fx::None ? 0 : src.val;
@@ -966,7 +985,7 @@ void GridScreen::openFill() {
 }
 
 void GridScreen::captureLive() {
-  const int tr = track();
+  const int tr = menuCtx_.track;
   const engine::Status& es = app_.status();
   if ((es.playing || es.paused) && es.pattern != app_.editPattern()) {  // the state is the heard pattern's
     app_.toast("CAPTURE: OTHER PATTERN");
@@ -996,16 +1015,16 @@ void GridScreen::captureLive() {
 // wrapped into its start, at the level as played (mt::resamplePlan). Playback is stopped first.
 void GridScreen::resample(bool wholePattern) {
   mt::Project& p = app_.project();
-  if (!wholePattern && !p.trackInternal(track())) {
+  if (!wholePattern && !p.trackInternal(menuCtx_.track)) {
     app_.toast("MIDI TRACK");
     return;
   }
   if (!renderReady(app_)) return;
   uint16_t mask = 0;
   for (int t = 0; t < mt::kTracks; ++t)
-    if (wholePattern ? p.trackAudible(t) : t == track()) mask |= static_cast<uint16_t>(1u << t);
+    if (wholePattern ? p.trackAudible(t) : t == menuCtx_.track) mask |= static_cast<uint16_t>(1u << t);
   const mt::ResamplePlan plan =
-      mt::resamplePlan(p, app_.editPattern(), mask, wholePattern ? -1 : track(), storage::kResampleMaxFrames);
+      mt::resamplePlan(p, app_.editPattern(), mask, wholePattern ? -1 : menuCtx_.track, storage::kResampleMaxFrames);
   char name[mt::kSampleNameMax + 1];
   storage::RenderStats rs;
   const storage::Result r = storage::resample(p, plan, name, rs, App::renderProgress, &app_);
@@ -1027,7 +1046,6 @@ void GridScreen::apply(const mt::Sel& sel, int id) {
   mt::Pattern& pt = pat();
   switch (id) {
     case kNoteOff:
-    case kNoteOffSel:
       for (int t = sel.t0; t <= sel.t1; ++t)
         for (int i = sel.s0; i <= sel.s1; ++i) {
           pt.steps[t][i].note = mt::kNoteOff;
@@ -1044,13 +1062,12 @@ void GridScreen::apply(const mt::Sel& sel, int id) {
 
 void GridScreen::openTranspose() {
   char title[28];
-  const mt::Sel sel = selOn_ ? curSel() : trackSel();
-  if (selOn_) snprintf(title, sizeof(title), "SEL T%d-%d %d-%d", sel.t0 + 1, sel.t1 + 1, sel.s0 + 1, sel.s1 + 1);
-  else snprintf(title, sizeof(title), "T%d %s", sel.t0 + 1, app_.project().tracks[sel.t0].name);
+  const mt::Sel sel = menuCtx_.processScope();
+  menuScopeTitle(title, sizeof(title), sel, !menuCtx_.selected);
   setEdit(false);
   const int pattern = app_.editPattern();
   transpose_.open(title, [this, sel, pattern](int amount, bool degrees) {
-    if (app_.editPattern() != pattern) {  // heard pattern changed while the dialog was open
+    if (app_.editPattern() != pattern || !menuTargetValid()) {  // target changed while dialog was open
       app_.toast("PATTERN CHANGED");
       return;
     }
@@ -1080,8 +1097,7 @@ void GridScreen::transpose(const mt::Sel& sel, int amount, bool degrees) {
 }
 
 void GridScreen::onMenu(int id) {
-  // The heard pattern changed while the menu was open: edits of steps would hit the wrong one.
-  // View, follow, undo, REC / PERF and dropping the selection do not depend on it.
+  // Settings are independent of the captured edit target.
   if (id == kEditStep) {
     openEditStepMenu();
     return;
@@ -1091,25 +1107,22 @@ void GridScreen::onMenu(int id) {
     char msg[20];
     snprintf(msg, sizeof(msg), "EDIT STEP %d", editStep_);
     app_.toast(msg);
+    app_.menu().back(); openGridSettings(true);
     return;
   }
-  const bool anyPattern = id == kToggleView || id == kRollView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
-                          id == kDropSel || id == kMotionRec || id == kRecordingSetup;
-  if (!anyPattern && app_.editPattern() != menuPattern_) {
-    app_.toast("PATTERN CHANGED");
-    return;
-  }
-  const bool selId = id == kCopySel || id == kClearSel || id == kNoteOffSel || id == kDropSel;
-  if (selId && !selOn_) return;
+  if (id == kGridSettings) { openGridSettings(); return; }
+  const bool anyPattern = id == kToggleFollow || id == kPerf || id == kDropSel || id == kRecordingSetup;
+  if (!anyPattern && !menuTargetValid()) return;
+  if ((id == kCopySel || id == kDropSel) && !menuCtx_.selected) return;
   mt::Clipboard* cb = app_.clipboard();
-  const int tr = track(), step = cur();
+  const int tr = menuCtx_.track, step = menuCtx_.step;
   switch (id) {
     case kCopyStep:
     case kCopyTrack:
     case kCopySel:
       if (!cb) return;
       mt::copySel(pat(),
-                  id == kCopyStep ? mt::makeSel(tr, step, tr, step) : (id == kCopyTrack ? trackSel() : curSel()),
+                  id == kCopyStep ? mt::makeSel(tr, step, tr, step) : (id == kCopyTrack ? menuCtx_.trackScope() : menuCtx_.selection),
                   *cb);
       if (id == kCopySel) selOn_ = false;  // free the cursor to pick the paste position
       app_.toast("COPIED");
@@ -1118,8 +1131,8 @@ void GridScreen::onMenu(int id) {
       if (!cb || !cb->tracks || !cb->steps) return;
       app_.pushUndo();
       engine::lockProject();
-      if (selOn_) {
-        const mt::Sel s = curSel();
+      if (menuCtx_.selected) {
+        const mt::Sel s = menuCtx_.selection;
         mt::pasteAt(pat(), *cb, s.t0, s.s0);
       } else {
         mt::pasteAt(pat(), *cb, tr, step);
@@ -1129,11 +1142,6 @@ void GridScreen::onMenu(int id) {
       engine::post(engine::Cmd::ReleaseTies);
       app_.toast("PASTED");
       break;
-    case kClearStep:
-    case kNoteOff: apply(mt::makeSel(tr, step, tr, step), id); break;
-    case kNoteOffSel: apply(curSel(), id); break;
-    case kClearTrack: apply(trackSel(), id); break;
-    case kClearSel: apply(curSel(), id); break;
     case kTranspose: openTranspose(); break;
     case kSelect:
       selOn_ = true;
@@ -1141,28 +1149,22 @@ void GridScreen::onMenu(int id) {
       selS0_ = selS1_ = step;
       app_.toast("SELECT: TURN TO EXTEND");
       break;
-    case kToggleView: setView(view_ == View::Overview ? View::Detail : View::Overview); break;
-    case kRollView: setView(View::Roll); break;
-    case kRecordingSetup: app_.openRecordingSetup(); break;
-    case kMotionRec:
-      app_.setMotionRecording(!app_.motionRecording());
-      app_.toast(app_.motionRecording() ? "MOTION REC ARMED" : "MOTION REC OFF");
-      break;
+    case kEditTools: openEditTools(menuCtx_.editScope()); break;
+    case kProcessMenu: openProcessMenu(); break;
+    case kTrackMenu: openTrackMenu(); break;
+    case kResampleMenu: openResampleMenu(); break;
+    case kRecordingSetup: app_.openRecordingSetup(true); break;
     case kToggleFollow:
       follow_ = !follow_;
       dragFrozen_ = false;
       app_.toast(follow_ ? "FOLLOW ON" : "FOLLOW OFF");
+      openGridSettings(true);
       break;
-    case kUndo: undo(); break;
     case kDropSel: selOn_ = false; break;
     case kFill: openFill(); break;
     case kCaptureLive: captureLive(); break;
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
-    case kRec:
-      app_.setRecording(!rec_, !rec_);
-      app_.toast(rec_ ? "REC: NOTES + MOTION" : "REC OFF");
-      break;
     case kPerf:
       setPerf(!perf());
       app_.toast(perf() ? "PERF: HOLD A BUTTON" : "PERF OFF");
@@ -1569,14 +1571,22 @@ void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
   for (int k = 0; k < mt::kFxSlots; ++k) s.drawFastVLine(kNumW + (kFx1 + 2 * k) * kFieldW - 1, gridY - kNamesH, h, kDim);
 }
 
-// REC (red) / PERF (yellow) over the step numbers instead of the header text; 0 when neither.
+// REC / MREC (red) / PERF (yellow) share the header slot; 0 when none is armed.
 // PERF appends the held effects' short names in press order ("PERF RPT FLT CRS"), as many as the
 // header line holds (PerfPad::drawBadge).
 int GridScreen::drawBadge(LGFX_Sprite& s, int y) {
-  if (!rec_) return app_.perf().drawBadge(s, 0, y);
+  const bool motion = app_.motionRecording();
+  if (!rec_ && !motion) {
+    const int perfWidth = app_.perf().drawBadge(s, 0, y);
+    if (perfWidth || !app_.automationMuted(track())) return perfWidth;
+    s.setTextColor(kYellow);
+    s.drawString("AUTO OFF", 0, y);
+    return 8 * kCharW;
+  }
+  const char* label = rec_ ? (motion ? "REC+" : "REC") : "MREC";
   s.setTextColor(kRed);
-  s.drawString("REC", 0, y);
-  return 3 * kCharW;
+  s.drawString(label, 0, y);
+  return static_cast<int>(strlen(label)) * kCharW;
 }
 
 // Two rows of 8 (lanes 1-8 over 9-16) in a 16 px row; filled = the lane hits.

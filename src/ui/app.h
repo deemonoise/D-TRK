@@ -36,10 +36,12 @@ class App {
  public:
   void begin(LGFX* lcd, mt::Project* p);
   void onInput(const hw::InputEvent& ev);
+  bool automationMuted(int track) const { return track >= 0 && track < mt::kTracks && ((automationMute_ >> track) & 1); }
+  void toggleAutomationMute(int track);
   bool recordPermit() const;
   void syncRecordArm();
   void setRecording(bool notes, bool motion);
-  void openRecordingSetup();
+  void openRecordingSetup(bool child = false, bool refresh = false);
   void setPracticePrefs(mt::PracticePrefs prefs);
   bool motionRecording() const { return motionRec_; }
   void setMotionRecording(bool on);
@@ -267,6 +269,7 @@ class App {
   PerfVis vis_;
   XyPad xyPad_;
 
+  uint16_t automationMute_ = 0;
   mt::PracticePrefs practicePrefs_;
   uint8_t savedPracticeBits_ = 0, savedClickLevel_ = 64;
   bool recordBatch_ = false;

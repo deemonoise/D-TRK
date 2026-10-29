@@ -4,6 +4,7 @@
 #include "fx_info.h"
 #include "groove.h"
 #include "record.h"
+#include "automation.h"
 
 namespace mt {
 
@@ -1251,6 +1252,16 @@ void Sequencer::silence(uint64_t now, MidiSink& out) {
 // expandStep with the track's instrument (a KIT makes it a drum track) and routing: on an INT
 // track every event's channel is the track number (the key of intVoices_ and of ties), CHN does
 // not apply.
+void Sequencer::setAutomationMute(uint64_t now, uint16_t mask, MidiSink& out) {
+  const uint16_t changed = automationMute_ ^ mask;
+  if (!changed) return;
+  automationMute_ = mask;
+  for (int tr = 0; tr < kTracks; ++tr) if (((changed >> tr) & 1) && internal(tr)) {
+    const uint8_t b[3] = {0xF5, kSynthClearLocks, static_cast<uint8_t>((mask >> tr) & 1 ? 0 : 1)};
+    out.synth(now, static_cast<uint8_t>(tr), b, 3);
+  }
+}
+
 bool Sequencer::expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex) {
   ExpandCtx c = ctx;
   c.kit = p_.kitOf(track);
@@ -1296,6 +1307,10 @@ void Sequencer::dispatch(const SchedEvent& e, MidiSink& out) {
   const uint8_t kind = e.b[0] & 0xF0;
   const uint8_t ch = e.b[0] & 0x0F;
   const bool toSynth = internal(e.track);
+  // Gate controls at delivery time, including events already planned before the toggle.
+  // Notes/ties and their IDs stay intact; no replanning or artificial note-offs.
+  if (toSynth && ((automationMute_ >> e.track) & 1) && e.b[0] == 0xF5 &&
+      automationCommand(static_cast<Fx>(e.b[1]))) return;
   // synth fx / release / PERF step clock never reach MIDI
   if ((e.b[0] == 0xF5 || e.b[0] == 0xF6 || e.b[0] == 0xFF || e.b[0] == kSynthHint) && !toSynth) return;
   if (kind == 0xB0 && toSynth) return;     // CC is MIDI only

@@ -3,6 +3,9 @@
 namespace mt {
 constexpr int kAutomationParams = 17;
 Fx automationFx(int index);
+bool automationCommand(Fx fx);
+void automationStrip(Step& step);
+int automationSlotsUsed(const Step& step);
 int automationValue(const TrackCfg &t, const Instrument &i, Fx fx);
 int automationGet(const Step &step, Fx fx);
 bool automationSet(Step &step, Fx fx, uint8_t value);

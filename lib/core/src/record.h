@@ -18,6 +18,23 @@ inline int recordStepFor(int pos, uint8_t phase, int len) {
   return (phase < 128 ? pos : pos + 1) % len;
 }
 
+// Signed percent offset from the nearest step of a recorded note.
+inline int8_t recordNudge(uint8_t phase) {
+  const int offset = phase < 128 ? phase : static_cast<int>(phase) - 256;
+  return static_cast<int8_t>(offset * 100 / 256);
+}
+
+inline bool recordTiming(Step& step, uint8_t phase) {
+  const int8_t value = recordNudge(phase);
+  int slot = -1;
+  for (int i = 0; i < kFxSlots; ++i) if (step.fx[i].cmd == Fx::NDG) { slot = i; break; }
+  if (slot < 0) for (int i = 0; i < kFxSlots; ++i) if (step.fx[i].cmd == Fx::None) { slot = i; break; }
+  if (value && slot < 0) return false;
+  for (auto& f : step.fx) if (f.cmd == Fx::NDG) f = FxSlot{};
+  if (value) step.fx[slot] = {Fx::NDG, static_cast<uint8_t>(value)};
+  return true;
+}
+
 // Encode a held duration as GAT (1..800% of a track step), rounded to the closest value.
 inline uint8_t recordGate(uint64_t heldUs, uint32_t stepUs) {
   if (!stepUs) return 1;

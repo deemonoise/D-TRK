@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include "menu_history.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "touch.h"
@@ -22,6 +23,9 @@ class Menu {
   static constexpr int kRowH = 20;
 
   void open(const char* title, const MenuItem* items, int count, std::function<void(int id)> onChoose);
+  bool openChild(const char* title, const MenuItem* items, int count, std::function<void(int id)> onChoose);
+  void replace(const char* title, const MenuItem* items, int count, std::function<void(int id)> onChoose);
+  void back();
   bool isOpen() const { return open_; }
   void close();
   void onInput(const hw::InputEvent& ev);
@@ -34,6 +38,17 @@ class Menu {
     int id;
     bool enabled;
   };
+  struct Frame {
+    char title[28]{};
+    Item items[kMaxItems]{};
+    int count = 0, selection = 0, top = 0;
+    std::function<void(int)> action;
+  };
+  Frame snapshot() const;
+  void restore(Frame&& frame);
+  void load(const char* title, const MenuItem* items, int count, std::function<void(int)> onChoose);
+  mt::MenuHistory<Frame, 4> history_;
+  bool choosing_ = false;
   int rows() const { return count_ < kVisible ? count_ : kVisible; }
   int height() const { return (rows() + 1) * kRowH + 4; }
   int left() const;

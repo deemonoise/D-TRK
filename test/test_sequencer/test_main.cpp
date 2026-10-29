@@ -3444,8 +3444,34 @@ void test_start_tempo_for_count_in_uses_song_entry_bpm() {
   TEST_ASSERT_EQUAL(120,seq->startTempo());
 }
 
+void test_automation_bypass_preserves_notes_and_other_tracks() {
+  p->tracks[0].out=TrackOut::Int; p->tracks[1].out=TrackOut::Int;
+  auto& a=p->patterns[0].steps[0][0]; a.note=60; a.fx[0]={Fx::FLT,20}; a.fx[1]={Fx::GAT,80};
+  auto& b=p->patterns[0].steps[1][0]; b.note=65; b.fx[0]={Fx::FLT,30};
+  seq->setAutomationMute(0,1,*sink); seq->start(0,*sink); run(0,110000);
+  bool first=false,other=false,off=false;
+  for(const auto& e:sink->syn) {
+    if(e.b[0]==0xF5 && e.b[1]==static_cast<uint8_t>(Fx::FLT)) {
+      if(e.track==0) first=true; if(e.track==1) other=true;
+    }
+    if(e.track==0 && (e.b[0]&0xF0)==0x80 && e.b[1]==60 && e.t==100000) off=true;
+  }
+  TEST_ASSERT_FALSE(first); TEST_ASSERT_TRUE(other); TEST_ASSERT_TRUE(off);
+  TEST_ASSERT_EQUAL(Fx::FLT,a.fx[0].cmd); TEST_ASSERT_EQUAL(20,a.fx[0].val);
+}
+void test_automation_toggle_does_not_release_held_tie() {
+  p->tracks[0].out=TrackOut::Int;
+  auto& a=p->patterns[0].steps[0][0]; a.note=60; a.fx[0]={Fx::TIE,0}; a.fx[1]={Fx::FLT,30};
+  seq->start(0,*sink); run(0,50000);
+  seq->setAutomationMute(50000,1,*sink);
+  run(50000,400000);
+  for(const auto& e:sink->syn)
+    TEST_ASSERT_FALSE(e.track==0 && (e.b[0]&0xF0)==0x80 && e.b[1]==60);
+}
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_automation_toggle_does_not_release_held_tie);
+  RUN_TEST(test_automation_bypass_preserves_notes_and_other_tracks);
   RUN_TEST(test_start_tempo_for_count_in_uses_song_entry_bpm);
   RUN_TEST(test_monitor_beats_follow_quarters_and_stop_with_transport);
   RUN_TEST(test_start_sends_start_then_clock);

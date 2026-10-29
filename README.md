@@ -23,6 +23,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
 - Scales, undo, selection, copy.
 - Motion REC records parameter movements as step locks; Automation view provides value bars, ramps and parameter-only copy/paste.
+- Note timing quantize with strength, live timing stored as NDG, separate note/automation clearing and temporary automation bypass.
 - One- or two-bar count-in, recording/playback metronome and one-pass recording that leaves playback running.
 - Microtonal project tuning: 10 factory tunings (just, meantone, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce…) and your own Scala `.scl` files from the card.
 - Scenes and an A↔B crossfader: 8 scenes of mix and sound locks per project, morphed live on MIX or in PERF.

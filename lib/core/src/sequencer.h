@@ -106,6 +106,7 @@ class Sequencer {
 
   void queuePattern(uint8_t idx);   // switch at the end of the current pass; ignored while the song plays
   void selectPattern(uint8_t idx);  // switch from the next step
+  void setAutomationMute(uint64_t now, uint16_t mask, MidiSink& out);
   void setBpm(uint16_t bpm);
   // The header BPM: while a song slot's BPM holds the live tempo, the live tempo only (until the next slot
   // with its own BPM, leaving the song or Stop; the project BPM stays); else setBpm.
@@ -404,6 +405,7 @@ class Sequencer {
   Sched& hist(int i) { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
   const Sched& hist(int i) const { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
 
+  uint16_t automationMute_ = 0;
   Project& p_;
   Cold* cold_;
   bool ownCold_;

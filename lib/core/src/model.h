@@ -409,6 +409,8 @@ constexpr uint8_t kCndPre = 0x03, kCndNotPre = 0x04, kCndNei = 0x05, kCndNotNei 
 constexpr uint8_t kSynthStep = 0xF0;
 // Synth message 0xF5 kSynthArpChord chord (a CHD value): the track's ARP cycles that chord's notes.
 constexpr uint8_t kSynthArpChord = 0xF1;
+// Parameter-lock bypass: val 0 saves/clears sounding voice masks, val 1 restores surviving voices.
+constexpr uint8_t kSynthClearLocks = 0xF2;
 // Synth message 0xF4 note ofs (INT tracks, ahead of a SAMPLE step): where the track's next note-on
 // will start (note, OFS 0 = none), so the synth board loads it in advance. Never reaches MIDI.
 constexpr uint8_t kSynthHint = 0xF4;

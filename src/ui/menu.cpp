@@ -5,6 +5,48 @@
 namespace ui {
 
 void Menu::open(const char* title, const MenuItem* items, int count, std::function<void(int id)> onChoose) {
+  history_.clear();
+  load(title, items, count, std::move(onChoose));
+}
+
+bool Menu::openChild(const char* title, const MenuItem* items, int count, std::function<void(int)> onChoose) {
+  if ((open_ || choosing_) && !history_.push(snapshot())) { open_ = true; return false; }
+  load(title, items, count, std::move(onChoose));
+  return true;
+}
+
+void Menu::replace(const char* title, const MenuItem* items, int count, std::function<void(int)> onChoose) {
+  const int sel = sel_, top = top_;
+  load(title, items, count, std::move(onChoose));
+  if (sel >= 0 && sel < count_ && items_[sel].enabled) sel_ = sel;
+  top_ = top < 0 ? 0 : top;
+  const int maxTop = count_ > kVisible ? count_ - kVisible : 0;
+  if (top_ > maxTop) top_ = maxTop;
+  ensureVisible();
+}
+
+Menu::Frame Menu::snapshot() const {
+  Frame f;
+  memcpy(f.title, title_, sizeof(title_));
+  memcpy(f.items, items_, sizeof(items_));
+  f.count = count_; f.selection = sel_; f.top = top_; f.action = onChoose_;
+  return f;
+}
+
+void Menu::restore(Frame&& f) {
+  memcpy(title_, f.title, sizeof(title_));
+  memcpy(items_, f.items, sizeof(items_));
+  count_ = f.count; sel_ = f.selection; top_ = f.top;
+  onChoose_ = std::move(f.action); dragAcc_ = 0; open_ = true;
+}
+
+void Menu::back() {
+  Frame parent;
+  if (history_.pop(parent)) restore(std::move(parent));
+  else close();
+}
+
+void Menu::load(const char* title, const MenuItem* items, int count, std::function<void(int)> onChoose) {
   if (count > kMaxItems) count = kMaxItems;
   if (count < 0) count = 0;
   strlcpy(title_, title ? title : "", sizeof(title_));
@@ -25,6 +67,8 @@ void Menu::open(const char* title, const MenuItem* items, int count, std::functi
 }
 
 void Menu::close() {
+  history_.clear();
+  choosing_ = false;
   open_ = false;
   onChoose_ = nullptr;
 }
@@ -49,6 +93,7 @@ void Menu::move(int delta) {
 }
 
 void Menu::ensureVisible() {
+  if (count_ <= 0) { sel_ = top_ = 0; return; }
   if (sel_ < top_) top_ = sel_;
   if (sel_ >= top_ + kVisible) top_ = sel_ - kVisible + 1;
 }
@@ -56,9 +101,13 @@ void Menu::ensureVisible() {
 void Menu::choose(int idx) {
   if (idx < 0 || idx >= count_ || !items_[idx].enabled) return;
   const int id = items_[idx].id;
-  std::function<void(int)> cb = std::move(onChoose_);
-  close();
-  if (cb) cb(id);  // may open another menu
+  sel_ = idx;
+  std::function<void(int)> cb = onChoose_;
+  open_ = false;
+  choosing_ = true;
+  if (cb) cb(id);
+  choosing_ = false;
+  if (!open_) close();
 }
 
 void Menu::onInput(const hw::InputEvent& ev) {
@@ -94,6 +143,7 @@ void Menu::onTouch(const TouchEvent& ev) {
     close();
     return;
   }
+  if (history_.size() && ev.y < y0 + 2 + kRowH && ev.x < x0 + 28) { back(); return; }
   const int row = (ev.y - (y0 + 2 + kRowH)) / kRowH;
   if (ev.y < y0 + 2 + kRowH || row >= rows()) return;  // title or bottom padding
   const int idx = top_ + row;
@@ -108,7 +158,8 @@ void Menu::draw(LGFX_Sprite& s) {
   s.fillRect(x0, y0, kW, h, kMenuBg);
   s.drawRect(x0, y0, kW, h, kMenuBorder);
   s.setTextColor(kCursor);
-  s.drawString(title_, x0 + 8, y0 + 4);
+  if (history_.size()) s.drawString("<", x0 + 8, y0 + 4);
+  s.drawString(title_, x0 + (history_.size() ? 24 : 8), y0 + 4);
   s.drawFastHLine(x0, y0 + 2 + kRowH, kW, kMenuBorder);
   for (int r = 0; r < rows(); ++r) {
     const int i = top_ + r;

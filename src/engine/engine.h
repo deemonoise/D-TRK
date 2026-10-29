@@ -26,7 +26,7 @@ namespace engine {
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
   Fill, SetSong, GenEdit, GenReseed, MutEdit, SetLiveBpm,
-  LiveNote, LiveAllOff, MidiPanic, PracticeSettings, PracticeArm
+  LiveNote, LiveAllOff, MidiPanic, PracticeSettings, PracticeArm, AutomationMute
 };
 
 struct Command {

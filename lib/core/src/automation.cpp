@@ -20,6 +20,15 @@ bool room(const Step &s, Fx f) {
 }
 bool bounds(int len) { return len > 0 && len <= kMaxSteps; }
 } // namespace
+bool automationCommand(Fx fx) { return valid(fx) || (fx >= Fx::LFO && fx <= Fx::LFR); }
+void automationStrip(Step& step) {
+  for (auto& f : step.fx) if (automationCommand(f.cmd)) f = FxSlot{};
+}
+int automationSlotsUsed(const Step& step) {
+  int used = 0;
+  for (const auto& f : step.fx) if (f.cmd != Fx::None) ++used;
+  return used;
+}
 Fx automationFx(int index) {
   return params[(index % kAutomationParams + kAutomationParams) %
                 kAutomationParams];

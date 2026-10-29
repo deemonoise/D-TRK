@@ -103,34 +103,26 @@ void GridScreen::automationTouch(const TouchEvent &ev) {
   automationEdit(v);
 }
 
-void GridScreen::openAutomationMenu() {
+void GridScreen::openAutomationMenu(bool refresh) {
   const MenuItem items[] = {
       {"Parameter...", 0},
+      {app_.automationMuted(track()) ? "Automation: OFF" : "Automation: ON", 11, app_.project().trackInternal(track())},
       {"Track...", 10},
       {"Set ramp start", 1},
       {"Ramp to cursor", 2, autoAnchor_ >= 0},
       {"Clear lock", 3},
       {"Clear parameter lane", 4},
       {"Copy parameter lane", 5},
-      {"Paste parameter lane", 6, autoClip_.len > 0},
-      {"Undo", 7, app_.undo() && app_.undo()->size() > 0},
-      {app_.motionRecording() ? "Motion REC: ON" : "Motion REC: OFF", 8}};
+      {"Paste parameter lane", 6, autoClip_.len > 0}};
   const int pattern = app_.editPattern(), tr = track(), param = autoParam_;
-  app_.menu().open("AUTOMATION", items, 10, [this, pattern, tr, param](int id) {
+  auto cb = [this, pattern, tr, param](int id) {
+    if (id == 11) { app_.toggleAutomationMute(tr); return; }
     if (id == 0) {
       openAutomationParams();
       return;
     }
     if (id == 10) {
       openAutomationTracks();
-      return;
-    }
-    if (id == 7) {
-      undo();
-      return;
-    }
-    if (id == 8) {
-      app_.setMotionRecording(!app_.motionRecording());
       return;
     }
     if (pattern != app_.editPattern() || tr != track() || param != autoParam_) {
@@ -179,17 +171,20 @@ void GridScreen::openAutomationMenu() {
       app_.markDirty();
       app_.toast("AUTOMATION APPLIED");
     }
-  });
+  };
+  if (refresh) app_.menu().replace("AUTOMATION",items,9,cb);
+  else app_.menu().open("AUTOMATION",items,9,cb);
 }
 
 void GridScreen::openAutomationParams() {
   MenuItem items[mt::kAutomationParams];
   for (int n = 0; n < mt::kAutomationParams; ++n)
     items[n] = {mt::fxLongName(mt::automationFx(n)), n};
-  app_.menu().open("PARAMETER", items, mt::kAutomationParams, [this](int n) {
+  app_.menu().openChild("PARAMETER", items, mt::kAutomationParams, [this](int n) {
     autoParam_ = n;
     autoAnchor_ = -1;
     editPushed_ = false;
+    app_.menu().back(); openAutomationMenu(true);
     app_.invalidate();
   });
 }
@@ -198,10 +193,11 @@ void GridScreen::openAutomationTracks() {
   MenuItem items[mt::kTracks];
   for (int n = 0; n < mt::kTracks; ++n)
     items[n] = {app_.project().tracks[n].name, n};
-  app_.menu().open("TRACK", items, mt::kTracks, [this](int n) {
+  app_.menu().openChild("TRACK", items, mt::kTracks, [this](int n) {
     app_.setCurTrack(n);
     autoAnchor_ = -1;
     editPushed_ = false;
+    app_.menu().back(); openAutomationMenu(true);
     app_.invalidate();
   });
 }
@@ -215,11 +211,13 @@ void GridScreen::drawAutomation(LGFX_Sprite &s, int y, int h) {
     snprintf(val, sizeof(val), "---");
   else
     mt::fxFormat(fx, current, val);
-  snprintf(buf, sizeof(buf), "T%d %s %s  %d-%d%s", track() + 1, mt::fxName(fx),
-           val, autoLeft_ + 1, autoLeft_ + 16 < len() ? autoLeft_ + 16 : len(),
-           app_.motionRecording() ? " MREC" : "");
-  s.setTextColor(kCursor);
-  s.drawString(buf, 8, y + 2);
+  const int badgeW = drawBadge(s, y);
+  const int slots = mt::automationSlotsUsed(pat().steps[track()][cur()]);
+  snprintf(buf, sizeof(buf), "T%d %s %s %d-%d FX%d/%d%s", track() + 1,
+           mt::fxName(fx), val, autoLeft_ + 1, autoLeft_ + 16 < len() ? autoLeft_ + 16 : len(),
+           slots, mt::kFxSlots, app_.automationMuted(track()) && (rec_ || app_.motionRecording() || perf()) ? " AUTO OFF" : "");
+  s.setTextColor(slots == mt::kFxSlots ? kRed : kCursor);
+  s.drawString(buf, badgeW ? badgeW + 8 : 8, y + 2);
   const int base = y + h - 40, graphH = h - 64, max = mt::fxStep(fx, 0, 1000);
   const auto &st = app_.status();
   const int heard = st.playing

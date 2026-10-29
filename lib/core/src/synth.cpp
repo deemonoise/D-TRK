@@ -144,6 +144,9 @@ void Synth::reset() {
     dropSlot(v);
     v = Voice();
   }
+  memset(bypassLockMask_, 0, sizeof(bypassLockMask_));
+  memset(bypassLfoMask_, 0, sizeof(bypassLfoMask_));
+  memset(bypassAge_, 0, sizeof(bypassAge_));
   age_ = 0;
   nEv_ = 0;
   load_ = 0;
@@ -448,6 +451,26 @@ void Synth::resetArp(TrackRt& r) const {
 
 void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
   TrackRt& r = rt_[track];
+  if (cmd == kSynthClearLocks) {
+    r.lockMask = 0;
+    r.lfoLockMask = 0;
+    r.lfoRst = 0;
+    for (int i = 0; i < kVoices; ++i) {
+      auto& v = voices_[i];
+      if (!v.on || v.track != track) continue;
+      if (!val) {
+        bypassLockMask_[i] = v.lockMask;
+        bypassLfoMask_[i] = v.lfoLockMask;
+        bypassAge_[i] = v.age;
+        v.lockMask = 0;
+        v.lfoLockMask = 0;
+      } else if (v.age == bypassAge_[i]) {
+        v.lockMask = bypassLockMask_[i];
+        v.lfoLockMask = bypassLfoMask_[i];
+      }
+    }
+    return;
+  }
   if (cmd == kSynthStep) {
     r.tps = (val & 0x7F) ? (val & 0x7F) : 24;
     r.noteStep = (val & 0x80) != 0;

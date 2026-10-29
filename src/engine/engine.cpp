@@ -97,6 +97,7 @@ void handle(const Command& c) {
     case Cmd::LiveNote: seq->liveNote(now, c.arg >> 8, c.arg & 0xFF, c.arg2, midi); break;
     case Cmd::LiveAllOff: seq->liveAllOff(now, midi); break;
     case Cmd::MidiPanic: seq->midiPanic(now, midi); break;
+    case Cmd::AutomationMute: seq->setAutomationMute(now, c.arg, midi); break;
     case Cmd::PracticeSettings: practicePrefs = mt::practicePrefs(static_cast<uint8_t>(c.arg), c.arg2); break;
     case Cmd::PracticeArm:
       practice.arm(c.arg != 0, seq->playing(), seq->heardPattern(), seq->heardLoop());

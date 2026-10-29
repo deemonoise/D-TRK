@@ -343,7 +343,7 @@ void App::abAction(const mt::AbOut& o) {
       }
       return;
     case AbAction::Back:
-      if (menu_.isOpen()) menu_.close();
+      if (menu_.isOpen()) menu_.back();
       else if (bpmEdit_) setBpmEdit(false);
       else if (xyMode()) {
         perf_.setXy(false);
@@ -518,6 +518,8 @@ void App::pushUndo(uint8_t pat, int genTrack) {
 }
 
 void App::projectReplaced() {
+  automationMute_ = 0;
+  engine::postWait(engine::Cmd::AutomationMute, 0);
   setRecording(false, false);
   for (auto& r : padRec_) r.active = false;
   if (mt::Undo* u = undo()) u->clear();
@@ -1703,11 +1705,6 @@ void App::drawStatus() {
     snprintf(count, sizeof(count), "COUNT %u", status_.countIn);
     spr_->setTextColor(kYellow);
     spr_->drawString(count, 416, 4);
-    return;
-  }
-  if (motionRec_) {
-    spr_->setTextColor(kRed);
-    spr_->drawString("MREC", 416, 4);
     return;
   }
   // SD!: a sample voice ran out of data (the card fell behind) in the last kCpuRedMs.

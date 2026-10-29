@@ -238,12 +238,12 @@ void test_debug() {
 }
 
 void test_protocol_and_debug_id() {
-  TEST_ASSERT_EQUAL(20, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
+  TEST_ASSERT_EQUAL(21, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
                                      // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,
                                      // RecStopRep::ended, RecResult::CardFull); 19: KIT 16 lanes (SynthModel size);
-                                     // 20: live monitor metronome (0xF9 accent level)
+                                     // 20: live monitor metronome (0xF9 accent level); 21: parameter-lock bypass
   TEST_ASSERT_EQUAL(41, static_cast<int>(Msg::Debug));  // after Perf (40)
   TEST_ASSERT_EQUAL(42, static_cast<int>(Msg::WtRender));
   TEST_ASSERT_EQUAL(43, static_cast<int>(Msg::RenderOut));

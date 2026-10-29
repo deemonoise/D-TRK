@@ -380,6 +380,9 @@ class Synth {
   void snapStrip(TrackStrip& s);
   void runGate(TrackStrip::Gate& g, float* x, int n);
   // The block through the master chain into mixL_ / mixR_ (master gain and soft clip applied).
+  uint32_t bypassLockMask_[kVoices]{};
+  uint16_t bypassLfoMask_[kVoices]{};
+  uint32_t bypassAge_[kVoices]{};
   void renderCore();
 
   const SynthModel& p_;

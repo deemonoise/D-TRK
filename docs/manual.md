@@ -172,9 +172,8 @@ Track name color: yellow — solo, gray — not audible, white — normal.
 recording. Repeating the selected chord disarms recording without stopping playback; enabling
 recording while stopped also starts playback. MIDI notes record on any tab, including INST / TRACK;
 track buttons record notes in GRID. GRID's regular REC also enables motion recording.
-Alternatively enable **Motion REC** in the GRID context menu, then move an INST / TRACK parameter using the
-encoder, touch or a learned MIDI CC while playing. MIX pan and held-track-button pan edits are also recorded. `MREC` in the status
-bar indicates that recording is armed. Supported INT-track locks: FLT, RES, DEC, COL, SHP, SWP,
+Alternatively enable **Motion REC** with **B+Play**, then move an INST / TRACK parameter using the
+encoder, touch or a learned MIDI CC while playing. MIX pan and held-track-button pan edits are also recorded. The GRID header uses one recording area: `REC` for notes, `MREC` for motion, or `REC+` for both. Supported INT-track locks: FLT, RES, DEC, COL, SHP, SWP,
 CON, DLY, RVB, PAN, DRV, BIT, SRR, DTY, GTE, MOD and SAT. Macros depend on instrument type;
 SAT is FM-only. In INST, select the current track's instrument. Track volume, master controls,
 scene morph and parameters without a corresponding FX command are not recorded. Base parameter
@@ -207,6 +206,35 @@ means no lock, rather than zero.
 
 Manual automation edits disarm Motion REC. Locks use the existing project format and WAV render path.
 
+### Range editing, quantize and automation comparison
+
+**GRID → Edit step / Edit selection…** targets the selection, or the current step when nothing is selected. **Process track / selection → Quantize…** processes the track or selection:
+
+- **Clear notes** clears the note column (including OFF), velocity and KIT masks, preserving every FX.
+- **Clear automation** removes macro, filter, send, insert, pan and LFO parameter locks.
+  Notes, NDG, GAT, conditions, ratchets and other musical commands remain.
+- **Quantize…** moves note starts toward a **1/4, 1/8, 1/16, 1/32, 1/8T or 1/16T** grid.
+  Choose **0 / 25 / 50 / 75 / 100 %** strength, then **Apply**. Pitch, velocity, KIT masks and
+  relative GAT duration stay intact. Musical FX follow notes; parameter locks stay at their original
+  steps. Separate OFF-column events stay in place. Track speed and length are respected; grid
+  targets stay inside the selected range. Swing, groove and humanize remain active during playback.
+- Colliding notes or conflicting/full FX slots reject the entire operation without changes.
+  `NO GRID IN RANGE` means the selection contains no target on that grid: choose a larger range
+  or finer grid. Applied edits support undo.
+
+Live note recording now stores timing deviations from the nearest step as **NDG**. Quantize can
+then keep or tighten that timing. If no FX slot is available, `NO FX SLOT FOR TIMING` leaves the
+note on its nearest step without a new nudge. KIT lanes share a step's timing: its first hit sets NDG.
+
+**Automation: ON / OFF** in Track or the Automation menu temporarily bypasses parameter locks
+on the INT track across patterns. GRID displays `AUTO OFF`. Sounding notes continue, and surviving
+voices regain their locks when automation is enabled again. Notes, lengths, arpeggios, vibrato,
+CC, Pitch Bend and Program Change are unaffected. This is a live comparison only: data stays intact,
+the switch is not saved, and loading a project resets it. WAV, stems and Capture use stored automation.
+
+Automation's header shows occupancy of **all** FX slots at the cursor, e.g. **FX4/6**; **FX6/6**
+turns red. Immediate lock bypass/restoration requires protocol **21** on both boards.
+
 ### Count-in, metronome and one-pass recording
 
 GRID context menu → **Recording setup…** contains device settings saved across power cycles:
@@ -238,7 +266,7 @@ The metronome plays quarter notes with a four-beat accent, independent of swing,
 and length. REC ONLY sounds during active recording; PLAY + REC also sounds during playback.
 The click goes directly to the output: no instrument or voice slot, no project effects, and no
 click in WAV, stems or internal resampling. Headphone volume controls it. Without the synth board,
-only the visual count-in is available. Both WT32 and Teensy need protocol **20** firmware.
+only the visual count-in is available. Both boards need protocol **20 or later**, and their protocol versions must match.
 
 ### Encoder
 
@@ -319,25 +347,34 @@ One press of A (placing plus stretching) is one undo step.
 
 ### Selecting with the encoder
 
-Menu → **Select** sets a selection corner at the cell under the cursor. While a selection exists, any cursor movement (turn — by steps, <kbd>Shift</kbd>+turn — by tracks or fields) moves the opposite corner. A long press opens the selection menu, a click clears the selection. After **Copy sel** the selection is cleared: move the cursor away and choose **Paste**. Clear, Note OFF and Transpose keep the selection.
+Menu → **Select** sets a selection corner at the cell under the cursor. While a selection exists, any cursor movement (turn — by steps, <kbd>Shift</kbd>+turn — by tracks or fields) moves the opposite corner. A long press opens the selection menu, a click clears the selection. After **Copy selection** the selection is cleared: move the cursor away and choose **Paste**. Clear, Note OFF and Transpose keep the selection.
 
 ### Context menu
 
-| Without selection | With selection |
-|-------------------|----------------|
-| Copy step · Paste · Clear step · Note OFF · Select · Copy track · Clear track · Transpose track… · **Fill…** · **Capture live** (on a track with GEN or MUT on) · **Resample track** · **Resample pattern** · **Rec: ON/OFF** · **Perf: ON/OFF** · Detail view / Overview · **Piano roll** · Follow: ON/OFF · Undo | Copy sel · Paste · Clear sel · Note OFF sel · Transpose… · **Fill…** · Undo · Clear selection |
+The main menu has 10 rows without scrolling: Copy step / Copy selection, Paste, Select / End selection, Edit step / Edit selection, Process track / Process selection, Track, PERF, Recording setup, Resample, Grid settings.
+
+| Group | Commands and scope |
+|---|---|
+| Edit step / selection | Note OFF, Clear notes, Clear automation, Clear all — step or selection |
+| Process track / selection | Fill, Transpose, Quantize — track or selection |
+| Track | Copy track, Clear (Clear notes / Clear automation / Clear all), Automation ON/OFF, Capture live — entire track; Capture live requires GEN/MUT |
+| Recording setup | Count-in, Metronome, Click volume, Record length |
+| Resample | Track, Pattern |
+| Grid settings | Edit step, Follow |
+
+The title shows STEP / SEL / TRACK scope, captured when opening the menu. **B** or tapping **<** returns to the parent menu, preserving its selection and scroll; B closes the root menu. Long encoder press or tapping outside closes the entire menu. Undo remains **Shift+B**, recording **A+Play / B+Play**, views **Shift+encoder click**.
 
 - **Transpose…** opens a dialog: **Amount** and **Mode** (SCALE — scale degrees, CHROMATIC — semitones), with OK / CANCEL buttons. The range is two octaves up and down (in SCALE that is 2 × the number of scale notes; ±14 for major). <kbd>Shift</kbd>+turn changes Amount by an octave. Long press — Cancel. Affects only steps with a note; without a selection, the whole track; one undo step. It is a shift, not a state: Amount starts at 0 every time the dialog opens; to restore the notes, apply the opposite shift (+12, then −12). Mode is remembered until power-off.
 - <a id="capturelive"></a>**Capture live** (a track with [GEN](#gen) or [MUT](#mut) on) writes what the track plays now into the edited pattern, all steps of its length: first MUT (the heard drift or generation), then the generator on top of it — PITCH replaces the notes of steps with a note, GATE puts a note on the hit steps and removes it from the others (BYTE modes the same way); OFF and step fx stay, Flip is not applied. While playing, the state is taken from the next step to play; when stopped, from the start (the generator from its seed, MUT as written). One undo step, toast `LIVE CAPTURED`. Then GEN turns OFF and MUT keeps running in its mode from a fresh state of the written pattern (EVO with no drift, CA / MARKOV at generation 0), so the sound does not jump. Undo restores the pattern and GEN; MUT restarts from a fresh state. Only while the edited pattern is the one playing (else toast `CAPTURE: OTHER PATTERN`).
 - Paste inserts at the cursor position or at the top-left corner of the selection. It doesn't go past track 16 or the pattern length; the selection is also clipped at track 16.
 - The clipboard survives loading another project — so you can move parts between projects.
-- If the pattern changed while the menu was open, the action is not performed (toast "PATTERN CHANGED").
+- If the pattern changed while the menu was open, the action is not performed (toast "TARGET CHANGED").
 
 <a id="live"></a>
 
 ### REC and PERF: track buttons live
 
-Two modes from the GRID context menu. They exclude each other and edit mode: turning one on turns the others off. The header above the step numbers shows `REC` (red) or `PERF` (yellow). They work during playback; when stopped, the buttons behave as usual.
+REC uses **A+Play**; PERF is in the GRID context menu. They exclude each other and edit mode: turning one on turns the others off. The header above the step numbers shows `REC` (red) or `PERF` (yellow). They work during playback; when stopped, the buttons behave as usual.
 
 PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row menu too, and it is one shared mode — turned on in either menu it is on in both (turning it on in SONG leaves pattern edit; GRID turns REC off when you come back). In SONG with PERF on, button N holds its effect while playing, the encoder turns a held effect's depth instead of moving the cursor, and <kbd>Shift</kbd>+N mutes the track live. The SONG header shows the same `PERF …` badge in place of `n/128`.
 
@@ -383,7 +420,7 @@ The header shows the held effects in press order by short name: `PERF RPT FLT CR
 
 ### Undo
 
-<kbd>Shift</kbd>+<kbd>B</kbd> on any screen — the only undo gesture (the GRID context menu also has **Undo**); <kbd>Shift</kbd>+long press and <kbd>Shift</kbd>+long tap in GRID do nothing. 8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo and mute/solo are not undone. Song edits have their own history on the [SONG](#song) tab (also <kbd>Shift</kbd>+<kbd>B</kbd>, 8 steps). There is no redo. Load, New and import clear the history.
+<kbd>Shift</kbd>+<kbd>B</kbd> on any screen — the only undo gesture; <kbd>Shift</kbd>+long press and <kbd>Shift</kbd>+long tap in GRID do nothing. 8 steps. Each step is a snapshot of the whole pattern (with 16 tracks the snapshot doubled in size, so the depth is 8 rather than 32). It undoes edits in GRID, menu operations, Fill, and also Copy-to, Clear and Length in BANK. TRACK and PROJ parameters, tempo and mute/solo are not undone. Song edits have their own history on the [SONG](#song) tab (also <kbd>Shift</kbd>+<kbd>B</kbd>, 8 steps). There is no redo. Load, New and import clear the history.
 
 ### Step
 

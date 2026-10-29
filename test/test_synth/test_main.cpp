@@ -5893,8 +5893,22 @@ void test_chip_ext_waves_render() {
   }
 }
 
+void test_clear_parameter_locks_keeps_sounding_voice() {
+  stepStart(0,0,24,true); fx(0,0,Fx::FLT,20); fx(0,0,Fx::LFD,30); noteOn(0,0,60);
+  render1(buf);
+  int v=s->trackVoice(0); TEST_ASSERT_GREATER_OR_EQUAL(0,v);
+  TEST_ASSERT_NOT_EQUAL(0,s->voice(v).lockMask);
+  TEST_ASSERT_NOT_EQUAL(0,s->voice(v).lfoLockMask);
+  send(0,0,0xF5,kSynthClearLocks,0); render1(buf);
+  TEST_ASSERT_EQUAL(v,s->trackVoice(0)); TEST_ASSERT_TRUE(s->voice(v).on);
+  TEST_ASSERT_EQUAL(0,s->voice(v).lockMask); TEST_ASSERT_EQUAL(0,s->voice(v).lfoLockMask);
+  send(0,0,0xF5,kSynthClearLocks,1); render1(buf);
+  TEST_ASSERT_EQUAL(v,s->trackVoice(0));
+  TEST_ASSERT_NOT_EQUAL(0,s->voice(v).lockMask); TEST_ASSERT_NOT_EQUAL(0,s->voice(v).lfoLockMask);
+}
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_clear_parameter_locks_keeps_sounding_voice);
   RUN_TEST(test_chip_step_quantises_envelope);
   RUN_TEST(test_chip_step_holds_per_8_samples);
   RUN_TEST(test_chip_ext_waves_render);

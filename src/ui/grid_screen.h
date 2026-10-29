@@ -1,6 +1,8 @@
 #pragma once
 #include "edit_ops.h"
+#include "grid_context.h"
 #include "automation.h"
+#include "quantize.h"
 #include "fill.h"
 #include "fill_dialog.h"
 #include "model.h"
@@ -52,10 +54,11 @@ class GridScreen : public Screen {
   enum Field : uint8_t { kNote, kVel, kFx1, kFields = kFx1 + 2 * mt::kFxSlots };
   // Context menu ids.
   enum MenuId : int {
-    kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
-    kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
-    kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive, kRollView,
-    kMotionRec, kRecordingSetup,
+    kCopyStep, kPaste, kCopyTrack, kClearTrack, kTranspose, kSelect,
+    kToggleFollow, kCopySel, kClearSel, kDropSel, kNoteOff, kFill,
+    kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive,
+    kRecordingSetup, kEditTools, kProcessMenu, kTrackMenu, kResampleMenu, kGridSettings,
+    kQuantize, kAutomationToggle,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;
@@ -90,9 +93,21 @@ class GridScreen : public Screen {
   void automationInput(const hw::InputEvent& ev);
   void automationTouch(const TouchEvent& ev);
   void automationEdit(int value, bool erase = false);
-  void openAutomationMenu();
+  void openAutomationMenu(bool refresh = false);
   void openAutomationParams();
   void openAutomationTracks();
+  void openEditTools(const mt::Sel& scope, bool wholeTrack = false);
+  void openProcessMenu();
+  void openTrackMenu();
+  void openResampleMenu();
+  void openGridSettings(bool refresh = false);
+  bool menuTargetValid();
+  void menuScopeTitle(char* title, size_t size, const mt::Sel& scope, bool wholeTrack = false) const;
+  void openQuantizeMenu(bool refresh = false);
+  mt::Sel quantizeSel_{};
+  int quantizePattern_ = -1;
+  mt::QuantizeSpec quantizeSpec_;
+
   int autoParam_ = 0, autoLeft_ = 0, autoAnchor_ = -1;
   uint8_t autoAnchorValue_ = 0;
   uint16_t autoGesture_ = UINT16_MAX;
@@ -169,7 +184,7 @@ class GridScreen : public Screen {
   // Lane mask as squares: 2 rows of 8 in both modes (Overview column; compact: Detail NOTE field).
   void drawMask(LGFX_Sprite& s, int x, int y, uint16_t mask, bool audible, int cursorLane, bool compact);
   void drawPad(LGFX_Sprite& s, int y);
-  int drawBadge(LGFX_Sprite& s, int y);  // its width in px, 0 when neither REC nor PERF
+  int drawBadge(LGFX_Sprite& s, int y);  // its width in px, 0 without REC, MREC or PERF
   bool selected(int tr, int step) const;
 
   App& app_;
@@ -218,7 +233,7 @@ class GridScreen : public Screen {
   mt::FxSlot lastFx_[mt::kTracks][mt::kFxSlots] = {};  // last FX written per track and slot, offered on empty slots
   bool fxCycled_ = false;  // a command was turned on this cell: passing "..." does not offer lastFx_ again
 
-  int menuPattern_ = -1;  // pattern the context menu was opened for
+  mt::GridContext menuCtx_;
   bool selOn_ = false;
   int selT0_ = 0, selS0_ = 0, selT1_ = 0, selS1_ = 0;  // anchor and end, not normalized
 };
