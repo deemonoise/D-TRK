@@ -35,7 +35,6 @@ class GridScreen : public Screen {
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
   bool buttonsBusy() const;
   void undo();  // with a toast; the next edit takes a fresh snapshot
-  const char* viewTabLabel() const;
   void nextView();
   bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen() || action_.isOpen(); }  // modal pattern operations
   // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.

@@ -371,10 +371,11 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::Both:
       if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
-    case AbAction::AThenB:  // GRID, PERF off: hold A + B clears the step / selection; else Both follows
+    case AbAction::AThenB:  // A then B released without turning: clear GRID, otherwise toggle XY
       if (tab_ == Tab::Grid && !perf_.on() && !xyMode() && !menu_.isOpen() && !bpmEdit_ && !rec_.isOpen() &&
           !versionBarrier() && grid_.chordClear())
-        ab_.dropBoth();
+        return;
+      if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
     default: return;
   }
@@ -1766,7 +1767,7 @@ void App::drawTabs() {
     const bool active = i == static_cast<int>(tab_);
     if (active) spr_->fillRect(x, kTabY, kTabW, kTabH, kPlayBg);
     if (i > 0) spr_->drawFastVLine(x, kTabY + 4, kTabH - 8, kDim);
-    const char* label = active && tab_ == Tab::Grid ? grid_.viewTabLabel() : kNames[i];
+    const char* label = kNames[i];
     uint16_t color = !screens_[i] ? kDim : (active ? kCursor : kText);
     if (shift_ && i == static_cast<int>(Tab::Count) - 1) {  // SHIFT indicator over the last tab
       label = "SHIFT";

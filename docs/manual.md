@@ -78,7 +78,7 @@ Degree entry and slices in the sample editor don't depend on the half — there 
 
 ### Buttons A and B
 
-Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and turn the encoder or press another button. A short press on its own (a tap) counts on release and only if nothing else happened while the button was held. If both are held, B wins.
+Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and turn the encoder or press another button. A short press on its own (a tap) counts on release and only if nothing else happened while the button was held. A + B + turn changes pages within the current screen; track buttons still use B.
 
 | Action | What it does |
 |--------|--------------|
@@ -87,15 +87,15 @@ Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and t
 | Hold <kbd>A</kbd> + <kbd>Shift</kbd> + turn | Whatever <kbd>Shift</kbd>+turn does in edit mode: ×10, a note by octaves, a sample marker to the nearest onset, the cursor position on a name row. |
 | Hold <kbd>A</kbd>, press <kbd>B</kbd> | Cancel the edit: the value made with A is restored. In GRID it clears instead (next rows). |
 | <kbd>A</kbd> tap in GRID | Empty step: put the track's last note (on a [drum track](#drumtrack), toggle the lane under the cursor). Step with a note: hear it. |
-| Hold <kbd>A</kbd>, press <kbd>B</kbd> in GRID (all three views, KIT tracks too) | Clear: the selection if there is one, else the whole step under the cursor (note, velocity, fx). One undo step; after A + turn the press and the clear are one undo step together, and the edit mode A entered ends. B does not go Back and A does not tap. With [PERF](#live) on, A then B without a turn stays the [XY pad](#xypad) toggle (clear through the menu). <kbd>Shift</kbd>+<kbd>A</kbd> does nothing in GRID. |
+| Hold <kbd>A</kbd>, press <kbd>B</kbd> in GRID (all three views, KIT tracks too) | Without a preceding edit, clear on release without turning; after A + turn, clear immediately on B press. Clear: the selection if there is one, else the whole step under the cursor (note, velocity, fx). One undo step; after A + turn the press and the clear are one undo step together, and the edit mode A entered ends. B does not go Back and A does not tap. With [PERF](#live) on, A then B without a turn stays the [XY pad](#xypad) toggle (clear through the menu). <kbd>Shift</kbd>+<kbd>A</kbd> does nothing in GRID. |
 | <kbd>Shift</kbd>+<kbd>A</kbd> in MIX | Open / close the [SCENE view](#scenes). |
 | <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> in the sample editor (INST, SMPL page) | Next / previous marker, like **\>** / **\<** — see [SAMPLE](#sample). |
 | <kbd>A</kbd> tap in the [REC window](#rec) (SAMPLE and MIX) | START / STOP, like the big button (with or without Shift). A + turn still edits. |
 | Hold <kbd>Shift</kbd> + <kbd>A</kbd> + <kbd>N</kbd> | Solo / unsolo track N of the visible half; toast `TRACK n SOLO` / `TRACK n ON`. |
 | Hold <kbd>A</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end A (toast `A = SCENE 3`), also in the SCENE view and with the XY pad open; see [scenes](#scenes). Elsewhere it does nothing (the press does not reach the screen). |
 | Hold <kbd>B</kbd> + turn | Switch tabs in a ring: GRID → TRACK → INST → MIX → BANK → SONG → PROJ → FILE → GRID. In MIX in the SCENE view: the master parameter MAIN … EQHI instead (the tab stays). |
-| Hold <kbd>B</kbd> + <kbd>Shift</kbd> + turn | Previous / next page in TRACK, INST and PROJ, section in FILE (wraps). The cursor stays on the page tabs if it was there, otherwise it goes to the first row. |
-| <kbd>A</kbd>+<kbd>B</kbd> (press both, release) on GRID, SONG, MIX | With [PERF](#live) on: XY pad on / off (see [XY pad](#xypad)). Nothing happens if a turn or a track button came in between. On GRID with PERF off, A held first and then B clears instead (see above). |
+| Hold <kbd>A</kbd> + <kbd>B</kbd> + turn (also B + Shift + turn) | Previous / next page in TRACK, INST and PROJ, section in FILE (wraps). The cursor stays on the page tabs if it was there, otherwise it goes to the first row. |
+| <kbd>A</kbd>+<kbd>B</kbd> (press both, release) on GRID, SONG, MIX | With [PERF](#live) on: XY pad on / off (see [XY pad](#xypad)). Nothing happens if a turn or a track button came in between. On GRID with PERF off, A held first and then B without turning clears on release instead (see above). |
 | <kbd>B</kbd> tap | With the XY pad open: close it. Back: close a menu, dialog, picker, the on-screen keyboard or the file list; cancel copy mode in BANK; leave edit mode keeping the value; leave tempo editing. In the [file browsers](#browsers) (Load, Import WAV…, Import MIDI…, presets, the wavetable picker) it steps back one folder (at the top level it closes the list; preset Load — cancels). In GRID, one thing per tap, in this order: close Fill / Transpose → clear the selection → edit mode off → REC off → PERF off. In SONG: pattern edit off → PERF off. In MIX: with the [REC window](#recsd) open — STOP the take, the window stays open (no take: close the window); else leave the SCENE view (in CPY mode, cancel the copy first) → drop the pan or crossfader selection → PERF on / off. |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | [Undo](#undo); on the SONG tab, undo of song edits. |
 | Hold <kbd>B</kbd> + <kbd>N</kbd> in MIX | Scene N on the crossfader end B (toast `B = SCENE 3`), as A + N. Elsewhere it does nothing. |
@@ -117,7 +117,7 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 - **B** / tapping **<** returns through nested menus with selection restored. Long encoder press or tapping outside closes the menu tree.
 - Rotate, Velocity, Transpose, Fill, Import, Export, Save one-shot, Wavetable Make and Dice have persistent action/cancel buttons at the bottom. Encoder focus reaches them after the last parameter row. Fill retains its live preview and restoration on cancel.
 - Selecting inactive rows explains the condition (e.g. Enable Filter or INT tracks only). Preconfiguring an inactive value remains possible where previously supported. Read-only rows do not enter edit mode.
-- The active GRID tab shows **G:OVR / G:DTL / G:ROL / G:AUT**. Tapping it again cycles views, like Shift+encoder click; tapping from another tab opens GRID without changing its view.
+- The active GRID tab shows **GRID**. Tapping it again cycles views, like Shift+encoder click; tapping from another tab opens GRID without changing its view.
 - TRACK shows the track and assigned instrument. INST shows its relationship to the current track, `/KIT` for a lane reference and `xN` for multiple INT-track consumers. Shared instruments remain shared.
 - FILE → PROJECTS contains project operations. **Wi-Fi firmware…**, **MIDI devices…** and **Update synth** live in **FILE → SYSTEM**. Firmware/card/memory/link/reset/battery/CPU diagnostics are in **SYSTEM → Diagnostics…**; B returns to SYSTEM.
 - PROJ: **MAIN** holds BPM/scale/tuning/seed; **PAT** holds Length/Resolution/Swing/Groove for Pxx, followed by DLY/RVB/MOD/MSTR/PERF. Existing MIDI bindings remain compatible.

@@ -198,10 +198,6 @@ void GridScreen::cancelCell() {
   app_.toast("CANCEL");
 }
 
-const char* GridScreen::viewTabLabel() const {
-  static const char* const labels[] = {"G:OVR", "G:DTL", "G:ROL", "G:AUT"};
-  return labels[static_cast<int>(view_)];
-}
 void GridScreen::nextView() {
   if (dialogOpen()) return;
   toggleView();
