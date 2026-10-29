@@ -19,6 +19,8 @@ enum class AbAction : uint8_t {
   ATrack,        // A + track button, no Shift (delta = button; MIX: scene N on crossfader end A)
   BTrack,        // B + track button, no Shift (delta = button; MIX: scene N on crossfader end B)
   Both,          // A and B pressed together and released, nothing else meanwhile (on the first release)
+  RecordAll,     // A + Play: notes and motion
+  RecordMotion,  // B + Play: motion only
   AClick,        // A held alone + encoder click (aClick: only where the screen asks for it)
   AThenB,        // B pressed while A is held alone (A first, nothing else yet): GRID clears the step;
                  // Both still follows on release unless the app calls dropBoth()
@@ -90,6 +92,14 @@ class AbKeys {
       return out(AbAction::EditTurn, delta, shift);
     }
     return out(AbAction::Pass);
+  }
+  // Play chords consume the modifier taps; an ongoing A edit still ends on release.
+  AbOut play() {
+    if (!a_ && !b_) return out(AbAction::Pass);
+    both_ = false;
+    if (a_) aUsed_ = true;
+    if (b_) bUsed_ = true;
+    return out(b_ ? AbAction::RecordMotion : AbAction::RecordAll);
   }
   AbOut track(int n, bool shift) {
     both_ = false;

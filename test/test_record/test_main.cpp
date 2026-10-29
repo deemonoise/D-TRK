@@ -106,8 +106,21 @@ void test_long_hold_slow_quarter_release_does_not_wrap_off_byte() {
   TEST_ASSERT_EQUAL(90, steps[9].find(Fx::GAT)->val);
 }
 
+void test_record_chord_mode_transitions() {
+  RecordMode m = recordModeToggle({false,false},false);
+  TEST_ASSERT_TRUE(m.notes); TEST_ASSERT_TRUE(m.motion);
+  m = recordModeToggle(m,false);
+  TEST_ASSERT_FALSE(m.notes); TEST_ASSERT_FALSE(m.motion);
+  m = recordModeToggle({true,true},true);
+  TEST_ASSERT_FALSE(m.notes); TEST_ASSERT_TRUE(m.motion);
+  m = recordModeToggle(m,true);
+  TEST_ASSERT_FALSE(m.notes); TEST_ASSERT_FALSE(m.motion);
+  m = recordModeToggle({false,true},false);
+  TEST_ASSERT_TRUE(m.notes); TEST_ASSERT_TRUE(m.motion);
+}
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_record_chord_mode_transitions);
   RUN_TEST(test_record_step_rounds_to_nearest);
   RUN_TEST(test_record_hold_gate);
   RUN_TEST(test_long_hold_slow_quarter_release_does_not_wrap_off_byte);

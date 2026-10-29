@@ -8,6 +8,9 @@
 
 namespace ui {
 
+// UI task only. Called outside the project mutex, immediately before/after a row edit.
+void setParamEditObserver(std::function<void(bool before)> observer);
+
 struct Param {
   const char* label;
   std::function<void(char* out, int n)> format;

@@ -7,6 +7,7 @@
 #include "engine/engine.h"
 #include "file_screen.h"
 #include "grid_screen.h"
+#include "automation.h"
 #include "hw/battery.h"
 #include "ble_midi_parse.h"
 #include "midi_devices.h"
@@ -35,6 +36,10 @@ class App {
  public:
   void begin(LGFX* lcd, mt::Project* p);
   void onInput(const hw::InputEvent& ev);
+  bool motionRecording() const { return motionRec_; }
+  void setMotionRecording(bool on);
+  void motionObserve(bool before, int track = -1);
+  void pollMotion();
   void tick();  // touch, engine status, redraw (at most every kFrameMs)
   void setTab(Tab t);
   Tab tab() const { return tab_; }
@@ -181,6 +186,7 @@ class App {
   static bool perfTab(Tab t) { return t == Tab::Grid || t == Tab::Song || t == Tab::Mix; }
   void onTouch(const TouchEvent& ev);
   void transport();
+  void recordShortcut(bool motionOnly);
   void postSong(bool on);  // SetSong from the SONG cursor
   void startSong();
   void postStart(engine::Cmd c);  // a start, held back until the synth board is synced
@@ -256,6 +262,12 @@ class App {
   PerfVis vis_;
   XyPad xyPad_;
 
+  bool motionRec_ = false, motionObserving_ = false;
+  int motionTrack_ = 0, motionPattern_ = -1, motionInstr_ = 0;
+  mt::InstrType motionType_ = mt::InstrType::Chip;
+  uint32_t motionLoop_ = UINT32_MAX;
+  int16_t motionBefore_[mt::kAutomationParams]{};
+  mt::MotionLatch motion_[mt::kTracks];
   GridScreen grid_{*this};
   TrackScreen track_{*this};
   BankScreen bank_{*this};

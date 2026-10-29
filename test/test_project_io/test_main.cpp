@@ -3,6 +3,7 @@
 #include <unity.h>
 #include <vector>
 #include "bytebeat_lib.h"
+#include "automation.h"
 #include "inst_codec.h"
 #include "project_io.h"
 #include "scene.h"
@@ -3295,8 +3296,24 @@ void test_knob_too_many_and_dropped() {
   TEST_ASSERT_EQUAL(0, b.knobs[1].screen);
 }
 
+void test_automation_lanes_survive_project_round_trip() {
+  a.patterns[0].steps[0][0].note = 60;
+  TEST_ASSERT_TRUE(automationRamp(a.patterns[0].steps[0], 16, Fx::FLT, 0, 15, 0, 127));
+  TEST_ASSERT_TRUE(automationSet(a.patterns[0].steps[0][4], Fx::PAN, 30));
+  VecSink sink;
+  TEST_ASSERT_TRUE(saveProject(a, sink));
+  VecSource source(sink.buf);
+  TEST_ASSERT_EQUAL(LoadErr::Ok, loadProject(source, b));
+  TEST_ASSERT_EQUAL(60, b.patterns[0].steps[0][0].note);
+  TEST_ASSERT_EQUAL(0, automationGet(b.patterns[0].steps[0][0], Fx::FLT));
+  TEST_ASSERT_EQUAL(127, automationGet(b.patterns[0].steps[0][15], Fx::FLT));
+  TEST_ASSERT_EQUAL(30, automationGet(b.patterns[0].steps[0][4], Fx::PAN));
+  TEST_ASSERT_EQUAL(kNoteEmpty, b.patterns[0].steps[0][4].note);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_automation_lanes_survive_project_round_trip);
   RUN_TEST(test_crc32_reference);
   RUN_TEST(test_samples_bad_names_skipped);
   RUN_TEST(test_round_trip_full_project);

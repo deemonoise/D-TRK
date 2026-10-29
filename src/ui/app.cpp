@@ -38,6 +38,7 @@ T* allocArray(size_t n) {
 void App::begin(LGFX* lcd, mt::Project* p) {
   lcd_ = lcd;
   p_ = p;
+  setParamEditObserver([this](bool before) { motionObserve(before); });
 
   undoBuf_ = allocArray<mt::Undo::Entry>(mt::Undo::kDepth + 1);
   if (undoBuf_) undo_ = mt::Undo(undoBuf_);
@@ -111,6 +112,22 @@ void App::setTab(Tab t) {
   dirty_ = true;
 }
 
+void App::recordShortcut(bool motionOnly) {
+  if (transportLocked_ || versionBarrier()) { toast("RECORDING UNAVAILABLE"); return; }
+  if (menu_.isOpen() || bpmEdit_ || rec_.isOpen() || grid_.dialogOpen()) {
+    toast("CLOSE DIALOG FIRST");
+    return;
+  }
+  const auto mode = mt::recordModeToggle({grid_.recording(), motionRecording()}, motionOnly);
+  grid_.setNoteRecording(mode.notes);
+  setMotionRecording(mode.motion);
+  if (mode.motion && !status_.playing && playWait_ < 0) {
+    if (!status_.paused) postSong(tab_ == Tab::Song && p_->songLen > 0);
+    postStart(engine::Cmd::StartStop);
+  }
+  toast(!mode.motion ? "REC OFF" : (mode.notes ? "REC: NOTES + MOTION" : "REC: MOTION ONLY"));
+}
+
 void App::transport() {
   if (transportLocked_) {
     toast("WI-FI MODE");
@@ -180,6 +197,10 @@ void App::onInput(const hw::InputEvent& ev) {
     case InputType::BDown: abAction(ab_.bDown()); return;
     case InputType::BUp: abAction(ab_.bUp(ev.shift)); return;
     case InputType::PlayPress:
+      if (const auto o = ab_.play(); o.act != mt::AbAction::Pass) {
+        recordShortcut(o.act == mt::AbAction::RecordMotion);
+        return;
+      }
       if (!menu_.isOpen() && !bpmEdit_ && screen()->onPlay()) return;
       if (ev.shift && status_.playing && !transportLocked_) {
         fillDown();
@@ -494,6 +515,7 @@ void App::pushUndo(uint8_t pat, int genTrack) {
 }
 
 void App::projectReplaced() {
+  setMotionRecording(false);
   for (auto& r : padRec_) r.active = false;
   if (mt::Undo* u = undo()) u->clear();
   learnSlot_ = -1;  // knob learn: the binds are the old project's
@@ -515,6 +537,7 @@ void App::projectReplaced() {
 }
 
 bool App::doUndo() {
+  setMotionRecording(false);
   if (!undoBuf_) return false;
   uint8_t pat;
   mt::Pattern& scratch = undoBuf_[mt::Undo::kDepth].data;
@@ -600,9 +623,11 @@ void App::nudgeTrackPan(int track, int d) {
     int v = t.pan + d;
     v = v < 0 ? 0 : (v > 127 ? 127 : v);
     if (v != t.pan) {
+      motionObserve(true, track);
       engine::lockProject();
       t.pan = static_cast<uint8_t>(v);
       engine::unlockProject();
+      motionObserve(false);
       markDirty();
     }
   }
@@ -885,7 +910,7 @@ void App::padNoteOn(int note, uint8_t vel, uint8_t ch) {
   padNote_[pad] = note;
   padChannel_[pad] = ch;
   padTrack_[pad] = static_cast<int8_t>(tr);
-  if (tab_ == Tab::Grid && grid_.recording() && status_.playing) {
+  if (grid_.recording() && status_.playing) {
     const int step = grid_.recordPad(tr, lane, note, vel);
     // KIT has one GAT shared by all lanes: keep its track gate, as for the piano roll.
     if (midiRecHold_ && lane < 0) {
@@ -1287,6 +1312,78 @@ void App::showBusy(const char* msg) {
   lastDraw_ = millis();
 }
 
+void App::setMotionRecording(bool on) {
+  motionRec_ = on;
+  motionObserving_ = false;
+  motionPattern_ = -1;
+  motionLoop_ = UINT32_MAX;
+  for (auto& m : motion_) m.clear();
+  invalidate();
+}
+
+void App::motionObserve(bool before, int track) {
+  if (before) {
+    motionObserving_ = motionRec_ && engine::status().playing &&
+        (track >= 0 || tab_ != Tab::Inst || inst_.onTrackInstr());
+    if (!motionObserving_) return;
+    motionTrack_ = track >= 0 && track < mt::kTracks ? track : curTrack_;
+    const auto& t = p_->tracks[motionTrack_];
+    if (t.out != mt::TrackOut::Int) { motionObserving_ = false; return; }
+    motionInstr_ = t.instr % mt::kInstruments;
+    const auto& i = p_->instruments[motionInstr_];
+    motionType_ = i.type;
+    for (int n = 0; n < mt::kAutomationParams; ++n)
+      motionBefore_[n] = mt::automationValue(t,i,mt::automationFx(n));
+    return;
+  }
+  if (!motionObserving_) return;
+  motionObserving_ = false;
+  const auto& t = p_->tracks[motionTrack_];
+  const auto& i = p_->instruments[t.instr % mt::kInstruments];
+  if (t.instr % mt::kInstruments != motionInstr_ || i.type != motionType_) return;
+  int16_t after[mt::kAutomationParams];
+  for (int n = 0; n < mt::kAutomationParams; ++n)
+    after[n] = mt::automationValue(t,i,mt::automationFx(n));
+  // Establish the pass before touching: a new pass must not discard the first movement.
+  pollMotion();
+  motion_[motionTrack_].touch(motionBefore_,after);
+  pollMotion();
+}
+
+void App::pollMotion() {
+  if (!motionRec_) return;
+  const auto st = engine::status();
+  if (!st.playing) {
+    for (auto& m : motion_) m.clear();
+    motionPattern_ = -1;
+    motionLoop_ = UINT32_MAX;
+    return;
+  }
+  if (motionPattern_ != st.pattern) {
+    for (auto& m : motion_) m.clear();
+    motionPattern_ = st.pattern;
+    motionLoop_ = UINT32_MAX;
+  }
+  for (auto& m : motion_) m.beginPass(st.loop);
+  auto& p = p_->patterns[st.pattern];
+  const uint8_t phase = engine::stepPhase(st);
+  bool changed = false, full = false;
+  engine::lockProject();
+  for (int tr = 0; tr < mt::kTracks; ++tr) {
+    if (p_->tracks[tr].out != mt::TrackOut::Int) continue;
+    auto& step = p.steps[tr][mt::automationStep(p,tr,st.pos,st.loop,phase)];
+    mt::Step out = step;
+    if (!motion_[tr].write(out)) { full = true; continue; }
+    if (memcmp(&out,&step,sizeof(step)) == 0) continue;
+    if (motionLoop_ != st.loop) { pushUndo(st.pattern); motionLoop_ = st.loop; }
+    step = out;
+    changed = true;
+  }
+  engine::unlockProject();
+  if (changed) markDirty();
+  if (full) { setMotionRecording(false); toast("MOTION STOP: NO FX SLOT"); }
+}
+
 void App::tick() {
   TouchEvent te;
   if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag(), xyMode() && !menu_.isOpen())) onTouch(te);
@@ -1316,6 +1413,7 @@ void App::tick() {
     dirty_ = true;
   }
   pollMidi();
+  pollMotion();
   if (btMark() != btDrawn_) dirty_ = true;  // the status bar BT
   perf_.poll(status_.playing);
   rec_.poll();  // every tab: the board's keepalive and a take that ends on its own
@@ -1579,6 +1677,11 @@ void App::drawStatus() {
   if (synth_ == Synth::Sync || playWait_ >= 0) {
     spr_->setTextColor(kYellow);
     spr_->drawString("SYNC", 416, 4);
+    return;
+  }
+  if (motionRec_) {
+    spr_->setTextColor(kRed);
+    spr_->drawString("MREC", 416, 4);
     return;
   }
   // SD!: a sample voice ran out of data (the card fell behind) in the last kCpuRedMs.

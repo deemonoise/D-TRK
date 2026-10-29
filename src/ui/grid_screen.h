@@ -1,5 +1,6 @@
 #pragma once
 #include "edit_ops.h"
+#include "automation.h"
 #include "fill.h"
 #include "fill_dialog.h"
 #include "model.h"
@@ -23,6 +24,7 @@ class GridScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  bool wantsHDrag() const override { return view_ == View::Automation; }
   bool wantsRedraw(const engine::Status& st) override;
   // Track button N: false when App should handle it (Shift + N outside edit = mute).
   bool trackKey(int n, bool shift);
@@ -33,6 +35,10 @@ class GridScreen : public Screen {
   // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.
   bool chordClear();
   // Controller pads (App): REC is on and no Fill / Transpose dialog is open (App adds "playing").
+  void setNoteRecording(bool on) {
+    if (on && view_ == View::Automation) setView(View::Overview);
+    setRec(on);
+  }
   bool recording() const { return rec_ && !dialogOpen(); }
   uint8_t lastNote(int tr) const { return lastNote_[tr]; }  // the octave melodic pads play in
   // A controller pad into the heard step of track tr (REC, playing): lane >= 0 sets that drum lane,
@@ -48,6 +54,7 @@ class GridScreen : public Screen {
     kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
     kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive, kRollView,
+    kMotionRec,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;
@@ -77,7 +84,18 @@ class GridScreen : public Screen {
   static_assert(kNumW + kRollCols * kRollColW <= kScreenW, "Roll columns must fit");
 
   // Shift + click cycles them. Roll: the current track as a piano roll (KIT: its 16 lanes).
-  enum class View : uint8_t { Overview, Detail, Roll };
+  enum class View : uint8_t { Overview, Detail, Roll, Automation };
+  void drawAutomation(LGFX_Sprite& s, int y, int h);
+  void automationInput(const hw::InputEvent& ev);
+  void automationTouch(const TouchEvent& ev);
+  void automationEdit(int value, bool erase = false);
+  void openAutomationMenu();
+  void openAutomationParams();
+  void openAutomationTracks();
+  int autoParam_ = 0, autoLeft_ = 0, autoAnchor_ = -1;
+  uint8_t autoAnchorValue_ = 0;
+  uint16_t autoGesture_ = UINT16_MAX;
+  mt::AutomationClip autoClip_;
 
   mt::Pattern& pat();
   int len() const;  // pattern length clamped to kMinSteps..kMaxSteps

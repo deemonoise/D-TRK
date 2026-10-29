@@ -241,8 +241,30 @@ void test_a_click() {
   expect(AbAction::None, k.aUp(false));
 }
 
+void test_play_chords_consume_button_taps() {
+  AbKeys k;
+  expect(AbAction::Pass, k.play());
+  k.aDown();
+  expect(AbAction::RecordAll, k.play());
+  expect(AbAction::None, k.aUp(false));
+  k.bDown();
+  expect(AbAction::RecordMotion, k.play());
+  expect(AbAction::None, k.bUp(true));
+}
+void test_play_chord_b_wins_and_finishes_existing_edit() {
+  AbKeys k;
+  k.aDown(); k.turn(1,false);
+  expect(AbAction::RecordAll,k.play());
+  expect(AbAction::EditEnd,k.aUp(false));
+  k.aDown(); k.bDown();
+  expect(AbAction::RecordMotion,k.play());
+  expect(AbAction::None,k.bUp(false));
+  expect(AbAction::None,k.aUp(false));
+}
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_play_chords_consume_button_taps);
+  RUN_TEST(test_play_chord_b_wins_and_finishes_existing_edit);
   RUN_TEST(test_idle_passes_through);
   RUN_TEST(test_a_turn_edits_and_release_ends);
   RUN_TEST(test_a_tap);

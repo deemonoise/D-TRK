@@ -80,6 +80,8 @@ int GridScreen::rowsFor(int h) const {
 }
 
 void GridScreen::onEnter() {
+  autoAnchor_ = -1;
+  editPushed_ = false;
   setEdit(false);
   cur();
   needVisible_ = true;
@@ -99,6 +101,7 @@ void GridScreen::onProjectReplaced() {
 
 // The Fill dialog keeps editing the pattern it was opened for.
 void GridScreen::onPatternChange() {
+  autoAnchor_ = -1;
   recLoop_ = UINT32_MAX;  // REC hits on the new pattern get their own undo snapshot
   curStep_ = 0;
   top_ = 0;
@@ -194,14 +197,22 @@ void GridScreen::cancelCell() {
 }
 
 void GridScreen::toggleView() {
-  setView(view_ == View::Overview ? View::Detail : (view_ == View::Detail ? View::Roll : View::Overview));
+  switch (view_) {
+    case View::Overview: setView(View::Detail); break;
+    case View::Detail: setView(View::Roll); break;
+    case View::Roll: setView(View::Automation); break;
+    case View::Automation: setView(View::Overview); break;
+  }
 }
 
 void GridScreen::setView(View v) {
   view_ = v;
+  editPushed_ = false;
+  autoAnchor_ = -1;
   if (v != View::Detail) curField_ = kNote;
   setEdit(false);
   rollHeld_ = false;
+  if (v == View::Automation) { setRec(false); setPerf(false); }
   if (v == View::Roll) {  // the cursor row: the note under the cursor, else the track's last one
     const mt::Step& st = pat().steps[track()][cur()];
     rollNote_ = st.hasNote() && !drum() ? st.note : lastNote_[track()];
@@ -528,6 +539,7 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
     return;
   }
   cur();
+  if (view_ == View::Automation) { automationInput(ev); return; }
   switch (ev.type) {
     case InputType::EncTurn:
       if (app_.perf().turn(ev.delta, ev.shift)) break;  // the last pressed effect's depth; the cursor stays
@@ -584,6 +596,9 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
 // before the press drops it. An empty step outside such a press: no snapshot.
 bool GridScreen::chordClear() {
   if (dialogOpen()) return false;
+  if (view_ == View::Automation) {
+    automationEdit(0,true); editPushed_ = false; return true;
+  }
   const int tr = track(), step = cur();
   const bool own = (holdEdit_ || rollHeld_) && editPushed_ && !cellOthers_ && cellPat_ == app_.editPattern() &&
                    cellTr_ == tr && cellStep_ == step;
@@ -606,6 +621,13 @@ bool GridScreen::chordClear() {
 // step like a track button.
 void GridScreen::onATap(bool shift) {
   if (dialogOpen() || shift) return;
+  if (view_ == View::Automation) {
+    editPushed_ = false;
+    const auto fx = mt::automationFx(autoParam_);
+    if (mt::automationGet(pat().steps[track()][cur()], fx) < 0) automationEdit(mt::fxDefault(fx));
+    editPushed_ = false;
+    return;
+  }
   const int tr = track(), step = cur();
   if (!edit_) editPushed_ = false;  // outside edit every tap is its own undo step
   if (roll()) {  // the row's note, KIT: the lane's bit
@@ -634,6 +656,12 @@ void GridScreen::onATap(bool shift) {
 
 // Back: closes a dialog, else drops the selection, else leaves edit / REC / PERF.
 void GridScreen::onBack() {
+  if (view_ == View::Automation) {
+    setEdit(false);
+    editPushed_ = false;
+    app_.invalidate();
+    return;
+  }
   if (fill_.isOpen()) {
     fill_.onInput({hw::InputType::EncLong, 0, false});
     return;
@@ -648,6 +676,7 @@ void GridScreen::onBack() {
     setEdit(false);
   } else if (rec_) {
     setRec(false);
+    app_.setMotionRecording(false);
     app_.toast("REC OFF");
   } else if (perf()) {
     setPerf(false);
@@ -659,6 +688,13 @@ bool GridScreen::trackKey(int n, bool shift) {
   if (fill_.isOpen() || transpose_.isOpen()) return true;
   cur();
   const bool playing = app_.status().playing;
+  if (view_ == View::Automation) {
+    if (shift) return false;
+    app_.setCurTrack(firstTrack() + n);
+    autoAnchor_ = -1; editPushed_ = false;
+    cursorMoved();
+    return true;
+  }
   if (rec_ && playing) return recordKey(n, shift);
   // Button N holds its PROJ -> PERF effect while playing; Shift + N still mutes.
   if (!shift && app_.perf().press(n)) return true;
@@ -702,6 +738,7 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     return;
   }
   cur();
+  if (view_ == View::Automation) { automationTouch(ev); return; }
   if (roll()) {
     rollTouch(ev);
     return;
@@ -848,6 +885,7 @@ void GridScreen::openMenu() {
     add("Transpose track...", kTranspose, true);
     add("Fill...", kFill, true);
     if (app_.project().genOn(track()) || mt::mutOn(app_.project(), track())) add("Capture live", kCaptureLive, true);
+    add(app_.motionRecording() ? "Motion REC: ON" : "Motion REC: OFF", kMotionRec, true);
     add(rec_ ? "Rec: ON" : "Rec: OFF", kRec, true);
     add(perf() ? "Perf: ON" : "Perf: OFF", kPerf, true);
     add(view_ == View::Overview ? "Detail view" : "Overview", kToggleView, true);
@@ -1052,7 +1090,7 @@ void GridScreen::onMenu(int id) {
     return;
   }
   const bool anyPattern = id == kToggleView || id == kRollView || id == kToggleFollow || id == kUndo || id == kRec || id == kPerf ||
-                          id == kDropSel;
+                          id == kDropSel || id == kMotionRec;
   if (!anyPattern && app_.editPattern() != menuPattern_) {
     app_.toast("PATTERN CHANGED");
     return;
@@ -1101,6 +1139,10 @@ void GridScreen::onMenu(int id) {
       break;
     case kToggleView: setView(view_ == View::Overview ? View::Detail : View::Overview); break;
     case kRollView: setView(View::Roll); break;
+    case kMotionRec:
+      app_.setMotionRecording(!app_.motionRecording());
+      app_.toast(app_.motionRecording() ? "MOTION REC ARMED" : "MOTION REC OFF");
+      break;
     case kToggleFollow:
       follow_ = !follow_;
       dragFrozen_ = false;
@@ -1113,8 +1155,9 @@ void GridScreen::onMenu(int id) {
     case kResampleTrack: resample(false); break;
     case kResamplePattern: resample(true); break;
     case kRec:
-      setRec(!rec_);
-      app_.toast(rec_ ? "REC: BUTTONS WRITE WHILE PLAYING" : "REC OFF");
+      setNoteRecording(!rec_);
+      app_.setMotionRecording(rec_);
+      app_.toast(rec_ ? "REC: NOTES + MOTION" : "REC OFF");
       break;
     case kPerf:
       setPerf(!perf());
@@ -1139,6 +1182,7 @@ void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
   y0_ = y0;
   h_ = h;
   rows_ = rowsFor(h);
+  if (view_ == View::Automation) { drawAutomation(s,y0,h); return; }
   if (roll()) {
     drawRoll(s, y0, h);
     return;

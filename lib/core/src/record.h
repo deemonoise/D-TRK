@@ -4,6 +4,12 @@
 #include "roll.h"
 
 namespace mt {
+struct RecordMode { bool notes, motion; };
+inline RecordMode recordModeToggle(RecordMode current, bool motionOnly) {
+  const bool selected = motionOnly ? (!current.notes && current.motion) : (current.notes && current.motion);
+  return selected ? RecordMode{false, false} : RecordMode{!motionOnly, true};
+}
+
 
 // Step a live-recorded note lands on: the heard step pos, or the next one past its half (phase
 // 0..255 inside the step), wrapped to len.

@@ -158,13 +158,54 @@ Tabs switch by tapping the bottom bar or with <kbd>B</kbd>+turn (see [Buttons A 
 
 GRID always edits the pattern that is playing. When the pattern changes (queue, song, loading), the cursor moves to step 1, edit mode turns off and the selection is cleared.
 
-### Three views
+### GRID views
 
 - **Overview** (default): 8 columns — one half of the 16 tracks, the one the cursor is in: 1–8 or 9–16. Which half is on screen is shown on the left above the step numbers: `1-8` or `9-16`. The half is not a separate mode: when the cursor moves from track 8 to track 9 (<kbd>Shift</kbd>+turn, tapping a track name in Detail, a [track button](#trackkeys)), the second half is shown; move back and the first returns. The [track buttons](#trackkeys) follow the same half. A cell shows the note, a velocity bar and a yellow dot if the step has fx. The dot is gray if all of the step's fx are synth fx on a MIDI track (they have no effect there). Every fourth step is highlighted, and the playback row is marked.
 - **Detail**: one (the current) track across the full width, 14 fields: NOTE, VEL and six pairs FX1…FX6 with their values. The track number (`T3`) is above the step numbers, the name above NOTE/VEL. <kbd>Shift</kbd>+turn past the last field moves to the next track; the track buttons switch it too. Tapping the name row mutes (with <kbd>Shift</kbd>, solos) that track. Synth fx on a MIDI track are shown in gray. The playback row and follow show the track's own step (Pat len, [Speed](#track)): a x2 / x4 track moves 2 / 4 rows per pattern step. Overview shows the pattern step.
 - **Piano roll**: the current track as a piano roll, see [below](#pianoroll).
 
 Track name color: yellow — solo, gray — not audible, white — normal.
+
+### Parameter automation
+
+**A + Play** toggles notes and motion recording together; **B + Play** toggles motion-only
+recording. Repeating the selected chord disarms recording without stopping playback; enabling
+recording while stopped also starts playback. MIDI notes record on any tab, including INST / TRACK;
+track buttons record notes in GRID. GRID's regular REC also enables motion recording.
+Alternatively enable **Motion REC** in the GRID context menu, then move an INST / TRACK parameter using the
+encoder, touch or a learned MIDI CC while playing. MIX pan and held-track-button pan edits are also recorded. `MREC` in the status
+bar indicates that recording is armed. Supported INT-track locks: FLT, RES, DEC, COL, SHP, SWP,
+CON, DLY, RVB, PAN, DRV, BIT, SRR, DTY, GTE, MOD and SAT. Macros depend on instrument type;
+SAT is FM-only. In INST, select the current track's instrument. Track volume, master controls,
+scene morph and parameters without a corresponding FX command are not recorded. Base parameter
+edits retain their normal effect on the project.
+
+On any pass, moving a parameter latches its latest value into the current and subsequent track
+steps until the end of that pass, respecting track speed and length. The next pass preserves
+existing automation until the parameter moves again.
+It is step-grid recording. Stop or a pattern change clears the latched
+values; move a knob again to resume. Motion REC stays armed until disabled. Undo disarms it;
+one undo snapshot is taken before the first write in each pattern pass. If the touched locks do
+not fit the six FX slots, `MOTION STOP: NO FX SLOT` disarms recording without replacing other FX.
+
+Open **Automation view** by cycling Shift + click through Overview → Detail →
+Piano roll → Automation. It shows one parameter in 16-step pages; **Track…** selects any of the 16 tracks. Bars are explicit locks; `-`
+means no lock, rather than zero.
+
+- Turn selects a step; Shift + turn selects a parameter. **Parameter…** lists all parameters.
+- Click toggles edit; turn changes the value, Shift makes larger changes. **A + turn** edits directly.
+- Tap or drag in the graph sets the bar height. A gesture has one undo snapshot.
+- **A** inserts a default lock when absent. **A + B** clears only the selected lock, preserving notes
+  and other FX. Track buttons select tracks; Shift + a track button mutes.
+- Set the first endpoint and choose **Set ramp start**, edit another endpoint and choose
+  **Ramp to cursor**. Both forward and backward ranges work.
+- **Copy parameter lane / Paste parameter lane** copy values starting at step one, even to another
+  track or parameter. Paste clips to the destination length; source holes clear destination locks.
+- **Clear lock / Clear parameter lane** clear one lock / the whole parameter lane. Ramps and paste
+  are atomic when FX slots run out, and each operation has undo.
+- **B** leaves edit and stays in Automation. Shift + click changes the view.
+
+Manual automation edits disarm Motion REC. Locks use the existing project format and WAV render path.
 
 ### Encoder
 
@@ -173,7 +214,7 @@ Track name color: yellow — solo, gray — not audible, white — normal.
 | Turn | Step up/down (wraps around) | Change the field value |
 | <kbd>Shift</kbd>+turn | Overview: another track. Detail: another field | Coarse step |
 | Click | Enter edit mode (toast with the field name) | Leave edit mode |
-| <kbd>Shift</kbd>+click | Next view: Overview → Detail → [Piano roll](#pianoroll) → Overview | |
+| <kbd>Shift</kbd>+click | Next view: Overview → Detail → [Piano roll](#pianoroll) → Automation → Overview | |
 | Long press | Context menu | |
 | Hold <kbd>A</kbd> + turn | Enter edit mode and change the value (the mini keyboard / lane pad stays hidden); releasing A leaves edit mode | Change the value; releasing A keeps edit mode on |
 | Hold <kbd>A</kbd>, press <kbd>B</kbd> | Clear the selection, else the step under the cursor | Clear the step; edit mode stays (if A entered it, it ends) |
@@ -2333,7 +2374,7 @@ Three pages: **DEVICES**, **PADS**, **KNOBS**. Navigation matches the other scre
 
 **PADS** — the pad banks of the device selected on DEVICES (its name is in the header); each device keeps its own. A controller's bank buttons change the notes / channel its pads send; the tracker tells the banks apart by them. Three assignable functions: `PAT  CH 1  C-2` — the channel and the note of pad 1; the bank is the 16 notes from it. `UNASSIGNED` — not learned.
 
-**Notes work without learning.** Any Note On / Off outside the assigned PAT / PERF / MUTE ranges plays the current track at its original MIDI pitch and velocity. Input channels distinguish held sources; the currently selected track receives the note and its output MIDI channel remains the TRACK setting. KIT accepts its configured lane notes (60–75 by default). GRID REC records incoming notes using REC LENGTH. Legacy NOTE assignments are ignored; other assignments remain intact.
+**Notes work without learning.** Any Note On / Off outside the assigned PAT / PERF / MUTE ranges plays the current track at its original MIDI pitch and velocity. Input channels distinguish held sources; the currently selected track receives the note and its output MIDI channel remains the TRACK setting. KIT accepts its configured lane notes (60–75 by default). When REC is enabled, incoming notes record on any tab using REC LENGTH. Legacy NOTE assignments are ignored; other assignments remain intact.
 
 - **LEARN** teaches only the selected PAT / PERF / MUTE row: select the function, choose Learn this bank from the row menu and hit the first pad of its bank. Other assignments stay unchanged; no assignment is needed to play notes. Assign just MUTE if desired; other notes still play. Click a row for Learn this bank / Edit channel / note / Unassign. **Stop learning** in the context menu or <kbd>B</kbd> cancels learning and keeps the previous assignment. The device must be connected as IN.
 

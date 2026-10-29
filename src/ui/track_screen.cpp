@@ -1179,9 +1179,11 @@ void TrackScreen::setPan(int track, int v) {
   if (t.out != mt::TrackOut::Int) return;  // MIDI: no pan
   v = clampi(v, 0, 127);
   if (v == t.pan) return;
+  app_.motionObserve(true, track);
   engine::lockProject();
   t.pan = static_cast<uint8_t>(v);
   engine::unlockProject();
+  app_.motionObserve(false);
   app_.markDirty();
 }
 

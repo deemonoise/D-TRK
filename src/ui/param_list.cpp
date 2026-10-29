@@ -5,15 +5,21 @@
 #include "theme.h"
 
 namespace ui {
+namespace {
+std::function<void(bool)> editObserver;
+}  // namespace
+void setParamEditObserver(std::function<void(bool)> observer) { editObserver = std::move(observer); }
 
 bool turnRow(const Param* rows, int count, const char* label, size_t maxLen, int delta, char* out, int n) {
   for (int i = 0; i < count; ++i) {
     const Param& r = rows[i];
     if (!r.label || strncmp(r.label, label, maxLen) != 0) continue;
     if (!r.edit) return false;
+    if (editObserver) editObserver(true);
     engine::lockProject();
     r.edit(delta);
     engine::unlockProject();
+    if (editObserver) editObserver(false);
     if (n > 0) out[0] = 0;
     if (r.format && n > 0) r.format(out, n);
     return true;
@@ -23,9 +29,11 @@ bool turnRow(const Param* rows, int count, const char* label, size_t maxLen, int
 
 void ParamList::edit(int delta) {
   if (sel_ < 0 || sel_ >= count_ || !params_[sel_].edit || delta == 0) return;
+  if (editObserver) editObserver(true);
   engine::lockProject();
   params_[sel_].edit(delta);
   engine::unlockProject();
+  if (editObserver) editObserver(false);
   net_ += delta;
   if (onEdit_) onEdit_();
 }
@@ -58,6 +66,7 @@ void ParamList::beginEdit() {
 
 bool ParamList::cancelEdit() {
   if (!edit_) return false;
+  if (editObserver) editObserver(true);
   hold_ = false;
   void* dst = snapOk_ ? scope_() : nullptr;  // asked while still editing, as in beginEdit()
   edit_ = false;
@@ -81,6 +90,7 @@ bool ParamList::cancelEdit() {
       engine::unlockProject();
     }
   }
+  if (editObserver) editObserver(false);
   snapOk_ = false;
   net_ = 0;
   if (onEdit_) onEdit_();

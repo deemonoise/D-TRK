@@ -22,6 +22,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - A mutator per track (**MUT**), one mode at a time: **EVO** — the pattern drifts live (notes along the scale, drops and ghost notes, retriggers and velocity, shifted steps), pulled back by Home; **CA1D / CA2D** — every few passes a new generation of a cellular automaton grown from the pattern (1D Wolfram rules, or Life-like rules over the KIT lanes); **MARKOV** — a Markov chain built from the pattern's own notes. Capture live writes what the track plays (MUT and GEN) into the pattern.
 - Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
 - Scales, undo, selection, copy.
+- Motion REC records parameter movements as step locks; Automation view provides value bars, ramps and parameter-only copy/paste.
 - Microtonal project tuning: 10 factory tunings (just, meantone, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce…) and your own Scala `.scl` files from the card.
 - Scenes and an A↔B crossfader: 8 scenes of mix and sound locks per project, morphed live on MIX or in PERF.
 
