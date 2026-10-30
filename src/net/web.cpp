@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "file_rules.h"
+#include "dice_library.h"
+#include "esp_heap_caps.h"
+#include "engine/engine.h"
 #include "link/link.h"
 #include "link/synth_fw.h"
 #include "storage/remote_fs.h"
@@ -21,6 +24,7 @@ constexpr uint32_t kRestartDelayMs = 1000;
 WebServer* srv = nullptr;
 WebHooks hooks;
 uint32_t restartAt = 0;
+bool diceUploading = false;
 char busyMsg[32];
 
 struct Fw {
@@ -81,6 +85,7 @@ void handleFwChunk() {
     case UPLOAD_FILE_START:
       fw = Fw{};
       fw.started = true;
+      if (diceUploading) return fwFail(409, "the MIDI library is uploading");
       if (inSynthFlash) return fwFail(409, "the synth board is updating");
       if (!mt::webFirmwareName(u.filename.c_str())) return fwFail(400, "a .bin file is needed");
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) return fwFail(500, Update.errorString());
@@ -138,12 +143,156 @@ bool synthBusy() {
          synthPending;
 }
 
+// ---- Dice library upload ----
+constexpr const char* kDicePath = "/midi/dice-library.dml";
+constexpr const char* kDiceTmp = "/midi/dice-library.dml.tmp";
+constexpr const char* kDiceBak = "/midi/dice-library.dml.bak";
+
+struct DiceUpload {
+  bool started = false, complete = false, ownsTemp = false;
+  int code = 0;
+  char err[48] = {};
+  fs::File file;
+  uint32_t bytes = 0, lastKb = 0;
+} diceUpload;
+
+void diceFail(int code, const char* message) {
+  if (diceUpload.code) return;
+  diceUpload.code = code;
+  strlcpy(diceUpload.err, message, sizeof(diceUpload.err));
+  if (diceUpload.file) diceUpload.file.close();
+  if (diceUpload.ownsTemp) storage::remoteFs().remove(kDiceTmp);
+  diceUpload.ownsTemp = false;
+  diceUploading = false;
+}
+
+void handleDiceChunk() {
+  HTTPUpload& u = srv->upload();
+  fs::FS& fs = storage::remoteFs();
+  switch (u.status) {
+    case UPLOAD_FILE_START: {
+      if (diceUploading) return diceFail(400, "one library file per request");
+      diceUpload = DiceUpload{};
+      diceUpload.started = true;
+      if ((fw.started && !fw.code) || Update.isRunning() || restartAt || synthBusy() || inSynthFlash)
+        return diceFail(409, "a firmware update is running");
+      // Wi-Fi mode already stops and locks the transport; reject rather than stop it silently.
+      const auto transport = engine::status();
+      if (transport.playing || transport.paused) return diceFail(409, "stop playback first");
+      if (strcmp(u.filename.c_str(), "dice-library.dml")) return diceFail(400, "choose dice-library.dml");
+      if (!slink::synthUp()) return diceFail(503, "no synth board");
+      if (!fs.exists("/midi") && !fs.mkdir("/midi")) return diceFail(500, "cannot create MIDI folder");
+      if (fs.exists(kDiceTmp) && !fs.remove(kDiceTmp)) return diceFail(500, "cannot remove temporary file");
+      diceUpload.ownsTemp = true;
+      diceUploading = true;
+      diceUpload.file = fs.open(kDiceTmp, FILE_WRITE);
+      if (!diceUpload.file) return diceFail(500, "cannot write the card");
+      busy("MIDI LIBRARY 0 KB");
+      break;
+    }
+    case UPLOAD_FILE_WRITE: {
+      if (diceUpload.code) return;
+      if (!diceUploading || !diceUpload.file) return diceFail(400, "no file");
+      if (u.currentSize > mt::kDiceLibraryMaxBytes - diceUpload.bytes)
+        return diceFail(413, "MIDI library exceeds 4 MB");
+      if (diceUpload.file.write(u.buf, u.currentSize) != u.currentSize)
+        return diceFail(500, "card write failed");
+      diceUpload.bytes += static_cast<uint32_t>(u.currentSize);
+      const uint32_t kb = diceUpload.bytes / 1024;
+      if (kb - diceUpload.lastKb >= 64) {
+        diceUpload.lastKb = kb;
+        char message[32];
+        snprintf(message, sizeof(message), "MIDI LIBRARY %lu KB", static_cast<unsigned long>(kb));
+        busy(message);
+      }
+      break;
+    }
+    case UPLOAD_FILE_END:
+      if (diceUpload.code) return;
+      if (!diceUploading || !diceUpload.file) return diceFail(400, "no file");
+      diceUpload.file.close();
+      if (diceUpload.bytes < 16) return diceFail(400, "invalid MIDI library");
+      diceUpload.complete = true;
+      break;
+    case UPLOAD_FILE_ABORTED: diceFail(400, "upload aborted"); break;
+  }
+}
+
+bool validateDiceTemp() {
+  fs::File file = storage::remoteFs().open(kDiceTmp, "r");
+  if (!file || file.isDirectory() || file.size() != diceUpload.bytes) {
+    file.close();
+    diceFail(500, "cannot read back the library");
+    return false;
+  }
+  auto* bytes = static_cast<uint8_t*>(heap_caps_malloc(diceUpload.bytes, MALLOC_CAP_SPIRAM));
+  if (!bytes) {
+    file.close();
+    diceFail(503, "not enough memory to validate MIDI");
+    return false;
+  }
+  uint32_t done = 0;
+  while (done < diceUpload.bytes) {
+    const size_t left = diceUpload.bytes - done;
+    const size_t want = left < 4096 ? left : 4096;
+    const size_t got = file.read(bytes + done, want);
+    if (!got || got > want) break;
+    done += static_cast<uint32_t>(got);
+  }
+  file.close();
+  const bool valid = done == diceUpload.bytes && mt::DiceMidiLibrary(bytes, done).valid();
+  heap_caps_free(bytes);
+  if (!valid) diceFail(400, "invalid MIDI library");
+  return valid;
+}
+
+bool publishDiceTemp() {
+  fs::FS& fs = storage::remoteFs();
+  const bool old = fs.exists(kDicePath);
+  if (old) {
+    if (fs.exists(kDiceBak) && !fs.remove(kDiceBak)) {
+      diceFail(500, "cannot replace library backup");
+      return false;
+    }
+    if (!fs.rename(kDicePath, kDiceBak)) {
+      diceFail(500, "cannot back up existing library");
+      return false;
+    }
+  }
+  if (!fs.rename(kDiceTmp, kDicePath)) {
+    // A failed final rename must not discard the preceding valid library. Keep .bak if even
+    // restoration fails, so card recovery can still restore it.
+    const bool restored = !fs.exists(kDiceBak) || fs.rename(kDiceBak, kDicePath);
+    diceFail(500, restored ? "card rename failed; previous library kept" : "rename failed; previous library in .bak");
+    return false;
+  }
+  diceUpload.ownsTemp = false;
+  return true;
+}
+
+void handleDiceDone() {
+  if (!diceUpload.started) { reply(400, "no file"); return; }
+  diceUpload.started = false;
+  if (!diceUpload.code && !diceUpload.complete) diceFail(400, "incomplete upload");
+  if (!diceUpload.code && validateDiceTemp()) publishDiceTemp();
+  diceUploading = false;
+  if (diceUpload.code) {
+    logFail("MIDI library", diceUpload.code);
+    reply(diceUpload.code, diceUpload.err);
+    return;
+  }
+  reply(200, "OK");
+  log("+ MIDI library%s", "");
+  busy("MIDI LIBRARY READY");
+}
+// ---- End Dice library upload ----
+
 void handleSynthChunk() {
   HTTPUpload& u = srv->upload();
   fs::FS& fs = storage::remoteFs();
   switch (u.status) {
     case UPLOAD_FILE_START:
-      if (synthBusy() || inSynthFlash) {
+      if (synthBusy() || inSynthFlash || diceUploading) {
         syn.started = true;
         syn.code = 409;
         strlcpy(syn.msg, "an update is running", sizeof(syn.msg));
@@ -380,6 +529,7 @@ bool webBegin(const WebHooks& h) {
   srv->on("/api/update", HTTP_POST, handleFwDone, handleFwChunk);
   srv->on("/api/update-synth", HTTP_POST, handleSynthDone, handleSynthChunk);
   srv->on("/api/update-synth/status", HTTP_GET, handleSynthStatus);
+  srv->on("/api/dice-library", HTTP_POST, handleDiceDone, handleDiceChunk);
   srv->on("/api/export/list", HTTP_GET, handleExportList);
   srv->on("/api/export/file", HTTP_GET, handleExportFile);
   static const char* kHeaders[] = {"Range"};
@@ -411,6 +561,10 @@ void webEnd() {
   }
   syn = SynthUpd{};
   synthPending = false;
+  if (diceUpload.file) diceUpload.file.close();
+  if (diceUpload.ownsTemp) storage::remoteFs().remove(kDiceTmp);
+  diceUpload = DiceUpload{};
+  diceUploading = false;
   hooks = WebHooks{};
 }
 

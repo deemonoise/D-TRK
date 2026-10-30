@@ -1,4 +1,5 @@
 #include "storage.h"
+#include "project_memory.h"
 #include <Arduino.h>
 #include <new>
 #include <stdio.h>
@@ -32,14 +33,14 @@ struct Path {
 
 // Temporary Project in PSRAM; at most one exists at a time.
 mt::Project* allocProject() {
-  void* m = heap_caps_malloc(sizeof(mt::Project), MALLOC_CAP_SPIRAM);
+  void* m = allocateProjectMemory(sizeof(mt::Project));
   return m ? new (m) mt::Project() : nullptr;
 }
 
 void freeProject(mt::Project* p) {
   if (!p) return;
   p->~Project();
-  heap_caps_free(p);
+  releaseProjectMemory(p);
 }
 
 // If one of these fires, a field was added/removed: update snapshot() below and

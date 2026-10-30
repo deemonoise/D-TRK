@@ -44,6 +44,27 @@ float buf[kSynthRate], ref[kSynthRate];
 
 }  // namespace
 
+// Exact 128-sample cycles separate waveform DC from fractional-period sampling.
+void test_pulse_is_centered_and_bounded_at_every_duty() {
+  const float duties[] = {0.f, 0.125f, 0.25f, 0.5f, 0.75f, 0.875f, 1.f};
+  for (float duty : duties) {
+    ChipOsc o;
+    float cycle[128];
+    for (int i = 0; i < 128; ++i) {
+      cycle[i] = o.next(Wave::Pulse, 1.f / 128.f, duty);
+      TEST_ASSERT_TRUE(fabsf(cycle[i]) <= 1.f);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.f, mean(cycle, 128));
+    if (duty == 0.f || duty == 1.f) TEST_ASSERT_EQUAL_FLOAT(0.f, rms(cycle, 128));
+  }
+}
+
+void test_half_duty_pulse_keeps_square_reference() {
+  ChipOsc o;
+  for (int i = 0; i < 128; ++i)
+    TEST_ASSERT_EQUAL_FLOAT(i < 64 ? 1.f : -1.f, o.next(Wave::Pulse, 1.f / 128.f, 0.5f));
+}
+
 void test_sid_combined_level_and_dc() {
   render(Wave::Pulse, 440, 0.5f, ref, kSynthRate);
   const float r0 = rms(ref, kSynthRate);
@@ -232,6 +253,8 @@ void test_sid_noise_period() {
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_pulse_is_centered_and_bounded_at_every_duty);
+  RUN_TEST(test_half_duty_pulse_keeps_square_reference);
   RUN_TEST(test_sid_combined_level_and_dc);
   RUN_TEST(test_sid_combined_differs_from_parts);
   RUN_TEST(test_sid_pulse_combined_flat_when_pulse_low);

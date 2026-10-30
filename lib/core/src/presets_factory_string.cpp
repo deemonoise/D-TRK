@@ -50,22 +50,23 @@ constexpr FactoryPreset kTable[] = {
        lfo1(m, LfoWave::Sine, LfoDest::Vol, 65, 6); fx(m, 20, 55); }},
     {InstrType::String, "KEYS", "GAMELAN", [](I& m) {  // inharmonic gong-bar, long
        st(m, StringModel::Modal, 108, 70, 100, 20, 0); env(m, 0, 40, 127, 80); m.vol = 85; fx(m, 30, 80); }},
-    // PAD: longest DAMP and a slow ADSR swell over the ring; the noise burst softens the strike.
+    // PAD: long DAMP; the attack must open before the finite exciter has lost its energy.
+    // These are struck swells, not continuously bowed strings.
     {InstrType::String, "PAD", "BOWED", [](I& m) {  // bowed-like swell, dark, slow vibrato
-       st(m, StringModel::String, 127, 45, 0, 20, 127); env(m, 60, 40, 127, 90);
-       lfo1(m, LfoWave::Sine, LfoDest::Pitch, 55, 1); m.vol = 90; fx(m, 25, 90); }},
+       st(m, StringModel::String, 127, 70, 0, 20, 20); env(m, 35, 40, 127, 90);
+       lfo1(m, LfoWave::Sine, LfoDest::Pitch, 55, 1); m.vol = 100; fx(m, 25, 90); }},
     {InstrType::String, "PAD", "GLASDRON", [](I& m) {  // glass plate swell: ambient drone
        st(m, StringModel::Modal, 127, 60, 110, 15, 127); env(m, 60, 40, 127, 100);
        lfo1(m, LfoWave::Sine, LfoDest::Col, 15, 12); m.vol = 80; fx(m, 40, 100); }},
     {InstrType::String, "PAD", "DARKDRON", [](I& m) {  // low string, closed filter, slow breath: dark ambient
-       st(m, StringModel::String, 127, 25, 20, 40, 100); m.transpose = -12; env(m, 60, 40, 127, 100);
-       lp(m, 70, 10, 0, 40); lfo1(m, LfoWave::Sine, LfoDest::Cutoff, 10, 10); m.vol = 90; fx(m, 20, 90); }},
+       st(m, StringModel::String, 127, 20, 20, 64, 0); m.transpose = -12; env(m, 40, 40, 127, 100);
+       lp(m, 70, 10, 0, 40); lfo1(m, LfoWave::Sine, LfoDest::Cutoff, 10, 10); m.vol = 110; fx(m, 20, 90); }},
     {InstrType::String, "PAD", "CHIMES", [](I& m) {  // wind chimes, strike position wanders
        st(m, StringModel::Modal, 120, 80, 105, 10, 0); env(m, 0, 40, 127, 90);
        lfo1(m, LfoWave::Random, LfoDest::Swp, 40, 15); m.vol = 80; fx(m, 40, 100); }},
     {InstrType::String, "PAD", "SHIMMER", [](I& m) {  // airy high string swell: dream / chillwave
-       st(m, StringModel::String, 120, 90, 0, 15, 60); m.transpose = 12; env(m, 58, 40, 127, 100);
-       m.vol = 75; fx(m, 50, 110); }},
+       st(m, StringModel::String, 120, 70, 0, 15, 20); m.transpose = 12; env(m, 35, 40, 127, 100);
+       m.vol = 100; fx(m, 50, 110); }},
 };
 
 }  // namespace

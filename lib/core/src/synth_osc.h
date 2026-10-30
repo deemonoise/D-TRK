@@ -76,7 +76,14 @@ struct ChipOsc {
   MT_INLINE float next(Wave w, float inc, float duty) {
     float v;
     switch (w) {
-      case Wave::Pulse: v = phase < duty ? 1.f : -1.f; break;
+      case Wave::Pulse: {
+        // Subtract the cycle's mean (2*duty - 1), then normalise the larger
+        // shoulder: DC-free at every width, bounded by 1, unchanged at 50%.
+        const float hi = 1.f - duty;
+        const float gain = 1.f / (duty > 0.5f ? duty : hi);
+        v = (phase < duty ? hi : -duty) * gain;
+        break;
+      }
       case Wave::Triangle: v = 4.f * (phase < 0.5f ? 0.5f - phase : phase - 0.5f) - 1.f; break;
       case Wave::Saw: v = 2.f * phase - 1.f; break;
       case Wave::Noise:

@@ -51,6 +51,9 @@ int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 DiceOpts opts(int g, int s, int variety = kDiceVarietyDefault, uint8_t layers = kDiceAll, int root = -1) {
   DiceOpts o;
+  o.fillGaps = false;  // recipe/canon fixtures explicitly exercise the original sparse arrangement
+  o.form = DiceForm::Classic;
+  o.groove = 0;
   o.genre = static_cast<uint8_t>(g);
   o.style = static_cast<uint8_t>(s);
   o.variety = static_cast<uint8_t>(variety);
@@ -353,6 +356,8 @@ void test_kit_mix_and_feel() {
       const DiceRecipe& rec = *diceRecipe(g, s);
       p.reset();
       diceRoll(p, opts(g, s, 0, kDiceAll, 0), 0, 3, snap);
+      loaded.reset();
+      diceRoll(loaded, opts(g,s,0,kDiceSounds,0),0,3,snap);
       for (int k = 0; k < kDiceRoles; ++k) {
         if (!(rec.roles & (1u << k))) continue;
         const TrackCfg& c = p.tracks[k];
@@ -392,7 +397,9 @@ void test_kit_mix_and_feel() {
         }
         TEST_ASSERT_TRUE_MESSAGE(t.res == kDiceKeep || m.reso <= t.res, m.name);
         TEST_ASSERT_TRUE_MESSAGE(t.fenv == kDiceKeep || m.fenv <= t.fenv, m.name);
-        TEST_ASSERT_TRUE_MESSAGE(m.attack >= t.atk && m.release >= t.rel, m.name);
+        const auto& unfitted=loaded.instruments[loaded.tracks[k].instr];
+        TEST_ASSERT_TRUE_MESSAGE(unfitted.attack>=t.atk && unfitted.release>=t.rel,m.name);
+        TEST_ASSERT_TRUE_MESSAGE(m.attack<=unfitted.attack && m.release<=unfitted.release,m.name);
         TEST_ASSERT_TRUE_MESSAGE(t.drv == kDiceKeep || (m.synFold <= t.drv && m.synRing <= t.drv), m.name);
         if (t.rvb != kDiceKeep) TEST_ASSERT_EQUAL(t.rvb, m.rsend);
         if (t.dly != kDiceKeep) TEST_ASSERT_EQUAL(t.dly, m.send);
@@ -805,8 +812,141 @@ void test_variety_100_diverse() {
   TEST_ASSERT_TRUE(third >= 2);
 }
 
+
+void test_clean_roll_and_keep_mix() {
+  p.reset();
+  p.tracks[1].gateDepth = 127; p.tracks[1].gateMask = 0;
+  p.tracks[1].folSrc = 8; p.tracks[1].folAmt = -60; p.tracks[1].modSend = 127;
+  p.tracks[1].humanize = 80;
+  memcpy(&before, &p, sizeof(p));
+  auto o = opts(0, 0, 0, kDiceAll, 0);
+  diceRoll(p, o, 0, 123, snap);
+  TEST_ASSERT_EQUAL(0, p.tracks[1].gateDepth); TEST_ASSERT_EQUAL(0, p.tracks[1].folSrc);
+  TEST_ASSERT_EQUAL(0, p.tracks[1].folAmt); TEST_ASSERT_EQUAL(0, p.tracks[1].modSend);
+  TEST_ASSERT_EQUAL(0, p.tracks[1].humanize);
+  diceUndo(p, snap); TEST_ASSERT_EQUAL_MEMORY(&before, &p, sizeof(p));
+  o.clean = false; diceRoll(p, o, 0, 123, snap);
+  TEST_ASSERT_EQUAL(127, p.tracks[1].gateDepth); TEST_ASSERT_EQUAL(8, p.tracks[1].folSrc);
+}
+
+void test_locked_role_preserves_settings_notes_and_shared_sound() {
+  p.reset(); p.tracks[2].instr = p.tracks[1].instr; // shared sound must remain for locked bass
+  p.patterns[0].length = 32; p.patterns[0].swing = 61;
+  p.patterns[0].steps[1][0].note = 48; p.patterns[1].steps[1][0].note = 50;
+  p.gen[1].mode = 1; p.tracks[1].mute = true;
+  memcpy(&before, &p, sizeof(p));
+  auto o = opts(0, 0, 30, kDiceAll, -1); o.lockMask = 1u << 1;
+  diceRoll(p, o, 0, 99, snap);
+  TEST_ASSERT_EQUAL_MEMORY(&before.tracks[1], &p.tracks[1], sizeof(TrackCfg));
+  TEST_ASSERT_EQUAL_MEMORY(&before.instruments[1], &p.instruments[1], sizeof(Instrument));
+  TEST_ASSERT_EQUAL_MEMORY(&before.gen[1], &p.gen[1], sizeof(GenCfg));
+  TEST_ASSERT_EQUAL_MEMORY(before.patterns[0].steps[1], p.patterns[0].steps[1], sizeof(p.patterns[0].steps[1]));
+  TEST_ASSERT_EQUAL_MEMORY(before.patterns[1].steps[1], p.patterns[1].steps[1], sizeof(p.patterns[1].steps[1]));
+  TEST_ASSERT_EQUAL(32, p.patterns[0].length); TEST_ASSERT_EQUAL(61, p.patterns[0].swing);
+  TEST_ASSERT_EQUAL(before.scaleRoot, p.scaleRoot); TEST_ASSERT_EQUAL(before.scaleType, p.scaleType);
+  diceUndo(p, snap); TEST_ASSERT_EQUAL_MEMORY(&before, &p, sizeof(p));
+}
+
+void test_generated_bass_register_respects_preset_transpose() {
+  for (int g=0;g<diceGenreCount();++g) for (int style=0;style<diceStyleCount(g);++style) {
+    p.reset(); diceRoll(p, opts(g,style,30,kDiceAll,0),0,12375,snap);
+    const auto& m=p.instruments[p.tracks[1].instr];
+    for(int j=0;j<p.patterns[0].length;++j){const auto& st=p.patterns[0].steps[1][j];
+      if(st.hasNote()) TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(24, int(st.note)+m.transpose, m.name);
+    }
+  }
+}
+
+struct TestDicePhrases : DicePhraseSource {
+  bool enabled = true;
+  bool pick(int, DiceRole role, uint32_t, DicePhrase& ph) const override {
+    if (!enabled || (role != DiceRole::Bass && role != DiceRole::Chords)) return false;
+    ph = DicePhrase(); ph.bars=1; ph.root=0; ph.scale=static_cast<uint8_t>(ScaleType::Minor);
+    if(role==DiceRole::Bass) {ph.count=2;ph.events[0]={0,24,36,91,255};ph.events[1]={96,24,43,75,255};}
+    else {ph.count=3;ph.events[0]={0,384,60,100,255};ph.events[1]={0,384,63,100,255};ph.events[2]={0,384,67,100,255};}
+    return true;
+  }
+};
+void test_midi_library_roll_fallback_and_undo() {
+  p.reset(); memcpy(&before,&p,sizeof(p)); TestDicePhrases source;
+  auto o=opts(0,0,0,kDiceAll,0);o.source=DiceSource::Midi;o.seed=777;
+  auto r=diceRoll(p,o,0,111,snap,0,&source);
+  TEST_ASSERT_EQUAL(777,r.seed);TEST_ASSERT_TRUE(r.midiMask&(1u<<1));TEST_ASSERT_TRUE(r.midiMask&(1u<<2));
+  TEST_ASSERT_TRUE(r.missingMask&1u);TEST_ASSERT_NOT_NULL(p.patterns[0].steps[2][0].find(Fx::CHD));
+  TEST_ASSERT_EQUAL(91,p.patterns[0].steps[1][0].vel);
+  diceUndo(p,snap);TEST_ASSERT_EQUAL_MEMORY(&before,&p,sizeof(p));
+  diceRoll(p,opts(0,0,0,kDiceAll,0),0,333,snap);
+  memcpy(&before,&p,sizeof(p));const uint8_t oldLayers=snap.layers;source.enabled=false;
+  r=diceRoll(p,o,0,444,snap,0,&source);
+  TEST_ASSERT_EQUAL(0,r.midiMask);TEST_ASSERT_EQUAL(oldLayers,snap.layers);
+  TEST_ASSERT_EQUAL_MEMORY(&before,&p,sizeof(p)); // failed roll must not apply old snapshot
+}
+
+void test_midi_locked_headers_keep_tick_positions_in_each_pattern(){
+ p.reset();p.patterns[0].res=Resolution::Eighth;p.patterns[1].res=Resolution::Quarter;
+ p.patterns[0].length=16;p.patterns[1].length=32;TestDicePhrases source;
+ auto o=opts(0,0,0,kDiceAll,0);o.source=DiceSource::Midi;o.lockMask=1;
+ diceRoll(p,o,0,124,snap,0,&source);
+ TEST_ASSERT_TRUE(p.patterns[0].steps[1][2].hasNote()); // 96ticks /48
+ TEST_ASSERT_TRUE(p.patterns[1].steps[1][1].hasNote()); // 96ticks /96
+ TEST_ASSERT_EQUAL(25,gatePercent(p.patterns[1].steps[1][0].find(Fx::GAT)->val));
+ TEST_ASSERT_EQUAL(Resolution::Quarter,p.patterns[1].res);TEST_ASSERT_EQUAL(32,p.patterns[1].length);
+}
+void test_locked_chords_guide_each_pattern_including_main_lead(){
+ p.reset();p.scaleType=(uint8_t)ScaleType::Minor;
+ for(int i=0;i<4;++i){auto&st=p.patterns[i].steps[2][0];st.note=i%2?66:60;st.fx[0]={Fx::CHD,kChordMaj};}
+ auto o=opts(0,0,0,kDiceAll,0);o.lockMask=4;
+ diceRoll(p,o,0,124,snap);
+ for(int pat:{0,1,3})for(int role:{1,3,4})for(int j=0;j<p.patterns[pat].length;j+=4){
+  auto&st=p.patterns[pat].steps[role][j];if(!st.hasNote())continue;int pc=(st.note-(pat%2?66:60)+120)%12;
+  TEST_ASSERT_TRUE(pc==0||pc==4||pc==7);
+ }
+}
+struct LeadOnly : DicePhraseSource {
+ bool pick(int,DiceRole role,uint32_t,DicePhrase& ph) const override {
+  if(role!=DiceRole::Lead)return false;ph=DicePhrase();ph.count=1;ph.events[0]={0,24,72,100,255};return true;
+ }
+};
+void test_library_lead_is_not_muted_by_builtin_none(){
+ p.reset();LeadOnly source;auto o=opts(0,0,100,kDiceAll,0);o.source=DiceSource::Midi;
+ auto r=diceRoll(p,o,0,5,snap,0,&source);TEST_ASSERT_TRUE(r.midiMask&8);TEST_ASSERT_FALSE(p.tracks[3].mute);
+}
+
+void test_four_step_locked_patterns_do_not_write_outside_the_grid(){
+ p.reset();for(int i=0;i<4;++i)p.patterns[i].length=4;
+ auto o=opts(2,0,0,kDiceAll,0);o.lockMask=1;
+ diceRoll(p,o,0,1,snap);
+ for(int pat=0;pat<4;++pat){
+  TEST_ASSERT_EQUAL(4,p.patterns[pat].length);
+  for(int role=1;role<6;++role)for(int at=4;at<kMaxSteps;++at)TEST_ASSERT_TRUE(p.patterns[pat].steps[role][at].isEmpty());
+ }
+}
+
+struct ExtremePitchSource : DicePhraseSource {
+ bool pick(int,DiceRole role,uint32_t,DicePhrase& ph) const override {
+  ph=DicePhrase();ph.scale=(uint8_t)ScaleType::Chromatic;
+  if(role==DiceRole::Chords){ph.count=3;ph.events[0]={0,96,68,100,255};ph.events[1]={0,96,72,100,255};ph.events[2]={0,96,75,100,255};return true;}
+  if(role==DiceRole::Lead){ph.count=1;ph.events[0]={0,24,127,100,255};return true;}
+  return false;
+ }
+};
+void test_harmony_keeps_extreme_midi_pitch_in_range(){
+ p.reset();ExtremePitchSource source;auto o=opts(0,0,0,kDiceAll,0);o.source=DiceSource::Midi;
+ auto r=diceRoll(p,o,0,1,snap,0,&source);
+ TEST_ASSERT_TRUE(r.midiMask&8);TEST_ASSERT_TRUE(p.patterns[0].steps[3][0].hasNote());
+ TEST_ASSERT_LESS_OR_EQUAL(127,p.patterns[0].steps[3][0].note);
+}
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_harmony_keeps_extreme_midi_pitch_in_range);
+  RUN_TEST(test_four_step_locked_patterns_do_not_write_outside_the_grid);
+  RUN_TEST(test_midi_locked_headers_keep_tick_positions_in_each_pattern);
+  RUN_TEST(test_locked_chords_guide_each_pattern_including_main_lead);
+  RUN_TEST(test_library_lead_is_not_muted_by_builtin_none);
+  RUN_TEST(test_midi_library_roll_fallback_and_undo);
+  RUN_TEST(test_clean_roll_and_keep_mix);
+  RUN_TEST(test_locked_role_preserves_settings_notes_and_shared_sound);
+  RUN_TEST(test_generated_bass_register_respects_preset_transpose);
   RUN_TEST(test_genres_and_styles);
   RUN_TEST(test_every_recipe_valid);
   RUN_TEST(test_kit_mix_and_feel);

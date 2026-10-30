@@ -4,6 +4,7 @@
 #include "bass_gen.h"
 #include "chord_gen.h"
 #include "dice_recipes.h"
+#include "dice_library.h"
 #include "model.h"
 #include "scale.h"
 
@@ -41,7 +42,21 @@ uint16_t diceOverwrites(const Project& p, int editPattern);
 // the kit or an instrument of its block.
 void diceSlots(const Project& p, uint8_t out[kDiceRoles]);
 
+enum class DiceSource : uint8_t { Builtin, Midi, Hybrid };
+
+enum class DiceForm : uint8_t { Classic, Develop };
+enum class DiceChange : uint8_t { Subtle, Normal, Wild };
+
 struct DiceOpts {
+  DiceForm form = DiceForm::Develop;
+  DiceChange change = DiceChange::Wild;
+  uint8_t targetMask = 0x3f;
+  uint8_t groove = 35;
+  DiceSource source = DiceSource::Builtin;
+  uint8_t lockMask = 0;  // locked roles keep sound, settings, notes, GEN/MUT and mute
+  bool clean = true;
+  bool fillGaps = true;  // full pattern rolls fill playable roles between occupied tracks
+  uint32_t seed = 0;  // UI: 0 = new seed, otherwise replay this seed
   uint8_t genre = 0, style = 0;  // diceRecipe(genre, style); out of range = 0, 0
   uint8_t variety = kDiceVarietyDefault;  // 0..100: 0 = canon (the heaviest option, no mutations)
   uint8_t layers = kDiceAll;     // kDice* bits
@@ -86,6 +101,8 @@ struct DiceWork {
   Progression prog;
   ChordSeg segs[kProgMax];
   Instrument tmp;
+  DicePhrase phrase;
+  Step midiSteps[kMaxSteps];
   Pattern full;  // MAIN with every role (DROP)
 };
 
@@ -95,6 +112,7 @@ struct DiceWork {
 // roll replaced, bit for bit: the one-step undo. Solo is never swapped; mute only of the tracks PATTERN
 // muted / unmuted. The caller owns it (PSRAM on the device, sizeof(DiceSnap) ~ 86 KB).
 struct DiceSnap {
+  bool preserveHeaders = false;  // a role lock also protects its pattern timing
   uint8_t layers = 0;   // layers of the applied roll still to undo, 0 = nothing
   uint8_t drafted = 0;  // layers of a draft waiting for diceApply
   uint8_t first = 0;    // first of the four patterns
@@ -107,6 +125,8 @@ struct DiceSnap {
 };
 
 struct DiceResult {
+  uint32_t seed = 0;
+  uint8_t midiMask = 0, midiApproxMask = 0, missingMask = 0;
   int8_t genre = -1, style = -1;  // the recipe rolled
   uint8_t first = 0;              // first of the four patterns
   uint16_t written = 0;           // tracks whose sound, steps or mute changed
@@ -117,11 +137,11 @@ struct DiceResult {
 // Rolls o.layers into s.parts, seeded (same project + opts + seed = same roll); p is only read. Drops the
 // previous roll's undo.
 DiceResult diceDraft(const Project& p, const DiceOpts& o, int editPattern, uint32_t seed, DiceSnap& s,
-                     uint16_t bpm = 0);
+                     uint16_t bpm = 0, const DicePhraseSource* library = nullptr);
 // Swaps the draft into p (what it wrote only). Returns its layers, 0 = no draft.
 uint8_t diceApply(Project& p, DiceSnap& s, uint16_t bpm = 0);
 // diceDraft + diceApply.
-DiceResult diceRoll(Project& p, const DiceOpts& o, int editPattern, uint32_t seed, DiceSnap& s, uint16_t bpm = 0);
+DiceResult diceRoll(Project& p, const DiceOpts& o, int editPattern, uint32_t seed, DiceSnap& s, uint16_t bpm = 0, const DicePhraseSource* library = nullptr);
 // Puts back what the last applied roll wrote and empties the undo. Returns its layers, 0 = nothing.
 // Edits made since elsewhere stay; edits to the rolled parts are lost.
 uint8_t diceUndo(Project& p, DiceSnap& s, uint16_t bpm = 0);

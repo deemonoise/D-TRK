@@ -5,7 +5,7 @@ namespace net {
 
 // Single page served at "/" (and "/firmware"): firmware updates of the tracker (.bin) and of the synth
 // board (.hex, through its card), and the Export section: the WAV files of /export on the synth board's
-// card (FILE -> Export...), listed by /api/export/list and downloaded by /api/export/file.
+// card (FILE -> Export...), and a prepared Dice MIDI library uploaded to its fixed SD path.
 // No external resources: works without internet access.
 static const char kWebPage[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -43,6 +43,11 @@ border-radius:6px;padding:4px 10px;cursor:pointer}
 <p class="note">The file .pio/build/teensy41/firmware.hex. It goes to the synth board's card as
 /firmware/teensy.hex, then the board flashes it and restarts.</p>
 <div class="drop">Drop firmware.hex here or click to choose<input type="file" accept=".hex" hidden></div>
+<progress max="100"></progress><div class="st"></div></section>
+<section id="dice" style="margin-top:20px"><h2>Dice MIDI library (.dml)</h2>
+<p class="note">Choose the prepared dice-library.dml. It replaces the library on the card after validation;
+the previous file is kept as a backup. No restart is needed.</p>
+<div class="drop">Drop dice-library.dml here or click to choose<input type="file" accept=".dml" hidden></div>
 <progress max="100"></progress><div class="st"></div></section>
 <section id="ex" style="margin-top:20px"><h2>Export (.wav)</h2>
 <p class="note">Files of FILE &rarr; Export... on the synth board's card, /export/&lt;project&gt;/&lt;source&gt;/.
@@ -88,6 +93,14 @@ async function synth(files){
     else if(s.state==='error'){pg.style.display='none';status(sec,s.msg,1);return;}
   }
 }
+async function diceLibrary(files){
+  const sec=$('#dice'),f=files[0];if(!f)return;
+  if(f.name!=='dice-library.dml'){status(sec,'choose dice-library.dml',1);return;}
+  if(f.size<16||f.size>4*1024*1024){status(sec,'the library must be 16 bytes to 4 MB',1);return;}
+  status(sec,'Uploading and validating the library...');
+  const r=await send('/api/dice-library',f,sec);
+  status(sec,r.code===200?'Ready. Select MIDI or HYBRID in DICE.':r.text,r.code!==200);
+}
 function drop(sec,fn){
   const d=$('.drop',sec),i=$('input',d);
   d.onclick=()=>i.click();i.onclick=e=>e.stopPropagation();
@@ -98,6 +111,7 @@ function drop(sec,fn){
 }
 drop($('#fw'),firmware);
 drop($('#syn'),synth);
+drop($('#dice'),diceLibrary);
 async function exports(){
   const sec=$('#ex'),l=$('.list',sec);status(sec,'Reading the card...');
   let a;try{a=await(await fetch('/api/export/list')).json();}catch(e){status(sec,'no answer',1);return;}

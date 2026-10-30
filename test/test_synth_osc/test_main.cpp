@@ -15,14 +15,25 @@ void test_note_hz() {
 }
 
 void test_pulse_duty() {
-  ChipOsc o;
-  int high = 0;
-  for (int i = 0; i < kSynthRate; ++i) {
-    const float v = o.next(Wave::Pulse, 1000.f / kSynthRate, 0.25f);
-    TEST_ASSERT_TRUE(v == 1.f || v == -1.f);
-    if (v > 0) ++high;
+  const float duties[] = {0.25f, 0.5f, 0.75f};
+  for (float duty : duties) {
+    ChipOsc o;
+    int high = 0;
+    double sum = 0;
+    // DC-free pulse keeps the duty cycle; the longer shoulder is attenuated,
+    // the shorter one stays at full scale. A 50% square still has +/-1.
+    const float positive = duty <= 0.5f ? 1.f : (1.f - duty) / duty;
+    const float negative = duty >= 0.5f ? -1.f : -duty / (1.f - duty);
+    for (int i = 0; i < kSynthRate; ++i) {
+      const float v = o.next(Wave::Pulse, 1000.f / kSynthRate, duty);
+      TEST_ASSERT_FLOAT_WITHIN(1e-6f, v > 0 ? positive : negative, v);
+      TEST_ASSERT_TRUE(fabsf(v) <= 1.f);
+      if (v > 0) ++high;
+      sum += v;
+    }
+    TEST_ASSERT_INT_WITHIN(kSynthRate / 100, static_cast<int>(kSynthRate * duty), high);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.f, sum / kSynthRate);
   }
-  TEST_ASSERT_INT_WITHIN(kSynthRate / 100, kSynthRate / 4, high);
 }
 
 static int downCrossings(Wave w, float hz) {

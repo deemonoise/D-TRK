@@ -15,6 +15,7 @@
 #include "storage/crashlog.h"
 #include "storage/settings.h"
 #include "storage/storage.h"
+#include "storage/project_memory.h"
 #include "ui/app.h"
 
 static constexpr uint32_t kSynthWaitMs = 3000;  // boot: wait for the synth board at most this long
@@ -54,6 +55,7 @@ void setup() {
 #endif
   // Before anything else: the sequencer needs a large block of internal RAM (in PSRAM it costs
   // more); the link, the screen and Wi-Fi fragment it later.
+  if (!storage::reserveProjectMemory()) Serial.println("storage: project workspace allocation failed");
   net::prime();
   core_ram::reserve();
   void* uiMem = heap_caps_malloc(sizeof(ui::App), MALLOC_CAP_SPIRAM);

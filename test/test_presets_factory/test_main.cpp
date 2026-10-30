@@ -7,6 +7,8 @@
 #include "synth_fm_machines.h"
 #include "wt_builtin.h"
 #include <vector>
+#include <algorithm>
+#include <cstdlib>
 
 using namespace mt;
 
@@ -297,6 +299,59 @@ void test_every_preset_sounds() {
   }
 }
 
+// The slow amp attack used to hide the short string exciter; these pads must remain
+// audible at the browser's reference note without a special master/track gain.
+void test_string_pads_audible_at_reference_note() {
+  static Project p;
+  for (const char* name : {"BOWED", "DARKDRON", "SHIMMER"}) {
+    int preset = -1;
+    for (int i = 0; i < factoryCount(InstrType::String); ++i)
+      if (!strcmp(factoryPreset(InstrType::String, i).name, name)) preset = i;
+    TEST_ASSERT_TRUE_MESSAGE(preset >= 0, name);
+    p.reset();
+    p.tracks[0].vol = 127;
+    factoryBuild(InstrType::String, preset, p.instruments[0]);
+    Synth synth(p);
+    const uint8_t on[] = {0x90, 60, 127};
+    synth.event(0, 0, on, 3);
+    int peak = 0;
+    int16_t l[Synth::kBlock], r[Synth::kBlock];
+    for (int block = 0; block < 1034; ++block) {
+      synth.render(l, r);
+      for (int16_t x : l) peak = x > peak ? x : (-x > peak ? -x : peak);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(peak > 1600, name);  // peak above -26.3 dBFS
+    TEST_ASSERT_TRUE_MESSAGE(peak < 12000, name); // headroom for chords and sends
+  }
+}
+
+// The waveform, full synth envelope and master clipper must not reintroduce
+// a material offset in stock narrow-pulse leads.
+void test_chip_pulse_presets_have_no_material_dc() {
+  static Project p;
+  for (const char* name : {"THIN LD", "SQ LEAD"}) {
+    int preset = -1;
+    for (int i = 0; i < factoryCount(InstrType::Chip); ++i)
+      if (!strcmp(factoryPreset(InstrType::Chip, i).name, name)) preset = i;
+    TEST_ASSERT_TRUE_MESSAGE(preset >= 0, name);
+    p.reset();
+    p.tracks[0].vol = 127;
+    factoryBuild(InstrType::Chip, preset, p.instruments[0]);
+    Synth synth(p);
+    const uint8_t on[] = {0x90, 72, 127};
+    synth.event(0, 0, on, 3);
+    double dc = 0;
+    int samples = 0;
+    int16_t l[Synth::kBlock], r[Synth::kBlock];
+    for (int block = 0; block < 293; ++block) {
+      synth.render(l, r);
+      if (block < 52) continue;  // settled amp envelope, ~0.15..0.85 s
+      for (int16_t x : l) { dc += x; ++samples; }
+    }
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.005f, 0.f, dc / samples / 32768., name);
+  }
+}
+
 // Type 7 is a former type: no factory presets.
 void test_unused7_has_no_presets() { TEST_ASSERT_EQUAL(0, factoryCount(InstrType::Unused7)); }
 
@@ -391,8 +446,67 @@ void test_kit_lane_levels_reach_instruments() {
   }
 }
 
+// A transition should open in brightness and energy during a short Dice hold,
+// then sustain rather than turn back into a dark, decaying whoop.
+void test_risers_open_and_sustain_without_clipping() {
+  static Project p;
+  for (InstrType type : {InstrType::Synth, InstrType::Fm}) {
+    int index=-1;
+    for(int i=0;i<factoryCount(type);++i)
+      if(!strcmp(factoryPreset(type,i).name,"RISER"))index=i;
+    TEST_ASSERT_TRUE(index>=0);
+    p.reset();p.tracks[0].vol=127;
+    factoryBuild(type,index,p.instruments[0]);
+    p.instruments[0].send=p.instruments[0].rsend=0;
+    Synth synth(p);const uint8_t on[]={0x90,60,100};synth.event(0,0,on,3);
+    double energy[3]={},difference[3]={};int counts[3]={};
+    float previous=0;int peak=0;
+    int16_t l[Synth::kBlock],r[Synth::kBlock];
+    for(int block=0;block < (kSynthRate*4+Synth::kBlock-1)/Synth::kBlock;++block){
+      synth.render(l,r);
+      for(int i=0;i<Synth::kBlock;++i){
+        const int sample=block*Synth::kBlock+i;
+        const float x=l[i]/32768.f;
+        int window=sample>=kSynthRate/5 && sample<kSynthRate*2/5 ? 0 :
+                   sample>=kSynthRate*9/10 && sample<kSynthRate*11/10 ? 1 :
+                   sample>=kSynthRate*3 && sample<kSynthRate*4 ? 2 : -1;
+        if(window>=0){energy[window]+=x*x;difference[window]+=(x-previous)*(x-previous);++counts[window];}
+        previous=x;peak=std::max(peak,abs(static_cast<int>(l[i])));
+      }
+    }
+    const double early=energy[0]/counts[0],late=energy[1]/counts[1],held=energy[2]/counts[2];
+    const double brightEarly=difference[0]/(energy[0]+1e-20),brightLate=difference[1]/(energy[1]+1e-20);
+    printf("RISER %d early %.6f late %.6f held %.6f brightness %.5f -> %.5f peak %d\n",(int)type,early,late,held,brightEarly,brightLate,peak);
+    TEST_ASSERT_TRUE(late>early*1.5);
+    TEST_ASSERT_TRUE(brightLate>brightEarly*1.8);
+    TEST_ASSERT_TRUE(held>late*0.6);
+    TEST_ASSERT_TRUE(peak<16000);
+    // Dice often holds a riser for only ~1 second: it must be audible before release,
+    // then make room for the incoming downbeat rather than drone on indefinitely.
+    Synth shortGate(p);shortGate.event(0,0,on,3);
+    const uint8_t off[]={0x80,60,0};
+    double endEnergy=0,tailEnergy=0;int endCount=0,tailCount=0;
+    const int offBlock=kSynthRate/Synth::kBlock;
+    for(int block=0;block<kSynthRate*3/Synth::kBlock;++block){
+      if(block==offBlock)shortGate.event(0,0,off,3);
+      shortGate.render(l,r);
+      for(int i=0;i<Synth::kBlock;++i){
+        const int sample=block*Synth::kBlock+i;
+        const double x=l[i]/32768.0;
+        if(sample>=kSynthRate*4/5 && sample<kSynthRate){endEnergy+=x*x;++endCount;}
+        if(sample>=kSynthRate*2){tailEnergy+=x*x;++tailCount;}
+      }
+    }
+    TEST_ASSERT_TRUE(endEnergy/endCount>early*1.5);
+    TEST_ASSERT_TRUE(tailEnergy/tailCount<endEnergy/endCount*0.02);
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_risers_open_and_sustain_without_clipping);
+  RUN_TEST(test_string_pads_audible_at_reference_note);
+  RUN_TEST(test_chip_pulse_presets_have_no_material_dc);
   RUN_TEST(test_counts);
   RUN_TEST(test_drum2_presets);
   RUN_TEST(test_names_unique_and_short);

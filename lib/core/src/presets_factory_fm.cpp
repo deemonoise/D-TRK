@@ -275,10 +275,10 @@ constexpr FactoryPreset kTable[] = {
     {InstrType::Fm, "PAD", "STRNG FM", [](I& m) {  // string ensemble: saw zone, slow attack
        fm(m, FmMachine::Tone); mac(m, 64, 55, 38, 0, 64); env(m, 70, 90, 115, 85); lp(m, 90, 5, 0, 0);
        lfo1(m, LfoWave::Tri, LfoDest::Pitch, 60, 2); fx(m, 20, 70); m.vol = 82; }},
-    {InstrType::Fm, "FX", "RISER", [](I& m) {  // pitch and index climb over the held note
-       fm(m, FmMachine::Tone); mac(m, 64, 50, 40, 0, 64); env(m, 100, 90, 127, 80);
-       lfo1(m, LfoWave::Saw, LfoDest::Pitch, 10, 40); lfoN(m, 2, LfoWave::Saw, LfoDest::Col, 10, 40);
-       fx(m, 40, 70); m.vol = 72; }},
+    {InstrType::Fm, "FX", "RISER", [](I& m) {  // soft held tone revealed by one rising filter envelope
+       fm(m, FmMachine::Tone); mac(m, 64, 62, 30, 0, 64);
+       env(m, 92, 100, 127, 78); lp(m, 32, 10, 63, 0); m.fAtk = 100;
+       fx(m, 12, 55); m.vol = 65; }},
     {InstrType::Fm, "FX", "LASER", [](I& m) { fm(m, FmMachine::Perc); mac(m, 70, 90, 90, 127, 90); m.transpose = 12; m.vol = 72; fx(m, 40, 30); }},
 };
 

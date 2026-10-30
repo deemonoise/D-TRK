@@ -8,6 +8,9 @@
 #include <string.h>
 #include "app.h"
 #include "dice.h"
+#include "dice_library.h"
+#include "storage/dice_library_io.h"
+#include "storage/project_memory.h"
 #include "esp_heap_caps.h"
 #include "engine/engine.h"
 #include "fx_info.h"
@@ -31,8 +34,7 @@ int wrapi(int v, int n) { return ((v % n) + n) % n; }
 }  // namespace
 
 ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
-  diceDlg_.setHost({[this](const mt::DiceOpts& o) { roll(o); }, [this] { undoDice(); },
-                    [this] { return dice_ && dice_->layers != 0; }});
+  diceDlg_.setHost({[this](const mt::DiceOpts& o) { roll(o); }});
   params_[kBpm] = {"BPM", [this](char* o, int n) { snprintf(o, n, "%d", bpm()); }, [this](int d) { editBpm(d); }};
   params_[kRoot] = {"Scale root", [this](char* o, int n) { snprintf(o, n, "%s", kRootNames[app_.project().scaleRoot % 12]); },
                     [this](int d) { app_.project().scaleRoot = static_cast<uint8_t>(wrapi(app_.project().scaleRoot + d, 12)); }};
@@ -421,12 +423,7 @@ void ProjScreen::applyTuning() {
   app_.markDirty();
 }
 
-void ProjScreen::onProjectReplaced() {
-  if (dice_) {  // its undo (and a draft) belong to the old project
-    dice_->layers = 0;
-    dice_->drafted = 0;
-  }
-}
+void ProjScreen::onProjectReplaced() {}
 
 // The evolve drift is indexed by step: on steps a roll (or its undo) rewrote it would play over notes it
 // never saw. Holding lockProject(): cleared before the next plan.
@@ -458,44 +455,73 @@ void ProjScreen::afterDice(uint8_t layers) {
 }
 
 void ProjScreen::roll(const mt::DiceOpts& o) {
-  if (!dice_) {
-    void* m = heap_caps_malloc(sizeof(mt::DiceSnap), MALLOC_CAP_SPIRAM);
-    if (!m) {
-      app_.toast("NO MEMORY");
+  // The reserved workspace is leased only during generation and returned before engine messages.
+  const uint32_t seed = o.seed ? o.seed : esp_random() % 999999u + 1u;
+  mt::DiceResult r;
+  uint8_t applied = 0;
+  const bool wantMidi = (o.layers & mt::kDicePattern) && o.source != mt::DiceSource::Builtin;
+  bool fallback = false;
+  {
+    storage::DiceLibraryData bytes;
+    if (wantMidi) {
+      app_.showBusy("LOADING MIDI LIBRARY...");
+      if (!bytes.load(o.genre, seed)) {
+        if (o.source == mt::DiceSource::Midi) {
+          app_.toast(bytes.error());
+          app_.invalidate();
+          return;
+        }
+        fallback = true;
+      }
+    }
+    const mt::DicePhraseSource* source = wantMidi && bytes ? &bytes : nullptr;
+    struct DraftLease {
+      mt::DiceSnap* value;
+      DraftLease() {
+        void* memory = storage::allocateProjectMemory(sizeof(mt::DiceSnap));
+        value = memory ? new (memory) mt::DiceSnap() : nullptr;
+      }
+      ~DraftLease() {
+        if (value) { value->~DiceSnap(); storage::releaseProjectMemory(value); }
+      }
+    } lease;
+    mt::DiceSnap* dice = lease.value;
+    if (!dice) { app_.toast("NO MEMORY"); app_.invalidate(); return; }
+    mt::Project& p = app_.project();
+    // The generators work without the lock. A song slot's BPM may hold the live tempo: the
+    // draft reads the saved project BPM.
+    r =
+        mt::diceDraft(p, o, app_.editPattern(), seed, *dice, engine::projectBpm(p), source);
+    if (wantMidi && o.source == mt::DiceSource::Midi && !r.midiMask) {
+      app_.toast("NO MATCHING MIDI");
+      app_.invalidate();
       return;
     }
-    dice_ = new (m) mt::DiceSnap();
-  }
-  mt::Project& p = app_.project();
-  // The generators run without the lock (the UI is the only writer of what they read); the engine only
-  // waits for the swap.
-  // A song slot's BPM may hold the live tempo p.bpm: the roll reads and its undo keeps the project BPM.
-  const mt::DiceResult r = mt::diceDraft(p, o, app_.editPattern(), esp_random(), *dice_, engine::projectBpm(p));
-  engine::lockProject();
-  uint16_t pb = 0;
-  // o.layers as the roll took them (SONG only with PATTERN)
-  const uint8_t applied = mt::diceApply(p, *dice_, engine::savedBpm(pb) ? pb : 0);
-  evoClearTracks(dice_->patMask);
-  engine::unlockProject();
+    engine::lockProject();
+    uint16_t pb = 0;
+    applied = mt::diceApply(p, *dice, engine::savedBpm(pb) ? pb : 0);
+    evoClearTracks(dice->patMask);
+    engine::unlockProject();
+    if (!applied) {
+      app_.toast("DICE: NOTHING TO CHANGE");
+      app_.invalidate();
+      return;
+    }
+  } // both the draft and selected MIDI phrases are no longer retained
+  diceDlg_.usedSeed(seed);
   afterDice(applied);
   char msg[48];
-  snprintf(msg, sizeof(msg), "DICE %s %s %u %s %s", mt::diceGenreName(r.genre), mt::diceStyleName(r.genre, r.style),
-           static_cast<unsigned>(p.bpm), kRootNames[p.scaleRoot % 12],
-           mt::scaleName(static_cast<mt::ScaleType>(p.scaleType)));
+  if (wantMidi) {
+    unsigned roles = 0;
+    for (int k = 0; k < mt::kDiceRoles; ++k) roles += (r.midiMask >> k) & 1u;
+    snprintf(msg, sizeof(msg), "MIDI %u%s%s #%lu", roles,
+             fallback || r.missingMask ? " FALLBACK" : "", r.midiApproxMask ? " SIMPL" : "",
+             static_cast<unsigned long>(seed));
+  } else {
+    snprintf(msg, sizeof(msg), "DICE %s %s #%lu", mt::diceGenreName(r.genre),
+             mt::diceStyleName(r.genre, r.style), static_cast<unsigned long>(seed));
+  }
   app_.toast(msg);
-}
-
-void ProjScreen::undoDice() {
-  if (!dice_) return;
-  engine::lockProject();
-  const uint16_t rolled = dice_->patMask;  // diceUndo empties it
-  uint16_t pb = 0;
-  const uint8_t l = mt::diceUndo(app_.project(), *dice_, engine::savedBpm(pb) ? pb : 0);
-  if (l) evoClearTracks(rolled);
-  engine::unlockProject();
-  if (!l) return;
-  afterDice(l);
-  app_.toast("UNDO DICE");
 }
 
 // A + turn on the page bar: the previous / next page.

@@ -16,8 +16,8 @@ namespace ui {
 // length / resolution / swing apply to the heard pattern. Device settings and diagnostics are on
 // FILE > SYSTEM.
 // Header DICE (tap, or a long encoder press): the DICE window (DiceDialog: genre / style / variety /
-// scope / song, ROLL / UNDO; mt::diceDraft from the heard pattern outside the project lock, then
-// mt::diceApply under it; one undo step, PSRAM).
+// scope / song, ROLL; mt::diceDraft from the heard pattern outside the project lock, then
+// mt::diceApply under it; temporary shared workspace).
 class ProjScreen : public Screen {
  public:
   explicit ProjScreen(App& app);
@@ -72,10 +72,8 @@ class ProjScreen : public Screen {
 
   static constexpr int kDiceX0 = 384, kDiceX1 = 472;  // header DICE button
   void roll(const mt::DiceOpts& o);
-  void undoDice();
   static void evoClearTracks(uint16_t mask);  // holding lockProject()
-  void afterDice(uint8_t layers);  // engine messages for what a roll / its undo wrote
-  mt::DiceSnap* dice_ = nullptr;   // PSRAM, on the first roll; nullptr = never rolled
+  void afterDice(uint8_t layers);
   DiceDialog diceDlg_;
 
   // Tuning row: 0 = 12-TET, then the factory tunings, then the card's /presets/TUN files (listed at

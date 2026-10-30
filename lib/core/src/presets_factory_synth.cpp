@@ -276,10 +276,10 @@ constexpr FactoryPreset kTable[] = {
        two(m, SynOsc::Saw, SynOsc::Saw, 64, 76); lp(m, 70, 12, 30, 60); env(m, 0, 75, 0, 70); fx(m, 50, 80); m.vol = 68; }},
     {InstrType::Synth, "PLUCK", "DUBPLK", [](I& m) {  // dub echo pluck
        two(m, SynOsc::Tri, SynOsc::Saw, 25, 64); lp(m, 66, 20, 20, 50); env(m, 0, 65, 0, 55); fx(m, 100, 70); m.vol = 80; }},
-    {InstrType::Synth, "FX", "RISER", [](I& m) {  // noise + pitch rising over ~4 s
-       sy(m, SynOsc::Saw, nullptr, SynOsc::Saw, nullptr); m.synNoise = 90; m.macro[kMacMix] = 64; m.macro[kMacDet] = 80;
-       env(m, 60, 100, 120, 80); lp(m, 50, 40, 60, 115);
-       lfo1(m, LfoWave::Saw, LfoDest::Pitch, 4, 30); fx(m, 30, 70); m.vol = 60; }},
+    {InstrType::Synth, "FX", "RISER", [](I& m) {  // airy one-shot opening, no cycling pitch ramp
+       two(m, SynOsc::Tri, SynOsc::Tri, 0, 64); m.synNoise = 127;
+       env(m, 88, 100, 127, 78); lp(m, 35, 12, 63, 0); m.fAtk = 100;
+       fx(m, 12, 55); m.vol = 52; }},
     {InstrType::Synth, "FX", "NOISESWP", [](I& m) {
        sy(m, SynOsc::Tri, nullptr, SynOsc::Tri, nullptr); m.macro[kMacMix] = 0; m.synNoise = 127;
        env(m, 50, 90, 80, 90); bp(m, 70, 80); lfo1(m, LfoWave::Sine, LfoDest::Cutoff, 35, 45); m.vol = 70; fx(m, 30, 80); }},
