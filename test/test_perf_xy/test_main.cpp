@@ -19,7 +19,7 @@ static void assertSpans(PerfFx f, int len) {
     prev = d;
     seen[d + 128] = true;
   }
-  for (int d = r.lo; d <= r.hi; ++d) TEST_ASSERT_TRUE(seen[d + 128]);
+  for (int i = 0; i < perfDepthCount(f); ++i) TEST_ASSERT_TRUE(seen[perfDepthAt(f, i) + 128]);
 }
 
 void test_axis_spans_every_effect_on_both_pads() {
@@ -36,18 +36,18 @@ void test_axis_clamps_and_none() {
   TEST_ASSERT_EQUAL(2, perfAxisDepth(PerfFx::Crush, 100, 0));  // no pad: lo
 }
 
-// REPEAT 1/2..1/32: seven equal zones; the edge is the first pixel of the next value.
+// REPEAT 1/2..1/32: five equal zones; the edge is the first pixel of the next value.
 void test_axis_list_zones() {
   TEST_ASSERT_TRUE(perfAxisZoned(PerfFx::Repeat));
   TEST_ASSERT_TRUE(perfAxisZoned(PerfFx::Crush));
   TEST_ASSERT_FALSE(perfAxisZoned(PerfFx::Filter));
   TEST_ASSERT_FALSE(perfAxisZoned(PerfFx::None));
-  for (int i = 1; i <= 6; ++i) {
+  for (int i = 1; i < perfDepthCount(PerfFx::Repeat); ++i) {
     const int e = perfAxisEdge(PerfFx::Repeat, i, 480);
-    TEST_ASSERT_EQUAL(i - 1, perfAxisDepth(PerfFx::Repeat, e - 1, 480));
-    TEST_ASSERT_EQUAL(i, perfAxisDepth(PerfFx::Repeat, e, 480));
+    TEST_ASSERT_EQUAL(perfDepthAt(PerfFx::Repeat, i - 1), perfAxisDepth(PerfFx::Repeat, e - 1, 480));
+    TEST_ASSERT_EQUAL(perfDepthAt(PerfFx::Repeat, i), perfAxisDepth(PerfFx::Repeat, e, 480));
   }
-  TEST_ASSERT_EQUAL(69, perfAxisEdge(PerfFx::Repeat, 1, 480));
+  TEST_ASSERT_EQUAL(96, perfAxisEdge(PerfFx::Repeat, 1, 480));
 }
 
 // FILTER: LP on the low side, OFF in a dead zone of len / 8 round the middle, HP on the high side.

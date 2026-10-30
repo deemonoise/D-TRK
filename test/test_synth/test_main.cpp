@@ -4049,7 +4049,7 @@ void test_perf_repeat_loops_a_sixteenth() {
   s->setPerfBuffer(perfBuf, 32000);
   noteOn(0, 0, 48);
   noteOn(0, 1, 55);  // two notes: the dry mix is far from kSix-periodic
-  renderMs(40);
+  renderMs(300);  // punch-in freezes a complete prior slice; prime more than one sixteenth
   send(0, kPreviewTrack, 0xF6, 0, static_cast<uint8_t>(PerfFx::Repeat));
   constexpr int kBlocks = (11000 + kSix) / Synth::kBlock + 1;
   static int16_t o[Synth::kBlock * kBlocks];

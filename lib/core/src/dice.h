@@ -46,10 +46,12 @@ enum class DiceSource : uint8_t { Builtin, Midi, Hybrid };
 
 enum class DiceForm : uint8_t { Classic, Develop };
 enum class DiceChange : uint8_t { Subtle, Normal, Wild };
+enum class DiceDensity : uint8_t { Sparse, Normal, Busy };
 
 struct DiceOpts {
   DiceForm form = DiceForm::Develop;
   DiceChange change = DiceChange::Wild;
+  DiceDensity density = DiceDensity::Normal;  // WILD pattern rolls only; independent of Variety
   uint8_t targetMask = 0x3f;
   uint8_t groove = 35;
   DiceSource source = DiceSource::Builtin;

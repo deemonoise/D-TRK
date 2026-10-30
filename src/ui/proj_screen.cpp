@@ -237,8 +237,7 @@ ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
                                    },
                                    [this, b](int d) {
                                      mt::Project& p = app_.project();
-                                     const mt::PerfRange r = mt::perfRange(static_cast<mt::PerfFx>(p.perfMap[b]));
-                                     p.perfDepth[b] = static_cast<int8_t>(clampi(p.perfDepth[b] + d, r.lo, r.hi));
+                                     p.perfDepth[b] = static_cast<int8_t>(mt::perfDepthStep(static_cast<mt::PerfFx>(p.perfMap[b]), p.perfDepth[b], d));
                                    },
                                    [this, b] { return app_.project().perfMap[b] == 0; }};
   }

@@ -66,10 +66,10 @@ class PerfBus {
   // ring. REPEAT / ROLL / REVERSE run at speed +-1 from an integer frame, so their reads are exact;
   // the interpolation matters for SCRATCH and TAPE STOP. Looping heads count left down by one per
   // sample and seam at left <= 0; the overshoot (-left, 0..1) shortens the next loop, so lengths
-  // alternate between floor and ceil and keep their fractional average (1/16T at 1000 samples per
-  // step: 667, 667, 666, ...). fx None = live input. No head reads at or past the writer.
+  // alternate between floor and ceil and keep their fractional average at fractional tempos. fx None = live input. No head reads at or past the writer.
   struct Head {
     PerfFx fx = PerfFx::None;
+    uint32_t end = 0;    // REPEAT: frozen window end; retained when changing its size
     uint32_t base = 0;   // ring frame of off 0: REPEAT / ROLL loop start, else the press point
     float off = 0;       // read position, frames from base (REVERSE / SCRATCH: <= 0)
     float speed = 1;     // frames per sample: REPEAT / ROLL 1, REVERSE -1, TAPE STOP 1 -> 0
@@ -79,8 +79,8 @@ class PerfBus {
     int loops = 0;       // ROLL: loops since the last halving
     int32_t prot = 0;    // lowest frame read, from base: the writer must not come round onto it
     uint32_t avail = 0;  // REVERSE / SCRATCH: frames recorded without a pause behind base at press
-    // SCRATCH: off = amp x (s - 1), (c, s) = (cos, sin) of the phase rotated by (rc, rs)
-    float amp = 0, period = 0, c = 1, s = 0, rc = 1, rs = 0;
+    // SCRATCH: quick backward stroke, slower return; cubic motion and a short crossfader dip.
+    float amp = 0, period = 0, phase = 0, phaseInc = 0;
     // TAPE STOP: speed = v0 - u x dec, set exactly once per block and stepped by dec inside it
     // (u samples since the last slope change: a turn keeps the current speed, new slope); gain
     // fades the output once stopped.
@@ -95,9 +95,10 @@ class PerfBus {
   void switchHead(PerfFx want, uint32_t w0, int n, double grid0, float samplesPerStep,
                   bool running);
   // REVERSE / SCRATCH need this many frames recorded behind the press point to start.
-  bool canCapture(PerfFx f, int n, float samplesPerStep) const;
+  bool canCapture(PerfFx f, int n, float samplesPerStep, double grid) const;
   float loopLen(float steps, float samplesPerStep) const;  // frames, clipped behind the writer
   uint32_t intact(const Head& h, uint32_t wEnd) const;     // recorded frames behind base
+  void repeatWindow(Head& h, float over, float samplesPerStep) const;
   void reverseWindow(Head& h, float over, float samplesPerStep, uint32_t wEnd) const;
   void scratchPeriod(Head& h, float over, float samplesPerStep, uint32_t wEnd) const;
   void seam(Head& h, Head& out, int& xf, float samplesPerStep) const;
@@ -118,7 +119,7 @@ class PerfBus {
   float gateGain_ = 1, gateLen_ = 1;  // gain 0..1, length in steps
   Svf filtL_, filtR_;
   int8_t filtSign_ = 0;               // -1 LP, 1 HP, 0 reset (the state belongs to that mode)
-  float crushStep_ = 0.125f;          // quantizer step on +-1 (6 bits)
+  float crushStep_ = 0.03125f;          // quantizer step on +-1 (6 bits)
   int downHold_ = 4, downLeft_ = 0;   // samples per held sample, samples until the next one
   float downL_ = 0, downR_ = 0;
   Drive drive_;

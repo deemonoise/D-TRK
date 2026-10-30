@@ -1386,6 +1386,96 @@ void musicalDraft(const Project& original, DiceParts& d, DiceSnap& snap, const D
   }
 }
 
+// Density changes event count, independently of Variety's musical choices. The NORMAL path
+// leaves every byte and RNG draw untouched. Only WILD pattern rolls use this extra pass.
+void densityDraft(const Project& original, DiceParts& d, DiceSnap& snap,
+                  const DiceOpts& opts, uint32_t seed) {
+  if (opts.change != DiceChange::Wild || opts.density == DiceDensity::Normal ||
+      static_cast<uint8_t>(opts.density) > static_cast<uint8_t>(DiceDensity::Busy)) return;
+  int8_t lanes[kDiceLanes];
+  kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, lanes);
+  uint16_t anchors = 0;
+  for (int lane : {kDiceKick, kDiceSnare, kDiceClap})
+    if (lanes[lane] >= 0) anchors |= 1u << lanes[lane];
+  const int ghostLane = lanes[kDiceHat] >= 0 ? lanes[kDiceHat] : lanes[kDicePerc];
+  for (int pat = 0; pat < kDicePats; ++pat) {
+    DicePat& dp = d.pats[pat];
+    const int len = dp.length, q = ticksPerStep(dp.res);
+    for (int role : {0, 1, 3, 4}) {
+      const uint8_t bit = static_cast<uint8_t>(1u << role);
+      if (!(snap.patMask & opts.targetMask & bit) || (opts.lockMask & bit)) continue;
+      Step* row = dp.steps[role];
+      memcpy(snap.work.midiSteps, row, sizeof(snap.work.midiSteps));
+      const Step* source = snap.work.midiSteps;
+      int count = 0;
+      for (int i = 0; i < len; ++i) count += source[i].hasNote();
+      if (!count) continue;  // an intentional absent part remains absent
+      if (opts.density == DiceDensity::Sparse) {
+        for (int i = 0; i < len && count > 1; ++i) {
+          const Step& note = source[i];
+          if (!note.hasNote() || note.find(Fx::CHD) || (i * q) % kPpqn == 0 ||
+              (role == 0 && (laneMask(note) & anchors))) continue;
+          // The same thinning contour across the band produces space rather than independent jitter.
+          Rng choice(seed ^ (0x85EBCA6Bu * (pat + 1)) ^ (0x9E3779B9u * (i + 1)));
+          if (choice.below(100) >= 55) continue;
+          row[i] = Step();
+          --count;
+        }
+        continue;
+      }
+      if (role == 0 && ghostLane < 0) continue;
+      int budget = std::max(1, len / (role == 0 ? 8 : 16));
+      if (opts.form == DiceForm::Develop && opts.targetMask == 0x3f && pat == 0)
+        budget = std::max(1, budget / 2);
+      const int phase = role == 1 ? 2 : role == 4 ? 1 : 3;
+      const Step* chords = opts.lockMask & 4 ? original.patterns[snap.first + pat].steps[2] : dp.steps[2];
+      Rng start(seed ^ (0x27D4EB2Du * (pat + 1)) ^ (0x165667B1u * (role + 1)));
+      const int from = start.below(len);
+      for (int offset = 0; offset < len && budget; ++offset) {
+        const int at = (from + offset) % len;
+        if (!source[at].isEmpty() || (at * q * 4 / kPpqn) % 4 != phase) continue;
+        int previous = -1, distance = 0;
+        bool released = false;
+        for (int back = 1; back < len; ++back) {
+          const int pos = (at + len - back) % len;
+          const Step& prior = source[pos];
+          const FxSlot* off = prior.find(Fx::OFF);
+          if (prior.note == kNoteOff || (off && off->val <= back * q)) released = true;
+          if (prior.hasNote()) { previous = pos; distance = back; break; }
+        }
+        if (previous < 0) continue;
+        const Step& note = source[previous];
+        const FxSlot* gate = note.find(Fx::GAT);
+        const FxSlot* delay = note.find(Fx::NDG);
+        const int duration = gatePercent(gate ? gate->val : d.tracks[role].defGate);
+        // Inserting a note inside a held gate would retrigger/choke it. Respect the loop boundary too.
+        if (!released && (note.find(Fx::TIE) ||
+            duration + (delay ? static_cast<int8_t>(delay->val) : 0) > distance * 100)) continue;
+        Step added;
+        if (role == 0) {
+          added.note = static_cast<uint8_t>(std::min(64, std::max(1, effVel(note.note) / 2)));
+          setLaneMask(added, 1u << ghostLane);
+        } else {
+          added.note = note.note;
+          added.vel = static_cast<uint8_t>(std::min(72, std::max(1, effVel(note.vel) * 3 / 5)));
+          const Step* chord = nullptr;
+          for (int j = 0; j < len; ++j) if (chords[j].hasNote()) chord = &chords[j];
+          for (int j = 0; j <= at; ++j) if (chords[j].hasNote()) chord = &chords[j];
+          if (chord) {
+            const auto* fx = chord->find(Fx::CHD);
+            const ChordSeg seg{chord->note, static_cast<uint8_t>(fx ? fx->val : kChordTriad), 0, dp.length};
+            added.note = static_cast<uint8_t>(chordTone(added.note, seg, d.scaleRoot,
+                                                       static_cast<ScaleType>(d.scaleType)));
+          }
+        }
+        putFx(added, Fx::GAT, gateValue(25));
+        row[at] = added;
+        --budget;
+      }
+    }
+  }
+}
+
 uint8_t envAtMostMs(uint8_t current, int milliseconds) {
   while (current && envTimeMs(current) > milliseconds) --current;
   return current;
@@ -1651,6 +1741,7 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int editPattern, u
     fillPatternGaps(c, d, s, p, o);
     musicalDraft(p, d, s, o, seed, res.midiMask);
     diceVaryDraft(p, o, seed, s);
+    densityDraft(p, d, s, o, seed);
     if (layers & kDiceSounds) fitPhraseSounds(d, s);
   }
   if (layers & kDiceSong) rollSong(d, first, o.form);

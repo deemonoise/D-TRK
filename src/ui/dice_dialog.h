@@ -41,7 +41,7 @@ class DiceDialog {
 
  private:
   enum Row : int {
-    kGenre, kStyle, kTarget, kChange, kForm, kFeel, kVariety, kLength, kScope, kSong, kSource, kClean, kSeedMode, kSeed,
+    kGenre, kStyle, kTarget, kChange, kForm, kFeel, kDensity, kVariety, kLength, kScope, kSong, kSource, kClean, kSeedMode, kSeed,
     kLockDrums, kLockBass, kLockChords, kLockLead, kLockArp, kLockFx,
     kRoll, kClose, kRows
   };
@@ -49,11 +49,11 @@ class DiceDialog {
   struct Prefs {
     uint8_t genre = 0, style = 0, variety = mt::kDiceVarietyDefault, scope = kScAll, song = 1;
     uint8_t len = 0;  // index into kLens: 0 = AUTO
-    uint8_t target = 0, change = 2, form = 1, feel = 35;
+    uint8_t target = 0, change = 2, form = 1, feel = 35, density = 1;
     uint8_t source = 0, clean = 1, fixedSeed = 0, locks = 0;
     uint32_t seed = 1;
     bool operator!=(const Prefs& o) const {
-      return target != o.target || change != o.change || form != o.form || feel != o.feel || genre != o.genre || style != o.style || variety != o.variety || scope != o.scope || song != o.song ||
+      return density != o.density || target != o.target || change != o.change || form != o.form || feel != o.feel || genre != o.genre || style != o.style || variety != o.variety || scope != o.scope || song != o.song ||
              len != o.len || source != o.source || clean != o.clean || fixedSeed != o.fixedSeed ||
              locks != o.locks || seed != o.seed;
     }

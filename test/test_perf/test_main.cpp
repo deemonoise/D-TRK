@@ -343,8 +343,8 @@ void test_bus_filter_hp_cuts_lows() {
   TEST_ASSERT_TRUE(lossDb() > 20.f);
 }
 
-float crush2(float x) {  // the 2-bit wet value: round(x / 4) x 4
-  return x < -2.f ? -4.f : (x < 2.f ? 0.f : 4.f);
+float crush2(float x) {  // signed mid-tread quantizer, two bits over the PERF headroom range
+  return floorf(x * 0.5f + 0.5f) * 2.f;
 }
 
 void test_bus_crush_quantizes() {
@@ -356,8 +356,9 @@ void test_bus_crush_quantizes() {
   run(b);
   bool seen[3] = {};
   for (int i = PerfBus::kXfade; i < kN; ++i) {
-    TEST_ASSERT_TRUE(outL[i] == -4.f || outL[i] == 0.f || outL[i] == 4.f);
-    TEST_ASSERT_TRUE(outR[i] == -4.f || outR[i] == 0.f || outR[i] == 4.f);
+    TEST_ASSERT_EQUAL_FLOAT(outL[i], floorf(outL[i] * .5f) * 2.f);
+    TEST_ASSERT_EQUAL_FLOAT(outR[i], floorf(outR[i] * .5f) * 2.f);
+    TEST_ASSERT_TRUE(fabsf(outL[i]) <= 4.f && fabsf(outR[i]) <= 4.f);
     seen[outL[i] < 0 ? 0 : (outL[i] == 0 ? 1 : 2)] = true;
   }
   TEST_ASSERT_TRUE(seen[0] && seen[1] && seen[2]);
@@ -632,8 +633,8 @@ void test_repeat_loops_the_last_step() {
   for (int t = 3500 + PerfBus::kXfade; t < 7500; ++t) {
     const int k = (t - 3500) % 1000;
     if (t >= 4500 && k < PerfBus::kXfade) continue;  // seam crossfades
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[3000 + k], outL[t]);
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inR[3000 + k], outR[t]);
+    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[2000 + k], outL[t]);
+    TEST_ASSERT_FLOAT_WITHIN(kQ, inR[2000 + k], outR[t]);
   }
   int at[8];
   TEST_ASSERT_EQUAL(3, seams(3500, 7500, at, 8));
@@ -660,14 +661,14 @@ void test_repeat_length_change_at_next_loop() {
   run100(b, 0, 3500);
   b.press(PerfFx::Repeat);
   run100(b, 3500, 3800);
-  b.turn(-2);  // 1/16 -> 1/8: the current loop still ends at 1000
+  b.turn(-1);  // 1/16 -> 1/8: the current loop still ends at 1000
   run100(b, 3800, 8100);
   int at[8];
   TEST_ASSERT_EQUAL(2, seams(3500, 8100, at, 8));
   TEST_ASSERT_EQUAL(4500, at[0]);
   TEST_ASSERT_EQUAL(6500, at[1]);
   for (int t = 6500 + PerfBus::kXfade; t < 8100; ++t)  // the next loop: 2 steps from 3000
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[3000 + t - 6500], outL[t]);
+    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[1000 + t - 6500], outL[t]);
 }
 
 void test_roll_halves() {
@@ -682,7 +683,7 @@ void test_roll_halves() {
   int at[16];
   TEST_ASSERT_EQUAL(7, seams(3500, 8100, at, 16));
   for (int i = 0; i < 7; ++i) TEST_ASSERT_EQUAL(want[i], at[i]);
-  TEST_ASSERT_FLOAT_WITHIN(kQ, inL[3000 + 100], outL[7750 + 100]);  // still from the step start
+  TEST_ASSERT_FLOAT_WITHIN(kQ, inL[1000 + 100], outL[7750 + 100]);  // still from the step start
 }
 
 void test_buffer_release_returns_live() {
@@ -711,27 +712,18 @@ void test_repeat_hold_longer_than_the_ring() {
   for (int t = 7600; t < kN; ++t) {
     const int k = (t - 3500) % 1000;
     if (k < PerfBus::kXfade) continue;
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[3000 + k], outL[t]);
+    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[2000 + k], outL[t]);
   }
 }
 
-void test_repeat_triplet_lengths_average() {
-  ramp();
-  PerfBus& b = freshBus();
-  run100(b, 0, 3500);
-  b.press(PerfFx::Repeat);
-  b.turn(1);  // 1/16T = 2/3 step = 666.67 samples
-  run100(b, 3500, kN);
-  int at[16];
-  const int k = seams(3500, kN, at, 16);
-  TEST_ASSERT_TRUE(k >= 6);
-  TEST_ASSERT_EQUAL(3500 + 667, at[0]);  // ceil of the first 666.67
-  for (int i = 1; i < k; ++i) {
-    const int len = at[i] - at[i - 1];
-    TEST_ASSERT_TRUE(len == 666 || len == 667);
-  }
-  TEST_ASSERT_EQUAL(2000, at[3] - at[0]);  // three loops: 2000 exactly
-  TEST_ASSERT_FLOAT_WITHIN(1.f, 666.67f * (k - 1), static_cast<float>(at[k - 1] - at[0]));
+void test_repeat_straight_fractional_tempo_lengths_average() {
+  ramp();PerfBus& b=freshBus();
+  const float sps=1000.5f;
+  run100(b,0,3500,sps);b.press(PerfFx::Repeat);b.turn(1); // 1/32 = half step
+  run100(b,3500,kN,sps);int at[16];const int count=seams(3500,kN,at,16);
+  TEST_ASSERT_TRUE(count>=6);
+  for(int i=1;i<count;++i)TEST_ASSERT_TRUE(at[i]-at[i-1]==500 || at[i]-at[i-1]==501);
+  TEST_ASSERT_FLOAT_WITHIN(1.f,500.25f*(count-1),static_cast<float>(at[count-1]-at[0]));
 }
 
 void test_roll_default_n2() {
@@ -746,7 +738,7 @@ void test_roll_default_n2() {
   int at[64];
   TEST_ASSERT_TRUE(seams(1750, kN, at, 64) >= 9);
   for (int i = 0; i < 9; ++i) TEST_ASSERT_EQUAL(want[i], at[i]);
-  TEST_ASSERT_FLOAT_WITHIN(kQ, inL[1500 + 100], outL[5375 + 100]);
+  TEST_ASSERT_FLOAT_WITHIN(kQ, inL[500 + 100], outL[5375 + 100]);
 }
 
 void test_capture_after_parked_writer_is_fresh() {
@@ -760,8 +752,8 @@ void test_capture_after_parked_writer_is_fresh() {
   b.press(PerfFx::Roll);  // grid at 7.5 steps: the step start (7000) was never recorded
   run100(b, 7500, kN);
   for (int t = 7500 + PerfBus::kXfade; t < kN; ++t) {  // 2000-sample loop from the press point
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[t], outL[t]);
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inR[t], outR[t]);
+    TEST_ASSERT_TRUE(outL[t]>=inL[7500]-kQ && outL[t]<=inL[t]+kQ);
+    TEST_ASSERT_TRUE(outR[t]<=inR[7500]+kQ && outR[t]>=inR[t]-kQ);
   }
 }
 
@@ -774,7 +766,7 @@ void test_repeat_paused_starts_at_press() {
   for (int t = 3500 + PerfBus::kXfade; t < 6000; ++t) {
     const int k = (t - 3500) % 1000;
     if (t >= 4500 && k < PerfBus::kXfade) continue;
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[3500 + k], outL[t]);
+    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[2500 + k], outL[t]);
   }
 }
 
@@ -821,27 +813,17 @@ void test_reverse_reads_backwards() {
 }
 
 void test_scratch_stays_in_the_past() {
-  ramp();
-  PerfBus& b = freshBus();
-  run100(b, 0, 3500);
-  b.press(PerfFx::Scratch);  // 1/8: T = 2000, A = T / pi, around frame 3498
-  run100(b, 3500, kN);
-  const float a = 2000.f / 3.14159265f;
-  auto at = [](float i) { return i / kN * 6.f - 3.f; };
-  const float tol = 3.f * 6.f / kN;  // 3 frames of the ramp
-  bool differs = false;
-  for (int t = 3500; t < kN; ++t) {
+  ramp();PerfBus& b=freshBus();run100(b,0,3500);b.press(PerfFx::Scratch);run100(b,3500,kN);
+  auto at=[](float i){return i/kN*6.f-3.f;};const float tol=4.f*kQ;
+  for(int t=3500+PerfBus::kXfade;t<kN;++t){
     TEST_ASSERT_TRUE(isfinite(outL[t]) && isfinite(outR[t]));
-    if (t < 3500 + PerfBus::kXfade) continue;
-    TEST_ASSERT_TRUE(outL[t] <= at(3498.f) + kQ);  // never at or past the writer (frame t)
-    TEST_ASSERT_TRUE(outL[t] >= at(3498.f - 2.f * a - 1.f) - kQ);
-    differs = differs || fabsf(outL[t] - inL[t]) > 0.01f;
+    TEST_ASSERT_TRUE(outL[t]<=0.f && outL[t]>=at(3498.f-1501.f)-kQ);
+    TEST_ASSERT_FLOAT_WITHIN(kQ,-outL[t],outR[t]);
   }
-  TEST_ASSERT_TRUE(differs);
-  for (int p = 0; p < 2; ++p) {  // the swing: top at T/4, bottom at 3T/4, every period
-    TEST_ASSERT_FLOAT_WITHIN(tol, at(3498.f), outL[3500 + 500 + 2000 * p]);
-    TEST_ASSERT_FLOAT_WITHIN(tol, at(3498.f - 2.f * a), outL[3500 + 1500 + 2000 * p]);
-    TEST_ASSERT_FLOAT_WITHIN(tol, at(3498.f - a), outL[3500 + 2000 + 2000 * p]);
+  // Halfway through either stroke reads the same past position, at unequal times.
+  for(int period=0;period<2;++period){
+    TEST_ASSERT_FLOAT_WITHIN(tol,at(3498.f-750.f),outL[3500+250+2000*period]);
+    TEST_ASSERT_FLOAT_WITHIN(tol,at(3498.f-750.f),outL[3500+1250+2000*period]);
   }
 }
 
@@ -886,7 +868,7 @@ void test_two_buffer_fx_last_wins_and_returns() {
   for (int k = PerfBus::kXfade; k < 2000; ++k) {
     const int j = k % 1000;
     if (k >= 1000 && j < PerfBus::kXfade) continue;
-    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[5000 + j], outL[5500 + k]);
+    TEST_ASSERT_FLOAT_WITHIN(kQ, inL[4000 + j], outL[5500 + k]);
   }
 }
 
@@ -941,26 +923,15 @@ void test_reverse_turn_applies_at_the_seam() {
 }
 
 void test_scratch_hold_longer_than_the_ring() {
-  ramp();
-  PerfBus b;
-  b.setBuffer(ring, 4096);  // the writer comes round to the swing after ~3400 samples
-  b.transportStart();
-  const float sps = 500.f;
-  run100(b, 0, 3500, sps);
-  b.press(PerfFx::Scratch);  // 1/8 = 2 steps: T = 1000, A = T / pi
-  run100(b, 3500, kN, sps);
-  const float a = 1000.f / 3.14159265f;
-  auto at = [](float i) { return i / kN * 6.f - 3.f; };
-  const float tol = 3.f * 6.f / kN;
-  for (int t = 3500 + PerfBus::kXfade; t < kN; ++t) {
-    TEST_ASSERT_TRUE(outL[t] <= at(3498.f) + kQ);
-    TEST_ASSERT_TRUE(outL[t] >= at(3498.f - 2.f * a - 1.f) - kQ);
+  ramp();PerfBus b;b.setBuffer(ring,4096);b.transportStart();
+  run100(b,0,3500,500.f);b.press(PerfFx::Scratch);run100(b,3500,kN,500.f);
+  auto at=[](float i){return i/kN*6.f-3.f;};
+  for(int t=3500+PerfBus::kXfade;t<kN;++t){
+    TEST_ASSERT_TRUE(outL[t]<=0.f && outL[t]>=at(3498.f-751.f)-kQ);
+    TEST_ASSERT_FLOAT_WITHIN(kQ,-outL[t],outR[t]);
   }
-  for (int p = 3; p < 5; ++p) {  // periods after the writer came round
-    TEST_ASSERT_FLOAT_WITHIN(tol, at(3498.f), outL[3500 + 250 + 1000 * p]);
-    if (3500 + 750 + 1000 * p < kN)
-      TEST_ASSERT_FLOAT_WITHIN(tol, at(3498.f - 2.f * a), outL[3500 + 750 + 1000 * p]);
-  }
+  for(int period=3;period<5;++period)
+    TEST_ASSERT_FLOAT_WITHIN(4.f*kQ,at(3498.f-375.f),outL[3500+125+1000*period]);
 }
 
 // First sample from which the output stays exactly 0 (-1: never).
@@ -1139,7 +1110,7 @@ int main() {
   RUN_TEST(test_roll_halves);
   RUN_TEST(test_buffer_release_returns_live);
   RUN_TEST(test_repeat_hold_longer_than_the_ring);
-  RUN_TEST(test_repeat_triplet_lengths_average);
+  RUN_TEST(test_repeat_straight_fractional_tempo_lengths_average);
   RUN_TEST(test_roll_default_n2);
   RUN_TEST(test_capture_after_parked_writer_is_fresh);
   RUN_TEST(test_repeat_paused_starts_at_press);

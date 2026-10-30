@@ -51,6 +51,9 @@ DiceDialog::DiceDialog(App& app) : app_(app) {
     [this](int d){pr_.form=d>0;},[this]{return !patterns() || pr_.target || pr_.change!=2;}};
   params_[kFeel]={"Feel",[this](char* o,int n){snprintf(o,n,"%u",pr_.feel);},
     [this](int d){pr_.feel=clampi(pr_.feel+d,0,100);},[this]{return !patterns() || pr_.change!=2;}};
+  static const char* const densities[]={"SPARSE","NORMAL","BUSY"};
+  params_[kDensity]={"Density",[this](char* o,int n){snprintf(o,n,"%s",densities[pr_.density]);},
+    [this](int d){pr_.density=clampi(pr_.density+d,0,2);},[this]{return !patterns() || pr_.change!=2;}};
   params_[kVariety] = {"Variety", [this](char* o, int n) { snprintf(o, n, "%u", static_cast<unsigned>(pr_.variety)); },
                        [this](int d) { pr_.variety = static_cast<uint8_t>(clampi(pr_.variety + d, 0, 100)); }};
   params_[kLength] = {"Length",
@@ -113,6 +116,7 @@ void DiceDialog::clampPrefs() {
   if(pr_.change>2)pr_.change=2;
   pr_.form=pr_.form?1:0;
   if(pr_.feel>100)pr_.feel=35;
+  if(pr_.density>2)pr_.density=1;
   if (pr_.seed < 1 || pr_.seed > kSeedMax) pr_.seed = 1;
 }
 
@@ -138,6 +142,7 @@ void DiceDialog::loadPrefs() {
   pr_.change=storage::loadSetting("dicechange",d.change);
   pr_.form=storage::loadSetting("diceform",d.form);
   pr_.feel=storage::loadSetting("dicefeel",d.feel);
+  pr_.density=storage::loadSetting("dicedensity",d.density);
   clampPrefs();
   saved_ = pr_;
 }
@@ -163,6 +168,7 @@ void DiceDialog::savePrefs() {
   if(pr_.change!=saved_.change)storage::saveSetting("dicechange",pr_.change);
   if(pr_.form!=saved_.form)storage::saveSetting("diceform",pr_.form);
   if(pr_.feel!=saved_.feel)storage::saveSetting("dicefeel",pr_.feel);
+  if(pr_.density!=saved_.density)storage::saveSetting("dicedensity",pr_.density);
   saved_ = pr_;
 }
 
@@ -217,6 +223,7 @@ void DiceDialog::rollNow(int first) {
   o.change=patterns()?static_cast<mt::DiceChange>(pr_.change):mt::DiceChange::Wild;
   o.form=static_cast<mt::DiceForm>(pr_.form);
   o.groove=pr_.feel;
+  o.density=static_cast<mt::DiceDensity>(pr_.density);
   o.genre = pr_.genre;
   o.style = pr_.style;
   o.variety = pr_.variety;

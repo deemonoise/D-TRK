@@ -2317,6 +2317,21 @@ void test_prf2_depths_clamped() {
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(-64), out.buf[pos + 8 + kPerfButtons + 2]);
 }
 
+// Stable raw PRF2 IDs keep every existing straight Repeat/Gate period across save/load.
+void test_perf_straight_sizes_roundtrip_without_reindexing() {
+  const uint8_t repeat[]={0,1,2,4,6}, gate[]={0,1,3,5};
+  for (int i=0;i<5;++i) {
+    a.reset();
+    a.perfMap[0]=pf(PerfFx::Repeat);a.perfDepth[0]=repeat[i];
+    a.perfMap[1]=pf(PerfFx::Gate);a.perfDepth[1]=gate[i%4];
+    VecSink out;TEST_ASSERT_TRUE(saveProject(a,out));
+    TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok),static_cast<int>(loadBytes(out.buf)));
+    TEST_ASSERT_EQUAL(repeat[i],b.perfDepth[0]);TEST_ASSERT_EQUAL(gate[i%4],b.perfDepth[1]);
+    TEST_ASSERT_EQUAL_FLOAT(perfRepeatSteps(repeat[i]),perfRepeatSteps(b.perfDepth[0]));
+    TEST_ASSERT_EQUAL_FLOAT(perfGateSteps(gate[i%4]),perfGateSteps(b.perfDepth[1]));
+  }
+}
+
 // AUDI byte 13 (the old DJ filter) is ignored on load and written neutral (64).
 void test_audi_dj_byte_ignored() {
   std::vector<uint8_t> f = fileHeader();
@@ -3407,6 +3422,7 @@ int main() {
   RUN_TEST(test_prf2_wins_over_prfm);
   RUN_TEST(test_pxy_chunk);
   RUN_TEST(test_prf2_depths_clamped);
+  RUN_TEST(test_perf_straight_sizes_roundtrip_without_reindexing);
   RUN_TEST(test_new_project_perf_depths);
   RUN_TEST(test_new_project_perf_xy);
   RUN_TEST(test_audi_dj_byte_ignored);

@@ -109,9 +109,8 @@ bool PerfPad::hold(int h, int n) {
   stack_.press(f);
   if (!audio::perf(0, fx)) lost_ = true;
   // The button's start value (PROJ -> PERF): a turn in the same audio block, so the default never sounds.
-  const mt::PerfRange r = mt::perfRange(f);
-  const int start = clampi(app_.project().perfDepth[n], r.lo, r.hi);
-  const int d = clampi(start - stack_.depth(f), -128, 127);
+  const int start = mt::perfDepthNormalize(f, app_.project().perfDepth[n]);
+  const int d = mt::perfDepthDelta(f, stack_.depth(f), start);
   if (d != 0) {
     stack_.turn(d);
     if (!audio::perf(2, static_cast<uint8_t>(static_cast<int8_t>(d)))) lost_ = true;

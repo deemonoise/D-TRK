@@ -417,12 +417,12 @@ PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row me
 
 | Effect | What it does | Encoder | Default |
 |--------|--------------|---------|---------|
-| REPEAT | loops the mix from the last grid step boundary | 1/2, 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 — applies at the next loop | 1/16 |
-| ROLL | a repeat from 1/8, the loop halves every N loops down to 1/64 | N = 1…4 | 2 |
+| REPEAT | immediately loops an already recorded slice ending at the last step boundary; size changes at the next loop | 1/2, 1/4, 1/8, 1/16, 1/32 | 1/16 |
+| ROLL | captures a recorded 1/8 slice and halves its loop every N repeats down to 1/64 | N = 1…4 | 2 |
 | REVERSE | plays the buffer backwards from the press point, looping over the window | 1/4, 1/2, 1, 2 bars | 1 bar |
-| SCRATCH | the read head swings (sine) around the press point | period 1/4, 1/8, 1/16, 1/32 | 1/8 |
+| SCRATCH | quick backwards stroke and slower return, with brief crossfader dips at the turns | period 1/4, 1/8, 1/16, 1/32 | 1/8 |
 | TAPE STOP | the speed falls to 0, then silence; release returns the live mix | 1/16, 1/8, 1/4, 1/2, 1 bar | 1/4 bar |
-| GATE | 50 % gate in phase with the grid | 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 | 1/16 |
+| GATE | 50 % gate in phase with the grid | 1/4, 1/8, 1/16, 1/32 | 1/16 |
 | FILTER | at OFF nothing happens; counter-clockwise closes a low-pass (20 kHz → 100 Hz), clockwise opens a high-pass (20 Hz → 8 kHz), with a little resonance | LP 64 … OFF … HP 63 | OFF |
 | CRUSH | bit depth | 2…12 bits | 6 |
 | DOWNSAMPLE | sample and hold | 16 kHz, 8 kHz, 4 kHz, 2 kHz, 1 kHz, 500 Hz | 8 kHz |
@@ -433,6 +433,8 @@ PERF also works on the [SONG](#song) tab: **Perf: ON/OFF** is in the SONG row me
 | MOD THROW | the whole mix into the [MOD bus](#modbus) send while held, the tail rings out; with Mod type = OFF it throws into CHORUS | send 0…127 | 100 |
 | TAPE WOBBLE | while held, the delay becomes TAPE and Wear rises to the encoder value (never below the project's): the echo drifts and "stretches"; does nothing in PING-PONG | Wear 0…127 | 127 |
 | --- | the button does nothing | | |
+
+Only straight PERF sizes are offered. On a fresh buffer, REPEAT/ROLL wait until a complete selected slice has been recorded. Size increases during a hold are limited to the history available at capture. Old projects retain their straight sizes; former triplet settings use the nearest straight size. A short repeat captures the preceding slice: use 1/8 or 1/4 when you want more of a drum hit or beat.
 
 The header shows the held effects in press order by short name: `PERF RPT FLT CRS` (RPT ROL REV SCR TPS GAT FLT CRS DWN DRV DLY RVB FRZ MOD WOB). Several buttons held together stack. The buffer effects (REPEAT, ROLL, REVERSE, SCRATCH, TAPE STOP) share one read head, so only the last pressed of them plays; release it and the previous still-held one returns. Everything else stacks freely. The encoder turns the last pressed held effect. Stop, PERF off or leaving the tab (GRID or SONG) releases everything. PERF touches INT sound only — MIDI tracks are not affected — and only live: Export and Resample do not include it. The buffer effects play from a 6 s buffer in the synth board's PSRAM; without PSRAM (or after it failed a check) there is none: toast `PERF: NO MEMORY FOR REPEAT`, and they are silent.
 
@@ -2060,6 +2062,7 @@ The project stores the name and the table itself: it plays in tune without the f
 | Change | **WILD** creates a fresh part. **SUBTLE** keeps the current motif with a change budget of about one quarter of its existing attacks; **NORMAL** uses about half (at least one step when a change is possible). These two modes write patterns only, retaining the current sounds, tempo, scale, pattern grid and song. An empty role receives a complete generated phrase. |
 | Form | **DEVELOP**: four related patterns INTRO → MAIN → VAR → FILL. **CLASSIC**: MAIN → FILL → BREAK → DROP. Available for a fresh, all-role pattern roll. |
 | Feel | 0..100: strength of a shared velocity and timing contour on generated parts. 0 adds none. Existing MIDI timing and velocity are retained. Applies to fresh pattern generation; SUBTLE / NORMAL retain the existing articulation. |
+| Density | **SPARSE / NORMAL / BUSY**, independent of Variety. NORMAL preserves existing generation. SPARSE removes secondary attacks while keeping rhythmic anchors and chord changes. BUSY adds bounded quiet notes in free spaces. Applies to WILD; respects locks and Target. |
 | Variety | 0..100 (Shift ×10), default 30. 0 = the canon: the style's main BPM and its most likely kit, presets, grooves and parts, nothing mutated. Higher: the rarer options come up more often, the BPM moves within the style's range, drums get ghost notes, shifts and probabilities, lead / arp notes move by scale steps. |
 | Length | AUTO, 16, 32, 64, 128: the steps of all four patterns. AUTO = the style's length: 64 for the melodic styles, 32 for the groove ones (tech house, minimal / peak / hard / acid / dub techno, UKG, electro, neuro, jungle, jumpup, trap, glitch, breakbeat, dark psy). Grey unless Scope writes patterns. |
 | Scope | **ALL** (all three below), **TEMPO** (BPM and one of the style's scales, a random tonic), **SOUNDS** (the style's KIT on track 1, its presets on tracks 2–6), **PATTERNS** (four patterns, below). |

@@ -59,7 +59,6 @@ MT_INLINE int16_t roundS16(float x) { return static_cast<int16_t>(x < 0.f ? x - 
 constexpr float kInvScale = 1.f / PerfBus::kScale;
 constexpr uint32_t kGuard = 2 * 128;  // loops end this far behind the writer (2 blocks)
 constexpr int32_t kRevMargin = PerfBus::kXfade + 3;  // REVERSE reads on below its window (seam)
-constexpr float kTwoPi = 6.2831853f;
 
 // The ring at frame base + off, linearly interpolated (off may be negative: |off| < frames).
 MT_INLINE void readRing(const int16_t* __restrict b, uint32_t frames, uint32_t base, float off,
@@ -82,10 +81,18 @@ MT_INLINE void PerfBus::play(Head& h, const int16_t* __restrict b, uint32_t fram
                              float& r) {
   switch (h.fx) {
     case PerfFx::Scratch: {
-      readRing(b, frames, h.base, h.amp * (h.s - 1.f), l, r);
-      const float c = h.c * h.rc - h.s * h.rs;
-      h.s = h.s * h.rc + h.c * h.rs;
-      h.c = c;
+      if (h.phase >= 1.f) h.phase -= 1.f; // outgoing heads keep playing across a stroke boundary
+      const bool back = h.phase < 0.25f;
+      const float q = back ? h.phase * 4.f : (h.phase - 0.25f) * (4.f / 3.f);
+      const float smooth = q * q * (3.f - 2.f * q);
+      const float pos = back ? -h.amp * smooth : -h.amp * (1.f - smooth);
+      readRing(b, frames, h.base, pos, l, r);
+      // Brief crossfader closures make distinct strokes instead of a continuous pitch wobble.
+      const float edge = (q < 0.5f ? q : 1.f - q) * 16.f;
+      const float gain = 0.15f + 0.85f * (edge < 0.f ? 0.f : edge > 1.f ? 1.f : edge);
+      l *= gain;
+      r *= gain;
+      h.phase += h.phaseInc;
       break;
     }
     case PerfFx::TapeStop:
@@ -111,16 +118,10 @@ MT_INLINE void PerfBus::play(Head& h, const int16_t* __restrict b, uint32_t fram
   }
 }
 
-// SCRATCH: one Newton step back onto the unit circle. Insurance: the phase restarts from
-// cosf / sinf every period, so the drift of the per-sample rotation stays far below audible.
 // TAPE STOP: the whole frames of off move into base, so off stays small and a slow speed still
 // adds to it at full float precision (off reaches t / 2 = 64000 frames otherwise).
 void PerfBus::settle(Head& h) const {
-  if (h.fx == PerfFx::Scratch) {
-    const float k = 1.5f - 0.5f * (h.c * h.c + h.s * h.s);
-    h.c *= k;
-    h.s *= k;
-  } else if (h.fx == PerfFx::TapeStop) {
+  if (h.fx == PerfFx::TapeStop) {
     const uint32_t k = static_cast<uint32_t>(h.off);  // off >= 0
     h.base = (h.base + k) % frames_;
     h.off -= static_cast<float>(k);
@@ -220,6 +221,17 @@ MT_HOT uint32_t PerfBus::intact(const Head& h, uint32_t wEnd) const {
   return d < h.avail ? d : h.avail;
 }
 
+MT_HOT void PerfBus::repeatWindow(Head& h, float over, float samplesPerStep) const {
+  float len = loopLen(h.steps, samplesPerStep);
+  if (len > h.avail) len = static_cast<float>(h.avail);
+  uint32_t span = static_cast<uint32_t>(len);
+  if (span < len) ++span;
+  h.base = (h.end + frames_ - span) % frames_;
+  h.prot = static_cast<int32_t>(span) - static_cast<int32_t>(h.avail);
+  h.off = 0.f;
+  h.left = len - over;
+}
+
 MT_HOT void PerfBus::reverseWindow(Head& h, float over, float samplesPerStep, uint32_t wEnd) const {
   // Reads base - 1 - k for k < len, then (outgoing, under the seam crossfade) kXfade further.
   constexpr float kMin = static_cast<float>(kXfade + 1);
@@ -234,27 +246,28 @@ MT_HOT void PerfBus::reverseWindow(Head& h, float over, float samplesPerStep, ui
 }
 
 MT_HOT void PerfBus::scratchPeriod(Head& h, float over, float samplesPerStep, uint32_t wEnd) const {
-  // off(t) = A (sin(2 pi t / T) - 1): swings between base - 2A and base, peak speed 2 at A = T/pi.
-  // sinf / cosf once per period; per sample the (cos, sin) pair is rotated.
   float t = perfScratchSteps(stack_.depth(PerfFx::Scratch)) * samplesPerStep;
   if (t < static_cast<float>(kXfade + 1)) t = static_cast<float>(kXfade + 1);
-  float a = t * (1.f / 3.14159265f);
   const float room = static_cast<float>(intact(h, wEnd)) - 4.f;
-  if (2.f * a > room) a = room > 0.f ? 0.5f * room : 0.f;
-  const float w = kTwoPi / t, ph = over * w;  // carry the overshoot into the phase
-  h.amp = a;
+  h.amp = room > 0.f ? (0.75f * t < room ? 0.75f * t : room) : 0.f;
   h.period = t;
-  h.c = cosf(ph);
-  h.s = sinf(ph);
-  h.rc = cosf(w);
-  h.rs = sinf(w);
+  h.phase = over / t;
+  h.phaseInc = 1.f / t;
   h.left = t - over;
-  int32_t span = static_cast<int32_t>(2.f * a);
-  if (static_cast<float>(span) < 2.f * a) ++span;  // ceil
+  int32_t span = static_cast<int32_t>(h.amp);
+  if (static_cast<float>(span) < h.amp) ++span;
   h.prot = -span - 4;
 }
 
-bool PerfBus::canCapture(PerfFx f, int n, float samplesPerStep) const {
+bool PerfBus::canCapture(PerfFx f, int n, float samplesPerStep, double grid) const {
+  if (f == PerfFx::Repeat || f == PerfFx::Roll) {
+    const double sinceFrames = (grid - static_cast<double>(static_cast<int64_t>(grid))) * samplesPerStep;
+    const uint32_t since = sinceFrames + 0.5 >= samplesPerStep ? 0 : static_cast<uint32_t>(sinceFrames + 0.5);
+    const float wanted = loopLen(f == PerfFx::Roll ? 2.f : perfRepeatSteps(stack_.depth(f)), samplesPerStep);
+    uint32_t needed = static_cast<uint32_t>(wanted);
+    if (needed < wanted) ++needed;
+    return fresh_ >= since && fresh_ - since >= needed;
+  }
   // With little audio recorded behind the press point (just after a park or setBuffer) the
   // window / swing would be a few stale frames held for the whole press: play live instead until
   // the writer has recorded enough (the press point is then that block).
@@ -280,20 +293,21 @@ void PerfBus::switchHead(PerfFx want, uint32_t w0, int n, double grid0, float sa
   switch (want) {
     case PerfFx::Repeat:
     case PerfFx::Roll: {
-      // The last step boundary on the grid: samplesSinceStep frames before the block start (a
-      // boundary less than half a sample ahead counts as now). Paused (grid standing still): from
-      // the press point. Never further back than the writer has recorded since its last park.
-      uint32_t s = 0;
+      // Freeze a complete window ending at the last clock boundary, never future input.
+      uint32_t since = 0;
       if (running) {
-        const double since =
-            (grid0 - static_cast<double>(static_cast<int64_t>(grid0))) * samplesPerStep;
-        s = since + 0.5 >= samplesPerStep ? 0 : static_cast<uint32_t>(since + 0.5);
+        const double frames = (grid0 - static_cast<double>(static_cast<int64_t>(grid0))) * samplesPerStep;
+        since = frames + 0.5 >= samplesPerStep ? 0 : static_cast<uint32_t>(frames + 0.5);
       }
-      if (s > fresh_) s = fresh_;
-      if (s > frames_ - kGuard) s = frames_ - kGuard;
-      h.base = (w0 + frames_ - s) % frames_;
+      if (since > fresh_) since = fresh_;
+      h.end = (w0 + frames_ - since) % frames_;
+      h.avail = fresh_ - since;
+      const float reserveFrames = loopLen(want == PerfFx::Roll ? 2.f : 8.f, samplesPerStep);
+      uint32_t reserve = static_cast<uint32_t>(reserveFrames);
+      if (reserve < reserveFrames) ++reserve;
+      if (h.avail > reserve) h.avail = reserve;
       h.steps = want == PerfFx::Roll ? 2.f : perfRepeatSteps(stack_.depth(PerfFx::Repeat));
-      h.left = loopLen(h.steps, samplesPerStep);
+      repeatWindow(h, 0.f, samplesPerStep);
       break;
     }
     case PerfFx::Reverse:  // backwards from the press point
@@ -326,8 +340,13 @@ MT_HOT void PerfBus::seam(Head& h, Head& out, int& xf, float samplesPerStep) con
         h.loops = 0;
         h.steps = h.steps * 0.5f < 0.25f ? 0.25f : h.steps * 0.5f;  // floor 1/64
       }
-      h.off = 0;
-      h.left = loopLen(h.steps, samplesPerStep) - over;
+      if (h.fx == PerfFx::Repeat) repeatWindow(h, over, samplesPerStep);
+      else {
+        h.off = 0;
+        float len = loopLen(h.steps, samplesPerStep);
+        if (len > h.avail) len = static_cast<float>(h.avail);
+        h.left = len - over;
+      }
       break;
     case PerfFx::Reverse:
       out = h;  // reads on below the window (protected) under the crossfade
@@ -367,7 +386,7 @@ MT_HOT void PerfBus::process(float* l, float* r, int n, float samplesPerStep, bo
   {
     PerfFx want = buf_ && frames_ > 2 * kGuard && samplesPerStep > 0.f ? stack_.buffered()
                                                                        : PerfFx::None;
-    if (want != head_.fx && !canCapture(want, n, samplesPerStep)) want = PerfFx::None;
+    if (want != head_.fx && !canCapture(want, n, samplesPerStep, running ? grid0 : 0.0)) want = PerfFx::None;
     if (want != head_.fx) switchHead(want, w0, n, grid0, samplesPerStep, running);
     Head& h = head_;
     if (h.fx == PerfFx::TapeStop && h.speed > 0.f) {
@@ -510,7 +529,7 @@ MT_HOT void PerfBus::process(float* l, float* r, int n, float samplesPerStep, bo
     const bool on = stack_.held(PerfFx::Crush);
     if (on) {
       const int bits = stack_.depth(PerfFx::Crush);
-      crushStep_ = 2.f / static_cast<float>(1 << (bits > 1 ? bits - 1 : 0));
+      crushStep_ = 2.f / static_cast<float>(1 << (bits > 0 ? bits : 0));
     }
     const float step = crushStep_, inv = 1.f / step;
     stage(fade_[kCrush], on, l, r, n,
