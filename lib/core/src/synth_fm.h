@@ -16,7 +16,8 @@ enum class FmAlg : uint8_t {
   Count
 };
 bool fmCarrier(FmAlg a, int op);
-// Largest modulation index (radians) of a modulator at hz: keeps the sidebands below ~16 kHz.
+// Pitch-only index ceiling (radians), also used by machine feedback. The voice additionally
+// limits modulation using receiver frequencies and routing; this does not strictly band-limit PM.
 float fmMaxIndex(float hz);
 
 // Times are to -60 dB, ms; 0 = no decay.
@@ -68,7 +69,7 @@ class FmVoice {
   bool done() const { return oneShot_ && t_ > kAttack && amp_ < 1e-4f; }
 
  private:
-  static constexpr uint32_t kAttack = 16;  // one-shot attack, samples (0.5 ms)
+  static constexpr uint32_t kAttack = 16;  // one-shot attack, samples (~0.36 ms)
 
   // Exponential decay to -60 dB over ms, starting at off (samples after the trigger), advanced
   // by one multiplication per control tick; expf only when ms, off, span or the time jumps.
@@ -82,6 +83,7 @@ class FmVoice {
 
   template <FmAlg A>
   void run(float* __restrict out, int n, float gain);
+  void renderSegment(float* out, int n, float gain);
   void noisePair(const FmParams& p, uint32_t t0, int span, float& n0, float& n1);
   void ampPair(const FmParams& p, uint32_t t0, int span, float& a0, float& a1);
 
@@ -92,7 +94,7 @@ class FmVoice {
   float fb_[kFmOps] = {0}, dFb_[kFmOps] = {0};    // cycles
   float last_[kFmOps] = {0}, fbIn_[kFmOps] = {0};  // feedback: mean of the last two outputs
   float noise_ = 0, dNoise_ = 0;
-  float amp_ = 0, dAmp_ = 0, ampStart_ = 0;
+  float amp_ = 0, dAmp_ = 0, ampStart_ = 0, dAmpTail_ = 0;
   uint32_t rng_ = 0x12345678;
   uint32_t t_ = 0;  // samples since the trigger
   FmAlg alg_ = FmAlg::Additive;

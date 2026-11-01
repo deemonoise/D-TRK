@@ -38,7 +38,7 @@ void oneshotDir(const Instrument& in, char out[kOneshotDirMax]) {
     }
     case InstrType::Fm: snprintf(out, kOneshotDirMax, "FM/%s", fmMachineName(in.machine)); break;
     case InstrType::Synth: {
-      static const char* const kOsc[] = {"SAW", "SQUARE", "TRI", "WT"};
+      static const char* const kOsc[] = {"SAW", "SQUARE", "TRI", "WT", "SINE"};
       static_assert(sizeof(kOsc) / sizeof(kOsc[0]) == static_cast<int>(SynOsc::Count), "SYNTH osc names");
       const uint8_t o = in.synOsc[0];
       snprintf(out, kOneshotDirMax, "SYNTH/%s", kOsc[o < static_cast<uint8_t>(SynOsc::Count) ? o : 0]);

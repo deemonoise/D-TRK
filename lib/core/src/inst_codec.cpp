@@ -199,6 +199,11 @@ void packSyn(const Instrument& m, uint8_t* b) {
   b[40] = m.synEDec;
   b[41] = m.synFold;
   b[42] = m.synRing;
+  b[43] = m.synPhaseMode;
+  b[44] = m.synPhase[0];
+  b[45] = m.synPhase[1];
+  b[46] = m.synEnvDest;
+  b[47] = m.synSubWave;
 }
 
 void unpackSyn(const uint8_t* b, Instrument& m) {
@@ -216,6 +221,11 @@ void unpackSyn(const uint8_t* b, Instrument& m) {
   m.synEDec = clampu(b[40], 0, 127);
   m.synFold = clampu(b[41], 0, 127);  // 41, 42: once reserved 0 (off)
   m.synRing = clampu(b[42], 0, 127);
+  m.synPhaseMode = b[43] < static_cast<uint8_t>(SynPhaseMode::Count) ? b[43] : 0;
+  m.synPhase[0] = clampu(b[44], 0, 127);
+  m.synPhase[1] = clampu(b[45], 0, 127);
+  m.synEnvDest = b[46] < static_cast<uint8_t>(SynEnvDest::Count) ? b[46] : 0;
+  m.synSubWave = b[47] < static_cast<uint8_t>(SynSubWave::Count) ? b[47] : 0;
 }
 
 void packLofi(const Instrument& m, uint8_t* b) {

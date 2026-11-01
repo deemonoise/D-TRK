@@ -19,13 +19,14 @@ void drawWtFrame(LGFX_Sprite& s, const int8_t* pts, int x0, int y0, int x1, int 
 
 // Imports the wavetable WAV at path into the bank and the project's list under a name made from
 // base (sanitized, cut to 16; "-2", "-3"... when the name holds another table). out = the name used.
+// replaceExisting: editor-confirmed replacement of the project entry with this exact name.
 // Toasts and returns false on failure (also while the transport runs: STOP PLAYBACK FIRST).
-bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSampleNameMax + 1]);
+bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSampleNameMax + 1], bool replaceExisting = false);
 
 // SYNTH table picker over the work area (INST, OSC page), a FileList like every browser: row 0 is
 // "< Back" (close, the table stays) or "< Up (..)" in a subfolder, a long press / B goes back. The
-// table list holds the built-in tables ("*NAME"), the project's, DRAW... (WtDraw: keyframes from the
-// oscillator's table, a new table), then IMPORT... (a browser of /wavetables and its subfolders:
+// table list holds the built-in tables ("*NAME"), the project's, DRAW... (WtDraw: edit the full oscillator table, or create a new
+// wave / morph), then IMPORT... (a browser of /wavetables and its subfolders:
 // folders, *.wav; Back at its top returns to the tables, the cursor on IMPORT...). Turning / a first
 // tap only moves the cursor (a file: Play / the first tap previews it); a click (a tap on the
 // selected row) sets the table on the oscillator and closes. A picked file is imported (see
@@ -38,7 +39,7 @@ class WtPicker {
   void open(int instr, int osc);
   void close();
   bool isOpen() const { return open_; }
-  bool drawOpen() const { return draw_.isOpen(); }  // the editor wants HDrag (strokes)
+  bool drawOpen() const { return draw_.isOpen(); }  // the editor wants raw Down / Move / Up
   void onInput(const hw::InputEvent& ev);
   void onTouch(const TouchEvent& ev);
   bool onPlay();  // WT import: previews the selected file
@@ -55,6 +56,7 @@ class WtPicker {
   void listTables(const char* select);  // select: table name to put the cursor on, or nullptr
   void listFiles(const char* cursor);   // dir_, the cursor on that name
   void act(FileList::Act a);
+  void openDraw(const char* source, bool morph = false);
   void choose();  // click / tap on the selected row
   void back();    // row 0, long press: up a folder, to the tables, or close
   void importFile(int i);

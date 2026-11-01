@@ -13,7 +13,7 @@ constexpr size_t kFmRecSize = 16;    // drive, rsend, velCut, velMac at 10..13, 
 // insert; 0 in a project (see Instrument::drive).
 constexpr size_t kFltRecSize = 8;    // filter, delay send
 constexpr size_t kSliceRecSize = 8 + 2 * kMaxSlices;  // modes, count, 3 reserved, positions
-constexpr size_t kSynRecSize = 48;  // SYNTH: 43 bytes of fields (41 fold, 42 ring) + reserved
+constexpr size_t kSynRecSize = 48;  // SYNTH: legacy 0..42, phase mode/offsets 43..45, env target 46, sub wave 47
 constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, depth, dest, sync (bits)
 constexpr size_t kLofiRecSize = 8;  // LOFI: formula, sync, 6 reserved (0)
 constexpr size_t kLfoByteRecSize = 2 * kLfos;  // LFO BYTE: formula, A of LFO 1..4

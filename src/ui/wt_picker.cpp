@@ -9,6 +9,7 @@
 #include "esp_heap_caps.h"
 #include "file_rules.h"
 #include "sample_set.h"
+#include "menu.h"
 #include "storage/storage.h"
 #include "wt_builtin.h"
 
@@ -54,7 +55,7 @@ void drawWtFrame(LGFX_Sprite& s, const int8_t* pts, int x0, int y0, int x1, int 
   }
 }
 
-bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSampleNameMax + 1]) {
+bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSampleNameMax + 1], bool replaceExisting) {
   const engine::Status& st = app.status();
   if (st.playing || st.paused) {
     app.toast(audio::bankResultText(audio::BankResult::Busy));
@@ -66,8 +67,12 @@ bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSa
   }
   char nm[mt::kSampleNameMax + 1];
   if (!storage::sanitize(base, nm)) strlcpy(nm, "WT", sizeof(nm));
-  app.showBusy("IMPORT...");
   mt::Project& p = app.project();
+  if (replaceExisting && mt::projWtFind(p,nm)<0 && p.wavetableCount>=mt::kProjWavetables) {
+    app.toast("TABLE LIST FULL");
+    return false;
+  }
+  app.showBusy("IMPORT...");
   uint32_t crc = 0;
   const audio::BankResult r = audio::importWtToCache(path, crc, nullptr, importProgress, &app);
   if (r != audio::BankResult::Ok) {
@@ -75,7 +80,8 @@ bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSa
     app.toast(audio::bankResultText(r));
     return false;
   }
-  if (!uniqueName(p, nm, crc, out)) {
+  if (replaceExisting) strlcpy(out,nm,mt::kSampleNameMax+1);
+  else if (!uniqueName(p, nm, crc, out)) {
     app.toast("TABLE LIST FULL");
     return false;
   }
@@ -220,19 +226,28 @@ void WtPicker::choose() {
       }
       listFiles(cursor_);
       return;
-    case Kind::Draw:
-      draw_.open(inst().synWt[osc_], [this](const char* nm) {
-        setTable(nm);
-        char msg[32];
-        snprintf(msg, sizeof(msg), "WT %s", nm);
-        app_.toast(msg);
-        close();
+    case Kind::Draw: {
+      const MenuItem items[]={{"Edit current WT",0},{"New wave",1},{"New morph",2}};
+      app_.menu().open("DRAW WT",items,3,[this](int choice) {
+        openDraw(choice==0?inst().synWt[osc_]:"",choice==2);
       });
       return;
+    }
     default:
       setTable(list_.name(i));
       close();
       return;
+  }
+}
+
+void WtPicker::openDraw(const char* source,bool morph) {
+  list_.free();
+  if (!draw_.open(source,[this](const char* nm) {
+    setTable(nm);
+    char msg[32]; snprintf(msg,sizeof(msg),"WT %s",nm);
+    app_.toast(msg); close();
+  },morph)) {
+    if (list_.alloc()) listTables("DRAW..."); else close();
   }
 }
 
@@ -248,21 +263,26 @@ void WtPicker::act(FileList::Act a) {
 void WtPicker::onInput(const hw::InputEvent& ev) {
   if (draw_.isOpen()) {
     draw_.onInput(ev);
+    if (open_ && !draw_.isOpen()) { if (list_.alloc()) listTables("DRAW..."); else close(); }
     return;
   }
+  if (!list_.ready()) { if (!list_.alloc()) { close(); return; } listTables("DRAW..."); }
   act(list_.onInput(ev));
 }
 
 bool WtPicker::onPlay() {
-  if (!open_ || draw_.isOpen()) return false;
+  if (!open_) return false;
+  if (draw_.isOpen()) return draw_.onPlay();
   return list_.onPlay();  // the tables: no preview, Play starts the transport
 }
 
 void WtPicker::onTouch(const TouchEvent& ev) {
   if (draw_.isOpen()) {
     draw_.onTouch(ev);
+    if (open_ && !draw_.isOpen()) { if (list_.alloc()) listTables("DRAW..."); else close(); }
     return;
   }
+  if (!list_.ready()) { if (!list_.alloc()) { close(); return; } listTables("DRAW..."); }
   act(list_.onTouch(ev, y0_ + kHeaderH));
 }
 
@@ -271,6 +291,10 @@ void WtPicker::draw(LGFX_Sprite& s, int y0) {
   if (draw_.isOpen()) {
     draw_.draw(s, y0);
     return;
+  }
+  if (!list_.ready()) {
+    if (!list_.alloc()) { close(); return; }
+    listTables("DRAW...");
   }
   if (files_) {
     FileList::drawHeader(s, y0, "IMPORT WT", dir_);

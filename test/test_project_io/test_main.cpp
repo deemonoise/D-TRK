@@ -1296,6 +1296,8 @@ static void fillSyn(Instrument& m) {
   m.synEDec = 120;
   m.synFold = 77;
   m.synRing = 33;
+  m.synPhaseMode = 2; m.synPhase[0] = 17; m.synPhase[1] = 103;
+  m.synEnvDest = 4; m.synSubWave = 1;
 }
 
 void test_syn_roundtrip() {
@@ -1324,6 +1326,8 @@ void test_syn_roundtrip() {
   TEST_ASSERT_EQUAL(m.synEDec, r.synEDec);
   TEST_ASSERT_EQUAL(77, r.synFold);
   TEST_ASSERT_EQUAL(33, r.synRing);
+  TEST_ASSERT_EQUAL(2, r.synPhaseMode); TEST_ASSERT_EQUAL(17, r.synPhase[0]);
+  TEST_ASSERT_EQUAL(103, r.synPhase[1]); TEST_ASSERT_EQUAL(4, r.synEnvDest); TEST_ASSERT_EQUAL(1, r.synSubWave);
   TEST_ASSERT_EQUAL(2, b.wavetableCount);
   TEST_ASSERT_EQUAL_STRING("pad", b.wavetables[0].name);
   TEST_ASSERT_EQUAL_HEX32(0xCAFEBABE, b.wavetables[0].crc);
@@ -1405,6 +1409,8 @@ void test_file_without_syn_chunks() {
   TEST_ASSERT_EQUAL(def.synEDec, r.synEDec);
   TEST_ASSERT_EQUAL(0, r.synFold);
   TEST_ASSERT_EQUAL(0, r.synRing);
+  TEST_ASSERT_EQUAL(0, r.synPhaseMode); TEST_ASSERT_EQUAL(0, r.synPhase[0]);
+  TEST_ASSERT_EQUAL(0, r.synPhase[1]); TEST_ASSERT_EQUAL(0, r.synEnvDest); TEST_ASSERT_EQUAL(0, r.synSubWave);
 }
 
 void test_syni_garbage_clamped() {

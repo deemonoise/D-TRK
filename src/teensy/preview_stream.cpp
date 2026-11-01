@@ -10,6 +10,8 @@
 #include "stream.h"
 #include "stream_ring.h"
 #include "wav.h"
+#include "synth.h"
+#include "wt_audition.h"
 
 using namespace mt::link;
 using mt::BankResult;
@@ -33,6 +35,8 @@ constexpr uint32_t kRawBytes = 6144;  // up to 512 stereo 24 bit frames (more ch
 
 mt::SynthModel* model = nullptr;
 SynthStream* out = nullptr;
+mt::Synth* synth = nullptr;
+mt::WtAudition audition;
 mt::StreamRing ring;  // its memory is a pool slot while a preview plays
 int slot = -1;
 mt::LinearResampler rs;
@@ -40,7 +44,7 @@ mt::WavInfo info;
 Src src;
 uint32_t left = 0;  // input frames still to read
 bool streaming = false;
-uint8_t raw[kRawBytes];
+alignas(float) uint8_t raw[kRawBytes];
 int16_t mono[kChunk];
 int16_t res[kChunk * 6 + 2];  // kPreviewMaxRate up to 6x below the output rate: 8 kHz
 
@@ -53,6 +57,12 @@ void closeFile() {
 
 // Reads one chunk (as much as the ring takes); at the end the ring is told so.
 void fill() {
+  if (audition.playing()) {
+    const unsigned room = ring.space() < kChunk ? ring.space() : kChunk;
+    ring.write(res, audition.render(res, room));
+    if (!audition.playing()) ring.finish();
+    return;
+  }
   if (!left) return;
   const uint32_t fb = info.frameBytes();
   uint32_t n = rs.inFor(ring.space());
@@ -124,7 +134,7 @@ void releaseSlot() {
 class RingConsumer final : public mt::StreamConsumer {
  public:
   bool needs(uint32_t& r) override {
-    if (!ring.playing() || !left) {
+    if (!ring.playing() || (!left && !audition.playing())) {
       r = UINT32_MAX;
       return false;
     }
@@ -137,15 +147,42 @@ RingConsumer cons;
 
 }  // namespace
 
-void begin(mt::SynthModel& m, SynthStream& o) {
+void begin(mt::SynthModel& m, SynthStream& o, mt::Synth& syn) {
+  synth = &syn;
+  audition.bind(mono, mono + 256);
   model = &m;
   out = &o;
   out->setPreview(&ring);
 }
 
-bool isRequest(Msg t) { return t == Msg::PreviewFile; }
+bool isRequest(Msg t) { return t == Msg::PreviewFile || t == Msg::WtAudition; }
 
-int handle(Msg, const uint8_t* p, int n, uint8_t* o) {
+FLASHMEM int handle(Msg t, const uint8_t* p, int n, uint8_t* o) {
+  if (t == Msg::WtAudition) {
+    WtAuditionReq q; WtAuditionRep m; Reader r(p, n);
+    if (!decode(r, q)) { stop(); m.result = code(BankResult::ReadFail); }
+    else if (q.action == WtAuditionAction::Stop) stop();
+    else if (synth && synth->gatePos() >= 0) { stop(); m.result = code(BankResult::Busy); }
+    else {
+      if (q.action == WtAuditionAction::Part0) stop();
+      const bool ok = audition.part(q.token, q.action == WtAuditionAction::Part0 ? 0 : 1,
+                                    q.pts, millis(), reinterpret_cast<float*>(raw));
+      if (!ok) m.result = code(BankResult::ReadFail);
+      else if (q.action == WtAuditionAction::Part1) {
+        AudioNoInterrupts();
+        slot = stream::pool().acquire(mt::kPreviewKey, 0, 0, nullptr, 0, mt::SampleRegion(), mt::SlotOwner::Preview);
+        AudioInterrupts();
+        if (slot < 0) { stop(); m.result = code(BankResult::Busy); }
+        else {
+          ring.setBuffer(stream::pool().slotRef(slot).buf, mt::kSlotBlocks * mt::kStreamBlock);
+          ring.reset();
+          for (int i = 0; i < 6 && audition.playing(); ++i) fill();
+          ring.start(); streaming = true;
+        }
+      }
+    }
+    Writer w(o, kMaxPayload); encode(m, w); return w.ok() ? w.size() : 0;
+  }
   stop();
   PreviewFileRep m;
   Reader r(p, n);
@@ -177,6 +214,7 @@ int handle(Msg, const uint8_t* p, int n, uint8_t* o) {
 }
 
 void stop() {
+  audition.stop();
   ring.stop();
   closeFile();
   ended();
@@ -186,6 +224,7 @@ void stop() {
 bool active() { return streaming; }
 
 void step() {
+  audition.expire(millis());
   if (!ring.playing()) {
     closeFile();  // played to its end
     ended();

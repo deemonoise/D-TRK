@@ -855,8 +855,45 @@ void test_fmex_chip_step_roundtrip() {
   TEST_ASSERT_FALSE(c.chipStep);
 }
 
+void test_syn_extension_bytes_and_clamps() {
+  Instrument m = synthInst();
+  m.synOsc[0] = static_cast<uint8_t>(SynOsc::Sine);
+  m.synPhaseMode = 2; m.synPhase[0] = 32; m.synPhase[1] = 96;
+  m.synEnvDest = 4; m.synSubWave = 2;
+  uint8_t r[kSynRecSize]; packSyn(m, r);
+  TEST_ASSERT_EQUAL(2, r[43]); TEST_ASSERT_EQUAL(32, r[44]); TEST_ASSERT_EQUAL(96, r[45]);
+  TEST_ASSERT_EQUAL(4, r[46]); TEST_ASSERT_EQUAL(2, r[47]);
+  Instrument b; unpackSyn(r, b);
+  TEST_ASSERT_EQUAL(m.synOsc[0], b.synOsc[0]);
+  TEST_ASSERT_EQUAL(2, b.synPhaseMode); TEST_ASSERT_EQUAL(32, b.synPhase[0]);
+  TEST_ASSERT_EQUAL(96, b.synPhase[1]); TEST_ASSERT_EQUAL(4, b.synEnvDest); TEST_ASSERT_EQUAL(2, b.synSubWave);
+  memset(r + 43, 255, 5); unpackSyn(r, b);
+  TEST_ASSERT_EQUAL(0, b.synPhaseMode); TEST_ASSERT_EQUAL(127, b.synPhase[0]);
+  TEST_ASSERT_EQUAL(127, b.synPhase[1]); TEST_ASSERT_EQUAL(0, b.synEnvDest); TEST_ASSERT_EQUAL(0, b.synSubWave);
+}
+void test_syn_old_reserved_bytes_restore_defaults() {
+  Instrument b = synthInst(); b.synPhaseMode = 2; b.synPhase[0] = 80;
+  b.synPhase[1] = 60; b.synEnvDest = 4; b.synSubWave = 2;
+  uint8_t r[kSynRecSize] = {}; unpackSyn(r, b);
+  TEST_ASSERT_EQUAL(0, b.synPhaseMode); TEST_ASSERT_EQUAL(0, b.synPhase[0]);
+  TEST_ASSERT_EQUAL(0, b.synPhase[1]); TEST_ASSERT_EQUAL(0, b.synEnvDest); TEST_ASSERT_EQUAL(0, b.synSubWave);
+}
+void test_syn_extension_preset_roundtrip() {
+  Instrument a = synthInst(); a.synPhaseMode = 1; a.synPhase[0] = 17; a.synPhase[1] = 53;
+  a.synEnvDest = 3; a.synSubWave = 1;
+  VecSink out; TEST_ASSERT_TRUE(savePreset(a, out));
+  TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
+  VecSource in(out.buf); Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(1, b.synPhaseMode); TEST_ASSERT_EQUAL(17, b.synPhase[0]);
+  TEST_ASSERT_EQUAL(53, b.synPhase[1]); TEST_ASSERT_EQUAL(3, b.synEnvDest); TEST_ASSERT_EQUAL(1, b.synSubWave);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_syn_extension_bytes_and_clamps);
+  RUN_TEST(test_syn_old_reserved_bytes_restore_defaults);
+  RUN_TEST(test_syn_extension_preset_roundtrip);
   RUN_TEST(test_roundtrip);
   RUN_TEST(test_drum_roundtrip);
   RUN_TEST(test_bad_files);

@@ -6,12 +6,19 @@
 
 namespace mt {
 
+MT_HOT __attribute__((noinline)) float WtOsc::syncRead(const int16_t* table, float pos, uint32_t phase) const {
+  return read(table, pos, phase);
+}
+
 float wtLevelPos(float hz) {
   const float x = log2f(hz * kWtHarm / 8000.f);
   return x < 0 ? 0 : (x > kWtLevels - 1 ? kWtLevels - 1 : x);
 }
 
 MT_HOT void WtOsc::setLevel(float hz) {
+  // Finish a running 32-sample fade before accepting another level. A mid-block bend may
+  // reverse direction: retaining both endpoints avoids a jump or a third table read.
+  if (fade) return;
   // floor(wtLevelPos(hz)) without log2f (control rate, every SYNTH voice): halvings are exact.
   float x = hz * kWtHarm * (1.f / 8000.f);  // no __divsf3
   int k = 0;
@@ -19,32 +26,72 @@ MT_HOT void WtOsc::setLevel(float hz) {
     x *= 0.5f;
     ++k;
   }
+  if (level != 0xff) {
+    // 2% hysteresis, well inside the original Nyquist margin, prevents vibrato from
+    // repeatedly starting transitions around an octave boundary.
+    if (k == level + 1 && hz < 125.f * (1u << level) * 1.02f) k = level;
+    else if (k + 1 == level && hz > 62.5f * (1u << level) * 0.98f) k = level;
+    if (k == level) return;
+    oldOff = off;
+    oldLb = lb;
+    fade = 32;
+  }
+  level = static_cast<uint8_t>(k);
   off = wtLevelOff(k);
   lb = 0;
   while ((1 << lb) < wtLevelLen(k)) ++lb;
 }
 
-void SynVoice::trigger() {
+void SynVoice::trigger(uint8_t phaseMode, uint8_t phase1, uint8_t phase2, uint32_t seed, bool keep) {
+  snap_ = true;
+  if (phaseMode == static_cast<uint8_t>(SynPhaseMode::Free) && keep) return;
   for (auto& o : bl_) o.reset();
   for (auto& o : wt_) o.reset();
   sub_.reset();
-  snap_ = true;
+  const bool random = phaseMode == static_cast<uint8_t>(SynPhaseMode::Random);
+  uint32_t rng = seed ? seed : 0x9e3779b9u;
+  auto nextPhase = [&rng]() {
+    rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+    return rng;
+  };
+  for (int k = 0; k < 2; ++k) {
+    uint32_t ph = static_cast<uint32_t>((k ? phase2 : phase1) & 127u) << 25;
+    if (random) ph += nextPhase();
+    bl_[k].t = (ph >> 8) * (1.f / 16777216.f);
+    wt_[k].ph = ph;
+  }
+  if (random) sub_.t = (nextPhase() >> 8) * (1.f / 16777216.f);
 }
 
-MT_HOT void SynVoice::control(const SynParams& p, int n) {
+MT_CONTROL void SynVoice::control(const SynParams& p, int n) {
   p_ = p;
   for (int k = 0; k < 2; ++k)
     if (p.mode[k] == static_cast<uint8_t>(SynOsc::Wt)) wt_[k].setLevel(p.hz[k]);
+  // Smooth the effective folder amount, including its pitch protection. Changing MIX or
+  // enabling even a tiny RING introduces another source; applying its limit in render()
+  // would step the existing folder before that source has faded in.
+  float foldTarget = 0.f;
+  if (p.fold > 0.f) {
+    const float mixStart = snap_ ? p.mix : mix_;
+    const bool ring = p.ring > 0.f || (!snap_ && ring_ > 0.f);
+    const bool source2 = mixStart > 0.f || p.mix > 0.f || ring;
+    const bool source1 = mixStart < 1.f || p.mix < 1.f || ring || (p.sync && source2);
+    float foldHz = source1 ? p.hz[0] : 0.f;
+    if (source2 && p.hz[1] > foldHz) foldHz = p.hz[1];
+    if (ring) foldHz = p.hz[0] + p.hz[1];  // the product creates sum frequencies
+    const float lh = (5000.f - foldHz) * (1.f / 4000.f);
+    foldTarget = p.fold * (lh < 0.f ? 0.f : (lh > 1.f ? 1.f : lh));
+  }
   if (snap_) {
     snap_ = false;
-    shape_[0] = p.shape[0], shape_[1] = p.shape[1], mix_ = p.mix, fold_ = p.fold, ring_ = p.ring;
+    shape_[0] = p.shape[0], shape_[1] = p.shape[1], mix_ = p.mix, fold_ = foldTarget, ring_ = p.ring;
     shapeStep_[0] = shapeStep_[1] = mixStep_ = foldStep_ = ringStep_ = 0;
     return;
   }
   const float inv = n == 32 ? 1.f / 32 : (n > 0 ? 1.f / n : 1.f);  // kControl: no __divsf3
   for (int k = 0; k < 2; ++k) shapeStep_[k] = (p.shape[k] - shape_[k]) * inv;
   mixStep_ = (p.mix - mix_) * inv;
-  foldStep_ = (p.fold - fold_) * inv;
+  foldStep_ = (foldTarget - fold_) * inv;
   ringStep_ = (p.ring - ring_) * inv;
 }
 
@@ -58,22 +105,64 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
   float s = shape_[k];
   const float ds = shapeStep_[k];
   switch (static_cast<SynOsc>(p_.mode[k])) {
-    case SynOsc::Square: {
-      BlOsc& o = bl_[k];
-      for (int i = 0; i < n; ++i, s += ds) {
-        const BlOut r = o.square(dt, inv, 0.5f + 0.45f * s, sync ? sync[i] : -1.f);
+    case SynOsc::Sine: {
+      BlOsc o = bl_[k];
+      for (int i = 0; i < n; ++i) {
+        const BlOut r = o.sine(dt, inv, sync ? sync[i] : -1.f);
         dst[i] = r.v;
         if (wrap) wrap[i] = r.wrap;
       }
+      bl_[k] = o;
+      break;
+    }
+    case SynOsc::Square: {
+      // Local state cannot alias dst: keep oscillator registers across sample stores.
+      BlOsc o = bl_[k];
+      const float dpw = 0.45f * ds;
+      const float relative = dt - dpw;
+      const float edgeInv = relative > 1e-30f ? fastRcp(relative)
+                            : (relative < -1e-30f ? -fastRcp(-relative) : 0.f);
+      if (sync) {
+        for (int i = 0; i < n; ++i, s += ds)
+          dst[i] = o.squarePwm(dt, inv, 0.5f + 0.45f * s, dpw, edgeInv, sync[i]).v;
+      } else {
+        // The first interval may have the preceding control block's width slope.
+        const BlOut first = o.squarePwm(dt, inv, 0.5f + 0.45f * s, dpw, edgeInv, -1.f);
+        dst[0] = first.v;
+        if (wrap) wrap[0] = first.wrap;
+        s += ds;
+        if (ds == 0.f) {
+          const float pw = 0.5f + 0.45f * s, dc = 2.f * pw - 1.f;
+          for (int i = 1; i < n; ++i) {
+            const BlOut r = o.square(dt, inv, pw, -1.f);
+            dst[i] = r.v - dc;
+            if (wrap) wrap[i] = r.wrap;
+          }
+        } else if (relative >= 0.f) {
+          for (int i = 1; i < n; ++i, s += ds) {
+            const BlOut r = o.squarePwmRun<false>(dt, inv, 0.5f + 0.45f * s, edgeInv);
+            dst[i] = r.v;
+            if (wrap) wrap[i] = r.wrap;
+          }
+        } else {
+          for (int i = 1; i < n; ++i, s += ds) {
+            const BlOut r = o.squarePwmRun<true>(dt, inv, 0.5f + 0.45f * s, edgeInv);
+            dst[i] = r.v;
+            if (wrap) wrap[i] = r.wrap;
+          }
+        }
+      }
+      bl_[k] = o;
       break;
     }
     case SynOsc::Tri: {
-      BlOsc& o = bl_[k];
+      BlOsc o = bl_[k];
       for (int i = 0; i < n; ++i) {
-        const BlOut r = o.tri(dt, inv);
+        const BlOut r = o.tri(dt, inv, sync ? sync[i] : -1.f);
         dst[i] = r.v;
         if (wrap) wrap[i] = r.wrap;
       }
+      bl_[k] = o;
       break;
     }
     case SynOsc::Wt: {
@@ -114,7 +203,7 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
 constexpr float kFoldGain = 1.0f, kRingGain = 1.3f;
 constexpr float kFoldFade = 16.f;  // fully wet from fold ~8/127
 
-MT_HOT void SynVoice::foldBlock(float* a, int m, float lim) {
+MT_HOT void SynVoice::foldBlock(float* a, int m) {
   // Naive (no ADAA: its slope quotient cost ~1 %/voice on the Teensy); the pitch limit bounds the
   // aliasing. No branch, no division per sample.
   float fd = fold_;
@@ -122,7 +211,7 @@ MT_HOT void SynVoice::foldBlock(float* a, int m, float lim) {
   // Two samples per pass: the M7 issues in order, two independent chains fill each other's stalls.
 #pragma GCC unroll 2
   for (int i = 0; i < m; ++i, fd += df) {
-    const float e = fd * lim;
+    const float e = fd;
     const float x = a[i];
     float y = foldTri(x * (1.f + 7.f * e));
     if (kFoldGain != 1.f) y *= 1.f + (kFoldGain - 1.f) * e;
@@ -144,10 +233,7 @@ MT_HOT void SynVoice::render(float* out, int n, float amp) {
   const bool ring = ring_ > 0.f || ring_ + ringStep_ * n > 0.f;  // needs both oscillators
   const bool need1 = mix_ < 1.f || mixEnd < 1.f || p_.sync || ring;
   const bool need2 = mix_ > 0.f || mixEnd > 0.f || ring;
-  // Fold pitch limit: full up to osc 1 at 1 kHz, falling linearly to off at 5 kHz (aliasing).
-  const float lh = (5000.f - p_.hz[0]) * (1.f / 4000.f);
-  const float lim = lh < 0.f ? 0.f : (lh > 1.f ? 1.f : lh);
-  const bool fold = lim > 0.f && (fold_ > 0.f || fold_ + foldStep_ * n > 0.f);
+  const bool fold = fold_ > 0.f || fold_ + foldStep_ * n > 0.f;
   float a[kChunk], b[kChunk], w[kChunk];
   for (int pos = 0; pos < n; pos += kChunk) {
     const int m = n - pos < kChunk ? n - pos : kChunk;
@@ -169,11 +255,23 @@ MT_HOT void SynVoice::render(float* out, int n, float amp) {
       for (int i = 0; i < m; ++i, mx += dm) a[i] += (b[i] - a[i]) * mx;
       ring_ += ringStep_ * m;
     }
-    if (fold) foldBlock(a, m, lim);
+    if (fold) foldBlock(a, m);
     fold_ += foldStep_ * m;
     if (p_.sub > 0) {
       const float sg = p_.sub;
-      for (int i = 0; i < m; ++i) a[i] += sub_.square(subDt, subInv, 0.5f, -1).v * sg;
+      BlOsc sub = sub_;
+      switch (static_cast<SynSubWave>(p_.subWave)) {
+        case SynSubWave::Sine:
+          for (int i = 0; i < m; ++i) a[i] += sub.sine(subDt, subInv, -1.f).v * sg;
+          break;
+        case SynSubWave::Tri:
+          for (int i = 0; i < m; ++i) a[i] += sub.tri(subDt, subInv, -1.f).v * sg;
+          break;
+        default:
+          for (int i = 0; i < m; ++i) a[i] += sub.square(subDt, subInv, 0.5f, -1.f).v * sg;
+          break;
+      }
+      sub_ = sub;
     }
     if (p_.noise > 0) {
       const float ng = p_.noise * (1.f / 2147483648.f);

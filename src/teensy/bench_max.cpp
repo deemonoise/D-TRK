@@ -32,6 +32,11 @@
 // (Synth::setVoiceBudget at kVoiceBudgetTeensy, the other groups run with the budget off: they price raw
 // voices): POOL WT FX+CHIP LADDER (16 WT FX as in group 2 plus CHIP LADDER) requests 16 .. 32 voices by 4; the budget steals, so their reports add the live voices (on, not
 // stolen), and they go over only on the CPU (average, a block over 100 %, the guard shrinking the pool).
+// 7: SYNTH features at up to 16 heavy voices, the production cap: sine, sine fold/ring,
+// the three sub waves on the same two-saw body, four SENV destinations and RANDOM / FREE
+// re-triggers. FX and the WT reference use the same chain as group 1. SENV chords are
+// re-struck every 1/8 too, so the measured interval exercises a moving envelope rather
+// than only its already-settled tail. The variants share WT LFO's instrument slot.
 // A ladder lists the groups it runs in; its instruments come from the table in begin().
 #ifdef AUDIO_BENCH_MAX
 #include "bench.h"
@@ -105,6 +110,7 @@ constexpr int kMixWt = 16;                                  // Mix: fixed voices
 constexpr int kMixWtTracks = kMixWt / mt::kPolyPerTrack;     // ... on the first tracks
 constexpr int kAll = mt::kTracks * mt::kPolyPerTrack;
 constexpr int kHeavyTop = mt::kFmVoiceMax < kAll ? mt::kFmVoiceMax : kAll;
+constexpr int kSynFeatureTop = kHeavyTop < 16 ? kHeavyTop : 16;
 constexpr int kChipTop = mt::kVoices < kAll ? mt::kVoices : kAll;
 constexpr int kMixTop = (mt::kVoices < kAll ? mt::kVoices : kAll) - kMixWt;
 static_assert(kMixWt % mt::kPolyPerTrack == 0 && kMixWt <= mt::kFmVoiceMax && kMixTop > 0, "max bench mix");
@@ -112,7 +118,11 @@ constexpr int kPoolTop = 16;  // group 5: kMixWt + 0 .. 16 = the 16 .. 32 voices
 static_assert(kPoolTop <= kMixTop, "max bench pool");
 
 // Group bits: a ladder runs in every group it lists (BENCH_MAX_GROUP 0 runs each ladder once).
-constexpr uint8_t kG1 = 1, kG2 = 2, kG3 = 4, kG4 = 8, kG5 = 16, kG6 = 32;  // 6: group 2's CHIP variant lines only
+constexpr uint8_t kG1 = 1, kG2 = 2, kG3 = 4, kG4 = 8, kG5 = 16, kG6 = 32, kG7 = 64;
+// Group 6 contains group 2's CHIP variant lines only; group 7 covers the SYNTH features.
+enum class SynFeature : int8_t {
+  Sine, SineFx, SubSquare, SubSine, SubTri, EnvPitch2, EnvFold, EnvRing, EnvMix, PhaseRandom, PhaseFree
+};
 struct Ladder {
   char name[24];
   uint8_t groups;
@@ -126,6 +136,7 @@ struct Ladder {
   bool solo = false;    // Hits: every track on instr (one machine), not instr + t % kDrumKinds
   int8_t machine = -1;  // solo Hits: this DrumMachine built into kDrumSoloInstr for the ladder (-1: as is)
   int chip = -1;        // a CHIP variant (makeChipVar arg) built into kChipVarInstr for the ladder (-1: as is)
+  int8_t syn = -1;      // SynFeature in WT LFO's slot (-1: restore the normal WT LFO)
 };
 // Instrument args: kMove adds a moving cutoff (moveCutoff); a CHIP variant packs the wave, kChipStepOn
 // and the filter mode | kMove (makeChipVar).
@@ -141,9 +152,12 @@ constexpr int kDrumSoloInstr = kDrumInstr;
 #define BENCH_DRUM_SOLO(nm, mc) \
   {"DRUM " nm, kG3, Kind::Hits, mt::kTracks, kDrumSoloInstr, -1, false, false, false, true, \
    static_cast<int8_t>(mt::DrumMachine::mc)}
+#define BENCH_SYN_FEATURE(nm, feature, restrike) \
+  {"SYN " nm, kG7, Kind::Held, kSynFeatureTop, kWtLfoInstr, -1, false, restrike, false, false, -1, -1, \
+   static_cast<int8_t>(SynFeature::feature)}
 // In flash (PROGMEM, read in place): RAM1 is short in this env.
 constexpr Ladder kLadders[] PROGMEM = {
-    {"fx only", kG1 | kG2 | kG3 | kG4 | kG5 | kG6, Kind::None, 0, kChipInstr, -1},
+    {"fx only", kG1 | kG2 | kG3 | kG4 | kG5 | kG6 | kG7, Kind::None, 0, kChipInstr, -1},
     {"CHIP", kG1 | kG2 | kG6, Kind::Held, kChipTop, kChipInstr, -1},
     {"FM TONE", kG1, Kind::Held, kHeavyTop, kFmInstr, -1},
     {"FM TONE SAT", kG1, Kind::Held, kHeavyTop, kFmSatInstr, -1},
@@ -186,6 +200,18 @@ constexpr Ladder kLadders[] PROGMEM = {
     {"STRING LOW", kG4, Kind::Held, kHeavyTop, kStringInstr + 0, -1, false, true, true},
     {"16 " BENCH_STRING_WORST_NAME " HIT + CHIP", kG4, Kind::Mix, kMixTop, kChipInstr, kStringWorstInstr, false, true},
     {"POOL WT FX+CHIP LADDER", kG5, Kind::Mix, kPoolTop, kChipLadderInstr, kWtFxInstr, true},
+    {"WT REF", kG7, Kind::Held, kSynFeatureTop, kWtInstr, -1},
+    BENCH_SYN_FEATURE("SINE", Sine, false),
+    BENCH_SYN_FEATURE("SINE FOLD+RING", SineFx, false),
+    BENCH_SYN_FEATURE("SUB SQR", SubSquare, false),
+    BENCH_SYN_FEATURE("SUB SIN", SubSine, false),
+    BENCH_SYN_FEATURE("SUB TRI", SubTri, false),
+    BENCH_SYN_FEATURE("SENV PITCH2", EnvPitch2, true),
+    BENCH_SYN_FEATURE("SENV FOLD", EnvFold, true),
+    BENCH_SYN_FEATURE("SENV RING", EnvRing, true),
+    BENCH_SYN_FEATURE("SENV MIX", EnvMix, true),
+    BENCH_SYN_FEATURE("PHASE RANDOM", PhaseRandom, true),
+    BENCH_SYN_FEATURE("PHASE FREE", PhaseFree, true),
 };
 constexpr int kLadderCount = sizeof(kLadders) / sizeof(kLadders[0]);
 constexpr bool sameStr(const char* a, const char* b) { return *a == *b && (!*a || sameStr(a + 1, b + 1)); }
@@ -201,7 +227,7 @@ static_assert(stringWorstLadder() < kLadderCount &&
 #ifndef BENCH_MAX_GROUP
 #define BENCH_MAX_GROUP 0
 #endif
-static_assert(BENCH_MAX_GROUP >= 0 && BENCH_MAX_GROUP <= 6, "BENCH_MAX_GROUP: 0 (all), 1 .. 6");
+static_assert(BENCH_MAX_GROUP >= 0 && BENCH_MAX_GROUP <= 7, "BENCH_MAX_GROUP: 0 (all), 1 .. 7");
 // 0: all. The inner ternary only keeps the shift count >= 0 when BENCH_MAX_GROUP is 0 (both arms are
 // compiled; GCC warns on a negative shift even in the unused one).
 constexpr uint8_t kGroupMask = BENCH_MAX_GROUP ? 1 << (BENCH_MAX_GROUP > 0 ? BENCH_MAX_GROUP - 1 : 0) : 0xFF;
@@ -294,6 +320,8 @@ void makeDrum(mt::Instrument& in, int kind);
 void makeDrumSolo(mt::Instrument& in, int machine);
 void makeChip(mt::Instrument& chip, int arg);
 void makeChipVar(mt::Instrument& chip, int arg);
+void makeWt(mt::Instrument& in, int arg);
+FLASHMEM void makeSynFeature(mt::Instrument& in, int arg);
 constexpr int kLp = static_cast<int>(mt::FltMode::Lp);
 void setFx(mt::Instrument& in);
 
@@ -322,6 +350,16 @@ void startStep() {
       makeChip(in, kLp | kMove);
     setFx(in);
     builtChip = l.chip;
+  }
+  // Reuse WT LFO's slot; all other groups get its original instrument back.
+  static int8_t builtSyn = -1;
+  if (l.syn != builtSyn) {
+    mt::Instrument& in = model->instruments[kWtLfoInstr];
+    in = mt::Instrument();
+    if (l.syn >= 0) makeSynFeature(in, l.syn);
+    else makeWt(in, kMove);
+    setFx(in);
+    builtSyn = l.syn;
   }
   synth->setVoiceBudget(l.pool ? mt::kVoiceBudgetTeensy : mt::kVoiceBudgetOff);
   for (int t = 0; t < mt::kTracks; ++t) {
@@ -553,6 +591,44 @@ void makeWt(mt::Instrument& w, int arg) {
   w.fenv = 40;
   w.vol = 30;
   moveCutoff(w, arg);
+}
+
+// Only setup work, never part of a measured audio loop: keep this builder in flash.
+FLASHMEM void makeSynFeature(mt::Instrument& in, int arg) {
+  makeWt(in, 0);
+  in.synOsc[0] = in.synOsc[1] = static_cast<uint8_t>(mt::SynOsc::Saw);
+  const auto feature = static_cast<SynFeature>(arg);
+  switch (feature) {
+    case SynFeature::Sine:
+    case SynFeature::SineFx:
+      in.synOsc[0] = in.synOsc[1] = static_cast<uint8_t>(mt::SynOsc::Sine);
+      if (feature == SynFeature::SineFx) in.synFold = 100, in.synRing = 64;
+      break;
+    case SynFeature::SubSquare:
+    case SynFeature::SubSine:
+    case SynFeature::SubTri:
+      in.synSub = 100;
+      in.synSubWave = static_cast<uint8_t>(arg - static_cast<int>(SynFeature::SubSquare));
+      break;
+    case SynFeature::EnvPitch2:
+    case SynFeature::EnvFold:
+    case SynFeature::EnvRing:
+    case SynFeature::EnvMix:
+      in.macro[mt::kMacSenv] = 96;
+      in.synEAtk = 20;
+      in.synEDec = 100;
+      in.synEnvDest = feature == SynFeature::EnvPitch2 ? static_cast<uint8_t>(mt::SynEnvDest::Pitch2)
+                      : feature == SynFeature::EnvFold ? static_cast<uint8_t>(mt::SynEnvDest::Fold)
+                      : feature == SynFeature::EnvRing ? static_cast<uint8_t>(mt::SynEnvDest::Ring)
+                                                      : static_cast<uint8_t>(mt::SynEnvDest::Mix);
+      break;
+    case SynFeature::PhaseRandom:
+      in.synPhaseMode = static_cast<uint8_t>(mt::SynPhaseMode::Random);
+      break;
+    case SynFeature::PhaseFree:
+      in.synPhaseMode = static_cast<uint8_t>(mt::SynPhaseMode::Free);
+      break;
+  }
 }
 
 // arg: the filter mode | kMove, | kNoRing / kNoFold to leave one of them at 0.

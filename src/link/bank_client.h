@@ -78,6 +78,8 @@ bool wtCached(const char* name);
 // Level 0 of frame f of wavetable name (built-in or in the project's list), >> 8, 256 points.
 // Cached here (a few frames). False when absent / no answer.
 bool wtFrame(const char* name, int f, int8_t* out);
+BankResult wtFrame16(const char* name, int f, int16_t* out);
+BankResult wtAudition(const int16_t* pts);
 
 // Sample editor, on the synth board's data of project sample index. wavePeaks: min / max (>> 8) of
 // cols columns from grid column col0 of a zoom grid putting span frames on width columns

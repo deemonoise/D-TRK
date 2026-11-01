@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = 11
+PROTOCOL = 23
 MAX_PAYLOAD = 512
 
 # lib/core/src/link_msg.h, enum class Msg (append only).
@@ -40,7 +40,8 @@ MSG = {name: i + 1 for i, name in enumerate(
     "RenderStart RenderBlocks RenderEnd "
     "Meters Phones Profile "
     "Status Progress FwFromFile Log "
-    "FsRmdir WtFrame Perf Debug WtRender RenderOut".split())}
+    "FsRmdir WtFrame Perf Debug WtRender RenderOut "
+    "RecStart RecSet RecLevel RecStop RecCancel FsCopy WtFrame16 WtAudition".split())}
 MSG_NAME = {v: k for k, v in MSG.items()}
 
 # lib/core/src/link_msg.h, kErr*.
@@ -796,7 +797,12 @@ def cmd_selftest(args):
     assert b["count"] == 3 and b["free"] == 4000 and b["builtins"] == 0xFF and b["rates"] == [44100, 0]
     page = bytes([1, 2]) + struct.pack("<BI", 1, 0) + fs_str("wt") + struct.pack("<BI", 0, 1234) + fs_str("kick.wav")
     assert parse_list(page) == (True, [(True, 0, "wt"), (False, 1234, "kick.wav")])
-    assert PROTOCOL == 11 and MSG["Debug"] == 41 and MSG["WtRender"] == 42 and MSG["RenderOut"] == 43
+    assert PROTOCOL == 23
+    assert MSG["Debug"] == 41
+    assert MSG["WtRender"] == 42
+    assert MSG["RenderOut"] == 43
+    assert MSG["WtFrame16"] == 50
+    assert MSG["WtAudition"] == 51
     st = struct.pack("<BHHBH", 50, 0, 0, 20, 1000) + bytes(16) + struct.pack("<HBH", 0, 0, 2) + b"\x01\x02" + \
         struct.pack("<BHHBB", 14, 3, 41, 1, 57) + struct.pack("<H", 0xFFFF) + bytes(16) + struct.pack("<I", 11800)
     s = parse_status(st)

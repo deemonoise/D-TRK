@@ -264,6 +264,8 @@ class App {
   mt::Project* p_ = nullptr;
   engine::Status status_{};
   TouchTracker touch_;
+  Screen* rawTouchScreen_ = nullptr;
+  bool rawTouchXy_ = false;
   Menu menu_;
   PerfPad perf_{*this};
   PerfVis vis_;

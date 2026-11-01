@@ -5,6 +5,7 @@
 
 namespace mt {
 struct SynthModel;
+class Synth;
 }
 class SynthStream;
 
@@ -14,7 +15,7 @@ class SynthStream;
 // in the link log when it ends.
 namespace preview {
 
-void begin(mt::SynthModel& model, SynthStream& out);
+void begin(mt::SynthModel& model, SynthStream& out, mt::Synth& synth);
 bool isRequest(mt::link::Msg t);  // PreviewFile
 // PreviewFile -> its reply payload in out (kMaxPayload), its size.
 int handle(mt::link::Msg t, const uint8_t* p, int n, uint8_t* out);

@@ -110,7 +110,10 @@ const char* fmMachineName(uint8_t machine);  // "KICK"; out of range -> Kick
 // FM macros: Instrument::macro index, fx DEC..CON = Fx::DCY + index.
 enum FmMacro : uint8_t { kMacDec, kMacCol, kMacShp, kMacSwp, kMacCon, kFmMacros };
 // SYNTH oscillator mode. Stored in files: new modes before Count only.
-enum class SynOsc : uint8_t { Saw, Square, Tri, Wt, Count };
+enum class SynOsc : uint8_t { Saw, Square, Tri, Wt, Sine, Count };
+enum class SynPhaseMode : uint8_t { Retrig, Free, Random, Count };
+enum class SynEnvDest : uint8_t { Shape, Fold, Ring, Mix, Pitch2, Count };
+enum class SynSubWave : uint8_t { Square, Sine, Tri, Count };
 // SYNTH macros: same slots as FM / DRUM (fx DCY..CON, LFO Dec..Con).
 enum SynMacro : uint8_t { kMacShp1 = kMacDec, kMacShp2 = kMacCol, kMacMix = kMacShp, kMacDet = kMacSwp,
                           kMacSenv = kMacCon };
@@ -267,6 +270,10 @@ struct Instrument {
   uint8_t driveModel = 0;  // DriveModel of the recommended insert (see drive above); 0 in a project
   // SYNTH wavefolder and ring modulator on the oscillator mix (SynParams::fold, ring), 0..127, 0 = off.
   uint8_t synFold = 0, synRing = 0;
+  uint8_t synPhaseMode = 0;
+  uint8_t synPhase[2] = {0, 0};  // turns / 128, applied at a non-legato trigger
+  uint8_t synEnvDest = 0;        // SynEnvDest; Shape preserves existing projects
+  uint8_t synSubWave = 0;        // SynSubWave; Square preserves existing projects
   uint8_t lofiFormula = 0;  // LOFI BYTE: built-in formula index (bytebeat_lib.h), out of range = 0
   uint8_t lofiSync = 0;     // LOFI BYTE: 1 = t at 1024 per 1/16 step of the project tempo
   // LFO 1..4 wave BYTE: {formula (bytebeat_lib.h), A 0..127}; B / C are the formula's defaults. Default:

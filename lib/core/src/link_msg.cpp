@@ -445,6 +445,29 @@ bool decode(Reader& r, BankClearRep& m) {
   return r.ok();
 }
 
+void encode(const WtFrame16Req& m, Writer& w) { w.str(m.name); w.u8(m.frame); w.u8(m.half); }
+bool decode(Reader& r, WtFrame16Req& m) {
+  r.str(m.name, sizeof m.name); m.frame = r.u8(); m.half = r.u8();
+  return r.ok() && m.frame < 64 && m.half < 2;
+}
+void encode(const WtFrame16Rep& m, Writer& w) {
+  w.u8(m.result); for (auto x : m.pts) w.u16(static_cast<uint16_t>(x));
+}
+bool decode(Reader& r, WtFrame16Rep& m) {
+  m.result = r.u8(); for (auto& x : m.pts) x = static_cast<int16_t>(r.u16()); return r.ok();
+}
+void encode(const WtAuditionReq& m, Writer& w) {
+  w.u16(m.token); w.u8(static_cast<uint8_t>(m.action));
+  if (m.action != WtAuditionAction::Stop) for (auto x : m.pts) w.u16(static_cast<uint16_t>(x));
+}
+bool decode(Reader& r, WtAuditionReq& m) {
+  m.token = r.u16(); m.action = static_cast<WtAuditionAction>(r.u8());
+  if (m.action != WtAuditionAction::Stop) for (auto& x : m.pts) x = static_cast<int16_t>(r.u16());
+  return r.ok() && static_cast<uint8_t>(m.action) <= 2;
+}
+void encode(const WtAuditionRep& m, Writer& w) { w.u8(m.result); }
+bool decode(Reader& r, WtAuditionRep& m) { m.result = r.u8(); return r.ok(); }
+
 void encode(const WtFrameReq& m, Writer& w) {
   w.u8(m.frame);
   w.str(m.name);

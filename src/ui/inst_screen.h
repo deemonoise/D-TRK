@@ -7,6 +7,7 @@
 #include "rec_dialog.h"
 #include "sample_editor.h"
 #include "screen.h"
+#include "syn_wave_preview.h"
 #include "wt_make_dialog.h"
 #include "wt_picker.h"
 
@@ -34,9 +35,10 @@ namespace ui {
 // APC), macros named per machine (grey "-" where unused; BYTE: A B C grey where the formula does not read
 // them). ADSR, mode and glide as CHIP.
 // SYNTH: six pages, MAIN / ENV / OSC / MOD / FILT / LFO. OSC: Osc1, Table1, Shape1 (SHP1), Osc2, Table2,
-// Shape2 (SHP2), Semi2, Detune (DET), Sync, Mix (MIX), with the selected oscillator's waveform (WT: the
-// frame under SHAPE) on the right; MOD: Sub, Sub oct, Noise, Ring, Fold (0 = OFF), Env>Shp (SENV),
-// Env atk, Env dec. ADSR, mode and glide as CHIP. A click / tap on a Table row opens WtPicker; a missing table is shown red.
+// Shape2 (SHP2), Semi2, Detune (DET), Sync, Mix (MIX), Phase mode, Phase1/2 and View. MOD: Sub,
+// Sub wave/oct, Noise, Ring, Fold, Env target/amt, Env atk/dec and View. OSC shows both sources and
+// their mix; MOD shows the result before filter/ADSR. MODEL C4 is a local HOLD/LIVE preview, not a
+// capture of playing voices. A click / tap on a Table row opens WtPicker; missing tables are red.
 // STRING: MAIN / ENV / RES / FILT / LFO. RES: Model, Damp (as T60), Bright, Struct, Position (%), Excite
 // (CLICK at 0, else the burst in ms). ADSR, mode and glide as SYNTH. The Filter row skips COMB.
 // Filter and LFO rows on every type, after the type's own (CHIP / SAMPLE: no macro LFO targets).
@@ -59,6 +61,7 @@ class InstScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  bool wantsRawTouch() const override { return !recShown() && wt_.drawOpen(); }
   bool wantsHDrag() const override {
     return !recShown() &&
            (wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor()));
@@ -93,9 +96,12 @@ class InstScreen : public Screen {
   // SYNTH: OSC page rows, then MOD page rows.
   static constexpr int kOsc1 = kCommon, kTable1 = kCommon + 1, kShape1 = kCommon + 2, kOsc2 = kCommon + 3,
                        kTable2 = kCommon + 4, kShape2 = kCommon + 5, kSemi = kCommon + 6, kDetune = kCommon + 7,
-                       kSync = kCommon + 8, kMix = kCommon + 9, kSynOscRows = 10;
-  static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kRing = kSub + 3,
-                       kFold = kSub + 4, kSenv = kSub + 5, kEAtk = kSub + 6, kEDec = kSub + 7, kSynRows = kSub + 8;
+                       kSync = kCommon + 8, kMix = kCommon + 9, kPhaseMode = kCommon + 10,
+                       kPhase1 = kCommon + 11, kPhase2 = kCommon + 12, kOscView = kCommon + 13, kSynOscRows = 14;
+  static constexpr int kSub = kOsc1 + kSynOscRows, kSubWave = kSub + 1, kSubOct = kSub + 2,
+                       kNoise = kSub + 3, kRing = kSub + 4, kFold = kSub + 5, kEnvTarget = kSub + 6,
+                       kSenv = kSub + 7, kEAtk = kSub + 8, kEDec = kSub + 9, kModView = kSub + 10,
+                       kSynRows = kSub + 11;
   // STRING: one RES page.
   static constexpr int kStrModel = kCommon, kStrDamp = kCommon + 1, kStrBright = kCommon + 2,
                        kStrStruct = kCommon + 3, kStrPos = kCommon + 4, kStrExc = kCommon + 5,
@@ -120,8 +126,8 @@ class InstScreen : public Screen {
   // ENV page ADSR graph, right of the values; y from the list top.
   static constexpr int kEnvX0 = 280, kEnvX1 = 470, kEnvY0 = 8, kEnvY1 = 112;
   static constexpr int kEnvHold = 30;  // sustain plateau width
-  // OSC page (SYNTH) frame preview, right of the values (table names reach x 336); y from the list top.
-  static constexpr int kWtX0 = 336, kWtX1 = 456, kWtY0 = 8, kWtY1 = 112;
+  // SYNTH waveform model, right of the values (table names reach x336); y from list top.
+  static constexpr int kWaveX = 336, kWaveY = 8, kWaveW = 128, kWaveH = 152, kWaveToggleH = 24;
   static constexpr int kNameLen = 8;
   static constexpr int kPreviewNote = 60;
   // Header hit areas: left arrow, right arrow, PRESET and PREVIEW buttons.
@@ -155,9 +161,10 @@ class InstScreen : public Screen {
   int logicalPage(int phys) const;     // Page of a tab index
   void showPage(int phys, bool bar);  // tab index, wraps; bar: the page bar keeps the cursor, else the first row
   int tableOsc() const;                // SYNTH OSC page on a Table row: its oscillator, else -1
+  bool viewRow(int row) const;          // the local HOLD/LIVE action on OSC / MOD
   void drawPageBar(LGFX_Sprite& s, int y);
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
-  void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC page: frame / waveform of the selected osc
+  void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC/MOD waveform model
   void initTail(Param* t);  // t = &rows[type's row count]
   void relabel();           // DRUM / LOFI macro labels of the current machine
   void leaveEdit();
@@ -196,6 +203,7 @@ class InstScreen : public Screen {
   mt::MutateUndo mut_;          // the last Mutate (slot -1 = none); dropped on load / New, refused once the slot is edited
   int y0_ = kAreaY;
   int namePos_ = 0;
+  SynWavePreview wave_;
   SampleEditor editor_{app_, kAreaY + kHeaderH + kPageBarH};
 };
 

@@ -1,4 +1,5 @@
 #include "synth.h"
+#include "synth_params.h"
 #include "bytebeat_lib.h"
 #include "fastmath.h"
 #include "hot.h"
@@ -869,6 +870,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
                     cost, budget_);
   }
   Voice& v = voices_[vi];
+  // FREE can reuse an idle/releasing voice too; allocator legato only describes
+  // overlapping mono/slide notes. Never retain another instrument/engine's phase.
+  const bool keepSynPhase = v.syn && v.engKind == EngineKind::Syn && v.instr == ii;
   v.stolen = false;  // SLD may take a fading voice back
   const bool keepFm = legato && v.fm;  // a sounding FM voice: choke without a click
   const bool prevDrum = legato && oneShot(v);  // its one-shot sound and gate env end here
@@ -1004,7 +1008,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       v.synWt[k] = (wt_ && wtMode && name[0]) ? wt_->findWt(name) : nullptr;
     }
     if (!overlap || !wasSyn) {  // legato keeps the phases and the env -> SHAPE running, as the filter env
-      v.sv().trigger();
+      const uint8_t phaseMode = m.synPhaseMode < static_cast<uint8_t>(SynPhaseMode::Count) ? m.synPhaseMode : 0;
+      const uint32_t phaseSeed = phaseMode == static_cast<uint8_t>(SynPhaseMode::Random) ? rnd() : 0;
+      v.sv().trigger(phaseMode, m.synPhase[0], m.synPhase[1], phaseSeed, keepSynPhase);
       v.senvT = 0;
     }
   }
@@ -1604,7 +1610,7 @@ MT_HOT void Synth::controlDrum2(Voice& v, const Instrument& m, float pitch, int 
 
 // SYNTH: macros SHP1, SHP2, MIX, DET, SENV (env -> SHAPE depth, bipolar around 64); la: control()'s LFO
 // sums (SUB, NOISE, SEMI2, FOLD, RING here).
-MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
+MT_CONTROL void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
                               const float* la) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
@@ -1616,18 +1622,21 @@ MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt
   for (int k = 0; k < 2; ++k) {
     sp.mode[k] = m.synOsc[k] < static_cast<uint8_t>(SynOsc::Count) ? m.synOsc[k] : 0;
     sp.wt[k] = v.synWt[k];
-    sp.shape[k] = clampf(mac[kMacShp1 + k] * (1.f / 127.f) + senv, 0.f, 1.f);
+    sp.shape[k] = clampf(mac[kMacShp1 + k] * (1.f / 127.f), 0.f, 1.f);
   }
   const float det = (mac[kMacDet] - 64.f) * (50.f / 64.f) * 0.01f;  // +-50 cents, in semitones
   sp.hz[0] = cachedHz(v, 0, pitch);
-  sp.hz[1] = cachedHz(v, 1, pitch + clampf(m.synSemi, -24, 24) + 24.f * la[ld(LfoDest::Semi2)] + det);
+  sp.hz[1] = cachedHz(v, 1, pitch + clampf(m.synSemi, -24, 24) + 24.f * la[ld(LfoDest::Semi2)] + det +
+                              synEnvPitch2(m.synEnvDest, senv));
   sp.mix = mac[kMacMix] * (1.f / 127.f);
   sp.sync = m.synSync;
   sp.sub = u7(m.synSub + 64.f * la[ld(LfoDest::Sub)]) * (1.f / 127.f);
   sp.subOct = m.synSubOct ? 2 : 1;
+  sp.subWave = m.synSubWave;
   sp.noise = u7(m.synNoise + 64.f * la[ld(LfoDest::Noise)]) * (1.f / 127.f);
   sp.fold = u7(m.synFold + 64.f * la[ld(LfoDest::Fold)]) * (1.f / 127.f);
   sp.ring = u7(m.synRing + 64.f * la[ld(LfoDest::Ring)]) * (1.f / 127.f);
+  synApplyEnv(sp, m.synEnvDest, senv);
   v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   v.amp = v.gain * iv * vol * (1.f / 127.f);

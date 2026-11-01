@@ -242,9 +242,9 @@ static FmParams goldenPatch() {
   return p;
 }
 
-// SAT 0 (the default): the shaper is skipped, the render is bit for bit the one from before SAT.
+// SAT 0 (the default): golden render with the corrected attack and the shaper skipped.
 void test_sat_zero_bit_exact() {
-  constexpr uint32_t kGolden = 0xEF26D32Cu;  // the hash of this render on the code before SAT
+  constexpr uint32_t kGolden = 0xC1F17104u;  // corrected 16-sample attack; SAT 0 still skips the shaper
   FmVoice v;
   v.trigger(false);
   run(v, goldenPatch(), buf, 8192);
@@ -252,6 +252,8 @@ void test_sat_zero_bit_exact() {
   char msg[32];
   snprintf(msg, sizeof msg, "hash 0x%08X", static_cast<unsigned>(h));
   TEST_ASSERT_EQUAL_HEX32_MESSAGE(kGolden, h, msg);
+  // Everything after the corrected first tick remains bit-exact to the previous low-pitch render.
+  TEST_ASSERT_EQUAL_HEX32(0x6EBA8C23u, hashOf(buf + 32, 8192 - 32));
 }
 
 // SAT keeps the full-scale peak (tanh(g) / tanh(g) = 1) and fattens the wave: RMS up.
@@ -311,8 +313,159 @@ void test_sat_back_to_zero_is_bypass() {
   TEST_ASSERT_EQUAL_MEMORY(xa + from, xb + from, sizeof(float) * (1024 - from));
 }
 
+// The attack/decay corner must survive a control period that straddles sample 16.
+void test_short_attack_reaches_peak_inside_tick() {
+  FmParams p = sine(kSynthRate / 64.f);  // carrier peak at sample 16
+  p.oneShot = true;
+  p.ampMs = 5;
+  FmVoice v;
+  v.trigger(false);
+  run(v, p, buf, 64);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.f, buf[16]);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f, buf[8] / sinf(6.2831853f * 8 / 64));
+}
+
+void test_attack_corner_survives_partial_renders() {
+  FmParams p = sine(kSynthRate / 64.f);
+  p.oneShot = true;
+  p.ampMs = 5;
+  FmVoice v;
+  v.trigger(false);
+  memset(buf, 0, 64 * sizeof(float));
+  v.control(p, 32);
+  v.render(buf, 7, 1);
+  v.render(buf + 7, 9, 1);
+  v.render(buf + 16, 16, 1);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.f, buf[16]);
+}
+
+static double spectralAmplitude(const float* x, int n, float hz) {
+  double re = 0, im = 0;
+  for (int i = 0; i < n; ++i) {
+    const double a = 6.283185307179586 * hz * i / kSynthRate;
+    re += x[i] * cos(a);
+    im += x[i] * sin(a);
+  }
+  return 2 * sqrt(re * re + im * im) / n;
+}
+
+void test_high_carrier_reduces_folded_sidebands() {
+  FmParams p = sine(4000);
+  p.op[0].ratio = 3.5f;  // 14 kHz carrier, third upper sideband folds from 26 to 18.1 kHz
+  p.op[1].level = 3;
+  FmVoice v;
+  v.trigger(false);
+  run(v, p, buf, kSynthRate);
+  TEST_ASSERT_TRUE(spectralAmplitude(buf, kSynthRate, 18100) < 0.01);
+  TEST_ASSERT_TRUE(spectralAmplitude(buf, kSynthRate, 14000) > 0.5);
+}
+
+void test_shared_modulator_respects_highest_carrier() {
+  FmParams p = sine(4000);
+  p.alg = FmAlg::OneToThree;
+  p.op[0].ratio = 3.5f;
+  p.op[1].ratio = 1;
+  p.op[1].level = 0.2f;
+  p.op[3].level = 3;
+  FmVoice v;
+  v.trigger(false);
+  run(v, p, buf, kSynthRate);
+  TEST_ASSERT_TRUE(spectralAmplitude(buf, kSynthRate, 18100) < 0.01);
+}
+
+// Splitting the same two pairs into independently rendered voices must preserve the low pair:
+// the upper pair's pitch must not consume its bandwidth budget.
+void test_two_pairs_have_independent_headroom() {
+  static float low[1024], high[1024];
+  FmParams p = sine(1000);
+  p.alg = FmAlg::TwoPairs;
+  p.op[1].level = 2;
+  p.op[2].ratio = 14;
+  p.op[2].level = 1;
+  p.op[3].ratio = 4;
+  p.op[3].level = 3;
+  FmVoice both, a, b;
+  both.trigger(false); a.trigger(false); b.trigger(false);
+  run(both, p, buf, 1024);
+  FmParams pa = p, pb = p;
+  pa.op[2].level = 0;
+  pb.op[0].level = 0;
+  run(a, pa, low, 1024);
+  run(b, pb, high, 1024);
+  for (int i = 0; i < 1024; ++i)
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, low[i] + high[i], buf[i]);
+}
+
+void test_two_modulators_share_carrier_headroom() {
+  FmParams p = sine(4000);
+  p.alg = FmAlg::TwoToOne;
+  p.op[0].ratio = 3.5f;
+  p.op[1].level = p.op[2].level = 3;
+  FmVoice v;
+  v.trigger(false);
+  run(v, p, buf, kSynthRate);
+  TEST_ASSERT_TRUE(spectralAmplitude(buf, kSynthRate, 18100) < 0.01);
+}
+
+void test_nested_modulator_bandwidth_limits_outer_index() {
+  // Deeper modulation broadens operator 2 beyond its 1 kHz fundamental. That width must be
+  // included when it modulates the high carrier, rather than permitting the full index 12.
+  FmParams p = sine(1000);
+  p.op[0].ratio = 14;
+  p.op[1].level = 12;
+  p.op[2].ratio = 4;
+  p.op[2].level = 3;
+  FmVoice v;
+  v.trigger(false);
+  run(v, p, buf, kSynthRate);
+  // With the broad modulation curtailed, the high carrier remains the main component.
+  TEST_ASSERT_TRUE(spectralAmplitude(buf, kSynthRate, 14000) > 0.8);
+}
+
+void test_decayed_nested_modulator_releases_headroom() {
+  static float ref[4410];
+  FmParams p = sine(1000);
+  p.op[0].ratio = 10;
+  p.op[1].level = 4;
+  p.op[2].ratio = 4;
+  p.op[2].level = 3;
+  p.op[2].decayMs = 5;
+  FmVoice a, b;
+  a.trigger(false); b.trigger(false);
+  run(a, p, buf, 4410);
+  p.op[2].level = 0;
+  run(b, p, ref, 4410);
+  for (int i = 4378; i < 4410; ++i)
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, ref[i], buf[i]);
+}
+
+void test_zero_decay_ignores_sustain_and_resumes_decay_on_change() {
+  FmParams p = sine(500);
+  p.op[0].sustain = 0.37f;
+  FmVoice v;
+  v.trigger(false);
+  run(v, p, buf, 1024);
+  for (int i = 0; i < 1024; ++i)
+    TEST_ASSERT_FLOAT_WITHIN(0.005f, sinf(6.2831853f * 500 * i / kSynthRate), buf[i]);
+  // Introducing a finite decay after flat ticks must use elapsed note time, not a stale cache.
+  p.op[0].decayMs = 5;
+  run(v, p, buf, 1024);
+  float peak = 0;
+  for (int i = 0; i < 1024; ++i) peak = fmaxf(peak, fabsf(buf[i]));
+  TEST_ASSERT_TRUE(peak < 0.371f && peak > 0.36f);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_zero_decay_ignores_sustain_and_resumes_decay_on_change);
+  RUN_TEST(test_decayed_nested_modulator_releases_headroom);
+  RUN_TEST(test_two_pairs_have_independent_headroom);
+  RUN_TEST(test_two_modulators_share_carrier_headroom);
+  RUN_TEST(test_nested_modulator_bandwidth_limits_outer_index);
+  RUN_TEST(test_short_attack_reaches_peak_inside_tick);
+  RUN_TEST(test_attack_corner_survives_partial_renders);
+  RUN_TEST(test_high_carrier_reduces_folded_sidebands);
+  RUN_TEST(test_shared_modulator_respects_highest_carrier);
   RUN_TEST(test_carrier_frequency);
   RUN_TEST(test_zero_index_is_pure_sine);
   RUN_TEST(test_modulation_changes_wave);

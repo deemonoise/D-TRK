@@ -21,3 +21,12 @@
 #define MT_RAM2
 #endif
 #define MT_INLINE inline __attribute__((always_inline))
+
+// These small control-rate routines share the Teensy's instruction cache instead of
+// consuming another 32 KB ITCM bank. Sample-rate loops stay MT_HOT; the ESP32 still
+// keeps control work in IRAM because its flash cache is shared with the UI.
+#if defined(__IMXRT1062__)
+#define MT_CONTROL FLASHMEM
+#else
+#define MT_CONTROL MT_HOT
+#endif

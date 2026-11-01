@@ -103,6 +103,8 @@ void App::setTab(Tab t) {
   if (t == Tab::Count || !screens_[static_cast<int>(t)]) return;
   setBpmEdit(false);
   if (t == tab_) return;
+  rawTouchScreen_ = nullptr;
+  rawTouchXy_ = false;
   perf_.setXy(false);  // the pad belongs to the tab it was opened on
   xyPad_.clear();
   menu_.close();
@@ -201,6 +203,8 @@ void App::onInput(const hw::InputEvent& ev) {
     case InputType::BDown: abAction(ab_.bDown()); return;
     case InputType::BUp: abAction(ab_.bUp(ev.shift)); return;
     case InputType::PlayPress:
+      // A drawing document keeps Play even while its action/confirmation menu is open.
+      if (screen()->wantsRawTouch() && screen()->onPlay()) return;
       if (const auto o = ab_.play(); o.act != mt::AbAction::Pass) {
         recordShortcut(o.act == mt::AbAction::RecordMotion);
         return;
@@ -456,7 +460,27 @@ void App::onTouch(const TouchEvent& ev) {
   lastInputMs_ = millis();
   dirty_ = true;
   if (ev.type == TouchType::Down || ev.type == TouchType::Move || ev.type == TouchType::Up) {
-    xyTouch(ev);
+    if (ev.type == TouchType::Down) {
+      rawTouchScreen_ = nullptr;
+      rawTouchXy_ = !menu_.isOpen() && xyMode();
+      if (!rawTouchXy_ && !menu_.isOpen() && !versionBarrier() && screen()->wantsRawTouch())
+        rawTouchScreen_ = screen();
+    }
+    if (rawTouchXy_) {
+      if (!menu_.isOpen() && xyMode()) xyTouch(ev);
+      else {
+        xyPad_.lift(); perf_.xyUp(); rawTouchXy_ = false;
+      }
+    }
+    else if (rawTouchScreen_) {
+      if (rawTouchScreen_ == screen() && !menu_.isOpen() && !versionBarrier() &&
+          rawTouchScreen_->wantsRawTouch()) rawTouchScreen_->onTouch(ev);
+      else rawTouchScreen_ = nullptr;  // a captured gesture never enters a replacement overlay
+    }
+    if (ev.type == TouchType::Up) {
+      rawTouchScreen_ = nullptr;
+      rawTouchXy_ = false;
+    }
     return;
   }
   if (ev.type == TouchType::HDrag) {
@@ -1407,7 +1431,7 @@ void App::pollMotion() {
 
 void App::tick() {
   TouchEvent te;
-  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag(), xyMode() && !menu_.isOpen())) onTouch(te);
+  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag(), !menu_.isOpen() && (xyMode() || screen()->wantsRawTouch()))) onTouch(te);
 
   const engine::Status s = engine::status();
   if (!(s == status_)) {

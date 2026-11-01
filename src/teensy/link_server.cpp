@@ -175,6 +175,7 @@ bool pushNow(uint64_t at, uint8_t len, uint8_t b0, uint8_t b1, uint8_t b2) {
 // insTrack: the pattern track whose insert the preview plays through (>= kTracks: none; the synth
 // keeps it until the next 0xF7, so every preview sets it).
 void startPreview(uint8_t instr, int slice, uint8_t note, uint32_t holdMs, uint8_t insTrack) {
+  preview::stop();
   const uint64_t at = micros64() + kPlayLatencyUs;
   if (previewOffUs) pushNow(at, 3, 0x80, previewNote, 0);
   pushNow(at, 2, 0xF7, insTrack < mt::kTracks ? insTrack : mt::kTracks, 0);

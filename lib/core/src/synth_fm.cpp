@@ -50,17 +50,60 @@ MT_INLINE float opStep(OpRun& s, float mod) {
   return y;
 }
 
-}  // namespace
-
-MT_HOT bool fmCarrier(FmAlg a, int op) {
+MT_INLINE uint8_t carrierMask(FmAlg a) {
   switch (a) {
     case FmAlg::Stack:
-    case FmAlg::TwoToOne: return op == 0;
-    case FmAlg::TwoPairs: return op == 0 || op == 2;
-    case FmAlg::OneToThree: return op < 3;
-    default: return true;
+    case FmAlg::TwoToOne: return 1;
+    case FmAlg::TwoPairs: return 5;
+    case FmAlg::OneToThree: return 7;
+    default: return 15;
   }
 }
+
+// Approximate occupied bandwidth, evaluated only at control rate. PM has infinitely many
+// sidebands: this is a pitch-dependent alias reduction, not a strict band-limit. Each receiver
+// shares its remaining headroom between incoming branches; nested branches carry their own width.
+// Feedback is separately limited by machines: this estimate does not bound feedback-generated bands.
+struct IndexLimits {
+  float hz[kFmOps], width[kFmOps], cap[kFmOps], level[kFmOps];
+  const FmParams& p;
+
+  MT_INLINE IndexLimits(const FmParams& params, float bend, uint8_t carriers, const float* l0, const float* l1) : p(params) {
+    if (p.alg == FmAlg::Additive) return;
+    for (int i = 0; i < kFmOps; ++i) {
+      level[i] = l0[i] > l1[i] ? l0[i] : l1[i];
+      hz[i] = width[i] = p.hz * p.op[i].ratio * bend;
+      cap[i] = (carriers & (1u << i)) ? 12.f : fmMaxIndex(hz[i]);
+    }
+    switch (p.alg) {
+      case FmAlg::Stack: receive(2, 3); receive(1, 2); receive(0, 1); break;
+      case FmAlg::TwoToOne: receive(2, 3); receive(0, 1, 2); break;
+      case FmAlg::TwoPairs: receive(0, 1); receive(2, 3); break;
+      case FmAlg::OneToThree:
+        for (int i = 0; i < 3; ++i) if (level[i] > 0) receive(i, 3);
+        break;
+      default: break;
+    }
+  }
+
+  MT_HOT __attribute__((noinline)) void receive(int receiver, int a, int b = -1) {
+    const float la = level[a] < cap[a] ? level[a] : cap[a];
+    const float lb = b >= 0 ? (level[b] < cap[b] ? level[b] : cap[b]) : 0.f;
+    const float need = la * width[a] + (b >= 0 ? lb * width[b] : 0.f);
+    const float room = hz[receiver] < 16000.f ? 16000.f - hz[receiver] : 0.f;
+    if (need > room) {
+      const float scale = room * fastRcp(need);
+      cap[a] = la * scale;
+      if (b >= 0) cap[b] = lb * scale;
+    }
+    width[receiver] += (la < cap[a] ? la : cap[a]) * width[a];
+    if (b >= 0) width[receiver] += (lb < cap[b] ? lb : cap[b]) * width[b];
+  }
+};
+
+}  // namespace
+
+MT_HOT bool fmCarrier(FmAlg a, int op) { return (carrierMask(a) & (1u << op)) != 0; }
 
 MT_HOT float fmMaxIndex(float hz) {
   if (hz <= 0) return 12;
@@ -149,7 +192,7 @@ MT_HOT void FmVoice::ampPair(const FmParams& p, uint32_t t0, int span, float& a0
   a1 = at(tb);
 }
 
-MT_HOT void FmVoice::control(const FmParams& p, int span) {
+MT_CONTROL void FmVoice::control(const FmParams& p, int span) {
   alg_ = p.alg;
   oneShot_ = p.oneShot;
   const float inv = span == 32 ? 1.f / 32 : (span > 0 ? 1.f / span : 0);  // kControl: no __divsf3
@@ -175,23 +218,31 @@ MT_HOT void FmVoice::control(const FmParams& p, int span) {
     fbScale0 = 1.f + p.fbEnv * d0;
     fbScale1 = 1.f + p.fbEnv * d1;
   }
+  float level0[kFmOps], level1[kFmOps];
+  for (int i = 0; i < kFmOps; ++i) {
+    const FmOp& o = p.op[i];
+    level0[i] = level1[i] = 0;
+    if (o.decayMs <= 0.f || o.sustain >= 1.f) {
+      level0[i] = level1[i] = o.level;
+    } else if (o.level != 0) {
+      float d0, d1;
+      opDec_[i].at(o.decayMs, 0, t_, span, d0, d1);
+      const float s = o.sustain < 0 ? 0 : (o.sustain > 1 ? 1 : o.sustain);
+      level0[i] = o.level * (s + (1.f - s) * d0);
+      level1[i] = o.level * (s + (1.f - s) * d1);
+    }
+  }
+  const uint8_t carriers = carrierMask(p.alg);
+  const IndexLimits limits(p, bend0 > bend1 ? bend0 : bend1, carriers, level0, level1);
   for (int i = 0; i < kFmOps; ++i) {
     const FmOp& o = p.op[i];
     const float hz = p.hz * o.ratio;
     const float i0 = hz * bend0 * kIncPerHz, i1 = hz * bend1 * kIncPerHz;
-    float l0 = 0, l1 = 0;
-    if (o.level != 0) {
-      float d0, d1;
-      opDec_[i].at(o.decayMs, 0, t_, span, d0, d1);
-      const float s = o.sustain < 0 ? 0 : (o.sustain > 1 ? 1 : o.sustain);
-      l0 = o.level * (s + (1.f - s) * d0);
-      l1 = o.level * (s + (1.f - s) * d1);
-      if (!fmCarrier(p.alg, i)) {
-        // The limit of the highest pitch this tick reaches: a sweep starts octaves up (KICK, PERC).
-        const float m = fmMaxIndex(hz * (bend0 > bend1 ? bend0 : bend1));
-        l0 = (l0 < m ? l0 : m) * kInvTwoPi;
-        l1 = (l1 < m ? l1 : m) * kInvTwoPi;
-      }
+    float l0 = level0[i], l1 = level1[i];
+    if (!(carriers & (1u << i))) {
+      const float m = limits.cap[i];
+      l0 = (l0 < m ? l0 : m) * kInvTwoPi;
+      l1 = (l1 < m ? l1 : m) * kInvTwoPi;
     }
     if (hz <= 0 || i0 >= kMaxInc || i1 >= kMaxInc) l0 = l1 = 0;
     else if (choke_) l0 = lvl_[i];  // ramp from the sounding level, no snap
@@ -219,6 +270,12 @@ MT_HOT void FmVoice::control(const FmParams& p, int span) {
   ampPair(p, t_, span, a0, a1);
   amp_ = a0;
   dAmp_ = (a1 - a0) * inv;
+  if (p.oneShot && t_ < kAttack && t_ + span >= kAttack) {
+    // Preserve the corner instead of interpolating straight across attack + decay.
+    const int attack = static_cast<int>(kAttack - t_);
+    dAmp_ = (1.f - a0) / attack;
+    dAmpTail_ = span > attack ? (a1 - 1.f) / (span - attack) : 0.f;
+  }
   filterOn_ = p.filterHz > 0;
   filterAll_ = p.filterAll;
   if (filterOn_ && (p.filterHz != filterHz_ || p.filterQ != filterQ_ || p.filterMode != filterMode_)) {
@@ -323,7 +380,7 @@ MT_INLINE void FmVoice::run(float* __restrict out, int n, float gain) {
 
 // The algorithms inline here: one IRAM function (template instances in IRAM sections break the
 // Xtensa literal placement).
-MT_HOT void FmVoice::render(float* out, int n, float gain) {
+MT_HOT __attribute__((noinline)) void FmVoice::renderSegment(float* out, int n, float gain) {
   switch (alg_) {
     case FmAlg::Stack: run<FmAlg::Stack>(out, n, gain); break;
     case FmAlg::TwoToOne: run<FmAlg::TwoToOne>(out, n, gain); break;
@@ -331,6 +388,19 @@ MT_HOT void FmVoice::render(float* out, int n, float gain) {
     case FmAlg::OneToThree: run<FmAlg::OneToThree>(out, n, gain); break;
     default: run<FmAlg::Additive>(out, n, gain); break;
   }
+}
+
+MT_HOT void FmVoice::render(float* out, int n, float gain) {
+  if (n <= 0) return;
+  if (oneShot_ && t_ < kAttack && t_ + n >= kAttack) {
+    const int attack = static_cast<int>(kAttack - t_);
+    renderSegment(out, attack, gain);
+    amp_ = 1.f;
+    dAmp_ = dAmpTail_;
+    out += attack;
+    n -= attack;
+  }
+  if (n > 0) renderSegment(out, n, gain);
 }
 
 }  // namespace mt

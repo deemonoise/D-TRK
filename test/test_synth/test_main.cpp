@@ -2697,6 +2697,35 @@ void test_synth_saw_sounds() {
   TEST_ASSERT_INT_WITHIN(2, 22, crossings(blocksMs(100)));
 }
 
+void test_synth_free_phase_survives_released_voice_reuse() {
+  Instrument& m = p->instruments[0]; instrSetType(m, InstrType::Synth);
+  m.synOsc[0] = m.synOsc[1] = static_cast<uint8_t>(SynOsc::Sine);
+  m.mono = true; m.attack = 0; m.sustain = 127; m.release = 0;
+  float tails[2][32] = {};
+  for (int mode = 0; mode < 2; ++mode) {
+    s->reset(); m.synPhaseMode = static_cast<uint8_t>(mode);
+    noteOn(0, 0, 57); render1(buf);
+    noteOff(0, 0, 57); render1(buf);
+    noteOn(0, 0, 57); render1(buf);
+    const int vi = s->trackVoice(0); TEST_ASSERT_TRUE(vi >= 0);
+    SynVoice copy = s->voice(vi).eng.syn;
+    copy.render(tails[mode], 32, 1.f);
+  }
+  float difference = 0;
+  for (int i = 0; i < 32; ++i) difference += fabsf(tails[0][i] - tails[1][i]);
+  TEST_ASSERT_TRUE(difference > 5.f);
+}
+
+void test_synth_env_pitch2_reaches_audio_engine() {
+  Instrument& m = p->instruments[0]; instrSetType(m, InstrType::Synth);
+  m.synOsc[0] = m.synOsc[1] = static_cast<uint8_t>(SynOsc::Sine);
+  m.sustain = 127; m.macro[kMacMix] = 127;
+  m.macro[kMacSenv] = 96; m.synEAtk = 0; m.synEDec = 0;
+  m.synEnvDest = static_cast<uint8_t>(SynEnvDest::Pitch2);
+  noteOn(0, 0, 57); render1(buf);
+  TEST_ASSERT_INT_WITHIN(2, 44, crossings(blocksMs(100)));
+}
+
 void test_synth_missing_wt_silent() {
   Instrument& m = p->instruments[0];
   instrSetType(m, InstrType::Synth);
@@ -4892,8 +4921,9 @@ static uint32_t lpBpHpRenderHash() {
 
 void test_lp_bp_hp_render_unchanged() {
   const uint32_t h = lpBpHpRenderHash();
-  // Captured before VoiceFilter replaced the Svf; re-captured after the FM KICK body (filter path unchanged).
-  TEST_ASSERT_EQUAL_HEX32(0x09EFE345u, h);
+  // Re-captured after preserving the FM KICK attack peak inside a control block;
+  // LP / BP / HP processing itself is unchanged.
+  TEST_ASSERT_EQUAL_HEX32(0x7043CC95u, h);
 }
 
 // A CHIP saw through each new type: it sounds, and the voice is freed within 3 s of the release
@@ -6083,6 +6113,8 @@ int main() {
   RUN_TEST(test_dly_lock_without_note_hits_sounding_voice);
   RUN_TEST(test_delay_time_follows_tempo);
   RUN_TEST(test_synth_saw_sounds);
+  RUN_TEST(test_synth_free_phase_survives_released_voice_reuse);
+  RUN_TEST(test_synth_env_pitch2_reaches_audio_engine);
   RUN_TEST(test_synth_missing_wt_silent);
   RUN_TEST(test_synth_wt_plays);
   RUN_TEST(test_synth_wt_voices_are_heavy);

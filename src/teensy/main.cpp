@@ -144,7 +144,7 @@ void setup() {
   AudioMemory(16);  // the input takes 2 blocks a cycle (recording, MON) on top of the output
   out.begin(&synth);
   const bool shield = codec::begin();
-  preview::begin(model, out);
+  preview::begin(model, out, synth);
   render::begin(synth, out);
   rec::begin(out);
   fw::begin(out);

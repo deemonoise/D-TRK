@@ -1,11 +1,13 @@
 #pragma once
 #include <stdint.h>
+#include "hot.h"
 #include "link_frame.h"
 
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 21;  // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
+constexpr uint16_t kProtocol = 23;  // 23: lossless WT editor frames and RAM audition
+                                    // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
                                     // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields);
                                     // 12: LOFI (InstrType::Lofi, Instrument lofiFormula / lofiSync / lfoByte);
                                     // 13: recording (Rec*)
@@ -18,6 +20,8 @@ constexpr uint16_t kProtocol = 21;  // 8: SynthModel Tuning chunk; 9: xfade + Sc
                                     // 19: KIT 16 lanes (SynthModel size)
                                     // 20: live monitor metronome event (0xF9 accent level)
                                     // 21: parameter-lock bypass command (0xF5 kSynthClearLocks)
+                                    // 22: SYNTH phase, SENV destination and sub-wave model fields
+                                    // 22: SYNTH phase, env destination, SUB waveform (Instrument layout)
 
 // Frame types. Append only: the numbers are the protocol.
 enum class Msg : uint8_t {
@@ -37,6 +41,7 @@ enum class Msg : uint8_t {
   RenderOut,
   RecStart, RecSet, RecLevel, RecStop, RecCancel,
   FsCopy,
+  WtFrame16, WtAudition,
 };
 
 // Fs* replies: err first, 0 = ok.
@@ -272,6 +277,17 @@ struct BankClearRep {
   uint8_t removed = 0;
 };
 // Level 0 of frame (0..63) of wavetable name (built-in "*NAME" or a name of the project's list).
+// Lossless level-0 data, two halves of 128 signed little-endian points.
+struct WtFrame16Req { char name[17] = {}; uint8_t frame = 0, half = 0; };
+struct WtFrame16Rep { uint8_t result = 0; int16_t pts[128] = {}; };
+enum class WtAuditionAction : uint8_t { Stop, Part0, Part1 };
+struct WtAuditionReq {
+  uint16_t token = 0;
+  WtAuditionAction action = WtAuditionAction::Stop;
+  int16_t pts[128] = {};
+};
+struct WtAuditionRep { uint8_t result = 0; };
+
 struct WtFrameReq {
   uint8_t frame = 0;
   char name[17] = {};
@@ -527,6 +543,14 @@ void encode(const SampleInfoRep& m, Writer& w);
 void encode(const BankIndexRep& m, Writer& w);
 void encode(const BankClearReq& m, Writer& w);
 void encode(const BankClearRep& m, Writer& w);
+MT_CONTROL void encode(const WtFrame16Req& m, Writer& w);
+MT_CONTROL bool decode(Reader& r, WtFrame16Req& m);
+MT_CONTROL void encode(const WtFrame16Rep& m, Writer& w);
+MT_CONTROL bool decode(Reader& r, WtFrame16Rep& m);
+MT_CONTROL void encode(const WtAuditionReq& m, Writer& w);
+MT_CONTROL bool decode(Reader& r, WtAuditionReq& m);
+MT_CONTROL void encode(const WtAuditionRep& m, Writer& w);
+MT_CONTROL bool decode(Reader& r, WtAuditionRep& m);
 void encode(const WtFrameReq& m, Writer& w);
 void encode(const WtFrameRep& m, Writer& w);
 void encode(const WavePeaksReq& m, Writer& w);

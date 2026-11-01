@@ -238,7 +238,7 @@ void test_debug() {
 }
 
 void test_protocol_and_debug_id() {
-  TEST_ASSERT_EQUAL(21, kProtocol);  // 10: WtRender; 11: export (RenderOut, RenderStartReq / Rep fields); 12: LOFI;
+  TEST_ASSERT_EQUAL(23, kProtocol);  // 23: lossless WT frames and RAM audition.
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
                                      // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,
@@ -967,6 +967,25 @@ void test_render_oneshot_fields() {
   TEST_ASSERT_FALSE(decode(r6, e2));
 }
 
+void test_wt_editor_transport() {
+  WtFrame16Req q; strcpy(q.name, "*BASIC"); q.frame = 63; q.half = 1;
+  int n = put(q); checkTruncated<WtFrame16Req>(n);
+  WtFrame16Req q2; Reader r(buf, n); TEST_ASSERT_TRUE(decode(r, q2));
+  TEST_ASSERT_EQUAL_STRING(q.name, q2.name); TEST_ASSERT_EQUAL(63, q2.frame); TEST_ASSERT_EQUAL(1,q2.half);
+  q.half = 2; n = put(q); Reader bad(buf,n); TEST_ASSERT_FALSE(decode(bad,q2));
+  WtFrame16Rep rep; for(int i=0;i<128;++i) rep.pts[i] = static_cast<int16_t>(i*503-32768);
+  n=put(rep); TEST_ASSERT_EQUAL(257,n); checkTruncated<WtFrame16Rep>(n);
+  WtFrame16Rep rep2; Reader rr(buf,n); TEST_ASSERT_TRUE(decode(rr,rep2));
+  TEST_ASSERT_EQUAL_INT16_ARRAY(rep.pts,rep2.pts,128);
+  WtAuditionReq a; a.token=65535; a.action=WtAuditionAction::Part1; memcpy(a.pts,rep.pts,sizeof a.pts);
+  n=put(a); TEST_ASSERT_EQUAL(259,n); checkTruncated<WtAuditionReq>(n);
+  WtAuditionReq a2; Reader ar(buf,n); TEST_ASSERT_TRUE(decode(ar,a2));
+  TEST_ASSERT_EQUAL(65535,a2.token); TEST_ASSERT_EQUAL_INT16_ARRAY(a.pts,a2.pts,128);
+  a.action=WtAuditionAction::Stop; n=put(a); TEST_ASSERT_EQUAL(3,n); checkTruncated<WtAuditionReq>(n);
+  a.action=static_cast<WtAuditionAction>(3); n=put(a); Reader ab(buf,n); TEST_ASSERT_FALSE(decode(ab,a2));
+  TEST_ASSERT_EQUAL(50,static_cast<int>(Msg::WtFrame16)); TEST_ASSERT_EQUAL(51,static_cast<int>(Msg::WtAudition));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_writer_reader_primitives);
@@ -997,5 +1016,6 @@ int main(int, char**) {
   RUN_TEST(test_wt_render);
   RUN_TEST(test_rec_msgs_roundtrip);
   RUN_TEST(test_msg_rec_ids);
+  RUN_TEST(test_wt_editor_transport);
   return UNITY_END();
 }

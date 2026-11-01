@@ -52,12 +52,14 @@ static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt
 // 382: synFold, synRing (SYNI bytes 41, 42; snapshot copies instruments whole).
 // 392: lofiFormula, lofiSync, lfoByte (LOFI chunk). 394: fmSat, chipStep (FMEX chunk; chipStep: tail padding).
 // 570: kit 16 lanes (KITS chunk, 352-byte records).
-static_assert(sizeof(mt::Instrument) == 570, "Instrument changed: update snapshot() and project_io");
+// 576: SYNTH phase/env destination/sub waveform (SYNI reserved bytes 43..47).
+static_assert(sizeof(mt::Instrument) == 576, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
 // 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO). 480828: var (TVAR), LOFI instrument fields.
 // 480892: Instrument::fmSat (FMEX chunk). 481276: songTrn, songBpm, songTrnMask (SSLT).
 // 481628: knobs (KNOB). 520028: Step::lanesHi (PATN 15-byte steps), kit 16 lanes (KITS).
-static_assert(sizeof(mt::Project) == 520028, "Project changed: update snapshot() and project_io");
+// 520220: the five SYNTH fields; snapshot already copies the whole instrument array.
+static_assert(sizeof(mt::Project) == 520220, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {

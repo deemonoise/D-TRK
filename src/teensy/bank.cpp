@@ -410,6 +410,7 @@ int resultOnly(Msg t, BankResult r, uint8_t* p) {
       m.result = res(r);
       return put(m, p);
     }
+    case Msg::WtFrame16: { WtFrame16Rep m; m.result = res(r); return put(m, p); }
     case Msg::WtFrame: {
       WtFrameRep m;
       m.result = res(r);
@@ -473,6 +474,18 @@ int wtFrame(Reader& r, uint8_t* p) {
   if (!decode(r, q)) return resultOnly(Msg::WtFrame, BankResult::ReadFail, p);
   WtFrameRep m;
   if (!mt::bankWtFrame(theBank, *model, q.name, q.frame, m.pts)) m.result = res(BankResult::OpenFail);
+  return put(m, p);
+}
+
+FLASHMEM int wtFrame16(Reader& r, uint8_t* p) {
+  WtFrame16Req q;
+  if (!decode(r, q)) return resultOnly(Msg::WtFrame16, BankResult::ReadFail, p);
+  WtFrame16Rep m;
+  const int i = mt::bankWtIndex(theBank, *model, q.name);
+  const uint32_t off = q.frame * mt::kWtFramePts + q.half * 128;
+  if (i < 0) m.result = res(BankResult::OpenFail);
+  else if (const int16_t* data = theBank.data(i)) memcpy(m.pts, data + off, sizeof m.pts);
+  else if (!theBank.readData(i, off, m.pts, 128)) m.result = res(BankResult::ReadFail);
   return put(m, p);
 }
 
@@ -631,7 +644,8 @@ bool isRequest(Msg t) {
     case Msg::SampleInfo:
     case Msg::BankIndex:
     case Msg::BankClear:
-    case Msg::WtFrame: return true;
+    case Msg::WtFrame:
+    case Msg::WtFrame16: return true;
     default: return false;
   }
 }
@@ -640,10 +654,11 @@ int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* o) {
   const uint8_t type = static_cast<uint8_t>(t);
   Reader r(p, n);
   // Lookups: answered at once, any time.
-  if (t == Msg::SampleInfo || t == Msg::BankIndex || t == Msg::WtFrame) {
+  if (t == Msg::SampleInfo || t == Msg::BankIndex || t == Msg::WtFrame || t == Msg::WtFrame16) {
     if (!mounted) return resultOnly(t, BankResult::NoBank, o);
     if (t == Msg::SampleInfo) return sampleInfo(r, o);
     if (t == Msg::BankIndex) return bankIndex(o);
+    if (t == Msg::WtFrame16) return wtFrame16(r, o);
     return wtFrame(r, o);
   }
   if (working && curType == type && curSeq == seq) {  // a retry of the running job

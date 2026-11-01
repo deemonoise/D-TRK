@@ -414,6 +414,40 @@ BankResult wtRender(int index, uint32_t from, uint32_t to, const mt::WtMakeParam
   return result(rep.result);
 }
 
+BankResult wtFrame16(const char* name, int f, int16_t* out) {
+  WtFrame16Req q;
+  if (!name || strlen(name) >= sizeof q.name || f < 0 || f >= 64 || !out) return BankResult::OpenFail;
+  if (!waitSynced()) return BankResult::Link;
+  strcpy(q.name, name); q.frame = static_cast<uint8_t>(f);
+  for (int half = 0; half < 2; ++half) {
+    q.half = static_cast<uint8_t>(half);
+    uint8_t reply[kMaxPayload]; int len = 0;
+    if (!shortCall(Msg::WtFrame16, q, reply, len)) return BankResult::Link;
+    WtFrame16Rep rep; Reader rd(reply, len);
+    if (!decode(rd, rep)) return BankResult::Link;
+    if (rep.result) return result(rep.result);
+    memcpy(out + half * 128, rep.pts, sizeof rep.pts);
+  }
+  return BankResult::Ok;
+}
+
+BankResult wtAudition(const int16_t* pts) {
+  if (!pts) return BankResult::ReadFail;
+  if (!engineIdle()) return BankResult::Busy;
+  static uint16_t token = 0;
+  WtAuditionReq q; q.token = ++token;
+  for (int half = 0; half < 2; ++half) {
+    q.action = half ? WtAuditionAction::Part1 : WtAuditionAction::Part0;
+    memcpy(q.pts, pts + half * 128, sizeof q.pts);
+    uint8_t reply[kMaxPayload]; int len = 0;
+    if (!shortCall(Msg::WtAudition, q, reply, len, 500)) { previewStop(); return BankResult::Link; }
+    WtAuditionRep rep; Reader rd(reply, len);
+    if (!decode(rd, rep)) { previewStop(); return BankResult::Link; }
+    if (rep.result) { previewStop(); return result(rep.result); }
+  }
+  return BankResult::Ok;
+}
+
 BankResult previewFile(const char* path, uint32_t* frames, uint32_t* rate) {
   PreviewFileReq q;
   if (!path || strlen(path) >= sizeof q.path) return BankResult::OpenFail;
