@@ -518,7 +518,9 @@ inline uint16_t gatePercent(uint8_t v) {
 // NDG and PBN keep a signed value in the uint8 slot.
 inline int8_t fxSigned(uint8_t v) { return static_cast<int8_t>(v); }
 
+constexpr int kPatternNameMax = 16;
 struct Pattern {
+  char name[kPatternNameMax + 1] = {0};  // optional label; the pattern number stays stable
   uint8_t length = kDefaultSteps;
   Resolution res = Resolution::Sixteenth;
   uint8_t swing = 50;  // 50..75 %

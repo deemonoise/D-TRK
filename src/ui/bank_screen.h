@@ -1,6 +1,7 @@
 #pragma once
 #include "model.h"
 #include "screen.h"
+#include "keyboard.h"
 
 namespace ui {
 
@@ -9,6 +10,7 @@ class BankScreen : public Screen {
  public:
   explicit BankScreen(App& app) : app_(app) {}
   void onEnter() override;
+  void onLeave() override { kb_.close(); }
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;
   void onProjectReplaced() override;
@@ -17,7 +19,7 @@ class BankScreen : public Screen {
   bool wantsRedraw(const engine::Status& st) override;
 
  private:
-  enum MenuId : int { kCopyTo, kClear, kClearConfirm, kCancel, kLen16, kLen32, kLen64, kLen128, kLength, kDouble, kDoubleApply };
+  enum MenuId : int { kCopyTo, kClear, kClearConfirm, kCancel, kLen16, kLen32, kLen64, kLen128, kLength, kDouble, kDoubleApply, kRename };
   static constexpr int kCols = 4;
   static constexpr int kGapX = 6, kGapY = 4;
   static constexpr int kTileW = 112, kTileH = (kAreaH-kCols*kGapY)/kCols;
@@ -28,6 +30,7 @@ class BankScreen : public Screen {
   int tileAt(int x, int y) const;
   void activate(int idx, bool shift);  // queue / select, or the copy target
   void openMenu(int idx);
+  void rename(int pat);
   void onMenu(int id);
   void openLengthMenu();
   void openDoubleMenu();
@@ -38,6 +41,7 @@ class BankScreen : public Screen {
   void drawTile(LGFX_Sprite& s, int idx, int x, int y, bool blinkOn);
 
   App& app_;
+  Keyboard kb_;
   int y0_ = kAreaY;
   int sel_ = 0;
   int menuPat_ = 0;

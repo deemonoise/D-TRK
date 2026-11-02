@@ -47,7 +47,7 @@ void freeProject(mt::Project* p) {
 // lib/core/src/project_io.cpp (save + load + its tests) before changing the expected size.
 static_assert(sizeof(mt::Step) == 15, "Step layout changed: update snapshot() and project_io");
 static_assert(sizeof(mt::TrackCfg) == 40, "TrackCfg changed: update snapshot() and project_io");
-static_assert(sizeof(mt::Pattern) == 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
+static_assert(sizeof(mt::Pattern) == mt::kPatternNameMax + 1 + 4 + 2 * mt::kTracks + sizeof(mt::Step) * mt::kTracks * mt::kMaxSteps,
               "Pattern changed: update snapshot() and project_io");
 // 382: synFold, synRing (SYNI bytes 41, 42; snapshot copies instruments whole).
 // 392: lofiFormula, lofiSync, lfoByte (LOFI chunk). 394: fmSat, chipStep (FMEX chunk; chipStep: tail padding).
@@ -59,7 +59,8 @@ static_assert(sizeof(mt::Instrument) == 576, "Instrument changed: update snapsho
 // 480892: Instrument::fmSat (FMEX chunk). 481276: songTrn, songBpm, songTrnMask (SSLT).
 // 481628: knobs (KNOB). 520028: Step::lanesHi (PATN 15-byte steps), kit 16 lanes (KITS).
 // 520220: the five SYNTH fields; snapshot already copies the whole instrument array.
-static_assert(sizeof(mt::Project) == 520220, "Project changed: update snapshot() and project_io");
+// 520492: Pattern::name (PNAM chunk); snapshot copies each whole Pattern.
+static_assert(sizeof(mt::Project) == 520492, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {

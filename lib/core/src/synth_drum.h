@@ -91,7 +91,8 @@ class DrumVoice {
     set(p);
     control(span);
   }
-  void render(float* __restrict out, int n, float amp);
+  // ampStep ramps the new sound; last_/choke tail retain the actual output gain.
+  void render(float* __restrict out, int n, float amp, float ampStep = 0.f);
   // Every part below -80 dB (after drive) and no bursts left (also before the first trigger).
   bool done() const;
 

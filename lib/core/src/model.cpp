@@ -10,6 +10,7 @@
 namespace mt {
 
 void Pattern::clear() {
+  memset(name, 0, sizeof(name));
   length = kDefaultSteps;
   res = Resolution::Sixteenth;
   swing = 50;

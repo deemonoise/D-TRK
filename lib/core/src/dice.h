@@ -13,10 +13,11 @@ namespace mt {
 // Dice (PROJ): a starter in a genre / style (dice_recipes.h), by layers (bits, any mix):
 //   TEMPO   the style's BPM and one of its scales, a tonic;
 //   SOUNDS  the style's KIT on DRUMS, its presets on the other role tracks;
-//   PATTERN four patterns MAIN / FILL / BREAK / DROP from the start pattern (diceFirstPattern): the role
+//   PATTERN Classic: MAIN/FILL/BREAK/DROP; Develop: INTRO/MAIN/VAR/OUTRO;
+//           Arrange: INTRO/MAIN/BREAK/BUILD/DROP/OUTRO from diceFirstPattern: the role
 //           tracks' steps, the patterns' length / resolution / swing / groove; roles the style lacks are
 //           emptied and muted, the others unmuted;
-//   SONG    (only with PATTERN) the song becomes MAIN x2, FILL, BREAK, DROP x2, FILL.
+//   SONG    (only with PATTERN) a chain of the active sections, according to the chosen form.
 // Tracks 7..16 and the other patterns are never touched.
 enum : uint8_t { kDiceTempo = 1, kDiceSounds = 2, kDicePattern = 4, kDiceAll = 7, kDiceSong = 8 };
 
@@ -24,16 +25,18 @@ enum : uint8_t { kDiceTempo = 1, kDiceSounds = 2, kDicePattern = 4, kDiceAll = 7
 constexpr uint8_t kDiceTrack[kDiceRoles] = {0, 1, 2, 3, 4, 5};
 const char* diceRoleName(DiceRole r);  // "DRUMS", "BASS", "CHORDS", "LEAD", "ARP", "FX" (track names)
 
-constexpr int kDicePats = 4;  // MAIN, FILL, BREAK, DROP
+constexpr int kDicePats = 4;  // legacy Classic/Develop pattern count stays stable
+constexpr int kDiceMaxPats = 6;
 enum : uint8_t { kDiceMain, kDiceFill, kDiceBreak, kDiceDrop };
+enum : uint8_t { kArrangeIntro, kArrangeMain, kArrangeBreak, kArrangeBuild, kArrangeDrop, kArrangeOutro };
 constexpr int kDiceSongLen = 7;
 constexpr int kDiceVarietyDefault = 30;
 
-// The first of the four patterns for the edited one: it, or earlier so that all four fit (P13..P16).
-int diceFirstPattern(int editPattern);
-// Patterns of the four (bit i = pattern first + i) holding any step: a PATTERN roll overwrites their role
+// Dice always starts at P01. The edit/count arguments remain for source compatibility.
+int diceFirstPattern(int editPattern, int count = kDicePats);
+// Patterns of the range (bit i = pattern first + i) holding any step: a PATTERN roll overwrites their role
 // tracks (UI: "OVERWRITE Pxx-Pyy?").
-uint16_t diceOverwrites(const Project& p, int editPattern);
+uint16_t diceOverwrites(const Project& p, int editPattern, int count = kDicePats);
 
 // Instrument slot of each role: the role track's own instrument; DRUMS' drums go to
 // factoryKitBlock(out[Drums]); a melodic slot taken by an earlier role, inside that block or played by
@@ -44,7 +47,7 @@ void diceSlots(const Project& p, uint8_t out[kDiceRoles]);
 
 enum class DiceSource : uint8_t { Builtin, Midi, Hybrid };
 
-enum class DiceForm : uint8_t { Classic, Develop };
+enum class DiceForm : uint8_t { Classic, Develop, Arrange };
 enum class DiceChange : uint8_t { Subtle, Normal, Wild };
 enum class DiceDensity : uint8_t { Sparse, Normal, Busy };
 
@@ -66,8 +69,12 @@ struct DiceOpts {
   uint8_t len = 0;               // pattern steps 16/32/64/128; 0 = AUTO (from the style)
 };
 
+// Six sections only for a full WILD ARRANGE pattern roll; all other requests use four.
+int dicePatternCount(const DiceOpts& opts);
+
 // The role tracks of one pattern, and its header.
 struct DicePat {
+  char name[kPatternNameMax + 1];
   uint8_t length;
   Resolution res;
   uint8_t swing, groove;
@@ -92,7 +99,7 @@ struct DiceParts {
   Instrument instruments[kInstruments];
   GenCfg gen[kDiceRoles];
   VarCfg var[kDiceRoles];
-  DicePat pats[kDicePats];
+  DicePat pats[kDiceMaxPats];
   DiceSong song;
 };
 
@@ -112,15 +119,17 @@ struct DiceWork {
 // the project and rolls them (UI task, no lock: the UI is the only writer of these), diceApply swaps
 // the written ones with the project's (under the project lock). After the swap `parts` holds what the
 // roll replaced, bit for bit: the one-step undo. Solo is never swapped; mute only of the tracks PATTERN
-// muted / unmuted. The caller owns it (PSRAM on the device, sizeof(DiceSnap) ~ 86 KB).
+// muted / unmuted. The caller owns it (PSRAM on the device, sizeof(DiceSnap) ~ 125 KiB).
 struct DiceSnap {
   bool preserveHeaders = false;  // a role lock also protects its pattern timing
+  bool namePatterns = false;  // full WILD pattern roll: exchange section labels on apply/undo
   uint8_t layers = 0;   // layers of the applied roll still to undo, 0 = nothing
   uint8_t drafted = 0;  // layers of a draft waiting for diceApply
-  uint8_t first = 0;    // first of the four patterns
+  uint8_t first = 0;    // first of the active pattern range
+  uint8_t patCount = kDicePats;  // actual draft/undo range; inactive capacity is never read or swapped
   uint8_t cfgMask = 0;     // SOUNDS: role tracks whose TrackCfg the roll wrote
   uint8_t muteMask = 0;    // PATTERN: role tracks whose mute it wrote
-  uint8_t patMask = 0;     // PATTERN: role tracks whose steps (four patterns), GEN and MUT it wrote
+  uint8_t patMask = 0;     // PATTERN: role tracks whose active-pattern steps, GEN and MUT it wrote
   uint32_t instrMask = 0;  // SOUNDS: instruments it wrote
   DiceParts parts;
   DiceWork work;  // not state
@@ -130,11 +139,11 @@ struct DiceResult {
   uint32_t seed = 0;
   uint8_t midiMask = 0, midiApproxMask = 0, missingMask = 0;
   int8_t genre = -1, style = -1;  // the recipe rolled
-  uint8_t first = 0;              // first of the four patterns
+  uint8_t first = 0;              // first of the active pattern range
   uint16_t written = 0;           // tracks whose sound, steps or mute changed
 };
 
-// bpm (all four): the project BPM when a song slot's BPM holds the live tempo p.bpm (0 = p.bpm). The roll
+// bpm (all sections): the project BPM when a song slot's BPM holds the live tempo p.bpm (0 = p.bpm). The roll
 // reads it, and the undo keeps it, instead of p.bpm.
 // Rolls o.layers into s.parts, seeded (same project + opts + seed = same roll); p is only read. Drops the
 // previous roll's undo.

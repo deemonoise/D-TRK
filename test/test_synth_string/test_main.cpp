@@ -998,8 +998,98 @@ void test_modal_level_matches_string() {
   }
 }
 
+// Other tracks' MIDI events may split a STRING render at any sample. The
+// resonator's delay glide must depend on elapsed samples, not those call boundaries.
+static void splitGlide(float hz, int split, bool changeAgain) {
+  StringParams p;
+  p.hz = hz;
+  p.damp = 0.85f;
+  p.bright = 0.7f;
+  StringVoice initial;
+  initial.trigger(1.f, false);
+  int16_t la[kLineLen] = {}, lb[kLineLen] = {};
+  float warm[32];
+  for (int b = 0; b < 80; ++b) {
+    memset(warm, 0, sizeof warm);
+    initial.control(p, 32);
+    initial.render(warm, 32, 1.f, la);
+  }
+  StringVoice whole = initial, pieces = initial;
+  memcpy(lb, la, sizeof la);
+  p.hz = hz * 1.25f;  // both pitches retain the same rate divider (1 / 2 / 4).
+  whole.control(p, 32);
+  pieces.control(p, 32);
+  float a[128] = {}, b[128] = {};
+  if (changeAgain) {
+    whole.render(a, 8, 1.f, la);
+    pieces.render(b, 1, 1.f, lb);
+    pieces.render(b + 1, 7, 1.f, lb);
+    p.hz = hz * 0.9f;
+    whole.control(p, 24);
+    pieces.control(p, 24);
+    whole.render(a + 8, 24, 1.f, la);
+    pieces.render(b + 8, 9, 1.f, lb);
+    pieces.render(b + 17, 15, 1.f, lb);
+  } else {
+    whole.render(a, 32, 1.f, la);
+    pieces.render(b, split, 1.f, lb);
+    pieces.render(b + split, 32 - split, 1.f, lb);
+  }
+  // The following periods also agree, including a cached control update at
+  // the glide's endpoint. No stale ramp may advance the settled delay again.
+  for (int at = 32; at < 128; at += 32) {
+    whole.control(p, 32);
+    pieces.control(p, 32);
+    whole.render(a + at, 32, 1.f, la);
+    pieces.render(b + at, 32, 1.f, lb);
+  }
+  for (int j = 0; j < 128; ++j) TEST_ASSERT_FLOAT_WITHIN(1e-6f, a[j], b[j]);
+  TEST_ASSERT_EQUAL_MEMORY(la, lb, sizeof la);
+}
+void test_string_glide_render_partition_invariant() {
+  for (float hz : {220.f, 60.f, 30.f})
+    for (int split : {1, 7, 8, 16, 31}) splitGlide(hz, split, false);
+}
+void test_string_glide_midperiod_target_partition_invariant() {
+  for (float hz : {220.f, 60.f, 30.f}) splitGlide(hz, 0, true);
+}
+
+// A same-parameter control event halfway through the ramp is a no-op; a
+// renderer that crosses its endpoint must stop there even without a new control.
+void test_string_glide_cached_control_and_endpoint() {
+  for (float hz : {220.f, 60.f, 30.f}) {
+    StringParams p;
+    p.hz = hz;
+    StringVoice v;
+    v.trigger(1.f, false);
+    int16_t la[kLineLen] = {}, lb[kLineLen] = {};
+    float warm[32] = {};
+    v.control(p, 32);
+    v.render(warm, 32, 1.f, la);
+    StringVoice ref = v;
+    memcpy(lb, la, sizeof la);
+    p.hz = hz * 1.25f;
+    v.control(p, 32);
+    ref.control(p, 32);
+    float a[96] = {}, b[96] = {};
+    v.render(a, 8, 1.f, la);
+    v.control(p, 24);  // cached coefficients; must not cancel the in-flight ramp
+    v.render(a + 8, 88, 1.f, la);
+    ref.render(b, 32, 1.f, lb);
+    ref.control(p, 32);
+    ref.render(b + 32, 32, 1.f, lb);
+    ref.control(p, 32);
+    ref.render(b + 64, 32, 1.f, lb);
+    for (int j = 0; j < 96; ++j) TEST_ASSERT_FLOAT_WITHIN(1e-6f, a[j], b[j]);
+    TEST_ASSERT_EQUAL_MEMORY(la, lb, sizeof la);
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_string_glide_render_partition_invariant);
+  RUN_TEST(test_string_glide_cached_control_and_endpoint);
+  RUN_TEST(test_string_glide_midperiod_target_partition_invariant);
   RUN_TEST(test_exciter_impulse);
   RUN_TEST(test_exciter_burst_length);
   RUN_TEST(test_exciter_brightness);

@@ -196,6 +196,7 @@ class SynVoice {
   uint32_t noise_ = 0x12345678u;
   bool snap_ = true;  // next control() jumps to its values (after trigger)
   float fold_ = 0, foldStep_ = 0, ring_ = 0, ringStep_ = 0;
+  float subGain_ = 0, noiseGain_ = 0, subStep_ = 0, noiseStep_ = 0;
 };
 
 MT_INLINE BlOut BlOsc::sine(float dt, float inv, float sync) {

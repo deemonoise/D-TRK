@@ -464,7 +464,7 @@ void ProjScreen::roll(const mt::DiceOpts& o) {
     storage::DiceLibraryData bytes;
     if (wantMidi) {
       app_.showBusy("LOADING MIDI LIBRARY...");
-      if (!bytes.load(o.genre, seed)) {
+      if (!bytes.load(o.genre, seed, o.style)) {
         if (o.source == mt::DiceSource::Midi) {
           app_.toast(bytes.error());
           app_.invalidate();

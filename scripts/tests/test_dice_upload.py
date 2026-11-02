@@ -20,6 +20,7 @@ class DiceUploadTest(unittest.TestCase):
                        "-ffunction-sections", "-Wl,-dead_strip",
                        "-I" + str(ROOT / "lib/core/src"),
                        str(folder / "test.cpp"), str(ROOT / "lib/core/src/dice_library.cpp"),
+                       str(ROOT / "lib/core/src/dice_recipes.cpp"),
                        "-o", str(folder / "test")]
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

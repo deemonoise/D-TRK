@@ -85,7 +85,8 @@ MT_CONTROL void SynVoice::control(const SynParams& p, int n) {
   if (snap_) {
     snap_ = false;
     shape_[0] = p.shape[0], shape_[1] = p.shape[1], mix_ = p.mix, fold_ = foldTarget, ring_ = p.ring;
-    shapeStep_[0] = shapeStep_[1] = mixStep_ = foldStep_ = ringStep_ = 0;
+    subGain_ = p.sub; noiseGain_ = p.noise;
+    shapeStep_[0] = shapeStep_[1] = mixStep_ = foldStep_ = ringStep_ = subStep_ = noiseStep_ = 0;
     return;
   }
   const float inv = n == 32 ? 1.f / 32 : (n > 0 ? 1.f / n : 1.f);  // kControl: no __divsf3
@@ -93,6 +94,8 @@ MT_CONTROL void SynVoice::control(const SynParams& p, int n) {
   mixStep_ = (p.mix - mix_) * inv;
   foldStep_ = (foldTarget - fold_) * inv;
   ringStep_ = (p.ring - ring_) * inv;
+  subStep_ = (p.sub - subGain_) * inv;
+  noiseStep_ = (p.noise - noiseGain_) * inv;
 }
 
 constexpr float kMaxDt = 0.4999f;  // phase step per sample, below Nyquist
@@ -257,31 +260,35 @@ MT_HOT void SynVoice::render(float* out, int n, float amp) {
     }
     if (fold) foldBlock(a, m);
     fold_ += foldStep_ * m;
-    if (p_.sub > 0) {
-      const float sg = p_.sub;
+    if (subGain_ > 0.f || subGain_ + subStep_ * m > 0.f) {
+      float sg = subGain_;
+      const float ds = subStep_;
       BlOsc sub = sub_;
       switch (static_cast<SynSubWave>(p_.subWave)) {
         case SynSubWave::Sine:
-          for (int i = 0; i < m; ++i) a[i] += sub.sine(subDt, subInv, -1.f).v * sg;
+          for (int i = 0; i < m; ++i, sg += ds) a[i] += sub.sine(subDt, subInv, -1.f).v * sg;
           break;
         case SynSubWave::Tri:
-          for (int i = 0; i < m; ++i) a[i] += sub.tri(subDt, subInv, -1.f).v * sg;
+          for (int i = 0; i < m; ++i, sg += ds) a[i] += sub.tri(subDt, subInv, -1.f).v * sg;
           break;
         default:
-          for (int i = 0; i < m; ++i) a[i] += sub.square(subDt, subInv, 0.5f, -1.f).v * sg;
+          for (int i = 0; i < m; ++i, sg += ds) a[i] += sub.square(subDt, subInv, 0.5f, -1.f).v * sg;
           break;
       }
       sub_ = sub;
     }
-    if (p_.noise > 0) {
-      const float ng = p_.noise * (1.f / 2147483648.f);
+    if (noiseGain_ > 0.f || noiseGain_ + noiseStep_ * m > 0.f) {
+      float ng = noiseGain_ * (1.f / 2147483648.f);
+      const float dn = noiseStep_ * (1.f / 2147483648.f);
       uint32_t x = noise_;
-      for (int i = 0; i < m; ++i) {
+      for (int i = 0; i < m; ++i, ng += dn) {
         x ^= x << 13, x ^= x >> 17, x ^= x << 5;
         a[i] += static_cast<int32_t>(x) * ng;
       }
       noise_ = x;
     }
+    subGain_ += subStep_ * m;
+    noiseGain_ += noiseStep_ * m;
     float* o = out + pos;
     for (int i = 0; i < m; ++i) o[i] += a[i] * g;
     shape_[0] += shapeStep_[0] * m, shape_[1] += shapeStep_[1] * m, mix_ = mx;

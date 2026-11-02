@@ -2,6 +2,46 @@
 
 namespace mt {
 
+MT_CONTROL void collapseStealTail(Voice& v) {
+  if (v.sample) return;  // Streaming/sample state keeps its existing fade policy.
+  v.stolen = true;
+  // `hold` already contains the voice's last post-filter sample, including its gain/envelope.
+  // The engine state remains allocated for later reuse; only this 4 ms tail bypasses its DSP.
+  v.fm = v.drum = v.syn = v.str = v.lofi = v.sample = v.heavy = false;
+  v.fltOn = v.chipStep = false;
+  v.wave = kStealTailWave;
+  v.amp = v.ampNow = 1.f;
+  v.ampStep = 0.f;
+  v.env.hold(1.f);
+  v.env.fade(kStealMs);
+}
+
+namespace {
+MT_CONTROL void trimFullDspTailsWithPick(Voice (&v)[kVoices], int budget, int pick, int cost) {
+  // Removing a voice from the nominal live sum did not remove its engine's work:
+  // simultaneous note bursts can otherwise render the entire old pool for another 4 ms.
+  int full = cost;
+  for (int i = 0; i < kVoices; ++i)
+    if (i != pick && v[i].on && !v[i].env.idle() && !isStealTail(v[i])) full += v[i].cost;
+  while (full > budget) {
+    int victim = -1;
+    for (int i = 0; i < kVoices; ++i) {
+      const Voice& x = v[i];
+      if (i == pick || !x.on || !x.stolen || x.sample || x.env.idle() || !x.cost || isStealTail(x)) continue;
+      if (victim < 0 || x.age < v[victim].age) victim = i;
+    }
+    if (victim < 0) break;
+    full -= v[victim].cost;
+    collapseStealTail(v[victim]);
+  }
+}
+}
+
+MT_CONTROL void trimFullDspTails(Voice (&v)[kVoices], int budget) {
+  if (budget >= kVoiceBudgetOff) return;
+  trimFullDspTailsWithPick(v, budget, -1, 0);
+}
+
 int enforceBudget(Voice (&v)[kVoices], int pick, int cost, int budget) {
   cost = cost < 0 ? 0 : (cost > UINT16_MAX ? UINT16_MAX : cost);
   if (budget >= kVoiceBudgetOff) return cost;  // no limit: no scan
@@ -25,6 +65,7 @@ int enforceBudget(Voice (&v)[kVoices], int pick, int cost, int budget) {
     v[victim].stolen = true;
     used -= v[victim].cost;
   }
+  trimFullDspTailsWithPick(v, budget, pick, cost);
   return cost;
 }
 

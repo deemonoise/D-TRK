@@ -78,7 +78,7 @@ void test_factory_parses() {
     TEST_ASSERT_TRUE(p.n > 0);
   }
   TEST_ASSERT_NULL(progFactoryName(progFactoryCount()));
-  TEST_ASSERT_EQUAL(32, chordRhythmCount());
+  TEST_ASSERT_EQUAL(33, chordRhythmCount());
   for (int i = 0; i < chordRhythmCount(); ++i) {
     ArpPattern r;
     TEST_ASSERT_TRUE(strlen(chordRhythmName(i)) <= 10);

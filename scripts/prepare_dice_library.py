@@ -173,14 +173,29 @@ def parse_smf(data: bytes) -> Midi:
 
 
 def genre_mask(folder: str) -> int:
-    name = folder.casefold()
+    name = re.sub(r"[^a-z0-9]+", " ", folder.casefold()).strip()
     families = {
         "analog magic": (0, 1), "chillwave": (8, 7), "darkwave": (8,),
-        "deep house": (0,), "disco": (0, 8), "drill": (5,), "drum & bass": (3,),
+        "deep house": (0,), "disco": (0, 8), "drill": (5,), "drum bass": (3,),
         "edm": (0, 2), "electric dreams": (8,), "electronica": (6, 7),
-        "house": (0,), "indie dance": (0, 8), "latin": (0, 4), "lo-fi hip hop": (5,),
+        "house": (0,), "indie dance": (0, 8), "latin": (0, 4), "lo fi hip hop": (5,),
         "melodic techno": (1,), "minimal": (1,), "pop": (8, 0),
-        "reggaeton": (5, 4), "slap house": (0,), "soul & r&b": (5,),
+        "reggaeton": (5, 4), "slap house": (0,), "soul r b": (5,),
+        "acid techno": (1,), "dub techno": (1,), "minimal techno": (1,),
+        "peak time techno": (1,), "hard techno": (1,),
+        "ebm": (1,), "industrial": (1,), "industrial techno": (1,),
+        "psy trance": (2,), "psytrance": (2,), "full on": (2,), "fullon": (2,),
+        "dark psy": (2,), "darkpsy": (2,), "goa": (2,), "goa trance": (2,),
+        "uplift": (2,), "uplifting trance": (2,), "progressive trance": (2,),
+        "jump up": (3,), "jumpup": (3,), "neuro": (3,), "neurofunk": (3,),
+        "liquid": (3,), "liquid dnb": (3,), "jungle": (3,), "halftime": (3,),
+        "drum and bass": (3,), "drum n bass": (3,), "d b": (3,),
+        "hip hop": (5,),
+        "progressive house": (0,), "acid house": (0,),
+        "boom bap": (5,), "boombap": (5,), "lofi": (5,),
+        "braindance": (6,), "glitch": (6,), "footwork": (6,), "juke": (6,),
+        "deep dubstep": (4,), "deep dub": (4,), "dubstep": (4,),
+        "dark ambient": (7,), "drone": (7,), "outrun": (8,), "darksynth": (8,),
         "tech house": (0, 1), "trap": (5,), "ethereal2080 dre4mscape": (7, 8),
     }
     indices = families.get(name)

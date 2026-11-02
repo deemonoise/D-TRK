@@ -420,8 +420,90 @@ void test_budget_cost_clamped() {
   TEST_ASSERT_EQUAL(0, v[j].cost);
 }
 
+static int fullDspCost() {
+  int sum=0;
+  for(const auto& x:v) if(x.on && !x.env.idle() && x.wave!=0xfe) sum+=x.cost;
+  return sum;
+}
+void test_budget_counts_full_dsp_fading_cost() {
+  const int a=allocCost(0,300,1000);v[a].fm=true;v[a].heavy=true;v[a].fltOn=true;v[a].hold=.75f;
+  allocCost(1,300,1000);allocCost(2,300,1000);
+  allocCost(3,300,1000);
+  TEST_ASSERT_TRUE(fullDspCost()<=1000);
+  TEST_ASSERT_FALSE(v[a].fm);
+  TEST_ASSERT_FALSE(v[a].heavy);
+  TEST_ASSERT_FALSE(v[a].fltOn);
+  TEST_ASSERT_EQUAL_FLOAT(.75f,v[a].hold);
+  TEST_ASSERT_EQUAL_FLOAT(1,v[a].ampNow);
+  TEST_ASSERT_EQUAL_FLOAT(0,v[a].ampStep);
+  float last=.75f;
+  for(int n=0;n<180;++n) {
+    const float next=v[a].hold*v[a].env.next();
+    TEST_ASSERT_FLOAT_WITHIN(.005f,last,next);last=next;
+  }
+  TEST_ASSERT_TRUE(v[a].env.idle());
+}
+void test_budget_keeps_full_fades_when_cpu_headroom_exists() {
+  const int old=allocCost(0,300,kVoiceBudgetOff);v[old].fm=true;v[old].stolen=true;v[old].env.fade(kStealMs);
+  allocCost(1,300,kVoiceBudgetOff);
+  const int pick=2;
+  TEST_ASSERT_EQUAL(400,enforceBudget(v,pick,400,1000));
+  TEST_ASSERT_TRUE(v[old].fm);
+  TEST_ASSERT_TRUE(v[old].env.stage()==Env::Stage::Release);
+}
+void test_budget_collapses_only_enough_oldest_fades() {
+  for(int i=0;i<3;++i) {int a=allocCost(i,200,kVoiceBudgetOff);v[a].fm=true;v[a].stolen=true;v[a].env.fade(kStealMs);}
+  allocCost(3,200,kVoiceBudgetOff);allocCost(4,200,kVoiceBudgetOff);
+  enforceBudget(v,5,400,1000);
+  TEST_ASSERT_FALSE(v[byAge(1)].fm);
+  TEST_ASSERT_FALSE(v[byAge(2)].fm);
+  TEST_ASSERT_TRUE(v[byAge(3)].fm);
+  TEST_ASSERT_TRUE(fullDspCost()+400<=1000);
+}
+void test_budget_never_collapses_sample_or_budget_off_fades() {
+  const int sample=allocCost(0,300,kVoiceBudgetOff);v[sample].sample=true;
+  allocCost(1,300,kVoiceBudgetOff);allocCost(2,300,kVoiceBudgetOff);
+  allocCost(3,300,1000);
+  TEST_ASSERT_TRUE(v[sample].sample);
+  TEST_ASSERT_TRUE(v[sample].stolen);
+  TEST_ASSERT_NOT_EQUAL(0xfe,v[sample].wave);
+  setUp();
+  const int a=allocCost(0,300,kVoiceBudgetOff);v[a].fm=true;v[a].stolen=true;v[a].env.fade(kStealMs);
+  enforceBudget(v,1,2000,kVoiceBudgetOff);
+  TEST_ASSERT_TRUE(v[a].fm);
+}
+
+void test_tail_helper_marks_its_mode_and_refuses_samples() {
+  const int a=allocCost(0,300,kVoiceBudgetOff);v[a].fm=true;v[a].hold=-.2f;
+  collapseStealTail(v[a]);
+  TEST_ASSERT_TRUE(isStealTail(v[a]));
+  TEST_ASSERT_EQUAL_FLOAT(-.2f,v[a].hold);
+  const int b=allocCost(1,300,kVoiceBudgetOff);v[b].sample=true;
+  collapseStealTail(v[b]);
+  TEST_ASSERT_TRUE(v[b].sample);
+  TEST_ASSERT_FALSE(v[b].stolen);
+}
+
+void test_trim_full_dsp_tails_after_repricing_never_steals_active_notes() {
+  for(int i=0;i<3;++i) {const int a=allocCost(i,400,kVoiceBudgetOff);v[a].fm=true;}
+  trimFullDspTails(v,1000); // No existing stolen victim: this helper is not live-note allocation.
+  TEST_ASSERT_EQUAL(0,stolenCount());
+  const int old=byAge(1);v[old].stolen=true;v[old].env.fade(kStealMs);
+  trimFullDspTails(v,kVoiceBudgetOff);TEST_ASSERT_TRUE(v[old].fm);
+  trimFullDspTails(v,1000);
+  TEST_ASSERT_TRUE(isStealTail(v[old]));
+  TEST_ASSERT_EQUAL(800,fullDspCost());
+  TEST_ASSERT_EQUAL(1,stolenCount());
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_trim_full_dsp_tails_after_repricing_never_steals_active_notes);
+  RUN_TEST(test_tail_helper_marks_its_mode_and_refuses_samples);
+  RUN_TEST(test_budget_counts_full_dsp_fading_cost);
+  RUN_TEST(test_budget_keeps_full_fades_when_cpu_headroom_exists);
+  RUN_TEST(test_budget_collapses_only_enough_oldest_fades);
+  RUN_TEST(test_budget_never_collapses_sample_or_budget_off_fades);
   RUN_TEST(test_alloc_marks_voice);
   RUN_TEST(test_poly_steals_oldest_of_track);
   RUN_TEST(test_mono_legato);

@@ -1,5 +1,6 @@
 #pragma once
 #include "dialog_actions.h"
+#include "dice_dialog_state.h"
 #include <functional>
 #include <stdint.h>
 #include "dice.h"
@@ -45,26 +46,13 @@ class DiceDialog {
     kLockDrums, kLockBass, kLockChords, kLockLead, kLockArp, kLockFx,
     kRoll, kClose, kRows
   };
-  enum Scope : uint8_t { kScAll, kScTempo, kScSounds, kScPatterns, kScopes };
-  struct Prefs {
-    uint8_t genre = 0, style = 0, variety = mt::kDiceVarietyDefault, scope = kScAll, song = 1;
-    uint8_t len = 0;  // index into kLens: 0 = AUTO
-    uint8_t target = 0, change = 2, form = 1, feel = 35, density = 1;
-    uint8_t source = 0, clean = 1, fixedSeed = 0, locks = 0;
-    uint32_t seed = 1;
-    bool operator!=(const Prefs& o) const {
-      return density != o.density || target != o.target || change != o.change || form != o.form || feel != o.feel || genre != o.genre || style != o.style || variety != o.variety || scope != o.scope || song != o.song ||
-             len != o.len || source != o.source || clean != o.clean || fixedSeed != o.fixedSeed ||
-             locks != o.locks || seed != o.seed;
-    }
-  };
+  using Prefs = dice_dialog::Prefs;
   static constexpr int kHeaderH = 28;
 
-  uint8_t layers() const;  // kDice* bits of Scope + Song
-  bool patterns() const { return pr_.scope == kScAll || pr_.scope == kScPatterns; }
+  bool patterns() const { return dice_dialog::patterns(pr_); }
   void clampPrefs();
   void roll();            // asks before overwriting, then rollNow()
-  void rollNow(int first);
+  void rollNow(const mt::DiceOpts& opts, dice_dialog::Range range);
   bool action(int row);  // ROLL / CLOSE row: runs it, true when handled
 
   DialogActions actions_;
@@ -73,7 +61,7 @@ class DiceDialog {
   Param params_[kRows];
   ParamList list_{kAreaY + kHeaderH};
   Prefs pr_, saved_;
-  int confirmed_ = -1;  // first pattern of the range OVERWRITE was answered (or rolled) for, -1 = none
+  dice_dialog::Range confirmed_;  // full range answered or rolled in this session
   int y0_ = kAreaY;
   bool open_ = false;
 };

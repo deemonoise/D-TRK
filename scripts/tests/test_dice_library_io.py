@@ -74,7 +74,7 @@ static void put32(std::vector<uint8_t>& b,size_t at,uint32_t v){put16(b,at,v);pu
 static std::vector<uint8_t> makeLibrary(){
  constexpr int count=1996,table=16+64*count;std::vector<uint8_t>b(735568);
  memcpy(b.data(),"DML1",4);put16(b,4,1);put16(b,6,64);put32(b,8,count);
- for(int i=0;i<count;++i){size_t at=16+i*64;put16(b,at,1);b[at+2]=i%6;b[at+4]=2;b[at+5]=1;
+ for(int i=0;i<count;++i){size_t at=16+i*64;put16(b,at,1<<((i/6)%9));b[at+2]=i%6;b[at+4]=2;b[at+5]=1;put16(b,at+6,70+i%110);
  put32(b,at+8,table+i*8);put32(b,at+12,8);snprintf((char*)b.data()+at+16,48,"phrase %d",i);
  put16(b,table+i*8,0);put16(b,table+i*8+2,24);b[table+i*8+4]=i%128;b[table+i*8+5]=100;b[table+i*8+6]=255;}
  return b;
@@ -93,6 +93,18 @@ int main(int argc,char** argv){
  assert(data.pick(0,(mt::DiceRole)k,seed,a));assert(full.pick(0,(mt::DiceRole)k,seed,b));
  assert(a.count==b.count && !strcmp(a.name,b.name) && a.events[0].note==b.events[0].note);
  assert(!data.pick(0,(mt::DiceRole)k,seed+1,a));}
+ // The same bounded reservoir and style scoring must agree in memory and on SD.
+ for(int genre=0;genre<9;++genre)for(int style=0;style<mt::diceStyleCount(genre);++style)
+ for(uint32_t seed:{1u,777u,8765u}){
+  assert(data.load(genre,seed,style));
+  for(int k=0;k<6;++k){mt::DicePhrase a,b;uint32_t rs=seed^(0x9E3779B9u*(k+1));
+   assert(full.pickForStyle(genre,style,(mt::DiceRole)k,rs,a));
+   assert(data.pickForStyle(genre,style,(mt::DiceRole)k,rs,b));
+   assert(a.count==b.count && !strcmp(a.name,b.name) &&
+          !memcmp(a.events,b.events,a.count*sizeof(mt::DicePhraseEvent)));
+   assert(!data.pickForStyle(genre,(style+1)%mt::diceStyleCount(genre),(mt::DiceRole)k,rs,b));
+  }
+ }
  hw::shortRead=true;assert(!data.load() && !data && allocations==0);hw::shortRead=false;
  hw::files["/midi/dice-library.dml"]=std::vector<uint8_t>(storage::DiceLibraryData::kMaxBytes+1,42);
  assert(!data.load() && !data && allocations==0);
@@ -118,6 +130,15 @@ int main(int argc,char** argv){
     if(expected)assert(a.count==b.count && !strcmp(a.name,b.name) &&
         !memcmp(a.events,b.events,a.count*sizeof(mt::DicePhraseEvent)));
    }
+   for(int style=0;style<mt::diceStyleCount(genre);++style){
+    assert(streamed.load(genre,seed,style));
+    for(int role=0;role<6;++role){mt::DicePhrase a,b;uint32_t rs=seed^(0x9E3779B9u*(role+1));
+     bool expected=reference.pickForStyle(genre,style,(mt::DiceRole)role,rs,a);
+     assert(expected==streamed.pickForStyle(genre,style,(mt::DiceRole)role,rs,b));
+     if(expected)assert(a.count==b.count && !strcmp(a.name,b.name) &&
+         !memcmp(a.events,b.events,a.count*sizeof(mt::DicePhraseEvent)));
+    }
+   }
   }
  }
 }
@@ -125,6 +146,7 @@ int main(int argc,char** argv){
             cmd = ["clang++", "-std=c++17", "-fsanitize=address,undefined", "-ffunction-sections", "-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections",
                    "-I" + str(d), "-I" + str(ROOT / "src"), "-I" + str(ROOT / "lib/core/src"),
                    str(ROOT / "src/storage/dice_library_io.cpp"), str(ROOT / "lib/core/src/dice_library.cpp"),
+                   str(ROOT / "lib/core/src/dice_recipes.cpp"),
                    str(d / "test.cpp"),
                    "-o", str(d / "test")]
             result = subprocess.run(cmd, capture_output=True, text=True)

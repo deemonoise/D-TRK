@@ -173,7 +173,7 @@ void StringVoice::reset(uint8_t model, bool coefs) {
     if (ks) {
       Ks& k = s_.ks;
       k.lp = k.hpX = k.hpY = k.apX = k.apY = k.qe = k.acc = k.y0 = k.y1 = 0.f;
-      k.d = k.dTarget, k.dStep = 0.f;
+      k.d = k.dTarget, k.dStep = 0.f, k.dLeft = 0;
       k.w = 0, k.ph = 0;
     } else {
       for (int i = 0; i < kModes; ++i) s_.md.m[i].ic1 = s_.md.m[i].ic2 = 0.f;
@@ -249,10 +249,8 @@ void StringVoice::control(const StringParams& in, int n) {
   const bool same = key_[0] == p.hz && key_[1] == p.damp && key_[2] == p.bright && key_[3] == p.structure &&
                     (ks || key_[4] == p.pos);
   if (ks) {
-    if (same)
-      s_.ks.dStep = 0;
-    else
-      controlKs(p, n);
+    // A cached / event-triggered control call does not finish a running glide.
+    if (!same) controlKs(p, n);
     // done() needs a quiet period: a narrow strike circulates as a pulse once per period, the blocks
     // between its passes (and before the first wrap) read near-silence from the line.
     span_ = static_cast<uint16_t>(s_.ks.dTarget * static_cast<float>(s_.ks.r)) + 2;
@@ -328,9 +326,10 @@ void StringVoice::controlKs(const StringParams& p, int n) {
   k.g = minf(g * rsqrtF(lpMag2 * hpMag2 * inMag2), kMaxLoop);
   k.dTarget = d;
   if (snap || n <= 0) {
-    k.d = d, k.dStep = 0;
+    k.d = d, k.dStep = 0, k.dLeft = 0;
   } else {
     k.dStep = (d - k.d) * (n == 32 ? 1.f / 32 : fastRcp(static_cast<float>(n)));
+    k.dLeft = static_cast<uint32_t>(n);
   }
 }
 
@@ -413,6 +412,14 @@ MT_HOT void StringVoice::render(float* out, int n, float amp, int16_t* line) {
 
 MT_HOT float StringVoice::renderKs(float* __restrict out, int n, float g, int16_t* __restrict line) {
   Ks& k = s_.ks;
+  // Usually renderCore ends at the control boundary. Keep the public renderer
+  // correct for a longer call too: the rest uses the settled delay, not its ramp.
+  if (k.dLeft && static_cast<uint32_t>(n) > k.dLeft) {
+    const int first = static_cast<int>(k.dLeft);
+    const float a = renderKs(out, first, g, line);
+    const float b = renderKs(out + first, n - first, g, line);
+    return maxf(a, b);
+  }
   float d = k.d, lp = k.lp, hpX = k.hpX, hpY = k.hpY, apX = k.apX, apY = k.apY, qe = k.qe;
   const float a = k.a, R = k.R, kh = k.kh, c = k.c, gl = k.g, dStep = k.dStep;
   int w = k.w;
@@ -473,14 +480,20 @@ MT_HOT float StringVoice::renderKs(float* __restrict out, int n, float g, int16_
           acc = 0;
           y0 = y1, y1 = s;
           peak = maxf(peak, s > 0 ? s : -s);
-          d += dStep * static_cast<float>(r);
         }
         o[i] += (y0 + (y1 - y0) * static_cast<float>(ph) * invR) * g;
+        // Delay is measured at output-sample time even when the loop runs at
+        // half / quarter rate. A partial render may end between loop steps.
+        d += dStep;
       }
     }
   }
   if (r != 1) k.acc = acc, k.y0 = y0, k.y1 = y1, k.ph = static_cast<uint8_t>(ph);
-  k.d = k.dTarget;  // the ramp ends on the target (unchanged inputs keep it exactly)
+  if (k.dLeft) {
+    k.dLeft -= static_cast<uint32_t>(n);
+    if (!k.dLeft) { d = k.dTarget; k.dStep = 0.f; }
+  }
+  k.d = d;
   k.lp = flushTiny(lp), k.hpX = flushTiny(hpX), k.hpY = flushTiny(hpY), k.apX = flushTiny(apX);
   k.apY = flushTiny(apY), k.qe = qe;
   k.w = static_cast<uint16_t>(w);

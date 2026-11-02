@@ -27,7 +27,8 @@ static uint32_t fingerprint(const Project& q){
 static DiceOpts opts(){DiceOpts o;o.root=0;o.variety=30;o.len=64;return o;}
 void test_normal_retains_existing_generated_steps(){
   DiceOpts o=opts();diceRoll(p,o,0,777,snap);
-  TEST_ASSERT_EQUAL_UINT32(2550594343u,fingerprint(p));
+  // Canon musical pipeline changed; NORMAL density still has a deterministic baseline.
+  TEST_ASSERT_EQUAL_UINT32(3161586748u,fingerprint(p));
   TEST_ASSERT_GREATER_THAN(0,attacks(p));
 }
 void test_sparse_thins_without_emptying_roles_or_changing_kept_notes(){

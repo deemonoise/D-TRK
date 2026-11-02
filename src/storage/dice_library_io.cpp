@@ -65,7 +65,7 @@ void DiceLibraryData::clear() {
   size_ = 0; mask_ = 0; ready_ = false;
 }
 
-bool DiceLibraryData::load(int genre, uint32_t seed) {
+bool DiceLibraryData::load(int genre, uint32_t seed, int style) {
   clear();
   error_ = "MIDI LIBRARY MISSING";
   if (!hw::sdReady()) { error_ = "NO SD CARD"; return false; }
@@ -89,6 +89,7 @@ bool DiceLibraryData::load(int genre, uint32_t seed) {
     error_ = "BAD MIDI LIBRARY"; return false;
   }
   genre_ = genre >= 0 && genre < 9 ? genre : 0;
+  style_ = mt::diceRecipe(genre_, style) ? style : -1;
   seed_ = seed;
   mt::Rng rng[mt::kDiceRoles];
   uint32_t seen[mt::kDiceRoles] = {};
@@ -120,7 +121,8 @@ bool DiceLibraryData::load(int genre, uint32_t seed) {
       if (const char* error = readPhrase(file, e, features)) {
         clear(); error_ = error; return false;
       }
-      const int score = features.score(static_cast<mt::DiceRole>(role), e[5], roleSeed(seed, role));
+      const int score = features.scoreForStyle(static_cast<mt::DiceRole>(role), e[5], roleSeed(seed, role),
+                                               genre_, style_, u16(e + 6));
       if (score < best) { best = score; chosen = e; }
     }
     mt::DicePhraseFeatures ignored;
@@ -140,5 +142,9 @@ bool DiceLibraryData::pick(int genre, mt::DiceRole role, uint32_t seed, mt::Dice
       seed != roleSeed(seed_, k)) return false;
   out = phrases_[k];
   return true;
+}
+bool DiceLibraryData::pickForStyle(int genre, int style, mt::DiceRole role, uint32_t seed, mt::DicePhrase& out) const {
+  const int requested = mt::diceRecipe(genre, style) ? style : -1;
+  return requested == style_ && pick(genre, role, seed, out);
 }
 }  // namespace storage

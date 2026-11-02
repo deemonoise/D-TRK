@@ -172,6 +172,7 @@ class StringVoice {
   // Karplus-Strong string. The loop runs at the rate / r (r 1, 2, 4: periods up to 510 line samples).
   struct Ks {
     float d, dStep, dTarget;  // read delay in loop samples, its per-sample ramp, the control's target
+    uint32_t dLeft;           // output samples left in the delay ramp
     float lp, a;              // damping one-pole low-pass
     float hpX, hpY, R, kh;    // DC blocker (cutoff far below the fundamental), its gain
     float apX, apY, c;        // dispersion first-order all-pass

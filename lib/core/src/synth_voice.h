@@ -94,7 +94,9 @@ struct Voice {
   // Control-rate values, refreshed every Synth::kControl samples.
   float inc = 0;            // CHIP: phase increment; SAMPLE: frames per output sample
   float duty = 0.5f;        // pulse width incl. PWM
-  float amp = 0;            // gain * instrument vol (the track's fader is in its strip)
+  float amp = 0;            // target: gain * instrument vol (the track's fader is in its strip)
+  float ampNow = -1;        // reached gain; negative only before a fresh note
+  float ampStep = 0;        // per-sample ramp to amp, ending at the next control boundary
   // What this voice asks of its track's strip (Synth::TrackStrip reads the newest voice), per
   // control update: locks, else the track's values, + LFO.
   float send = 0;           // delay send 0..1: DLY lock or the track instrument's send
@@ -135,6 +137,7 @@ struct Voice {
   int8_t slot = -1;                   // StreamPool slot, -1 = none (retried every control update)
   uint16_t cost = 0;                  // voiceCost at note-on (allocVoice, budget; here: a padding hole)
   bool under = false;                 // underrun: holding the last value
+  bool smpLooped = false;             // reverse initial suffix stays file data until the first loop
   float hold = 0;                     // last interpolated value
   float ug = 1;                       // underrun gain, 2 ms ramps
   int64_t pos = 0;
@@ -210,6 +213,16 @@ struct Voice {
   bool lofi = false;
 };
 
+// Internal render sentinel, outside every stored CHIP wave (0xff is the STEP dispatch).
+// A CPU-unsafe stolen non-sample voice becomes its last post-filter output with a short fade.
+constexpr uint8_t kStealTailWave = 0xfe;
+static_assert(kStealTailWave >= kWaveCount, "steal tail sentinel must not be a stored CHIP wave");
+MT_INLINE bool isStealTail(const Voice& v) { return v.stolen && !v.sample && v.wave == kStealTailWave; }
+MT_CONTROL void collapseStealTail(Voice& v);
+// Repriced fading engines may become too expensive without a new note/pick. Trim only
+// already-stolen non-sample tails; active voices keep the nominal enforceBudget policy.
+MT_CONTROL void trimFullDspTails(Voice (&v)[kVoices], int budget);
+
 // Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the
 // filter and a stolen voice is on its way out.
 inline bool heavyLoad(const Voice& x) {
@@ -234,6 +247,9 @@ inline bool heavyLoad(const Voice& x) {
 // The budget part of allocVoice, also for a voice taken without it (SLD, a KIT lane choke): with
 // the live voices' costs (stolen ones and v[pick] not counted) plus cost over budget, the oldest
 // live voices but pick, releasing first, fade over kStealMs (stolen) until it fits or none is left.
+// Full-DSP fading voices still consume CPU: when they plus the pick exceed the budget,
+// oldest stolen non-sample voices become cheap held-output fades. Samples keep their streaming
+// fade policy. The note always plays, including a single note whose cost exceeds the budget.
 // Returns cost clamped to Voice::cost's range (the caller stores it in v[pick].cost).
 int enforceBudget(Voice (&v)[kVoices], int pick, int cost, int budget);
 int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato,

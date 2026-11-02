@@ -111,7 +111,8 @@ void test_virus_patterns() {
   for (int i = 0; i < arpFactoryCount(); ++i)
     if (strcmp(arpFactoryName(i), "VIRUS 01") == 0) first = i;
   TEST_ASSERT_TRUE(first >= 0);
-  TEST_ASSERT_EQUAL(first + 64, arpFactoryCount());  // VIRUS 01..64 close the list
+  TEST_ASSERT_EQUAL(first + 65, arpFactoryCount());  // append-only JUKE HIT follows VIRUS 01..64
+  TEST_ASSERT_EQUAL_STRING("JUKE HIT", arpFactoryName(first + 64));
   TEST_ASSERT_EQUAL_STRING("VIRUS 64", arpFactoryName(first + 63));
   bool nudged = false;
   for (int i = first; i < first + 64; ++i) {

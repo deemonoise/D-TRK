@@ -443,8 +443,30 @@ void test_output_soft_clip() {
   TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.f, pk);
 }
 
+void test_amp_ramp_and_choke_keep_output_gain() {
+  DrumParams p; p.toneHz[0]=200; p.toneLvl[0]=1; p.toneMs=2000;
+  DrumVoice v; v.trigger(false); v.control(p,32); DrumVoice ref=v;
+  float actual[32]={},source[32]={};
+  v.render(actual,32,.5f,-.5f/32); ref.render(source,32,1.f);
+  float gain=.5f;
+  for(int i=0;i<32;++i,gain-=.5f/32) TEST_ASSERT_FLOAT_WITHIN(1e-6f,source[i]*gain,actual[i]);
+  const float last=actual[31];
+  v.trigger(true); p=DrumParams(); v.control(p,32);
+  float tail[2]={};v.render(tail,2,0.f);
+  TEST_ASSERT_EQUAL_FLOAT(last,tail[0]); // old hit was already gain-scaled
+}
+void test_amp_ramp_render_partition_invariant() {
+  DrumParams p; p.toneHz[0]=173; p.toneLvl[0]=1; p.toneMs=2000;
+  DrumVoice a;a.trigger(false);a.control(p,32);DrumVoice b=a;
+  float x[32]={},y[32]={};a.render(x,32,.3f,.007f);
+  b.render(y,13,.3f,.007f);b.render(y+13,19,.3f+13*.007f,.007f);
+  for(int i=0;i<32;++i)TEST_ASSERT_FLOAT_WITHIN(1e-6f,x[i],y[i]);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_amp_ramp_and_choke_keep_output_gain);
+  RUN_TEST(test_amp_ramp_render_partition_invariant);
   RUN_TEST(test_tone_frequency);
   RUN_TEST(test_decay_and_done);
   RUN_TEST(test_metal_bounded_finite);

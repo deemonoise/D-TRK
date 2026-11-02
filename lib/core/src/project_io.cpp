@@ -853,6 +853,19 @@ LoadErr readScns(CrcSource& in, uint32_t size, LegacySong& ls) {
   return LoadErr::Ok;
 }
 
+// PNAM is independent of PATN: even an empty pattern may have a label.
+LoadErr readPnam(CrcSource& in, uint32_t size, Project& p) {
+  constexpr uint32_t bytes = kPatterns * kPatternNameMax;
+  if (size < bytes) return LoadErr::BadValue;
+  for (Pattern& pt : p.patterns) {
+    if (!in.read(pt.name, kPatternNameMax)) return LoadErr::Truncated;
+    pt.name[kPatternNameMax] = 0;
+    for (int i = 0; i < kPatternNameMax && pt.name[i]; ++i)
+      if (static_cast<uint8_t>(pt.name[i]) < 32 || static_cast<uint8_t>(pt.name[i]) > 126) pt.name[i] = '?';
+  }
+  return in.skip(size - bytes) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
   uint8_t h[kPatHeader];
   if (size < kPatHeader) return LoadErr::BadValue;
@@ -878,7 +891,10 @@ LoadErr readPatn(CrcSource& in, uint32_t size, Project& p) {
   if (!stepBytes && body != 0) return LoadErr::BadValue;
   if (h[0] >= kPatterns) return in.skip(body) ? LoadErr::Ok : LoadErr::Truncated;
   Pattern& pt = p.patterns[h[0]];
+  char name[sizeof(pt.name)];
+  memcpy(name, pt.name, sizeof(name));
   pt.clear();
+  memcpy(pt.name, name, sizeof(name));  // PNAM may precede this PATN
   pt.length = clampu(len, kMinSteps, kMaxSteps);
   pt.res = h[2] < static_cast<int>(Resolution::Count) ? static_cast<Resolution>(h[2]) : Resolution::Sixteenth;
   pt.swing = h[3] < 50 || h[3] > 75 ? 50 : h[3];
@@ -1168,6 +1184,18 @@ bool saveProject(const Project& p, ByteSink& out) {
     }
   }
   {
+    bool named = false;
+    for (const Pattern& pt : p.patterns) named |= pt.name[0] != 0;
+    if (named) {
+      if (!o.chunk("PNAM", kPatterns * kPatternNameMax)) return false;
+      for (const Pattern& pt : p.patterns) {
+        char name[kPatternNameMax] = {0};
+        memcpy(name, pt.name, strnlen(pt.name, kPatternNameMax));
+        if (!o.write(name, sizeof(name))) return false;
+      }
+    }
+  }
+  {
     uint8_t g[kGrovSize];
     for (int i = 0; i < kPatterns; ++i) g[i] = p.patterns[i].groove;
     for (int t = 0; t < kTracks; ++t) g[kPatterns + t] = p.tracks[t].humanize;
@@ -1337,6 +1365,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     if (memcmp(ch, "PROJ", 4) == 0) e = readProj(in, size, out, legacy);
     else if (memcmp(ch, "TRKS", 4) == 0) e = readTrks(in, size, out);
     else if (memcmp(ch, "PATN", 4) == 0) e = readPatn(in, size, out);
+    else if (memcmp(ch, "PNAM", 4) == 0) e = readPnam(in, size, out);
     else if (memcmp(ch, "INST", 4) == 0) e = readInst(in, size, out);
     else if (memcmp(ch, "FMIN", 4) == 0) e = readFmin(in, size, out);
     else if (memcmp(ch, "FLTR", 4) == 0) e = readFltr(in, size, out);

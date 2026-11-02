@@ -95,6 +95,32 @@ int DicePhraseFeatures::score(DiceRole role, uint8_t bars, uint32_t roleSeed) co
   return score;
 }
 
+// DML1 already carries BPM. Compare ordinary, half-time and double-time pulse rates.
+int DicePhraseFeatures::scoreForStyle(DiceRole role, uint8_t bars, uint32_t roleSeed,
+                                      int genre, int style, uint16_t bpm) const {
+  const int base = score(role, bars, roleSeed);
+  const DiceRecipe* recipe = diceRecipe(genre, style);
+  if (base == INT_MAX || !recipe) return base;
+  const DiceMusicProfile& music = diceMusicProfile(genre, style);
+  const int k = static_cast<int>(role);
+  const int desired = k == 1 ? music.bassPerBar : k == 3 ? music.leadPerBar : k == 4 ? music.arpPerBar : 0;
+  int result = base;
+  if (desired) {
+    Rng profile(roleSeed ^ (0x9E3779B9u * (k + 1)));
+    const int activity = 70 + profile.below(61);
+    static constexpr int density[kDiceRoles] = {12, 6, 2, 5, 10, 1};
+    const int oldWanted = density[k] * ((k == 2 || k == 3) ? 200 - activity : activity);
+    result -= abs(static_cast<int>(attacks) * 100 / bars - oldWanted) / 5;
+    result += abs(static_cast<int>(attacks) * 100 / bars - desired * 100) / 5;
+  }
+  if (!bpm) return result + 8;  // Unknown tempo remains usable, below an equally suitable known loop.
+  const int target = recipe->bpm * 2;
+  const int distance = std::min({abs(static_cast<int>(bpm) * 2 - target),
+                                 abs(static_cast<int>(bpm) - target),
+                                 abs(static_cast<int>(bpm) * 4 - target)});
+  return result + distance * 100 / target;
+}
+
 DiceMidiLibrary::DiceMidiLibrary(const uint8_t* data, size_t size) : data_(data), size_(size) {
   if (!data || size < kHead || size > kDiceLibraryMaxBytes || memcmp(data, "DML1", 4) ||
       u16(data + 4) != 1 || u16(data + 6) != kEntry) return;
@@ -106,6 +132,10 @@ DiceMidiLibrary::DiceMidiLibrary(const uint8_t* data, size_t size) : data_(data)
 }
 
 bool DiceMidiLibrary::pick(int genre, DiceRole role, uint32_t seed, DicePhrase& out) const {
+  return pickForStyle(genre, -1, role, seed, out);
+}
+
+bool DiceMidiLibrary::pickForStyle(int genre, int style, DiceRole role, uint32_t seed, DicePhrase& out) const {
   if (!valid() || genre < 0 || genre >= 9) return false;
   if (static_cast<int>(role) < 0 || static_cast<int>(role) >= kDiceRoles) return false;
   Rng rng(seed); const uint8_t* candidates[kDicePhraseCandidates] = {}; uint32_t found = 0;
@@ -122,7 +152,7 @@ bool DiceMidiLibrary::pick(int genre, DiceRole role, uint32_t seed, DicePhrase& 
     const uint8_t* p = data_ + u32(e + 8);
     for (uint32_t i = 0; i < u32(e + 12) / kEvent; ++i, p += kEvent)
       features.add({u16(p), u16(p + 2), p[4], p[5], p[6]});
-    const int score = features.score(role, e[5], seed);
+    const int score = features.scoreForStyle(role, e[5], seed, genre, style, u16(e + 6));
     if (score < best) { best = score; chosen = e; }
   }
   if (!chosen) return false;

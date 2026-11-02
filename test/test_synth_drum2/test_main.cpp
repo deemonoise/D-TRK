@@ -506,8 +506,28 @@ void test_cpx_clap_decay_range() {
   TEST_ASSERT_TRUE_MESSAGE(hi > 0.24f && hi < 0.36f, msg);
 }
 
+void test_amp_ramp_and_choke_keep_output_gain() {
+  for(int kind=0;kind<static_cast<int>(Drum2Kind::Count);++kind){
+    Drum2Params p;p.hz=drum2BaseHz(static_cast<Drum2Kind>(kind));for(float& m:p.mac)m=.5f;
+    Drum2Voice v;v.trigger(static_cast<Drum2Kind>(kind),1.f,false);v.control(p,32);Drum2Voice ref=v;
+    float actual[32]={},source[32]={};v.render(actual,32,.5f,-.5f/32);ref.render(source,32,1.f);
+    float gain=.5f;for(int i=0;i<32;++i,gain-=.5f/32)TEST_ASSERT_FLOAT_WITHIN(1e-6f,source[i]*gain,actual[i]);
+    const float last=actual[31];v.trigger(static_cast<Drum2Kind>(kind),1.f,true);v.control(p,32);
+    float tail[1]={};v.render(tail,1,0.f);TEST_ASSERT_EQUAL_FLOAT(last,tail[0]);
+  }
+}
+void test_amp_ramp_render_partition_invariant() {
+  Drum2Params p;p.hz=200;for(float& m:p.mac)m=.5f;
+  Drum2Voice a;a.trigger(Drum2Kind::Sda,1.f,false);a.control(p,32);Drum2Voice b=a;
+  float x[32]={},y[32]={};a.render(x,32,.3f,.007f);
+  b.render(y,13,.3f,.007f);b.render(y+13,19,.3f+13*.007f,.007f);
+  for(int i=0;i<32;++i)TEST_ASSERT_FLOAT_WITHIN(1e-6f,x[i],y[i]);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_amp_ramp_and_choke_keep_output_gain);
+  RUN_TEST(test_amp_ramp_render_partition_invariant);
   RUN_TEST(test_stub_silent_done);
   RUN_TEST(test_struct_trivial);
   RUN_TEST(test_base_hz);

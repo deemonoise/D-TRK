@@ -199,7 +199,7 @@ class Synth {
   // Voice pool by cost (voice_cost.h): the summed voiceCost of the live voices stays under the
   // budget, new notes steal the oldest (releasing first). kVoiceBudgetOff (default): no limit; the
   // Teensy firmware sets kVoiceBudgetTeensy. The CPU guard above stays the backstop.
-  void setVoiceBudget(int b) { budget_ = b; }
+  void setVoiceBudget(int b);
   int voiceBudget() const { return budget_; }
 
   // Level meters (MIX): the peak of each pattern track's voices since the last call, before the
@@ -325,6 +325,7 @@ class Synth {
   static uint8_t machineOf(const Instrument& m);
   float rnd();
   void renderVoice(Voice& v, float* out, int n);
+  void renderVoiceRamped(Voice& v, float* out, int n);
   void startSample(Voice& v, const Instrument& m);
   static void renderSample(Voice& v, float* out, int n);
   struct FrameRun {

@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <vector>
 #include <cstring>
+#include <climits>
 #include "dice_library.h"
 using namespace mt;
 void setUp(){} void tearDown(){}
@@ -75,4 +76,52 @@ void test_matching_seed_replays_but_keeps_phrase_variety(){
  TEST_ASSERT_EQUAL_STRING(a.name,b.name);seen|=1u<<(a.name[0]-'A');}
  TEST_ASSERT_TRUE_MESSAGE((seen&(seen-1))!=0,"matching must preserve variety across seeds");
 }
-int main(){UNITY_BEGIN();RUN_TEST(test_matching_seed_replays_but_keeps_phrase_variety);RUN_TEST(test_matching_prefers_role_register_over_random_pick);RUN_TEST(test_long_pad_keeps_duration_with_marked_continuations);RUN_TEST(test_valid_pick_and_bounds);RUN_TEST(test_phrase_timing_velocity_transpose);RUN_TEST(test_chords_keep_polyphony_and_mark_reduction);RUN_TEST(test_drums_use_lanes_and_polyphonic_mask);return UNITY_END();}
+
+void test_style_matching_uses_bass_activity_and_equivalent_bpm(){
+ const int table=16+3*64;std::vector<uint8_t>b(table+(2+12+12)*8);
+ memcpy(b.data(),"DML1",4);put16(b,4,1);put16(b,6,64);put32(b,8,3);int event=table;
+ const int counts[]={2,12,12},bpms[]={150,75,110};
+ for(int c=0;c<3;++c){int at=16+c*64,count=counts[c];put16(b,at,1<<2);b[at+2]=1;b[at+4]=(int)ScaleType::Phrygian;b[at+5]=1;
+ put16(b,at+6,bpms[c]);put32(b,at+8,event);put32(b,at+12,count*8);b[at+16]='A'+c;
+ for(int j=0;j<count;++j,event+=8){put16(b,event,j*384/count);put16(b,event+2,18);b[event+4]=36;b[event+5]=100;b[event+6]=255;}}
+ DiceMidiLibrary lib(b.data(),b.size());TEST_ASSERT_TRUE(lib.valid());
+ for(uint32_t seed=1;seed<=20;++seed){DicePhrase phrase;
+ TEST_ASSERT_TRUE(lib.pickForStyle(2,2,DiceRole::Bass,seed,phrase));
+ TEST_ASSERT_EQUAL_STRING("B",phrase.name);}
+}
+struct LegacySource : DicePhraseSource {
+ bool pick(int genre,DiceRole role,uint32_t seed,DicePhrase& p) const override {
+  p.count=1;p.events[0].note=static_cast<uint8_t>(genre+static_cast<int>(role)+seed);return true;
+ }
+};
+void test_style_source_keeps_legacy_implementations_compatible(){
+ LegacySource source;DicePhrase p;
+ TEST_ASSERT_TRUE(source.pickForStyle(2,3,DiceRole::Bass,40,p));TEST_ASSERT_EQUAL(43,p.events[0].note);
+}
+
+void test_style_scoring_preserves_legacy_and_checks_tempo_octaves(){
+ DicePhraseFeatures features;
+ for(int i=0;i<12;++i)features.add({static_cast<uint16_t>(i*32),18,36,100,255});
+ const int legacy=features.score(DiceRole::Bass,1,123);
+ TEST_ASSERT_EQUAL(legacy,features.scoreForStyle(DiceRole::Bass,1,123,2,-1,150));
+ TEST_ASSERT_EQUAL(legacy,features.scoreForStyle(DiceRole::Bass,1,123,99,99,150));
+ const int normal=features.scoreForStyle(DiceRole::Bass,1,123,2,2,150);
+ TEST_ASSERT_EQUAL(normal,features.scoreForStyle(DiceRole::Bass,1,123,2,2,75));
+ TEST_ASSERT_EQUAL(normal,features.scoreForStyle(DiceRole::Bass,1,123,2,2,300));
+ TEST_ASSERT_GREATER_THAN(normal,features.scoreForStyle(DiceRole::Bass,1,123,2,2,110));
+ TEST_ASSERT_GREATER_THAN(normal,features.scoreForStyle(DiceRole::Bass,1,123,2,2,0));
+ TEST_ASSERT_EQUAL(INT_MAX,features.scoreForStyle(DiceRole::Bass,0,123,2,2,150));
+ TEST_ASSERT_EQUAL(INT_MAX,features.scoreForStyle(DiceRole::Count,1,123,2,2,150));
+}
+void test_style_foreground_scoring_prefers_profile_density(){
+ for(DiceRole role:{DiceRole::Lead,DiceRole::Arp}){
+  const DiceMusicProfile& music=diceMusicProfile(2,0);
+  const int desired=role==DiceRole::Lead?music.leadPerBar:music.arpPerBar;
+  TEST_ASSERT_GREATER_THAN(0,desired);
+  DicePhraseFeatures fitting,crowded;
+  for(int i=0;i<desired;++i)fitting.add({static_cast<uint16_t>(i*384/desired),18,72,100,255});
+  for(int i=0;i<32;++i)crowded.add({static_cast<uint16_t>(i*12),18,72,100,255});
+  TEST_ASSERT_LESS_THAN(crowded.scoreForStyle(role,1,123,2,0,138),fitting.scoreForStyle(role,1,123,2,0,138));
+ }
+}
+int main(){UNITY_BEGIN();RUN_TEST(test_style_scoring_preserves_legacy_and_checks_tempo_octaves);RUN_TEST(test_style_foreground_scoring_prefers_profile_density);RUN_TEST(test_style_matching_uses_bass_activity_and_equivalent_bpm);RUN_TEST(test_style_source_keeps_legacy_implementations_compatible);RUN_TEST(test_matching_seed_replays_but_keeps_phrase_variety);RUN_TEST(test_matching_prefers_role_register_over_random_pick);RUN_TEST(test_long_pad_keeps_duration_with_marked_continuations);RUN_TEST(test_valid_pick_and_bounds);RUN_TEST(test_phrase_timing_velocity_transpose);RUN_TEST(test_chords_keep_polyphony_and_mark_reduction);RUN_TEST(test_drums_use_lanes_and_polyphonic_mask);return UNITY_END();}

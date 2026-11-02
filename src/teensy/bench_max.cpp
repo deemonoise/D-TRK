@@ -47,6 +47,7 @@
 #include "stack_mark.h"
 #include "synth.h"
 #include "voice_cost.h"
+#include "bytebeat_lib.h"
 
 namespace bench {
 
@@ -118,14 +119,15 @@ constexpr int kPoolTop = 16;  // group 5: kMixWt + 0 .. 16 = the 16 .. 32 voices
 static_assert(kPoolTop <= kMixTop, "max bench pool");
 
 // Group bits: a ladder runs in every group it lists (BENCH_MAX_GROUP 0 runs each ladder once).
-constexpr uint8_t kG1 = 1, kG2 = 2, kG3 = 4, kG4 = 8, kG5 = 16, kG6 = 32, kG7 = 64;
+constexpr uint16_t kG1 = 1, kG2 = 2, kG3 = 4, kG4 = 8, kG5 = 16, kG6 = 32, kG7 = 64, kG8 = 128, kG9 = 256;
 // Group 6 contains group 2's CHIP variant lines only; group 7 covers the SYNTH features.
 enum class SynFeature : int8_t {
   Sine, SineFx, SubSquare, SubSine, SubTri, EnvPitch2, EnvFold, EnvRing, EnvMix, PhaseRandom, PhaseFree
 };
+enum class AuditFeature : int8_t { AyLow, AyHigh, SawHigh, ByteLow, ByteHigh, ApcLow, ApcHigh, ChipVol, SynVol, SynSubNoise, FmVol, AyExtreme };
 struct Ladder {
   char name[24];
-  uint8_t groups;
+  uint16_t groups;
   Kind kind;
   int top;    // voices (Mix: of instr, on top of kMixWt)
   int instr;  // the voices' slot (Hits: the first of kDrumKinds)
@@ -137,6 +139,7 @@ struct Ladder {
   int8_t machine = -1;  // solo Hits: this DrumMachine built into kDrumSoloInstr for the ladder (-1: as is)
   int chip = -1;        // a CHIP variant (makeChipVar arg) built into kChipVarInstr for the ladder (-1: as is)
   int8_t syn = -1;      // SynFeature in WT LFO's slot (-1: restore the normal WT LFO)
+  int8_t audit = -1;    // group 8: audit feature in CHIP LFO slot
 };
 // Instrument args: kMove adds a moving cutoff (moveCutoff); a CHIP variant packs the wave, kChipStepOn
 // and the filter mode | kMove (makeChipVar).
@@ -155,9 +158,11 @@ constexpr int kDrumSoloInstr = kDrumInstr;
 #define BENCH_SYN_FEATURE(nm, feature, restrike) \
   {"SYN " nm, kG7, Kind::Held, kSynFeatureTop, kWtLfoInstr, -1, false, restrike, false, false, -1, -1, \
    static_cast<int8_t>(SynFeature::feature)}
+#define BENCH_AUDIT(nm, ft, top) {nm, kG8, Kind::Held, top, kChipLfoInstr, -1, false, false, false, false, -1, -1, -1, static_cast<int8_t>(AuditFeature::ft)}
+#define BENCH_AUDIT_POOL(nm, ft, top) {nm, kG9, Kind::Held, top, kChipLfoInstr, -1, true, false, false, false, -1, -1, -1, static_cast<int8_t>(AuditFeature::ft)}
 // In flash (PROGMEM, read in place): RAM1 is short in this env.
 constexpr Ladder kLadders[] PROGMEM = {
-    {"fx only", kG1 | kG2 | kG3 | kG4 | kG5 | kG6 | kG7, Kind::None, 0, kChipInstr, -1},
+    {"fx only", kG1 | kG2 | kG3 | kG4 | kG5 | kG6 | kG7 | kG8 | kG9, Kind::None, 0, kChipInstr, -1},
     {"CHIP", kG1 | kG2 | kG6, Kind::Held, kChipTop, kChipInstr, -1},
     {"FM TONE", kG1, Kind::Held, kHeavyTop, kFmInstr, -1},
     {"FM TONE SAT", kG1, Kind::Held, kHeavyTop, kFmSatInstr, -1},
@@ -212,6 +217,16 @@ constexpr Ladder kLadders[] PROGMEM = {
     BENCH_SYN_FEATURE("SENV MIX", EnvMix, true),
     BENCH_SYN_FEATURE("PHASE RANDOM", PhaseRandom, true),
     BENCH_SYN_FEATURE("PHASE FREE", PhaseFree, true),
+    BENCH_AUDIT("AY TN LOW", AyLow, 16), BENCH_AUDIT("AY TN HIGH", AyHigh, 16),
+    BENCH_AUDIT("SAW HIGH", SawHigh, 16),
+    BENCH_AUDIT("BYTE LOW", ByteLow, 16), BENCH_AUDIT("BYTE HIGH", ByteHigh, 16),
+    BENCH_AUDIT("APC LOW", ApcLow, 16), BENCH_AUDIT("APC HIGH", ApcHigh, 16),
+    BENCH_AUDIT("CHIP VOL LFO", ChipVol, 16), BENCH_AUDIT("SYN VOL LFO", SynVol, 16),
+    BENCH_AUDIT("SYN SUB NOISE LFO", SynSubNoise, 16), BENCH_AUDIT("FM VOL LFO", FmVol, 16),
+    BENCH_AUDIT_POOL("POOL BYTE HIGH", ByteHigh, 16), BENCH_AUDIT_POOL("POOL BYTE LOW", ByteLow, 16),
+    BENCH_AUDIT_POOL("POOL APC HIGH", ApcHigh, 32), BENCH_AUDIT_POOL("POOL AY HIGH", AyHigh, 32),
+    BENCH_AUDIT_POOL("POOL SYN VOL LFO", SynVol, 32),
+    BENCH_AUDIT_POOL("POOL AY EXTREME", AyExtreme, 24),
 };
 constexpr int kLadderCount = sizeof(kLadders) / sizeof(kLadders[0]);
 constexpr bool sameStr(const char* a, const char* b) { return *a == *b && (!*a || sameStr(a + 1, b + 1)); }
@@ -227,11 +242,16 @@ static_assert(stringWorstLadder() < kLadderCount &&
 #ifndef BENCH_MAX_GROUP
 #define BENCH_MAX_GROUP 0
 #endif
-static_assert(BENCH_MAX_GROUP >= 0 && BENCH_MAX_GROUP <= 7, "BENCH_MAX_GROUP: 0 (all), 1 .. 7");
+static_assert(BENCH_MAX_GROUP >= 0 && BENCH_MAX_GROUP <= 11, "BENCH_MAX_GROUP: 0 (all), 1 .. 9, 10 (audit regression), 11 (FM + budget)");
 // 0: all. The inner ternary only keeps the shift count >= 0 when BENCH_MAX_GROUP is 0 (both arms are
 // compiled; GCC warns on a negative shift even in the unused one).
-constexpr uint8_t kGroupMask = BENCH_MAX_GROUP ? 1 << (BENCH_MAX_GROUP > 0 ? BENCH_MAX_GROUP - 1 : 0) : 0xFF;
-constexpr bool inGroup(int i) { return kLadders[i].groups & kGroupMask; }
+constexpr uint16_t kGroupMask = BENCH_MAX_GROUP == 10 ? kG1 | kG8 | kG9
+                              : BENCH_MAX_GROUP ? 1 << (BENCH_MAX_GROUP > 0 ? BENCH_MAX_GROUP - 1 : 0) : 0x1FF;
+constexpr bool inGroup(int i) {
+  return BENCH_MAX_GROUP == 11 ? (kLadders[i].groups & kG9) || kLadders[i].kind == Kind::None ||
+                                 sameStr(kLadders[i].name, "FM TONE")
+                              : kLadders[i].groups & kGroupMask;
+}
 // The first ladder of the group from i on, kLadderCount if none.
 constexpr int nextLadder(int i) { return i < kLadderCount && !inGroup(i) ? nextLadder(i + 1) : i; }
 constexpr int groupCount(int i = 0) { return i < kLadderCount ? inGroup(i) + groupCount(i + 1) : 0; }
@@ -272,7 +292,12 @@ uint32_t profBlocks;
 uint32_t cycleClock() { return ARM_DWT_CYCCNT; }
 float pct(uint32_t cycles) { return 100.f * cycles / SynthStream::blockCycles(); }
 
+const Ladder& cur();
 void note(int track, uint8_t status, uint8_t key) {
+  if(status==0x90 && cur().audit==static_cast<int8_t>(AuditFeature::AyExtreme)) {
+    const uint8_t arp[3]={0xF5,static_cast<uint8_t>(mt::Fx::ARP),0xFF};
+    synth->event(0,static_cast<uint8_t>(track),arp,3);
+  }
   const uint8_t b[3] = {status, key, 100};
   synth->event(0, static_cast<uint8_t>(track), b, 3);
 }
@@ -284,7 +309,10 @@ void chord(int first, int voices, uint8_t status) {
   const bool low = cur().low;
   for (int i = 0; i < voices; ++i) {
     const int t = first + i / mt::kPolyPerTrack, k = i % mt::kPolyPerTrack;
-    note(t, status, static_cast<uint8_t>(low ? 28 + t % 4 + k * 3 : 48 + (t % 4) * 3 + k * 5));
+    const int feature=cur().audit;
+    const bool high=feature==static_cast<int>(AuditFeature::AyHigh) || feature==static_cast<int>(AuditFeature::SawHigh) ||
+                    feature==static_cast<int>(AuditFeature::ByteHigh) || feature==static_cast<int>(AuditFeature::ApcHigh) || feature==static_cast<int>(AuditFeature::AyExtreme);
+    note(t, status, static_cast<uint8_t>(high ? 96 + (t%4)*3+k*5 : low ? 28 + t % 4 + k * 3 : 48 + (t % 4) * 3 + k * 5));
   }
 }
 int played() { return cur().kind == Kind::Mix ? kMixWt + count : count; }
@@ -324,6 +352,7 @@ void makeWt(mt::Instrument& in, int arg);
 FLASHMEM void makeSynFeature(mt::Instrument& in, int arg);
 constexpr int kLp = static_cast<int>(mt::FltMode::Lp);
 void setFx(mt::Instrument& in);
+FLASHMEM void makeAudit(mt::Instrument& in,int feature);
 
 void startStep() {
   const Ladder& l = cur();
@@ -360,6 +389,12 @@ void startStep() {
     else makeWt(in, kMove);
     setFx(in);
     builtSyn = l.syn;
+  }
+  static int builtAudit=-2;
+  if (l.audit != builtAudit) {
+    auto& in=model->instruments[kChipLfoInstr];in=mt::Instrument();
+    if(l.audit>=0) makeAudit(in,l.audit);else makeChip(in,kLp|kMove);
+    setFx(in);builtAudit=l.audit;
   }
   synth->setVoiceBudget(l.pool ? mt::kVoiceBudgetTeensy : mt::kVoiceBudgetOff);
   for (int t = 0; t < mt::kTracks; ++t) {
@@ -631,6 +666,39 @@ FLASHMEM void makeSynFeature(mt::Instrument& in, int arg) {
   }
 }
 
+// Group 8: bounded production-like ladders for the cross-engine fixes.
+FLASHMEM void makeAudit(mt::Instrument& in,int feature) {
+  const auto f=static_cast<AuditFeature>(feature);
+  makeChip(in,kLp);in.wave=static_cast<uint8_t>(mt::Wave::AyToneNoise);
+  if(f==AuditFeature::AyHigh || f==AuditFeature::SawHigh || f==AuditFeature::AyExtreme) {
+    in.transpose=24;in.lfoWave=static_cast<uint8_t>(mt::LfoWave::Square);
+    in.lfoRate=0;in.lfoDepth=63;in.lfoDest=static_cast<uint8_t>(mt::LfoDest::Pitch);
+    if(f==AuditFeature::AyExtreme) for(auto& l:in.lfo) l={static_cast<uint8_t>(mt::LfoWave::Square),0,63,static_cast<uint8_t>(mt::LfoDest::Pitch),0};
+    if(f==AuditFeature::SawHigh) in.wave=static_cast<uint8_t>(mt::Wave::Saw);
+  } else if(f==AuditFeature::ByteLow || f==AuditFeature::ByteHigh || f==AuditFeature::ApcLow || f==AuditFeature::ApcHigh) {
+    mt::instrSetType(in,mt::InstrType::Lofi);in.machine=static_cast<uint8_t>(f==AuditFeature::ByteLow||f==AuditFeature::ByteHigh?mt::LofiMachine::Byte:mt::LofiMachine::Apc);
+    int best=0,score=-1;
+    for(int k=0;k<mt::byteFormulaCount();++k) {
+      const auto& bc=mt::byteCode(k);int s=0;
+      for(int j=0;j<bc.len;++j) {const auto op=bc.ops[j];s+=op==static_cast<uint8_t>(mt::ByteOp::Div)||op==static_cast<uint8_t>(mt::ByteOp::Mod)?5:1;j+=mt::byteOpImm(op);}
+      if(s>score)score=s,best=k;
+    }
+    in.lofiFormula=best;in.macro[0]=64;in.macro[1]=127;in.macro[2]=127;in.macro[3]=127;
+    in.fltMode=kLp;in.cutoff=90;in.reso=40;in.mono=false;in.sustain=127;in.vol=30;
+    link::log("audit LOFI formula %d score %d",best,score);
+  } else {
+    if(f==AuditFeature::ChipVol) in.wave=static_cast<uint8_t>(mt::Wave::Saw);
+    else if(f==AuditFeature::FmVol) makeFm(in,0);
+    else {makeWt(in,0);in.synOsc[0]=in.synOsc[1]=static_cast<uint8_t>(mt::SynOsc::Saw);}
+    in.lfoWave=static_cast<uint8_t>(mt::LfoWave::Tri);in.lfoRate=96;in.lfoDepth=63;
+    in.lfoDest=static_cast<uint8_t>(mt::LfoDest::Vol);in.lfoSync=mt::kLfoFree;
+    if(f==AuditFeature::SynSubNoise) {
+      in.lfoDest=static_cast<uint8_t>(mt::LfoDest::Sub);
+      in.lfo[0]={static_cast<uint8_t>(mt::LfoWave::Tri),96,63,static_cast<uint8_t>(mt::LfoDest::Noise),mt::kLfoFree};
+    }
+  }
+}
+
 // arg: the filter mode | kMove, | kNoRing / kNoFold to leave one of them at 0.
 constexpr int kNoRing = 0x200, kNoFold = 0x400;
 void makeWtFold(mt::Instrument& w, int arg) {
@@ -742,7 +810,7 @@ void begin(mt::SynthModel& m, mt::Synth& s, SynthStream& out) {
   out.setBlockHook(tick);  // the first step after kBootBlocks
 }
 
-void step() {
+FLASHMEM void step() {
   if (measureSeq != seenMeasure) {  // a step's measured part began: profile from here
     seenMeasure = measureSeq;
     memset(prof, 0, sizeof prof);

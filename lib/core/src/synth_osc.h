@@ -63,6 +63,10 @@ MT_INLINE float ayStep(float e) {
 constexpr float kAyBuzzMean = ayLevelMean();
 constexpr float kAyBuzzGain = 1.f / (1.f - kAyBuzzMean);
 
+// Exact AY register advance, including wave-change/zero seed recovery. Bounded work even
+// when a high note clocks the 17-bit register many times per output sample.
+uint32_t chipAyAdvance(uint32_t state, uint32_t clocks);
+
 // One chip oscillator; phase in [0, 1).
 struct ChipOsc {
   float phase = 0;
@@ -110,17 +114,56 @@ struct ChipOsc {
       }
     }
     phase += inc;
-    while (phase >= 1.f) {
+    if (phase >= 1.f) {
+      uint32_t clocks = 1;
       phase -= 1.f;
-      if (w == Wave::Noise || w == Wave::Metal) stepLfsr(w == Wave::Metal ? 6 : 1);
-      else if (w == Wave::SidNoise) stepSid();
-      else if (w == Wave::AyNoise) stepAy();
+      if (phase >= 1.f) {
+        if (phase < 4294967296.f) {
+          const uint32_t extra = static_cast<uint32_t>(phase);
+          phase -= static_cast<float>(extra);
+          clocks += extra;
+        } else {
+          // Extreme valid tunings can overflow noteHz. There is no meaningful
+          // sample-rate phase at an unrepresentable clock count; recover safely.
+          phase = 0.f;
+          clocks = 0;
+        }
+      }
+      // Tonal waves need only the fractional phase. Noise clocks are bounded by
+      // Synth::control; AY TN below has its own exact jump for high pitched tones.
+      if (w == Wave::Noise || w == Wave::Metal) {
+        for (uint32_t i = 0; i < clocks; ++i) stepLfsr(w == Wave::Metal ? 6 : 1);
+      } else if (w == Wave::SidNoise) {
+        for (uint32_t i = 0; i < clocks; ++i) stepSid();
+      } else if (w == Wave::AyNoise) {
+        // The production noise clock is capped at four: retain its cheap inline path.
+        if (clocks <= 4) for (uint32_t i = 0; i < clocks; ++i) stepAy();
+        else {
+          lfsr = chipAyAdvance(lfsr, clocks);
+          noiseVal = (lfsr & 1) ? 1.f : -1.f;
+        }
+      }
     }
-    if (w == Wave::AyToneNoise) {  // its noise runs at 8x the tone, own phase
+    if (w == Wave::AyToneNoise) {
       nphase += inc * 8.f;
-      while (nphase >= 1.f) {
+      if (nphase >= 1.f) {
+        uint32_t clocks = 1;
         nphase -= 1.f;
-        stepAy();
+        if (nphase >= 1.f) {
+          if (nphase < 4294967296.f) {
+            const uint32_t extra = static_cast<uint32_t>(nphase);
+            nphase -= static_cast<float>(extra);
+            clocks += extra;
+          } else {
+            nphase = 0.f;
+            clocks = 0;
+          }
+        }
+        if (clocks == 1) stepAy();
+        else {
+          lfsr = chipAyAdvance(lfsr, clocks);
+          noiseVal = (lfsr & 1) ? 1.f : -1.f;
+        }
       }
     }
     return v;

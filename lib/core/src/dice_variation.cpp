@@ -29,7 +29,7 @@ int harmonicNote(int note, const Step* chords, int len, int at, uint8_t root, Sc
 void diceVaryDraft(const Project& original, const DiceOpts& opts, uint32_t seed, DiceSnap& draft) {
   if (opts.change == DiceChange::Wild) return;
   const bool subtle = opts.change == DiceChange::Subtle;
-  for (int pat = 0; pat < kDicePats; ++pat) {
+  for (int pat = 0; pat < draft.patCount; ++pat) {
     DicePat& dst = draft.parts.pats[pat];
     const Pattern& old = original.patterns[draft.first + pat];
     const int len = std::min<int>(kMaxSteps, std::min<int>(dst.length, old.length));

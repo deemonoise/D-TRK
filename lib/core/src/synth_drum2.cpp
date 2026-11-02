@@ -643,7 +643,7 @@ MT_HOT void Drum2Voice::renderHhr(float* o, int n) {
   }
 }
 
-MT_HOT void Drum2Voice::render(float* __restrict out, int n, float amp) {
+MT_HOT void Drum2Voice::render(float* __restrict out, int n, float amp, float ampStep) {
   float buf[64];
   float tailV = tailV_, last = last_, pk = pk_;
   for (int off = 0; off < n; off += 64) {
@@ -670,6 +670,7 @@ MT_HOT void Drum2Voice::render(float* __restrict out, int n, float amp) {
       pk = as > pk ? as : pk * kPeakK;
       last = s * amp + tailV;
       o[i] += last;
+      amp += ampStep;
       tailV *= kChokeK;
     }
   }

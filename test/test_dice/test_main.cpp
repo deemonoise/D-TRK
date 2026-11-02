@@ -143,7 +143,7 @@ const char* grooveName(int i) { return grooveAt(i).name; }
 void test_genres_and_styles() {
   static const char* const kGenres[] = {"HOUSE", "TECHNO", "TRANCE", "DNB", "BREAKS",
                                         "HIPHOP", "IDM", "AMBIENT", "SYNTHWAVE"};
-  static const int kStyles[] = {5, 6, 5, 5, 3, 3, 3, 3, 3};
+  static const int kStyles[] = {5, 7, 5, 5, 4, 3, 4, 3, 3};
   TEST_ASSERT_EQUAL(9, diceGenreCount());
   for (int g = 0; g < 9; ++g) {
     TEST_ASSERT_EQUAL_STRING(kGenres[g], diceGenreName(g));
@@ -155,6 +155,34 @@ void test_genres_and_styles() {
   TEST_ASSERT_NULL(diceGenreName(9));
   TEST_ASSERT_NULL(diceRecipe(0, 5));
   TEST_ASSERT_EQUAL(0, diceStyleCount(-1));
+}
+
+void test_appended_styles_preserve_saved_indices() {
+  // Frozen pre-extension order: NVS saves the genre/style pair by numeric index.
+  const std::vector<const char*> previous[] = {
+      {"DEEP", "TECH", "ACID", "DISCO", "PROG"},
+      {"MINIMAL", "DUB", "PEAK", "HARD", "ACID", "MELODIC"},
+      {"UPLIFT", "FULLON", "DARK PSY", "GOA", "PROG"},
+      {"LIQUID", "JUMPUP", "NEURO", "JUNGLE", "HALFTIME"},
+      {"BREAKBEAT", "UKG 2STEP", "ELECTRO"},
+      {"BOOMBAP", "LOFI", "TRAP"},
+      {"BRAINDANCE", "GLITCH", "ELECTRONICA"},
+      {"DREAM", "DARK", "DRONE"},
+      {"OUTRUN", "DARKSYNTH", "CHILLWAVE"},
+  };
+  int kept = 0;
+  for (int genre = 0; genre < 9; ++genre)
+    for (size_t style = 0; style < previous[genre].size(); ++style) {
+      TEST_ASSERT_EQUAL_STRING(previous[genre][style], diceStyleName(genre, style));
+      ++kept;
+    }
+  TEST_ASSERT_EQUAL(36, kept);
+  TEST_ASSERT_EQUAL_STRING("EBM", diceStyleName(1, 6));
+  TEST_ASSERT_EQUAL_STRING("DEEP DUB", diceStyleName(4, 3));
+  TEST_ASSERT_EQUAL_STRING("FOOTWORK", diceStyleName(6, 3));
+  TEST_ASSERT_NULL(diceRecipe(1, 7));
+  TEST_ASSERT_NULL(diceRecipe(4, 4));
+  TEST_ASSERT_NULL(diceRecipe(6, 4));
 }
 
 void test_every_recipe_valid() {
@@ -282,27 +310,27 @@ void test_every_recipe_valid() {
 
 void test_first_pattern_and_overwrites() {
   TEST_ASSERT_EQUAL(0, diceFirstPattern(0));
-  TEST_ASSERT_EQUAL(5, diceFirstPattern(5));
-  TEST_ASSERT_EQUAL(12, diceFirstPattern(12));
-  TEST_ASSERT_EQUAL(12, diceFirstPattern(14));
-  TEST_ASSERT_EQUAL(12, diceFirstPattern(15));
+  TEST_ASSERT_EQUAL(0, diceFirstPattern(5));
+  TEST_ASSERT_EQUAL(0, diceFirstPattern(12));
+  TEST_ASSERT_EQUAL(0, diceFirstPattern(14));
+  TEST_ASSERT_EQUAL(0, diceFirstPattern(15));
   p.reset();
   TEST_ASSERT_EQUAL(0, diceOverwrites(p, 14));
-  p.patterns[13].steps[9][3].note = 60;  // any track counts
-  p.patterns[11].steps[0][0].note = 60;  // outside P13..P16
+  p.patterns[1].steps[9][3].note = 60;  // any track counts inside P01..P04
+  p.patterns[11].steps[0][0].note = 60;  // outside the Dice range
   TEST_ASSERT_EQUAL(0x2, diceOverwrites(p, 14));
-  TEST_ASSERT_EQUAL(0x5, diceOverwrites(p, 11));  // P12 and P14
+  TEST_ASSERT_EQUAL(0x2, diceOverwrites(p, 11));  // editor position never shifts the range
 }
 
-// A roll at P15 writes P13..P16 only.
+// A roll from any editor position writes P01..P04 only.
 void test_other_patterns_untouched() {
   templateBuild(0, p);
   for (int i = 0; i < kPatterns; ++i) p.patterns[i].steps[1][i % 16].note = static_cast<uint8_t>(40 + i);
   memcpy(&before, &p, sizeof(Project));
   const DiceResult r = diceRoll(p, opts(0, 0), 14, 7, snap);
-  TEST_ASSERT_EQUAL(12, r.first);
-  for (int i = 0; i < 12; ++i) TEST_ASSERT_EQUAL_MEMORY(&before.patterns[i], &p.patterns[i], sizeof(Pattern));
-  for (int i = 12; i < 16; ++i) TEST_ASSERT_TRUE(memcmp(&before.patterns[i], &p.patterns[i], sizeof(Pattern)) != 0);
+  TEST_ASSERT_EQUAL(0, r.first);
+  for (int i = 4; i < 16; ++i) TEST_ASSERT_EQUAL_MEMORY(&before.patterns[i], &p.patterns[i], sizeof(Pattern));
+  for (int i = 0; i < 4; ++i) TEST_ASSERT_TRUE(memcmp(&before.patterns[i], &p.patterns[i], sizeof(Pattern)) != 0);
 }
 
 void test_tracks_7_to_16_untouched() {
@@ -465,7 +493,7 @@ void test_absent_roles_empty_and_muted() {
         TEST_ASSERT_EQUAL_MESSAGE(!present, p.tracks[k].mute, rec.style);
         int notes = 0;
         for (int i = 0; i < kDicePats; ++i) {
-          const Pattern& pt = p.patterns[3 + i];
+          const Pattern& pt = p.patterns[r.first + i];
           TEST_ASSERT_EQUAL(rec.len, pt.length);
           if (!present) TEST_ASSERT_TRUE_MESSAGE(trackEmpty(pt, k), rec.style);
           notes += noteCount(pt, k);
@@ -538,7 +566,7 @@ void test_song_write() {
   TEST_ASSERT_EQUAL(20, p.songLen);
   TEST_ASSERT_EQUAL_MEMORY(before.songTrn, p.songTrn, sizeof(p.songTrn));
   diceRoll(p, opts(0, 0, 30, kDiceAll | kDiceSong), 5, 3, snap);
-  static const uint8_t kOrder[] = {5, 5, 6, 7, 8, 8, 6};
+  static const uint8_t kOrder[] = {0, 0, 1, 2, 3, 3, 1};
   TEST_ASSERT_EQUAL(kDiceSongLen, p.songLen);
   TEST_ASSERT_EQUAL_UINT8_ARRAY(kOrder, p.song, 7);
   for (int i = 0; i < kDiceSongLen; ++i) {
@@ -763,7 +791,7 @@ void test_drum_b_bars_differ() {
     }
 }
 
-// The lead's B bar ends on the tonic or the fifth; the bass's last note before a bar's root approaches it.
+// Canon lead cadence remains tonic/fifth. Phrase bass may add an approach only above Variety 0.
 void test_cadence_and_approach() {
   int leads = 0, basses = 0;
   for (int g = 0; g < diceGenreCount(); ++g)
@@ -783,6 +811,9 @@ void test_cadence_and_approach() {
           TEST_ASSERT_TRUE_MESSAGE(pc == 0 || pc == fifth, r.style);
           ++leads;
         }
+        if (diceMusicProfile(g, s).bassMotion != DiceBassMotion::Phrase) continue;
+        p.reset();
+        diceRoll(p, opts(g, s, 30, kDiceAll, root), 0, 1, snap);
         if ((r.roles & diceRoleBit(DiceRole::Bass)) && drop.steps[1][0].hasNote()) {
           const int u = unitOf(drop.length), o = lastOnset(drop, 1, n - 1);
           TEST_ASSERT_TRUE_MESSAGE(o >= u - 4, r.style);
@@ -792,7 +823,7 @@ void test_cadence_and_approach() {
         }
       }
     }
-  TEST_ASSERT_TRUE(leads >= 10 && basses >= 30);
+  TEST_ASSERT_TRUE(leads >= 10 && basses >= 10);
 }
 
 // Variety 100: leads differ seed to seed, the third bar varies now and then.
@@ -948,6 +979,7 @@ int main() {
   RUN_TEST(test_locked_role_preserves_settings_notes_and_shared_sound);
   RUN_TEST(test_generated_bass_register_respects_preset_transpose);
   RUN_TEST(test_genres_and_styles);
+  RUN_TEST(test_appended_styles_preserve_saved_indices);
   RUN_TEST(test_every_recipe_valid);
   RUN_TEST(test_kit_mix_and_feel);
   RUN_TEST(test_first_pattern_and_overwrites);

@@ -3,11 +3,12 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "scripts"))
 import prepare_dice_library as lib
 
 
@@ -32,6 +33,44 @@ def midi(events, ppq=96, name=""):
 
 
 class LibraryTests(unittest.TestCase):
+    def test_source_import_stays_in_the_invoked_symlink_overlay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            overlay = Path(tmp)
+            (overlay / "test").mkdir()
+            (overlay / "scripts").mkdir()
+            (overlay / "test/test_prepare_dice_library.py").symlink_to(Path(__file__).absolute())
+            source = overlay / "scripts/prepare_dice_library.py"
+            source.write_text("OVERLAY_MARKER = True\n")
+            probe = subprocess.run(
+                [sys.executable, "-c",
+                 "import test_prepare_dice_library as t; print(t.lib.__file__)"],
+                cwd=overlay / "test", capture_output=True, text=True, check=True)
+            self.assertTrue(source.samefile(probe.stdout.strip()))
+
+    def test_known_subgenre_folders_stay_in_their_families(self):
+        aliases = {"Jump-Up": 3, " neurofunk ": 3, "Liquid DnB": 3,
+                   "Drum_and_Bass": 3, "Psy-Trance": 2, "Full On": 2,
+                   "Dark Psy": 2, "Goa Trance": 2, "Uplifting Trance": 2,
+                   "Acid Techno": 1, "Dub-Techno": 1, "Minimal Techno": 1,
+                   "Progressive House": 0, "Boom Bap": 5, "Braindance": 6,
+                   "Dark Ambient": 7, "Outrun": 8}
+        for folder, genre in aliases.items():
+            with self.subTest(folder=folder):
+                self.assertEqual(1 << genre, lib.genre_mask(folder))
+        self.assertEqual(511, lib.genre_mask("unclassified custom pack"))
+
+    def test_new_styles_use_existing_family_bits(self):
+        for folder, family in (("Deep Dubstep", 4), ("Deep-Dub", 4), ("Dubstep", 4),
+                               ("Footwork", 6), ("JUKE", 6), ("EBM", 1),
+                               ("Industrial", 1), ("Industrial_Techno", 1)):
+            with self.subTest(folder=folder):
+                self.assertEqual(1 << family, lib.genre_mask(folder))
+        self.assertEqual(9, len(lib.GENRES))
+        raw = midi([(0, b"\x90\x24\x64"), (96, b"\x80\x24\0")])
+        _, binary, _ = self.compile_tree({"Footwork/Bass/Sub Cm.mid": raw})
+        self.assertEqual((b"DML1", 1, 64), lib.HEADER.unpack_from(binary)[:3])
+        self.assertEqual(1 << 6, lib.ENTRY.unpack_from(binary, lib.HEADER.size)[0])
+
     def test_note_lengths_running_status_and_velocity_zero(self):
         source = midi([(12, b"\x90\x3c\x60"), (24, b"\x40\x50"),
                        (24, b"\x3c\0"), (24, b"\x40\0")])
@@ -93,12 +132,29 @@ class LibraryTests(unittest.TestCase):
         for note, lane in [(35, 0), (36, 0), (38, 1), (40, 1), (42, 2), (44, 2), (46, 3), (39, 4)]:
             self.assertEqual(lib.drum_lane(note, "", "")[0], lane)
 
-    def test_every_known_folder_has_genre_mapping(self):
-        for name in ("Analog Magic", "Chillwave", "Darkwave", "Deep House", "Disco", "Drill",
-                     "Drum & Bass", "EDM", "Electric Dreams", "Electronica", "House", "Indie Dance",
-                     "Latin", "Lo-Fi Hip Hop", "Melodic Techno", "Minimal", "Pop", "Reggaeton",
-                     "Slap House", "Soul & R&B", "Tech House", "Trap", "ethereal2080 DRE4MSCAPE"):
-            self.assertGreater(lib.genre_mask(name), 0, name)
+    def test_every_known_folder_has_the_exact_genre_mask(self):
+        folders = {
+            1: "House|Deep House|Slap House|Progressive House|Acid House",
+            2: "Techno|Melodic Techno|Minimal|Acid Techno|Dub Techno|Minimal Techno|Peak Time Techno|Hard Techno|EBM|Industrial|Industrial Techno",
+            4: "Trance|Psy Trance|Psytrance|Full On|Fullon|Dark Psy|Darkpsy|Goa|Goa Trance|Uplift|Uplifting Trance|Progressive Trance",
+            8: "DNB|Drum & Bass|Drum and Bass|Drum n Bass|D&B|Jump Up|Jumpup|Neuro|Neurofunk|Liquid|Liquid DNB|Jungle|Halftime",
+            16: "Breaks|Deep Dubstep|Deep Dub|Dubstep",
+            32: "Hiphop|Hip Hop|Drill|Lo-Fi Hip Hop|Boom Bap|Boombap|Lofi|Trap|Soul & R&B",
+            64: "IDM|Braindance|Glitch|Footwork|Juke",
+            128: "Ambient|Dark Ambient|Drone",
+            256: "Synthwave|Darkwave|Electric Dreams|Outrun|Darksynth",
+            3: "Analog Magic|Tech House",
+            5: "EDM",
+            17: "Latin",
+            48: "Reggaeton",
+            192: "Electronica",
+            257: "Disco|Indie Dance|Pop",
+            384: "Chillwave|ethereal2080 DRE4MSCAPE",
+        }
+        for expected, names in folders.items():
+            for name in names.split("|"):
+                with self.subTest(folder=name):
+                    self.assertEqual(expected, lib.genre_mask(name))
 
     def compile_tree(self, files, duplicate_manifest=None):
         temporary = tempfile.TemporaryDirectory()

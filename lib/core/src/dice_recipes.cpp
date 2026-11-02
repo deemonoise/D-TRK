@@ -458,6 +458,16 @@ KIT(LIQUID) KIT(JUNGLE) KIT(NEURO) KIT(BREAKS) KIT(UKG) KIT(ELECTRO) KIT(BOOM) K
 KIT(AMB) KIT(SW) KIT(DARKSW) KIT(CHILL)
 #undef KIT
 
+// New styles reuse the existing synthesis assets with deliberately narrow, coherent kits.
+constexpr DiceDrum DK_FOOTWORK[] = {{kDr, "BD808 S", 120, -8, 0, 8}, {kFm, "KICK ELC", 118, -10, 0, 4},
+                                   {kDr, "BD ELECT", 118, -10, 0, 3}, DEND};
+constexpr DiceDrum DS_FOOTWORK[] = {{kDr, "SD808 S", 100, -8, 0, 8}, {kFm, "SNR ELEC", 98, 0, 0, 4}, DEND};
+constexpr DiceDrum DP_EBM[] = {{kDr, "METAL HT", 54, -10, 0, 8}, {kFm, "WOODBLK", 54, 0, 0, 4},
+                               {kDr, "RS909", 56, 0, 0, 3}, {kFm, "ZAP", 50, 0, 0, 2}, DEND};
+constexpr DiceKit KI_DEEPDUB = {{DK_DUB, DS_TRAP, DC_DUB, DH_DUB, DO_DUB, DP_DUB}};
+constexpr DiceKit KI_FOOTWORK = {{DK_FOOTWORK, DS_FOOTWORK, DC_ELECTRO, DH_ELECTRO, DO_ELECTRO, DP_ELECTRO}};
+constexpr DiceKit KI_EBM = {{DK_HARD, DS_HARD, DC_HARD, DH_HARD, DO_HARD, DP_EBM}};
+
 // ---- Feel: velocity on the beat / e / & / a, accent, ghost (~-14 dB), humanize at Variety 100 --------
 constexpr DiceFeel FL_HOUSE = {{118, 74, 106, 82}, 127, 26, 30};   // offbeat hats lifted
 constexpr DiceFeel FL_TECHNO = {{120, 82, 98, 88}, 127, 24, 20};
@@ -522,6 +532,17 @@ constexpr DiceMix MX_DNB = {{{114, 64, K, K, K, 0, 0, 24, 0, 0, 16},
                              {90, 58, 94, 35, 24, 0, 66, 14, 0, 40, 44},
                              {82, 76, 90, 35, 24, 0, 60, 10, 0, 50, 40},
                              {72, 46, K, K, K, 0, 0, 20, 0, 36, 56}}};
+// Growl/reese presets already balance their own resonance, filter envelope and saturation.
+// Preserve those choices while retaining the shared DNB role levels and sends.
+constexpr DiceMix growlMix() {
+  DiceMix mix = MX_DNB;
+  mix.role[1].cut = K;
+  mix.role[1].res = K;
+  mix.role[1].fenv = K;
+  mix.role[1].drv = 64;
+  return mix;
+}
+constexpr DiceMix MX_GROWL = growlMix();
 constexpr DiceMix MX_LIQUID = {{{110, 64, K, K, K, 0, 0, 16, 0, 0, 22},
                                 {100, 64, 74, 25, 16, 0, 0, 12, 0, 0, 0},
                                 {84, 64, 84, 25, 16, 64, 92, 6, 0, 30, 70},
@@ -576,6 +597,46 @@ constexpr DiceMix MX_CHILL = {{{104, 64, K, K, K, 0, 0, 12, 20, 0, 24},
                                {86, 58, 88, 25, 16, 20, 80, 8, 10, 50, 60},
                                {80, 76, 86, 25, 16, 0, 76, 8, 10, 56, 56},
                                {68, 46, K, K, K, 0, 0, 12, 20, 40, 64}}};
+
+constexpr DiceMix deepDubMix() {
+  DiceMix mix = MX_DUB;
+  mix.role[0].rvb = 14;
+  mix.role[2].vol = 78;
+  mix.role[3].vol = 74;
+  mix.role[4].vol = 72;
+  mix.role[5].vol = 64;
+  return mix;
+}
+constexpr DiceMix footworkMix() {
+  DiceMix mix = MX_TRAP;
+  mix.role[0].rvb = 10;
+  mix.role[2].vol = 82;
+  mix.role[2].atk = 0;
+  mix.role[2].rel = 40;
+  mix.role[2].dly = 8;
+  mix.role[2].rvb = 28;
+  mix.role[3].dly = 12;
+  mix.role[3].rvb = 24;
+  mix.role[4].vol = 78;
+  mix.role[4].rel = 40;
+  mix.role[4].dly = 12;
+  mix.role[4].rvb = 24;
+  return mix;
+}
+constexpr DiceMix ebmMix() {
+  DiceMix mix = MX_HARD;
+  mix.role[1].res = K;
+  mix.role[1].fenv = K;
+  mix.role[1].drv = 48;
+  mix.role[2].dly = 12;
+  mix.role[2].rvb = 24;
+  mix.role[3].dly = 12;
+  mix.role[3].rvb = 24;
+  mix.role[4].dly = 16;
+  mix.role[4].rvb = 20;
+  return mix;
+}
+constexpr DiceMix MX_DEEPDUB = deepDubMix(), MX_FOOTWORK = footworkMix(), MX_EBM = ebmMix();
 
 // ---- Drums: kick ---------------------------------------------------------------------------------
 constexpr DiceName K_HOUSE[] = {{"x...x...x...x...", 10}, {"x...x...x...x..o", 3}, {"x...x...x..ox...", 2}, END};
@@ -656,6 +717,25 @@ constexpr DiceName P_AMB[] = {{"......x.........", 4}, {"...........x....", 3}, 
 constexpr DiceName FH_CONGA[] = {{"..x..x....x.x..x", 5}, {"x..x..x...x..x..", 4}, {"...x..x.x...x...", 3}, END};
 constexpr DiceName FH_SPARSE[] = {{"........x.......", 5}, {"x...............", 4}, END};
 constexpr DiceName FH_IDM[] = {{".x..x.x...x.3...", 4}, {"x.3...x..x...2..", 4}, END};
+
+// Dedicated rhythmic skeletons for the append-only subgenres. Strings remain 16/32 steps.
+constexpr DiceName K_DEEPDUB[] = {{"X.........x.....X....x..........", 8},
+                                 {"X......x........X.........x.....", 4}, END};
+constexpr DiceName S_DEEPDUB[] = {{"........X...............X.......", 8},
+                                 {"........X......o........X.......", 3}, END};
+constexpr DiceName H_DEEPDUB[] = {{"..x...x...x...x.", 8}, {"..x...x.....x...", 3}, END};
+constexpr DiceName P_DEEPDUB[] = {{".....x.........x", 8}, {"...x.......x....", 4}, END};
+constexpr DiceName K_FOOTWORK[] = {{"X..x..X...x..x....X.x..X..x...x.", 8},
+                                  {"X..x...X..x.x.....X...x..X..x...", 4}, END};
+constexpr DiceName C_FOOTWORK[] = {{"....X..x..X.......X.....X..x..X.", 8},
+                                  {"..X.....X..x..X....X..x..X......", 4}, END};
+constexpr DiceName H_FOOTWORK[] = {{"x.x.3.x.x.x.3.x.", 8}, {"x.x.x.3.x.x.x.3.", 4}, END};
+constexpr DiceName P_FOOTWORK[] = {{"...x..x....x.x..", 8}, {".x.....x..x....x", 4}, END};
+constexpr DiceName K_EBM[] = {{"X...X...X...X...", 8}, {"X...X...X...X..x", 3}, END};
+constexpr DiceName S_EBM[] = {{"....X.......X...", 8}, {"....X......oX...", 3}, END};
+constexpr DiceName C_EBM[] = {{"............x...", 8}, {"....x.......x...", 3}, END};
+constexpr DiceName H_EBM[] = {{".x.x.x.x.x.x.x.x", 8}, {"x.x.x.x.x.x.x.x.", 3}, END};
+constexpr DiceName P_EBM[] = {{".x.x..x..x.x..x.", 8}, {"...x..x....x..x.", 4}, END};
 
 // ---- Sounds ------------------------------------------------------------------------------------
 // Shared lists: the roles a style leaves out point here.
@@ -790,7 +870,7 @@ constexpr DiceSound XA_TECMELODIC[] = {{kSy, "PING", 5}, {kSy, "PLUCK", 4}, {kSy
 constexpr DiceSound XF_TECMELODIC[] = {{kSy, "NOISESWP", 6}, {kSy, "RISER", 4}, {kFm, "ZAP", 3}, {kSy, "SWEEPUP", 4},
                                        {kSy, "UPLIFTER", 3}, {kSy, "WHOOSH", 3}, {kSy, "SPACEDRN", 2}, SEND};
 constexpr DiceSound XB_TRAUPLIFT[] = {{kSy, "BASS", 6}, {kSy, "PLUCKBAS", 4}, {kSy, "MOOGISH", 4},
-                                      {kSy, "TRANCEBS", 6}, {kSy, "MOOGFAT", 3}, SEND};
+                                      {kSy, "TRANCEBS", 9}, {kSy, "MOOGFAT", 3}, SEND};
 constexpr DiceSound XC_TRAUPLIFT[] = {{kSy, "PAD", 6}, {kSy, "PWMSTR", 5}, {kSy, "SHIMMER", 4}, {kSy, "CHOIR", 3},
                                       {kSy, "TRANCEPD", 6}, {kSy, "STRINGS", 4}, {kSy, "TRANCSTB", 4},
                                       {kSy, "DREAMPAD", 3}, {kFm, "STRNG FM", 3}, {kCh, "CHOIR", 3},
@@ -805,7 +885,7 @@ constexpr DiceSound XF_TRAUPLIFT[] = {{kSy, "RISER", 8}, {kSy, "NOISESWP", 5}, {
                                       {kSy, "DOWNLIFT", 4}, {kFm, "RISER", 4}, {kSy, "IMPACT", 3},
                                       {kSy, "SWEEPUP", 3}, {kSy, "WHOOSH", 2}, SEND};
 constexpr DiceSound XB_TRAFULLON[] = {{kSy, "PLUCKBAS", 6}, {kSy, "BASS", 5}, {kSy, "ACID", 3}, {kFm, "FM BASS", 3},
-                                      {kSy, "PSYBASS", 6}, {kFm, "PSY BASS", 5}, {kSy, "GOABASS", 3},
+                                      {kSy, "PSYBASS", 9}, {kFm, "PSY BASS", 5}, {kSy, "GOABASS", 3},
                                       {kFm, "GOA BASS", 3}, SEND};
 constexpr DiceSound XL_TRAFULLON[] = {{kSy, "WT LEAD", 6}, {kSy, "SOLO", 4}, {kSy, "SYNCLD", 3}, {kSy, "PSYLEAD", 6},
                                       {kFm, "PSY LEAD", 4}, {kSy, "GOALEAD", 3}, SEND};
@@ -815,7 +895,7 @@ constexpr DiceSound XF_TRAFULLON[] = {{kSy, "SCIFI", 6}, {kFm, "ZAP", 5}, {kSy, 
                                       {kSy, "LASER", 4}, {kSy, "ZAP", 4}, {kFm, "LASER", 3}, {kSy, "UPLIFTER", 3},
                                       {kSy, "DOWNLIFT", 2}, {kSy, "IMPACT", 2}, SEND};
 constexpr DiceSound XB_TRADARKPSY[] = {{kSy, "PLUCKBAS", 6}, {kSy, "BASS", 5}, {kSy, "ACID", 3}, {kFm, "FM BASS", 3},
-                                       {kSy, "PSYBASS", 6}, {kFm, "PSY BASS", 5}, {kSy, "RUMBLE", 2},
+                                       {kSy, "PSYBASS", 9}, {kFm, "PSY BASS", 5}, {kSy, "RUMBLE", 2},
                                        {kSy, "NEURO", 1}, SEND};
 constexpr DiceSound XA_TRADARKPSY[] = {{kSy, "PING", 6}, {kSy, "SYNCPLK", 4}, {kSy, "CHIPPLK", 3}, {kSy, "PSYPLK", 5},
                                        {kFm, "PLK PSY", 4}, {kSy, "GLITCHPL", 3}, {kSt, "SITAR", 2}, SEND};
@@ -823,7 +903,7 @@ constexpr DiceSound XF_TRADARKPSY[] = {{kSy, "SCIFI", 6}, {kFm, "ZAP", 5}, {kSy,
                                        {kSy, "SPACEDRN", 4}, {kSy, "DOWNLIFT", 3}, {kSy, "ZAP", 3}, {kSy, "LASER", 3},
                                        {kSy, "IMPACT", 2}, SEND};
 constexpr DiceSound XB_TRAGOA[] = {{kSy, "PLUCKBAS", 6}, {kSy, "BASS", 5}, {kSy, "ACID", 3}, {kFm, "FM BASS", 3},
-                                   {kSy, "GOABASS", 6}, {kFm, "GOA BASS", 5}, {kSy, "PSYBASS", 4},
+                                   {kSy, "GOABASS", 9}, {kFm, "GOA BASS", 5}, {kSy, "PSYBASS", 4},
                                    {kFm, "PSY BASS", 3}, SEND};
 constexpr DiceSound XL_TRAGOA[] = {{kSy, "WT LEAD", 6}, {kSy, "SOLO", 4}, {kSy, "SYNCLD", 3}, {kSy, "GOALEAD", 6},
                                    {kSy, "PSYLEAD", 5}, {kFm, "PSY LEAD", 4}, {kFm, "FLUTE FM", 2}, SEND};
@@ -831,7 +911,7 @@ constexpr DiceSound XA_TRAGOA[] = {{kSy, "ACID", 8}, {kCh, "ACID", 4}, {kSy, "AC
                                    {kFm, "PLK PSY", 4}, {kSt, "SITAR", 3}, {kCh, "SID ARP", 2}, SEND};
 constexpr DiceSound XF_TRAGOA[] = {{kSy, "SCIFI", 6}, {kFm, "ZAP", 5}, {kSy, "RISER", 4}, {kCh, "LASER", 3},
                                    {kSy, "LASER", 4}, {kSy, "ZAP", 4}, {kFm, "LASER", 3}, {kFm, "TABLA", 2}, SEND};
-constexpr DiceSound XB_TRAPROG[] = {{kSy, "BASS", 6}, {kSy, "PLUCKBAS", 4}, {kSy, "MOOGISH", 4}, {kSy, "TRANCEBS", 5},
+constexpr DiceSound XB_TRAPROG[] = {{kSy, "BASS", 6}, {kSy, "PLUCKBAS", 4}, {kSy, "MOOGISH", 4}, {kSy, "TRANCEBS", 9},
                                     {kSy, "MOOGFAT", 4}, {kFm, "TECH BAS", 2}, SEND};
 constexpr DiceSound XC_TRAPROG[] = {{kSy, "PAD", 6}, {kSy, "PWMSTR", 5}, {kSy, "SHIMMER", 4}, {kSy, "CHOIR", 3},
                                     {kSy, "PROGPAD", 6}, {kSy, "TRANCEPD", 4}, {kSy, "VOX PAD", 3},
@@ -861,14 +941,14 @@ constexpr DiceSound XA_DNBLIQUID[] = {{kSy, "PLUCK", 4}, {kSy, "BELL", 4}, {kSt,
                                       {kFm, "EP BELL", 3}, {kSt, "VIBRA", 2}, {kFm, "PLK SOFT", 2}, SEND};
 constexpr DiceSound XF_DNBLIQUID[] = {{kSy, "NOISESWP", 6}, {kSy, "RISER", 5}, {kSy, "ROBOT", 2}, {kSy, "WHOOSH", 4},
                                       {kFm, "SHKR SFT", 3}, {kFm, "RIM SOFT", 3}, {kSt, "CHIMES", 2}, SEND};
-constexpr DiceSound XB_DNBJUMPUP[] = {{kSy, "REESE", 8}, {kSy, "WOBBLE", 3}, {kSy, "FM GROWL", 2}, {kFm, "JUMPUP", 5},
+constexpr DiceSound XB_DNBJUMPUP[] = {{kSy, "REESE", 8}, {kSy, "WOBBLE", 3}, {kSy, "FM GROWL", 2}, {kFm, "JUMPUP", 9},
                                       {kSy, "WOBBLE2", 5}, {kFm, "GROWL FM", 3}, {kSy, "REESEWRM", 3}, SEND};
 constexpr DiceSound XL_DNBJUMPUP[] = {{kSy, "WT LEAD", 6}, {kSy, "HOOVER", 5}, {kSy, "SUPERSAW", 3},
                                       {kSy, "GLIDELD", 2}, SEND};
 constexpr DiceSound XF_DNBJUMPUP[] = {{kSy, "NOISESWP", 6}, {kSy, "RISER", 5}, {kSy, "ROBOT", 2}, {kSy, "SIREN", 4},
                                       {kSy, "WHOOSH", 3}, {kSy, "IMPACT", 3}, {kSy, "DOWNLIFT", 3}, SEND};
 constexpr DiceSound XB_DNBNEURO[] = {{kSy, "REESE", 6}, {kSy, "FM GROWL", 5}, {kFm, "WOBBLE", 3}, {kSy, "WOBBLE", 3},
-                                     {kSy, "NEURO", 5}, {kFm, "NEURO", 4}, {kFm, "GROWL FM", 4}, {kSy, "REESEWRM", 2},
+                                     {kSy, "NEURO", 9}, {kFm, "NEURO", 4}, {kFm, "GROWL FM", 4}, {kSy, "REESEWRM", 2},
                                      SEND};
 constexpr DiceSound XC_DNBNEURO[] = {{kSy, "DARK PAD", 6}, {kSy, "WTSWEEP", 4}, {kSy, "CHOIR", 3},
                                      {kFm, "PAD DARK", 4}, {kSy, "STRNGDRK", 3}, {kSy, "ABYSS", 2}, SEND};
@@ -1068,6 +1148,38 @@ constexpr DiceSound XA_SYNCHILLWA[] = {{kFm, "GLOCK", 4}, {kSt, "HARP", 4}, {kSy
 constexpr DiceSound XF_SYNCHILLWA[] = {{kCh, "WIND", 6}, {kSy, "NOISESWP", 5}, {kFm, "GONG", 3}, {kSy, "WHOOSH", 2},
                                        SEND};
 
+// Narrow sound palettes keep the new styles distinct without adding synthesizer presets.
+constexpr DiceSound XB_DEEPDUB[] = {{kSy, "DEEPSUB", 8}, {kFm, "HALF SUB", 5}, {kFm, "SUB FM", 4},
+                                    {kFm, "DUB BASS", 3}, SEND};
+constexpr DiceSound XC_DEEPDUB[] = {{kSy, "DUBCHORD", 8}, {kSy, "DARK PAD", 4}, {kFm, "PAD DARK", 3}, SEND};
+constexpr DiceSound XL_DEEPDUB[] = {{kSy, "SINELEAD", 8}, {kSy, "SOFTLEAD", 4}, SEND};
+constexpr DiceSound XA_DEEPDUB[] = {{kSy, "DUBPLK", 8}, {kSy, "DEEPPLK", 4}, {kFm, "PLK SOFT", 3}, SEND};
+constexpr DiceSound XF_DEEPDUB[] = {{kFm, "RIM SOFT", 8}, {kSy, "WIND", 4}, {kFm, "SHKR SFT", 3}, SEND};
+constexpr DiceSound XB_FOOTWORK[] = {{kSy, "808 GLD", 8}, {kFm, "808 FM", 5}, {kSy, "DEEPSUB", 4}, SEND};
+constexpr DiceSound XC_FOOTWORK[] = {{kSy, "STAB", 8}, {kCh, "CHIPSTAB", 5}, {kSy, "TRANCSTB", 3}, SEND};
+constexpr DiceSound XL_FOOTWORK[] = {{kSy, "STAB", 8}, {kCh, "CHIPSTAB", 4}, SEND};
+constexpr DiceSound XA_FOOTWORK[] = {{kCh, "CHIPSTAB", 8}, {kSy, "STAB", 5}, {kSy, "BLIP", 3}, SEND};
+constexpr DiceSound XF_FOOTWORK[] = {{kFm, "CLAVE", 8}, {kFm, "WOODBLK", 4}, {kDr, "CL808", 3}, SEND};
+constexpr DiceSound XB_EBM[] = {{kSy, "DARKBASS", 8}, {kSy, "ELECBASS", 5}, {kFm, "FM BASS", 4},
+                                {kSy, "MOOGFAT", 3}, SEND};
+constexpr DiceSound XC_EBM[] = {{kSy, "STAB", 8}, {kSy, "BRASS", 4}, {kCh, "CHIPSTAB", 3}, SEND};
+constexpr DiceSound XL_EBM[] = {{kSy, "SYNCLD", 8}, {kSy, "HOOVER", 4}, {kFm, "BRASS", 3}, SEND};
+constexpr DiceSound XA_EBM[] = {{kSy, "SYNCPLK", 8}, {kSy, "BLIP", 4}, {kCh, "CHIPSTAB", 3}, SEND};
+constexpr DiceSound XF_EBM[] = {{kFm, "ZAP", 8}, {kFm, "WOODBLK", 4}, {kSy, "ROBOT", 3}, SEND};
+constexpr DiceName PR_DEEPDUB[] = {{"DUB 17", 8}, {"PHRYG 12", 4}, {"DUB 1b6", 3}, END};
+constexpr DiceName PR_FOOTWORK[] = {{"DUB 17", 8}, {"PHRYG 12", 4}, {"MIN 1767", 3}, END};
+constexpr DiceName PR_EBM[] = {{"PHRYG 12", 8}, {"DUB 17", 5}, {"MIN 1767", 3}, END};
+constexpr DiceName RH_DEEPDUB[] = {{"OFFBEAT", 8}, {"DUB SKNK", 4}, END};
+constexpr DiceName RH_FOOTWORK[] = {{"JUKE STAB", 8}, {"CHOP 3", 3}, END};
+// Four-chord progressions can allocate only four steps per chord in a short pattern.
+// Every EBM rhythm starts inside that segment so its melodic source cannot disappear.
+constexpr DiceName RH_EBM[] = {{"STAB", 8}, {"SYNCOPA", 4}, {"OFFBEAT", 3}, END};
+constexpr DiceName BA_DEEPDUB[] = {{"DUB SPACE", 8}, {"DUBSTEP", 4}, {"SUB HOLD", 2}, END};
+constexpr DiceName BA_FOOTWORK[] = {{"JUKE SUB", 8}, {"UKG", 3}, {"SYNCOPA", 2}, END};
+constexpr DiceName BA_EBM[] = {{"EBM", 8}, {"TECHNO 16", 4}, {"ROCK 8", 3}, END};
+constexpr DiceName AR_FOOTWORK[] = {{"JUKE HIT", 8}, {"EL FUNK", 3}, END};
+constexpr DiceName AR_EBM[] = {{"EL ROBOT", 8}, {"TE STAB", 4}, END};
+
 // ---- Progressions --------------------------------------------------------------------------------
 constexpr DiceName PR_DEEP[] = {{"DEEP 2", 6}, {"DEEP 1MI9", 5}, {"DEEP 21", 4}, {"HOUSE 2", 4}, {"DORIAN 12", 3}, END};
 constexpr DiceName PR_TECHH[] = {{"DUB 17", 5}, {"DORIAN 14", 4}, {"PHRYG 12", 3}, END};
@@ -1130,7 +1242,7 @@ constexpr DiceName BA_TRANCE[] = {{"TRNC OFF", 8}, {"ROLLING", 4}, {"GALLOP", 3}
 constexpr DiceName BA_PSY[] = {{"PSY", 7}, {"PSY TRIP", 5}, {"GALLOP", 4}, END};
 constexpr DiceName BA_GOA[] = {{"PSY", 5}, {"GALLOP", 5}, {"ROLLING", 4}, END};
 constexpr DiceName BA_DNB[] = {{"DNB", 6}, {"SUB HOLD", 4}, {"REESE", 4}, END};
-constexpr DiceName BA_JUMP[] = {{"REESE", 4}, {"DNB", 4}, {"OCT HOLD", 4}, {"DUBSTEP", 3}, END};
+constexpr DiceName BA_JUMP[] = {{"REESE", 4}, {"DNB", 6}, {"OCT HOLD", 4}, {"DUBSTEP", 3}, END};
 constexpr DiceName BA_NEURO[] = {{"REESE", 6}, {"DNB", 4}, {"DUBSTEP", 3}, END};
 constexpr DiceName BA_JUNGLE[] = {{"SUB HOLD", 5}, {"DNB", 5}, {"DUB", 4}, {"ONE DROP", 3}, END};
 constexpr DiceName BA_HALF[] = {{"DUBSTEP", 6}, {"SUB HOLD", 4}, {"REESE", 4}, END};
@@ -1267,6 +1379,9 @@ constexpr DiceRecipe kTechno[] = {
      DR(K_TECH, nullptr, C_BACK, H_TECH, O_OFF, P_MIN),
      SN(XB_TECMELODIC, XC_TECMELODIC, XL_TECMELODIC, XA_TECMELODIC, XF_TECMELODIC),
      PR_MELODIC, RH_PAD, kTri, 4, BA_MELT, AR_TECHNO, MD_TR, LM_MOTIF, MO_TECHNO, nullptr, &FL_TECHNO, &MX_TRANCE},
+    {"EBM", 124, 128, 132, 32, k16, nullptr, 50, SC_PHR, D | B | C | A | F, &KI_EBM,
+     DR(K_EBM, S_EBM, C_EBM, H_EBM, O_SOME, P_EBM), SN(XB_EBM, XC_EBM, XL_EBM, XA_EBM, XF_EBM),
+     PR_EBM, RH_EBM, kTri, 3, BA_EBM, AR_EBM, MD_UP, LM_ARP, MO_RIFF, FH_SPARSE, &FL_TECHNO, &MX_EBM},
 };
 
 constexpr DiceRecipe kTrance[] = {
@@ -1298,10 +1413,10 @@ constexpr DiceRecipe kDnb[] = {
      PR_LIQUID, RH_DNB, k7th, 4, BA_DNB, AR_DNB, MD_UP, LM_SOME, MO_SOFT, nullptr, &FL_DNB, &MX_LIQUID},
     {"JUMPUP", 172, 174, 176, 32, k16, nullptr, 50, SC_MIN, D | B | L | F, &KI_DNB,
      DR(K_JUMP, S_DNB, nullptr, H_DNB, O_DNB, nullptr), SN(XB_DNBJUMPUP, CH_DARK, XL_DNBJUMPUP, A_DNB, XF_DNBJUMPUP),
-     PR_DNB, RH_DNB, kTri, 4, BA_JUMP, AR_DNB, MD_UP, LM_MOTIF, MO_RIFF, nullptr, &FL_DNB, &MX_DNB},
+     PR_DNB, RH_DNB, kTri, 4, BA_JUMP, AR_DNB, MD_UP, LM_MOTIF, MO_RIFF, nullptr, &FL_DNB, &MX_GROWL},
     {"NEURO", 172, 174, 176, 32, k16, nullptr, 50, SC_PHR, D | B | C | F, &KI_NEURO,
      DR(K_NEURO, S_DNB, nullptr, H_DNB, O_DNB, nullptr), SN(XB_DNBNEURO, XC_DNBNEURO, L_HOOVER, A_DNB, XF_DNBNEURO),
-     PR_NEURO, RH_DNB, kTri, 3, BA_NEURO, AR_DNB, MD_UP, LM_ARP, MO_RIFF, nullptr, &FL_DNB, &MX_DNB},
+     PR_NEURO, RH_DNB, kTri, 3, BA_NEURO, AR_DNB, MD_UP, LM_ARP, MO_RIFF, nullptr, &FL_DNB, &MX_GROWL},
     {"JUNGLE", 160, 165, 170, 32, k16, nullptr, 50, SC_MIN, D | B | C | F, &KI_JUNGLE,
      DR(K_JUNGLE, S_JUNGLE, nullptr, H_JUNGLE, O_DNB, nullptr),
      SN(XB_DNBJUNGLE, XC_DNBJUNGLE, L_DNB, A_DNB, XF_DNBJUNGLE),
@@ -1324,6 +1439,11 @@ constexpr DiceRecipe kBreaks[] = {
      DR(K_ELECTRO, nullptr, C_BACK, H_16, nullptr, P_ELECTRO),
      SN(XB_BREELECTRO, CH_TECHNO, XL_BREELECTRO, XA_BREELECTRO, XF_BREELECTRO),
      PR_ELECTRO, RH_STAB, kTri, 4, BA_ELECTRO, AR_ELECTRO, MD_UP, LM_ARP, MO_RIFF, FH_SPARSE, &FL_TECHNO, &MX_CLUB},
+    {"DEEP DUB", 138, 140, 142, 64, k16, nullptr, 50, SC_MIN, D | B | C | F, &KI_DEEPDUB,
+     DR(K_DEEPDUB, S_DEEPDUB, nullptr, H_DEEPDUB, O_SOME, P_DEEPDUB),
+     SN(XB_DEEPDUB, XC_DEEPDUB, XL_DEEPDUB, XA_DEEPDUB, XF_DEEPDUB),
+     PR_DEEPDUB, RH_DEEPDUB, k7th, 4, BA_DEEPDUB, AR_DUB, MD_UP, LM_SOME, MO_SOFT,
+     FH_SPARSE, &FL_BREAKS, &MX_DEEPDUB},
 };
 
 constexpr DiceRecipe kHiphop[] = {
@@ -1354,6 +1474,11 @@ constexpr DiceRecipe kIdm[] = {
      DR(K_ELNICA, S_BACK, nullptr, H_8, nullptr, P_IDM),
      SN(XB_IDMELECTRO, XC_IDMELECTRO, XL_IDMELECTRO, XA_IDMELECTRO, XF_IDMELECTRO),
      PR_ELNICA, RH_PAD, k9th, 4, BA_ELNICA, AR_AMB, MD_AMB, LM_MOTIF, MO_IDM, FH_IDM, &FL_IDM, &MX_IDM},
+    {"FOOTWORK", 156, 160, 164, 32, k16, nullptr, 50, SC_MIN, D | B | C | A | F, &KI_FOOTWORK,
+     DR(K_FOOTWORK, nullptr, C_FOOTWORK, H_FOOTWORK, O_SOME, P_FOOTWORK),
+     SN(XB_FOOTWORK, XC_FOOTWORK, XL_FOOTWORK, XA_FOOTWORK, XF_FOOTWORK),
+     PR_FOOTWORK, RH_FOOTWORK, kTri, 4, BA_FOOTWORK, AR_FOOTWORK, MD_UP, LM_ARP, MO_RIFF,
+     FH_SPARSE, &FL_IDM, &MX_FOOTWORK},
 };
 
 constexpr DiceRecipe kAmbient[] = {
@@ -1397,6 +1522,50 @@ constexpr Genre kGenres[] = {
 };
 constexpr int kGenreN = sizeof(kGenres) / sizeof(kGenres[0]);
 
+constexpr bool musicTableFits() {
+  for (const Genre& genre : kGenres) if (genre.n > kDiceStyleSlots) return false;
+  return true;
+}
+static_assert(musicTableFits(), "Every recipe needs a music-profile slot");
+
+constexpr DiceMusicProfile kMusicDefault = {DiceBassMotion::Phrase, 0, 0, 0, 127, 0, false};
+constexpr DiceMusicProfile kMelodicMusic = {DiceBassMotion::Phrase, 8, 8, 60, 84, 8, false};
+constexpr DiceMusicProfile kTranceMusic = {DiceBassMotion::Pulse, 8, 8, 60, 84, 4, false};
+constexpr DiceMusicProfile kPsyMusic = {DiceBassMotion::Pulse, 6, 8, 48, 76, 12, false};
+constexpr DiceMusicProfile kTechPulseMusic = {DiceBassMotion::Pulse, 4, 8, 48, 76, 12, false};
+constexpr DiceMusicProfile kAmbientMusic = {DiceBassMotion::Hold, 2, 2, 48, 84, 1, false};
+constexpr DiceMusicProfile kSynthPulseMusic = {DiceBassMotion::Pulse, 0, 0, 0, 127, 8, false};
+
+// Every existing style has an explicit entry in the persisted genre/style order. Unrestricted
+// native foregrounds retain their character; sparse implicit support is handled by dice.cpp.
+constexpr DiceMusicProfile kMusic[kGenreN][kDiceStyleSlots] = {
+    // HOUSE: DEEP, TECH, ACID, DISCO, PROG.
+    {kMusicDefault, kMusicDefault, {DiceBassMotion::Acid, 4, 4, 36, 60, 12, false},
+     kMusicDefault, kMelodicMusic},
+    // TECHNO: MINIMAL, DUB, PEAK, HARD, ACID, MELODIC, EBM.
+    {kMusicDefault, kMusicDefault, kTechPulseMusic, kTechPulseMusic,
+     {DiceBassMotion::Phrase, 4, 8, 36, 60, 6, true}, kMelodicMusic,
+     {DiceBassMotion::Pulse, 4, 8, 48, 76, 16, false}},
+    // TRANCE: UPLIFT, FULLON, DARK PSY, GOA, PROG.
+    {kTranceMusic, kPsyMusic, {DiceBassMotion::Pulse, 4, 8, 48, 76, 12, false},
+     kPsyMusic, kTranceMusic},
+    // DNB: LIQUID, JUMPUP, NEURO, JUNGLE, HALFTIME.
+    {kMusicDefault, {DiceBassMotion::Phrase, 4, 2, 48, 72, 4, false},
+     {DiceBassMotion::Hold, 2, 2, 48, 72, 3, false}, kMusicDefault,
+     {DiceBassMotion::Hold, 4, 4, 48, 72, 2, false}},
+    // BREAKS: BREAKBEAT, UKG 2STEP, ELECTRO, DEEP DUB.
+    {kMusicDefault, kMusicDefault, {DiceBassMotion::Phrase, 6, 6, 48, 84, 0, false},
+     {DiceBassMotion::Hold, 2, 2, 48, 72, 2, false}},
+    // HIPHOP: BOOMBAP, LOFI, TRAP. Preserve the 808's authored sustain and slide.
+    {kMusicDefault, kMusicDefault, {DiceBassMotion::Hold, 0, 0, 0, 127, 0, false}},
+    // IDM: BRAINDANCE, GLITCH, ELECTRONICA retain dense foregrounds; FOOTWORK is compact.
+    {kMusicDefault, kMusicDefault, kMusicDefault, {DiceBassMotion::Pulse, 4, 6, 48, 76, 6, false}},
+    // AMBIENT: DREAM, DARK, DRONE. A bar is eight steps at k8 resolution.
+    {{DiceBassMotion::Hold, 0, 0, 0, 127, 0, false}, kAmbientMusic, kAmbientMusic},
+    // SYNTHWAVE: OUTRUN, DARKSYNTH, CHILLWAVE.
+    {kSynthPulseMusic, kSynthPulseMusic, kMusicDefault},
+};
+
 bool degreeToken(const char* p, int n) {
   if (n < 1 || n > 2 || p[0] < '1' || p[0] > '9') return false;
   return n == 1 || p[1] == '^' || p[1] == 'v';
@@ -1414,6 +1583,11 @@ const char* diceStyleName(int g, int s) {
 const DiceRecipe* diceRecipe(int g, int s) {
   if (g < 0 || g >= kGenreN || s < 0 || s >= kGenres[g].n) return nullptr;
   return &kGenres[g].styles[s];
+}
+
+const DiceMusicProfile& diceMusicProfile(int genre, int style) {
+  return style >= 0 && style < kDiceStyleSlots && diceRecipe(genre, style)
+             ? kMusic[genre][style] : kMusicDefault;
 }
 
 int diceMotifCount() { return kMotifN; }

@@ -5,6 +5,7 @@
 #include "storage/settings.h"
 
 namespace ui {
+using namespace dice_dialog;
 namespace {
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -14,11 +15,6 @@ const char* const kScopeNames[] = {"ALL", "TEMPO", "SOUNDS", "PATTERNS"};
 const char* const kSourceNames[] = {"BUILTIN", "MIDI", "HYBRID"};
 constexpr uint32_t kSeedMax = 999999;
 constexpr uint8_t kRoleMask = (1u << mt::kDiceRoles) - 1;
-constexpr uint8_t kScopeLayers[] = {mt::kDiceAll, mt::kDiceTempo, mt::kDiceSounds, mt::kDicePattern};
-
-// Length row: 0 = AUTO (the style's length), else pattern steps.
-constexpr uint8_t kLens[] = {0, 16, 32, 64, 128};
-constexpr int kLenCount = sizeof(kLens) / sizeof(kLens[0]);
 
 enum : int { kMenuCancel, kMenuOverwrite };
 
@@ -47,8 +43,8 @@ DiceDialog::DiceDialog(App& app) : app_(app) {
     [this](int d){pr_.target=clampi(pr_.target+d,0,6);},[this]{return pr_.scope==kScTempo;}};
   params_[kChange]={"Change",[this](char* o,int n){snprintf(o,n,"%s",changes[pr_.change]);},
     [this](int d){pr_.change=clampi(pr_.change+d,0,2);},[this]{return !patterns();}};
-  params_[kForm]={"Form",[this](char* o,int n){snprintf(o,n,"%s",pr_.form?"DEVELOP":"CLASSIC");},
-    [this](int d){pr_.form=d>0;},[this]{return !patterns() || pr_.target || pr_.change!=2;}};
+  params_[kForm]={"Form",[this](char* o,int n){snprintf(o,n,"%s",formName(pr_.form));},
+    [this](int d){pr_.form=changeForm(pr_.form,d);},[this]{return !patterns() || pr_.target || pr_.change!=2;}};
   params_[kFeel]={"Feel",[this](char* o,int n){snprintf(o,n,"%u",pr_.feel);},
     [this](int d){pr_.feel=clampi(pr_.feel+d,0,100);},[this]{return !patterns() || pr_.change!=2;}};
   static const char* const densities[]={"SPARSE","NORMAL","BUSY"};
@@ -114,7 +110,7 @@ void DiceDialog::clampPrefs() {
   pr_.locks &= kRoleMask;
   if(pr_.target>6)pr_.target=0;
   if(pr_.change>2)pr_.change=2;
-  pr_.form=pr_.form?1:0;
+  pr_.form=clampForm(pr_.form);
   if(pr_.feel>100)pr_.feel=35;
   if(pr_.density>2)pr_.density=1;
   if (pr_.seed < 1 || pr_.seed > kSeedMax) pr_.seed = 1;
@@ -177,15 +173,9 @@ void DiceDialog::usedSeed(uint32_t seed) {
   if (pr_ != saved_) app_.settingsChanged();
 }
 
-uint8_t DiceDialog::layers() const {
-  uint8_t l = kScopeLayers[pr_.scope % kScopes];
-  if (patterns() && pr_.song) l |= mt::kDiceSong;
-  return l;
-}
-
 void DiceDialog::open() {
   clampPrefs();
-  confirmed_ = -1;  // a new session asks again
+  confirmed_ = {};  // a new session asks again
   list_.setEdit(false);
   list_.setSel(kGenre);
   actions_.reset(list_);
@@ -201,38 +191,25 @@ void DiceDialog::close() {
 
 void DiceDialog::roll() {
   list_.setEdit(false);
+  const mt::DiceOpts opts = options(pr_);
   const int edit = app_.editPattern();
-  const int first = mt::diceFirstPattern(edit);
+  const Range target = range(opts, edit);
   // Read-only, outside the lock: the UI is the only writer of the patterns.
-  if (patterns() && first != confirmed_ && mt::diceOverwrites(app_.project(), edit) != 0) {
+  if ((opts.layers & mt::kDicePattern) && target != confirmed_ &&
+      mt::diceOverwrites(app_.project(), edit, target.count) != 0) {
     char title[32];
-    snprintf(title, sizeof(title), "OVERWRITE P%02d-P%02d?", first + 1, first + mt::kDicePats);
+    rangeTitle(title, sizeof(title), target, true);
     const MenuItem items[] = {{"Cancel", kMenuCancel}, {"Overwrite", kMenuOverwrite}};
-    app_.menu().open(title, items, 2, [this, first](int id) {
-      if (id == kMenuOverwrite) rollNow(first);
+    app_.menu().open(title, items, 2, [this, opts, target](int id) {
+      if (id == kMenuOverwrite) rollNow(opts, target);
     });
     return;
   }
-  rollNow(first);
+  rollNow(opts, target);
 }
 
-void DiceDialog::rollNow(int first) {
-  if (patterns()) confirmed_ = first;  // the range now holds this session's roll: re-rolls do not ask
-  mt::DiceOpts o;
-  o.targetMask=pr_.target && pr_.scope!=kScTempo ? 1u<<(pr_.target-1) : kRoleMask;
-  o.change=patterns()?static_cast<mt::DiceChange>(pr_.change):mt::DiceChange::Wild;
-  o.form=static_cast<mt::DiceForm>(pr_.form);
-  o.groove=pr_.feel;
-  o.density=static_cast<mt::DiceDensity>(pr_.density);
-  o.genre = pr_.genre;
-  o.style = pr_.style;
-  o.variety = pr_.variety;
-  o.len = kLens[pr_.len % kLenCount];
-  o.layers = layers();
-  o.source = static_cast<mt::DiceSource>(pr_.source);
-  o.clean = pr_.clean != 0;
-  o.lockMask = pr_.locks;
-  o.seed = pr_.fixedSeed ? pr_.seed : 0;
+void DiceDialog::rollNow(const mt::DiceOpts& o, dice_dialog::Range target) {
+  if (o.layers & mt::kDicePattern) confirmed_ = target;
   if (host_.roll) host_.roll(o);
   if (pr_ != saved_) app_.settingsChanged();
   app_.invalidate();
@@ -266,6 +243,11 @@ void DiceDialog::onInput(const hw::InputEvent& ev) {
 void DiceDialog::onTouch(const TouchEvent& ev) {
   if (!open_) return;
   if(ev.y>=y0_+kAreaH-DialogActions::kH){
+    // Touch ROLL without moving the encoder's current focus to the footer.
+    if (ev.type == TouchType::Tap && ev.x >= kScreenW / 2) {
+      action(kRoll);
+      return;
+    }
     const int result=actions_.touch(list_,ev,y0_);if(result>=0)action(result==0?kRoll:kClose);return;
   }
   actions_.touch(list_,ev,y0_);
@@ -276,8 +258,9 @@ void DiceDialog::draw(LGFX_Sprite& s, int y0) {
   y0_ = y0;
   char buf[32];
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
-  const int first = mt::diceFirstPattern(app_.editPattern());
-  if (patterns()) snprintf(buf, sizeof(buf), "DICE P%02d-P%02d", first + 1, first + mt::kDicePats);
+  const mt::DiceOpts opts = options(pr_);
+  const Range target = range(opts, app_.editPattern());
+  if (patterns()) rangeTitle(buf, sizeof(buf), target, false);
   else snprintf(buf, sizeof(buf), "DICE");
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);

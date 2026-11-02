@@ -33,8 +33,9 @@ class Drum2Voice {
   void trigger(Drum2Kind k, float accent, bool keepTail);
   // Targets for the next span samples (coefficients are set here, envelopes run per sample).
   void control(const Drum2Params& p, int span);
-  // out += amp x sound.
-  void render(float* __restrict out, int n, float amp);
+  // out += amp x sound; ampStep advances the new hit's gain each sample.
+  // The choke tail is already output-scaled and stays independent of this gain.
+  void render(float* __restrict out, int n, float amp, float ampStep = 0.f);
   // Below -80 dB, no claps pending, choke tail over (also before the first trigger).
   bool done() const;
 

@@ -9,6 +9,8 @@ namespace mt {
 // Dice roles, on tracks 1..6 (kDiceTrack in dice.h).
 enum class DiceRole : uint8_t { Drums, Bass, Chords, Lead, Arp, Fx, Count };
 constexpr int kDiceRoles = static_cast<int>(DiceRole::Count);
+// Width of genre/style policy tables; style indices are persisted and append-only.
+constexpr int kDiceStyleSlots = 7;
 constexpr uint8_t diceRoleBit(DiceRole r) { return static_cast<uint8_t>(1u << static_cast<int>(r)); }
 
 // Recipe lists: an option and its weight (> 0); every list ends with an entry of weight 0.
@@ -106,6 +108,19 @@ const char* diceGenreName(int g);                // nullptr out of range
 int diceStyleCount(int g);                       // 0 out of range
 const char* diceStyleName(int g, int s);         // nullptr out of range
 const DiceRecipe* diceRecipe(int g, int s);      // nullptr out of range
+
+// Musical constraints separate from the weighted assets. A zero attack budget leaves the role
+// unrestricted; budgets count attacks per physical 4/4 bar at the pattern's resolution.
+enum class DiceBassMotion : uint8_t { Phrase, Pulse, Hold, Acid };
+struct DiceMusicProfile {
+  DiceBassMotion bassMotion;
+  uint8_t leadPerBar, arpPerBar;
+  uint8_t arpLow, arpHigh;  // sounding MIDI notes, including the preset's transpose
+  uint8_t bassPerBar;      // MIDI candidate preference, 0 = no style-specific density preference
+  bool acidArp;            // ARP uses a monophonic acid bass phrase, accents and slides
+};
+// Invalid indices return the unrestricted default. Genre/style order follows diceRecipe.
+const DiceMusicProfile& diceMusicProfile(int genre, int style);
 
 // LEAD motifs (by name in recipes).
 int diceMotifCount();

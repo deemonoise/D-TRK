@@ -105,6 +105,7 @@ constexpr Factory kRhythms[] = {
     {"GHOST 3", "x o o x o o x o x o o x o o x o"},
     {"CHOP 3", "x - . x - . x - . x - . x - . x"},
     {"TRESILLO", "X . . x . . x . X . . x . . x ."},
+    {"JUKE STAB", "Xs . . xs . . Xs . . . xs . Xs . . xs"},
 };
 constexpr int kRhythmsN = sizeof(kRhythms) / sizeof(kRhythms[0]);
 

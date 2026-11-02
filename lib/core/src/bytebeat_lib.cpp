@@ -109,10 +109,20 @@ constexpr ByteFormula kFormulas[] = {
 };
 constexpr int kCount = static_cast<int>(sizeof(kFormulas) / sizeof(kFormulas[0]));
 
+uint16_t workScore[kCount] = {};
 struct Table {
   ByteCode code[kCount];
   Table() {
-    for (int i = 0; i < kCount; ++i) byteCompile(kFormulas[i].expr, kFormulas[i].mode, code[i]);
+    for (int i = 0; i < kCount; ++i) {
+      byteCompile(kFormulas[i].expr, kFormulas[i].mode, code[i]);
+      unsigned score = 0;
+      for (int j = 0; j < code[i].len; ++j) {
+        const uint8_t op = code[i].ops[j];
+        score += op == static_cast<uint8_t>(ByteOp::Div) || op == static_cast<uint8_t>(ByteOp::Mod) ? 5 : 1;
+        j += byteOpImm(op);
+      }
+      workScore[i] = static_cast<uint16_t>(score);
+    }
   }
 };
 
@@ -133,5 +143,10 @@ int byteFormulaCount() {
 const ByteFormula& byteFormula(int i) { return kFormulas[clampIndex(i)]; }
 
 const ByteCode& byteCode(int i) { return table().code[clampIndex(i)]; }
+
+uint16_t byteWorkScore(int i) {
+  const uint16_t score = workScore[clampIndex(i)];
+  return score ? score : kByteWorkScoreMax;
+}
 
 }  // namespace mt

@@ -18,6 +18,11 @@ struct DicePhrase {
 };
 struct DicePhraseSource {
   virtual bool pick(int genre, DiceRole role, uint32_t seed, DicePhrase& out) const = 0;
+  // Existing custom sources keep working; built-in libraries rank candidates by style.
+  virtual bool pickForStyle(int genre, int style, DiceRole role, uint32_t seed, DicePhrase& out) const {
+    (void)style;
+    return pick(genre, role, seed, out);
+  }
   virtual ~DicePhraseSource() = default;
 };
 // Shared bounded candidate selection for the memory view and streamed SD reader.
@@ -28,6 +33,8 @@ struct DicePhraseFeatures {
   uint8_t low = 127, high = 0;
   void add(const DicePhraseEvent& event);
   int score(DiceRole role, uint8_t bars, uint32_t roleSeed) const;
+  int scoreForStyle(DiceRole role, uint8_t bars, uint32_t roleSeed,
+                    int genre, int style, uint16_t bpm) const;
 };
 // Validated, read-only view of DML1 data owned by the caller; no heap or I/O.
 class DiceMidiLibrary final : public DicePhraseSource {
@@ -36,6 +43,7 @@ class DiceMidiLibrary final : public DicePhraseSource {
   bool valid() const { return count_ != 0; }
   uint32_t count() const { return count_; }
   bool pick(int genre, DiceRole role, uint32_t seed, DicePhrase& out) const override;
+  bool pickForStyle(int genre, int style, DiceRole role, uint32_t seed, DicePhrase& out) const override;
  private:
   const uint8_t* data_ = nullptr;
   size_t size_ = 0;

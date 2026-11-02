@@ -54,6 +54,12 @@ SECTIONS
 		/* wavetable maker (WtRender, a background job with the transport stopped) */
 		*:wt_make.cpp.o(.text* .rodata*)
 		*wt_make.cpp.o(.text* .rodata*)
+		/* WT spectra/build are boot/import/preview preparation, never oscillator reads in IRQ.
+		   Keep their working tables in RAM; only their cold instructions live in flash. */
+		*:wt_builtin.cpp.o(.text* .rodata*)
+		*wt_builtin.cpp.o(.text* .rodata*)
+		*:wt_mip.cpp.o(.text*)
+		*wt_mip.cpp.o(.text*)
 		/* recording: writer, names, setup (the capture fed by the interrupt is MT_HOT, .fastrun) */
 		*:rec.cpp.o(.text* .rodata*)
 		*rec.cpp.o(.text* .rodata*)

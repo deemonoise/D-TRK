@@ -280,7 +280,7 @@ void DrumVoice::control(int span) {
                                     : 1.f;
 }
 
-MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp) {
+MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp, float ampStep) {
   // Hot state in locals; parts whose envelope has snapped to 0 are skipped.
   uint32_t ph0 = tonePh_[0], ph1 = tonePh_[1], ph2 = tonePh_[2];
   uint32_t inc0 = toneInc_[0], inc1 = toneInc_[1], inc2 = toneInc_[2];
@@ -396,6 +396,7 @@ MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp) {
     s = softSat(s * driveGain);
     last = s * amp + tailV;
     out[i] += last;
+    amp += ampStep;
     tailV *= kChokeK;
   }
   tonePh_[0] = ph0, tonePh_[1] = ph1, tonePh_[2] = ph2;

@@ -19,4 +19,10 @@ const ByteFormula& byteFormula(int i);
 // these functions; call byteFormulaCount() once at boot so the audio path never compiles.
 const ByteCode& byteCode(int i);
 
+// Weighted interpreter work: Div/Mod=5, other instructions=1, immediate bytes skipped.
+// Filled by the existing boot-time compilation. This lookup NEVER initializes the table:
+// before boot initialization it returns a conservative bound, safe on the audio path.
+constexpr uint16_t kByteWorkScoreMax = 5 * kByteOpsMax;
+uint16_t byteWorkScore(int i);
+
 }  // namespace mt
