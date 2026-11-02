@@ -2345,7 +2345,7 @@ Import, Rename and Delete change the project (a `*` appears); save it so the cha
 
 **Loading.** Load and autoload at power-on check every sample of the project: if it is in `/mt-store/`, it is ready; if not, it is copied there from `/projects/name/` with a progress bar (file name, bytes). If the file is missing, corrupted or contains different data (the WAV was changed on a computer), the sample stays in the list as MISSING, with the toast "N SAMPLES MISSING" at the end. To bring it back, put the correct file in the folder and load the project again, or import a WAV under the same name.
 
-**Saving.** If the folder could not be written (card full, write error), toast "SAMPLES NOT SAVED". The `.mtp` file is saved anyway, but the project stays marked `*`: the next Save completes the folder. A MISSING sample leaves its file untouched on save; Save As to a new name copies such files from the old folder.
+**Saving.** If the folder could not be written (card full, write error), toast "SAMPLES NOT SAVED". The previous `.mtp` and autosave remain in place, and the project name does not change. The project stays marked `*`: the next Save retries the resources and publishes the project after they succeed. Resource files are shared by `.mtp` and `.bak`: overwriting a sample under the same name does not keep a separate version for the backup. A MISSING sample leaves its file untouched on save; Save As to a new name copies such files from the old folder.
 
 **Moving a project** to another card or another tracker: copy `name.mtp` and the `name/` folder to `/projects` on a computer (take the card out of the synth board). On load, the samples are copied into `/mt-store/` automatically.
 

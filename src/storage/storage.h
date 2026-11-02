@@ -25,9 +25,9 @@ bool stopEngine();
 // Progress of the sample sync: current sample name, bytes (or work units) of it.
 using SyncProgress = void (*)(const char* file, uint32_t done, uint32_t total, void* ctx);
 
-// Snapshot of live under the lock, .tmp, verify, rotate .bak, rename, /last.txt, then syncFolder().
-// Works while playing. On success live.name = name. SamplesNotSaved: the .mtp is saved (live.name
-// set) but the sample folder is not complete.
+// Snapshot under lock, .tmp + verify, prepare resources, rotate .bak, publish, then clean resources.
+// Works while playing. SamplesNotSaved: .mtp, live.name, last and autosave stay unchanged;
+// resource writes may have completed in part and are retried by the next save.
 Result save(mt::Project& live, const char* name, SyncProgress cb = nullptr, void* ctx = nullptr);
 
 // /projects/<live.name>/<sample>.wav for every listed sample that is cached and whose file is absent
@@ -54,7 +54,7 @@ Result load(mt::Project& live, const char* name, bool fromBak = false, int* miss
 
 // Autosave slot /projects/<live.name>.auto: the project file only (no sample folder, the .mtp and
 // .bak untouched), written through .atm. Transport stopped (live is read without a copy). save()
-// removes it; loadAutosave() brings it back under the same name (the caller marks the project dirty).
+// removes it and its .aub backup; loadAutosave() brings it back under the same name (the caller marks the project dirty).
 Result autosave(const mt::Project& live);
 bool autosaveExists(const char* name);
 Result loadAutosave(mt::Project& live, int* missing = nullptr, SyncProgress cb = nullptr, void* ctx = nullptr);

@@ -132,10 +132,19 @@ int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, b
     const char* name = entry.c_str();
     const size_t len = strlen(name);
     if (len <= extLen || len - extLen >= kNameMax || name[0] == '.') continue;
-    if (strcasecmp(name + len - extLen, ext) != 0) continue;
+    const bool backup = extLen == 4 && (strcmp(ext, ".mtp") == 0 || strcmp(ext, ".mti") == 0) &&
+                        strcasecmp(name + len - extLen, ".bak") == 0;
+    if (!backup && strcasecmp(name + len - extLen, ext) != 0) continue;
     memcpy(base, name, len - extLen);
     base[len - extLen] = 0;
     if (accept && !accept(base)) continue;
+    if (backup) {
+      // List an interrupted rotation under its usual name; load restores it.
+      // Do not rename while enumerating the directory (the FS may visit it twice).
+      char dst[256];
+      const int dn = snprintf(dst, sizeof(dst), "%s/%s%s", dir, base, ext);
+      if (dn < 0 || dn >= static_cast<int>(sizeof(dst)) || sdFs().exists(dst)) continue;
+    }
     n = keepName(names, n, max, base, len - extLen);
   }
   qsort(names, n, kNameMax, cmpName);

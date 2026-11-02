@@ -70,6 +70,9 @@ void* moveSeq(void* dst);
 bool post(Cmd c, uint16_t arg = 0, uint8_t arg2 = 0);
 // As post, waiting up to 50 ms for room: for commands that must not be lost (fill / perf release).
 bool postWait(Cmd c, uint16_t arg = 0, uint8_t arg2 = 0);
+// After replacing the project, holding lockProject(): reset ties and tempo before the next plan.
+// Uses a dedicated slot, so a full command queue cannot lose this update.
+void projectReplaced(uint16_t bpm);
 Status status();
 // Engine timer time, us (time stamps of synth events).
 uint64_t nowUs();

@@ -49,6 +49,7 @@ portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
 Status st{};
 // Track bits (16); 32-bit so the atomic is a plain s32c1i CAS on the ESP32, no lock in the
 // engine task (xtensa gcc reports is_always_lock_free false even for 32 bits, so no static_assert).
+std::atomic<uint32_t> replacementBpm{0};  // latest project replacement, applied after queued commands
 std::atomic<uint32_t> mutClearBits{0};  // mutClear(): tracks to clear before the next plan
 
 bool IRAM_ATTR onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, void*) {
@@ -121,6 +122,10 @@ void run(void*) {
     xSemaphoreTake(projMutex, portMAX_DELAY);
     Command c;
     while (xQueueReceive(cmds, &c, 0) == pdTRUE) handle(c);
+    if (const uint32_t bpm = replacementBpm.exchange(0)) {
+      handle({Cmd::ReleaseTies, 0, 0});
+      handle({Cmd::SetBpm, 0, static_cast<uint16_t>(bpm)});
+    }
     for (uint32_t b = mutClearBits.exchange(0); b; b &= b - 1) seq->mutClear(nowUs(), midi, __builtin_ctz(b));
     const uint64_t now = nowUs();
     while (practice.counting() && practice.next() <= now) {
@@ -209,6 +214,11 @@ bool postWait(Cmd c, uint16_t arg, uint8_t arg2) {
   const bool ok = xQueueSend(cmds, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
   xTaskNotifyGive(task);
   return ok;
+}
+
+void projectReplaced(uint16_t bpm) {
+  replacementBpm.store(bpm, std::memory_order_release);
+  xTaskNotifyGive(task);
 }
 
 Status status() {

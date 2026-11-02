@@ -224,7 +224,7 @@ void FileScreen::doSave(const char* name) {
   app_.showBusy("SAVING...");
   const storage::Result r = storage::save(app_.project(), nm, App::syncProgress, &app_);
   if (r == storage::Result::SamplesNotSaved) {
-    // The project file is saved, the folder is not complete: stays dirty, so the next save retries.
+    // Resources are incomplete: the project file stays unchanged; keep dirty so the next save retries.
     reprobe(storage::Result::WriteFail);
     app_.toast(storage::resultText(r));
     return;

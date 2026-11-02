@@ -44,7 +44,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
   buzzer (envelope as oscillator), noise and tone+noise, the AY 16-step volume (Step) and a SID-style filter
   (our own approximations, no emulator code or data).
 - **LOFI**: bytebeat (45 built-in formulas, from the 2011 classics to our own rhythmic ones that lock to the tempo, all with A, B, C parameters) and an Atari Punk Console with subharmonics — dirty 8-bit sound.
-- **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
+- **KIT**: a drum track of 16 lanes, each with its own sample or any instrument.
 
 Every instrument has a filter (LP / BP / HP, LADDER, MS20, COMB, FORMANT) with an envelope, drive and 4 LFOs (tempo sync, modulate each other, controlled from steps, a bytebeat formula as a wave). 582 factory presets.
 
@@ -91,6 +91,15 @@ pio run -e teensy41 -t upload      # synth board: first flash over the Teensy's 
 pio run -e teensy41                # synth board .hex for the Wi-Fi page or /firmware/teensy.hex
 pio test -e native                 # core tests on the computer
 ```
+
+Full local verification (C++ and Python tests, then both firmware builds):
+
+```
+python3 scripts/verify.py
+```
+
+Requires Python 3.11, `platformio==6.2.0` in the same Python environment, and `clang++`.
+Use `--tests-only` or `--builds-only` to run either part separately. CI uses macOS and the same commands.
 
 - **First flash of the Teensy** goes over its USB with Teensy Loader (before the enclosure is closed); later the synth board is updated from the tracker (Wi-Fi page or FILE → SYSTEM → Update synth).
 - The ESP partition table is custom (`partitions.csv`): two ~8 MB firmware slots (`app0` / `app1`); the old `samples` partition is gone. After switching to it, flash once over USB (`pio run -e wt32 -t upload`): OTA does not change the partition table. Wi-Fi settings (NVS) are kept — `nvs` and `otadata` are at the same addresses.

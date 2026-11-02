@@ -1,0 +1,22 @@
+name: Verify
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [tests-only, builds-only]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install platformio==6.2.0
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ runner.arch }}-${{ matrix.mode }}-${{ hashFiles('platformio.ini') }}
+      - run: python scripts/verify.py --${{ matrix.mode }}

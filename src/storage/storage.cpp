@@ -1,3 +1,4 @@
+#include "file_commit.h"
 #include "storage.h"
 #include "project_memory.h"
 #include <Arduino.h>
@@ -135,10 +136,9 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   }
 }
 
-// Swaps in a new project with the engine stopped. Ties may still hold notes of the old data.
+// Called under the project lock, engine stopped. Applied before the next sequencer plan.
 void afterReplace(const mt::Project& live) {
-  engine::post(engine::Cmd::ReleaseTies);
-  engine::post(engine::Cmd::SetBpm, live.bpm);
+  engine::projectReplaced(live.bpm);
 }
 
 bool writeLast(const char* name) {
@@ -149,6 +149,9 @@ bool writeLast(const char* name) {
   f.close();
   return ok;
 }
+
+Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb, void* ctx, bool clean);
+Result cleanProjectFolder(const mt::Project& live);
 
 bool transposeDropped = false;  // set by the last readFile, see songTransposeDropped()
 bool tuneDropped = false;       // the same for tuningDropped()
@@ -358,7 +361,8 @@ bool validName(const char* name) { return mt::projectBaseValid(name); }
 
 bool exists(const char* name, bool bak) {
   if (!hw::sdReady()) return false;
-  return hw::sdFs().exists(Path(name, bak ? ".bak" : ".mtp").s);
+  if (bak) return hw::sdFs().exists(Path(name, ".bak").s);
+  return recoverFile(hw::sdFs(), Path(name, ".mtp").s, Path(name, ".bak").s);
 }
 
 Result save(mt::Project& live, const char* name, SyncProgress cb, void* ctx) {
@@ -379,41 +383,34 @@ Result save(mt::Project& live, const char* name, SyncProgress cb, void* ctx) {
   const Path tmp(nm, ".tmp"), mtp(nm, ".mtp"), bak(nm, ".bak");
   fs::FS& fs = hw::sdFs();
   Result r = writeTmp(tmp.s, *snap);
-  if (r == Result::Ok && readFile(tmp.s, *snap) != Result::Ok) r = Result::WriteFail;  // snapshot no longer needed
+  if (r == Result::Ok && readFile(tmp.s, *snap) != Result::Ok) r = Result::WriteFail;
+  // readFile reused the workspace; it still contains the verified snapshot, including nm.
+  if (r == Result::Ok && syncFolderImpl(*snap, from, cb, ctx, false) != Result::Ok)
+    r = Result::SamplesNotSaved;
   freeProject(snap);
   if (r != Result::Ok) {
     fs.remove(tmp.s);
     return r;
   }
-  bool rotated = false;
-  if (fs.exists(mtp.s)) {
-    if (fs.exists(bak.s)) fs.remove(bak.s);
-    if (!fs.rename(mtp.s, bak.s)) {
-      fs.remove(tmp.s);
-      return Result::WriteFail;
-    }
-    rotated = true;
-  }
-  if (!fs.rename(tmp.s, mtp.s)) {
-    if (rotated) fs.rename(bak.s, mtp.s);  // put the previous version back under its name
-    return Result::WriteFail;
-  }
+  if (!commitFile(fs, tmp.s, mtp.s, bak.s)) return Result::WriteFail;
   writeLast(nm);
-  if (fs.exists(Path(nm, ".auto").s)) fs.remove(Path(nm, ".auto").s);  // saved: the autosave is behind
-
+  const Path autoBak(nm, ".aub"), autoFile(nm, ".auto");
+  // Remove the backup first: a failed removal must not resurrect an older autosave.
+  if (!fs.exists(autoBak.s) || fs.remove(autoBak.s)) {
+    if (fs.exists(autoFile.s)) fs.remove(autoFile.s);
+  }
   engine::lockProject();
   memcpy(live.name, nm, sizeof(nm));
   engine::unlockProject();
-  const Result fr = syncFolder(live, from, cb, ctx);
-  if (fr != Result::Ok) {
-    Serial.printf("storage: sample folder of %s: %s\n", nm, resultText(fr));
-    return Result::SamplesNotSaved;
-  }
+  // The new backup is now known: only now may unused resources be removed.
+  if (cleanProjectFolder(live) != Result::Ok)
+    Serial.printf("storage: cleanup of %s deferred\n", nm);
   strlcpy(srcFolder, nm, sizeof(srcFolder));
   return Result::Ok;
 }
 
-Result syncFolder(const mt::Project& live, const char* from, SyncProgress cb, void* ctx) {
+namespace {
+Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb, void* ctx, bool clean) {
   if (!hw::sdReady()) return Result::NoSd;
   if (!mt::projectBaseValid(live.name)) return Result::BadFile;
   char dir[32];
@@ -465,14 +462,29 @@ Result syncFolder(const mt::Project& live, const char* from, SyncProgress cb, vo
   }
   // A failed write may leave the only good copy of a listed sample under another name: clean up next time.
   if (r != Result::Ok) return r;
+  return clean ? cleanProjectFolder(live) : Result::Ok;
+}
+
+Result cleanProjectFolder(const mt::Project& live) {
+  fs::FS& fs = hw::sdFs();
+  char dir[32], wtDir[40];
+  snprintf(dir, sizeof(dir), "%s%s", kDir, live.name);
+  snprintf(wtDir, sizeof(wtDir), "%s/wt", dir);
   // Files of samples / wavetables in neither the list nor the .bak's, leftovers of interrupted writes.
   if (!fs.exists(dir)) return Result::Ok;
   mt::ProjectFileNames* bak = bakNames(live.name);
-  r = cleanFolder(dir, [&](const char* base) { return mt::projSampleFind(live, base) >= 0 || (bak && bak->has(base, false)); });
+  if (!bak && fs.exists(Path(live.name, ".bak").s)) return Result::ReadFail;
+  Result r = cleanFolder(dir, [&](const char* base) { return mt::projSampleFind(live, base) >= 0 || (bak && bak->has(base, false)); });
   if (r == Result::Ok && fs.exists(wtDir))
     r = cleanFolder(wtDir, [&](const char* base) { return mt::projWtFind(live, base) >= 0 || (bak && bak->has(base, true)); });
   delete bak;
   return r;
+}
+
+}  // namespace
+
+Result syncFolder(const mt::Project& live, const char* from, SyncProgress cb, void* ctx) {
+  return syncFolderImpl(live, from, cb, ctx, true);
 }
 
 Result pullSamples(mt::Project& live, int* missing, SyncProgress cb, void* ctx) {
@@ -510,19 +522,23 @@ Result load(mt::Project& live, const char* name, bool fromBak, int* missing, Syn
 Result autosave(const mt::Project& live) {
   if (!hw::sdReady()) return Result::NoSd;
   if (!validName(live.name)) return Result::BadFile;
-  const Path tmp(live.name, ".atm"), dst(live.name, ".auto");
-  const Result r = writeTmp(tmp.s, live);  // the engine is stopped (not paused): p.bpm and the mutes are the project's
+  const Path tmp(live.name, ".atm"), dst(live.name, ".auto"), bak(live.name, ".aub");
+  mt::Project* check = allocProject();
+  if (!check) return Result::NoMemory;
+  Result r = writeTmp(tmp.s, live);  // transport stopped: live is stable
+  if (r == Result::Ok && readFile(tmp.s, *check) != Result::Ok) r = Result::WriteFail;
+  freeProject(check);
   fs::FS& fs = hw::sdFs();
   if (r != Result::Ok) {
     fs.remove(tmp.s);
     return r;
   }
-  if (fs.exists(dst.s)) fs.remove(dst.s);
-  return fs.rename(tmp.s, dst.s) ? Result::Ok : Result::WriteFail;
+  return commitFile(fs, tmp.s, dst.s, bak.s) ? Result::Ok : Result::WriteFail;
 }
 
 bool autosaveExists(const char* name) {
-  return hw::sdReady() && validName(name) && hw::sdFs().exists(Path(name, ".auto").s);
+  return hw::sdReady() && validName(name) &&
+         recoverFile(hw::sdFs(), Path(name, ".auto").s, Path(name, ".aub").s);
 }
 
 Result loadAutosave(mt::Project& live, int* missing, SyncProgress cb, void* ctx) {
@@ -537,7 +553,8 @@ Result loadExt(mt::Project& live, const char* name, const char* ext, int* missin
   if (!hw::sdReady()) return Result::NoSd;
   if (!validName(name)) return Result::BadFile;  // would load under a different name
   const Path path(name, ext);
-  if (!hw::sdFs().exists(path.s)) return Result::NotFound;
+  const Path bak(name, strcmp(ext, ".auto") == 0 ? ".aub" : ".bak");
+  if (!recoverFile(hw::sdFs(), path.s, bak.s)) return Result::NotFound;
   mt::Project* tmp = allocProject();
   if (!tmp) return Result::NoMemory;
   Result r = readFile(path.s, *tmp);
@@ -546,8 +563,8 @@ Result loadExt(mt::Project& live, const char* name, const char* ext, int* missin
     strlcpy(tmp->name, name, sizeof(tmp->name));  // the file name wins over the stored one
     engine::lockProject();
     live = *tmp;
-    engine::unlockProject();
     afterReplace(live);
+    engine::unlockProject();
     writeLast(live.name);
   }
   freeProject(tmp);
@@ -566,8 +583,8 @@ Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
   tuneDropped = false;
   engine::lockProject();
   build(i, live);
-  engine::unlockProject();
   afterReplace(live);
+  engine::unlockProject();
   // Otherwise a reboot would autoload the project that was just closed.
   if (hw::sdReady() && hw::sdFs().exists(kLast)) hw::sdFs().remove(kLast);
   return Result::Ok;
@@ -598,22 +615,22 @@ Result saveTemplate(const mt::Project& live, const char* name) {
   if (!snap) return Result::NoMemory;
   snapshot(live, *snap);
   mt::templateStrip(*snap);
-  const TemplatePath tmp(nm, ".tmp"), dst(nm, ".mtp");
+  const TemplatePath tmp(nm, ".tmp"), dst(nm, ".mtp"), bak(nm, ".bak");
   Result r = writeTmp(tmp.s, *snap);
+  if (r == Result::Ok && readFile(tmp.s, *snap) != Result::Ok) r = Result::WriteFail;
   freeProject(snap);
-  if (r == Result::Ok) {
-    if (fs.exists(dst.s)) fs.remove(dst.s);
-    if (!fs.rename(tmp.s, dst.s)) r = Result::WriteFail;
+  if (r != Result::Ok) {
+    fs.remove(tmp.s);
+    return r;
   }
-  if (r != Result::Ok) fs.remove(tmp.s);
-  return r;
+  return commitFile(fs, tmp.s, dst.s, bak.s) ? Result::Ok : Result::WriteFail;
 }
 
 Result newFromTemplate(mt::Project& live, const char* name, int* missing) {
   if (missing) *missing = 0;
   if (!hw::sdReady()) return Result::NoSd;
-  const TemplatePath path(name, ".mtp");
-  if (!hw::sdFs().exists(path.s)) return Result::NotFound;
+  const TemplatePath path(name, ".mtp"), bak(name, ".bak");
+  if (!recoverFile(hw::sdFs(), path.s, bak.s)) return Result::NotFound;
   mt::Project* tmp = allocProject();
   if (!tmp) return Result::NoMemory;
   Result r = readFile(path.s, *tmp);
@@ -622,8 +639,8 @@ Result newFromTemplate(mt::Project& live, const char* name, int* missing) {
     mt::templateStrip(*tmp);  // also "untitled"
     engine::lockProject();
     live = *tmp;
-    engine::unlockProject();
     afterReplace(live);
+    engine::unlockProject();
     srcFolder[0] = 0;
     if (hw::sdFs().exists(kLast)) hw::sdFs().remove(kLast);
   }
