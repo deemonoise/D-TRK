@@ -1,7 +1,9 @@
 #include <unity.h>
+#include <initializer_list>
 #include <string.h>
 #include "link_msg.h"
 #include "model.h"
+#include "bank_ops.h"
 
 using namespace mt::link;
 
@@ -238,7 +240,7 @@ void test_debug() {
 }
 
 void test_protocol_and_debug_id() {
-  TEST_ASSERT_EQUAL(23, kProtocol);  // 23: lossless WT frames and RAM audition.
+  TEST_ASSERT_EQUAL(27, kProtocol);  // 26: raw sample extraction, unchanged model layout.
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
                                      // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,
@@ -986,6 +988,107 @@ void test_wt_editor_transport() {
   TEST_ASSERT_EQUAL(50,static_cast<int>(Msg::WtFrame16)); TEST_ASSERT_EQUAL(51,static_cast<int>(Msg::WtAudition));
 }
 
+void test_sample_edit_wire_contract() {
+  SampleEditReq q{0x12345678u, 7, 0x98765432u, 1023, 8193, 1};
+  int n=put(q); TEST_ASSERT_EQUAL(23,n); checkTruncated<SampleEditReq>(n);
+  const uint8_t golden[]={0x78,0x56,0x34,0x12,7,0x32,0x54,0x76,0x98,0xff,3,0,0,1,0x20,0,0,1,0,0,0,1,0};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(golden,buf,n);
+  SampleEditReq got; Reader r(buf,n); TEST_ASSERT_TRUE(decode(r,got));
+  TEST_ASSERT_EQUAL_UINT32(q.token,got.token); TEST_ASSERT_EQUAL(q.index,got.index);
+  TEST_ASSERT_EQUAL_UINT32(q.crc,got.crc); TEST_ASSERT_EQUAL_UINT32(q.from,got.from);
+  TEST_ASSERT_EQUAL_UINT32(q.to,got.to); TEST_ASSERT_EQUAL(q.normalize,got.normalize);
+  SampleEditRep a{q.token,0,0xaabbccddu,7170,22050,48};
+  n=put(a); TEST_ASSERT_EQUAL(18,n); checkTruncated<SampleEditRep>(n);
+  SampleEditRep b; Reader rr(buf,n); TEST_ASSERT_TRUE(decode(rr,b));
+  TEST_ASSERT_EQUAL_UINT32(a.token,b.token); TEST_ASSERT_EQUAL_UINT32(a.crc,b.crc);
+  TEST_ASSERT_EQUAL_UINT32(a.frames,b.frames); TEST_ASSERT_EQUAL_UINT32(a.rate,b.rate); TEST_ASSERT_EQUAL(48,b.root);
+  SampleEditCancelReq c{q.token}; n=put(c); TEST_ASSERT_EQUAL(4,n); checkTruncated<SampleEditCancelReq>(n);
+  SampleEditCancelReq cc; Reader cr(buf,n); TEST_ASSERT_TRUE(decode(cr,cc)); TEST_ASSERT_EQUAL_UINT32(c.token,cc.token);
+  TEST_ASSERT_EQUAL(52,static_cast<int>(Msg::SampleEdit)); TEST_ASSERT_EQUAL(53,static_cast<int>(Msg::SampleEditCancel));
+}
+
+void test_sample_edit_rejects_invalid_identity_flags_range_and_trailing() {
+  SampleEditReq q{9,0,0x1234,100,200,0}, out;
+  auto bad=[&]() { const int n=put(q); Reader r(buf,n); TEST_ASSERT_FALSE(decode(r,out)); };
+  q.token=0; bad(); q.token=9; q.index=128; bad(); q.index=0;
+  q.normalize=2; bad(); q.normalize=0; q.to=100; bad(); q.to=99; bad(); q.to=200;
+  int n=put(q); buf[n]=0; Reader extra(buf,n+1); TEST_ASSERT_FALSE(decode(extra,out));
+  SampleEditCancelReq c{0}, co; n=put(c); Reader zero(buf,n); TEST_ASSERT_FALSE(decode(zero,co));
+  c.token=9;n=put(c);buf[n]=0;Reader cx(buf,n+1);TEST_ASSERT_FALSE(decode(cx,co));
+}
+
+void test_sample_edit_reply_rejects_invalid_success_and_accepts_cancellation() {
+  SampleEditRep q{9,0,1234,10,44100,60}, out;
+  auto bad=[&]() { const int n=put(q); Reader r(buf,n); TEST_ASSERT_FALSE(decode(r,out)); };
+  q.rate=0;bad();q.rate=44100;q.frames=0;bad();q.frames=10;q.root=128;bad();q.root=60;
+  q.token=0;bad();q.token=9;q.result=255;bad();
+  q.result=static_cast<uint8_t>(mt::BankResult::Running);bad();
+  q.result=static_cast<uint8_t>(mt::BankResult::Cancelled);q.crc=q.frames=q.rate=0; const int n=put(q);Reader r(buf,n);
+  TEST_ASSERT_TRUE(decode(r,out));TEST_ASSERT_EQUAL(static_cast<uint8_t>(mt::BankResult::Cancelled),out.result);TEST_ASSERT_EQUAL_UINT32(9,out.token);
+  buf[n]=0; Reader extra(buf,n+1);TEST_ASSERT_FALSE(decode(extra,out));
+}
+
+void test_sample_stretch_wire_ratio_boundaries_and_invalid_mode_combinations() {
+  SampleEditReq q{11,127,0,1,UINT32_MAX,0}, out;
+  q.mode=1;
+  for(uint32_t ratio:{32768u,65536u,131072u}) {
+    q.ratioQ16=ratio; const int n=put(q); TEST_ASSERT_EQUAL(23,n);
+    Reader r(buf,n); TEST_ASSERT_TRUE(decode(r,out));
+    TEST_ASSERT_EQUAL_UINT8(1,out.mode); TEST_ASSERT_EQUAL_UINT32(ratio,out.ratioQ16);
+  }
+  auto bad=[&]() { const int n=put(q); Reader r(buf,n); TEST_ASSERT_FALSE(decode(r,out)); };
+  q.ratioQ16=32767;bad(); q.ratioQ16=131073;bad(); q.ratioQ16=65536;
+  q.normalize=1;bad();q.normalize=0;q.mode=2;bad();q.mode=0;q.ratioQ16=98304;bad();
+  q.ratioQ16=65536;const int n=put(q);Reader old18(buf,18);TEST_ASSERT_FALSE(decode(old18,out));
+  Reader exact(buf,n);TEST_ASSERT_TRUE(decode(exact,out));
+}
+
+void test_sample_tempo_wire_golden_known_unknown_and_cancel_ids() {
+  SampleTempoReq q{0x01020304u,127,0xf00dbeefu,17,8194}, got;
+  int n=put(q); TEST_ASSERT_EQUAL(17,n); checkTruncated<SampleTempoReq>(n);
+  const uint8_t reqGolden[]={4,3,2,1,127,0xef,0xbe,0x0d,0xf0,17,0,0,0,2,0x20,0,0};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(reqGolden,buf,n);
+  Reader request(buf,n);TEST_ASSERT_TRUE(decode(request,got));
+  TEST_ASSERT_EQUAL_UINT32(q.token,got.token);TEST_ASSERT_EQUAL_UINT32(q.crc,got.crc);
+  TEST_ASSERT_EQUAL_UINT32(q.from,got.from);TEST_ASSERT_EQUAL_UINT32(q.to,got.to);TEST_ASSERT_EQUAL(127,got.index);
+  SampleTempoRep rep{q.token,0,1200,875,600,2400,1}, out;
+  n=put(rep);TEST_ASSERT_EQUAL(14,n);checkTruncated<SampleTempoRep>(n);
+  const uint8_t repGolden[]={4,3,2,1,0,0xb0,4,0x6b,3,0x58,2,0x60,9,1};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(repGolden,buf,n);
+  Reader response(buf,n);TEST_ASSERT_TRUE(decode(response,out));TEST_ASSERT_EQUAL_UINT16(1200,out.bpm10);
+  TEST_ASSERT_EQUAL_UINT16(875,out.confidence);TEST_ASSERT_EQUAL_UINT16(600,out.halfBpm10);
+  TEST_ASSERT_EQUAL_UINT16(2400,out.doubleBpm10);TEST_ASSERT_EQUAL_UINT8(1,out.flags);
+  rep=SampleTempoRep{};rep.token=q.token;n=put(rep);Reader unknown(buf,n);TEST_ASSERT_TRUE(decode(unknown,out));
+  TEST_ASSERT_EQUAL_UINT16(0,out.bpm10);TEST_ASSERT_EQUAL_UINT16(0,out.confidence);
+  rep.result=static_cast<uint8_t>(mt::BankResult::Cancelled);n=put(rep);Reader cancelled(buf,n);
+  TEST_ASSERT_TRUE(decode(cancelled,out));
+  TEST_ASSERT_EQUAL(54,static_cast<int>(Msg::SampleTempo));TEST_ASSERT_EQUAL(55,static_cast<int>(Msg::SampleTempoCancel));
+}
+
+void test_sample_tempo_request_rejects_invalid_identity_range_and_extra_bytes() {
+  SampleTempoReq q{1,0,0,0,1},out;
+  auto bad=[&]() { const int n=put(q);Reader r(buf,n);TEST_ASSERT_FALSE(decode(r,out)); };
+  q.token=0;bad();q.token=1;q.index=128;bad();q.index=0;q.to=0;bad();q.from=2;q.to=1;bad();
+  q.from=UINT32_MAX-1;q.to=UINT32_MAX;q.token=UINT32_MAX;int n=put(q);Reader limits(buf,n);TEST_ASSERT_TRUE(decode(limits,out));
+  buf[n]=0;Reader extra(buf,n+1);TEST_ASSERT_FALSE(decode(extra,out));
+}
+
+void test_sample_tempo_reply_rejects_nonterminal_and_out_of_bounds_metadata() {
+  SampleTempoRep q{1,0,1200,1000,600,2400,0},out;
+  auto bad=[&]() { const int n=put(q);Reader r(buf,n);TEST_ASSERT_FALSE(decode(r,out)); };
+  q.token=0;bad();q.token=1;q.result=255;bad();q.result=static_cast<uint8_t>(mt::BankResult::Running);bad();q.result=0;
+  q.bpm10=399;bad();q.bpm10=2401;bad();q.bpm10=1200;
+  q.confidence=1001;bad();q.confidence=1000;q.halfBpm10=199;bad();q.halfBpm10=1201;bad();q.halfBpm10=600;
+  q.doubleBpm10=799;bad();q.doubleBpm10=4801;bad();q.doubleBpm10=2400;q.flags=2;bad();q.flags=0;
+  q.result=static_cast<uint8_t>(mt::BankResult::Busy);bad();q.result=0;
+  for(uint16_t bpm:{400,2400}) {
+    q.bpm10=bpm;q.halfBpm10=bpm/2;q.doubleBpm10=bpm*2;const int n=put(q);Reader r(buf,n);TEST_ASSERT_TRUE(decode(r,out));
+  }
+  q=SampleTempoRep{};q.token=1;q.confidence=1;bad();q.confidence=0;q.halfBpm10=600;bad();
+  q.halfBpm10=0;q.doubleBpm10=2400;bad();q.doubleBpm10=0;q.flags=1;bad();q.flags=0;
+  int n=put(q);buf[n]=0;Reader extra(buf,n+1);TEST_ASSERT_FALSE(decode(extra,out));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_writer_reader_primitives);
@@ -1017,5 +1120,12 @@ int main(int, char**) {
   RUN_TEST(test_rec_msgs_roundtrip);
   RUN_TEST(test_msg_rec_ids);
   RUN_TEST(test_wt_editor_transport);
+  RUN_TEST(test_sample_edit_wire_contract);
+  RUN_TEST(test_sample_edit_rejects_invalid_identity_flags_range_and_trailing);
+  RUN_TEST(test_sample_edit_reply_rejects_invalid_success_and_accepts_cancellation);
+  RUN_TEST(test_sample_stretch_wire_ratio_boundaries_and_invalid_mode_combinations);
+  RUN_TEST(test_sample_tempo_wire_golden_known_unknown_and_cancel_ids);
+  RUN_TEST(test_sample_tempo_request_rejects_invalid_identity_range_and_extra_bytes);
+  RUN_TEST(test_sample_tempo_reply_rejects_nonterminal_and_out_of_bounds_metadata);
   return UNITY_END();
 }

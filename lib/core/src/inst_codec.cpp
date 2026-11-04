@@ -60,7 +60,7 @@ void packFm(const Instrument& m, uint8_t* b) {
 
 void unpackFm(const uint8_t* b, Instrument& m) {
   // Machine of either type; fixInstrument() narrows it by type.
-  m.machine = b[0] < kMachineMax ? b[0] : 0;
+  m.machine = b[0] < kMachineMax || m.type == InstrType::Fm ? b[0] : 0;
   for (int k = 0; k < kFmMacros; ++k) m.macro[k] = clampu(b[1 + k], 0, 127);
   m.lfoWave = b[6] < static_cast<int>(LfoWave::Count) ? b[6] : 0;
   m.lfoRate = clampu(b[7], 0, 127);
@@ -128,32 +128,40 @@ void unpackFlt(const uint8_t* b, Instrument& m) {
   m.send = clampu(b[7], 0, 127);
 }
 
-void packSlices(const Instrument& m, uint8_t* b) {
-  memset(b, 0, kSliceRecSize);
+namespace {
+void packSliceRecord(const Instrument& m, uint8_t* b, size_t size, int limit) {
+  memset(b, 0, size);
   b[0] = m.sliceMode;
   b[1] = m.chopMode;
-  b[2] = m.chopN;
+  b[2] = m.chopN > limit ? static_cast<uint8_t>(limit) : m.chopN;
   b[3] = m.chopThresh;
-  const int n = m.sliceCount < kMaxSlices ? m.sliceCount : kMaxSlices;
+  const int n = m.sliceCount < limit ? m.sliceCount : limit;
   b[4] = static_cast<uint8_t>(n);
   for (int i = 0; i < n; ++i) wr16(b + 8 + 2 * i, m.slices[i]);
 }
 
-void unpackSlices(const uint8_t* b, Instrument& m) {
+void unpackSliceRecord(const uint8_t* b, Instrument& m, int limit) {
   m.sliceMode = b[0] < static_cast<int>(SliceMode::Count) ? b[0] : 0;
   m.chopMode = b[1] < static_cast<int>(ChopMode::Count) ? b[1] : 0;
-  m.chopN = clampu(b[2], 2, kMaxSlices);
+  m.chopN = clampu(b[2], 2, limit);
   m.chopThresh = clampu(b[3], 0, 100);
-  const int count = b[4] < kMaxSlices ? b[4] : kMaxSlices;
+  const int count = b[4] < limit ? b[4] : limit;
   int n = 0;
   for (; n < count; ++n) {
     const uint16_t v = rd16(b + 8 + 2 * n);
     if (n && v <= m.slices[n - 1]) break;
     m.slices[n] = v;
   }
+  // Includes the extended tail when loading a legacy record into the larger runtime model.
   for (int i = n; i < kMaxSlices; ++i) m.slices[i] = 0;
   m.sliceCount = static_cast<uint8_t>(n);
 }
+}  // namespace
+
+void packSlices(const Instrument& m, uint8_t* b) { packSliceRecord(m, b, kSliceRecSize, kLegacySlices); }
+void unpackSlices(const uint8_t* b, Instrument& m) { unpackSliceRecord(b, m, kLegacySlices); }
+void packSlicesExt(const Instrument& m, uint8_t* b) { packSliceRecord(m, b, kSliceExtRecSize, kMaxSlices); }
+void unpackSlicesExt(const uint8_t* b, Instrument& m) { unpackSliceRecord(b, m, kMaxSlices); }
 
 void packLfo(const Instrument& m, uint8_t* b) {
   b[0] = m.lfoSync & 3;
@@ -245,6 +253,13 @@ void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m) {
   memcpy(m.lfoByte, b, n < kLfoByteRecSize ? n : kLfoByteRecSize);  // range: fixInstrument
 }
 
+void packFmParams(const Instrument& m, uint8_t* b) { memcpy(b, m.fmParam, kFmParams); }
+
+void unpackFmParams(const uint8_t* b, size_t n, Instrument& m) {
+  const size_t count = n < kFmParamRecSize ? n : kFmParamRecSize;
+  for (size_t i = 0; i < count; ++i) m.fmParam[i] = clampu(b[i], 0, 127);
+}
+
 void packFmEx(const Instrument& m, uint8_t* b) {
   memset(b, 0, kFmExRecSize);
   b[0] = m.fmSat;
@@ -263,7 +278,11 @@ void fixInstrument(Instrument& m) {
   else if (m.type == InstrType::Drum) n = static_cast<int>(DrumMachine::Count);
   else if (m.type == InstrType::String) n = static_cast<int>(StringModel::Count);
   else if (m.type == InstrType::Lofi) n = static_cast<int>(LofiMachine::Count);
-  if (n && m.machine >= n) m.machine = 0;
+  if (n && m.machine >= n) {
+    if (m.type == InstrType::Fm) fmSetMachine(m, static_cast<uint8_t>(FmMachine::Tone));
+    else m.machine = 0;
+  }
+  for (uint8_t& value : m.fmParam) if (value > 127) value = 127;
   if (m.type == InstrType::Drum && m.machine == static_cast<uint8_t>(DrumMachine::Unused22))
     m.machine = kDrum2First;  // was BDF: BDA
   // COMB needs the voice's delay line, which STRING takes (the synth would run it as Off).

@@ -39,7 +39,7 @@ bool ampEnv(const Instrument& m) {
 // Macro k moves: FM, DRUM, SYNTH, LOFI (not a slot the LOFI machine leaves unused).
 bool macros(const Instrument& m, int k) {
   if (m.type == InstrType::Lofi) return *lofiMacroName(m.machine, k);
-  return m.type == InstrType::Fm || m.type == InstrType::Drum || m.type == InstrType::Synth;
+  return m.type == InstrType::Drum || m.type == InstrType::Synth;
 }
 
 // A mutated field: in lo..hi and moved by at most the strength's share, or unchanged when it was outside.
@@ -60,6 +60,10 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
   memcpy(&m, &was, sizeof(Instrument));
   TEST_ASSERT_TRUE(mutateInstrument(m, strength, seed));
   const int s = strength;
+  if (was.type == InstrType::Fm) {
+    same(was.decay, m.decay, "FM shared decay is not a sound control");
+    same(was.sustain, m.sustain, "FM shared sustain is not a sound control");
+  }
   if (ampEnv(was)) {
     field(was.attack, m.attack, 0, 100, s, "attack");
     field(was.decay, m.decay, 1, 127, s, "decay");
@@ -88,8 +92,12 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
     if (macros(was, k)) field(was.macro[k], m.macro[k], 0, 127, s, "macro");
     else same(was.macro[k], m.macro[k], "macro");
   }
-  if (was.type == InstrType::Fm) field(was.fmSat, m.fmSat, 0, 127, s, "fmSat");
-  else same(was.fmSat, m.fmSat, "fmSat");
+  same(was.fmSat, m.fmSat, "fmSat");
+  for (int k = 0; k < kFmParams; ++k) {
+    if (was.type == InstrType::Fm && *fmParamName(was.machine, k))
+      field(was.fmParam[k], m.fmParam[k], 0, 127, s, "fmParam");
+    else same(was.fmParam[k], m.fmParam[k], "fmParam");
+  }
   if (was.type == InstrType::Synth) {
     field(was.synSub, m.synSub, 0, 127, s, "synSub");
     field(was.synNoise, m.synNoise, 0, 80, s, "synNoise");
@@ -117,6 +125,7 @@ void checkOne(const Instrument& was, int strength, uint32_t seed) {
   x.attack = was.attack, x.decay = was.decay, x.sustain = was.sustain, x.release = was.release;
   x.cutoff = was.cutoff, x.reso = was.reso, x.fenv = was.fenv, x.fAtk = was.fAtk, x.fDec = was.fDec;
   memcpy(x.macro, was.macro, sizeof(x.macro));
+  memcpy(x.fmParam, was.fmParam, sizeof(x.fmParam));
   x.fmSat = was.fmSat;
   x.synSub = was.synSub, x.synNoise = was.synNoise, x.synEAtk = was.synEAtk, x.synEDec = was.synEDec;
   x.duty = was.duty, x.pwmDepth = was.pwmDepth, x.pwmRate = was.pwmRate;
@@ -252,20 +261,27 @@ void test_slot_undo_refused_after_edit() {
   TEST_ASSERT_TRUE(mutateRestore(p, u));
 }
 
-// FM: SAT moves with the macros; DRUM keeps it.
-void test_fm_sat_moves() {
+// FM: OVER moves as parameter H; the former SAT field remains untouched.
+void test_fm_over_moves() {
   Instrument fm;
   instrSetType(fm, InstrType::Fm);
-  fm.fmSat = 64;
+  fm.fmParam[7] = 64;
   int moved = 0;
   for (uint32_t seed = 1; seed <= 10; ++seed) {
     checkOne(fm, 100, seed);
     Instrument a;
     memcpy(&a, &fm, sizeof(Instrument));
     mutateInstrument(a, 100, seed);
-    moved += a.fmSat != fm.fmSat;
+    moved += a.fmParam[7] != fm.fmParam[7];
   }
   TEST_ASSERT_TRUE(moved >= 8);
+  Instrument hh;
+  instrSetType(hh, InstrType::Fm);
+  fmSetMachine(hh, static_cast<uint8_t>(FmMachine::HhBasic));
+  hh.fmParam[4] = 23; hh.fmParam[5] = 42;
+  mutateInstrument(hh, 100, 42);
+  TEST_ASSERT_EQUAL(23, hh.fmParam[4]);
+  TEST_ASSERT_EQUAL(42, hh.fmParam[5]);
   Instrument d;
   instrSetType(d, InstrType::Drum);
   d.fmSat = 64;
@@ -282,6 +298,6 @@ int main() {
   RUN_TEST(test_moves_something_and_is_seeded);
   RUN_TEST(test_slot_undo_bit_exact);
   RUN_TEST(test_slot_undo_refused_after_edit);
-  RUN_TEST(test_fm_sat_moves);
+  RUN_TEST(test_fm_over_moves);
   return UNITY_END();
 }

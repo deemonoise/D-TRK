@@ -50,9 +50,9 @@ int StreamPool::acquire(uint32_t key, uint32_t frames, uint32_t rate, const Samp
   for (int s = 0; s < n_; ++s) {
     const StreamSlot& x = slot_[s];
     if (x.owner == SlotOwner::Prefetch && x.key == key && o == SlotOwner::Voice) {
-      slot_[s].owner = SlotOwner::Voice;  // adopt: the loads it made stay
-      slot_[s].age = ++age_;
-      publish(s, g.pos, (g.dir < 0 ? -1 : 1) * ((static_cast<int64_t>(rate) << 32) / 44100));
+      // The hint may precede a start/end/loop edit. Refresh the complete playback region
+      // and clear the hint's cursor guards; take() retains valid loads for the same key.
+      take(s, key, frames, rate, heads, nHeads, g, o);
       return s;
     }
     if (x.owner == SlotOwner::Free) {
@@ -92,12 +92,15 @@ const int16_t* StreamPool::block(int s, uint32_t b) const {
   return nullptr;
 }
 
-void StreamPool::publish(int s, int64_t pos, int64_t step) {
+void StreamPool::publish(int s, int64_t pos, int64_t step, uint16_t before, uint16_t after, bool looped) {
   StreamSlot& x = slot_[s];
   x.seq = x.seq + 1;
   fence();
   x.play.pos = static_cast<uint32_t>(pos >> 32);
   x.play.step16 = static_cast<int32_t>(step >> 16);
+  x.play.before = before;
+  x.play.after = after;
+  x.play.looped = looped;
   fence();
   x.seq = x.seq + 1;
 }

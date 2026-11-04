@@ -1,69 +1,127 @@
 #include "fs_server.h"
 #include <Arduino.h>
+#include <Audio.h>
 #include <SD.h>
+#include <new>
 #include <string.h>
+#include "fs_deferred.h"
 #include "link_fs.h"
 #include "link_server.h"
 #include "model.h"
 #include "preset_paths.h"
+#include "rec_server.h"
+#include "sector_io.h"
+#include "stream.h"
+
+#ifndef DTRK_SDIO_DMA
+#define DTRK_SDIO_DMA 1
+#endif
 
 using namespace mt::link;
 
 namespace card {
 
 namespace {
+bool streamIdle();
 
-// The volume reads the card through this. SdFat's sector cache reads a sector into its buffer before
-// it takes the new sector number: a failed read left the old number on garbage, and the next
-// directory write put that garbage on the card. Single-sector reads (the cache) land in a bounce
-// buffer, copied over only when good; a failed transfer is ended and tried again.
-class SafeCard final : public FsBlockDevice {
+// One exclusive transfer area for all filesystem and raw sample reads. DMA never sees caller
+// stack / cache buffers; each cache maintenance operation owns whole cache lines.
+DMAMEM uint8_t sectorBounce[8192] __attribute__((aligned(32)));
+
+// A filesystem cache never receives a failed sector read. The same bounce path serves the
+// sample reader, so enabling DMA cannot bypass coherency for one kind of transfer.
+class SafeCard final : public FsBlockDevice, private mt::SectorIoDevice {
  public:
+  SafeCard() : io_(*this, sectorBounce, sizeof sectorBounce / 512) {}
   SdCard* c = nullptr;
   bool fault = false;  // a read or write failed for good: the volume is mounted again before use
 
-  bool isBusy() override { return c->isBusy(); }
-  uint32_t sectorCount() override { return c->sectorCount(); }
-  bool syncDevice() override { return c->syncDevice(); }
+  bool isBusy() override { return c && !fault && c->isBusy(); }
+  uint32_t sectorCount() override { return c ? c->sectorCount() : 0; }
+  bool syncDevice() override { return c && !fault && c->syncDevice(); }
   bool readSector(uint32_t s, uint8_t* d) override {
-    for (int k = 0; k < kTries; ++k) {
-      if (c->readSector(s, bounce_)) {
-        memcpy(d, bounce_, sizeof bounce_);
-        return true;
-      }
-      c->syncDevice();
-    }
-    return failed();
+    return readSectors(s, d, 1);
   }
   bool readSectors(uint32_t s, uint8_t* d, size_t n) override {
-    for (int k = 0; k < kTries; ++k) {
-      if (c->readSectors(s, d, n)) return true;
-      c->syncDevice();
-    }
+    if (fault) return false;
+    if (n <= UINT32_MAX && io_.read(s, static_cast<uint32_t>(n), d)) return true;
     return failed();
   }
   bool writeSector(uint32_t s, const uint8_t* d) override {
-    for (int k = 0; k < kTries; ++k) {
-      if (c->writeSector(s, d)) return true;
-      c->syncDevice();
-    }
-    return failed();
+    return writeSectors(s, d, 1);
   }
   bool writeSectors(uint32_t s, const uint8_t* d, size_t n) override {
-    for (int k = 0; k < kTries; ++k) {
-      if (c->writeSectors(s, d, n)) return true;
-      c->syncDevice();
-    }
+    if (fault) return false;
+    if (n <= UINT32_MAX && io_.write(s, static_cast<uint32_t>(n), d)) return true;
     return failed();
   }
 
  private:
-  static constexpr int kTries = 3;
+  bool read(uint32_t sector, uint32_t count, uint8_t* out) override {
+    return c && c->readSectors(sector, out, count);
+  }
+  bool write(uint32_t sector, uint32_t count, const uint8_t* in) override {
+    return c && c->writeSectors(sector, in, count);
+  }
+  bool recover() override {
+#if DTRK_SDIO_DMA
+    // The SDK's syncDevice does not abort a timed-out DMA. Latch the fault; no bounce reuse
+    // or further transfers until an idle full controller restart has quiesced it.
+    return false;
+#else
+    return c && c->syncDevice();
+#endif
+  }
+  void prepareRead(uint8_t* data, uint32_t bytes) override {
+#if DTRK_SDIO_DMA
+    arm_dcache_flush_delete(data, bytes);
+#endif
+    (void)data; (void)bytes;
+  }
+  void finishRead(uint8_t* data, uint32_t bytes) override {
+#if DTRK_SDIO_DMA
+    arm_dcache_delete(data, bytes);
+#endif
+    (void)data; (void)bytes;
+  }
+  void prepareWrite(uint8_t* data, uint32_t bytes) override {
+#if DTRK_SDIO_DMA
+    arm_dcache_flush_delete(data, bytes);
+#endif
+    (void)data; (void)bytes;
+  }
+  bool finishWrite() override {
+#if DTRK_SDIO_DMA
+    if (!c) return false;
+    constexpr uint32_t kReadyBudgetUs = 1000000;
+    constexpr uint32_t kStatusErrors =
+        CARD_STATUS_OUT_OF_RANGE | CARD_STATUS_ADDRESS_ERROR | CARD_STATUS_SECTOR_LEN_ERROR |
+        CARD_STATUS_ERASE_SEQ_ERROR | CARD_STATUS_ERASE_PARAM | CARD_STATUS_WP_VIOLATION |
+        CARD_STATUS_CARD_IS_LOCKED | CARD_STATUS_LOCK_UNLOCK_FAILED | CARD_STATUS_COM_CRC_ERROR |
+        CARD_STATUS_ILLEGAL_COMMAND | CARD_STATUS_CARD_ECC_FAILED | CARD_STATUS_CC_ERROR |
+        CARD_STATUS_ERROR | CARD_STATUS_CSD_OVERWRITE | CARD_STATUS_WP_ERASE_SKIP | CARD_STATUS_AKE_SEQ_ERROR;
+    const uint32_t started = micros();
+    for (;;) {
+      if (micros() - started >= kReadyBudgetUs) return false;
+      // DMA TC only completed the bus transfer. The next read must not inherit programming
+      // busy from this write. status() also distinguishes a failed CMD13 (0) from normal busy;
+      // its SDK command has its own timeout, so this poll budget is not a hard wall-time bound.
+      const uint32_t status = c->status();
+      if (micros() - started >= kReadyBudgetUs || status == 0 || status == UINT32_MAX ||
+          (status & kStatusErrors)) return false;
+      if ((status & CARD_STATUS_READY_FOR_DATA) &&
+          (status & CARD_STATUS_CURRENT_STATE) == (4u << CARD_STATUS_CURRENT_STATE_SHIFT)) return true;
+      yield();
+    }
+#else
+    return true;
+#endif
+  }
   bool failed() {
     fault = true;
     return false;
   }
-  uint8_t bounce_[512] __attribute__((aligned(4)));
+  mt::SectorIo io_;
 };
 
 class SdBackend : public FsBackend {
@@ -77,12 +135,39 @@ class SdBackend : public FsBackend {
     for (FsFile& f : files_)
       if (f.isOpen() && !dev_.fault) return mounted_ ? kErrOk : kErrNoCard;
     bool in;
+#if DTRK_SDIO_DMA
+    if (!began_) {
+      FsDateTime::setCallback(SDClass::dateTime);
+      attemptAt_ = millis();
+      ++attempts_;
+      // Public SdFat entry: remembers DMA for restart(). The SDK's initialization and CMD6
+      // buffer remain native; the project mounts through SafeCard before any file operation.
+      in = SD.sdfs.begin(SdioConfig(DMA_SDIO));
+    } else if (!mounted_ || dev_.fault) {
+      const uint32_t wait = attempts_ < 3 ? 1000 : 30000;
+      if (millis() - attemptAt_ < wait || rec::busy() || !streamIdle()) return kErrNoCard;
+      if (attempts_ >= 3) attempts_ = 0;
+      // Close stale handles while the faulted block device still rejects writes, before
+      // restarting the card / volume. FatFile::close marks them closed even if sync fails.
+      dev_.fault = true;
+      for (FsFile& f : files_) f.close();
+      dir_.close();
+      attemptAt_ = millis();
+      ++attempts_;
+      in = SD.sdfs.restart();
+    } else {
+      const uint32_t status = SD.sdfs.card() && SD.sdfs.card()->syncDevice()
+                                  ? SD.sdfs.card()->status() : 0;
+      in = status != 0 && status != UINT32_MAX;
+    }
+#else
     if (!began_) {
       in = SD.begin(BUILTIN_SDCARD);
     } else {
       if (SD.sdfs.card()) SD.sdfs.card()->syncDevice();
       in = SD.mediaPresent();
     }
+#endif
     began_ = true;
     checkAt_ = millis();
     const bool fresh = in && (!mounted_ || dev_.fault);
@@ -96,7 +181,22 @@ class SdBackend : public FsBackend {
       spaceValid_ = false;
     }
     mounted_ = in;
+#if DTRK_SDIO_DMA
+    if (in) attempts_ = 0;
+#endif
     return in ? kErrOk : kErrNoCard;
+  }
+
+  bool readSectors(uint32_t sector, uint32_t count, uint8_t* out) {
+    return mounted_ && dev_.readSectors(sector, out, count);
+  }
+
+  void logState() {
+    SdCard* c = SD.sdfs.card();
+    ::link::log("sd: %s mounted %u fault %u attempts %u error %u data %08lx kHz %lu",
+                DTRK_SDIO_DMA ? "DMA" : "FIFO", mounted_, dev_.fault, attempts_,
+                c ? c->errorCode() : 0, static_cast<unsigned long>(c ? c->errorData() : 0),
+                static_cast<unsigned long>(c ? static_cast<SdioCard*>(c)->kHzSdClk() : 0));
   }
 
   int16_t stat(const char* path, bool& isDir, uint32_t& size) override {
@@ -214,6 +314,8 @@ class SdBackend : public FsBackend {
   SafeCard dev_;
   bool began_ = false, mounted_ = false;
   uint32_t checkAt_ = 0;
+  uint32_t attemptAt_ = 0;
+  uint8_t attempts_ = 0;
   bool spaceValid_ = false;
   uint32_t spaceAt_ = 0, totalMb_ = 0, freeMb_ = 0;
   FsFile files_[kFsMaxOpen];
@@ -222,17 +324,64 @@ class SdBackend : public FsBackend {
 
 SdBackend backend;
 FsServerCore server(backend);
+void sendReply(void*, Msg type, uint8_t seq, const uint8_t* payload, int size) {
+  ::link::reply(type, seq, payload, size);
+}
+// The copied wire request and last reply must not consume the tight audio stack / RAM1.
+DMAMEM FsDeferred deferred(server, sendReply, nullptr);
+bool (*audioIdle)() = nullptr;
+
+bool streamIdle() {
+  // Owners and the event queue form one snapshot: otherwise the audio interrupt could consume
+  // a queued SAMPLE event between the slot scan and the empty-queue check. No link frames are
+  // read while a long operation runs, so the single loop producer cannot add another event.
+  AudioNoInterrupts();
+  bool idle = audioIdle && audioIdle();
+  const mt::StreamPool& pool = stream::pool();
+  for (int i = 0; idle && i < pool.slots(); ++i)
+    if (pool.slot(i).owner != mt::SlotOwner::Free) idle = false;
+  AudioInterrupts();
+  return idle;
+}
+
+struct DeferredWork final : mt::BgWork {
+  uint32_t minReserveUs() const override { return 50000; }
+  bool step() override {
+    if (!deferred.waiting()) return false;
+    // Recording owns the card; requests still expire through card::step without touching it.
+    if (rec::busy()) return false;
+    return deferred.step(millis(), streamIdle());
+  }
+} deferredWork;
 
 }  // namespace
 
-void begin() { backend.ready(); }
+void begin() {
+  // DMAMEM is NOLOAD: establish all guards explicitly before a first Hello or filesystem job.
+  new (&deferred) FsDeferred(server, sendReply, nullptr);
+  backend.ready();
+}
+
+void setAudioIdle(bool (*check)()) { audioIdle = check; }
 
 bool ready() { return backend.ready() == kErrOk; }
 
+bool readSectors(uint32_t sector, uint32_t count, uint8_t* out) {
+  return backend.readSectors(sector, count, out);
+}
+
+void logState() { backend.logState(); }
+
 void spaceChanged() { backend.dropSpace(); }
 
-int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out) { return server.handle(t, seq, p, n, out); }
+int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out) {
+  return deferred.submit(t, seq, p, n, millis(), out);
+}
 
-void reset() { server.reset(); }
+mt::BgWork* background() { return &deferredWork; }
+
+void step() { deferred.expire(millis()); }
+
+void reset() { deferred.reset(); }
 
 }  // namespace card

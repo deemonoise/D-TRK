@@ -1,4 +1,5 @@
 #include "model.h"
+#include "synth_fm_tonal.h"
 #include "bytebeat_lib.h"
 #include "fastmath.h"
 #include "hot.h"
@@ -43,9 +44,97 @@ InstrType instrTypeAt(int k) {
 }
 
 const char* fmMachineName(uint8_t machine) {
-  static const char* const kNames[] = {"KICK", "SNARE", "METAL", "PERC", "TONE", "CHORD", "CLAP", "HAT"};
-  static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(FmMachine::Count), "FM names");
-  return kNames[machine < static_cast<uint8_t>(FmMachine::Count) ? machine : 0];
+  static const char* const names[] = {"BD MODERN", "SD BASIC", "SD VINTAGE", "PC CARBON", "CP VINTAGE", "CY ALLOY", "SY CHORD", "SY TOY", "SY TONE", "HH BASIC"};
+  return names[machine < static_cast<uint8_t>(FmMachine::Count) ? machine : static_cast<uint8_t>(FmMachine::Tone)];
+}
+
+const char* fmParamName(uint8_t machine, int param) {
+  static const char* const names[][kFmParams] = {
+    {"TUNE", "SWEP", "PNCH", "DEC", "SMOD", "TMOD", "MENV", "OVER"},
+    {"TUNE", "SWEP", "PNCH", "DEC", "INHM", "MDFB", "MENV", "OVER"},
+    {"TUNE", "SWEP", "PNCH", "DEC", "INHM", "FCMP", "MENV", "OVER"},
+    {"TUNE", "SWEP", "PNCH", "DEC", "INHM", "MOD", "MENV", "OVER"},
+    {"TUNE", "SPCR", "PNCH", "DEC", "BAL", "BODY", "BENV", "OVER"},
+    {"TUNE", "SHIM", "PNCH", "DEC", "RADIO", "MOD", "MENV", "OVER"},
+    {"TUNE", "WAVE", "PNCH", "DEC", "TYPE", "BAL", "FENV", "OVER"},
+    {"TUNE", "FORM", "PNCH", "DEC", "IMP", "BRIG", "PAR", "OVER"},
+    {"TUNE", "RATIO", "PNCH", "DEC", "FDBK", "MOD", "MENV", "OVER"},
+    {"TUNE", "TONE", "TDEC", "DEC", "", "", "RST", "OVER"},
+  };
+  if (param < 0 || param >= kFmParams) return "";
+  return names[machine < static_cast<uint8_t>(FmMachine::Count) ? machine : static_cast<uint8_t>(FmMachine::Tone)][param];
+}
+
+bool fmParamIsToggle(uint8_t machine, int param) {
+  const bool hat=machine==static_cast<uint8_t>(FmMachine::HhBasic);
+  return (param==2 && !hat) || (param==6 && hat);
+}
+
+const char* fmChordTypeName(uint8_t rawType) {
+  // Names describe pitch classes relative to the played root; ambiguous sets stay unnamed.
+  static const char* const names[]={
+    "Uni2","Uni3","Uni4","m","Maj","Sus2","Sus4","m7","7","mMaj7","Maj7","7sus4",
+    "dim7","mAdd9","Add9","m6","Maj6","dim","Maj(b5)","m7b5","7b5","aug","m7#5","aug7",
+    "Set","Set","Set","Set","Set","Set","Set","Set","Set","Set","Set","Set","Dyad","5th"};
+  return names[rawType<38?rawType:37];
+}
+
+float fmTuneSemitones(uint8_t machine, uint8_t raw) {
+  const int offset=raw<40?-24:raw>88?24:static_cast<int>(raw)-64;
+  return offset*(machine==static_cast<uint8_t>(FmMachine::HhBasic)?.125f:1.f);
+}
+
+uint8_t fmParamStep(uint8_t machine,int param,uint8_t raw,int delta) {
+  if(!delta || !*fmParamName(machine,param))return raw;
+  if(fmParamIsToggle(machine,param))return delta>0?127:0;
+  const int step=delta< -127?-127:delta>127?127:delta;
+  if(param==0) {
+    const int value=raw<40?40:raw>88?88:raw;
+    const int next=value+step;return static_cast<uint8_t>(next<40?40:next>88?88:next);
+  }
+  const int max=machine==static_cast<uint8_t>(FmMachine::Chord) && param==4?37:127;
+  const int value=raw>max?max:raw,next=value+step;
+  return static_cast<uint8_t>(next<0?0:next>max?max:next);
+}
+
+void formatFmParam(uint8_t machine,int param,uint8_t raw,char* out,int n) {
+  if(!out || n<=0)return;
+  if(!*fmParamName(machine,param)){snprintf(out,n,"-");return;}
+  if(fmParamIsToggle(machine,param)){snprintf(out,n,"%s",raw?"ON":"OFF");return;}
+  if(param==0) {
+    const float offset=fmTuneSemitones(machine,raw);
+    if(machine==static_cast<uint8_t>(FmMachine::HhBasic))snprintf(out,n,"%+.3f st",offset);
+    else snprintf(out,n,"%+d st",static_cast<int>(offset));
+    return;
+  }
+  if(machine==static_cast<uint8_t>(FmMachine::Tone) && param==1) {
+    snprintf(out,n,"x%.3f",fmToneRatio(raw));return;
+  }
+  if(machine==static_cast<uint8_t>(FmMachine::Chord) && param==4) {
+    float intervals[4]={};const int count=fmChordSignature(raw,intervals);
+    char values[4][8]={{0}};
+    for(int i=0;i<count;++i) {
+      if(intervals[i]==static_cast<int>(intervals[i]))snprintf(values[i],sizeof(values[i]),"%d",static_cast<int>(intervals[i]));
+      else snprintf(values[i],sizeof(values[i]),"%.1f",intervals[i]);
+    }
+    const unsigned type=raw>37?37:raw;
+    const char* name=fmChordTypeName(raw);
+    if(count==2)snprintf(out,n,"%u %s [%s,%s] st",type,name,values[0],values[1]);
+    else if(count==3)snprintf(out,n,"%u %s [%s,%s,%s] st",type,name,values[0],values[1],values[2]);
+    else snprintf(out,n,"%u %s [%s,%s,%s,%s] st",type,name,values[0],values[1],values[2],values[3]);
+    return;
+  }
+  if(machine==static_cast<uint8_t>(FmMachine::HhBasic) && param==1) {
+    snprintf(out,n,"%u%% bright",(static_cast<unsigned>(raw)*100+63)/127);return;
+  }
+  snprintf(out,n,"%u",raw);
+}
+
+uint8_t fmMacroParam(uint8_t machine, int macro) {
+  static constexpr uint8_t map[] = {3, 4, 5, 1, 6};
+  static constexpr uint8_t hatMap[] = {3, 1, 2, 0, 6};
+  if (macro < 0 || macro >= kFmMacros) return 3;
+  return machine == static_cast<uint8_t>(FmMachine::HhBasic) ? hatMap[macro] : map[macro];
 }
 
 void chipWaveName(uint8_t w, char* o, int n) {
@@ -101,6 +190,7 @@ void Project::reset() {
   rvbLevel = 80;
   compAmt = 0;
   compRel = 50;
+  compAttack = 83;
   scTrack = 0;
   scDepth = 64;
   memcpy(perfMap, kPerfDefaultMap, sizeof(perfMap));
@@ -221,24 +311,21 @@ int tuningRootKey(const TuningTable& t, uint8_t scaleRoot) {
 void tuningClear(TuningTable& t) { t = TuningTable(); }
 
 bool fmGated(uint8_t machine) {
-  return machine == static_cast<uint8_t>(FmMachine::Tone) || machine == static_cast<uint8_t>(FmMachine::Chord);
+  return machine == static_cast<uint8_t>(FmMachine::Tone) || machine == static_cast<uint8_t>(FmMachine::Chord) ||
+         machine == static_cast<uint8_t>(FmMachine::Toy);
 }
 
 void fmSetMachine(Instrument& m, uint8_t machine) {
-  // DECAY, COLOR, SHAPE, SWEEP, CONTOUR per machine: sounds right away.
-  static const uint8_t kDefaults[static_cast<int>(FmMachine::Count)][kFmMacros] = {
-      {85, 40, 32, 70, 50},  // Kick
-      {70, 64, 40, 30, 64},  // Snare
-      {90, 64, 0, 0, 64},    // Metal
-      {65, 50, 32, 40, 40},  // Perc
-      {64, 40, 0, 0, 64},    // Tone: sine
-      {64, 30, 0, 0, 64},    // Chord: maj
-      {70, 64, 40, 40, 64},  // Clap
-      {40, 64, 90, 64, 64},  // Hat: closed
+  static const uint8_t defaults[][kFmParams] = {
+    {64, 0, 0, 80, 48, 32, 64, 0}, {64, 0, 0, 80, 32, 64, 64, 0},
+    {64, 0, 0, 80, 32, 64, 64, 0}, {64, 0, 0, 80, 32, 64, 64, 0},
+    {64, 64, 0, 80, 64, 48, 64, 0}, {64, 64, 0, 80, 64, 64, 64, 0},
+    {64, 32, 0, 110, 16, 64, 0, 0}, {64, 32, 0, 80, 64, 64, 64, 0},
+    {64, 64, 0, 110, 0, 64, 0, 0}, {64, 64, 32, 80, 0, 0, 127, 0},
   };
-  constexpr int kLast = static_cast<int>(FmMachine::Count) - 1;
-  m.machine = static_cast<uint8_t>(machine > kLast ? kLast : machine);
-  for (int k = 0; k < kFmMacros; ++k) m.macro[k] = kDefaults[m.machine][k];
+  m.machine = machine < static_cast<uint8_t>(FmMachine::Count) ? machine : static_cast<uint8_t>(FmMachine::Tone);
+  memcpy(m.fmParam, defaults[m.machine], kFmParams);
+  // Shared macro slots and the historical FMEX SAT byte belong to other/old records; leave them intact.
 }
 
 float cutoffHz(float v) {
@@ -430,6 +517,7 @@ const char* lfoDestName(uint8_t dest, InstrType t) {
   static const char* const kStr[] = {"DAMP", "BRIGHT", "STRUCT", "POS", "EXC"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(LfoDest::Count), "LFO dest names");
   if (dest >= static_cast<uint8_t>(LfoDest::Count)) dest = 0;
+  if (t == InstrType::Fm && dest == static_cast<uint8_t>(LfoDest::Sat)) return "OVER";
   const int mac = dest - static_cast<int>(LfoDest::Dec);
   if (t == InstrType::Synth && mac >= 0 && mac < kFmMacros) return kSyn[mac];
   if (t == InstrType::String && mac >= 0 && mac < kFmMacros) return kStr[mac];

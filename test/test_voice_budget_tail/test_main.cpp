@@ -283,8 +283,87 @@ void test_full_dsp_fading_byte_cost_tracks_pitch_modulation() {
   }
   TEST_ASSERT_TRUE(actual <= synth->budget_);
 }
+void test_sample_tail_uses_postfilter_cache_and_normal_release_keeps_sample() {
+  auto& m = model.instruments[0];
+  instrSetType(m, InstrType::Sample);
+  strcpy(m.sample, "s"); m.root = 60;
+  m.loop = uint8_t(LoopMode::Forward);
+  synth->setBank(&bank);
+  auto& v = note();
+  synth->renderCore();
+  TEST_ASSERT_TRUE(fabsf(v.sampleTailHold) > .00001f);
+  const float last = v.sampleTailHold;
+  v.env.fade(kStealMs);
+  trimFullDspTails(synth->voices_, 0);
+  TEST_ASSERT_TRUE(v.sample); // ordinary releases retain their full sample DSP
+  v.stolen = true;
+  trimFullDspTails(synth->voices_, 0);
+  TEST_ASSERT_TRUE(isStealTail(v));
+  TEST_ASSERT_EQUAL_FLOAT(last, v.hold);
+  TEST_ASSERT_FALSE(v.fltOn);
+  Env expected = v.env;
+  float out[32] = {};
+  synth->renderVoice(v, out, 32);
+  for (int i = 0; i < 32; ++i)
+    TEST_ASSERT_FLOAT_WITHIN(.000001f, last * expected.next(), out[i]);
+  for (int i = 0; i < 8; ++i) synth->renderCore();
+  TEST_ASSERT_FALSE(v.on);
+}
+
+void test_warm_sample_pool_pitch_jump_bounds_full_dsp_cost() {
+  auto& m = model.instruments[0];
+  instrSetType(m, InstrType::Sample);
+  strcpy(m.sample, "s"); m.root = 60; m.mono = false;
+  m.loop = uint8_t(LoopMode::Forward);
+  synth->setBank(&bank);
+  for (int t = 0; t < 8; ++t)
+    for (int n = 0; n < 4; ++n) synth->noteOn(t, 60, 127);
+  synth->renderCore();
+  m.root = 0;
+  synth->renderCore();
+  int actual = 0, tails = 0;
+  for (const auto& v : synth->voices_) {
+    if (v.on && !v.env.idle() && !isStealTail(v)) actual += v.cost;
+    tails += isStealTail(v);
+  }
+  TEST_ASSERT_TRUE(actual <= kVoiceBudgetTeensy);
+  TEST_ASSERT_TRUE(tails > 0);
+}
+
+void test_dense_fir_sample_notes_bound_actual_full_dsp_cost() {
+  delete synth;
+  model = SynthModel();
+  auto& m = model.instruments[0];
+  instrSetType(m, InstrType::Sample);
+  strcpy(m.sample, "s");
+  m.root = 60;
+  m.loop = uint8_t(LoopMode::Forward);
+  m.mono = false;
+  m.vol = m.sustain = 127;
+  m.attack = m.decay = m.release = 0;
+  for (auto& track : model.tracks) {
+    track.out = TrackOut::Int;
+    track.instr = 0;
+  }
+  synth = new Synth(model);
+  synth->setBank(&bank);
+  const int budget = 2 * voiceCost(m, true, 0, 0, InstrType::Count, 255, 4.f);
+  synth->setVoiceBudget(budget);
+  for (int t = 0; t < 8; ++t) {
+    synth->noteOn(t, 84, 127);
+    synth->renderCore();
+    int actual = 0;
+    for (const auto& voice : synth->voices_)
+      if (voice.on && !voice.env.idle() && !isStealTail(voice)) actual += voice.cost;
+    TEST_ASSERT_TRUE(actual <= budget);
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_dense_fir_sample_notes_bound_actual_full_dsp_cost);
+  RUN_TEST(test_warm_sample_pool_pitch_jump_bounds_full_dsp_cost);
+  RUN_TEST(test_sample_tail_uses_postfilter_cache_and_normal_release_keeps_sample);
   RUN_TEST(test_cache_keeps_postfilter_individual_last_sample);
   RUN_TEST(test_tail_renders_cached_sample_without_refiltering);
   RUN_TEST(test_tail_control_does_not_reactivate_instrument);

@@ -185,6 +185,13 @@ ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
                          else snprintf(o, n, "OFF");
                        },
                        u7(&mt::Project::compAmt)};
+  params_[kCompAttack] = {"Comp atk",
+                          [this](char* o, int n) {
+                            const uint8_t a = app_.project().compAttack;
+                            const float ms = 0.5f * powf(100.f, (a > 127 ? 127 : a) / 127.f);
+                            snprintf(o, n, ms < 10.f ? "%.1f ms" : "%.0f ms", ms);
+                          },
+                          u7(&mt::Project::compAttack), noComp};
   params_[kCompRel] = {"Comp rel",
                        [this](char* o, int n) {
                          const float ms = 20.f * powf(50.f, (app_.project().compRel > 127 ? 127 : app_.project().compRel) / 127.f);
@@ -277,7 +284,7 @@ ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
     if (P().modType == 0) return "Select FLANGER or PHASER first";
     return P().modLevel == 0 ? "Raise Mod level first" : "Feedback needs FLANGER or PHASER";
   };
-  params_[kCompRel].hint = params_[kScTrack].hint = [] { return "Enable the master compressor first"; };
+  params_[kCompAttack].hint = params_[kCompRel].hint = params_[kScTrack].hint = [] { return "Enable the master compressor first"; };
   params_[kScDepth].hint = [this] {
     return P().compAmt == 0 ? "Enable the master compressor first" : "Select a sidechain source track first";
   };

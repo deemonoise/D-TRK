@@ -511,6 +511,55 @@ static void test_capture_long_limit() {
   TEST_ASSERT_EQUAL(RecState::Rec, c.state());
 }
 
+static void test_capture_memory_loss_discards_unread_frames() {
+  std::vector<int16_t> mem(1024 * 2);
+  RecCapture c;
+  c.init(mem.data(), 1024);
+  c.arm(RecSource::Resample, kRecThreshOff, kRecMaxFrames);
+  const int16_t l[] = {100, 200}, r[] = {-300, -400};
+  c.feed(l, r, 2);
+  TEST_ASSERT_EQUAL_UINT32(2, c.ring().size());
+  c.invalidateMemory();
+  TEST_ASSERT_EQUAL(RecState::Idle, c.state());
+  TEST_ASSERT_EQUAL_UINT32(0, c.ring().size());
+  TEST_ASSERT_EQUAL_UINT32(0, c.ring().capacity());
+  TEST_ASSERT_EQUAL_UINT32(0, c.ring().pop(nullptr, 100));
+  TEST_ASSERT_EQUAL_UINT32(2, c.frames());  // diagnostic count survives, not safe-to-save frames
+}
+
+static void test_capture_memory_loss_cannot_rearm_freed_buffer() {
+  std::vector<int16_t> mem(1024 * 2);
+  RecCapture c;
+  c.init(mem.data(), 1024);
+  c.arm(RecSource::Resample, kRecThreshOff, kRecMaxFrames);
+  c.invalidateMemory();
+  mem.clear();
+  mem.shrink_to_fit();  // ASan catches any later touch through the retained old pointer.
+  c.arm(RecSource::Resample, kRecThreshOff, kRecMaxFrames);
+  TEST_ASSERT_EQUAL(RecState::Idle, c.state());
+  const int16_t l[] = {100, 200}, r[] = {-300, -400};
+  c.feed(l, r, 2);
+  TEST_ASSERT_EQUAL_UINT32(0, c.ring().pop(nullptr, 100));
+  uint16_t peak;
+  uint32_t clips;
+  c.meter().take(peak, clips);
+  TEST_ASSERT_EQUAL_UINT16(400, peak);  // input metering does not depend on recording memory
+}
+
+static void test_capture_memory_loss_discards_armed_preroll() {
+  std::vector<int16_t> mem(1024 * 2);
+  RecCapture c;
+  c.init(mem.data(), 1024);
+  c.arm(RecSource::Line, 0, kRecMaxFrames);
+  const int16_t quiet[] = {1, 2};
+  c.feed(quiet, quiet, 2);
+  TEST_ASSERT_EQUAL(RecState::Armed, c.state());
+  c.invalidateMemory();
+  TEST_ASSERT_EQUAL_UINT32(0, c.ring().size());
+  c.arm(RecSource::Line, -20, kRecMaxFrames);
+  TEST_ASSERT_EQUAL(RecState::Idle, c.state());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_ring_push_pop);
@@ -536,5 +585,8 @@ int main(int, char**) {
   RUN_TEST(test_sd_limit_frames);
   RUN_TEST(test_header_over_2gb);
   RUN_TEST(test_capture_long_limit);
+  RUN_TEST(test_capture_memory_loss_discards_unread_frames);
+  RUN_TEST(test_capture_memory_loss_cannot_rearm_freed_buffer);
+  RUN_TEST(test_capture_memory_loss_discards_armed_preroll);
   return UNITY_END();
 }

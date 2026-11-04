@@ -54,14 +54,18 @@ static_assert(sizeof(mt::Pattern) == mt::kPatternNameMax + 1 + 4 + 2 * mt::kTrac
 // 392: lofiFormula, lofiSync, lfoByte (LOFI chunk). 394: fmSat, chipStep (FMEX chunk; chipStep: tail padding).
 // 570: kit 16 lanes (KITS chunk, 352-byte records).
 // 576: SYNTH phase/env destination/sub waveform (SYNI reserved bytes 43..47).
-static_assert(sizeof(mt::Instrument) == 576, "Instrument changed: update snapshot() and project_io");
+// 584: eight independent FM controls (FMPA); snapshot copies instruments whole.
+// 776: 128 logical slices (SLX1); snapshot already copies each whole instrument.
+static_assert(sizeof(mt::Instrument) == 776, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
 // 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO). 480828: var (TVAR), LOFI instrument fields.
 // 480892: Instrument::fmSat (FMEX chunk). 481276: songTrn, songBpm, songTrnMask (SSLT).
 // 481628: knobs (KNOB). 520028: Step::lanesHi (PATN 15-byte steps), kit 16 lanes (KITS).
 // 520220: the five SYNTH fields; snapshot already copies the whole instrument array.
 // 520492: Pattern::name (PNAM chunk); snapshot copies each whole Pattern.
-static_assert(sizeof(mt::Project) == 520492, "Project changed: update snapshot() and project_io");
+// compAttack used existing padding; FMPA adds 8 bytes per instrument (520748 total); copied explicitly.
+// 526892: 96 extra uint16 markers per instrument, no new snapshot field.
+static_assert(sizeof(mt::Project) == 526892, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {
@@ -96,6 +100,7 @@ void snapshot(const mt::Project& live, mt::Project& out) {
   out.rvbLevel = live.rvbLevel;
   out.compAmt = live.compAmt;
   out.compRel = live.compRel;
+  out.compAttack = live.compAttack;
   out.scTrack = live.scTrack;
   out.scDepth = live.scDepth;
   memcpy(out.perfMap, live.perfMap, sizeof(out.perfMap));

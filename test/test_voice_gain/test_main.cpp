@@ -39,8 +39,8 @@ void test_gain_partition_invariance_all_engines(){
 }
 void test_gain_matches_per_sample_reference_all_engines(){
  for(auto type:{InstrType::Chip,InstrType::Sample,InstrType::Fm,InstrType::Synth,InstrType::String,InstrType::Lofi,InstrType::Drum})for(int variant=0;variant<(type==InstrType::Drum?2:1);++variant){
-  auto& a=startEngine(type,variant?int(DrumMachine::Bda):0);float warm[32]={};synth->renderVoice(a,warm,32);volume(0);
-  synth->voices_[1]=a;auto& b=synth->voices_[1];b.amp=b.ampNow=1;b.ampStep=0;memcpy(voiceLine(1),voiceLine(0),kLineLen*sizeof(int16_t));float whole[32]={},flat[32]={};
+  auto& a=startEngine(type,variant?int(DrumMachine::Bda):0);float warm[32]={};synth->renderVoice(a,warm,32);const float initialGain=a.ampNow;volume(0);
+  synth->voices_[1]=a;auto& b=synth->voices_[1];b.amp=b.ampNow=initialGain;b.ampStep=0;memcpy(voiceLine(1),voiceLine(0),kLineLen*sizeof(int16_t));float whole[32]={},flat[32]={};
   synth->renderVoice(a,whole,32);synth->renderVoice(b,flat,32);for(int i=0;i<32;i++)TEST_ASSERT_FLOAT_WITHIN(.000001f,flat[i]*(1-i/32.f),whole[i]);
  }
 }

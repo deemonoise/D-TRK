@@ -1,4 +1,5 @@
 #include "bank_client.h"
+#include "sample_extract.h"
 #include <Arduino.h>
 #include <string.h>
 #include <strings.h>
@@ -66,7 +67,7 @@ bool waitSynced() {
 }
 
 BankResult result(uint8_t r) {
-  return r <= static_cast<uint8_t>(BankResult::Running) ? static_cast<BankResult>(r) : BankResult::Link;
+  return r <= static_cast<uint8_t>(BankResult::Cancelled) ? static_cast<BankResult>(r) : BankResult::Link;
 }
 
 struct ProgCtx {
@@ -81,6 +82,25 @@ void onProgress(const Progress& p, void* c) {
   if (pc->itemCb) {
     const int item = p.item == Progress::kNoItem ? -1 : (p.item >= Progress::kWtItem ? kItemWt + p.item - Progress::kWtItem : p.item);
     pc->itemCb(item, p.done, p.total, pc->ctx);
+  }
+}
+
+struct ExtractProgress {
+  uint32_t token;
+  bool (*callback)(uint32_t, uint32_t, void*);
+  void* context;
+  Msg cancelType = Msg::SampleEditCancel;
+  bool cancelled = false, cancelSent = false;
+};
+
+void onExtractProgress(const Progress& progress, void* context) {
+  ExtractProgress& state = *static_cast<ExtractProgress*>(context);
+  if (!state.cancelled && state.callback && !state.callback(progress.done, progress.total, state.context))
+    state.cancelled = true;
+  if (state.cancelled && !state.cancelSent) {
+    SampleEditCancelReq cancel;
+    cancel.token = state.token;
+    state.cancelSent = slink::send(state.cancelType, cancel);  // no nested request while requestLong holds its lock
   }
 }
 
@@ -191,6 +211,7 @@ const char* bankResultText(BankResult r) {
     case BankResult::NoMemory: return "NO MEMORY";
     case BankResult::Link: return "SYNTH NOT ANSWERING";
     case BankResult::Running: return "BUSY";
+    case BankResult::Cancelled: return "CANCELLED";
   }
   return "?";
 }
@@ -384,6 +405,72 @@ int onsets(int index, mt::Onset* out, int max, BankResult* err) {
   }
   if (err) *err = r;
   return r == BankResult::Ok ? n : -1;
+}
+
+namespace {
+template<class Req, class Rep>
+BankResult offlineSampleCall(Msg type, Msg cancelType, Req& request, Rep& response,
+                            bool (*progress)(uint32_t,uint32_t,void*), void* ctx) {
+  if (!engineIdle()) return BankResult::Busy;
+  if (request.index>=mt::kProjSamples || request.from>=request.to) return BankResult::OpenFail;
+  if (!waitSynced()) return BankResult::Link;
+  if (!engineIdle()) return BankResult::Busy;
+  static uint32_t nextToken=0;
+  if (++nextToken==0) ++nextToken;
+  request.token=nextToken;
+  uint8_t payload[kMaxPayload], reply[kMaxPayload];
+  Writer writer(payload,sizeof payload); encode(request,writer);
+  if (!writer.ok()) return BankResult::Link;
+  ExtractProgress state{request.token,progress,ctx,cancelType};
+  int length=0;
+  const bool answered=slink::requestLong(type,payload,writer.size(),reply,length,onExtractProgress,&state);
+  Reader reader(reply,length);
+  if (!answered || !decode(reader,response) || response.token!=request.token) {
+    SampleEditCancelReq cancel{request.token};
+    slink::send(cancelType,cancel);  // best effort without observed terminal acknowledgement
+    return BankResult::Link;
+  }
+  // Short jobs may finish without a Progress frame; cancellation still prevents publication.
+  if (!state.cancelled && progress && !progress(request.to-request.from,request.to-request.from,ctx)) state.cancelled=true;
+  return state.cancelled ? BankResult::Cancelled : result(response.result);
+}
+BankResult editSample(int index, uint32_t crc, uint32_t from, uint32_t to, bool normalize,
+                      uint8_t mode, uint32_t ratioQ16, ImportOut& out,
+                      bool (*progress)(uint32_t,uint32_t,void*), void* ctx) {
+  if (index<0 || index>=mt::kProjSamples || from>=to || !mt::sampleEditFrames(to-from,ratioQ16))
+    return BankResult::OpenFail;
+  SampleEditReq request;
+  request.index=static_cast<uint8_t>(index);request.crc=crc;request.from=from;request.to=to;
+  request.normalize=normalize?1:0;request.mode=mode;request.ratioQ16=ratioQ16;
+  SampleEditRep response;
+  const BankResult completed=offlineSampleCall(Msg::SampleEdit,Msg::SampleEditCancel,request,response,progress,ctx);
+  bankViewStale();
+  if (completed!=BankResult::Ok) return completed;
+  if (response.frames!=mt::sampleEditFrames(to-from,ratioQ16)) return BankResult::ReadFail;
+  out.crc=response.crc;out.frames=response.frames;out.rate=response.rate;out.root=response.root;
+  return BankResult::Ok;
+}
+}  // namespace
+
+BankResult extractSample(int index, uint32_t crc, uint32_t from, uint32_t to, bool normalize, ImportOut& out,
+                         bool (*progress)(uint32_t,uint32_t,void*), void* ctx) {
+  return editSample(index,crc,from,to,normalize,0,65536,out,progress,ctx);
+}
+BankResult stretchSample(int index, uint32_t crc, uint32_t from, uint32_t to, uint32_t ratioQ16, ImportOut& out,
+                         bool (*progress)(uint32_t,uint32_t,void*), void* ctx) {
+  return editSample(index,crc,from,to,false,1,ratioQ16,out,progress,ctx);
+}
+BankResult detectSampleTempo(int index, uint32_t crc, uint32_t from, uint32_t to, mt::TempoEstimate& out,
+                         bool (*progress)(uint32_t,uint32_t,void*), void* ctx) {
+  if (index<0 || index>=mt::kProjSamples || from>=to) return BankResult::OpenFail;
+  SampleTempoReq request;
+  request.index=static_cast<uint8_t>(index);request.crc=crc;request.from=from;request.to=to;
+  SampleTempoRep response;
+  const BankResult completed=offlineSampleCall(Msg::SampleTempo,Msg::SampleTempoCancel,request,response,progress,ctx);
+  if (completed!=BankResult::Ok) return completed;
+  out.bpm10=response.bpm10;out.confidence=response.confidence;out.halfBpm10=response.halfBpm10;
+  out.doubleBpm10=response.doubleBpm10;out.ambiguous=(response.flags&1)!=0;
+  return BankResult::Ok;
 }
 
 BankResult wtRender(int index, uint32_t from, uint32_t to, const mt::WtMakeParams& p, const char* path,

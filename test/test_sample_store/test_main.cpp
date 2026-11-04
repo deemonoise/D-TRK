@@ -128,13 +128,57 @@ void test_source_skips_stale_or_scattered_entries() {
   TEST_ASSERT_FALSE(src.find("pad", d));
 }
 
+void test_source_accepts_a_published_fragment_map() {
+  projSampleSet(*model, "PAD", 0x3333u, 4000);
+  SectorExtent extents[] = {{0, 900, 8}, {8, 3000, 9}};
+  SectorMap map;
+  map.sectors = 17; map.extents = extents; map.count = 2;
+  const int i = table->add(0x3333u, 4000, 44100, 0, &map);
+  TEST_ASSERT_TRUE(i >= 0);
+  TEST_ASSERT_TRUE(table->at(i).sectors == &map);
+  StoreSampleSource source(*table, *pool, nullptr, *model);
+  SampleData data;
+  TEST_ASSERT_TRUE(source.find("PAD", data));
+  TEST_ASSERT_TRUE(data.streamable);
+  TEST_ASSERT_NULL(data.whole);
+  table->clear();
+  TEST_ASSERT_FALSE(source.find("PAD", data));
+}
+
+#include "test_edit.inc"
+#include "test_operations.inc"
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_stretch_unity_is_exact_copy_with_preserved_source_and_metadata);
+  RUN_TEST(test_stretch_ratios_have_exact_duration_crc_rate_and_bounded_reads);
+  RUN_TEST(test_stretch_invalid_ratio_and_overflow_never_create_output);
+  RUN_TEST(test_stretch_cancel_and_failures_close_source_and_leave_it_unchanged);
+  RUN_TEST(test_tempo_is_read_only_and_short_or_silent_input_is_valid_unknown);
+  RUN_TEST(test_tempo_click_train_and_cancel_have_bounded_io_without_output);
+  RUN_TEST(test_tempo_invalid_and_failed_read_never_touch_output_or_old_temp_files);
+  RUN_TEST(test_stretch_short_silence_and_dedup_keep_existing_assets);
+  RUN_TEST(test_edit_extracts_half_open_region_preserves_source_metadata_and_builds_peaks);
+  RUN_TEST(test_edit_normalizes_selected_pcm_with_int16_min_and_silence);
+  RUN_TEST(test_edit_normalizes_only_the_selection_and_copies_one_frame);
+  RUN_TEST(test_edit_rejects_empty_reversed_out_of_bounds_and_noncanonical_input);
+  RUN_TEST(test_edit_actual_file_bounds_are_checked_before_copy);
+  RUN_TEST(test_edit_full_range_dedup_preserves_existing_wav_and_overview_on_cancel_or_success);
+  RUN_TEST(test_edit_cancel_drops_only_own_temporary_files_and_never_published_result);
+  RUN_TEST(test_edit_faults_clean_temporary_output_and_are_retryable);
+  RUN_TEST(test_edit_progress_is_bounded_per_step_and_does_not_restart_an_active_job);
+  RUN_TEST(test_edit_cancel_and_overview_failures_keep_committed_wav_and_prior_overview);
+  RUN_TEST(test_edit_can_be_followed_by_ordinary_import_and_added_callback_has_closed_source);
+  RUN_TEST(test_edit_reservation_failure_removes_temp_and_leaves_source_intact);
+  RUN_TEST(test_edit_dedup_metadata_conflict_never_changes_existing_keyed_files);
+  RUN_TEST(test_edit_large_progress_total_never_wraps_or_allocates_whole_file);
+  RUN_TEST(test_edit_scan_read_failure_closes_source_without_creating_output);
   RUN_TEST(test_path_is_lower_hex);
   RUN_TEST(test_header_puts_data_at_512_and_parses_back);
   RUN_TEST(test_table_add_find_and_full);
   RUN_TEST(test_table_keeps_heads);
   RUN_TEST(test_source_streams_and_prefers_psram);
   RUN_TEST(test_source_skips_stale_or_scattered_entries);
+  RUN_TEST(test_source_accepts_a_published_fragment_map);
   return UNITY_END();
 }

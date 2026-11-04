@@ -13,6 +13,7 @@
 #include "psram.h"
 #include "sample_store.h"
 #include "stream.h"
+#include "stream_loader.h"
 #include "synth.h"
 
 
@@ -60,6 +61,7 @@ uint16_t minRes = 0xFFFF;
 bool settled = false;
 bool heavy = false;
 bool wt = false;  // kBenchWt
+bool requireStreams = false;  // SD-only measurements must retain all requested sample voices
 uint64_t cpuSum = 0;  // measured part: render cycles, blocks, slowest block, lowest voice cap
 uint32_t cpuBlocks = 0, cpuPeak = 0, capLow = mt::kVoices;
 
@@ -261,8 +263,10 @@ FLASHMEM void start(uint8_t semis, uint8_t flags, uint16_t secs) {
   }
   Found f[kN];
   const int n = scanStore(f);
-  if (n < kN) link::log("sbench: only %d store files (want %d long ones: LD bank <wav>)", n, kN);
-  if (!n) return;
+  if (n < kN) {
+    link::log("sbench: error: only %d store files (want %d)", n, kN);
+    return;
+  }
   out->park(true);  // no audio block touches the synth from here on; the unpark resets it once more
   synth->reset();
   model->sampleCount = static_cast<uint8_t>(n);
@@ -281,6 +285,7 @@ FLASHMEM void start(uint8_t semis, uint8_t flags, uint16_t secs) {
     in.loopStart = 0;
   }
   heavy = flags & mt::link::kBenchHeavy;
+  requireStreams = flags & mt::link::kBenchSdOnly;
   wt = heavy && (flags & mt::link::kBenchWt);
   if (heavy) heavyInstruments();
   if (flags & mt::link::kBenchFx) fxOn();
@@ -296,7 +301,13 @@ FLASHMEM void start(uint8_t semis, uint8_t flags, uint16_t secs) {
     model->tracks[t].solo = false;
   }
   psram::hold(flags & mt::link::kBenchSdOnly);
-  stream::rescan(*model);  // store entries, heads, and the PSRAM plan (none if held)
+  const int registered = stream::rescan(*model);  // entries, heads and PSRAM plan (none if held)
+  if (registered != n) {
+    link::log("sbench: error: registered %d of %d samples", registered, n);
+    out->park(false);
+    psram::hold(false);
+    return;
+  }
   out->park(false);
   link::log("sbench: %d samples, %lu..%lu frames, %s%s%s", n, static_cast<unsigned long>(f[n - 1].frames),
             static_cast<unsigned long>(f[0].frames), (flags & mt::link::kBenchSdOnly) ? "SD only" : "PSRAM allowed",
@@ -322,6 +333,16 @@ FLASHMEM void start(uint8_t semis, uint8_t flags, uint16_t secs) {
 FLASHMEM void stop() {
   if (!running) return;
   measuring = false;
+  if (settled) {
+    const stream::Stats s = stream::takeStats(1);
+    underruns += s.underruns;
+    if (s.minReserveMs < minRes) minRes = s.minReserveMs;
+    const Cpu c = takeCpu();
+    cpuSum += c.sum;
+    cpuBlocks += c.n;
+    if (c.peak > cpuPeak) cpuPeak = c.peak;
+    if (c.cap < capLow) capLow = c.cap;
+  }
   if (notesOn) notes(false);
   running = false;
   const uint32_t ran = millis() - t0;
@@ -353,8 +374,14 @@ FLASHMEM void step() {
   }
   if (!settled) {
     if (now - t0 < kSettleMs) return;
-    stream::takeStats(1);  // the cold start does not count
+    const stream::Stats s = stream::takeStats(1);  // the cold start does not count
+    if (requireStreams && s.voices != kN) {
+      link::log("sbench: error: %u of %d stream voices", s.voices, kN);
+      stop();
+      return;
+    }
     takeCpu();
+    stream::takeProfile();
     measuring = true;
     settled = true;
     lastLog = now;
@@ -363,6 +390,11 @@ FLASHMEM void step() {
   if (now - lastLog >= 1000) {
     lastLog = now;
     const stream::Stats s = stream::takeStats(1);
+    if (requireStreams && s.voices != kN) {
+      link::log("sbench: error: %u of %d stream voices", s.voices, kN);
+      stop();
+      return;
+    }
     underruns += s.underruns;
     if (s.minReserveMs < minRes) minRes = s.minReserveMs;
     const Cpu c = takeCpu();
@@ -371,6 +403,34 @@ FLASHMEM void step() {
     if (c.peak > cpuPeak) cpuPeak = c.peak;
     if (c.cap < capLow) capLow = c.cap;
     const float block = static_cast<float>(SynthStream::blockCycles());
+    const stream::Profile io = stream::takeProfile();
+    if (now - t0 < 6000 || io.readFailures || !io.reads) {
+      card::logState();
+      const mt::StreamSlot& x = stream::pool().slot(0);
+      mt::PlaySnap p;
+      stream::pool().snap(0, p);
+      uint32_t reserve;
+      const bool need = mt::streamNeeds(stream::pool(), 0, reserve);
+      mt::StreamLoad load;
+      const bool plan = mt::streamPlan(stream::pool(), 0, load);
+      link::log("sbench slot: pos %lu step %ld guard %u/%u frames %lu heads %u gen %u tags %lx %lx %lx %lx %lx %lx",
+                static_cast<unsigned long>(p.pos), static_cast<long>(p.step16), p.before, p.after,
+                static_cast<unsigned long>(x.frames), x.nHeads, x.gen,
+                static_cast<unsigned long>(x.tag[0]), static_cast<unsigned long>(x.tag[1]),
+                static_cast<unsigned long>(x.tag[2]), static_cast<unsigned long>(x.tag[3]),
+                static_cast<unsigned long>(x.tag[4]), static_cast<unsigned long>(x.tag[5]));
+      link::log("sbench query: need %u reserve %lu plan %u block %lu n %d old reserve %lu",
+                need, static_cast<unsigned long>(reserve), plan,
+                static_cast<unsigned long>(load.block), load.n,
+                static_cast<unsigned long>(mt::streamReserveUs(stream::pool(), 0)));
+    }
+    const uint32_t cyclesUs = F_CPU_ACTUAL / 1000000;
+    link::log("sbench io: needs %lu calls %lu us, reads %lu calls %lu sectors %lu us peak %lu us bad %lu, step %lu us peak %lu us",
+              static_cast<unsigned long>(io.needsCalls), static_cast<unsigned long>(io.needsCycles / cyclesUs),
+              static_cast<unsigned long>(io.reads), static_cast<unsigned long>(io.readBlocks),
+              static_cast<unsigned long>(io.readCycles / cyclesUs),
+              static_cast<unsigned long>(io.readPeakCycles / cyclesUs), static_cast<unsigned long>(io.readFailures),
+              static_cast<unsigned long>(io.stepCycles / cyclesUs), static_cast<unsigned long>(io.stepPeakCycles / cyclesUs));
     link::log("sbench: %3lu s  voices %2u/%2d  underruns %u (%lu)  min reserve %u ms  cpu %.1f %% peak %.1f %%  cap %lu",
               static_cast<unsigned long>((now - t0 - kSettleMs) / 1000), s.voices, synth->activeVoices(), s.underruns,
               static_cast<unsigned long>(underruns), s.minReserveMs, c.n ? 100.f * c.sum / c.n / block : 0.f,

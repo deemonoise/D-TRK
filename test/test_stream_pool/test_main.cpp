@@ -128,6 +128,36 @@ void test_snapshot_round_trip() {
   TEST_ASSERT_EQUAL_INT32(-98304, p.step16);
 }
 
+void test_adopted_prefetch_takes_current_region_and_keeps_cached_sample() {
+  const int slot=get(55,SlotOwner::Prefetch);
+  TEST_ASSERT_TRUE(load(slot,5));
+  pool.publish(slot,int64_t(0)<<32,int64_t{1}<<32,12,13,true);
+  SampleRegion current;
+  current.from=2048;current.to=4096;current.loopLo=2560;current.loopHi=3584;
+  current.loopMode=static_cast<uint8_t>(LoopMode::Forward);
+  current.dir=-1;current.pos=int64_t(4095)<<32;
+  TEST_ASSERT_EQUAL(slot,pool.acquire(55,100000,44100,nullptr,0,current,SlotOwner::Voice));
+  PlaySnap p;TEST_ASSERT_TRUE(pool.snap(slot,p));
+  TEST_ASSERT_EQUAL_UINT32(current.from,p.from);TEST_ASSERT_EQUAL_UINT32(current.to,p.to);
+  TEST_ASSERT_EQUAL_UINT32(current.loopLo,p.loopLo);TEST_ASSERT_EQUAL_UINT32(current.loopHi,p.loopHi);
+  TEST_ASSERT_EQUAL(current.loopMode,p.loopMode);
+  TEST_ASSERT_EQUAL_UINT32(4095,p.pos);TEST_ASSERT_EQUAL_INT32(-65536,p.step16);
+  TEST_ASSERT_EQUAL(0,p.before);TEST_ASSERT_EQUAL(0,p.after);TEST_ASSERT_FALSE(p.looped);
+  TEST_ASSERT_EQUAL(SlotOwner::Voice,pool.slot(slot).owner);
+  const int16_t* retained=pool.block(slot,5);TEST_ASSERT_NOT_NULL(retained);
+  TEST_ASSERT_EQUAL_INT16(5000,retained[0]);TEST_ASSERT_EQUAL_INT16(5511,retained[511]);
+}
+
+void test_guarded_snapshot_keeps_actual_cursor_and_resets_on_reuse() {
+  const int s=get(77);
+  pool.publish(s,int64_t(1234)<<32,-(int64_t{3}<<32),95,96,true);
+  PlaySnap p;TEST_ASSERT_TRUE(pool.snap(s,p));
+  TEST_ASSERT_EQUAL_UINT32(1234,p.pos);TEST_ASSERT_EQUAL_INT32(-3*65536,p.step16);
+  TEST_ASSERT_EQUAL(95,p.before);TEST_ASSERT_EQUAL(96,p.after);TEST_ASSERT_TRUE(p.looped);
+  pool.release(s);TEST_ASSERT_EQUAL(s,get(77));TEST_ASSERT_TRUE(pool.snap(s,p));
+  TEST_ASSERT_EQUAL_UINT32(0,p.pos);TEST_ASSERT_EQUAL(0,p.before);TEST_ASSERT_EQUAL(0,p.after);TEST_ASSERT_FALSE(p.looped);
+}
+
 void test_stale_prefetch_is_released() {
   const int a = get(5, SlotOwner::Prefetch);
   const int b = get(6, SlotOwner::Prefetch);
@@ -152,6 +182,8 @@ int main() {
   RUN_TEST(test_preview_never_evicted);
   RUN_TEST(test_commit_after_rekey_is_dropped);
   RUN_TEST(test_snapshot_round_trip);
+  RUN_TEST(test_adopted_prefetch_takes_current_region_and_keeps_cached_sample);
+  RUN_TEST(test_guarded_snapshot_keeps_actual_cursor_and_resets_on_reuse);
   RUN_TEST(test_stale_prefetch_is_released);
   return UNITY_END();
 }

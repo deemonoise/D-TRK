@@ -46,7 +46,11 @@ constexpr uint16_t kStealMs = 4;  // fade of a heavy voice stolen past kFmVoiceM
 enum class EngineKind : uint8_t { Fm, Drum, Syn, String, Lofi, Drum2 };
 struct FmEngine {
   FmVoice fmv;
+#if defined(__IMXRT1062__)
+  FmParams* params = nullptr;  // control-rate cache in RAM2, bound to the voice slot at note-on
+#else
   FmParams fp;
+#endif
 };
 struct DrumEngine {
   DrumVoice drv;  // with what it derives from its DrumParams (set() on a change)
@@ -138,7 +142,8 @@ struct Voice {
   uint16_t cost = 0;                  // voiceCost at note-on (allocVoice, budget; here: a padding hole)
   bool under = false;                 // underrun: holding the last value
   bool smpLooped = false;             // reverse initial suffix stays file data until the first loop
-  float hold = 0;                     // last interpolated value
+  float hold = 0;                     // raw sample underrun value / collapsed tail output
+  float sampleTailHold = 0;           // last post-filter SAMPLE output, separate from raw PCM hold
   float ug = 1;                       // underrun gain, 2 ms ramps
   int64_t pos = 0;
   int64_t step = 0;         // from inc, at control rate
@@ -165,7 +170,7 @@ struct Voice {
   // pitch >= 1 cent from it (Synth::controlFm). fpValid = false forces a recompute (note-on).
   bool fpValid = false;
   float fpPitch = 0;
-  float fpMac[kFmMacros] = {0};
+  float fpMac[kFmParams] = {0};
   // DRUM instrument (machine above holds its DrumMachine). drumMachine() cache: the DrumVoice's
   // set() for the fp* key above, as fp for FM (Synth::controlDrum).
   bool drum = false;
@@ -183,7 +188,13 @@ struct Voice {
   EngineKind engKind = EngineKind::Fm;
   VoiceEngine eng;
   FmVoice& fmv() { return eng.fm.fmv; }
-  FmParams& fp() { return eng.fm.fp; }
+  FmParams& fp() {
+#if defined(__IMXRT1062__)
+    return *eng.fm.params;
+#else
+    return eng.fm.fp;
+#endif
+  }
   DrumVoice& drv() { return eng.drum.drv; }
   const DrumVoice& drv() const { return eng.drum.drv; }
   SynVoice& sv() { return eng.syn; }
@@ -214,13 +225,13 @@ struct Voice {
 };
 
 // Internal render sentinel, outside every stored CHIP wave (0xff is the STEP dispatch).
-// A CPU-unsafe stolen non-sample voice becomes its last post-filter output with a short fade.
+// A CPU-unsafe stolen voice becomes its last post-filter output with a short fade.
 constexpr uint8_t kStealTailWave = 0xfe;
 static_assert(kStealTailWave >= kWaveCount, "steal tail sentinel must not be a stored CHIP wave");
 MT_INLINE bool isStealTail(const Voice& v) { return v.stolen && !v.sample && v.wave == kStealTailWave; }
 MT_CONTROL void collapseStealTail(Voice& v);
 // Repriced fading engines may become too expensive without a new note/pick. Trim only
-// already-stolen non-sample tails; active voices keep the nominal enforceBudget policy.
+// already-stolen tails; active voices keep the nominal enforceBudget policy.
 MT_CONTROL void trimFullDspTails(Voice (&v)[kVoices], int budget);
 
 // Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the
@@ -248,8 +259,7 @@ inline bool heavyLoad(const Voice& x) {
 // the live voices' costs (stolen ones and v[pick] not counted) plus cost over budget, the oldest
 // live voices but pick, releasing first, fade over kStealMs (stolen) until it fits or none is left.
 // Full-DSP fading voices still consume CPU: when they plus the pick exceed the budget,
-// oldest stolen non-sample voices become cheap held-output fades. Samples keep their streaming
-// fade policy. The note always plays, including a single note whose cost exceeds the budget.
+// oldest stolen voices become cheap held-output fades. The note always plays, including a single note whose cost exceeds the budget.
 // Returns cost clamped to Voice::cost's range (the caller stores it in v[pick].cost).
 int enforceBudget(Voice (&v)[kVoices], int pick, int cost, int budget);
 int allocVoice(Voice (&v)[kVoices], uint8_t track, bool mono, uint32_t& ageCounter, bool& legato,

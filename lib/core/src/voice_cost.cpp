@@ -27,6 +27,15 @@ MT_CONTROL int ayToneNoiseCost(float hz) {
   return kCostChipAyTnExtreme;
 }
 
+MT_CONTROL bool samplePitchModulated(const Instrument& m) {
+  for (int i = 0; i < kLfos; ++i) {
+    const LfoCfg c = lfoAt(m, i);
+    if (c.depth && (c.dest == static_cast<uint8_t>(LfoDest::Pitch) ||
+                    c.dest == static_cast<uint8_t>(LfoDest::Fine))) return true;
+  }
+  return false;
+}
+
 MT_CONTROL uint8_t configuredPotential(const Instrument& m) {
   uint8_t flags = 0;
   if (m.synEnvDest == static_cast<uint8_t>(SynEnvDest::Fold)) flags |= kCostPotentialFold;
@@ -41,8 +50,26 @@ MT_CONTROL uint8_t configuredPotential(const Instrument& m) {
 }
 }
 
+MT_CONTROL int samplePlaybackCost(float frameStep, bool pitchModulated) {
+  float step = frameStep < 0 ? -frameStep : frameStep;
+  // Bad/unknown numeric input must not under-reserve a potentially expensive renderer.
+  if (!(step >= 0.f) || step > 256.f) step = 256.f;
+  int cost;
+  if (step <= 1.f) cost = pitchModulated ? kCostSampleFirCommon : kCostSample;
+  else if (step <= 2.5f) cost = kCostSampleFirCommon;
+  else if (step <= 4.f) cost = kCostSampleFirMedium;
+  else if (step <= 8.f) cost = kCostSampleFirHigh;
+  else if (step <= 16.f) cost = kCostSampleFirWide;
+  else {
+    const int whole = static_cast<int>(step);
+    const int upper = whole + (step > whole ? 1 : 0);
+    cost = kCostSampleFirWide + (upper - 16) * kCostSampleFirExtremeStep;
+  }
+  return cost + (pitchModulated ? kCostSamplePitchMod : 0);
+}
+
 MT_CONTROL int voiceCost(const Instrument& m, bool sample, uint8_t potential, float effectiveHz,
-                         InstrType actualType, uint8_t actualMachine) {
+                         InstrType actualType, uint8_t actualMachine, float sampleFrameStep) {
   const InstrType type = sample ? InstrType::Sample : actualType == InstrType::Count ? m.type : actualType;
   const uint8_t machine = actualMachine == 255 ? m.machine : actualMachine;
   if (type == InstrType::Synth || type == InstrType::Fm)
@@ -51,8 +78,15 @@ MT_CONTROL int voiceCost(const Instrument& m, bool sample, uint8_t potential, fl
   // lane builds fltMode Off: the base).
   int c = kCostChip;
   switch (type) {
-    case InstrType::Sample: c = kCostSample; break;
-    case InstrType::Fm: c = kCostFm + ((m.fmSat || (potential & kCostPotentialSat)) ? kCostFmSat : 0); break;
+    case InstrType::Sample:
+      c = samplePlaybackCost(sampleFrameStep, (potential & kCostPotentialSamplePitch) || samplePitchModulated(m));
+      break;
+    case InstrType::Fm: {
+      const uint8_t id=machine<static_cast<uint8_t>(FmMachine::Count)?machine:static_cast<uint8_t>(FmMachine::Tone);
+      c=kCostFmMachines[id]+((m.fmParam[7] || (potential & kCostPotentialSat))?kCostFmSat:0);
+      if(id==static_cast<uint8_t>(FmMachine::Tone) && m.fmParam[2])c+=kCostFmTonePunch;
+      break;
+    }
     case InstrType::Drum:  // constant indices, no .rodata table (RAM1): see STRING below
       static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == 8 && kDrum2First == 16,
                     "voiceCost: a case per machine");

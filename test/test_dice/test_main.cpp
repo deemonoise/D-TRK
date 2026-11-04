@@ -231,9 +231,9 @@ void test_every_recipe_valid() {
             if (l == kDiceHat)
               TEST_ASSERT_TRUE_MESSAGE((starts("CH") || starts("HH") || starts("HAT") || strstr(n, "HHR C") ||
                                         strstr(n, " HH")) &&
-                                           !strstr(n, "HAT O") && n[strlen(n) - 1] != 'O',
+                                           !strstr(n, "HAT O") && strcmp(n, "HHLONG") && n[strlen(n) - 1] != 'O',
                                        n);
-            if (l == kDiceOpen) TEST_ASSERT_TRUE_MESSAGE(starts("OH") || strstr(n, "HAT O") || strstr(n, "HHR O"), n);
+            if (l == kDiceOpen) TEST_ASSERT_TRUE_MESSAGE(starts("OH") || strstr(n, "HAT O") || strstr(n, "HHR O") || !strcmp(n, "HHLONG"), n);
             if (l == kDicePerc)
               TEST_ASSERT_FALSE_MESSAGE(starts("BD") || strstr(n, "KICK") || starts("SD") || strstr(n, "SN") ||
                                             starts("CP") || strstr(n, "CLAP") || starts("CH") || starts("HH") ||
@@ -272,9 +272,10 @@ void test_every_recipe_valid() {
           const int x = presetIndex(l[i].type, l[i].name);
           TEST_ASSERT_TRUE_MESSAGE(x >= 0, l[i].name);
           factoryBuild(l[i].type, x, tmp);
-          // Melodic roles play notes as written (FM: TONE only); CHORDS needs polyphony.
+          // Melodic roles play notes as written (FM: TONE/TOY); CHORDS needs polyphony.
           if (k != static_cast<int>(DiceRole::Fx) && tmp.type == InstrType::Fm)
-            TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(FmMachine::Tone), tmp.machine, l[i].name);
+            TEST_ASSERT_TRUE_MESSAGE(tmp.machine == static_cast<uint8_t>(FmMachine::Tone) ||
+                                         tmp.machine == static_cast<uint8_t>(FmMachine::Toy), l[i].name);
           if (k == static_cast<int>(DiceRole::Chords)) TEST_ASSERT_FALSE_MESSAGE(tmp.mono, l[i].name);
         }
       }
@@ -410,8 +411,15 @@ void test_kit_mix_and_feel() {
             if (d.type == InstrType::Drum || d.type == InstrType::Fm) {
               Instrument ref;
               factoryBuild(d.type, presetIndex(d.type, d.name), ref);
-              TEST_ASSERT_EQUAL(clampi(ref.macro[0] + d.dec, 0, 127), dm.macro[0]);
-              TEST_ASSERT_EQUAL(clampi(ref.macro[1] + d.tone, 0, 127), dm.macro[1]);
+              if (d.type == InstrType::Fm) {
+                TEST_ASSERT_EQUAL(clampi(ref.fmParam[3] + d.dec, 0, 127), dm.fmParam[3]);
+                const uint8_t tone = fmMacroParam(ref.machine, kMacCol);
+                const int amount = *fmParamName(ref.machine, tone) ? d.tone : 0;
+                TEST_ASSERT_EQUAL(clampi(ref.fmParam[tone] + amount, 0, 127), dm.fmParam[tone]);
+              } else {
+                TEST_ASSERT_EQUAL(clampi(ref.macro[0] + d.dec, 0, 127), dm.macro[0]);
+                TEST_ASSERT_EQUAL(clampi(ref.macro[1] + d.tone, 0, 127), dm.macro[1]);
+              }
             }
           }
           TEST_ASSERT_EQUAL(kNoInstr, m.kit[6].instr);

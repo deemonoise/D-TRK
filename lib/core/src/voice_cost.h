@@ -7,12 +7,29 @@ namespace mt {
 // Voice cost: hundredths of a percent of the Teensy 4.1 CPU per voice (bench-max 2026-10-15, LP
 // filter, envelope and track strip share included). allocVoice keeps the sum of the live voices'
 // costs under Synth::voiceBudget().
-constexpr int kCostSample = 100;  // SD / flash stream (plus the filter add-ons, as every type)
+constexpr int kCostSample = 100;  // original-rate/slower sample playback
+// FIR prices, in 0.01% CPU/voice. USB Teensy 4.1 audit 2026-11-02:
+// common bucket includes distinct pitches and cold-start headroom; pitch modulation costs extra.
+// Kept separate from the 32-voice pool size; the existing budget prices actual work.
+constexpr int kCostSampleFirCommon = 300;  // >1 .. 2.5 source frames/output
+constexpr int kCostSampleFirMedium = 400;  // >2.5 .. 4
+constexpr int kCostSampleFirHigh = 750;    // >4 .. 8
+constexpr int kCostSampleFirWide = 1100;   // >8 .. 16
+constexpr int kCostSampleFirExtremeStep = 20;  // per extra whole frame/output above 16
+constexpr int kCostSamplePitchMod = 100;  // active cutoff/phase modulation reserve
 constexpr int kCostChip = 119;
 constexpr int kCostSynBl = 200;   // USB audit 2026-11-01: ~2.0%/voice incl. gain modulation
 constexpr int kCostSynWt = 240;
-constexpr int kCostFmSat = 40;  // estimate over FM; calibrated by the USB regression bench
-constexpr int kCostFm = 225;      // bench-max 2026-10-25: TONE 4 ops + detune, 2.23 %/voice
+// Conservative upper prices from the ten-machine USB CPU audit, 2026-11-03.
+// Warm/cold blocks at 4/8/16 actual voices, baseline and high-pitch/LFO extremes.
+// These upper prices retain headroom after the bit-exact renderer optimizations;
+// they are budget reservations, not the average CPU load. OVER reserves extra activation work.
+constexpr int kCostFmSat = 40;
+constexpr int kCostFmTonePunch = 300;  // measured harmonic-carrier branch when SY TONE PNCH is on
+constexpr int kCostFmMachines[] = {775, 925, 975, 900, 650, 1025, 1625, 1000, 775, 900};
+static_assert(sizeof(kCostFmMachines)/sizeof(kCostFmMachines[0]) == static_cast<int>(FmMachine::Count),
+              "one CPU price per reference machine");
+constexpr int kCostFm = kCostFmMachines[0];  // default BD MODERN, retained for common cost callers
 // DRUM BD8..CY9 (DrumMachine order): bench-max group 3, 2026-10-26, after the recalibration (3 tones,
 // h3 / h5, two-part envelopes, the soft clip). Slope of the DRUM <machine> ladders' average load, 4 .. 16
 // voices, DECAY 127 (the hits ring through the 16th); RS8 still ends early (9 of 16 sounding): per
@@ -60,15 +77,23 @@ constexpr int kVoiceBudgetOff = 1 << 30;
 
 // Potential per-note modulation not present in the instrument: follower / LFO destination locks.
 enum VoiceCostPotential : uint8_t {
-  kCostPotentialFold = 1, kCostPotentialRing = 2, kCostPotentialSat = 4
+  kCostPotentialFold = 1, kCostPotentialRing = 2, kCostPotentialSat = 4,
+  kCostPotentialSamplePitch = 8
 };
+// Source frames consumed per output sample; signed steps price reverse identically. Zero/default
+// preserves the original base cost. Pitch modulation reserves FIR work even at the unity boundary.
+MT_CONTROL int samplePlaybackCost(float frameStep, bool pitchModulated = false);
+
 // Includes configured SENV/LFO destinations even when their current depth is neutral:
 // CON/depth locks may activate them. `potential` adds per-note/follower destinations.
 // effectiveHz: BYTE pitch including SYNC, or CHIP AY TN pitch after every pitch modulator.
 // <=0/unknown reserves full-rate BYTE / the extreme AY TN bucket.
 // Live voices latch engine type/machine at note-on; UI may change m.type/machine while
 // they still ring. Overrides price that actual engine without copying the large Instrument.
+// sampleFrameStep: current source frames/output after root/sample-rate, pitch, ARP, bend and LFO;
+// caller must pass the newly resolved step, not the previous control period's value.
 MT_CONTROL int voiceCost(const Instrument& m, bool sample, uint8_t potential = 0, float effectiveHz = 0,
-                         InstrType actualType = InstrType::Count, uint8_t actualMachine = 255);
+                         InstrType actualType = InstrType::Count, uint8_t actualMachine = 255,
+                         float sampleFrameStep = 1.f);
 
 }  // namespace mt

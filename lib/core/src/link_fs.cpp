@@ -79,6 +79,10 @@ void FsServerCore::reset() {
   cached_ = false;
 }
 
+bool FsServerCore::listCanContinue(const char* dir, uint16_t start) const {
+  return start == 0 || (dir && listing_ && start == listNext_ && strcmp(dir, listDir_) == 0);
+}
+
 void FsServerCore::dropList() {
   if (listing_) b_.dirClose();
   listing_ = false;

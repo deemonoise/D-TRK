@@ -36,8 +36,8 @@ enum DiceLane : uint8_t { kDiceKick, kDiceSnare, kDiceClap, kDiceHat, kDiceOpen,
 constexpr int8_t kDiceKitLane[kDiceLanes] = {0, 1, 4, 2, 3, 5};
 
 // A drum of a dice kit: a factory DRUM / FM / CHIP preset, its level (the lane instrument's vol and the
-// lane's, 0..127, linear: 64 = -6 dB from 127) and offsets to its first two macros (DRUM / FM: DECAY and
-// TONE / ATTACK / COLOR..., the length and click / brightness of the hit; other types ignore them).
+// lane's, 0..127, linear: 64 = -6 dB from 127) and offsets to its length/tone controls (DRUM macros; FM DEC and E;
+// the length and click / brightness of the hit; other types ignore them).
 struct DiceDrum {
   InstrType type;
   const char* name;

@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "frame_writer.h"
 #include "link_msg.h"
 
 namespace mt {
@@ -28,8 +29,11 @@ void reply(mt::link::Msg t, uint8_t seq, const M& m) {
   encode(m, w);
   if (w.ok()) reply(t, seq, p, w.size());
 }
-// Waits until every frame queued for the ESP is out (before a reboot).
+// Before a reboot: UART drains; desk USB tries its queue for at most 20 ms, then asks the SDK
+// to flush. USB flush does not guarantee that the host has actually received the bytes.
 void flushOut();
+// Desk-only counters (zero for the normal UART build). Queue overflow / short writes stay visible.
+mt::link::FrameTxStats txStats();
 // From work that keeps loop() busy (bank jobs): a Status when one is due, so the ESP sees the board
 // alive.
 void statusIfDue();

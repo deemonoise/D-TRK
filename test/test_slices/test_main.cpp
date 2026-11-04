@@ -100,7 +100,7 @@ void test_last_slice_past_end_plays_to_sample_end() {
 
 void test_chop_equal_clamps_n() {
   Instrument m;
-  m.chopN = 99;
+  m.chopN = 255;
   chopEqual(m);
   TEST_ASSERT_EQUAL(kMaxSlices, m.sliceCount);
 }

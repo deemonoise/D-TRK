@@ -314,7 +314,18 @@ bool ExportWriter::block(const Synth& s) {
       r = taps_.r[tap_[i] - 1];
       g = taps_.gain * 32767.f;
     }
-    fill_[i] += pcm_[i].put(l + from, r + from, n, g, buf_[i] + fill_[i]);
+    if (tap_[i] != kExportTapMaster && taps_.sampleGain[from] != taps_.sampleGain[Synth::kBlock - 1]) {
+      // A MAIN move must have the same ramp in exported stems as in the live master.
+      float scaledL[Synth::kBlock], scaledR[Synth::kBlock];
+      for (int j = 0; j < n; ++j) {
+        const float gain = taps_.sampleGain[from + j];
+        scaledL[j] = l[from + j] * gain;
+        scaledR[j] = r[from + j] * gain;
+      }
+      fill_[i] += pcm_[i].put(scaledL, scaledR, n, 32767.f, buf_[i] + fill_[i]);
+    } else {
+      fill_[i] += pcm_[i].put(l + from, r + from, n, g, buf_[i] + fill_[i]);
+    }
   }
   return true;
 }

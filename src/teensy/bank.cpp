@@ -1,5 +1,6 @@
 #include "bank.h"
 #include <Arduino.h>
+#include <Audio.h>
 #include <SD.h>
 #include <new>
 #include <string.h>
@@ -154,6 +155,209 @@ void sendProgress(uint32_t done, uint32_t total, int item) {
                      : static_cast<uint8_t>(item >= mt::BankJob::kWtItem ? Progress::kWtItem + item - mt::BankJob::kWtItem : item);
   link::reply(Msg::Progress, curSeq, pr);
 }
+
+// ---- Offline SampleEdit session ----
+// This mutating operation has its own identity/cache: an 8-bit wire seq alone is not a retry.
+// The parked output owns no voice slots and no queued events may survive back into playback.
+struct SampleEditSession {
+  static constexpr int kRequestBytes = 23;
+  SampleEditReq request;
+  Msg type = Msg::SampleEdit;
+  int size = 0;
+  uint8_t seq = 0, body[kRequestBytes] = {}, replyBytes[18] = {};
+  int replySize = 0;
+  bool active = false, cached = false;
+
+  int result(Msg kind, uint32_t token, BankResult r, uint8_t* p) const {
+    if (kind == Msg::SampleTempo) {
+      SampleTempoRep rep;
+      rep.token = token;
+      rep.result = res(r);
+      return put(rep, p);
+    }
+    SampleEditRep rep;
+    rep.token = token;
+    rep.result = res(r);
+    return put(rep, p);
+  }
+
+  bool same(Msg kind, uint8_t s, const uint8_t* p, int n) const {
+    return kind == type && s == seq && n == size && p && memcmp(body, p, size) == 0;
+  }
+
+  void discardEvents() {
+    AudioNoInterrupts();
+    out->queue().clear();
+    AudioInterrupts();
+  }
+
+  void unpark() {
+    AudioNoInterrupts();
+    out->queue().clear();
+    park(false);
+    AudioInterrupts();
+  }
+
+  void finish(BankResult r, bool send) {
+    if (type == Msg::SampleTempo) {
+      SampleTempoRep rep;
+      rep.token = request.token;
+      rep.result = res(r);
+      if (r == BankResult::Ok) {
+        const auto& estimate = store.tempoResult();
+        rep.bpm10 = estimate.bpm10;
+        rep.confidence = estimate.confidence;
+        rep.halfBpm10 = estimate.halfBpm10;
+        rep.doubleBpm10 = estimate.doubleBpm10;
+        rep.flags = estimate.ambiguous ? 1 : 0;
+      }
+      replySize = put(rep, replyBytes);
+    } else {
+      SampleEditRep rep;
+      rep.token = request.token;
+      if (r == BankResult::Ok) {
+        const mt::ImportOut& o = store.imported();
+        if (!stream::add(o.crc)) r = BankResult::ReadFail;
+        else {
+          rep.crc = o.crc;
+          rep.frames = o.frames;
+          rep.rate = o.rate;
+          rep.root = o.root;
+        }
+      }
+      rep.result = res(r);
+      replySize = put(rep, replyBytes);
+    }
+    active = false;
+    cached = true;
+    working = storeActive = false;
+    unpark();
+    if (send) link::reply(type, seq, replyBytes, replySize);
+  }
+
+  bool decodeRequest(Msg kind, const uint8_t* p, int n, SampleEditReq& q) const {
+    Reader reader(p, n);
+    if (kind == Msg::SampleTempo) {
+      SampleTempoReq tempo;
+      if (!decode(reader, tempo)) return false;
+      q.token = tempo.token;
+      q.index = tempo.index;
+      q.crc = tempo.crc;
+      q.from = tempo.from;
+      q.to = tempo.to;
+      return true;
+    }
+    return decode(reader, q);
+  }
+
+  int handleRequest(Msg kind, uint8_t s, const uint8_t* p, int n, uint8_t* o) {
+    uint32_t token = 0;
+    if (p && n >= 4) {
+      Reader id(p, 4);
+      token = id.u32();
+    }
+    const int expected = kind == Msg::SampleTempo ? 17 : kRequestBytes;
+    if (!p || n != expected) return result(kind, token, BankResult::Unsupported, o);
+    SampleEditReq q;
+    if (!decodeRequest(kind, p, n, q) || !q.token) return result(kind, token, BankResult::Unsupported, o);
+    if (active) {
+      if (!same(kind, s, p, n)) return result(kind, q.token, BankResult::Busy, o);
+      sendProgress(store.done(), store.total(), -1);
+      return -1;
+    }
+    if (cached && same(kind, s, p, n)) {
+      memcpy(o, replyBytes, replySize);
+      return replySize;
+    }
+    if (cached && kind == type && q.token == request.token) return result(kind, q.token, BankResult::ReadFail, o);
+    if (working || migrating || rec::busy() || render::active() || tools::busy() || (out && out->parked()))
+      return result(kind, q.token, BankResult::Busy, o);
+    if (!mounted || !model || !theSynth || !out) return result(kind, q.token, BankResult::NoBank, o);
+    if (q.index >= model->sampleCount || q.index >= mt::kProjSamples || q.crc != model->samples[q.index].crc)
+      return result(kind, q.token, BankResult::ReadFail, o);
+    if (q.from >= q.to || q.to > model->samples[q.index].frames)
+      return result(kind, q.token, BankResult::Unsupported, o);
+    if (kind == Msg::SampleEdit) {
+      const bool copy = q.mode == 0 && q.normalize <= 1 && q.ratioQ16 == 65536;
+      const bool stretch = q.mode == 1 && !q.normalize && q.ratioQ16 >= 32768 && q.ratioQ16 <= 131072;
+      if (!copy && !stretch) return result(kind, q.token, BankResult::Unsupported, o);
+      const uint64_t frames = (uint64_t(q.to - q.from) * q.ratioQ16 + 32768) / 65536;
+      if (frames > (UINT32_MAX - mt::kStoreDataOffset) / 2)
+        return result(kind, q.token, BankResult::Unsupported, o);
+    }
+    // gatePos and the output queue are owned by the ISR. Park/reset is one snapshot so no queued
+    // transport start can run between checking the gate and taking ownership of the card.
+    AudioNoInterrupts();
+    if (theSynth->gatePos() >= 0) {
+      AudioInterrupts();
+      return result(kind, q.token, BankResult::Busy, o);
+    }
+    park(true);
+    theSynth->reset();  // release all slots now; park alone resets only on the next unpark
+    out->queue().clear();
+    AudioInterrupts();
+    preview::stop();
+    request = q;
+    type = kind;
+    seq = s;
+    size = n;
+    memcpy(body, p, n);
+    cached = false;
+    curType = static_cast<uint8_t>(kind);
+    curSeq = s;
+    working = true;
+    lastProgress = millis();
+    char path[mt::kStorePathMax];
+    mt::storePath(q.crc, path);  // never retain a PSRAM/legacy pointer across a background portion
+    const BankResult r = kind == Msg::SampleTempo ? store.startTempo(path, q.from, q.to) :
+                         q.mode == 1 ? store.startStretch(path, q.from, q.to, q.ratioQ16) :
+                                       store.startEdit(path, q.from, q.to, q.normalize != 0);
+    if (r != BankResult::Ok) {
+      finish(r, false);
+      memcpy(o, replyBytes, replySize);
+      return replySize;
+    }
+    active = storeActive = true;
+    return -1;
+  }
+
+  int handle(uint8_t s, const uint8_t* p, int n, uint8_t* o) { return handleRequest(Msg::SampleEdit, s, p, n, o); }
+  int analyze(uint8_t s, const uint8_t* p, int n, uint8_t* o) { return handleRequest(Msg::SampleTempo, s, p, n, o); }
+
+  int cancel(const uint8_t* p, int n, Msg owner = Msg::SampleEdit) {
+    if (!p || n != 4) return -1;
+    Reader reader(p, n);
+    SampleEditCancelReq q;
+    if (decode(reader, q) && active && owner == type && q.token == request.token) {
+      store.cancel();
+      finish(BankResult::Cancelled, true);  // original seq/token, no separate Cancel reply
+    }
+    return -1;
+  }
+
+
+  void reset() {
+    if (active) {
+      store.cancel();
+      active = false;
+      working = storeActive = false;
+      unpark();
+    }
+    cached = false;  // a new Hello/session must never receive a reply from the old one
+  }
+
+  bool step() {
+    discardEvents();
+    const BankResult r = store.step();
+    if (r != BankResult::Running) finish(r, true);
+    else if (millis() - lastProgress >= kProgressMs) {
+      lastProgress = millis();
+      sendProgress(store.done(), store.total(), -1);
+    }
+    return true;
+  }
+} edit;
+// ---- End SampleEdit session ----
 
 // Sync / save: the store's samples, then the bank job's wavetables, on one scale (items x 1000).
 uint32_t setsTotal() {
@@ -638,6 +842,10 @@ void logState() {
 
 bool isRequest(Msg t) {
   switch (t) {
+    case Msg::SampleEdit:
+    case Msg::SampleEditCancel:
+    case Msg::SampleTempo:
+    case Msg::SampleTempoCancel:
     case Msg::BankSync:
     case Msg::AssetsSave:
     case Msg::BankImport:
@@ -651,6 +859,11 @@ bool isRequest(Msg t) {
 }
 
 int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* o) {
+  // The edit token/body cache must bypass the legacy bank type+seq-only cache below.
+  if (t == Msg::SampleEdit) return edit.handle(seq, p, n, o);
+  if (t == Msg::SampleEditCancel) return edit.cancel(p, n);
+  if (t == Msg::SampleTempo) return edit.analyze(seq, p, n, o);
+  if (t == Msg::SampleTempoCancel) return edit.cancel(p, n, Msg::SampleTempo);
   const uint8_t type = static_cast<uint8_t>(t);
   Reader r(p, n);
   // Lookups: answered at once, any time.
@@ -722,7 +935,10 @@ bool sampleAccess(int index, uint32_t& crc, uint32_t& frames, uint32_t& rate, co
 
 const mt::SampleBank& flash() { return theBank; }
 
-void reset() { answered = false; }
+void reset() {
+  edit.reset();  // only an Edit is cancelled; existing import/save/sync jobs keep their behavior
+  answered = false;
+}
 
 mt::BankResult writable() {
   if (!card::ready()) return BankResult::NoSd;
@@ -776,6 +992,7 @@ FLASHMEM void refreshIfDue() {
 }
 
 bool bgStep() {
+  if (edit.active) return edit.step();
   if (migrating) {
     const BankResult r = store.step();
     if (r != BankResult::Running) migrateDone(r);

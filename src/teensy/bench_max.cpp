@@ -591,7 +591,8 @@ void makeFm(mt::Instrument& fm, int sat) {
   fm.mono = false;
   fm.sustain = 127;
   fm.vol = 30;
-  fm.fmSat = static_cast<uint8_t>(sat);
+  fm.fmParam[7] = static_cast<uint8_t>(sat);
+  fm.fmParam[3] = 127;
 }
 
 // Group 2: arg | kMove adds a moving cutoff. The group 1 instruments hold theirs (CHIP: the env held

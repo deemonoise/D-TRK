@@ -3,6 +3,7 @@
 #include <AudioStream.h>
 #include "ev_queue.h"
 #include "practice.h"
+#include "synth_gain.h"
 
 namespace mt {
 class Synth;
@@ -85,6 +86,7 @@ class SynthStream : public AudioStream {
   volatile uint32_t cycles_ = 0, blocks_ = 0, peakCycles_ = 0, profPeak_ = 0;
   volatile uint16_t stalls_ = 0, late_ = 0, lost_ = 0, outPeak_ = 0;
   volatile int32_t phonesQ15_ = 32768;
+  mt::GainRamp phonesGain_;
   static constexpr int kScopeLen = 512;
   int16_t scope_[kScopeLen] = {};
   volatile int scopeAt_ = 0;

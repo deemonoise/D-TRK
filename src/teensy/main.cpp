@@ -131,7 +131,8 @@ void setup() {
   // its built-in wavetables need a 96 KB table from the RAM2 (OCRAM) heap before the delay line.
   card::begin();
   bank::begin(model, synth, out);
-  stream::begin(synth);  // the slot pool (96 KB DMAMEM) and the loop() scheduler
+  stream::begin(synth);  // the configured slot pool (RAM2) and the loop() scheduler
+  stream::addBackground(card::background());
   tools::begin();        // WavePeaks / Onsets of store samples as background work
   psram::begin(model, synth);  // CS0 chip (or off), self-test, the PERF reserve, the fill of the model
   const uint8_t perfSec = allocPerf();
@@ -143,6 +144,9 @@ void setup() {
   synth.setVoiceBudget(mt::kVoiceBudgetTeensy);  // the pool by cost (voice_cost.h); the guard is the backstop
   AudioMemory(16);  // the input takes 2 blocks a cycle (recording, MON) on top of the output
   out.begin(&synth);
+  card::setAudioIdle([]() {
+    return out.queue().peek() == nullptr && synth.activeVoices() == 0 && synth.gatePos() < 0;
+  });
   const bool shield = codec::begin();
   preview::begin(model, out, synth);
   render::begin(synth, out);
@@ -166,6 +170,7 @@ void setup() {
 void loop() {
   wdog::feed();
   link::poll();
+  card::step();    // queued filesystem requests expire even when audio owns the SD budget
   stream::step();  // voice / preview loads, then one background portion (bank job, ...)
   bank::refreshIfDue();  // heads / PSRAM for samples added on the fly
   rec::step();     // a take's ring into its file, STOP / keepalive

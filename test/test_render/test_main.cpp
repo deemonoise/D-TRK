@@ -1,3 +1,4 @@
+#include "synth_master.h"
 #include <unity.h>
 #include <math.h>
 #include <string.h>
@@ -405,8 +406,9 @@ void test_demo_render_unchanged_by_split() {
   int16_t peak = 0;
   const uint32_t h = demoRenderHash(&blocks, &peak);
   TEST_ASSERT_TRUE(peak > 1000);
-  // The FM attack and SYNTH oscillator corrections intentionally change the demo's audio.
-  TEST_ASSERT_EQUAL_HEX32(0xF39988DDu, h);
+  // Clean master, corrected reverb and smooth delay intentionally change demo audio.
+  // Deterministic repeats and block splitting remain covered by the adjacent render tests.
+  TEST_ASSERT_EQUAL_HEX32(0x7DA9008Du, h);
 }
 
 // The synth boards render on one synth, reset between renders: drum noise and LFO Random included,
@@ -694,7 +696,7 @@ void test_taps_keep_master_identical() {
   TEST_ASSERT_EQUAL_HEX32(plain, renderHash(p, synth, nullptr));
 }
 
-static float clip(float x) { return x >= 1.f ? 1.f : (x <= -1.f ? -1.f : x * (1.5f - 0.5f * x * x)); }
+static float clip(float x) { return masterLimit(x); }
 
 // Comp 0, EQ flat: the master is the soft clip of (sum of the track taps + the returns) x MAIN gain.
 void test_taps_sum_to_master() {
@@ -712,7 +714,7 @@ void test_taps_sum_to_master() {
   int16_t l[Synth::kBlock], rr[Synth::kBlock];
   float worst = 0, loud = 0, fx[3] = {0, 0, 0};
   while (r.renderBlock(l, rr)) {
-    TEST_ASSERT_FLOAT_WITHIN(1e-7f, 80 * 0.25f / 100.f, all.t.gain);
+    TEST_ASSERT_FLOAT_WITHIN(1e-7f, 80 * 0.375f / 100.f, all.t.gain);
     for (int i = 0; i < Synth::kBlock; ++i) {
       float sl = 0, sr = 0;
       for (int k = 0; k < RenderTaps::kCount; ++k) {

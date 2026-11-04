@@ -3,7 +3,7 @@
 namespace mt {
 
 MT_CONTROL void collapseStealTail(Voice& v) {
-  if (v.sample) return;  // Streaming/sample state keeps its existing fade policy.
+  if (v.sample) v.hold = v.sampleTailHold;
   v.stolen = true;
   // `hold` already contains the voice's last post-filter sample, including its gain/envelope.
   // The engine state remains allocated for later reuse; only this 4 ms tail bypasses its DSP.
@@ -27,7 +27,7 @@ MT_CONTROL void trimFullDspTailsWithPick(Voice (&v)[kVoices], int budget, int pi
     int victim = -1;
     for (int i = 0; i < kVoices; ++i) {
       const Voice& x = v[i];
-      if (i == pick || !x.on || !x.stolen || x.sample || x.env.idle() || !x.cost || isStealTail(x)) continue;
+      if (i == pick || !x.on || !x.stolen || x.env.idle() || !x.cost || isStealTail(x)) continue;
       if (victim < 0 || x.age < v[victim].age) victim = i;
     }
     if (victim < 0) break;

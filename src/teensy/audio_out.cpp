@@ -116,10 +116,12 @@ void SynthStream::update() {
     scopeAt_ = at;
   }
   const int32_t g = phonesQ15_;
-  if (g < 32768) {
+  phonesGain_.set(static_cast<float>(g));
+  if (g < 32768 || phonesGain_.moving()) {
     for (int i = 0; i < AUDIO_BLOCK_SAMPLES; ++i) {
-      l->data[i] = static_cast<int16_t>((l->data[i] * g) >> 15);
-      r->data[i] = static_cast<int16_t>((r->data[i] * g) >> 15);
+      const int32_t gain = static_cast<int32_t>(phonesGain_.next() + .5f);
+      l->data[i] = static_cast<int16_t>((l->data[i] * gain) >> 15);
+      r->data[i] = static_cast<int16_t>((r->data[i] * gain) >> 15);
     }
   }
   transmit(l, 0);

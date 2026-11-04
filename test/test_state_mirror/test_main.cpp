@@ -94,6 +94,24 @@ void test_edit_during_flight_stays_dirty() {
   TEST_ASSERT_EQUAL(c, s.nextDirty(live));
 }
 
+void test_compressor_attack_mirrors_and_retries_edits_in_flight() {
+  StateMirror s;
+  live = Project();
+  drain(s, live);
+  live.compAttack = 27;
+  const uint16_t c = static_cast<uint16_t>(s.nextDirty(live));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Compressor), c);
+  uint32_t off, len;
+  TEST_ASSERT_TRUE(chunkRange(c, off, len));
+  std::vector<uint8_t> sent(bytesOf(live, c), bytesOf(live, c) + len);
+  live.compAttack = 100;
+  s.acked(c, sent.data());
+  TEST_ASSERT_FALSE(s.synced(live));
+  TEST_ASSERT_EQUAL(c, s.nextDirty(live));
+  s.acked(c, bytesOf(live, c));
+  TEST_ASSERT_TRUE(s.synced(live));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_fresh_mirror_sends_everything_in_order);
@@ -101,5 +119,6 @@ int main(int, char**) {
   RUN_TEST(test_invalidate_dirties_all);
   RUN_TEST(test_in_flight_not_resent_and_failed_retries);
   RUN_TEST(test_edit_during_flight_stays_dirty);
+  RUN_TEST(test_compressor_attack_mirrors_and_retries_edits_in_flight);
   return UNITY_END();
 }

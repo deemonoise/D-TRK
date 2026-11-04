@@ -126,6 +126,7 @@ static void fillFull(Project& p) {
   p.rvbLevel = 33;
   p.compAmt = 44;
   p.compRel = 55;
+  p.compAttack = 37;
   p.scTrack = 16;
   p.scDepth = 66;
   Instrument& i1 = p.instruments[1];
@@ -159,8 +160,9 @@ static void fillFull(Project& p) {
   i15.reverse = true;
   Instrument& i3 = p.instruments[3];
   i3.type = InstrType::Fm;
-  i3.machine = static_cast<uint8_t>(FmMachine::Clap);
+  i3.machine = static_cast<uint8_t>(FmMachine::CpVintage);
   for (int k = 0; k < kFmMacros; ++k) i3.macro[k] = static_cast<uint8_t>(10 + k * 20);
+  for (int k = 0; k < kFmParams; ++k) i3.fmParam[k] = static_cast<uint8_t>(7 + k * 13);
   i3.fmSat = 77;
   p.instruments[15].chipStep = true;
   i3.lfoWave = static_cast<uint8_t>(LfoWave::Random);
@@ -236,6 +238,7 @@ static void assertSame(const Project& x, const Project& y) {
   TEST_ASSERT_EQUAL(x.rvbLevel, y.rvbLevel);
   TEST_ASSERT_EQUAL(x.compAmt, y.compAmt);
   TEST_ASSERT_EQUAL(x.compRel, y.compRel);
+  TEST_ASSERT_EQUAL(x.compAttack, y.compAttack);
   TEST_ASSERT_EQUAL(x.scTrack, y.scTrack);
   TEST_ASSERT_EQUAL(x.scDepth, y.scDepth);
   for (int i = 0; i < kInstruments; ++i) {
@@ -263,6 +266,7 @@ static void assertSame(const Project& x, const Project& y) {
     TEST_ASSERT_EQUAL(m.loopStart, n.loopStart);
     TEST_ASSERT_EQUAL(m.reverse, n.reverse);
     TEST_ASSERT_EQUAL(m.machine, n.machine);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(m.fmParam, n.fmParam, kFmParams);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(m.macro, n.macro, kFmMacros);
     TEST_ASSERT_EQUAL(m.fmSat, n.fmSat);
     TEST_ASSERT_EQUAL(m.chipStep, n.chipStep);
@@ -334,8 +338,8 @@ void test_empty_patterns_not_written() {
   TEST_ASSERT_TRUE(saveProject(a, out));
   // Everything but patterns: project, track and audio chunks (< 2 KB) plus the instrument records
   // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LOFI 8, LFOX 16, LFOB 8, FMEX 4, KITS 352 = 580 bytes each).
-  // One written empty pattern would add ~28 KB, so the bound proves none is.
-  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 586);
+  // SLX1 adds 264 bytes per instrument. One written empty pattern would add ~28 KB, so the bound proves none is.
+  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * (594 + kSliceExtRecSize));
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
@@ -925,7 +929,7 @@ void test_fmin_garbage_clamped() {
   finish(f);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
   const Instrument& m = b.instruments[0];
-  TEST_ASSERT_EQUAL(0, m.machine);
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Tone), m.machine);
   for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_EQUAL(127, m.macro[k]);
   TEST_ASSERT_EQUAL(0, m.lfoWave);
   TEST_ASSERT_EQUAL(127, m.lfoRate);
@@ -1196,7 +1200,7 @@ void test_fm_machine_out_of_range() {
   TEST_ASSERT_TRUE(saveProject(a, out));
   VecSource in(out.buf);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
-  TEST_ASSERT_EQUAL(0, b.instruments[3].machine);
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Tone), b.instruments[3].machine);
 }
 
 void test_slices_roundtrip() {
@@ -1267,14 +1271,14 @@ void test_slices_count_clamped() {
   uint8_t r[kSliceRecSize];
   memset(r, 0, sizeof(r));
   r[4] = 40;
-  for (int i = 0; i < kMaxSlices; ++i) {
+  for (int i = 0; i < kLegacySlices; ++i) {
     const uint16_t v = static_cast<uint16_t>(100 + i * 1000);
     r[8 + 2 * i] = static_cast<uint8_t>(v);
     r[9 + 2 * i] = static_cast<uint8_t>(v >> 8);
   }
   Instrument m;
   unpackSlices(r, m);
-  TEST_ASSERT_EQUAL(kMaxSlices, m.sliceCount);
+  TEST_ASSERT_EQUAL(kLegacySlices, m.sliceCount);
   TEST_ASSERT_EQUAL(100 + 31 * 1000, m.slices[31]);
 }
 
@@ -2080,6 +2084,27 @@ void test_tspd_absent_without_speeds_and_bad_values() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+void test_audi_attack_round_trip_legacy_and_clamp() {
+  a.compAttack = 27;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  TEST_ASSERT_EQUAL(27, b.compAttack);
+  std::vector<uint8_t> f = fileHeader();
+  std::vector<uint8_t> audi(26, 0);
+  putChunk(f, "AUDI", audi);  // pre-attack projects keep the 10 ms default
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(83, b.compAttack);
+  f = fileHeader();
+  audi.push_back(255);
+  audi.push_back(17);  // future tail is skipped
+  putChunk(f, "AUDI", audi);
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(127, b.compAttack);
+}
+
 void test_audi_sound_fx_defaults_and_clamps() {
   std::vector<uint8_t> f = fileHeader();
   putChunk(f, "AUDI", {50, 1, 4, 10, 20, 30});  // a 6-byte (older) AUDI
@@ -2352,8 +2377,9 @@ void test_audi_dj_byte_ignored() {
   while (pos + 8 <= out.buf.size() && memcmp(out.buf.data() + pos, "AUDI", 4) != 0)
     pos += 8 + (out.buf[pos + 4] | (out.buf[pos + 5] << 8) | (out.buf[pos + 6] << 16) |
                 (static_cast<uint32_t>(out.buf[pos + 7]) << 24));
-  TEST_ASSERT_TRUE(pos + 8 + 26 <= out.buf.size());
-  TEST_ASSERT_EQUAL(26, out.buf[pos + 4]);
+  TEST_ASSERT_TRUE(pos + 8 + 27 <= out.buf.size());
+  TEST_ASSERT_EQUAL(27, out.buf[pos + 4]);
+  TEST_ASSERT_EQUAL(83, out.buf[pos + 8 + 26]);
   TEST_ASSERT_EQUAL(64, out.buf[pos + 8 + 13]);
 }
 
@@ -3222,6 +3248,31 @@ void test_fmex_garbage_clamped_and_sizes() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
 
+// ---- FMPA: the eight independently stored A..H machine controls ----
+void test_fmpa_short_long_clamped_and_invalid_records() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "FMPA", {1, 10, 200, 1, 2, 3, 4, 5, 6, 127, 88, 99});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  const uint8_t expected[] = {127, 1, 2, 3, 4, 5, 6, 127};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, b.instruments[0].fmParam, 8);
+  f = fileHeader();
+  putChunk(f, "FMPA", {1, 2, 31, 47});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(31, b.instruments[0].fmParam[0]);
+  TEST_ASSERT_EQUAL(47, b.instruments[0].fmParam[1]);
+  TEST_ASSERT_EQUAL(110, b.instruments[0].fmParam[3]);  // missing tail keeps reset TONE defaults
+  f = fileHeader();
+  putChunk(f, "FMPA", {1, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "FMPA", {2, 8, 1, 2});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
 // ---- KNOB: controller knobs (BLE MIDI learn) ----
 
 void test_knob_round_trip_and_missing() {
@@ -3334,6 +3385,7 @@ void test_automation_lanes_survive_project_round_trip() {
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_fmpa_short_long_clamped_and_invalid_records);
   RUN_TEST(test_automation_lanes_survive_project_round_trip);
   RUN_TEST(test_crc32_reference);
   RUN_TEST(test_samples_bad_names_skipped);
@@ -3422,6 +3474,7 @@ int main() {
   RUN_TEST(test_tins_three_byte_records);
   RUN_TEST(test_tins_record_assigns_present_fields_only);
   RUN_TEST(test_no_tins_migrates_instrument_insert);
+  RUN_TEST(test_audi_attack_round_trip_legacy_and_clamp);
   RUN_TEST(test_audi_sound_fx_defaults_and_clamps);
   RUN_TEST(test_read_file_names);
   RUN_TEST(test_prfm_legacy_mapped);

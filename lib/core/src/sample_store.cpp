@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <new>
+#include "time_stretch.h"
 #include "sample_set.h"
+#include "render.h"
 #include "wav.h"
 #include "wave_peaks.h"
 
@@ -55,7 +58,7 @@ int StoreTable::find(uint32_t crc) const {
   return -1;
 }
 
-int StoreTable::add(uint32_t crc, uint32_t frames, uint32_t rate, uint32_t sector) {
+int StoreTable::add(uint32_t crc, uint32_t frames, uint32_t rate, uint32_t sector, const SectorMap* sectors) {
   const int have = find(crc);
   if (have >= 0) return have;
   if (n_ >= kStoreEntries || !crc) return -1;
@@ -63,6 +66,7 @@ int StoreTable::add(uint32_t crc, uint32_t frames, uint32_t rate, uint32_t secto
   e.frames = frames;
   e.rate = rate;
   e.sector = sector;
+  e.sectors = sectors;
   e.head0 = 0;
   e.nHeads = 0;
   e.psram = nullptr;
@@ -102,7 +106,7 @@ bool StoreSampleSource::find(const char* name, SampleData& out) const {
     out.rate = e.rate;
     out.heads = e.nHeads ? t_.heads(i) : nullptr;
     out.nHeads = e.nHeads;
-    out.streamable = e.sector != 0;
+    out.streamable = e.sector != 0 || e.sectors != nullptr;
     const int16_t* ps2 = e.psram;
     if (ps2 && p_.psramOk) {
       out.whole = ps2;
@@ -115,9 +119,37 @@ bool StoreSampleSource::find(const char* name, SampleData& out) const {
 
 // ---- StoreJob ----
 
+struct StoreJob::TempoState {
+  explicit TempoState(uint32_t frames, uint32_t rate) : scan(frames, rate, kMaxOnsets) {}
+  OnsetScan scan;
+  Onset onsets[kMaxOnsets];
+};
+
+struct StoreJob::StretchReader final : TimeStretchReader {
+  explicit StretchReader(StoreJob& job) : job(job) {}
+  bool read(uint32_t first, uint32_t count, int16_t* out) override {
+    if (!count) return true;
+    if (!out || !job.in_ || first > job.stretchInput_ || count > job.stretchInput_ - first) return false;
+    const uint64_t position = uint64_t(job.at_) + uint64_t(first) * 2;
+    if (position > UINT32_MAX || !job.in_->seek(static_cast<uint32_t>(position))) return false;
+    // One WSOLA grain requests at most 3072 frames. Individual file reads stay <= 2 KB.
+    while (count) {
+      const uint32_t n = count < kStepFrames ? count : kStepFrames;
+      if (!job.in_->read(out, n * 2)) return false;
+      out += n;
+      count -= n;
+    }
+    return true;
+  }
+  StoreJob& job;
+};
+
 const char kStoreTmp[] = "/mt-store/import.tmp";
 
 namespace {
+const char kEditTmp[] = "/mt-store/edit.tmp";
+const char kEditPeakTmp[] = "/mt-store/edit.pk.tmp";
+
 BankResult fromWav(WavErr e) {
   return e == WavErr::NotWav ? BankResult::NotWav
                              : (e == WavErr::Truncated ? BankResult::Truncated : BankResult::Unsupported);
@@ -211,12 +243,12 @@ int StoreJob::missing() const {
   return n;
 }
 uint32_t StoreJob::done() const {
-  if (kind_ == Kind::Import) return subDone_;
+  if (kind_ == Kind::Import || kind_ == Kind::Edit || kind_ == Kind::Analyze) return subDone_;
   return static_cast<uint32_t>(item_) * 1000 +
          (subTotal_ ? static_cast<uint32_t>(static_cast<uint64_t>(subDone_) * 1000 / subTotal_) : 0);
 }
 uint32_t StoreJob::total() const {
-  return kind_ == Kind::Import ? subTotal_ : static_cast<uint32_t>(count_) * 1000;
+  return kind_ == Kind::Import || kind_ == Kind::Edit || kind_ == Kind::Analyze ? subTotal_ : static_cast<uint32_t>(count_) * 1000;
 }
 
 void StoreJob::closeAll() {
@@ -229,7 +261,7 @@ void StoreJob::closeAll() {
 BankResult StoreJob::start(Kind k) {
   if (busy()) return BankResult::Busy;
   if (!d_.ready()) return BankResult::NoSd;
-  d_.mkdir(kStoreDir);  // false when it is there
+  if (k != Kind::Analyze) d_.mkdir(kStoreDir);  // a tempo probe never writes the volume
   kind_ = k;
   phase_ = Phase::Next;
   item_ = count_ = 0;
@@ -240,6 +272,7 @@ BankResult StoreJob::start(Kind k) {
 
 BankResult StoreJob::finish(BankResult r) {
   closeAll();
+  releaseWorkers();
   kind_ = Kind::None;
   phase_ = Phase::Next;
   return r;
@@ -249,9 +282,10 @@ void StoreJob::cancel() {
   if (!busy()) return;
   const Phase ph = phase_;
   closeAll();
-  if (ph == Phase::Convert) d_.remove(kStoreTmp);
+  releaseWorkers();
+  if (ph == Phase::Convert) d_.remove(temporaryPath());
   if (ph == Phase::Copy) d_.remove(path_);
-  if (ph == Phase::Peaks) d_.remove(dst_);
+  if (ph == Phase::Peaks) d_.remove(kind_ == Kind::Edit ? path_ : dst_);
   kind_ = Kind::None;
   phase_ = Phase::Next;
 }
@@ -263,6 +297,87 @@ BankResult StoreJob::startImport(const char* path, const uint32_t* knownCrc) {
   r = openConvert(path, nullptr, knownCrc);
   if (r != BankResult::Ok) finish(r);
   return r;
+}
+
+void StoreJob::releaseWorkers() {
+  delete stretch_;
+  stretch_ = nullptr;
+  delete tempo_;
+  tempo_ = nullptr;
+  editStretch_ = false;
+}
+
+BankResult StoreJob::openOperation(Kind kind, const char* path, uint32_t from, uint32_t to) {
+  if (from >= to || !path || path[0] != '/') return BankResult::Unsupported;
+  const BankResult r = start(kind);
+  if (r != BankResult::Ok) return r;
+  imp_ = ImportOut();
+  in_ = d_.openRead(path);
+  if (!in_) return finish(BankResult::OpenFail);
+  w_ = WavInfo();
+  const WavErr e = wavParse(*in_, w_);
+  if (e != WavErr::Ok) return finish(fromWav(e));
+  if (w_.channels != 1 || w_.bits != 16 || w_.isFloat || !w_.rate ||
+      w_.rate > kWavMaxRate || w_.dataOffset != kStoreDataOffset || to > w_.frames())
+    return finish(BankResult::Unsupported);
+  const uint64_t end = uint64_t(w_.dataOffset) + uint64_t(to) * 2;
+  if (end > in_->size()) return finish(BankResult::Truncated);
+  at_ = w_.dataOffset + from * 2;  // validated against the real 32-bit file size above
+  if (!in_->seek(at_)) return finish(BankResult::ReadFail);
+  bankEntry_ = -1;
+  hasExpect_ = false;
+  root_ = w_.root;
+  rate_ = w_.rate;
+  left_ = to - from;
+  editNormalize_ = false;
+  editStretch_ = false;
+  editPeak_ = 0;
+  subDone_ = 0;
+  subTotal_ = left_;
+  return BankResult::Ok;
+}
+
+BankResult StoreJob::startEdit(const char* path, uint32_t from, uint32_t to, bool normalize) {
+  const BankResult opened = openOperation(Kind::Edit, path, from, to);
+  if (opened != BankResult::Ok) return opened;
+  editNormalize_ = normalize;
+  subTotal_ = left_ * (normalize ? 2u : 1u);  // <= file data bytes, so cannot overflow
+  if (normalize) {
+    phase_ = Phase::EditScan;
+    return BankResult::Ok;
+  }
+  const BankResult r = beginWrite(left_);
+  return r == BankResult::Ok ? r : finish(r);
+}
+
+BankResult StoreJob::startStretch(const char* path, uint32_t from, uint32_t to, uint32_t ratioQ16) {
+  if (ratioQ16 < 32768 || ratioQ16 > 131072) return BankResult::Unsupported;
+  if (ratioQ16 == 65536) return startEdit(path, from, to, false);  // exact unity, no DSP workspace
+  const BankResult opened = openOperation(Kind::Edit, path, from, to);
+  if (opened != BankResult::Ok) return opened;
+  uint64_t frames = (uint64_t(left_) * ratioQ16 + 32768) / 65536;
+  if (!frames) frames = 1;
+  if (frames > (UINT32_MAX - kStoreDataOffset) / 2) return finish(BankResult::Unsupported);
+  stretch_ = new (std::nothrow) TimeStretch;
+  if (!stretch_) return finish(BankResult::NoMemory);
+  const TimeStretchResult state = stretch_->start(left_, rate_, static_cast<uint32_t>(frames));
+  if (state != TimeStretchResult::Running)
+    return finish(state == TimeStretchResult::NoMemory ? BankResult::NoMemory : BankResult::Unsupported);
+  stretchInput_ = left_;
+  editStretch_ = true;
+  subTotal_ = static_cast<uint32_t>(frames);
+  const BankResult r = beginWrite(subTotal_);
+  return r == BankResult::Ok ? r : finish(r);
+}
+
+BankResult StoreJob::startTempo(const char* path, uint32_t from, uint32_t to) {
+  const BankResult r = openOperation(Kind::Analyze, path, from, to);
+  if (r != BankResult::Ok) return r;
+  tempoResult_ = TempoEstimate{};
+  tempo_ = new (std::nothrow) TempoState(left_, rate_);
+  if (!tempo_) return finish(BankResult::NoMemory);
+  phase_ = Phase::TempoScan;
+  return BankResult::Ok;
 }
 
 BankResult StoreJob::startSync(const char* project, const SynthModel& m) {
@@ -301,23 +416,36 @@ BankResult StoreJob::startMigrate(const SampleBank& b) {
 BankResult StoreJob::step() {
   if (!busy()) return BankResult::Ok;
   switch (phase_) {
-    case Phase::Convert: return convertStep();
+    case Phase::Convert: return kind_ == Kind::Edit ? (editStretch_ ? stretchStep() : editCopyStep()) : convertStep();
+    case Phase::EditScan: return editScanStep();
+    case Phase::TempoScan: return tempoStep();
     case Phase::Copy: return copyStep();
     case Phase::Peaks: return peaksStep();
-    default: return kind_ == Kind::Import ? finish(BankResult::Ok) : nextItem();
+    default: return kind_ == Kind::Import || kind_ == Kind::Edit ? finish(BankResult::Ok) : nextItem();
   }
 }
 
 BankResult StoreJob::endItem(BankResult r) {
   const Phase ph = phase_;
+  bool peaksClosed = true;
+  if (kind_ == Kind::Edit && ph == Phase::Peaks && out_) {
+    out_ = nullptr;
+    peaksClosed = d_.closeWrite();
+  }
   closeAll();
-  if (ph == Phase::Convert) d_.remove(kStoreTmp);
+  if (ph == Phase::Convert) d_.remove(temporaryPath());
   if (ph == Phase::Copy && r != BankResult::Ok) d_.remove(path_);
-  if (ph == Phase::Peaks && left_) d_.remove(dst_);  // a cut overview is worse than none
+  if (ph == Phase::Peaks) {
+    if (kind_ == Kind::Edit) {
+      // Publish only a complete new overview. A prior overview always wins; cancel / failure
+      // can remove only this job's temporary output, never another keyed file.
+      if (left_ || !peaksClosed || d_.exists(dst_) || !d_.rename(path_, dst_)) d_.remove(path_);
+    } else if (left_) d_.remove(dst_);  // a cut overview is worse than none
+  }
   phase_ = Phase::Next;
   bankEntry_ = -1;
   subDone_ = subTotal_ = 0;
-  if (kind_ == Kind::Import) return finish(r);
+  if (kind_ == Kind::Import || kind_ == Kind::Edit) return finish(r);
   if (r != BankResult::Ok && kind_ != Kind::Migrate && item_ < kProjSamples) missing_[item_] = true;
   ++item_;
   return BankResult::Running;
@@ -426,23 +554,104 @@ BankResult StoreJob::openConvert(const char* path, const uint32_t* expect, const
   return beginWrite(static_cast<uint32_t>(static_cast<uint64_t>(frames) * rate_ / w_.rate) + 2);
 }
 
+const char* StoreJob::temporaryPath() const { return kind_ == Kind::Edit ? kEditTmp : kStoreTmp; }
+
 BankResult StoreJob::beginWrite(uint32_t frames) {
-  d_.remove(kStoreTmp);
-  out_ = d_.openWrite(kStoreTmp);
+  d_.remove(temporaryPath());
+  out_ = d_.openWrite(temporaryPath());
   if (!out_) {
     closeAll();
     return BankResult::WriteFail;
   }
-  out_->reserve(kStoreDataOffset + frames * 2);
+  const bool reserved = out_->reserve(kStoreDataOffset + frames * 2);
+  if (kind_ == Kind::Edit && !reserved) {
+    closeAll();
+    d_.remove(temporaryPath());
+    return BankResult::WriteFail;
+  }
   static const uint8_t zero[kStoreDataOffset] = {};
   if (!out_->write(zero, sizeof zero)) {  // the header goes in at the end (crc)
     closeAll();
-    d_.remove(kStoreTmp);
+    d_.remove(temporaryPath());
     return BankResult::WriteFail;
   }
   frames_ = crc_ = 0;
   phase_ = Phase::Convert;
   return BankResult::Ok;
+}
+
+BankResult StoreJob::editScanStep() {
+  const uint32_t n = left_ < kStepFrames ? left_ : kStepFrames;
+  if (!in_->read(mono_, n * 2)) return endItem(BankResult::Truncated);
+  for (uint32_t i = 0; i < n; ++i) {
+    const int32_t v = mono_[i];
+    const uint32_t magnitude = static_cast<uint32_t>(v < 0 ? -v : v);
+    if (magnitude > editPeak_) editPeak_ = magnitude;
+  }
+  left_ -= n;
+  subDone_ += n;
+  if (left_) return BankResult::Running;
+  if (!in_->seek(at_)) return endItem(BankResult::ReadFail);
+  left_ = subTotal_ / 2;
+  const BankResult r = beginWrite(left_);
+  return r == BankResult::Ok ? BankResult::Running : endItem(r);
+}
+
+BankResult StoreJob::editCopyStep() {
+  const uint32_t n = left_ < kStepFrames ? left_ : kStepFrames;
+  if (!in_->read(mono_, n * 2)) return endItem(BankResult::Truncated);
+  if (editNormalize_ && editPeak_) {
+    constexpr int64_t target = static_cast<int64_t>(kNormPeak + 0.5f);
+    for (uint32_t i = 0; i < n; ++i) {
+      const int32_t v = mono_[i];
+      const int64_t magnitude = v < 0 ? -v : v;
+      const int32_t scaled = static_cast<int32_t>((magnitude * target + editPeak_ / 2) / editPeak_);
+      mono_[i] = static_cast<int16_t>(v < 0 ? -scaled : scaled);
+    }
+  }
+  if (!out_->write(mono_, n * 2)) return endItem(BankResult::WriteFail);
+  crc_ = sampleCrc(mono_, n, crc_);
+  frames_ += n;
+  left_ -= n;
+  subDone_ += n;
+  return left_ ? BankResult::Running : finishConvert();
+}
+
+BankResult StoreJob::stretchStep() {
+  StretchReader reader(*this);
+  uint32_t produced = 0;
+  const TimeStretchResult state = stretch_->step(reader, mono_, kStepFrames, produced);
+  if (state != TimeStretchResult::Running && state != TimeStretchResult::Done) {
+    const BankResult r = state == TimeStretchResult::NoMemory ? BankResult::NoMemory :
+                         state == TimeStretchResult::ReadFail ? BankResult::ReadFail : BankResult::Unsupported;
+    return endItem(r);
+  }
+  if (frames_ > subTotal_ || produced > kStepFrames || produced > subTotal_ - frames_)
+    return endItem(BankResult::ReadFail);
+  if (produced) {
+    if (!out_->write(mono_, produced * 2)) return endItem(BankResult::WriteFail);
+    crc_ = sampleCrc(mono_, produced, crc_);
+    frames_ += produced;
+    subDone_ = frames_;
+  }
+  if (state != TimeStretchResult::Done) return BankResult::Running;
+  if (frames_ != subTotal_) return endItem(BankResult::ReadFail);
+  delete stretch_;
+  stretch_ = nullptr;
+  editStretch_ = false;
+  return finishConvert();
+}
+
+BankResult StoreJob::tempoStep() {
+  const uint32_t n = left_ < kStepFrames ? left_ : kStepFrames;
+  if (!in_->read(mono_, n * 2)) return finish(BankResult::ReadFail);
+  tempo_->scan.feed(mono_, n);
+  left_ -= n;
+  subDone_ += n;
+  if (left_) return BankResult::Running;
+  const int count = tempo_->scan.finish(tempo_->onsets);
+  tempoResult_ = estimateTempo(tempo_->onsets, count, rate_, subTotal_);
+  return finish(BankResult::Ok);  // unknown tempo is a valid read-only result, not an I/O error
 }
 
 BankResult StoreJob::convertStep() {
@@ -467,6 +676,18 @@ BankResult StoreJob::convertStep() {
   return left_ ? BankResult::Running : finishConvert();
 }
 
+bool StoreJob::editStoredMetadataMatches(const char* path) {
+  ReadFile* existing = d_.openRead(path);
+  if (!existing) return false;
+  WavInfo info;
+  const bool match = wavParse(*existing, info) == WavErr::Ok && !info.isFloat &&
+      info.channels == 1 && info.bits == 16 && info.dataOffset == kStoreDataOffset &&
+      info.hasCrc && info.crc == crc_ && info.frames() == frames_ && info.rate == rate_ &&
+      info.root == root_ && uint64_t(info.dataOffset) + uint64_t(frames_) * 2 <= existing->size();
+  d_.closeRead();
+  return match;
+}
+
 BankResult StoreJob::finishConvert() {
   if (in_) d_.closeRead();
   in_ = nullptr;
@@ -476,25 +697,29 @@ BankResult StoreJob::finishConvert() {
   const bool ok = out_->seek(0) && out_->write(h, sizeof h);
   out_ = nullptr;
   if (!d_.closeWrite() || !ok) {
-    d_.remove(kStoreTmp);
+    d_.remove(temporaryPath());
     return endItem(BankResult::WriteFail);
   }
   char p[kStorePathMax];
   storePath(crc_, p);
-  if (d_.exists(p)) {
-    d_.remove(kStoreTmp);  // the same data is there already
-  } else if (!d_.rename(kStoreTmp, p)) {
-    d_.remove(kStoreTmp);
+  const bool alreadyStored = d_.exists(p);
+  if (alreadyStored) {
+    if (kind_ == Kind::Edit && !editStoredMetadataMatches(p))
+      return endItem(BankResult::Unsupported);  // PCM-only keys cannot represent conflicting metadata
+    d_.remove(temporaryPath());  // the same data is there already
+  } else if (!d_.rename(temporaryPath(), p)) {
+    d_.remove(temporaryPath());
     phase_ = Phase::Next;
     return endItem(BankResult::WriteFail);
   }
-  if (kind_ == Kind::Import) {
+  if (kind_ == Kind::Import || kind_ == Kind::Edit) {
     imp_.crc = crc_;
     imp_.frames = frames_;
     imp_.rate = rate_;
     imp_.root = root_;
   }
   if (added_) added_(crc_, addedCtx_);
+  if (kind_ == Kind::Edit && alreadyStored) return endItem(BankResult::Ok);
   return openPeaks();
 }
 
@@ -504,7 +729,11 @@ BankResult StoreJob::openPeaks() {
   phase_ = Phase::Next;
   in_ = d_.openRead(p);
   storePeaksPath(crc_, dst_);
-  out_ = in_ ? d_.openWrite(dst_) : nullptr;
+  if (kind_ == Kind::Edit) {
+    strcpy(path_, kEditPeakTmp);
+    d_.remove(path_);
+  }
+  out_ = in_ ? d_.openWrite(kind_ == Kind::Edit ? path_ : dst_) : nullptr;
   left_ = frames_;
   if (!in_ || !out_ || !in_->seek(kStoreDataOffset)) {
     phase_ = Phase::Peaks;

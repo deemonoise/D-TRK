@@ -51,7 +51,9 @@ mt::BankResult importFile(const char* path);
 // and the import (crc, frames in the store) until the next importFile.
 mt::BankResult importPoll(mt::ImportOut& o, uint32_t& done, uint32_t& total);
 
-// The ESP (re)started: its seqs start over, so the last reply is no longer one to repeat.
+// The ESP (re)started: its seqs start over, so the last reply is no longer one to repeat. Cancels
+// an offline SampleEdit/SampleTempo, discards its queued events and unparks without sending an old-session
+// reply. Other bank jobs retain their existing behavior.
 void reset();
 
 // The running job's next piece (about kStepBytes of card I/O), then its reply when it ends. False: no

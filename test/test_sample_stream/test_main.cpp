@@ -126,6 +126,20 @@ void test_stream_matches_ram_reverse_pingpong() {
   TEST_ASSERT_EQUAL_INT16_ARRAY(a.data(), b.data(), a.size());
 }
 
+void test_antialias_stream_matches_ram_at_loop_edges() {
+  for (auto mode : {LoopMode::Off, LoopMode::Forward, LoopMode::PingPong})
+    for (bool reverse : {false, true})
+      for (uint8_t note : {uint8_t(73), uint8_t(84)}) {
+        p->instruments[0].loop = static_cast<uint8_t>(mode);
+        p->instruments[0].loopStart = 0x2000;
+        p->instruments[0].reverse = reverse;
+        const auto a = ram(note, 180);
+        const auto b = streamed(note, 180);
+        TEST_ASSERT_EQUAL_INT16_ARRAY(a.data(), b.data(), a.size());
+        TEST_ASSERT_EQUAL_UINT32(0, pool.underruns);
+      }
+}
+
 void test_underrun_fades_and_counts() {
   const auto a = ram(60, 60);
   src.stream = true;
@@ -219,10 +233,51 @@ void test_prefetch_skips_what_needs_no_load() {
   TEST_ASSERT_EQUAL(-1, s->prefetch(0, 60, 0));
 }
 
+static void check_same_key_reuse_refreshes_region(bool collapsed) {
+  Instrument& m = p->instruments[0];
+  m.mono = true;
+  m.loop = static_cast<uint8_t>(LoopMode::Forward);
+  src.stream = true;
+  pool.sync = &rd;
+  play(72, 4);
+  Voice& old = const_cast<Voice&>(s->voice(s->trackVoice(0)));
+  const int slot = old.slot;
+  TEST_ASSERT_TRUE(slot >= 0);
+  const uint8_t generation = pool.slot(slot).gen;
+  if (collapsed) collapseStealTail(old);  // stream slot survives until this short tail ends/reuses
+  m.start = 0x2000;
+  m.end = 0x9000;
+  m.loopStart = 0x4000;
+  m.loop = static_cast<uint8_t>(LoopMode::PingPong);
+  m.reverse = true;
+  const SampleRegion wanted = sampleRegion(m, -1, static_cast<uint32_t>(src.d.size()), 0);
+  play(72, 1);
+  const Voice& current = s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL(slot, current.slot);
+  TEST_ASSERT_EQUAL(generation, pool.slot(slot).gen); // same-key data are retained
+  PlaySnap snapshot;
+  TEST_ASSERT_TRUE(pool.snap(slot, snapshot));
+  TEST_ASSERT_EQUAL_UINT32(wanted.from, snapshot.from);
+  TEST_ASSERT_EQUAL_UINT32(wanted.to, snapshot.to);
+  TEST_ASSERT_EQUAL_UINT32(wanted.loopLo, snapshot.loopLo);
+  TEST_ASSERT_EQUAL_UINT32(wanted.loopHi, snapshot.loopHi);
+  TEST_ASSERT_EQUAL(wanted.loopMode, snapshot.loopMode);
+  TEST_ASSERT_TRUE(snapshot.step16 < 0);
+}
+void test_same_key_retrigger_refreshes_stream_region() {
+  check_same_key_reuse_refreshes_region(false);
+}
+void test_collapsed_sample_slot_reuse_refreshes_stream_region() {
+  check_same_key_reuse_refreshes_region(true);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_same_key_retrigger_refreshes_stream_region);
+  RUN_TEST(test_collapsed_sample_slot_reuse_refreshes_stream_region);
   RUN_TEST(test_stream_matches_ram_forward_loop);
   RUN_TEST(test_stream_matches_ram_reverse_pingpong);
+  RUN_TEST(test_antialias_stream_matches_ram_at_loop_edges);
   RUN_TEST(test_underrun_fades_and_counts);
   RUN_TEST(test_voice_frees_its_slot);
   RUN_TEST(test_failed_psram_falls_back_to_stream);

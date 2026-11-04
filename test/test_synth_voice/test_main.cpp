@@ -460,28 +460,26 @@ void test_budget_collapses_only_enough_oldest_fades() {
   TEST_ASSERT_TRUE(v[byAge(3)].fm);
   TEST_ASSERT_TRUE(fullDspCost()+400<=1000);
 }
-void test_budget_never_collapses_sample_or_budget_off_fades() {
+void test_budget_collapses_sample_but_preserves_budget_off_fades() {
   const int sample=allocCost(0,300,kVoiceBudgetOff);v[sample].sample=true;
   allocCost(1,300,kVoiceBudgetOff);allocCost(2,300,kVoiceBudgetOff);
   allocCost(3,300,1000);
-  TEST_ASSERT_TRUE(v[sample].sample);
-  TEST_ASSERT_TRUE(v[sample].stolen);
-  TEST_ASSERT_NOT_EQUAL(0xfe,v[sample].wave);
+  TEST_ASSERT_TRUE(isStealTail(v[sample]));
   setUp();
   const int a=allocCost(0,300,kVoiceBudgetOff);v[a].fm=true;v[a].stolen=true;v[a].env.fade(kStealMs);
   enforceBudget(v,1,2000,kVoiceBudgetOff);
   TEST_ASSERT_TRUE(v[a].fm);
 }
 
-void test_tail_helper_marks_its_mode_and_refuses_samples() {
+void test_tail_helper_uses_separate_sample_output_cache() {
   const int a=allocCost(0,300,kVoiceBudgetOff);v[a].fm=true;v[a].hold=-.2f;
   collapseStealTail(v[a]);
   TEST_ASSERT_TRUE(isStealTail(v[a]));
   TEST_ASSERT_EQUAL_FLOAT(-.2f,v[a].hold);
-  const int b=allocCost(1,300,kVoiceBudgetOff);v[b].sample=true;
+  const int b=allocCost(1,300,kVoiceBudgetOff);v[b].sample=true;v[b].hold=12000;v[b].sampleTailHold=.15f;
   collapseStealTail(v[b]);
-  TEST_ASSERT_TRUE(v[b].sample);
-  TEST_ASSERT_FALSE(v[b].stolen);
+  TEST_ASSERT_TRUE(isStealTail(v[b]));
+  TEST_ASSERT_EQUAL_FLOAT(.15f,v[b].hold);
 }
 
 void test_trim_full_dsp_tails_after_repricing_never_steals_active_notes() {
@@ -499,11 +497,11 @@ void test_trim_full_dsp_tails_after_repricing_never_steals_active_notes() {
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_trim_full_dsp_tails_after_repricing_never_steals_active_notes);
-  RUN_TEST(test_tail_helper_marks_its_mode_and_refuses_samples);
+  RUN_TEST(test_tail_helper_uses_separate_sample_output_cache);
   RUN_TEST(test_budget_counts_full_dsp_fading_cost);
   RUN_TEST(test_budget_keeps_full_fades_when_cpu_headroom_exists);
   RUN_TEST(test_budget_collapses_only_enough_oldest_fades);
-  RUN_TEST(test_budget_never_collapses_sample_or_budget_off_fades);
+  RUN_TEST(test_budget_collapses_sample_but_preserves_budget_off_fades);
   RUN_TEST(test_alloc_marks_voice);
   RUN_TEST(test_poly_steals_oldest_of_track);
   RUN_TEST(test_mono_legato);

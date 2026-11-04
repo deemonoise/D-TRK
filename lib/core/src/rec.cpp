@@ -91,7 +91,13 @@ int recGainClamp(RecSource src, int gain) {
 
 // --- RecCapture ---
 
+void RecCapture::invalidateMemory() {
+  stop();
+  ring_.init(nullptr, 0);
+}
+
 void RecCapture::arm(RecSource src, int8_t threshDb, uint32_t maxFrames) {
+  if (!ring_.capacity()) return;
   ring_.reset();
   src_ = src;
   level_ = recThreshLevel(threshDb);

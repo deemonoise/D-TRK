@@ -41,7 +41,7 @@ class SampleEditor {
     list_.setEdit(false);
     holdMarker_ = false;
   }
-  uint8_t previewNote();        // NOTE mode with a slice selected: root + slice, else C4
+  uint8_t previewNote();        // NOTE mode with a slice selected: root + slice; 255 if outside MIDI range, else C4
   // Track button k (0..7): plays slice (selected slice, or the first) + k to its end, any slice mode.
   void playSlice(int k);
   // Toolbar actions, shared by touch and the hardware (InstScreen).
@@ -57,6 +57,8 @@ class SampleEditor {
   // SAMPLE -> To wavetable: project sample index, Start..End frames and rate; false without a sample
   // in the bank (none / MISSING).
   bool wtSource(int& index, uint32_t& from, uint32_t& to, uint32_t& rate);
+  // Extract always uses Start..End; slice=true intersects the selected slice with it.
+  bool extractSource(bool slice, int& index, uint32_t& from, uint32_t& to, uint32_t& rate);
 
  private:
   static constexpr int kMarkerRow = 0, kZoomRow = 1, kSampleRow = 2, kRoot = 3, kStart = 4, kEnd = 5,

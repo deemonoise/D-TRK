@@ -35,7 +35,7 @@ class RecRing {
   // Consumer: up to max frames into interleaved, the count.
   uint32_t pop(int16_t* interleaved, uint32_t max);
   uint32_t size() const { return head_.load() - tail_.load(); }
-  uint32_t capacity() const { return mask_ + 1; }
+  uint32_t capacity() const { return mem_ ? mask_ + 1 : 0; }
   // Producer, while the consumer does not read (Armed): drops all but the newest n frames.
   void keepLast(uint32_t n) MT_HOT;
   bool overflowed() const { return overflow_.load(); }
@@ -71,6 +71,10 @@ int recGainClamp(RecSource src, int gain);
 class RecCapture {
  public:
   void init(int16_t* mem, uint32_t frames) { ring_.init(mem, frames); }
+  // Neither producer nor consumer running: stop and discard the unread ring without touching its
+  // memory. Used before publishing a PSRAM failure. arm() cannot revive it; only explicit init can.
+  // The input meter and captured-frame diagnostic remain available after invalidation.
+  void invalidateMemory();
   // Only while Idle and the consumer does not read.
   void arm(RecSource src, int8_t threshDb, uint32_t maxFrames);
   void feed(const int16_t* l, const int16_t* r, uint32_t n) MT_HOT;

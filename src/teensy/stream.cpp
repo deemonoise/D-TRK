@@ -17,23 +17,55 @@ namespace stream {
 
 namespace {
 
-// 96 KB in RAM2 (OCRAM, cached): SdFat SDIO runs in FIFO mode, the CPU copies, no DMA coherence.
-DMAMEM int16_t poolMem[mt::kStreamSlots * mt::kSlotBlocks * mt::kStreamBlock] __attribute__((aligned(32)));
+// The raw I/O bounce owns DMA coherence; the audio pool is written only by the CPU.
+constexpr uint32_t kPoolStride = mt::kSlotBlocks * mt::kStreamBlock;
+DMAMEM int16_t poolMem[mt::kStreamSlots * kPoolStride] __attribute__((aligned(32)));
 mt::StreamPool thePool;
 mt::StoreTable theTable;
+
+// Only fragmented files need runs. Metadata is built in loop(), then published immutably;
+// neither the audio interrupt nor a stream refill has to traverse FAT / exFAT cluster chains.
+constexpr int kExtentCapacity = 1024;
+DMAMEM mt::SectorExtent extents[kExtentCapacity];
+DMAMEM mt::SectorMap maps[mt::kStoreEntries];
+int usedExtents = 0;
+#ifdef LINK_DESK
+Profile profile;
+#endif
+
+class RawReader final : public mt::SectorReader {
+ public:
+  bool read(uint32_t sector, uint32_t count, uint8_t* out) override {
+#ifdef LINK_DESK
+    const uint32_t start = ARM_DWT_CYCCNT;
+#endif
+    const bool ok = card::readSectors(sector, count, out);
+#ifdef LINK_DESK
+    const uint32_t elapsed = ARM_DWT_CYCCNT - start;
+    profile.readCycles += elapsed;
+    ++profile.reads;
+    profile.readBlocks += count;
+    profile.readFailures += !ok;
+    if (elapsed > profile.readPeakCycles) profile.readPeakCycles = elapsed;
+#endif
+    return ok;
+  }
+};
+RawReader raw;
 
 class SdReader final : public mt::BlockReader {
  public:
   bool read(uint32_t key, uint32_t block, int n, int16_t* out) override {
     const int i = theTable.find(key);
-    if (i < 0 || !card::ready()) return false;
-    const uint32_t s = theTable.at(i).sector;
-    if (!s) return false;
-    uint8_t* d = reinterpret_cast<uint8_t*>(out);
-    if (SD.sdfs.card()->readSectors(s + 1 + 2 * block, d, 2 * n)) return true;
-    // The multi-sector read SdFat SDIO keeps open between calls may have timed out: start over once.
-    SD.sdfs.card()->syncDevice();
-    return SD.sdfs.card()->readSectors(s + 1 + 2 * block, d, 2 * n);
+    if (i < 0 || n <= 0 || n > mt::kLoadMax || !card::ready()) return false;
+    const mt::StoreEntry& entry = theTable.at(i);
+    mt::SectorMap contiguous;
+    contiguous.first = entry.sector;
+    contiguous.sectors = 1 + static_cast<uint32_t>((uint64_t(entry.frames) * 2 + 511) / 512);
+    const mt::SectorMap& file = entry.sectors ? *entry.sectors : contiguous;
+    const uint64_t at = 1 + uint64_t(block) * 2;
+    return at <= UINT32_MAX && file.read(static_cast<uint32_t>(at), 2 * n,
+                                        reinterpret_cast<uint8_t*>(out), raw);
   }
 };
 SdReader rd;
@@ -47,9 +79,15 @@ class SlotConsumer final : public mt::StreamConsumer {
       r = UINT32_MAX;
       return false;
     }
-    r = mt::streamReserveUs(thePool, s);
-    mt::StreamLoad l;
-    return mt::streamPlan(thePool, s, l);
+#ifdef LINK_DESK
+    const uint32_t start = ARM_DWT_CYCCNT;
+#endif
+    const bool need = mt::streamNeeds(thePool, s, r);
+#ifdef LINK_DESK
+    profile.needsCycles += ARM_DWT_CYCCNT - start;
+    ++profile.needsCalls;
+#endif
+    return need;
   }
   void load() override { mt::streamLoad(thePool, s, rd); }
 };
@@ -76,6 +114,33 @@ uint32_t firstSector(FsFile& f) {
   return bgn;
 }
 
+bool mapFile(FsFile& file, uint32_t sectors, mt::SectorMap& map, int& count) {
+  const uint32_t clusterSectors = SD.sdfs.sectorsPerCluster();
+  if (!clusterSectors) return false;
+  mt::SectorExtent* runs = extents + usedExtents;
+  count = 0;
+  for (uint32_t at = 0; at < sectors;) {
+    // SdFat's saved position records the cluster containing position-1, in both file systems.
+    if (!file.seekSet(uint64_t(at) * 512 + 1)) return false;
+    fspos_t position;
+    file.fgetpos(&position);
+    if (position.cluster < 2 || position.cluster - 2 >= SD.sdfs.clusterCount()) return false;
+    uint32_t take = sectors - at;
+    if (take > clusterSectors) take = clusterSectors;
+    const uint64_t physical = uint64_t(SD.sdfs.dataStartSector()) +
+                              uint64_t(position.cluster - 2) * clusterSectors;
+    if (physical > UINT32_MAX ||
+        !mt::appendSectorExtent(runs, count, kExtentCapacity - usedExtents, at,
+                                static_cast<uint32_t>(physical), take)) return false;
+    at += take;
+  }
+  map.first = 0;
+  map.sectors = sectors;
+  map.extents = runs;
+  map.count = static_cast<uint16_t>(count);
+  return count != 0;
+}
+
 }  // namespace
 
 void begin(mt::Synth& s) {
@@ -94,6 +159,9 @@ void addBackground(mt::BgWork* w) {
 }
 
 void step() {
+#ifdef LINK_DESK
+  const uint32_t start = ARM_DWT_CYCCNT;
+#endif
   AudioNoInterrupts();
   thePool.expirePrefetch(millis(), kPrefetchMaxMs);
   AudioInterrupts();
@@ -104,6 +172,11 @@ void step() {
       for (int k = 0; k < kStatReaders; ++k)
         if (r < minReserve[k]) minReserve[k] = r;
     }
+#ifdef LINK_DESK
+  const uint32_t elapsed = ARM_DWT_CYCCNT - start;
+  profile.stepCycles += elapsed;
+  if (elapsed > profile.stepPeakCycles) profile.stepPeakCycles = elapsed;
+#endif
 }
 
 bool add(uint32_t crc) {
@@ -120,16 +193,32 @@ bool add(uint32_t crc) {
   src.f = &f;
   mt::WavInfo w;
   const bool ok = mt::wavParse(src, w) == mt::WavErr::Ok && w.hasCrc && w.crc == crc && w.channels == 1 &&
-                  w.bits == 16 && w.dataOffset == mt::kStoreDataOffset;
+                  w.bits == 16 && w.dataOffset == mt::kStoreDataOffset && w.frames() &&
+                  f.fileSize() >= uint64_t(w.dataOffset) + w.dataBytes;
   const uint32_t sector = ok ? firstSector(f) : 0;
-  f.close();
   if (!ok) return false;
-  if (!sector && quietAdds == 0) link::log("store: %08lx is not contiguous", static_cast<unsigned long>(crc));
-  return theTable.add(crc, w.frames(), w.rate, sector) >= 0;
+  if (theTable.find(crc) >= 0) return true;
+  if (theTable.count() >= mt::kStoreEntries) return false;
+  const mt::SectorMap* map = nullptr;
+  int count = 0;
+  if (!sector) {
+    mt::SectorMap& mapped = maps[theTable.count()];
+    const uint32_t sectors = 1 + static_cast<uint32_t>((uint64_t(w.frames()) * 2 + 511) / 512);
+    if (!mapFile(f, sectors, mapped, count)) {
+      if (quietAdds == 0) link::log("store: %08lx invalid chain or extent pool full", static_cast<unsigned long>(crc));
+      return false;
+    }
+    map = &mapped;
+    if (quietAdds == 0) link::log("store: %08lx mapped %d extents", static_cast<unsigned long>(crc), count);
+  }
+  const bool added = theTable.add(crc, w.frames(), w.rate, sector, map) >= 0;
+  if (added) usedExtents += count;
+  return added;
 }
 
 int rescan(const mt::SynthModel& m, bool log) {
   theTable.clear();
+  usedExtents = 0;
   if (!log) ++quietAdds;
   int n = 0;
   const mt::SampleBank& fb = bank::flash();
@@ -187,5 +276,13 @@ Stats takeStats(int who) {
   hintsSeen[who] = hintSlotsSeen[who] = 0;
   return s;
 }
+
+#ifdef LINK_DESK
+Profile takeProfile() {
+  const Profile taken = profile;
+  profile = Profile{};
+  return taken;
+}
+#endif
 
 }  // namespace stream

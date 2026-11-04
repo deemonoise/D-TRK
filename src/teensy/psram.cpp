@@ -5,6 +5,7 @@
 #include "model.h"
 #include "psram_cache.h"
 #include "rec.h"
+#include "rec_server.h"
 #include "stream.h"
 #include "synth.h"
 
@@ -89,6 +90,7 @@ uint32_t recRingFrames() { return recRing() ? mt::kRecRingBytes / 4 : 0; }
 
 void step() {
   if (st != State::On || watch.step(millis())) return;
+  rec::psramFailed();  // detach the capture ring before publishing failed memory to other users
   stream::pool().psramOk = false;  // Synth drops PSRAM sources at the next block, the fill stops
   st = State::Failed;
   if (synth) {  // PERF stays silent until a reboot (the ESP sees Status::psram)

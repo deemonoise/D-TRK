@@ -55,10 +55,11 @@ void autosave_and_template_failures() {
  assert(fs::files.count("/templates/base.mtp"));assert(fs::files.at("/templates/base.mtp")==old);
 }
 void full_queue_replace() {
- reset();auto p=project();assert(storage::save(*p,"song")==Result::Ok);
- p->bpm=180;engine::queueFull=true;
+ reset();auto p=project();p->compAttack=27;assert(storage::save(*p,"song")==Result::Ok);
+ p->bpm=180;p->compAttack=119;engine::queueFull=true;
  assert(storage::load(*p,"song")==Result::Ok);
  assert(engine::tempo==p->bpm);assert(engine::resets==1);assert(engine::locks==0);
+ assert(p->compAttack==27);  // save snapshots must copy the appended SynthModel field
 }
 void interrupted_rotations_recover() {
  reset();auto p=project();assert(storage::autosave(*p)==Result::Ok);

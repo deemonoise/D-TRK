@@ -1,5 +1,6 @@
 #include "link_server.h"
 #include <Arduino.h>
+#include <new>
 #include <stdarg.h>
 #include <string.h>
 #include "audio_out.h"
@@ -34,6 +35,30 @@ namespace {
 
 #ifdef LINK_DESK
 usb_serial_class& port = Serial;
+class UsbFramePort final : public FramePort {
+ public:
+  bool connected() override { return usb_configuration && port.dtr(); }
+  int capacity() override { return port.availableForWrite(); }
+  size_t write(const uint8_t* bytes, size_t size) override { return port.write(bytes, size); }
+};
+UsbFramePort usbPort;
+// RAM2 is NOLOAD: no implicit startup-zero assumption, including boot logs before begin().
+alignas(FrameWriter) DMAMEM uint8_t deskTxStorage[sizeof(FrameWriter)];
+FrameWriter* deskTx = nullptr;  // RAM1/BSS, unlike the bytes above, is cleared by startup.
+void observeDeskConnection();
+void pumpDeskTx();
+
+FrameWriter& deskWriter() {
+  if (!deskTx) deskTx = new (deskTxStorage) FrameWriter();
+  return *deskTx;
+}
+
+void submitDeskFrame(Msg type, const uint8_t* bytes, int size) {
+  observeDeskConnection();
+  const bool critical = type != Msg::Status && type != Msg::Log && type != Msg::Progress;
+  deskWriter().submit(usbPort, bytes, size, critical);
+  pumpDeskTx();
+}
 #else
 HardwareSerialIMXRT& port = Serial1;
 DMAMEM uint8_t rxMem[8192];
@@ -52,20 +77,39 @@ uint8_t perfSec = 0;
 uint32_t lastStatus = 0;
 uint32_t lostTotal = 0;  // events lost on this side since boot (queue full)
 
+#ifdef LINK_DESK
+bool deskWasConnected = false;  // RAM1/BSS; Hello retry within the same DTR session is not a reset.
+void observeDeskConnection() {
+  const bool connected = usbPort.connected();
+  if (deskWasConnected && !connected) {
+    dec = Decoder{};  // an old partial request must not swallow the next host's first Hello
+    if (usb_configuration && !port.dtr()) port.clear();
+  }
+  deskWasConnected = connected;
+}
+
+void pumpDeskTx() {
+  observeDeskConnection();
+  deskWriter().step(usbPort);
+}
+#endif
+
 // Preview track: the sounding preview note and when it ends (Teensy time), 0 = none.
 uint8_t previewNote = 0;
 uint64_t previewOffUs = 0;
 constexpr uint32_t kPreviewMs = 300;
 
 // StateSet pieces of the chunk being received; applied on the last piece.
-uint8_t scratch[6144];
+DMAMEM uint8_t scratch[6144];  // raw StateSet staging, fully written before commit; preserve RAM1 stack
 int scratchChunk = -1;
 uint32_t scratchNext = 0;
 
 // Opened on the first frame: setup() logs (psram, bank) come before begin(), and a write to a closed
 // Serial1 waits forever once a frame does not fit its small TX buffer.
 void openPort() {
-#ifndef LINK_DESK
+#ifdef LINK_DESK
+  deskWriter();
+#else
   static bool open = false;
   if (open) return;
   open = true;
@@ -80,7 +124,11 @@ void send(Msg t, const M& m) {
   openPort();
   uint8_t buf[kMaxEncoded];
   const int n = frame(t, txSeq++, m, buf);
+#ifdef LINK_DESK
+  if (n > 0) submitDeskFrame(t, buf, n);
+#else
   if (n > 0) port.write(buf, n);
+#endif
 }
 
 void sendHello() {
@@ -110,6 +158,21 @@ void onHello(Reader& r) {
   if (h.modelSize && h.modelSize != sizeof(mt::SynthModel))
     log("model size mismatch: esp %lu, synth %u", static_cast<unsigned long>(h.modelSize), sizeof(mt::SynthModel));
   sendHello();
+#ifdef LINK_DESK
+  card::logState();
+  SCB_ID_CSSELR = 0;
+  asm volatile("dsb" ::: "memory");
+  const uint32_t cache = SCB_ID_CCSIDR;
+  log("desk dcache: sets %lu ways %lu line %lu",
+      static_cast<unsigned long>(((cache >> 13) & 0x7FFF) + 1),
+      static_cast<unsigned long>(((cache >> 3) & 0x3FF) + 1),
+      static_cast<unsigned long>(1u << ((cache & 7) + 4)));
+  const FrameTxStats tx = deskWriter().stats();
+  log("desk tx: skipped %lu closed %lu overflow %lu short %lu invalid %lu pending %u",
+      static_cast<unsigned long>(tx.telemetryDropped), static_cast<unsigned long>(tx.closedDropped),
+      static_cast<unsigned long>(tx.overflow), static_cast<unsigned long>(tx.shortWrites),
+      static_cast<unsigned long>(tx.invalid), tx.pending);
+#endif
   if (wdog::resetByWatchdog())
     log("boot: the watchdog reset the board (loop() hung for %lu s)", static_cast<unsigned long>(wdog::kTimeoutMs / 1000));
 }
@@ -365,12 +428,35 @@ void begin(mt::SynthModel& m, mt::Synth& s, SynthStream& o, uint8_t perfSeconds)
 void reply(Msg t, uint8_t seq, const uint8_t* p, int n) {
   uint8_t buf[kMaxEncoded];
   const int k = encode(static_cast<uint8_t>(t), seq, p, n, buf);
+#ifdef LINK_DESK
+  if (k > 0) submitDeskFrame(t, buf, k);
+#else
   if (k > 0) port.write(buf, k);
+#endif
 }
 
-void flushOut() { port.flush(); }
+void flushOut() {
+#ifdef LINK_DESK
+  // Only the explicit halt / reboot path may wait; routine submit / poll never do.
+  const uint32_t began = millis();
+  while (usbPort.connected() && deskWriter().stats().pending && millis() - began < 20)
+    if (!deskWriter().step(usbPort)) yield();
+#endif
+  port.flush();
+}
+
+FrameTxStats txStats() {
+#ifdef LINK_DESK
+  return deskTx ? deskTx->stats() : FrameTxStats{};
+#else
+  return {};
+#endif
+}
 
 void statusIfDue() {
+#ifdef LINK_DESK
+  pumpDeskTx();
+#endif
   wdog::feed();  // the long one-go parts (compacting, a render into the bank) come through here
   const uint32_t now = millis();
   if (now - lastStatus >= kStatusMs) {
@@ -380,8 +466,25 @@ void statusIfDue() {
 }
 
 void poll() {
+#ifdef LINK_DESK
+  pumpDeskTx();
+  if (usbPort.connected())
+#endif
   for (int n = port.available(); n > 0; --n) {
+#ifdef LINK_DESK
+    // Dispatch can observe a disconnect and clear RX after this pass's available() snapshot.
+    if (!usbPort.connected()) {
+      observeDeskConnection();
+      break;
+    }
+    // One request produces at most one critical reply. Leave the rest in RX under pressure.
+    if (!deskWriter().roomForCritical()) break;
+    const int byte = port.read();
+    if (byte < 0) break;
+    if (dec.feed(static_cast<uint8_t>(byte))) dispatch();
+#else
     if (dec.feed(static_cast<uint8_t>(port.read()))) dispatch();
+#endif
   }
   if (previewOffUs && micros64() + kPlayLatencyUs >= previewOffUs) {
     pushNow(previewOffUs, 3, 0x80, previewNote, 0);

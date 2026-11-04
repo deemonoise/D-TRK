@@ -137,12 +137,13 @@ void slotsOf(const TrackCfg* role, const TrackCfg* all, const Instrument* instru
   }
 }
 
-// The role plays the notes as written: FM only as TONE (the other machines are one-shot drums or a chord
+// The role plays the notes as written: FM TONE/TOY (the other machines are one-shot drums or a chord
 // of their own; FX takes them), CHORDS needs polyphony, no KIT on a melodic role.
 bool roleFits(DiceRole role, const Instrument& m) {
   if (m.type == InstrType::Kit || m.type == InstrType::Sample) return false;
   if (role == DiceRole::Fx) return true;
-  if (m.type == InstrType::Fm && m.machine != static_cast<uint8_t>(FmMachine::Tone)) return false;
+  if (m.type == InstrType::Fm && m.machine != static_cast<uint8_t>(FmMachine::Tone) &&
+      m.machine != static_cast<uint8_t>(FmMachine::Toy)) return false;
   return !(role == DiceRole::Chords && m.mono);
 }
 
@@ -196,7 +197,7 @@ void kitLanes(const Instrument& kit, const Instrument* instruments, int8_t out[k
     const char* n = names[l];
     if (!n[0]) continue;
     if (startsWith(n, "BD") || strstr(n, "KICK")) cls[l] = kDiceKick;
-    else if (startsWith(n, "OH") || strstr(n, " OH") || strstr(n, "HAT O") || strstr(n, "HHR O") ||
+    else if (!strcmp(n, "HHLONG") || startsWith(n, "OH") || strstr(n, " OH") || strstr(n, "HAT O") || strstr(n, "HHR O") ||
              (startsWith(n, "HAT") && n[strlen(n) - 1] == 'O'))  // FM HAT 909O
       cls[l] = kDiceOpen;
     else if (startsWith(n, "CH") || startsWith(n, "HH") || startsWith(n, "HAT") || strstr(n, "HHR C") ||
@@ -208,7 +209,7 @@ void kitLanes(const Instrument& kit, const Instrument* instruments, int8_t out[k
   for (int k = 0; k < kDiceLanes; ++k) out[k] = -1;
   for (int l = kKitLanes - 1; l >= 0; --l)
     if (cls[l] >= 0) out[cls[l]] = static_cast<int8_t>(l);  // the first lane of each wins
-  static const char* const kPerc[] = {"RS", "RIM", "CL", "CB", "COW", "CONGA", "WOOD", "METAL", "BLIP", "TOM"};
+  static const char* const kPerc[] = {"PC", "RS", "RIM", "CL", "CB", "COW", "CONGA", "WOOD", "METAL", "BLIP", "TOM"};
   for (const char* pre : kPerc) {
     for (int l = 0; l < kKitLanes && out[kDicePerc] < 0; ++l)
       if (cls[l] < 0 && names[l][0] && startsWith(names[l], pre)) out[kDicePerc] = static_cast<int8_t>(l);
@@ -1002,7 +1003,11 @@ bool buildKit(const Ctx& c, Instrument* ins, int slot, uint32_t& mask) {
     clearInsert(m);  // behind a lane: no track insert takes the drum's recommendation
     m.transpose = static_cast<int8_t>(m.transpose - kl);
     m.vol = dr.vol;
-    if (m.type == InstrType::Drum || m.type == InstrType::Fm) {
+    if (m.type == InstrType::Fm) {
+      m.fmParam[3] = addU7(m.fmParam[3], dr.dec + c.pk.jd[l]);
+      const uint8_t tone = fmMacroParam(m.machine, kMacCol);
+      if (*fmParamName(m.machine, tone)) m.fmParam[tone] = addU7(m.fmParam[tone], dr.tone + c.pk.jt[l]);
+    } else if (m.type == InstrType::Drum) {
       m.macro[kMacDec] = addU7(m.macro[kMacDec], dr.dec + c.pk.jd[l]);
       m.macro[kMacCol] = addU7(m.macro[kMacCol], dr.tone + c.pk.jt[l]);
     }

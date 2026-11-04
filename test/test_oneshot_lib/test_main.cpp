@@ -42,14 +42,14 @@ void test_drum_dirs() {
 }
 
 void test_fm_dirs() {
-  TEST_ASSERT_EQUAL_STRING("FM/KICK", dirOf(InstrType::Fm, 0));
-  TEST_ASSERT_EQUAL_STRING("FM/HAT", dirOf(InstrType::Fm, static_cast<uint8_t>(FmMachine::Hat)));
-  TEST_ASSERT_EQUAL_STRING("FM/KICK", dirOf(InstrType::Fm, 99));
+  TEST_ASSERT_EQUAL_STRING("FM/BD MODERN", dirOf(InstrType::Fm, 0));
+  TEST_ASSERT_EQUAL_STRING("FM/HH BASIC", dirOf(InstrType::Fm, static_cast<uint8_t>(FmMachine::HhBasic)));
+  TEST_ASSERT_EQUAL_STRING("FM/SY TONE", dirOf(InstrType::Fm, 99));
 }
 
 void test_fm_machine_names() {
-  TEST_ASSERT_EQUAL_STRING("CHORD", fmMachineName(static_cast<uint8_t>(FmMachine::Chord)));
-  TEST_ASSERT_EQUAL_STRING("KICK", fmMachineName(255));
+  TEST_ASSERT_EQUAL_STRING("SY CHORD", fmMachineName(static_cast<uint8_t>(FmMachine::Chord)));
+  TEST_ASSERT_EQUAL_STRING("SY TONE", fmMachineName(255));
 }
 
 void test_chip_wave_names() {

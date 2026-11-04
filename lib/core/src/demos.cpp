@@ -525,7 +525,7 @@ void buildLofi(Project& p) {
                               {InstrType::Drum, "RIM BIT"}};
   enum { kBd, kSd, kHh, kRim };
   kit(p, 0, "DUSTY", 16, kKit, 4);
-  Instrument& keys = ins(p, 1, InstrType::Fm, "EP SOFT");
+  Instrument& keys = ins(p, 1, InstrType::Fm, "TONEPLUK");
   keys.rsend = 60;
   keys.fltMode = static_cast<uint8_t>(FltMode::Lp);  // dark top: the old master low-pass of this demo
   keys.cutoff = 107;                                 // ~5 kHz
@@ -749,7 +749,7 @@ void buildDubTechno(Project& p) {
                               {InstrType::Drum, "OH909"}};
   enum { kBd, kRs, kCh, kOh };
   kit(p, 0, "DUB KIT", 16, kKit, 4);
-  Instrument& stab = ins(p, 1, InstrType::Fm, "CHRD MI9");
+  Instrument& stab = ins(p, 1, InstrType::Fm, "CHRDTYPE");
   stab.send = 100;
   stab.rsend = 90;
   stab.fltMode = static_cast<uint8_t>(FltMode::Lp);
@@ -858,7 +858,7 @@ void buildIdm(Project& p) {
   kit(p, 2, "HAT", 18, kHat1, 1);
   kit(p, 3, "METAL", 19, kMetal1, 1);
   ins(p, 4, InstrType::Synth, "PLUCKBAS");
-  ins(p, 5, InstrType::Fm, "DX BELL").send = 60;
+  ins(p, 5, InstrType::Fm, "TONEPLUK").send = 60;
   ins(p, 6, InstrType::Synth, "WARM PAD").rsend = 100;
   ins(p, 7, InstrType::Chip, "BLIP").send = 50;
   track(p, kKick, "KICK", 0, 120);
@@ -958,10 +958,10 @@ void buildHouse(Project& p) {
                               {InstrType::Drum, "OH909"}, {InstrType::Drum, "RS909"}};
   enum { kBd, kCp, kCh, kOh, kRs };
   kit(p, 0, "909", 16, kKit, 5);
-  ins(p, 1, InstrType::Fm, "DX BASS");
+  ins(p, 1, InstrType::Fm, "TONEBASS");
   ins(p, 2, InstrType::Synth, "STAB").send = 45;
   ins(p, 3, InstrType::Synth, "CHOIR").rsend = 100;
-  ins(p, 4, InstrType::Fm, "CONGA");
+  ins(p, 4, InstrType::Fm, "PCCARBON");
   track(p, kDrums, "909", 0, 118);
   track(p, kBass, "BASS", 1, 100, 40);
   track(p, kStab, "STAB", 2, 78, 35);

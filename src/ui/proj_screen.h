@@ -41,7 +41,7 @@ class ProjScreen : public Screen {
     kDlyTime, kDlyMode, kDlyFb, kDlyTone, kDlyChar, kDlyLevel,
     kRvbSize, kRvbMode, kRvbDamp, kRvbShim, kShimInt, kRvbLevel,
     kModType, kModRate, kModDepth, kModFb, kModLevel,
-    kCompAmt, kCompRel, kScTrack, kScDepth, kEqLow, kEqHigh, kPerf1,
+    kCompAmt, kCompAttack, kCompRel, kScTrack, kScDepth, kEqLow, kEqHigh, kPerf1,
     kPerfLast = kPerf1 + 2 * mt::kPerfButtons - 1,  // Button N, then its start Value
     kPerfX, kPerfY,  // the XY pad's axes (PERF, A + B)
     kRows

@@ -24,6 +24,10 @@ bool savePreset(const Instrument& m, ByteSink& out) {
   p += kLfoByteRecSize;
   packFmEx(m, b + p);
   p += kFmExRecSize;
+  packFmParams(m, b + p);
+  p += kFmParamRecSize;
+  packSlicesExt(m, b + p);
+  p += kSliceExtRecSize;
   const uint32_t c = crc32(b, p);
   b[p] = static_cast<uint8_t>(c);
   b[p + 1] = static_cast<uint8_t>(c >> 8);
@@ -37,7 +41,9 @@ LoadErr loadPreset(ByteSource& in, Instrument& out) {
   if (!in.read(b, 8)) return LoadErr::Truncated;
   if (memcmp(b, "MTI1", 4) != 0) return LoadErr::BadMagic;
   if (b[4] > kPresetVersion) return LoadErr::BadVersion;
-  const size_t size = b[4] >= 8   ? kPresetSize
+  const size_t size = b[4] >= 10  ? kPresetSize
+                      : b[4] == 9 ? kPresetSizeV9
+                      : b[4] == 8 ? kPresetSizeV8
                       : b[4] == 7 ? kPresetSizeV7
                       : b[4] == 6 ? kPresetSizeV6
                       : b[4] == 5 ? kPresetSizeV5
@@ -57,7 +63,9 @@ LoadErr loadPreset(ByteSource& in, Instrument& out) {
   if (size >= kPresetSizeV6) unpackLofi(b + slc + kSliceRecSize + kSynRecSize + kLfoRecSize, kLofiRecSize, m);
   if (size >= kPresetSizeV7)
     unpackLfoByte(b + slc + kSliceRecSize + kSynRecSize + kLfoRecSize + kLofiRecSize, kLfoByteRecSize, m);
-  if (size >= kPresetSize) unpackFmEx(b + kPresetSizeV7 - 4, kFmExRecSize, m);  // after LFOB, before the CRC
+  if (size >= kPresetSizeV8) unpackFmEx(b + kPresetSizeV7 - 4, kFmExRecSize, m);  // after LFOB, before the CRC
+  if (size >= kPresetSizeV9) unpackFmParams(b + kPresetSizeV8 - 4, kFmParamRecSize, m);
+  if (size >= kPresetSize) unpackSlicesExt(b + kPresetSizeV9 - 4, m);
   fixInstrument(m);
   out = m;
   return LoadErr::Ok;

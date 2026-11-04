@@ -4,112 +4,71 @@
 
 namespace mt {
 
-constexpr int kFmOps = 4;
+constexpr int kFmOps = 8;
 
-// Operator routing, op1 = index 0; ">" = modulates.
-enum class FmAlg : uint8_t {
-  Stack,       // 4>3>2>1, out 1
-  TwoToOne,    // 4>3>1, 2>1, out 1
-  TwoPairs,    // 4>3, 2>1, out 1 + 3
-  OneToThree,  // 4>1, 4>2, 4>3, out 1 + 2 + 3
-  Additive,    // out 1 + 2 + 3 + 4
-  Count
-};
-bool fmCarrier(FmAlg a, int op);
-// Pitch-only index ceiling (radians), also used by machine feedback. The voice additionally
-// limits modulation using receiver frequencies and routing; this does not strictly band-limit PM.
-float fmMaxIndex(float hz);
-
-// Times are to -60 dB, ms; 0 = no decay.
+// A sparse, acyclic PM graph: a higher-index operator may modulate a lower one.
+// Times are milliseconds to -60 dB; zero means no decay. Non-output levels are radians.
 struct FmOp {
-  float ratio = 1;    // x FmParams::hz
-  float level = 0;    // carrier: gain; modulator: index, radians
-  float sustain = 0;  // fraction of level the decay ends at, 0..1
-  float decayMs = 0;
-  float fb = 0;       // self-modulation, radians
+  float ratio = 1, level = 0, sustain = 0, decayMs = 0, fb = 0;
+  float wave = 0;  // 0..3: sine/triangle/saw/square morph; 4..5: measured CHORD harmonic morph
+  int8_t mod = -1;
+  bool output = true;
 };
 
-// One FM voice's sound, made by a machine (synth_fm_machines) at control rate.
+// Measured-reference model parameters. These are candidate implementations, not Elektron internals.
 struct FmParams {
-  FmAlg alg = FmAlg::Additive;
   FmOp op[kFmOps];
-  float hz = 0;          // base frequency
-  float pitchEnv = 0;    // semitones at the trigger, decaying to 0
-  float pitchMs = 0;
-  float fbEnv = 0;       // feedback x (1 + fbEnv) at the trigger, decaying
-  float fbMs = 0;
-  float noise = 0;       // white noise level
-  float noiseMs = 0;     // 0 = flat
-  uint8_t bursts = 0;    // noise retriggers before the decay (clap)
-  float burstMs = 0;
-  float tail = 1;        // noise level after the bursts
+  float hz = 0, pitchEnv = 0, pitchMs = 0;
+  float ampMs = 0, ampSustain = 0, attackMs = 0.36f;
+  float noise = 0, noiseMs = 0, noiseSustain = 0;
+  uint8_t bursts = 0;
+  float burstMs = 0, tail = 1;
   Svf::Mode filterMode = Svf::Mode::Lp;
-  float filterHz = 0;    // 0 = no filter
-  float filterQ = 0.707f;
-  bool filterAll = false;  // filter the operators too, else the noise only
-  bool oneShot = true;     // own amplitude envelope; false = held at 1 (the caller's ADSR shapes it)
-  float ampMs = 0;
-  // SAT 0..1: a tanh shaper before the amplitude, y -> y + w (tanh(g y) / tanh(g) - y), g = 1 + 7 sat^2,
-  // w = min(1, 8 sat) (fades the shaper in from 0, no step). 0 = bypass, bit-exact. Not a machine's:
-  // Synth::controlFm sets it after fmMachine (outside the params cache).
-  float sat = 0;
+  float filterHz = 0, filterQ = 0.707f;
+  bool filterAll = false, oneShot = true;
+  float noise2 = 0, noise2Ms = 0, noise2Sustain = 0;
+  float noise2FilterHz = 0, noise2FilterQ = 0.707f;
+  Svf::Mode noise2FilterMode = Svf::Mode::Lp;
+  float sat = 0, outputGain = 1, postGain = 1, overComp = 0;  // postGain is after OVER, preserving its operating point
+  bool resetPhase = true;
 };
 
-// Runtime of one FM voice. control() takes the values at the current time and ramps them
-// linearly to their values span samples later; render() advances per sample.
+// Mapper entry points are separate so tonal and percussion calibration can be reviewed independently.
+bool fmTonalMachine(uint8_t machine, const float raw[8], float note, FmParams& out);
+bool fmPercussionMachine(uint8_t machine, const float raw[8], float note, FmParams& out);
+
+// Render/control contract retained by Synth. No allocation, I/O or per-sample exp/pow.
 class FmVoice {
  public:
-  // keepPhase: retrigger of a sounding voice (choke): oscillators run on and the amplitude
-  // ramps from where it is, so there is no click.
   void trigger(bool keepPhase);
   void control(const FmParams& p, int span);
-  // Adds n samples x gain to out.
-  void render(float* out, int n, float gain);
-  // One-shot sound has decayed to silence.
-  bool done() const { return oneShot_ && t_ > kAttack && amp_ < 1e-4f; }
+  // out must not overlap this voice state (all Synth callers use separate mix buffers).
+  void render(float* __restrict out, int n, float gain);
+  bool done() const { return oneShot_ && t_ > 32 && amp_ < 1e-4f && ampTarget_ < 1e-4f; }
 
  private:
-  static constexpr uint32_t kAttack = 16;  // one-shot attack, samples (~0.36 ms)
-
-  // Exponential decay to -60 dB over ms, starting at off (samples after the trigger), advanced
-  // by one multiplication per control tick; expf only when ms, off, span or the time jumps.
-  struct Decay {
-    float ms = 0, off = 0, c = 1, e = 1;
-    int span = -1;
-    uint32_t t = 0xffffffffu;  // time e belongs to
-    // Values at t0 and t0 + span; both >= off.
-    void at(float ms, float off, uint32_t t0, int span, float& e0, float& e1);
+  struct OpState {
+    uint32_t phase = 0;
+    float inc = 0, dInc = 0, level = 0, dLevel = 0, fb = 0, dFb = 0, wave = 0, dWave = 0, last = 0;
+    int8_t mod = -1;
+    bool output = true, active = false;
   };
-
-  template <FmAlg A>
-  void run(float* __restrict out, int n, float gain);
-  void renderSegment(float* out, int n, float gain);
-  void noisePair(const FmParams& p, uint32_t t0, int span, float& n0, float& n1);
-  void ampPair(const FmParams& p, uint32_t t0, int span, float& a0, float& a1);
-
-  uint32_t ph_[kFmOps] = {0};
-  uint32_t inc_[kFmOps] = {0};  // phase units (2^32 = cycle) per sample
-  int32_t dInc_[kFmOps] = {0};
-  float lvl_[kFmOps] = {0}, dLvl_[kFmOps] = {0};  // modulators: in cycles
-  float fb_[kFmOps] = {0}, dFb_[kFmOps] = {0};    // cycles
-  float last_[kFmOps] = {0}, fbIn_[kFmOps] = {0};  // feedback: mean of the last two outputs
-  float noise_ = 0, dNoise_ = 0;
-  float amp_ = 0, dAmp_ = 0, ampStart_ = 0, dAmpTail_ = 0;
-  uint32_t rng_ = 0x12345678;
-  uint32_t t_ = 0;  // samples since the trigger
-  FmAlg alg_ = FmAlg::Additive;
-  bool oneShot_ = false, filterOn_ = false, filterAll_ = false;
-  bool choke_ = false;  // next control() ramps levels from where they are
-  Decay opDec_[kFmOps], pitchDec_, fbDec_, noiseDec_, ampDec_;
-  float bendEnv_ = 0, bendD_ = -1, bend_ = 1;
-  float filterHz_ = -1, filterQ_ = 0;  // svf_ coefficients set for these (skips tanf)
-  Svf::Mode filterMode_ = Svf::Mode::Lp;  // last pitch bend: exp2 of bendEnv_ x bendD_ / 12
-  Svf svf_;
-  // SAT (see FmParams::sat): drive g, 1 / tanh(g), wet w at the block start and per sample. *T_: the
-  // last control()'s targets, where the next ramp starts exactly (no drift keeps the bypass off).
-  float satG_ = 1, dSatG_ = 0, satN_ = 1, dSatN_ = 0, satW_ = 0, dSatW_ = 0;
-  float satU_ = 0, satGT_ = 1, satNT_ = 1, satWT_ = 0;
-  bool satSnap_ = true;  // next control() starts at its targets (a fresh trigger)
+  void additive(float* __restrict tonal, int n, int ramp);
+  void pair(float* __restrict tonal, int n, int ramp);
+  OpState op_[kFmOps];
+  Svf filter_, noise2Filter_;
+  uint32_t t_ = 0, rng_ = 0x12345678;
+  int left_ = 0;
+  float amp_ = 0, dAmp_ = 0, ampTarget_ = 0;
+  float noise_ = 0, dNoise_ = 0, noise2_ = 0, dNoise2_ = 0;
+  float sat_ = 0, dSat_ = 0, outputGain_ = 1, dOutputGain_ = 0;
+  float attackSamples_ = 16, postGain_ = 1, dPostGain_ = 0;
+  float lastOut_ = 0, fadeFrom_ = 0;
+  uint8_t fadeLeft_ = 0;
+  uint8_t bursts_ = 0;
+  float burstSamples_ = 0, tail_ = 1;
+  bool oneShot_ = true, filterOn_ = false, filterAll_ = false, noise2FilterOn_ = false;
+  bool fresh_ = true, keepPhase_ = false, additive_ = true, paired_ = false;
 };
 
 }  // namespace mt

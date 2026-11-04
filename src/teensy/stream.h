@@ -17,7 +17,7 @@ void begin(mt::Synth& s);
 void step();
 // Background work, run round robin when every consumer has > 30 ms (bank jobs, tools, PSRAM fill).
 void addBackground(mt::BgWork* w);
-// Re-reads the store entries of the model's samples (contiguous files only). The synth is parked.
+// Re-reads store entries and builds bounded sector maps for fragmented files. The synth is parked.
 // Returns the samples found; logs "store: N of M samples" when log (not before link::begin).
 int rescan(const mt::SynthModel& m, bool log = true);
 // Registers one store file now (an import just wrote it). The synth may be running.
@@ -39,5 +39,15 @@ struct Stats {
 constexpr int kStatReaders = 2;  // 0: Status, 1: the desk bench
 // Reads and resets the counters of one reader (who < kStatReaders); the readers are independent.
 Stats takeStats(int who = 0);
+
+#ifdef LINK_DESK
+// Loop-side wall cycles, including time preempted by audio. Separate from render CPU.
+struct Profile {
+  uint64_t needsCycles = 0, readCycles = 0, stepCycles = 0;
+  uint32_t needsCalls = 0, reads = 0, readBlocks = 0, readFailures = 0;
+  uint32_t readPeakCycles = 0, stepPeakCycles = 0;
+};
+Profile takeProfile();
+#endif
 
 }  // namespace stream

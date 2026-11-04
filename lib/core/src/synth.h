@@ -6,6 +6,7 @@
 #include "sample_source.h"
 #include "stream_pool.h"
 #include "synth_comp.h"
+#include "synth_gain.h"
 #include "synth_crush.h"
 #include "synth_delay.h"
 #include "synth_drive.h"
@@ -43,7 +44,7 @@ static_assert(kLfos == 4, "LfoMods::depth initializer");
 // Export stem taps (Synth::setTaps, offline renders only; the live path never sets them). Per block,
 // for each bit of mask: l[i] / r[i] (kBlock floats each, owned by the caller) get track i's strip
 // after insert, fader and pan (no sends, before the compressor) or the MOD / DLY / RVB return; mix
-// units, before the master stage. gain: that block's MAIN gain (mv x 0.25 / 100): x gain x 32767 is
+// units, before the master stage. gain: that block's MAIN gain (mv x 0.375 / 100): x gain x 32767 is
 // the master's int16 scale. The master stays bit-identical: the taps only read the mix (a return is
 // the mix after its bus minus the mix before it). kPrev: the preview track's strip (one-shot bounce:
 // the insert it plays through, fader and pan, no sends, no master).
@@ -53,7 +54,8 @@ struct RenderTaps {
   uint32_t mask = 0;
   float* l[kCount] = {};
   float* r[kCount] = {};
-  float gain = 0;
+  float gain = 0;  // last sample, useful for constant MAIN
+  float sampleGain[128] = {};  // actual per-sample MAIN gain, including its ramp and linear calibration
 };
 
 // Hardware-free synth for INT tracks. Messages are MIDI-like, channel nibble ignored:
@@ -77,7 +79,7 @@ struct RenderTaps {
 //
 // Master chain (renderCore): PERF throws -> MOD bus (ModFx, SynthModel::mod*: the tracks' MOD sends ->
 // a stereo return into the mix) -> delay (SynthModel::dlyMode, dlyChar) -> freeze duck -> reverb (SHIMMER:
-// the pitch shifter in its feedback) -> compressor -> + sidechain key -> master EQ (eqLow / eqHigh)
+// the pitch shifter in its feedback) -> compressor (dry sidechain key restored) -> master EQ (eqLow / eqHigh)
 // -> PERF -> master gain, soft clip. The defaults (OFF, DIGITAL, PLAIN, flat) are bit-exact to the
 // chain before them.
 //
@@ -365,7 +367,7 @@ class Synth {
   void refreshStrip(uint8_t track, int nv, int len);
   // The strip of track over the segment trk_[0..n) at block position pos: insert, sends,
   // peak, pan into the mix (or the sidechain bus).
-  void runStrip(uint8_t track, int pos, int n, int scTrack, bool keyAround);
+  void runStrip(uint8_t track, int pos, int n, int scTrack);
   // Export taps (out of the hot section: only offline renders set taps_).
   RenderTaps* taps_ = nullptr;
   MT_INLINE bool tapOn(int k) const { return taps_ && (taps_->mask >> k & 1u); }
@@ -447,7 +449,10 @@ class Synth {
   float rsend_[kBlock];  // reverb send bus (mono, pre-pan)
   float msend_[kBlock];  // MOD send bus (mono, pre-pan)
   float* shimWet_ = nullptr;  // SHIMMER: the reverb's last block (kBlock, mono, before the level)
-  float scL_[kBlock], scR_[kBlock];  // sidechain key: the strip of Project::scTrack (bypasses the compressor)
+  float scL_[kBlock], scR_[kBlock];  // dry sidechain key, crossfaded on source changes
+  float scWeight_[kSynthTracks] = {};
+  bool scSnap_ = true;
+  static constexpr float kScStep = 1.f / (0.005f * kSynthRate);
   // Channel strips: one control segment of each track's mono sum, the tracks touched by an event
   // since their last refresh (bit = track), the preview track's insert (0xF7).
   float trk_[kControl];  // the mono sum of the track being rendered (renderCore -> runStrip)
@@ -457,6 +462,7 @@ class Synth {
   static_assert(kSynthTracks <= 32, "stripDirty_ / hot masks are uint32_t");
   Reverb reverb_;
   Compressor comp_;
+  GainRamp masterGain_;
   ModFx modfx_;  // its 2 KB line in the reverb block (setModBuffer)
   MasterEq eq_;
   Shimmer shimmer_;

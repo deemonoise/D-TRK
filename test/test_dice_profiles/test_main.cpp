@@ -15,7 +15,7 @@ void tearDown() {}
 void test_canonical_bass_uses_the_style_voice() {
   struct Canon { int genre, style; const char* name; };
   const Canon cases[] = {{2, 0, "TRANCEBS"}, {2, 1, "PSYBASS"}, {2, 2, "PSYBASS"},
-                         {2, 3, "GOABASS"}, {2, 4, "TRANCEBS"}, {3, 1, "JUMPUP"}, {3, 2, "NEURO"}};
+                         {2, 3, "GOABASS"}, {2, 4, "TRANCEBS"}, {3, 1, "TONEBASS"}, {3, 2, "NEURO"}};
   for (const auto& c : cases) {
     templateBuild(0, project);
     DiceOpts options;

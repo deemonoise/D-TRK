@@ -67,9 +67,9 @@ void build909(Project& p) {
 }
 
 void buildFm(Project& p) {
-  static const char* const kDrums[] = {"KICK", "SNARE", "HAT C", "HAT O", "CLAP", "WOODBLK"};
+  static const char* const kDrums[] = {"BDMODERN", "SDBASIC", "HHSHORT", "HHLONG", "CPVINT", "PCSHORT"};
   kit(p, "FM KIT", kDrums, 6);
-  static const char* const kInst[] = {"FM BASS", "E.PIANO", "BELL", "CHORD M7"};
+  static const char* const kInst[] = {"TONEBASS", "TONEPLUK", "TOYBRITE", "TONESINE"};
   static const char* const kTr[] = {"BASS", "EPIANO", "BELL", "CHORDS"};
   melodic(p, kInst, kTr, 4);
 }

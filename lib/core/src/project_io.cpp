@@ -55,8 +55,8 @@ constexpr size_t kTvarRec = 9;
 // masterVol, preview, dlyTime, dlyFb, dlyTone, dlyLevel, rvbSize, rvbDamp, rvbLevel, compAmt, compRel,
 // scTrack, scDepth, then byte 13: the old DJ filter (+ 64), ignored on load and written 64, then the
 // master / send fx: dlyMode, dlyChar, rvbMode, rvbShim, modType, modRate, modDepth, modFb, modLevel,
-// eqLow, eqHigh, shimInt. Each of those bytes is read when present (older files: the defaults).
-constexpr size_t kAudiSize = 26;
+// eqLow, eqHigh, shimInt, compAttack. Each of those bytes is read when present (older files: the defaults).
+constexpr size_t kAudiSize = 27;
 constexpr size_t kAudiMfx = 14;     // the first master / send fx byte
 constexpr size_t kAudiFxSize = 13;  // older files: up to scDepth
 constexpr size_t kAudiDlySize = 6;  // older files: up to dlyLevel
@@ -72,6 +72,7 @@ static_assert(kKitRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kFmRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kFltRecSize <= kMaxRec, "readRecords buffer");
 static_assert(kSliceRecSize <= kMaxRec, "readRecords buffer");
+static_assert(kSliceExtRecSize <= kMaxRec, "readRecords extended slice buffer");
 static_assert(kSmplSize <= kMaxRec, "readRecords buffer");
 constexpr size_t kWtblSize = 20;  // name[16] u32 crc
 constexpr size_t kChn2Rec = 4;    // pattern, transpose, repeat, scene
@@ -485,9 +486,19 @@ LoadErr readFltr(CrcSource& in, uint32_t size, Project& p) {
                      [&](int i, const uint8_t* b) { unpackFlt(b, p.instruments[i]); });
 }
 
-LoadErr readSlce(CrcSource& in, uint32_t size, Project& p) {
+LoadErr readSlce(CrcSource& in, uint32_t size, Project& p, uint8_t extendedCount) {
   return readRecords(in, size, kSliceRecSize, kInstruments,
-                     [&](int i, const uint8_t* b) { unpackSlices(b, p.instruments[i]); });
+                     [&](int i, const uint8_t* b) {
+                       if (i >= extendedCount) unpackSlices(b, p.instruments[i]);
+                     });
+}
+
+LoadErr readSlx1(CrcSource& in, uint32_t size, Project& p, uint8_t& extendedCount) {
+  return readRecords(in, size, kSliceExtRecSize, kInstruments,
+                     [&](int i, const uint8_t* b) {
+                       unpackSlicesExt(b, p.instruments[i]);
+                       if (i >= extendedCount) extendedCount = static_cast<uint8_t>(i + 1);
+                     });
 }
 
 LoadErr readSyni(CrcSource& in, uint32_t size, Project& p) {
@@ -545,6 +556,23 @@ LoadErr readFmex(CrcSource& in, uint32_t size, Project& p) {
     uint8_t b[kFmExRecSize] = {};
     if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
     unpackFmEx(b, take, p.instruments[i]);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
+// FMPA: count, record size, independent A..H controls. Missing fields retain defaults.
+LoadErr readFmpa(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kInstruments ? h[0] : kInstruments;
+  const uint32_t take = rec < kFmParamRecSize ? rec : kFmParamRecSize;
+  for (int i = 0; i < n; ++i) {
+    uint8_t b[kFmParamRecSize] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    unpackFmParams(b, take, p.instruments[i]);
   }
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
@@ -618,7 +646,7 @@ LoadErr readAudi(CrcSource& in, uint32_t size, Project& p) {
   }
   auto mode = [](uint8_t v, auto count) { return v < static_cast<uint8_t>(count) ? v : 0; };  // unknown: 0
   uint8_t* const mfx[] = {&p.dlyMode, &p.dlyChar, &p.rvbMode, &p.rvbShim, &p.modType, &p.modRate,
-                          &p.modDepth, &p.modFb, &p.modLevel, &p.eqLow, &p.eqHigh, &p.shimInt};
+                          &p.modDepth, &p.modFb, &p.modLevel, &p.eqLow, &p.eqHigh, &p.shimInt, &p.compAttack};
   static_assert(sizeof(mfx) / sizeof(mfx[0]) == kAudiSize - kAudiMfx, "AUDI layout");
   for (uint32_t i = kAudiMfx; i < n; ++i) *mfx[i - kAudiMfx] = clampu(b[i], 0, 127);
   p.dlyMode = mode(p.dlyMode, DlyMode::Count);
@@ -1017,6 +1045,13 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  if (!o.chunk("SLX1", 1 + kInstruments * kSliceExtRecSize) || !o.write(&count, 1)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kSliceExtRecSize];
+    packSlicesExt(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
   if (!o.chunk("SYNI", 1 + kInstruments * kSynRecSize) || !o.write(&count, 1)) return false;
   for (const Instrument& m : p.instruments) {
     uint8_t b[kSynRecSize];
@@ -1052,6 +1087,14 @@ bool saveProject(const Project& p, ByteSink& out) {
   for (const Instrument& m : p.instruments) {
     uint8_t b[kFmExRecSize];
     packFmEx(m, b);
+    if (!o.write(b, sizeof(b))) return false;
+  }
+
+  const uint8_t ph[2] = {static_cast<uint8_t>(kInstruments), static_cast<uint8_t>(kFmParamRecSize)};
+  if (!o.chunk("FMPA", 2 + kInstruments * kFmParamRecSize) || !o.write(ph, 2)) return false;
+  for (const Instrument& m : p.instruments) {
+    uint8_t b[kFmParamRecSize];
+    packFmParams(m, b);
     if (!o.write(b, sizeof(b))) return false;
   }
 
@@ -1132,7 +1175,8 @@ bool saveProject(const Project& p, ByteSink& out) {
                                  p.modType,   p.modRate,
                                  p.modDepth,  p.modFb,
                                  p.modLevel,  p.eqLow,
-                                 p.eqHigh,    p.shimInt};
+                                 p.eqHigh,    p.shimInt,
+                                 p.compAttack};
   if (!o.chunk("AUDI", kAudiSize) || !o.write(au, sizeof(au))) return false;
 
   // Always written, empty or not.
@@ -1329,6 +1373,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
   bool sng3 = false;
   bool prf2 = false;  // a PRF2 chunk was read: PRFM no longer applies
   bool tins = false;  // a TINS chunk was read: no insert migration
+  uint8_t extendedSlices = 0;  // prefix covered by SLX1; later legacy SLCE cannot overwrite it
   uint16_t evoParked = 0;  // TEVO: tracks whose EvoCfg is not the active MUT mode (mutFix)
   for (;;) {
     uint8_t ch[8];
@@ -1369,7 +1414,8 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "INST", 4) == 0) e = readInst(in, size, out);
     else if (memcmp(ch, "FMIN", 4) == 0) e = readFmin(in, size, out);
     else if (memcmp(ch, "FLTR", 4) == 0) e = readFltr(in, size, out);
-    else if (memcmp(ch, "SLCE", 4) == 0) e = readSlce(in, size, out);
+    else if (memcmp(ch, "SLCE", 4) == 0) e = readSlce(in, size, out, extendedSlices);
+    else if (memcmp(ch, "SLX1", 4) == 0) e = readSlx1(in, size, out, extendedSlices);
     else if (memcmp(ch, "TOUT", 4) == 0) e = readTout(in, size, out);
     else if (memcmp(ch, "TPAN", 4) == 0) e = readTpan(in, size, out);
     else if (memcmp(ch, "TINS", 4) == 0) {
@@ -1387,6 +1433,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "LOFI", 4) == 0) e = readLofi(in, size, out);
     else if (memcmp(ch, "LFOB", 4) == 0) e = readLfob(in, size, out);
     else if (memcmp(ch, "FMEX", 4) == 0) e = readFmex(in, size, out);
+    else if (memcmp(ch, "FMPA", 4) == 0) e = readFmpa(in, size, out);
     else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, legacy);

@@ -238,21 +238,22 @@ void test_lfo_hz_range() {
 void test_fm_gated_machines() {
   TEST_ASSERT_TRUE(fmGated(static_cast<uint8_t>(FmMachine::Tone)));
   TEST_ASSERT_TRUE(fmGated(static_cast<uint8_t>(FmMachine::Chord)));
-  TEST_ASSERT_FALSE(fmGated(static_cast<uint8_t>(FmMachine::Kick)));
-  TEST_ASSERT_FALSE(fmGated(static_cast<uint8_t>(FmMachine::Hat)));
-  TEST_ASSERT_FALSE(fmGated(200));  // out of range = Kick
+  TEST_ASSERT_TRUE(fmGated(static_cast<uint8_t>(FmMachine::Toy)));
+  TEST_ASSERT_FALSE(fmGated(static_cast<uint8_t>(FmMachine::BdModern)));
+  TEST_ASSERT_FALSE(fmGated(static_cast<uint8_t>(FmMachine::HhBasic)));
+  TEST_ASSERT_FALSE(fmGated(200));  // an invalid raw ID is not gated
 }
 
 void test_fm_set_machine_defaults() {
   Instrument m;
-  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Kick), m.machine);
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::BdModern), m.machine);
   m.macro[kMacCol] = 1;
   fmSetMachine(m, static_cast<uint8_t>(FmMachine::Chord));
   TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Chord), m.machine);
-  TEST_ASSERT_EQUAL(0, m.macro[kMacShp]);  // chord type maj
-  TEST_ASSERT_TRUE(m.macro[kMacCol] != 1);
+  TEST_ASSERT_EQUAL(16, m.fmParam[4]);  // measured CHORD TYPE baseline
+  TEST_ASSERT_EQUAL(1, m.macro[kMacCol]);  // FM controls are independent of other engines' shared macros
   fmSetMachine(m, 99);
-  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Count) - 1, m.machine);
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Tone), m.machine);
 }
 
 void test_reset_clears_samples() {
@@ -613,6 +614,7 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(80, p.rvbLevel);
   TEST_ASSERT_EQUAL(0, p.compAmt);
   TEST_ASSERT_EQUAL(50, p.compRel);
+  TEST_ASSERT_EQUAL(83, p.compAttack);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
   TEST_ASSERT_EQUAL(17, kLocks);  // + BIT, SRR, PAN, DTY, GTE, MOD, SAT
@@ -951,7 +953,7 @@ void test_fm_sat_model() {
   TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sat), T::Drum));
   TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sat), T::Synth));
   TEST_ASSERT_FALSE(lfoDestValid(d(LfoDest::Sat), T::Chip));
-  TEST_ASSERT_EQUAL_STRING("SAT", lfoDestName(d(LfoDest::Sat), T::Fm));
+  TEST_ASSERT_EQUAL_STRING("OVER", lfoDestName(d(LfoDest::Sat), T::Fm));
   TEST_ASSERT_EQUAL(d(LfoDest::Sat), lfoDestStep(d(LfoDest::Con), 1, T::Fm));
   TEST_ASSERT_EQUAL(d(LfoDest::Vol), lfoDestStep(d(LfoDest::Sat), 1, T::Fm));
   TEST_ASSERT_EQUAL(d(LfoDest::Vol), lfoDestStep(d(LfoDest::Con), 1, T::Drum));
@@ -983,8 +985,67 @@ void test_wave_ext_after_wavetables() {
   TEST_ASSERT_EQUAL(static_cast<int>(mt::Wave::AyToneNoise) + 1, mt::kWaveCount);
 }
 
+void test_reference_fm_tone_has_independent_controls() {
+  Instrument m;
+  fmSetMachine(m, 8);
+  TEST_ASSERT_EQUAL(8, m.machine);
+  const uint8_t expected[] = {64, 64, 0, 110, 0, 64, 0, 0};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, m.fmParam, 8);
+  fmSetMachine(m, static_cast<uint8_t>(FmMachine::HhBasic));
+  TEST_ASSERT_EQUAL_STRING("", fmParamName(m.machine, 4));
+  TEST_ASSERT_EQUAL_STRING("", fmParamName(m.machine, 5));
+  TEST_ASSERT_EQUAL_STRING("RST", fmParamName(m.machine, 6));
+  const uint8_t expectedHatMap[] = {3, 1, 2, 0, 6};
+  for (int k = 0; k < kFmMacros; ++k) TEST_ASSERT_EQUAL(expectedHatMap[k], fmMacroParam(m.machine, k));
+  TEST_ASSERT_EQUAL_STRING("OVER", fmParamName(m.machine, 7));
+}
+
+void test_cp_default_uses_auditioned_spcr_setting() {
+  Instrument m;fmSetMachine(m,static_cast<uint8_t>(FmMachine::CpVintage));
+  TEST_ASSERT_EQUAL(64,m.fmParam[1]);
+}
+
+void test_fm_semantic_toggle_editor_and_tune_values() {
+  const auto tone=static_cast<uint8_t>(FmMachine::Tone),hat=static_cast<uint8_t>(FmMachine::HhBasic);
+  TEST_ASSERT_TRUE(fmParamIsToggle(tone,2));TEST_ASSERT_FALSE(fmParamIsToggle(hat,2));
+  TEST_ASSERT_TRUE(fmParamIsToggle(hat,6));
+  TEST_ASSERT_EQUAL(127,fmParamStep(tone,2,0,1));TEST_ASSERT_EQUAL(0,fmParamStep(tone,2,64,-1));
+  TEST_ASSERT_EQUAL(127,fmParamStep(tone,2,1,1));TEST_ASSERT_EQUAL(64,fmParamStep(tone,2,64,0));
+  TEST_ASSERT_EQUAL(33,fmParamStep(hat,2,32,1));TEST_ASSERT_EQUAL(127,fmParamStep(hat,6,0,1));
+  TEST_ASSERT_EQUAL(0,fmParamStep(tone,0,0,0));TEST_ASSERT_EQUAL(41,fmParamStep(tone,0,0,1));
+  TEST_ASSERT_EQUAL(87,fmParamStep(tone,0,127,-1));
+  TEST_ASSERT_EQUAL(36,fmParamStep(static_cast<uint8_t>(FmMachine::Chord),4,127,-1));
+  TEST_ASSERT_FLOAT_WITHIN(.0001f,-24,fmTuneSemitones(tone,0));
+  TEST_ASSERT_FLOAT_WITHIN(.0001f,-3,fmTuneSemitones(hat,0));
+  TEST_ASSERT_FLOAT_WITHIN(.0001f,.125f,fmTuneSemitones(hat,65));
+}
+void test_fm_semantic_value_text_and_layout_bounds() {
+  const auto tone=static_cast<uint8_t>(FmMachine::Tone),hat=static_cast<uint8_t>(FmMachine::HhBasic);
+  char value[32];formatFmParam(tone,2,64,value,sizeof(value));TEST_ASSERT_EQUAL_STRING("ON",value);
+  formatFmParam(tone,2,0,value,sizeof(value));TEST_ASSERT_EQUAL_STRING("OFF",value);
+  formatFmParam(tone,0,0,value,sizeof(value));TEST_ASSERT_EQUAL_STRING("-24 st",value);
+  formatFmParam(hat,0,65,value,sizeof(value));TEST_ASSERT_EQUAL_STRING("+0.125 st",value);
+  formatFmParam(tone,1,64,value,sizeof(value));TEST_ASSERT_EQUAL_STRING("x4.400",value);
+  formatFmParam(static_cast<uint8_t>(FmMachine::Chord),4,16,value,sizeof(value));
+  TEST_ASSERT_EQUAL_STRING("16 Maj6 [-8,-5,-3,0] st",value);
+  formatFmParam(static_cast<uint8_t>(FmMachine::Chord),4,127,value,sizeof(value));
+  TEST_ASSERT_EQUAL_STRING("37 5th [-5,0] st",value);
+  formatFmParam(hat,1,64,value,sizeof(value));TEST_ASSERT_EQUAL_STRING("50% bright",value);
+  char complete[96];
+  for(int type=0;type<128;++type){
+    formatFmParam(static_cast<uint8_t>(FmMachine::Chord),4,type,complete,sizeof(complete));
+    TEST_ASSERT_TRUE(strlen(complete)<=31);
+    formatFmParam(static_cast<uint8_t>(FmMachine::Chord),4,type,value,sizeof(value));
+    TEST_ASSERT_EQUAL_STRING(complete,value);
+  }
+  char shortValue[5]={'?','?','?','?','!'};
+  formatFmParam(tone,1,64,shortValue,4);
+  TEST_ASSERT_EQUAL('\0',shortValue[3]);TEST_ASSERT_EQUAL('!',shortValue[4]);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_reference_fm_tone_has_independent_controls);
   RUN_TEST(test_gate_defaults_and_presets);
   RUN_TEST(test_step_is_15_bytes_and_empty_by_default);
   RUN_TEST(test_fx_in_last_slot);
@@ -1005,6 +1066,9 @@ int main() {
   RUN_TEST(test_lfo_hz_range);
   RUN_TEST(test_fm_gated_machines);
   RUN_TEST(test_fm_set_machine_defaults);
+  RUN_TEST(test_cp_default_uses_auditioned_spcr_setting);
+  RUN_TEST(test_fm_semantic_toggle_editor_and_tune_values);
+  RUN_TEST(test_fm_semantic_value_text_and_layout_bounds);
   RUN_TEST(test_reset_clears_samples);
   RUN_TEST(test_cutoff_hz_range);
   RUN_TEST(test_reso_q_range);

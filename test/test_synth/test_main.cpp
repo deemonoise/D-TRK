@@ -723,7 +723,7 @@ void test_master_volume_200_is_louder() {
   render1(buf);
   const int at100 = blockPeak();
   p->masterVol = 200;
-  render1(buf);
+  for (int block = 0; block < 3; ++block) render1(buf);  // finite 5 ms MAIN ramp has landed
   const int at200 = blockPeak();
   TEST_ASSERT_TRUE(at200 > at100 * 18 / 10);
   TEST_ASSERT_TRUE(at200 < 32767);
@@ -949,17 +949,17 @@ static bool blockSilent() {
 }
 
 void test_fm_kick_sounds_and_ends_by_itself() {
-  useFm(0, FmMachine::Kick);
-  p->instruments[0].macro[kMacDec] = 20;  // ~14 ms
+  useFm(0, FmMachine::BdModern);
+  p->instruments[0].fmParam[3] = 0;  // minimum measured-machine decay
   noteOn(0, 0, 60);
   TEST_ASSERT_FALSE(blockSilent());
-  for (int k = 0; k < 30; ++k) render1(buf);
+  for (int k = 0; k < 120; ++k) render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());
 }
 
 void test_fm_drum_ignores_note_off() {
-  useFm(0, FmMachine::Kick);
-  p->instruments[0].macro[kMacDec] = 110;
+  useFm(0, FmMachine::BdModern);
+  p->instruments[0].fmParam[3] = 110;
   noteOn(0, 0, 60);
   noteOff(10, 0, 60);
   for (int k = 0; k < 4; ++k) render1(buf);
@@ -968,7 +968,7 @@ void test_fm_drum_ignores_note_off() {
 }
 
 void test_fm_drum_chokes_on_same_track() {
-  useFm(0, FmMachine::Hat);
+  useFm(0, FmMachine::HhBasic);
   p->instruments[0].mono = false;  // ignored: drums are mono
   noteOn(0, 0, 60);
   noteOn(50, 0, 64);
@@ -991,6 +991,28 @@ void test_fm_tone_poly_and_gated() {
   render1(buf);
   render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());  // release 0
+}
+
+void test_fm_eight_raw_parameters_reach_production_cache() {
+  useFm(0,FmMachine::Tone);
+  auto& m=p->instruments[0];
+  m.fmParam[3]=127;m.fmParam[5]=0;m.fmParam[6]=0;
+  noteOn(0,0,60);render1(buf);
+  const int index=s->trackVoice(0);
+  TEST_ASSERT_GREATER_OR_EQUAL(0,index);
+  TEST_ASSERT_FLOAT_WITHIN(.01f,0.f,s->voice(index).fpMac[5]);
+  const auto calls=s->fmMachineCalls();
+  m.fmParam[6]=127;render1(buf);
+  TEST_ASSERT_GREATER_THAN(calls,s->fmMachineCalls());
+  TEST_ASSERT_FLOAT_WITHIN(.01f,127.f,s->voice(index).fpMac[6]);
+}
+
+void test_unknown_fm_machine_matches_codec_tone_fallback() {
+  auto& m=p->instruments[0];m.type=InstrType::Fm;m.machine=200;
+  noteOn(0,0,60);render1(buf);
+  const auto& v=s->voice(s->trackVoice(0));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(FmMachine::Tone),v.machine);
+  TEST_ASSERT_FLOAT_WITHIN(.5f,261.555f,v.eng.fm.fp.hz);
 }
 
 void test_fm_chord_is_one_voice() {
@@ -1043,7 +1065,7 @@ void test_fm_lock_ignored_on_chip() {
 void test_fm_lfo_on_pitch() {
   useFm(0, FmMachine::Tone);
   Instrument& m = p->instruments[0];
-  m.macro[kMacCol] = 0;  // pure sine
+  m.fmParam[5] = 0;  // pure sine
   m.sustain = 127;
   noteOn(0, 0, 69);
   const int plain = crossings(250);
@@ -1068,12 +1090,12 @@ static int maxStep(const int16_t* a, int16_t prev) {
 }
 
 void test_fm_choke_mid_segment_has_no_jump() {
-  useFm(0, FmMachine::Kick);
+  useFm(0, FmMachine::BdModern);
   Instrument& m = p->instruments[0];
-  m.macro[kMacDec] = 100;  // ~1 s
-  m.macro[kMacCol] = 0;    // pure sine, no sweep
-  m.macro[kMacShp] = 0;
-  m.macro[kMacSwp] = 0;
+  m.fmParam[3] = 100;  // ~1 s
+  m.fmParam[5] = 0;    // pure sine, no sweep
+  m.fmParam[4] = 0;
+  m.fmParam[1] = 0;
   noteOn(0, 0, 72);
   int peak = 0;
   for (int k = 0; k < 4; ++k) {
@@ -1090,8 +1112,8 @@ void test_fm_choke_mid_segment_has_no_jump() {
 }
 
 void test_fm_drum_all_off_fades() {
-  useFm(0, FmMachine::Kick);
-  p->instruments[0].macro[kMacDec] = 110;
+  useFm(0, FmMachine::BdModern);
+  p->instruments[0].fmParam[3] = 110;
   noteOn(0, 0, 60);
   for (int k = 0; k < 4; ++k) render1(buf);
   const int16_t prev = buf[Synth::kBlock - 1];
@@ -1131,28 +1153,29 @@ void test_fm_legato_from_chip_starts_fm_voice() {
 }
 
 void test_fm_tone_after_drum_takes_its_own_env() {
-  useFm(0, FmMachine::Kick);
+  useFm(0, FmMachine::BdModern);
   useFm(1, FmMachine::Tone);
-  p->instruments[0].macro[kMacDec] = 127;
+  p->instruments[0].fmParam[3] = 127;
   Instrument& t = p->instruments[1];
   t.mono = true;
   t.sustain = 0;
-  t.macro[kMacDec] = 0;  // 5 ms decay to nothing
+  t.fmParam[3] = 0;  // machine minimum decay to silence
   noteOn(0, 0, 60);
   render1(buf);
   pgm(0, 1);
   noteOn(0, 0, 60);  // legato into the sounding kick's voice
-  for (int k = 0; k < 10; ++k) render1(buf);
+  for (int k = 0; k < 30; ++k) render1(buf);
   TEST_ASSERT_EQUAL(0, s->activeVoices());  // TONE's env, not the drum gate
 }
 
 void test_fm_machine_switch_keeps_sounding_drum_one_shot() {
-  useFm(0, FmMachine::Kick);
-  p->instruments[0].macro[kMacDec] = 40;  // ~40 ms
+  useFm(0, FmMachine::BdModern);
+  p->instruments[0].fmParam[3] = 0;  // short reference-machine decay
   noteOn(0, 0, 60);
   render1(buf);
   fmSetMachine(p->instruments[0], static_cast<uint8_t>(FmMachine::Tone));  // UI edit while it sounds
   p->instruments[0].sustain = 127;
+  p->instruments[0].fmParam[3] = 0;
   for (int k = 0; k < 100; ++k) render1(buf);  // 400 ms
   TEST_ASSERT_EQUAL(0, s->activeVoices());  // no drone
 }
@@ -1191,18 +1214,28 @@ void test_fm_lfo_on_vol() {
   TEST_ASSERT_TRUE(loud > quiet * 4);
 }
 
+void test_fm_decay_lfo_preserves_fractional_control() {
+  useFm(0,FmMachine::Tone);
+  auto& m=p->instruments[0];m.fmParam[3]=64;
+  m.lfoWave=static_cast<uint8_t>(LfoWave::Sine);m.lfoRate=60;m.lfoDepth=10;
+  m.lfoDest=static_cast<uint8_t>(LfoDest::Dec);
+  noteOn(0,0,60);for(int i=0;i<5;++i)render1(buf);
+  const float value=s->voice(s->trackVoice(0)).fpMac[3];
+  TEST_ASSERT_TRUE(fabsf(value-roundf(value))>1e-4f);
+}
+
 void test_fm_lfo_on_macro() {
   useFm(0, FmMachine::Tone);
   Instrument& m = p->instruments[0];
-  m.macro[kMacCol] = 0;  // pure sine
+  m.fmParam[5] = 64;  // weak modulation baseline
   noteOn(0, 0, 69);
   static int16_t a[Synth::kBlock * 20];
   for (int k = 0; k < 20; ++k) render1(a + k * Synth::kBlock);
   s->reset();
   m.lfoWave = static_cast<uint8_t>(LfoWave::Square);
   m.lfoRate = 30;
-  m.lfoDepth = 63;  // COLOR 0 -> ~63 in the first half cycle
-  m.lfoDest = static_cast<uint8_t>(LfoDest::Col);
+  m.lfoDepth = 63;  // MOD 64 -> ~127 in the first half cycle
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Shp);
   noteOn(0, 0, 69);
   long diff = 0, sum = 0;
   for (int k = 0; k < 20; ++k) {
@@ -1933,7 +1966,7 @@ void test_fm_cache_static_note_computes_once() {
 }
 
 void test_fm_cache_static_note_matches_recompute() {
-  const FmMachine ms[] = {FmMachine::Tone, FmMachine::Kick, FmMachine::Snare, FmMachine::Clap, FmMachine::Chord};
+  const FmMachine ms[] = {FmMachine::Tone, FmMachine::BdModern, FmMachine::SdBasic, FmMachine::CpVintage, FmMachine::Chord};
   for (FmMachine mc : ms) {
     useFm(0, mc);
     p->instruments[0].sustain = 127;
@@ -2004,7 +2037,7 @@ void test_fm_sat_instrument() {
   Instrument& m = p->instruments[0];
   m.sustain = 127;
   renderFm(fa, 40, true);
-  m.fmSat = 127;
+  m.fmParam[7] = 127;
   const uint32_t c0 = s->fmMachineCalls();
   renderFm(fb, 40, true);
   TEST_ASSERT_TRUE(s->fmMachineCalls() - c0 <= 2);
@@ -2123,7 +2156,7 @@ void test_fm_ninth_note_steals_oldest_fm_keeps_chip() {
 // 16 tracks, 12 of them FM: the heavy-voice cap holds under random note traffic.
 void test_fm_voices_never_exceed_cap() {
   useFm(1, FmMachine::Tone);
-  useFm(2, FmMachine::Kick);
+  useFm(2, FmMachine::BdModern);
   useFm(3, FmMachine::Chord);
   p->instruments[1].mono = false;
   p->instruments[1].sustain = 127;
@@ -3648,6 +3681,52 @@ void test_comp_sidechain_key_track_not_squashed() {
   TEST_ASSERT_FLOAT_WITHIN(dry * 0.05f, dry, comp);
 }
 
+// Constant looping samples isolate routing discontinuities from oscillator transients.
+void test_comp_sidechain_source_changes_are_smooth() {
+  sampleInstr(400, kSynthRate);
+  for (auto& x : ab->data) x = 12000;
+  p->instruments[0].loop = static_cast<uint8_t>(LoopMode::Forward);
+  p->instruments[1] = p->instruments[0];
+  p->instruments[1].vol = 64;
+  p->tracks[0].pan = 0;
+  p->tracks[1].pan = 127;
+  p->compAmt = 127;
+  p->scDepth = 127;
+  p->scTrack = 1;
+  noteOn(0, 0, 60);
+  noteOn(0, 1, 60);
+  for (int k = 0; k < 100; ++k) render1(buf);
+  const int leftBefore = buf[Synth::kBlock - 1];
+  p->scTrack = 2;
+  render1(buf);
+  TEST_ASSERT_INT_WITHIN(200, leftBefore, buf[0]);
+  TEST_ASSERT_TRUE(buf[Synth::kBlock - 1] < leftBefore - 500);
+  // Rapid changes mid-fade and then source OFF must also avoid a routing step.
+  const int leftMid = buf[Synth::kBlock - 1];
+  p->scTrack = 1;
+  render1(buf);
+  TEST_ASSERT_INT_WITHIN(200, leftMid, buf[0]);
+  const int leftLast = buf[Synth::kBlock - 1];
+  p->scTrack = 0;
+  render1(buf);
+  TEST_ASSERT_INT_WITHIN(200, leftLast, buf[0]);
+}
+
+void test_comp_attack_setting_reaches_audio() {
+  sampleInstr(400, kSynthRate);
+  for (auto& x : ab->data) x = 12000;
+  p->instruments[0].loop = static_cast<uint8_t>(LoopMode::Forward);
+  p->compAmt = 127;
+  p->compAttack = 0;
+  noteOn(0, 0, 60);
+  const float fast = rmsBlocks(5);
+  s->reset();
+  p->compAttack = 127;
+  noteOn(0, 0, 60);
+  const float slow = rmsBlocks(5);
+  TEST_ASSERT_TRUE(slow > fast * 1.15f);
+}
+
 void test_comp_off_is_bit_identical() {
   p->scTrack = 1;
   p->scDepth = 127;  // ignored with compAmt 0
@@ -4199,6 +4278,22 @@ void test_perf_freeze_ducks_mix() {
   perfSend(*s, 1, static_cast<uint8_t>(PerfFx::Freeze));
   renderBoth(*s, ref, 1, false);  // ramping out
   renderBoth(*s, ref, 10, true);
+}
+
+void test_perf_freeze_does_not_leak_sidechain_key() {
+  sampleInstr(400, kSynthRate);
+  for (auto& x : ab->data) x = 3000;
+  p->instruments[0].loop = static_cast<uint8_t>(LoopMode::Forward);
+  p->compAmt = 127;
+  p->scTrack = 1;
+  p->scDepth = 127;
+  noteOn(0, 0, 60);
+  const float dry = rmsBlocks(100);
+  perfSend(*s, 0, static_cast<uint8_t>(PerfFx::Freeze));
+  rmsBlocks(10);  // finish dry gain and detector ramps; no reverb buffer in this test
+  const float frozen = rmsBlocks(10);
+  TEST_ASSERT_TRUE(frozen > dry * 0.45f);
+  TEST_ASSERT_TRUE(frozen < dry * 0.55f);
 }
 
 static int16_t dlyA[16000], dlyB[16000];
@@ -4819,7 +4914,7 @@ static Instrument& synFoldInst() {
   instrSetType(m, InstrType::Synth);
   return m;
 }
-constexpr uint32_t kSynFoldRef = 0x250BF7C3;  // today's build (fold 0, ring 0), captured before the change
+constexpr uint32_t kSynFoldRef = 0xED7E9CAD;  // clean master calibration; Fold/Ring DSP remains off
 
 void test_synth_fold_ring_off_bit_exact() {
   Instrument& m = synFoldInst();
@@ -4868,7 +4963,7 @@ static uint32_t lpBpHpRenderHash() {
   c.keytrack = 64;
   c.release = 50;
   Instrument& f = p->instruments[1];  // FM, BP
-  useFm(1, FmMachine::Kick);
+  useFm(1, FmMachine::BdModern);
   instrSetType(f, InstrType::Fm);
   f.fltMode = static_cast<uint8_t>(FltMode::Bp);
   f.cutoff = 90;
@@ -4921,9 +5016,8 @@ static uint32_t lpBpHpRenderHash() {
 
 void test_lp_bp_hp_render_unchanged() {
   const uint32_t h = lpBpHpRenderHash();
-  // Re-captured after preserving the FM KICK attack peak inside a control block;
-  // LP / BP / HP processing itself is unchanged.
-  TEST_ASSERT_EQUAL_HEX32(0x7043CC95u, h);
+  // This mix includes FM: re-captured after its explicit mixer-level trim.
+  TEST_ASSERT_EQUAL_HEX32(0xAF9FC6B9u, h);
 }
 
 // A CHIP saw through each new type: it sounds, and the voice is freed within 3 s of the release
@@ -5474,7 +5568,7 @@ void test_tuning_eligible_types() {
   s->startTrack(2);
   noteOn(0, 2, 60);
   instrSetType(p->instruments[3], InstrType::Fm);
-  fmSetMachine(p->instruments[3], static_cast<uint8_t>(FmMachine::Kick));
+  fmSetMachine(p->instruments[3], static_cast<uint8_t>(FmMachine::BdModern));
   p->tracks[3].instr = 3;
   s->startTrack(3);
   noteOn(0, 3, 60);
@@ -5936,6 +6030,34 @@ void test_clear_parameter_locks_keeps_sounding_voice() {
   TEST_ASSERT_EQUAL(v,s->trackVoice(0));
   TEST_ASSERT_NOT_EQUAL(0,s->voice(v).lockMask); TEST_ASSERT_NOT_EQUAL(0,s->voice(v).lfoLockMask);
 }
+// The reference recorder's level must not become the engine's mixer level.
+// At full velocity/faders, starting sounds need useful level and single-note headroom.
+void test_fm_default_levels_match_other_engines_in_mixer() {
+  for (int caseId=0; caseId<=static_cast<int>(FmMachine::Count); ++caseId) {
+    const bool rolling=caseId==static_cast<int>(FmMachine::Count);
+    const int machine=rolling?static_cast<int>(FmMachine::CpVintage):caseId;
+    delete s; s=nullptr;
+    auto& m=p->instruments[0]; m=Instrument();
+    instrSetType(m,InstrType::Fm); fmSetMachine(m,static_cast<uint8_t>(machine));
+    if(rolling)m.fmParam[1]=32; // a compact-clap trim must not overload its rolling mode
+    m.vol=127; m.fltMode=static_cast<uint8_t>(FltMode::Off); m.send=m.rsend=0;
+    p->dlyLevel=p->rvbLevel=p->modLevel=p->compAmt=0;
+    s=new Synth(*p); noteOn(0,0,60,127);
+    double energy=0; int peak=0, count=0;
+    for(int k=0;k<blocksMs(1000);++k) {
+      render1(buf);
+      for(int16_t x:buf) {
+        const int a=x<0?-static_cast<int>(x):x; if(a>peak)peak=a;
+        if(k<blocksMs(300)){energy+=static_cast<double>(x)*x;++count;}
+      }
+    }
+    char label[64]; snprintf(label,sizeof(label),"FM machine %d mixer peak",machine);
+    TEST_ASSERT_GREATER_THAN_MESSAGE(6553,peak,label); // >0.2, CHIP/SYNTH peak is about0.375
+    TEST_ASSERT_LESS_THAN_MESSAGE(26214,peak,label);   // <0.8: no master knee on a starting note
+    TEST_ASSERT_GREATER_THAN_MESSAGE(1036.0,sqrt(energy/count),label); // >-30dBFS over first300ms
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_clear_parameter_locks_keeps_sounding_voice);
@@ -6019,6 +6141,9 @@ int main() {
   RUN_TEST(test_fm_drum_ignores_note_off);
   RUN_TEST(test_fm_drum_chokes_on_same_track);
   RUN_TEST(test_fm_tone_poly_and_gated);
+  RUN_TEST(test_fm_default_levels_match_other_engines_in_mixer);
+  RUN_TEST(test_fm_eight_raw_parameters_reach_production_cache);
+  RUN_TEST(test_unknown_fm_machine_matches_codec_tone_fallback);
   RUN_TEST(test_fm_chord_is_one_voice);
   RUN_TEST(test_fm_lock_on_note_step);
   RUN_TEST(test_fm_lock_on_empty_step_hits_sounding_voice);
@@ -6031,6 +6156,7 @@ int main() {
   RUN_TEST(test_fm_machine_switch_keeps_sounding_drum_one_shot);
   RUN_TEST(test_fm_lfo_random_starts_off_zero);
   RUN_TEST(test_fm_lfo_on_vol);
+  RUN_TEST(test_fm_decay_lfo_preserves_fractional_control);
   RUN_TEST(test_fm_lfo_on_macro);
   RUN_TEST(test_fm_cache_static_note_computes_once);
   RUN_TEST(test_fm_cache_static_note_matches_recompute);
@@ -6191,6 +6317,8 @@ int main() {
   RUN_TEST(test_comp_sidechain_track);
   RUN_TEST(test_comp_sidechain_key_track_not_squashed);
   RUN_TEST(test_comp_off_is_bit_identical);
+  RUN_TEST(test_comp_attack_setting_reaches_audio);
+  RUN_TEST(test_comp_sidechain_source_changes_are_smooth);
   RUN_TEST(test_arm_up_down_updown);
   RUN_TEST(test_arm_random_stays_in_set);
   RUN_TEST(test_arp_chord_cycles_chord_notes);
@@ -6224,6 +6352,7 @@ int main() {
   RUN_TEST(test_perf_step_clock_reanchors_grid);
   RUN_TEST(test_perf_step_clock_idle_bit_exact);
   RUN_TEST(test_perf_freeze_ducks_mix);
+  RUN_TEST(test_perf_freeze_does_not_leak_sidechain_key);
   RUN_TEST(test_perf_return_floor_decays);
   RUN_TEST(test_perf_reset_drops_throw);
   RUN_TEST(test_fol_silent_source_bit_exact);

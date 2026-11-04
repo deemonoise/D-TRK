@@ -10,6 +10,7 @@
 #include "engine/engine.h"
 #include "note_name.h"
 #include "sample_set.h"
+#include "sample_extract.h"
 #include "slices.h"
 
 namespace ui {
@@ -196,6 +197,15 @@ bool SampleEditor::wtSource(int& index, uint32_t& from, uint32_t& to, uint32_t& 
   sync();
   if (idx_ < 0 || frames_ == 0) return false;
   region(from, to);
+  index = idx_;
+  rate = rate_;
+  return true;
+}
+
+bool SampleEditor::extractSource(bool slice, int& index, uint32_t& from, uint32_t& to, uint32_t& rate) {
+  sync();
+  if (idx_ < 0 || !frames_ || (slice && !sliceSelected())) return false;
+  if (!mt::sampleExtractRegion(inst(), frames_, slice ? sel_ - kSlice0 : -1, from, to)) return false;
   index = idx_;
   rate = rate_;
   return true;
@@ -401,7 +411,7 @@ bool SampleEditor::ensureOnsets() {
 uint8_t SampleEditor::previewNote() {
   const mt::Instrument& m = inst();
   if (m.sliceMode == static_cast<uint8_t>(mt::SliceMode::Note) && sel_ >= kSlice0 && sel_ - kSlice0 < m.sliceCount)
-    return static_cast<uint8_t>(clampi(m.root + sel_ - kSlice0, 0, 127));
+    return mt::sliceNote(m, sel_ - kSlice0);
   return 60;
 }
 

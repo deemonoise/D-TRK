@@ -208,7 +208,8 @@ void test_slc_fx() {
   TEST_ASSERT_EQUAL_STRING("SLC", fxName(Fx::SLC));
   TEST_ASSERT_TRUE(fxSynthOnly(Fx::SLC));
   TEST_ASSERT_EQUAL(0, fxDefault(Fx::SLC));
-  TEST_ASSERT_EQUAL(31, fxStep(Fx::SLC, 30, 5));
+  TEST_ASSERT_EQUAL(35, fxStep(Fx::SLC, 30, 5));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::SLC, 125, 5));
   TEST_ASSERT_EQUAL(0, fxStep(Fx::SLC, 2, -5));
   TEST_ASSERT_EQUAL_STRING(" 12", fmt(Fx::SLC, 12));
   // OFF: ticks 0..96, MIDI too.

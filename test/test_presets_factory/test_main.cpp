@@ -23,6 +23,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   SAME(root); SAME(start); SAME(end); SAME(loop); SAME(loopStart); SAME(reverse);
   SAME(machine);
   for (int k = 0; k < kFmMacros; ++k) SAME(macro[k]);
+  for (int k = 0; k < kFmParams; ++k) SAME(fmParam[k]);
   SAME(lfoWave); SAME(lfoRate); SAME(lfoDepth); SAME(lfoDest);
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack);
   for (int k = 0; k < 2; ++k) {
@@ -111,16 +112,18 @@ void test_valid_values() {
       TEST_ASSERT_TRUE_MESSAGE(m.type == ty, factoryPreset(ty, i).name);
       TEST_ASSERT_EQUAL_STRING(factoryPreset(ty, i).name, m.name);
       // Clamped values survive pack -> unpack unchanged: everything is in range.
-      uint8_t a[kInstRecSize], f[kFmRecSize], l[kFltRecSize], y[kSynRecSize];
+      uint8_t a[kInstRecSize], f[kFmRecSize], l[kFltRecSize], y[kSynRecSize], q[kFmParamRecSize];
       packInst(m, a);
       packFm(m, f);
       packFlt(m, l);
       packSyn(m, y);
+      packFmParams(m, q);
       Instrument r;
       unpackInst(a, r);
       unpackFm(f, r);
       unpackFlt(l, r);
       unpackSyn(y, r);
+      unpackFmParams(q, sizeof(q), r);
       fixInstrument(r);
       assertSameInst(m, r, m.name);
     }
@@ -132,8 +135,8 @@ void test_valid_values() {
 void test_recommended_insert() {
   struct R { InstrType t; const char* name; uint8_t drive, bits, rate; };
   const R want[] = {
-      {InstrType::Chip, "GRIT BAS", 40, 70, 0},  {InstrType::Fm, "KICK PNC", 40, 0, 0},
-      {InstrType::Fm, "CHRD 5TH", 25, 0, 0},     {InstrType::Drum, "BD808 D", 45, 0, 0},
+      {InstrType::Chip, "GRIT BAS", 40, 70, 0},  {InstrType::Fm, "BDPUNCH", 0, 0, 0},
+      {InstrType::Fm, "CHRDTYPE", 0, 0, 0},     {InstrType::Drum, "BD808 D", 45, 0, 0},
       {InstrType::Drum, "BD909 H", 30, 0, 0},    {InstrType::Drum, "BD DUSTY", 0, 85, 30},
       {InstrType::Drum, "SD DUSTY", 0, 90, 40},  {InstrType::Drum, "HH DUSTY", 0, 80, 50},
       {InstrType::Drum, "CP DUSTY", 0, 0, 60},   {InstrType::Drum, "RIM BIT", 0, 110, 0},
@@ -244,15 +247,17 @@ void test_lofi_byte_presets_use_formula_defaults() {
   TEST_ASSERT_TRUE(syncN >= 3);
 }
 
-void test_chord_preset_is_maj7() {
+void test_chord_preset_uses_measured_type() {
+  bool found = false;
   for (int i = 0; i < factoryCount(InstrType::Fm); ++i) {
-    if (strcmp(factoryPreset(InstrType::Fm, i).name, "CHORD M7") != 0) continue;
+    if (strcmp(factoryPreset(InstrType::Fm, i).name, "CHRDTYPE") != 0) continue;
     Instrument m;
     factoryBuild(InstrType::Fm, i, m);
-    TEST_ASSERT_EQUAL_STRING("MAJ7", fmChordName(m.macro[kMacShp]));
-    return;
+    TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Chord), m.machine);
+    TEST_ASSERT_EQUAL(9, m.fmParam[4]);
+    found = true;
   }
-  TEST_FAIL_MESSAGE("no CHORD M7");
+  TEST_ASSERT_TRUE(found);
 }
 
 // Built-in wavetables, built on first use.
@@ -450,7 +455,7 @@ void test_kit_lane_levels_reach_instruments() {
 // then sustain rather than turn back into a dark, decaying whoop.
 void test_risers_open_and_sustain_without_clipping() {
   static Project p;
-  for (InstrType type : {InstrType::Synth, InstrType::Fm}) {
+  for (InstrType type : {InstrType::Synth}) {
     int index=-1;
     for(int i=0;i<factoryCount(type);++i)
       if(!strcmp(factoryPreset(type,i).name,"RISER"))index=i;
@@ -502,8 +507,29 @@ void test_risers_open_and_sustain_without_clipping() {
   }
 }
 
+void test_reference_family_has_all_ten_machines_and_bass_register() {
+  bool seen[static_cast<int>(FmMachine::Count)] = {};
+  bool bass = false;
+  for (int i = 0; i < factoryCount(InstrType::Fm); ++i) {
+    Instrument m;
+    factoryBuild(InstrType::Fm, i, m);
+    TEST_ASSERT_LESS_THAN(static_cast<int>(FmMachine::Count), m.machine);
+    seen[m.machine] = true;
+    for (uint8_t value : m.fmParam) TEST_ASSERT_LESS_OR_EQUAL(127, value);
+    if (!strcmp(m.name, "TONEBASS")) {
+      TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Tone), m.machine);
+      TEST_ASSERT_EQUAL(-12, m.transpose);  // keeps Dice bass notes in their intended register
+      TEST_ASSERT_EQUAL(0, m.fmParam[5]);
+      bass = true;
+    }
+  }
+  for (bool present : seen) TEST_ASSERT_TRUE(present);
+  TEST_ASSERT_TRUE(bass);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_reference_family_has_all_ten_machines_and_bass_register);
   RUN_TEST(test_risers_open_and_sustain_without_clipping);
   RUN_TEST(test_string_pads_audible_at_reference_note);
   RUN_TEST(test_chip_pulse_presets_have_no_material_dc);
@@ -518,7 +544,7 @@ int main() {
   RUN_TEST(test_synth_presets_builtin_tables);
   RUN_TEST(test_lofi_presets_valid);
   RUN_TEST(test_lofi_byte_presets_use_formula_defaults);
-  RUN_TEST(test_chord_preset_is_maj7);
+  RUN_TEST(test_chord_preset_uses_measured_type);
   RUN_TEST(test_every_preset_sounds);
   RUN_TEST(test_unused7_has_no_presets);
   RUN_TEST(test_string_presets);

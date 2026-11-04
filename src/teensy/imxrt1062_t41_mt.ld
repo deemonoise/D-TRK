@@ -24,6 +24,9 @@ SECTIONS
 	.text.code : {
 		KEEP(*(.startup))
 		*(.flashmem*)
+		/* Text/number formatting runs in setup/background logging, never the sample loop.
+		   Keep newlib's large formatters out of the shared ITCM/DTCM voice/stack budget. */
+		*(.text._svfprintf_r .text._vfiprintf_r .text._dtoa_r)
 		/* MIDI tracker: cold code runs from flash (RAM1 is short). Anything FASTRUN / MT_HOT
 		   in these files is in .fastrun and stays in ITCM. */
 		*:demos.cpp.o(.text*)
@@ -73,6 +76,9 @@ SECTIONS
 		*inst_codec.cpp.o(.text*)
 		*:link_msg.cpp.o(.text*)
 		*link_msg.cpp.o(.text*)
+		/* SD planning runs in loop(), or a parked offline render, never the live audio IRQ. */
+		*:stream_loader.cpp.o(.text*)
+		*stream_loader.cpp.o(.text*)
 		*:link_fs.cpp.o(.text*)
 		*link_fs.cpp.o(.text*)
 		*:bank_ops.cpp.o(.text*)

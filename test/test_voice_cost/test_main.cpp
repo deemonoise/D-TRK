@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <initializer_list>
+#include <limits>
 #include "model.h"
 #include "voice_cost.h"
 #include "bytebeat_lib.h"
@@ -107,7 +108,7 @@ void test_synth_bl() {
 }
 
 void test_fm_drum() {
-  TEST_ASSERT_EQUAL(225, voiceCost(of(InstrType::Fm), false));
+  TEST_ASSERT_EQUAL(kCostFmMachines[static_cast<int>(FmMachine::BdModern)], voiceCost(of(InstrType::Fm), false));
   TEST_ASSERT_EQUAL(kCostDrum[0], voiceCost(of(InstrType::Drum), false));  // machine 0: BD8
 }
 
@@ -205,14 +206,35 @@ void test_potential_mask_and_lfo_targets_do_not_double_charge() {
   m.lfo[2].dest=static_cast<uint8_t>(LfoDest::Ring);
   TEST_ASSERT_EQUAL(kCostSynBl+kCostRing,voiceCost(m,false));
 }
+void test_fm_reference_prices_follow_latched_machine() {
+  Instrument m=of(InstrType::Fm);m.machine=static_cast<uint8_t>(FmMachine::Tone);
+  const int tone=voiceCost(m,false);
+  m.machine=static_cast<uint8_t>(FmMachine::HhBasic);
+  const int hat=voiceCost(m,false);
+  TEST_ASSERT_GREATER_THAN(tone,hat);
+  m.type=InstrType::Chip;m.machine=0;
+  TEST_ASSERT_EQUAL(hat,voiceCost(m,false,0,0,InstrType::Fm,static_cast<uint8_t>(FmMachine::HhBasic)));
+  m.type=InstrType::Fm;m.machine=255;
+  TEST_ASSERT_EQUAL(tone,voiceCost(m,false));
+}
+
+void test_fm_tone_punch_prices_its_richer_carrier() {
+  Instrument m=of(InstrType::Fm);m.machine=static_cast<uint8_t>(FmMachine::Tone);
+  const int plain=voiceCost(m,false);m.fmParam[2]=1;
+  TEST_ASSERT_EQUAL(plain+kCostFmTonePunch,voiceCost(m,false));
+  m.machine=static_cast<uint8_t>(FmMachine::HhBasic);m.fmParam[2]=0;
+  const int hat=voiceCost(m,false);m.fmParam[2]=127;
+  TEST_ASSERT_EQUAL(hat,voiceCost(m,false));
+}
+
 void test_fm_sat_base_lfo_and_per_note_cost() {
   Instrument m=of(InstrType::Fm);
   TEST_ASSERT_EQUAL(kCostFm,voiceCost(m,false));
-  m.fmSat=1;
+  m.fmParam[7]=1;
   TEST_ASSERT_EQUAL(kCostFm+kCostFmSat,voiceCost(m,false));
   m.lfoDest=static_cast<uint8_t>(LfoDest::Sat);
   TEST_ASSERT_EQUAL(kCostFm+kCostFmSat,voiceCost(m,false,kCostPotentialSat));
-  m.fmSat=0;
+  m.fmParam[7]=0;
   TEST_ASSERT_EQUAL(kCostFm+kCostFmSat,voiceCost(m,false));
   m.lfoDest=static_cast<uint8_t>(LfoDest::Pitch);
   TEST_ASSERT_EQUAL(kCostFm+kCostFmSat,voiceCost(m,false,kCostPotentialSat));
@@ -285,14 +307,95 @@ void test_ay_tone_noise_cost_tracks_effective_clock() {
   TEST_ASSERT_EQUAL(kCostChip,voiceCost(m,false,0,200000));
 }
 
+void test_sample_active_pitch_modulation_reserves_filter_work() {
+  Instrument m = of(InstrType::Sample);
+  m.fltMode = static_cast<uint8_t>(FltMode::Off);
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Pitch);
+  m.lfoDepth = 0;
+  TEST_ASSERT_EQUAL(kCostSample, voiceCost(m, true));
+  m.lfoDepth = 2;
+  TEST_ASSERT_TRUE(voiceCost(m, true) > kCostSample);
+}
+
+static int sampleRateCost(const Instrument& m, float step, uint8_t potential = 0,
+                          InstrType actual = InstrType::Count) {
+  return voiceCost(m, true, potential, 0, actual, 255, step);
+}
+
+void test_sample_frame_step_cost_is_monotonic_and_reverse_symmetric() {
+  int previous = 0;
+  for (float step : {0.f, .5f, 1.f, 1.0001f, 2.f, 2.5f, 2.5001f, 4.f, 4.0001f,
+                     8.f, 8.0001f, 16.f, 16.0001f, 32.f, 128.f, 256.f}) {
+    const int cost = samplePlaybackCost(step);
+    TEST_ASSERT_TRUE(cost >= kCostSample && cost >= previous);
+    TEST_ASSERT_EQUAL(cost, samplePlaybackCost(-step));
+    previous = cost;
+  }
+  TEST_ASSERT_EQUAL(kCostSample, samplePlaybackCost(1.f));
+  TEST_ASSERT_EQUAL(kCostSampleFirCommon, samplePlaybackCost(2.5f));
+  TEST_ASSERT_EQUAL(kCostSampleFirMedium, samplePlaybackCost(4.f));
+  TEST_ASSERT_EQUAL(kCostSampleFirHigh, samplePlaybackCost(8.f));
+  TEST_ASSERT_EQUAL(kCostSampleFirWide, samplePlaybackCost(16.f));
+}
+
+void test_sample_frame_step_clamps_nonfinite_and_above_maximum() {
+  const int maximum = samplePlaybackCost(256.f);
+  TEST_ASSERT_EQUAL(maximum, samplePlaybackCost(10000.f));
+  TEST_ASSERT_EQUAL(maximum, samplePlaybackCost(std::numeric_limits<float>::infinity()));
+  TEST_ASSERT_EQUAL(maximum, samplePlaybackCost(-std::numeric_limits<float>::infinity()));
+  TEST_ASSERT_EQUAL(maximum, samplePlaybackCost(std::numeric_limits<float>::quiet_NaN()));
+  TEST_ASSERT_TRUE(maximum + kCostSamplePitchMod < 65536);
+}
+
+void test_sample_flags_and_latched_type_keep_rate_and_filter_addons_once() {
+  Instrument m = of(InstrType::Kit);
+  m.fltMode = static_cast<uint8_t>(FltMode::Sid);
+  TEST_ASSERT_EQUAL(samplePlaybackCost(4) + kCostSid, sampleRateCost(m, 4));
+  m.type = InstrType::Fm;
+  TEST_ASSERT_EQUAL(samplePlaybackCost(8) + kCostSid,
+                    sampleRateCost(m, 8, 0, InstrType::String));
+  TEST_ASSERT_EQUAL(kCostFm + kCostSid,
+                    voiceCost(m, false, 0, 0, InstrType::Fm, 255, 256));
+}
+
+void test_sample_pitch_modulation_cost_is_live_and_never_double_charged() {
+  Instrument m = of(InstrType::Sample);
+  m.fltMode = static_cast<uint8_t>(FltMode::Off);
+  const int plain = sampleRateCost(m, 2);
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Pitch);
+  m.lfoDepth = 0;
+  TEST_ASSERT_EQUAL(plain, sampleRateCost(m, 2));
+  m.lfoDepth = -2;
+  const int modulated = sampleRateCost(m, 2);
+  TEST_ASSERT_EQUAL(samplePlaybackCost(2, true), modulated);
+  TEST_ASSERT_TRUE(modulated > plain);
+  m.lfo[0].dest = static_cast<uint8_t>(LfoDest::Fine);
+  m.lfo[0].depth = 3;
+  TEST_ASSERT_EQUAL(modulated, sampleRateCost(m, 2, kCostPotentialSamplePitch));
+  m.lfoDepth = 0;
+  m.lfo[0].depth = 0;
+  TEST_ASSERT_EQUAL(plain, sampleRateCost(m, 2));
+  TEST_ASSERT_EQUAL(modulated, sampleRateCost(m, 2, kCostPotentialSamplePitch));
+  m.lfoDest = static_cast<uint8_t>(LfoDest::Cutoff);
+  m.lfoDepth = 63;
+  TEST_ASSERT_EQUAL(plain, sampleRateCost(m, 2));
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_sample_frame_step_cost_is_monotonic_and_reverse_symmetric);
+  RUN_TEST(test_sample_frame_step_clamps_nonfinite_and_above_maximum);
+  RUN_TEST(test_sample_flags_and_latched_type_keep_rate_and_filter_addons_once);
+  RUN_TEST(test_sample_pitch_modulation_cost_is_live_and_never_double_charged);
+  RUN_TEST(test_sample_active_pitch_modulation_reserves_filter_work);
   RUN_TEST(test_byte_score_boot_metadata_and_no_lazy_initialization);
   RUN_TEST(test_ay_tone_noise_cost_tracks_effective_clock);
   RUN_TEST(test_lofi_byte_cost_scales_with_formula_and_evaluation_rate);
   RUN_TEST(test_latched_engine_type_and_machine_override_live_instrument);
   RUN_TEST(test_synth_modulators_reserve_fold_and_ring);
   RUN_TEST(test_potential_mask_and_lfo_targets_do_not_double_charge);
+  RUN_TEST(test_fm_reference_prices_follow_latched_machine);
+  RUN_TEST(test_fm_tone_punch_prices_its_richer_carrier);
   RUN_TEST(test_fm_sat_base_lfo_and_per_note_cost);
   RUN_TEST(test_chip_lp_is_base);
   RUN_TEST(test_chip_filter_addons);

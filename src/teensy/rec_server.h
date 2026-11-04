@@ -11,6 +11,11 @@ class SynthStream;
 namespace rec {
 
 void begin(SynthStream& out);
+// loop(), before the PSRAM watchdog publishes Failed: atomically detach capture and discard its
+// unread ring, without SD I/O or heap use. Take/Sealing retain only the already-written WAV prefix
+// and report NoPsram (WriteFail takes precedence); no bank import follows. An existing Importing
+// job already uses its sealed file and keeps its result. New takes require a reboot.
+void psramFailed();
 bool isRequest(mt::link::Msg t);
 // A request (frame seq) -> its reply payload in out (kMaxPayload), its size; -1 for RecStop: step()
 // sends Progress frames, then the RecStopRep.

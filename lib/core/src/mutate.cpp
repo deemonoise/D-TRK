@@ -36,8 +36,10 @@ bool mutateInstrument(Instrument& m, int strength, uint32_t seed) {
   if (t == InstrType::Chip || t == InstrType::Sample || t == InstrType::Synth || t == InstrType::Lofi ||
       (t == InstrType::Fm && fmGated(m.machine))) {
     mv.move(m.attack, 0, 100);
-    mv.move(m.decay, 1, 127);
-    mv.move(m.sustain, 0, 127);
+    if (t != InstrType::Fm) {
+      mv.move(m.decay, 1, 127);
+      mv.move(m.sustain, 0, 127);
+    }
     mv.move(m.release, 0, 110);
   }
   if (m.fltMode != static_cast<uint8_t>(FltMode::Off)) {
@@ -47,9 +49,11 @@ bool mutateInstrument(Instrument& m, int strength, uint32_t seed) {
     mv.move(m.fAtk, 0, 100);
     mv.move(m.fDec, 1, 127);  // 0 = hold: outside, stays
   }
-  if (t == InstrType::Fm || t == InstrType::Drum || t == InstrType::Synth)
+  if (t == InstrType::Drum || t == InstrType::Synth)
     for (uint8_t& k : m.macro) mv.move(k, 0, 127);
-  if (t == InstrType::Fm) mv.move(m.fmSat, 0, 127);  // after the macros: the other types' draws stay as they were
+  if (t == InstrType::Fm)
+    for (int k = 0; k < kFmParams; ++k)
+      if (*fmParamName(m.machine, k)) mv.move(m.fmParam[k], 0, 127);
   if (t == InstrType::Lofi)
     for (int k = 0; k < kFmMacros; ++k)
       if (*lofiMacroName(m.machine, k)) mv.move(m.macro[k], 0, 127);  // not a slot the machine leaves unused

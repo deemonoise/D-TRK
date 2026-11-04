@@ -3,12 +3,15 @@
 #include "bank_ops.h"
 #include "model.h"
 #include "sample_source.h"
+#include "sector_map.h"
 #include "stream_pool.h"
+#include "tempo_detect.h"
 
 namespace mt {
+class TimeStretch;
 
 // The sample store on the synth board's card: /mt-store/<crc>.wav, mono 16-bit <= kWavMaxRate, data
-// from byte kStoreDataOffset (sector 1 of a contiguous file), plus /mt-store/<crc>.pk (peak overview).
+// from byte kStoreDataOffset (logical file sector 1), plus /mt-store/<crc>.pk (peak overview).
 // Keyed by the data CRC, so it serves every project; the project folders keep their own copies.
 constexpr uint32_t kStoreDataOffset = 512;
 constexpr int kStorePathMax = 28;
@@ -27,6 +30,7 @@ struct StoreEntry {
   volatile uint32_t crc = 0;  // 0 = empty
   uint32_t frames = 0, rate = 0;
   uint32_t sector = 0;        // first card sector of the file (data from sector + 1); 0 = not contiguous
+  const SectorMap* sectors = nullptr;  // immutable fragmented-file map, or null for the fast path
   uint16_t head0 = 0;         // first of nHeads in the head pool
   uint8_t nHeads = 0;
   const int16_t* volatile psram = nullptr;  // verified whole copy, nullptr = none
@@ -36,7 +40,8 @@ class StoreTable {
  public:
   int find(uint32_t crc) const;  // -1 if absent
   // Index of crc (added if absent); -1 if the table is full.
-  int add(uint32_t crc, uint32_t frames, uint32_t rate, uint32_t sector);
+  // A map and its extent storage must outlive the entry; both are ready before publication.
+  int add(uint32_t crc, uint32_t frames, uint32_t rate, uint32_t sector, const SectorMap* sectors = nullptr);
   // Heads of entry i (once per entry); false if the head pool is full.
   bool setHeads(int i, const SampleHead* h, int n);
   const SampleHead* heads(int i) const { return head_ + e_[i].head0; }
@@ -85,6 +90,10 @@ BankResult storeWriteFrames(BankDisk& d, uint32_t frames, uint32_t rate, FrameFi
 // here changes the flash bank: the synth keeps playing (register new files through setOnAdded).
 //  - Import: any supported WAV -> the store (mono 16 bit, <= kWavMaxRate, root from "smpl"). With the
 //    file's mtcr crc (or knownCrc) already stored at its length nothing is read.
+//  - Edit: offline copy of a canonical store WAV region, optionally normalized, into a new data
+//    key. The source and pre-existing keyed WAV/overview files are never changed.
+//    Time stretch uses the same commit/overview/cleanup path and preserves rate/root.
+//  - Analyze: bounded read-only onset/tempo scan; no output or temporary files.
 //  - Sync: every sample of m not in the store comes from /projects/<project>/<name>.wav; other data
 //    (crc) or no file: missing.
 //  - Save: every sample of m in the store whose project file is not current is copied there (via
@@ -93,7 +102,7 @@ BankResult storeWriteFrames(BankDisk& d, uint32_t frames, uint32_t rate, FrameFi
 // Every new store file is followed by its peak overview (<crc>.pk).
 class StoreJob {
  public:
-  enum class Kind : uint8_t { None, Import, Sync, Save, Migrate };
+  enum class Kind : uint8_t { None, Import, Sync, Save, Migrate, Edit, Analyze };
   static constexpr uint32_t kStepFrames = 1024;  // per step; a multiple of kPeakBlock
   using Added = void (*)(uint32_t crc, void* ctx);
 
@@ -104,6 +113,15 @@ class StoreJob {
     addedCtx_ = ctx;
   }
   BankResult startImport(const char* path, const uint32_t* knownCrc = nullptr);
+  // Offline canonical mono16 copy of [from,to), optionally peak-normalized to -1 dBFS.
+  BankResult startEdit(const char* path, uint32_t from, uint32_t to, bool normalize);
+  // Pitch-preserving duration multiplier Q16, 0.5..2. Output length is rounded with 64-bit
+  // arithmetic; unity is an exact copy. Temporary DSP memory exists only while converting.
+  BankResult startStretch(const char* path, uint32_t from, uint32_t to, uint32_t ratioQ16);
+  // Read-only scan of the selection. A valid short/silent/weak selection succeeds with unknown
+  // bpm10/confidence 0. No output/temp files are created, overwritten or removed by this job.
+  BankResult startTempo(const char* path, uint32_t from, uint32_t to);
+  const TempoEstimate& tempoResult() const { return tempoResult_; }
   BankResult startSync(const char* project, const SynthModel& m);
   BankResult startSave(const char* project, const SynthModel& m);
   BankResult startMigrate(const SampleBank& b);
@@ -120,13 +138,23 @@ class StoreJob {
   uint32_t total() const;
 
  private:
-  enum class Phase : uint8_t { Next, Convert, Copy, Peaks };
+  enum class Phase : uint8_t { Next, Convert, Copy, Peaks, EditScan, TempoScan };
+  struct StretchReader;
+  struct TempoState;
   BankResult start(Kind k);
   BankResult nextItem();
   BankResult openConvert(const char* path, const uint32_t* expect, const uint32_t* known);
   BankResult openCopy(uint32_t crc);
   BankResult beginWrite(uint32_t frames);
   BankResult convertStep();
+  BankResult editScanStep();
+  BankResult editCopyStep();
+  BankResult openOperation(Kind kind, const char* path, uint32_t from, uint32_t to);
+  BankResult stretchStep();
+  BankResult tempoStep();
+  void releaseWorkers();
+  const char* temporaryPath() const;
+  bool editStoredMetadataMatches(const char* path);
   BankResult finishConvert();
   BankResult copyStep();
   BankResult openPeaks();
@@ -148,6 +176,11 @@ class StoreJob {
   int item_ = 0, count_ = 0;
   bool missing_[kProjSamples] = {};
   ImportOut imp_;
+  TempoEstimate tempoResult_;
+  TimeStretch* stretch_ = nullptr;
+  TempoState* tempo_ = nullptr;
+  uint32_t stretchInput_ = 0;
+  bool editStretch_ = false;
   ReadFile* in_ = nullptr;
   WriteFile* out_ = nullptr;
   WavInfo w_;
@@ -155,6 +188,8 @@ class StoreJob {
   int bankEntry_ = -1;
   uint32_t at_ = 0, left_ = 0, frames_ = 0, crc_ = 0, expect_ = 0, rate_ = 0;
   bool hasExpect_ = false;
+  bool editNormalize_ = false;
+  uint32_t editPeak_ = 0;
   uint8_t root_ = 60;
   uint32_t subDone_ = 0, subTotal_ = 0;
   uint8_t raw_[kStepFrames * 8];  // stereo float: 8 bytes a frame

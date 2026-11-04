@@ -6,7 +6,8 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 23;  // 23: lossless WT editor frames and RAM audition
+constexpr uint16_t kProtocol = 27;  // 27: offline stretch / tempo, 128 slices; update both boards
+                                    // 25: independent eight-parameter FM instrument layout
                                     // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
                                     // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields);
                                     // 12: LOFI (InstrType::Lofi, Instrument lofiFormula / lofiSync / lfoByte);
@@ -42,6 +43,7 @@ enum class Msg : uint8_t {
   RecStart, RecSet, RecLevel, RecStop, RecCancel,
   FsCopy,
   WtFrame16, WtAudition,
+  SampleEdit, SampleEditCancel, SampleTempo, SampleTempoCancel,
 };
 
 // Fs* replies: err first, 0 = ok.
@@ -245,6 +247,46 @@ struct BankImportRep {
   uint32_t crc = 0, frames = 0, rate = 0;  // wavetable: frames = 0, rate = 0
   uint8_t root = 60;
 };
+// Offline immutable copy of source frames [from,to). Identity guards a stale sample-list index;
+// token identifies this operation independently of the 8-bit frame seq. Encoded size: 23 bytes.
+struct SampleEditReq {
+  uint32_t token = 0;
+  uint8_t index = 0;
+  uint32_t crc = 0, from = 0, to = 0;
+  uint8_t normalize = 0;  // Copy only: normalize the selection to -1 dBFS
+  uint8_t mode = 0;  // 0 Copy, 1 pitch-preserving offline Stretch
+  uint32_t ratioQ16 = 65536;  // duration multiplier, Stretch 0.5..2; Copy exactly 1
+};
+struct SampleEditRep {
+  uint32_t token = 0;
+  uint8_t result = 0;  // mt::BankResult
+  uint32_t crc = 0, frames = 0, rate = 0;
+  uint8_t root = 60;
+};
+// One-way cancellation; the terminal SampleEditRep uses the original request's seq/token.
+struct SampleEditCancelReq { uint32_t token = 0; };
+MT_CONTROL void encode(const SampleEditReq& m, Writer& w);
+MT_CONTROL void encode(const SampleEditRep& m, Writer& w);
+MT_CONTROL void encode(const SampleEditCancelReq& m, Writer& w);
+MT_CONTROL bool decode(Reader& r, SampleEditReq& m);
+MT_CONTROL bool decode(Reader& r, SampleEditRep& m);
+MT_CONTROL bool decode(Reader& r, SampleEditCancelReq& m);
+// Analysis of [from,to), no output asset and no project-tempo change. Encoded sizes 17 / 14.
+struct SampleTempoReq {
+  uint32_t token = 0;
+  uint8_t index = 0;
+  uint32_t crc = 0, from = 0, to = 0;
+};
+struct SampleTempoRep {
+  uint32_t token = 0;
+  uint8_t result = 0;
+  uint16_t bpm10 = 0, confidence = 0, halfBpm10 = 0, doubleBpm10 = 0;
+  uint8_t flags = 0;  // bit 0: half/double ambiguity; bpm10=0: unknown
+};
+MT_CONTROL void encode(const SampleTempoReq& m, Writer& w);
+MT_CONTROL bool decode(Reader& r, SampleTempoReq& m);
+MT_CONTROL void encode(const SampleTempoRep& m, Writer& w);
+MT_CONTROL bool decode(Reader& r, SampleTempoRep& m);
 // The bank entry of project sample index.
 struct SampleInfoReq {
   uint8_t index = 0;

@@ -16,19 +16,27 @@ Hello, Time every 50 ms, EvBatch. Log frames from the Teensy are printed as they
   python3 -I scripts/link_desk.py render OUT.wav FRAMES [--normalize] [--trim] [--abort-after K]
                                                  # RenderStart / RenderBlocks (u16 len + payload each) / RenderEnd
   python3 -I scripts/link_desk.py update X.hex   # .hex onto the card, FwFromFile: the board reflashes itself
+  python3 -I scripts/link_desk.py sample-extract INDEX FROM TO --crc HEX [--normalize] [--cancel-after S]
+  python3 -I scripts/link_desk.py sample-stretch INDEX FROM TO --crc HEX --ratio 150
+  python3 -I scripts/link_desk.py sample-tempo INDEX FROM TO --crc HEX
   python3 -I scripts/link_desk.py selftest       # codec only, no board
 
 Needs pyserial: ~/.platformio/penv/bin/python has it (or pip install pyserial). --port /dev/cu.usbmodemXXXX if autodetect picks wrong.
 """
 import argparse
+import json
+import math
 import queue
+import re
 import struct
 import sys
 import threading
 import time
 
-PROTOCOL = 23
+PROTOCOL = 27
 MAX_PAYLOAD = 512
+MAX_FRAME = MAX_PAYLOAD + 4  # type, seq, crc16
+MAX_ENCODED = MAX_FRAME + MAX_FRAME // 254 + 2  # matches core/link_frame.h
 
 # lib/core/src/link_msg.h, enum class Msg (append only).
 MSG = {name: i + 1 for i, name in enumerate(
@@ -41,7 +49,7 @@ MSG = {name: i + 1 for i, name in enumerate(
     "Meters Phones Profile "
     "Status Progress FwFromFile Log "
     "FsRmdir WtFrame Perf Debug WtRender RenderOut "
-    "RecStart RecSet RecLevel RecStop RecCancel FsCopy WtFrame16 WtAudition".split())}
+    "RecStart RecSet RecLevel RecStop RecCancel FsCopy WtFrame16 WtAudition SampleEdit SampleEditCancel SampleTempo SampleTempoCancel".split())}
 MSG_NAME = {v: k for k, v in MSG.items()}
 
 # lib/core/src/link_msg.h, kErr*.
@@ -102,9 +110,30 @@ def encode_frame(mtype, seq, payload):
 def decode_frame(raw):
     """COBS bytes without the 0x00 -> (type, seq, payload) or None."""
     f = cobs_decode(raw)
-    if f is None or len(f) < 4 or struct.unpack("<H", f[-2:])[0] != crc16(f[:-2]):
+    if f is None or not 4 <= len(f) <= MAX_FRAME or struct.unpack("<H", f[-2:])[0] != crc16(f[:-2]):
         return None
     return f[0], f[1], f[2:-2]
+
+
+class FrameDecoder:
+    """Bounded stream framing; every invalid segment counts once at its delimiter."""
+    def __init__(self):
+        self.buffer = bytearray()
+        self.overflow = False
+
+    def feed(self, data):
+        frames = []
+        for byte in data:
+            if byte:
+                if len(self.buffer) < MAX_ENCODED:
+                    self.buffer.append(byte)
+                else:
+                    self.overflow = True
+            elif self.buffer or self.overflow:
+                frames.append(None if self.overflow else decode_frame(bytes(self.buffer)))
+                self.buffer.clear()
+                self.overflow = False
+        return frames
 
 
 def now_us():
@@ -221,7 +250,7 @@ class Link:
         return None
 
     def _rx(self):
-        buf = bytearray()
+        decoder = FrameDecoder()
         while self.alive:
             try:
                 data = self.ser.read(self.ser.in_waiting or 1)  # whatever is there: no wait for a full 4 KB
@@ -229,20 +258,20 @@ class Link:
                 if self.alive:
                     raise
                 return  # closed under us (update: the board reboots)
-            for b in data:
-                if b:
-                    buf.append(b)
-                    continue
-                if buf:
-                    f = decode_frame(bytes(buf))
-                    if f is None:
-                        self.errors += 1
-                    elif f[0] == MSG["Log"]:
-                        n = f[2][0]
-                        print("[synth]", f[2][1:1 + n].decode(errors="replace"), flush=True)
-                    else:
-                        self.frames.put(f)
-                buf.clear()
+            for frame in decoder.feed(data):
+                self._receive_frame(frame)
+
+    def _receive_frame(self, frame):
+        if frame is None:
+            self.errors += 1
+            return
+        if frame[0] == MSG["Log"]:
+            if not frame[2] or frame[2][0] >= len(frame[2]):
+                self.errors += 1
+                return
+            n = frame[2][0]
+            print("[synth]", frame[2][1:1 + n].decode(errors="replace"), flush=True)
+        self.frames.put(frame)
 
     def _clock(self):
         while self.alive:
@@ -266,7 +295,9 @@ class Link:
             self.send("Hello", hello_payload())
             p = self.wait("Hello", 1.0)
             if p:
-                return parse_hello(p)
+                hello = parse_hello(p)
+                self.send("Time", struct.pack("<Q", now_us()))
+                return hello
         return None
 
 
@@ -409,6 +440,64 @@ def cmd_hang(link, args):
     time.sleep(1.0)
 
 
+def parse_stream_bench(line):
+    """Only the board's final report is evidence that a stream measurement ran."""
+    if line == "sbench: no card":
+        sys.exit("stream bench: no card")
+    if line.startswith("sbench: error: "):
+        sys.exit(line)
+    match = re.fullmatch(
+        r"sbench: done, (\d+) underruns in (\d+) s, min reserve (\d+) ms, "
+        r"cpu avg ([\d.]+) % peak ([\d.]+) %, cap min (\d+)", line)
+    if not match:
+        return None
+    under, seconds, reserve, average, peak, cap = match.groups()
+    return dict(underruns=int(under), seconds=int(seconds), min_reserve_ms=int(reserve),
+                cpu_avg=float(average), cpu_peak=float(peak), cap_min=int(cap))
+
+
+def check_stream_bench(result, seconds, errors):
+    if result["seconds"] < seconds:
+        sys.exit("stream bench: measurement duration shorter than requested")
+    if errors:
+        sys.exit("stream bench: CRC / COBS errors: %d" % errors)
+    if result["underruns"]:
+        sys.exit("stream bench: %d underruns" % result["underruns"])
+
+
+def stream_bench_log(payload, setup):
+    line = payload[1:1 + payload[0]].decode(errors="replace")
+    result = parse_stream_bench(line)
+    if setup and line.startswith("sbench: ") and " samples, " in line:
+        return True, None
+    return result is not None, result
+
+
+def wait_stream_bench(link, args):
+    t0 = time.monotonic()
+    # PSRAM copies may fill for up to 20 s before measurement starts.
+    end = t0 + args.secs + 25
+    last = 0
+    fault = args.fault_at is not None
+    while time.monotonic() < end:
+        now = time.monotonic()
+        if fault and now - t0 >= args.fault_at + 2:
+            link.send("Debug", debug_payload(1))
+            fault = False
+        try:
+            kind, _, payload = link.frames.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        if kind == MSG["Log"]:
+            done, result = stream_bench_log(payload, args.setup)
+            if done:
+                return result
+        elif kind == MSG["Status"] and now - last >= 5:
+            last = now
+            print_status(parse_status(payload))
+    sys.exit("stream bench: no completed measurement summary (timeout)")
+
+
 def cmd_bench_stream(link, args):
     """Debug StreamBench (desk build): the 16 longest /mt-store files held on tracks 0..15 at the root
     (+ --semis), --secs long; the board logs a line a second and a summary. --sd: no PSRAM copies;
@@ -417,28 +506,19 @@ def cmd_bench_stream(link, args):
     --wt (with --heavy): the heavy voices are wavetable SYNTH; --fx: drive / delay / reverb 100 on every voice, comp.
     Ctrl-C stops the bench."""
     cmd_hello(link, args)
-    flags = ((1 if args.sd else 0) | (2 if args.setup else 0) | (4 if args.heavy else 0) | (8 if args.wt else 0)
-             | (16 if args.fx else 0))
+    flags = (1 if args.sd else 0) | (2 if args.setup else 0) | (4 if args.heavy else 0) | (8 if args.wt else 0)
+    flags |= 16 if args.fx else 0
     link.send("Debug", debug_payload(2, args.semis, flags, args.secs))
-    if args.setup:
-        time.sleep(2.0)
-        return
-    t0 = time.monotonic()
-    end = t0 + args.secs + 4
-    last = 0
-    fault = args.fault_at is not None
     try:
-        while time.monotonic() < end:
-            if fault and time.monotonic() - t0 >= args.fault_at + 2:  # + the bench's 2 s settling
-                link.send("Debug", debug_payload(1))
-                fault = False
-            p = link.wait("Status", 1.0)
-            if p and time.monotonic() - last >= 5:
-                last = time.monotonic()
-                print_status(parse_status(p))
+        result = wait_stream_bench(link, args)
+        if not args.setup:
+            print("BENCH_RESULT " + json.dumps(result, sort_keys=True), flush=True)
+            check_stream_bench(result, args.secs, link.errors)
     except KeyboardInterrupt:
-        link.send("Debug", debug_payload(3))
-        time.sleep(0.5)
+        sys.exit("stream bench: interrupted before completion")
+    finally:
+        if not args.setup:
+            link.send("Debug", debug_payload(3))
 
 
 def fs_check(err, what):
@@ -553,7 +633,7 @@ def cmd_update(link, args):
 
 
 BANK_RESULT = ["Ok", "Busy", "NoSd", "NoBank", "OpenFail", "ReadFail", "NotWav", "Unsupported", "Truncated",
-               "Full", "WriteFail", "NoMemory", "Link", "Running"]
+               "Full", "WriteFail", "NoMemory", "Link", "Running", "Cancelled"]
 
 
 def parse_bank_index(p):
@@ -777,7 +857,305 @@ def cmd_render(link, args):
                                          time.monotonic() - t1))
 
 
-def cmd_selftest(args):
+def _sample_edit_uint(value, maximum, name, minimum=0):
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError('%s must be an integer in %d..%d' % (name, minimum, maximum))
+    return value
+
+
+def sample_tempo_payload(token, index, crc, from_frame, to_frame):
+    """Protocol 27 read-only range analysis: token/index/crc/from/to, exactly 17 bytes."""
+    token = _sample_edit_uint(token, 0xFFFFFFFF, 'token', 1)
+    index = _sample_edit_uint(index, 127, 'index')
+    crc = _sample_edit_uint(crc, 0xFFFFFFFF, 'crc')
+    start = _sample_edit_uint(from_frame, 0xFFFFFFFF, 'from')
+    end = _sample_edit_uint(to_frame, 0xFFFFFFFF, 'to')
+    if start >= end:
+        raise ValueError('sample range must be nonempty and half-open: FROM < TO')
+    return struct.pack('<IBIII', token, index, crc, start, end)
+
+
+def sample_edit_payload(token, index, crc, from_frame, to_frame, normalize=False, mode=0, ratio_q16=65536):
+    """Protocol 27 SampleEdit: 17-byte identity, normalize/mode u8, duration multiplier Q16 u32."""
+    identity = sample_tempo_payload(token, index, crc, from_frame, to_frame)
+    norm = int(normalize) if type(normalize) is bool else normalize
+    norm = _sample_edit_uint(norm, 1, 'normalize')
+    mode = _sample_edit_uint(mode, 1, 'mode')
+    ratio_q16 = _sample_edit_uint(ratio_q16, 131072, 'ratio Q16', 32768)
+    if mode == 0 and ratio_q16 != 65536:
+        raise ValueError('Copy mode requires unity duration')
+    if mode == 1 and norm:
+        raise ValueError('Normalize cannot be combined with Stretch')
+    return identity + struct.pack('<BBI', norm, mode, ratio_q16)
+
+
+def _sample_terminal_result(received, token, result):
+    _sample_edit_uint(token, 0xFFFFFFFF, 'token', 1)
+    if received != token:
+        raise ValueError('sample reply token mismatch')
+    if result >= len(BANK_RESULT) or result == 13:
+        raise ValueError('sample reply has an unknown or nonterminal result')
+
+
+def _sample_tempo_unknown(confidence, half, twice, flags):
+    if confidence or half or twice or flags:
+        raise ValueError('unknown tempo must have zero metadata')
+
+
+def _sample_tempo_values(bpm10, confidence, half, twice, flags, result):
+    if confidence > 1000 or flags > 1:
+        raise ValueError('invalid tempo confidence or flags')
+    if not bpm10:
+        _sample_tempo_unknown(confidence, half, twice, flags)
+    elif result != 0 or not 400 <= bpm10 <= 2400:
+        raise ValueError('invalid primary tempo or failed result metadata')
+    elif not 200 <= half <= 1200 or not 800 <= twice <= 4800:
+        raise ValueError('invalid half/double tempo alternatives')
+
+
+def parse_sample_tempo(payload, token):
+    if len(payload) != 14:
+        raise ValueError('SampleTempo reply must contain exactly 14 bytes')
+    received, result, bpm, confidence, half, twice, flags = struct.unpack('<IBHHHHB', payload)
+    _sample_terminal_result(received, token, result)
+    _sample_tempo_values(bpm, confidence, half, twice, flags, result)
+    return dict(token=received, result=BANK_RESULT[result], bpm10=bpm, confidence=confidence,
+                halfBpm10=half, doubleBpm10=twice, ambiguous=bool(flags))
+
+
+def _sample_edit_success(frames, rate, expected_frames):
+    if frames != expected_frames or not frames:
+        raise ValueError('SampleEdit returned an unexpected frame count')
+    if not 1 <= rate <= 44100:
+        raise ValueError('SampleEdit returned an unsupported sample rate')
+
+
+def parse_sample_edit(payload, token, expected_frames):
+    """Strict terminal reply: no trailing bytes, stale token, Running, or malformed metadata."""
+    if len(payload) != 18:
+        raise ValueError('SampleEdit reply must contain exactly 18 bytes')
+    received, result, crc, frames, rate, root = struct.unpack('<IBIIIB', payload)
+    _sample_terminal_result(received, token, result)
+    if root > 127:
+        raise ValueError('SampleEdit reply has an invalid root note')
+    if result == 0:
+        _sample_edit_success(frames, rate, expected_frames)
+    return dict(token=received, result=BANK_RESULT[result], crc=crc, frames=frames, rate=rate, root=root)
+
+
+def _sample_operation_token(args):
+    token = args.token
+    if token is None:
+        token = (now_us() & 0xFFFFFFFF) or 1
+    delay = args.cancel_after
+    if delay is not None and (not math.isfinite(delay) or delay < 0):
+        raise ValueError('--cancel-after must be a finite nonnegative number of seconds')
+    return token
+
+
+def _sample_extract_options(args):
+    token = _sample_operation_token(args)
+    return sample_edit_payload(token, args.index, args.crc, args.from_frame, args.to_frame,
+                               args.normalize), token
+
+
+def _sample_bpm10(value):
+    if value is None or not math.isfinite(value) or not 20 <= value <= 480:
+        raise ValueError('source and target BPM must both be finite values in 20..480')
+    return int(value * 10 + .5)
+
+
+def _sample_stretch_ratio(args):
+    if args.ratio is not None:
+        if args.source_bpm is not None or args.target_bpm is not None:
+            raise ValueError('choose duration --ratio or a source/target BPM pair')
+        if not math.isfinite(args.ratio) or not 50 <= args.ratio <= 200:
+            raise ValueError('--ratio is duration percent in 50..200')
+        return int(args.ratio * 65536 / 100 + .5)
+    source, target = _sample_bpm10(args.source_bpm), _sample_bpm10(args.target_bpm)
+    ratio = (source * 65536 + target // 2) // target
+    return _sample_edit_uint(ratio, 131072, 'duration ratio Q16', 32768)
+
+
+def sample_stretch_frames(frames, ratio_q16):
+    frames = _sample_edit_uint(frames, 0xFFFFFFFF, 'input frames', 1)
+    ratio_q16 = _sample_edit_uint(ratio_q16, 131072, 'ratio Q16', 32768)
+    out = (frames * ratio_q16 + 32768) // 65536
+    if out > (0xFFFFFFFF - 512) // 2:
+        raise ValueError('stretched output does not fit a canonical WAV')
+    return out
+
+
+def _sample_stretch_options(args):
+    token = _sample_operation_token(args)
+    ratio = _sample_stretch_ratio(args)
+    payload = sample_edit_payload(token, args.index, args.crc, args.from_frame, args.to_frame, mode=1,
+                                  ratio_q16=ratio)
+    sample_stretch_frames(args.to_frame - args.from_frame, ratio)
+    return payload, token
+
+
+def _sample_tempo_options(args):
+    token = _sample_operation_token(args)
+    return sample_tempo_payload(token, args.index, args.crc, args.from_frame, args.to_frame), token
+
+
+class SampleEditSession:
+    """One operation token, one best-effort cancel, and an independently observed terminal reply."""
+    def __init__(self, link, token, cancel_after, kind='SampleEdit'):
+        self.link, self.token, self.cancel_after = link, token, cancel_after
+        self.kind = kind
+        self.started = 0.0
+        self.cancel_attempted = self.cancel_sent = self.interrupted = False
+        self.cancel_error = self.wait_error = None
+
+    def cancel(self):
+        if self.cancel_attempted:
+            return
+        self.cancel_attempted = True
+        try:
+            self.link.send(self.kind + 'Cancel', struct.pack('<I', self.token))
+            self.cancel_sent = True
+        except Exception as error:
+            self.cancel_error = str(error)
+
+    def progress(self, _done, _total):
+        if self.cancel_after is not None and time.monotonic() - self.started >= self.cancel_after:
+            self.cancel()
+
+    def connect(self):
+        try:
+            hello = self.link.hello()
+        except KeyboardInterrupt:
+            self.interrupted = True
+            return 'interrupted before sample operation was sent'
+        except Exception as error:
+            return str(error)
+        if not hello:
+            return 'no Hello from the board'
+        if hello[0] != PROTOCOL:
+            return 'protocol mismatch: board %d, script %d' % (hello[0], PROTOCOL)
+        return None
+
+    def wait_terminal(self):
+        try:
+            return self.link.wait(self.kind, 5.0)
+        except (Exception, KeyboardInterrupt) as error:
+            self.wait_error = str(error) or type(error).__name__
+            return None
+
+    def execute(self, payload):
+        self.started = time.monotonic()
+        try:
+            return self.link.call(self.kind, payload, timeout=5.0, progress=self.progress)
+        except KeyboardInterrupt:
+            self.interrupted = True
+            self.cancel()
+            return self.wait_terminal()
+        except Exception as error:
+            self.wait_error = str(error)
+            return None
+
+
+def _sample_edit_report(session, status, error=None, **terminal):
+    acknowledged = False
+    result = dict(status=status, error=error, token=session.token, result=None,
+                  crc=None, frames=None, rate=None, root=None, terminal_ack=acknowledged,
+                  cancel_sent=session.cancel_sent, cancel_error=session.cancel_error,
+                  interrupted=session.interrupted, link_errors=session.link.errors)
+    if session.kind == 'SampleTempo':
+        for field in ('crc', 'frames', 'rate', 'root'):
+            result.pop(field)
+        result.update(dict.fromkeys(('bpm10', 'confidence', 'halfBpm10', 'doubleBpm10', 'ambiguous')))
+    result.update(terminal)
+    return result
+
+
+def _sample_edit_outcome(session, payload, expected_frames):
+    if not payload:
+        session.cancel()
+        status = 'interrupted' if session.interrupted else 'no_reply'
+        return _sample_edit_report(session, status, session.wait_error or 'no terminal ' + session.kind + ' reply')
+    try:
+        terminal = (parse_sample_tempo(payload, session.token) if session.kind == 'SampleTempo'
+                    else parse_sample_edit(payload, session.token, expected_frames))
+    except ValueError as error:
+        session.cancel()
+        return _sample_edit_report(session, 'invalid_reply', str(error))
+    result = terminal['result']
+    status = {'Ok': 'ok', 'Cancelled': 'cancelled'}.get(result, 'error')
+    error = None if result == 'Ok' else result
+    if result == 'Ok' and session.link.errors > 0:
+        status, error = 'link_error', 'received %d invalid link frame(s)' % session.link.errors
+    return _sample_edit_report(session, status, error, terminal_ack=True, **terminal)
+
+
+def _run_sample_operation(link, args, payload, token, expected_frames, kind, prefix):
+    session = SampleEditSession(link, token, args.cancel_after, kind)
+    error = session.connect()
+    if error:
+        status = 'interrupted' if session.interrupted else 'protocol_error'
+        report = _sample_edit_report(session, status, error)
+    else:
+        report = _sample_edit_outcome(session, session.execute(payload), expected_frames)
+    print(prefix + ' ' + json.dumps(report), flush=True)
+    if session.interrupted:
+        sys.exit(130)
+    if report['status'] != 'ok':
+        sys.exit(1)
+
+
+def cmd_sample_extract(link, args):
+    payload, token = _sample_extract_options(args)
+    _run_sample_operation(link, args, payload, token, args.to_frame - args.from_frame,
+                          'SampleEdit', 'SAMPLE_EDIT_RESULT')
+
+
+def cmd_sample_stretch(link, args):
+    payload, token = _sample_stretch_options(args)
+    frames = sample_stretch_frames(args.to_frame - args.from_frame, _sample_stretch_ratio(args))
+    _run_sample_operation(link, args, payload, token, frames, 'SampleEdit', 'SAMPLE_STRETCH_RESULT')
+
+
+def cmd_sample_tempo(link, args):
+    payload, token = _sample_tempo_options(args)
+    _run_sample_operation(link, args, payload, token, None, 'SampleTempo', 'SAMPLE_TEMPO_RESULT')
+
+
+def _sample_edit_u32_arg(value):
+    return _sample_edit_uint(int(value, 0), 0xFFFFFFFF, 'value')
+
+
+def _sample_edit_crc_arg(value):
+    return _sample_edit_uint(int(value, 16), 0xFFFFFFFF, 'crc')
+
+
+def _sample_range_parser(sub, command, help_text):
+    parser = sub.add_parser(command, help=help_text)
+    parser.add_argument('index', type=int)
+    parser.add_argument('from_frame', type=_sample_edit_u32_arg, metavar='FROM')
+    parser.add_argument('to_frame', type=_sample_edit_u32_arg, metavar='TO')
+    parser.add_argument('--crc', type=_sample_edit_crc_arg, required=True, help='expected source CRC in hex')
+    parser.add_argument('--token', type=_sample_edit_u32_arg, default=None)
+    parser.add_argument('--cancel-after', type=float, default=None, metavar='SECONDS')
+    return parser
+
+
+def add_sample_extract_parser(sub):
+    extract = _sample_range_parser(sub, 'sample-extract', 'copy raw sample frames [FROM,TO) into a new store sample')
+    extract.add_argument('--normalize', action='store_true', help='normalize the selection to -1 dBFS')
+
+
+def add_sample_analysis_parsers(sub):
+    stretch = _sample_range_parser(sub, 'sample-stretch', 'change duration while preserving pitch, in a new WAV')
+    duration = stretch.add_mutually_exclusive_group(required=True)
+    duration.add_argument('--ratio', type=float, help='duration percent, 50..200 (150 means 1.5 times longer)')
+    duration.add_argument('--source-bpm', type=float, help='manually supplied source BPM, 20..480')
+    stretch.add_argument('--target-bpm', type=float, help='target BPM with --source-bpm, 20..480')
+    _sample_range_parser(sub, 'sample-tempo', 'estimate source BPM without changing project tempo or assets')
+
+
+def _selftest_frames():
     assert crc16(b"123456789") == 0x29B1
     for n in (0, 1, 253, 254, 255, 256, 512):
         for p in (bytes(n), b"\xff" * n, bytes((i * 7) % 256 for i in range(n))):
@@ -786,23 +1164,37 @@ def cmd_selftest(args):
             assert decode_frame(enc[:-1]) == (5, 9, p), n
     batch = ev_batch([(1000 + i, i % 17, [0x90, 60, 127]) for i in range(40)])
     assert len(batch) <= MAX_PAYLOAD
+
+
+def _selftest_protocol():
     assert parse_hello(hello_payload())[0] == PROTOCOL
     assert MSG["FsOpen"] == 7 and MSG["Log"] == 37 and MSG["FsRmdir"] == 38 and MSG["WtFrame"] == 39
     assert MSG["Perf"] == 40 and parse_hello(hello_payload())[4] == 0
-    st = parse_status(struct.pack("<BHHBH", 50, 1, 2, 3, 400) + bytes(16) + struct.pack("<HBH", 4, 7, 0) + bytes(7))
-    assert st["parks"] == 7 and st["lost"] == 4 and st["scope"] == 0
     assert MSG["BankSync"] == 16 and MSG["BankIndex"] == 20 and MSG["Progress"] == 35
+
+
+def _selftest_files():
     idx = struct.pack("<BBIIII", 0, 3, 5000, 4000, 100, 7) + bytes(20) + bytes([0xFF, 2]) + struct.pack("<HH", 44100, 0)
     b = parse_bank_index(idx)
     assert b["count"] == 3 and b["free"] == 4000 and b["builtins"] == 0xFF and b["rates"] == [44100, 0]
     page = bytes([1, 2]) + struct.pack("<BI", 1, 0) + fs_str("wt") + struct.pack("<BI", 0, 1234) + fs_str("kick.wav")
     assert parse_list(page) == (True, [(True, 0, "wt"), (False, 1234, "kick.wav")])
-    assert PROTOCOL == 23
+
+
+def _selftest_ids():
+    assert PROTOCOL == 27
     assert MSG["Debug"] == 41
     assert MSG["WtRender"] == 42
     assert MSG["RenderOut"] == 43
     assert MSG["WtFrame16"] == 50
     assert MSG["WtAudition"] == 51
+    assert MSG["SampleEdit"] == 52 and MSG["SampleEditCancel"] == 53
+    assert MSG["SampleTempo"] == 54 and MSG["SampleTempoCancel"] == 55
+
+
+def _selftest_status():
+    st = parse_status(struct.pack("<BHHBH", 50, 1, 2, 3, 400) + bytes(16) + struct.pack("<HBH", 4, 7, 0) + bytes(7))
+    assert st["parks"] == 7 and st["lost"] == 4 and st["scope"] == 0
     st = struct.pack("<BHHBH", 50, 0, 0, 20, 1000) + bytes(16) + struct.pack("<HBH", 0, 0, 2) + b"\x01\x02" + \
         struct.pack("<BHHBB", 14, 3, 41, 1, 57) + struct.pack("<H", 0xFFFF) + bytes(16) + struct.pack("<I", 11800)
     s = parse_status(st)
@@ -811,8 +1203,15 @@ def cmd_selftest(args):
     assert stack_text(STACK_UNKNOWN) == "-" and stack_text(0) == "0!"
     assert parse_status(st[:-4])["stack"] == STACK_UNKNOWN  # protocol 4 payload: not measured
     assert debug_payload(2, 12, 1, 600) == bytes([2, 12, 1]) + struct.pack("<H", 600)
-    print("selftest ok")
 
+
+def cmd_selftest(args):
+    _selftest_frames()
+    _selftest_protocol()
+    _selftest_files()
+    _selftest_ids()
+    _selftest_status()
+    print("selftest ok")
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -873,14 +1272,25 @@ def main():
     up.add_argument("hex")
     up.add_argument("--force", action="store_true")
     up.add_argument("--secs", type=float, default=15.0)
+    add_sample_extract_parser(sub)
+    add_sample_analysis_parsers(sub)
     sub.add_parser("selftest")
     args = ap.parse_args()
+    sample_options = {'sample-extract': _sample_extract_options, 'sample-stretch': _sample_stretch_options,
+                      'sample-tempo': _sample_tempo_options}
+    if args.cmd in sample_options:
+        try:
+            _, args.token = sample_options[args.cmd](args)
+        except ValueError as error:
+            ap.error(str(error))
     if args.cmd == "selftest":
         return cmd_selftest(args)
     link = Link(args.port or find_port())
     {"hello": cmd_hello, "notes": cmd_notes, "status": cmd_status, "fs": cmd_fs, "bank": cmd_bank, "perf": cmd_perf, "update": cmd_update,
      "card": cmd_card, "model": cmd_model, "pnote": cmd_pnote, "preview": cmd_preview, "render": cmd_render,
-     "hint": cmd_hint, "psram-fault": cmd_psram_fault, "hang": cmd_hang, "bench-stream": cmd_bench_stream}[args.cmd](link, args)
+     "hint": cmd_hint, "psram-fault": cmd_psram_fault, "hang": cmd_hang, "bench-stream": cmd_bench_stream,
+     "sample-extract": cmd_sample_extract, "sample-stretch": cmd_sample_stretch,
+     "sample-tempo": cmd_sample_tempo}[args.cmd](link, args)
     link.alive = False
 
 

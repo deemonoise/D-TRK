@@ -185,7 +185,7 @@ void begin(mt::SynthModel& m, mt::Synth& s, SynthStream& out) {
       in.macro[mt::kMacDec] = 110;  // still ringing at the choke
     } else {
       mt::instrSetType(in, mt::InstrType::Fm);
-      mt::fmSetMachine(in, static_cast<uint8_t>(mt::FmMachine::Hat));
+      mt::fmSetMachine(in, static_cast<uint8_t>(mt::FmMachine::HhBasic));
       in.macro[mt::kMacDec] = 127;
       in.macro[mt::kMacCon] = 127;
       in.macro[mt::kMacShp] = 64;

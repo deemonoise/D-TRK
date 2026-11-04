@@ -74,6 +74,8 @@ class FsServerCore {
   int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out);
   // Closes every file, drops the listing and the reply cache (the ESP restarted, the card went away).
   void reset();
+  // Pure admission check: a first page or the exact next page of the live cursor.
+  bool listCanContinue(const char* dir, uint16_t start) const;
 
  private:
   // body: where w writes (after the err).

@@ -91,7 +91,8 @@ void test_kit_lane_gets_frame_zero() {
 void test_cap_keeps_starts_first() {
   Instrument& m = sampler(0);
   m.start = 0x8000;
-  for (int i = 0; i < kMaxSlices; ++i) sliceInsert(m, static_cast<uint16_t>(0x100 + i * 0x700));
+  // Keep widely separated points: the physical head cap is independent of logical capacity.
+  for (int i = 0; i < 32; ++i) sliceInsert(m, static_cast<uint16_t>(0x100 + i * 0x700));
   HeadPoint h[4];
   const int n = headPoints(*p, kCrc, kFrames, 44100, h, 4);
   TEST_ASSERT_EQUAL(4, n);

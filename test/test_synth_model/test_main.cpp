@@ -61,16 +61,30 @@ void test_send_order_and_ids() {
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Tracks), chunkId(1));
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Tuning), chunkId(2));  // before the first notes
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Scenes), chunkId(3));
-  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Instr0), chunkId(4));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Compressor), chunkId(4));
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Instr0), chunkId(5));
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Samples), chunkId(kChunks - 2));
   TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Wavetables), chunkId(kChunks - 1));
   for (int i = 0; i < kChunks; ++i) TEST_ASSERT_EQUAL(i, chunkIndex(chunkId(i)));
   uint32_t off, len;
   TEST_ASSERT_TRUE(chunkRange(static_cast<uint16_t>(Chunk::Tuning), off, len));
   TEST_ASSERT_TRUE(chunkRange(static_cast<uint16_t>(Chunk::Scenes), off, len));
-  TEST_ASSERT_FALSE(chunkRange(6, off, len));
+  TEST_ASSERT_FALSE(chunkRange(7, off, len));
   TEST_ASSERT_FALSE(chunkRange(static_cast<uint16_t>(static_cast<int>(Chunk::Instr0) + kInstruments), off, len));
   TEST_ASSERT_EQUAL(-1, chunkIndex(999));
+}
+
+void test_compressor_attack_has_its_own_chunk() {
+  SynthModel a;
+  SynthModel b = a;
+  b.compAttack = 20;
+  const auto ids = changed(a, b);
+  TEST_ASSERT_EQUAL(1, ids.size());
+  TEST_ASSERT_EQUAL(static_cast<int>(Chunk::Compressor), ids[0]);
+  uint32_t off, len;
+  TEST_ASSERT_TRUE(chunkRange(ids[0], off, len));
+  TEST_ASSERT_EQUAL(offsetof(SynthModel, compAttack), off);
+  TEST_ASSERT_TRUE(off + len == sizeof(SynthModel));
 }
 
 void test_one_edit_one_chunk() {
@@ -121,7 +135,7 @@ void test_scenes_chunk() {
   uint32_t off, len;
   TEST_ASSERT_TRUE(chunkRange(static_cast<uint16_t>(Chunk::Scenes), off, len));
   TEST_ASSERT_EQUAL(offsetof(SynthModel, sceneLive), off);
-  TEST_ASSERT_EQUAL(sizeof(SynthModel) - off, len);
+  TEST_ASSERT_EQUAL(sizeof(SynthModel::sceneLive), len);
   TEST_ASSERT_EQUAL(480, static_cast<int>(len));  // one StateSet piece
   Project a;
   Project b = a;
@@ -170,6 +184,7 @@ int main(int, char**) {
   RUN_TEST(test_chunks_tile_the_model);
   RUN_TEST(test_copy_chunk_by_chunk_rebuilds_the_model);
   RUN_TEST(test_send_order_and_ids);
+  RUN_TEST(test_compressor_attack_has_its_own_chunk);
   RUN_TEST(test_one_edit_one_chunk);
   RUN_TEST(test_tuning_chunk);
   RUN_TEST(test_scenes_chunk);

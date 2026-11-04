@@ -117,6 +117,39 @@ void test_clock_24ppqn_at_120() {
   TEST_ASSERT_EQUAL(25, sink->times(0xF8).size());
 }
 
+// Logical deadlines only: this does not measure ESP task wakeup or the physical UART.
+void test_clock_fractional_periods_do_not_accumulate_drift() {
+  constexpr uint64_t origin = 1234567;
+  for (uint16_t bpm : {20, 73, 120, 137, 299, 300}) {
+    p->bpm = bpm;
+    sink->log.clear();
+    sink->now = origin;
+    seq->start(origin, *sink);
+    run(origin, origin + 60000000);
+    const auto clocks = sink->times(0xF8);
+    TEST_ASSERT_EQUAL_UINT32(bpm * 24u + 1, clocks.size());
+    for (size_t i = 0; i < clocks.size(); ++i) {
+      const uint64_t expected = origin + i * 60000000ull / (24u * bpm);
+      TEST_ASSERT_EQUAL_UINT64(expected, clocks[i]);
+    }
+  }
+}
+
+void test_late_clock_poll_catches_up_without_shifting_future_grid() {
+  seq->start(0, *sink);
+  run(0, 0);
+  sink->now = 100000;
+  seq->process(100000, *sink);  // deliberately miss four 120-BPM clock deadlines
+  auto clocks = sink->times(0xF8);
+  TEST_ASSERT_EQUAL(5, clocks.size());
+  for (size_t i = 1; i < clocks.size(); ++i) TEST_ASSERT_EQUAL_UINT64(100000, clocks[i]);
+  run(100001, 130000);
+  clocks = sink->times(0xF8);
+  TEST_ASSERT_EQUAL(7, clocks.size());
+  TEST_ASSERT_EQUAL_UINT64(104166, clocks[5]);
+  TEST_ASSERT_EQUAL_UINT64(125000, clocks[6]);
+}
+
 void test_sixteenths_at_120() {
   p->patterns[0].steps[0][0].note = 60;
   p->patterns[0].steps[0][1].note = 60;
@@ -3470,6 +3503,8 @@ void test_automation_toggle_does_not_release_held_tie() {
 }
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_clock_fractional_periods_do_not_accumulate_drift);
+  RUN_TEST(test_late_clock_poll_catches_up_without_shifting_future_grid);
   RUN_TEST(test_automation_toggle_does_not_release_held_tie);
   RUN_TEST(test_automation_bypass_preserves_notes_and_other_tracks);
   RUN_TEST(test_start_tempo_for_count_in_uses_song_entry_bpm);

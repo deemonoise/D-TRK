@@ -402,6 +402,34 @@ static void fillOuts(ExportOut* o) {
   strcpy(o[2].name, "T_FX_DLY.wav");
 }
 
+void test_writer_stem_contains_main_gain_ramp() {
+  Project& p = *mkProj();
+  p.instruments[0].vol = 10;
+  p.tracks[0].pan = 64;
+  Synth& synth = *fxSynth(p);
+  WriterRig rig(1, 4096);
+  rig.w.begin(tmpDir().c_str(), 24, 0, rig.mem.data(), 4096, rig.taps.data(), 1);
+  TEST_ASSERT_TRUE(rig.w.add(0, 1, "MAIN_RAMP.wav", 0));
+  synth.setTaps(&rig.w.taps());
+  const uint8_t note[] = {0x90, 60, 100};
+  TEST_ASSERT_TRUE(synth.event(0, 0, note, 3));
+  int16_t l[128], r[128];
+  for (int k = 0; k < 20; ++k) synth.render(l, r);
+  p.masterVol = 0;
+  std::vector<int32_t> expected;
+  for (int k = 0; k < 2; ++k) {
+    synth.render(l, r);
+    for (int i = 0; i < 128; ++i) expected.push_back(static_cast<int32_t>(lrintf(synth.masterL()[i] * 256.f)));
+    TEST_ASSERT_TRUE(rig.w.block(synth));
+  }
+  synth.setTaps(nullptr);
+  TEST_ASSERT_TRUE(rig.w.end(256));
+  const auto bytes = slurp(tmpDir() + "/MAIN_RAMP.wav");
+  TEST_ASSERT_EQUAL_UINT32(44 + 256 * 6, bytes.size());
+  for (int i = 0; i < 256; ++i)
+    TEST_ASSERT_INT32_WITHIN(1, expected[i], s24(&bytes[44 + 6 * i]));
+}
+
 void test_writer_files() {
   Project& p = *mkProj();
   p.instruments[0].send = 90;
@@ -506,6 +534,7 @@ int main() {
   RUN_TEST(test_pcm_24);
   RUN_TEST(test_pcm_16_dither);
   RUN_TEST(test_writer_files);
+  RUN_TEST(test_writer_stem_contains_main_gain_ramp);
   RUN_TEST(test_writer_skip);
   RUN_TEST(test_writer_two_passes_equal_one);
   RUN_TEST(test_writer_abort_and_failure_leave_nothing);

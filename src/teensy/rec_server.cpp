@@ -33,6 +33,7 @@ enum class Phase : uint8_t { None, Take, Sealing, Importing };
 SynthStream* out = nullptr;
 mt::RecCapture cap;
 bool ringOk = false;
+bool memoryLost = false;  // this take lost its unread PSRAM; never drain or import it afterwards
 Phase phase = Phase::None;
 bool watching = false;  // the window's meter (out->setRec) runs
 bool keepOnly = false;  // REC -> SD (RecStartReq::toSd): the take is the file, never the store
@@ -124,6 +125,7 @@ int levelRep(RecResult r, uint8_t* o) {
   m.result = static_cast<uint8_t>(r);
   if (r == RecResult::Ok && phase != Phase::None) {
     if (writer.failed()) m.result = static_cast<uint8_t>(RecResult::WriteFail);
+    else if (memoryLost) m.result = static_cast<uint8_t>(RecResult::NoPsram);
     else if (cap.overflow()) m.result = static_cast<uint8_t>(RecResult::CardSlow);
   }
   m.state = static_cast<uint8_t>(shownState());
@@ -136,6 +138,8 @@ int levelRep(RecResult r, uint8_t* o) {
 
 // The ring into the file for up to kStepUs; false when a write failed.
 bool drain() {
+  // Armed capture owns tail too (keepLast): only the ISR may trim the pre-roll until it triggers.
+  if (memoryLost || cap.state() == mt::RecState::Armed) return true;
   const uint32_t t0 = micros();
   do {
     const uint32_t n = cap.ring().pop(buf, kChunkFrames);
@@ -160,7 +164,7 @@ void dropFile() {
 // The ring is empty and the capture idle: header, rename. Ok, TooShort (nothing kept) or WriteFail.
 RecResult seal() {
   const uint32_t frames = writer.frames();
-  if (!writer.failed() && frames < mt::kRecMinFrames) {
+  if (!memoryLost && !writer.failed() && frames < mt::kRecMinFrames) {
     dropFile();
     return RecResult::TooShort;
   }
@@ -202,7 +206,10 @@ void keep(const char* why) {
     file.close();
     card::spaceChanged();
   }
-  if (r == RecResult::Ok) link::log("rec: %s, kept REC%d.wav", why, number);
+  if (r == RecResult::Ok && memoryLost)
+    link::log("rec: %s, PSRAM failed, kept REC%d.wav prefix (%lu frames)", why, number,
+              static_cast<unsigned long>(writer.frames()));
+  else if (r == RecResult::Ok) link::log("rec: %s, kept REC%d.wav", why, number);
   else link::log("rec: %s, REC%d not kept (%s)", why, number, r == RecResult::TooShort ? "too short" : "card write failed");
   phase = Phase::None;
   stopPending = false;
@@ -270,6 +277,7 @@ RecResult start(Reader& r, uint16_t& n) {
   keepOnly = q.toSd != 0;
   spaceBound = bySpace;
   maxFrames = limit;
+  memoryLost = false;
   AudioNoInterrupts();
   cap.arm(src, q.thresh, limit);
   AudioInterrupts();
@@ -321,6 +329,19 @@ void begin(SynthStream& o) {
   }
 }
 
+void psramFailed() {
+  AudioNoInterrupts();
+  if (phase == Phase::Take || phase == Phase::Sealing) memoryLost = true;
+  ringOk = false;
+  cap.invalidateMemory();
+  if (out) {
+    out->setMonitor(false);
+    out->setRec(nullptr);
+  }
+  watching = false;
+  AudioInterrupts();
+}
+
 bool isRequest(Msg t) {
   return t == Msg::RecStart || t == Msg::RecSet || t == Msg::RecLevel || t == Msg::RecStop || t == Msg::RecCancel;
 }
@@ -355,7 +376,8 @@ int handle(Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* o) {
       stopSeq = seq;
       stopPending = true;
       haveStopRep = false;
-      stopRes.result = static_cast<uint8_t>(cap.overflow() ? RecResult::CardSlow : RecResult::Ok);
+      stopRes.result = static_cast<uint8_t>(memoryLost ? RecResult::NoPsram :
+                                          cap.overflow() ? RecResult::CardSlow : RecResult::Ok);
       phase = Phase::Sealing;
       lastProgress = millis();
       return -1;
@@ -403,7 +425,12 @@ void step() {
         file.close();
         card::spaceChanged();
       }
-      if (res == RecResult::Ok && stopRes.result == static_cast<uint8_t>(RecResult::CardSlow)) res = RecResult::CardSlow;
+      if (res == RecResult::Ok && memoryLost) {
+        res = RecResult::NoPsram;
+        stopRes.frames = writer.frames();
+      } else if (res == RecResult::Ok && stopRes.result == static_cast<uint8_t>(RecResult::CardSlow)) {
+        res = RecResult::CardSlow;
+      }
       if (keepOnly) {  // REC -> SD: the file is the take; no bank / crc
         if (res == RecResult::Ok || res == RecResult::CardSlow) stopRes.frames = writer.frames();
         stopRes.result = static_cast<uint8_t>(res);

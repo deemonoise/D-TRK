@@ -16,6 +16,7 @@ enum class BankResult : uint8_t {
   Ok, Busy, NoSd, NoBank, OpenFail, ReadFail, NotWav, Unsupported, Truncated, Full, WriteFail, NoMemory,
   Link,     // ESP side: no answer from the synth board
   Running,  // BankJob::step: not done yet
+  Cancelled,  // an explicitly cancelled offline sample edit
 };
 
 // A file being read: ByteSource read / skip take exactly n bytes or fail.

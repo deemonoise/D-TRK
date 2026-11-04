@@ -13,6 +13,12 @@ namespace mt {
 constexpr int kLineLen = 512;  // a power of two (index masks); COMB's lowest pitch 44100 / 511 = 86 Hz
 static_assert((kLineLen & (kLineLen - 1)) == 0, "kLineLen must be a power of two");
 
+// The Teensy also keeps the new eight-operator control cache out of scarce RAM1.
+// Like the line pool this cache belongs to the one production Synth; native/ESP keep caches inline.
+#if defined(__IMXRT1062__)
+struct FmParams;
+extern FmParams gFmVoiceParams[];
+#endif
 extern int16_t gVoiceLines[][kLineLen];  // [kVoices], synth_lines.cpp
 MT_INLINE int16_t* voiceLine(int voice) { return gVoiceLines[voice]; }
 

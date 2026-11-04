@@ -29,9 +29,10 @@ int schedulePass(StreamConsumer* const* c, int n, BgWork* const* bg, int nBg, in
       if (r < minRes) minRes = r;
     }
   }
-  if (minRes <= kBgReserveUs || nBg <= 0) return loads;
+  if (nBg <= 0) return loads;
   for (int k = 0; k < nBg; ++k) {
     const int i = (bgNext + k) % nBg;
+    if (minRes <= bg[i]->minReserveUs()) continue;
     if (bg[i]->step()) {
       bgNext = (i + 1) % nBg;
       break;

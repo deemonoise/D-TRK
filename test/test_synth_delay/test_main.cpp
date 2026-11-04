@@ -1,4 +1,5 @@
 #include <math.h>
+#include <initializer_list>
 #include <string.h>
 #include <unity.h>
 #include "synth_delay.h"
@@ -219,7 +220,7 @@ static float timeChangeStep(uint8_t mode) {
 }
 
 void test_tape_time_change_glides() {
-  TEST_ASSERT_TRUE(timeChangeStep(kDig) > 0.2f);
+  TEST_ASSERT_TRUE(timeChangeStep(kDig) < 0.05f);  // DIGITAL crossfades its read taps too
   TEST_ASSERT_TRUE(timeChangeStep(kTape) < 0.05f);  // 200 Hz x 1.5 at 0.5: ~0.03
 }
 
@@ -250,7 +251,8 @@ void test_ping_pong_alternates() {
     TEST_ASSERT_EQUAL_FLOAT(0.f, r[i]);
   }
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1.f, r[200]);
-  // fb: the third echo on L at 300, x fb.
+  // fb: let its 5 ms control ramp settle, then the third echo on L is x fb.
+  for (int k = 0; k < 2; ++k) a.process(z, zl, zr, 128, 100, 127, 127, 127, kPP, 127);
   ppRun(a, l, r, 2048, 100, 127, 127);
   TEST_ASSERT_FLOAT_WITHIN(1e-2f, 0.95f, l[300]);
   TEST_ASSERT_TRUE(fabsf(r[300]) < 1e-3f);
@@ -326,8 +328,184 @@ void test_digital_tape_switch_seamless() {
   TEST_ASSERT_TRUE(step < 0.08f);
 }
 
+// Quantizing a lossy feedback must not create a permanent 1..10 LSB oscillator.
+void test_feedback_reaches_zero_in_every_mode() {
+  for (uint8_t mode = kDig; mode <= kPP; ++mode)
+    for (int sign : {-1, 1}) {
+      Delay a; a.setBuffer(line, kLen);
+      float z[128] = {}, l[128] = {}, r[128] = {};
+      a.process(z, l, r, 128, 8, 127, 127, 127, mode, 0);
+      while (a.wiping()) a.process(z, l, r, 128, 8, 127, 127, 127, mode, 0);
+      float last = 0;
+      for (int b = 0; b < 1000; ++b) {
+        for (int i = 0; i < 128; ++i) z[i] = b == 0 && i == 0 ? sign * .1f : 0.f, l[i] = r[i] = 0;
+        a.process(z, l, r, 128, 8, 127, 127, 127, mode, 0);
+        if (b > 990)
+          for (int i = 0; i < 128; ++i) last = fmaxf(last, fmaxf(fabsf(l[i]), fabsf(r[i])));
+      }
+      TEST_ASSERT_EQUAL_FLOAT(0.f, last);
+    }
+}
+
+void test_level_change_has_finite_smooth_ramp() {
+  Delay a; a.setBuffer(line, kLen);
+  float x = .5f, l = 0, r = 0;
+  for (int i = 0; i < 2000; ++i) { l = r = 0; a.process(&x, &l, &r, 1, 8, 0, 127, 127); }
+  l = r = 0; a.process(&x, &l, &r, 1, 8, 0, 127, 0);
+  TEST_ASSERT_TRUE(l > .49f);  // first sample still near the previous return level
+  float prev = l;
+  for (int i = 0; i < 221; ++i) {
+    l = r = 0; a.process(&x, &l, &r, 1, 8, 0, 127, 0);
+    TEST_ASSERT_TRUE(l <= prev && prev - l < .003f);
+    prev = l;
+  }
+  TEST_ASSERT_EQUAL_FLOAT(0.f, l);
+}
+
+void test_feedback_change_is_smoothed() {
+  Delay a; a.setBuffer(line, kLen);
+  float x = .1f, l = 0, r = 0;
+  for (int i = 0; i < 2000; ++i) { l = r = 0; a.process(&x, &l, &r, 1, 8, 0, 127, 127); }
+  x = 0;
+  for (int i = 0; i <= 8; ++i) { l = r = 0; a.process(&x, &l, &r, 1, 8, 127, 127, 127); }
+  TEST_ASSERT_TRUE(l < .01f);
+}
+
+void test_tone_change_is_smoothed() {
+  Delay a; a.setBuffer(line, kLen);
+  float x = 0, l = 0, r = 0;
+  for (int i = 0; i < 2000; ++i) { x = (i & 1) ? -.5f : .5f; l = r = 0; a.process(&x, &l, &r, 1, 1, 0, 127, 127); }
+  const float previous = l;
+  x = .5f; l = r = 0; a.process(&x, &l, &r, 1, 1, 0, 0, 127);
+  TEST_ASSERT_TRUE(l * previous < -.20f);  // still nearly the unfiltered next opposite sample
+}
+
+static void partitionRender(float* out, int total, bool split) {
+  Delay a; a.setBuffer(big, kBig);
+  float x[128], r[128];
+  int at = 0;
+  while (at < total) {
+    const int boundary = at < 4096 ? 4096 : at < 8192 ? 8192 : total;
+    int k = split ? 1 + (at * 7 % 97) : 128;
+    if (k > boundary - at) k = boundary - at;
+    for (int i = 0; i < k; ++i) x[i] = .3f * sinf((at + i) * .03f), out[at + i] = r[i] = 0;
+    a.process(x, out + at, r, k, at < 4096 ? 100 : at < 8192 ? 311 : 47,
+              at < 4096 ? 0 : 110, at < 8192 ? 127 : 40, at < 8192 ? 127 : 32);
+    at += k;
+  }
+}
+void test_parameter_and_time_ramps_are_partition_invariant() {
+  static float a[12288], b[12288];
+  partitionRender(a, 12288, false); partitionRender(b, 12288, true);
+  TEST_ASSERT_EQUAL_MEMORY(a, b, sizeof(a));
+}
+
+void test_time_retarget_stays_continuous_in_digital_and_pingpong() {
+  for (uint8_t mode : {kDig, kPP}) {
+    Delay a; a.setBuffer(big, kBig);
+    float prev = 0, maxStep = 0;
+    for (int i = 0; i < 20000; ++i) {
+      float x = .5f * sinf(i * .02f), l = 0, r = 0;
+      // New requests faster than the fade; the old fade finishes before taking the newest.
+      const uint32_t delay = i < 10000 ? 100 : 100 + (i / 17 % 13) * 47;
+      a.process(&x, &l, &r, 1, delay, 0, 127, 127, mode, 0);
+      if (i > 2000) maxStep = fmaxf(maxStep, fabsf(l - prev));
+      prev = l;
+    }
+    TEST_ASSERT_TRUE(maxStep < .02f);
+  }
+}
+
+void test_noise_tail_and_dark_feedback_eventually_reach_silence() {
+  for (uint8_t mode : {kDig, kTape, kPP})
+    for (uint8_t tone : {uint8_t(0), uint8_t(127)}) {
+      Delay a; a.setBuffer(line, kLen);
+      float peak = 0;
+      for (int i = 0; i < 128000; ++i) {
+        float x = i < 128 ? noise() * .3f : 0, l = 0, r = 0;
+        a.process(&x, &l, &r, 1, 8, 127, tone, 127, mode, mode == kTape ? 127 : 0);
+        if (i > 127000) peak = fmaxf(peak, fmaxf(fabsf(l), fabsf(r)));
+      }
+      TEST_ASSERT_EQUAL_FLOAT(0.f, peak);
+    }
+}
+
+void test_short_buffers_and_extreme_values_stay_in_bounds() {
+  for (uint32_t len : {2u, 3u, 7u})
+    for (uint8_t mode : {kDig, kTape, kPP}) {
+      int16_t buf[9] = {}; buf[len] = 12345;
+      Delay a; a.setBuffer(buf, len);
+      for (int i = 0; i < 1000; ++i) {
+        float x = .5f, l = 0, r = 0;
+        a.process(&x, &l, &r, 1, i & 1 ? 0 : 0xFFFFFFFFu, 255, 255, 255, mode, 255);
+        TEST_ASSERT_TRUE(isfinite(l) && isfinite(r));
+      }
+      TEST_ASSERT_EQUAL_INT16(12345, buf[len]);
+    }
+}
+
+// A worn TAPE glide must hand the settled read position to DIGITAL, not revive its old tap.
+void test_tape_handoff_keeps_the_current_read_position() {
+  for (uint8_t exitMode : {kTape, kDig}) {
+    Delay a; a.setBuffer(big, kBig);
+    float previous = 0, maxStep = 0;
+    for (int i = 0; i < 200000; ++i) {
+      float x = .3f * sinf(6.283185307f * 200.f * i / kSynthRate), l = 0, r = 0;
+      const uint8_t mode = i < 2000 ? kDig : i < 100000 ? kTape : exitMode;
+      a.process(&x, &l, &r, 1, i < 20000 ? 300 : 700, 0, 127, 127, mode, i < 100000 ? 127 : 0);
+      if (i >= 100000) maxStep = fmaxf(maxStep, fabsf(l - previous));
+      previous = l;
+    }
+    TEST_ASSERT_TRUE(maxStep < .02f);
+  }
+}
+
+void test_tape_entry_finishes_an_inflight_digital_time_fade() {
+  for (int change : {2001, 2030, 2060, 2090, 2120}) {
+    Delay a; a.setBuffer(big, kBig);
+    float previous = 0, maxStep = 0;
+    for (int i = 0; i < 8000; ++i) {
+      float x = .3f * sinf(6.283185307f * 200.f * i / kSynthRate), l = 0, r = 0;
+      a.process(&x, &l, &r, 1, i < 2000 ? 300 : 700, 0, 127, 127, i < change ? kDig : kTape, 127);
+      if (i >= 2000) maxStep = fmaxf(maxStep, fabsf(l - previous));
+      previous = l;
+    }
+    TEST_ASSERT_TRUE(maxStep < .03f);
+  }
+}
+
+static void tapeEntryPartition(float* out, bool split) {
+  Delay a; a.setBuffer(big, kBig);
+  float in[128], right[128];
+  for (int at = 0; at < 8192;) {
+    const int boundary = at < 2000 ? 2000 : at < 2030 ? 2030 : 8192;
+    int n = split ? 1 + at * 7 % 97 : 128;
+    if (n > boundary - at) n = boundary - at;
+    for (int i = 0; i < n; ++i) { in[i] = .3f * sinf((at + i) * .02f); out[at + i] = right[i] = 0; }
+    a.process(in, out + at, right, n, at < 2000 ? 300 : at < 2030 ? 700 : 900,
+              40, 110, 100, at < 2030 ? kDig : kTape, 127);
+    at += n;
+  }
+}
+void test_tape_entry_with_queued_time_is_partition_invariant() {
+  static float a[8192], b[8192];
+  tapeEntryPartition(a, false); tapeEntryPartition(b, true);
+  TEST_ASSERT_EQUAL_MEMORY(a, b, sizeof(a));
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_tape_entry_with_queued_time_is_partition_invariant);
+  RUN_TEST(test_tape_entry_finishes_an_inflight_digital_time_fade);
+  RUN_TEST(test_tape_handoff_keeps_the_current_read_position);
+  RUN_TEST(test_time_retarget_stays_continuous_in_digital_and_pingpong);
+  RUN_TEST(test_noise_tail_and_dark_feedback_eventually_reach_silence);
+  RUN_TEST(test_short_buffers_and_extreme_values_stay_in_bounds);
+  RUN_TEST(test_feedback_reaches_zero_in_every_mode);
+  RUN_TEST(test_level_change_has_finite_smooth_ramp);
+  RUN_TEST(test_feedback_change_is_smoothed);
+  RUN_TEST(test_tone_change_is_smoothed);
+  RUN_TEST(test_parameter_and_time_ramps_are_partition_invariant);
   RUN_TEST(test_impulse_returns_after_delay);
   RUN_TEST(test_level_scales_the_return);
   RUN_TEST(test_no_feedback_one_echo);

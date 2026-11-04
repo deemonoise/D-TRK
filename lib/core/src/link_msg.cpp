@@ -1,6 +1,7 @@
 #include "link_msg.h"
 #include <string.h>
 #include "model.h"
+#include "bank_ops.h"
 #include "wt_mip.h"
 
 namespace mt::link {
@@ -862,6 +863,56 @@ bool decode(Reader& r, RecStopRep& m) {
   m.clips = r.u32();
   m.ended = r.left() > 0 ? r.u8() : 0;  // appended in 18
   return r.ok();
+}
+
+void encode(const SampleEditReq& m, Writer& w) {
+  w.u32(m.token); w.u8(m.index); w.u32(m.crc); w.u32(m.from); w.u32(m.to); w.u8(m.normalize); w.u8(m.mode); w.u32(m.ratioQ16);
+}
+
+bool decode(Reader& r, SampleEditReq& m) {
+  m.token=r.u32(); m.index=r.u8(); m.crc=r.u32(); m.from=r.u32(); m.to=r.u32(); m.normalize=r.u8(); m.mode=r.u8(); m.ratioQ16=r.u32();
+  return r.ok() && r.left()==0 && m.token && m.index<mt::kProjSamples && m.from<m.to &&
+      ((m.mode==0 && m.normalize<=1 && m.ratioQ16==65536) ||
+       (m.mode==1 && !m.normalize && m.ratioQ16>=32768 && m.ratioQ16<=131072));
+}
+
+void encode(const SampleEditRep& m, Writer& w) {
+  w.u32(m.token); w.u8(m.result); w.u32(m.crc); w.u32(m.frames); w.u32(m.rate); w.u8(m.root);
+}
+
+bool decode(Reader& r, SampleEditRep& m) {
+  m.token=r.u32(); m.result=r.u8(); m.crc=r.u32(); m.frames=r.u32(); m.rate=r.u32(); m.root=r.u8();
+  if (!r.ok() || r.left()!=0 || m.result>static_cast<uint8_t>(mt::BankResult::Cancelled) ||
+      m.result==static_cast<uint8_t>(mt::BankResult::Running) || m.root>127) return false;
+  return m.result!=static_cast<uint8_t>(mt::BankResult::Ok) || (m.token && m.frames && m.rate && m.rate<=mt::kWavMaxRate);
+}
+
+void encode(const SampleEditCancelReq& m, Writer& w) { w.u32(m.token); }
+
+bool decode(Reader& r, SampleEditCancelReq& m) {
+  m.token=r.u32();
+  return r.ok() && r.left()==0 && m.token;
+}
+
+void encode(const SampleTempoReq& m, Writer& w) {
+  w.u32(m.token); w.u8(m.index); w.u32(m.crc); w.u32(m.from); w.u32(m.to);
+}
+bool decode(Reader& r, SampleTempoReq& m) {
+  m.token=r.u32(); m.index=r.u8(); m.crc=r.u32(); m.from=r.u32(); m.to=r.u32();
+  return r.ok() && r.left()==0 && m.token && m.index<mt::kProjSamples && m.from<m.to;
+}
+void encode(const SampleTempoRep& m, Writer& w) {
+  w.u32(m.token); w.u8(m.result); w.u16(m.bpm10); w.u16(m.confidence);
+  w.u16(m.halfBpm10); w.u16(m.doubleBpm10); w.u8(m.flags);
+}
+bool decode(Reader& r, SampleTempoRep& m) {
+  m.token=r.u32(); m.result=r.u8(); m.bpm10=r.u16(); m.confidence=r.u16();
+  m.halfBpm10=r.u16(); m.doubleBpm10=r.u16(); m.flags=r.u8();
+  if (!r.ok() || r.left()!=0 || !m.token || m.result>static_cast<uint8_t>(mt::BankResult::Cancelled) ||
+      m.result==static_cast<uint8_t>(mt::BankResult::Running) || m.flags>1 || m.confidence>1000) return false;
+  if (!m.bpm10) return !m.confidence && !m.halfBpm10 && !m.doubleBpm10 && !m.flags;
+  return m.result==0 && m.bpm10>=400 && m.bpm10<=2400 && m.halfBpm10>=200 && m.halfBpm10<=1200 &&
+      m.doubleBpm10>=800 && m.doubleBpm10<=4800;
 }
 
 }  // namespace mt::link

@@ -78,7 +78,8 @@ enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 // Stored in files: new values go before Count only.
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
 enum class ChopMode : uint8_t { Equal, Trans, Count };
-constexpr int kMaxSlices = 32;
+constexpr int kMaxSlices = 128;
+static_assert(kMaxSlices <= 255, "slice count and SLC index fit uint8_t");
 // Stored in files (INST byte 8): new types before Count only. LOFI is 6 as on main.
 // 7 is a former type: never reuse it; a file / preset with type 7 loads as CHIP.
 enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Lofi, Unused7, String, Count };
@@ -104,9 +105,19 @@ struct KitLane {
   uint8_t note = 60;
 };
 static_assert(sizeof(KitLane) == kSampleNameMax + 6, "KitLane layout (file format)");
-// FM machines (Model:Cycles style). Stored in files: new machines go before Count only.
-enum class FmMachine : uint8_t { Kick, Snare, Metal, Perc, Tone, Chord, Clap, Hat, Count };
-const char* fmMachineName(uint8_t machine);  // "KICK"; out of range -> Kick
+// Measured Syntakt-inspired models. The former FM family is deliberately replaced.
+enum class FmMachine : uint8_t { BdModern, SdBasic, SdVintage, PcCarbon, CpVintage, CyAlloy, Chord, Toy, Tone, HhBasic, Count };
+constexpr int kFmParams = 8;  // independent A..H raw controls; unlike the five shared macro FX
+const char* fmMachineName(uint8_t machine);
+const char* fmParamName(uint8_t machine, int param);  // empty for unused positions
+// UI semantics preserve raw data until edited. Toggle edits normalize to0/127.
+bool fmParamIsToggle(uint8_t machine, int param);
+const char* fmChordTypeName(uint8_t rawType);  // conventional pitch-set names, not Elektron names
+float fmTuneSemitones(uint8_t machine, uint8_t raw);
+uint8_t fmParamStep(uint8_t machine, int param, uint8_t raw, int delta);
+// At most31 visible ASCII characters; no invented Hz or chord names.
+void formatFmParam(uint8_t machine, int param, uint8_t raw, char* out, int n);
+uint8_t fmMacroParam(uint8_t machine, int macro);  // shared DCY..CON modulation -> A..H
 // FM macros: Instrument::macro index, fx DEC..CON = Fx::DCY + index.
 enum FmMacro : uint8_t { kMacDec, kMacCol, kMacShp, kMacSwp, kMacCon, kFmMacros };
 // SYNTH oscillator mode. Stored in files: new modes before Count only.
@@ -144,7 +155,7 @@ enum class LofiMachine : uint8_t { Byte, Apc, Count };
 enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
 // send, the drive, the reverb send, the bit / sample-rate reduction, the pan, the drive model, the
-// trance gate's depth, the MOD send, FM SAT (kLockSat, Instrument::fmSat).
+// trance gate's depth, the MOD send, FM OVER (kLockSat, Instrument::fmParam[7]).
 enum LockBit : uint8_t {
   kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLockPan, kLockDty, kLockGte,
   kLockMod, kLockSat, kLocks
@@ -157,8 +168,8 @@ enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Byte, Count };
 enum class DriveModel : uint8_t { Tanh, Clip, Fold, Rect, Asym, Count };
 // Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2, Fold, Ring: SYNTH;
 // RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Pan: the track's
-// pan (+-64 at full depth). ModSend: the track's MOD send (TrackCfg::modSend). Sat: FM SAT
-// (Instrument::fmSat), FM only. Stored in files: new targets before Count only (the Dest list shows them
+// pan (+-64 at full depth). ModSend: the track's MOD send (TrackCfg::modSend). Sat: FM OVER
+// (Instrument::fmParam[7]), FM only. Stored in files: new targets before Count only (the Dest list shows them
 // in its own order, see lfoDestStep).
 enum class LfoDest : uint8_t {
   Pitch, Dec, Col, Shp, Swp, Con, Vol, Cutoff, Drive,
@@ -228,9 +239,10 @@ struct Instrument {
   uint8_t chopThresh = 50;    // TRANS: 0..100, higher = more slices
   uint8_t sliceCount = 0;     // 0..kMaxSlices
   uint16_t slices[kMaxSlices] = {0};
-  // FM / DRUM: machine and its macros (see fmSetMachine, drumSetMachine), LFO.
+  // Machine selectors; FM has independent A..H, other engines use the five shared macro slots.
   uint8_t machine = 0;                                // FmMachine, DrumMachine or LofiMachine, by type
-  uint8_t macro[kFmMacros] = {85, 40, 32, 70, 50};    // DECAY..CONTOUR 0..127 (FM / DRUM), Kick defaults
+  uint8_t fmParam[kFmParams] = {64, 64, 0, 110, 0, 64, 0, 0};  // SY TONE baseline
+  uint8_t macro[kFmMacros] = {85, 40, 32, 70, 50};    // shared DRUM / SYNTH / STRING / LOFI macros, 0..127
   uint8_t lfoWave = 0;   // LfoWave
   uint8_t lfoRate = 64;  // 0..127, see lfoHz
   int8_t lfoDepth = 0;   // -64..63, 0 = off
@@ -279,7 +291,7 @@ struct Instrument {
   // LFO 1..4 wave BYTE: {formula (bytebeat_lib.h), A 0..127}; B / C are the formula's defaults. Default:
   // formula 0 and its A (kByteDef*).
   uint8_t lfoByte[kLfos][2] = {{0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}};
-  // FM SAT 0..127: tanh saturation before the voice's amp (FmParams::sat), 0 = off. FM only; kept on any type.
+  // Historical FMEX byte retained for old file records; new machines use fmParam[7] (OVER).
   uint8_t fmSat = 0;
   // CHIP STEP: the envelope snaps to the 16 AY volume levels (kAyLevel). FMEX byte 1; kept on any type.
   bool chipStep = false;
@@ -391,7 +403,7 @@ enum class Fx : uint8_t {
 // DTY locks the track insert's drive model (kLockDty, DriveModel: TNH CLP FLD RCT ASY), INT tracks only.
 // GTE locks the trance gate's depth (kLockGte, TrackCfg::gateDepth: 0 = OFF, 1..127), INT tracks only.
 // MOD locks the MOD bus send (kLockMod, TrackCfg::modSend), INT tracks only.
-// SAT locks the FM instrument's SAT (kLockSat, Instrument::fmSat), INT tracks only; other types ignore it.
+// SAT locks the FM instrument's OVER (kLockSat, fmParam[7]), INT tracks only; other types ignore it.
 // FLP (0..100 %): the track generator's register shift on this step flips with this chance instead of
 // GenCfg::flip (shift_gen.h). The sequencer's; never sent to the synth.
 // ARM (arp mode): mode << 4 | rate (1..kArmRateMax notes per step); modes UP, DOWN, UPDOWN, RANDOM.
@@ -702,6 +714,8 @@ struct SynthModel {
   TuningTable tuning;
   // Scenes chunk, last: copies of Project::scenes[sceneA / sceneB] (syncSceneLive), all the synth needs.
   Scene sceneLive[2];
+  // Compressor attack, appended for stable offsets of existing mirror chunks. AUDI byte 26.
+  uint8_t compAttack = 83;  // 0.5..50 ms exponential; default approximately 10 ms
 };
 
 // Shift-register generator of a track (shift_gen.h): plays the project scale live in place of the

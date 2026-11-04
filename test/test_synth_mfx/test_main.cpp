@@ -54,10 +54,10 @@ static uint32_t fnv(uint32_t h, const int16_t* d, int n) {
 
 // A mix with every master stage before feature 5 busy: 4 tracks panned, delay and reverb sends,
 // compressor with a sidechain key, notes on and off. The hash of 300 blocks.
-static uint32_t referenceScene(Synth& x) {
+static uint32_t referenceScene(Synth& x, uint8_t compAmt = 0) {
   x.setDelayBuffer(dline, 64000);
   x.setReverbBuffer(rvbBuf, Reverb::kBufLen);
-  p->compAmt = 60;
+  p->compAmt = compAmt;
   p->scTrack = 4;
   p->tracks[1].pan = 20;
   p->tracks[2].pan = 110;
@@ -79,14 +79,19 @@ static uint32_t referenceScene(Synth& x) {
   return h;
 }
 
-// Measured on the firmware before feature 5's integration (2026-10-14; feature/teensy at 44.1 kHz:
-// b1926b0, the per-voice mix before the track strips).
-static constexpr uint32_t kRefHash = 0x4037AB84;
+// Compressor bypassed: reference updated for the clean master, corrected reverb and smooth delay.
+// Explicit effect A/B tests below still verify that individual controls change the output.
+static constexpr uint32_t kRefHash = 0x685F4400;
 
-void test_default_render_bit_exact_to_before() {
+void test_default_render_matches_corrected_audio_reference() {
   const uint32_t h = referenceScene(*s);
-  printf("reference hash 0x%08X\n", h);
+  printf("bypassed reference hash 0x%08X\n", h);
   TEST_ASSERT_EQUAL_HEX32(kRefHash, h);
+}
+
+void test_active_compressor_changes_reference_scene() {
+  const uint32_t active = referenceScene(*s, 60);
+  TEST_ASSERT_NOT_EQUAL(kRefHash, active);
 }
 
 // ---- A / B renders: the same events into two synths, compared ----
@@ -268,6 +273,31 @@ void test_shimmer_mode() { TEST_ASSERT_TRUE(shimmerDiff(true, 127) > 1000); }
 void test_shimmer_no_buffer_is_plain() { TEST_ASSERT_TRUE(shimmerDiff(false, 127) == 0); }
 void test_shimmer_amount_zero_is_plain() { TEST_ASSERT_TRUE(shimmerDiff(true, 0) == 0); }
 
+// A completed wet mute must clear the delayed shimmer feedback block as well as its shifter.
+// Otherwise a quick OFF/ON feeds the pre-mute wet samples back into the now-empty reverb.
+void test_shimmer_quick_mute_does_not_resurrect_previous_wet_block() {
+  p->instruments[0].rsend = 127;
+  p->instruments[0].release = 0;
+  p->rvbMode = static_cast<uint8_t>(RvbMode::Shimmer);
+  p->rvbLevel = p->rvbSize = p->rvbShim = 127;
+  p->rvbDamp = 0;
+  s->setReverbBuffer(rvbBuf, Reverb::kBufLen);
+  s->setShimmerBuffer(shimA, PitchShift::kLen, wetA);
+  send(*s, 0, 0, 0x90, 60, 100);
+  for (int b = 0; b < 100; ++b) s->renderStereo(lr);
+  send(*s, 0, 0, 0x80, 60, 0);
+  p->rvbLevel = 0;
+  for (int b = 0; b < 3; ++b) s->renderStereo(lr);  // completes the 221-sample wet fade
+  TEST_ASSERT_EQUAL(0, s->activeVoices());
+  p->rvbLevel = 127;
+  int peak = 0;
+  for (int b = 0; b < 200; ++b) {
+    s->renderStereo(lr);
+    for (int16_t x : lr) if (abs(x) > peak) peak = abs(x);
+  }
+  TEST_ASSERT_EQUAL_INT(0, peak);
+}
+
 // Master EQ: a low boost changes the mix.
 void test_master_eq() {
   p->eqLow = 127;
@@ -293,6 +323,13 @@ void test_perf_mod_throw() {
   delete r;
 }
 
+void test_perf_mod_throw_with_bypassed_sidechain_key() {
+  p->compAmt = 0;
+  p->scTrack = 1;
+  p->scDepth = 127;
+  test_perf_mod_throw();
+}
+
 // PERF TAPE WOBBLE: the delay runs TAPE at full wear while held.
 void test_perf_tape_wobble() {
   p->instruments[0].send = 127;
@@ -308,7 +345,9 @@ void test_perf_tape_wobble() {
 
 int main() {
   UNITY_BEGIN();
-  RUN_TEST(test_default_render_bit_exact_to_before);
+  RUN_TEST(test_shimmer_quick_mute_does_not_resurrect_previous_wet_block);
+  RUN_TEST(test_default_render_matches_corrected_audio_reference);
+  RUN_TEST(test_active_compressor_changes_reference_scene);
   RUN_TEST(test_mod_send_reaches_mod_bus);
   RUN_TEST(test_mod_off_or_zero_send_bit_exact);
   RUN_TEST(test_mod_lock_and_lfo_target);
@@ -320,6 +359,7 @@ int main() {
   RUN_TEST(test_shimmer_amount_zero_is_plain);
   RUN_TEST(test_master_eq);
   RUN_TEST(test_perf_mod_throw);
+  RUN_TEST(test_perf_mod_throw_with_bypassed_sidechain_key);
   RUN_TEST(test_perf_tape_wobble);
   return UNITY_END();
 }

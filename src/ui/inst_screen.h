@@ -6,6 +6,7 @@
 #include "preset_browser.h"
 #include "rec_dialog.h"
 #include "sample_editor.h"
+#include "sample_extract_dialog.h"
 #include "screen.h"
 #include "syn_wave_preview.h"
 #include "wt_make_dialog.h"
@@ -64,7 +65,7 @@ class InstScreen : public Screen {
   bool wantsRawTouch() const override { return !recShown() && wt_.drawOpen(); }
   bool wantsHDrag() const override {
     return !recShown() &&
-           (wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !wtMake_.isOpen() && !bounce_.isOpen() && onEditor()));
+           (wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !wtMake_.isOpen() && !extract_.isOpen() && !bounce_.isOpen() && onEditor()));
   }
   // Track button n: on the sample editor plays slices (see SampleEditor::playSlice). False = not taken.
   bool trackKey(int n, bool shift);
@@ -86,10 +87,10 @@ class InstScreen : public Screen {
   static constexpr int kMainRows = 9;  // MAIN = [0, 9), ENV = [9, kCommon)
   static constexpr int kWave = kCommon, kDuty = kCommon + 1, kPwmRate = kCommon + 2, kPwmDepth = kCommon + 3,
                        kChipStep = kCommon + 4, kChipRows = kCommon + 5;
-  static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmMacros;  // FM
+  static constexpr int kMachine = kCommon, kMac0 = kCommon + 1, kMacRows = kMac0 + mt::kFmParams;  // FM A..H
   // DRUM: Machine (kMachine) is the group (KICK, SNARE, ...), then its Model, then the macros.
   static constexpr int kDrumModel = kCommon + 1, kDrumMac0 = kCommon + 2, kDrumRows = kDrumMac0 + mt::kFmMacros;
-  static constexpr int kFmSat = kMacRows, kFmRows = kFmSat + 1;  // FM only: SAT after the macros (not DRUM)
+  static constexpr int kFmRows = kMacRows;  // OVER is parameter H; no second saturation control
   // LOFI: Machine (kMachine), Formula, Sync, then the macros.
   static constexpr int kFormula = kCommon + 1, kLofiSync = kCommon + 2, kLofiMac0 = kCommon + 3,
                        kLofiRows = kLofiMac0 + mt::kFmMacros;
@@ -194,6 +195,7 @@ class InstScreen : public Screen {
   int page_ = kPgMain;
   PresetBrowser presets_{app_};
   WtPicker wt_{app_};
+  SampleExtractDialog extract_{app_};
   WtMakeDialog wtMake_{app_};
   BounceDialog bounce_{app_};  // Save one-shot...
   int instr_ = 0;

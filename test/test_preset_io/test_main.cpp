@@ -43,6 +43,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
   SAME(root); SAME(start); SAME(end); SAME(loop); SAME(loopStart); SAME(reverse);
   SAME(machine);
   for (int k = 0; k < kFmMacros; ++k) SAME(macro[k]);
+  for (int k = 0; k < kFmParams; ++k) SAME(fmParam[k]);
   SAME(lfoWave); SAME(lfoRate); SAME(lfoDepth); SAME(lfoDest);
   SAME(fltMode); SAME(cutoff); SAME(reso); SAME(fenv); SAME(fAtk); SAME(fDec); SAME(keytrack); SAME(send);
   SAME(drive); SAME(rsend); SAME(velCut); SAME(velMac); SAME(crushBits); SAME(crushRate); SAME(driveModel);
@@ -89,7 +90,8 @@ void test_roundtrip() {
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(240, kPresetSize);
+  TEST_ASSERT_EQUAL(512, kPresetSize);
+  TEST_ASSERT_EQUAL(248, kPresetSizeV9);
   TEST_ASSERT_EQUAL(236, kPresetSizeV7);
   TEST_ASSERT_EQUAL(228, kPresetSizeV6);
   TEST_ASSERT_EQUAL(220, kPresetSizeV5);
@@ -790,14 +792,15 @@ void test_v8_fmex_roundtrip() {
   Instrument a;
   strcpy(a.name, "FATKICK");
   instrSetType(a, InstrType::Fm);
-  fmSetMachine(a, static_cast<uint8_t>(FmMachine::Kick));
+  fmSetMachine(a, static_cast<uint8_t>(FmMachine::BdModern));
   a.fmSat = 99;
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
-  TEST_ASSERT_EQUAL(8, kPresetVersion);
-  TEST_ASSERT_EQUAL(8, out.buf[4]);
+  TEST_ASSERT_EQUAL(10, kPresetVersion);
+  TEST_ASSERT_EQUAL(10, out.buf[4]);
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(kPresetSizeV7 + kFmExRecSize, kPresetSize);
+  TEST_ASSERT_EQUAL(kPresetSizeV8 + kFmParamRecSize, kPresetSizeV9);
+  TEST_ASSERT_EQUAL(kPresetSizeV9 + kSliceExtRecSize, kPresetSize);
   TEST_ASSERT_EQUAL(99, out.buf[kPresetSizeV7 - 4]);  // SAT: byte 0 of the FMEX record, after LFOB
   VecSource in(out.buf);
   Instrument b;
@@ -889,8 +892,55 @@ void test_syn_extension_preset_roundtrip() {
   TEST_ASSERT_EQUAL(53, b.synPhase[1]); TEST_ASSERT_EQUAL(3, b.synEnvDest); TEST_ASSERT_EQUAL(1, b.synSubWave);
 }
 
+void test_reference_fm_eight_controls_roundtrip() {
+  Instrument a;
+  instrSetType(a, InstrType::Fm);
+  fmSetMachine(a, static_cast<uint8_t>(FmMachine::Tone));
+  for (int k = 0; k < kFmParams; ++k) a.fmParam[k] = 13 + k * 11;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  Instrument b;
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(a.fmParam, b.fmParam, kFmParams);
+}
+
+void test_reference_preset_v8_defaults_and_v9_clamping() {
+  Instrument a;
+  instrSetType(a, InstrType::Fm);
+  a.fmParam[7] = 255;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  VecSource in(out.buf);
+  Instrument b;
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(127, b.fmParam[7]);
+  const auto old = asVersion(out.buf, 8, kPresetSizeV8);
+  VecSource legacy(old);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(legacy, b)));
+  const uint8_t expected[] = {64, 64, 0, 110, 0, 64, 0, 0};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, b.fmParam, kFmParams);
+}
+
+void test_unknown_reference_machine_uses_tone_defaults() {
+  Instrument a;
+  instrSetType(a, InstrType::Fm);
+  a.machine = 255;
+  a.fmParam[0] = 1;
+  VecSink out;
+  TEST_ASSERT_TRUE(savePreset(a, out));
+  Instrument b;
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Tone), b.machine);
+  TEST_ASSERT_EQUAL(64, b.fmParam[0]);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_unknown_reference_machine_uses_tone_defaults);
+  RUN_TEST(test_reference_preset_v8_defaults_and_v9_clamping);
+  RUN_TEST(test_reference_fm_eight_controls_roundtrip);
   RUN_TEST(test_syn_extension_bytes_and_clamps);
   RUN_TEST(test_syn_old_reserved_bytes_restore_defaults);
   RUN_TEST(test_syn_extension_preset_roundtrip);

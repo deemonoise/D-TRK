@@ -3,6 +3,7 @@
 #include "bank_ops.h"
 #include "onset.h"
 #include "wt_make.h"
+#include "tempo_detect.h"
 
 // The sample bank lives on the synth board (src/teensy/bank.cpp): these are its requests over the
 // link. UI task only, blocking (the long ones report progress). Whatever depends on the project's
@@ -87,6 +88,16 @@ BankResult wtAudition(const int16_t* pts);
 // (up to max), the count, -1 on failure (*err says why).
 BankResult wavePeaks(int index, uint32_t col0, uint32_t span, int width, int cols, int8_t* mn, int8_t* mx);
 int onsets(int index, mt::Onset* out, int max, BankResult* err = nullptr);
+// Immutable off-line extraction. false from progress requests cancellation, then waits for
+// the terminal original reply; a late Ok after cancellation never yields bindable output.
+BankResult extractSample(int index, uint32_t crc, uint32_t from, uint32_t to, bool normalize, ImportOut& out,
+                         bool (*progress)(uint32_t, uint32_t, void*) = nullptr, void* ctx = nullptr);
+
+BankResult stretchSample(int index, uint32_t crc, uint32_t from, uint32_t to, uint32_t ratioQ16, ImportOut& out,
+                         bool (*progress)(uint32_t, uint32_t, void*) = nullptr, void* ctx = nullptr);
+BankResult detectSampleTempo(int index, uint32_t crc, uint32_t from, uint32_t to, mt::TempoEstimate& out,
+                         bool (*progress)(uint32_t, uint32_t, void*) = nullptr, void* ctx = nullptr);
+
 // A wavetable made on the synth board (mt::WtMaker) from frames [from, to) of project sample index,
 // written to path (/wavetables/<name>.wav). Busy while the engine plays. err = the maker's error
 // (result Ok with err != Ok: nothing written); pitched = CYCLE frames whose pitch was found. cb gets

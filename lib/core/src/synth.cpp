@@ -1,5 +1,7 @@
 #include "synth.h"
+#include "synth_master.h"
 #include "sample_loop.h"
+#include "synth_resample.h"
 #include "synth_params.h"
 #include "bytebeat_lib.h"
 #include "fastmath.h"
@@ -42,6 +44,8 @@ MT_CONTROL uint8_t costPotential(const TrackCfg* track, uint16_t lfoMask, const 
     if (dest == static_cast<uint8_t>(LfoDest::Fold)) flags |= kCostPotentialFold;
     if (dest == static_cast<uint8_t>(LfoDest::Ring)) flags |= kCostPotentialRing;
     if (dest == static_cast<uint8_t>(LfoDest::Sat)) flags |= kCostPotentialSat;
+    if (dest == static_cast<uint8_t>(LfoDest::Pitch) || dest == static_cast<uint8_t>(LfoDest::Fine))
+      flags |= kCostPotentialSamplePitch;
   };
   if (track && track->folSrc && track->folAmt) add(track->folDest);
   for (int i = 0; i < kLfos; ++i)
@@ -52,12 +56,13 @@ MT_CONTROL uint8_t costPotential(const TrackCfg* track, uint16_t lfoMask, const 
 
 // A held voice keeps its engine/machine when the editor selects another one.
 // Price the engine that still renders, using the current live controls, without copying Instrument.
-MT_CONTROL int runningVoiceCost(const Voice& v, const Instrument& m, uint8_t potential, float chipHz = 0.f) {
+MT_CONTROL int runningVoiceCost(const Voice& v, const Instrument& m, uint8_t potential, float chipHz = 0.f,
+                                 float sampleFrameStep = 1.f) {
   const InstrType type = v.fm ? InstrType::Fm : v.drum ? InstrType::Drum : v.syn ? InstrType::Synth :
                          v.str ? InstrType::String : v.lofi ? InstrType::Lofi :
                          v.sample ? InstrType::Sample : InstrType::Chip;
   const float hz = v.lofi ? v.eng.lofi.lp.hz : chipHz;
-  return voiceCost(m, v.sample, potential, hz, type, v.machine);
+  return voiceCost(m, v.sample, potential, hz, type, v.machine, sampleFrameStep);
 }
 
 // BYTE SYNC runs 1024 counter ticks per sixteenth, scaled by whole note octaves.
@@ -148,13 +153,6 @@ bool isOff(const uint8_t* b, uint8_t len) {
          (b[0] == 0xF6 && len >= 2 && (b[1] == 1 || b[1] == 3));
 }
 
-// Soft clip: 1.5x - 0.5x^3 inside [-1, 1], flat outside.
-float softClip(float x) {
-  if (x >= 1.f) return 1.f;
-  if (x <= -1.f) return -1.f;
-  return x * (1.5f - 0.5f * x * x);
-}
-
 // Pan gains per position 0..127, constant power x sqrt 2 (centre 1 / 1, hard left sqrt 2 / 0).
 // Filled once by the first Synth (initPan), outside the audio path.
 float panL[128], panR[128];
@@ -182,6 +180,7 @@ int eventOffset(uint64_t t, uint64_t blockT) {
 }
 
 Synth::Synth(const SynthModel& p) : p_(p) {
+  sampleFirInit();  // copy immutable common-rate coefficient banks before live rendering
   Drive::init();  // the tanh table, outside the audio path
   byteFormulaCount();  // compiles the LOFI formula table, outside the audio path
   initPan();
@@ -213,6 +212,9 @@ void Synth::reset() {
   delay_.clear();
   reverb_.clear();
   comp_.reset();
+  masterGain_.reset();
+  for (float& w : scWeight_) w = 0;
+  scSnap_ = true;
   perf_.reset();
   perfDs_ = perfRs_ = perfMs_ = 0;
   perfDry_ = 1;
@@ -714,7 +716,7 @@ uint8_t Synth::machineOf(const Instrument& m) {
   else if (m.type == InstrType::String) n = static_cast<uint8_t>(StringModel::Count);
   else if (m.type == InstrType::Lofi) n = static_cast<uint8_t>(LofiMachine::Count);
   else n = static_cast<uint8_t>(FmMachine::Count);
-  return m.machine < n ? m.machine : 0;
+  return m.machine < n ? m.machine : m.type == InstrType::Fm ? static_cast<uint8_t>(FmMachine::Tone) : 0;
 }
 
 // One-shot drum voice (DRUM, FM drum machines): ignores note-offs, always retriggers (choke).
@@ -890,8 +892,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   const bool heavy = fm || drumT || synWtT || stringT ||
                      (lofiT && machine == static_cast<uint8_t>(LofiMachine::Byte));
   const bool drum = drumT || (fm && !fmGated(machine));  // one-shot, choke
-  const bool tone = fm && machine == static_cast<uint8_t>(FmMachine::Tone);
-  // FM: only TONE may be poly; drums and CHORD take the track's voice. DRUM is always mono.
+  const bool tone = fm && (machine == static_cast<uint8_t>(FmMachine::Tone) ||
+                           machine == static_cast<uint8_t>(FmMachine::Toy));
+  // TONE/TOY may be poly; FM drums and the internally voiced CHORD take one track voice.
   // A KIT lane is mono through its own note (below), so the track is poly across lanes.
   const bool mono = kitLane ? false : fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
   // Tuning: melodic voices only (not drums, FM drum machines, KIT lanes, NOTE slices). Their pitches are
@@ -922,7 +925,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
         x.env.fade(kChokeMs);
   // The price for the pool's budget: m is the lane's instrument for a KIT lane (a sampler lane is
   // a SAMPLE), so sample covers both.
-  const uint8_t potential = costPotential(track < kTracks ? &p_.tracks[track] : nullptr,
+  uint8_t potential = costPotential(track < kTracks ? &p_.tracks[track] : nullptr,
                                           r.lfoLockMask, r.lfoLock, r.lockMask, r.lock);
   float effectiveHz = 0;
   if (lofiT && machine == static_cast<uint8_t>(LofiMachine::Byte))
@@ -931,7 +934,19 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   else if (m.wave == static_cast<uint8_t>(Wave::AyToneNoise) &&
            !sample && !fm && !drumT && !synT && !stringT && !lofiT)
     effectiveHz = noteHz(pitch);
-  const int cost = voiceCost(m, sample, potential, effectiveHz);
+  if (sample) {
+    for (int i = 0; i < kLfos; ++i) {
+      const bool lockedDepth = r.lfoLockMask & (1u << (i * kLfoLocks + kLfoLkDepth));
+      const bool lockedDest = r.lfoLockMask & (1u << (i * kLfoLocks + kLfoLkDest));
+      const uint8_t dest = lockedDest ? r.lfoLock[i].dest : lfoAt(m, i).dest;
+      if (lockedDepth && r.lfoLock[i].depth != 0 &&
+          (dest == static_cast<uint8_t>(LfoDest::Pitch) || dest == static_cast<uint8_t>(LfoDest::Fine)))
+        potential |= kCostPotentialSamplePitch;
+    }
+  }
+  const float sampleStep = sample ? clampf(sd.rate * (1.f / kSynthRate) *
+      fastExp2((pitch - (m.root > 127 ? 127 : m.root)) * (1.f / 12.f)), 0.f, 256.f) : 1.f;
+  const int cost = voiceCost(m, sample, potential, effectiveHz, InstrType::Count, 255, sampleStep);
   int vi;
   if (held >= 0) {  // no allocVoice: the held voice takes the new note's cost, within the budget
     vi = held;
@@ -1061,6 +1076,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     if (stringT && fresh) v.stv().seed(static_cast<uint32_t>(vi));  // chords: uncorrelated bursts
   }
   if (fm) {
+#if defined(__IMXRT1062__)
+    v.eng.fm.params = &gFmVoiceParams[vi];
+#endif
     v.fpValid = false;
     if (!overlap || !keepFm) {  // legato from a CHIP / SAMPLE voice starts the FM voice afresh
       // A held machine after a drum starts afresh too: its level is 1 at once, ramping the
@@ -1107,10 +1125,11 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       // The FM / DRUM voice shapes itself; the env only gates. Note-offs are ignored: the short
       // release only fades an all-off (stop, output change).
       v.env.set(0, 0, 1.f, kDrumReleaseMs);
+    } else if (fm) {
+      // The machine owns DEC and sustain. This envelope only adds attack and Note Off release.
+      v.env.set(envTimeMs(m.attack), 0, 1.f, envTimeMs(m.release));
     } else {
-      const uint8_t dec = velDecay(v, m, (v.lockMask & (1u << kMacDec)) ? v.lock[kMacDec] : m.macro[kMacDec]);
-      v.env.set(envTimeMs(m.attack), fm ? fmDecayMs(dec) : envTimeMs(m.decay), sus * (1.f / 127.f),
-                envTimeMs(m.release));
+      v.env.set(envTimeMs(m.attack), envTimeMs(m.decay), sus * (1.f / 127.f), envTimeMs(m.release));
     }
     v.env.gate(true);
   }
@@ -1124,6 +1143,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     v.ampStep = 0;
   }
   if (!sample && (!legato || wasSample)) v.hold = 0.f;
+  if (sample && restartSmp) v.sampleTailHold = 0.f;
   control(v, 0);
 }
 
@@ -1161,6 +1181,14 @@ void Synth::startSlot(Voice& v, const SampleRegion& g) {
   if (v.slot >= 0) {
     // The same sample again (legato restart, retrigger): keep the slot and its blocks.
     if (pool_->slot(v.slot).key == v.srcKey) {
+      // A retrigger may follow a slice/loop edit or reuse a collapsed sample tail. Keep
+      // same-key blocks, but make the loader follow this note's complete new region.
+      PlaySnap& play = pool_->slotRef(v.slot).play;
+      play.from = g.from;
+      play.to = g.to;
+      play.loopLo = g.loopLo;
+      play.loopHi = g.loopHi;
+      play.loopMode = g.loopMode;
       pool_->publish(v.slot, g.pos, g.dir < 0 ? -1 : 1);
       return;
     }
@@ -1306,13 +1334,23 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   if (fla >= 0) la[fla] += folMod_[v.track];
   pitch += 12.f * la[ld(LfoDest::Pitch)] + la[ld(LfoDest::Fine)];
   if (!v.lofi && budget_ < kVoiceBudgetOff) {
-    const uint8_t potential = costPotential(v.track < kTracks ? &p_.tracks[v.track] : nullptr,
+    uint8_t potential = costPotential(v.track < kTracks ? &p_.tracks[v.track] : nullptr,
                                             v.lfoLockMask, cs, v.lockMask, v.lock);
     float chipHz = 0;
     if (m.wave == static_cast<uint8_t>(Wave::AyToneNoise) &&
         !v.sample && !v.fm && !v.drum && !v.syn && !v.str)
       chipHz = cachedHz(v, 0, pitch);  // this control update's resolved ARP/bend/LFO pitch
-    const int nextCost = runningVoiceCost(v, m, potential, chipHz);
+    float sampleStep = 1.f;
+    if (v.sample) {
+      const float semis = pitch - (m.root > 127 ? 127 : m.root);
+      const float ratio = semis == v.smpKey ? v.smpVal : fastExp2(semis * (1.f / 12.f));
+      sampleStep = clampf(v.smpRate * (1.f / kSynthRate) * ratio, 0.f, 256.f);
+      for (int i = 0; i < kLfos; ++i)
+        if (cs[i].depth != 0 && (cs[i].dest == static_cast<uint8_t>(LfoDest::Pitch) ||
+                                cs[i].dest == static_cast<uint8_t>(LfoDest::Fine)))
+          potential |= kCostPotentialSamplePitch;
+    }
+    const int nextCost = runningVoiceCost(v, m, potential, chipHz, sampleStep);
     if (nextCost != v.cost) {
       if (v.stolen) {
         v.cost = static_cast<uint16_t>(nextCost);
@@ -1645,28 +1683,31 @@ MT_HOT void Synth::macros(const Voice& v, const Instrument& m, const float* lm, 
 // per target) the SAT one.
 MT_HOT void Synth::controlFm(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
                              const float* la) {
-  float mac[kFmMacros];
-  macros(v, m, lm, mac);
-  // fmMachine is pure and costly (tens of us): reuse the last params while the inputs stay
-  // within half a macro step and a cent of the ones they were made from.
-  bool stale = !v.fpValid || !fmCache_ || fabsf(pitch - v.fpPitch) >= kFmCacheCents;
-  for (int k = 0; k < kFmMacros && !stale; ++k) stale = fabsf(mac[k] - v.fpMac[k]) >= kFmCacheMacro;
-  if (stale) {
-    fmMachine(v.machine, mac, pitch, v.fp());
-    ++fmCalls_;
-    v.fpValid = true;
-    v.fpPitch = pitch;
-    for (int k = 0; k < kFmMacros; ++k) v.fpMac[k] = mac[k];
+  float raw[kFmParams];
+  for (int k=0;k<kFmParams;++k) raw[k]=m.fmParam[k];
+  for (int k=0;k<kFmMacros;++k) {
+    const int param=fmMacroParam(v.machine,k);
+    if (v.lockMask & (1u<<k)) raw[param]=v.lock[k];
+    if (param==3) raw[param]=velDecay(v,m,static_cast<uint8_t>(raw[param]));
+    // LFO interpolation follows the integer velocity/lock base, retaining fractional values.
+    raw[param]=clampf(raw[param]+lm[k],0.f,127.f);
   }
-  // SAT (FmParams::sat): outside the cache, so a lock or an LFO on it costs no fmMachine call; set every
-  // update (a recomputed fp() comes back with sat 0).
-  const uint8_t sb = (v.lockMask & (1u << kLockSat)) ? v.lock[kLockSat] : m.fmSat;
-  v.fp().sat = u7(sb + 64.f * la[ld(LfoDest::Sat)]) * (1.f / 127.f);
+  // OVER is a renderer control; changing it does not invalidate spectral calibration.
+  const uint8_t over=(v.lockMask & (1u<<kLockSat))?v.lock[kLockSat]:m.fmParam[7];
+  raw[7]=u7(over+64.f*la[ld(LfoDest::Sat)]);
+  bool stale=!v.fpValid || !fmCache_ || fabsf(pitch-v.fpPitch)>=kFmCacheCents;
+  for(int k=0;k<kFmParams-1 && !stale;++k) stale=fabsf(raw[k]-v.fpMac[k])>=kFmCacheMacro;
+  if(stale) {
+    fmMachine(v.machine,raw,pitch,v.fp());
+    ++fmCalls_;v.fpValid=true;v.fpPitch=pitch;
+    for(int k=0;k<kFmParams;++k)v.fpMac[k]=raw[k];
+  }
+  v.fp().sat=raw[7]*(1.f/127.f);
   // Ramp to the next control update: a full period from render(), the rest of it mid-segment
   // (note-on, bend), so a choke ramp ends exactly where the next update starts.
   v.fmv().control(v.fp(), dt ? dt : ctlLeft_);
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
-  controlAmp(v, v.gain * iv * vol * (1.f / 127.f), dt ? dt : ctlLeft_, dt > 0);
+  controlAmp(v, v.gain * iv * vol * (fmMixGain(v.machine, raw[1]) / 127.f), dt ? dt : ctlLeft_, dt > 0);
 }
 
 // As controlFm, with the same cache: drumMachine's powf calls cost microseconds each on the ESP32.
@@ -1944,7 +1985,8 @@ MT_HOT void Synth::renderChip(Voice& v, float* out, int n) {
   }
 }
 
-// Sample playback: 32.32 fixed point position, linear interpolation between frames. The loop
+// Sample playback: Q32 position; source-domain FIR for pitch-up, legacy linear at unity/downpitch.
+// The loop
 // region [loopLo, loopHi) bounds the play direction's edge (for Off it is the whole region).
 MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   const int16_t* d = v.smp;
@@ -1954,20 +1996,54 @@ MT_HOT void Synth::renderSample(Voice& v, float* out, int n) {
   const uint8_t mode = v.loopMode;
   int64_t pos = v.pos;
   int64_t step = v.dir > 0 ? v.step : -v.step;
+  const SampleFirPlan fir = sampleFirPlan(step);
   bool looped = v.smpLooped;
+  const bool firLoop = (mode == static_cast<uint8_t>(LoopMode::Forward) ||
+                        mode == static_cast<uint8_t>(LoopMode::PingPong)) && v.loopHi > v.loopLo;
+  uint32_t firLo = firLoop && (looped || step < 0) ? v.loopLo : v.from;
+  uint32_t firHi = firLoop && (looped || step >= 0) ? v.loopHi : v.to;
+  const int firFirst = fir.first(), firLast = fir.last();
   Env env = v.env;  // in registers: an out store would force a reload through v
-  for (int i = 0; i < n; ++i) {
-    const uint32_t idx = static_cast<uint32_t>(pos >> 32);
-    const int32_t a = d[idx];
-    const uint32_t nx = sampleLoopNext(idx, last, v.loopLo, v.loopHi, mode, looped, step);
-    const int32_t b = d[nx];
-    const float s = a + (b - a) * (static_cast<uint32_t>(pos) * 2.3283064e-10f);
-    out[i] += s * env.next() * amp;
-    pos += step;
-    if (!sampleLoopPast(pos, step, lo, hi, mode)) continue;
-    if (!sampleLoopEdge(pos, step, lo, hi, mode, looped)) {
-      env.kill();
-      break;
+  float firBlock[kControl];
+  bool blockReady = false;
+  if (fir.quantized && n > 0 && n <= kControl) {
+    const int64_t endPos = pos + step * (n - 1);
+    const int64_t firstCenter = step < 0 ? endPos >> 32 : pos >> 32;
+    const int64_t lastCenter = step < 0 ? pos >> 32 : endPos >> 32;
+    if (firstCenter + firFirst >= firLo && lastCenter + firLast < firHi) {
+      sampleFirQ15Block(fir, pos, step, d, 0, firBlock, n);
+      blockReady = true;
+    }
+  }
+  if (blockReady) {
+    for (int i = 0; i < n; ++i) out[i] += firBlock[i] * env.next() * amp;
+    pos += step * n;
+    if (sampleLoopPast(pos, step, lo, hi, mode) &&
+        !sampleLoopEdge(pos, step, lo, hi, mode, looped)) env.kill();
+  } else {
+    for (int i = 0; i < n; ++i) {
+      const uint32_t idx = static_cast<uint32_t>(pos >> 32);
+      float s;
+      if (!fir.active()) {
+        const int32_t a = d[idx];
+        const uint32_t nx = sampleLoopNext(idx, last, v.loopLo, v.loopHi, mode, looped, step);
+        const int32_t b = d[nx];
+        s = a + (b - a) * (static_cast<uint32_t>(pos) * 2.3283064e-10f);
+      } else if ((int64_t(idx) + firFirst >= firLo && uint64_t(idx) + firLast < firHi)) {
+        s = sampleFirContiguous(fir, static_cast<uint32_t>(pos), d + int64_t(idx) + firFirst);
+      } else {
+        s = sampleFirRam(fir, static_cast<uint32_t>(pos), idx, d,
+                         v.from, v.to, v.loopLo, v.loopHi, mode, looped, step);
+      }
+      out[i] += s * env.next() * amp;
+      pos += step;
+      if (!sampleLoopPast(pos, step, lo, hi, mode)) continue;
+      if (!sampleLoopEdge(pos, step, lo, hi, mode, looped)) {
+        env.kill();
+        break;
+      }
+      firLo = firLoop && (looped || step < 0) ? v.loopLo : v.from;
+      firHi = firLoop && (looped || step >= 0) ? v.loopHi : v.to;
     }
   }
   v.env = env;
@@ -2008,49 +2084,110 @@ MT_HOT void Synth::renderStream(Voice& v, float* out, int n) {
   const uint8_t mode = v.loopMode;
   int64_t pos = v.pos;
   int64_t step = v.dir > 0 ? v.step : -v.step;
+  const SampleFirPlan fir = sampleFirPlan(step);
   bool looped = v.smpLooped;
+  const bool firLoop = (mode == static_cast<uint8_t>(LoopMode::Forward) ||
+                        mode == static_cast<uint8_t>(LoopMode::PingPong)) && v.loopHi > v.loopLo;
+  uint32_t firLo = firLoop && (looped || step < 0) ? v.loopLo : v.from;
+  uint32_t firHi = firLoop && (looped || step >= 0) ? v.loopHi : v.to;
+  const int firFirst = fir.first(), firLast = fir.last();
   Env env = v.env;
   float ug = v.ug, hold = v.hold;
   bool under = v.under;
   FrameRun run{nullptr, 1, 0};
-  for (int i = 0; i < n; ++i) {
-    const uint32_t idx = static_cast<uint32_t>(pos >> 32);
-    const uint32_t nx = sampleLoopNext(idx, last, v.loopLo, v.loopHi, mode, looped, step);
-    bool ok = (idx >= run.lo && idx < run.hi) || frameRun(v, idx, step, run);
-    int32_t a = 0, b = 0;
-    if (ok) {
-      a = run.d[idx - run.lo];
-      if (nx >= run.lo && nx < run.hi) {
-        b = run.d[nx - run.lo];
-      } else {
-        // A sync load for nx may reuse the way run points to (a block behind the play direction):
-        // the next frame looks its run up again.
-        FrameRun r2;
-        ok = frameRun(v, nx, step, r2);
-        if (ok) b = r2.d[nx - r2.lo];
-        run = {nullptr, 1, 0};
+  float firBlock[kControl];
+  bool blockReady = false;
+  if (fir.quantized && n > 0 && n <= kControl) {
+    const int64_t endPos = pos + step * (n - 1);
+    const int64_t firstCenter = step < 0 ? endPos >> 32 : pos >> 32;
+    const int64_t lastCenter = step < 0 ? pos >> 32 : endPos >> 32;
+    if (firstCenter + firFirst >= firLo && lastCenter + firLast < firHi) {
+      const uint32_t first = static_cast<uint32_t>(firstCenter + firFirst);
+      const uint32_t last = static_cast<uint32_t>(lastCenter + firLast);
+      if (frameRun(v, first, step, run) && last < run.hi) {
+        sampleFirQ15Block(fir, pos, step, run.d, run.lo, firBlock, n);
+        blockReady = true;
       }
     }
-    float s;
-    if (ok) {
-      s = a + (b - a) * (static_cast<uint32_t>(pos) * 2.3283064e-10f);
-      hold = s;
-      under = false;
-      if (ug < 1.f) ug = ug + kUnderStep < 1.f ? ug + kUnderStep : 1.f;
+  }
+  if (blockReady) {
+    if (ug == 1.f) {
+      for (int i = 0; i < n; ++i) out[i] += firBlock[i] * env.next() * amp;
     } else {
-      if (!under) {
-        under = true;
-        pool_->underruns = pool_->underruns + 1;
+      for (int i = 0; i < n; ++i) {
+        ug = ug + kUnderStep < 1.f ? ug + kUnderStep : 1.f;
+        out[i] += firBlock[i] * ug * env.next() * amp;
       }
-      s = hold;
-      if (ug > 0.f) ug = ug - kUnderStep > 0.f ? ug - kUnderStep : 0.f;
     }
-    out[i] += s * ug * env.next() * amp;
-    pos += step;
-    if (!sampleLoopPast(pos, step, lo, hi, mode)) continue;
-    if (!sampleLoopEdge(pos, step, lo, hi, mode, looped)) {
-      env.kill();
-      break;
+    hold = firBlock[n - 1];
+    under = false;
+    pos += step * n;
+    if (sampleLoopPast(pos, step, lo, hi, mode) &&
+        !sampleLoopEdge(pos, step, lo, hi, mode, looped)) env.kill();
+  } else {
+    for (int i = 0; i < n; ++i) {
+      const uint32_t idx = static_cast<uint32_t>(pos >> 32);
+      float s = 0;
+      bool ok;
+      if (fir.active()) {
+        const auto read = [&](int64_t frame, float& value) {
+          const uint32_t mapped = sampleFirFrame(frame, v.from, v.to, v.loopLo, v.loopHi, mode, looped, step);
+          if (!(mapped >= run.lo && mapped < run.hi) && !frameRun(v, mapped, step, run)) return false;
+          value = run.d[mapped - run.lo];
+          return true;
+        };
+        if ((int64_t(idx) + firFirst >= firLo && uint64_t(idx) + firLast < firHi)) {
+          const uint32_t first = static_cast<uint32_t>(int64_t(idx) + firFirst);
+          const uint32_t lastTap = static_cast<uint32_t>(int64_t(idx) + firLast);
+          const bool have = (first >= run.lo && lastTap < run.hi) || frameRun(v, first, step, run);
+          if (have && lastTap < run.hi) {
+            s = sampleFirContiguous(fir, static_cast<uint32_t>(pos), run.d + first - run.lo);
+            ok = true;
+          } else {
+            ok = sampleFirRead(fir, static_cast<uint32_t>(pos), idx, read, s);
+          }
+        } else {
+          ok = sampleFirRead(fir, static_cast<uint32_t>(pos), idx, read, s);
+        }
+      } else {
+        const uint32_t nx = sampleLoopNext(idx, last, v.loopLo, v.loopHi, mode, looped, step);
+        ok = (idx >= run.lo && idx < run.hi) || frameRun(v, idx, step, run);
+        int32_t a = 0, b = 0;
+        if (ok) {
+          a = run.d[idx - run.lo];
+          if (nx >= run.lo && nx < run.hi) {
+            b = run.d[nx - run.lo];
+          } else {
+            // Copy before loading another way: a synchronous refill may evict the first block.
+            FrameRun r2;
+            ok = frameRun(v, nx, step, r2);
+            if (ok) b = r2.d[nx - r2.lo];
+            run = {nullptr, 1, 0};
+          }
+        }
+        if (ok) s = a + (b - a) * (static_cast<uint32_t>(pos) * 2.3283064e-10f);
+      }
+      if (ok) {
+        hold = s;
+        under = false;
+        if (ug < 1.f) ug = ug + kUnderStep < 1.f ? ug + kUnderStep : 1.f;
+      } else {
+        if (!under) {
+          under = true;
+          pool_->underruns = pool_->underruns + 1;
+        }
+        s = hold;
+        if (ug > 0.f) ug = ug - kUnderStep > 0.f ? ug - kUnderStep : 0.f;
+      }
+      out[i] += s * ug * env.next() * amp;
+      pos += step;
+      if (!sampleLoopPast(pos, step, lo, hi, mode)) continue;
+      if (!sampleLoopEdge(pos, step, lo, hi, mode, looped)) {
+        env.kill();
+        break;
+      }
+      firLo = firLoop && (looped || step < 0) ? v.loopLo : v.from;
+      firHi = firLoop && (looped || step >= 0) ? v.loopHi : v.to;
     }
   }
   v.env = env;
@@ -2060,7 +2197,10 @@ MT_HOT void Synth::renderStream(Voice& v, float* out, int n) {
   v.ug = ug;
   v.hold = hold;
   v.under = under;
-  if (v.slot >= 0) pool_->publish(v.slot, pos, step);
+  if (v.slot >= 0)
+    pool_->publish(v.slot, pos, step,
+                   fir.active() ? static_cast<uint16_t>(-fir.first()) : 0,
+                   fir.active() ? static_cast<uint16_t>(fir.last()) : 0, looped);
 }
 
 // x x (gl, gr) added into l / r. Ramping (a step non-zero): each gain steps before its sample, gl /
@@ -2087,7 +2227,7 @@ MT_INLINE static void panAdd(const float* __restrict x, float* __restrict l, flo
 
 // Insert, then fader x pan into the mix: the strip's sends (mono, pre-pan) and the peak for the
 // track's level meter (MIX) on the way.
-MT_HOT void Synth::runStrip(uint8_t track, int pos, int n, int scTrack, bool keyAround) {
+MT_HOT void Synth::runStrip(uint8_t track, int pos, int n, int scTrack) {
   TrackStrip& s = strips_[track];
   float* __restrict x = trk_;
   if (s.drvFade < 1.f) {  // a drive change: the old settings fade out over kControl samples
@@ -2148,16 +2288,24 @@ MT_HOT void Synth::runStrip(uint8_t track, int pos, int n, int scTrack, bool key
     const float pk = xPk * s.fader;
     if (pk > trackPeak_[track]) trackPeak_[track] = pk;
   }
-  // Sidechain ducking: the key track goes around the compressor (into sc only, added back after
-  // it); without the compressor the key also stays in the mix.
+  // The full mix always contains every track. A second, dry key bus lets the compressor
+  // restore the key without switching the mix routing when SC is enabled or disabled.
   float gl = s.gl, gr = s.gr;
-  const bool sc = track == scTrack;
-  if (sc && !keyAround) {
+  const float target = track == scTrack ? 1.f : 0.f;
+  if (scWeight_[track] != target) {
+    float key[kControl];
+    float w = scWeight_[track];
+    for (int i = 0; i < n; ++i) {
+      w = target > w ? minf(w + kScStep, target) : maxf(w - kScStep, target);
+      key[i] = x[i] * w;
+    }
+    float a = gl, b = gr;
+    panAdd(key, scL_ + pos, scR_ + pos, n, a, b, s.dgl, s.dgr);
+  } else if (target > 0.f) {
     float a = gl, b = gr;
     panAdd(x, scL_ + pos, scR_ + pos, n, a, b, s.dgl, s.dgr);
   }
-  const bool key = sc && keyAround;
-  panAdd(x, (key ? scL_ : mixL_) + pos, (key ? scR_ : mixR_) + pos, n, gl, gr, s.dgl, s.dgr);
+  panAdd(x, mixL_ + pos, mixR_ + pos, n, gl, gr, s.dgl, s.dgr);
   if (taps_) {
     const int tk = track < kTracks ? track : RenderTaps::kPrev;
     if (tapOn(tk)) tapTrack(tk, x, pos, n, s.gl, s.gr, s.dgl, s.dgr);
@@ -2344,9 +2492,12 @@ MT_HOT void Synth::renderCore() {
   for (auto& x : scR_) x = 0;
   if (taps_) tapsClear();
   const int scTrack = p_.scTrack >= 1 && p_.scTrack <= kTracks ? p_.scTrack - 1 : -1;
-  // Sidechain ducking: the key track goes around the compressor (into sc only, added back after it),
-  // so it ducks the rest of the mix without squashing itself.
-  const bool keyAround = scTrack >= 0 && p_.compAmt > 0 && p_.scDepth > 0;
+  if (scSnap_) {
+    if (scTrack >= 0) scWeight_[scTrack] = 1.f;
+    scSnap_ = false;
+  }
+  bool scBus = scTrack >= 0;
+  for (float w : scWeight_) scBus = scBus || w > 0.f;
   sp16_ = (kPpqn / 4) * tickSamples();
   int e = 0;
   for (int pos = 0; pos < kBlock;) {
@@ -2409,12 +2560,14 @@ MT_HOT void Synth::renderCore() {
         if (i != head[t]) {
           float tmp[kControl] = {0};
           renderVoice(v, tmp, n);
-          if (budget_ < kVoiceBudgetOff && !v.sample && !isStealTail(v)) v.hold = tmp[n - 1];
+          if (v.sample) v.sampleTailHold = tmp[n - 1];
+          else if (budget_ < kVoiceBudgetOff && !isStealTail(v)) v.hold = tmp[n - 1];
           for (int j = 0; j < n; ++j) x[j] += tmp[j];
         } else {
           for (int j = 0; j < n; ++j) x[j] = 0;
           renderVoice(v, x, n);
-          if (budget_ < kVoiceBudgetOff && !v.sample && !isStealTail(v)) v.hold = x[n - 1];
+          if (v.sample) v.sampleTailHold = x[n - 1];
+          else if (budget_ < kVoiceBudgetOff && !isStealTail(v)) v.hold = x[n - 1];
         }
         if (clk) mark(voiceStage(v));
         // Freed once the note has ended and its filter has rung out: cutting a resonant filter
@@ -2424,8 +2577,15 @@ MT_HOT void Synth::renderCore() {
           dropSlot(v);
         }
       }
-      runStrip(static_cast<uint8_t>(t), pos, n, scTrack, keyAround);
+      runStrip(static_cast<uint8_t>(t), pos, n, scTrack);
       if (clk) mark(kProfStrip);
+    }
+    // Advance even silent / muted tracks, so a later note cannot revive an old source.
+    for (int t = 0; t < kSynthTracks; ++t) {
+      const float target = t == scTrack ? 1.f : 0.f;
+      float& w = scWeight_[t];
+      for (int i = 0; i < n && w != target; ++i)
+        w = target > w ? minf(w + kScStep, target) : maxf(w - kScStep, target);
     }
     if (boundary)  // the ramps have landed: exact targets, no drift
       for (auto& x : strips_) {
@@ -2455,8 +2615,7 @@ MT_HOT void Synth::renderCore() {
   mark(kProfMix);
   // PERF throws: the whole mix (mono, before the MOD bus / delay / reverb) into the sends while held.
   // The send gains ramp (kPerfRamp per sample): a cut mid-note would step the lines' input. The
-  // sidechain key track (keyAround) joins the mix after the comp: it is neither thrown nor ducked by a
-  // freeze.
+  // sidechain key participates as part of the whole mix, like the other tracks.
   if (const float ds = perf_.delaySend(), rs = perf_.reverbSend(), ms = perf_.modSend();
       ds > 0.f || rs > 0.f || ms > 0.f || perfDs_ > 0.f || perfRs_ > 0.f || perfMs_ > 0.f)
     for (int i = 0; i < kBlock; ++i) {
@@ -2518,14 +2677,12 @@ MT_HOT void Synth::renderCore() {
       perfDry_ = perfDry_ < g ? minf(perfDry_ + kPerfRamp, g) : maxf(perfDry_ - kPerfRamp, g);
       mixL_[i] *= perfDry_;
       mixR_[i] *= perfDry_;
+      // The compressor must restore only the key that still sounds after FREEZE.
+      scL_[i] *= perfDry_;
+      scR_[i] *= perfDry_;
     }
   // The delay runs at level 0 too (its line stays live); the reverb rests there, so once its return
   // closes the lines are cleared: a later throw must not replay a stale tail.
-  if (rvbRan_ && rl == 0) {
-    reverb_.clear();
-    shimmer_.clear();
-  }
-  rvbRan_ = rl > 0;
   // SHIMMER: the shifted last block of the reverb (shimWet_) into its input. Leaving SHIMMER, the
   // loop gain ramps down over a block before it stops; amount 0 adds nothing (bit-exact).
   const bool shim = shimOn_ && (p_.rvbMode == static_cast<uint8_t>(RvbMode::Shimmer) || shimmer_.active());
@@ -2542,15 +2699,16 @@ MT_HOT void Synth::renderCore() {
   if (taps_) tapReturn(RenderTaps::kRvb, false);
   reverb_.process(rsend_, mixL_, mixR_, kBlock, rsz, morphM(kScnRDamp, p_.rvbDamp), rl, frozen, shim ? shimWet_ : nullptr);
   if (taps_) tapReturn(RenderTaps::kRvb, true);
+  if (rvbRan_ && rl == 0 && reverb_.muted()) {
+    shimmer_.clear();
+    if (shimWet_) for (int i = 0; i < kBlock; ++i) shimWet_[i] = 0;
+    shimRan_ = false;
+  }
+  rvbRan_ = rl > 0 || !reverb_.muted();
   mark(kProfReverb);
-  comp_.process(mixL_, mixR_, scTrack >= 0 ? scL_ : nullptr, scTrack >= 0 ? scR_ : nullptr, kBlock, p_.compAmt,
-                p_.compRel, p_.scDepth);
+  comp_.process(mixL_, mixR_, scBus ? scL_ : nullptr, scBus ? scR_ : nullptr, kBlock, p_.compAmt,
+                p_.compRel, p_.scDepth, p_.compAttack);
   mark(kProfComp);
-  if (keyAround)
-    for (int i = 0; i < kBlock; ++i) {
-      mixL_[i] += scL_[i];
-      mixR_[i] += scR_[i];
-    }
   // Master EQ: after the comp (it does not react to the boost) and the key track, before PERF (its
   // FILTER stays the last colour). Flat: skipped.
   eq_.process(mixL_, mixR_, kBlock, morphM(kScnEqLo, p_.eqLow), morphM(kScnEqHi, p_.eqHigh));
@@ -2560,10 +2718,15 @@ MT_HOT void Synth::renderCore() {
   mark(kProfPerf);
   const uint8_t mvs = morphM(kScnMain, p_.masterVol);
   const uint8_t mv = mvs > kMasterVolMax ? kMasterVolMax : mvs;
-  const float g = mv * (0.25f / 100.f);  // 100 %: headroom for 16 voices; up to 200 % leans on the soft clip
-  if (taps_) taps_->gain = g;
-  for (int i = 0; i < kBlock; ++i) mixL_[i] = softClip(mixL_[i] * g) * 32767.f;
-  for (int i = 0; i < kBlock; ++i) mixR_[i] = softClip(mixR_[i] * g) * 32767.f;
+  // Preserve the old small-signal level (+3.52 dB) as a clean linear gain.
+  masterGain_.set(mv * (0.375f / 100.f));
+  for (int i = 0; i < kBlock; ++i) {
+    const float g = masterGain_.next();
+    if (taps_) taps_->sampleGain[i] = g;
+    mixL_[i] = masterLimit(mixL_[i] * g) * 32767.f;
+    mixR_[i] = masterLimit(mixR_[i] * g) * 32767.f;
+  }
+  if (taps_) taps_->gain = masterGain_.current();
   mark(kProfMaster);
   if (clk) ++profBlocks_;
 }
@@ -2594,7 +2757,7 @@ MT_HOT void Synth::render(int16_t* out) {
 }
 
 void Synth::takeTrackPeaks(float out[kTracks]) {
-  const float g = 0.25f;  // the master gain at MAIN 100 % (render())
+  const float g = 0.375f;  // the linear master calibration at MAIN 100 %, before peak protection
   for (int t = 0; t < kTracks; ++t) {
     out[t] = trackPeak_[t] * g;
     trackPeak_[t] = 0;

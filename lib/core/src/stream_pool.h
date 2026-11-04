@@ -16,8 +16,18 @@ namespace mt {
 #endif
 constexpr int kStreamSlots = MT_STREAM_SLOTS;
 constexpr int kStreamBlock = 512;  // frames (1 KB, 2 card sectors)
-constexpr int kSlotBlocks = 6;
-constexpr int kLoadMax = 4;  // blocks per card read
+#ifndef MT_STREAM_SLOT_BLOCKS
+#define MT_STREAM_SLOT_BLOCKS 6
+#endif
+#ifndef MT_STREAM_LOAD_BLOCKS
+#define MT_STREAM_LOAD_BLOCKS 4
+#endif
+constexpr int kSlotBlocks = MT_STREAM_SLOT_BLOCKS;
+constexpr int kLoadMax = MT_STREAM_LOAD_BLOCKS;  // blocks per card read
+// The unguarded planner retains its current block plus four ahead; larger experiments stay
+// bounded so planning arrays and per-slot metadata cannot grow without an explicit review.
+static_assert(kSlotBlocks >= 5 && kSlotBlocks <= 16, "stream cache ways must be 5..16");
+static_assert(kLoadMax > 0 && kLoadMax <= kSlotBlocks, "stream load batch must be 1..cache ways");
 constexpr uint32_t kPreviewKey = 0xFFFFFFFFu;  // PreviewFile's ring, not a sample
 
 enum class SlotOwner : uint8_t { Free, Voice, Prefetch, Preview };
@@ -28,6 +38,8 @@ struct PlaySnap {
   int32_t step16 = 0; // frames per output sample, 16.16, < 0 backwards
   uint32_t loopLo = 0, loopHi = 1, from = 0, to = 1;
   uint8_t loopMode = 0;
+  uint16_t before = 0, after = 0;  // source frames needed around pos by the resampler
+  bool looped = false;            // preserve the initial prefix/suffix until the first turn
 };
 
 struct StreamSlot {
@@ -77,7 +89,10 @@ class StreamPool {
   // Block b of slot s, nullptr if not loaded.
   const int16_t* block(int s, uint32_t b) const;
   // The consumer's position and signed step (32.32) after it rendered.
-  void publish(int s, int64_t pos, int64_t step);
+  // before/after are source-frame FIR guards, independent of play direction. They do not move
+  // the actual playback cursor. A guarded window larger than the slot cannot claim a reserve.
+  void publish(int s, int64_t pos, int64_t step, uint16_t before = 0, uint16_t after = 0,
+               bool looped = false);
   bool snap(int s, PlaySnap& out) const;  // false: the slot is free
   const StreamSlot& slot(int s) const { return slot_[s]; }
   StreamSlot& slotRef(int s) { return slot_[s]; }
