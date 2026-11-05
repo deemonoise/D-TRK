@@ -55,6 +55,7 @@ static_assert(sizeof(mt::Pattern) == mt::kPatternNameMax + 1 + 4 + 2 * mt::kTrac
 // 570: kit 16 lanes (KITS chunk, 352-byte records).
 // 576: SYNTH phase/env destination/sub waveform (SYNI reserved bytes 43..47).
 // 584: eight independent FM controls (FMPA); snapshot copies instruments whole.
+// 776: synSatType uses final tail padding (FMEX reserved byte2), no size change.
 // 776: 128 logical slices (SLX1); snapshot already copies each whole instrument.
 static_assert(sizeof(mt::Instrument) == 776, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
@@ -159,6 +160,7 @@ Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb
 Result cleanProjectFolder(const mt::Project& live);
 
 bool transposeDropped = false;  // set by the last readFile, see songTransposeDropped()
+uint8_t convertedFm = 0;       // count from the last successful legacy FM migration
 bool tuneDropped = false;       // the same for tuningDropped()
 
 Result readFile(const char* path, mt::Project& out) {
@@ -169,6 +171,7 @@ Result readFile(const char* path, mt::Project& out) {
   const mt::LoadErr e = mt::loadProject(src, out, &notes);
   transposeDropped = notes.songTransposeDropped;
   tuneDropped = notes.tuningDropped;
+  convertedFm = e == mt::LoadErr::Ok ? notes.fmConverted : 0;
   f.close();
   switch (e) {
     case mt::LoadErr::Ok: return Result::Ok;
@@ -586,6 +589,7 @@ Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
   srcFolder[0] = 0;
   transposeDropped = false;
   tuneDropped = false;
+  convertedFm = 0;
   engine::lockProject();
   build(i, live);
   afterReplace(live);
@@ -598,6 +602,7 @@ Result newBuilt(mt::Project& live, void (*build)(int, mt::Project&), int i) {
 
 bool songTransposeDropped() { return transposeDropped; }
 bool tuningDropped() { return tuneDropped; }
+uint8_t fmConverted() { return convertedFm; }
 
 Result newProject(mt::Project& live, int tmpl) { return newBuilt(live, mt::templateBuild, tmpl); }
 

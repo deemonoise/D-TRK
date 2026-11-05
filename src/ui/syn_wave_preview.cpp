@@ -3,6 +3,7 @@
 #include "audio/audio.h"
 #include "link/bank_client.h"
 #include "synth_params.h"
+#include "synth_syn_calibration.h"
 #include "fastmath.h"
 #include <esp_heap_caps.h>
 #include <math.h>
@@ -13,7 +14,7 @@ namespace ui {
 namespace {
 void params(const mt::Instrument& m, uint32_t age, mt::SynParams& p) {
   const float depth = (m.macro[mt::kMacSenv] - 64.f) * (1.f / 64.f);
-  const float env = depth != 0 ? depth * mt::filterEnv(age, m.synEAtk, m.synEDec) : 0;
+  const float env = depth != 0 ? depth * mt::synModEnv(age, m.synEAtk, m.synEDec) : 0;
   const float pitch = 60.f + m.transpose + m.fine * .01f;
   const float det = (m.macro[mt::kMacDet] - 64.f) * (50.f / 6400.f);
   p.hz[0] = mt::noteHz(pitch);
@@ -22,6 +23,8 @@ void params(const mt::Instrument& m, uint32_t age, mt::SynParams& p) {
     p.mode[k] = m.synOsc[k];
     p.shape[k] = m.macro[mt::kMacShp1 + k] * (1.f / 127.f);
   }
+  if (m.synOsc[0] == static_cast<uint8_t>(mt::SynOsc::HyperSaw))
+    p.shape[1] = m.macro[mt::kMacDet] * (1.f / 127.f);
   p.mix = m.macro[mt::kMacMix] * (1.f / 127.f);
   p.sync = m.synSync;
   p.sub = m.synSub * (1.f / 127.f);
@@ -30,6 +33,8 @@ void params(const mt::Instrument& m, uint32_t age, mt::SynParams& p) {
   p.noise = m.synNoise * (1.f / 127.f);
   p.fold = m.synFold * (1.f / 127.f);
   p.ring = m.synRing * (1.f / 127.f);
+  p.satType = mt::synAnalog(m.fltMode) ? 0 : m.synSatType;
+  p.satLevel = m.fmSat;
   mt::synApplyEnv(p, m.synEnvDest, env);
 }
 void trace(LGFX_Sprite& s, const float* points, int x, int y, int w, int h, float scale, uint16_t color) {
@@ -68,7 +73,8 @@ void SynWavePreview::reset() {
 
 const int16_t* SynWavePreview::table(int k, const mt::Instrument& m, float shape) {
   Table& t = tables_[k];
-  if (m.synOsc[k] != static_cast<uint8_t>(mt::SynOsc::Wt)) {
+  if (m.synOsc[k] != static_cast<uint8_t>(mt::SynOsc::Wt) ||
+      m.synOsc[0] == static_cast<uint8_t>(mt::SynOsc::HyperSaw)) {
     if (t.data) heap_caps_free(t.data);
     t = Table();
     return nullptr;
@@ -98,8 +104,12 @@ void SynWavePreview::draw(LGFX_Sprite& s, const mt::Instrument& m, int x, int y,
   memcpy(key + mt::kSynRecSize, m.macro, mt::kFmMacros);
   key[mt::kSynRecSize + mt::kFmMacros] = static_cast<uint8_t>(m.transpose);
   key[mt::kSynRecSize + mt::kFmMacros + 1] = static_cast<uint8_t>(m.fine);
-  const bool wt = m.synOsc[0] == static_cast<uint8_t>(mt::SynOsc::Wt) ||
-                  m.synOsc[1] == static_cast<uint8_t>(mt::SynOsc::Wt);
+  key[mt::kSynRecSize + mt::kFmMacros + 2] = m.synSatType;
+  key[mt::kSynRecSize + mt::kFmMacros + 3] = m.fmSat;
+  key[mt::kSynRecSize + mt::kFmMacros + 4] = m.fltMode;
+  const bool wt = m.synOsc[0] != static_cast<uint8_t>(mt::SynOsc::HyperSaw) &&
+                 (m.synOsc[0] == static_cast<uint8_t>(mt::SynOsc::Wt) ||
+                  m.synOsc[1] == static_cast<uint8_t>(mt::SynOsc::Wt));
   uint32_t bankStamp = 0, parkStamp = 0;
   if (wt) {
     const auto& bank = audio::bankView();

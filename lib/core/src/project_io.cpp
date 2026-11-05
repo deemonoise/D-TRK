@@ -476,9 +476,11 @@ LoadErr readInst(CrcSource& in, uint32_t size, Project& p) {
                      [&](int i, const uint8_t* b) { unpackInst(b, p.instruments[i]); });
 }
 
-LoadErr readFmin(CrcSource& in, uint32_t size, Project& p) {
-  return readRecords(in, size, kFmRecSize, kInstruments,
-                     [&](int i, const uint8_t* b) { unpackFm(b, p.instruments[i]); });
+LoadErr readFmin(CrcSource& in, uint32_t size, Project& p, uint8_t& count) {
+  return readRecords(in, size, kFmRecSize, kInstruments, [&](int i, const uint8_t* b) {
+    unpackFm(b, p.instruments[i]);
+    if (i >= count) count = i + 1;
+  });
 }
 
 LoadErr readFltr(CrcSource& in, uint32_t size, Project& p) {
@@ -1361,6 +1363,7 @@ LoadErr readProjectFileNames(ByteSource& src, ProjectFileNames& out) {
 
 LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
   out.reset();
+  if (notes) notes->fmConverted = 0;
   // Files older than TOUT were MIDI-only.
   for (TrackCfg& c : out.tracks) c.out = TrackOut::Midi;
   CrcSource in(src);
@@ -1372,6 +1375,8 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
   LegacySong legacy;
   bool sng3 = false;
   bool prf2 = false;  // a PRF2 chunk was read: PRFM no longer applies
+  bool fmParams = false;  // FMPA identifies the new FM family even with zero/short records
+  uint8_t fmRecords = 0;  // only migrate instruments actually covered by FMIN
   bool tins = false;  // a TINS chunk was read: no insert migration
   uint8_t extendedSlices = 0;  // prefix covered by SLX1; later legacy SLCE cannot overwrite it
   uint16_t evoParked = 0;  // TEVO: tracks whose EvoCfg is not the active MUT mode (mutFix)
@@ -1385,6 +1390,9 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
       if (!in.raw().read(v, 4)) return LoadErr::Truncated;
       if (rd32(v) != in.crc()) return LoadErr::BadCrc;
       if (!sng3 && legacy.n > 0) migrateSong(legacy, out, notes);
+      if (!fmParams)
+        for (int i = 0; i < fmRecords; ++i)
+          if (migrateLegacyFm(out.instruments[i]) && notes) ++notes->fmConverted;
       for (Instrument& m : out.instruments) fixInstrument(m);
       if (!tins) migrateInsert(out);
       for (Instrument& m : out.instruments) clearInsert(m);  // the tracks' now
@@ -1412,7 +1420,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "PATN", 4) == 0) e = readPatn(in, size, out);
     else if (memcmp(ch, "PNAM", 4) == 0) e = readPnam(in, size, out);
     else if (memcmp(ch, "INST", 4) == 0) e = readInst(in, size, out);
-    else if (memcmp(ch, "FMIN", 4) == 0) e = readFmin(in, size, out);
+    else if (memcmp(ch, "FMIN", 4) == 0) e = readFmin(in, size, out, fmRecords);
     else if (memcmp(ch, "FLTR", 4) == 0) e = readFltr(in, size, out);
     else if (memcmp(ch, "SLCE", 4) == 0) e = readSlce(in, size, out, extendedSlices);
     else if (memcmp(ch, "SLX1", 4) == 0) e = readSlx1(in, size, out, extendedSlices);
@@ -1433,7 +1441,10 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "LOFI", 4) == 0) e = readLofi(in, size, out);
     else if (memcmp(ch, "LFOB", 4) == 0) e = readLfob(in, size, out);
     else if (memcmp(ch, "FMEX", 4) == 0) e = readFmex(in, size, out);
-    else if (memcmp(ch, "FMPA", 4) == 0) e = readFmpa(in, size, out);
+    else if (memcmp(ch, "FMPA", 4) == 0) {
+      fmParams = true;
+      e = readFmpa(in, size, out);
+    }
     else if (memcmp(ch, "KITS", 4) == 0) e = readKits(in, size, out);
     else if (memcmp(ch, "WTBL", 4) == 0) e = readWtbl(in, size, out);
     else if (memcmp(ch, "CHN2", 4) == 0) e = readChn2(in, size, legacy);

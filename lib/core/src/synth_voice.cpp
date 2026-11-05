@@ -2,6 +2,30 @@
 
 namespace mt {
 
+MT_CONTROL void refreshHeavy(Voice (&v)[kVoices], int pick, bool heavy) {
+  if (v[pick].heavy == heavy) return;
+  v[pick].heavy = heavy;
+  if (!heavy || !heavyLoad(v[pick])) return;
+  int count = 0;
+  for (const auto& x : v) count += heavyLoad(x);
+  while (count > kFmVoiceMax) {
+    int victim = -1;
+    bool releasing = false;
+    for (int i = 0; i < kVoices; ++i) {
+      if (i == pick || !heavyLoad(v[i])) continue;
+      const bool rel = v[i].env.stage() == Env::Stage::Release;
+      if (victim < 0 || (rel && !releasing) || (rel == releasing && v[i].age < v[victim].age)) {
+        victim = i;
+        releasing = rel;
+      }
+    }
+    if (victim < 0) break;
+    v[victim].env.fade(kStealMs);
+    v[victim].stolen = true;
+    --count;
+  }
+}
+
 MT_CONTROL void collapseStealTail(Voice& v) {
   if (v.sample) v.hold = v.sampleTailHold;
   v.stolen = true;

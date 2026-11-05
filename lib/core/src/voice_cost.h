@@ -18,8 +18,11 @@ constexpr int kCostSampleFirWide = 1100;   // >8 .. 16
 constexpr int kCostSampleFirExtremeStep = 20;  // per extra whole frame/output above 16
 constexpr int kCostSamplePitchMod = 100;  // active cutoff/phase modulation reserve
 constexpr int kCostChip = 119;
+constexpr int kCostSynSat = 80, kCostSynAnalog = 100;  // USB audit: reserve0.8/1.0% per voice above the existing oscillator budget
 constexpr int kCostSynBl = 200;   // USB audit 2026-11-01: ~2.0%/voice incl. gain modulation
 constexpr int kCostSynWt = 240;
+constexpr int kCostSynLpLimit = 100;  // high resonance: state-energy bound and its control work
+constexpr int kCostSynHyper = 400;  // USB 2026-11-05: nine saws, including high pitch/density modulation margin
 // Conservative upper prices from the ten-machine USB CPU audit, 2026-11-03.
 // Warm/cold blocks at 4/8/16 actual voices, baseline and high-pitch/LFO extremes.
 // These upper prices retain headroom after the bit-exact renderer optimizations;
@@ -78,7 +81,7 @@ constexpr int kVoiceBudgetOff = 1 << 30;
 // Potential per-note modulation not present in the instrument: follower / LFO destination locks.
 enum VoiceCostPotential : uint8_t {
   kCostPotentialFold = 1, kCostPotentialRing = 2, kCostPotentialSat = 4,
-  kCostPotentialSamplePitch = 8
+  kCostPotentialSamplePitch = 8, kCostPotentialSynLpLimit = 16
 };
 // Source frames consumed per output sample; signed steps price reverse identically. Zero/default
 // preserves the original base cost. Pitch modulation reserves FIR work even at the unity boundary.

@@ -8,6 +8,7 @@ namespace mt {
 // + LFO from v5, + LOFI from v6, + LFOB from v7, + FMEX from v8, + FMPA from v9, + SLX1 from v10) records (inst_codec), u32 crc32 of every
 // byte before it. Little-endian. v1 files load without slices, v1 / v2 with SYNTH defaults, v5 and older
 // with LOFI formula 0, v6 and older with LFO BYTE defaults, v7 and older with SAT 0.
+// FM presets through v8 convert the old machine ids/macros/SAT; v9+ retain independent A..H.
 constexpr uint8_t kPresetVersion = 10;  // 4: drive, rsend, velCut, velMac in the FM record (same size as 3);
                                        // 5: + the LFO record; 6: + the LOFI record; 7: + the LFOB record;
                                        // 8: + the FMEX record (FM SAT); 9: + FMPA; 10: + SLX1 (128 logical slices)

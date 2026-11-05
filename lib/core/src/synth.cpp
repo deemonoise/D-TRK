@@ -45,6 +45,7 @@ MT_CONTROL uint8_t costPotential(const TrackCfg* track, uint16_t lfoMask, const 
     if (dest == static_cast<uint8_t>(LfoDest::Fold)) flags |= kCostPotentialFold;
     if (dest == static_cast<uint8_t>(LfoDest::Ring)) flags |= kCostPotentialRing;
     if (dest == static_cast<uint8_t>(LfoDest::Sat)) flags |= kCostPotentialSat;
+    if (dest == static_cast<uint8_t>(LfoDest::Reso)) flags |= kCostPotentialSynLpLimit;
     if (dest == static_cast<uint8_t>(LfoDest::Pitch) || dest == static_cast<uint8_t>(LfoDest::Fine))
       flags |= kCostPotentialSamplePitch;
   };
@@ -52,6 +53,7 @@ MT_CONTROL uint8_t costPotential(const TrackCfg* track, uint16_t lfoMask, const 
   for (int i = 0; i < kLfos; ++i)
     if (lfoMask & (1u << (i * kLfoLocks + kLfoLkDest))) add(lfos[i].dest);
   if ((lockMask & (1u << kLockSat)) && locks[kLockSat]) flags |= kCostPotentialSat;
+  if ((lockMask & (1u << kLockRes)) && locks[kLockRes] >= 77) flags |= kCostPotentialSynLpLimit;
   return flags;
 }
 
@@ -109,7 +111,8 @@ static_assert(static_cast<int>(FltKind::Lp) == static_cast<int>(FltMode::Lp) - 1
                   static_cast<int>(FltKind::Comb) == static_cast<int>(FltMode::Comb) - 1 &&
                   static_cast<int>(FltKind::Formant) == static_cast<int>(FltMode::Formant) - 1 &&
                   static_cast<int>(FltKind::Sid) == static_cast<int>(FltMode::Sid) - 1 &&
-                  static_cast<int>(FltMode::Count) == 9,
+                  static_cast<int>(FltKind::Analog4) == static_cast<int>(FltMode::Analog4) - 1 &&
+                  static_cast<int>(FltMode::Count) == 13,
               "FltKind must mirror FltMode minus Off");
 
 // A voice still sounds: its note, or once the envelope has ended its filter ringing out (renderCore
@@ -890,7 +893,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   const uint8_t machine = machineOf(m);
   // Heavy: counts against kFmVoiceMax (Voice::heavy, heavyLoad) and takes macro locks (with SYNTH, LOFI).
   // LOFI: BYTE is heavy, APC light.
-  const bool heavy = fm || drumT || synWtT || stringT ||
+  const bool heavy = fm || drumT || synWtT || (synT && m.synOsc[0] == static_cast<uint8_t>(SynOsc::HyperSaw)) || stringT ||
                      (lofiT && machine == static_cast<uint8_t>(LofiMachine::Byte));
   const bool drum = drumT || (fm && !fmGated(machine));  // one-shot, choke
   const bool tone = fm && (machine == static_cast<uint8_t>(FmMachine::Tone) ||
@@ -928,6 +931,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
   // a SAMPLE), so sample covers both.
   uint8_t potential = costPotential(track < kTracks ? &p_.tracks[track] : nullptr,
                                           r.lfoLockMask, r.lfoLock, r.lockMask, r.lock);
+  if (synT && morphT(track, kScnRes, m.reso) >= 77) potential |= kCostPotentialSynLpLimit;
   float effectiveHz = 0;
   if (lofiT && machine == static_cast<uint8_t>(LofiMachine::Byte))
     effectiveHz = m.lofiSync ? byteSyncHz(note, static_cast<int>(clampf(m.transpose, -24, 24)), tickSamples())
@@ -1340,6 +1344,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   if (!v.lofi && budget_ < kVoiceBudgetOff) {
     uint8_t potential = costPotential(v.track < kTracks ? &p_.tracks[v.track] : nullptr,
                                             v.lfoLockMask, cs, v.lockMask, v.lock);
+    if (v.syn && morphT(v.track, kScnRes, m.reso) >= 77) potential |= kCostPotentialSynLpLimit;
     float chipHz = 0;
     if (m.wave == static_cast<uint8_t>(Wave::AyToneNoise) &&
         !v.sample && !v.fm && !v.drum && !v.syn && !v.str)
@@ -1485,20 +1490,22 @@ MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, con
   float res = (v.lockMask & (1u << kLockRes)) ? v.lock[kLockRes] : (mr > 127 ? 127 : mr);
   if (la[ld(LfoDest::Reso)] != 0) res = clampf(res + 64.f * la[ld(LfoDest::Reso)], 0.f, 127.f);
   const bool synLp = v.syn && mode == static_cast<uint8_t>(FltMode::Lp);
-  const float resKey = res + (synLp ? 128.f : 0.f);  // invalidate on engine / filter-law changes too
+  const bool analog = synAnalog(mode);
+  const float resKey = res + (synLp ? 128.f : v.syn && analog ? 256.f : 0.f);  // invalidate on engine / filter-law changes too
   if (resKey != v.fltRes) {
     v.fltRes = resKey;
     v.fltQ = synLp ? synLpQ(res) : resoQ(res);
   }
   // Octaves above 20 Hz (as cutoffHz): cutoff, envelope, key tracking (from C4).
   const float rawCut = clampf(cut + 64.f * la[ld(LfoDest::Cutoff)], 0.f, 127.f);
-  float oct = synLp ? synLpOctaves(rawCut) : rawCut * (9.451211f / 127.f);  // log2(700)
+  float oct = analog ? synAnalogOctaves(rawCut, mode - static_cast<uint8_t>(FltMode::Analog1) + 1)
+                     : synLp ? synLpOctaves(rawCut) : rawCut * (9.451211f / 127.f);  // log2(700)
   const float fenv = clampf(m.fenv + 64.f * la[ld(LfoDest::Fenv)], -64.f, 63.f);
   if (fenv != 0 && !v.fenvDone) {
-    const float e = filterEnv(v.fenvT, m.fAtk, m.fDec);
+    const float e = v.syn ? synModEnv(v.fenvT, m.fAtk, m.fDec) : filterEnv(v.fenvT, m.fAtk, m.fDec);
     // The -60 dB tail moves the cutoff < 0.01 octave: drop it (not the start of a slow attack).
-    if (e < 1e-3f && v.fenvT > envTimeMs(m.fAtk) * (kSynthRate / 1000.f)) v.fenvDone = true;
-    oct += fenv * (6.f / 64.f) * e;
+    if (e < 1e-3f && v.fenvT > (v.syn ? synModAttackMs(m.fAtk) : envTimeMs(m.fAtk)) * (kSynthRate / 1000.f)) v.fenvDone = true;
+    oct += ((synLp || (v.syn && analog)) ? synFenvOctaves(fenv) : fenv * (6.f / 64.f)) * e;
   }
   // FORMANT: the cutoff is the vowel, key tracking does not move it.
   if (mode != static_cast<uint8_t>(FltMode::Formant))
@@ -1509,7 +1516,7 @@ MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, con
     v.octKey = oct;
     v.octHz = 20.f * fastExp2(oct);
   }
-  v.flt.set(static_cast<FltKind>(mode - 1), v.octHz, res, v.fltQ);
+  v.flt.set(static_cast<FltKind>(mode - 1), v.octHz, res, analog ? (v.syn ? m.fmSat : 64.f) : v.fltQ);
 }
 
 MT_HOT float Synth::cachedHz(Voice& v, int k, float note) {
@@ -1772,13 +1779,19 @@ MT_CONTROL void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, in
   v.senvT += static_cast<uint32_t>(dt);
   // env -> SHAPE: nothing to compute at the neutral 64.
   const float senvAmt = (mac[kMacSenv] - 64.f) * (1.f / 64.f);
-  const float senv = senvAmt != 0 ? senvAmt * filterEnv(v.senvT, m.synEAtk, m.synEDec) : 0.f;  // AD, decay 0 = hold
+  const float senv = senvAmt != 0 ? senvAmt * synModEnv(v.senvT, m.synEAtk, m.synEDec) : 0.f;  // AD, decay 0 = hold
   SynParams sp;
   for (int k = 0; k < 2; ++k) {
     sp.mode[k] = m.synOsc[k] < static_cast<uint8_t>(SynOsc::Count) ? m.synOsc[k] : 0;
     sp.wt[k] = v.synWt[k];
     sp.shape[k] = clampf(mac[kMacShp1 + k] * (1.f / 127.f), 0.f, 1.f);
   }
+  const bool hyper = sp.mode[0] == static_cast<uint8_t>(SynOsc::HyperSaw);
+  if (sp.mode[1] == static_cast<uint8_t>(SynOsc::HyperSaw)) sp.mode[1] = 0;
+  if (hyper) sp.shape[1] = clampf(mac[kMacDet] * (1.f / 127.f), 0.f, 1.f);
+  const bool heavy = hyper || sp.mode[0] == static_cast<uint8_t>(SynOsc::Wt) ||
+                                sp.mode[1] == static_cast<uint8_t>(SynOsc::Wt);
+  refreshHeavy(voices_, static_cast<int>(&v - voices_), heavy);
   const float det = (mac[kMacDet] - 64.f) * (50.f / 64.f) * 0.01f;  // +-50 cents, in semitones
   sp.hz[0] = cachedHz(v, 0, pitch);
   sp.hz[1] = cachedHz(v, 1, pitch + clampf(m.synSemi, -24, 24) + 24.f * la[ld(LfoDest::Semi2)] + det +
@@ -1791,6 +1804,8 @@ MT_CONTROL void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, in
   sp.noise = u7(m.synNoise + 64.f * la[ld(LfoDest::Noise)]) * (1.f / 127.f);
   sp.fold = u7(m.synFold + 64.f * la[ld(LfoDest::Fold)]) * (1.f / 127.f);
   sp.ring = u7(m.synRing + 64.f * la[ld(LfoDest::Ring)]) * (1.f / 127.f);
+  sp.satType = synAnalog(m.fltMode) ? 0 : m.synSatType;
+  sp.satLevel = m.fmSat;
   synApplyEnv(sp, m.synEnvDest, senv);
   v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
@@ -1854,7 +1869,27 @@ MT_CONTROL void Synth::controlString(Voice& v, const Instrument& m, float pitch,
   controlAmp(v, v.gain * (127.f / (v.vel ? v.vel : 1)) * iv * vol * (1.f / 127.f), dt ? dt : ctlLeft_, dt > 0);
 }
 
+MT_HOT void Synth::renderSynLp(Voice& v, float* out, int n) {
+  if (v.env.idle()) { v.flt.reset(); return; }
+  float input[kControl] = {}, filtered[kControl] = {};
+  v.sv().render(input, n, 1.f);
+  if (v.fltRes < 256.f && v.fltQ > 8.f) {
+    // The measured resonant sine reaches about5.65x the dry level, independent of output volume.
+    const float limit = 5.65f * fastRcp(synLpGain(v.fltRes - 128.f));
+    v.flt.processSynLp(input, filtered, n, limit);
+  } else {
+    v.flt.processAdd(input, filtered, n, nullptr);
+  }
+  Env env = v.env;
+  const float step = v.ampStep;
+  float gain = step != 0.f ? v.ampNow : v.amp;
+  for (int i = 0; i < n; ++i, gain += step) out[i] += filtered[i] * gain * env.next();
+  v.env = env;
+  if (step != 0.f) v.ampNow = gain;
+}
+
 MT_HOT void Synth::renderVoice(Voice& v, float* out, int n) {
+  if (v.syn && v.fltOn && v.fltRes >= 128.f) { renderSynLp(v, out, n); return; }
   // Segments end at control boundaries: n <= kControl. A filtered voice renders into flt first,
   // an unfiltered one straight into out.
   if (v.env.idle()) {

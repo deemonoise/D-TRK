@@ -3,6 +3,10 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## Unreleased
+- Legacy FM loading: projects without FMPA and FM presets v1–8 convert all eight old machines to current equivalents, transferring SAT/macros and approximating decay, TONE ratios and chord voicing. Common settings remain intact; loading reports the converted voice count, and saving prevents repeat migration.
+- SYNTH: optional Sat type/Input (Light/Soft/Middle/Hard, Digital, sinusoidal Shaper, variable Rectifier) and Analog1…4 with measured drive/resonance approximations. Files, voice pool and Teensy global RAM remain the same size; extra CPU cost is budgeted. Update both boards.
+- SYNTH refinement: measure HSAW density, exponential spread and RMS level against Virus; extend pulse width to100%; calibrate modulation AD timing/depth, classic LP poles and high-Q damping. Bound resonant energy before amplitude ADSR, reserve high-resonance CPU work, and retime the factory RISER. Existing SYNTH sounds change.
+- SYNTH: OSC1 HSAW, one algorithmic group of up to nine bandlimited saws per note. Density and detune support macros/LFO, phase modes and the normal Sub/Noise/Fold/filter/ADSR path. Shares the Teensy's 16-heavy-voice cap and CPU budget; oscillator state fits existing voice memory. OSC2/Mix/Sync/Ring are inactive in HSAW. Update both boards to select and play the mode.
 - WT: fix `FLASH WRITE ERROR` after table analysis when temporary RAM is tight on the regular Teensy. Release source buffers before committing the flash index; data format and audio are unchanged.
 - SYNTH: calibrate amplitude ADSR and classic LP cutoff/Q/level against Virus TI Snow recordings. Exponential decay/release, corrected ENV times and curves; existing SYNTH sounds change. Other engines and special filter models retain their response.
 - SAMPLE: offline pitch-preserving time stretch (50–200% duration), BPM estimation with confidence and half/double alternatives, improved quiet-attack detection on tonal backgrounds. Up to 128 slices, SLC 0–127; legacy projects/presets still load, new SLX1 extension and v10 presets. Link protocol27: update both boards.

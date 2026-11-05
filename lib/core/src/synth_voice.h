@@ -223,6 +223,10 @@ struct Voice {
   // LOFI instrument (machine above holds its LofiMachine): BYTE is heavy, APC light.
   bool lofi = false;
 };
+#if defined(__IMXRT1062__)
+static_assert(sizeof(VoiceEngine) == 664 && sizeof(Voice) == 1200,
+              "HyperSaw must fit the existing Teensy voice pool without growing RAM1");
+#endif
 
 // Internal render sentinel, outside every stored CHIP wave (0xff is the STEP dispatch).
 // A CPU-unsafe stolen voice becomes its last post-filter output with a short fade.
@@ -239,6 +243,9 @@ MT_CONTROL void trimFullDspTails(Voice (&v)[kVoices], int budget);
 inline bool heavyLoad(const Voice& x) {
   return x.on && x.heavy && !x.stolen && !x.env.idle();
 }
+
+// A live SYNTH can become heavy when its oscillator mode is edited.
+MT_CONTROL void refreshHeavy(Voice (&v)[kVoices], int pick, bool heavy);
 
 // Picks a voice for track and marks it allocated. Mono: the track's voice if any (legato), else a free one.
 // Poly: a free voice if the track has < polyMax, else the track's oldest.

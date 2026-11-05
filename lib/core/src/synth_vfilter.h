@@ -8,7 +8,7 @@
 namespace mt {
 
 // A voice's filter: FltMode minus Off, in the same order (FltKind = FltMode - 1).
-enum class FltKind : uint8_t { Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid };
+enum class FltKind : uint8_t { Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid, Analog1, Analog2, Analog3, Analog4 };
 // LP / BP / HP pass straight to Svf::set by value.
 static_assert(static_cast<int>(FltKind::Lp) == static_cast<int>(Svf::Mode::Lp) &&
                   static_cast<int>(FltKind::Bp) == static_cast<int>(Svf::Mode::Bp) &&
@@ -33,6 +33,7 @@ class VoiceFilter {
   // hz: the cutoff (clamped to 20 Hz .. 0.45 x the rate; COMB's pitch; FORMANT's vowel: 20 Hz A ..
   // 14 kHz U, the cutoff knob's range); reso127: the resonance 0..127 (the new modes map it
   // themselves); q: resoQ(reso127), cached by Synth, used by LP / BP / HP.
+  // Analog1..4: q is input level0..127 instead; same four-pole feedback state, selected output tap.
   // Switching to another state family (LP / BP / HP share the Svf state, as Svf::set does) resets
   // the state.
   void set(FltKind k, float hz, float reso127, float q);
@@ -43,6 +44,8 @@ class VoiceFilter {
   // for it). A LADDER / MS20 / SID tail ends when its fade does.
   MT_INLINE bool ringing() const {
     switch (kind_) {
+      case FltKind::Analog1: case FltKind::Analog2: case FltKind::Analog3: case FltKind::Analog4:
+        return tail_ >= kTailOff && above(st_.analog.core.s, 4);
       case FltKind::Ladder: return tail_ >= kTailOff && above(st_.ladder.s, 4);
       case FltKind::Ms20: return tail_ >= kTailOff && above(st_.ms20.s, 3);
       case FltKind::Comb: return st_.comb.peak > 1e-4f;
@@ -56,6 +59,7 @@ class VoiceFilter {
   // voice: its tail fades out (-60 dB in 50 ms) at once, any other LADDER / MS20 / SID tail after 2 s.
   // LP / BP / HP tails do not fade (bit-exact to Svf).
   void processAdd(const float* __restrict in, float* __restrict out, int n, int16_t* line);
+  void processSynLp(const float* in, float* out, int n, float limit);  // SYNTH LP only, before amp ADSR
 
 #ifdef PIO_UNIT_TESTING
   static uint32_t formantComputes;  // setFormant() calls (tests: set() caches)
@@ -104,9 +108,12 @@ class VoiceFilter {
     float s[3];          // Svf's ic1 (band-pass), ic2 (low-pass), the DC blocker's estimate
     float a1, a2, a3;    // Svf's: a1 = 1 / (1 + g (g + k)), a2 = g a1, a3 = g a2
   };
+  struct Analog { Ladder core; float drive, gain, level; uint8_t poles; };
+  static_assert(sizeof(Analog) <= sizeof(Formant), "Analog must fit the existing voice state");
   union State {
     Svf svf;  // LP / BP / HP
     Ladder ladder;
+    Analog analog;
     Ms20 ms20;
     Comb comb;
     Formant formant;
@@ -123,6 +130,8 @@ class VoiceFilter {
   }
   static constexpr float kTailOff = 1e-3f;  // the fade's end (-60 dB)
   void setLadder(float hz, float r);
+  MT_CONTROL void setAnalog(float hz, float reso, float level);
+  void analogLoop(const float* in, float* out, int n);
   void setMs20(float hz, float r);
   // One loop per case, no per-sample branch: kIn (input, else a tail), kFade (a fading tail).
   template <bool kIn, bool kFade>

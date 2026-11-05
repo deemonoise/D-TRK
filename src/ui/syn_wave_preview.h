@@ -29,7 +29,7 @@ class SynWavePreview {
   mt::SynPreviewClock clock_;
   mt::SynPreviewModel model_;
   mt::SynPreviewFrame frame_;
-  uint8_t key_[mt::kSynRecSize + mt::kFmMacros + 2] = {};
+  uint8_t key_[mt::kSynRecSize + mt::kFmMacros + 5] = {};
   bool live_ = false, keyValid_ = false, noMemory_ = false;
   uint32_t lastMissingTry_ = 0;
   uint32_t bankStamp_ = 0, parkStamp_ = 0;

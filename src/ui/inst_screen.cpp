@@ -190,31 +190,39 @@ InstScreen::InstScreen(App& app) : app_(app) {
     else snprintf(o, n, "%d st", mt::lofiLoopSteps(v));
   };
   // SYNTH: ADSR, mode and glide as CHIP. Oscillator k rows, then the shared ones.
+  auto hyper = [this] { return inst().synOsc[0] == static_cast<uint8_t>(mt::SynOsc::HyperSaw); };
   for (int k = 0; k < 2; ++k) {
     const int base = k ? kOsc2 : kOsc1;
     const int shapeRow = k ? kShape2 : kShape1;
     syn_[base] = {k ? "Osc2" : "Osc1",
                   [this, k](char* o, int n) {
-                    static const char* const kNames[] = {"SAW", "SQR", "TRI", "WT", "SIN"};
+                    static const char* const kNames[] = {"SAW", "SQR", "TRI", "WT", "SIN", "HSAW"};
                     static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::SynOsc::Count), "osc names");
                     const uint8_t v = inst().synOsc[k];
                     snprintf(o, n, "%s", kNames[v < static_cast<uint8_t>(mt::SynOsc::Count) ? v : 0]);
                   },
                   [this, k](int d) {
                     mt::Instrument& m = inst();
+                    const bool wasHyper = m.synOsc[0] == static_cast<uint8_t>(mt::SynOsc::HyperSaw);
                     // UI order is independent of the IDs stored in projects (WT=3, SIN=4).
                     static constexpr mt::SynOsc kOrder[] = {
-                        mt::SynOsc::Saw, mt::SynOsc::Square, mt::SynOsc::Tri, mt::SynOsc::Sine, mt::SynOsc::Wt};
+                        mt::SynOsc::Saw, mt::SynOsc::Square, mt::SynOsc::Tri, mt::SynOsc::Sine, mt::SynOsc::Wt,
+                        mt::SynOsc::HyperSaw};
                     static_assert(sizeof(kOrder) / sizeof(kOrder[0]) == static_cast<int>(mt::SynOsc::Count), "osc order");
                     int pos = 0;
                     for (int i = 0; i < static_cast<int>(mt::SynOsc::Count); ++i)
                       if (static_cast<uint8_t>(kOrder[i]) == m.synOsc[k]) pos = i;
-                    m.synOsc[k] = static_cast<uint8_t>(kOrder[clampi(pos + d, 0, static_cast<int>(mt::SynOsc::Count) - 1)]);
+                    const int count = static_cast<int>(mt::SynOsc::Count) - k;
+                    m.synOsc[k] = static_cast<uint8_t>(kOrder[clampi(pos + d, 0, count - 1)]);
+                    if (!k && !wasHyper && m.synOsc[0] == static_cast<uint8_t>(mt::SynOsc::HyperSaw)) {
+                      m.macro[mt::kMacShp1] = 127;
+                      if (m.synEnvDest > static_cast<uint8_t>(mt::SynEnvDest::Fold)) m.synEnvDest = 0;
+                    }
                     // A wavetable osc without a table would be silent: start from the first built-in.
                     if (m.synOsc[k] == static_cast<uint8_t>(mt::SynOsc::Wt) && !m.synWt[k][0])
                       strlcpy(m.synWt[k], mt::wtBuiltinName(0), sizeof(m.synWt[k]));
-                  }};
-    auto notWt = [this, k] { return inst().synOsc[k] != static_cast<uint8_t>(mt::SynOsc::Wt); };
+                  }, [hyper, k] { return k && hyper(); }};
+    auto notWt = [this, k, hyper] { return (k && hyper()) || inst().synOsc[k] != static_cast<uint8_t>(mt::SynOsc::Wt); };
     // No edit: a click / tap opens WtPicker (see onInput / onTouch).
     syn_[base + 1] = {k ? "Table2" : "Table1",
                       [this, k](char* o, int n) { snprintf(o, n, "%s", inst().synWt[k][0] ? inst().synWt[k] : "-"); },
@@ -223,21 +231,28 @@ InstScreen::InstScreen(App& app) : app_(app) {
                         if (notWt()) return false;
                         return !inst().synWt[k][0] || !audio::wtCached(inst().synWt[k]);
                       }};
-    syn_[shapeRow] = {k ? "Shape2" : "Shape1", macroNum(mt::kMacShp1 + k), macroEdit(mt::kMacShp1 + k),
-                      [this, k] {
+    syn_[shapeRow] = {k ? "Shape2" : "Shape1", [this, k, hyper](char* o, int n) {
+                        if (!k && hyper()) snprintf(o, n, "%.1f saws", mt::synHyperDensity(inst().macro[mt::kMacShp1] / 127.f));
+                        else snprintf(o, n, "%u", inst().macro[mt::kMacShp1 + k]);
+                      }, macroEdit(mt::kMacShp1 + k),
+                      [this, k, hyper] {
+                        if (hyper()) return k != 0;
                         const uint8_t v = inst().synOsc[k];
                         return v != static_cast<uint8_t>(mt::SynOsc::Square) && v != static_cast<uint8_t>(mt::SynOsc::Wt);
-                      }, {}, [] { return "SHAPE APPLIES TO SQR OR WT"; }};
+                      }, {}, [] { return "SHAPE: SQR / WT; HSAW: DENSITY ON OSC1"; }};
   }
   syn_[kSemi] = {"Semi2", [this](char* o, int n) { snprintf(o, n, "%+d", inst().synSemi); },
-                 [this](int d) { inst().synSemi = static_cast<int8_t>(clampi(inst().synSemi + d, -24, 24)); }};
+                 [this](int d) { inst().synSemi = static_cast<int8_t>(clampi(inst().synSemi + d, -24, 24)); }, hyper};
   syn_[kDetune] = {"Detune",
-                   [this](char* o, int n) { snprintf(o, n, "%+d ct", (inst().macro[mt::kMacDet] - 64) * 50 / 64); },
+                   [this, hyper](char* o, int n) {
+                     if (hyper()) snprintf(o, n, "+/-%.1f ct", mt::synHyperSpread(inst().macro[mt::kMacDet] / 127.f));
+                     else snprintf(o, n, "%+d ct", (inst().macro[mt::kMacDet] - 64) * 50 / 64);
+                   },
                    macroEdit(mt::kMacDet)};
   syn_[kSync] = {"Sync", [this](char* o, int n) { snprintf(o, n, "%s", inst().synSync ? "ON" : "OFF"); },
-                 [this](int d) { inst().synSync = d > 0; }};
+                 [this](int d) { inst().synSync = d > 0; }, hyper};
   syn_[kMix] = {"Mix", [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().macro[mt::kMacMix] * 100 + 63) / 127); },
-                macroEdit(mt::kMacMix)};
+                macroEdit(mt::kMacMix), hyper};
   syn_[kPhaseMode] = {"Phase mode", [this](char* o, int n) {
                        static const char* const kNames[] = {"RETRIG", "FREE", "RANDOM"};
                        const uint8_t v = inst().synPhaseMode;
@@ -251,7 +266,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                           snprintf(o, n, "%u deg", static_cast<unsigned>(inst().synPhase[k]) * 360 / 128);
                         }, [this, k](int d) {
                           inst().synPhase[k] = static_cast<uint8_t>(clampi(inst().synPhase[k] + d, 0, 127));
-                        }, [this] { return inst().synPhaseMode == static_cast<uint8_t>(mt::SynPhaseMode::Free); },
+                        }, [this, k, hyper] { return (k && hyper()) || inst().synPhaseMode == static_cast<uint8_t>(mt::SynPhaseMode::Free); },
                         {}, [] { return "INITIAL PHASE ONLY IN FREE MODE"; }};
   auto view = [this](char* o, int n) { snprintf(o, n, "%s", wave_.live() ? "LIVE" : "HOLD"); };
   syn_[kOscView] = {"View", view, nullptr, {}, {}, [] { return "CLICK TO TOGGLE HOLD / LIVE"; }};
@@ -275,7 +290,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    if (inst().synRing) snprintf(o, n, "%u", inst().synRing);
                    else snprintf(o, n, "OFF");
                  },
-                 [this](int d) { inst().synRing = static_cast<uint8_t>(clampi(inst().synRing + d, 0, 127)); }};
+                 [this](int d) { inst().synRing = static_cast<uint8_t>(clampi(inst().synRing + d, 0, 127)); }, hyper};
   syn_[kFold] = {"Fold",
                  [this](char* o, int n) {
                    if (inst().synFold) snprintf(o, n, "%u", inst().synFold);
@@ -286,9 +301,9 @@ InstScreen::InstScreen(App& app) : app_(app) {
                        static const char* const kNames[] = {"SHAPE", "FOLD", "RING", "MIX", "PITCH2"};
                        const uint8_t v = inst().synEnvDest;
                        snprintf(o, n, "%s", kNames[v < static_cast<uint8_t>(mt::SynEnvDest::Count) ? v : 0]);
-                     }, [this](int d) {
+                     }, [this, hyper](int d) {
                        inst().synEnvDest = static_cast<uint8_t>(clampi(inst().synEnvDest + d, 0,
-                           static_cast<int>(mt::SynEnvDest::Count) - 1));
+                           hyper() ? static_cast<int>(mt::SynEnvDest::Fold) : static_cast<int>(mt::SynEnvDest::Count) - 1));
                      }};
   syn_[kSenv] = {"Env amt", [this](char* o, int n) {
                   const int amount = inst().macro[mt::kMacSenv] - 64;
@@ -298,14 +313,27 @@ InstScreen::InstScreen(App& app) : app_(app) {
                 },
                  macroEdit(mt::kMacSenv)};
   auto noSenv = [this] { return inst().macro[mt::kMacSenv] == 64; };
-  syn_[kEAtk] = {"Env atk", [this](char* o, int n) { envTime(inst().synEAtk, o, n); },
+  syn_[kEAtk] = {"Env atk", [this](char* o, int n) { envMilliseconds(mt::synModAttackMs(inst().synEAtk), o, n); },
                  [this](int d) { inst().synEAtk = static_cast<uint8_t>(clampi(inst().synEAtk + d, 0, 127)); }, noSenv};
   syn_[kEDec] = {"Env dec",
                  [this](char* o, int n) {
-                   if (inst().synEDec) envTime(inst().synEDec, o, n);
+                   if (inst().synEDec) envMilliseconds(mt::synDecaySpanMs(inst().synEDec), o, n);
                    else snprintf(o, n, "HOLD");
                  },
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
+  auto analog = [this] { return mt::synAnalog(inst().fltMode); };
+  syn_[kSatType] = {"Sat type", [this](char* o, int n) {
+                     static const char* const names[] = {"OFF", "LIGHT", "SOFT", "MIDDLE", "HARD", "DIGITAL", "SHAPER", "RECT"};
+                     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<int>(mt::SynSatType::Count), "sat names");
+                     snprintf(o, n, "%s", names[inst().synSatType < static_cast<uint8_t>(mt::SynSatType::Count) ? inst().synSatType : 0]);
+                   }, [this](int d) {
+                     const int old = inst().synSatType;
+                     inst().synSatType = static_cast<uint8_t>(clampi(old + d, 0, static_cast<int>(mt::SynSatType::Count) - 1));
+                     if (!old && inst().synSatType && !inst().fmSat) inst().fmSat = 64;
+                   }, analog, {}, [] { return "ANALOG USES ITS OWN SATURATION"; }};
+  syn_[kSatLevel] = {"Sat input", [this](char* o, int n) { snprintf(o, n, "%+d", inst().fmSat - 64); },
+                    [this](int d) { inst().fmSat = static_cast<uint8_t>(clampi(inst().fmSat + d, 0, 127)); },
+                    [this, analog] { return !analog() && !inst().synSatType; }, {}, [] { return "INPUT LEVEL INTO SATURATION / ANALOG"; }};
   // STRING: DAMP (as the T60 0.05 s x 200^(v/127)), BRIGHT, STRUCT, POS, EXC (0 = click, else a burst).
   string_[kStrModel] = {"Model", [this](char* o, int n) { snprintf(o, n, "%s", mt::stringModelName(inst().machine)); },
                         [this](int d) {
@@ -456,7 +484,7 @@ void InstScreen::initTail(Param* t) {
   auto noEnv = [this, off] { return off() || inst().fenv == 0; };
   t[kFltMode] = {"Filter",
                  [this](char* o, int n) {
-                   static const char* const kNames[] = {"OFF", "LP", "BP", "HP", "LADDER", "MS20", "COMB", "FORMANT", "SID"};
+                   static const char* const kNames[] = {"OFF", "LP", "BP", "HP", "LADDER", "MS20", "COMB", "FORMANT", "SID", "ANALOG1", "ANALOG2", "ANALOG3", "ANALOG4"};
                    static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(mt::FltMode::Count), "names");
                    snprintf(o, n, "%s", kNames[inst().fltMode % static_cast<int>(mt::FltMode::Count)]);
                  },
@@ -466,6 +494,8 @@ void InstScreen::initTail(Param* t) {
                    // STRING takes the voice's delay line: no COMB, step over it in both directions.
                    if (inst().type == mt::InstrType::String && v == static_cast<int>(mt::FltMode::Comb) && d)
                      v = clampi(v + (d > 0 ? 1 : -1), 0, kMax);
+                   if (inst().type == mt::InstrType::Synth && mt::synAnalog(static_cast<uint8_t>(v)) &&
+                       !mt::synAnalog(inst().fltMode) && !inst().fmSat) inst().fmSat = 64;
                    inst().fltMode = static_cast<uint8_t>(v);
                  }};
   t[kCutoff] = {"Cutoff",
@@ -488,11 +518,11 @@ void InstScreen::initTail(Param* t) {
               [this](int d) { inst().reso = static_cast<uint8_t>(clampi(inst().reso + d, 0, 127)); }, off};
   t[kFEnv] = {"Flt env", [this](char* o, int n) { snprintf(o, n, "%+d", inst().fenv); },
               [this](int d) { inst().fenv = static_cast<int8_t>(clampi(inst().fenv + d, -64, 63)); }, off};
-  t[kFAtk] = {"Flt attack", [this](char* o, int n) { envTime(inst().fAtk, o, n); },
+  t[kFAtk] = {"Flt attack", [this](char* o, int n) { envMilliseconds(inst().type == mt::InstrType::Synth ? mt::synModAttackMs(inst().fAtk) : mt::envTimeMs(inst().fAtk), o, n); },
               [this](int d) { inst().fAtk = static_cast<uint8_t>(clampi(inst().fAtk + d, 0, 127)); }, noEnv};
   t[kFDec] = {"Flt decay",
               [this](char* o, int n) {
-                if (inst().fDec) envTime(inst().fDec, o, n);
+                if (inst().fDec) envMilliseconds(inst().type == mt::InstrType::Synth ? mt::synDecaySpanMs(inst().fDec) : mt::envTimeMs(inst().fDec), o, n);
                 else snprintf(o, n, "HOLD");
               },
               [this](int d) { inst().fDec = static_cast<uint8_t>(clampi(inst().fDec + d, 0, 127)); }, noEnv};
@@ -653,7 +683,9 @@ Param* InstScreen::rowsOf(mt::InstrType t) {
     case mt::InstrType::Sample: return sample_;
     case mt::InstrType::Fm: return fm_;
     case mt::InstrType::Drum: return drum_;
-    case mt::InstrType::Synth: return syn_;
+    case mt::InstrType::Synth:
+      syn_[kShape1].label = inst().synOsc[0] == static_cast<uint8_t>(mt::SynOsc::HyperSaw) ? "Density" : "Shape1";
+      return syn_;
     case mt::InstrType::String: return string_;
     case mt::InstrType::Lofi: return lofi_;
     default: return chip_;

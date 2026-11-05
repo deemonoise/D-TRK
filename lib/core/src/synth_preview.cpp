@@ -31,8 +31,9 @@ float fit(float peak) {
 }  // namespace
 
 void SynPreviewModel::render(const SynParams& p, const SynPreviewPhase& phase, bool advance, SynPreviewFrame& out) {
-  const uint8_t dryMask = (p.mix < 1.f || p.sync ? 1u : 0u) | (p.mix > 0.f ? 2u : 0u);
-  const uint8_t modMask = dryMask | (p.ring > 0.f ? 3u : 0u);
+  const bool hyper = p.mode[0] == static_cast<uint8_t>(SynOsc::HyperSaw);
+  const uint8_t dryMask = hyper ? 1u : (p.mix < 1.f || p.sync ? 1u : 0u) | (p.mix > 0.f ? 2u : 0u);
+  const uint8_t modMask = dryMask | (!hyper && p.ring > 0.f ? 3u : 0u);
   const uint8_t active = dryMask | (modMask << 2);
   // Production voices skip inaudible oscillators. If a modulation makes one audible
   // again, restart the local model coherently rather than overlay mismatched phases.
@@ -45,14 +46,16 @@ void SynPreviewModel::render(const SynParams& p, const SynPreviewPhase& phase, b
     }
   initialized_ = true;
   out.missing[0] = p.mode[0] == static_cast<uint8_t>(SynOsc::Wt) && !p.wt[0];
-  out.missing[1] = p.mode[1] == static_cast<uint8_t>(SynOsc::Wt) && !p.wt[1];
+  out.missing[1] = !hyper && p.mode[1] == static_cast<uint8_t>(SynOsc::Wt) && !p.wt[1];
   SynParams dry = p;
   dry.fold = dry.ring = dry.sub = dry.noise = 0;
+  dry.satType = 0;
   float peakMix = 0, peakMod = 0;
   for (int offset = 0; offset < kSynPreviewPoints * kSynPreviewStride; offset += 32) {
     // At most128samples of temporary work, not a full waveform/WT table on the UI stack.
     float block[4][32] = {};
     for (int trace = 0; trace < 4; ++trace) {
+      if (hyper && trace == 1) continue;
       SynParams params = trace == 3 ? p : dry;
       if (trace < 2) params.mix = static_cast<float>(trace);
       voices_[trace].control(params, 32);

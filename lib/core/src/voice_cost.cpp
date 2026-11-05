@@ -45,6 +45,7 @@ MT_CONTROL uint8_t configuredPotential(const Instrument& m) {
     if (dest == static_cast<uint8_t>(LfoDest::Fold)) flags |= kCostPotentialFold;
     if (dest == static_cast<uint8_t>(LfoDest::Ring)) flags |= kCostPotentialRing;
     if (dest == static_cast<uint8_t>(LfoDest::Sat)) flags |= kCostPotentialSat;
+    if (dest == static_cast<uint8_t>(LfoDest::Reso)) flags |= kCostPotentialSynLpLimit;
   }
   return flags;
 }
@@ -119,9 +120,13 @@ MT_CONTROL int voiceCost(const Instrument& m, bool sample, uint8_t potential, fl
       break;
     case InstrType::Synth: {
       const uint8_t wt = static_cast<uint8_t>(SynOsc::Wt);
-      c = m.synOsc[0] == wt || m.synOsc[1] == wt ? kCostSynWt : kCostSynBl;
+      const bool hyper = m.synOsc[0] == static_cast<uint8_t>(SynOsc::HyperSaw);
+      c = hyper ? kCostSynHyper : m.synOsc[0] == wt || m.synOsc[1] == wt ? kCostSynWt : kCostSynBl;
+      if (m.fltMode == static_cast<uint8_t>(FltMode::Lp) &&
+          (m.reso >= 77 || (potential & kCostPotentialSynLpLimit))) c += kCostSynLpLimit;
+      if (!synAnalog(m.fltMode) && m.synSatType > 0 && m.synSatType < static_cast<uint8_t>(SynSatType::Count)) c += kCostSynSat;
       if (m.synFold || (potential & kCostPotentialFold)) c += kCostFold;
-      if (m.synRing || (potential & kCostPotentialRing)) c += kCostRing;
+      if (!hyper && (m.synRing || (potential & kCostPotentialRing))) c += kCostRing;
       break;
     }
     case InstrType::String:  // constant indices: a table in .rodata would cost RAM1 (DTCM alignment)
@@ -142,6 +147,7 @@ MT_CONTROL int voiceCost(const Instrument& m, bool sample, uint8_t potential, fl
     default: break;                                  // KIT
   }
   switch (static_cast<FltMode>(m.fltMode)) {
+    case FltMode::Analog1: case FltMode::Analog2: case FltMode::Analog3: case FltMode::Analog4: c += kCostSynAnalog; break;
     case FltMode::Ladder: c += kCostLadder; break;
     case FltMode::Ms20: c += kCostMs20; break;
     case FltMode::Comb: c += type == InstrType::String ? 0 : kCostComb; break;  // STRING: Off

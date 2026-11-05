@@ -1,5 +1,7 @@
 #include "inst_codec.h"
+#include "synth_fm_machines.h"
 #include <string.h>
+#include <math.h>
 #include "bytebeat_lib.h"
 
 namespace mt {
@@ -216,7 +218,8 @@ void packSyn(const Instrument& m, uint8_t* b) {
 
 void unpackSyn(const uint8_t* b, Instrument& m) {
   for (int k = 0; k < 2; ++k) {
-    m.synOsc[k] = b[k] < static_cast<int>(SynOsc::Count) ? b[k] : 0;
+    const int count = k ? static_cast<int>(SynOsc::HyperSaw) : static_cast<int>(SynOsc::Count);
+    m.synOsc[k] = b[k] < count ? b[k] : 0;  // one HyperSaw group: OSC1 only
     memcpy(m.synWt[k], b + 2 + 16 * k, kSampleNameMax);
     m.synWt[k][kSampleNameMax] = 0;
   }
@@ -264,11 +267,103 @@ void packFmEx(const Instrument& m, uint8_t* b) {
   memset(b, 0, kFmExRecSize);
   b[0] = m.fmSat;
   b[1] = m.chipStep ? 1 : 0;
+  b[2] = m.synSatType;
 }
 
 void unpackFmEx(const uint8_t* b, size_t n, Instrument& m) {
   if (n > 0) m.fmSat = clampu(b[0], 0, 127);
   if (n > 1) m.chipStep = b[1] != 0;
+  m.synSatType = n > 2 && b[2] < static_cast<int>(SynSatType::Count) ? b[2] : 0;
+}
+
+namespace {
+// Find the closest current DEC or held TONE MOD value through the actual mapper.
+// Runs only while loading; no tables duplicating the calibrated machine laws.
+float migratedControlValue(const Instrument& m, int control, int value) {
+  float raw[kFmParams];
+  for (int i = 0; i < kFmParams; ++i) raw[i] = m.fmParam[i];
+  raw[control] = value;
+  FmParams p;
+  fmMachine(m.machine, raw, 60.f, p);
+  return control == 3 ? p.ampMs : p.op[4].level * p.op[4].sustain;
+}
+uint8_t closestFmControl(const Instrument& m, int control, float target) {
+  int lo = 0, hi = 127;
+  while (hi - lo > 1) {
+    const int mid = (lo + hi) / 2;
+    if (migratedControlValue(m, control, mid) < target) lo = mid;
+    else hi = mid;
+  }
+  const float a = fabsf(migratedControlValue(m, control, lo) - target);
+  const float b = fabsf(migratedControlValue(m, control, hi) - target);
+  return static_cast<uint8_t>(a <= b ? lo : hi);
+}
+void migrateTone(Instrument& m) {
+  int zone = m.macro[kMacShp] * 5 / 127;
+  if (zone > 4) zone = 4;
+  // Old SHAPE zones: paired1:1, feedback saw, paired2:1, stack, paired3.5:1.
+  MT_CONTROL_DATA static const uint8_t ratio[] = {9, 9, 24, 24, 49};
+  m.fmParam[1] = ratio[zone];
+  m.fmParam[4] = zone == 1 || zone == 3 ? m.macro[kMacCol] : 0;
+  const float scale = zone <= 1 ? 1.5f : 3.f;
+  const float held = m.macro[kMacCol] * (scale / 127.f);
+  // New feedback lives on the modulator, so MOD must remain active in the old saw zone.
+  // A tiny base also lets MENV create the old zero-COLOR, nonzero-SWEEP pluck.
+  const float pluck = m.macro[kMacSwp] * (scale / (6.f * 127.f));
+  m.fmParam[5] = closestFmControl(m, 5, held > pluck ? held : pluck);
+  m.fmParam[6] = m.macro[kMacSwp];
+  // Old melodic voices were held by the instrument ADSR, not the DEC macro.
+  m.fmParam[3] = 127;
+}
+void migrateChord(Instrument& m) {
+  int chord = m.macro[kMacShp] * 12 / 127;
+  if (chord > 11) chord = 11;
+  // MAJ, MIN, SUS2, SUS4,7,m7,Maj7,dim,aug,5,oct,m9.
+  // Current signatures are voiced below their reference note: compensate with TUNE,
+  // leaving the instrument transpose and every sequence note intact.
+  MT_CONTROL_DATA static const uint8_t type[] = {4,3,5,6,8,7,10,12,21,36,0,25};
+  MT_CONTROL_DATA static const uint8_t tune[] = {76,76,76,76,76,76,76,73,72,71,64,76};
+  m.fmParam[0] = tune[chord]; m.fmParam[4] = type[chord];
+  m.fmParam[1] = m.macro[kMacCol];
+  m.fmParam[5] = chord == 10 ? 0 : 64;
+  m.fmParam[6] = m.macro[kMacSwp]; m.fmParam[3] = 127;
+}
+}  // namespace
+
+bool migrateLegacyFm(Instrument& m) {
+  if (m.type != InstrType::Fm) return false;
+  const uint8_t old = m.machine;
+  MT_CONTROL_DATA static const FmMachine machine[] = {
+      FmMachine::BdModern, FmMachine::SdBasic, FmMachine::CyAlloy, FmMachine::PcCarbon,
+      FmMachine::Tone, FmMachine::Chord, FmMachine::CpVintage, FmMachine::HhBasic};
+  if (old >= sizeof(machine) / sizeof(machine[0])) {
+    fmSetMachine(m, static_cast<uint8_t>(FmMachine::Tone));
+    return false;
+  }
+  fmSetMachine(m, static_cast<uint8_t>(machine[old]));
+  for (int k = 0; k < kFmMacros; ++k) m.fmParam[fmMacroParam(m.machine, k)] = m.macro[k];
+  m.fmParam[7] = m.fmSat;
+  if (old == 4) migrateTone(m);
+  else if (old == 5) migrateChord(m);
+  else {
+    // Closest new base pitches to the old55/180/400/200Hz at C4.
+    m.fmParam[0] = old == 0 ? 61 : old == 1 ? 58 : old == 2 ? 71 : old == 3 ? 59 : 64;
+    if (old == 6) {
+      // Old SWEEP was filter Q. Current SPCR near its middle can add repeats hundreds
+      // of milliseconds apart: use the compact clap rather than inventing a new rhythm.
+      m.fmParam[1] = 64;
+    }
+    if (old == 7) {  // TONE/TDEC replace the old hat's colour/tail controls; keep reset on.
+      m.fmParam[1] = m.macro[kMacCol]; m.fmParam[2] = m.macro[kMacCon]; m.fmParam[6] = 127;
+    }
+    float ms = fmDecayMs(m.macro[kMacDec]);
+    if (old == 1) {  // Old snare's CONTOUR could extend the noise beyond its base decay.
+      const float length = .3f + 1.2f * m.macro[kMacCon] / 127.f;
+      if (length > 1.f) ms *= length;
+    }
+    m.fmParam[3] = closestFmControl(m, 3, ms);
+  }
+  return true;
 }
 
 void fixInstrument(Instrument& m) {
@@ -291,6 +386,7 @@ void fixInstrument(Instrument& m) {
   if (m.lofiFormula >= byteFormulaCount()) m.lofiFormula = 0;
   if (m.lofiSync > 1) m.lofiSync = 1;
   if (m.fmSat > 127) m.fmSat = 127;
+  if (m.synSatType >= static_cast<uint8_t>(SynSatType::Count)) m.synSatType = 0;
   for (uint8_t* l : m.lfoByte) {
     if (l[0] >= byteFormulaCount()) l[0] = 0;
     if (l[1] > 127) l[1] = 127;

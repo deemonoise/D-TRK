@@ -1322,9 +1322,10 @@ void App::endProgress() {
 }
 
 void App::loadedToast(const char* what, int missing, bool folderFail) {
-  char parts[5][40];
+  char parts[6][40];
   int n = 0;
   if (what && what[0]) strlcpy(parts[n++], what, sizeof(parts[0]));
+  if (storage::fmConverted()) snprintf(parts[n++], sizeof(parts[0]), "FM: %u CONVERTED", unsigned(storage::fmConverted()));
   if (missing > 0) snprintf(parts[n++], sizeof(parts[0]), "%d SAMPLES MISSING", missing);
   if (folderFail) strlcpy(parts[n++], "SAMPLES NOT SAVED", sizeof(parts[0]));
   if (storage::songTransposeDropped()) strlcpy(parts[n++], "SONG: TRANSPOSE DROPPED", sizeof(parts[0]));

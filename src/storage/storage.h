@@ -76,6 +76,8 @@ Result newFromTemplate(mt::Project& live, const char* name, int* missing = nullp
 bool songTransposeDropped();
 // The file's tuning (TUNE chunk) was broken: the project plays 12-TET. Set like songTransposeDropped().
 bool tuningDropped();
+// Old FM voices converted by the last successful file read;0 after a fresh project/demo.
+uint8_t fmConverted();
 
 // Boot: loads /last.txt straight into p (engine not running yet). False = p left reset.
 // *fromBak = true when the .mtp was unreadable and the .bak was loaded instead.

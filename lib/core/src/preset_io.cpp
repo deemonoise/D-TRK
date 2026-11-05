@@ -66,6 +66,7 @@ LoadErr loadPreset(ByteSource& in, Instrument& out) {
   if (size >= kPresetSizeV8) unpackFmEx(b + kPresetSizeV7 - 4, kFmExRecSize, m);  // after LFOB, before the CRC
   if (size >= kPresetSizeV9) unpackFmParams(b + kPresetSizeV8 - 4, kFmParamRecSize, m);
   if (size >= kPresetSize) unpackSlicesExt(b + kPresetSizeV9 - 4, m);
+  if (b[4] < 9) migrateLegacyFm(m);
   fixInstrument(m);
   out = m;
   return LoadErr::Ok;

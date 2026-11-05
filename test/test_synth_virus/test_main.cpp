@@ -35,9 +35,9 @@ void test_measured_classic_lp_cutoff_and_resonance() {
  TEST_ASSERT_FLOAT_WITHIN(.3f,5.06f,v.fltQ);
  float la[static_cast<int>(LfoDest::Count)]={};auto& m=model.instruments[0];m.reso=0;
  synth->controlFilter(v,m,60,la);TEST_ASSERT_FLOAT_WITHIN(.03f,.714f,v.fltQ);
- for(auto pair:{std::pair<int,float>{44,270.87f},{68,980.82f},{92,3540.49f}}) {
+ for(auto pair:{std::pair<int,float>{56,521.39f},{72,1234.79f},{88,2946.14f},{104,6976.34f}}) {
   m.cutoff=pair.first;synth->controlFilter(v,m,60,la);
-  TEST_ASSERT_FLOAT_WITHIN(pair.second*.025f,pair.second,v.octHz);
+  TEST_ASSERT_FLOAT_WITHIN(pair.second*.01f,pair.second,v.octHz);
  }
 }
 void test_syn_lp_resonance_has_measured_level_compensation() {
@@ -103,7 +103,7 @@ void test_reference_maps_are_bounded_and_monotonic() {
   const float next=20.f*std::exp2(synLpOctaves(r));
   TEST_ASSERT_TRUE(next>=fc && next<25000);fc=next;
   const float nq=synLpQ(r),ng=synLpGain(r);
-  TEST_ASSERT_TRUE(nq>=q && nq<=51);TEST_ASSERT_TRUE(ng<=gain && ng>.1f);q=nq;gain=ng;
+  TEST_ASSERT_TRUE(nq>=q && nq<=240);TEST_ASSERT_TRUE(ng<=gain && ng>.1f);q=nq;gain=ng;
   TEST_ASSERT_TRUE(synAttackMs(r)>=a && synAttackMs(r)<22000);a=synAttackMs(r);
   TEST_ASSERT_TRUE(synDecayTauMs(r)>=d && synDecayTauMs(r)<6000);d=synDecayTauMs(r);
  }

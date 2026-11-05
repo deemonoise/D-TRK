@@ -5,6 +5,7 @@
 #include "model.h"
 #include "synth_osc.h"
 #include "wt_mip.h"
+#include "synth_syn_sat.h"
 
 namespace mt {
 
@@ -29,7 +30,7 @@ struct BlOsc {
   // dpw / edgeInv are prepared per block: width increment and 1 / (dt - dpw).
   // The returned pulse is DC-free; square() retains its raw +/-1 convention for the sub.
   MT_INLINE BlOut squarePwm(float dt, float inv, float pw, float dpw, float edgeInv, float sync);
-  // Free-running SYNTH pulse after a block's first interval: width .5..95, fixed ramp direction.
+  // Free-running SYNTH pulse after a block's first interval: width .5..1, fixed ramp direction.
   template <bool Reverse> MT_INLINE BlOut squarePwmRun(float dt, float inv, float pw, float edgeInv);
   MT_INLINE BlOut tri(float dt, float inv, float sync);
   MT_INLINE BlOut sine(float dt, float inv, float sync);
@@ -158,7 +159,7 @@ struct SynParams {
   uint8_t mode[2] = {0, 0};             // SynOsc
   const int16_t* wt[2] = {nullptr, nullptr};
   float hz[2] = {220, 220};
-  float shape[2] = {0, 0};              // 0..1: PW 0.5..0.95 / frame 0..63; Saw / Tri ignore it
+  float shape[2] = {0, 0};              // 0..1: PW / WT; HyperSaw: density1..9, exponential spread0..137.5ct
   float mix = 0;                        // 0 = osc 1, 1 = osc 2
   bool sync = false;
   float sub = 0;                        // 0..1
@@ -166,6 +167,7 @@ struct SynParams {
   uint8_t subWave = 0;                  // SynSubWave; square is the existing default
   float noise = 0;                      // 0..1
   float fold = 0;                       // 0..1: wavefolder on the oscillator mix
+  uint8_t satType = 0, satLevel = 64;
   float ring = 0;                       // 0..1: crossfade of the mix to osc 1 x osc 2
 };
 
@@ -186,13 +188,17 @@ class SynVoice {
   // Oscillator k over n samples into dst; shape ramps from shape_[k]. sync: osc 1 wraps per
   // sample (or nullptr); wrap: this oscillator's wraps (or nullptr).
   void oscBlock(int k, float* dst, const float* sync, float* wrap, int n);
+  void hyperBlock(float* dst, int n);  // one nine-saw group, no heap or WT buffers
   // Wavefolder over a chunk of the oscillator mix; fold_ already includes pitch protection.
   void foldBlock(float* a, int m);
   SynParams p_;
+  SynSat sat_;
   float shape_[2] = {0, 0}, shapeStep_[2] = {0, 0};
   float mix_ = 0, mixStep_ = 0;
   BlOsc bl_[2], sub_;
   WtOsc wt_[2];
+  BlOsc hyper_[8];  // first saw uses bl_[0]; inactive saws keep running for continuous phases
+  float hyperDt_[9] = {};  // pitch/density/spread cache
   uint32_t noise_ = 0x12345678u;
   bool snap_ = true;  // next control() jumps to its values (after trigger)
   float fold_ = 0, foldStep_ = 0, ring_ = 0, ringStep_ = 0;

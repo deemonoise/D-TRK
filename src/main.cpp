@@ -116,7 +116,7 @@ void setup() {
     char msg[48];
     snprintf(msg, sizeof(msg), "AUTOLOAD: %s", storage::resultText(autoErr));
     app->toast(msg);
-  } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped() || storage::tuningDropped()) {
+  } else if (fromBak || missing > 0 || folderFail || storage::songTransposeDropped() || storage::tuningDropped() || storage::fmConverted()) {
     app->loadedToast(fromBak ? "LOADED BACKUP" : nullptr, missing, folderFail);
   }
   // BLE radio only when a device is active (App::begin handed hw::ble the list's active IN / OUT; it

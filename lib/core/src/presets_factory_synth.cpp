@@ -278,7 +278,7 @@ constexpr FactoryPreset kTable[] = {
        two(m, SynOsc::Tri, SynOsc::Saw, 25, 64); lp(m, 66, 20, 20, 50); env(m, 0, 65, 0, 55); fx(m, 100, 70); m.vol = 80; }},
     {InstrType::Synth, "FX", "RISER", [](I& m) {  // airy one-shot opening, no cycling pitch ramp
        two(m, SynOsc::Tri, SynOsc::Tri, 0, 64); m.synNoise = 127;
-       env(m, 88, 100, 127, 78); lp(m, 35, 12, 63, 0); m.fAtk = 100;
+       env(m, 88, 100, 127, 78); lp(m, 35, 12, 63, 0); m.fAtk = 80;  // ~1.4s with the measured filter attack
        fx(m, 12, 55); m.vol = 52; }},
     {InstrType::Synth, "FX", "NOISESWP", [](I& m) {
        sy(m, SynOsc::Tri, nullptr, SynOsc::Tri, nullptr); m.macro[kMacMix] = 0; m.synNoise = 127;

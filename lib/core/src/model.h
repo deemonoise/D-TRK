@@ -121,7 +121,7 @@ uint8_t fmMacroParam(uint8_t machine, int macro);  // shared DCY..CON modulation
 // FM macros: Instrument::macro index, fx DEC..CON = Fx::DCY + index.
 enum FmMacro : uint8_t { kMacDec, kMacCol, kMacShp, kMacSwp, kMacCon, kFmMacros };
 // SYNTH oscillator mode. Stored in files: new modes before Count only.
-enum class SynOsc : uint8_t { Saw, Square, Tri, Wt, Sine, Count };
+enum class SynOsc : uint8_t { Saw, Square, Tri, Wt, Sine, HyperSaw, Count };
 enum class SynPhaseMode : uint8_t { Retrig, Free, Random, Count };
 enum class SynEnvDest : uint8_t { Shape, Fold, Ring, Mix, Pitch2, Count };
 enum class SynSubWave : uint8_t { Square, Sine, Tri, Count };
@@ -152,7 +152,7 @@ static_assert(static_cast<int>(StringModel::Count) <= kMachineMax, "machine fiel
 enum class LofiMachine : uint8_t { Byte, Apc, Count };
 // Stored in files (Instrument::fltMode): new values go before Count only; loaders clamp unknown ones to Off.
 // Sid: 6581-style 12 dB low-pass, dirty, no self-oscillation.
-enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid, Count };
+enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid, Analog1, Analog2, Analog3, Analog4, Count };
 // Lock bits (Voice / TrackRt lockMask, lock[]): FM / DRUM macros 0..4, then the filter, the delay
 // send, the drive, the reverb send, the bit / sample-rate reduction, the pan, the drive model, the
 // trance gate's depth, the MOD send, FM OVER (kLockSat, Instrument::fmParam[7]).
@@ -163,8 +163,10 @@ enum LockBit : uint8_t {
 static_assert(kLocks <= 32, "lockMask is a uint32_t");
 // Byte: a bytebeat formula over the phase (Instrument::lfoByte). Stored in files: new waves before Count only.
 enum class LfoWave : uint8_t { Sine, Tri, Saw, Square, Random, Byte, Count };
-// TrackCfg::driveModel, fx DTY: the curve of the track insert's drive (see ModelDrive, synth_drive.h).
-// Stored in files: new models before Count only; a value >= Count loads as Tanh.
+// SYNTH per-voice saturation; FMEX byte2, stable file IDs.
+enum class SynSatType : uint8_t { Off, Light, Soft, Middle, Hard, Digital, Shaper, Rect, Count };
+MT_INLINE bool synAnalog(uint8_t mode) { return mode >= static_cast<uint8_t>(FltMode::Analog1) && mode <= static_cast<uint8_t>(FltMode::Analog4); }
+// TrackCfg::driveModel: track insert curve (ModelDrive, synth_drive.h), stable file IDs.
 enum class DriveModel : uint8_t { Tanh, Clip, Fold, Rect, Asym, Count };
 // Dec..Con = macro index + 1 (FM / DRUM / SYNTH). Duty: CHIP; Sub, Noise, Semi2, Fold, Ring: SYNTH;
 // RateN / DepthN / RtrgN: LFO N's rate, depth, phase restart (see Synth::control). Pan: the track's
@@ -291,10 +293,12 @@ struct Instrument {
   // LFO 1..4 wave BYTE: {formula (bytebeat_lib.h), A 0..127}; B / C are the formula's defaults. Default:
   // formula 0 and its A (kByteDef*).
   uint8_t lfoByte[kLfos][2] = {{0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}};
-  // Historical FMEX byte retained for old file records; new machines use fmParam[7] (OVER).
+  // FMEX byte0: historical FM value; SYNTH saturation/Analog input level0..127 (64 neutral).
+  // New FM machines use fmParam[7] (OVER); they do not read this byte.
   uint8_t fmSat = 0;
   // CHIP STEP: the envelope snaps to the 16 AY volume levels (kAyLevel). FMEX byte 1; kept on any type.
   bool chipStep = false;
+  uint8_t synSatType = 0;  // SynSatType; FMEX byte2, fills tail padding without growing Instrument
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }

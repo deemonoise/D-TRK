@@ -327,6 +327,7 @@ class Synth {
   static uint8_t machineOf(const Instrument& m);
   float rnd();
   void renderVoice(Voice& v, float* out, int n);
+  void renderSynLp(Voice& v, float* out, int n);
   void renderVoiceRamped(Voice& v, float* out, int n);
   void startSample(Voice& v, const Instrument& m);
   static void renderSample(Voice& v, float* out, int n);

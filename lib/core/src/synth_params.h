@@ -17,7 +17,8 @@ MT_INLINE void synApplyEnv(SynParams& p, uint8_t dest, float amount) {
     case SynEnvDest::Pitch2: break;
     default:
       p.shape[0] = fclamp(p.shape[0] + amount, 0.f, 1.f);
-      p.shape[1] = fclamp(p.shape[1] + amount, 0.f, 1.f);
+      if (p.mode[0] != static_cast<uint8_t>(SynOsc::HyperSaw))
+        p.shape[1] = fclamp(p.shape[1] + amount, 0.f, 1.f);  // HyperSaw: shape2 carries DET spread
       break;
   }
 }

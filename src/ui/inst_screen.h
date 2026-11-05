@@ -101,8 +101,8 @@ class InstScreen : public Screen {
                        kPhase1 = kCommon + 11, kPhase2 = kCommon + 12, kOscView = kCommon + 13, kSynOscRows = 14;
   static constexpr int kSub = kOsc1 + kSynOscRows, kSubWave = kSub + 1, kSubOct = kSub + 2,
                        kNoise = kSub + 3, kRing = kSub + 4, kFold = kSub + 5, kEnvTarget = kSub + 6,
-                       kSenv = kSub + 7, kEAtk = kSub + 8, kEDec = kSub + 9, kModView = kSub + 10,
-                       kSynRows = kSub + 11;
+                       kSenv = kSub + 7, kEAtk = kSub + 8, kEDec = kSub + 9, kSatType = kSub + 10, kSatLevel = kSub + 11, kModView = kSub + 12,
+                       kSynRows = kSub + 13;
   // STRING: one RES page.
   static constexpr int kStrModel = kCommon, kStrDamp = kCommon + 1, kStrBright = kCommon + 2,
                        kStrStruct = kCommon + 3, kStrPos = kCommon + 4, kStrExc = kCommon + 5,

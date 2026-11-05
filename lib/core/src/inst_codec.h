@@ -20,7 +20,7 @@ constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, 
 constexpr size_t kLofiRecSize = 8;  // LOFI: formula, sync, 6 reserved (0)
 constexpr size_t kLfoByteRecSize = 2 * kLfos;  // LFO BYTE: formula, A of LFO 1..4
 constexpr size_t kFmParamRecSize = kFmParams;  // FMPA: independent A..H raw controls
-constexpr size_t kFmExRecSize = 4;  // FM extension: SAT, CHIP STEP, 2 reserved (0)
+constexpr size_t kFmExRecSize = 4;  // FM/SYNTH extension: input level, CHIP STEP, SYNTH sat type, reserved0
 
 void packInst(const Instrument& m, uint8_t* b);
 void unpackInst(const uint8_t* b, Instrument& m);
@@ -41,9 +41,11 @@ void unpackLofi(const uint8_t* b, size_t n, Instrument& m);
 // LFO BYTE (Instrument::lfoByte). unpackLfoByte reads n bytes of a record (shorter: the rest keeps its value).
 void packLfoByte(const Instrument& m, uint8_t* b);
 void unpackLfoByte(const uint8_t* b, size_t n, Instrument& m);
-// FM extension (Instrument::fmSat, chipStep). unpackFmEx reads n bytes of a record (shorter: the rest keeps its value).
+// Independent current-generation FM controls.
 void packFmParams(const Instrument& m, uint8_t* b);
 void unpackFmParams(const uint8_t* b, size_t n, Instrument& m);
+// Shared extension (fmSat, chipStep, synSatType). Missing/invalid SYNTH type defaults to Off;
+// older shorter records retain the other absent fields.
 void packFmEx(const Instrument& m, uint8_t* b);
 void unpackFmEx(const uint8_t* b, size_t n, Instrument& m);
 // Count is cut to the longest strictly ascending prefix of the positions.
@@ -54,5 +56,9 @@ void unpackSlicesExt(const uint8_t* b, Instrument& m);
 // After all records: an unknown FM machine becomes TONE; other unknown machines become 0, as does a
 // LOFI or LFO BYTE formula past the library (byteFormulaCount); an LFO BYTE A over 127 becomes 127.
 void fixInstrument(Instrument& m);
+// Call only after identifying a pre-FMPA file (project without FMPA, preset version<=8).
+// Approximate conversion of the old8-machine family; common controls and source macros stay intact.
+// Returns true for a known old FM voice; unknown old ids fall back to neutral TONE.
+bool migrateLegacyFm(Instrument& m);
 
 }  // namespace mt

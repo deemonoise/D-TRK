@@ -70,7 +70,7 @@ void test_source_mix_and_mod_share_the_real_voice() {
 }
 void test_bin_ranges_retain_peaks_between_representative_points() {
   SynPreviewModel model; SynParams p;
-  p.hz[0] = 4000; p.mode[0] = static_cast<uint8_t>(SynOsc::Square); p.shape[0] = 1;
+  p.hz[0] = 4000; p.mode[0] = static_cast<uint8_t>(SynOsc::Square); p.shape[0] = .9f;  //95% duty;100% is silent
   model.render(p, {}, false, frame);
   bool hiddenPeak = false;
   for (int i = 0; i < kSynPreviewPoints; ++i) {

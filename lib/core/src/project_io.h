@@ -28,9 +28,11 @@ enum class LoadErr : uint8_t { Ok, BadMagic, BadVersion, Truncated, BadCrc, BadV
 struct LoadNotes {
   bool songTransposeDropped = false;  // a legacy chain item had a transpose: the song has none
   bool tuningDropped = false;         // a TUNE chunk was broken: the project plays 12-TET
+  uint8_t fmConverted = 0;             // old8-machine FM voices converted after a valid CRC
 };
 
-// Resets out first. Values are clamped to valid ranges; unknown chunks are skipped. Old song chunks
+// Resets out first. Projects without FMPA convert legacy FM voices after CRC validation.
+// Values are clamped to valid ranges; unknown chunks are skipped. Old song chunks
 // (PROJ chain, CHN2, SCNS) are migrated to the song when the file has no SNG3.
 LoadErr loadProject(ByteSource& in, Project& out, LoadNotes* notes = nullptr);
 

@@ -905,7 +905,7 @@ void test_reference_fm_eight_controls_roundtrip() {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(a.fmParam, b.fmParam, kFmParams);
 }
 
-void test_reference_preset_v8_defaults_and_v9_clamping() {
+void test_reference_preset_v8_migration_and_v9_clamping() {
   Instrument a;
   instrSetType(a, InstrType::Fm);
   a.fmParam[7] = 255;
@@ -915,11 +915,22 @@ void test_reference_preset_v8_defaults_and_v9_clamping() {
   Instrument b;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
   TEST_ASSERT_EQUAL(127, b.fmParam[7]);
-  const auto old = asVersion(out.buf, 8, kPresetSizeV8);
+  a.machine = 4;  // old TONE id, not the current CP VINTAGE
+  const uint8_t macro[] = {64, 40, 0, 0, 64};
+  memcpy(a.macro, macro, sizeof(macro));
+  a.fmSat = 37;
+  VecSink oldOut;
+  TEST_ASSERT_TRUE(savePreset(a, oldOut));
+  const auto old = asVersion(oldOut.buf, 8, kPresetSizeV8);
   VecSource legacy(old);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(legacy, b)));
-  const uint8_t expected[] = {64, 64, 0, 110, 0, 64, 0, 0};
-  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, b.fmParam, kFmParams);
+  TEST_ASSERT_EQUAL(static_cast<int>(FmMachine::Tone), b.machine);
+  TEST_ASSERT_EQUAL(64, b.fmParam[0]);
+  TEST_ASSERT_EQUAL(9, b.fmParam[1]);
+  TEST_ASSERT_EQUAL(127, b.fmParam[3]);
+  TEST_ASSERT_GREATER_THAN(0, b.fmParam[5]);
+  TEST_ASSERT_EQUAL(0, b.fmParam[6]);
+  TEST_ASSERT_EQUAL(37, b.fmParam[7]);
 }
 
 void test_unknown_reference_machine_uses_tone_defaults() {
@@ -939,7 +950,7 @@ void test_unknown_reference_machine_uses_tone_defaults() {
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_unknown_reference_machine_uses_tone_defaults);
-  RUN_TEST(test_reference_preset_v8_defaults_and_v9_clamping);
+  RUN_TEST(test_reference_preset_v8_migration_and_v9_clamping);
   RUN_TEST(test_reference_fm_eight_controls_roundtrip);
   RUN_TEST(test_syn_extension_bytes_and_clamps);
   RUN_TEST(test_syn_old_reserved_bytes_restore_defaults);

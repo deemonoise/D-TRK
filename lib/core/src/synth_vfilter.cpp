@@ -1,12 +1,14 @@
 #include "synth_vfilter.h"
 #include <string.h>
+#include "synth_syn_sat.h"
+#include "synth_drive.h"
 
 namespace mt {
 
 namespace {
 
 // State families: a switch inside one keeps the state, across them resets it.
-MT_INLINE int family(FltKind k) { return k <= FltKind::Hp ? 0 : static_cast<int>(k); }
+MT_INLINE int family(FltKind k) { return k <= FltKind::Hp ? 0 : k >= FltKind::Analog1 ? 9 : static_cast<int>(k); }
 
 // LADDER feedback at resonance 1: the linear loop self-oscillates from k = 4 (each pole -3 dB and
 // -45 degrees at the cutoff); a little over it starts and holds the oscillation, vfSat sets its level.
@@ -69,6 +71,8 @@ MT_HOT void VoiceFilter::set(FltKind k, float hz, float reso127, float q) {
   if (family(k) != family(kind_)) {
     if (k <= FltKind::Hp)
       st_.svf = Svf();
+    else if (k >= FltKind::Analog1)
+      st_.analog = Analog();
     else if (k == FltKind::Ladder)
       st_.ladder = Ladder();
     else if (k == FltKind::Ms20)
@@ -84,6 +88,13 @@ MT_HOT void VoiceFilter::set(FltKind k, float hz, float reso127, float q) {
     tailN_ = 0;
   }
   kind_ = k;
+  if (k >= FltKind::Analog1) {
+    if (hz != hz_ || reso127 != res_ || q != st_.analog.level ||
+        st_.analog.poles != static_cast<int>(k) - static_cast<int>(FltKind::Analog1) + 1)
+      setAnalog(hz, reso127, q);
+    hz_ = hz; res_ = reso127;
+    return;
+  }
   if (k <= FltKind::Hp) {
     st_.svf.set(static_cast<Svf::Mode>(k), hz, q);
     return;
@@ -108,6 +119,9 @@ void VoiceFilter::reset() {
   tail_ = 1;
   tailN_ = 0;
   switch (kind_) {
+    case FltKind::Analog1: case FltKind::Analog2: case FltKind::Analog3: case FltKind::Analog4:
+      for (float& s : st_.analog.core.s) s = 0;
+      break;
     case FltKind::Ladder:
       for (float& s : st_.ladder.s) s = 0;
       break;
@@ -145,6 +159,45 @@ MT_HOT void VoiceFilter::setLadder(float hz, float r) {
   l.c[1] = G2 * b * inv;
   l.c[2] = G * b * inv;
   l.c[3] = b * inv;
+}
+
+void VoiceFilter::setAnalog(float hz, float reso, float level) {
+  Analog& a = st_.analog; Ladder& l = a.core;
+  a.poles = static_cast<int>(kind_) - static_cast<int>(FltKind::Analog1) + 1;
+  a.level = level; synAnalogDrive(level, a.drive, a.gain);
+  // Four-pole fit reaches3.08 at64; no feedback at0 preserves the open-filter drive fit.
+  const float r = fclamp(reso, 0.f, 127.f);
+  l.k = r <= 64.f ? r * (3.08f / 64.f) : r <= 96.f ? 3.08f + (r - 64.f) * (.62f / 32.f) : 3.7f + (r - 96.f) * (.6f / 31.f);
+  osc_ = l.k >= 4.f;
+  const float G = onePoleG(hz), b = 1.f - G, G2 = G * G, G4 = G2 * G2;
+  l.G = G;
+  const float inv = fastRcp(1.f + l.k * G4);
+  l.gi = G4 * inv; l.c[0] = G2 * G * b * inv; l.c[1] = G2 * b * inv;
+  l.c[2] = G * b * inv; l.c[3] = b * inv;
+}
+MT_HOT void VoiceFilter::analogLoop(const float* in, float* out, int n) {
+  Analog& a = st_.analog; Ladder& l = a.core;
+  float s0 = l.s[0], s1 = l.s[1], s2 = l.s[2], s3 = l.s[3];
+  const float G = l.G, b = 1.f - G, k = l.k, drive = a.drive, gain = a.gain;
+  const float gi = l.gi, c0 = l.c[0], c1 = l.c[1], c2 = l.c[2], c3 = l.c[3];
+  const int poles = a.poles;
+  if (in) { tail_ = 1.f; tailN_ = 0; }
+  const bool fade = !in && (osc_ || tailN_ >= kTailCap);
+  if (!in && tailN_ < kTailCap) tailN_ += n;
+  float tail = tail_;
+  const float *table, *slopes; Drive::tables(table, slopes);
+  for (int i = 0; i < n; ++i) {
+    const float x = in ? in[i] * drive : 0.f;
+    const float y4 = gi * x + c0 * s0 + c1 * s1 + c2 * s2 + c3 * s3;
+    const float u = Drive::tanhLut(x - k * y4, table, slopes);
+    const float y1 = G * u + b * s0; s0 = 2.f * y1 - s0;
+    const float y2 = G * y1 + b * s1; s1 = 2.f * y2 - s1;
+    const float y3 = G * y2 + b * s2; s2 = 2.f * y3 - s2;
+    const float y = G * y3 + b * s3; s3 = 2.f * y - s3;
+    if (fade) tail *= kTailFade;
+    out[i] += (poles == 1 ? y1 : poles == 2 ? y2 : poles == 3 ? y3 : y) * gain * tail;
+  }
+  l.s[0] = s0; l.s[1] = s1; l.s[2] = s2; l.s[3] = s3; tail_ = tail;
 }
 
 MT_HOT void VoiceFilter::setMs20(float hz, float r) {
@@ -371,7 +424,12 @@ MT_INLINE void VoiceFilter::sidLoop(const float* __restrict in, float* __restric
   tail_ = tail;
 }
 
+MT_HOT void VoiceFilter::processSynLp(const float* in, float* out, int n, float limit) {
+  st_.svf.processAddBounded(in, out, n, limit);
+}
+
 MT_HOT void VoiceFilter::processAdd(const float* __restrict in, float* __restrict out, int n, int16_t* line) {
+  if (kind_ >= FltKind::Analog1) { analogLoop(in, out, n); return; }
   if (kind_ <= FltKind::Hp) {
     st_.svf.processAdd(in, out, n);
     return;

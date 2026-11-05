@@ -126,7 +126,7 @@ void test_fast_pwm_blocks_match_generic_edge_rendering() {
     for (int block = 0; block < 64; ++block) {
       p.shape[0] = targets[block % 8];
       const float step = block ? (p.shape[0] - shape) / 32.f : 0.f;
-      const float dpw = .45f * step;
+      const float dpw = .5f * step;
       const float relative = dt - dpw;
       const float ei = relative > 0.f ? fastRcp(relative) : (relative < 0.f ? -fastRcp(-relative) : 0.f);
       float out[32] = {};
@@ -134,7 +134,7 @@ void test_fast_pwm_blocks_match_generic_edge_rendering() {
       voice.render(out, 32, 1.f);
       float sh = shape;
       for (int i = 0; i < 32; ++i, sh += step) {
-        const float expected = ref.squarePwm(dt, inv, .5f + .45f * sh, dpw, ei, -1.f).v;
+        const float expected = ref.squarePwm(dt, inv, .5f + .5f * sh, dpw, ei, -1.f).v;
         TEST_ASSERT_FLOAT_WITHIN(2e-5f, expected, out[i]);
       }
       shape += step * 32;

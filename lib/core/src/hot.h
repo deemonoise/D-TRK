@@ -27,6 +27,8 @@
 // keeps control work in IRAM because its flash cache is shared with the UI.
 #if defined(__IMXRT1062__)
 #define MT_CONTROL FLASHMEM
+#define MT_CONTROL_DATA PROGMEM  // control-only coefficients stay in flash, outside scarce DTCM
 #else
 #define MT_CONTROL MT_HOT
+#define MT_CONTROL_DATA MT_DATA
 #endif

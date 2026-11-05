@@ -39,6 +39,28 @@ struct Svf {
     ic1_ = ic1;
     ic2_ = ic2;
   }
+  // SYNTH's classic LP: limit resonant state energy while retaining its small-signal poles.
+  // The radial bound keeps a resonant sinusoid round; clipping only its output would flatten it.
+  MT_HOT MT_INLINE void processAddBounded(const float* __restrict in, float* __restrict out, int n, float limit) {
+    float ic1 = ic1_, ic2 = ic2_;
+    const float a1 = a1_, a2 = a2_, a3 = a3_, ceiling = limit * limit;
+    for (int i = 0; i < n; ++i) {
+      const float v3 = in[i] - ic2;
+      const float v1 = a1 * ic1 + a2 * v3;
+      const float v2 = ic2 + a2 * ic1 + a3 * v3;
+      ic1 = 2.f * v1 - ic1;
+      ic2 = 2.f * v2 - ic2;
+      const float energy = ic1 * ic1 + ic2 * ic2;
+      if (energy > ceiling) {
+        const float scale = limit * fastRcp(sqrtf(energy));
+        ic1 *= scale;
+        ic2 *= scale;
+      }
+      out[i] += v2;
+    }
+    ic1_ = ic1;
+    ic2_ = ic2;
+  }
   MT_HOT MT_INLINE float process(float v0) {
     const float v3 = v0 - ic2_;
     const float v1 = a1_ * ic1_ + a2_ * v3;
