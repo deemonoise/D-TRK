@@ -406,9 +406,9 @@ void test_demo_render_unchanged_by_split() {
   int16_t peak = 0;
   const uint32_t h = demoRenderHash(&blocks, &peak);
   TEST_ASSERT_TRUE(peak > 1000);
-  // Clean master, corrected reverb and smooth delay intentionally change demo audio.
+  // Clean master, send effects and the measured SYNTH ADSR/LP intentionally change demo audio.
   // Deterministic repeats and block splitting remain covered by the adjacent render tests.
-  TEST_ASSERT_EQUAL_HEX32(0x7DA9008Du, h);
+  TEST_ASSERT_EQUAL_HEX32(0x9AEB4F91u, h);
 }
 
 // The synth boards render on one synth, reset between renders: drum noise and LFO Random included,

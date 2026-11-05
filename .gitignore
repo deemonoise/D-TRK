@@ -21,6 +21,9 @@ __pycache__/
 docs/plans/
 docs/automation_checklist_ru.md
 
+# Local Virus wavetable recordings
+/assets/wavetables/virus/
+
 # Local verification reports
 .metrics/
 target/

@@ -1576,6 +1576,8 @@ Factory presets: two per machine — BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT
 
 ### SYNTH: oscillators and wavetables
 
+SYNTH amplitude ADSR and the LP cutoff/resonance controls are calibrated against dry Virus TI Snow reference recordings. Attack is linear; Decay and Release are exponential, and their displayed times describe the 90% → 10% transition. LP resonance includes level compensation. Other instrument types and the other filter models keep their own response. Existing SYNTH sounds therefore change; this is not a complete Virus emulation.
+
 **SYNTH** — an "analog" synthesizer: 2 oscillators, a sub-oscillator, noise, hard sync, a ring modulator, a wavefolder and a dedicated envelope on SHAPE, followed by the shared ADSR, [filter and LFO](#filter). Each oscillator's mode: **SAW**, **SQR**, **TRI** — classic alias-free waveforms (PolyBLEP), or **WT** — a wavetable (64 frames of 256 points, the frame position is SHAPE). The amplitude envelope is Attack, Decay, Sustain, Release from the ENV page; Mode (POLY / MONO) and Glide work as for CHIP. A SYNTH with a wavetable (at least one oscillator in WT) is a "heavy" voice: together with FM, DRUM, STRING and LOFI BYTE no more than 16 of them sound; a SYNTH using only SAW / SQR / TRI is light and does not count toward that limit. How many voices actually sound is up to the [voice cost budget](#sound) (WT costs about twice as much as SAW / SQR / TRI): on overload the oldest voices fade out.
 
 SYNTH has 6 pages: **MAIN**, **ENV**, **OSC**, **MOD**, **FILT**, **LFO**. When Type is changed to another type, the MOD page becomes the type page.

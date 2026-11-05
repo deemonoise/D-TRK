@@ -218,7 +218,7 @@ struct Instrument {
   uint8_t vol = 100;      // 0..127
   int8_t transpose = 0;   // -24..24 semitones
   int8_t fine = 0;        // -50..50 cents
-  uint8_t attack = 0, decay = 40, sustain = 100, release = 30;  // times via envTimeMs, sustain 0..127
+  uint8_t attack = 0, decay = 40, sustain = 100, release = 30;  // envTimeMs; SYNTH uses measured syn* time maps
   bool mono = false;
   uint8_t glide = 0;      // MONO portamento, SLD units (x4 ms), 0 = off
   uint8_t wave = 0;       // Wave

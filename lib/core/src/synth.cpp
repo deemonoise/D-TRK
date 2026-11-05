@@ -3,6 +3,7 @@
 #include "sample_loop.h"
 #include "synth_resample.h"
 #include "synth_params.h"
+#include "synth_syn_calibration.h"
 #include "bytebeat_lib.h"
 #include "fastmath.h"
 #include "hot.h"
@@ -1128,6 +1129,9 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
     } else if (fm) {
       // The machine owns DEC and sustain. This envelope only adds attack and Note Off release.
       v.env.set(envTimeMs(m.attack), 0, 1.f, envTimeMs(m.release));
+    } else if (synT) {
+      v.env.set(synAttackMs(m.attack), synDecayTauMs(m.decay), sus * (1.f / 127.f),
+                synDecayTauMs(m.release), true);
     } else {
       v.env.set(envTimeMs(m.attack), envTimeMs(m.decay), sus * (1.f / 127.f), envTimeMs(m.release));
     }
@@ -1480,12 +1484,15 @@ MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, con
   const float cut = (v.lockMask & (1u << kLockFlt)) ? v.lock[kLockFlt] : (mc > 127 ? 127 : mc);
   float res = (v.lockMask & (1u << kLockRes)) ? v.lock[kLockRes] : (mr > 127 ? 127 : mr);
   if (la[ld(LfoDest::Reso)] != 0) res = clampf(res + 64.f * la[ld(LfoDest::Reso)], 0.f, 127.f);
-  if (res != v.fltRes) {
-    v.fltRes = res;
-    v.fltQ = resoQ(res);
+  const bool synLp = v.syn && mode == static_cast<uint8_t>(FltMode::Lp);
+  const float resKey = res + (synLp ? 128.f : 0.f);  // invalidate on engine / filter-law changes too
+  if (resKey != v.fltRes) {
+    v.fltRes = resKey;
+    v.fltQ = synLp ? synLpQ(res) : resoQ(res);
   }
   // Octaves above 20 Hz (as cutoffHz): cutoff, envelope, key tracking (from C4).
-  float oct = clampf(cut + 64.f * la[ld(LfoDest::Cutoff)], 0.f, 127.f) * (9.451211f / 127.f);  // log2(700)
+  const float rawCut = clampf(cut + 64.f * la[ld(LfoDest::Cutoff)], 0.f, 127.f);
+  float oct = synLp ? synLpOctaves(rawCut) : rawCut * (9.451211f / 127.f);  // log2(700)
   const float fenv = clampf(m.fenv + 64.f * la[ld(LfoDest::Fenv)], -64.f, 63.f);
   if (fenv != 0 && !v.fenvDone) {
     const float e = filterEnv(v.fenvT, m.fAtk, m.fDec);
@@ -1787,7 +1794,9 @@ MT_CONTROL void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, in
   synApplyEnv(sp, m.synEnvDest, senv);
   v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
-  controlAmp(v, v.gain * iv * vol * (1.f / 127.f), dt ? dt : ctlLeft_, dt > 0);
+  const float filterGain = v.fltOn && m.fltMode == static_cast<uint8_t>(FltMode::Lp)
+                               ? synLpGain(v.fltRes - 128.f) : 1.f;
+  controlAmp(v, v.gain * iv * vol * filterGain * (1.f / 127.f), dt ? dt : ctlLeft_, dt > 0);
 }
 
 // LOFI: macros as DRUM (A B C TONE LOOP / WIDTH TONE DRIFT SMOOTH), no params cache (all cheap). The

@@ -17,6 +17,7 @@
 #include "synth_lofi.h"
 #include "wt_builtin.h"
 #include "wt_mip.h"
+#include "synth_syn_calibration.h"
 
 namespace ui {
 namespace {
@@ -24,10 +25,15 @@ static_assert(ParamList::kValueX+31*kCharW<=kScreenW-16,"FM value text fits befo
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-void envTime(uint8_t v, char* o, int n) {
-  const unsigned ms = mt::envTimeMs(v);
+void envMilliseconds(unsigned ms, char* o, int n) {
   if (ms < 1000) snprintf(o, n, "%u ms", ms);
   else snprintf(o, n, "%u.%u s", ms / 1000, ms % 1000 / 100);
+}
+void envTime(uint8_t v, char* o, int n) { envMilliseconds(mt::envTimeMs(v), o, n); }
+void ampTime(const mt::Instrument& m, uint8_t v, bool attack, char* o, int n) {
+  const unsigned ms = m.type == mt::InstrType::Synth
+                          ? (attack ? mt::synAttackMs(v) : mt::synDecaySpanMs(v)) : mt::envTimeMs(v);
+  envMilliseconds(ms, o, n);
 }
 
 }  // namespace
@@ -55,13 +61,13 @@ InstScreen::InstScreen(App& app) : app_(app) {
                      [this](int d) { inst().transpose = static_cast<int8_t>(clampi(inst().transpose + d, -24, 24)); }};
     p[kFine] = {"Fine", [this](char* o, int n) { snprintf(o, n, "%+d ct", inst().fine); },
                 [this](int d) { inst().fine = static_cast<int8_t>(clampi(inst().fine + d, -50, 50)); }};
-    p[kAttack] = {"Attack", [this](char* o, int n) { envTime(inst().attack, o, n); },
+    p[kAttack] = {"Attack", [this](char* o, int n) { ampTime(inst(), inst().attack, true, o, n); },
                   [this](int d) { inst().attack = static_cast<uint8_t>(clampi(inst().attack + d, 0, 127)); }};
-    p[kDecay] = {"Decay", [this](char* o, int n) { envTime(inst().decay, o, n); },
+    p[kDecay] = {"Decay", [this](char* o, int n) { ampTime(inst(), inst().decay, false, o, n); },
                  [this](int d) { inst().decay = static_cast<uint8_t>(clampi(inst().decay + d, 0, 127)); }};
     p[kSustain] = {"Sustain", [this](char* o, int n) { snprintf(o, n, "%d%%", (inst().sustain * 100 + 63) / 127); },
                    [this](int d) { inst().sustain = static_cast<uint8_t>(clampi(inst().sustain + d, 0, 127)); }};
-    p[kRelease] = {"Release", [this](char* o, int n) { envTime(inst().release, o, n); },
+    p[kRelease] = {"Release", [this](char* o, int n) { ampTime(inst(), inst().release, false, o, n); },
                    [this](int d) { inst().release = static_cast<uint8_t>(clampi(inst().release + d, 0, 127)); }};
     p[kMode] = {"Mode", [this](char* o, int n) { snprintf(o, n, "%s", inst().mono ? "MONO" : "POLY"); },
                 [this](int d) { inst().mono = d > 0; }};
@@ -472,7 +478,8 @@ void InstScreen::initTail(Param* t) {
                     else snprintf(o, n, "%c", kV[q / 2]);
                     return;
                   }
-                  const float hz = mt::cutoffHz(inst().cutoff);
+                  const bool synLp = inst().type == mt::InstrType::Synth && inst().fltMode == static_cast<uint8_t>(mt::FltMode::Lp);
+                  const float hz = synLp ? fminf(mt::kSynthRate * .45f, 20.f * exp2f(mt::synLpOctaves(inst().cutoff))) : mt::cutoffHz(inst().cutoff);
                   if (hz < 1000) snprintf(o, n, "%u Hz", static_cast<unsigned>(hz + 0.5f));
                   else snprintf(o, n, "%.1f kHz", hz / 1000.f);
                 },
@@ -1250,20 +1257,35 @@ void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
 }
 
 void InstScreen::drawEnv(LGFX_Sprite& s, int y) {
-  // A, D, R widths ~ log2(1 + ms), the longest time (10 s) = a third of the room left by the plateau.
-  const float kMaxLog = log2f(10001.f);
+  // Segment widths are logarithmic; the largest time gets a third of the available room.
   constexpr int kRoom = (kEnvX1 - kEnvX0 - kEnvHold) / 3;
   const mt::Instrument& m = inst();
-  auto w = [&](uint8_t v) { return static_cast<int>(log2f(1.f + mt::envTimeMs(v)) * kRoom / kMaxLog + 0.5f); };
+  const bool syn = m.type == mt::InstrType::Synth;
+  const float kMaxLog = log2f(1.f + (syn ? mt::synAttackMs(127) : 10000));
+  auto w = [&](unsigned ms) { return static_cast<int>(log2f(1.f + ms) * kRoom / kMaxLog + 0.5f); };
   const int top = y + kEnvY0, bot = y + kEnvY1;
   const int sy = bot - m.sustain * (bot - top) / 127;
   const Param& a = typeRows()[kAttack];
   const uint16_t c = a.dim && a.dim() ? kDim : kText;
-  const int x1 = kEnvX0 + w(m.attack), x2 = x1 + w(m.decay), x3 = x2 + kEnvHold, x4 = x3 + w(m.release);
+  const int x1 = kEnvX0 + w(syn ? mt::synAttackMs(m.attack) : mt::envTimeMs(m.attack));
+  const int x2 = x1 + w(syn ? mt::synDecaySpanMs(m.decay) : mt::envTimeMs(m.decay));
+  const int x3 = x2 + kEnvHold;
+  const int x4 = x3 + w(syn ? mt::synDecaySpanMs(m.release) : mt::envTimeMs(m.release));
+  auto fall = [&](int from, int to, int high, int low) {
+    if (!syn || to <= from) { s.drawLine(from, high, to, low, c); return; }
+    int last = high;
+    for (int x = from + 1; x <= to; ++x) {
+      const float u = static_cast<float>(x - from) / (to - from);
+      const float curve = (expf(-4.f * u) - .01831564f) * 1.01865736f;
+      const int next = low + static_cast<int>((high - low) * curve);
+      s.drawLine(x - 1, last, x, next, c);
+      last = next;
+    }
+  };
   s.drawLine(kEnvX0, bot, x1, top, c);
-  s.drawLine(x1, top, x2, sy, c);
+  fall(x1, x2, top, sy);
   s.drawLine(x2, sy, x3, sy, c);
-  s.drawLine(x3, sy, x4, bot, c);
+  fall(x3, x4, sy, bot);
 }
 
 void InstScreen::drawOsc(LGFX_Sprite& s, int y) {

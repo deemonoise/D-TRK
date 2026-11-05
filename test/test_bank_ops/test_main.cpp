@@ -8,6 +8,8 @@
 #include "wt_make.h"
 #include <string>
 #include <vector>
+#include <new>
+#include <limits>
 #include "bank_ops.h"
 #include "sample_set.h"
 #include "sample_store.h"
@@ -17,6 +19,40 @@
 #include "wt_mip.h"
 
 using namespace mt;
+
+// Bound only nothrow arrays used by bank jobs; ordinary test fixtures remain unrestricted.
+namespace {
+struct ArrayAllocation { void* p = nullptr; size_t bytes = 0; } arrays[64];
+size_t arrayLimit = std::numeric_limits<size_t>::max(), arrayLive = 0, arrayPeak = 0;
+void releaseArray(void* p) {
+  for (auto& a : arrays) if (p && a.p == p) {
+    arrayLive -= a.bytes;
+    a = {};
+    break;
+  }
+  free(p);
+}
+}
+void* operator new[](size_t n) {
+  if (void* p = malloc(n ? n : 1)) return p;
+  throw std::bad_alloc();
+}
+void* operator new[](size_t n, const std::nothrow_t&) noexcept {
+  if (arrayLimit == std::numeric_limits<size_t>::max()) return malloc(n ? n : 1);
+  if (n > arrayLimit - arrayLive) return nullptr;
+  for (auto& a : arrays) if (!a.p) {
+    a.p = malloc(n ? n : 1);
+    if (!a.p) return nullptr;
+    a.bytes = n;
+    arrayLive += n;
+    if (arrayLive > arrayPeak) arrayPeak = arrayLive;
+    return a.p;
+  }
+  return nullptr;
+}
+void operator delete[](void* p) noexcept { releaseArray(p); }
+void operator delete[](void* p, size_t) noexcept { releaseArray(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { releaseArray(p); }
 
 // NOR flash in RAM (as test_sample_bank).
 struct RamFlash final : BankFlash {
@@ -367,6 +403,37 @@ void test_import_wavetable_matches_buffer_import() {
   TEST_ASSERT_TRUE(bankWtIndex(*bank, *proj, "PAD") >= 0);
 }
 
+void test_wavetable_import_commits_with_108kb_temporary_heap() {
+  std::vector<int16_t> source;
+  sineFrames(source, kWtFrames, kWtFrameLen);
+  writePlainWav("/limited.wav", source, 1, 44100);
+  BankResult result;
+  uint32_t crc;
+  arrayPeak = 0;
+  {
+    BankJob j(*bank, *disk);
+    // Enough for the 96 KB mip table and source analysis, with space reused for the index.
+    arrayLimit = 108 * 1024;
+    j.startImport("/limited.wav", true, *proj);
+    result = run(j);
+    crc = j.imported().crc;
+  }
+  arrayLimit = std::numeric_limits<size_t>::max();
+  TEST_ASSERT_EQUAL(0, arrayLive);
+  TEST_ASSERT_TRUE(arrayPeak <= 108 * 1024);
+  TEST_ASSERT_EQUAL(BankResult::Ok, result);
+  SampleBank remounted(*flash);
+  TEST_ASSERT_TRUE(remounted.mount());
+  char key[kSampleNameMax + 1];
+  wtKey(crc, key);
+  const int index = remounted.find(key);
+  TEST_ASSERT_TRUE(index >= 0);
+  TEST_ASSERT_EQUAL(kWtTableSamples, remounted.entry(index)->frames);
+  std::vector<int16_t> canonical(kWtSrcSamples);
+  wtLevel0(remounted.data(index), canonical.data());
+  TEST_ASSERT_EQUAL_HEX32(crc, sampleCrc(canonical.data(), kWtSrcSamples));
+}
+
 void test_wavetable_bad_length() {
   writePlainWav("/w.wav", ramp(1000, 1), 1, 44100);
   BankJob j(*bank, *disk);
@@ -633,6 +700,7 @@ int main(int, char**) {
   RUN_TEST(test_save_then_sync);
   RUN_TEST(test_save_skips_current_files);
   RUN_TEST(test_import_wavetable_matches_buffer_import);
+  RUN_TEST(test_wavetable_import_commits_with_108kb_temporary_heap);
   RUN_TEST(test_import_made_wavetable_wav);
   RUN_TEST(test_wavetable_bad_length);
   RUN_TEST(test_sample_source);

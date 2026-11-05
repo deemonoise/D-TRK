@@ -5016,8 +5016,8 @@ static uint32_t lpBpHpRenderHash() {
 
 void test_lp_bp_hp_render_unchanged() {
   const uint32_t h = lpBpHpRenderHash();
-  // This mix includes FM: re-captured after its explicit mixer-level trim.
-  TEST_ASSERT_EQUAL_HEX32(0xAF9FC6B9u, h);
+  // This mix includes SYNTH: re-captured after its intentional measured ADSR change.
+  TEST_ASSERT_EQUAL_HEX32(0x9196D011u, h);
 }
 
 // A CHIP saw through each new type: it sounds, and the voice is freed within 3 s of the release

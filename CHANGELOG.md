@@ -3,6 +3,8 @@
 Built from the git history. Russian: [CHANGELOG_ru.md](CHANGELOG_ru.md).
 
 ## Unreleased
+- WT: fix `FLASH WRITE ERROR` after table analysis when temporary RAM is tight on the regular Teensy. Release source buffers before committing the flash index; data format and audio are unchanged.
+- SYNTH: calibrate amplitude ADSR and classic LP cutoff/Q/level against Virus TI Snow recordings. Exponential decay/release, corrected ENV times and curves; existing SYNTH sounds change. Other engines and special filter models retain their response.
 - SAMPLE: offline pitch-preserving time stretch (50–200% duration), BPM estimation with confidence and half/double alternatives, improved quiet-attack detection on tonal backgrounds. Up to 128 slices, SLC 0–127; legacy projects/presets still load, new SLX1 extension and v10 presets. Link protocol27: update both boards.
 - SAMPLE: Extract region / selected slice into a new named sample, optionally normalized to -1 dBFS. Copies raw PCM without instrument processing, preserves the original, and supports progress/cancel. Binding changes only after success. Current link protocol27: update both boards.
 - Sample streaming: fragmented store WAVs use immutable sector maps built at registration (1024 extents shared), retaining the contiguous-file fast path. Audio reserve stays finite at the prefetch horizon and respects partial loop blocks, so background SD work waits for actual buffered playback time.

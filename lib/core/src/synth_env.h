@@ -5,17 +5,19 @@
 
 namespace mt {
 
-// Linear ADSR, advanced once per sample. Attack runs at a fixed rate (full scale in aMs),
-// so a retrigger from a non-zero level is shorter and has no click.
+// ADSR advanced once per sample. Linear by default; SYNTH uses exponential decay/release.
+// Attack runs at a fixed rate (full scale in aMs), so retriggering stays continuous.
 class Env {
  public:
   enum class Stage : uint8_t { Idle, Attack, Decay, Sustain, Release };
 
-  void set(uint16_t aMs, uint16_t dMs, float sustain, uint16_t rMs) {
+  // Exponential mode uses dMs / rMs as time constants; attack remains linear.
+  void set(uint16_t aMs, uint16_t dMs, float sustain, uint16_t rMs, bool exponential = false) {
+    expDecay_ = expRelease_ = exponential;
     sus_ = sustain < 0.f ? 0.f : (sustain > 1.f ? 1.f : sustain);
     aStep_ = aMs ? 1.f / samples(aMs) : 1.f;
-    dStep_ = dMs ? (1.f - sus_) / samples(dMs) : 1.f;
-    rLen_ = samples(rMs);
+    dStep_ = dMs ? (exponential ? coefficient(dMs) : (1.f - sus_) / samples(dMs)) : 1.f;
+    rLen_ = rMs ? (exponential ? coefficient(rMs) : samples(rMs)) : 0.f;
   }
   // on: from the current level to Attack (no click); off: Release.
   void gate(bool on) {
@@ -26,12 +28,13 @@ class Env {
         kill();
       } else {
         stage_ = Stage::Release;
-        rStep_ = level_ / rLen_;
+        rStep_ = expRelease_ ? rLen_ : level_ / rLen_;
       }
     }
   }
   // Release over ms, whatever the release time (choke).
   void fade(uint16_t ms) {
+    expRelease_ = false;  // stop/choke/voice stealing must keep its short linear fade
     rLen_ = samples(ms);
     gate(false);
   }
@@ -48,17 +51,19 @@ class Env {
           stage_ = Stage::Decay;
         }
         break;
-      case Stage::Decay:
-        level_ -= dStep_;
-        if (level_ <= sus_) {
+      case Stage::Decay: {
+        const float before = level_;
+        level_ -= expDecay_ ? (level_ - sus_) * dStep_ : dStep_;
+        if (level_ <= sus_ || (expDecay_ && (level_ - sus_ <= 1e-5f || level_ == before))) {
           level_ = sus_;
           stage_ = Stage::Sustain;
           if (sus_ <= 0.f) kill();  // nothing left to hold: free the voice
         }
         break;
+      }
       case Stage::Release:
-        level_ -= rStep_;
-        if (level_ <= 0.f) kill();
+        level_ -= expRelease_ ? level_ * rStep_ : rStep_;
+        if (level_ <= (expRelease_ ? 1e-5f : 0.f)) kill();
         break;
       default:
         break;
@@ -76,12 +81,18 @@ class Env {
 
  private:
   static float samples(uint16_t ms) { return ms * (kSynthRate / 1000.f); }
+  static float coefficient(uint16_t ms) {
+    const float x = 1.f / samples(ms);  // callers guarantee >= 1 ms
+    return x * (1.f - .5f * x);  // 1-exp(-x), relative error < .009% at >=1 ms
+  }
 
   Stage stage_ = Stage::Idle;
+  bool expDecay_ = false, expRelease_ = false;  // occupy existing alignment padding
   float level_ = 0;
   float sus_ = 1;
   float aStep_ = 1, dStep_ = 1, rStep_ = 1;
   float rLen_ = 0;
 };
+static_assert(sizeof(Env) == 28, "SYNTH envelope curves must not grow the voice pool");
 
 }  // namespace mt

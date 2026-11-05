@@ -515,6 +515,12 @@ BankResult BankJob::importWt(const uint32_t* knownCrc) {
     default: r = BankResult::Unsupported; break;
   }
   if (rd.err) r = BankResult::ReadFail;
+  // Source analysis is finished. Reuse its 10 KB for the flash index commit instead of
+  // keeping it beside the 96 KB mip table (the regular Teensy has less heap than desk).
+  delete[] raw_;
+  delete[] mono_;
+  raw_ = nullptr;
+  mono_ = nullptr;
   // crc of the canonical source: level 0 of every frame, in order (wtLevel0 without its 32 KB).
   uint32_t crc = 0;
   if (r == BankResult::Ok)

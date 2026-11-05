@@ -294,7 +294,8 @@ void test_every_preset_sounds() {
       int16_t buf[Synth::kBlock], bufR[Synth::kBlock];
       int peak = 0;
       // 116 ms; LOFI 348 ms: a bytebeat song may start with a rest (42 MELDY: 256 ms at C-4).
-      const int blocks = ty == InstrType::Lofi ? 120 : 40;
+      // Slow SYNTH drones need time to open their measured attack; keep the audibility threshold.
+      const int blocks = ty == InstrType::Synth ? 800 : ty == InstrType::Lofi ? 120 : 40;
       for (int k = 0; k < blocks; ++k) {
         s.render(buf, bufR);
         for (int16_t x : buf) peak = x > peak ? x : (-x > peak ? -x : peak);
