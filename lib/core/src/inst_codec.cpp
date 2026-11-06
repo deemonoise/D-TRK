@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include "bytebeat_lib.h"
+#include "mod_matrix.h"
 
 namespace mt {
 namespace {
@@ -16,6 +17,20 @@ uint8_t clampu(int v, int lo, int hi) { return static_cast<uint8_t>(v < lo ? lo 
 int8_t clamps(int8_t v, int lo, int hi) { return static_cast<int8_t>(v < lo ? lo : (v > hi ? hi : v)); }
 
 }  // namespace
+
+void packMod(const Instrument& m, uint8_t* b) { memcpy(b, m.mod, kModRecSize); }
+void unpackMod(const uint8_t* b, size_t n, Instrument& m) {
+  for (int i = 0; i < kModRoutes && (i + 1) * sizeof(ModRoute) <= n; ++i) {
+    ModRoute r;
+    memcpy(&r, b + i * sizeof(ModRoute), sizeof r);
+    if (r.source >= uint8_t(ModSource::Count) || !modDestValid(r.dest)) r.source = 0;
+    if (!modDestValid(r.dest)) r.dest = 0;
+    r.amount = clamps(r.amount, -64, 63);
+    if (r.polarity >= uint8_t(ModPolarity::Count)) r.polarity = 0;
+    if (r.via >= uint8_t(ModSource::Count)) r.via = 0;
+    m.mod[i] = r;
+  }
+}
 
 void packInst(const Instrument& m, uint8_t* b) {
   memset(b, 0, kInstRecSize);

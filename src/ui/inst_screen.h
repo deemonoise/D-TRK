@@ -120,7 +120,7 @@ class InstScreen : public Screen {
   static constexpr int kKitRows = kKitMain + mt::kKitLanes * kLaneRows;
   // Logical pages; kPgType2 (SYNTH MOD) only on SYNTH and KIT, so the others have one page less. KIT: MAIN,
   // kPgType (lanes 1-8) and kPgType2 (lanes 9-16) only.
-  enum Page : int { kPgMain, kPgEnv, kPgType, kPgType2, kPgFilt, kPgLfo };
+  enum Page : int { kPgMain, kPgEnv, kPgType, kPgType2, kPgFilt, kPgLfo, kPgMatrix };
   static constexpr int kHeaderH = 28;
   static constexpr int kPageBarH = 24;
   static constexpr int kListRows = (kAreaH - kHeaderH - kPageBarH) / ParamList::kRowH;
@@ -151,7 +151,7 @@ class InstScreen : public Screen {
   bool onEditor() const { return shown_ == mt::InstrType::Sample && page_ == kPgType; }
   bool synth() const { return shown_ == mt::InstrType::Synth; }
   bool kit() const { return shown_ == mt::InstrType::Kit; }
-  int pageCount() const { return kit() ? 3 : (synth() ? 6 : 5); }
+  int pageCount() const { return kit() ? 3 : (synth() ? 7 : 6); }
   void initKit();
   static constexpr int kLanesPerPage = 8;
   int firstLane() const { return page_ == kPgType2 ? kLanesPerPage : 0; }  // KIT lane page's first lane
@@ -167,6 +167,9 @@ class InstScreen : public Screen {
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
   void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC/MOD waveform model
   void initTail(Param* t);  // t = &rows[type's row count]
+  void initMatrix();
+  int modSel_ = 0;
+  Param matrix_[6];
   void relabel();           // DRUM / LOFI macro labels of the current machine
   void leaveEdit();
   void fixNames();  // empty name -> INSn

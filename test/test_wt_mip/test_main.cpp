@@ -92,8 +92,28 @@ void test_silent_source_fails() {
   TEST_ASSERT_FALSE(wtBuild(z, table));
 }
 
+// Frozen PCM from the pre-optimization runtime sine tables, including every mip/frame.
+void test_build_retains_original_pcm_bits() {
+  struct Mixed : WtSpectrumSource {
+    void spectrum(int f, float* re, float* im) override {
+      for (int h = 1; h <= kWtHarm; ++h) {
+        re[h-1] = h == f+1 ? .7f : 0.f;
+        im[h-1] = 1.f / h;
+      }
+    }
+  } src;
+  TEST_ASSERT_TRUE(wtBuild(src, table));
+  uint64_t hash = 14695981039346656037ull;
+  for (uint16_t x : table) {
+    hash ^= x & 255; hash *= 1099511628211ull;
+    hash ^= x >> 8; hash *= 1099511628211ull;
+  }
+  TEST_ASSERT_EQUAL_HEX64(0x978de35a553010dfull, hash);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_build_retains_original_pcm_bits);
   RUN_TEST(test_layout);
   RUN_TEST(test_analyze_roundtrip);
   RUN_TEST(test_build_levels_bandlimited);

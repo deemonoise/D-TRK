@@ -299,7 +299,7 @@ only the visual count-in is available. Both boards need protocol **20 or later**
 
 - **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on (FILE → SYSTEM).
 - **VEL.** 0–127, ×10 with Shift. A value of 0 is shown as `...` and means "the track's default velocity".
-- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN, FLP; pitch and volume SLD, VIB, PBN, VSL, ACC, AC2; sound FLT, RES, DRV, DTY, BIT, SRR, GTE, DEC, COL, SHP, SWP, CON, SAT; LFO LFO, LFD, LFS, LFW, LFT, LFR; sample OFS, SLC; sends and pan DLY, RVB, MOD, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
+- **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN, FLP; pitch and volume SLD, VIB, PBN, VSL, ACC, AC2; sound FLT, RES, DRV, DTY, BIT, SRR, GTE, DEC, COL, SHP, SWP, CON, SAT; LFO LFO, LFD, LFS, LFW, LFT, LFR, M01–M08; sample OFS, SLC; sends and pan DLY, RVB, MOD, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
 - **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. For GAT Shift moves ±10 % of the shown value, to the nearest GAT value in the turn's direction (below 100 % exactly ±10 %; above 100 % the values go 7 % apart, so Shift moves one value: 95 → 107, 100 → 107, 114 → 107). On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
 
 One edit session (from entering to leaving edit mode) is one undo step.
@@ -512,6 +512,7 @@ Each step has six slots. If the same command is in several slots, the first one 
 | `LFW` | SIN, TRI, SAW, SQR, RND, BYT | INT | Wave lock of the selected LFO. |
 | `LFT` | PIT, DEC, COL, SHP, SWP, CON, SAT, VOL, CUT, DRV, RES, FEN, DLY, RVB, PAN, BIT, SRR, FIN, DUT, SUB, NOI, SM2, FLD, RNG, RA1–RA4, DP1–DP4, RG1–RG4, MOD | INT | Dest lock of the selected LFO, same targets as Dest (RA / DP / RG — L1–L4 RATE / DEPTH / RTRG); a target the type lacks does nothing. |
 | `LFR` | 00–FF | INT | Restarts the selected LFO's phase at value / 256 (`00` — start of the period, `80` — middle): Retrig OFF — the instrument's shared phase, Retrig ON — the step's notes or the sounding notes. |
+| `M01`…`M08` | −64…+63 | INT | Matrix route 1–8 depth lock for step notes or sounding notes; insertion default 0. |
 | `DEC` | 0–127 | INT | FM, DRUM, SYNTH, STRING, LOFI: the DECAY macro for the step's note (for DRUM and LOFI — the machine slot with the same number, for SYNTH — SHP1, for STRING — DAMP). |
 | `COL` | 0–127 | INT | FM, DRUM, SYNTH, STRING, LOFI: the COLOR macro for the step's note (for DRUM and LOFI — the machine slot with the same number, for SYNTH — SHP2, for STRING — BRIGHT). |
 | `SHP` | 0–127 | INT | FM, DRUM, SYNTH, STRING, LOFI: the SHAPE macro for the step's note (for DRUM and LOFI — the machine slot with the same number, for SYNTH — MIX, for STRING — STRUCT). |
@@ -1343,7 +1344,7 @@ Choose a free **Name**, optionally turn **Normalize** to **−1 dBFS**, then pre
 
 The operation stops transport and runs offline, with progress. A long encoder press or Play cancels processing. REC must be stopped first. On success the new sample is added to the project and assigned to this instrument; Start/End become the full new sample, and loop/slices are cleared. The original sample and other instruments are retained. An occupied name, error, cancellation or changed source leaves the project and binding untouched. Save the project normally to persist its new sample entry and asset copy.
 
-Both firmwares must support link protocol **27**. Existing projects and presets still load; new files retain up to 128 slices.
+Both firmwares must support link protocol **28**. Existing projects and presets still load; new files retain up to 128 slices.
 
 <a id="sample-stretch"></a>
 
@@ -1465,7 +1466,7 @@ For field recordings and long takes: MIX → the **REC** button (or an encoder l
 
 ### Slices: playback
 
-Up to 128 slices per instrument. SLC 0–127 and editor track-button preview address all 128. NOTE follows MIDI notes 0–127: Root=60 exposes 68 slices by notes; Root=0 exposes all 128. Selected slices above the NOTE range preview directly; use Extract slice to make a separate asset. Slice n plays from its marker to the next slice; the last one plays to End (if End is to its left — to the end of the sample). While there are no slices, NOTE and FX sound like OFF. Projects append an SLX1 extension and presets use version 10; old files load without conversion. Older firmware sees only the first 32 markers of a new project and loses the extension when saving; it cannot load v10 presets.
+Up to 128 slices per instrument. SLC 0–127 and editor track-button preview address all 128. NOTE follows MIDI notes 0–127: Root=60 exposes 68 slices by notes; Root=0 exposes all 128. Selected slices above the NOTE range preview directly; use Extract slice to make a separate asset. Slice n plays from its marker to the next slice; the last one plays to End (if End is to its left — to the end of the sample). While there are no slices, NOTE and FX sound like OFF. Projects append an SLX1 extension and presets use version 11; old files load without conversion. Older firmware sees only the first 32 markers of a new project and loses the extension when saving; it cannot load v11 presets.
 
 - **NOTE:** the Root note plays slice 1, Root+1 plays slice 2 and so on (slice number = note − Root + 1). Notes below Root and above the last slice are silent. The slice plays at its original pitch (Transpose and Fine work) — handy for laying a break out across the keys.
 - **FX:** notes play the whole Start–End region at normal pitch, and fx [SLC](#fx) on a step picks the slice for that step's note: `SLC 0` — slice 1, `SLC 127` — slice 128. The slice plays at the note's pitch (like a regular sample from Root). Without SLC, or with a number not less than the slice count — the whole region.
@@ -1890,6 +1891,31 @@ Self-oscillation (LADDER, MS20) sounds without any input: after the amp envelope
 
 **LFO to LFO.** An LFO can modulate another LFO of the same instrument. **L1–L4 RATE** speeds up / slows down the target: its rate × 2^(±4), ≈ ×/÷16 at full depth, in FREE and TEMPO. **L1–L4 DEPTH** scales the target's depth: × (1 + value), limited to 0…2 — −64 silences the target, +63 nearly doubles it. **L1–L4 RTRG** restarts the target at phase 0 on each cycle of the source (RND gets a new value); only depth ≠ 0 matters, its amount doesn't. An LFO can't pick its own RTRG. Modulation reaches the target with a 1 ms lag, so any routing works, loops included. A Retrig OFF target (one phase per instrument) takes RATE and RTRG only from Retrig OFF LFOs — a per-voice LFO has no single phase to give; DEPTH works from any LFO. While playback is stopped, a TEMPO + Retrig OFF target holds and ignores restarts.
 
+<a id="matrix"></a>
+
+### MATRIX: modulation matrix
+
+**INST → MATRIX** provides 8 additional routes per instrument (except KIT; edit the instrument used by its INST lane). Legacy LFO and follower assignments remain active. One source can feed several targets at independent depths, and multiple sources can feed one target.
+
+| Row | Function |
+|---|---|
+| Route | Slot 1–8; its depth corresponds to FX M01–M08. |
+| Source | OFF, LFO 1–4, AMP ENV, FLT ENV, VELOCITY, NOTE, RANDOM, FOLLOWER. OFF disables a route while retaining its settings. |
+| Target | The LFO targets, including L1–L4 RATE / DEPTH, excluding RTRG. The list follows the instrument type. |
+| M01…M08 depth | Signed amount −64…+63; zero contributes nothing, negative reverses direction. |
+| Polarity | NATIVE keeps the source range; 0..1 is unipolar; −1..1 is bipolar. |
+| Depth via | OFF keeps full depth; another source multiplies only this route's depth by its unipolar 0…1 value. |
+
+LFOs and RANDOM are natively bipolar; other sources use 0…1. AMP ENV reads the voice's current amplitude envelope. FLT ENV uses Flt atk/dec even with the filter off or Flt env at zero. VELOCITY is note velocity / 127; NOTE is the original MIDI note / 127. RANDOM is reproducible and held for each note. FOLLOWER reads the envelope configured by the track's follow source and attack/release; its legacy destination amount does not scale this source.
+
+An LFO used as Source or Depth via runs even with its legacy Depth at zero. Wave, Rate, Sync and Retrig remain on the LFO page. Matrix L1–L4 RATE targets affect per-voice LFOs (Retrig ON); Retrig OFF retains the shared instrument clock. L1–L4 DEPTH scale the legacy LFO assignment; Depth via scales an individual matrix route. LFO-to-LFO routes read the previous control update, avoiding recursive evaluation.
+
+Example: Route 1 LFO 1 → CUTOFF at +24; Route 2 LFO 1 → PAN at −16. Both share a phase, with independent direction and depth. For velocity-controlled vibrato, use LFO 2 → FINE at +12 with Depth via VELOCITY; other routes from LFO 2 keep their own depths.
+
+**Automation:** M01–M08 lock route depth for the step's notes, or sounding notes on a note-less step. Range −64…+63, insertion default 0. Motion REC, MIDI Learn on the depth row, Automation view, signed ramps and lock bypass are supported. Source, target and Depth via remain unchanged by these commands. Existing base parameter, p-lock and scene rules remain; the matrix adds modulation in the same units as LFOs. Sends, insert and pan retain the newest sounding voice's track-wide behavior.
+
+Projects store MODM (omitted when empty); presets use v11. Older files load with an empty matrix. Older firmware skips MODM and drops its routes when saving; it cannot read v11 presets. Update **both boards** for link protocol 28.
+
 <a id="kit"></a>
 
 ### KIT (drum kit)
@@ -1937,7 +1963,7 @@ The **PRESET** button in the INST header (or <kbd>Shift</kbd>+long press of the 
 - **Save** always writes to the folder of the instrument's type; `[FACTORY]` is not shown. File name: up to 16 characters, A–Z 0–9 \_ -; the first 8 characters also become the instrument name.
 - A **SAMPLE preset** stores the sample name. If that sample is in the project, it is applied together with the preset's Root and slices; otherwise the instrument's sample, Root and slices stay as they were. The Slices, Chop and Chop N / Sens modes are always taken from the preset. There are no factory SAMPLE presets.
 - A **SYNTH preset** stores the oscillator wavetable names: built-in tables are always available, a project table is matched by name, and a missing one is imported from `/wavetables` (see [wavetables](#wavetables)). Factory SYNTH presets use only built-in tables.
-- **Format:** presets are saved in v10 format, including128 slices, SYNTH parameters, LFOs (with the LFO BYTE formulas), the LOFI formula and eight FM controls. Older files load; pre-v9 FM presets automatically convert with an approximate sound mapping.
+- **Format:** presets are saved in v11 format, including the modulation matrix, 128 slices, SYNTH parameters, LFOs (with the LFO BYTE formulas), the LOFI formula and eight FM controls. Older files load; pre-v9 FM presets automatically convert with an approximate sound mapping.
 - **Folders:** up to 4 levels inside a type folder (deeper gives "TOO DEEP").
 - Without a card, Load shows only `[FACTORY]` and Save does not open ("NO SD CARD").
 

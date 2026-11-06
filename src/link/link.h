@@ -35,7 +35,8 @@ using ProgressFn = void (*)(const mt::link::Progress& p, void* ctx);
 bool requestLong(mt::link::Msg type, const uint8_t* p, int n, uint8_t* reply, int& replyLen,
                  ProgressFn onProgress = nullptr, void* ctx = nullptr, uint32_t idleMs = 2500);
 
-// Hello seen and a Status within the last second.
+// Hello confirmed and recent Status / matching reply, or a request still within its
+// bounded wait. A slow card must not cause Hello to reset an open filesystem session.
 bool synthUp();
 // The synth speaks our protocol with the same SynthModel layout.
 bool versionOk();

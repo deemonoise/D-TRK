@@ -95,7 +95,7 @@ MT_CONTROL int samplePlaybackCost(float frameStep, bool pitchModulated = false);
 // they still ring. Overrides price that actual engine without copying the large Instrument.
 // sampleFrameStep: current source frames/output after root/sample-rate, pitch, ARP, bend and LFO;
 // caller must pass the newly resolved step, not the previous control period's value.
-MT_CONTROL int voiceCost(const Instrument& m, bool sample, uint8_t potential = 0, float effectiveHz = 0,
+MT_HOT int voiceCost(const Instrument& m, bool sample, uint8_t potential = 0, float effectiveHz = 0,
                          InstrType actualType = InstrType::Count, uint8_t actualMachine = 255,
                          float sampleFrameStep = 1.f);
 

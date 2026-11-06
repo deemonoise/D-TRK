@@ -158,7 +158,7 @@ enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Ladder, Ms20, Comb, Formant, Sid
 // trance gate's depth, the MOD send, FM OVER (kLockSat, Instrument::fmParam[7]).
 enum LockBit : uint8_t {
   kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLockPan, kLockDty, kLockGte,
-  kLockMod, kLockSat, kLocks
+  kLockMod, kLockSat, kLockMatrix0, kLocks = kLockMatrix0 + 8
 };
 static_assert(kLocks <= 32, "lockMask is a uint32_t");
 // Byte: a bytebeat formula over the phase (Instrument::lfoByte). Stored in files: new waves before Count only.
@@ -198,6 +198,18 @@ struct LfoCfg {
   uint8_t dest = 0;   // LfoDest
   uint8_t sync = 0;   // kLfoTempo | kLfoFree bits
 };
+// Optional routes add to the legacy LFO destinations. Stored IDs: append only.
+enum class ModSource : uint8_t { Off, Lfo1, Lfo2, Lfo3, Lfo4, AmpEnv, FilterEnv, Velocity, Note, Random, Follower, Count };
+enum class ModPolarity : uint8_t { Native, Unipolar, Bipolar, Count };
+constexpr int kModRoutes = 8;
+struct ModRoute {
+  uint8_t source = 0;  // ModSource; Off disables the route
+  uint8_t dest = 0;    // LfoDest; phase reset is not a continuous target
+  int8_t amount = 0;   // -64..63, same target units as LFO depth
+  uint8_t polarity = 0;  // Native preserves each source's range
+  uint8_t via = 0;     // ModSource, Off = full depth; otherwise multiplied by its unipolar value
+};
+static_assert(sizeof(ModRoute) == 5, "matrix record layout");
 static_assert(sizeof(LfoCfg) == 5, "LfoCfg layout (file format)");
 // LFO fx locks (Fx::LFD .. LFT in this order): bit LFO x kLfoLocks + LfoLock of a lock mask.
 enum LfoLock : uint8_t { kLfoLkDepth, kLfoLkRate, kLfoLkWave, kLfoLkDest, kLfoLocks };
@@ -299,6 +311,7 @@ struct Instrument {
   // CHIP STEP: the envelope snaps to the 16 AY volume levels (kAyLevel). FMEX byte 1; kept on any type.
   bool chipStep = false;
   uint8_t synSatType = 0;  // SynSatType; FMEX byte2, fills tail padding without growing Instrument
+  ModRoute mod[kModRoutes];
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }
@@ -392,7 +405,8 @@ float folStepMs();  // 32 samples at kSynthRate: 1 ms at 32 kHz, 0.726 ms at 44.
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
-  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, SAT, AC2, Count
+  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, SAT, AC2,
+  M01, M02, M03, M04, M05, M06, M07, M08, Count
 };
 // LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:

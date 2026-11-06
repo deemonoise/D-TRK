@@ -55,6 +55,7 @@ struct FmEngine {
 struct DrumEngine {
   DrumVoice drv;  // with what it derives from its DrumParams (set() on a change)
 };
+static_assert(sizeof(SynVoice) <= sizeof(DrumEngine), "SYNTH control caches must not grow the voice pool");
 struct LofiEngine {
   LofiVoice lv;
   LofiParams lp;  // the formula cache (Synth::controlLofi)
@@ -165,6 +166,7 @@ struct Voice {
   uint16_t lfoLockMask = 0;          // LFO fx locks of this note: bit = LFO x kLfoLocks + LfoLock
   LfoCfg lfoLock[kLfos];             // their values
   float lfoOut[kLfos] = {};          // last update's output (-1..1 x depth / 64): LFO -> LFO source
+  float modLfo[kLfos] = {};          // matrix's raw waves, independent of legacy depth
   uint8_t lfoWrap = 0;               // bit i: LFO i's phase wrapped since the last update (RTRG source)
   // fmMachine() cache: params for the key below, recomputed when a macro moves >= 0.5 or the
   // pitch >= 1 cent from it (Synth::controlFm). fpValid = false forces a recompute (note-on).
@@ -224,8 +226,8 @@ struct Voice {
   bool lofi = false;
 };
 #if defined(__IMXRT1062__)
-static_assert(sizeof(VoiceEngine) == 664 && sizeof(Voice) == 1200,
-              "HyperSaw must fit the existing Teensy voice pool without growing RAM1");
+static_assert(sizeof(VoiceEngine) == 664 && sizeof(Voice) == 1224,
+              "matrix adds 16 bytes of raw LFO state and 8 depth locks per Teensy voice");
 #endif
 
 // Internal render sentinel, outside every stored CHIP wave (0xff is the STEP dispatch).

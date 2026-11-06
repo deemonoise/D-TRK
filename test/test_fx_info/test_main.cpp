@@ -310,7 +310,7 @@ void test_lfo_fx() {
   TEST_ASSERT_EQUAL_STRING(" 80", fmt(Fx::LFR, 0x80));
   for (int f = static_cast<int>(Fx::LFO); f <= static_cast<int>(Fx::LFR); ++f) TEST_ASSERT_TRUE(fxSynthOnly(static_cast<Fx>(f)));
   TEST_ASSERT_TRUE(fxNextCmd(Fx::SAT, 1) == Fx::LFO);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::LFR, 1) == Fx::OFS);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::LFR, 1) == Fx::M01);
 }
 
 // ACC: drum tracks only, lane mask 0..255 shown as two hex digits (like VIB / ARP).
@@ -337,7 +337,8 @@ void test_ac2_info() {
   TEST_ASSERT_FALSE(fxSynthOnly(Fx::AC2));
   TEST_ASSERT_TRUE(fxNextCmd(Fx::ACC, 1) == Fx::AC2);
   TEST_ASSERT_TRUE(fxNextCmd(Fx::AC2, -1) == Fx::ACC);
-  TEST_ASSERT_EQUAL(static_cast<int>(Fx::AC2) + 1, static_cast<int>(Fx::Count));
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::AC2) + 1, static_cast<int>(Fx::M01));
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::M08) + 1, static_cast<int>(Fx::Count));
 }
 
 void test_cnd_pre_nei() {

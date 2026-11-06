@@ -21,6 +21,9 @@ constexpr size_t kLofiRecSize = 8;  // LOFI: formula, sync, 6 reserved (0)
 constexpr size_t kLfoByteRecSize = 2 * kLfos;  // LFO BYTE: formula, A of LFO 1..4
 constexpr size_t kFmParamRecSize = kFmParams;  // FMPA: independent A..H raw controls
 constexpr size_t kFmExRecSize = 4;  // FM/SYNTH extension: input level, CHIP STEP, SYNTH sat type, reserved0
+constexpr size_t kModRecSize = kModRoutes * sizeof(ModRoute);
+void packMod(const Instrument& m, uint8_t* b);
+void unpackMod(const uint8_t* b, size_t n, Instrument& m);
 
 void packInst(const Instrument& m, uint8_t* b);
 void unpackInst(const uint8_t* b, Instrument& m);

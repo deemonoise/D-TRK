@@ -315,7 +315,8 @@ class Synth {
   static void macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]);
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
   void controlFilter(Voice& v, const Instrument& m, float pitch, const float* la);  // la: control()'s LFO sums
-  float lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods);
+  float lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods, bool matrix = false);
+  void matrixSources(const Voice& v, const Instrument& m, uint16_t mask, float* sources) const;
   float lfoRateHz(const LfoCfg& c) const;
   static LfoCfg lfoCfgOf(const Voice* v, const Instrument& m, int i);  // the instrument's + v's locks
   void lfoFx(uint8_t track, Fx f, uint8_t val, bool now);

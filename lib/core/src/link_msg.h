@@ -6,7 +6,8 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 27;  // 27: offline stretch / tempo, 128 slices; update both boards
+constexpr uint16_t kProtocol = 28;  // 28: instrument modulation matrix / signed depth locks; update both boards
+                                    // 27: offline stretch / tempo, 128 slices
                                     // 25: independent eight-parameter FM instrument layout
                                     // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
                                     // 11: export (RenderOut, RenderStartReq / RenderEndReq / RenderRep fields);

@@ -183,8 +183,22 @@ class SynVoice {
   // Next control period of n samples: shape and mix ramp to p over it.
   void control(const SynParams& p, int n);
   void render(float* out, int n, float amp);
+  // Pure calibration coefficients survive retrigger; Filter/Shape entries stay independent.
+  float cachedModEnv(uint32_t samples, uint8_t attack, uint8_t decay, bool shape);
+  MT_INLINE float cachedLpGain(float raw) {
+    if (raw != gainRaw_) updateLpGain(raw);
+    return gainValue_;
+  }
 
  private:
+  void updateLpGain(float raw);
+  struct ModEnvCache {
+    float attackSamples = 0, invAttack = 0, invTau = 0;
+    uint8_t attack = 0, decay = 0;
+    bool valid = false;
+  };
+  ModEnvCache modEnv_[2];
+  float gainRaw_ = -1.f, gainValue_ = 1.f;
   // Oscillator k over n samples into dst; shape ramps from shape_[k]. sync: osc 1 wraps per
   // sample (or nullptr); wrap: this oscillator's wraps (or nullptr).
   void oscBlock(int k, float* dst, const float* sync, float* wrap, int n);

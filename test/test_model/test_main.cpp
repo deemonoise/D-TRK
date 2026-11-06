@@ -617,7 +617,7 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(83, p.compAttack);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(17, kLocks);  // + BIT, SRR, PAN, DTY, GTE, MOD, SAT
+  TEST_ASSERT_EQUAL(17 + kModRoutes, kLocks);  // + BIT, SRR, PAN, DTY, GTE, MOD, SAT
   TEST_ASSERT_EQUAL(kLockSrr + 1, kLockPan);
   TEST_ASSERT_EQUAL(kLockPan + 1, kLockDty);
   TEST_ASSERT_EQUAL(kLockDty + 1, kLockGte);

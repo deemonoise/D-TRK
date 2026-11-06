@@ -116,6 +116,9 @@ SECTIONS
 		*FatDbg.cpp.o(.text*)
 		*:CrashReport.cpp.o(.text*)
 		*CrashReport.cpp.o(.text*)
+		/* Bytecode compilation is boot-time preparation, never live evaluation. */
+		*:bytebeat_compile.cpp.o(.text* .rodata*)
+		*bytebeat_compile.cpp.o(.text* .rodata*)
 		/* Synth modules: per-block code is MT_HOT (.fastrun, ITCM); setup, UI-rate and event code here. */
 		*:synth.cpp.o(.text*)
 		*synth.cpp.o(.text*)

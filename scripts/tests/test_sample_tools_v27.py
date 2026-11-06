@@ -30,7 +30,7 @@ def unknown_reply(result=0):
 
 class WireTests(unittest.TestCase):
     def test_new_ids_and_v27_golden_payloads(self):
-        self.assertEqual(27, D.PROTOCOL)
+        self.assertEqual(28, D.PROTOCOL)
         self.assertEqual(54, D.MSG['SampleTempo'])
         self.assertEqual(55, D.MSG['SampleTempoCancel'])
         self.assertEqual(bytes.fromhex('7856341203efcdab890b000000e4070000'),

@@ -57,7 +57,8 @@ static_assert(sizeof(mt::Pattern) == mt::kPatternNameMax + 1 + 4 + 2 * mt::kTrac
 // 584: eight independent FM controls (FMPA); snapshot copies instruments whole.
 // 776: synSatType uses final tail padding (FMEX reserved byte2), no size change.
 // 776: 128 logical slices (SLX1); snapshot already copies each whole instrument.
-static_assert(sizeof(mt::Instrument) == 776, "Instrument changed: update snapshot() and project_io");
+// 816: eight 5-byte modulation routes (MODM chunk); snapshot copies instruments whole.
+static_assert(sizeof(mt::Instrument) == 816, "Instrument changed: update snapshot() and project_io");
 // 477280: tuning (TUNE chunk). 479684: scenes, sceneA / B, xfade, sceneLive (SCEN chunk). 479816: gen (TGEN).
 // 480268: songFol, seed (SFOL), perfXy (PXY), evo (TEVO). 480828: var (TVAR), LOFI instrument fields.
 // 480892: Instrument::fmSat (FMEX chunk). 481276: songTrn, songBpm, songTrnMask (SSLT).
@@ -66,7 +67,7 @@ static_assert(sizeof(mt::Instrument) == 776, "Instrument changed: update snapsho
 // 520492: Pattern::name (PNAM chunk); snapshot copies each whole Pattern.
 // compAttack used existing padding; FMPA adds 8 bytes per instrument (520748 total); copied explicitly.
 // 526892: 96 extra uint16 markers per instrument, no new snapshot field.
-static_assert(sizeof(mt::Project) == 526892, "Project changed: update snapshot() and project_io");
+static_assert(sizeof(mt::Project) == 528172, "Project changed: update snapshot() and project_io");
 
 // Pattern by pattern, so the engine never waits for a whole-project copy.
 void snapshot(const mt::Project& live, mt::Project& out) {

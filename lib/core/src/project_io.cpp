@@ -544,6 +544,22 @@ LoadErr readLfob(CrcSource& in, uint32_t size, Project& p) {
   return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
 }
 
+LoadErr readModm(CrcSource& in, uint32_t size, Project& p) {
+  uint8_t h[2];
+  if (size < 2) return LoadErr::BadValue;
+  if (!in.read(h, 2)) return LoadErr::Truncated;
+  const uint32_t rec = h[1];
+  if (rec == 0 || size < 2 + h[0] * rec) return LoadErr::BadValue;
+  const int n = h[0] < kInstruments ? h[0] : kInstruments;
+  const uint32_t take = rec < kModRecSize ? rec : kModRecSize;
+  for (int i = 0; i < n; ++i) {
+    uint8_t b[kModRecSize] = {};
+    if (!in.read(b, take) || !in.skip(rec - take)) return LoadErr::Truncated;
+    unpackMod(b, take, p.instruments[i]);
+  }
+  return in.skip(size - 2 - static_cast<uint32_t>(n) * rec) ? LoadErr::Ok : LoadErr::Truncated;
+}
+
 // FMEX (Instrument::fmSat, chipStep, inst_codec kFmExRecSize): count, record size, then a record per instrument.
 // Same rules as TINS. Files without it: SAT 0, STEP off.
 LoadErr readFmex(CrcSource& in, uint32_t size, Project& p) {
@@ -1084,6 +1100,20 @@ bool saveProject(const Project& p, ByteSink& out) {
     if (!o.write(b, sizeof(b))) return false;
   }
 
+  bool matrixStored = false;
+  for (const Instrument& m : p.instruments)
+    for (const ModRoute& r : m.mod)
+      matrixStored |= r.source || r.dest || r.amount || r.polarity || r.via;
+  if (matrixStored) {
+    const uint8_t mh[2] = {static_cast<uint8_t>(kInstruments), static_cast<uint8_t>(kModRecSize)};
+    if (!o.chunk("MODM", 2 + kInstruments * kModRecSize) || !o.write(mh, 2)) return false;
+    for (const Instrument& m : p.instruments) {
+      uint8_t b[kModRecSize];
+      packMod(m, b);
+      if (!o.write(b, sizeof b)) return false;
+    }
+  }
+
   const uint8_t xh[2] = {static_cast<uint8_t>(kInstruments), static_cast<uint8_t>(kFmExRecSize)};
   if (!o.chunk("FMEX", 2 + kInstruments * kFmExRecSize) || !o.write(xh, 2)) return false;
   for (const Instrument& m : p.instruments) {
@@ -1439,6 +1469,7 @@ LoadErr loadProject(ByteSource& src, Project& out, LoadNotes* notes) {
     else if (memcmp(ch, "SYNI", 4) == 0) e = readSyni(in, size, out);
     else if (memcmp(ch, "LFOX", 4) == 0) e = readLfox(in, size, out);
     else if (memcmp(ch, "LOFI", 4) == 0) e = readLofi(in, size, out);
+    else if (memcmp(ch, "MODM", 4) == 0) e = readModm(in, size, out);
     else if (memcmp(ch, "LFOB", 4) == 0) e = readLfob(in, size, out);
     else if (memcmp(ch, "FMEX", 4) == 0) e = readFmex(in, size, out);
     else if (memcmp(ch, "FMPA", 4) == 0) {

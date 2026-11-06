@@ -96,10 +96,11 @@ void GridScreen::automationTouch(const TouchEvent &ev) {
   curStep_ = step;
   cursorMoved();
   const auto fx = mt::automationFx(autoParam_);
-  const int max = mt::fxStep(fx, 0, 1000);
+  const bool signedValue = fx >= mt::Fx::M01 && fx <= mt::Fx::M08;
+  const int min = signedValue ? -64 : 0, max = signedValue ? 63 : mt::fxStep(fx, 0, 1000);
   const int graphH = h_ - 64;
-  int v = (y0_ + h_ - 40 - ev.y) * max / graphH;
-  v = v < 0 ? 0 : (v > max ? max : v);
+  int v = min + (y0_ + h_ - 40 - ev.y) * (max - min) / graphH;
+  v = v < min ? min : (v > max ? max : v);
   automationEdit(v);
 }
 
@@ -218,7 +219,9 @@ void GridScreen::drawAutomation(LGFX_Sprite &s, int y, int h) {
            slots, mt::kFxSlots, app_.automationMuted(track()) && (rec_ || app_.motionRecording() || perf()) ? " AUTO OFF" : "");
   s.setTextColor(slots == mt::kFxSlots ? kRed : kCursor);
   s.drawString(buf, badgeW ? badgeW + 8 : 8, y + 2);
-  const int base = y + h - 40, graphH = h - 64, max = mt::fxStep(fx, 0, 1000);
+  const bool signedValue = fx >= mt::Fx::M01 && fx <= mt::Fx::M08;
+  const int min = signedValue ? -64 : 0, max = signedValue ? 63 : mt::fxStep(fx, 0, 1000);
+  const int base = y + h - 40, graphH = h - 64;
   const auto &st = app_.status();
   const int heard = st.playing
                         ? mt::automationStep(pat(), track(), st.pos, st.loop,
@@ -232,7 +235,8 @@ void GridScreen::drawAutomation(LGFX_Sprite &s, int y, int h) {
                n == heard ? kPlayBg : (n % 4 == 0 ? kBeatBg : kBg));
     const int v = mt::automationGet(pat().steps[track()][n], fx);
     if (v >= 0) {
-      const int bh = max > 0 ? v * graphH / max : 0;
+      const int value = signedValue ? mt::fxSigned(static_cast<uint8_t>(v)) : v;
+      const int bh = max > min ? (value-min) * graphH / (max-min) : 0;
       s.fillRect(x + 4, base - bh, 19, bh + 1, kCyan);
     } else {
       s.setTextColor(kDim);

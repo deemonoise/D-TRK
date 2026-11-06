@@ -38,7 +38,7 @@ class FakeLink:
         self.errors = 0
 
     def hello(self):
-        return (27, 'fake', 1, 30624, 0)
+        return (DESK.PROTOCOL, 'fake', 1, 30624, 0)
 
     def call(self, name, payload, timeout, progress):
         self.calls.append((name, payload, timeout))
@@ -62,7 +62,7 @@ class FakeLink:
 
 class SampleExtractProtocolTests(unittest.TestCase):
     def test_protocol_and_message_ids_append_without_renumbering(self):
-        self.assertEqual(27, DESK.PROTOCOL)
+        self.assertEqual(28, DESK.PROTOCOL)
         self.assertEqual(51, DESK.MSG['WtAudition'])
         self.assertEqual(52, DESK.MSG['SampleEdit'])
         self.assertEqual(53, DESK.MSG['SampleEditCancel'])

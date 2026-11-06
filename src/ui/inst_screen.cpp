@@ -1,4 +1,5 @@
 #include "inst_screen.h"
+#include "mod_matrix.h"
 #include "ui_context.h"
 #include <math.h>
 #include <stdio.h>
@@ -23,6 +24,7 @@ namespace ui {
 namespace {
 static_assert(ParamList::kValueX+31*kCharW<=kScreenW-16,"FM value text fits before scroll marks");
 
+const char* const matrixDepthNames[] = {"M01 depth", "M02 depth", "M03 depth", "M04 depth", "M05 depth", "M06 depth", "M07 depth", "M08 depth"};
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 void envMilliseconds(unsigned ms, char* o, int n) {
@@ -367,6 +369,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   initTail(string_ + kStringRows);
   initTail(lofi_ + kLofiRows);
   initKit();
+  initMatrix();
   list_.setParams(chip_, kMainRows);  // MAIN of shown_ (Chip)
   list_.setVisibleRows(kListRows);
   list_.setPageBar(true);
@@ -379,6 +382,27 @@ InstScreen::InstScreen(App& app) : app_(app) {
   list_.setOnCancel([this] { app_.toast("CANCEL"); });
   presets_.setOnClose([this] { afterPresets(); });
   wt_.setOnClose([this] { app_.invalidate(); });
+}
+
+void InstScreen::initMatrix() {
+  auto route = [this]() -> mt::ModRoute& { return inst().mod[modSel_]; };
+  auto off = [route] { return route().source == 0; };
+  matrix_[0] = {"Route", [this](char* o, int n) { snprintf(o,n,"%d / %d",modSel_+1,mt::kModRoutes); },
+    [this](int d) { modSel_=clampi(modSel_+d,0,mt::kModRoutes-1); matrix_[3].label=matrixDepthNames[modSel_]; }};
+  matrix_[1] = {"Source", [route](char* o,int n) { snprintf(o,n,"%s",mt::modSourceName(route().source)); },
+    [route](int d) { route().source=clampi(route().source+d,0,int(mt::ModSource::Count)-1); }};
+  matrix_[2] = {"Target", [this,route](char* o,int n) { snprintf(o,n,"%s",mt::lfoDestName(route().dest,inst().type)); },
+    [this,route](int d) { route().dest=mt::modDestStep(route().dest,d,inst().type); },off,
+    [this,route] { return !mt::lfoDestValid(route().dest,inst().type); }};
+  matrix_[3] = {matrixDepthNames[0], [route](char* o,int n) { snprintf(o,n,"%+d",route().amount); },
+    [route](int d) { route().amount=clampi(route().amount+d,-64,63); },off};
+  matrix_[4] = {"Polarity", [route](char* o,int n) {
+      const char* const names[]={"NATIVE","0..1","-1..1"};
+      snprintf(o,n,"%s",names[route().polarity<3?route().polarity:0]); },
+    [route](int d) { route().polarity=clampi(route().polarity+d,0,2); },off};
+  matrix_[5] = {"Depth via", [route](char* o,int n) { snprintf(o,n,"%s",mt::modSourceName(route().via)); },
+    [route](int d) { route().via=clampi(route().via+d,0,int(mt::ModSource::Count)-1); },off};
+  for (int i=2;i<6;++i) matrix_[i].hint=[] { return "Select a matrix Source"; };
 }
 
 void InstScreen::initKit() {
@@ -535,7 +559,7 @@ void InstScreen::initTail(Param* t) {
   // struct in the Dest row into a load from address 0 (PANIC on any non-SYNTH instrument).
   auto cfg = [this] { return mt::lfoAt(inst(), lfoSel_); };
   auto lfo = [this] { return mt::lfoRef(inst(), lfoSel_); };
-  auto noLfo = [cfg] { return cfg().depth == 0; };
+  auto noLfo = [this,cfg] { return cfg().depth == 0 && !(mt::modLfoMask(inst()) & (1u << lfoSel_)); };
   t[kLfoSel] = {"LFO",
                 [this](char* o, int n) {
                   int on = 0;
@@ -724,6 +748,7 @@ Param* InstScreen::rowsFor(mt::InstrType t, int page, int& count) {
       off = kSub, c = kSynRows - kSub;
       break;
     case kPgFilt: off = tail, c = kFiltRows; break;
+    case kPgMatrix: count=6; matrix_[3].label=matrixDepthNames[modSel_]; return matrix_;
     case kPgLfo: off = tail + kFiltRows, c = kTailRows - kFiltRows; break;
     default: return nullptr;
   }
@@ -1053,6 +1078,7 @@ bool InstScreen::buttonsBusy() const { return !recShown() && !presets_.isOpen() 
 bool InstScreen::knobRow(int& page, const char*& label) {
   if (recShown() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || extract_.isOpen() || bounce_.isOpen()) return false;
   if (!onTrackInstr() || onEditor() || (kit() && page_ != kPgMain) || page_ == kPgLfo) return false;
+  if (page_ == kPgMatrix && list_.sel() != 3) return false;
   if (page_ == kPgMain && (list_.sel() == kName || list_.sel() == kType)) return false;  // KIT MAIN too
   relabel();  // the label as knobTurn's relabel() for this instrument gives it (DRUM / LOFI macros)
   const Param* r = list_.knobRow(mt::kKnobLabel - 1);
@@ -1078,6 +1104,15 @@ bool InstScreen::knobTurn(int track, int page, const char* label, int delta, cha
   if (track < 0 || track >= mt::kTracks) return false;
   const int target = app_.project().tracks[track].instr % mt::kInstruments;
   const mt::InstrType t = app_.project().instruments[target].type;
+  if (page == kPgMatrix && t != mt::InstrType::Kit) {
+    for (int i=0;i<mt::kModRoutes;++i) if (strcmp(label,matrixDepthNames[i])==0) {
+      Param row = {matrixDepthNames[i],
+        [this,target,i](char* o,int size) { snprintf(o,size,"%+d",app_.project().instruments[target].mod[i].amount); },
+        [this,target,i](int d) { auto& amount=app_.project().instruments[target].mod[i].amount; amount=clampi(amount+d,-64,63); }};
+      return turnRow(&row,1,label,mt::kKnobLabel-1,delta,val,n);
+    }
+    return false;
+  }
   int count = 0;
   Param* const rows = rowsFor(t, page, count);
   if (!rows) return false;
@@ -1274,7 +1309,7 @@ void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
   static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "LOFI", "", "RES"};
   static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
-  const char* names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};
+  const char* names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO", "MATRIX"};
   if (kit()) names[kPgType] = "LN1-8", names[kPgType2] = "LN9-16";
   const int ty = y + (kPageBarH - 4 - kCharH) / 2;
   const int n = pageCount(), w = pageW(), cur = physPage();

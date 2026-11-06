@@ -44,7 +44,10 @@ std::atomic<uint32_t> crcErrors{0}, retries{0};
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 Hello hello;
 bool helloSeen = false;
-uint32_t lastStatusMs = 0;
+uint32_t lastContactMs = 0;
+// A card operation may withhold Status longer than kAliveMs. Its caller already owns
+// a bounded timeout; do not send Hello (which closes the peer's files) during that wait.
+std::atomic<bool> requestPending{false};
 StatusAgg emptyAgg() {
   StatusAgg a = {};
   a.minReserveMs = 0xFFFF;
@@ -115,7 +118,7 @@ void onStatus(Reader& r) {
   static Status s;
   if (!decode(r, s)) return;
   portENTER_CRITICAL(&mux);
-  lastStatusMs = millis();
+  lastContactMs = millis();
   agg.frames++;
   agg.cpuSum += s.cpuPct;
   if (s.cpuPct > agg.cpuPeak) agg.cpuPeak = s.cpuPct;
@@ -141,6 +144,11 @@ void onStatus(Reader& r) {
 
 void dispatch(const Decoder& d) {
   if (reqActive && d.type() == reqType && d.seq() == reqSeq) {
+    // Refresh before waking the caller: the next file block must not see a dead peer
+    // merely because the reply arrived before the delayed periodic Status.
+    portENTER_CRITICAL(&mux);
+    lastContactMs = millis();
+    portEXIT_CRITICAL(&mux);
     const int n = d.size() < kMaxPayload ? d.size() : kMaxPayload;
     memcpy(reqBuf, d.payload(), n);
     reqLen = n;
@@ -153,6 +161,7 @@ void dispatch(const Decoder& d) {
     Progress pr;
     if (!decode(r, pr)) return;
     portENTER_CRITICAL(&mux);
+    lastContactMs = millis();
     progLatest = pr;
     progNew = true;
     portEXIT_CRITICAL(&mux);
@@ -167,7 +176,7 @@ void dispatch(const Decoder& d) {
       if (!helloSeen || h.bootId != hello.bootId) stream.underruns = 0;
       hello = h;
       helloSeen = true;
-      lastStatusMs = millis();
+      lastContactMs = millis();
       portEXIT_CRITICAL(&mux);
       break;
     }
@@ -203,7 +212,7 @@ void dispatch(const Decoder& d) {
 
 bool alive(uint32_t now) {
   portENTER_CRITICAL(&mux);
-  const bool up = helloSeen && now - lastStatusMs < kAliveMs;
+  const bool up = helloSeen && (now - lastContactMs < kAliveMs || requestPending.load());
   portEXIT_CRITICAL(&mux);
   return up;
 }
@@ -273,6 +282,7 @@ bool sendRaw(Msg t, const uint8_t* payload, int n, TickType_t wait) {
 
 bool request(Msg type, const uint8_t* p, int n, Msg replyType, uint8_t* reply, int& replyLen, uint32_t timeoutMs) {
   if (!reqMutex || xSemaphoreTake(reqMutex, pdMS_TO_TICKS(timeoutMs * 3)) != pdTRUE) return false;
+  requestPending.store(true);
   bool ok = false;
   // One seq for all tries: a repeat is answered from the synth's reply cache, not done twice, and a
   // late reply to an earlier try counts.
@@ -292,6 +302,7 @@ bool request(Msg type, const uint8_t* p, int n, Msg replyType, uint8_t* reply, i
     reqActive = false;
   }
   if (ok) replyLen = reqLen;
+  requestPending.store(false);
   xSemaphoreGive(reqMutex);
   return ok;
 }
@@ -299,6 +310,7 @@ bool request(Msg type, const uint8_t* p, int n, Msg replyType, uint8_t* reply, i
 bool requestLong(Msg type, const uint8_t* p, int n, uint8_t* reply, int& replyLen, ProgressFn onProgress, void* ctx,
                  uint32_t idleMs) {
   if (!reqMutex || xSemaphoreTake(reqMutex, pdMS_TO_TICKS(idleMs)) != pdTRUE) return false;
+  requestPending.store(true);
   const uint8_t seq = seqCounter.fetch_add(1);
   xSemaphoreTake(reqDone, 0);
   portENTER_CRITICAL(&mux);
@@ -336,6 +348,7 @@ bool requestLong(Msg type, const uint8_t* p, int n, uint8_t* reply, int& replyLe
   }
   reqActive = false;
   if (ok) replyLen = reqLen;
+  requestPending.store(false);
   xSemaphoreGive(reqMutex);
   return ok;
 }

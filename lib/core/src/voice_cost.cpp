@@ -1,4 +1,5 @@
 #include "voice_cost.h"
+#include "mod_matrix.h"
 #include "bytebeat_lib.h"
 #include "synth_lofi.h"
 #include "synth_osc.h"
@@ -69,8 +70,9 @@ MT_CONTROL int samplePlaybackCost(float frameStep, bool pitchModulated) {
   return cost + (pitchModulated ? kCostSamplePitchMod : 0);
 }
 
-MT_CONTROL int voiceCost(const Instrument& m, bool sample, uint8_t potential, float effectiveHz,
+MT_HOT int voiceCost(const Instrument& m, bool sample, uint8_t potential, float effectiveHz,
                          InstrType actualType, uint8_t actualMachine, float sampleFrameStep) {
+  potential |= modCostPotential(m);
   const InstrType type = sample ? InstrType::Sample : actualType == InstrType::Count ? m.type : actualType;
   const uint8_t machine = actualMachine == 255 ? m.machine : actualMachine;
   if (type == InstrType::Synth || type == InstrType::Fm)

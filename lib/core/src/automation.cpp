@@ -5,7 +5,8 @@ namespace mt {
 namespace {
 constexpr Fx params[] = {Fx::FLT, Fx::RES, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP,
                          Fx::CON, Fx::DLY, Fx::RVB, Fx::PAN, Fx::DRV, Fx::BIT,
-                         Fx::SRR, Fx::DTY, Fx::GTE, Fx::MOD, Fx::SAT};
+                         Fx::SRR, Fx::DTY, Fx::GTE, Fx::MOD, Fx::SAT,
+                         Fx::M01, Fx::M02, Fx::M03, Fx::M04, Fx::M05, Fx::M06, Fx::M07, Fx::M08};
 bool valid(Fx fx) {
   for (Fx f : params)
     if (fx == f)
@@ -34,6 +35,7 @@ Fx automationFx(int index) {
                 kAutomationParams];
 }
 int automationValue(const TrackCfg &t, const Instrument &i, Fx f) {
+  if (f >= Fx::M01 && f <= Fx::M08) return static_cast<uint8_t>(i.mod[int(f) - int(Fx::M01)].amount);
   if (f >= Fx::DCY && f <= Fx::CON) {
     if (i.type != InstrType::Fm && i.type != InstrType::Drum &&
         i.type != InstrType::Synth && i.type != InstrType::String &&
@@ -110,10 +112,11 @@ bool automationRamp(Step *s, int len, Fx f, int a, int b, uint8_t va,
   for (int n = a; n <= b; ++n)
     if (!room(s[n], f))
       return false;
+  const bool signedValue = f >= Fx::M01 && f <= Fx::M08;
+  const int first = signedValue ? fxSigned(va) : va, last = signedValue ? fxSigned(vb) : vb;
   for (int n = a; n <= b; ++n) {
-    const int v = a == b ? va
-                         : (static_cast<int>(va) * (b - n) +
-                            static_cast<int>(vb) * (n - a)) /
+    const int v = a == b ? first
+                         : (first * (b - n) + last * (n - a)) /
                                (b - a);
     automationSet(s[n], f, static_cast<uint8_t>(v));
   }

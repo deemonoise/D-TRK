@@ -90,7 +90,8 @@ void test_roundtrip() {
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
-  TEST_ASSERT_EQUAL(512, kPresetSize);
+  TEST_ASSERT_EQUAL(512, kPresetSizeV10);
+  TEST_ASSERT_EQUAL(552, kPresetSize);
   TEST_ASSERT_EQUAL(248, kPresetSizeV9);
   TEST_ASSERT_EQUAL(236, kPresetSizeV7);
   TEST_ASSERT_EQUAL(228, kPresetSizeV6);
@@ -796,11 +797,12 @@ void test_v8_fmex_roundtrip() {
   a.fmSat = 99;
   VecSink out;
   TEST_ASSERT_TRUE(savePreset(a, out));
-  TEST_ASSERT_EQUAL(10, kPresetVersion);
-  TEST_ASSERT_EQUAL(10, out.buf[4]);
+  TEST_ASSERT_EQUAL(11, kPresetVersion);
+  TEST_ASSERT_EQUAL(11, out.buf[4]);
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
   TEST_ASSERT_EQUAL(kPresetSizeV8 + kFmParamRecSize, kPresetSizeV9);
-  TEST_ASSERT_EQUAL(kPresetSizeV9 + kSliceExtRecSize, kPresetSize);
+  TEST_ASSERT_EQUAL(kPresetSizeV9 + kSliceExtRecSize, kPresetSizeV10);
+  TEST_ASSERT_EQUAL(kPresetSizeV10 + kModRecSize, kPresetSize);
   TEST_ASSERT_EQUAL(99, out.buf[kPresetSizeV7 - 4]);  // SAT: byte 0 of the FMEX record, after LFOB
   VecSource in(out.buf);
   Instrument b;

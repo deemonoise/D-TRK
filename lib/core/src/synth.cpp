@@ -1,4 +1,5 @@
 #include "synth.h"
+#include "mod_matrix.h"
 #include "synth_master.h"
 #include "sample_loop.h"
 #include "synth_resample.h"
@@ -564,6 +565,22 @@ void Synth::fx(uint8_t track, uint8_t cmd, uint8_t val) {
   }
   // On a step without a note, fx act on the track's sounding voices now.
   const bool now = !r.noteStep;
+  if (cmd >= uint8_t(Fx::M01) && cmd <= uint8_t(Fx::M08)) {
+    const int k = kLockMatrix0 + cmd - uint8_t(Fx::M01);
+    const int a = fxSigned(val);
+    const uint8_t depth = static_cast<uint8_t>(a < -64 ? -64 : (a > 63 ? 63 : a));
+    if (now) {
+      for (auto& v : voices_) if (v.on && v.track == track) {
+        v.lock[k] = depth;
+        v.lockMask |= 1u << k;
+        control(v, 0);
+      }
+    } else {
+      r.lock[k] = depth;
+      r.lockMask |= 1u << k;
+    }
+    return;
+  }
   switch (static_cast<Fx>(cmd)) {
     case Fx::SLD:
       if (!val) break;
@@ -1234,6 +1251,21 @@ void Synth::releaseTrack(uint8_t track) {
     if (v.on && v.track == track) v.env.gate(false);
 }
 
+void Synth::matrixSources(const Voice& v, const Instrument& m, uint16_t mask, float* src) const {
+  for (int i = 0; i < kLfos; ++i) src[int(ModSource::Lfo1) + i] = v.modLfo[i];
+  src[int(ModSource::AmpEnv)] = v.env.level();
+  if (mask & (1u << int(ModSource::FilterEnv)))
+    src[int(ModSource::FilterEnv)] = v.syn ? synModEnv(v.fenvT, m.fAtk, m.fDec) : filterEnv(v.fenvT, m.fAtk, m.fDec);
+  src[int(ModSource::Velocity)] = v.vel * (1.f / 127.f);
+  src[int(ModSource::Note)] = v.note * (1.f / 127.f);
+  // Independent deterministic note random: adding an empty route cannot consume the synth RNG.
+  uint32_t h = v.age * 747796405u + v.note * 2891336453u + 277803737u;
+  h = ((h >> ((h >> 28) + 4)) ^ h) * 277803737u;
+  h = (h >> 22) ^ h;
+  src[int(ModSource::Random)] = (h >> 8) * (2.f / 16777215.f) - 1.f;
+  src[int(ModSource::Follower)] = v.track < kTracks ? folEnv_[v.track] : 0.f;
+}
+
 MT_HOT void Synth::control(Voice& v, int dt) {
   if (isStealTail(v)) return;
   const Instrument& m = instrOf(v);
@@ -1311,38 +1343,61 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   // Targets invalid for the type are summed and never read, so are L1..L4 RATE / DEPTH / RTRG: they
   // act through mods, LFO -> LFO from the last update's outputs and wraps (shared LFOs' wraps: advanceInstLfos). A
   // dt = 0 update (note-on, fx) neither restarts nor consumes the wraps.
-  const uint8_t shared = sharedLfos(m);
-  const uint8_t wraps = dt ? static_cast<uint8_t>((v.lfoWrap & ~shared) | (instLfoWrap_[v.instr] & shared)) : 0;
   LfoCfg cs[kLfos];  // the instrument's LFOs with this note's LFO fx locks
   for (int i = 0; i < kLfos; ++i) cs[i] = lfoCfgOf(&v, m, i);
-
-  LfoMods mods = lfoMods(cs, v.lfoOut, wraps, 0xF);
-  // Envelope follower of the voice's track (TrackCfg::fol*): L1..L4 RATE / DEPTH into the mods as an
-  // LFO -> LFO source, the other targets summed with the LFOs below (Vol: the strip's).
-  int fla = -1;
-  if (folVoice_ & (1u << v.track)) {
-    const int d = folLa_[v.track];
-    const float f = folMod_[v.track];
-    if (d >= ld(LfoDest::Rate1) && d < ld(LfoDest::Rate1) + kLfos) mods.oct[d - ld(LfoDest::Rate1)] += 4.f * f;
-    else if (d >= ld(LfoDest::Depth1) && d < ld(LfoDest::Depth1) + kLfos)
-      mods.depth[d - ld(LfoDest::Depth1)] = clampf(mods.depth[d - ld(LfoDest::Depth1)] + f, 0.f, 2.f);
-    else fla = d;
-  }
-  if (dt) v.lfoWrap = 0;  // collected anew by this update's advances
   float la[kLfoDests] = {};
   float lfoVol = 1;
-  for (int i = 0; i < kLfos; ++i) {
-    const LfoCfg& c = cs[i];
-    const float l = lfo(v, c, i, dt, mods);
-    if (l == 0) continue;
-    const int dest = c.dest < kLfoDests ? c.dest : 0;
-    if (dest == ld(LfoDest::Vol)) lfoVol *= clampf(1.f + l, 0.f, 2.f);
-    else la[dest] += l;
+  const uint16_t matrixMask = modSourceMask(m);
+  const uint8_t matrixLfos = (matrixMask >> 1) & 15;
+  float matrixSrc[kModSources], matrixOut[kModTargets];
+  if (matrixMask) {
+    matrixSources(v, m, matrixMask, matrixSrc);
+    modEvaluate(m, matrixSrc, matrixOut, v.lockMask, v.lock);
   }
-  if (fla >= 0) la[fla] += folMod_[v.track];
+  const bool activeLfo = matrixLfos || cs[0].depth || cs[1].depth || cs[2].depth || cs[3].depth;
+  if (activeLfo || (folVoice_ & (1u << v.track))) {
+    const uint8_t shared = sharedLfos(m);
+    const uint8_t wraps = dt ? static_cast<uint8_t>((v.lfoWrap & ~shared) | (instLfoWrap_[v.instr] & shared)) : 0;
+
+    LfoMods mods = lfoMods(cs, v.lfoOut, wraps, 0xF);
+    if (matrixMask) for (int i = 0; i < kLfos; ++i) {
+      mods.oct[i] += 4.f * matrixOut[ld(LfoDest::Rate1) + i];
+      mods.depth[i] = clampf(mods.depth[i] + matrixOut[ld(LfoDest::Depth1) + i], 0.f, 2.f);
+    }
+    // Envelope follower of the voice's track (TrackCfg::fol*): L1..L4 RATE / DEPTH into the mods as an
+    // LFO -> LFO source, the other targets summed with the LFOs below (Vol: the strip's).
+    int fla = -1;
+    if (folVoice_ & (1u << v.track)) {
+      const int d = folLa_[v.track];
+      const float f = folMod_[v.track];
+      if (d >= ld(LfoDest::Rate1) && d < ld(LfoDest::Rate1) + kLfos) mods.oct[d - ld(LfoDest::Rate1)] += 4.f * f;
+      else if (d >= ld(LfoDest::Depth1) && d < ld(LfoDest::Depth1) + kLfos)
+        mods.depth[d - ld(LfoDest::Depth1)] = clampf(mods.depth[d - ld(LfoDest::Depth1)] + f, 0.f, 2.f);
+      else fla = d;
+    }
+    if (dt) v.lfoWrap = 0;  // collected anew by this update's advances
+    for (int i = 0; i < kLfos; ++i) {
+      const LfoCfg& c = cs[i];
+      const float l = lfo(v, c, i, dt, mods, matrixLfos & (1u << i));
+      if (l == 0) continue;
+      const int dest = c.dest < kLfoDests ? c.dest : 0;
+      if (dest == ld(LfoDest::Vol)) lfoVol *= clampf(1.f + l, 0.f, 2.f);
+      else la[dest] += l;
+    }
+    if (fla >= 0) la[fla] += folMod_[v.track];
+  } else {
+    for (float& x : v.lfoOut) x = 0.f;
+    if (dt) v.lfoWrap = 0;
+  }
+  if (matrixMask) {
+    for (int i = 0; i < kLfos; ++i) matrixSrc[int(ModSource::Lfo1) + i] = v.modLfo[i];
+    modEvaluate(m, matrixSrc, matrixOut, v.lockMask, v.lock);
+    for (int d = 0; d < kModTargets; ++d) la[d] += matrixOut[d];
+    lfoVol *= clampf(1.f + matrixOut[ld(LfoDest::Vol)], 0.f, 2.f);
+  }
   pitch += 12.f * la[ld(LfoDest::Pitch)] + la[ld(LfoDest::Fine)];
   if (!v.lofi && budget_ < kVoiceBudgetOff) {
-    uint8_t potential = costPotential(v.track < kTracks ? &p_.tracks[v.track] : nullptr,
+    uint8_t potential = modCostPotential(m) | costPotential(v.track < kTracks ? &p_.tracks[v.track] : nullptr,
                                             v.lfoLockMask, cs, v.lockMask, v.lock);
     if (v.syn && morphT(v.track, kScnRes, m.reso) >= 77) potential |= kCostPotentialSynLpLimit;
     float chipHz = 0;
@@ -1502,7 +1557,7 @@ MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, con
                      : synLp ? synLpOctaves(rawCut) : rawCut * (9.451211f / 127.f);  // log2(700)
   const float fenv = clampf(m.fenv + 64.f * la[ld(LfoDest::Fenv)], -64.f, 63.f);
   if (fenv != 0 && !v.fenvDone) {
-    const float e = v.syn ? synModEnv(v.fenvT, m.fAtk, m.fDec) : filterEnv(v.fenvT, m.fAtk, m.fDec);
+    const float e = v.syn ? v.sv().cachedModEnv(v.fenvT, m.fAtk, m.fDec, false) : filterEnv(v.fenvT, m.fAtk, m.fDec);
     // The -60 dB tail moves the cutoff < 0.01 octave: drop it (not the start of a slow attack).
     if (e < 1e-3f && v.fenvT > (v.syn ? synModAttackMs(m.fAtk) : envTimeMs(m.fAtk)) * (kSynthRate / 1000.f)) v.fenvDone = true;
     oct += ((synLp || (v.syn && analog)) ? synFenvOctaves(fenv) : fenv * (6.f / 64.f)) * e;
@@ -1532,6 +1587,7 @@ void Synth::resetLfos(Voice& v) {
     v.lfoPhase[i] = 0;
     v.lfoRnd[i] = rnd();
     v.lfoOut[i] = 0;
+    v.modLfo[i] = 0;
   }
   v.lfoWrap = 0;
 }
@@ -1563,8 +1619,8 @@ MT_HOT float lfoShape(uint8_t wave, float ph, float rnd, const uint8_t* byte) {
 // LFO i of a voice, restarted at note-on; with Retrig OFF the instrument's shared phase
 // (advanceInstLfos) instead. mods: LFO -> LFO (RATE / RTRG of a per-voice LFO, DEPTH of either).
 // -1..1 x depth / 64, kept in v.lfoOut as a source for the next update.
-MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods) {
-  if (!c.depth) return v.lfoOut[i] = 0;
+MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods, bool matrix) {
+  if (!c.depth && !matrix) { v.modLfo[i] = 0; return v.lfoOut[i] = 0; }
   float w;
   if (lfoFree(c.sync)) {
     w = lfoShape(c.wave, instLfoPhase_[v.instr][i], instLfoRnd_[v.instr][i], inst(v.instr).lfoByte[i]);
@@ -1584,6 +1640,7 @@ MT_HOT float Synth::lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods&
     }
     w = lfoShape(c.wave, ph, v.lfoRnd[i], inst(v.instr).lfoByte[i]);
   }
+  v.modLfo[i] = w;
   return v.lfoOut[i] = w * lfoDepth(c.depth) * (1.f / 64.f) * mods.depth[i];
 }
 
@@ -1772,14 +1829,14 @@ MT_CONTROL void Synth::controlDrum2(Voice& v, const Instrument& m, float pitch, 
 
 // SYNTH: macros SHP1, SHP2, MIX, DET, SENV (env -> SHAPE depth, bipolar around 64); la: control()'s LFO
 // sums (SUB, NOISE, SEMI2, FOLD, RING here).
-MT_CONTROL void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
+MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt, const float* lm, float vol,
                               const float* la) {
   float mac[kFmMacros];
   macros(v, m, lm, mac);
   v.senvT += static_cast<uint32_t>(dt);
   // env -> SHAPE: nothing to compute at the neutral 64.
   const float senvAmt = (mac[kMacSenv] - 64.f) * (1.f / 64.f);
-  const float senv = senvAmt != 0 ? senvAmt * synModEnv(v.senvT, m.synEAtk, m.synEDec) : 0.f;  // AD, decay 0 = hold
+  const float senv = senvAmt != 0 ? senvAmt * v.sv().cachedModEnv(v.senvT, m.synEAtk, m.synEDec, true) : 0.f;  // AD, decay 0 = hold
   SynParams sp;
   for (int k = 0; k < 2; ++k) {
     sp.mode[k] = m.synOsc[k] < static_cast<uint8_t>(SynOsc::Count) ? m.synOsc[k] : 0;
@@ -1810,7 +1867,7 @@ MT_CONTROL void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, in
   v.sv().control(sp, dt ? dt : ctlLeft_);  // same ramp contract as the FM voice
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   const float filterGain = v.fltOn && m.fltMode == static_cast<uint8_t>(FltMode::Lp)
-                               ? synLpGain(v.fltRes - 128.f) : 1.f;
+                               ? v.sv().cachedLpGain(v.fltRes - 128.f) : 1.f;
   controlAmp(v, v.gain * iv * vol * filterGain * (1.f / 127.f), dt ? dt : ctlLeft_, dt > 0);
 }
 
@@ -1875,7 +1932,7 @@ MT_HOT void Synth::renderSynLp(Voice& v, float* out, int n) {
   v.sv().render(input, n, 1.f);
   if (v.fltRes < 256.f && v.fltQ > 8.f) {
     // The measured resonant sine reaches about5.65x the dry level, independent of output volume.
-    const float limit = 5.65f * fastRcp(synLpGain(v.fltRes - 128.f));
+    const float limit = 5.65f * fastRcp(v.sv().cachedLpGain(v.fltRes - 128.f));
     v.flt.processSynLp(input, filtered, n, limit);
   } else {
     v.flt.processAdd(input, filtered, n, nullptr);

@@ -5,11 +5,12 @@
 namespace mt {
 
 // .mti: "MTI1" u8 version u8 type u16 reserved, INST + FMIN + FLTR (+ SLCE from v2, + SYNI from v3,
-// + LFO from v5, + LOFI from v6, + LFOB from v7, + FMEX from v8, + FMPA from v9, + SLX1 from v10) records (inst_codec), u32 crc32 of every
+// + LFO from v5, + LOFI from v6, + LFOB from v7, + FMEX from v8, + FMPA from v9, + SLX1 from v10,
+// + MODM from v11) records (inst_codec), u32 crc32 of every
 // byte before it. Little-endian. v1 files load without slices, v1 / v2 with SYNTH defaults, v5 and older
 // with LOFI formula 0, v6 and older with LFO BYTE defaults, v7 and older with SAT 0.
 // FM presets through v8 convert the old machine ids/macros/SAT; v9+ retain independent A..H.
-constexpr uint8_t kPresetVersion = 10;  // 4: drive, rsend, velCut, velMac in the FM record (same size as 3);
+constexpr uint8_t kPresetVersion = 11;  // 4: drive, rsend, velCut, velMac in the FM record (same size as 3);
                                        // 5: + the LFO record; 6: + the LOFI record; 7: + the LFOB record;
                                        // 8: + the FMEX record (FM SAT); 9: + FMPA; 10: + SLX1 (128 logical slices)
 constexpr size_t kPresetSizeV1 = 8 + kInstRecSize + kFmRecSize + kFltRecSize + 4;
@@ -20,8 +21,9 @@ constexpr size_t kPresetSizeV6 = kPresetSizeV5 + kLofiRecSize;
 constexpr size_t kPresetSizeV7 = kPresetSizeV6 + kLfoByteRecSize;
 constexpr size_t kPresetSizeV8 = kPresetSizeV7 + kFmExRecSize;
 constexpr size_t kPresetSizeV9 = kPresetSizeV8 + kFmParamRecSize;
-constexpr size_t kPresetSize = kPresetSizeV9 + kSliceExtRecSize;
-static_assert(kPresetSizeV9 == 248 && kPresetSize == 512, "preset V9 is frozen; V10 appends 264 bytes");
+constexpr size_t kPresetSizeV10 = kPresetSizeV9 + kSliceExtRecSize;
+constexpr size_t kPresetSize = kPresetSizeV10 + kModRecSize;
+static_assert(kPresetSizeV9 == 248 && kPresetSizeV10 == 512, "preset V9 is frozen; V10 appends 264 bytes");
 
 bool savePreset(const Instrument& m, ByteSink& out);
 // out is written only on Ok. Values are clamped like a project's.

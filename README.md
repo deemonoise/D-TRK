@@ -23,6 +23,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - A mutator per track (**MUT**), one mode at a time: **EVO** — the pattern drifts live (notes along the scale, drops and ghost notes, retriggers and velocity, shifted steps), pulled back by Home; **CA1D / CA2D** — every few passes a new generation of a cellular automaton grown from the pattern (1D Wolfram rules, or Life-like rules over the KIT lanes); **MARKOV** — a Markov chain built from the pattern's own notes. Capture live writes what the track plays (MUT and GEN) into the pattern.
 - Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
 - Scales, undo, selection, copy.
+- Modulation matrix: 8 routes per instrument, LFO fan-out, envelope / velocity / note / random / follower sources, per-route depth modulation and M01–M08 automation.
 - Motion REC records parameter movements as step locks; Automation view provides value bars, ramps and parameter-only copy/paste.
 - Note timing quantize with strength, live timing stored as NDG, separate note/automation clearing and temporary automation bypass.
 - Circular step rotation, fragment duplication, pattern doubling, selective paste and velocity processing (Set/Add/Ramp/Humanize).

@@ -105,10 +105,13 @@ void test_frozen_v9_and_project_fixtures_load_exact_legacy_markers(){
 }
 
 void test_v10_preset_512_bytes_roundtrips_all_markers_and_preserves_v9_fmpa(){
-  TEST_ASSERT_EQUAL(10,kPresetVersion);TEST_ASSERT_EQUAL(248,kPresetSizeV9);TEST_ASSERT_EQUAL(512,kPresetSize);
+  TEST_ASSERT_EQUAL(11,kPresetVersion);TEST_ASSERT_EQUAL(248,kPresetSizeV9);TEST_ASSERT_EQUAL(512,kPresetSizeV10);
   Instrument m;fullSlices(m);m.type=InstrType::Fm;
   for(int i=0;i<kFmParams;++i)m.fmParam[i]=uint8_t(13+i*11);
-  Sink out;TEST_ASSERT_TRUE(savePreset(m,out));TEST_ASSERT_EQUAL(512,out.data.size());
+  Sink out;TEST_ASSERT_TRUE(savePreset(m,out));
+  out.data.resize(kPresetSizeV10);out.data[4]=10;
+  write32(out.data.data()+out.data.size()-4,crc32(out.data.data(),out.data.size()-4));
+  TEST_ASSERT_EQUAL(512,out.data.size());
   Source in(out.data);Instrument restored;TEST_ASSERT_EQUAL(LoadErr::Ok,loadPreset(in,restored));
   sameSlices(m,restored);TEST_ASSERT_EQUAL_UINT8_ARRAY(m.fmParam,restored.fmParam,kFmParams);
   std::vector<uint8_t> old(out.data.begin(),out.data.begin()+kPresetSizeV9);
@@ -154,7 +157,7 @@ void test_truncated_or_corrupt_extended_records_are_rejected(){
 
 void test_128_metadata_does_not_expand_physical_head_cache(){
   TEST_ASSERT_EQUAL(128,kMaxSlices);TEST_ASSERT_EQUAL(40,kMaxHeads);TEST_ASSERT_EQUAL(1024,kHeadPool);
-  TEST_ASSERT_EQUAL(30624,sizeof(SynthModel));
+  TEST_ASSERT_EQUAL(30624,sizeof(SynthModel)-kInstruments*sizeof(Instrument::mod));
 }
 
 void test_slc_127_and_midi_note_127_address_the_last_logical_slice(){

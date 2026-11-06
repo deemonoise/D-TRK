@@ -43,6 +43,27 @@ MT_HOT void WtOsc::setLevel(float hz) {
   while ((1 << lb) < wtLevelLen(k)) ++lb;
 }
 
+MT_CONTROL void SynVoice::updateLpGain(float raw) {
+  gainRaw_ = raw;
+  gainValue_ = synLpGain(raw);
+}
+
+MT_CONTROL float SynVoice::cachedModEnv(uint32_t samples, uint8_t attack, uint8_t decay, bool shape) {
+  ModEnvCache& c = modEnv_[shape ? 1 : 0];
+  if (!c.valid || c.attack != attack || c.decay != decay) {
+    c.attack = attack;
+    c.decay = decay;
+    c.attackSamples = synModAttackMs(attack) * (kSynthRate / 1000.f);
+    c.invAttack = c.attackSamples > 0.f ? fastRcp(c.attackSamples) : 0.f;
+    const float tau = synDecayTauMs(decay) * (kSynthRate / 1000.f);
+    c.invTau = tau > 0.f ? fastRcp(tau) : 0.f;
+    c.valid = true;
+  }
+  if (samples < c.attackSamples) return samples * c.invAttack;
+  if (c.invTau == 0.f) return 1.f;
+  return fastExp(-(samples - c.attackSamples) * c.invTau);
+}
+
 constexpr int kChunk = 32;  // oscillator render/control chunk
 constexpr float kMaxDt = 0.4999f;  // phase step per sample, below Nyquist
 
@@ -74,7 +95,7 @@ void SynVoice::trigger(uint8_t phaseMode, uint8_t phase1, uint8_t phase2, uint32
   }
 }
 
-MT_CONTROL void SynVoice::control(const SynParams& p, int n) {
+MT_HOT void SynVoice::control(const SynParams& p, int n) {
   sat_.set(p.satType, p.satLevel);
   const bool hyper = p.mode[0] == static_cast<uint8_t>(SynOsc::HyperSaw);
   const bool changed = snap_ || p.mode[0] != p_.mode[0] || p.hz[0] != p_.hz[0] ||
@@ -255,12 +276,13 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
       break;
     }
     default: {
-      BlOsc& o = bl_[k];
+      BlOsc o = bl_[k];
       for (int i = 0; i < n; ++i) {
         const BlOut r = o.saw(dt, inv, sync ? sync[i] : -1.f);
         dst[i] = r.v;
         if (wrap) wrap[i] = r.wrap;
       }
+      bl_[k] = o;
       break;
     }
   }

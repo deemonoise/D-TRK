@@ -240,7 +240,7 @@ void test_debug() {
 }
 
 void test_protocol_and_debug_id() {
-  TEST_ASSERT_EQUAL(27, kProtocol);  // 26: raw sample extraction, unchanged model layout.
+  TEST_ASSERT_EQUAL(28, kProtocol);  // 26: raw sample extraction, unchanged model layout.
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
                                      // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,

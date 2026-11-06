@@ -1,7 +1,7 @@
 #pragma once
 #include "model.h"
 namespace mt {
-constexpr int kAutomationParams = 17;
+constexpr int kAutomationParams = 17 + kModRoutes;
 Fx automationFx(int index);
 bool automationCommand(Fx fx);
 void automationStrip(Step& step);

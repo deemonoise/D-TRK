@@ -33,7 +33,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = 27
+PROTOCOL = 28
 MAX_PAYLOAD = 512
 MAX_FRAME = MAX_PAYLOAD + 4  # type, seq, crc16
 MAX_ENCODED = MAX_FRAME + MAX_FRAME // 254 + 2  # matches core/link_frame.h
@@ -1182,7 +1182,7 @@ def _selftest_files():
 
 
 def _selftest_ids():
-    assert PROTOCOL == 27
+    assert PROTOCOL == 28
     assert MSG["Debug"] == 41
     assert MSG["WtRender"] == 42
     assert MSG["RenderOut"] == 43

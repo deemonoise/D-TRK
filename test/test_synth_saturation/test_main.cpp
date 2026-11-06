@@ -22,7 +22,7 @@ void test_shaper_is_sinusoidal_rather_than_triangle_fold(){tone(6,64);TEST_ASSER
 void test_soft_and_hard_retain_distinct_asymmetric_character(){tone(2,96);TEST_ASSERT_FLOAT_WITHIN(.025,.257,harmonic(2)/harmonic(1));tone(4,96);TEST_ASSERT_FLOAT_WITHIN(.03,.054,harmonic(2)/harmonic(1));TEST_ASSERT_FLOAT_WITHIN(.04,.292,harmonic(3)/harmonic(1));}
 void test_nonlinearities_are_finite_bounded_and_block_invariant(){for(int k=1;k<8;++k){SynSat a,b;a.set(k,127);b.set(k,127);float whole[512],parts[512];for(int n=0;n<512;++n)whole[n]=parts[n]=4*sin(n*.31);a.processBlock(whole,512);for(int n=0;n<512;n+=32)b.processBlock(parts+n,32);for(int n=0;n<512;++n){TEST_ASSERT_TRUE(std::isfinite(whole[n]));TEST_ASSERT_LESS_THAN_FLOAT(10,fabs(whole[n]));TEST_ASSERT_EQUAL_FLOAT(whole[n],parts[n]);}}}
 void test_reserved_record_roundtrip_and_legacy_default(){Instrument m;m.fmSat=96;m.synSatType=7;m.chipStep=true;uint8_t b[kFmExRecSize];packFmEx(m,b);TEST_ASSERT_EQUAL(4,sizeof b);Instrument out;unpackFmEx(b,4,out);TEST_ASSERT_EQUAL(7,out.synSatType);TEST_ASSERT_EQUAL(96,out.fmSat);TEST_ASSERT_TRUE(out.chipStep);b[2]=0;unpackFmEx(b,4,out);TEST_ASSERT_EQUAL(0,out.synSatType);b[2]=255;unpackFmEx(b,4,out);TEST_ASSERT_EQUAL(0,out.synSatType);out.synSatType=7;unpackFmEx(b,2,out);TEST_ASSERT_EQUAL(0,out.synSatType);}
-void test_model_size_does_not_grow(){TEST_ASSERT_EQUAL(30624,sizeof(SynthModel));TEST_ASSERT_LESS_OR_EQUAL(664,sizeof(SynVoice));}
+void test_model_size_does_not_grow(){TEST_ASSERT_EQUAL(30624,sizeof(SynthModel)-kInstruments*sizeof(Instrument::mod));TEST_ASSERT_LESS_OR_EQUAL(664,sizeof(SynVoice));}
 void test_analog_cutoff_matches_measured_four_pole_range(){TEST_ASSERT_FLOAT_WITHIN(50,815,20*exp2(synAnalogOctaves(64,4)));TEST_ASSERT_FLOAT_WITHIN(120,1950,20*exp2(synAnalogOctaves(80,4)));}
 void test_analog_poles_change_rolloff_without_voice_growth(){float in[4096],out[4096];double rms[2];for(int mode=0;mode<2;++mode){VoiceFilter f;f.set(mode?FltKind::Analog4:FltKind::Analog1,800,0,32);for(int n=0;n<4096;++n){in[n]=.02*sin(6.283185307179586*4000*n/kSynthRate);out[n]=0;}f.processAdd(in,out,4096,nullptr);double sum=0;for(int n=2048;n<4096;++n)sum+=out[n]*out[n];rms[mode]=sqrt(sum/2048);}TEST_ASSERT_TRUE(rms[0]>rms[1]*10);}
 void test_analog_feedback_stays_finite_at_extremes(){for(int k=int(FltKind::Analog1);k<=int(FltKind::Analog4);++k)for(int c:{20,800,19000}){VoiceFilter f;f.set(FltKind(k),c,127,127);float x[128],y[128];for(int b=0;b<100;++b){for(int n=0;n<128;++n){x[n]=b<50?3*sin((n+b*128)*.3):0;y[n]=0;}f.processAdd(x,y,128,nullptr);for(float a:y){TEST_ASSERT_TRUE(std::isfinite(a));TEST_ASSERT_LESS_THAN_FLOAT(20,fabs(a));}}}}
@@ -40,7 +40,7 @@ struct Source : ByteSource {
 void test_project_and_preset_keep_saturation_and_analog_controls() {
   auto project=std::make_unique<Project>();auto& m=project->instruments[3];instrSetType(m,InstrType::Synth);
   m.synSatType=7;m.fmSat=109;m.fltMode=uint8_t(FltMode::Analog3);
-  Sink preset;TEST_ASSERT_TRUE(savePreset(m,preset));TEST_ASSERT_EQUAL(512,preset.data.size());
+  Sink preset;TEST_ASSERT_TRUE(savePreset(m,preset));TEST_ASSERT_EQUAL(kPresetSize,preset.data.size());
   Source pi(preset);Instrument loaded;TEST_ASSERT_EQUAL(int(LoadErr::Ok),int(loadPreset(pi,loaded)));
   TEST_ASSERT_EQUAL(7,loaded.synSatType);TEST_ASSERT_EQUAL(109,loaded.fmSat);TEST_ASSERT_EQUAL(m.fltMode,loaded.fltMode);
   Sink song;TEST_ASSERT_TRUE(saveProject(*project,song));*project=Project();Source si(song);

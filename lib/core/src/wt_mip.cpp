@@ -1,22 +1,17 @@
 #include "wt_mip.h"
+#include "wt_sine_table.h"
 #include <math.h>
 
 namespace mt {
 namespace {
 
 // Float only: the ESP32-S3 FPU is single precision, soft-double trig would cost ~1 us per
-// call. With the tables below one import (64 frames x 2 wtBuild passes; 2048-point frames)
+// call. With the immutable table one import (64 frames x 2 wtBuild passes; 2048-point frames)
 // is ~70 M float MACs, ~0.5-1 s on the S3 at 240 MHz; synthesis of all levels ~10 M.
 constexpr int kSynLen = kWtFrameLen;  // synthesis sine table (level lengths divide it)
-constexpr int kAnaLen = 4096;         // analysis sine table (power-of-two frames <= 4096)
-float gSynSin[kSynLen];
-float gAnaSin[kAnaLen];
-struct TabInit {
-  TabInit() {
-    for (int i = 0; i < kSynLen; ++i) gSynSin[i] = static_cast<float>(sin(6.283185307179586 * i / kSynLen));
-    for (int i = 0; i < kAnaLen; ++i) gAnaSin[i] = static_cast<float>(sin(6.283185307179586 * i / kAnaLen));
-  }
-} tabInit;
+constexpr int kAnaLen = detail::kWtSineLen;
+constexpr int kSynStride = kAnaLen / kSynLen;
+static_assert(kAnaLen % kSynLen == 0, "synthesis uses an exact subset of the analysis table");
 
 constexpr bool isPow2(int v) { return v > 0 && (v & (v - 1)) == 0; }
 
@@ -30,7 +25,8 @@ void synthLevel(const float* re, const float* im, int k, float* y) {
     const int base = n * step;
     for (int h = 1; h <= top; ++h) {
       const int i = (h * base) & (kSynLen - 1);
-      acc += re[h - 1] * gSynSin[(i + kSynLen / 4) & (kSynLen - 1)] + im[h - 1] * gSynSin[i];
+      acc += re[h - 1] * detail::kWtSine[((i + kSynLen / 4) & (kSynLen - 1)) * kSynStride] +
+             im[h - 1] * detail::kWtSine[i * kSynStride];
     }
     y[n] = acc;
   }
@@ -48,8 +44,8 @@ void wtAnalyze(const int16_t* x, int len, float* re, float* im) {
       const int step = h * (kAnaLen / len);
       for (int n = 0; n < len; ++n) {
         const int i = (n * step) & (kAnaLen - 1);
-        c += x[n] * gAnaSin[(i + kAnaLen / 4) & (kAnaLen - 1)];
-        s += x[n] * gAnaSin[i];
+        c += x[n] * detail::kWtSine[(i + kAnaLen / 4) & (kAnaLen - 1)];
+        s += x[n] * detail::kWtSine[i];
       }
     } else {
       // Rotation recurrence, reseeded exactly every 64 points to bound float drift.
