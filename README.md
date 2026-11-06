@@ -101,6 +101,8 @@ python3 scripts/verify.py
 Requires Python 3.11, `platformio==6.2.0` in the same Python environment, and `clang++`.
 Use `--tests-only` or `--builds-only` to run either part separately. CI uses macOS and the same commands.
 
+Optional data-preparation, recovery and analysis tools are kept locally in `local_tools/`, which is ignored by Git. Builds and CI do not depend on them.
+
 - **First flash of the Teensy** goes over its USB with Teensy Loader (before the enclosure is closed); later the synth board is updated from the tracker (Wi-Fi page or FILE → SYSTEM → Update synth).
 - The ESP partition table is custom (`partitions.csv`): two ~8 MB firmware slots (`app0` / `app1`); the old `samples` partition is gone. After switching to it, flash once over USB (`pio run -e wt32 -t upload`): OTA does not change the partition table. Wi-Fi settings (NVS) are kept — `nvs` and `otadata` are at the same addresses.
 - Teensy program flash: firmware from 0x60000000, OTA staging area at 0x60100000, bank (wavetables, sample starts) from 0x60200000.

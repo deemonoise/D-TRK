@@ -21,7 +21,7 @@ class App;
 //   the folder left) or closes at the top;
 // - a tap on a folder, an action or Back opens it at once; a file's first tap selects it (and
 //   previews it, see setPreviewDir), a tap on the selected one confirms; a drag scrolls;
-// - an empty list shows a dim EMPTY FOLDER (NO SD CARD without a card) line.
+// - an empty list shows EMPTY FOLDER; failed reads show READ FAILED / NO SD CARD.
 // Entries live in PSRAM while the list is allocated.
 class FileList {
  public:
@@ -59,6 +59,7 @@ class FileList {
   void finish(const char* cursor = nullptr, bool dirOnly = false);
 
   int count() const { return count_; }
+  bool readFailed() const { return readError_; }
   int rows() const { return count_ + 1; }
   int sel() const { return sel_; }    // row
   int entry() const { return sel_ - 1; }  // -1: Back
@@ -104,6 +105,7 @@ class FileList {
   Meta* meta_ = nullptr;                    // PSRAM, cap_, right after names_
   int count_ = 0, sel_ = 0, top_ = 0, dragAcc_ = 0;
   bool backTop_ = true;
+  bool readError_ = false;
   int nameRight_ = kMarkX - 8;
   const char* pvDir_ = nullptr;
   int pvSel_ = -1;        // row previewed, -1 none

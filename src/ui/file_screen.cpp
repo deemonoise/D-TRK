@@ -265,7 +265,7 @@ void FileScreen::listDir(const char* cursor) {
   list_.setPreviewDir(wavList_ ? wavDir_ : nullptr);
   list_.finish(cursor);
   // A toast at the top only; a subfolder shows EMPTY FOLDER in the list.
-  if (list_.count() == 0 && top && hw::sdReady())
+  if (list_.count() == 0 && !list_.readFailed() && top && hw::sdReady())
     app_.toast(wavList_ ? "NO /samples/*.wav" : (midiList_ ? "NO /midi FILES" : "NO PROJECTS"));
 }
 

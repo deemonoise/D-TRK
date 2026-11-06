@@ -45,7 +45,7 @@ class SafeCard final : public FsBlockDevice, private mt::SectorIoDevice {
   bool readSectors(uint32_t s, uint8_t* d, size_t n) override {
     if (fault) return false;
     if (n <= UINT32_MAX && io_.read(s, static_cast<uint32_t>(n), d)) return true;
-    return failed();
+    return failed("read", s, n);
   }
   bool writeSector(uint32_t s, const uint8_t* d) override {
     return writeSectors(s, d, 1);
@@ -53,7 +53,7 @@ class SafeCard final : public FsBlockDevice, private mt::SectorIoDevice {
   bool writeSectors(uint32_t s, const uint8_t* d, size_t n) override {
     if (fault) return false;
     if (n <= UINT32_MAX && io_.write(s, static_cast<uint32_t>(n), d)) return true;
-    return failed();
+    return failed("write", s, n);
   }
 
  private:
@@ -117,8 +117,11 @@ class SafeCard final : public FsBlockDevice, private mt::SectorIoDevice {
     return true;
 #endif
   }
-  bool failed() {
+  bool failed(const char* operation, uint32_t sector, size_t count) {
     fault = true;
+    ::link::log("sd: %s failed sector %lu count %lu error %u data %08lx", operation,
+                static_cast<unsigned long>(sector), static_cast<unsigned long>(count),
+                c ? c->errorCode() : 0, static_cast<unsigned long>(c ? c->errorData() : 0));
     return false;
   }
   mt::SectorIo io_;
@@ -251,6 +254,10 @@ class SdBackend : public FsBackend {
     return false;
   }
 
+  int16_t dirError() const override {
+    return dev_.fault || dir_.getError() ? kErrIo : kErrOk;
+  }
+
   void dirClose() override { dir_.close(); }
 
   int16_t remove(const char* path) override {
@@ -345,7 +352,7 @@ bool streamIdle() {
 }
 
 struct DeferredWork final : mt::BgWork {
-  uint32_t minReserveUs() const override { return 50000; }
+  uint32_t minReserveUs() const override { return FsDeferred::kReserveUs; }
   bool step() override {
     if (!deferred.waiting()) return false;
     // Recording owns the card; requests still expire through card::step without touching it.

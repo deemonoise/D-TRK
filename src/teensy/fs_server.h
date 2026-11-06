@@ -27,8 +27,8 @@ void spaceChanged();
 // An Fs* request (frame seq): copies it for background execution. -1 when queued / pending retry
 // or t is not an Fs request; >=0 is an immediate reply in out (cached result / rejected overlap).
 int handle(mt::link::Msg t, uint8_t seq, const uint8_t* p, int n, uint8_t* out);
-// Register once with stream::addBackground after stream::begin. The scheduler requires >50 ms reserve;
-// monolithic scans / copy / metadata writes additionally require idle streams.
+// Register once with stream::addBackground after stream::begin. The scheduler requires >30 ms reserve;
+// monolithic scans / copy / recursive deletion additionally require idle streams.
 mt::BgWork* background();
 // Every loop pass, even when the scheduler cannot admit background work: expires a request
 // after its bounded queue wait with an explicit error reply and no card access.

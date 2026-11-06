@@ -146,6 +146,7 @@ class RemoteFileImpl : public fs::FileImpl {
   String getNextFileName() override { return getNextFileName(nullptr); }
 
   String getNextFileName(bool* isDir) override {
+    client.clearError();  // cached EOF must not inherit an unrelated exists() result
     FsEntry e;
     char p[kFsPathMax];
     if (!nextEntry(e) || !child(e.name, p)) return String();

@@ -27,3 +27,6 @@ docs/automation_checklist_ru.md
 # Local verification reports
 .metrics/
 target/
+
+# Local analysis, conversion and recovery tools
+/local_tools/

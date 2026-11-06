@@ -21,7 +21,8 @@ struct MemoryFs final : FsBackend {
   std::string handles[kFsMaxOpen];
   std::vector<FsEntry> entries;
   size_t dirPos = 0;
-  int dirOpens = 0, dirReads = 0;
+  int dirOpens = 0, dirReads = 0, dirFailAt = -1;
+  int16_t dirError() const override { return dirFailAt >= 0 && dirReads >= dirFailAt ? kErrIo : kErrOk; }
   int16_t ready() override { ++readyCalls; return present ? kErrOk : kErrNoCard; }
   int16_t stat(const char* path, bool& dir, uint32_t& size) override {
     dir = dirs.count(path) != 0;
@@ -58,6 +59,7 @@ struct MemoryFs final : FsBackend {
   int16_t dirOpen(const char*) override { ++dirOpens; dirPos = 0; return kErrOk; }
   bool dirNext(FsEntry& e) override {
     ++dirReads;
+    if (dirError() != kErrOk) return false;
     if (dirPos == entries.size()) return false;
     e = entries[dirPos++]; return true;
   }
@@ -438,9 +440,8 @@ void test_arbitrary_listing_skip_waits_for_idle_and_metadata_invalidates_cursor(
   TEST_ASSERT_EQUAL(2, disk->dirOpens);
   TEST_ASSERT_TRUE(server->listCanContinue("/", 6));
   queuePath(Msg::FsMkdir, 3, "/folder");
-  TEST_ASSERT_FALSE(pending->step(3, false));
   TEST_ASSERT_TRUE(server->listCanContinue("/", 6));  // receipt does not invalidate it
-  TEST_ASSERT_TRUE(pending->step(3, true));
+  TEST_ASSERT_TRUE(pending->step(3, false));
   TEST_ASSERT_FALSE(server->listCanContinue("/", 6));
   queueList(4, "/", 6);
   TEST_ASSERT_FALSE(pending->step(4, false));
@@ -460,43 +461,65 @@ void test_malformed_listing_is_rejected_without_waiting_for_idle() {
   TEST_ASSERT_EQUAL(0, disk->dirOpens);
 }
 
-void test_mkdir_waits_for_audio_idle_without_touching_card() {
-  queuePath(Msg::FsMkdir, 1, "/new");
-  TEST_ASSERT_FALSE(pending->step(0, false));
-  TEST_ASSERT_EQUAL(0, disk->readyCalls);
-  TEST_ASSERT_FALSE(disk->dirs.count("/new"));
-  TEST_ASSERT_TRUE(pending->waiting());
-  TEST_ASSERT_TRUE(pending->step(1, true));
+void test_save_metadata_runs_when_audio_reserve_admits_it_without_stopping_transport() {
+  disk->files["/song.mtp"] = {1,2,3};
+  disk->files["/song.tmp"] = {4,5,6};
+  disk->files["/song.bak"] = {0};
+  queuePath(Msg::FsRemove, 1, "/song.bak");
+  TEST_ASSERT_TRUE(pending->step(0, false));
   TEST_ASSERT_EQUAL(kErrOk, answerError());
-  TEST_ASSERT_TRUE(disk->dirs.count("/new"));
+  Writer first(req, sizeof req); first.str("/song.mtp"); first.str("/song.bak");
+  TEST_ASSERT_EQUAL(-1, pending->submit(Msg::FsRename, 2, req, first.size(), 0, out));
+  TEST_ASSERT_TRUE(pending->step(0, false));
+  TEST_ASSERT_EQUAL(kErrOk, answerError());
+  Writer second(req, sizeof req); second.str("/song.tmp"); second.str("/song.mtp");
+  TEST_ASSERT_EQUAL(-1, pending->submit(Msg::FsRename, 3, req, second.size(), 0, out));
+  TEST_ASSERT_TRUE(pending->step(0, false));
+  TEST_ASSERT_EQUAL(kErrOk, answerError());
+  TEST_ASSERT_TRUE(disk->files["/song.mtp"] == std::vector<uint8_t>({4,5,6}));
+  TEST_ASSERT_TRUE(disk->files["/song.bak"] == std::vector<uint8_t>({1,2,3}));
+  queuePath(Msg::FsMkdir, 4, "/song");
+  TEST_ASSERT_TRUE(pending->step(0, false));
+  TEST_ASSERT_EQUAL(kErrOk, answerError());
+  TEST_ASSERT_TRUE(disk->dirs.count("/song"));
 }
 
-void test_rename_waits_for_audio_idle_without_touching_card() {
-  disk->files["/old"] = {1,2,3};
-  Writer w(req, sizeof req); w.str("/old"); w.str("/renamed");
-  TEST_ASSERT_EQUAL(-1, pending->submit(Msg::FsRename, 2, req, w.size(), 0, out));
-  TEST_ASSERT_FALSE(pending->step(0, false));
-  TEST_ASSERT_EQUAL(0, disk->readyCalls);
-  TEST_ASSERT_TRUE(disk->files.count("/old"));
-  TEST_ASSERT_FALSE(disk->files.count("/renamed"));
-  TEST_ASSERT_TRUE(pending->waiting());
-  TEST_ASSERT_TRUE(pending->step(1, true));
-  TEST_ASSERT_EQUAL(kErrOk, answerError());
-  TEST_ASSERT_FALSE(disk->files.count("/old"));
-  TEST_ASSERT_TRUE(disk->files.count("/renamed"));
-}
-
-void test_remove_and_rmdir_still_require_audio_idle() {
-  disk->files["/renamed"] = {1,2,3};
+void test_recursive_removal_still_requires_audio_idle() {
   disk->dirs.insert("/new");
-  queuePath(Msg::FsRemove, 3, "/renamed");
-  TEST_ASSERT_FALSE(pending->step(0, false));
-  TEST_ASSERT_TRUE(disk->files.count("/renamed"));
-  TEST_ASSERT_TRUE(pending->step(0, true));
   queuePath(Msg::FsRmdir, 4, "/new");
   TEST_ASSERT_FALSE(pending->step(0, false));
   TEST_ASSERT_TRUE(disk->dirs.count("/new"));
   TEST_ASSERT_TRUE(pending->step(0, true));
+  TEST_ASSERT_FALSE(disk->dirs.count("/new"));
+}
+
+void test_directory_read_failure_is_not_an_empty_or_partial_success() {
+  seedList();
+  for (int failure : {1, 2, 3}) { // first entry, page body, read-ahead
+    disk->dirReads = 0;
+    disk->dirFailAt = failure;
+    queueList(static_cast<uint8_t>(failure), "/", 0);
+    TEST_ASSERT_TRUE(pending->step(0, true));
+    TEST_ASSERT_EQUAL(kErrIo, answerError());
+    TEST_ASSERT_EQUAL(2, replies->answers.back().data.size());
+    TEST_ASSERT_FALSE(server->listCanContinue("/", 2));
+  }
+  disk->dirFailAt = -1;
+  queueList(4, "/", 0);
+  TEST_ASSERT_TRUE(pending->step(0, true));
+  TEST_ASSERT_EQUAL(kErrOk, answerError());
+}
+
+void test_directory_skip_and_recursive_delete_preserve_read_failure() {
+  seedList(); disk->dirFailAt = 1;
+  queueList(1, "/", 4);
+  TEST_ASSERT_TRUE(pending->step(0, true));
+  TEST_ASSERT_EQUAL(kErrIo, answerError());
+  disk->dirs.insert("/keep");
+  queuePath(Msg::FsRmdir, 2, "/keep");
+  TEST_ASSERT_TRUE(pending->step(0, true));
+  TEST_ASSERT_EQUAL(kErrIo, answerError());
+  TEST_ASSERT_TRUE(disk->dirs.count("/keep"));
 }
 
 void test_listing_reply_retry_keeps_cursor_and_reset_revokes_continuation() {
@@ -543,16 +566,36 @@ void test_listing_cursor_tracks_sent_entries_when_names_fill_packet() {
   TEST_ASSERT_EQUAL(250, strlen(name));
 }
 
-void test_file_reserve_starvation_expires_without_blocking_other_background_work() {
+void test_file_request_runs_with_achievable_reserve_of_six_block_audio_cache() {
   struct Audio : mt::StreamConsumer {
+    // At 44.1 kHz, the guarded six-block cache can have only ~40 ms left even when full.
     bool needs(uint32_t& r) override { r = 40000; return false; }
     void load() override {}
   } audio;
   struct File : mt::BgWork {
-    uint32_t minReserveUs() const override { return 50000; }
+    uint32_t minReserveUs() const override { return FsDeferred::kReserveUs; }
+    bool step() override { return pending->step(0, false); }
+  } file;
+  queuePath(Msg::FsMkdir, 1, "/save");
+  mt::StreamConsumer* consumers[] = {&audio}; mt::BgWork* work[] = {&file}; int next = 0;
+  mt::schedulePass(consumers, 1, work, 1, next);
+  TEST_ASSERT_EQUAL(1, replies->answers.size());
+  TEST_ASSERT_EQUAL(kErrOk, answerError());
+  TEST_ASSERT_TRUE(disk->dirs.count("/save"));
+  TEST_ASSERT_FALSE(pending->waiting());
+}
+
+void test_file_reserve_starvation_expires_without_blocking_other_background_work() {
+  struct Audio : mt::StreamConsumer {
+    bool needs(uint32_t& r) override { r = 20000; return false; }
+    void load() override {}
+  } audio;
+  struct File : mt::BgWork {
+    uint32_t minReserveUs() const override { return FsDeferred::kReserveUs; }
     bool step() override { return pending->step(0, false); }
   } file;
   struct Other : mt::BgWork {
+    uint32_t minReserveUs() const override { return 10000; }
     int calls = 0;
     bool step() override { ++calls; return true; }
   } other;
@@ -573,9 +616,11 @@ int main() {
   RUN_TEST(test_live_listing_admits_first_and_exact_next_page_without_io_in_inspector);
   RUN_TEST(test_arbitrary_listing_skip_waits_for_idle_and_metadata_invalidates_cursor);
   RUN_TEST(test_malformed_listing_is_rejected_without_waiting_for_idle);
-  RUN_TEST(test_mkdir_waits_for_audio_idle_without_touching_card);
-  RUN_TEST(test_rename_waits_for_audio_idle_without_touching_card);
-  RUN_TEST(test_remove_and_rmdir_still_require_audio_idle);
+  RUN_TEST(test_save_metadata_runs_when_audio_reserve_admits_it_without_stopping_transport);
+  RUN_TEST(test_recursive_removal_still_requires_audio_idle);
+  RUN_TEST(test_directory_read_failure_is_not_an_empty_or_partial_success);
+  RUN_TEST(test_directory_skip_and_recursive_delete_preserve_read_failure);
+  RUN_TEST(test_file_request_runs_with_achievable_reserve_of_six_block_audio_cache);
   RUN_TEST(test_file_reserve_starvation_expires_without_blocking_other_background_work);
   RUN_TEST(test_listing_reply_retry_keeps_cursor_and_reset_revokes_continuation);
   RUN_TEST(test_listing_cursor_tracks_sent_entries_when_names_fill_packet);

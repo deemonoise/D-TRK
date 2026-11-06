@@ -232,6 +232,10 @@ Result cleanFolder(const char* dir, Keep keep) {
   if (!names) return Result::NoMemory;
   static constexpr const char* kExts[] = {".wav", ".tmp"};
   const int n = hw::sdListFiles(dir, kExts, 2, names, kMaxFolderFiles);
+  if (n < 0) {
+    heap_caps_free(names);
+    return Result::ReadFail;
+  }
   Result r = Result::Ok;
   for (int k = 0; k < n; ++k) {
     char base[hw::kNameMax];

@@ -221,6 +221,10 @@ int16_t FsServerCore::list(Reader& r, Writer& w, uint8_t* body) {
   }
   // Reads one ahead to tell whether there is more.
   if (listNext_ >= start && !held_ && b_.dirNext(heldEntry_)) held_ = true;
+  if (const int16_t e = b_.dirError(); e != kErrOk) {
+    dropList();
+    return e;
+  }
   body[0] = held_ ? 1 : 0;
   body[1] = static_cast<uint8_t>(count);
   return kErrOk;
@@ -240,7 +244,9 @@ int16_t FsServerCore::rmTree(const char* path, int depth) {
     e = b_.dirOpen(path);
     if (e != kErrOk) return e;
     const bool any = b_.dirNext(ent);
+    const int16_t readError = b_.dirError();
     b_.dirClose();
+    if (readError != kErrOk) return readError;
     if (!any) return b_.rmdir(path);
     if (!joinPath(path, ent.name, child)) return kErrBadArg;
     e = ent.isDir ? rmTree(child, depth + 1) : b_.remove(child);

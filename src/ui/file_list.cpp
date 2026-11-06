@@ -32,11 +32,13 @@ void FileList::free() {
   names_ = nullptr;
   meta_ = nullptr;
   count_ = sel_ = top_ = dragAcc_ = 0;
+  readError_ = false;
 }
 
 void FileList::clear() {
   previewStop();
   count_ = sel_ = top_ = dragAcc_ = 0;
+  readError_ = false;
 }
 
 bool FileList::add(Kind k, const char* name, uint8_t tag, int16_t index) {
@@ -49,21 +51,30 @@ bool FileList::add(Kind k, const char* name, uint8_t tag, int16_t index) {
 
 void FileList::addFolder(const char* dir, const char* const* exts, int extCount, bool folders, uint8_t dirTag,
                          uint8_t fileTag) {
-  if (!names_) return;
+  if (!names_ || readError_) return;
+  const int initial = count_;
   int from = count_;
   if (folders) {
-    count_ += hw::sdListDirs(dir, names_ + count_, cap_ - count_);
+    const int n = hw::sdListDirs(dir, names_ + count_, cap_ - count_);
+    if (n < 0) { readError_ = true; return; }
+    count_ += n;
     for (int i = from; i < count_; ++i) meta_[i] = {Kind::Dir, dirTag, 0};
     from = count_;
   }
-  if (extCount > 0) count_ += hw::sdListFiles(dir, exts, extCount, names_ + count_, cap_ - count_);
+  if (extCount > 0) {
+    const int n = hw::sdListFiles(dir, exts, extCount, names_ + count_, cap_ - count_);
+    if (n < 0) { readError_ = true; count_ = initial; return; }
+    count_ += n;
+  }
   for (int i = from; i < count_; ++i) meta_[i] = {Kind::File, fileTag, 0};
 }
 
 void FileList::addFiles(const char* dir, const char* ext, bool (*accept)(const char*), uint8_t tag) {
-  if (!names_) return;
+  if (!names_ || readError_) return;
   const int from = count_;
-  count_ += hw::sdList(dir, ext, names_ + count_, cap_ - count_, accept);
+  const int n = hw::sdList(dir, ext, names_ + count_, cap_ - count_, accept);
+  if (n < 0) { readError_ = true; return; }
+  count_ += n;
   for (int i = from; i < count_; ++i) meta_[i] = {Kind::File, tag, 0};
 }
 
@@ -77,6 +88,7 @@ void FileList::finish(const char* cursor, bool dirOnly) {
       break;
     }
   select(row);
+  if (readError_) app_.toast(hw::sdReady() ? "READ FAILED" : "NO SD CARD");
 }
 
 void FileList::select(int row) {
@@ -198,7 +210,9 @@ void FileList::draw(LGFX_Sprite& s, int top) const {
     if (dir) s.drawString("/", 16 + static_cast<int>(strlen(shown)) * kCharW, ty);
   }
   s.setTextColor(kDim);
-  if (count_ == 0) s.drawString(hw::sdReady() ? "EMPTY FOLDER" : "NO SD CARD", 16, top + kRowH + (kRowH - kCharH) / 2);
+  if (count_ == 0 || readError_)
+    s.drawString(!hw::sdReady() ? "NO SD CARD" : (readError_ ? "READ FAILED" : "EMPTY FOLDER"),
+                 16, top + (count_ + 1) * kRowH + (kRowH - kCharH) / 2);
   if (top_ > 0) s.drawString("^", kMarkX, top + 4);
   if (top_ + kRows < rows()) s.drawString("v", kMarkX, top + (kRows - 1) * kRowH + 4);
 }

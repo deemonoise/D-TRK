@@ -119,9 +119,9 @@ bool sdNextEntry(fs::File& dir, String& name, bool& isDir) {
 }
 
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, bool (*accept)(const char*)) {
-  if (!sdReady()) return 0;
+  if (!sdReady()) return -1;
   fs::File d = sdFs().open(dir);
-  if (!d || !d.isDirectory()) return 0;
+  if (!d || !d.isDirectory()) return -1;
   const size_t extLen = strlen(ext);
   int n = 0;
   String entry;
@@ -147,14 +147,15 @@ int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, b
     }
     n = keepName(names, n, max, base, len - extLen);
   }
+  if (storage::remoteLastError() != mt::link::kErrOk) return -1;
   qsort(names, n, kNameMax, cmpName);
   return n;
 }
 
 int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*names)[kNameMax], int max) {
-  if (!sdReady()) return 0;
+  if (!sdReady()) return -1;
   fs::File d = sdFs().open(dir);
-  if (!d || !d.isDirectory()) return 0;
+  if (!d || !d.isDirectory()) return -1;
   int n = 0;
   String entry;
   bool isDir;
@@ -171,14 +172,15 @@ int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*n
     if (!match) continue;
     n = keepName(names, n, max, name, len);
   }
+  if (storage::remoteLastError() != mt::link::kErrOk) return -1;
   qsort(names, n, kNameMax, cmpName);
   return n;
 }
 
 int sdListDirs(const char* dir, char (*names)[kNameMax], int max) {
-  if (!sdReady()) return 0;
+  if (!sdReady()) return -1;
   fs::File d = sdFs().open(dir);
-  if (!d || !d.isDirectory()) return 0;
+  if (!d || !d.isDirectory()) return -1;
   int n = 0;
   String entry;
   bool isDir;
@@ -189,6 +191,7 @@ int sdListDirs(const char* dir, char (*names)[kNameMax], int max) {
     if (len == 0 || len >= kNameMax || name[0] == '.') continue;
     n = keepName(names, n, max, name, len);
   }
+  if (storage::remoteLastError() != mt::link::kErrOk) return -1;
   qsort(names, n, kNameMax, cmpName);
   return n;
 }

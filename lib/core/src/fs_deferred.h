@@ -11,6 +11,9 @@ class FsDeferred {
   using Reply = void (*)(void* ctx, Msg type, uint8_t seq, const uint8_t* payload, int size);
   // Below the ESP FsClient's 2000-ms first retry; a retry never restarts this deadline.
   static constexpr uint32_t kWaitMs = 1000;
+  // Same floor as normal background work. A guarded six-block cache can be full with
+  // only ~40 ms remaining: demanding 50 ms can starve every request until it expires.
+  static constexpr uint32_t kReserveUs = 30000;
   FsDeferred(FsServerCore& server, Reply reply, void* ctx) : server_(server), reply_(reply), ctx_(ctx) {}
 
   // -1: queued / pending retry, or not an Fs request; >=0: immediate reply size in out.

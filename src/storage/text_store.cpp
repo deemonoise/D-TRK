@@ -14,7 +14,8 @@ bool textPath(char* out, size_t cap, const char* dir, const char* name, const ch
 
 int listTexts(const char* dir, const char* ext, char (*names)[hw::kNameMax], int max) {
   if (!hw::sdReady() || !hw::sdFs().exists(dir)) return 0;
-  return hw::sdList(dir, ext, names, max, validName);
+  const int n = hw::sdList(dir, ext, names, max, validName);
+  return n < 0 ? 0 : n;  // legacy callers expect a nonnegative count
 }
 
 Result loadText(const char* dir, const char* name, const char* ext, char* out, int cap) {

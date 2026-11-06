@@ -46,6 +46,8 @@ class FsBackend {
   // One listing at a time: the entries of path in the card's order, without "." and "..".
   virtual int16_t dirOpen(const char* path) = 0;
   virtual bool dirNext(FsEntry& e) = 0;
+  // After dirNext(false): distinguish the end of a directory from a failed read.
+  virtual int16_t dirError() const { return kErrOk; }
   virtual void dirClose() = 0;
   virtual int16_t remove(const char* path) = 0;
   virtual int16_t rename(const char* from, const char* to) = 0;
@@ -123,6 +125,8 @@ class FsClientCore {
   // none came.
   using Xfer = bool (*)(void* ctx, Msg t, const uint8_t* p, int n, uint8_t* reply, int& replyLen);
   FsClientCore(Xfer x, void* ctx) : x_(x), ctx_(ctx) {}
+  // Buffered directory iteration is a new local operation even when no request is needed.
+  void clearError() { last_ = kErrOk; }
 
   // All return kErrOk / a negative error (kErrLink: no reply); read / write the byte count.
   int16_t open(const char* path, FsMode mode, uint8_t& h, bool& isDir, uint32_t& size);

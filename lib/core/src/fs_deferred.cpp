@@ -15,10 +15,13 @@ bool needsIdle(const FsServerCore& server, Msg type, const uint8_t* payload, int
     case Msg::FsOpen:
     case Msg::FsRead:
     case Msg::FsWrite:
-    case Msg::FsClose: return false;
-    // Metadata writes can allocate clusters or sync directories; reserve is not a latency bound.
+    case Msg::FsClose:
+    // These are single filesystem operations, like open/create, write and close above.
+    // Requiring stopped transport here prevents every live save from publishing its .tmp.
+    // All still need scheduler admission; card latency has no hard bound.
     case Msg::FsMkdir:
-    case Msg::FsRename: return true;
+    case Msg::FsRename:
+    case Msg::FsRemove: return false;
     case Msg::FsList: {
       Reader r(payload, size);
       const uint16_t start = r.u16();
