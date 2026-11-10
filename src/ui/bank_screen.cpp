@@ -4,6 +4,7 @@
 #include <string.h>
 #include "app.h"
 #include "edit_ops.h"
+#include "pattern_tools.h"
 #include "names.h"
 
 namespace ui {
@@ -14,6 +15,7 @@ void BankScreen::onEnter() {
 }
 
 void BankScreen::onProjectReplaced() {
+  kb_.close();
   copyFrom_ = -1;
   masksStale_ = true;
 }
@@ -85,12 +87,55 @@ void BankScreen::openMenu(int idx) {
   menuPat_ = idx;
   copyFrom_ = -1;
   const MenuItem items[] = {
-      {"Copy to...", kCopyTo}, {"Clear", kClear},     {"Length 16", kLen16},
-      {"Length 32", kLen32},   {"Length 64", kLen64},  {"Length 128", kLen128},
+      {"Rename...", kRename}, {"Copy to...", kCopyTo}, {"Clear...", kClear}, {"Length...", kLength},
+      {"Pattern x2...", kDouble, app_.project().patterns[idx].length*2<=mt::kMaxSteps},
   };
   char title[28];
-  snprintf(title, sizeof(title), "PATTERN %02d", idx + 1);
+  const char* name = app_.project().patterns[idx].name;
+  if (name[0]) snprintf(title, sizeof(title), "P%02d %.16s", idx + 1, name);
+  else snprintf(title, sizeof(title), "PATTERN %02d", idx + 1);
   app_.menu().open(title, items, sizeof(items) / sizeof(items[0]), [this](int id) { onMenu(id); });
+}
+
+void BankScreen::rename(int pat) {
+  static_assert(Keyboard::kMaxLen == mt::kPatternNameMax, "pattern keyboard limit");
+  char title[24];
+  snprintf(title, sizeof(title), "P%02d NAME:", pat + 1);
+  kb_.open(title, app_.project().patterns[pat].name, [this, pat](const char* text) {
+    auto& target = app_.project().patterns[pat];
+    if (!strcmp(target.name, text)) return;
+    if (!app_.undo()) { app_.toast("NO MEMORY"); return; }
+    snapshot(pat);
+    // Display metadata only: neither the engine nor the synth link reads the label.
+    engine::lockProject();
+    strlcpy(target.name, text, sizeof(target.name));
+    engine::unlockProject();
+    app_.invalidate();
+  });
+}
+
+void BankScreen::openLengthMenu() {
+  const int length=app_.project().patterns[menuPat_].length;
+  const int values[]={16,32,64,128};
+  char labels[4][20],title[28]; MenuItem rows[4];
+  for(int i=0;i<4;++i){
+    snprintf(labels[i],sizeof(labels[i]),"%s%d steps",length==values[i]?"> ":"",values[i]);
+    rows[i]={labels[i],kLen16+i};
+  }
+  snprintf(title,sizeof(title),"P%02d LENGTH: %d",menuPat_+1,length);
+  app_.menu().openChild(title,rows,4,[this](int id){onMenu(id);});
+}
+
+void BankScreen::openDoubleMenu() {
+  const int length=app_.project().patterns[menuPat_].length;
+  char title[28],label[28];
+  snprintf(title,sizeof(title),"PATTERN P%02d x2",menuPat_+1);
+  snprintf(label,sizeof(label),"Apply: %d -> %d steps",length,length*2);
+  const MenuItem rows[]={{"All 16 tracks",kCancel,false},{label,kDoubleApply,length*2<=mt::kMaxSteps}};
+  app_.menu().openChild(title,rows,2,[this,length](int id){
+    if(app_.project().patterns[menuPat_].length!=length){app_.toast("TARGET CHANGED");return;}
+    onMenu(id);
+  });
 }
 
 void BankScreen::onMenu(int id) {
@@ -98,6 +143,19 @@ void BankScreen::onMenu(int id) {
   const int pat = menuPat_;
   char title[28];
   switch (id) {
+    case kRename: rename(pat); break;
+    case kLength: openLengthMenu(); break;
+    case kDouble: openDoubleMenu(); break;
+    case kDoubleApply: {
+      auto& target=p.patterns[pat];
+      if(target.length*2>mt::kMaxSteps){app_.toast("128 STEPS MAX");break;}
+      if(!app_.undo()){app_.toast("NO MEMORY");break;}
+      app_.setRecording(false,false);app_.pushUndo(pat);
+      engine::lockProject();const auto result=mt::doublePattern(target);engine::unlockProject();
+      if(result!=mt::ToolResult::Changed){app_.dropUndo();app_.toast("NO CHANGE");break;}
+      app_.markDirty();releaseTiesIfHeard(pat);masksStale_=true;app_.toast("PATTERN DOUBLED");
+      break;
+    }
     case kCopyTo:
       copyFrom_ = pat;
       app_.toast("TAP TARGET");
@@ -105,7 +163,7 @@ void BankScreen::onMenu(int id) {
     case kClear: {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Clear! (confirm)", kClearConfirm}};
       snprintf(title, sizeof(title), "CLEAR P%02d?", pat + 1);
-      app_.menu().open(title, items, 2, [this](int i) { onMenu(i); });
+      app_.menu().openChild(title, items, 2, [this](int i) { onMenu(i); });
       break;
     }
     case kClearConfirm:
@@ -121,6 +179,7 @@ void BankScreen::onMenu(int id) {
     case kLen32:
     case kLen64:
     case kLen128:
+      if(p.patterns[pat].length==(id==kLen16?16:id==kLen32?32:id==kLen64?64:128)){app_.toast("NO CHANGE");break;}
       snapshot(pat);
       engine::lockProject();
       p.patterns[pat].length = id == kLen16 ? 16 : id == kLen32 ? 32 : id == kLen64 ? 64 : 128;
@@ -135,6 +194,7 @@ void BankScreen::onMenu(int id) {
 }
 
 void BankScreen::onInput(const hw::InputEvent& ev) {
+  if (kb_.isOpen()) { kb_.onInput(ev); return; }
   using hw::InputType;
   switch (ev.type) {
     case InputType::EncTurn: sel_ = ((sel_ + ev.delta) % mt::kPatterns + mt::kPatterns) % mt::kPatterns; break;
@@ -145,6 +205,7 @@ void BankScreen::onInput(const hw::InputEvent& ev) {
 }
 
 void BankScreen::onTouch(const TouchEvent& ev) {
+  if (kb_.isOpen()) { kb_.onTouch(ev, app_.shift()); return; }
   if (ev.type == TouchType::Drag) return;
   const int idx = tileAt(ev.x, ev.y);
   if (idx < 0) return;
@@ -154,6 +215,7 @@ void BankScreen::onTouch(const TouchEvent& ev) {
 
 void BankScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
+  if (kb_.isOpen()) { kb_.draw(s, y0); return; }
   if (masksStale_) refreshMasks();
   const bool blinkOn = (millis() / kBlinkMs) & 1;
   for (int i = 0; i < mt::kPatterns; ++i) {
@@ -181,13 +243,27 @@ void BankScreen::drawTile(LGFX_Sprite& s, int idx, int x, int y, bool blinkOn) {
   if (queued || idx == copyFrom_) s.drawRect(x + 1, y + 1, kTileW - 2, kTileH - 2, border);
   if (idx == sel_) s.drawRect(x + 3, y + 3, kTileW - 6, kTileH - 6, kText);
 
-  s.setTextColor(empty ? kDim : kText);
+  s.setTextColor(empty && !pt.name[0] ? kDim : kText);
   snprintf(buf, sizeof(buf), "P%02d", idx + 1);
   s.drawString(buf, x + 8, y + 6);
-  snprintf(buf, sizeof(buf), "%u", pt.length);
-  s.drawString(buf, x + kTileW - 8 - static_cast<int>(strlen(buf)) * kCharW, y + 6);
+  if (pt.name[0]) {
+    // The compact header keeps length + resolution visible above the name.
+    s.setFont(&fonts::Font0);
+    snprintf(buf, sizeof(buf), "%u %s", pt.length, resName(pt.res));
+    s.drawString(buf, x + kTileW - 8 - static_cast<int>(strlen(buf)) * 6, y + 10);
+    s.setFont(font());
+  } else {
+    snprintf(buf, sizeof(buf), "%u", pt.length);
+    s.drawString(buf, x + kTileW - 8 - static_cast<int>(strlen(buf)) * kCharW, y + 6);
+  }
   s.setTextColor(kDim);
-  s.drawString(resName(pt.res), x + 8, y + 24);
+  if (pt.name[0]) {
+    constexpr int visible = (kTileW - 16) / kCharW;
+    snprintf(buf, sizeof(buf), "%.*s", visible, pt.name);
+    if (strnlen(pt.name, sizeof(pt.name)) > visible) buf[visible - 1] = '~';
+    s.setTextColor(kText);
+    s.drawString(buf, x + 8, y + 24);
+  } else s.drawString(resName(pt.res), x + 8, y + 24);
 
   // Track dots in two rows: tracks 1-8 above 9-16 (the two button halves).
   constexpr int kHalf = mt::kTracks / 2;
@@ -201,6 +277,7 @@ void BankScreen::drawTile(LGFX_Sprite& s, int idx, int x, int y, bool blinkOn) {
 
 // B: leave copy mode.
 void BankScreen::onBack() {
+  if (kb_.isOpen()) { kb_.close(); app_.invalidate(); return; }
   if (copyFrom_ < 0) return;
   copyFrom_ = -1;
   app_.toast("CANCEL");

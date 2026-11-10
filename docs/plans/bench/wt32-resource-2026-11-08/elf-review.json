@@ -1,0 +1,55 @@
+{
+  "last_ota": {
+    "path": "/private/tmp/dtrk-wt32-load-memory-ota-2026-11-08/firmware.elf",
+    "sha256": "36c882ffb3c5afaddcf454b864e1ca745a93bcff91a9e0e531f13189725e7b2f",
+    "sections": {
+      ".iram0.text": {
+        "size": 171451,
+        "address": 1077363716
+      },
+      ".dram0.data": {
+        "size": 23292,
+        "address": 1070260736
+      },
+      ".dram0.bss": {
+        "size": 74632,
+        "address": 1070284032
+      },
+      ".dram0.heap_start": {
+        "size": 0,
+        "address": 1070358664
+      }
+    }
+  },
+  "current": {
+    "path": "/Users/deemonoise/Documents/PlatformIO/Projects/D-TRK/.pio/build/wt32/firmware.elf",
+    "sha256": "ce029ebdb0138b82b75ccdad8a7e1ce6896e5c3ce6df3454d668019646d7fc41",
+    "sections": {
+      ".iram0.text": {
+        "size": 166275,
+        "address": 1077363716
+      },
+      ".dram0.data": {
+        "size": 23292,
+        "address": 1070255616
+      },
+      ".dram0.bss": {
+        "size": 74632,
+        "address": 1070278912
+      },
+      ".dram0.heap_start": {
+        "size": 0,
+        "address": 1070353544
+      }
+    }
+  },
+  "flash_symbols": [
+    "420529c8 00000138 T mt::TimeStretch::step(mt::TimeStretchReader&, short*, unsigned long, unsigned long&)",
+    "42052310 000000de T mt::TimeStretch::start(unsigned long, unsigned long, unsigned long)",
+    "42051fdc 00000324 T mt::estimateTempo(mt::Onset const*, int, unsigned long, unsigned long)",
+    "4202563c 0000011c T mt::OnsetScan::feed(short const*, unsigned long)"
+  ],
+  "offline_iram_input_bytes": 0,
+  "iram_text_delta": -5176,
+  "heap_start_delta": -5120
+}

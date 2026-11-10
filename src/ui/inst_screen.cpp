@@ -1,4 +1,6 @@
 #include "inst_screen.h"
+#include "ui_context.h"
+#include <Arduino.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,9 +18,12 @@
 #include "synth_lofi.h"
 #include "wt_builtin.h"
 #include "wt_mip.h"
+#include "mod_matrix.h"
 
 namespace ui {
 namespace {
+
+const char* const matrixDepthNames[] = {"M01 depth", "M02 depth", "M03 depth", "M04 depth", "M05 depth", "M06 depth", "M07 depth", "M08 depth"};
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -257,6 +262,9 @@ InstScreen::InstScreen(App& app) : app_(app) {
                    else snprintf(o, n, "HOLD");
                  },
                  [this](int d) { inst().synEDec = static_cast<uint8_t>(clampi(inst().synEDec + d, 0, 127)); }, noSenv};
+  auto view = [this](char* o, int n) { snprintf(o,n,"%s",wave_.live()?"LIVE":"HOLD"); };
+  syn_[kOscView] = {"View",view,nullptr,{}, {}, [] { return "CLICK TO TOGGLE HOLD / LIVE"; }};
+  syn_[kModView] = {"View",view,nullptr,{}, {}, [] { return "CLICK TO TOGGLE HOLD / LIVE"; }};
   initTail(chip_ + kChipRows);
   initTail(sample_ + kCommon);
   initTail(fm_ + kFmRows);
@@ -275,6 +283,7 @@ InstScreen::InstScreen(App& app) : app_(app) {
   list_.setEditScope([this]() -> void* { return &inst(); }, sizeof(mt::Instrument));
   list_.setOnCancel([this] { app_.toast("CANCEL"); });
   presets_.setOnClose([this] { afterPresets(); });
+  initMatrix();
   wt_.setOnClose([this] { app_.invalidate(); });
 }
 
@@ -415,7 +424,7 @@ void InstScreen::initTail(Param* t) {
   // struct in the Dest row into a load from address 0 (PANIC on any non-SYNTH instrument).
   auto cfg = [this] { return mt::lfoAt(inst(), lfoSel_); };
   auto lfo = [this] { return mt::lfoRef(inst(), lfoSel_); };
-  auto noLfo = [cfg] { return cfg().depth == 0; };
+  auto noLfo = [this, cfg] { return cfg().depth == 0 && !(mt::modLfoMask(inst()) & (1u << lfoSel_)); };
   t[kLfoSel] = {"LFO",
                 [this](char* o, int n) {
                   int on = 0;
@@ -495,6 +504,17 @@ void InstScreen::initTail(Param* t) {
                 b[1] = static_cast<uint8_t>(clampi(b[1] + d, 0, 127));
               },
               [this, notByte] { return notByte() || !(mt::byteUses(mt::byteCode(inst().lfoByte[lfoSel_][0])) & 1); }};
+  for (int r : {kCutoff, kReso, kFEnv}) t[r].hint = [] { return "Enable Filter"; };
+  for (int r : {kFAtk, kFDec})
+    t[r].hint = [off] { return off() ? "Enable Filter" : "Set Flt env above/below zero"; };
+  t[kKeytrack].hint = [off] { return off() ? "Enable Filter" : "FORMANT has no key tracking"; };
+  for (int r : {kLfoWave, kLfoSync, kLfoRetrig, kLfoRate, kLfoDest})
+    t[r].hint = [] { return "Set LFO Depth above/below zero"; };
+  t[kLfoFormula].hint = [noLfo] { return noLfo() ? "Set LFO Depth above/below zero" : "Select LFO Wave BYTE"; };
+  t[kLfoA].hint = [noLfo, notByte] {
+    return noLfo() ? "Set LFO Depth above/below zero" : notByte() ? "Select LFO Wave BYTE" : "Formula does not use A";
+  };
+
 }
 
 void InstScreen::relabel() {
@@ -519,6 +539,7 @@ mt::Instrument& InstScreen::inst() { return app_.project().instruments[instr_]; 
 void InstScreen::setType(mt::InstrType v) {
   mt::Instrument& m = inst();
   if (v == m.type) return;
+  wave_.reset();
   if (typeSnapInstr_ != instr_ || m.type == typeSnap_.type) {
     typeSnap_ = m;
     typeSnapInstr_ = instr_;
@@ -558,6 +579,44 @@ int InstScreen::typeCount() const {
     case mt::InstrType::Lofi: return kLofiRows - kCommon;
     default: return kChipRows - kCommon;
   }
+}
+
+void InstScreen::initMatrix() {
+  auto route = [this]() -> mt::ModRoute& { return inst().mod[matrixRoute_]; };
+  auto off = [route] { return route().source == 0; };
+  matrix_[0] = {"Route", [this](char* o, int n) { snprintf(o,n,"%d / %d",matrixRoute_+1,mt::kModRoutes); },
+    [this](int d) { matrixRoute_=clampi(matrixRoute_+d,0,mt::kModRoutes-1); matrix_[3].label=matrixDepthNames[matrixRoute_]; }};
+  matrix_[1] = {"Source", [route](char* o,int n) { snprintf(o,n,"%s",mt::modSourceName(route().source)); },
+    [route](int d) { route().source=clampi(route().source+d,0,int(mt::ModSource::Count)-1); }};
+  matrix_[2] = {"Target", [this,route](char* o,int n) { snprintf(o,n,"%s",mt::lfoDestName(route().dest,inst().type)); },
+    [this,route](int d) { route().dest=mt::modDestStep(route().dest,d,inst().type); },off,
+    [this,route] { return !mt::lfoDestValid(route().dest,inst().type); }};
+  matrix_[3] = {matrixDepthNames[0], [route](char* o,int n) { snprintf(o,n,"%+d",route().amount); },
+    [route](int d) { route().amount=clampi(route().amount+d,-64,63); },off};
+  matrix_[4] = {"Polarity", [route](char* o,int n) {
+      const char* const names[]={"NATIVE","0..1","-1..1"};
+      snprintf(o,n,"%s",names[route().polarity<3?route().polarity:0]); },
+    [route](int d) { route().polarity=clampi(route().polarity+d,0,2); },off};
+  matrix_[5] = {"Depth via", [route](char* o,int n) { snprintf(o,n,"%s",mt::modSourceName(route().via)); },
+    [route](int d) { route().via=clampi(route().via+d,0,int(mt::ModSource::Count)-1); },off};
+  for (int i=2;i<6;++i) matrix_[i].hint=[] { return "Select a matrix Source"; };
+}
+
+// Actions are captured before opening a job; switching instruments cannot redirect its result.
+void InstScreen::openSampleJob(int action) {
+  int index; uint32_t from,to,rate;
+  editor_.bind(instr_);
+  const bool found=action==4?editor_.wtSource(index,from,to,rate):editor_.extractSource(action==1,index,from,to,rate);
+  if (!found) { app_.toast(action==1?"SELECT A SLICE":"SAMPLE NOT CACHED"); return; }
+  if (action==4) wtMake_.open(index,from,to,rate,inst().name);
+  else if (action==2) extract_.openStretch(instr_,index,from,to,rate);
+  else if (action==3) extract_.openTempo(instr_,index,from,to,rate);
+  else extract_.open(instr_,index,from,to,rate);
+  sampleJob_=true;
+}
+void InstScreen::syncSampleJob() {
+  if (!sampleJob_ || extract_.isOpen() || wtMake_.isOpen()) return;
+  sampleJob_=false; mut_.slot=-1; editor_.bind(instr_); syncParams(); app_.invalidate();
 }
 
 void InstScreen::syncParams() {
@@ -613,6 +672,10 @@ void InstScreen::showPage(int phys, bool bar) {
     else list_.setSel(0);
     return;
   }
+  if (page_==kPgMatrix) {
+    list_.setParams(matrix_,6); list_.setVisibleRows(kListRows);
+    if(bar) list_.selectBar(); else list_.setSel(0); return;
+  }
   Param* const rows = typeRows();
   const int tail = kCommon + typeCount();
   int off = 0, count = kMainRows;
@@ -648,6 +711,7 @@ void InstScreen::leaveEdit() {
 }
 
 void InstScreen::onEnter() {
+  wave_.reset();
   leaveEdit();
   typeSnapInstr_ = -1;
   instr_ = app_.project().tracks[app_.curTrack()].instr % mt::kInstruments;
@@ -656,28 +720,32 @@ void InstScreen::onEnter() {
 }
 
 void InstScreen::onLeave() {
+  wave_.reset();
   if (presets_.isOpen()) presets_.close(false);
   if (wt_.isOpen()) wt_.close();
-  bounce_.cancel();
+  bounce_.cancel(); extract_.cancel(); wtMake_.cancel(); sampleJob_=false;
 }
 
 void InstScreen::onProjectReplaced() {
+  wave_.reset();
   mut_.slot = -1;  // belongs to the old project
   typeSnapInstr_ = -1;
   // The instrument the browsers would restore / set belongs to the old project.
   if (presets_.isOpen()) presets_.close(true);
   if (wt_.isOpen()) wt_.close();
-  bounce_.cancel();
+  bounce_.cancel(); extract_.cancel(); wtMake_.cancel(); sampleJob_=false;
   onEnter();
 }
 
 void InstScreen::afterPresets() {
+  wave_.reset();
   editor_.bind(instr_);
   syncParams();
   fixNames();
 }
 
 void InstScreen::openTables(int osc) {
+  wave_.reset();
   leaveEdit();
   wt_.open(instr_, osc);
 }
@@ -686,8 +754,10 @@ void InstScreen::presetMenu() {
   leaveEdit();
   if (inst().type == mt::InstrType::Kit) {  // factory kits only: no Save
     enum : int { kKitLoad, kKitShot };
-    const MenuItem items[] = {{"Load", kKitLoad}, {"Save one-shot...", kKitShot}};
-    app_.menu().open("PRESET", items, 2, [this](int id) {
+    const MenuItem items[] = {{"Load kit...", kKitLoad}, {"Save one-shot...", kKitShot}};
+    char title[28];
+    snprintf(title, sizeof(title), "KIT I%02d %s", instr_ + 1, inst().name);
+    app_.menu().open(title, items, 2, [this](int id) {
       if (id == kKitLoad) {
         typeSnapInstr_ = -1;
         presets_.open(PresetBrowser::Mode::Load, instr_);
@@ -697,57 +767,108 @@ void InstScreen::presetMenu() {
     });
     return;
   }
-  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kMut15, kMut30, kMut60, kMutUndo, kShot };
+  enum : int { kLoad, kSave, kChop, kAdd, kDel, kClear, kClearConfirm, kCancel, kToWt, kExtractRegion, kExtractSlice, kStretch, kBpm, kShot,
+               kRecordGroup, kSlicesGroup, kConvertGroup, kPresetsGroup, kMutateGroup };
   auto choose = [this](int id) {
     switch (id) {
       case kChop: editor_.chop(); break;
-      case kShot: bounce_.open(instr_, onEditor() ? editor_.previewNote() : kPreviewNote, previewIns()); break;
-      case kAdd: editor_.addSlice(app_.shift()); break;  // Shift held on the click: at a transient
+      case kShot: {
+        const int t = app_.curTrack();
+        const uint8_t ins = app_.project().tracks[t].instr == instr_ ? static_cast<uint8_t>(t) : mt::kTracks;
+        const uint8_t note=onEditor()?editor_.previewNote():kPreviewNote;
+        if (note>127) app_.toast("USE EXTRACT SLICE");
+        else bounce_.open(instr_,note,ins);
+        break;
+      }
+      case kStretch: openSampleJob(2); break;
+      case kBpm: openSampleJob(3); break;
+      case kExtractRegion: openSampleJob(0); break;
+      case kExtractSlice: openSampleJob(1); break;
+      case kToWt: openSampleJob(4); break;
+      case kAdd: editor_.addSlice(app_.shift()); break;
       case kDel: editor_.deleteSlice(); break;
       case kClear: {
-        const MenuItem confirm[] = {{"Cancel", kCancel}, {"Clear! (confirm)", kClearConfirm}};
-        app_.menu().open("CLEAR SLICES?", confirm, 2, [this](int i) {
+        const MenuItem confirm[] = {{"Cancel", kCancel}, {"Clear slices", kClearConfirm}};
+        app_.menu().openChild("CLEAR SLICES?", confirm, 2, [this](int i) {
           if (i == kClearConfirm) editor_.clearSlices();
         });
         break;
       }
       case kLoad:
       case kSave:
-        typeSnapInstr_ = -1;  // a loaded preset replaces the instrument
+        typeSnapInstr_ = -1;
         presets_.open(id == kSave ? PresetBrowser::Mode::Save : PresetBrowser::Mode::Load, instr_);
         break;
-      case kMut15: mutate(15); break;
-      case kMut30: mutate(30); break;
-      case kMut60: mutate(60); break;
-      case kMutUndo: undoMutate(); break;
+      case kMutateGroup: openMutateMenu(); break;
       default: break;
     }
   };
-  const bool canUndo = mut_.slot == instr_ && mt::mutateCanRestore(app_.project(), mut_);  // not edited since
   if (onEditor()) {
     editor_.bind(instr_);
-    const MenuItem items[] = {{"Save one-shot...", kShot},
-                              {"Chop", kChop},
-                              {"Add slice", kAdd},
-                              {"Delete slice", kDel, editor_.sliceSelected()},
-                              {"Clear slices", kClear, editor_.hasSlices()},
-                              {"Load preset", kLoad},
-                              {"Save preset", kSave},
-                              {"Mutate 15%", kMut15},
-                              {"Mutate 30%", kMut30},
-                              {"Mutate 60%", kMut60},
-                              {"Undo mutate", kMutUndo, canUndo}};
-    app_.menu().open("SAMPLE", items, 11, choose);
+    const MenuItem groups[] = {{"Render...", kRecordGroup}, {"Slices...", kSlicesGroup},
+                               {"Convert...", kConvertGroup}, {"Presets...", kPresetsGroup},
+                               {"Mutate...", kMutateGroup}};
+    char title[28];
+    snprintf(title, sizeof(title), "SAMPLE I%02d %s", instr_ + 1, inst().name);
+    app_.menu().open(title, groups, 5, [this, choose](int group) {
+      char title[28];
+      if (group == kMutateGroup) { openMutateMenu(); return; }
+      if (group == kRecordGroup) {
+        const MenuItem rows[] = {{"Save one-shot...", kShot}};
+        snprintf(title, sizeof(title), "RENDER I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, 1, choose);
+      } else if (group == kSlicesGroup) {
+        const MenuItem rows[] = {{"Chop", kChop}, {"Add slice", kAdd},
+                                {"Delete slice", kDel, editor_.sliceSelected()},
+                                {"Clear slices...", kClear, editor_.hasSlices()}};
+        snprintf(title, sizeof(title), "SLICES I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, 4, choose);
+      } else if (group == kConvertGroup) {
+        int wi; uint32_t wf, wt, wr;
+        MenuItem rows[5];
+        int count = 0;
+        rows[count++] = {"Time stretch...",kStretch,editor_.extractSource(false,wi,wf,wt,wr)};
+        rows[count++] = {"Estimate BPM...",kBpm,editor_.extractSource(false,wi,wf,wt,wr)};
+        rows[count++] = {"Extract region...", kExtractRegion, editor_.extractSource(false, wi, wf, wt, wr)};
+        if (editor_.sliceSelected())
+          rows[count++] = {"Extract slice...", kExtractSlice, editor_.extractSource(true, wi, wf, wt, wr)};
+        rows[count++] = {"To wavetable...", kToWt, editor_.wtSource(wi, wf, wt, wr)};
+        snprintf(title, sizeof(title), "CONVERT I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, count, choose);
+      } else if (group == kPresetsGroup) {
+        const MenuItem rows[] = {{"Load preset...", kLoad}, {"Save preset...", kSave}};
+        snprintf(title, sizeof(title), "PRESETS I%02d", instr_ + 1);
+        app_.menu().openChild(title, rows, 2, choose);
+      }
+    });
     return;
   }
-  const MenuItem items[] = {{"Load", kLoad},
-                            {"Save", kSave},
-                            {"Save one-shot...", kShot},
-                            {"Mutate 15%", kMut15},
-                            {"Mutate 30%", kMut30},
-                            {"Mutate 60%", kMut60},
-                            {"Undo mutate", kMutUndo, canUndo}};
-  app_.menu().open("PRESET", items, 7, choose);
+  const MenuItem items[] = {{"Load preset...", kLoad}, {"Save preset...", kSave},
+                            {"Save one-shot...", kShot}, {"Mutate...", kMutateGroup}};
+  char title[28];
+  snprintf(title, sizeof(title), "PRESET I%02d %s", instr_ + 1, inst().name);
+  app_.menu().open(title, items, 4, choose);
+}
+
+void InstScreen::openMutateMenu(bool refresh) {
+  char strength[28], title[28];
+  snprintf(strength, sizeof(strength), "Strength: %d%%", mutateStrength_);
+  snprintf(title, sizeof(title), "MUTATE I%02d", instr_ + 1);
+  const bool canUndo = mut_.slot == instr_ && mt::mutateCanRestore(app_.project(), mut_);
+  const MenuItem rows[] = {{strength, 0}, {"Apply mutation", 1}, {"Undo mutation", 2, canUndo}};
+  auto choose = [this](int id) {
+    if (id == 0) {
+      const MenuItem choices[] = {{"15%", 15}, {"30%", 30}, {"60%", 60}};
+      app_.menu().openChild("MUTATE STRENGTH", choices, 3, [this](int strength) {
+        mutateStrength_ = strength;
+        app_.menu().back();
+        openMutateMenu(true);
+      });
+    } else if (id == 1) mutate(mutateStrength_);
+    else if (id == 2) undoMutate();
+  };
+  if (refresh) app_.menu().replace(title, rows, 3, choose);
+  else app_.menu().openChild(title, rows, 3, choose);
 }
 
 void InstScreen::mutate(int strength) {
@@ -781,22 +902,23 @@ void InstScreen::undoMutate() {
 }
 
 void InstScreen::onATap(bool shift) {
-  if (presets_.isOpen() || wt_.isOpen() || bounce_.isOpen() || !onEditor()) return;
+  if (presets_.isOpen() || wt_.isOpen() || bounce_.isOpen() || extract_.isOpen() || wtMake_.isOpen() || !onEditor()) return;
   editor_.bind(instr_);
   editor_.stepMarker(shift ? -1 : 1);
 }
 
 void InstScreen::changeInstr(int d) {
+  wave_.reset();
   leaveEdit();
   instr_ = ((instr_ + d) % mt::kInstruments + mt::kInstruments) % mt::kInstruments;
   editor_.bind(instr_);
   syncParams();
 }
 
-bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && !bounce_.isOpen() && onEditor(); }
+bool InstScreen::buttonsBusy() const { return !presets_.isOpen() && !bounce_.isOpen() && !extract_.isOpen() && !wtMake_.isOpen() && onEditor(); }
 
 bool InstScreen::trackKey(int n, bool shift) {
-  if (shift || presets_.isOpen() || bounce_.isOpen() || !onEditor()) return false;
+  if (shift || presets_.isOpen() || bounce_.isOpen() || extract_.isOpen() || wtMake_.isOpen() || !onEditor()) return false;
   editor_.playSlice(n);
   return true;
 }
@@ -808,10 +930,14 @@ uint8_t InstScreen::previewIns() {
 }
 
 void InstScreen::preview() {
-  audio::preview(static_cast<uint8_t>(instr_), onEditor() ? editor_.previewNote() : kPreviewNote, previewIns());
+  const uint8_t note = onEditor() ? editor_.previewNote() : kPreviewNote;
+  if (note > 127) editor_.playSlice(0);
+  else audio::preview(static_cast<uint8_t>(instr_), note, previewIns());
 }
 
 void InstScreen::onInput(const hw::InputEvent& ev) {
+  if (extract_.isOpen()) { extract_.onInput(ev); syncSampleJob(); return; }
+  if (wtMake_.isOpen()) { wtMake_.onInput(ev); syncSampleJob(); return; }
   if (presets_.isOpen()) {
     presets_.onInput(ev);
     return;
@@ -826,6 +952,10 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
   }
   if (ev.type == hw::InputType::EncClick && tableOsc() >= 0) {
     openTables(tableOsc());
+    return;
+  }
+  if (ev.type == hw::InputType::EncClick && !list_.editing() && viewRow(list_.sel())) {
+    wave_.toggleLive();
     return;
   }
   const bool wasName = nameEdit();
@@ -864,12 +994,13 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
 
 // B + Shift + turn: the previous / next page (not over the browsers); the cursor stays on the page bar.
 void InstScreen::onPage(int d) {
-  if (presets_.isOpen() || wt_.isOpen() || bounce_.isOpen()) return;
+  if (presets_.isOpen() || wt_.isOpen() || bounce_.isOpen() || extract_.isOpen() || wtMake_.isOpen()) return;
   showPage(physPage() + d, onEditor() ? editor_.barSelected() : list_.barSelected());
 }
 
 // B: closes the browser (as its long press), else leaves the edit with the value kept.
 void InstScreen::onBack() {
+  if (extract_.isOpen() || wtMake_.isOpen()) { extract_.cancel(); wtMake_.cancel(); syncSampleJob(); return; }
   if (presets_.isOpen()) presets_.onInput({hw::InputType::EncLong, 0, false});
   else if (bounce_.isOpen()) bounce_.onInput({hw::InputType::EncLong, 0, false});
   else if (wt_.isOpen()) wt_.onInput({hw::InputType::EncLong, 0, false});
@@ -877,6 +1008,8 @@ void InstScreen::onBack() {
 }
 
 void InstScreen::onTouch(const TouchEvent& ev) {
+  if (extract_.isOpen()) { extract_.onTouch(ev); syncSampleJob(); return; }
+  if (wtMake_.isOpen()) { wtMake_.onTouch(ev); syncSampleJob(); return; }
   if (presets_.isOpen()) {
     presets_.onTouch(ev);
     return;
@@ -899,6 +1032,17 @@ void InstScreen::onTouch(const TouchEvent& ev) {
   if (ev.y >= y0_ + kHeaderH && ev.y < y0_ + kHeaderH + kPageBarH && ev.type != TouchType::Drag &&
       ev.type != TouchType::HDrag) {
     if (ev.type == TouchType::Tap) showPage(ev.x / pageW(), true);
+    return;
+  }
+  const int waveTop = y0_ + kHeaderH + kPageBarH + kWaveY;
+  if (ev.type == TouchType::Tap && synth() && (page_==kPgType || page_==kPgType2) &&
+      ev.x>=kWaveX && ev.x<kWaveX+kWaveW && ev.y>=waveTop && ev.y<waveTop+kWaveH) {
+    if (ev.y>=waveTop+kWaveH-kWaveToggleH) wave_.toggleLive();
+    return;
+  }
+  if (ev.type == TouchType::Tap && !list_.editing() && viewRow(list_.rowAt(ev.y))) {
+    list_.setSel(list_.rowAt(ev.y));
+    wave_.toggleLive();
     return;
   }
   // Tap on a character of the name being edited moves the name cursor.
@@ -926,7 +1070,7 @@ void InstScreen::drawPageBar(LGFX_Sprite& s, int y) {
   static const char* const kTypeNames[] = {"OSC", "SMPL", "FM", "DRUM", "OSC", "LANES", "LOFI"};
   static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == static_cast<int>(mt::InstrType::Count), "type page names");
   const int t = static_cast<int>(shown_);
-  const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO"};
+  const char* const names[] = {"MAIN", "ENV", kTypeNames[t < static_cast<int>(mt::InstrType::Count) ? t : 0], "MOD", "FILT", "LFO", "MATRIX"};
   const int ty = y + (kPageBarH - 4 - kCharH) / 2;
   const int n = pageCount(), w = pageW(), cur = physPage();
   for (int i = 0; i < n; ++i) {
@@ -957,50 +1101,25 @@ void InstScreen::drawEnv(LGFX_Sprite& s, int y) {
 }
 
 void InstScreen::drawOsc(LGFX_Sprite& s, int y) {
-  // Rows Osc1..Shape1 show osc 1, the rest osc 2.
-  const int k = kCommon + list_.sel() < kOsc2 ? 0 : 1;
-  const mt::Instrument& m = inst();
-  const int x0 = kWtX0, x1 = kWtX1, top = y + kWtY0, bot = y + kWtY1, mid = (top + bot) / 2;
-  const int pad = (bot - top) / 8;
-  const int hi = top + pad, lo = bot - pad;
-  s.drawFastHLine(x0, mid, x1 - x0, kBeatBg);
-  const uint8_t shape = m.macro[mt::kMacShp1 + k] > 127 ? 127 : m.macro[mt::kMacShp1 + k];
-  switch (static_cast<mt::SynOsc>(m.synOsc[k] % 4)) {
-    case mt::SynOsc::Wt: {
-      const mt::WtSource* w = audio::wavetableSource();
-      const int16_t* t = w && m.synWt[k][0] ? w->findWt(m.synWt[k]) : nullptr;
-      if (t) drawWtFrame(s, t, (shape * (mt::kWtFrames - 1) + 63) / 127, x0, top, x1, bot, kText);
-      else s.drawLine(x0, mid, x1, mid, kRed);  // missing: silent
-      break;
-    }
-    case mt::SynOsc::Square: {
-      // PW 0.5..0.95 over SHAPE (as the voice).
-      const int xp = x0 + static_cast<int>((x1 - x0) * (0.5f + 0.45f * shape / 127.f));
-      s.drawLine(x0, lo, x0, hi, kText);
-      s.drawLine(x0, hi, xp, hi, kText);
-      s.drawLine(xp, hi, xp, lo, kText);
-      s.drawLine(xp, lo, x1, lo, kText);
-      break;
-    }
-    case mt::SynOsc::Tri: {
-      const int q = (x1 - x0) / 4;
-      s.drawLine(x0, mid, x0 + q, hi, kText);
-      s.drawLine(x0 + q, hi, x1 - q, lo, kText);
-      s.drawLine(x1 - q, lo, x1, mid, kText);
-      break;
-    }
-    default:  // Saw
-      s.drawLine(x0, mid, (x0 + x1) / 2, hi, kText);
-      s.drawLine((x0 + x1) / 2, hi, (x0 + x1) / 2, lo, kText);
-      s.drawLine((x0 + x1) / 2, lo, x1, mid, kText);
-      break;
-  }
-  s.setTextColor(kDim);
-  s.drawString(k ? "OSC2" : "OSC1", x0, bot + 4);
+  wave_.draw(s,inst(),kWaveX,y+kWaveY,kWaveW,kWaveH,page_==kPgType2,millis());
+}
+
+bool InstScreen::viewRow(int row) const {
+  return synth() && ((page_==kPgType && row==kOscView-kCommon) ||
+                     (page_==kPgType2 && row==kModView-kSub));
+}
+
+bool InstScreen::wantsRedraw(const engine::Status&) {
+  return synth() && (page_==kPgType || page_==kPgType2) && !presets_.isOpen() &&
+         !wt_.isOpen() && !bounce_.isOpen() && !extract_.isOpen() && !wtMake_.isOpen() &&
+         wave_.wantsRedraw(millis());
 }
 
 void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   y0_ = y0;
+  syncSampleJob();
+  if (extract_.isOpen()) { extract_.draw(s,y0); return; }
+  if (wtMake_.isOpen()) { wtMake_.draw(s,y0); return; }
   if (presets_.isOpen()) {
     presets_.draw(s, y0);
     return;
@@ -1013,13 +1132,18 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
     wt_.draw(s, y0);
     return;
   }
-  char buf[24];
+  char buf[48];
   const int cy = y0 + kHeaderH / 2;
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.fillTriangle(24, cy - 2, 36, cy - 9, 36, cy + 5, kCursor);
   s.fillTriangle(kRightX0 + 36, cy - 2, kRightX0 + 24, cy - 9, kRightX0 + 24, cy + 5, kCursor);
-  snprintf(buf, sizeof(buf), "INS%d %s", instr_ + 1, inst().name);
+  const int tr = app_.curTrack();
+  const auto use = mt::instrumentUse(app_.project(), instr_, tr);
+  char relation[20];
+  snprintf(relation, sizeof(relation), !use.current ? "NOT ON T%02d" : use.currentViaKit ? "T%02d/KIT" : "T%02d", tr + 1);
+  if (use.count > 1) snprintf(buf, sizeof(buf), "I%02d %s %s x%d", instr_ + 1, inst().name, relation, use.count);
+  else snprintf(buf, sizeof(buf), "I%02d %s %s", instr_ + 1, inst().name, relation);
   s.setTextColor(kText);
   const int mid = (kLeftX1 + kRightX0) / 2;
   s.drawString(buf, mid - static_cast<int>(strlen(buf)) * kCharW / 2, ty);
@@ -1037,7 +1161,7 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
   } else {
     list_.draw(s, ly);
     if (page_ == kPgEnv) drawEnv(s, ly);
-    else if (synth() && page_ == kPgType) drawOsc(s, ly);
+    else if (synth() && (page_ == kPgType || page_ == kPgType2)) drawOsc(s, ly);
   }
   if (nameEdit()) {
     const int uy = list_.rowY(kName) + (ParamList::kRowH + kCharH) / 2;
@@ -1046,3 +1170,9 @@ void InstScreen::draw(LGFX_Sprite& s, int y0, int) {
 }
 
 }  // namespace ui
+
+namespace ui {
+bool InstScreen::onTrackInstr() const {
+  return instr_ == app_.project().tracks[app_.curTrack()].instr % mt::kInstruments;
+}
+}

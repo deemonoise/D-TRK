@@ -38,8 +38,8 @@ RenderDialog::RenderDialog(App& app) : app_(app) {
                      [this] { return source_ < mt::kPatterns; }};
   params_[kRender] = {"RENDER", [](char* o, int n) { snprintf(o, n, "LONG PRESS: STOP"); }, nullptr};
   params_[kCancel] = {"Cancel", nullptr, nullptr};
-  list_.setParams(params_, kRows);
-  list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
+  list_.setParams(params_, kRender);
+  list_.setVisibleRows(actions_.listRows(kHeaderH));
 }
 
 bool RenderDialog::songOk() const { return app_.project().songLen > 0; }
@@ -49,6 +49,7 @@ void RenderDialog::open() {
   tracks_ = kAll;
   list_.setEdit(false);
   list_.setSel(kSource);
+  actions_.reset(list_);
   open_ = true;
 }
 
@@ -61,11 +62,6 @@ bool RenderDialog::action(int row) {
 }
 
 void RenderDialog::confirm() {
-  const engine::Status& st = app_.status();
-  if (st.playing || st.paused) {
-    app_.toast("STOP FIRST");
-    return;
-  }
   if (!hw::sdReady()) {
     app_.toast(storage::resultText(storage::Result::NoSd));
     return;
@@ -97,6 +93,11 @@ void RenderDialog::confirm() {
 }
 
 void RenderDialog::run() {
+  const engine::Status transport = engine::status();
+  if (transport.playing || transport.paused || transport.countIn) {
+    if (!storage::stopEngine()) { app_.toast("BUSY"); return; }
+    app_.toast("STOPPED");
+  }
   mt::Project& p = app_.project();
   mt::RenderSpec spec = this->spec();
   if (tracks_ == kStems) {
@@ -208,29 +209,24 @@ void RenderDialog::onInput(const hw::InputEvent& ev) {
     close();
     return;
   }
-  if (ev.type == InputType::EncClick && !list_.editing() && action(list_.sel())) return;
-  list_.onInput(ev);
+  const int result = actions_.input(list_, kRender, ev);
+  if (result >= 0) action(result == 0 ? kRender : kCancel);
 }
 
 void RenderDialog::onTouch(const TouchEvent& ev) {
   if (!open_) return;
-  if (ev.type == TouchType::Tap) {
-    const int r = list_.rowAt(ev.y);
-    if (r == kRender || r == kCancel) {
-      list_.setSel(r);
-      action(r);
-      return;
-    }
-  }
-  list_.onTouch(ev);
+  const int result = actions_.touch(list_, ev, y0_);
+  if (result >= 0) action(result == 0 ? kRender : kCancel);
 }
 
 void RenderDialog::draw(LGFX_Sprite& s, int y0) {
   if (!open_) return;
+  y0_ = y0;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.setTextColor(kText);
-  s.drawString("RENDER WAV  /samples/render", ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
+  s.drawString("EXPORT  /samples/render", ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
   list_.draw(s, y0 + kHeaderH);
+  actions_.draw(s, y0, "EXPORT");
 }
 
 }  // namespace ui

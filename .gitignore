@@ -17,5 +17,9 @@ desktop.ini
 __pycache__/
 *.pyc
 
+# Local quality reports
+.metrics/
+target/
+
 # Working notes
 docs/plans/

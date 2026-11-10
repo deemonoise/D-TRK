@@ -6,59 +6,45 @@
 #include "synth.h"
 
 namespace core_ram {
-
 namespace {
-constexpr size_t kSeqOff = (sizeof(mt::Synth) + 15) & ~size_t{15};
-constexpr size_t kBytes = kSeqOff + sizeof(mt::Sequencer);
 constexpr uint32_t kInternal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+void* synthStorage = nullptr;
+bool synthIsInternal = false;
+void* seqStorage = nullptr;  // process lifetime: engine constructs it once, never moved for Wi-Fi
 
-void* block = nullptr;   // the internal block (null: not taken, or moved out)
-bool moved = false;      // toPsram() moved both out of the block
-void* synthPs = nullptr;  // their PSRAM copies while moved
-void* seqPs = nullptr;
+bool moveSynth(uint32_t caps, bool internal) {
+  if (!synthStorage) return false;
+  void* destination = heap_caps_malloc(sizeof(mt::Synth), caps);
+  if (!destination) return false;
+  if (!audio::moveSynth(destination)) {
+    heap_caps_free(destination);
+    return false;
+  }
+  void* previous = synthStorage;
+  synthStorage = destination;
+  synthIsInternal = internal;
+  heap_caps_free(previous);
+  return true;
+}
 }  // namespace
 
 void reserve() {
-  block = heap_caps_malloc(kBytes, kInternal);
-  audio::reserve(block);
-  engine::reserve(block ? static_cast<char*>(block) + kSeqOff : nullptr);
+  synthStorage = heap_caps_malloc(sizeof(mt::Synth), kInternal);
+  synthIsInternal = synthStorage != nullptr;
+  // Keep ownership even when boot internal RAM is short: a later restore can retry.
+  if (!synthStorage) synthStorage = heap_caps_malloc(sizeof(mt::Synth), MALLOC_CAP_SPIRAM);
+  seqStorage = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_SPIRAM);
+  audio::reserve(synthStorage);
+  engine::reserve(seqStorage);
 }
 
-bool internal() { return block && !moved; }
+bool internal() { return synthStorage && synthIsInternal; }
 
 bool toPsram() {
-  if (!internal()) return false;
-  void* s = heap_caps_malloc(sizeof(mt::Synth), MALLOC_CAP_SPIRAM);
-  void* q = heap_caps_malloc(sizeof(mt::Sequencer), MALLOC_CAP_SPIRAM);
-  if (!s || !q || !audio::moveSynth(s)) {
-    heap_caps_free(s);
-    heap_caps_free(q);
-    return false;
-  }
-  engine::moveSeq(q);
-  heap_caps_free(block);
-  block = nullptr;
-  synthPs = s;
-  seqPs = q;
-  moved = true;
-  return true;
+  return internal() && moveSynth(MALLOC_CAP_SPIRAM, false);
 }
 
 bool toInternal() {
-  if (!moved) return false;
-  void* nb = heap_caps_malloc(kBytes, kInternal);
-  if (!nb) return false;
-  if (!audio::moveSynth(nb)) {
-    heap_caps_free(nb);
-    return false;
-  }
-  engine::moveSeq(static_cast<char*>(nb) + kSeqOff);
-  heap_caps_free(synthPs);
-  heap_caps_free(seqPs);
-  synthPs = seqPs = nullptr;
-  block = nb;
-  moved = false;
-  return true;
+  return synthStorage && !synthIsInternal && moveSynth(kInternal, true);
 }
-
 }  // namespace core_ram

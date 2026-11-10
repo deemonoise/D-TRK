@@ -3,6 +3,7 @@
 #include "evolve.h"
 #include "model.h"
 #include "mut.h"
+#include "practice.h"
 #include "shift_gen.h"
 #include "var_gen.h"
 
@@ -20,11 +21,12 @@ namespace engine {
 // whose MUT mode changed starts over (no EVO changes, VAR generation 0). Sequencer::mutEdited.
 enum class Cmd : uint8_t {
   StartStop, TogglePlay, Stop, QueuePattern, SelectPattern, SetBpm, SendProgram, ReleaseTies, SongEdit, TrackOut,
-  Fill, SetSong, GenEdit, GenReseed, MutEdit
+  Fill, SetSong, GenEdit, GenReseed, MutEdit, SetLiveBpm, AutomationMute, PracticeSettings, PracticeArm
 };
 
 struct Command {
   Cmd cmd;
+  uint8_t arg2;
   uint16_t arg;
 };
 
@@ -41,9 +43,14 @@ struct Status {
   // The heard step: start (nowUs() time) and length, for stepPhase() (not compared: no redraws).
   uint64_t stepT;
   uint32_t stepUs;
+  uint8_t countIn;
+  bool recordActive;
+  uint32_t recordDone;
+  uint64_t recordEndedAt;
   bool operator==(const Status& o) const {
     return playing == o.playing && paused == o.paused && pattern == o.pattern && queued == o.queued &&
-           pos == o.pos && loop == o.loop && songPos == o.songPos && fill == o.fill && song == o.song;
+           pos == o.pos && loop == o.loop && songPos == o.songPos && fill == o.fill && song == o.song &&
+           countIn == o.countIn && recordActive == o.recordActive && recordDone == o.recordDone;
   }
 };
 
@@ -55,9 +62,12 @@ bool seqInternal();  // the sequencer ended up in internal RAM
 // it left (the caller frees it). core_ram uses it for Wi-Fi (transport stopped).
 void* moveSeq(void* dst);
 // False when the command queue was full (the command is lost).
-bool post(Cmd c, uint16_t arg = 0);
+bool post(Cmd c, uint16_t arg = 0, uint8_t arg2 = 0);
 // As post, waiting up to 50 ms for room: for commands that must not be lost (fill / perf release).
-bool postWait(Cmd c, uint16_t arg = 0);
+bool postWait(Cmd c, uint16_t arg = 0, uint8_t arg2 = 0);
+// Called under the project lock after replacing its contents. Latest replacement wins;
+// ties and tempo are reset after queued commands and before planning the new data.
+void projectReplaced(uint16_t bpm);
 Status status();
 // Engine timer time, us (time stamps of synth events).
 uint64_t nowUs();
@@ -70,6 +80,12 @@ void unlockProject();
 // While the song plays: the mutes from before it (bit = track), see Sequencer::savedMutes.
 // Call holding lockProject().
 bool savedMutes(uint16_t& bits);
+// While a song slot's BPM holds the live tempo (p.bpm): the project BPM, see Sequencer::savedBpm. Call
+// holding lockProject().
+bool savedBpm(uint16_t& bpm);
+// The project BPM (PROJ shows and edits it): p.bpm unless a song slot's BPM holds the live tempo. Takes
+// lockProject() itself: do not call holding it.
+uint16_t projectBpm(const mt::Project& p);
 // Track generators, holding lockProject(): the register after the heard step (the reset one while
 // stopped), and the register the next planned step starts from with that step of `track` in pattern pat
 // (Capture; step 0 while stopped or another pattern plays; stopped: the reset register).

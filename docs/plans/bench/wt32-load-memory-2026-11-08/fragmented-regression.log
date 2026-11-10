@@ -1,0 +1,3 @@
+adverse_newcopy_failure: relocated=no staging=NO MEMORY framebuffer=restored undo=preserved
+adverse_padding_failure: relocated=no staging=NO MEMORY framebuffer=restored undo=preserved
+typical_376k_tail: relocated=yes staging=fits framebuffer=restored undo=preserved

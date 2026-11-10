@@ -17,6 +17,16 @@ constexpr int kCostSynBl = 265;        // SYNTH without a wavetable oscillator
 constexpr int kCostSynWt = 374;        // SYNTH with a wavetable oscillator (both WT)
 constexpr int kCostLofiByte = 457, kCostLofiApc = 222;
 constexpr int kCostFilter = 50;        // the voice's SVF (LP / BP / HP): CHIP SAW LP 208 - SAW 158
+// Conservative matrix reservation from the 2026-11-08 N16R8 headless paired stress.
+// 1 unit = 0.4 us/block. Eight cheap routes averaged up to ~44 us/voice (reserve 115.2),
+// full sources + dynamic parameters peaked ~166 us/voice above the paired baseline
+// (reserve 374.4, including simultaneous-note setup headroom). N16R2 quad PSRAM and concurrent LCD/SD remain unvalidated.
+// Source-enabled depth-zero routes count too: signed Mxx locks can activate them.
+// Distinct LFO/source costs include via; the dynamic surcharge applies once for
+// Pitch/Fine/Cutoff/Reso/Drive/Sat or an engine macro (Dec..Con).
+constexpr bool kMatrixCostN16R2Validated = false;
+constexpr int kCostMatrixBase = 224, kCostMatrixRoute = 8;
+constexpr int kCostMatrixLfo = 112, kCostMatrixSource = 24, kCostMatrixDynamic = 128;
 // FM per machine (FmMachine order): KICK .. HAT; drums retriggered every 16th, DECAY 127.
 constexpr int kCostFm[] = {533, 553, 541, 426, 472, 661, 357, 742};
 static_assert(sizeof(kCostFm) / sizeof(kCostFm[0]) == static_cast<unsigned>(FmMachine::Count),
@@ -35,6 +45,6 @@ constexpr int kVoiceBudgetEsp = kLoadTargetEsp - kCostFixedEsp;
 constexpr int kVoiceBudgetOff = 1 << 30;
 
 // The price of one note of m (sample: a SAMPLE note or a KIT sampler lane).
-int voiceCost(const Instrument& m, bool sample);
+int voiceCost(const Instrument& m, bool sample, int typeOverride = -1, int machineOverride = -1);
 
 }  // namespace mt

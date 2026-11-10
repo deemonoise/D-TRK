@@ -3956,7 +3956,9 @@ void test_perf_repeat_loops_a_sixteenth() {
   s->setPerfBuffer(perfBuf, 32000);
   noteOn(0, 0, 48);
   noteOn(0, 1, 55);  // two notes: the dry mix is far from 4000-periodic
-  renderMs(40);
+  // REPEAT freezes the last completed clock window. Record more than one whole
+  // sixteenth before pressing; a short history must remain live until it exists.
+  renderMs(160);
   send(0, kPreviewTrack, 0xF6, 0, static_cast<uint8_t>(PerfFx::Repeat));
   static int16_t o[Synth::kBlock * 120];
   for (int k = 0; k < 120; ++k) s->render(o + k * Synth::kBlock);

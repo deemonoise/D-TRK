@@ -29,9 +29,27 @@ T* allocArray(size_t n) {
 
 }  // namespace
 
+App::FrameBufferLoan::FrameBufferLoan(App& app)
+    : lease_(app.frameBuffer_,app.spr_,App::waitFrameBuffer,App::createFrameBuffer,&app) {}
+
+void App::waitFrameBuffer(void* context) {
+  auto& app = *static_cast<App*>(context);
+  if (app.lcd_) app.lcd_->waitDMA();
+}
+
+bool App::createFrameBuffer(LGFX_Sprite& sprite, void*) {
+  if (!sprite.createSprite(kScreenW,kScreenH)) return false;
+  sprite.setFont(font());
+  return true;
+}
+
+void App::prepareProjectLoadMemory() { proj_.relocateDiceUndo(); }
+
 void App::begin(LGFX* lcd, mt::Project* p) {
   lcd_ = lcd;
   p_ = p;
+  setParamEditObserver([this](bool before) { motionObserve(before); });
+  setParamHintObserver([this](const char* hint) { toast(hint); });
 
   undoBuf_ = allocArray<mt::Undo::Entry>(mt::Undo::kDepth + 1);
   if (undoBuf_) undo_ = mt::Undo(undoBuf_);
@@ -63,7 +81,12 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   audio::setPhones(static_cast<uint8_t>(phones_));
   preview_ = savedPreview_ = storage::loadSetting("preview", 1) != 0;
   visuals_ = savedVisuals_ = storage::loadSetting("perfvis", 1) != 0;
+  practicePrefs_ = mt::practicePrefs(storage::loadSetting("practice", 0), storage::loadSetting("clickvol", 64));
+  savedPracticeBits_ = mt::practiceBits(practicePrefs_);
+  savedClickLevel_ = practicePrefs_.clickLevel;
+  engine::post(engine::Cmd::PracticeSettings, savedPracticeBits_, savedClickLevel_);
 
+  proj_.loadDicePrefs();
   status_ = engine::status();
   lastBpm_ = p_->bpm;
   if (perfTab(tab_)) perf_.attach();
@@ -75,6 +98,7 @@ void App::setTab(Tab t) {
   if (t == Tab::Count || !screens_[static_cast<int>(t)]) return;
   setBpmEdit(false);
   if (t == tab_) return;
+  rawTouch_.reset();
   perf_.setXy(false);  // the pad belongs to the tab it was opened on
   xyPad_.clear();
   menu_.close();
@@ -87,6 +111,21 @@ void App::setTab(Tab t) {
   if (t == Tab::Track || t == Tab::Mix) track_.setMixer(t == Tab::Mix);  // one screen, two views
   screen()->onEnter();
   dirty_ = true;
+}
+
+void App::recordShortcut(bool motionOnly) {
+  if (transportLocked_) { toast("RECORDING UNAVAILABLE"); return; }
+  if (menu_.isOpen() || bpmEdit_ || grid_.dialogOpen()) {
+    toast("CLOSE DIALOG FIRST");
+    return;
+  }
+  const auto mode = mt::recordModeToggle({grid_.recording(), motionRecording()}, motionOnly);
+  setRecording(mode.notes, mode.motion);
+  if (mode.motion && !status_.playing) {
+    if (!status_.paused) postSong(tab_ == Tab::Song && p_->songLen > 0);
+    engine::post(engine::Cmd::StartStop);
+  }
+  toast(!mode.motion ? "REC OFF" : (mode.notes ? "REC: NOTES + MOTION" : "REC: MOTION ONLY"));
 }
 
 void App::transport() {
@@ -119,7 +158,13 @@ void App::postSong(bool on) {
 }
 
 void App::setBpmEdit(bool on) {
-  if (on && !bpmEdit_) bpmTarget_ = bpmOrig_ = p_->bpm;
+  // From the live tempo shown; Shift+click puts it back. While a song slot's BPM holds the live tempo, the
+  // edit is live only (SetLiveBpm): the project BPM stays (PROJ edits it).
+  if (on && !bpmEdit_) {
+    bpmTarget_ = p_->bpm;
+    bpmOrig_ = p_->bpm;
+    bpmTurned_ = false;
+  }
   bpmEdit_ = on;
 }
 
@@ -134,6 +179,12 @@ void App::onInput(const hw::InputEvent& ev) {
     case InputType::BDown: abAction(ab_.bDown()); return;
     case InputType::BUp: abAction(ab_.bUp(ev.shift)); return;
     case InputType::PlayPress:
+      // A drawing document keeps Play even while its action/confirmation menu is open.
+      if (screen()->wantsRawTouch() && screen()->onPlay()) return;
+      if (const auto o = ab_.play(); o.act != mt::AbAction::Pass) {
+        recordShortcut(o.act == mt::AbAction::RecordMotion);
+        return;
+      }
       if (!menu_.isOpen() && !bpmEdit_ && screen()->onPlay()) return;
       if (ev.shift && status_.playing && !transportLocked_) {
         fillDown();
@@ -221,12 +272,13 @@ void App::onInput(const hw::InputEvent& ev) {
     if (ev.type == InputType::EncTurn || ev.type == InputType::EditTurn) {
       const int bpm = bpmTarget_ + ev.delta * (ev.shift ? 10 : 1);
       bpmTarget_ = bpm < 20 ? 20 : (bpm > 300 ? 300 : bpm);
-      engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
+      engine::post(engine::Cmd::SetLiveBpm, static_cast<uint16_t>(bpmTarget_));
+      bpmTurned_ = true;
       markDirty();
     } else {
-      if (ev.type == InputType::EncClick && ev.shift && bpmTarget_ != bpmOrig_) {
+      if (ev.type == InputType::EncClick && ev.shift && bpmTurned_) {
         bpmTarget_ = bpmOrig_;
-        engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
+        engine::post(engine::Cmd::SetLiveBpm, static_cast<uint16_t>(bpmTarget_));
         toast("CANCEL");
       }
       setBpmEdit(false);
@@ -268,7 +320,7 @@ void App::abAction(const mt::AbOut& o) {
       }
       return;
     case AbAction::Back:
-      if (menu_.isOpen()) menu_.close();
+      if (menu_.isOpen()) menu_.back();
       else if (bpmEdit_) setBpmEdit(false);
       else if (xyMode()) {
         perf_.setXy(false);
@@ -295,8 +347,8 @@ void App::abAction(const mt::AbOut& o) {
       return;
     case AbAction::AThenB:  // GRID, PERF off: hold A + B clears the step / selection; else Both follows
       if (tab_ == Tab::Grid && !perf_.on() && !xyMode() && !menu_.isOpen() && !bpmEdit_ &&
-          grid_.chordClear())
-        ab_.dropBoth();
+          grid_.chordClear()) return;
+      if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
     default: return;
   }
@@ -373,7 +425,14 @@ void App::onTouch(const TouchEvent& ev) {
   lastInputMs_ = millis();
   dirty_ = true;
   if (ev.type == TouchType::Down || ev.type == TouchType::Move || ev.type == TouchType::Up) {
-    xyTouch(ev);
+    const RawTouchPhase phase = ev.type == TouchType::Down ? RawTouchPhase::Down :
+                                ev.type == TouchType::Up ? RawTouchPhase::Up : RawTouchPhase::Move;
+    switch (rawTouch_.event(phase, screen(), xyMode(), screen()->wantsRawTouch(), menu_.isOpen())) {
+      case RawTouchRoute::Screen: screen()->onTouch(ev); break;
+      case RawTouchRoute::Xy: xyTouch(ev); break;
+      case RawTouchRoute::CancelXy: xyPad_.lift(); perf_.xyUp(); break;
+      case RawTouchRoute::None: break;
+    }
     return;
   }
   if (ev.type == TouchType::HDrag) {
@@ -391,6 +450,7 @@ void App::onTouch(const TouchEvent& ev) {
     return;
   }
   if (ev.y < kStatusH) {
+    if (toast_[0] && ev.x < kTransX0) return;
     if (ev.type != TouchType::Tap) return;
     if (ev.x >= kModeX0 && ev.x < kModeX1) {
       if (!status_.playing && !status_.paused) return;  // stopped, Play picks the mode by tab
@@ -410,7 +470,8 @@ void App::onTouch(const TouchEvent& ev) {
       int i = ev.x / kTabW;
       if (i < 0) i = 0;
       if (i >= static_cast<int>(Tab::Count)) i = static_cast<int>(Tab::Count) - 1;
-      setTab(static_cast<Tab>(i));
+      if (i == static_cast<int>(Tab::Grid) && tab_ == Tab::Grid) grid_.nextView();
+      else setTab(static_cast<Tab>(i));
     }
     return;
   }
@@ -426,6 +487,10 @@ void App::pushUndo(uint8_t pat, int genTrack) {
 }
 
 void App::projectReplaced() {
+  rawTouch_.reset();
+  setRecording(false, false);
+  automationMute_ = 0;
+  engine::post(engine::Cmd::AutomationMute, 0);
   if (mt::Undo* u = undo()) u->clear();
   markSaved();
   setBpmEdit(false);
@@ -442,6 +507,7 @@ void App::projectReplaced() {
 }
 
 bool App::doUndo() {
+  setMotionRecording(false);
   if (!undoBuf_) return false;
   uint8_t pat;
   mt::Pattern& scratch = undoBuf_[mt::Undo::kDepth].data;
@@ -522,9 +588,11 @@ void App::nudgeTrackPan(int track, int d) {
     int v = t.pan + d;
     v = v < 0 ? 0 : (v > 127 ? 127 : v);
     if (v != t.pan) {
+      motionObserve(true, track);
       engine::lockProject();
       t.pan = static_cast<uint8_t>(v);
       engine::unlockProject();
+      motionObserve(false);
       markDirty();
     }
   }
@@ -626,8 +694,14 @@ void App::setPerfVisuals(bool on) {
 // sweep = one write) and the transport is stopped. An NVS write can erase a flash sector with the
 // caches off: never while playing, and with the audio task parked.
 void App::saveSettingsIdle(uint32_t now) {
-  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing) return;
+  if (settingsChangedAt_ == 0 || now - settingsChangedAt_ < 1000 || status_.playing || status_.countIn) return;
   settingsChangedAt_ = 0;
+  proj_.saveDicePrefs();
+  const uint8_t practiceBits = mt::practiceBits(practicePrefs_);
+  if (practiceBits != savedPracticeBits_) storage::saveSetting("practice", practiceBits);
+  if (practicePrefs_.clickLevel != savedClickLevel_) storage::saveSetting("clickvol", practicePrefs_.clickLevel);
+  savedPracticeBits_ = practiceBits;
+  savedClickLevel_ = practicePrefs_.clickLevel;
   if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_ &&
       preview_ == savedPreview_ && visuals_ == savedVisuals_)
     return;
@@ -646,10 +720,11 @@ void App::saveSettingsIdle(uint32_t now) {
   savedVisuals_ = visuals_;
 }
 
-// Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while the transport
-// stands (no project copy needed) and after 3 s without input (the write takes a moment).
+// Unsaved changes go to /projects/<name>.auto every autosaveMin_ minutes: only while stopped (no project
+// copy needed; paused, a song slot's BPM and mutes would still hold p.bpm and the mutes) and after 3 s
+// without input (the write takes a moment).
 void App::autosaveIdle(uint32_t now) {
-  if (autosaveMin_ == 0 || !projectDirty() || editSeq_ == autosavedSeq_ || !hw::sdReady()) {
+  if (status_.countIn || autosaveMin_ == 0 || !projectDirty() || editSeq_ == autosavedSeq_ || !hw::sdReady()) {
     autosaveDue_ = 0;
     return;
   }
@@ -658,7 +733,7 @@ void App::autosaveIdle(uint32_t now) {
     return;
   }
   if (static_cast<int32_t>(now - autosaveDue_) < 0) return;
-  if (status_.playing || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000) return;
+  if (status_.playing || status_.paused || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000) return;
   showBusy("AUTOSAVE...");
   const storage::Result r = storage::autosave(*p_);
   autosavedSeq_ = editSeq_;
@@ -783,9 +858,83 @@ void App::showBusy(const char* msg) {
   lastDraw_ = millis();
 }
 
+void App::setMotionRecording(bool on) {
+  motionRec_ = on;
+  syncRecordArm();
+  motionObserving_ = false;
+  motionPattern_ = -1;
+  motionLoop_ = UINT32_MAX;
+  for (auto& m : motion_) m.clear();
+  invalidate();
+}
+
+void App::motionObserve(bool before, int track) {
+  if (before) {
+    motionObserving_ = motionRec_ && recordPermit() &&
+        (track >= 0 || tab_ != Tab::Inst || inst_.onTrackInstr());
+    if (!motionObserving_) return;
+    motionTrack_ = track >= 0 && track < mt::kTracks ? track : curTrack_;
+    const auto& t = p_->tracks[motionTrack_];
+    if (t.out != mt::TrackOut::Int) { motionObserving_ = false; return; }
+    motionInstr_ = t.instr % mt::kInstruments;
+    const auto& i = p_->instruments[motionInstr_];
+    motionType_ = i.type;
+    for (int n = 0; n < mt::kAutomationParams; ++n)
+      motionBefore_[n] = mt::automationValue(t,i,mt::automationFx(n));
+    return;
+  }
+  if (!motionObserving_) return;
+  motionObserving_ = false;
+  const auto& t = p_->tracks[motionTrack_];
+  const auto& i = p_->instruments[t.instr % mt::kInstruments];
+  if (t.instr % mt::kInstruments != motionInstr_ || i.type != motionType_) return;
+  int16_t after[mt::kAutomationParams];
+  for (int n = 0; n < mt::kAutomationParams; ++n)
+    after[n] = mt::automationValue(t,i,mt::automationFx(n));
+  // Establish the pass before touching: a new pass must not discard the first movement.
+  pollMotion();
+  motion_[motionTrack_].touch(motionBefore_,after);
+  pollMotion();
+}
+
+void App::pollMotion() {
+  if (!motionRec_) return;
+  const auto st = engine::status();
+  if (!st.playing || !recordPermit()) {
+    for (auto& m : motion_) m.clear();
+    motionPattern_ = -1;
+    motionLoop_ = UINT32_MAX;
+    return;
+  }
+  if (motionPattern_ != st.pattern) {
+    for (auto& m : motion_) m.clear();
+    motionPattern_ = st.pattern;
+    motionLoop_ = UINT32_MAX;
+  }
+  for (auto& m : motion_) m.beginPass(st.loop);
+  auto& p = p_->patterns[st.pattern];
+  const uint8_t phase = engine::stepPhase(st);
+  bool changed = false, full = false;
+  engine::lockProject();
+  for (int tr = 0; tr < mt::kTracks; ++tr) {
+    if (p_->tracks[tr].out != mt::TrackOut::Int) continue;
+    auto& step = p.steps[tr][mt::automationStep(p,tr,st.pos,st.loop,phase)];
+    mt::Step out = step;
+    if (!motion_[tr].write(out)) { full = true; continue; }
+    if (memcmp(&out,&step,sizeof(step)) == 0) continue;
+    if (motionLoop_ != st.loop) { pushUndo(st.pattern); motionLoop_ = st.loop; }
+    step = out;
+    changed = true;
+  }
+  engine::unlockProject();
+  if (changed) markDirty();
+  if (full) { setMotionRecording(false); toast("MOTION STOP: NO FX SLOT"); }
+}
+
 void App::tick() {
   TouchEvent te;
-  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag(), xyMode() && !menu_.isOpen())) onTouch(te);
+  if (touch_.poll(*lcd_, te, !menu_.isOpen() && screen()->wantsHDrag(),
+                  !menu_.isOpen() && (xyMode() || screen()->wantsRawTouch()))) onTouch(te);
 
   const engine::Status s = engine::status();
   if (!(s == status_)) {
@@ -795,6 +944,11 @@ void App::tick() {
       for (Screen* sc : screens_)
         if (sc) sc->onPatternChange();
     dirty_ = true;
+  }
+  if (status_.recordDone != recordDoneSeen_) {
+    recordDoneSeen_ = status_.recordDone;
+    setRecording(false, false);
+    toast("ONE PASS: REC FINISHED");
   }
   if (p_->bpm != lastBpm_) {
     lastBpm_ = p_->bpm;
@@ -809,9 +963,14 @@ void App::tick() {
     toast_[0] = 0;
     dirty_ = true;
   }
+  pollMotion();
   perf_.poll(status_.playing);
   screen()->poll();
   if (screen()->wantsRedraw(status_)) dirty_ = true;
+  if (!spr_ && !frameBuffer_.loaned && now-frameRetryAt_ >= 1000) {
+    frameRetryAt_ = now;
+    dirty_ = true;  // a failed framebuffer recreation is retried without requiring user input
+  }
   if (perfVisible() || vis_.engaged()) dirty_ = true;  // moving while held; the last frame goes back to plain
   if (xyMode() && xyPad_.animating(now)) dirty_ = true;  // the trail fades
 
@@ -872,7 +1031,16 @@ void App::pollBattery(uint32_t now) {
 }
 
 void App::draw() {
-  if (!spr_) return;
+  if (frameBuffer_.loaned) return;  // synchronous progress must not reclaim the staging loan
+  if (!spr_ && !restoreFrameBuffer(frameBuffer_,spr_,App::createFrameBuffer,this)) {
+    if (lcd_) {
+      lcd_->fillScreen(kBg);
+      lcd_->setFont(font());
+      lcd_->setTextColor(kRed);
+      lcd_->drawString("NO DISPLAY MEMORY: RETRYING",16,kAreaY+16);
+    }
+    return;
+  }
   spr_->fillScreen(kBg);
   drawStatus();
   spr_->setClipRect(0, kAreaY, kScreenW, kAreaH);
@@ -931,14 +1099,18 @@ void App::drawStatus() {
   snprintf(buf, sizeof(buf), "%3u BPM", bpmEdit_ ? static_cast<unsigned>(bpmTarget_) : p_->bpm);
   spr_->drawString(buf, 80, 4);
 
-  if (toast_[0]) {
-    spr_->setTextColor(kCursor);
-    spr_->drawString(toast_, 192, 4);
-    return;
-  }
   spr_->setTextColor(kText);
   snprintf(buf, sizeof(buf), "%u/%u", status_.pos + 1, p_->patterns[status_.pattern].length);
   spr_->drawString(buf, 200, 4);  // up to "128/128"
+  if (toast_[0]) {
+    spr_->fillRect(0, 0, kTransX0 - 4, kStatusH, kStatusBg);
+    spr_->setTextColor(kCursor);
+    spr_->setClipRect(8, 0, kTransX0 - 12, kStatusH);
+    spr_->drawString(toast_, 8, 4);
+    spr_->clearClipRect();
+    spr_->setTextColor(kText);
+  }
+
   if (status_.playing) {
     // Playing: PLAY on a green box, readable at a glance.
     spr_->fillRect(260, 3, 40, 18, kGreen);
@@ -958,6 +1130,17 @@ void App::drawStatus() {
     spr_->drawString(buf, 312, 4);  // up to 5 chars before the battery
   }
   drawBattery();
+  if (status_.countIn) {
+    snprintf(buf, sizeof(buf), "IN %u", status_.countIn);
+    spr_->setTextColor(kRed);
+    spr_->drawString(buf, 416, 4);
+    return;
+  }
+  if (motionRec_ || grid_.recording()) {
+    spr_->setTextColor(kRed);
+    spr_->drawString(motionRec_ ? "MREC" : "REC", 416, 4);
+    return;
+  }
   snprintf(buf, sizeof(buf), "CPU %3d%%", cpu_ > 999 ? 999 : cpu_);
   spr_->setTextColor(cpuColor_);
   spr_->drawString(buf, 416, 4);

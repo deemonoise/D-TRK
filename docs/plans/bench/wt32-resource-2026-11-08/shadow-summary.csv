@@ -1,0 +1,6 @@
+revision,pattern,placement,synth_int,rvb_int,seq_int,shadow,profile,churn,guard,blocks,avg_us,p95_us,p99_us,peak_us,warm_peak_us,over,active,min_active,max_active,events,expected_events,queue_rejects,missing_sample,missing_wt,rms,pcm_hash
+current,1,SynthINT_SeqINT_RVBPS,1,0,1,1,1,0,1,2000,1225.310,1863,2233,2819,3222,0,4.010,2,8,1303,1303,0,0,0,5035.029,8f64f27b
+current,1,SynthINT_SeqPS_RVBINT,1,1,0,1,1,0,1,2000,1186.989,1818,2214,2896,2920,0,4.010,2,8,1303,1303,0,0,0,5035.029,8f64f27b
+current,1,SynthINT_SeqINT_RVBPS,1,0,1,1,1,1,1,2000,1402.737,2172,2570,2829,2887,0,4.010,2,8,1303,1303,0,0,0,5035.029,8f64f27b
+current,1,SynthINT_SeqPS_RVBINT,1,1,0,1,1,1,1,2000,1270.698,1969,2293,3018,2912,0,4.010,2,8,1303,1303,0,0,0,5035.029,8f64f27b
+current,1,SynthINT_SeqINT_RVBPS,1,0,1,0,1,1,1,2000,1376.969,2078,2401,2607,3713,0,4.010,2,8,1303,1303,0,0,0,5035.029,8f64f27b

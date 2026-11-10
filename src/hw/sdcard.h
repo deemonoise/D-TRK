@@ -44,6 +44,7 @@ bool sdNextEntry(fs::File& dir, String& name, bool& isDir);
 
 constexpr int kNameMax = 96;  // listed file / folder name, incl. terminator
 // The listings below keep the alphabetically first max names when a folder holds more.
+// Returns -1 when the card or directory cannot be opened; an empty directory returns 0.
 // Names in dir ending with ext (e.g. ".mtp"), extension stripped, sorted. Returns the count.
 // accept (optional) filters base names, e.g. storage::validName.
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max,

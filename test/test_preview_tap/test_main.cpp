@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unity.h>
 #include "synth.h"
+#include "synth_master.h"
 
 using namespace mt;
 
@@ -142,7 +143,7 @@ void test_tap_includes_insert() {
 }
 
 // Units: the mix before the master gain. With no sends / fx, MAIN 100 %: mono out =
-// softClip(tap x 0.25) x 32767 (truncated). kPreviewVol is in the tap (fader), the pan (centre: 1).
+// masterLimit(tap x 0.375) x 32767 (truncated). kPreviewVol is in the tap (fader), the pan (centre: 1).
 void test_tap_level_vs_mix() {
   s->setPreviewTap(tapL, tapR);
   noteOn(0, kPreviewTrack, 60);
@@ -150,8 +151,8 @@ void test_tap_level_vs_mix() {
   for (int k = 0; k < kBlocks; ++k) {
     s->render(buf);
     for (int i = 0; i < Synth::kBlock; ++i) {
-      const float x = tapL[i] * 0.25f;
-      const float y = x * (1.5f - 0.5f * x * x) * 32767.f;
+      const float x = tapL[i] * 0.375f;
+      const float y = masterLimit(x) * 32767.f;
       TEST_ASSERT_FLOAT_WITHIN(1.01f, y, static_cast<float>(buf[i]));
       pk = fmaxf(pk, fabsf(tapL[i]));
     }

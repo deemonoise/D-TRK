@@ -1,0 +1,10 @@
+{
+  "label": "C",
+  "policy": "C-cardcache",
+  "bin_sha256": "80893190b4f653caeeb3d2cd78d445b574f670415ccb8acf12f179c0a294546f",
+  "bytes": 2197568,
+  "wifi_return_seconds_after_upload": 40.0,
+  "project_unchanged": true,
+  "profile_added_bytes": 3753,
+  "last_status": "AUTOPROFILE DONE policy=C-cardcache validation=B PLACEMENT OK project=TUTU-TUDUTU model_fnv=4363edfc raw_fnv=7943afbc bytes=66420 seed=0x5eed synthINT=1 seqINT=0 rvbINT=1"
+}

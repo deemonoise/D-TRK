@@ -12,7 +12,9 @@ constexpr size_t kFmRecSize = 16;    // drive, rsend, velCut, velMac at 10..13, 
 // drive, crushBits, crushRate (FM record) and driveModel (INST record): a preset's recommended track
 // insert; 0 in a project (see Instrument::drive).
 constexpr size_t kFltRecSize = 8;    // filter, delay send
-constexpr size_t kSliceRecSize = 8 + 2 * kMaxSlices;  // modes, count, 3 reserved, positions
+constexpr int kLegacySlices = 32;
+constexpr size_t kSliceExtRecSize = 264;
+constexpr size_t kSliceRecSize = 72;  // modes, count, 3 reserved, positions
 constexpr size_t kSynRecSize = 48;  // SYNTH: 41 bytes of fields + reserved
 constexpr size_t kLfoRecSize = 16;  // LFO 1 sync, then LFO 2..4 as wave, rate, depth, dest, sync (bits)
 constexpr size_t kLofiRecSize = 8;  // LOFI: formula, sync, 6 reserved (0)
@@ -43,6 +45,11 @@ void packFmEx(const Instrument& m, uint8_t* b);
 void unpackFmEx(const uint8_t* b, size_t n, Instrument& m);
 // Count is cut to the longest strictly ascending prefix of the positions.
 void packSlices(const Instrument& m, uint8_t* b);
+void packSlicesExt(const Instrument& m, uint8_t* b);
+void unpackSlicesExt(const uint8_t* b, Instrument& m);
+constexpr size_t kModRecSize = kModRoutes * sizeof(ModRoute);
+void packMod(const Instrument& m, uint8_t* b);
+void unpackMod(const uint8_t* b, size_t n, Instrument& m);
 void unpackSlices(const uint8_t* b, Instrument& m);
 // After all records of an instrument: a machine number the type does not have becomes 0, so does a
 // LOFI or LFO BYTE formula past the library (byteFormulaCount); an LFO BYTE A over 127 becomes 127.

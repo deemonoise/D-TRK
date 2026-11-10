@@ -122,7 +122,7 @@ void test_cmd_cycle() {
   // Every command once per round.
   bool seen[static_cast<int>(Fx::Count)] = {};
   Fx f = Fx::None;
-  for (int i = 0; i < static_cast<int>(Fx::Count); ++i) {
+  for (int i = 0; i < static_cast<int>(Fx::Count) - 1; ++i) {
     TEST_ASSERT_FALSE(seen[static_cast<int>(f)]);
     seen[static_cast<int>(f)] = true;
     TEST_ASSERT_TRUE(fxNextCmd(fxNextCmd(f, 1), -1) == f);
@@ -208,7 +208,8 @@ void test_slc_fx() {
   TEST_ASSERT_EQUAL_STRING("SLC", fxName(Fx::SLC));
   TEST_ASSERT_TRUE(fxSynthOnly(Fx::SLC));
   TEST_ASSERT_EQUAL(0, fxDefault(Fx::SLC));
-  TEST_ASSERT_EQUAL(31, fxStep(Fx::SLC, 30, 5));
+  TEST_ASSERT_EQUAL(35, fxStep(Fx::SLC, 30, 5));
+  TEST_ASSERT_EQUAL(127, fxStep(Fx::SLC, 120, 1000));
   TEST_ASSERT_EQUAL(0, fxStep(Fx::SLC, 2, -5));
   TEST_ASSERT_EQUAL_STRING(" 12", fmt(Fx::SLC, 12));
   // OFF: ticks 0..96, MIDI too.
@@ -309,7 +310,7 @@ void test_lfo_fx() {
   TEST_ASSERT_EQUAL_STRING(" 80", fmt(Fx::LFR, 0x80));
   for (int f = static_cast<int>(Fx::LFO); f <= static_cast<int>(Fx::LFR); ++f) TEST_ASSERT_TRUE(fxSynthOnly(static_cast<Fx>(f)));
   TEST_ASSERT_TRUE(fxNextCmd(Fx::SAT, 1) == Fx::LFO);
-  TEST_ASSERT_TRUE(fxNextCmd(Fx::LFR, 1) == Fx::OFS);
+  TEST_ASSERT_TRUE(fxNextCmd(Fx::LFR, 1) == Fx::M01);
 }
 
 // ACC: drum tracks only, lane mask 0..255 shown as two hex digits (like VIB / ARP).
@@ -434,7 +435,7 @@ void test_flp_fx() {
 // SAT: the FM SAT lock, 0..127, INT tracks only; appended to the enum, after CON in the list.
 void test_sat_fx() {
   TEST_ASSERT_EQUAL(static_cast<int>(Fx::FLP) + 1, static_cast<int>(Fx::SAT));
-  TEST_ASSERT_EQUAL(static_cast<int>(Fx::SAT) + 1, static_cast<int>(Fx::Count));
+  TEST_ASSERT_EQUAL(static_cast<int>(Fx::M08) + 1, static_cast<int>(Fx::Count));
   TEST_ASSERT_EQUAL_STRING("SAT", fxName(Fx::SAT));
   TEST_ASSERT_EQUAL_STRING("FM SATURATION", fxLongName(Fx::SAT));
   TEST_ASSERT_EQUAL(64, fxDefault(Fx::SAT));

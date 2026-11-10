@@ -1,0 +1,207 @@
+{
+  "current": {
+    "sections": {
+      ".iram0.vectors": {
+        "bytes": 1028,
+        "address": 1077362688
+      },
+      ".iram0.text": {
+        "bytes": 173487,
+        "address": 1077363716
+      },
+      ".dram0.dummy": {
+        "bytes": 158208,
+        "address": 1070104576
+      },
+      ".dram0.data": {
+        "bytes": 23612,
+        "address": 1070262784
+      },
+      ".dram0.bss": {
+        "bytes": 74712,
+        "address": 1070286400
+      },
+      ".iram0.text_end": {
+        "bytes": 77,
+        "address": 1077537203
+      },
+      ".iram0.data": {
+        "bytes": 0,
+        "address": 1077537280
+      },
+      ".iram0.bss": {
+        "bytes": 0,
+        "address": 1077537280
+      },
+      ".dram0.heap_start": {
+        "bytes": 0,
+        "address": 1070361112
+      }
+    },
+    "bin_bytes": 2196912
+  },
+  "cold": {
+    "sections": {
+      ".iram0.vectors": {
+        "bytes": 1028,
+        "address": 1077362688
+      },
+      ".iram0.text": {
+        "bytes": 171403,
+        "address": 1077363716
+      },
+      ".dram0.dummy": {
+        "bytes": 156160,
+        "address": 1070104576
+      },
+      ".dram0.data": {
+        "bytes": 23612,
+        "address": 1070260736
+      },
+      ".dram0.bss": {
+        "bytes": 74712,
+        "address": 1070284352
+      },
+      ".iram0.text_end": {
+        "bytes": 113,
+        "address": 1077535119
+      },
+      ".iram0.data": {
+        "bytes": 0,
+        "address": 1077535232
+      },
+      ".iram0.bss": {
+        "bytes": 0,
+        "address": 1077535232
+      },
+      ".dram0.heap_start": {
+        "bytes": 0,
+        "address": 1070359064
+      }
+    },
+    "bin_bytes": 2197024
+  },
+  "cold-all3": {
+    "sections": {
+      ".iram0.vectors": {
+        "bytes": 1028,
+        "address": 1077362688
+      },
+      ".iram0.text": {
+        "bytes": 168311,
+        "address": 1077363716
+      },
+      ".dram0.dummy": {
+        "bytes": 153088,
+        "address": 1070104576
+      },
+      ".dram0.data": {
+        "bytes": 23612,
+        "address": 1070257664
+      },
+      ".dram0.bss": {
+        "bytes": 74712,
+        "address": 1070281280
+      },
+      ".iram0.text_end": {
+        "bytes": 133,
+        "address": 1077532027
+      },
+      ".iram0.data": {
+        "bytes": 0,
+        "address": 1077532160
+      },
+      ".iram0.bss": {
+        "bytes": 0,
+        "address": 1077532160
+      },
+      ".dram0.heap_start": {
+        "bytes": 0,
+        "address": 1070355992
+      }
+    },
+    "bin_bytes": 2197056
+  },
+  "qspi-current": {
+    "sections": {
+      ".iram0.vectors": {
+        "bytes": 1028,
+        "address": 1077362688
+      },
+      ".iram0.text": {
+        "bytes": 171451,
+        "address": 1077363716
+      },
+      ".dram0.dummy": {
+        "bytes": 156160,
+        "address": 1070104576
+      },
+      ".dram0.data": {
+        "bytes": 23292,
+        "address": 1070260736
+      },
+      ".dram0.bss": {
+        "bytes": 74640,
+        "address": 1070284032
+      },
+      ".iram0.text_end": {
+        "bytes": 65,
+        "address": 1077535167
+      },
+      ".iram0.data": {
+        "bytes": 0,
+        "address": 1077535232
+      },
+      ".iram0.bss": {
+        "bytes": 0,
+        "address": 1077535232
+      },
+      ".dram0.heap_start": {
+        "bytes": 0,
+        "address": 1070358672
+      }
+    },
+    "bin_bytes": 2195152
+  },
+  "qspi-all3": {
+    "sections": {
+      ".iram0.vectors": {
+        "bytes": 1028,
+        "address": 1077362688
+      },
+      ".iram0.text": {
+        "bytes": 166275,
+        "address": 1077363716
+      },
+      ".dram0.dummy": {
+        "bytes": 151040,
+        "address": 1070104576
+      },
+      ".dram0.data": {
+        "bytes": 23292,
+        "address": 1070255616
+      },
+      ".dram0.bss": {
+        "bytes": 74640,
+        "address": 1070278912
+      },
+      ".iram0.text_end": {
+        "bytes": 121,
+        "address": 1077529991
+      },
+      ".iram0.data": {
+        "bytes": 0,
+        "address": 1077530112
+      },
+      ".iram0.bss": {
+        "bytes": 0,
+        "address": 1077530112
+      },
+      ".dram0.heap_start": {
+        "bytes": 0,
+        "address": 1070353552
+      }
+    },
+    "bin_bytes": 2195280
+  }
+}

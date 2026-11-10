@@ -16,12 +16,12 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - Each track has its own length and speed (1/4, 1/2, x1, x2, x4): polymeter, slow pads over fast grooves.
 - A step holds a note, volume, chord (36 types × 4 inversions) and 6 fx commands: slide, vibrato, retrigger, arp, trig conditions (probability, fill, "previous played"…), p-locks of sound parameters, pan and LFOs.
 - Fill notes, volume or any fx on every Nth step, by Euclid or at random, with value ramps.
-- Generators that write straight into notes: **ARP** (106 patterns, including 64 from the Access Virus), **CHORDS** (55 progressions in the project key, 32 rhythms, RANDOM, Mutate, voice leading) and **BASS** (48 bass patterns that follow the chords). Your own patterns are saved with Capture.
+- Generators that write straight into notes: **ARP** (107 patterns, including 64 from the Access Virus), **CHORDS** (55 progressions in the project key, 33 rhythms, RANDOM, Mutate, voice leading) and **BASS** (50 bass patterns that follow the chords). Your own patterns are saved with Capture.
 - A live shift-register generator per track (**GEN**): a looping 2–16-bit register slowly mutates and plays notes of the project scale (pitch, or the rhythm too), Flip live from a track button and the FLP fx per step, Capture writes the loop into the pattern. The BYTE PITCH / BYTE GATE modes take the melody and hits from any of the 45 bytebeat formulas instead.
-- **Dice** on PROJ: one roll gives a genre tempo and scale, factory sounds on four role tracks (drums, bass, chords, lead) and a pattern from the generators, undoable; **Mutate** on INST nudges an instrument's sound.
+- **DICE** on PROJ: 9 genres, 39 styles, six roles (drums, bass, chords, lead, arp, FX), phrases, density and CLASSIC / DEVELOP / ARRANGE forms; multiple patterns and a song, with Undo. **Mutate** on INST nudges an instrument’s sound.
 - A mutator per track (**MUT**), one mode at a time: **EVO** — the pattern drifts live (notes along the scale, drops and ghost notes, retriggers and velocity, shifted steps), pulled back by Home; **CA1D / CA2D** — every few passes a new generation of a cellular automaton grown from the pattern (1D Wolfram rules, or Life-like rules over the KIT lanes); **MARKOV** — a Markov chain built from the pattern's own notes. Capture live writes what the track plays (MUT and GEN) into the pattern.
 - Grooves (MPC, shuffle, drunk, boom bap, house…) and per-track humanize.
-- Scales, undo, selection, copy.
+- Scales, undo, selection, copy; quantize, rotate, duplicate, double pattern and velocity processing. Motion recording stores parameter movements in steps, with a dedicated GRID automation view.
 - Microtonal project tuning: 10 factory tunings (just, meantone, 19/24/31-EDO, slendro, pelog, Bohlen-Pierce…) and your own Scala `.scl` files from the card.
 - Scenes and an A↔B crossfader: 8 scenes of mix and sound locks per project, morphed live on MIX or in PERF.
 
@@ -37,7 +37,7 @@ User manual: [docs/manual.md](docs/manual.md). Wiring: [docs/wiring.md](docs/wir
 - **LOFI**: bytebeat (45 built-in formulas, from the 2011 classics to our own rhythmic ones that lock to the tempo, all with A, B, C parameters) and an Atari Punk Console with subharmonics — dirty 8-bit sound.
 - **KIT**: a drum track of 8 lanes, each with its own sample or any instrument.
 
-Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo sync, modulate each other, controlled from steps, a bytebeat formula as a wave). 159 factory presets.
+Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo sync, modulate each other, controlled from steps, a bytebeat formula as a wave). 557 factory presets.
 
 ### Mix and effects
 
@@ -52,7 +52,7 @@ Every instrument has an LP / BP / HP filter with an envelope and 4 LFOs (tempo s
 
 - **Song**: up to 128 slots, each with a pattern and the mutes of 16 tracks. An A tap repeats a slot, a tap or a track button mutes a track in the slot. Follow actions per slot (next, previous, stay, jump, random, with a chance) from a project seed: every Play a new path, the render repeatable. Play on the SONG tab plays the song, on other tabs it loops the pattern; Shift + Play plays the song from the cursor on any tab; SONG / LOOP switch on the fly, undo for song edits.
 - **PERF**: punch-in effects on the whole mix while a button is held (repeat, roll, reverse, scratch, tape stop, gate, filter, crush, downsample, drive, delay / reverb / MOD throw, tape wobble, freeze), the encoder sets the depth, several buttons stack; button assignment is configurable. Works on GRID, SONG and MIX; held effects also show on the whole screen (dim, pixelate, invert…), switchable in FILE → SYSTEM. XY pad (A + B): the touch screen holds two effects, the finger sets their depths.
-- **REC**: record notes from the track buttons while playing.
+- **REC**: track-button notes and motion recording, with count-in, metronome and one-pass mode. A + Play toggles notes plus motion; B + Play toggles motion only.
 - Shift + Play: the song from the SONG cursor on any tab; held while playing, fill.
 
 ### Files and extras

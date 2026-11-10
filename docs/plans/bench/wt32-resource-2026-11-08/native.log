@@ -1,0 +1,65 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 128 tests
+
+Processing test_time_stretch in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_time_stretch/test_main.cpp:243: test_unity_is_bitexact_for_ragged_reads_and_needs_no_workspace	[PASSED]
+test/test_time_stretch/test_main.cpp:244: test_duration_changes_preserve_sine_pitch_unlike_resampling	[PASSED]
+test/test_time_stretch/test_main.cpp:245: test_two_tones_stay_at_original_frequencies	[PASSED]
+test/test_time_stretch/test_main.cpp:246: test_constant_extrema_silence_and_dc_are_preserved_without_tail_artifacts	[PASSED]
+test/test_time_stretch/test_main.cpp:247: test_short_inputs_and_fractional_last_hop_are_bounded	[PASSED]
+test/test_time_stretch/test_main.cpp:248: test_output_is_deterministic_across_chunk_sizes_and_reset	[PASSED]
+test/test_time_stretch/test_main.cpp:249: test_reader_failure_is_sticky_without_exposing_partial_output	[PASSED]
+test/test_time_stretch/test_main.cpp:250: test_invalid_parameters_and_workspace_failure_do_no_reader_io	[PASSED]
+test/test_time_stretch/test_main.cpp:251: test_state_and_workspace_are_bounded_for_extreme_lengths	[PASSED]
+test/test_time_stretch/test_main.cpp:252: test_finite_tail_preserves_the_final_source_attack_for_compression_and_expansion	[PASSED]
+------------- native:test_time_stretch [PASSED] Took 4.06 seconds -------------
+
+Processing test_tempo_detect in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_tempo_detect/test_main.cpp:90: test_regular_tempos_at_all_sample_rates	[PASSED]
+test/test_tempo_detect/test_main.cpp:91: test_fractional_tempo_and_timestamp_shift	[PASSED]
+test/test_tempo_detect/test_main.cpp:92: test_jitter_and_missing_beats_keep_tempo	[PASSED]
+test/test_tempo_detect/test_main.cpp:93: test_swing_still_exposes_tempo_and_ambiguity	[PASSED]
+test/test_tempo_detect/test_main.cpp:94: test_silence_single_and_too_short_are_unknown	[PASSED]
+test/test_tempo_detect/test_main.cpp:95: test_irregular_onsets_are_unknown	[PASSED]
+test/test_tempo_detect/test_main.cpp:96: test_bad_candidates_do_not_read_past_or_produce_a_tempo	[PASSED]
+test/test_tempo_detect/test_main.cpp:97: test_weak_candidates_do_not_fake_confidence	[PASSED]
+test/test_tempo_detect/test_main.cpp:98: test_few_irregular_attacks_do_not_overfit_a_tempo	[PASSED]
+------------- native:test_tempo_detect [PASSED] Took 0.86 seconds -------------
+
+Processing test_onset in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_onset/test_main.cpp:265: test_silence_has_no_onsets	[PASSED]
+test/test_onset/test_main.cpp:266: test_noise_floor_has_no_onsets	[PASSED]
+test/test_onset/test_main.cpp:267: test_clicks_found_at_their_positions	[PASSED]
+test/test_onset/test_main.cpp:268: test_unaligned_click_refined_back	[PASSED]
+test/test_onset/test_main.cpp:269: test_strengths_normalized	[PASSED]
+test/test_onset/test_main.cpp:270: test_close_peaks_merged	[PASSED]
+test/test_onset/test_main.cpp:271: test_max_keeps_strongest	[PASSED]
+test/test_onset/test_main.cpp:272: test_nearest_and_step	[PASSED]
+test/test_onset/test_main.cpp:273: test_chop_transients_threshold	[PASSED]
+test/test_onset/test_main.cpp:274: test_chop_transients_inside_region_only	[PASSED]
+test/test_onset/test_main.cpp:275: test_chop_transients_keeps_strongest	[PASSED]
+test/test_onset/test_main.cpp:276: test_scan_in_pieces_equals_detect	[PASSED]
+test/test_onset/test_main.cpp:277: test_scan_short_input_finds_nothing	[PASSED]
+test/test_onset/test_main.cpp:278: test_steady_low_tones_never_explode_into_slices	[PASSED]
+test/test_onset/test_main.cpp:279: test_constant_dc_has_no_attacks	[PASSED]
+test/test_onset/test_main.cpp:280: test_quiet_hat_after_loud_kick_is_separate_and_refined	[PASSED]
+test/test_onset/test_main.cpp:281: test_attacks_on_a_steady_tone_are_not_masked	[PASSED]
+test/test_onset/test_main.cpp:282: test_drum_timing_at_all_sample_rates	[PASSED]
+----------------- native:test_onset [PASSED] Took 1.13 seconds -----------------
+
+=================================== SUMMARY ===================================
+Environment    Test               Status    Duration
+-------------  -----------------  --------  ------------
+native         test_time_stretch  PASSED    00:00:04.056
+native         test_tempo_detect  PASSED    00:00:00.863
+native         test_onset         PASSED    00:00:01.130
+================= 37 test cases: 37 succeeded in 00:00:06.050 =================

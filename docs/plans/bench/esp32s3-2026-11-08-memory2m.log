@@ -1,0 +1,132 @@
+HW chip=ESP32-S3 flash=16777216 psram=8388608
+SIZE App=88312 Project=488908 UndoEntry=28742 UndoEntries=9 UndoTotal=258678 Clipboard=28674 SeqCold=58112 Synth=49264 Seq=35136 Machine=3648
+MEM boot free_psram=8386096 largest_psram=8257524 free_internal=175116 largest_internal=118772
+ALLOC reserve_6MiB bytes=6160384 ok=1 external=1
+MEM reserve_6MiB free_psram=2094636 largest_psram=2064372 free_internal=175116 largest_internal=118772
+CAPACITY target_bytes=2097152 actual_free=2094636 delta=-2516 boot_metadata_bytes=2512
+MEM wifi_primed_off free_psram=2094336 largest_psram=2064372 free_internal=157000 largest_internal=90100
+ALLOC startup_core_internal_attempt bytes=84400 ok=1 external=0
+MEM startup_core_internal_attempt free_psram=2094336 largest_psram=2064372 free_internal=70980 largest_internal=31732
+CORE actual_early_internal_possible=1 forcing_psram_for_reported_WT32_case=1 bytes=84400
+ALLOC App bytes=88312 ok=1 external=1
+MEM App free_psram=2004220 largest_psram=1998836 free_internal=157000 largest_internal=90100
+MEM App_constructed free_psram=2004220 largest_psram=1998836 free_internal=154380 largest_internal=90100
+ALLOC Project bytes=488908 ok=1 external=1
+MEM Project free_psram=1512696 largest_psram=1507316 free_internal=154380 largest_internal=90100
+MEM autoload_before_audio_ui free_psram=1512696 largest_psram=1507316 free_internal=154380 largest_internal=90100
+ALLOC stage_project bytes=488908 ok=1 external=1
+MEM stage_project free_psram=1021172 largest_psram=1015796 free_internal=154380 largest_internal=90100
+STAGE autoload_before_audio_ui success=1 bytes=488908
+MEM stage_released free_psram=1512696 largest_psram=1507316 free_internal=154380 largest_internal=90100
+ALLOC SeqCold bytes=58112 ok=1 external=1
+MEM SeqCold free_psram=1454324 largest_psram=1441780 free_internal=154380 largest_internal=90100
+ALLOC Seq_PSRAM bytes=35136 ok=1 external=1
+MEM Seq_PSRAM free_psram=1418480 largest_psram=1409012 free_internal=154380 largest_internal=90100
+MEM engine_queue_task_stub free_psram=1418480 largest_psram=1409012 free_internal=147324 largest_internal=90100
+ALLOC Synth_PSRAM bytes=49264 ok=1 external=1
+MEM Synth_PSRAM free_psram=1368300 largest_psram=1343476 free_internal=147324 largest_internal=90100
+ALLOC MachineCache bytes=3648 ok=1 external=1
+MEM MachineCache free_psram=1364584 largest_psram=1343476 free_internal=147108 largest_internal=90100
+ALLOC Delay bytes=256000 ok=1 external=1
+MEM Delay free_psram=1106532 largest_psram=1081332 free_internal=147108 largest_internal=90100
+REVERB internal=1 bytes=32248
+MEM fx_buffers free_psram=1106532 largest_psram=1081332 free_internal=114076 largest_internal=65524
+ALLOC Undo9 bytes=258678 ok=1 external=1
+MEM Undo9 free_psram=844384 largest_psram=835572 free_internal=109132 largest_internal=65524
+ALLOC Clipboard bytes=28674 ok=1 external=1
+MEM Clipboard free_psram=815196 largest_psram=802804 free_internal=109132 largest_internal=65524
+ALLOC Sprite480x320x16 bytes=307202 ok=1 external=1
+MEM Sprite480x320x16 free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+MEM persistent_startup_core_psram free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+MEM fresh_no_filelist free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=1 external=1
+MEM stage_project free_psram=12372 largest_psram=12276 free_internal=109132 largest_internal=65524
+STAGE fresh_no_filelist success=1 bytes=488908
+MEM stage_released free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+ALLOC FileList512 bytes=51200 ok=1 external=1
+MEM FileList512 free_psram=451668 largest_psram=450548 free_internal=109132 largest_internal=65524
+MEM fresh_with_filelist free_psram=451668 largest_psram=450548 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=0 external=0
+MEM stage_project free_psram=451668 largest_psram=450548 free_internal=109132 largest_internal=65524
+STAGE fresh_with_filelist success=0 bytes=488908
+MEM stage_released free_psram=451668 largest_psram=450548 free_internal=109132 largest_internal=65524
+MEM filelist_released_for_stage free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+MEM fresh_after_filelist_release free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=1 external=1
+MEM stage_project free_psram=12372 largest_psram=12276 free_internal=109132 largest_internal=65524
+STAGE fresh_after_filelist_release success=1 bytes=488908
+MEM stage_released free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+ALLOC DICE_undo_retained bytes=122700 ok=1 external=1
+MEM DICE_undo_retained free_psram=381012 largest_psram=376820 free_internal=109132 largest_internal=65524
+ALLOC FileList_DICE bytes=51200 ok=1 external=1
+MEM FileList_DICE free_psram=328784 largest_psram=327668 free_internal=109132 largest_internal=65524
+MEM dice_with_filelist free_psram=328784 largest_psram=327668 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=0 external=0
+MEM stage_project free_psram=328784 largest_psram=327668 free_internal=109132 largest_internal=65524
+STAGE dice_with_filelist success=0 bytes=488908
+MEM stage_released free_psram=328784 largest_psram=327668 free_internal=109132 largest_internal=65524
+MEM FileList_DICE_released free_psram=381012 largest_psram=376820 free_internal=109132 largest_internal=65524
+MEM dice_after_filelist_release free_psram=381012 largest_psram=376820 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=0 external=0
+MEM stage_project free_psram=381012 largest_psram=376820 free_internal=109132 largest_internal=65524
+STAGE dice_after_filelist_release success=0 bytes=488908
+MEM stage_released free_psram=381012 largest_psram=376820 free_internal=109132 largest_internal=65524
+ALLOC padding_96KiB_before_sprite_loan bytes=98304 ok=1 external=1
+MEM padding_96KiB_before_sprite_loan free_psram=280656 largest_psram=278516 free_internal=109132 largest_internal=65524
+ALLOC DICE_new_before_sprite_loan bytes=122700 ok=1 external=1
+MEM DICE_new_before_sprite_loan free_psram=157772 largest_psram=155636 free_internal=109132 largest_internal=65524
+MOVE DICE_BEFORE_LOAN copy_verified=1 old=0x3c954fa8 new=0x3c98b7b0 original_sprite_held=1
+MEM DICE_old_released_before_sprite free_psram=280656 largest_psram=155636 free_internal=109132 largest_internal=65524
+MEM padding_released_before_sprite free_psram=381012 largest_psram=221172 free_internal=109132 largest_internal=65524
+SELECTED positive_relocated=1
+MEM Sprite_loan_after_safe_relocation free_psram=692312 largest_psram=524276 free_internal=109132 largest_internal=65524
+MEM safe_dice_relocated_then_sprite_loan free_psram=692312 largest_psram=524276 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=1 external=1
+MEM stage_project free_psram=200788 largest_psram=155636 free_internal=109132 largest_internal=65524
+STAGE safe_dice_relocated_then_sprite_loan success=1 bytes=488908
+MEM stage_released free_psram=692312 largest_psram=524276 free_internal=109132 largest_internal=65524
+ALLOC Sprite_restored_after_safe_relocation bytes=307202 ok=1 external=1
+MEM Sprite_restored_after_safe_relocation free_psram=381012 largest_psram=221172 free_internal=109132 largest_internal=65524
+SAFE_POSITIVE sprite_restored=1 dice_preserved=1
+MEM DICE_freed_on_project_replaced free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+MEM safe_next_project_direct free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=1 external=1
+MEM stage_project free_psram=12372 largest_psram=12276 free_internal=109132 largest_internal=65524
+STAGE safe_next_project_direct success=1 bytes=488908
+MEM stage_released free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+MEM next_sprite_loan free_psram=815196 largest_psram=802804 free_internal=109132 largest_internal=65524
+MEM safe_next_project_sprite_loan free_psram=815196 largest_psram=802804 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=1 external=1
+MEM stage_project free_psram=323672 largest_psram=319476 free_internal=109132 largest_internal=65524
+STAGE safe_next_project_sprite_loan success=1 bytes=488908
+MEM stage_released free_psram=815196 largest_psram=802804 free_internal=109132 largest_internal=65524
+ALLOC safe_next_sprite_restored bytes=307202 ok=1 external=1
+MEM safe_next_sprite_restored free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+SAFE_NEXT sprite_restored=1
+MEM negative_reset_sprite free_psram=815196 largest_psram=802804 free_internal=109132 largest_internal=65524
+ALLOC negative_original_sprite bytes=307202 ok=1 external=1
+MEM negative_original_sprite free_psram=503896 largest_psram=499700 free_internal=109132 largest_internal=65524
+ALLOC negative_pinned_gap64K bytes=65536 ok=1 external=1
+MEM negative_pinned_gap64K free_psram=436308 largest_psram=434164 free_internal=109132 largest_internal=65524
+ALLOC negative_isolated_DICE bytes=122700 ok=1 external=1
+MEM negative_isolated_DICE free_psram=313424 largest_psram=311284 free_internal=109132 largest_internal=65524
+ALLOC negative_tail_pin112K bytes=114688 ok=1 external=1
+MEM negative_tail_pin112K free_psram=196684 largest_psram=196596 free_internal=109132 largest_internal=65524
+MEM negative_before_relocation free_psram=196684 largest_psram=196596 free_internal=109132 largest_internal=65524
+ALLOC padding_96KiB_before_sprite_loan bytes=98304 ok=1 external=1
+MEM padding_96KiB_before_sprite_loan free_psram=96328 largest_psram=96244 free_internal=109132 largest_internal=65524
+ALLOC DICE_new_before_sprite_loan bytes=122700 ok=0 external=0
+MEM DICE_new_before_sprite_loan free_psram=96328 largest_psram=96244 free_internal=109132 largest_internal=65524
+MEM padding_released_after_copy_failure free_psram=196684 largest_psram=196596 free_internal=109132 largest_internal=65524
+RELOCATE success=0 reason=no_copy original_sprite_held=1
+SAFE_NEGATIVE relocated=0 sprite_still_held=1 original_pixels_preserved=1 dice_preserved=1
+MEM negative_sprite_loan free_psram=507984 largest_psram=311284 free_internal=109132 largest_internal=65524
+MEM negative_stage_expected_failure free_psram=507984 largest_psram=311284 free_internal=109132 largest_internal=65524
+ALLOC stage_project bytes=488908 ok=0 external=0
+MEM stage_project free_psram=507984 largest_psram=311284 free_internal=109132 largest_internal=65524
+STAGE negative_stage_expected_failure success=0 bytes=488908
+MEM stage_released free_psram=507984 largest_psram=311284 free_internal=109132 largest_internal=65524
+ALLOC negative_sprite_restored bytes=307202 ok=1 external=1
+MEM negative_sprite_restored free_psram=196684 largest_psram=196596 free_internal=109132 largest_internal=65524
+SAFE_NEGATIVE_FINAL sprite_restored=1 dice_preserved=1
+MEMORY DONE

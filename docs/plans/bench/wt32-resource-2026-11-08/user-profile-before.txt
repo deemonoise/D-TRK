@@ -1,0 +1,25 @@
+firmware e7efe3b+, 44 s, 11157 blocks, render 1818 us = 45.5 %
+  peak block 5350 us = 133.8 %
+  queue       24.2 us    0.6 %
+  events      32.8 us    0.8 %
+  cache      143.9 us    3.6 %
+  instLfo    120.2 us    3.0 %
+  ctlMod     118.0 us    3.0 %  n 15.20    7.76 us each
+  ctlFlt      10.4 us    0.3 %
+  ctlEng      76.8 us    1.9 %
+  chip         0.0 us    0.0 %
+  sample     102.6 us    2.6 %  n  1.52   67.55 us each
+  fm         314.0 us    7.9 %  n  2.11  148.92 us each
+  drum         0.0 us    0.0 %
+  synth       37.9 us    0.9 %  n  0.19  199.11 us each
+  mix         32.0 us    0.8 %
+  delay       75.8 us    1.9 %
+  reverb     502.4 us   12.6 %
+  comp         3.6 us    0.1 %
+  perf         2.6 us    0.1 %
+  master      36.8 us    0.9 %
+  strip      115.9 us    2.9 %
+  mod         65.1 us    1.6 %
+  shim         1.9 us    0.0 %
+  eq           1.8 us    0.0 %
+  lofi         0.0 us    0.0 %

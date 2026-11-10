@@ -28,7 +28,20 @@ uint64_t songTicks(const Project& p, int maxSlots) {
 
 uint64_t passUs(const Project& p, int idx) { return ticksToUs(p, passTicks(p, idx)); }
 
-uint64_t songUs(const Project& p, int maxSlots) { return ticksToUs(p, songTicks(p, maxSlots)); }
+uint64_t songUs(const Project& p, int maxSlots) {
+  uint64_t us = 0, ticks = 0;  // ticks: since the last tempo change
+  uint16_t bpm = p.bpm < 20 ? 20 : (p.bpm > 300 ? 300 : p.bpm);
+  followWalk(p, followRunSeed(p.seed, 0), maxSlots, [&](int slot) {
+    const uint16_t b = songBpmClamp(p.songBpm[slot]);
+    if (b && b != bpm) {
+      us += ticks * 625000ull / bpm;
+      ticks = 0;
+      bpm = b;
+    }
+    ticks += passTicks(p, p.song[slot] < kPatterns ? p.song[slot] : kPatterns - 1);
+  });
+  return us + ticks * 625000ull / bpm;
+}
 
 void normalizePeak(int16_t* b, uint32_t n, int16_t peak, float target) {
   if (peak <= 0) return;
@@ -54,11 +67,12 @@ void nextResampleName(const Project& p, char out[kSampleNameMax + 1]) {
   }
 }
 
-OfflineRender::Guard::Guard(Project& pr) : p(pr) {
+OfflineRender::Guard::Guard(Project& pr) : p(pr), bpm(pr.bpm) {
   for (int t = 0; t < kTracks; ++t) mute[t] = p.tracks[t].mute;
 }
 
 OfflineRender::Guard::~Guard() {
+  p.bpm = bpm;
   for (int t = 0; t < kTracks; ++t) p.tracks[t].mute = mute[t];
 }
 

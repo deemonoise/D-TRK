@@ -61,6 +61,10 @@ BankResult importWtToCache(const char* path, const mt::Project& p, uint32_t& crc
 // 16-bit WAV, mt::kWtSrcSamples frames, "mtcr" crc = the key crc, via path.tmp. Works while the
 // engine plays (reads mapped flash only).
 BankResult exportWt(const char* name, const mt::Project& p, const char* path);
+// Copies the full-resolution frame from the mapped wavetable bank.
+BankResult wtFrame16(const char* name, int frame, int16_t out[256]);
+// Band-limited C4 monitor preview; retained storage is reused only after the audio task stops it.
+BankResult wtAudition(const int16_t frame[256]);
 // Reads the first maxMs of a WAV from the SD card for preview: mono, <= 32 kHz, into a new PSRAM
 // buffer (*data, heap_caps_free it). Works while the engine plays.
 BankResult loadWavPreview(const char* path, uint32_t maxMs, int16_t** data, uint32_t* frames, uint32_t* rate);

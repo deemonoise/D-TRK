@@ -1,0 +1,283 @@
+NEWFM hardware cpu=240 flash=16777216 psram=8388608 rate=32000 source=4000b2e
+NEWFM sizes voice=520 params=332 free_internal=309432
+CONFIG machine=BD_MODERN stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=1 stress=0 active=1.00 avg_us=245.88 peak_us=250 load=0.061 checksum=1.51235025e-08 rms=0.412139 pcm_peak=0.597919
+CONFIG machine=BD_MODERN stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=2 stress=0 active=2.00 avg_us=487.56 peak_us=491 load=0.122 checksum=3.21979172e-07 rms=0.737141 pcm_peak=1.17781
+CONFIG machine=BD_MODERN stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=4 stress=0 active=4.00 avg_us=969.81 peak_us=972 load=0.242 checksum=8.96260133e-07 rms=1.2148 pcm_peak=2.28589
+CONFIG machine=BD_MODERN stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=8 stress=0 active=8.00 avg_us=1935.92 peak_us=1939 load=0.484 checksum=2.32143043e-06 rms=2.48757 pcm_peak=4.60406
+CONFIG machine=BD_MODERN stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=1 stress=1 active=1.00 avg_us=341.98 peak_us=346 load=0.085 checksum=2.30643968e-06 rms=0.318051 pcm_peak=0.333333
+CONFIG machine=BD_MODERN stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=2 stress=1 active=2.00 avg_us=678.73 peak_us=682 load=0.170 checksum=2.28988551e-06 rms=0.450341 pcm_peak=0.666667
+CONFIG machine=BD_MODERN stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=4 stress=1 active=4.00 avg_us=1353.31 peak_us=1359 load=0.338 checksum=2.24293126e-06 rms=0.780399 pcm_peak=1.33333
+CONFIG machine=BD_MODERN stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=8 stress=1 active=8.00 avg_us=2702.56 peak_us=2709 load=0.676 checksum=2.16245508e-06 rms=1.49151 pcm_peak=2.66667
+CONFIG machine=BD_MODERN stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=1 stress=2 active=1.00 avg_us=392.93 peak_us=396 load=0.098 checksum=2.12132227e-06 rms=0.318196 pcm_peak=0.333333
+CONFIG machine=BD_MODERN stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=2 stress=2 active=2.00 avg_us=781.14 peak_us=784 load=0.195 checksum=2.09244672e-06 rms=0.459011 pcm_peak=0.666667
+CONFIG machine=BD_MODERN stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=4 stress=2 active=4.00 avg_us=1557.23 peak_us=1560 load=0.389 checksum=2.02927504e-06 rms=0.651428 pcm_peak=1.33333
+CONFIG machine=BD_MODERN stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM BD_MODERN voices=8 stress=2 active=8.00 avg_us=3110.50 peak_us=3116 load=0.778 checksum=1.76770618e-06 rms=0.980014 pcm_peak=2.66667
+CONFIG machine=SD_BASIC stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=1 stress=0 active=1.00 avg_us=498.12 peak_us=501 load=0.125 checksum=1.77974869e-06 rms=0.19237 pcm_peak=0.768571
+CONFIG machine=SD_BASIC stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=2 stress=0 active=2.00 avg_us=992.44 peak_us=994 load=0.248 checksum=1.79233541e-06 rms=0.33079 pcm_peak=1.28011
+CONFIG machine=SD_BASIC stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=4 stress=0 active=4.00 avg_us=1980.88 peak_us=1983 load=0.495 checksum=1.8266652e-06 rms=0.635401 pcm_peak=2.5563
+CONFIG machine=SD_BASIC stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=8 stress=0 active=8.00 avg_us=3956.12 peak_us=3962 load=0.989 checksum=1.88382853e-06 rms=1.25479 pcm_peak=5.17153
+CONFIG machine=SD_BASIC stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=1 stress=1 active=1.00 avg_us=594.57 peak_us=598 load=0.149 checksum=1.86635066e-06 rms=0.134696 pcm_peak=0.146716
+CONFIG machine=SD_BASIC stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=2 stress=1 active=2.00 avg_us=1185.05 peak_us=1189 load=0.296 checksum=1.83568307e-06 rms=0.229968 pcm_peak=0.293433
+CONFIG machine=SD_BASIC stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=4 stress=1 active=4.00 avg_us=2365.75 peak_us=2372 load=0.591 checksum=1.7634826e-06 rms=0.437844 pcm_peak=0.586866
+CONFIG machine=SD_BASIC stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=8 stress=1 active=8.00 avg_us=4726.83 peak_us=4734 load=1.182 checksum=1.62337346e-06 rms=0.866039 pcm_peak=1.17373
+CONFIG machine=SD_BASIC stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=1 stress=2 active=1.00 avg_us=641.75 peak_us=645 load=0.160 checksum=1.61551861e-06 rms=0.135066 pcm_peak=0.146716
+CONFIG machine=SD_BASIC stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=2 stress=2 active=2.00 avg_us=1278.77 peak_us=1285 load=0.320 checksum=1.58470766e-06 rms=0.228349 pcm_peak=0.293433
+CONFIG machine=SD_BASIC stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=4 stress=2 active=4.00 avg_us=2552.09 peak_us=2556 load=0.638 checksum=1.55535884e-06 rms=0.402069 pcm_peak=0.586866
+CONFIG machine=SD_BASIC stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_BASIC voices=8 stress=2 active=8.00 avg_us=5101.29 peak_us=5108 load=1.275 checksum=1.55201178e-06 rms=0.746796 pcm_peak=1.17373
+CONFIG machine=SD_VINTAGE stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=1 stress=0 active=1.00 avg_us=539.92 peak_us=543 load=0.135 checksum=1.57827901e-06 rms=0.298585 pcm_peak=0.985522
+CONFIG machine=SD_VINTAGE stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=2 stress=0 active=2.00 avg_us=1075.18 peak_us=1076 load=0.269 checksum=1.62513129e-06 rms=0.457344 pcm_peak=1.93092
+CONFIG machine=SD_VINTAGE stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=4 stress=0 active=4.00 avg_us=2146.42 peak_us=2152 load=0.537 checksum=1.70093529e-06 rms=0.901124 pcm_peak=3.91916
+CONFIG machine=SD_VINTAGE stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=8 stress=0 active=8.00 avg_us=4287.00 peak_us=4291 load=1.072 checksum=1.84685996e-06 rms=1.72924 pcm_peak=8.00999
+CONFIG machine=SD_VINTAGE stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=1 stress=1 active=1.00 avg_us=614.42 peak_us=638 load=0.154 checksum=1.84517626e-06 rms=0.245257 pcm_peak=1.27661
+CONFIG machine=SD_VINTAGE stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=2 stress=1 active=2.00 avg_us=1224.50 peak_us=1271 load=0.306 checksum=1.81988185e-06 rms=0.35332 pcm_peak=2.42951
+CONFIG machine=SD_VINTAGE stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=4 stress=1 active=4.00 avg_us=2444.89 peak_us=2534 load=0.611 checksum=1.84571707e-06 rms=0.619884 pcm_peak=4.50091
+CONFIG machine=SD_VINTAGE stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=8 stress=1 active=8.00 avg_us=4886.06 peak_us=5059 load=1.222 checksum=1.87546061e-06 rms=1.19116 pcm_peak=8.8781
+CONFIG machine=SD_VINTAGE stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=1 stress=2 active=1.00 avg_us=662.80 peak_us=691 load=0.166 checksum=1.87135731e-06 rms=0.268885 pcm_peak=1.29111
+CONFIG machine=SD_VINTAGE stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=2 stress=2 active=2.00 avg_us=1320.63 peak_us=1371 load=0.330 checksum=1.83678435e-06 rms=0.442795 pcm_peak=2.54646
+CONFIG machine=SD_VINTAGE stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=4 stress=2 active=4.00 avg_us=2636.64 peak_us=2730 load=0.659 checksum=1.78757875e-06 rms=0.710332 pcm_peak=4.94444
+CONFIG machine=SD_VINTAGE stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM SD_VINTAGE voices=8 stress=2 active=8.00 avg_us=5268.86 peak_us=5450 load=1.317 checksum=1.66400093e-06 rms=1.21709 pcm_peak=9.21468
+CONFIG machine=PC_CARBON stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=1 stress=0 active=1.00 avg_us=460.38 peak_us=464 load=0.115 checksum=1.69230248e-06 rms=0.264443 pcm_peak=0.443524
+CONFIG machine=PC_CARBON stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=2 stress=0 active=2.00 avg_us=917.19 peak_us=918 load=0.229 checksum=1.7533747e-06 rms=0.38977 pcm_peak=0.737877
+CONFIG machine=PC_CARBON stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=4 stress=0 active=4.00 avg_us=1829.75 peak_us=1833 load=0.457 checksum=1.88217746e-06 rms=0.681353 pcm_peak=1.49422
+CONFIG machine=PC_CARBON stress=0 pitch=48 moving=0 operators=3 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=8 stress=0 active=8.00 avg_us=3655.50 peak_us=3660 load=0.914 checksum=2.1442504e-06 rms=1.32175 pcm_peak=2.93323
+CONFIG machine=PC_CARBON stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=1 stress=1 active=1.00 avg_us=556.62 peak_us=559 load=0.139 checksum=2.11853762e-06 rms=0.190696 pcm_peak=0.20555
+CONFIG machine=PC_CARBON stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=2 stress=1 active=2.00 avg_us=1108.82 peak_us=1113 load=0.277 checksum=2.05794481e-06 rms=0.274211 pcm_peak=0.4111
+CONFIG machine=PC_CARBON stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=4 stress=1 active=4.00 avg_us=2213.73 peak_us=2220 load=0.553 checksum=2.00291038e-06 rms=0.465928 pcm_peak=0.8222
+CONFIG machine=PC_CARBON stress=1 pitch=100 moving=0 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=8 stress=1 active=8.00 avg_us=4422.68 peak_us=4426 load=1.106 checksum=1.8836721e-06 rms=0.896265 pcm_peak=1.6444
+CONFIG machine=PC_CARBON stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=1 stress=2 active=1.00 avg_us=605.71 peak_us=609 load=0.151 checksum=1.88367756e-06 rms=0.191742 pcm_peak=0.20555
+CONFIG machine=PC_CARBON stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=2 stress=2 active=2.00 avg_us=1206.73 peak_us=1212 load=0.302 checksum=1.82027395e-06 rms=0.279964 pcm_peak=0.4111
+CONFIG machine=PC_CARBON stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=4 stress=2 active=4.00 avg_us=2409.55 peak_us=2416 load=0.602 checksum=1.76466278e-06 rms=0.413013 pcm_peak=0.8222
+CONFIG machine=PC_CARBON stress=2 pitch=100 moving=1 operators=3 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM PC_CARBON voices=8 stress=2 active=8.00 avg_us=4814.44 peak_us=4821 load=1.204 checksum=1.69862756e-06 rms=0.65176 pcm_peak=1.6444
+CONFIG machine=CP_VINTAGE stress=0 pitch=48 moving=0 operators=0 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=1 stress=0 active=1.00 avg_us=214.33 peak_us=218 load=0.054 checksum=1.6326527e-06 rms=0.186175 pcm_peak=0.83174
+CONFIG machine=CP_VINTAGE stress=0 pitch=48 moving=0 operators=0 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=2 stress=0 active=2.00 avg_us=424.12 peak_us=427 load=0.106 checksum=1.49624634e-06 rms=0.389884 pcm_peak=1.754
+CONFIG machine=CP_VINTAGE stress=0 pitch=48 moving=0 operators=0 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=4 stress=0 active=4.00 avg_us=843.69 peak_us=846 load=0.211 checksum=1.22037659e-06 rms=0.790721 pcm_peak=3.65405
+CONFIG machine=CP_VINTAGE stress=0 pitch=48 moving=0 operators=0 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=8 stress=0 active=8.00 avg_us=1682.88 peak_us=1685 load=0.421 checksum=6.64179822e-07 rms=1.60661 pcm_peak=7.50491
+CONFIG machine=CP_VINTAGE stress=1 pitch=100 moving=0 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=1 stress=1 active=1.00 avg_us=284.54 peak_us=286 load=0.071 checksum=5.18128331e-07 rms=1.87204 pcm_peak=2.17057
+CONFIG machine=CP_VINTAGE stress=1 pitch=100 moving=0 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=2 stress=1 active=2.00 avg_us=566.82 peak_us=570 load=0.142 checksum=2.2602535e-07 rms=3.74408 pcm_peak=4.34115
+CONFIG machine=CP_VINTAGE stress=1 pitch=100 moving=0 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=4 stress=1 active=4.00 avg_us=1129.69 peak_us=1136 load=0.282 checksum=-3.58180301e-07 rms=7.48816 pcm_peak=8.6823
+CONFIG machine=CP_VINTAGE stress=1 pitch=100 moving=0 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=8 stress=1 active=8.00 avg_us=2254.91 peak_us=2263 load=0.564 checksum=-1.52659243e-06 rms=14.9763 pcm_peak=17.3646
+CONFIG machine=CP_VINTAGE stress=2 pitch=100 moving=1 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=1 stress=2 active=1.00 avg_us=342.14 peak_us=351 load=0.086 checksum=-1.70140413e-06 rms=1.83344 pcm_peak=2.17057
+CONFIG machine=CP_VINTAGE stress=2 pitch=100 moving=1 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=2 stress=2 active=2.00 avg_us=679.16 peak_us=686 load=0.170 checksum=-1.88911122e-06 rms=3.52846 pcm_peak=4.34115
+CONFIG machine=CP_VINTAGE stress=2 pitch=100 moving=1 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=4 stress=2 active=4.00 avg_us=1353.76 peak_us=1368 load=0.338 checksum=-2.43645127e-06 rms=6.69328 pcm_peak=8.6823
+CONFIG machine=CP_VINTAGE stress=2 pitch=100 moving=1 operators=0 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CP_VINTAGE voices=8 stress=2 active=8.00 avg_us=2703.20 peak_us=2717 load=0.676 checksum=-3.52146958e-06 rms=13.3164 pcm_peak=17.3646
+CONFIG machine=CY_ALLOY stress=0 pitch=48 moving=0 operators=5 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=1 stress=0 active=1.00 avg_us=620.19 peak_us=623 load=0.155 checksum=-3.5225994e-06 rms=0.429844 pcm_peak=1.15508
+CONFIG machine=CY_ALLOY stress=0 pitch=48 moving=0 operators=5 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=2 stress=0 active=2.00 avg_us=1237.19 peak_us=1240 load=0.309 checksum=-3.56335659e-06 rms=0.608473 pcm_peak=2.05814
+CONFIG machine=CY_ALLOY stress=0 pitch=48 moving=0 operators=5 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=4 stress=0 active=4.00 avg_us=2470.48 peak_us=2475 load=0.618 checksum=-3.59694377e-06 rms=1.044 pcm_peak=3.53883
+CONFIG machine=CY_ALLOY stress=0 pitch=48 moving=0 operators=5 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=8 stress=0 active=8.00 avg_us=4937.25 peak_us=4942 load=1.234 checksum=-3.70261887e-06 rms=1.9966 pcm_peak=7.014
+CONFIG machine=CY_ALLOY stress=1 pitch=100 moving=0 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=1 stress=1 active=1.00 avg_us=706.81 peak_us=709 load=0.177 checksum=-3.53631549e-06 rms=0.800211 pcm_peak=0.912739
+CONFIG machine=CY_ALLOY stress=1 pitch=100 moving=0 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=2 stress=1 active=2.00 avg_us=1409.55 peak_us=1413 load=0.352 checksum=-3.20371009e-06 rms=1.60042 pcm_peak=1.82548
+CONFIG machine=CY_ALLOY stress=1 pitch=100 moving=0 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=4 stress=1 active=4.00 avg_us=2814.13 peak_us=2818 load=0.704 checksum=-2.53850044e-06 rms=3.20084 pcm_peak=3.65096
+CONFIG machine=CY_ALLOY stress=1 pitch=100 moving=0 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=8 stress=1 active=8.00 avg_us=5623.70 peak_us=5632 load=1.406 checksum=-1.20807931e-06 rms=6.40168 pcm_peak=7.30192
+CONFIG machine=CY_ALLOY stress=2 pitch=100 moving=1 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=1 stress=2 active=1.00 avg_us=753.59 peak_us=756 load=0.188 checksum=-1.05583626e-06 rms=0.779544 pcm_peak=0.912755
+CONFIG machine=CY_ALLOY stress=2 pitch=100 moving=1 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=2 stress=2 active=2.00 avg_us=1503.87 peak_us=1508 load=0.376 checksum=-7.49094795e-07 rms=1.51343 pcm_peak=1.82548
+CONFIG machine=CY_ALLOY stress=2 pitch=100 moving=1 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=4 stress=2 active=4.00 avg_us=3003.36 peak_us=3007 load=0.751 checksum=-1.40984881e-07 rms=2.96588 pcm_peak=3.65096
+CONFIG machine=CY_ALLOY stress=2 pitch=100 moving=1 operators=5 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CY_ALLOY voices=8 stress=2 active=8.00 avg_us=6002.41 peak_us=6009 load=1.501 checksum=1.14164925e-06 rms=5.95706 pcm_peak=7.3018
+CONFIG machine=CHORD stress=0 pitch=48 moving=0 operators=4 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=1 stress=0 active=1.00 avg_us=1559.75 peak_us=1562 load=0.390 checksum=1.27686644e-06 rms=0.2601 pcm_peak=0.577987
+CONFIG machine=CHORD stress=0 pitch=48 moving=0 operators=4 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=2 stress=0 active=2.00 avg_us=3115.18 peak_us=3119 load=0.779 checksum=1.50122378e-06 rms=0.461155 pcm_peak=1.15514
+CONFIG machine=CHORD stress=0 pitch=48 moving=0 operators=4 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=4 stress=0 active=4.00 avg_us=6225.69 peak_us=6231 load=1.556 checksum=1.9114525e-06 rms=0.82637 pcm_peak=2.30923
+CONFIG machine=CHORD stress=0 pitch=48 moving=0 operators=4 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=8 stress=0 active=8.00 avg_us=12447.14 peak_us=12453 load=3.112 checksum=2.68583381e-06 rms=1.65837 pcm_peak=4.61922
+CONFIG machine=CHORD stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=1 stress=1 active=1.00 avg_us=937.44 peak_us=938 load=0.234 checksum=2.68785425e-06 rms=0.32145 pcm_peak=0.550643
+CONFIG machine=CHORD stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=2 stress=1 active=2.00 avg_us=1869.73 peak_us=1872 load=0.467 checksum=2.70206806e-06 rms=0.451057 pcm_peak=1.0739
+CONFIG machine=CHORD stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=4 stress=1 active=4.00 avg_us=3735.85 peak_us=3740 load=0.934 checksum=2.72883335e-06 rms=0.78066 pcm_peak=2.06975
+CONFIG machine=CHORD stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=8 stress=1 active=8.00 avg_us=7467.31 peak_us=7475 load=1.867 checksum=2.79253572e-06 rms=1.49091 pcm_peak=4.16226
+CONFIG machine=CHORD stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=1 stress=2 active=1.00 avg_us=985.37 peak_us=999 load=0.246 checksum=2.75451725e-06 rms=0.323321 pcm_peak=0.601792
+CONFIG machine=CHORD stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=2 stress=2 active=2.00 avg_us=1964.41 peak_us=1993 load=0.491 checksum=2.66268444e-06 rms=0.459092 pcm_peak=1.19242
+CONFIG machine=CHORD stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=4 stress=2 active=4.00 avg_us=3924.52 peak_us=3981 load=0.981 checksum=2.55365353e-06 rms=0.645716 pcm_peak=2.13986
+CONFIG machine=CHORD stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=8 stress=2 active=8.00 avg_us=7844.49 peak_us=7890 load=1.961 checksum=2.51459483e-06 rms=0.987454 pcm_peak=3.73949
+CONFIG machine=TOY stress=0 pitch=48 moving=0 operators=8 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=1 stress=0 active=1.00 avg_us=617.00 peak_us=620 load=0.154 checksum=2.52488007e-06 rms=0.124341 pcm_peak=0.215234
+CONFIG machine=TOY stress=0 pitch=48 moving=0 operators=8 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=2 stress=0 active=2.00 avg_us=1232.88 peak_us=1237 load=0.308 checksum=2.55002738e-06 rms=0.182855 pcm_peak=0.342741
+CONFIG machine=TOY stress=0 pitch=48 moving=0 operators=8 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=4 stress=0 active=4.00 avg_us=2460.25 peak_us=2466 load=0.615 checksum=2.60654292e-06 rms=0.319658 pcm_peak=0.668964
+CONFIG machine=TOY stress=0 pitch=48 moving=0 operators=8 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=8 stress=0 active=8.00 avg_us=4917.12 peak_us=4922 load=1.229 checksum=2.72415673e-06 rms=0.620967 pcm_peak=1.34133
+CONFIG machine=TOY stress=1 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=1 stress=1 active=1.00 avg_us=703.88 peak_us=706 load=0.176 checksum=2.72756779e-06 rms=0.25909 pcm_peak=0.376566
+CONFIG machine=TOY stress=1 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=2 stress=1 active=2.00 avg_us=1404.17 peak_us=1408 load=0.351 checksum=2.72998159e-06 rms=0.365071 pcm_peak=0.749256
+CONFIG machine=TOY stress=1 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=4 stress=1 active=4.00 avg_us=2803.61 peak_us=2807 load=0.701 checksum=2.75270099e-06 rms=0.632995 pcm_peak=1.52292
+CONFIG machine=TOY stress=1 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=8 stress=1 active=8.00 avg_us=5602.80 peak_us=5609 load=1.401 checksum=2.7937283e-06 rms=1.21075 pcm_peak=3.03717
+CONFIG machine=TOY stress=2 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=1 stress=2 active=1.00 avg_us=786.93 peak_us=790 load=0.197 checksum=2.77451295e-06 rms=0.259643 pcm_peak=0.43744
+CONFIG machine=TOY stress=2 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=2 stress=2 active=2.00 avg_us=1570.18 peak_us=1574 load=0.393 checksum=2.70088617e-06 rms=0.368089 pcm_peak=0.86099
+CONFIG machine=TOY stress=2 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=4 stress=2 active=4.00 avg_us=3135.89 peak_us=3141 load=0.784 checksum=2.55496843e-06 rms=0.535707 pcm_peak=1.60115
+CONFIG machine=TOY stress=2 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TOY voices=8 stress=2 active=8.00 avg_us=6268.00 peak_us=6278 load=1.567 checksum=2.45185447e-06 rms=0.819896 pcm_peak=2.87506
+CONFIG machine=TONE stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=1 stress=0 active=1.00 avg_us=190.02 peak_us=195 load=0.048 checksum=2.46605691e-06 rms=0.184112 pcm_peak=0.26383
+CONFIG machine=TONE stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=2 stress=0 active=2.00 avg_us=375.89 peak_us=380 load=0.094 checksum=2.49909885e-06 rms=0.270161 pcm_peak=0.520695
+CONFIG machine=TONE stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=4 stress=0 active=4.00 avg_us=747.42 peak_us=750 load=0.187 checksum=2.57155466e-06 rms=0.473497 pcm_peak=0.999439
+CONFIG machine=TONE stress=0 pitch=48 moving=0 operators=2 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=8 stress=0 active=8.00 avg_us=1490.00 peak_us=1496 load=0.373 checksum=2.72110674e-06 rms=0.918568 pcm_peak=1.99161
+CONFIG machine=TONE stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=1 stress=1 active=1.00 avg_us=663.32 peak_us=666 load=0.166 checksum=2.62590243e-06 rms=0.498957 pcm_peak=0.552691
+CONFIG machine=TONE stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=2 stress=1 active=2.00 avg_us=1322.39 peak_us=1326 load=0.331 checksum=2.46473974e-06 rms=0.701998 pcm_peak=1.11955
+CONFIG machine=TONE stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=4 stress=1 active=4.00 avg_us=2640.02 peak_us=2644 load=0.660 checksum=2.30515775e-06 rms=1.21483 pcm_peak=2.23404
+CONFIG machine=TONE stress=1 pitch=100 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=8 stress=1 active=8.00 avg_us=5276.05 peak_us=5283 load=1.319 checksum=2.01524563e-06 rms=2.318 pcm_peak=4.48644
+CONFIG machine=TONE stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=1 stress=2 active=1.00 avg_us=700.51 peak_us=710 load=0.175 checksum=1.93929759e-06 rms=0.486889 pcm_peak=0.593838
+CONFIG machine=TONE stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=2 stress=2 active=2.00 avg_us=1396.18 peak_us=1415 load=0.349 checksum=1.86748912e-06 rms=0.684641 pcm_peak=1.18691
+CONFIG machine=TONE stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=4 stress=2 active=4.00 avg_us=2787.55 peak_us=2821 load=0.697 checksum=1.90756509e-06 rms=0.974815 pcm_peak=2.31451
+CONFIG machine=TONE stress=2 pitch=100 moving=1 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=8 stress=2 active=8.00 avg_us=5570.64 peak_us=5602 load=1.393 checksum=1.95259622e-06 rms=1.47238 pcm_peak=4.50201
+CONFIG machine=HH_BASIC stress=0 pitch=48 moving=0 operators=6 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=1 stress=0 active=1.00 avg_us=502.52 peak_us=505 load=0.126 checksum=1.94656423e-06 rms=0.0409741 pcm_peak=0.304356
+CONFIG machine=HH_BASIC stress=0 pitch=48 moving=0 operators=6 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=2 stress=0 active=2.00 avg_us=1000.75 peak_us=1002 load=0.250 checksum=1.93647975e-06 rms=0.0760765 pcm_peak=0.604203
+CONFIG machine=HH_BASIC stress=0 pitch=48 moving=0 operators=6 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=4 stress=0 active=4.00 avg_us=1997.06 peak_us=1999 load=0.499 checksum=1.91706158e-06 rms=0.145832 pcm_peak=1.19191
+CONFIG machine=HH_BASIC stress=0 pitch=48 moving=0 operators=6 over=0.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=8 stress=0 active=8.00 avg_us=3989.38 peak_us=3994 load=0.997 checksum=1.88020772e-06 rms=0.291901 pcm_peak=2.37931
+CONFIG machine=HH_BASIC stress=1 pitch=100 moving=0 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=1 stress=1 active=1.00 avg_us=588.38 peak_us=591 load=0.147 checksum=1.9021054e-06 rms=0.0928169 pcm_peak=0.179976
+CONFIG machine=HH_BASIC stress=1 pitch=100 moving=0 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=2 stress=1 active=2.00 avg_us=1172.19 peak_us=1177 load=0.293 checksum=1.94567042e-06 rms=0.192815 pcm_peak=0.359942
+CONFIG machine=HH_BASIC stress=1 pitch=100 moving=0 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=4 stress=1 active=4.00 avg_us=2340.73 peak_us=2346 load=0.585 checksum=2.03647528e-06 rms=0.392265 pcm_peak=0.719912
+CONFIG machine=HH_BASIC stress=1 pitch=100 moving=0 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=8 stress=1 active=8.00 avg_us=4676.86 peak_us=4683 load=1.169 checksum=2.21785172e-06 rms=0.802818 pcm_peak=1.43981
+CONFIG machine=HH_BASIC stress=2 pitch=100 moving=1 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=1 stress=2 active=1.00 avg_us=654.77 peak_us=658 load=0.164 checksum=2.22032986e-06 rms=0.101206 pcm_peak=0.179955
+CONFIG machine=HH_BASIC stress=2 pitch=100 moving=1 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=2 stress=2 active=2.00 avg_us=1305.25 peak_us=1309 load=0.326 checksum=2.25554413e-06 rms=0.188621 pcm_peak=0.359914
+CONFIG machine=HH_BASIC stress=2 pitch=100 moving=1 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=4 stress=2 active=4.00 avg_us=2605.94 peak_us=2611 load=0.651 checksum=2.32500793e-06 rms=0.344942 pcm_peak=0.719902
+CONFIG machine=HH_BASIC stress=2 pitch=100 moving=1 operators=6 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM HH_BASIC voices=8 stress=2 active=8.00 avg_us=5207.20 peak_us=5217 load=1.302 checksum=2.43332829e-06 rms=0.664607 pcm_peak=1.43933
+CONFIG machine=CHORD stress=3 pitch=48 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=1 stress=3 active=1.00 avg_us=1929.00 peak_us=1930 load=0.482 checksum=2.49784648e-06 rms=0.343164 pcm_peak=0.628231
+CONFIG machine=CHORD stress=3 pitch=48 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=2 stress=3 active=2.00 avg_us=3852.88 peak_us=3856 load=0.963 checksum=2.64616938e-06 rms=0.489083 pcm_peak=1.2541
+CONFIG machine=CHORD stress=3 pitch=48 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=4 stress=3 active=4.00 avg_us=7700.95 peak_us=7705 load=1.925 checksum=2.88190495e-06 rms=0.840233 pcm_peak=2.49982
+CONFIG machine=CHORD stress=3 pitch=48 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=8 stress=3 active=8.00 avg_us=15399.17 peak_us=15407 load=3.850 checksum=3.37266806e-06 rms=1.62953 pcm_peak=5.00216
+CONFIG machine=CHORD stress=4 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=1 stress=4 active=1.00 avg_us=1865.55 peak_us=1867 load=0.466 checksum=3.29692421e-06 rms=0.329768 pcm_peak=0.625559
+CONFIG machine=CHORD stress=4 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=2 stress=4 active=2.00 avg_us=3704.87 peak_us=3709 load=0.926 checksum=3.22585447e-06 rms=0.475195 pcm_peak=1.13586
+CONFIG machine=CHORD stress=4 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=4 stress=4 active=4.00 avg_us=7406.04 peak_us=7412 load=1.852 checksum=3.09678444e-06 rms=0.825325 pcm_peak=2.27213
+CONFIG machine=CHORD stress=4 pitch=100 moving=0 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=8 stress=4 active=8.00 avg_us=14785.81 peak_us=14793 load=3.696 checksum=2.91906031e-06 rms=1.58924 pcm_peak=4.60317
+CONFIG machine=CHORD stress=5 pitch=48 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=1 stress=5 active=1.00 avg_us=1999.29 peak_us=2001 load=0.500 checksum=2.91297465e-06 rms=0.338045 pcm_peak=0.62822
+CONFIG machine=CHORD stress=5 pitch=48 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=2 stress=5 active=2.00 avg_us=3993.93 peak_us=3996 load=0.998 checksum=2.97181941e-06 rms=0.499333 pcm_peak=1.25638
+CONFIG machine=CHORD stress=5 pitch=48 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=4 stress=5 active=4.00 avg_us=7983.61 peak_us=7988 load=1.996 checksum=3.16438172e-06 rms=0.724161 pcm_peak=2.43622
+CONFIG machine=CHORD stress=5 pitch=48 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=8 stress=5 active=8.00 avg_us=15960.94 peak_us=15971 load=3.990 checksum=3.44743012e-06 rms=1.16437 pcm_peak=4.49817
+CONFIG machine=CHORD stress=6 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=1 stress=6 active=1.00 avg_us=1943.42 peak_us=2001 load=0.486 checksum=3.46290813e-06 rms=0.367429 pcm_peak=0.633173
+CONFIG machine=CHORD stress=6 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=2 stress=6 active=2.00 avg_us=3877.16 peak_us=3996 load=0.969 checksum=3.40281576e-06 rms=0.587587 pcm_peak=1.23431
+CONFIG machine=CHORD stress=6 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=4 stress=6 active=4.00 avg_us=7746.88 peak_us=7903 load=1.937 checksum=3.3576639e-06 rms=0.922303 pcm_peak=2.45253
+CONFIG machine=CHORD stress=6 pitch=100 moving=1 operators=8 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM CHORD voices=8 stress=6 active=8.00 avg_us=15488.43 peak_us=15632 load=3.872 checksum=3.33285516e-06 rms=1.54741 pcm_peak=4.2686
+CONFIG machine=TONE stress=7 pitch=48 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=1 stress=7 active=1.00 avg_us=663.19 peak_us=666 load=0.166 checksum=3.38351538e-06 rms=0.500465 pcm_peak=0.545925
+CONFIG machine=TONE stress=7 pitch=48 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=2 stress=7 active=2.00 avg_us=1321.83 peak_us=1326 load=0.330 checksum=3.53936616e-06 rms=0.733188 pcm_peak=1.09086
+CONFIG machine=TONE stress=7 pitch=48 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=4 stress=7 active=4.00 avg_us=2639.14 peak_us=2644 load=0.660 checksum=3.78656637e-06 rms=1.27523 pcm_peak=2.18083
+CONFIG machine=TONE stress=7 pitch=48 moving=0 operators=2 over=1.000 retrigger_blocks=8 timed_trigger=1
+NEWFM TONE voices=8 stress=7 active=8.00 avg_us=5274.43 peak_us=5281 load=1.319 checksum=4.33548757e-06 rms=2.47086 pcm_peak=4.35884
+NEWFM DONE

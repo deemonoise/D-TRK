@@ -65,6 +65,7 @@ class Env {
     }
     return level_;
   }
+  void hold(float level) { stage_ = Stage::Sustain; level_ = level; }
   bool idle() const { return stage_ == Stage::Idle; }
   Stage stage() const { return stage_; }
   float level() const { return level_; }

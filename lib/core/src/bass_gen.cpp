@@ -59,6 +59,9 @@ constexpr Factory kFactory[] = {
     {"COUNTRY", "x . . . x5v . . . x . . . x5v . . ."},
     {"BOSSA", "x . . x5 x5 . . x x . . x5 x5 . . x"},
     {"TUMBAO", ". . . x . . x . . . . x5 . . x ."},
+    // Append-only: saved factory indices above remain stable.
+    {"DUB SPACE", "Xl - - - - - . . . . xl - . . . ."},
+    {"JUKE SUB", "X . . xs . . X x5 . . xs . . X . xs"},
 };
 constexpr int kFactoryN = sizeof(kFactory) / sizeof(kFactory[0]);
 

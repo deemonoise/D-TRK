@@ -55,6 +55,8 @@ constexpr Factory kFactory[] = {
     {"CHIP OCT", "x xr^ x xr^ x xr^ x xr^ x xr^ x xr^ x xr^ x xr^"},
     {"CHIP RUN", "xs xs xs xs xs xs xs xs xs xs xs xs xs xs xs xs"},
 #include "arp_virus.inc"
+    // New assets follow the included bank too: saved VIRUS indices remain stable.
+    {"JUKE HIT", "Xps . . xps . . Xps . . xps . . Xps . xps ."},
 };
 constexpr int kFactoryN = sizeof(kFactory) / sizeof(kFactory[0]);
 

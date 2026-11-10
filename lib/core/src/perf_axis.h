@@ -10,7 +10,7 @@ namespace mt {
 // zones, one per value). A bipolar range (FILTER: LP <-> HP) is 0 (OFF) in a dead zone of len / 8
 // round the middle, lo .. -1 below it and 1 .. hi above. None or len <= 0: lo.
 int perfAxisDepth(PerfFx f, int pos, int len);
-// List-valued effects (not coarse) are drawn as zones: the first pixel of value lo + i, 1 <= i <= hi - lo.
+// List-valued effects (not coarse): first pixel of visible choice i (retired IDs skipped).
 bool perfAxisZoned(PerfFx f);
 int perfAxisEdge(PerfFx f, int i, int len);
 // The bipolar dead zone [from, to) in pixels; false for every other effect.

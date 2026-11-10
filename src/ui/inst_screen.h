@@ -5,6 +5,9 @@
 #include "param_list.h"
 #include "preset_browser.h"
 #include "sample_editor.h"
+#include "syn_wave_preview.h"
+#include "sample_extract_dialog.h"
+#include "wt_make_dialog.h"
 #include "screen.h"
 #include "wt_picker.h"
 
@@ -13,10 +16,10 @@ namespace ui {
 // Instrument editor. Shift+turn (or a tap on the header arrows) = instrument -+1; entering the tab
 // selects the instrument of App::curTrack(). PREVIEW (tap, or a long press) plays C4 for 300 ms.
 // PRESET (tap, or Shift + long press): LOAD / SAVE menu, then the PresetBrowser over the list.
-// On the SMPL page that menu is SAMPLE: Save one-shot..., Chop, Add slice (Shift on the click: at a
-// transient), Delete slice, Clear slices (confirm), Load / Save preset; A tap / Shift + A tap = next /
+// On the SMPL page SAMPLE groups Render, Slices, Convert, Presets and Mutate;
+// slices include Chop, Add slice (Shift: at a transient), Delete and confirmed Clear; A tap / Shift + A tap = next /
 // previous marker.
-// PRESET menu (not on a KIT): also Mutate 15 / 30 / 60 % (mutateSlot: filter, envelopes, macros of
+// PRESET menu (not on a KIT): Mutate strength 15 / 30 / 60 %, Apply and Undo (mutateSlot: filter, envelopes, macros of
 // this instrument, seeded by esp_random) and Undo mutate (one step, this instrument only).
 // Name: click to edit, turn = character, Shift+turn = position.
 // Pages (tab bar under the header, or turning past the first / last row, wrapping): MAIN, ENV (with an
@@ -46,6 +49,7 @@ class InstScreen : public Screen {
   void onLeave() override;
   // The track buttons play slices (sample editor page): no hold-button volume then.
   bool buttonsBusy() const;
+  bool onTrackInstr() const;
   void onProjectReplaced() override;
   void dropMutateUndo() { mut_.slot = -1; }  // Dice SOUNDS rewrote the instruments
   void onInput(const hw::InputEvent& ev) override;
@@ -54,7 +58,10 @@ class InstScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
-  bool wantsHDrag() const override { return !presets_.isOpen() && !wt_.isOpen() && !bounce_.isOpen() && onEditor(); }
+  bool wantsRedraw(const engine::Status&) override;
+  bool onPlay() override { if (extract_.isOpen() || wtMake_.isOpen()) return true; return wt_.isOpen() && wt_.onPlay(); }
+  bool wantsRawTouch() const override { return wt_.drawOpen(); }
+  bool wantsHDrag() const override { return wt_.drawOpen() || (!presets_.isOpen() && !wt_.isOpen() && !bounce_.isOpen() && !extract_.isOpen() && !wtMake_.isOpen() && onEditor()); }
   // Track button n: on the sample editor plays slices (see SampleEditor::playSlice). False = not taken.
   bool trackKey(int n, bool shift);
 
@@ -76,9 +83,9 @@ class InstScreen : public Screen {
   // SYNTH: OSC page rows, then MOD page rows.
   static constexpr int kOsc1 = kCommon, kTable1 = kCommon + 1, kShape1 = kCommon + 2, kOsc2 = kCommon + 3,
                        kTable2 = kCommon + 4, kShape2 = kCommon + 5, kSemi = kCommon + 6, kDetune = kCommon + 7,
-                       kSync = kCommon + 8, kMix = kCommon + 9, kSynOscRows = 10;
+                       kSync = kCommon + 8, kMix = kCommon + 9, kOscView = kCommon + 10, kSynOscRows = 11;
   static constexpr int kSub = kOsc1 + kSynOscRows, kSubOct = kSub + 1, kNoise = kSub + 2, kSenv = kSub + 3,
-                       kEAtk = kSub + 4, kEDec = kSub + 5, kSynRows = kSub + 6;
+                       kEAtk = kSub + 4, kEDec = kSub + 5, kModView = kSub + 6, kSynRows = kSub + 7;
   // Filter and LFO: after the type's own rows (index = the type's row count + tail row).
   static constexpr int kFltMode = 0, kCutoff = 1, kReso = 2, kFEnv = 3, kFAtk = 4, kFDec = 5, kKeytrack = 6,
                        kLfoSel = 7, kLfoWave = 8, kLfoSync = 9, kLfoRetrig = 10, kLfoRate = 11, kLfoDepth = 12,
@@ -92,22 +99,22 @@ class InstScreen : public Screen {
   static constexpr int kKitRows = kKitMain + mt::kKitLanes * kLaneRows;
   // Logical pages; kPgType2 (SYNTH MOD) only on SYNTH, so the others have one page less. KIT: MAIN and
   // kPgType (LANES) only.
-  enum Page : int { kPgMain, kPgEnv, kPgType, kPgType2, kPgFilt, kPgLfo };
+  enum Page : int { kPgMain, kPgEnv, kPgType, kPgType2, kPgFilt, kPgLfo, kPgMatrix };
   static constexpr int kHeaderH = 28;
   static constexpr int kPageBarH = 24;
-  static constexpr int kListRows = 9;  // (kAreaH - kHeaderH - kPageBarH) / ParamList::kRowH
+  static constexpr int kListRows = (kAreaH - kHeaderH - kPageBarH) / ParamList::kRowH;
   // ENV page ADSR graph, right of the values; y from the list top.
   static constexpr int kEnvX0 = 280, kEnvX1 = 470, kEnvY0 = 8, kEnvY1 = 112;
   static constexpr int kEnvHold = 30;  // sustain plateau width
-  // OSC page (SYNTH) frame preview, right of the values (table names reach x 336); y from the list top.
-  static constexpr int kWtX0 = 336, kWtX1 = 456, kWtY0 = 8, kWtY1 = 112;
+  // Local C4 waveform model at the right of OSC / MOD, before filter and ADSR.
+  static constexpr int kWaveX = 336, kWaveY = 8, kWaveW = 128, kWaveH = 152, kWaveToggleH = 24;
   static constexpr int kNameLen = 8;
   static constexpr int kPreviewNote = 60;
   // Header hit areas: left arrow, right arrow, PRESET and PREVIEW buttons.
-  static constexpr int kLeftX1 = 56;
-  static constexpr int kRightX0 = 232, kRightX1 = 288;
-  static constexpr int kPresetX0 = 296, kPresetX1 = 376;
-  static constexpr int kPrevX0 = 384, kPrevX1 = 472;
+  static constexpr int kLeftX1 = 48;
+  static constexpr int kRightX0 = 280, kRightX1 = 320;
+  static constexpr int kPresetX0 = 328, kPresetX1 = 392;
+  static constexpr int kPrevX0 = 400, kPrevX1 = 472;
 
   mt::Instrument& inst();
   void setType(mt::InstrType v);  // under the lock (a ParamList edit)
@@ -119,17 +126,21 @@ class InstScreen : public Screen {
   bool onEditor() const { return shown_ == mt::InstrType::Sample && page_ == kPgType; }
   bool synth() const { return shown_ == mt::InstrType::Synth; }
   bool kit() const { return shown_ == mt::InstrType::Kit; }
-  int pageCount() const { return kit() ? 2 : (synth() ? 6 : 5); }
+  int pageCount() const { return kit() ? 2 : (synth() ? 7 : 6); }
   void initKit();
+  void initMatrix();
+  void openSampleJob(int action);
+  void syncSampleJob();
   void buildLanes(bool keep);  // LANES rows of the current lane modes into kitShown_; keep: scroll stays
   int pageW() const { return kScreenW / pageCount(); }
   int physPage() const;                // tab index of page_
   int logicalPage(int phys) const;     // Page of a tab index
   void showPage(int phys, bool bar);  // tab index, wraps; bar: the page bar keeps the cursor, else the first row
   int tableOsc() const;                // SYNTH OSC page on a Table row: its oscillator, else -1
+  bool viewRow(int row) const;
   void drawPageBar(LGFX_Sprite& s, int y);
   void drawEnv(LGFX_Sprite& s, int y);  // ADSR graph, y = list top
-  void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC page: frame / waveform of the selected osc
+  void drawOsc(LGFX_Sprite& s, int y);  // SYNTH OSC / MOD local model
   void initTail(Param* t);  // t = &rows[type's row count]
   void relabel();           // DRUM / LOFI macro labels of the current machine
   void leaveEdit();
@@ -138,6 +149,8 @@ class InstScreen : public Screen {
   void preview();
   uint8_t previewIns();  // the insert preview() and Save one-shot use: the current track's, or kTracks (dry)
   void presetMenu();
+  void openMutateMenu(bool refresh = false);
+  int mutateStrength_ = 30;
   void mutate(int strength);  // mutateSlot under the lock, toast, preview
   void undoMutate();
   void afterPresets();  // the browser closed: the type may have changed
@@ -150,6 +163,8 @@ class InstScreen : public Screen {
   Param drum_[kDrumRows + kTailRows];
   Param lofi_[kLofiRows + kTailRows];
   Param syn_[kSynRows + kTailRows];
+  Param matrix_[6];
+  int matrixRoute_ = 0;
   Param kit_[kKitRows];       // every KIT row
   Param kitShown_[kKitRows];  // LANES page: the rows of each lane's mode
   mt::InstrType shown_ = mt::InstrType::Chip;
@@ -157,6 +172,9 @@ class InstScreen : public Screen {
   int page_ = kPgMain;
   PresetBrowser presets_{app_};
   WtPicker wt_{app_};
+  SampleExtractDialog extract_{app_};
+  WtMakeDialog wtMake_{app_};
+  bool sampleJob_ = false;
   BounceDialog bounce_{app_};  // Save one-shot... / KIT bake
   int instr_ = 0;
   int lfoSel_ = 0;  // LFO page: which of the 4 LFOs the rows edit
@@ -165,6 +183,7 @@ class InstScreen : public Screen {
   mt::MutateUndo mut_;          // the last Mutate (slot -1 = none); dropped on load / New, refused once the slot is edited
   int y0_ = kAreaY;
   int namePos_ = 0;
+  SynWavePreview wave_;
   SampleEditor editor_{app_, kAreaY + kHeaderH + kPageBarH};
 };
 

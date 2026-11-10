@@ -165,6 +165,8 @@ void song(Project& p, const Item* items, int n) {
       p.song[len] = items[i].pattern;
       p.songMute[len] = 0;
       p.songFol[len] = SongFollow();
+      p.songTrn[len] = 0;
+      p.songBpm[len] = 0;
       ++len;
     }
   p.songLen = static_cast<uint8_t>(len);

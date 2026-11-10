@@ -1,0 +1,48 @@
+HEAP boot free_internal=208136 largest_internal=147444 min_internal=202860 free_psram=8386036 largest_psram=8257524
+HEADLESS chip=ESP32-S3 revision=2 cpu_mhz=240 flash=16777216 psram=8388608 synth_rate=32000 block=128 revision_code=ble-resource-probe
+PLACEMENT synth_internal=1 reverb_internal=1 sizeof_synth=49264 sizeof_project=488908 free_internal=123004
+HEAP synth_audio_task free_internal=113352 largest_internal=65524 min_internal=113352 free_psram=6854240 largest_psram=6815732
+BENCH phase=before_ble case=CHIP16 voices=16 active=16.00 avg_us=1747.53 peak_us=1761 warmup_peak_us=2765 rms=13537.87 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5764 checksum=-12420
+BENCH phase=before_ble case=CHIP24 voices=24 active=24.00 avg_us=2188.59 peak_us=2204 warmup_peak_us=3013 rms=13842.04 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5764 checksum=-19591
+BENCH phase=before_ble case=FMHAT4 voices=4 active=4.00 avg_us=1715.91 peak_us=1884 warmup_peak_us=2368 rms=2987.43 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=22111
+BENCH phase=before_ble case=FMHAT8 voices=8 active=8.00 avg_us=2933.45 peak_us=3260 warmup_peak_us=3785 rms=5619.13 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-25615
+BENCH phase=before_ble case=SYNTH8 voices=8 active=8.00 avg_us=1481.81 peak_us=1497 warmup_peak_us=2038 rms=5918.21 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-32005
+BENCH phase=before_ble case=SAMPLE16 voices=16 active=16.00 avg_us=2108.75 peak_us=2123 warmup_peak_us=2823 rms=17529.08 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=1175
+HEAP before_ble free_internal=113088 largest_internal=65524 min_internal=112836 free_psram=6854240 largest_psram=6815732
+HEAP before_ble_init free_internal=113088 largest_internal=65524 min_internal=112836 free_psram=6854240 largest_psram=6815732
+BLE init=1 init_us=58213 max_connections=1 central=1 observer=1 peripheral=0 broadcaster=0 host_stack=5120 sizeof_client=84 sizeof_scan=72 allocator_internal=1
+HEAP ble_initialized free_internal=52424 largest_internal=31732 min_internal=52216 free_psram=6854240 largest_psram=6815732
+HEAP ble_client_scan_allocated free_internal=52188 largest_internal=31732 min_internal=52160 free_psram=6854240 largest_psram=6815732
+BENCH phase=ble_idle case=CHIP16 voices=16 active=16.00 avg_us=1747.90 peak_us=1762 warmup_peak_us=2427 rms=13537.87 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-13333
+BENCH phase=ble_idle case=CHIP24 voices=24 active=24.00 avg_us=2188.88 peak_us=2205 warmup_peak_us=3037 rms=13842.04 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-18450
+BENCH phase=ble_idle case=FMHAT4 voices=4 active=4.00 avg_us=1716.50 peak_us=1894 warmup_peak_us=2301 rms=2987.43 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=21192
+BENCH phase=ble_idle case=FMHAT8 voices=8 active=8.00 avg_us=2933.50 peak_us=3261 warmup_peak_us=3797 rms=5619.13 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-24730
+BENCH phase=ble_idle case=SYNTH8 voices=8 active=8.00 avg_us=1481.49 peak_us=1495 warmup_peak_us=2051 rms=5918.21 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-31124
+BENCH phase=ble_idle case=SAMPLE16 voices=16 active=16.00 avg_us=2109.20 peak_us=2204 warmup_peak_us=2828 rms=17529.08 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=0
+HEAP ble_idle free_internal=52188 largest_internal=31732 min_internal=51908 free_psram=6854240 largest_psram=6815732
+HEAP scan_started free_internal=51928 largest_internal=31732 min_internal=51812 free_psram=6854240 largest_psram=6815732
+BENCH phase=ble_scan case=CHIP16 voices=16 active=16.00 avg_us=1756.71 peak_us=1956 warmup_peak_us=2437 rms=13537.87 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-12420
+BENCH phase=ble_scan case=CHIP24 voices=24 active=24.00 avg_us=2200.18 peak_us=2408 warmup_peak_us=3036 rms=13842.04 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-19591
+BENCH phase=ble_scan case=FMHAT4 voices=4 active=4.00 avg_us=1729.38 peak_us=2109 warmup_peak_us=2299 rms=2987.43 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=22111
+BENCH phase=ble_scan case=FMHAT8 voices=8 active=8.00 avg_us=2949.40 peak_us=3430 warmup_peak_us=3791 rms=5619.13 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-25615
+BENCH phase=ble_scan case=SYNTH8 voices=8 active=8.00 avg_us=1488.55 peak_us=1691 warmup_peak_us=2061 rms=5918.21 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-32005
+BENCH phase=ble_scan case=SAMPLE16 voices=16 active=16.00 avg_us=2115.02 peak_us=2316 warmup_peak_us=2837 rms=17529.08 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=1175
+HEAP ble_scan free_internal=51924 largest_internal=31732 min_internal=51604 free_psram=6854240 largest_psram=6815732
+BLE scan advertisements=116 target_found=1 scan_interval_ms=100 scan_window_ms=50 active_scan=1
+BLE APPROVED_TARGET name=MIDI PAD-01 address=a4:c1:38:97:ac:dc
+BLE connected=1
+HEAP after_connect_attempt free_internal=52140 largest_internal=31732 min_internal=51604 free_psram=6854240 largest_psram=6815732
+BLE subscribed=1 mtu=23 interval=50.00
+HEAP connected_subscribed free_internal=51512 largest_internal=31732 min_internal=51504 free_psram=6854240 largest_psram=6815732
+BENCH phase=ble_connected case=CHIP16 voices=16 active=16.00 avg_us=1749.50 peak_us=1807 warmup_peak_us=2443 rms=13537.87 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-13333
+BENCH phase=ble_connected case=CHIP24 voices=24 active=24.00 avg_us=2200.73 peak_us=2565 warmup_peak_us=3043 rms=13842.04 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-18450
+BENCH phase=ble_connected case=FMHAT4 voices=4 active=4.00 avg_us=1728.70 peak_us=1999 warmup_peak_us=2296 rms=2987.43 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=21192
+BENCH phase=ble_connected case=FMHAT8 voices=8 active=8.00 avg_us=2958.77 peak_us=3372 warmup_peak_us=3802 rms=5619.13 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-24730
+BENCH phase=ble_connected case=SYNTH8 voices=8 active=8.00 avg_us=1490.53 peak_us=1579 warmup_peak_us=2047 rms=5918.21 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=-31124
+BENCH phase=ble_connected case=SAMPLE16 voices=16 active=16.00 avg_us=2126.02 peak_us=2334 warmup_peak_us=2830 rms=17529.08 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=0
+HEAP ble_connected free_internal=51512 largest_internal=31732 min_internal=51252 free_psram=6854240 largest_psram=6815732
+BLE TRAFFIC_READY play EMP16 pads/knobs for30s; real notes routed via64queue to CHIP track0
+BENCH phase=ble_traffic case=CHIP_INPUT voices=0 active=0.00 avg_us=362.79 peak_us=509 warmup_peak_us=0 rms=0.00 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5420 checksum=0
+BLE FINAL connected=1 notifications=0 bytes=0 noteon=0 noteoff=0 cc=0 drops=0 dispatched=0
+HEAP connected_final free_internal=51512 largest_internal=31732 min_internal=51252 free_psram=6854240 largest_psram=6815732
+BENCH DONE ble_compiled=1 queue_drops=0

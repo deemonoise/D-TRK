@@ -1,5 +1,10 @@
 #pragma once
 #include "edit_ops.h"
+#include "grid_context.h"
+#include "automation.h"
+#include "quantize.h"
+#include "pattern_tools.h"
+#include "action_dialog.h"
 #include "fill.h"
 #include "fill_dialog.h"
 #include "model.h"
@@ -23,24 +28,32 @@ class GridScreen : public Screen {
   void onATap(bool shift) override;
   void onTouch(const TouchEvent& ev) override;
   void draw(LGFX_Sprite& s, int y0, int h) override;
+  bool wantsHDrag() const override { return view_ == View::Automation; }
   bool wantsRedraw(const engine::Status& st) override;
   // Track button N: false when App should handle it (Shift + N outside edit = mute).
   bool trackKey(int n, bool shift);
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
   bool buttonsBusy() const;
   void undo();  // with a toast; the next edit takes a fresh snapshot
-  bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen(); }  // Fill / Transpose preview
+  void nextView();  // cycles Overview / Detail / Roll / Automation unless a dialog is open
+  bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen() || action_.isOpen(); }  // Fill / Transpose preview
   // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.
   bool chordClear();
+  bool notesArmed() const { return rec_; }
+  bool recording() const { return rec_ && !dialogOpen(); }
+  void finishRecordPass();
+  void setNoteRecording(bool on) { if (on && view_ == View::Automation) setView(View::Overview); setRec(on); }
 
  private:
   // Fx field f: slot (f - kFx1) / 2, the command on even (f - kFx1), its value on odd.
   enum Field : uint8_t { kNote, kVel, kFx1, kFields = kFx1 + 2 * mt::kFxSlots };
   // Context menu ids.
   enum MenuId : int {
-    kCopyStep, kPaste, kClearStep, kCopyTrack, kClearTrack, kTranspose, kSelect,
-    kToggleView, kToggleFollow, kUndo, kCopySel, kClearSel, kDropSel, kNoteOff, kNoteOffSel, kFill,
-    kRec, kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive, kRollView,
+    kCopyStep, kPaste, kCopyTrack, kClearTrack, kTranspose, kSelect,
+    kToggleFollow, kCopySel, kClearSel, kDropSel, kNoteOff, kFill,
+    kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive,
+    kRecordingSetup, kEditTools, kProcessMenu, kTrackMenu, kResampleMenu, kGridSettings,
+    kQuantize, kAutomationToggle, kRotate, kVelocity, kDoublePattern,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
   static constexpr int kEditStepMax = 16;
@@ -65,7 +78,40 @@ class GridScreen : public Screen {
   static_assert(kNumW + kRollCols * kRollColW <= kScreenW, "Roll columns must fit");
 
   // Shift + click cycles them. Roll: the current track as a piano roll (KIT: its 8 lanes).
-  enum class View : uint8_t { Overview, Detail, Roll };
+  enum class View : uint8_t { Overview, Detail, Roll, Automation };
+  void drawAutomation(LGFX_Sprite& s, int y, int h);
+  void automationInput(const hw::InputEvent& ev);
+  void automationTouch(const TouchEvent& ev);
+  void automationEdit(int value, bool erase = false);
+  void openAutomationMenu(bool refresh = false);
+  void openAutomationParams();
+  void openAutomationTracks();
+  void openEditTools(const mt::Sel& scope, bool wholeTrack = false);
+  void openProcessMenu();
+  void openTrackMenu();
+  void openResampleMenu();
+  void openGridSettings(bool refresh = false);
+  bool menuTargetValid();
+  void menuScopeTitle(char* title, size_t size, const mt::Sel& scope, bool wholeTrack = false) const;
+  void openQuantizeMenu(bool refresh = false);
+  void openPasteMenu();
+  void openRotateDialog();
+  void openVelocityDialog();
+  void openDoublePattern();
+  mt::Sel toolScope() const;
+  void applyTool(std::function<mt::ToolResult(mt::Pattern&, mt::Pattern&)> operation);
+  int rotateAmount_ = 0;
+  mt::StepPart rotatePart_ = mt::StepPart::All;
+  mt::VelocitySpec velocitySpec_;
+
+  mt::Sel quantizeSel_{};
+  int quantizePattern_ = -1;
+  mt::QuantizeSpec quantizeSpec_;
+
+  int autoParam_ = 0, autoLeft_ = 0, autoAnchor_ = -1;
+  uint8_t autoAnchorValue_ = 0;
+  uint16_t autoGesture_ = UINT16_MAX;
+  mt::AutomationClip autoClip_;
 
   mt::Pattern& pat();
   int len() const;  // pattern length clamped to kMinSteps..kMaxSteps
@@ -137,6 +183,7 @@ class GridScreen : public Screen {
   bool selected(int tr, int step) const;
 
   App& app_;
+  ActionDialog action_{app_};
   int y0_ = kAreaY;
   int h_ = kAreaH;
   int rows_ = (kAreaH - kNamesH) / kRowH;
@@ -182,7 +229,7 @@ class GridScreen : public Screen {
   mt::FxSlot lastFx_[mt::kTracks][mt::kFxSlots] = {};  // last FX written per track and slot, offered on empty slots
   bool fxCycled_ = false;  // a command was turned on this cell: passing "..." does not offer lastFx_ again
 
-  int menuPattern_ = -1;  // pattern the context menu was opened for
+  mt::GridContext menuCtx_;
   bool selOn_ = false;
   int selT0_ = 0, selS0_ = 0, selT1_ = 0, selS1_ = 0;  // anchor and end, not normalized
 };

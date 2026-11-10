@@ -2,6 +2,7 @@
 #include "file_rules.h"
 #include "engine/engine.h"
 #include <Arduino.h>
+#include <SD.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,11 +23,9 @@ namespace ui {
 namespace {
 
 constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
-                                   "Import MIDI...", "Render WAV...", "Wi-Fi transfer...", "Retry"};
+                                   "Import MIDI...", "Export...", "Retry"};
 // The last row: Retry without a card, Restore autosave with one (they never need the row together).
 constexpr const char* kRestoreLabel = "Restore autosave";
-
-constexpr uint32_t kPreviewMs = 8000;  // WAV preview length (32 kHz mono: 512 KB)
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -67,6 +66,7 @@ bool FileScreen::enabled(int a) const {
   const bool sd = hw::sdReady();
   switch (a) {
     case kSectionSel: return true;
+    case kWifi: return true;  // connections do not require a mounted SD card
     case kRetry: return !sd || autoAvail_;
     default: return sd;
   }
@@ -88,7 +88,7 @@ void FileScreen::moveSel(int delta) {
 
 void FileScreen::run(int a) {
   if (!enabled(a)) return;
-  sel_ = a;
+  if (a >= 0 && a < kActions) sel_ = a;
   switch (a) {
     case kSectionSel: return;  // switched by A + turn / a tap on the page bar
     case kSave: save(); break;
@@ -160,7 +160,7 @@ void FileScreen::onMenu(int id) {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Delete", kDeleteUsed}};
       char title[28];
       snprintf(title, sizeof(title), "USED BY INS%d. DELETE?", ins + 1);
-      app_.menu().open(title, items, 2, [this](int id) { onMenu(id); });
+      app_.menu().openChild(title, items, 2, [this](int id) { onMenu(id); });
       break;
     }
     case kDeleteUsed: doDelete(pending_); break;
@@ -172,13 +172,7 @@ void FileScreen::onMenu(int id) {
   app_.invalidate();
 }
 
-void FileScreen::startWifi() {
-  if (!hw::sdReady()) {
-    app_.toast(storage::resultText(storage::Result::NoSd));
-    return;
-  }
-  wifi_.open();
-}
+void FileScreen::startWifi() { wifi_.open(); }
 
 void FileScreen::save() {
   const char* name = app_.project().name;
@@ -200,7 +194,7 @@ void FileScreen::saveAs(const char* initial) {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Overwrite", kOverwrite}};
       char title[28];
       snprintf(title, sizeof(title), "%s EXISTS", nm);
-      app_.menu().open(title, items, 2, [this](int id) { onMenu(id); });
+      app_.menu().openChild(title, items, 2, [this](int id) { onMenu(id); });
       return;
     }
     doSave(nm);
@@ -217,7 +211,7 @@ void FileScreen::doSave(const char* name) {
   app_.showBusy("SAVING...");
   const storage::Result r = storage::save(app_.project(), nm, App::syncProgress, &app_);
   if (r == storage::Result::SamplesNotSaved) {
-    // The project file is saved, the folder is not complete: stays dirty, so the next save retries.
+    // Resources are incomplete: keep the old project file and stay dirty so the next save retries.
     reprobe(storage::Result::WriteFail);
     app_.toast(storage::resultText(r));
     return;
@@ -234,105 +228,94 @@ void FileScreen::doSave(const char* name) {
 }
 
 void FileScreen::openList(bool midi) {
-  if (!names_) {
-    names_ = static_cast<char(*)[hw::kNameMax]>(heap_caps_malloc(kMaxFiles * hw::kNameMax, MALLOC_CAP_SPIRAM));
-    if (!names_) {
-      app_.toast(storage::resultText(storage::Result::NoMemory));
-      return;
-    }
-  }
+  if (!list_.alloc()) return;
   midiList_ = midi;
   wavList_ = false;
-  // Projects: only names that load back unchanged; others would be renamed by sanitize().
-  // MIDI: subfolders first, then .mid / .midi with the extension (any case).
-  dirCount_ = midi ? hw::sdListDirs(midiDir_, names_, kMaxFiles) : 0;
-  static constexpr const char* kMidiExts[] = {".mid", ".midi"};
-  count_ = dirCount_ + (midi ? hw::sdListFiles(midiDir_, kMidiExts, 2, names_ + dirCount_, kMaxFiles - dirCount_)
-                             : hw::sdList("/projects", ".mtp", names_, kMaxFiles, storage::validName));
-  listSel_ = count_ > 0 ? 1 : 0;
-  listTop_ = 0;
-  dragAcc_ = 0;
-  if (count_ == 0) app_.toast(!midi ? "NO PROJECTS" : (atRoot() ? "NO /midi FILES" : "EMPTY FOLDER"));
+  // The folder may have been removed (Wi-Fi, card swap): start over at /midi.
+  if (midi && !atRoot() && !(hw::sdReady() && hw::sdFs().exists(midiDir_))) strlcpy(midiDir_, "/midi", sizeof(midiDir_));
+  listDir(curCursor());
 }
 
 bool FileScreen::atRoot() const { return strcmp(curDir(), rootDir()) == 0; }
 
-void FileScreen::reopenList() {
-  if (wavList_) openWavList();
-  else openList(true);
+void FileScreen::listDir(const char* cursor) {
+  // Projects: only names that load back unchanged; others would be renamed by sanitize().
+  // MIDI / WAV: subfolders first, then .mid / .midi / .wav with the extension (any case).
+  static constexpr const char* kMidiExts[] = {".mid", ".midi"};
+  static constexpr const char* kWavExts[] = {".wav"};
+  list_.clear();
+  if (wavList_) list_.addFolder(wavDir_, kWavExts, 1);
+  else if (midiList_) list_.addFolder(midiDir_, kMidiExts, 2);
+  else list_.addFiles("/projects", ".mtp", storage::validName);
+  const bool top = !browsing() || atRoot();
+  list_.setBack(top);
+  list_.setPreviewDir(wavList_ ? wavDir_ : nullptr);
+  list_.finish(cursor);
+  // A toast at the top only; a subfolder shows EMPTY FOLDER in the list.
+  if (list_.count() == 0 && !list_.readFailed() && top && hw::sdReady())
+    app_.toast(wavList_ ? "NO /samples/*.wav" : (midiList_ ? "NO /midi FILES" : "NO PROJECTS"));
 }
 
 bool FileScreen::listUp() {
   char left[hw::kNameMax];
   if (!browsing() || !mt::browseUp(curDir(), rootDir(), left, sizeof(left))) return false;
-  reopenList();
-  // Put the cursor on the folder we came from.
-  for (int i = 0; i < dirCount_; ++i)
-    if (strcasecmp(names_[i], left) == 0) {
-      listSel_ = i + 1;
-      if (listSel_ >= listTop_ + kListRows) listTop_ = listSel_ - kListRows + 1;
-      break;
-    }
+  listDir(left);  // the cursor on the folder we came from
   return true;
 }
 
 void FileScreen::closeList() {
-  stopPreview();
-  heap_caps_free(names_);
-  names_ = nullptr;
-  count_ = 0;
-  dirCount_ = 0;
+  if (list_.ready()) list_.cursorName(curCursor(), hw::kNameMax);
+  list_.free();
   wavList_ = false;
+  midiList_ = false;
 }
 
-void FileScreen::chooseFile(int idx) {
-  stopPreview();
-  if (idx <= 0 || idx > count_) {
-    if (!(idx == 0 && listUp())) closeList();
+void FileScreen::listAct(FileList::Act a) {
+  if (a == FileList::Act::Back) {
+    list_.previewStop();
+    if (!listUp()) closeList();  // a subfolder: one level up; the top: the list closes
+  } else if (a == FileList::Act::Open) {
+    listOpen();
+  }
+}
+
+void FileScreen::listOpen() {
+  list_.previewStop();
+  const int idx = list_.entry();
+  if (idx < 0 || idx >= list_.count()) {
+    listAct(FileList::Act::Back);
     return;
   }
-  if (browsing() && idx - 1 < dirCount_) {
-    const char* sub = names_[idx - 1];
-    char* dir = curDir();
-    if (wavList_) {
-      int depth = 0;
-      for (const char* p = dir + strlen("/samples"); *p; ++p) depth += *p == '/';
-      if (depth >= kWavDepthMax) {
-        app_.toast("TOO DEEP");
-        return;
-      }
+  const char* nm = list_.name(idx);
+  if (list_.kind(idx) == FileList::Kind::Dir) {
+    switch (mt::browseInto(curDir(), curDirCap(), rootDir(), nm, FileList::kDepthMax)) {
+      case mt::BrowseResult::TooDeep: app_.toast("TOO DEEP"); return;
+      case mt::BrowseResult::TooLong: app_.toast("PATH TOO LONG"); return;
+      default: listDir(nullptr); return;
     }
-    if (strlen(dir) + 1 + strlen(sub) >= curDirCap()) {
-      app_.toast("PATH TOO LONG");
-      return;
-    }
-    strlcat(dir, "/", curDirCap());
-    strlcat(dir, sub, curDirCap());
-    reopenList();
-    return;
   }
   if (wavList_) {
-    strlcpy(wavFile_, names_[idx - 1], sizeof(wavFile_));
+    strlcpy(wavFile_, nm, sizeof(wavFile_));
     closeList();
     // Default sample name: the file name without the extension, cut to the bank's rules.
     char base[hw::kNameMax];
     strlcpy(base, wavFile_, sizeof(base));
     if (char* dot = strrchr(base, '.')) *dot = 0;
-    char nm[17];
-    storage::sanitize(base, nm);
-    importAs(nm);
+    char sn[17];
+    storage::sanitize(base, sn);
+    importAs(sn);
     return;
   }
   if (midiList_) {
     // Keep the list on failure so another file can be picked.
-    if (import_.open(midiDir_, names_[idx - 1])) closeList();
+    if (import_.open(midiDir_, nm)) closeList();
     else if (!hw::sdReady()) closeList();
     return;
   }
-  strlcpy(pending_, names_[idx - 1], sizeof(pending_));
+  strlcpy(pending_, nm, sizeof(pending_));
   if (app_.projectDirty()) {
     const MenuItem items[] = {{"Cancel", kCancel}, {"Discard & load", kDiscardLoad}};
-    app_.menu().open("DISCARD CHANGES?", items, 2, [this](int id) { onMenu(id); });
+    app_.menu().openChild("DISCARD CHANGES?", items, 2, [this](int id) { onMenu(id); });
   } else {
     doLoad(false);
   }
@@ -359,9 +342,19 @@ void FileScreen::doLoad(bool bak) {
     FileScreen& f;
     ~Refresh() { f.autoAvail_ = storage::autosaveExists(f.app_.project().name); }
   } refresh{*this};
+  // The project staging allocation needs one large PSRAM block. Preserve the cursor,
+  // then release the 512-entry browser while it is covered by the busy screen.
+  const bool hadList = list_.ready();
+  if (hadList) closeList();
   app_.showBusy("LOADING...");
   int missing = 0;
-  const storage::Result r = storage::load(app_.project(), pending_, bak, &missing, App::syncProgress, &app_);
+  storage::Result r = storage::load(app_.project(), pending_, bak, &missing, App::syncProgress, &app_);
+  if (r == storage::Result::NoMemory) {
+    // Keep the pixel block protected while moving undo; a failed load must restore it.
+    app_.prepareProjectLoadMemory();
+    App::FrameBufferLoan frame(app_);
+    r = storage::load(app_.project(), pending_, bak, &missing, App::syncProgress, &app_);
+  }
   if (r == storage::Result::Ok || r == storage::Result::SamplesNotSaved) {
     closeList();
     app_.projectReplaced();
@@ -371,12 +364,13 @@ void FileScreen::doLoad(bool bak) {
     return;
   }
   reprobe(r);
+  if (hadList && hw::sdReady()) openList(false);  // old project and selection survive a failed load
   using storage::Result;
   const bool fileProblem = r != Result::BadVersion && r != Result::NoSd && r != Result::NoMemory &&
                            r != Result::EngineBusy;
   if (fileProblem && !bak && storage::exists(pending_, true)) {
     const MenuItem items[] = {{"Cancel", kCancel}, {"Load backup", kLoadBak}};
-    app_.menu().open(storage::resultText(r), items, 2, [this](int id) { onMenu(id); });
+    app_.menu().openChild(storage::resultText(r), items, 2, [this](int id) { onMenu(id); });
     return;
   }
   if (!hw::sdReady()) closeList();
@@ -413,13 +407,13 @@ void FileScreen::onNewChoice(int id) {
     MenuItem demos[Menu::kMaxItems];
     int n = 0;
     for (int i = 0; i < mt::demoCount() && n < Menu::kMaxItems; ++i) demos[n++] = {mt::demoName(i), kTplDemo + i};
-    app_.menu().open("DEMO SONGS", demos, n, [this](int d) { onNewChoice(d); });
+    app_.menu().openChild("DEMO SONGS", demos, n, [this](int d) { onNewChoice(d); });
     return;
   }
   newChoice_ = id;
   if (app_.projectDirty()) {
     const MenuItem confirm[] = {{"Cancel", kCancel}, {"Discard & new", kDiscardNew}};
-    app_.menu().open("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
+    app_.menu().openChild("DISCARD CHANGES?", confirm, 2, [this](int c) { onMenu(c); });
   } else {
     doNew();
   }
@@ -465,11 +459,6 @@ void FileScreen::doNew() {
   app_.loadedToast(msg, missing, false);
 }
 
-void FileScreen::listScroll(int rows) {
-  const int total = count_ + 1;
-  listTop_ = clampi(listTop_ + rows, 0, total > kListRows ? total - kListRows : 0);
-}
-
 void FileScreen::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
   if (kb_.isOpen()) {
@@ -488,26 +477,16 @@ void FileScreen::onInput(const hw::InputEvent& ev) {
     wifi_.onInput(ev);
     return;
   }
-  if (section_ == kSecSamples && !names_) {
+  if (list_.ready()) {
+    listAct(list_.onInput(ev));
+    return;
+  }
+  if (section_ == kSecSamples) {
     samplesInput(ev);
     return;
   }
-  if (section_ == kSecSystem && !names_) {
+  if (section_ == kSecSystem) {
     systemInput(ev);
-    return;
-  }
-  if (names_) {
-    switch (ev.type) {
-      case InputType::EncTurn:
-        listSel_ = ((listSel_ + ev.delta) % (count_ + 1) + count_ + 1) % (count_ + 1);
-        if (listSel_ != pvSel_) stopPreview();
-        if (listSel_ < listTop_) listTop_ = listSel_;
-        if (listSel_ >= listTop_ + kListRows) listTop_ = listSel_ - kListRows + 1;
-        break;
-      case InputType::EncClick: chooseFile(listSel_); break;
-      case InputType::EncLong: closeList(); break;
-      default: break;
-    }
     return;
   }
   switch (ev.type) {
@@ -531,15 +510,16 @@ void FileScreen::onBack() {
   else if (import_.isOpen()) import_.onInput(lp);
   else if (render_.isOpen()) render_.onInput(lp);
   else if (wifi_.isOpen()) wifi_.onInput(lp);
-  else if (names_) {  // a subfolder: one level up (the cursor on the folder left); the top: the list closes
-    stopPreview();
-    if (!listUp()) closeList();
-  } else if (section_ == kSecSystem) sysList_.setEdit(false);
+  else if (list_.ready()) listAct(FileList::Act::Back);  // a subfolder: one level up; the top: closes
+  else if (section_ == kSecSystem) {
+    if (diagnostics_) showSystem(false);
+    else sysList_.setEdit(false);
+  }
 }
 
 // B + Shift + turn: the previous / next section.
 void FileScreen::onPage(int d) {
-  if (kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() || names_) return;
+  if (kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() || list_.ready()) return;
   setSection(section_ + d);
 }
 
@@ -560,32 +540,24 @@ void FileScreen::onTouch(const TouchEvent& ev) {
     wifi_.onTouch(ev);
     return;
   }
-  const int top = y0_ + kHeaderH + (names_ ? 0 : PageBar::kH);
-  if (!names_ && ev.y >= y0_ + kHeaderH && ev.y < top) {
-    if (ev.type == TouchType::Tap) setSection(PageBar::at(ev.x, kSections));
+  const int top = y0_ + kHeaderH + (list_.ready() ? 0 : PageBar::kH);
+  if (list_.ready()) {
+    listAct(list_.onTouch(ev, top));
     return;
   }
-  if (section_ == kSecSamples && !names_) {
+  if (ev.y >= y0_ + kHeaderH && ev.y < top) {
+    if (ev.type == TouchType::Tap) {
+      if (section_ == kSecSystem && diagnostics_) showSystem(false);
+      else setSection(PageBar::at(ev.x, kSections));
+    }
+    return;
+  }
+  if (section_ == kSecSamples) {
     samplesTouch(ev);
     return;
   }
-  if (section_ == kSecSystem && !names_) {
+  if (section_ == kSecSystem) {
     systemTouch(ev);
-    return;
-  }
-  if (names_) {
-    if (ev.type == TouchType::Drag) {
-      dragAcc_ += ev.dy;
-      const int rows = dragAcc_ / kRowH;
-      dragAcc_ -= rows * kRowH;
-      listScroll(-rows);
-      return;
-    }
-    if (ev.type != TouchType::Tap || ev.y < top) return;
-    const int idx = listTop_ + (ev.y - top) / kRowH;
-    if (idx > count_) return;
-    listSel_ = idx;
-    chooseFile(idx);
     return;
   }
   if (ev.type != TouchType::Tap || ev.y < top) return;
@@ -613,33 +585,19 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
   }
   const bool sd = hw::sdReady();
   drawHeader(s, y0);
-  const int top = y0 + kHeaderH + (names_ ? 0 : PageBar::kH);
-  if (section_ == kSecSamples && !names_) {
+  const int top = y0 + kHeaderH + (list_.ready() ? 0 : PageBar::kH);
+  if (list_.ready()) {
+    list_.draw(s, top);
+    return;
+  }
+  if (section_ == kSecSamples) {
     drawSamples(s, top);
     return;
   }
-  if (section_ == kSecSystem && !names_) {
+  if (section_ == kSecSystem) {
     batSeqDrawn_ = app_.batterySeq();
     profSecDrawn_ = profSecs();  // the CPU profile row shows this value
     sysList_.draw(s, top);
-    return;
-  }
-  if (names_) {
-    for (int r = 0; r < kListRows; ++r) {
-      const int i = listTop_ + r;
-      if (i > count_) break;
-      const int ry = top + r * kRowH;
-      const bool sel = i == listSel_;
-      if (sel) s.fillRect(0, ry, kScreenW, kRowH, kSelBg);
-      s.setTextColor(sel ? kCursor : (i == 0 ? kDim : kText));
-      const bool dir = browsing() && i > 0 && i - 1 < dirCount_;
-      const char* label = i == 0 ? (browsing() && !atRoot() ? "< Up (..)" : "< Back") : names_[i - 1];
-      s.drawString(label, 16, ry + (kRowH - kCharH) / 2);
-      if (dir) s.drawString("/", 16 + static_cast<int>(strlen(label)) * kCharW, ry + (kRowH - kCharH) / 2);
-    }
-    s.setTextColor(kDim);
-    if (listTop_ > 0) s.drawString("^", kScreenW - 24, top + 4);
-    if (listTop_ + kListRows < count_ + 1) s.drawString("v", kScreenW - 24, top + (kListRows - 1) * kRowH + 4);
     return;
   }
   for (int a = 0; a < kActions; ++a) {
@@ -658,22 +616,22 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
   const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
   s.setTextColor(kText);
-  if (names_ && browsing()) {
-    // Path tail, so the current folder stays visible.
-    const char* prefix = wavList_ ? "IMPORT WAV " : "IMPORT ";
-    const int fit = (kScreenW - 16 - 16 - 12 * kCharW) / kCharW - static_cast<int>(strlen(prefix));
-    const char* dir = curDir();
-    const int len = static_cast<int>(strlen(dir));
-    snprintf(buf, sizeof(buf), "%s%s%s", prefix, len > fit ? "..." : "", dir + (len > fit ? len - fit + 3 : 0));
-    s.drawString(buf, 16, ty);
-  } else {
-    snprintf(buf, sizeof(buf), "FILE  %s%s", app_.project().name, app_.projectDirty() ? "*" : "");
-    s.drawString(buf, 16, ty);
+  if (list_.ready()) {  // the title, the path's tail (so the current folder stays visible)
+    FileList::drawHeader(s, y0, wavList_ ? "IMPORT WAV" : (midiList_ ? "IMPORT" : "LOAD"),
+                         browsing() ? curDir() : "/projects");
+    return;
   }
-  if (!names_) {
+  snprintf(buf, sizeof(buf), "FILE  %s%s", app_.project().name, app_.projectDirty() ? "*" : "");
+  s.drawString(buf, 16, ty);
+  {
     // Sections: a page bar; with the encoder focus on it, an outline (A + turn = previous / next section).
     static const char* const kNames[kSections] = {"PROJECTS", "SAMPLES", "SYSTEM"};
     const int by = y0 + kHeaderH;
+    if (section_ == kSecSystem && diagnostics_) {
+      s.setTextColor(kCursor);
+      s.drawString("< SYSTEM / DIAGNOSTICS", 16, by + 2);
+      return;
+    }
     PageBar::draw(s, by, kNames, kSections, section_);
     const bool focus = section_ == kSecSamples  ? ssel_ == kSwitchRow
                        : section_ == kSecSystem ? sysList_.barSelected()
@@ -694,6 +652,7 @@ void FileScreen::setSection(int section) {
       stop_ = 0;
       break;
     case kSecSystem:
+      showSystem(false);
       sysList_.setEdit(false);
       sysList_.selectBar();
       break;
@@ -761,70 +720,18 @@ void FileScreen::sampleRun(int row) {
 }
 
 void FileScreen::openWavList() {
-  if (!names_) {
-    names_ = static_cast<char(*)[hw::kNameMax]>(heap_caps_malloc(kMaxFiles * hw::kNameMax, MALLOC_CAP_SPIRAM));
-    if (!names_) {
-      app_.toast(storage::resultText(storage::Result::NoMemory));
-      return;
-    }
-  }
+  if (!list_.alloc()) return;
   midiList_ = false;
   wavList_ = true;
   // The folder may have been removed (Wi-Fi, card swap): start over at /samples.
-  if (!atRoot() && !hw::sdFs().exists(wavDir_)) strlcpy(wavDir_, "/samples", sizeof(wavDir_));
-  // Subfolders first, then .wav (any case), both sorted; hidden entries (macOS ._*) are skipped.
-  dirCount_ = hw::sdListDirs(wavDir_, names_, kMaxFiles);
-  static constexpr const char* kWavExts[] = {".wav"};
-  count_ = dirCount_ + hw::sdListFiles(wavDir_, kWavExts, 1, names_ + dirCount_, kMaxFiles - dirCount_);
-  listSel_ = count_ > 0 ? 1 : 0;
-  listTop_ = 0;
-  dragAcc_ = 0;
-  if (count_ == 0) app_.toast(atRoot() ? "NO /samples/*.wav" : "EMPTY FOLDER");
+  if (!atRoot() && !(hw::sdReady() && hw::sdFs().exists(wavDir_))) strlcpy(wavDir_, "/samples", sizeof(wavDir_));
+  listDir(curCursor());
 }
 
+// WAV import: Play previews the selected file (again: stops); Load / MIDI: the transport.
 bool FileScreen::onPlay() {
-  if (kb_.isOpen() || import_.isOpen() || wifi_.isOpen() || !names_ || !wavList_) return false;
-  // Folders and Back: nothing, but Play does not start the transport in this list either.
-  if (listSel_ > dirCount_ && listSel_ <= count_) togglePreview();
-  return true;
-}
-
-void FileScreen::togglePreview() {
-  const bool again = pvBuf_ && pvSel_ == listSel_ && audio::previewPlaying();
-  stopPreview();
-  if (again) return;
-  char path[sizeof(wavDir_) + hw::kNameMax];
-  const int n = snprintf(path, sizeof(path), "%s/%s", wavDir_, names_[listSel_ - 1]);
-  if (n < 0 || n >= static_cast<int>(sizeof(path))) {
-    app_.toast("PATH TOO LONG");
-    return;
-  }
-  app_.showBusy("LOADING...");
-  uint32_t frames = 0, rate = 0;
-  const audio::BankResult r = audio::loadWavPreview(path, kPreviewMs, &pvBuf_, &frames, &rate);
-  if (r != audio::BankResult::Ok) {
-    if (r == audio::BankResult::OpenFail || r == audio::BankResult::ReadFail) hw::sdRecover();
-    app_.toast(audio::bankResultText(r));
-    return;
-  }
-  pvSel_ = listSel_;
-  audio::previewBuffer(pvBuf_, frames, rate);
-}
-
-void FileScreen::stopPreview() {
-  if (!pvBuf_ && pvLeftN_ == 0) return;
-  if (audio::previewStop()) {
-    // Acknowledged: the audio task reads no preview buffer any more, the left-over ones included.
-    heap_caps_free(pvBuf_);
-    for (int i = 0; i < pvLeftN_; ++i) heap_caps_free(pvLeft_[i]);
-    pvLeftN_ = 0;
-  } else if (pvBuf_) {
-    // Not acknowledged: the audio task may still read it; freed after a later acknowledged stop.
-    if (pvLeftN_ == kPvLeft) --pvLeftN_;  // never more than a few: the oldest is given up
-    pvLeft_[pvLeftN_++] = pvBuf_;
-  }
-  pvBuf_ = nullptr;
-  pvSel_ = -1;
+  if (kb_.isOpen() || import_.isOpen() || wifi_.isOpen() || !list_.ready()) return false;
+  return list_.onPlay();
 }
 
 void FileScreen::importAs(const char* initial) {
@@ -840,7 +747,7 @@ void FileScreen::importAs(const char* initial) {
       const MenuItem items[] = {{"Cancel", kCancel}, {"Overwrite", kOverwriteSample}};
       char title[28];
       snprintf(title, sizeof(title), "%s EXISTS", nm);
-      app_.menu().open(title, items, 2, [this](int id) { onMenu(id); });
+      app_.menu().openChild(title, items, 2, [this](int id) { onMenu(id); });
       return;
     }
     doImport(nm);
@@ -1091,9 +998,33 @@ void FileScreen::initSystem() {
                            }};
   // Read only: the firmware version and why the device last restarted (crash log: /diag/crashlog.txt).
   sysParams_[kFirmware] = {"Firmware", [](char* o, int n) { snprintf(o, n, "%s", storage::firmwareRev()); },
-                           [](int) {}};
+                           nullptr};
+  sysParams_[kCard] = {"Card", [](char* o, int n) {
+    if (!hw::sdReady()) { snprintf(o, n, "NO SD CARD"); return; }
+    const uint64_t total = SD.totalBytes(), used = SD.usedBytes();
+    const uint64_t free = used <= total ? total - used : 0;
+    constexpr uint64_t gb = 1024ull * 1024 * 1024;
+    snprintf(o, n, "%llu.%llu / %llu.%llu GB FREE", free / gb, free % gb * 10 / gb,
+             total / gb, total % gb * 10 / gb);
+  }, nullptr};
+  sysParams_[kSamples] = {"Samples", [](char* o, int n) {
+    if (!audio::bankMounted()) { snprintf(o, n, "NO SAMPLE BANK"); return; }
+    const auto& bank = audio::bank();
+    snprintf(o, n, "FLASH %d, %lu / %lu KB FREE", bank.count(),
+             static_cast<unsigned long>(bank.freeBytes() / 1024), static_cast<unsigned long>(bank.capacity() / 1024));
+  }, nullptr};
+  sysParams_[kRamMin] = {"Internal RAM min", [](char* o, int n) {
+    const unsigned min = static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024);
+    const unsigned now = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+    snprintf(o, n, "%uK, NOW %uK FREE", min, now);
+  }, nullptr};
+  sysParams_[kPsram] = {"PSRAM", [](char* o, int n) {
+    const unsigned free = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
+    const unsigned largest = static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
+    snprintf(o, n, "%uK FREE, MAX %uK", free, largest);
+  }, nullptr};
   sysParams_[kLastReset] = {"Last reset", [](char* o, int n) { snprintf(o, n, "%s", storage::lastResetText()); },
-                            [](int) {}};
+                            nullptr};
   // Where the synth and the sequencer live (PSRAM = the audio costs more) and the free internal RAM.
   sysParams_[kAudioRam] = {"Audio RAM",
                            [](char* o, int n) {
@@ -1105,7 +1036,7 @@ void FileScreen::initSystem() {
                              snprintf(o, n, "%s, RVB %s, %uK FREE", where,
                                       audio::reverbInternal() ? "INT" : "PSRAM", kb);
                            },
-                           [](int) {}};
+                           nullptr};
   // Sensor voltage, current (CHG while charging) and the gauge's percent; redrawn per sample.
   sysParams_[kBattery] = {"Battery",
                           [this](char* o, int n) {
@@ -1125,7 +1056,7 @@ void FileScreen::initSystem() {
                             else snprintf(pct, sizeof(pct), "--%%");
                             snprintf(o, n, "%.2fV %s%dmA %s", b.volts, g.charging() ? "CHG " : "", ma, pct);
                           },
-                          [](int) {}};
+                          nullptr};
   // Click: start; play a while (on the screen to measure), click again: the time per stage of the
   // audio render goes to /diag/cpuprof.txt.
   sysParams_[kCpuProf] = {"CPU profile",
@@ -1135,34 +1066,60 @@ void FileScreen::initSystem() {
                             else
                               snprintf(o, n, "CLICK TO START");
                           },
-                          [](int) {}};
+                          nullptr};
+  sysParams_[kWifiRow] = {"Wi-Fi transfer...", nullptr, nullptr};
+  sysParams_[kDiagnostics] = {"Diagnostics...", nullptr, nullptr};
+  sysParams_[kDiagBack] = {"Back to SYSTEM", nullptr, nullptr};
   sysList_.setOnCancel([this] { app_.toast("CANCEL"); });
   sysList_.setPageBar(true);
-  sysList_.setParams(sysParams_, kSysRows);
+  sysList_.setParams(sysParams_, kFirmware);
   sysList_.setVisibleRows(kSysListRows);
   sysList_.selectBar();
 }
 
 uint32_t FileScreen::profSecs() const { return (millis() - profStartMs_) / 1000; }
 
-// A + turn on the page bar: the previous / next section; a click on CPU profile starts / stops it.
+void FileScreen::showSystem(bool diagnostics) {
+  if (diagnostics && !diagnostics_) systemSel_ = sysList_.sel();
+  diagnostics_ = diagnostics;
+  sysList_.setEdit(false);
+  sysList_.setPageBar(!diagnostics);
+  sysList_.setParams(sysParams_ + (diagnostics ? kFirmware : 0),
+                     diagnostics ? kSysRows - kFirmware : kFirmware);
+  sysList_.setVisibleRows(kSysListRows);
+  sysList_.setSel(diagnostics ? 0 : systemSel_);
+  app_.invalidate();
+}
+
 void FileScreen::systemInput(const hw::InputEvent& ev) {
-  if (ev.type == hw::InputType::EncClick && !sysList_.editing() && sysList_.sel() == kCpuProf) {
-    toggleProfile();
-    return;
+  if (ev.type == hw::InputType::EncClick && !sysList_.editing() && !sysList_.barSelected()) {
+    const int row = systemRow();
+    if (row == kCpuProf || row == kWifiRow || row == kDiagnostics || row == kDiagBack) {
+      sysAction(row);
+      return;
+    }
   }
   if (const int ov = sysList_.onInput(ev)) setSection(section_ + ov);
 }
 
 void FileScreen::systemTouch(const TouchEvent& ev) {
   const int r = sysList_.rowAt(ev.y);
-  if (ev.type == TouchType::Tap && r == kCpuProf) {
+  const int row = (diagnostics_ ? kFirmware : 0) + r;
+  if (ev.type == TouchType::Tap && r >= 0 &&
+      (row == kCpuProf || row == kWifiRow || row == kDiagnostics || row == kDiagBack)) {
     sysList_.setEdit(false);
     sysList_.setSel(r);
-    toggleProfile();
+    sysAction(row);
     return;
   }
   sysList_.onTouch(ev);
+}
+
+void FileScreen::sysAction(int row) {
+  if (row == kCpuProf) toggleProfile();
+  else if (row == kWifiRow) run(kWifi);
+  else if (row == kDiagnostics) showSystem(true);
+  else if (row == kDiagBack) showSystem(false);
 }
 
 void FileScreen::toggleProfile() {
@@ -1186,9 +1143,18 @@ void FileScreen::toggleProfile() {
     if (pr.us[i] > pr.us[top]) top = i;
   }
   constexpr float kBlockUs = audio::kBlock * 1e6f / audio::kRate;
-  char line[96];
+  char line[320];
   snprintf(line, sizeof(line), "firmware %s, %lu s, %lu blocks, render %.0f us = %.1f %%\n", storage::firmwareRev(),
            static_cast<unsigned long>(secs), static_cast<unsigned long>(pr.blocks), total, total * 100 / kBlockUs);
+  const size_t used = strlen(line);
+  snprintf(line + used, sizeof(line) - used,
+           "project %s, synth %s, seq %s, rvb %s, internal free %u largest %u bytes, PSRAM free %u largest %u bytes\n",
+           app_.project().name, audio::synthInternal() ? "INTERNAL" : "PSRAM",
+           engine::seqInternal() ? "INTERNAL" : "PSRAM", audio::reverbInternal() ? "INT" : "PSRAM",
+           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
+           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
   const bool saved = storage::appendCpuProfile(line, pr);
   snprintf(line, sizeof(line), "%s %.0f%%, TOP %s %.0f%%", saved ? "SAVED" : "NO SD", total * 100 / kBlockUs,
            mt::Synth::profName(top), pr.us[top] * 100 / kBlockUs);
@@ -1198,7 +1164,7 @@ void FileScreen::toggleProfile() {
 // SYSTEM: a new battery sample, and the running CPU profile's seconds.
 bool FileScreen::wantsRedraw(const engine::Status&) {
   if (wifi_.wantsRedraw()) return true;
-  if (section_ != kSecSystem || names_ || kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen())
+  if (section_ != kSecSystem || list_.ready() || kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen())
     return false;
   return app_.batterySeq() != batSeqDrawn_ || (audio::profileRunning() && profSecs() != profSecDrawn_);
 }

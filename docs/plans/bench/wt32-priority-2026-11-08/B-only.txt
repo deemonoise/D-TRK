@@ -1,0 +1,84 @@
+firmware e7efe3b-autoB, 8 s, 2001 blocks, render 1533 us = 38.3 %
+project TUTU-TUDUTU, synth INTERNAL, seq PSRAM, rvb INT, internal free 39272 largest 30708 bytes, PSRAM free 518712 largest 516084 bytes
+autoprof policy B-synth49 window 1/3
+ui sampled_ms=8001 frames=88 fps=11.00 cpu_windows=16 yellow=2 red=0 stalls=0 model_fnv=4c4f2183 bytes=66420 seed=0x5eed
+  peak block 4318 us = 108.0 %
+  queue       24.7 us    0.6 %
+  events      32.2 us    0.8 %
+  cache      165.4 us    4.1 %
+  instLfo    123.3 us    3.1 %
+  ctlMod     124.2 us    3.1 %  n 16.01    7.76 us each
+  ctlFlt      10.9 us    0.3 %
+  ctlEng      80.6 us    2.0 %
+  chip         0.0 us    0.0 %
+  sample     107.2 us    2.7 %  n  1.62   66.04 us each
+  fm         325.8 us    8.1 %  n  2.19  148.46 us each
+  drum         0.0 us    0.0 %
+  synth       38.4 us    1.0 %  n  0.20  191.59 us each
+  mix         32.4 us    0.8 %
+  delay       81.8 us    2.0 %
+  reverb     169.0 us    4.2 %
+  comp         0.5 us    0.0 %
+  perf         2.5 us    0.1 %
+  master      37.1 us    0.9 %
+  strip      117.7 us    2.9 %
+  mod         56.2 us    1.4 %
+  shim         2.2 us    0.1 %
+  eq           0.5 us    0.0 %
+  lofi         0.0 us    0.0 %
+firmware e7efe3b-autoB, 8 s, 2014 blocks, render 1548 us = 38.7 %
+project TUTU-TUDUTU, synth INTERNAL, seq PSRAM, rvb INT, internal free 39056 largest 25588 bytes, PSRAM free 518712 largest 516084 bytes
+autoprof policy B-synth49 window 2/3
+ui sampled_ms=8055 frames=89 fps=11.05 cpu_windows=16 yellow=1 red=0 stalls=0 model_fnv=4c4f2183 bytes=66420 seed=0x5eed
+  peak block 4338 us = 108.4 %
+  queue       24.2 us    0.6 %
+  events      33.6 us    0.8 %
+  cache      166.5 us    4.2 %
+  instLfo    125.8 us    3.1 %
+  ctlMod     124.9 us    3.1 %  n 16.16    7.73 us each
+  ctlFlt      11.3 us    0.3 %
+  ctlEng      81.3 us    2.0 %
+  chip         0.0 us    0.0 %
+  sample     108.7 us    2.7 %  n  1.63   66.80 us each
+  fm         330.8 us    8.3 %  n  2.23  148.34 us each
+  drum         0.0 us    0.0 %
+  synth       39.2 us    1.0 %  n  0.20  193.91 us each
+  mix         34.2 us    0.9 %
+  delay       81.7 us    2.0 %
+  reverb     168.6 us    4.2 %
+  comp         0.5 us    0.0 %
+  perf         2.7 us    0.1 %
+  master      37.6 us    0.9 %
+  strip      119.8 us    3.0 %
+  mod         54.4 us    1.4 %
+  shim         2.0 us    0.1 %
+  eq           0.6 us    0.0 %
+  lofi         0.0 us    0.0 %
+firmware e7efe3b-autoB, 8 s, 2013 blocks, render 1538 us = 38.4 %
+project TUTU-TUDUTU, synth INTERNAL, seq PSRAM, rvb INT, internal free 39056 largest 25588 bytes, PSRAM free 518712 largest 516084 bytes
+autoprof policy B-synth49 window 3/3
+ui sampled_ms=8052 frames=88 fps=10.93 cpu_windows=16 yellow=2 red=0 stalls=0 model_fnv=4c4f2183 bytes=66420 seed=0x5eed
+  peak block 4297 us = 107.4 %
+  queue       24.5 us    0.6 %
+  events      33.1 us    0.8 %
+  cache      163.5 us    4.1 %
+  instLfo    125.7 us    3.1 %
+  ctlMod     124.5 us    3.1 %  n 16.13    7.72 us each
+  ctlFlt      11.1 us    0.3 %
+  ctlEng      82.5 us    2.1 %
+  chip         0.0 us    0.0 %
+  sample     107.8 us    2.7 %  n  1.62   66.36 us each
+  fm         328.7 us    8.2 %  n  2.23  147.65 us each
+  drum         0.0 us    0.0 %
+  synth       38.2 us    1.0 %  n  0.20  192.08 us each
+  mix         33.6 us    0.8 %
+  delay       81.5 us    2.0 %
+  reverb     167.5 us    4.2 %
+  comp         0.5 us    0.0 %
+  perf         2.5 us    0.1 %
+  master      36.9 us    0.9 %
+  strip      118.6 us    3.0 %
+  mod         54.5 us    1.4 %
+  shim         2.0 us    0.1 %
+  eq           0.5 us    0.0 %
+  lofi         0.0 us    0.0 %

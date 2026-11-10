@@ -161,8 +161,8 @@ void test_list_before_data_skipped() {
   TEST_ASSERT_EQUAL_INT16(8, out[1]);
 }
 
-void test_float_unsupported() {
-  const std::vector<uint8_t> f = wav(fmtBody(3, 1, 32000, 32), {0, 0, 0, 0});
+void test_float64_unsupported() {
+  const std::vector<uint8_t> f = wav(fmtBody(3, 1, 32000, 64), {0, 0, 0, 0, 0, 0, 0, 0});
   VecSource src(f);
   WavInfo w;
   TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Unsupported), static_cast<int>(wavParse(src, w)));
@@ -185,11 +185,11 @@ void test_extensible_pcm() {
   TEST_ASSERT_EQUAL_UINT32(1, w.frames());
 }
 
-void test_extensible_float_unsupported() {
+void test_extensible_float32_supported() {
   const std::vector<uint8_t> f = wav(fmtBody(3, 1, 48000, 32, true), {0, 0, 0, 0});
   VecSource src(f);
   WavInfo w;
-  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Unsupported), static_cast<int>(wavParse(src, w)));
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, w)));
 }
 
 void test_not_wav() {
@@ -457,17 +457,29 @@ void test_header_stereo_round_trip() {
   TEST_ASSERT_EQUAL_HEX32(0xCAFEF00D, w.crc);
 }
 
+void test_float32_import_clamps_nonfinite_and_channels() {
+  const float pcm[] = {0.f, .5f, -.5f, 2.f, -2.f, NAN, INFINITY, -INFINITY};
+  std::vector<uint8_t> raw(sizeof(pcm)); memcpy(raw.data(), pcm, sizeof(pcm));
+  const auto bytes = wav(fmtBody(3, 1, 48000, 32), raw);
+  VecSource src(bytes); WavInfo info;
+  TEST_ASSERT_EQUAL(static_cast<int>(WavErr::Ok), static_cast<int>(wavParse(src, info)));
+  int16_t out[8]; wavToMono(raw.data(), 8, info, out);
+  const int16_t expected[] = {0, 16384, -16384, 32767, -32768, 0, 32767, -32768};
+  TEST_ASSERT_EQUAL_INT16_ARRAY(expected, out, 8);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_float32_import_clamps_nonfinite_and_channels);
   RUN_TEST(test_mono16);
   RUN_TEST(test_8bit_unsigned);
   RUN_TEST(test_24bit);
   RUN_TEST(test_stereo_averaged);
   RUN_TEST(test_list_before_data_skipped);
-  RUN_TEST(test_float_unsupported);
+  RUN_TEST(test_float64_unsupported);
   RUN_TEST(test_32bit_pcm_unsupported);
   RUN_TEST(test_extensible_pcm);
-  RUN_TEST(test_extensible_float_unsupported);
+  RUN_TEST(test_extensible_float32_supported);
   RUN_TEST(test_not_wav);
   RUN_TEST(test_truncated);
   RUN_TEST(test_smpl_root_after_data);

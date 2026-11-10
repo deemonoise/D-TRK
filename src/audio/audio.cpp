@@ -18,6 +18,8 @@
 #include "hw/pins.h"
 #include "oneshot.h"
 #include "synth.h"
+#include "synth_gain.h"
+#include "practice.h"
 #include "synth_fm.h"
 #include "synth_fm_machines.h"
 #include "synth_drum.h"
@@ -159,6 +161,9 @@ uint32_t pvFrames, pvRate;
 std::atomic<uint32_t> pvReq{0}, pvAck{0};
 std::atomic<bool> pvPlaying{false};
 mt::OneShot oneshot;
+mt::MetronomeVoice metronome;
+mt::GainRamp phonesRamp;
+int16_t monitorL[kBlock], monitorR[kBlock];
 
 // PERF ring buffer (perfBuffer()): the UI sets pfData/pfFrames (nullptr = detach) and bumps pfReq;
 // the audio task attaches it and echoes pfReq in pfAck. A detached buffer is free once acknowledged.
@@ -204,6 +209,10 @@ int blockEvents;  // events fed into the current block (diagnostics)
 #endif
 
 void feed(uint8_t track, const uint8_t* b, uint8_t len, int off) {
+  if (len >= 3 && b[0] == mt::kMetronomeMsg) {
+    metronome.trigger(off, b[1] != 0, b[2]);
+    return;
+  }
 #ifdef AUDIO_CPU_LOG
   ++blockEvents;
 #endif
@@ -1175,6 +1184,8 @@ void render(int16_t* out) {
 void park() {
   const uint32_t g = pauseGen.load(std::memory_order_acquire);
   synth->reset();
+  metronome.reset();
+  phonesRamp.reset();
   while (engineQ.peek()) engineQ.pop();
   while (uiQ.peek()) uiQ.pop();
   parks.fetch_add(1, std::memory_order_release);  // after the drain: a later UI message survives
@@ -1249,12 +1260,20 @@ void run(void*) {
       scopePk.store(pk, std::memory_order_relaxed);
     }
     {  // after the scope: it shows the mix, the phones level only the headphones
-      const int32_t g = phonesQ15.load(std::memory_order_relaxed);
+      const int32_t target = phonesQ15.load(std::memory_order_relaxed);
+      phonesRamp.set(static_cast<float>(target));
+      // The click is monitor-only: it never enters synth taps, exports or resampling.
+      for (int i = 0; i < kBlock; ++i) { monitorL[i] = st[2*i]; monitorR[i] = st[2*i+1]; }
+      metronome.mix(monitorL, monitorR, kBlock);
       // 32-bit output: the phones gain loses no bits, so a low level does not turn quiet tails
       // into 16-bit grain. |x * g| <= 2^30, doubled it fills the 32-bit range.
       // +1 LSB DC: the PCM5102A never sees digital silence, so its auto-mute does not click on/off
       // between notes (the output is AC-coupled, the offset is inaudible).
-      for (int i = 0; i < 2 * kBlock; ++i) lr[i] = st[i] * g * 2 + 1;
+      for (int i = 0; i < kBlock; ++i) {
+        const int32_t g = static_cast<int32_t>(phonesRamp.next());
+        lr[2*i] = monitorL[i] * g * 2 + 1;
+        lr[2*i+1] = monitorR[i] * g * 2 + 1;
+      }
     }
     size_t written = 0;
     const int64_t w0 = esp_timer_get_time();

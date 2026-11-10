@@ -1,0 +1,16 @@
+test_core_storage_ownership_and_failure_recovery (scripts.tests.test_core_ram_priority.CoreRamPriorityTest.test_core_storage_ownership_and_failure_recovery) ... PASS boot (host Synth49808 Seq35152)
+PASS fallback (host Synth49808 Seq35152)
+PASS ps_alloc (host Synth49808 Seq35152)
+PASS park_ps (host Synth49808 Seq35152)
+PASS int_alloc (host Synth49808 Seq35152)
+PASS park_int (host Synth49808 Seq35152)
+PASS cycles (host Synth49808 Seq35152)
+PASS seq_fail (host Synth49808 Seq35152)
+PASS unreserved (host Synth49808 Seq35152)
+PASS synth_fail (host Synth49808 Seq35152)
+ok
+
+----------------------------------------------------------------------
+Ran 1 test in 2.424s
+
+OK

@@ -1,11 +1,14 @@
 #pragma once
 #include "shift_gen.h"
 #include "ab_keys.h"
+#include "automation.h"
+#include "record.h"
 #include "bank_screen.h"
 #include "battery_gauge.h"
 #include "edit_ops.h"
 #include "engine/engine.h"
 #include "file_screen.h"
+#include "frame_buffer_lease.h"
 #include "grid_screen.h"
 #include "hw/battery.h"
 #include "hw/input.h"
@@ -19,6 +22,7 @@
 #include "screen.h"
 #include "song_screen.h"
 #include "touch.h"
+#include "raw_touch_capture.h"
 #include "track_screen.h"
 #include "undo.h"
 #include "xy_pad.h"
@@ -30,7 +34,25 @@ enum class Tab : uint8_t { Grid, Track, Inst, Mix, Bank, Song, Proj, File, Count
 class App {
  public:
   void begin(LGFX* lcd, mt::Project* p);
+  class FrameBufferLoan {
+   public:
+    explicit FrameBufferLoan(App& app);
+   private:
+    FrameBufferLease<LGFX_Sprite> lease_;
+  };
+  void prepareProjectLoadMemory();
   void onInput(const hw::InputEvent& ev);
+  bool automationMuted(int track) const { return track >= 0 && track < mt::kTracks && ((automationMute_ >> track) & 1); }
+  void toggleAutomationMute(int track);
+  bool recordPermit() const;
+  void syncRecordArm();
+  void setRecording(bool notes, bool motion);
+  void openRecordingSetup(bool child = false, bool refresh = false);
+  void setPracticePrefs(mt::PracticePrefs prefs);
+  bool motionRecording() const { return motionRec_; }
+  void setMotionRecording(bool on);
+  void motionObserve(bool before, int track = -1);
+  void pollMotion();
   void tick();  // touch, engine status, redraw (at most every kFrameMs)
   void setTab(Tab t);
   Tab tab() const { return tab_; }
@@ -39,6 +61,7 @@ class App {
   const engine::Status& status() const { return status_; }
   bool shift() const { return shift_; }
   void invalidate() { dirty_ = true; }
+  void settingsChanged() { settingsChangedAt_ = millis() | 1; }
   uint8_t editPattern() const { return status_.pattern; }
   // SONG plays (or is paused): the sequencer ignores QueuePattern.
   bool songPlays() const { return status_.song && p_->songLen > 0 && (status_.playing || status_.paused); }
@@ -136,6 +159,7 @@ class App {
   static bool perfTab(Tab t) { return t == Tab::Grid || t == Tab::Song || t == Tab::Mix; }
   void onTouch(const TouchEvent& ev);
   void transport();
+  void recordShortcut(bool motionOnly);
   void postSong(bool on);  // SetSong from the SONG cursor
   void startSong();
   void trackKey(int n, bool shift);
@@ -167,6 +191,8 @@ class App {
   void soloKey(int n);
   void queueKey(int n);
   void draw();
+  static void waitFrameBuffer(void* context);
+  static bool createFrameBuffer(LGFX_Sprite& sprite, void* context);
   void drawStatus();
   void drawBattery();  // status bar, right of the loop counter
   void drawTabs();
@@ -174,14 +200,28 @@ class App {
 
   LGFX* lcd_ = nullptr;
   LGFX_Sprite* spr_ = nullptr;
+  FrameBufferState<LGFX_Sprite> frameBuffer_;
+  uint32_t frameRetryAt_ = 0;
   mt::Project* p_ = nullptr;
   engine::Status status_{};
   TouchTracker touch_;
+  RawTouchCapture rawTouch_;
   Menu menu_;
   PerfPad perf_{*this};
   PerfVis vis_;
   XyPad xyPad_;
 
+  uint16_t automationMute_ = 0;
+  mt::PracticePrefs practicePrefs_;
+  uint8_t savedPracticeBits_ = 0, savedClickLevel_ = 64;
+  bool recordBatch_ = false;
+  uint32_t recordDoneSeen_ = 0;
+  bool motionRec_ = false, motionObserving_ = false;
+  int motionTrack_ = 0, motionPattern_ = -1, motionInstr_ = 0;
+  mt::InstrType motionType_ = mt::InstrType::Chip;
+  uint32_t motionLoop_ = UINT32_MAX;
+  int16_t motionBefore_[mt::kAutomationParams]{};
+  mt::MotionLatch motion_[mt::kTracks];
   GridScreen grid_{*this};
   TrackScreen track_{*this};
   BankScreen bank_{*this};
@@ -219,7 +259,8 @@ class App {
   bool batChg_ = false;
   int bpmTarget_ = 120;  // local while editing: p_->bpm lags behind the engine queue
   bool bpmEdit_ = false;
-  int bpmOrig_ = 120;  // BPM when the edit began (Shift+click puts it back)
+  int bpmOrig_ = 120;  // project BPM when the edit began (Shift+click puts it back)
+  bool bpmTurned_ = false;  // the edit changed the BPM
   uint8_t curTrack_ = 0;
   int theme_ = 0, savedTheme_ = 0;  // colour theme (device setting, NVS) and as stored
   int autosaveMin_ = 5, savedAutosaveMin_ = 5;  // autosave interval, minutes, 0 = off (device setting)

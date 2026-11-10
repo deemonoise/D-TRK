@@ -1,3 +1,4 @@
+#include "file_commit.h"
 #include "presets.h"
 #include <stdio.h>
 #include <string.h>
@@ -34,13 +35,14 @@ Result readPreset(const char* path, mt::Instrument& out) {
 bool presetExists(const char* dir, const char* name) {
   if (!hw::sdReady()) return false;
   const PresetPath p(dir, name, ".mti");
-  return p.ok && hw::sdFs().exists(p.s);
+  const PresetPath bak(dir, name, ".bak");
+  return p.ok && recoverFile(hw::sdFs(), p.s, bak.s);
 }
 
 Result savePreset(const char* dir, const char* name, const mt::Instrument& m) {
   if (!hw::sdReady()) return Result::NoSd;
   if (!validName(name)) return Result::BadFile;
-  const PresetPath tmp(dir, name, ".tmp"), mti(dir, name, ".mti");
+  const PresetPath tmp(dir, name, ".tmp"), mti(dir, name, ".mti"), bak(dir, name, ".bak");
   if (!tmp.ok || !mti.ok) return Result::BadFile;
   fs::FS& fs = hw::sdFs();
   if (fs.exists(tmp.s)) fs.remove(tmp.s);
@@ -51,26 +53,27 @@ Result savePreset(const char* dir, const char* name, const mt::Instrument& m) {
   f.close();
   mt::Instrument check;
   ok = ok && readPreset(tmp.s, check) == Result::Ok;
-  if (ok && fs.exists(mti.s)) ok = fs.remove(mti.s);
-  ok = ok && fs.rename(tmp.s, mti.s);
   if (!ok) {
     if (fs.exists(tmp.s)) fs.remove(tmp.s);
     return Result::WriteFail;
   }
-  return Result::Ok;
+  return commitFile(fs, tmp.s, mti.s, bak.s) ? Result::Ok : Result::WriteFail;
 }
 
 Result loadPreset(const char* dir, const char* name, mt::Instrument& out) {
   if (!hw::sdReady()) return Result::NoSd;
   const PresetPath p(dir, name, ".mti");
-  if (!p.ok || !hw::sdFs().exists(p.s)) return Result::NotFound;
+  const PresetPath bak(dir, name, ".bak");
+  if (!p.ok || !recoverFile(hw::sdFs(), p.s, bak.s)) return Result::NotFound;
   return readPreset(p.s, out);
 }
 
 Result removePreset(const char* dir, const char* name) {
   if (!hw::sdReady()) return Result::NoSd;
   const PresetPath p(dir, name, ".mti");
-  if (!p.ok || !hw::sdFs().exists(p.s)) return Result::NotFound;
+  const PresetPath bak(dir, name, ".bak");
+  if (!p.ok || !recoverFile(hw::sdFs(), p.s, bak.s)) return Result::NotFound;
+  if (hw::sdFs().exists(bak.s) && !hw::sdFs().remove(bak.s)) return Result::WriteFail;
   return hw::sdFs().remove(p.s) ? Result::Ok : Result::WriteFail;
 }
 

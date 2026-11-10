@@ -1,0 +1,8 @@
+baseline-first bytes=472784 sha256=7aeb34d947007bf5467fdf33bf0b9d885389d8b1e374a9f8331dfca4afc6ce30 file=/private/tmp/dtrk-baseline-first-firmware.bin
+current-first bytes=481392 sha256=93093de5a18cfdfcb403c8245440874a757a4090146abc7100c52a2c7baffa2a file=/private/tmp/dtrk-current-first-firmware.bin
+newfm-final bytes=347936 sha256=013e2c6e781e7921b6464e6fede8a6a77d84ad225e9c7050e8d7144dbcc291e6 file=/private/tmp/dtrk-newfm-final-firmware.bin
+baseline-final bytes=472848 sha256=eea4a13c7f94de96b0d6818775628464f522b5235165b456278b671276ee86a9 file=/private/tmp/dtrk-baseline-final-firmware.bin
+current-final bytes=481472 sha256=ce893ef0767248700695b9a2cd9a3c2c246f827166623ab28fdd741f966d53b9 file=/private/tmp/dtrk-current-final-firmware.bin
+baseline-capture sha256=e0892fc08e3ba9fa99ac917710782b52caa1cde6f23bf0c6d98bec81f2b6ea65 file=/private/tmp/dtrk-baseline-final-capture.log
+current-capture sha256=8804b14b42eb52883dca68e853196cd64d82c3d335b52dccf8a6b543392f45f0 file=/private/tmp/dtrk-current-final-capture.log
+newfm-capture sha256=8251344f7b92e7fa6e4bfbc9e00978a9960dc6549001418b3a7121291c1b2fb1 file=/private/tmp/dtrk-newfm-final-capture.log

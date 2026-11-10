@@ -19,11 +19,11 @@ int perfAxisDepth(PerfFx f, int pos, int len) {
   if (bipolar(r)) {
     int from, to;
     deadZone(len, from, to);
-    if (pos < from) return clampi(r.lo + pos * -r.lo / from, r.lo, -1);
-    if (pos >= to) return clampi(1 + (pos - to) * r.hi / (len - to), 1, r.hi);
+    if (pos < from) return clampi(r.lo + static_cast<int>(static_cast<int64_t>(pos) * -r.lo / from), r.lo, -1);
+    if (pos >= to) return clampi(1 + static_cast<int>(static_cast<int64_t>(pos - to) * r.hi / (len - to)), 1, r.hi);
     return 0;
   }
-  return r.lo + pos * (r.hi - r.lo + 1) / len;
+  return perfDepthAt(f, static_cast<int>(static_cast<int64_t>(pos) * perfDepthCount(f) / len));
 }
 
 bool perfAxisZoned(PerfFx f) {
@@ -32,9 +32,10 @@ bool perfAxisZoned(PerfFx f) {
 }
 
 int perfAxisEdge(PerfFx f, int i, int len) {
-  const PerfRange r = perfRange(f);
-  const int n = r.hi - r.lo + 1;
-  return (i * len + n - 1) / n;  // the first pos with lo + pos * n / len >= lo + i
+  const int n = perfDepthCount(f);
+  if (len <= 0) return 0;
+  i = clampi(i, 0, n);
+  return static_cast<int>((static_cast<int64_t>(i) * len + n - 1) / n);  // the first pos with lo + pos * n / len >= lo + i
 }
 
 bool perfAxisDead(PerfFx f, int len, int& from, int& to) {

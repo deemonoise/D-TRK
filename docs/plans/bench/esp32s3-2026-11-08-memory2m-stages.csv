@@ -1,0 +1,11 @@
+type,name,success,bytes,free_psram,largest_psram,free_internal,largest_internal
+STAGE,autoload_before_audio_ui,1,488908,1512696,1507316,154380,90100
+STAGE,fresh_no_filelist,1,488908,503896,499700,109132,65524
+STAGE,fresh_with_filelist,0,488908,451668,450548,109132,65524
+STAGE,fresh_after_filelist_release,1,488908,503896,499700,109132,65524
+STAGE,dice_with_filelist,0,488908,328784,327668,109132,65524
+STAGE,dice_after_filelist_release,0,488908,381012,376820,109132,65524
+STAGE,safe_dice_relocated_then_sprite_loan,1,488908,692312,524276,109132,65524
+STAGE,safe_next_project_direct,1,488908,503896,499700,109132,65524
+STAGE,safe_next_project_sprite_loan,1,488908,815196,802804,109132,65524
+STAGE,negative_stage_expected_failure,0,488908,507984,311284,109132,65524

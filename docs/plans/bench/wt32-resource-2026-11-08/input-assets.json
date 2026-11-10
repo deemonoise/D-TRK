@@ -1,0 +1,46 @@
+{
+  "project": "TUTU-TUDUTU",
+  "source": "WT32 HTTP192.168.3.221",
+  "files": [
+    {
+      "file": "samples/Kick606.wav",
+      "bytes": 21460,
+      "sha256": "c5b1073b30fd71b8b50b62d2aceb82be239b78a49cc01c505fad3a482e3a6eaf"
+    },
+    {
+      "file": "samples/CFunk.wav",
+      "bytes": 20258,
+      "sha256": "6a65a5c5d762fc82cf24e48a3ef3e41d911cf1416f7bf8e993f78e8be4f388a1"
+    },
+    {
+      "file": "samples/CYDub.wav",
+      "bytes": 345652,
+      "sha256": "0b55a62c26000704aa014070c8770798af94b607076aa38eb4742f979188111a"
+    },
+    {
+      "file": "samples/HHDubC.wav",
+      "bytes": 80756,
+      "sha256": "736ff9c3236e025644d982f9832672d778f19a12b0cff2faf35656e91752dbb7"
+    },
+    {
+      "file": "samples/HHBotlC.wav",
+      "bytes": 4368,
+      "sha256": "506cd0dabeff6f8fedb7627fb3b8b565cbc1fb2dc709f2f15cbc044df8268e75"
+    },
+    {
+      "file": "samples/PCAbsy1.wav",
+      "bytes": 143882,
+      "sha256": "46503006205756d1457bd9a3c7ab70b15ce06b4488126ee9e73e6145914070b9"
+    },
+    {
+      "file": "wt/DIRTY_01.wav",
+      "bytes": 32872,
+      "sha256": "aeccedcf28ebefab3714008c37a9f7bf2cda1217b86941f09c4fdc296d948be2"
+    },
+    {
+      "file": "wt/DISTORTE.wav",
+      "bytes": 32872,
+      "sha256": "1ed8498ad0d8e7811ce0b88a3ac2e1e8e601fa5b38ee147d7606fbdeb94e2686"
+    }
+  ]
+}

@@ -28,6 +28,13 @@ struct PerfRange {
   bool coarse;  // Shift turns x10
 };
 PerfRange perfRange(PerfFx f);
+// Raw depth IDs stay stable in PRF2. Repeat/Gate skip retired triplet slots.
+int perfDepthNormalize(PerfFx f, int depth);
+int perfDepthCount(PerfFx f);
+int perfDepthAt(PerfFx f, int index);  // visible index -> raw depth
+int perfDepthIndex(PerfFx f, int depth);
+int perfDepthStep(PerfFx f, int depth, int delta);  // delta counts visible choices
+int perfDepthDelta(PerfFx f, int from, int to);    // turn message between raw depths
 const char* perfName(PerfFx f);   // toast / PROJ text, "" for None and out of range
 const char* perfShort(PerfFx f);  // 3 letters for the GRID / SONG header
 void perfValue(PerfFx f, int depth, char* out, int n);  // toast value: "1/16", "LP 20", "6 BIT"
@@ -40,8 +47,8 @@ struct PerfMsg {
 };
 
 // Lengths behind the list-valued depths, in steps (sixteenths); depth is clamped into the range.
-float perfRepeatSteps(int depth);   // Repeat: 1/2 1/4 1/8 1/8T 1/16 1/16T 1/32
-float perfGateSteps(int depth);     // Gate:   1/4 1/8 1/8T 1/16 1/16T 1/32
+float perfRepeatSteps(int depth);   // Repeat: 1/2 1/4 1/8 1/16 1/32
+float perfGateSteps(int depth);     // Gate:   1/4 1/8 1/16 1/32
 float perfReverseSteps(int depth);  // Reverse: 1/4 1/2 1 2 bars
 float perfScratchSteps(int depth);  // Scratch period: 1/4 1/8 1/16 1/32
 float perfTapeSteps(int depth);     // Tape stop: 1/16 1/8 1/4 1/2 1 bar

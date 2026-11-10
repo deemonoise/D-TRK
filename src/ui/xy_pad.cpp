@@ -45,12 +45,10 @@ void XyPad::draw(LGFX_Sprite& s, int y0, int h, const PerfPad& perf, uint32_t no
   if (mt::perfAxisDead(fx, w, a, b)) s.fillRect(a, y0, b - a, h, kBeatBg);
   if (mt::perfAxisDead(fy, h, a, b)) s.fillRect(0, y0 + h - b, w, b - a, kBeatBg);  // pos 0 at the bottom
   if (mt::perfAxisZoned(fx)) {
-    const mt::PerfRange r = mt::perfRange(fx);
-    for (int i = 1; i <= r.hi - r.lo; ++i) s.drawFastVLine(mt::perfAxisEdge(fx, i, w), y0, h, kBeatBg);
+    for (int i = 1; i < mt::perfDepthCount(fx); ++i) s.drawFastVLine(mt::perfAxisEdge(fx, i, w), y0, h, kBeatBg);
   }
   if (mt::perfAxisZoned(fy)) {
-    const mt::PerfRange r = mt::perfRange(fy);
-    for (int i = 1; i <= r.hi - r.lo; ++i) s.drawFastHLine(0, y0 + h - mt::perfAxisEdge(fy, i, h), w, kBeatBg);
+    for (int i = 1; i < mt::perfDepthCount(fy); ++i) s.drawFastHLine(0, y0 + h - mt::perfAxisEdge(fy, i, h), w, kBeatBg);
   }
   if (down_) {
     s.drawFastVLine(x_, y0, h, kDim);

@@ -17,15 +17,15 @@ bool validName(const char* name);
 
 bool exists(const char* name, bool bak = false);  // /projects/name.mtp (.bak)
 
-// Posts Stop and waits until the engine is neither playing nor paused. False: not stopped after 200 ms.
+// Posts Stop and waits until transport and count-in are stopped. False: not stopped after 200 ms.
 bool stopEngine();
 
 // Progress of the sample sync: current sample name, bytes (or work units) of it.
 using SyncProgress = void (*)(const char* file, uint32_t done, uint32_t total, void* ctx);
 
-// Snapshot of live under the lock, .tmp, verify, rotate .bak, rename, /last.txt, then syncFolder().
-// Works while playing. On success live.name = name. SamplesNotSaved: the .mtp is saved (live.name
-// set) but the sample folder is not complete.
+// Snapshot live, write and verify .tmp, sync resources, then rotate .bak and publish.
+// Works while playing. On success live.name = name. SamplesNotSaved leaves the previous
+// project file, autosave and live.name intact; resource cleanup happens only after publication.
 Result save(mt::Project& live, const char* name, SyncProgress cb = nullptr, void* ctx = nullptr);
 
 // /projects/<live.name>/<sample>.wav for every listed sample that is cached and whose file is absent

@@ -1,0 +1,64 @@
+{
+  "baseline_supplied": {
+    "bin_bytes": 2191776,
+    "diram": 254019
+  },
+  "app_partition_bytes": 3145728,
+  "variants": {
+    "frozen_plain": {
+      "workspace": "/private/tmp/dtrk-ble-full-link-plain-2v3khv1a",
+      "build_exit": 0,
+      "bin_bytes": 2191776,
+      "bin_sha256": "7851b2f71055645af9a0bc0729c61e48ad2a5b4e49a0ccbed9798444128df782",
+      "elf_sha256": "a499c7e9cc303cd1af02f37397ba43c7ba8ec37de32ce756a867892e7aef8cb4",
+      "app_partition_remaining": 953952,
+      "build_log": "/private/tmp/dtrk-ble-full-link-plain.log",
+      "size_log": "/private/tmp/dtrk-ble-full-link-plain-size.log",
+      "diram": 254019,
+      "diram_remaining": 87741,
+      "diram_total": 341760,
+      "iram": 16384,
+      "iram_remaining": 0,
+      "iram_total": 16384,
+      "bin_delta_from_frozen_plain": 0,
+      "diram_delta_from_frozen_plain": 0
+    },
+    "stock_ble": {
+      "workspace": "/private/tmp/dtrk-ble-full-link-ydevi2fr",
+      "build_exit": 0,
+      "bin_bytes": 2409472,
+      "bin_sha256": "5b8aa6a45ce78991d9b7af42cf62f4acc7259e4b3f99a7cdc90421d726b87985",
+      "elf_sha256": "37df02ec5d6ac22e0ed1c0302619ed4534d9a618e3df5e6be2720e3c1e594c53",
+      "app_partition_remaining": 736256,
+      "build_log": "/private/tmp/dtrk-ble-full-link-stock.log",
+      "size_log": "/private/tmp/dtrk-ble-full-link-stock-size.log",
+      "diram": 282759,
+      "diram_remaining": 59001,
+      "diram_total": 341760,
+      "iram": 16384,
+      "iram_remaining": 0,
+      "iram_total": 16384,
+      "bin_delta_from_frozen_plain": 217696,
+      "diram_delta_from_frozen_plain": 28740
+    },
+    "one_connection_ble": {
+      "workspace": "/private/tmp/dtrk-ble-full-link-one-jxa_yvv5",
+      "build_exit": 0,
+      "bin_bytes": 2397216,
+      "bin_sha256": "3c6a8fe5e862f839e71e1d13cc897e11d6a43160321cf22d71826832d6e7a313",
+      "elf_sha256": "d8898aefd976c631cb00a6d4a621ad8a2f7bfa697102fee1fb75a642158e993f",
+      "app_partition_remaining": 748512,
+      "build_log": "/private/tmp/dtrk-ble-full-link-one.log",
+      "size_log": "/private/tmp/dtrk-ble-full-link-one-size.log",
+      "diram": 282047,
+      "diram_remaining": 59713,
+      "diram_total": 341760,
+      "iram": 16384,
+      "iram_remaining": 0,
+      "iram_total": 16384,
+      "ble_config_sha256": "be5984252ce9c5cbd7b67d13ca8759bd6e86d49988f3e694a22d3a2da5bcc917",
+      "bin_delta_from_frozen_plain": 205440,
+      "diram_delta_from_frozen_plain": 28028
+    }
+  }
+}

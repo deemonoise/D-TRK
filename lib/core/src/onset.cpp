@@ -5,101 +5,136 @@
 namespace mt {
 namespace {
 
-constexpr int kWin = 256, kHop = 128, kRefine = 32;
+// Original causal filter-bank implementation; no external source code is used.
+// Positive band-energy change is motivated by Dixon, "Onset Detection Revisited", DAFx 2006:
+// https://www.dafx.de/paper-archive/details/_kscRgr98aSFW4l-j1YJuA
 constexpr float kGateDb = -60.f, kRiseDb = 3.f;
 
 uint32_t absDiff(uint32_t a, uint32_t b) { return a > b ? a - b : b - a; }
 
-int absAt(const int16_t* d, uint32_t i) { return d[i] < 0 ? -d[i] : d[i]; }
-
-// Start of the first kRefine block of [from, to) reaching half its peak.
-uint32_t refine(const int16_t* d, uint32_t from, uint32_t to) {
-  int peak = 0;
-  for (uint32_t i = from; i < to; ++i) peak = absAt(d, i) > peak ? absAt(d, i) : peak;
-  for (uint32_t b = from; b < to; b += kRefine) {
-    const uint32_t e = b + kRefine < to ? b + kRefine : to;
-    for (uint32_t i = b; i < e; ++i)
-      if (2 * absAt(d, i) >= peak) return b;
-  }
-  return from;
+float coefficient(float frequency, uint32_t rate) {
+  return rate ? 1.f - expf(-6.28318530718f * frequency / rate) : 0;
 }
-
-struct Cands {
-  Onset* out;
-  float fl[kMaxOnsets];
-  int n = 0, max;
-
-  void remove(int i) {
-    for (int k = i; k + 1 < n; ++k) {
-      out[k] = out[k + 1];
-      fl[k] = fl[k + 1];
-    }
-    --n;
-  }
-
-  void add(uint32_t pos, float f, uint32_t gap) {
-    // Closer than gap: the stronger one stays.
-    for (int i = 0; i < n; ++i)
-      if (absDiff(out[i].pos, pos) < gap && fl[i] >= f) return;
-    for (int i = n - 1; i >= 0; --i)
-      if (absDiff(out[i].pos, pos) < gap) remove(i);
-    if (n >= max) {
-      int w = 0;
-      for (int i = 1; i < n; ++i)
-        if (fl[i] < fl[w]) w = i;
-      if (fl[w] >= f) return;
-      remove(w);
-    }
-    int i = n;
-    while (i > 0 && out[i - 1].pos > pos) {
-      out[i] = out[i - 1];
-      fl[i] = fl[i - 1];
-      --i;
-    }
-    out[i] = {pos, 0};
-    fl[i] = f;
-    ++n;
-  }
-};
 
 }  // namespace
 
-int detectOnsets(const int16_t* d, uint32_t frames, uint32_t rate, Onset* out, int max) {
-  if (max > kMaxOnsets) max = kMaxOnsets;
-  if (!d || max <= 0 || frames < static_cast<uint32_t>(kWin)) return 0;
-  Cands c;
-  c.out = out;
-  c.max = max;
-  const uint32_t gap = rate * 40 / 1000;
-  const uint32_t windows = (frames - kWin) / kHop + 1;
-  float prevDb = -120.f;
-  float flux[3] = {0, 0, 0};  // k - 2, k - 1, k: the peak test runs on k - 1
-  for (uint32_t k = 0; k <= windows; ++k) {
-    float f = 0;
-    if (k < windows) {
-      uint64_t sum = 0;
-      for (uint32_t i = k * kHop; i < k * kHop + kWin; ++i) sum += static_cast<int64_t>(d[i]) * d[i];
-      const float e = static_cast<float>(sum) / kWin / (32768.f * 32768.f);
-      const float db = 10.f * log10f(e + 1e-12f);
-      f = db > kGateDb ? db - prevDb : 0.f;
-      prevDb = db;
+void OnsetScan::Cands::remove(int i) {
+  for (int k = i; k + 1 < n; ++k) {
+    out[k] = out[k + 1];
+    fl[k] = fl[k + 1];
+  }
+  --n;
+}
+
+void OnsetScan::Cands::add(uint32_t pos, float f, uint32_t gap) {
+  // Closer than gap: the stronger one stays.
+  for (int i = 0; i < n; ++i)
+    if (absDiff(out[i].pos, pos) < gap && fl[i] >= f) return;
+  for (int i = n - 1; i >= 0; --i)
+    if (absDiff(out[i].pos, pos) < gap) remove(i);
+  if (n >= max) {
+    int w = 0;
+    for (int i = 1; i < n; ++i)
+      if (fl[i] < fl[w]) w = i;
+    if (fl[w] >= f) return;
+    remove(w);
+  }
+  int i = n;
+  while (i > 0 && out[i - 1].pos > pos) {
+    out[i] = out[i - 1];
+    fl[i] = fl[i - 1];
+    --i;
+  }
+  out[i] = {pos, 0};
+  fl[i] = f;
+  ++n;
+}
+
+OnsetScan::OnsetScan(uint32_t frames, uint32_t rate, int max) : frames_(frames), gap_(rate * 40 / 1000) {
+  c_.max = max > kMaxOnsets ? kMaxOnsets : (max < 0 ? 0 : max);
+  hop_ = rate / 500;
+  if (!hop_) hop_ = 1;
+  windows_ = c_.max > 0 && rate && frames >= hop_ ? (frames - 1) / hop_ + 1 : 0;
+  dcAlpha_ = coefficient(20.f, rate);
+  lowAlpha_ = coefficient(250.f, rate);
+  middleAlpha_ = coefficient(2500.f, rate);
+  smoothAlpha_ = rate ? 1.f - expf(-static_cast<float>(hop_) / (rate * .020f)) : 0;
+}
+
+void OnsetScan::feed(const int16_t* d, uint32_t n) {
+  for (uint32_t i = 0; i < n && got_ < frames_; ++i) {
+    const float x = d[i];
+    if (!got_) dc_ = x;  // a constant offset present at the start is not an attack
+    dc_ += dcAlpha_ * (x - dc_);
+    const float ac = x - dc_;
+    low_ += lowAlpha_ * (ac - low_);
+    middle_ += middleAlpha_ * (ac - middle_);
+    const float bands[kBands] = {low_, middle_ - low_, ac - middle_};
+    const uint32_t block = (got_ / kRefine) % kPeakBlocks;
+    for (int band = 0; band < kBands; ++band) {
+      if (got_ % kRefine == 0) peak_[band][block] = 0;
+      const float magnitude = fabsf(bands[band]);
+      const uint16_t value = static_cast<uint16_t>(magnitude > 65535.f ? 65535.f : magnitude);
+      if (value > peak_[band][block]) peak_[band][block] = value;
+      energy_[band] += bands[band] * bands[band];
     }
-    flux[0] = flux[1];
-    flux[1] = flux[2];
-    flux[2] = f;
-    if (k == 0 || !(flux[1] >= kRiseDb && flux[1] > flux[0] && flux[1] >= flux[2])) continue;
-    const uint32_t p = k - 1;  // the peak window
-    const uint32_t from = p > 0 ? (p - 1) * kHop : 0;
-    const uint32_t to = p * kHop + kWin < frames ? p * kHop + kWin : frames;
-    c.add(refine(d, from, to), flux[1], gap);
+    ++got_;
+    if (++hopCount_ == hop_ || got_ == frames_) window(k_++);
   }
+}
+
+uint32_t OnsetScan::refineBand(uint32_t from, uint32_t to, int band) const {
+  const uint32_t first = from / kRefine, last = (to - 1) / kRefine;
+  uint16_t maximum = 0;
+  for (uint32_t block = first; block <= last; ++block)
+    if (peak_[band][block % kPeakBlocks] > maximum) maximum = peak_[band][block % kPeakBlocks];
+  for (uint32_t block = first; block <= last; ++block)
+    if (2u * peak_[band][block % kPeakBlocks] >= maximum) return block * kRefine;
+  return from;
+}
+
+void OnsetScan::window(uint32_t k) {
+  float f = 0;
+  uint8_t strongestBand = 0;
+  if (hopCount_) {
+    for (int band = 0; band < kBands; ++band) {
+      smooth_[band] += smoothAlpha_ * (energy_[band] / hopCount_ - smooth_[band]);
+      const float db = 10.f * log10f(smooth_[band] / (32768.f * 32768.f) + 1e-12f);
+      const float previous = prevDb_[band] > kGateDb ? prevDb_[band] : kGateDb;
+      const float rise = db > kGateDb ? db - previous : 0;
+      if (rise > f) { f = rise; strongestBand = static_cast<uint8_t>(band); }
+      prevDb_[band] = db;
+      energy_[band] = 0;
+    }
+    hopCount_ = 0;
+  }
+  flux_[0] = flux_[1]; flux_[1] = flux_[2]; flux_[2] = f;
+  fluxBand_[0] = fluxBand_[1]; fluxBand_[1] = fluxBand_[2]; fluxBand_[2] = strongestBand;
+  if (!windows_ || k == 0 || !(flux_[1] >= kRiseDb && flux_[1] > flux_[0] && flux_[1] >= flux_[2])) return;
+  const uint32_t attack = k - 1;
+  const uint32_t from = attack ? (attack - 1) * hop_ : 0;
+  const uint32_t end = (attack + 1) * hop_;
+  const uint32_t to = end < frames_ ? end : frames_;
+  c_.add(refineBand(from, to, fluxBand_[1]), flux_[1], gap_);
+}
+
+int OnsetScan::finish(Onset* out) {
+  if (!windows_) return 0;
+  window(k_);  // the last peak test (flux 0 after the end)
   float top = 0;
-  for (int i = 0; i < c.n; ++i) top = c.fl[i] > top ? c.fl[i] : top;
-  for (int i = 0; i < c.n; ++i) {
-    const int s = static_cast<int>(lroundf(c.fl[i] / top * 1000.f));
-    out[i].strength = static_cast<uint16_t>(s < 1 ? 1 : s > 1000 ? 1000 : s);
+  for (int i = 0; i < c_.n; ++i) top = c_.fl[i] > top ? c_.fl[i] : top;
+  for (int i = 0; i < c_.n; ++i) {
+    const int s = static_cast<int>(lroundf(c_.fl[i] / top * 1000.f));
+    out[i] = {c_.out[i].pos, static_cast<uint16_t>(s < 1 ? 1 : s > 1000 ? 1000 : s)};
   }
-  return c.n;
+  return c_.n;
+}
+
+int detectOnsets(const int16_t* d, uint32_t frames, uint32_t rate, Onset* out, int max) {
+  if (!d) return 0;
+  OnsetScan s(frames, rate, max);
+  s.feed(d, frames);
+  return s.finish(out);
 }
 
 int nearestOnset(const Onset* o, int n, uint32_t pos) {

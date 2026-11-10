@@ -1,0 +1,90 @@
+A {
+  "blocks": 6022,
+  "sampled_ms": 24091,
+  "render_us": 1949.0109598140152,
+  "peak_us": 5316.0,
+  "frames": 264,
+  "cpu_windows": 48,
+  "yellow": 32,
+  "red": 0,
+  "stalls": 0,
+  "model_fnv": "9400ea4f",
+  "model_bytes": 66420,
+  "raw_model_fnv": null,
+  "fps": 10.958449213399195,
+  "yellow_fraction": 0.6666666666666666
+}
+ stages {"cache": {"us": 179.10219196280303, "count": 0.0}, "instLfo": {"us": 124.06660577881102, "count": 0.0}, "ctlMod": {"us": 124.23540352042512, "count": 16.08682497509133}, "sample": {"us": 107.90109598140151, "count": 1.6199999999999999}, "fm": {"us": 327.77263367651943, "count": 2.2167153769511785}, "synth": {"us": 38.933394221188976, "count": 0.2}, "reverb": {"us": 539.9990866821654, "count": 0.0}}
+B {
+  "blocks": 6028,
+  "sampled_ms": 24108,
+  "render_us": 1539.6813205043131,
+  "peak_us": 4338.0,
+  "frames": 265,
+  "cpu_windows": 48,
+  "yellow": 5,
+  "red": 0,
+  "stalls": 0,
+  "model_fnv": "4c4f2183",
+  "model_bytes": 66420,
+  "raw_model_fnv": null,
+  "fps": 10.992201758752282,
+  "yellow_fraction": 0.10416666666666667
+}
+ stages {"cache": {"us": 165.1330291970803, "count": 0.0}, "instLfo": {"us": 124.93672859986728, "count": 0.0}, "ctlMod": {"us": 124.53405773059059, "count": 16.10018911745189}, "sample": {"us": 107.90152621101527, "count": 1.6233410749834107}, "fm": {"us": 328.4389681486397, "count": 2.2167219641672196}, "synth": {"us": 38.60049767750498, "count": 0.19999999999999998}, "reverb": {"us": 168.36544459190443, "count": 0.0}}
+A2 {
+  "blocks": 6013,
+  "sampled_ms": 24056,
+  "render_us": 1963.995676035257,
+  "peak_us": 4996.0,
+  "frames": 265,
+  "cpu_windows": 48,
+  "yellow": 23,
+  "red": 0,
+  "stalls": 0,
+  "model_fnv": "4363edfc",
+  "model_bytes": 66420,
+  "raw_model_fnv": "06a49af7",
+  "fps": 11.01596275357499,
+  "yellow_fraction": 0.4791666666666667
+}
+ stages {"cache": {"us": 180.36349575918842, "count": 0.0}, "instLfo": {"us": 125.3, "count": 0.0}, "ctlMod": {"us": 125.33455845667719, "count": 16.090151338766006}, "sample": {"us": 109.13347746549144, "count": 1.6233477465491433}, "fm": {"us": 325.60432396474306, "count": 2.213369366372859}, "synth": {"us": 39.16695493098287, "count": 0.19999999999999998}, "reverb": {"us": 542.0267753201397, "count": 0.0}}
+B2 {
+  "blocks": 6015,
+  "sampled_ms": 24063,
+  "render_us": 1529.0083125519534,
+  "peak_us": 4474.0,
+  "frames": 263,
+  "cpu_windows": 48,
+  "yellow": 7,
+  "red": 0,
+  "stalls": 0,
+  "model_fnv": "4363edfc",
+  "model_bytes": 66420,
+  "raw_model_fnv": "06a49af7",
+  "fps": 10.929643020404772,
+  "yellow_fraction": 0.14583333333333334
+}
+ stages {"cache": {"us": 158.6016625103907, "count": 0.0}, "instLfo": {"us": 116.89709060681629, "count": 0.0}, "ctlMod": {"us": 125.66541978387365, "count": 16.09344139650873}, "sample": {"us": 109.2351620947631, "count": 1.6233333333333333}, "fm": {"us": 330.4399833748961, "count": 2.2133582709891937}, "synth": {"us": 39.63283458021613, "count": 0.2}, "reverb": {"us": 166.73316708229427, "count": 0.0}}
+C2 {
+  "blocks": 6028,
+  "sampled_ms": 24105,
+  "render_us": 1538.6833112143331,
+  "peak_us": 4404.0,
+  "frames": 267,
+  "cpu_windows": 48,
+  "yellow": 4,
+  "red": 0,
+  "stalls": 0,
+  "model_fnv": "4363edfc",
+  "model_bytes": 66420,
+  "raw_model_fnv": "7943afbc",
+  "fps": 11.076540136901057,
+  "yellow_fraction": 0.08333333333333333
+}
+ stages {"cache": {"us": 165.76678832116787, "count": 0.0}, "instLfo": {"us": 124.56841406768415, "count": 0.0}, "ctlMod": {"us": 126.56783344392834, "count": 16.106859654943598}, "sample": {"us": 109.66970802919708, "count": 1.6266804910418051}, "fm": {"us": 328.34518911745187, "count": 2.21672196416722}, "synth": {"us": 38.60003317850033, "count": 0.2}, "reverb": {"us": 167.29850696748505, "count": 0.0}}
+RAW A/B model equality False (raw name-tail nondeterminism; preliminary only); delta_render_us -409.3296393097021
+ctlMod work count A 16.08682497509133 B 16.10018911745189 delta% 0.0830750777810696
+sample work count A 1.6199999999999999 B 1.6233410749834107 delta% 0.20623919650684108
+fm work count A 2.2167153769511785 B 2.2167219641672196 delta% 0.0002971611109625627
+synth work count A 0.2 B 0.19999999999999998 delta% -1.1102230246251565e-14

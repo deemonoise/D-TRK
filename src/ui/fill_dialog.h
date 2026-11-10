@@ -1,4 +1,5 @@
 #pragma once
+#include "dialog_actions.h"
 #include "arp_gen.h"
 #include "bass_gen.h"
 #include "chord_gen.h"
@@ -57,9 +58,6 @@ class FillDialog {
   };
   static constexpr int kHeaderH = 28;
   // Header buttons.
-  static constexpr int kBtnY = 2, kBtnH = 20;
-  static constexpr int kCancelX = 320, kCancelW = 72;
-  static constexpr int kOkX = 400, kOkW = 64;
   static constexpr int kUserMax = 32;  // user arp patterns / progressions / bass patterns listed
 
   int rangeLen() const { return sel_.s1 - sel_.s0 + 1; }
@@ -97,9 +95,9 @@ class FillDialog {
   void addRow(int id);      // params_[id] appended to shown_
   int rowId(int listRow) const { return listRow >= 0 && listRow < shownCount_ ? shownIds_[listRow] : -1; }
   int listRow(int id) const;
-  void drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel);
   static char (*allocNames())[hw::kNameMax];  // kUserMax names in PSRAM; nullptr without memory
 
+  DialogActions actions_;
   App& app_;
   Param params_[kRows];
   Param shown_[kRows];  // rows of the current settings, as the list shows them

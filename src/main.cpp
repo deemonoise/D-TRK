@@ -44,8 +44,8 @@ void wtBench();
 
 void setup() {
   Serial.begin(115200);
-  // Before anything else: the synth and the sequencer need large blocks of internal RAM (in PSRAM
-  // the audio costs far more); the SD card, the screen and Wi-Fi fragment it later.
+  // Prime Wi-Fi, then reserve the live synth before SD and LCD allocations fragment internal RAM.
+  // The sequencer uses PSRAM so the per-sample reverb lines can stay internal.
   net::prime();
   core_ram::reserve();
   void* uiMem = heap_caps_malloc(sizeof(ui::App), MALLOC_CAP_SPIRAM);

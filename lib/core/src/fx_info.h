@@ -16,6 +16,7 @@ uint8_t fxStep(Fx f, uint8_t v, int delta);  // encoder step, clamped, signed-aw
 // smaller move), clamped 1..200. Below 100 exact +-10 %; above, 7 % units are nearer: 95 -> 107,
 // 100 -> 107, 107 -> 114, 114 -> 107. GRID's GAT value and the piano roll's A + turn share it.
 uint8_t gatStep(uint8_t v, int delta, bool coarse);
+bool fxAllowed(Fx f);  // reserved AC2 (16-lane kits) is unavailable on this 8-lane firmware
 Fx fxNextCmd(Fx f, int delta);               // cycles every command, grouped (not the enum order)
 bool fxSynthOnly(Fx f);                      // SLD..SLC, DLY, DRV..ARM, BIT, SRR, LFO..LFR, PAN, DTY, GTE, MOD: INT tracks only
 bool fxDrumOnly(Fx f);                       // ACC: drum tracks only (KIT instrument), ignored elsewhere

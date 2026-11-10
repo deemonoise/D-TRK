@@ -1,0 +1,15 @@
+HEADLESS chip=ESP32-S3 revision=2 cpu_mhz=240 flash=16777216 psram=8388608 synth_rate=32000 block=128 revision_code=wave2-final
+PLACEMENT synth_internal=1 reverb_internal=1 sizeof_synth=49264 sizeof_project=488908 free_internal=161656
+BENCH GUARD_CHIP machine=0 voices=24 active=24.00 fx=1 matrix=0 perf=1 guard=1 avg_us=2418.70 peak_us=2458 warmup_peak_us=3698 min_active=24 max_active=24 not_retained=0 queue_rejects=0 load=0.605 rms=20990.39 checksum=10585
+BENCH GUARD_FMHAT machine=7 voices=8 active=7.00 fx=1 matrix=0 perf=1 guard=1 avg_us=2996.39 peak_us=3216 warmup_peak_us=4121 min_active=7 max_active=7 not_retained=1 queue_rejects=0 load=0.749 rms=14313.24 checksum=-20427
+BENCH GUARD_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=1 guard=1 avg_us=1713.19 peak_us=1744 warmup_peak_us=2304 min_active=8 max_active=8 not_retained=0 queue_rejects=0 load=0.428 rms=16338.83 checksum=12199
+BENCH GUARD_SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=0 perf=1 guard=1 avg_us=2338.56 peak_us=2373 warmup_peak_us=3063 min_active=16 max_active=16 not_retained=0 queue_rejects=0 load=0.585 rms=21288.71 checksum=-26284
+BENCH GUARD_CHIP machine=0 voices=24 active=13.00 fx=1 matrix=1 perf=1 guard=1 avg_us=2358.66 peak_us=2388 warmup_peak_us=3547 min_active=13 max_active=13 not_retained=11 queue_rejects=0 load=0.590 rms=18437.13 checksum=31173
+BENCH GUARD_FMHAT machine=7 voices=8 active=5.00 fx=1 matrix=1 perf=1 guard=1 avg_us=2697.02 peak_us=2970 warmup_peak_us=3605 min_active=5 max_active=5 not_retained=3 queue_rejects=0 load=0.674 rms=10149.53 checksum=-14047
+BENCH GUARD_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=1 perf=1 guard=1 avg_us=2082.75 peak_us=2130 warmup_peak_us=2681 min_active=8 max_active=8 not_retained=0 queue_rejects=0 load=0.521 rms=15386.54 checksum=-20557
+BENCH GUARD_SAMPLE machine=0 voices=16 active=12.00 fx=1 matrix=1 perf=1 guard=1 avg_us=2503.67 peak_us=2545 warmup_peak_us=3380 min_active=12 max_active=12 not_retained=4 queue_rejects=0 load=0.626 rms=19862.07 checksum=-10472
+BENCH GUARD_CHIP machine=0 voices=24 active=5.00 fx=1 matrix=2 perf=1 guard=1 avg_us=1662.93 peak_us=1812 warmup_peak_us=3690 min_active=5 max_active=5 not_retained=19 queue_rejects=0 load=0.416 rms=14471.44 checksum=-3504
+BENCH GUARD_FMHAT machine=7 voices=8 active=3.00 fx=1 matrix=2 perf=1 guard=1 avg_us=2352.39 peak_us=2668 warmup_peak_us=3361 min_active=3 max_active=3 not_retained=5 queue_rejects=0 load=0.588 rms=8566.01 checksum=-29824
+BENCH GUARD_SYNTH machine=0 voices=8 active=5.00 fx=1 matrix=2 perf=1 guard=1 avg_us=1901.68 peak_us=2090 warmup_peak_us=2686 min_active=5 max_active=5 not_retained=3 queue_rejects=0 load=0.475 rms=15102.55 checksum=8020
+BENCH GUARD_SAMPLE machine=0 voices=16 active=5.00 fx=1 matrix=2 perf=1 guard=1 avg_us=1751.80 peak_us=1893 warmup_peak_us=2983 min_active=5 max_active=5 not_retained=11 queue_rejects=0 load=0.438 rms=15254.17 checksum=30184
+BENCH DONE free_internal=161392 min_internal=161140

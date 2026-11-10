@@ -70,6 +70,7 @@ struct Voice {
   // Control-rate values, refreshed every Synth::kControl samples.
   float inc = 0;            // CHIP: phase increment; SAMPLE: frames per output sample
   float duty = 0.5f;        // pulse width incl. PWM
+  float ampNow = -1, ampStep = 0;
   float amp = 0;            // gain * instrument vol (the track's fader is in its strip)
   // What this voice asks of its track's strip (Synth::TrackStrip reads the newest voice), per
   // control update: locks, else the track's values, + LFO.
@@ -102,6 +103,8 @@ struct Voice {
   // Sample resolved at note-on. Position and step are 32.32 fixed point frames.
   const int16_t* smp = nullptr;
   uint32_t smpLen = 0, smpRate = 0;
+  bool smpLooped = false;
+  float hold = 0;  // last post-filter sample for cheap stolen tails
   int64_t pos = 0;
   int64_t step = 0;         // from inc, at control rate
   int8_t dir = 1;           // +1 forward, -1 backward
@@ -119,6 +122,7 @@ struct Voice {
   float lfoRnd[kLfos] = {};          // Random wave: value of the current cycle
   uint16_t lfoLockMask = 0;          // LFO fx locks of this note: bit = LFO x kLfoLocks + LfoLock
   LfoCfg lfoLock[kLfos];             // their values
+  float modLfo[kLfos] = {};  // raw waves for matrix, independent of legacy depth
   float lfoOut[kLfos] = {};          // last update's output (-1..1 x depth / 64): LFO -> LFO source
   uint8_t lfoWrap = 0;               // bit i: LFO i's phase wrapped since the last update (RTRG source)
   // fmMachine() cache: params for the key below, recomputed when a macro moves >= 0.5 or the
@@ -173,6 +177,12 @@ struct Voice {
   // LOFI instrument (machine above holds its LofiMachine): BYTE is heavy, APC light.
   bool lofi = false;
 };
+
+// A stolen engine may collapse into its held last output while a short envelope fades it.
+constexpr uint8_t kStealTailWave = 0xfe;
+inline bool isStealTail(const Voice& v) { return v.stolen && !v.sample && v.wave == kStealTailWave; }
+void collapseStealTail(Voice& v);
+void trimFullDspTails(Voice (&v)[kVoices], int budget);
 
 // Counts against kFmVoiceMax: a sounding heavy voice. A filter tail (env idle) costs only the
 // filter and a stolen voice is on its way out.
