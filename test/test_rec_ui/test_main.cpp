@@ -142,6 +142,12 @@ static void test_prefs() {
   // Nothing stored: the bytes the loader falls back to give the defaults.
   const RecPrefs d;
   TEST_ASSERT_TRUE(recPrefsFrom(0, 32, 5, static_cast<uint8_t>(kRecThreshOff), 0) == d);
+  TEST_ASSERT_FALSE(d.autoGain);
+  RecPrefs automatic = recPrefsFrom(0, 32, 5, static_cast<uint8_t>(kRecThreshOff), 0, 1);
+  TEST_ASSERT_TRUE(automatic.autoGain);
+  TEST_ASSERT_TRUE(automatic != d);
+  automatic.autoGain = false;
+  TEST_ASSERT_TRUE(automatic == d);
   TEST_ASSERT_EQUAL(RecSource::Mic, d.src);
   TEST_ASSERT_EQUAL(recGainDefault(RecSource::Mic), d.micGain);
   TEST_ASSERT_EQUAL(recGainDefault(RecSource::Line), d.lineGain);

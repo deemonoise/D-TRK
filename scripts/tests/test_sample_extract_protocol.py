@@ -62,7 +62,7 @@ class FakeLink:
 
 class SampleExtractProtocolTests(unittest.TestCase):
     def test_protocol_and_message_ids_append_without_renumbering(self):
-        self.assertEqual(28, DESK.PROTOCOL)
+        self.assertEqual(29, DESK.PROTOCOL)
         self.assertEqual(51, DESK.MSG['WtAudition'])
         self.assertEqual(52, DESK.MSG['SampleEdit'])
         self.assertEqual(53, DESK.MSG['SampleEditCancel'])

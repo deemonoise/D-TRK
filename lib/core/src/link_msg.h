@@ -6,7 +6,8 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 28;  // 28: instrument modulation matrix / signed depth locks; update both boards
+constexpr uint16_t kProtocol = 29;  // 29: MIC/LINE auto gain and applied-gain feedback; update both boards
+                                    // 28: instrument modulation matrix / signed depth locks
                                     // 27: offline stretch / tempo, 128 slices
                                     // 25: independent eight-parameter FM instrument layout
                                     // 8: SynthModel Tuning chunk; 9: xfade + Scenes chunk; 10: WtRender;
@@ -503,6 +504,7 @@ struct RecStartReq {
   uint8_t mon = 0;
   uint16_t number = 1;
   uint8_t toSd = 0;  // 1: REC -> SD (see above); left out by an older sender: 0
+  uint8_t autoGain = 0;  // MIC / LINE only; keep adapting before and during the take
 };
 struct RecStartRep {
   uint8_t result = 0;
@@ -513,6 +515,7 @@ struct RecSetReq {
   uint8_t mon = 0;
   uint8_t source = 0;  // mt::RecSource: the input the meter (and the codec) follows before RecStart;
                       // during a take only the take's source is accepted (else BadArg)
+  uint8_t autoGain = 0;
 };
 struct RecLevelRep {
   uint8_t result = 0, state = 0;
@@ -520,6 +523,7 @@ struct RecLevelRep {
   uint32_t clips = 0, frames = 0;
   uint8_t codec = 0;  // the codec answers: MIC / LINE available
   uint32_t left = 0;  // frames before the take ends on its own (time / 4 GB / card space); 0 without one
+  int8_t gain = 0;  // currently applied input gain, including automatic adjustments
 };
 struct RecStopRep {
   uint8_t result = 0, bank = 0;

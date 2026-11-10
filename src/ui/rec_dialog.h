@@ -20,16 +20,18 @@ class App;
 //   the card's file, no import ("REC -> SD"), up to 4 GB or the card's space. It records on in the
 //   background when the window closes (hide()) or the tab changes: App polls every frame (poll()), the
 //   status bar shows "REC mm:ss". The header shows the time left (the take's left, or the card's free
-//   space before the start).
+//   space before the start). A cold card is queried off the UI task: PREPARING blocks START, but
+//   the window opens/closes immediately. A failed query leaves LEFT unknown; RecStart rechecks space.
 // One take at a time: opening the other mode meanwhile toasts REC BUSY. The settings (Source, the
-// gains, Thresh, Mon) are device settings (prefs(), App keeps them in NVS), shared by both modes.
-// Rows: Source (MIC / LINE / RESAMPLE; only RESAMPLE without the shield), Gain (MIC +0..63 dB, LINE
-// 0..15, RESAMPLE none), Thresh (OFF, -60..-6 dB), Mon (OFF / ON), Cancel. Below them the big START /
-// STOP button (a silent tap for mic takes; the encoder's long press and an A tap do the same): START
+// gains, Auto gain, Thresh, Mon) are device settings (prefs(), App keeps them in NVS), shared by both modes.
+// Rows: Source (MIC / LINE / RESAMPLE; only RESAMPLE without the shield), Auto gain (MIC / LINE),
+// Gain (MIC +0..63 dB, LINE 0..15, RESAMPLE none; read-only applied gain in AUTO),
+// Thresh (OFF, -60..-6 dB), Mon (OFF / ON), Cancel. Below them the big START / STOP button
+// (a silent tap for mic takes; the encoder's long press and an A tap do the same): START
 // NOW, ARM with a Thresh, STOP. RESAMPLE with the transport stopped: START waits for Play ("ARMED: PLAY", blinking;
 // App calls onPlay() before it posts the start, so the first note is in the take); a tap again = READY.
 // The header shows the state (ARMED blinks), the meter (peak held 1 s, red at -1 dB and
-// up) and the time. While a take runs only Gain and Mon change. STOP (also B: stop(), and a take that
+// up) and the time. While a take runs Auto gain, manual Gain and Mon can change. STOP (also B: stop(), and a take that
 // ends itself) saves with "SAVING NN%", the window staying open in READY for the next take (B in READY
 // closes it);
 // Sample binds sample RECn to the instrument (slices cleared, root 60), toasts "REC1 12.4s, 3 CLIPS" and
@@ -75,7 +77,7 @@ class RecDialog {
   void draw(LGFX_Sprite& s, int y0);
 
  private:
-  enum Row : int { kSource, kGain, kThresh, kMon, kCancel, kRows };
+  enum Row : int { kSource, kAutoGain, kGain, kThresh, kMon, kCancel, kRows };
   static constexpr int kHeaderH = 68, kBtnMargin = 8;
   static constexpr uint32_t kPollMs = 100, kRetryMs = 500, kBlinkMs = 300, kAdoptMs = 3000;
 
@@ -88,7 +90,7 @@ class RecDialog {
   void drawBtn(LGFX_Sprite& s, int y0, uint32_t now);
   void start();
   void bind(const mt::link::RecStopRep& rep, bool cardSlow);
-  void send();  // RecSet with the rows' gain / mon / source
+  void send();  // RecSet with gain / auto gain / mon / source
   void level(const mt::link::RecLevelRep& rep, uint32_t now);
   void closeWindow();
   void ready();  // after a take (saved / dropped): READY in the window kept open; hidden: as closing
@@ -97,6 +99,7 @@ class RecDialog {
   void edited();  // a setting changed by hand: App saves it
   uint32_t leftFrames() const;  // before the take ends on its own; 0 = unknown
   int gain() const { return gains_[static_cast<int>(src_)]; }
+  bool autoGain() const { return autoGain_ && src_ != mt::RecSource::Resample; }
 
   App& app_;
   Param params_[kRows];
@@ -109,8 +112,11 @@ class RecDialog {
   int gains_[3] = {mt::recGainDefault(mt::RecSource::Mic), mt::recGainDefault(mt::RecSource::Line), 0};
   int8_t thresh_ = mt::kRecThreshOff;
   bool mon_ = false;
+  bool autoGain_ = false;
+  int appliedGain_ = 0;  // feedback only; never overwrite the saved manual gains
   bool codec_ = true;     // the board's last word: MIC / LINE available
   bool pendingSet_ = false;
+  bool preparing_ = false; // free-space query runs off the UI task; START waits, CLOSE stays live
   bool taking_ = false;   // RecStart went through, no STOP / CANCEL yet
   bool waitPlay_ = false;  // START with RESAMPLE while stopped: the take starts with Play (onPlay)
   bool warned_ = false;   // CARD TOO SLOW / WRITE FAIL toasted for this take

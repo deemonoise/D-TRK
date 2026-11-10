@@ -1344,7 +1344,7 @@ Choose a free **Name**, optionally turn **Normalize** to **−1 dBFS**, then pre
 
 The operation stops transport and runs offline, with progress. A long encoder press or Play cancels processing. REC must be stopped first. On success the new sample is added to the project and assigned to this instrument; Start/End become the full new sample, and loop/slices are cleared. The original sample and other instruments are retained. An occupied name, error, cancellation or changed source leaves the project and binding untouched. Save the project normally to persist its new sample entry and asset copy.
 
-Both firmwares must support link protocol **28**. Existing projects and presets still load; new files retain up to 128 slices.
+Both firmwares must support link protocol **29**. Existing projects and presets still load; new files retain up to 128 slices.
 
 <a id="sample-stretch"></a>
 
@@ -1365,16 +1365,19 @@ SAMPLE instrument → SMPL page → the **SAMPLE** menu → **Record…** opens 
 | Row | Values | Meaning |
 |---|---|---|
 | Source | MIC, LINE, RESAMPLE | MIC — the Audio Shield microphone, LINE — its line input, RESAMPLE — the tracker's own output (INT tracks, with PERF and knobs, as you hear it). Without the shield only RESAMPLE: `RESAMPLE (NO SHIELD)`. |
-| Gain | MIC 0..+63 dB (default +32), LINE 0..15 (default 5), RESAMPLE — | Input gain. Can be changed during the take. |
+| Auto gain | OFF / ON (default OFF), RESAMPLE — | Continuously adjusts MIC / LINE input gain in preview and during recording, including background REC -> SD. |
+| Gain | MIC 0..+63 dB (default +32), LINE 0..15 (default 5), RESAMPLE — | Manual input gain. With Auto gain ON, shows the current gain with AUTO and cannot be edited. Switching OFF restores the saved manual gain. |
 | Thresh | OFF, −60..−6 dB (step 2) | OFF (default) — recording starts at once. A level — the button **ARM**s the take (`ARMED` blinks) and it starts when the input crosses the threshold; the 20 ms before it are kept, so the attack is not cut. |
 | Mon | OFF / ON | Hear the input mixed over the track (a few ms of delay). OFF by default. With MIC and loud headphones or a speaker MON ON can howl (feedback) — keep the level low. Can be changed during the take. |
 | Cancel | DROP THE TAKE, CANCEL ARM, CANCEL WAIT, CLOSE | During a take (REC, `ARMED`, `STARTING`) — **DROP THE TAKE** / **CANCEL ARM**: the take is dropped (nothing in the project, the file is deleted) and the window stays open in READY for the next try. Waiting for Play (`ARMED: PLAY`) — **CANCEL WAIT**: back to READY. In READY — **CLOSE** closes the window. |
 
+Auto gain checks the louder input channel every 50 ms (MIC: mono, LINE: linked stereo). Peaks above −6 dBFS reduce gain quickly, more strongly near clipping; a full second of audible signal below −12 dBFS raises it by one step. Below −48 dBFS gain stays put. It uses the codec’s input gain range and cannot undo clipping already captured or compensate for an input that overloads even at minimum gain. Listen to the result: automatic adjustment changes the recording’s dynamics. RESAMPLE is unaffected.
+
 Below the rows: the big **START / STOP** button — a silent tap for mic takes, no encoder clicks on the recording: `● START` (`● ARM` with a Thresh) as a red outline, `ARMED` blinking, `■ STOP 00:12` filled red with the time (saves the take), grey `STARTING` / `SAVING…`. An encoder long press or an <kbd>A</kbd> tap (A pressed and released with no turn) does the same; in the window A has no other meaning. **RESAMPLE with the transport stopped:** START waits for Play — `ARMED: PLAY` blinks on the button and in the header; then Play (also <kbd>Shift</kbd>+Play, the song start) starts the take first and the transport right after, so the first note is in it. A tap (or a long press) while waiting goes back to READY; if the take cannot start, a toast tells why and the transport plays anyway. Playing already, START records at once; MIC and LINE always start at once. Above the rows: the meter (peak hold 1 s, red at −1 dB and above), the clip counter, the state (READY, ARMED, REC, SAVING) and the time against the **5:00** limit. At 5 minutes the take stops by itself and is saved.
 
-- **STOP** is also: encoder long press, <kbd>B</kbd>, or leaving the INST tab (that also closes the window). After a STOP (or a take that stopped by itself) the window stays open in READY for the next take; in READY <kbd>B</kbd> closes it. During a take only Gain and Mon change; Source and Thresh are locked.
+- **STOP** is also: encoder long press, <kbd>B</kbd>, or leaving the INST tab (that also closes the window). After a STOP (or a take that stopped by itself) the window stays open in READY for the next take; in READY <kbd>B</kbd> closes it. During a take Auto gain, manual Gain and Mon can change; Source and Thresh are locked.
 - **Save:** `SAVING` with progress, then a toast like `REC1 12.4s, 3 CLIPS`. The take is written to the card as `/samples/rec/RECn.wav` (44.1 kHz 16-bit; stereo for LINE and RESAMPLE, mono for MIC) and imported into the project as sample **RECn** in mono, (L+R)/2 without normalization; the instrument gets it in its Sample row (slices cleared) and the editor shows it. The number is the next free one.
-- Source, Gain (MIC and LINE each), Thresh and Mon are device settings: remembered after power-off and shared with [REC -> SD](#recsd).
+- Source, Auto gain, manual Gain (MIC and LINE each), Thresh and Mon are device settings: remembered after power-off and shared with [REC -> SD](#recsd).
 - While a REC -> SD take records, **Record…** answers `REC BUSY`.
 - Both boards must run firmware with link protocol 18 (flash the WT32 and the Teensy together).
 
@@ -1393,6 +1396,8 @@ Below the rows: the big **START / STOP** button — a silent tap for mic takes, 
 #### REC -> SD: recording straight onto the card (from MIX)
 
 For field recordings and long takes: MIX → the **REC** button (or an encoder long press on MIX) opens the same window titled `REC -> SD`: a tap on the big **START** button (or an encoder long press) starts (RESAMPLE with the transport stopped: waits for Play, as above). The rows, the button, the meter and the settings are the same as above.
+
+The window appears immediately. Preparing the card on the first opening after power-on can take several seconds: while **PREPARING** is shown, START is disabled, but you can change settings or close the window with B or Cancel → CLOSE. START / ARM appears when preparation finishes. If free space could not be read, LEFT shows `--`; starting a take still checks the card and available space.
 
 - **No import.** The take is only the file `/samples/rec/RECn.wav` on the synth board's card (n is the first free number on the card): no project sample, no instrument, no store copy. Import it later via FILE → SAMPLES → **Import WAV…** (the `rec/` folder).
 - **Length:** no 5-minute limit. The take stops by itself at the WAV's 4 GB (about 6.7 h stereo, 13.5 h for mono MIC) or when the card's free space is almost gone (8 MB is kept). The header shows the time and `LEFT 1:23:45` — the time left; before the start it is counted from the card's free space. Under a second free: `CARD FULL`, no take.
@@ -1914,7 +1919,7 @@ Example: Route 1 LFO 1 → CUTOFF at +24; Route 2 LFO 1 → PAN at −16. Both s
 
 **Automation:** M01–M08 lock route depth for the step's notes, or sounding notes on a note-less step. Range −64…+63, insertion default 0. Motion REC, MIDI Learn on the depth row, Automation view, signed ramps and lock bypass are supported. Source, target and Depth via remain unchanged by these commands. Existing base parameter, p-lock and scene rules remain; the matrix adds modulation in the same units as LFOs. Sends, insert and pan retain the newest sounding voice's track-wide behavior.
 
-Projects store MODM (omitted when empty); presets use v11. Older files load with an empty matrix. Older firmware skips MODM and drops its routes when saving; it cannot read v11 presets. Update **both boards** for link protocol 28.
+Projects store MODM (omitted when empty); presets use v11. Older files load with an empty matrix. Older firmware skips MODM and drops its routes when saving; it cannot read v11 presets. Update **both boards** for link protocol 29.
 
 <a id="kit"></a>
 

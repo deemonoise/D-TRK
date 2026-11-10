@@ -36,6 +36,11 @@ bool ringOk = false;
 bool memoryLost = false;  // this take lost its unread PSRAM; never drain or import it afterwards
 Phase phase = Phase::None;
 bool watching = false;  // the window's meter (out->setRec) runs
+mt::RecAutoGain gainControl;
+mt::RecSource gainSource = mt::RecSource::Resample;
+bool automaticGain = false;
+int manualGain = 0;
+uint32_t lastGainMs = 0;
 bool keepOnly = false;  // REC -> SD (RecStartReq::toSd): the take is the file, never the store
 bool spaceBound = false;  // keepOnly: the card's free space, not the 4 GB, sets the take's maximum
 uint32_t maxFrames = 0;   // the take's maximum (RecLevelRep::left)
@@ -67,15 +72,33 @@ bool sink(const void* d, uint32_t n, void* ctx) { return static_cast<FsFile*>(ct
 
 bool inputSource(mt::RecSource s) { return s != mt::RecSource::Resample; }
 
-// The codec on the source's input at gain (MIC dB / LINE level); RESAMPLE leaves it as it is.
-void setInput(mt::RecSource s, int gain) {
-  if (s == mt::RecSource::Mic) {
-    codec::input(codec::Input::Mic);
-    codec::micGain(gain);
-  } else if (s == mt::RecSource::Line) {
-    codec::input(codec::Input::Line);
-    codec::lineLevel(gain);
-  }
+// I2C writes stay in loop(), outside the audio interrupt and interrupt guards.
+void applyGain(mt::RecSource s, int gain) {
+  if (s == mt::RecSource::Mic) codec::micGain(gain);
+  else if (s == mt::RecSource::Line) codec::lineLevel(gain);
+}
+
+void configureGain(mt::RecSource s, int gain, bool automatic) {
+  gain = mt::recGainClamp(s, gain);
+  automatic = automatic && inputSource(s);
+  // RecSet (MON), a retry, and RecStart must keep the gain found during preview.
+  if (watching && s == gainSource && gain == manualGain && automatic == automaticGain) return;
+  gainSource = s;
+  manualGain = gain;
+  automaticGain = automatic;
+  gainControl.reset(s, gain);
+  if (inputSource(s)) codec::input(s == mt::RecSource::Mic ? codec::Input::Mic : codec::Input::Line);
+  applyGain(s, gain);
+  cap.meter().takeGainPeak();  // discard the previous source / gain's observation
+  lastGainMs = millis();
+}
+
+void updateGain(uint32_t now) {
+  if (!watching || !automaticGain || now - lastLevelMs > kKeepaliveMs) return;
+  if (phase != Phase::None && (phase != Phase::Take || cap.state() == mt::RecState::Idle)) return;
+  if (now - lastGainMs < mt::RecAutoGain::kWindowMs) return;
+  lastGainMs = now;  // never catch up missed windows after a slow card write
+  if (gainControl.update(cap.meter().takeGainPeak())) applyGain(gainSource, gainControl.gain());
 }
 
 // The audio ISR (SynthStream::update) reads cap's source, monitor_ and rec_ together: they change
@@ -132,6 +155,7 @@ int levelRep(RecResult r, uint8_t* o) {
   takeMeter(m.peak, m.clips);
   m.frames = phase != Phase::None ? cap.frames() : 0;
   m.codec = codec::present() ? 1 : 0;
+  m.gain = static_cast<int8_t>(gainControl.gain());
   if (phase == Phase::Take) m.left = maxFrames > m.frames ? maxFrames - m.frames : 0;
   return put(m, o);
 }
@@ -228,7 +252,7 @@ bool freeBytes(uint64_t& out) {
 
 RecResult start(Reader& r, uint16_t& n) {
   RecStartReq q;
-  if (!decode(r, q) || q.source > static_cast<uint8_t>(mt::RecSource::Resample) || q.thresh > 0)
+  if (!decode(r, q) || q.source > static_cast<uint8_t>(mt::RecSource::Resample) || q.thresh > 0 || q.autoGain > 1)
     return RecResult::BadArg;
   if (phase != Phase::None) return RecResult::Busy;
   const mt::RecSource src = static_cast<mt::RecSource>(q.source);
@@ -270,7 +294,7 @@ RecResult start(Reader& r, uint16_t& n) {
   file.preAllocate(mt::kWavHeaderBytes + static_cast<uint64_t>(pre) * ch * 2);
   number = k;
   n = static_cast<uint16_t>(k);
-  if (inputSource(src)) setInput(src, q.gain);
+  configureGain(src, q.gain, q.autoGain != 0);
   writer.begin(ch, sink, &file);
   takePeak = 0;
   takeClips = 0;
@@ -295,14 +319,15 @@ RecResult start(Reader& r, uint16_t& n) {
 
 int set(Reader& r, uint8_t* o) {
   RecSetReq q;
-  if (!decode(r, q) || q.source > static_cast<uint8_t>(mt::RecSource::Resample)) return levelRep(RecResult::BadArg, o);
+  if (!decode(r, q) || q.source > static_cast<uint8_t>(mt::RecSource::Resample) || q.autoGain > 1)
+    return levelRep(RecResult::BadArg, o);
   const mt::RecSource src = static_cast<mt::RecSource>(q.source);
   if (phase != Phase::None && src != cap.source()) return levelRep(RecResult::BadArg, o);
   if (inputSource(src) && !codec::present()) {
     unwatch();
     return levelRep(RecResult::NoCodec, o);
   }
-  if (inputSource(src)) setInput(src, q.gain);
+  configureGain(src, q.gain, q.autoGain != 0);
   watch(src, q.mon);
   return levelRep(RecResult::Ok, o);
 }
@@ -396,6 +421,7 @@ bool busy() { return phase != Phase::None; }
 
 void step() {
   const uint32_t now = millis();
+  updateGain(now);
   if (watching && now - lastMemLog >= kMemLogMs) {  // temporary: AudioMemory sizing with the input on
     lastMemLog = now;
     link::log("rec: audio blocks max %u of 16", static_cast<unsigned>(AudioMemoryUsageMax()));

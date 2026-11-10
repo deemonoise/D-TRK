@@ -58,10 +58,11 @@ struct RecRect {
 RecRect recBtnRect(int screenW, int rowsBottom, int areaBottom, int margin);
 // What the button shows: READY as START (ARM with a Thresh), ARMED (the threshold, blinking), WaitPlay
 // (RESAMPLE started with the transport stopped: the take starts with Play, blinking), STOP while
-// recording, STARTING (a start not yet answered) and SAVING greyed, not tappable.
-enum class RecBtn : uint8_t { Start, Arm, Armed, WaitPlay, Stop, Starting, Saving };
+// recording, PREPARING (card query), STARTING (a start not yet answered) and SAVING greyed,
+// not tappable. PREPARING can be closed without cancelling a take.
+enum class RecBtn : uint8_t { Start, Arm, Armed, WaitPlay, Stop, Starting, Saving, Preparing };
 RecBtn recBtnState(bool taking, bool starting, RecState st, bool thresh, bool waitPlay);
-inline bool recBtnLive(RecBtn b) { return b != RecBtn::Starting && b != RecBtn::Saving; }
+inline bool recBtnLive(RecBtn b) { return b != RecBtn::Starting && b != RecBtn::Saving && b != RecBtn::Preparing; }
 inline bool recBtnBlinks(RecBtn b) { return b == RecBtn::Armed || b == RecBtn::WaitPlay; }
 // A tap on the button (or the encoder's long press) by what it shows: Start (RecStart now), WaitPlay
 // (RESAMPLE with the transport stopped: wait for Play, so its first note is in the take), Unwait (back
@@ -88,13 +89,16 @@ struct RecPrefs {
   int8_t micGain = 32, lineGain = 5;  // recGainDefault
   int8_t thresh = kRecThreshOff;
   bool mon = false;
+  bool autoGain = false;  // MIC / LINE; manual gains remain saved independently
   bool operator==(const RecPrefs& o) const {
-    return src == o.src && micGain == o.micGain && lineGain == o.lineGain && thresh == o.thresh && mon == o.mon;
+    return src == o.src && micGain == o.micGain && lineGain == o.lineGain && thresh == o.thresh && mon == o.mon &&
+           autoGain == o.autoGain;
   }
   bool operator!=(const RecPrefs& o) const { return !(*this == o); }
 };
 // The stored bytes into settings: out of range = the default (a source), clamped (gains), snapped to
 // the THRESH steps; thresh is the int8_t as a byte.
-RecPrefs recPrefsFrom(uint8_t src, uint8_t micGain, uint8_t lineGain, uint8_t thresh, uint8_t mon);
+RecPrefs recPrefsFrom(uint8_t src, uint8_t micGain, uint8_t lineGain, uint8_t thresh, uint8_t mon,
+                      uint8_t autoGain = 0);
 
 }  // namespace mt

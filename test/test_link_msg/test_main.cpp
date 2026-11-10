@@ -240,7 +240,7 @@ void test_debug() {
 }
 
 void test_protocol_and_debug_id() {
-  TEST_ASSERT_EQUAL(28, kProtocol);  // 26: raw sample extraction, unchanged model layout.
+  TEST_ASSERT_EQUAL(29, kProtocol);  // 29: MIC/LINE auto gain; unchanged model layout.
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
                                      // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,
@@ -810,6 +810,7 @@ void test_rec_msgs_roundtrip() {
   a.thresh = -40;
   a.mon = 1;
   a.number = 4321;
+  a.autoGain = 1;
   int n = put(a);
   RecStartReq a2;
   Reader r(buf, n);
@@ -820,19 +821,26 @@ void test_rec_msgs_roundtrip() {
   TEST_ASSERT_EQUAL(1, a2.mon);
   TEST_ASSERT_EQUAL(4321, a2.number);
   TEST_ASSERT_EQUAL(0, a2.toSd);
-  checkTruncated<RecStartReq>(n - 1);  // toSd may be left out (an older ESP): 0
+  TEST_ASSERT_EQUAL(1, a2.autoGain);
+  checkTruncated<RecStartReq>(n - 2);  // optional toSd and autoGain
   a.toSd = 1;
   n = put(a);
-  TEST_ASSERT_EQUAL(7, n);
+  TEST_ASSERT_EQUAL(8, n);
   Reader ra(buf, n);
   TEST_ASSERT_TRUE(decode(ra, a2));
   TEST_ASSERT_EQUAL(1, a2.toSd);
   TEST_ASSERT_EQUAL(4321, a2.number);
-  Reader ra6(buf, n - 1);
+  Reader ra7(buf, n - 1);
+  TEST_ASSERT_TRUE(decode(ra7, a2));
+  TEST_ASSERT_EQUAL(1, a2.toSd);
+  TEST_ASSERT_EQUAL(0, a2.autoGain);
+  Reader ra6(buf, n - 2);
   RecStartReq a3;
   a3.toSd = 1;
+  a3.autoGain = 1;
   TEST_ASSERT_TRUE(decode(ra6, a3));
   TEST_ASSERT_EQUAL(0, a3.toSd);
+  TEST_ASSERT_EQUAL(0, a3.autoGain);
 
   RecStartRep b;
   b.result = static_cast<uint8_t>(RecResult::NoPsram);
@@ -849,6 +857,7 @@ void test_rec_msgs_roundtrip() {
   c.gain = 47;
   c.mon = 1;
   c.source = 2;
+  c.autoGain = 1;
   n = put(c);
   RecSetReq c2;
   Reader rc(buf, n);
@@ -856,7 +865,11 @@ void test_rec_msgs_roundtrip() {
   TEST_ASSERT_EQUAL(47, c2.gain);
   TEST_ASSERT_EQUAL(1, c2.mon);
   TEST_ASSERT_EQUAL(2, c2.source);
-  checkTruncated<RecSetReq>(n);
+  TEST_ASSERT_EQUAL(1, c2.autoGain);
+  checkTruncated<RecSetReq>(n - 1);
+  Reader rcOld(buf, n - 1);
+  TEST_ASSERT_TRUE(decode(rcOld, c2));
+  TEST_ASSERT_EQUAL(0, c2.autoGain);
 
   RecLevelRep d;
   d.result = static_cast<uint8_t>(RecResult::CardSlow);
@@ -866,6 +879,7 @@ void test_rec_msgs_roundtrip() {
   d.frames = 13230000;
   d.codec = 1;
   d.left = 0xF0E0D0C0;
+  d.gain = 42;
   n = put(d);
   RecLevelRep d2;
   Reader rd(buf, n);
@@ -877,17 +891,24 @@ void test_rec_msgs_roundtrip() {
   TEST_ASSERT_EQUAL(13230000, d2.frames);
   TEST_ASSERT_EQUAL(1, d2.codec);
   TEST_ASSERT_EQUAL_HEX32(0xF0E0D0C0, d2.left);
-  checkTruncated<RecLevelRep>(n - 4);
-  for (int k = n - 3; k < n; ++k) {  // a cut field: no
+  TEST_ASSERT_EQUAL(42, d2.gain);
+  Reader rdOld(buf, n - 1);
+  TEST_ASSERT_TRUE(decode(rdOld, d2));
+  TEST_ASSERT_EQUAL_HEX32(0xF0E0D0C0, d2.left);
+  TEST_ASSERT_EQUAL(0, d2.gain);
+  checkTruncated<RecLevelRep>(n - 5);
+  for (int k = n - 4; k < n - 1; ++k) {  // a cut field: no
     Reader rk(buf, k);
     RecLevelRep dk;
     TEST_ASSERT_FALSE(decode(rk, dk));
   }
-  Reader rd0(buf, n - 4);  // no left at all: 0
+  Reader rd0(buf, n - 5);  // no left at all: 0
   RecLevelRep d3;
   d3.left = 5;
+  d3.gain = 42;
   TEST_ASSERT_TRUE(decode(rd0, d3));
   TEST_ASSERT_EQUAL_UINT32(0, d3.left);
+  TEST_ASSERT_EQUAL(0, d3.gain);
 
   RecStopRep e;
   e.result = static_cast<uint8_t>(RecResult::Bank);

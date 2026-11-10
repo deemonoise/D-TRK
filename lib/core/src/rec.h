@@ -55,6 +55,11 @@ struct RecMeter {
   std::atomic<uint32_t> clips{0};  // samples at full scale (|s| >= 32767)
   void feed(const int16_t* s, uint32_t n) MT_HOT;
   void take(uint16_t& p, uint32_t& c);  // and reset
+  // Independent control window: AGC must never drain the UI meter or take's clip count.
+  uint16_t takeGainPeak() { return gainPeak_.exchange(0); }
+
+ private:
+  std::atomic<uint16_t> gainPeak_{0};
 };
 
 // Threshold level for -127..0 dB: 32767 * 10^(db / 20); kRecThreshOff -> 0.
@@ -62,6 +67,23 @@ int16_t recThreshLevel(int8_t db);
 // GAIN range of a source: MIC 0..63 dB (preamp steps + ADC gain, codec side), LINE 0..15 (line-in
 // level), RESAMPLE none (0).
 int recGainClamp(RecSource src, int gain);
+
+// Input gain controller, called once per 50 ms window in loop(), never in the audio ISR.
+// Holds peaks between -12 and -6 dBFS; fast reduction above -6 (stronger above -1),
+// one gain step up after a full second below -12. Below -48 dBFS: hold, reset release.
+// Both LINE channels share the peak and gain. RESAMPLE is always untouched.
+class RecAutoGain {
+ public:
+  static constexpr uint32_t kWindowMs = 50;
+  void reset(RecSource src, int gain) MT_CONTROL;
+  bool update(uint16_t peak) MT_CONTROL;  // true: write gain() to the codec
+  int gain() const { return gain_; }
+
+ private:
+  RecSource src_ = RecSource::Resample;
+  int gain_ = 0;
+  uint16_t quietMs_ = 0;
+};
 
 // The interrupt side of a take: arm() starts it (Armed until a sample reaches the threshold, keeping
 // the last kRecPreRollFrames in the ring; THRESH OFF: Rec at once), feed() takes every input block

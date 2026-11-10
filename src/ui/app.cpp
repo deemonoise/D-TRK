@@ -14,6 +14,7 @@
 #include "record.h"
 #include "roll.h"
 #include "storage/settings.h"
+#include "storage/space_query.h"
 #include "storage/storage.h"
 #include "hw/sdcard.h"
 #include "link_msg.h"
@@ -76,13 +77,14 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   savedPracticeBits_ = mt::practiceBits(practicePrefs_);
   savedClickLevel_ = practicePrefs_.clickLevel;
   engine::post(engine::Cmd::PracticeSettings, savedPracticeBits_, savedClickLevel_);
-  // The REC window's Source, MIC / LINE gains, Thresh and Mon (both of its modes).
+  // The REC window's Source, manual MIC / LINE gains, Auto gain, Thresh and Mon (both modes).
   const mt::RecPrefs rd;
   savedRec_ = mt::recPrefsFrom(storage::loadSetting("recsrc", static_cast<uint8_t>(rd.src)),
                                storage::loadSetting("recmic", static_cast<uint8_t>(rd.micGain)),
                                storage::loadSetting("recline", static_cast<uint8_t>(rd.lineGain)),
                                storage::loadSetting("recthr", static_cast<uint8_t>(rd.thresh)),
-                               storage::loadSetting("recmon", rd.mon ? 1 : 0));
+                               storage::loadSetting("recmon", rd.mon ? 1 : 0),
+                               storage::loadSetting("recauto", rd.autoGain ? 1 : 0));
   rec_.setPrefs(savedRec_);
   proj_.loadDicePrefs();  // the DICE window's Genre / Style / Variety / Length / Scope / Song
   // The remembered BLE MIDI devices and their pad banks; hw::ble gets the active ones (main starts
@@ -1185,6 +1187,7 @@ void App::saveSettingsIdle(uint32_t now) {
     if (rp.lineGain != savedRec_.lineGain) storage::saveSetting("recline", static_cast<uint8_t>(rp.lineGain));
     if (rp.thresh != savedRec_.thresh) storage::saveSetting("recthr", static_cast<uint8_t>(rp.thresh));
     if (rp.mon != savedRec_.mon) storage::saveSetting("recmon", rp.mon ? 1 : 0);
+    if (rp.autoGain != savedRec_.autoGain) storage::saveSetting("recauto", rp.autoGain ? 1 : 0);
     savedRec_ = rp;
   }
   if (theme_ == savedTheme_ && autosaveMin_ == savedAutosaveMin_ && phones_ == savedPhones_ &&
@@ -1215,7 +1218,8 @@ void App::autosaveIdle(uint32_t now) {
     return;
   }
   if (static_cast<int32_t>(now - autosaveDue_) < 0) return;
-  if (status_.playing || status_.paused || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000) return;
+  if (status_.playing || status_.paused || busy_ || menu_.isOpen() || now - lastInputMs_ < 3000 ||
+      storage::spaceQuery().state == storage::SpaceState::Pending) return;
   showBusy("AUTOSAVE...");
   const storage::Result r = storage::autosave(*p_);
   autosavedSeq_ = editSeq_;

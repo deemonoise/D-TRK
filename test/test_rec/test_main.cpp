@@ -560,8 +560,87 @@ static void test_capture_memory_loss_discards_armed_preroll() {
   TEST_ASSERT_EQUAL(RecState::Idle, c.state());
 }
 
+static void test_auto_gain_attack_and_bounds() {
+  RecAutoGain g;
+  g.reset(RecSource::Mic, 32);
+  TEST_ASSERT_TRUE(g.update(32767));
+  TEST_ASSERT_EQUAL_INT(26, g.gain());
+  TEST_ASSERT_TRUE(g.update(20000));
+  TEST_ASSERT_EQUAL_INT(24, g.gain());
+  for (int i = 0; i < 50; ++i) g.update(32767);
+  TEST_ASSERT_EQUAL_INT(0, g.gain());
+  TEST_ASSERT_FALSE(g.update(32767));
+  g.reset(RecSource::Line, 5);
+  TEST_ASSERT_TRUE(g.update(32767));
+  TEST_ASSERT_EQUAL_INT(1, g.gain());
+  TEST_ASSERT_TRUE(g.update(20000));
+  TEST_ASSERT_EQUAL_INT(0, g.gain());
+}
+
+static void test_auto_gain_release_silence_and_headroom() {
+  RecAutoGain g;
+  g.reset(RecSource::Mic, 32);
+  for (int i = 0; i < 19; ++i) TEST_ASSERT_FALSE(g.update(4000));
+  TEST_ASSERT_TRUE(g.update(4000));  // one second of quiet, audible input
+  TEST_ASSERT_EQUAL_INT(33, g.gain());
+  for (int i = 0; i < 500; ++i) {
+    TEST_ASSERT_FALSE(g.update(100));  // noise below -48 dBFS
+    TEST_ASSERT_FALSE(g.update(0));
+    TEST_ASSERT_FALSE(g.update(12000));  // target band: leave dynamics alone
+  }
+  TEST_ASSERT_EQUAL_INT(33, g.gain());
+  for (int i = 0; i < 19; ++i) g.update(4000);
+  g.update(32767);  // a loud transient restarts the release hold
+  for (int i = 0; i < 19; ++i) TEST_ASSERT_FALSE(g.update(4000));
+  TEST_ASSERT_TRUE(g.update(4000));
+}
+
+static void test_auto_gain_limits_and_resample() {
+  RecAutoGain g;
+  for (const auto src : {RecSource::Mic, RecSource::Line}) {
+    const int hi = recGainClamp(src, 100);
+    g.reset(src, hi - 1);
+    for (int i = 0; i < 100; ++i) g.update(4000);
+    TEST_ASSERT_EQUAL_INT(hi, g.gain());
+    g.reset(src, -100);
+    TEST_ASSERT_EQUAL_INT(0, g.gain());
+  }
+  g.reset(RecSource::Resample, 63);
+  for (int i = 0; i < 100; ++i) {
+    TEST_ASSERT_FALSE(g.update(4000));
+    TEST_ASSERT_FALSE(g.update(32767));
+  }
+  TEST_ASSERT_EQUAL_INT(0, g.gain());
+}
+
+static void test_auto_gain_meter_independent_stereo_and_mic() {
+  RecCapture c;
+  const int16_t l[] = {1000}, r[] = {-32768};
+  c.watch(RecSource::Line);
+  c.feed(l, r, 1);
+  TEST_ASSERT_EQUAL_UINT16(32767, c.meter().takeGainPeak());
+  c.feed(l, l, 1);
+  TEST_ASSERT_EQUAL_UINT16(1000, c.meter().takeGainPeak());
+  uint16_t peak;
+  uint32_t clips;
+  c.meter().take(peak, clips);
+  TEST_ASSERT_EQUAL_UINT16(32767, peak);
+  TEST_ASSERT_EQUAL_UINT32(1, clips);
+  c.feed(l, r, 1);
+  c.meter().take(peak, clips);
+  TEST_ASSERT_EQUAL_UINT16(32767, c.meter().takeGainPeak());
+  TEST_ASSERT_EQUAL_UINT16(0, c.meter().takeGainPeak());
+  c.watch(RecSource::Mic);
+  c.feed(l, r, 1);
+  TEST_ASSERT_EQUAL_UINT16(1000, c.meter().takeGainPeak());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_auto_gain_attack_and_bounds);
+  RUN_TEST(test_auto_gain_release_silence_and_headroom);
+  RUN_TEST(test_auto_gain_limits_and_resample);
+  RUN_TEST(test_auto_gain_meter_independent_stereo_and_mic);
   RUN_TEST(test_ring_push_pop);
   RUN_TEST(test_ring_wrap);
   RUN_TEST(test_ring_overflow);

@@ -138,6 +138,7 @@ RecTap recTap(RecBtn b, RecSource src, bool playing) {
 
 RecCancel recCancelAct(RecBtn b) {
   switch (b) {
+    case RecBtn::Preparing:
     case RecBtn::Start:
     case RecBtn::Arm: return RecCancel::Close;
     case RecBtn::WaitPlay: return RecCancel::Unwait;
@@ -150,6 +151,7 @@ RecCancel recCancelAct(RecBtn b) {
 
 const char* recCancelText(RecBtn b) {
   switch (b) {
+    case RecBtn::Preparing:
     case RecBtn::Start:
     case RecBtn::Arm: return "CLOSE";
     case RecBtn::WaitPlay: return "CANCEL WAIT";
@@ -161,6 +163,7 @@ const char* recCancelText(RecBtn b) {
 
 void recBtnText(RecBtn b, uint32_t frames, char* out, int n) {
   switch (b) {
+    case RecBtn::Preparing: snprintf(out, n, "PREPARING"); break;
     case RecBtn::Start: snprintf(out, n, "START"); break;
     case RecBtn::Arm: snprintf(out, n, "ARM"); break;
     case RecBtn::Armed: snprintf(out, n, "ARMED"); break;
@@ -182,7 +185,7 @@ int recBtnScale(int cols, int charW, int charH, int w, int h, int maxScale) {
   return s < 1 ? 1 : s;
 }
 
-RecPrefs recPrefsFrom(uint8_t src, uint8_t micGain, uint8_t lineGain, uint8_t thresh, uint8_t mon) {
+RecPrefs recPrefsFrom(uint8_t src, uint8_t micGain, uint8_t lineGain, uint8_t thresh, uint8_t mon, uint8_t autoGain) {
   RecPrefs p;
   if (src <= static_cast<uint8_t>(RecSource::Resample)) p.src = static_cast<RecSource>(src);
   p.micGain = static_cast<int8_t>(recGainClamp(RecSource::Mic, micGain));
@@ -190,6 +193,7 @@ RecPrefs recPrefsFrom(uint8_t src, uint8_t micGain, uint8_t lineGain, uint8_t th
   const int8_t th = static_cast<int8_t>(thresh);
   p.thresh = th > 0 ? kRecThreshOff : recThreshStep(th, 0);  // OFF stays OFF
   p.mon = mon != 0;
+  p.autoGain = autoGain != 0;
   return p;
 }
 

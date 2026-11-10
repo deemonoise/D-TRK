@@ -6,7 +6,7 @@
 #include "engine/engine.h"
 #include "link/rec_client.h"
 #include "rec.h"
-#include "storage/remote_fs.h"
+#include "storage/space_query.h"
 
 namespace ui {
 
@@ -32,19 +32,35 @@ RecDialog::RecDialog(App& app) : app_(app) {
                         const RecSource s = mt::recSourceStep(src_, d, codec_);
                         if (s == src_) return;
                         src_ = want_ = s;
+                        appliedGain_ = gain();
                         waitPlay_ = false;  // only RESAMPLE waits for Play
                         hold_.clear();
                         pendingSet_ = true;
                         edited();
                       },
                       [this] { return taking_ || !codec_; }};
+  params_[kAutoGain] = {"Auto gain",
+                        [this](char* o, int n) {
+                          snprintf(o, n, "%s", src_ == RecSource::Resample ? "-" : autoGain_ ? "ON" : "OFF");
+                        },
+                        [this](int d) {
+                          if (src_ == RecSource::Resample || autoGain_ == (d > 0)) return;
+                          autoGain_ = d > 0;
+                          appliedGain_ = gain();
+                          pendingSet_ = true;
+                          edited();
+                        },
+                        [this] { return src_ == RecSource::Resample; }};
   params_[kGain] = {"Gain",
                     [this](char* o, int n) {
-                      if (src_ == RecSource::Mic) snprintf(o, n, "+%d dB", gain());
-                      else if (src_ == RecSource::Line) snprintf(o, n, "%d", gain());
+                      const int g = autoGain() ? appliedGain_ : gain();
+                      const char* suffix = autoGain() ? "  AUTO" : "";
+                      if (src_ == RecSource::Mic) snprintf(o, n, "+%d dB%s", g, suffix);
+                      else if (src_ == RecSource::Line) snprintf(o, n, "%d%s", g, suffix);
                       else snprintf(o, n, "-");
                     },
                     [this](int d) {
+                      if (autoGain()) return;
                       int& g = gains_[static_cast<int>(src_)];
                       const int v = mt::recGainClamp(src_, g + d);
                       if (v == g) return;
@@ -52,7 +68,7 @@ RecDialog::RecDialog(App& app) : app_(app) {
                       pendingSet_ = true;
                       edited();
                     },
-                    [this] { return src_ == RecSource::Resample; }};
+                    [this] { return src_ == RecSource::Resample || autoGain(); }};
   params_[kThresh] = {"Thresh",
                       [this](char* o, int n) {
                         if (thresh_ == mt::kRecThreshOff) snprintf(o, n, "OFF");
@@ -89,6 +105,7 @@ void RecDialog::reset() {
   number_ = 0;
   hold_.clear();
   src_ = want_;
+  appliedGain_ = gain();
   codec_ = true;  // until the board says otherwise
   list_.setEdit(false);
 }
@@ -104,7 +121,9 @@ bool RecDialog::open(int instr, std::function<void()> onSaved) {
   reset();
   list_.setSel(kSource);
   open_ = true;
-  send();  // the codec and the meter follow the source from now on
+  // Configure the meter after the first frame. A closed SD window may still own the link.
+  preparing_ = true;
+  pendingSet_ = true;
   nextPoll_ = millis() + kPollMs;
   app_.invalidate();
   return true;
@@ -125,12 +144,12 @@ bool RecDialog::openSd() {
     return true;
   }
   reset();
-  // The card's free space for the header; it also warms the board's free-space count (slow the first
-  // time on a big FAT32 card), so that RecStart answers in time.
-  uint32_t total = 0, freeMb = 0;
-  freeMb_ = storage::remoteSpace(total, freeMb) ? static_cast<int32_t>(freeMb) : -1;
+  // A cold card's free-space count must not hold up drawing or closing the window.
+  freeMb_ = -1;
+  storage::beginSpaceQuery();
+  preparing_ = true;
+  pendingSet_ = true;
   open_ = true;
-  send();
   nextPoll_ = millis() + kPollMs;
   app_.invalidate();
   return true;
@@ -153,6 +172,7 @@ mt::RecPrefs RecDialog::prefs() const {
   p.lineGain = static_cast<int8_t>(gains_[static_cast<int>(RecSource::Line)]);
   p.thresh = thresh_;
   p.mon = mon_;
+  p.autoGain = autoGain_;
   return p;
 }
 
@@ -162,6 +182,8 @@ void RecDialog::setPrefs(const mt::RecPrefs& p) {
   gains_[static_cast<int>(RecSource::Line)] = mt::recGainClamp(RecSource::Line, p.lineGain);
   thresh_ = p.thresh;
   mon_ = p.mon;
+  autoGain_ = p.autoGain;
+  appliedGain_ = gain();
 }
 
 void RecDialog::edited() { app_.settingsChanged(); }
@@ -178,12 +200,13 @@ void RecDialog::send() {
     mt::link::RecLevelRep rep;
     bool link = false;
     const RecResult r = audio::recSet(static_cast<int8_t>(mt::recGainClamp(src_, gain())), mon_,
-                                      static_cast<uint8_t>(src_), &rep, &link);
+                                      static_cast<uint8_t>(src_), autoGain(), &rep, &link);
     if (!link) {
       if (!taking_) app_.toast("NO SYNTH");
       return;
     }
     codec_ = rep.codec != 0;
+    appliedGain_ = mt::recGainClamp(src_, rep.gain);
     // No shield: only RESAMPLE has a signal.
     if ((r == RecResult::NoCodec || !codec_) && src_ != RecSource::Resample && !taking_) {
       codec_ = false;
@@ -196,6 +219,7 @@ void RecDialog::send() {
 
 void RecDialog::level(const mt::link::RecLevelRep& rep, uint32_t now) {
   codec_ = rep.codec != 0;
+  appliedGain_ = mt::recGainClamp(src_, rep.gain);
   if (!codec_ && src_ != RecSource::Resample && !taking_) {  // the shield stopped answering
     src_ = RecSource::Resample;
     pendingSet_ = true;
@@ -244,15 +268,24 @@ void RecDialog::level(const mt::link::RecLevelRep& rep, uint32_t now) {
 
 void RecDialog::poll() {
   if (!open_ && !taking_ && !adoptUntil_) return;
+  const uint32_t now = millis();
+  if (preparing_) {
+    const auto space = storage::spaceQuery();
+    if (space.state == storage::SpaceState::Pending || static_cast<int32_t>(now - nextPoll_) < 0) return;
+    preparing_ = false;
+    if (mode_ == Mode::Sd)
+      freeMb_ = space.state == storage::SpaceState::Ready ? static_cast<int32_t>(space.freeMb) : -1;
+    app_.invalidate();
+  }
+  // Let the first frame appear before any recorder request, including with a missing peer.
+  if (static_cast<int32_t>(now - nextPoll_) < 0) return;
   if (pendingSet_ && open_) send();
   if (waitPlay_ && app_.status().playing) onPlay();  // started elsewhere (MIDI start): late, but a take
-  const uint32_t now = millis();
   if (adoptUntil_ && static_cast<int32_t>(now - adoptUntil_) >= 0) {  // no answer at all
     adoptUntil_ = 0;
     app_.toast("NO SYNTH");
     app_.invalidate();
   }
-  if (static_cast<int32_t>(now - nextPoll_) < 0) return;
   mt::link::RecLevelRep rep;
   if (audio::recLevel(rep)) {
     nextPoll_ = now + kPollMs;
@@ -268,7 +301,7 @@ void RecDialog::start() {
   bool link = false;
   RecResult r;
   if (mode_ == Mode::Sd) {
-    r = audio::recStartSd(static_cast<uint8_t>(src_), g, thresh_, mon_, n, &link);
+    r = audio::recStartSd(static_cast<uint8_t>(src_), g, thresh_, mon_, autoGain(), n, &link);
     // No reply (the board may still be counting a big card's free space) or BUSY to a retry of the
     // start it took: the next polls tell whether the take is on.
     if (!link || r == RecResult::Busy) {
@@ -287,6 +320,7 @@ void RecDialog::start() {
     q.gain = g;
     q.thresh = thresh_;
     q.mon = mon_ ? 1 : 0;
+    q.autoGain = autoGain() ? 1 : 0;
     q.number = static_cast<uint16_t>(mt::nextRecNumber(app_.project(), 1));
     n = q.number;
     r = audio::recStart(q, n, &link);
@@ -410,8 +444,10 @@ void RecDialog::detach() {
 }
 
 void RecDialog::closeWindow() {
-  if (open_ && !taking_) audio::recCancel();  // the meter and MON stop
+  // During preparation the meter/MON have not started; do not wait for the query's link lock.
+  if (open_ && !taking_ && !preparing_) audio::recCancel();
   open_ = false;
+  preparing_ = pendingSet_ = false;
   taking_ = false;
   waitPlay_ = false;
   adoptUntil_ = 0;
@@ -419,6 +455,7 @@ void RecDialog::closeWindow() {
 }
 
 mt::RecBtn RecDialog::btnState() const {
+  if (preparing_) return mt::RecBtn::Preparing;
   return mt::recBtnState(taking_, adoptUntil_ != 0, state_, thresh_ != mt::kRecThreshOff, waitPlay_);
 }
 
@@ -498,7 +535,10 @@ void RecDialog::draw(LGFX_Sprite& s, int y0) {
   s.drawString(line, ParamList::kLabelX, y0 + 2);
   const char* st = "READY";
   uint16_t stc = kDim;
-  if (adoptUntil_) {
+  if (preparing_) {
+    st = "PREPARING";
+    stc = kCursor;
+  } else if (adoptUntil_) {
     st = "STARTING";
     stc = kCursor;
   } else if (waitPlay_ && !taking_) {

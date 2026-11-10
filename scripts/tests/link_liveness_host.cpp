@@ -346,10 +346,31 @@ static void remoteFile(Msg delayed) {
     assert(!card.opened);
   }
 }
+static void concurrentSenders() {
+  slink::begin();
+  testBeforeQueueCopy = +[] {
+    testBeforeQueueCopy = nullptr;
+    const uint8_t inner[] = {22};
+    assert(slink::queueFrame(Msg::RecSet, 22, inner, sizeof inner, 0));
+  };
+  const uint8_t outer[] = {11};
+  assert(slink::queueFrame(Msg::FsStat, 11, outer, sizeof outer, 0));
+  for (int i : {22, 11}) {
+    slink::Bulk b;
+    assert(xQueueReceive(slink::bulkQ, &b, 0));
+    Decoder d;
+    bool decoded = false;
+    for (int k = 0; k < b.n; ++k) decoded = d.feed(b.d[k]) || decoded;
+    assert(decoded && d.seq() == i && d.size() == 1 && d.payload()[0] == i);
+  }
+}
+
 int main(int argc, char **argv) {
   assert(argc == 2);
   std::string c = argv[1];
-  if (c == "reply")
+  if (c == "concurrent")
+    concurrentSenders();
+  else if (c == "reply")
     replyContact();
   else if (c == "progress")
     progressContact();

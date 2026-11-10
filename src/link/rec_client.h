@@ -15,9 +15,11 @@ using RecResult = mt::link::RecResult;
 // under a second fits).
 RecResult recStart(const mt::link::RecStartReq& q, uint16_t& number, bool* link = nullptr);
 // REC -> SD from MIX: recStart with toSd and the first free number on the card.
-RecResult recStartSd(uint8_t source, int8_t gain, int8_t thresh, bool mon, uint16_t& number, bool* link = nullptr);
+RecResult recStartSd(uint8_t source, int8_t gain, int8_t thresh, bool mon, bool autoGain,
+                     uint16_t& number, bool* link = nullptr);
 // Gain / MON and the source the meter follows; rep (optional) gets the board's state.
-RecResult recSet(int8_t gain, bool mon, uint8_t source, mt::link::RecLevelRep* rep = nullptr, bool* link = nullptr);
+RecResult recSet(int8_t gain, bool mon, uint8_t source, bool autoGain,
+                 mt::link::RecLevelRep* rep = nullptr, bool* link = nullptr);
 // The meter since the last poll and the take's state; also the keepalive (2 s without one: the board
 // ends the take into its file). rep.left: frames before the take ends on its own (/ mt::kRecRate =
 // seconds left: 5 min, the 4 GB or the card's space). State Saving without a recStop: it ended on its

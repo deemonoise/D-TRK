@@ -59,7 +59,7 @@ void RecRing::keepLast(uint32_t n) {
 // --- meter, threshold, gain ---
 
 void RecMeter::feed(const int16_t* s, uint32_t n) {
-  int32_t pk = peak.load();
+  int32_t pk = 0;
   uint32_t cl = 0;
   for (uint32_t i = 0; i < n; ++i) {
     int32_t a = s[i] < 0 ? -static_cast<int32_t>(s[i]) : s[i];
@@ -69,7 +69,8 @@ void RecMeter::feed(const int16_t* s, uint32_t n) {
     }
     if (a > pk) pk = a;
   }
-  peak.store(static_cast<uint16_t>(pk));
+  if (pk > peak.load()) peak.store(static_cast<uint16_t>(pk));
+  if (pk > gainPeak_.load()) gainPeak_.store(static_cast<uint16_t>(pk));
   if (cl) clips.fetch_add(cl);
 }
 
@@ -87,6 +88,33 @@ int16_t recThreshLevel(int8_t db) {
 int recGainClamp(RecSource src, int gain) {
   const int hi = src == RecSource::Mic ? 63 : src == RecSource::Line ? 15 : 0;
   return gain < 0 ? 0 : gain > hi ? hi : gain;
+}
+
+void RecAutoGain::reset(RecSource src, int gain) {
+  src_ = src;
+  gain_ = recGainClamp(src, gain);
+  quietMs_ = 0;
+}
+
+bool RecAutoGain::update(uint16_t peak) {
+  if (src_ == RecSource::Resample) return false;
+  int delta = 0;
+  if (peak >= 16422) {  // -6 dBFS; leave room for the next transient
+    delta = peak >= 29204 ? (src_ == RecSource::Mic ? -6 : -4) : (src_ == RecSource::Mic ? -2 : -1);
+    quietMs_ = 0;
+  } else if (peak >= 131 && peak < 8231) {  // -48 .. -12 dBFS
+    quietMs_ += kWindowMs;
+    if (quietMs_ >= 1000) {
+      delta = 1;
+      quietMs_ = 0;
+    }
+  } else {
+    quietMs_ = 0;
+  }
+  const int next = recGainClamp(src_, gain_ + delta);
+  if (next == gain_) return false;
+  gain_ = next;
+  return true;
 }
 
 // --- RecCapture ---

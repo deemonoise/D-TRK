@@ -23,7 +23,7 @@ class LinkLivenessTest(unittest.TestCase):
                             str(ROOT / "src/storage/remote_fs.cpp"),
                             str(ROOT / "src/hw/sdcard.cpp"),
                             "-o", str(binary)], check=True)
-            for case in ["reply", "progress", "noise", "timeout", "slow_file",
+            for case in ["concurrent", "reply", "progress", "noise", "timeout", "slow_file",
                          "long_timeout", "long_progress", "wrap",
                          "remote_open", "remote_write", "remote_read", "remote_close"]:
                 with self.subTest(case=case):

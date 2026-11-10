@@ -8,10 +8,12 @@ struct TestQueue {
   std::deque<std::vector<uint8_t>> items;
 };
 using QueueHandle_t = TestQueue *;
+inline void (*testBeforeQueueCopy)() = nullptr;
 inline QueueHandle_t xQueueCreate(int, size_t n) {
   return new TestQueue{n, {}};
 }
 inline int xQueueSend(QueueHandle_t q, const void *p, TickType_t) {
+  if (testBeforeQueueCopy) testBeforeQueueCopy();
   q->items.emplace_back((const uint8_t *)p, (const uint8_t *)p + q->width);
   return pdTRUE;
 }

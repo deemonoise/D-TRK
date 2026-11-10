@@ -13,16 +13,18 @@ int audioGuards = 0;
 bool failWrite = false, failSeal = false;
 unsigned dataWrites = 0, importStarts = 0;
 bool healthy = true;
+bool codecPresent = false;
+int micGain = -1, lineGain = -1, gainWrites = 0;
 std::vector<int16_t> memory(8192 * 2);
 std::vector<uint8_t> reply;
 }
 RecTestSd SD;
 void SynthStream::update() {}
 namespace codec {
-bool present() { return false; }
+bool present() { return rec_test::codecPresent; }
 void input(Input) {}
-void micGain(int) {}
-void lineLevel(int) {}
+void micGain(int g) { TEST_ASSERT_EQUAL_INT(0, rec_test::audioGuards); rec_test::micGain = g; ++rec_test::gainWrites; }
+void lineLevel(int g) { TEST_ASSERT_EQUAL_INT(0, rec_test::audioGuards); rec_test::lineGain = g; ++rec_test::gainWrites; }
 }
 namespace bank {
 mt::BankResult writable() { return mt::BankResult::Ok; }
@@ -49,6 +51,9 @@ void setUp() {
   rec_test::nowMs = 1;
   rec_test::audioGuards = 0;
   rec_test::healthy = true;
+  rec_test::codecPresent = false;
+  rec_test::micGain = rec_test::lineGain = -1;
+  rec_test::gainWrites = 0;
   rec_test::memory.resize(8192 * 2);
   rec_test::failWrite = rec_test::failSeal = false;
   rec_test::dataWrites = rec_test::importStarts = 0;
@@ -325,8 +330,85 @@ static void test_armed_capture_keeps_only_preroll_until_trigger() {
   }
   TEST_ASSERT_EQUAL_UINT32(sampleCrc(mono.data(), frames), rd32le(b.data() + kWavHeaderBytes - 16));
 }
+static RecLevelRep setInput(RecSource src, int gain, bool automatic, bool mon = false) {
+  RecSetReq q;
+  q.source = uint8_t(src); q.gain = gain; q.autoGain = automatic; q.mon = mon;
+  uint8_t p[kMaxPayload], o[kMaxPayload];
+  Writer w(p, sizeof p); encode(q, w);
+  const int n = rec::handle(Msg::RecSet, 12, p, w.size(), o);
+  Reader r(o, n); RecLevelRep rep;
+  TEST_ASSERT_TRUE(decode(r, rep));
+  TEST_ASSERT_EQUAL_UINT8(uint8_t(RecResult::Ok), rep.result);
+  return rep;
+}
+static void inputWindow(int16_t left, int16_t right) {
+  rec::cap.feed(&left, &right, 1);
+  rec_test::nowMs += RecAutoGain::kWindowMs;
+  rec::step();
+}
+static void test_auto_gain_survives_start_monitor_and_background_take() {
+  rec_test::codecPresent = true;
+  setInput(RecSource::Mic, 32, true);
+  inputWindow(32767, 1);
+  TEST_ASSERT_EQUAL_INT(26, rec_test::micGain);
+  auto rep = setInput(RecSource::Mic, 32, true, true);
+  TEST_ASSERT_EQUAL_INT(26, rep.gain);  // MON must not restore the manual gain
+  TEST_ASSERT_EQUAL_INT(26, rec_test::micGain);
+  RecStartReq q;
+  q.source = uint8_t(RecSource::Mic); q.gain = 32; q.autoGain = 1; q.toSd = 1;
+  uint8_t p[kMaxPayload], o[kMaxPayload];
+  Writer w(p, sizeof p); encode(q, w);
+  const int n = rec::handle(Msg::RecStart, 13, p, w.size(), o);
+  Reader r(o, n); RecStartRep start;
+  TEST_ASSERT_TRUE(decode(r, start));
+  TEST_ASSERT_EQUAL_UINT8(0, start.result);
+  TEST_ASSERT_EQUAL_INT(26, rec_test::micGain);
+  // No UI meter polls: control still runs and clips still reach the take's report.
+  inputWindow(-32768, 1);
+  TEST_ASSERT_EQUAL_INT(20, rec_test::micGain);
+  const int len = rec::handle(Msg::RecLevel, 14, nullptr, 0, o);
+  Reader rl(o, len);
+  TEST_ASSERT_TRUE(decode(rl, rep));
+  TEST_ASSERT_EQUAL_INT(20, rep.gain);
+  TEST_ASSERT_EQUAL_UINT32(1, rep.clips);
+  TEST_ASSERT_EQUAL_UINT16(32767, rep.peak);
+}
+static void test_auto_gain_line_switch_off_and_resample() {
+  rec_test::codecPresent = true;
+  setInput(RecSource::Line, 9, true);
+  inputWindow(100, -32768);  // right channel also protects the linked pair
+  TEST_ASSERT_EQUAL_INT(5, rec_test::lineGain);
+  setInput(RecSource::Line, 9, false);
+  inputWindow(32767, 32767);
+  TEST_ASSERT_EQUAL_INT(9, rec_test::lineGain);
+  setInput(RecSource::Mic, 32, true);
+  inputWindow(100, -32768);  // MIC ignores the unused right channel
+  TEST_ASSERT_EQUAL_INT(32, rec_test::micGain);
+  const int writes = rec_test::gainWrites;
+  setInput(RecSource::Resample, 63, true);
+  inputWindow(32767, 32767);
+  TEST_ASSERT_EQUAL_INT(writes, rec_test::gainWrites);
+}
+static void test_auto_gain_stops_after_close_and_source_discards_old_peak() {
+  rec_test::codecPresent = true;
+  setInput(RecSource::Mic, 32, true);
+  const int16_t loud = 32767;
+  rec::cap.feed(&loud, &loud, 1);
+  setInput(RecSource::Line, 5, true);
+  inputWindow(1000, 1000);
+  TEST_ASSERT_EQUAL_INT(5, rec_test::lineGain);
+  uint8_t o[kMaxPayload];
+  rec::handle(Msg::RecCancel, 15, nullptr, 0, o);
+  const int writes = rec_test::gainWrites;
+  inputWindow(32767, 32767);
+  TEST_ASSERT_EQUAL_INT(writes, rec_test::gainWrites);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_auto_gain_survives_start_monitor_and_background_take);
+  RUN_TEST(test_auto_gain_line_switch_off_and_resample);
+  RUN_TEST(test_auto_gain_stops_after_close_and_source_discards_old_peak);
   RUN_TEST(test_live_fault_seals_only_written_sd_prefix);
   RUN_TEST(test_live_fault_suppresses_bank_import);
   RUN_TEST(test_fault_before_stop_reports_level_and_disables_future_start);

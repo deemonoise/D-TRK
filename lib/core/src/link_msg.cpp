@@ -785,6 +785,7 @@ void encode(const RecStartReq& m, Writer& w) {
   w.u8(m.mon);
   w.u16(m.number);
   w.u8(m.toSd);
+  w.u8(m.autoGain);
 }
 
 bool decode(Reader& r, RecStartReq& m) {
@@ -794,6 +795,7 @@ bool decode(Reader& r, RecStartReq& m) {
   m.mon = r.u8();
   m.number = r.u16();
   m.toSd = r.left() > 0 ? r.u8() : 0;  // appended in 18
+  m.autoGain = r.left() > 0 ? r.u8() : 0;  // appended in 29
   return r.ok();
 }
 
@@ -812,12 +814,14 @@ void encode(const RecSetReq& m, Writer& w) {
   w.u8(static_cast<uint8_t>(m.gain));
   w.u8(m.mon);
   w.u8(m.source);
+  w.u8(m.autoGain);
 }
 
 bool decode(Reader& r, RecSetReq& m) {
   m.gain = static_cast<int8_t>(r.u8());
   m.mon = r.u8();
   m.source = r.u8();
+  m.autoGain = r.left() > 0 ? r.u8() : 0;
   return r.ok();
 }
 
@@ -829,6 +833,7 @@ void encode(const RecLevelRep& m, Writer& w) {
   w.u32(m.frames);
   w.u8(m.codec);
   w.u32(m.left);
+  w.u8(static_cast<uint8_t>(m.gain));
 }
 
 bool decode(Reader& r, RecLevelRep& m) {
@@ -839,6 +844,7 @@ bool decode(Reader& r, RecLevelRep& m) {
   m.frames = r.u32();
   m.codec = r.u8();
   m.left = r.left() > 0 ? r.u32() : 0;  // appended in 18
+  m.gain = r.left() > 0 ? static_cast<int8_t>(r.u8()) : 0;  // appended in 29
   return r.ok();
 }
 

@@ -12,7 +12,7 @@ void begin();
 // Engine task only (single producer): an INT event stamped with its engine::nowUs() time.
 void postEvent(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len);
 
-// UI task: queues a whole frame of type t; false when the queue stays full for wait.
+// Queues a whole frame of type t; false when the queue stays full for wait. Concurrent senders are safe.
 bool sendRaw(mt::link::Msg t, const uint8_t* payload, int n, TickType_t wait = 0);
 template <class M>
 bool send(mt::link::Msg t, const M& m, TickType_t wait = 0) {
@@ -22,8 +22,9 @@ bool send(mt::link::Msg t, const M& m, TickType_t wait = 0) {
   return w.ok() && sendRaw(t, p, w.size(), wait);
 }
 
-// UI task, blocking: sends a request and waits for a reply of type replyType carrying the request's
-// seq (the same on every try); up to 3 tries of timeoutMs each. reply gets the payload (cap kMaxPayload), replyLen its size.
+// Blocking, serialized between callers (UI or SD-space worker): waits for a reply of type replyType
+// carrying the request's seq (the same on every try), up to 3 tries of timeoutMs each.
+// reply gets the payload (cap kMaxPayload), replyLen its size.
 bool request(mt::link::Msg type, const uint8_t* p, int n, mt::link::Msg replyType, uint8_t* reply, int& replyLen,
              uint32_t timeoutMs = 200);
 

@@ -53,11 +53,12 @@ RecResult recStart(const RecStartReq& q, uint16_t& number, bool* link) {
   return res(rep.result);
 }
 
-RecResult recSet(int8_t gain, bool mon, uint8_t source, RecLevelRep* out, bool* link) {
+RecResult recSet(int8_t gain, bool mon, uint8_t source, bool autoGain, RecLevelRep* out, bool* link) {
   RecSetReq q;
   q.gain = gain;
   q.mon = mon ? 1 : 0;
   q.source = source;
+  q.autoGain = autoGain ? 1 : 0;
   uint8_t reply[kMaxPayload];
   int len = 0;
   RecLevelRep rep;
@@ -95,7 +96,8 @@ RecResult recStop(RecStopRep& rep, BankProgressFn cb, void* ctx, bool* link) {
   return res(rep.result);
 }
 
-RecResult recStartSd(uint8_t source, int8_t gain, int8_t thresh, bool mon, uint16_t& number, bool* link) {
+RecResult recStartSd(uint8_t source, int8_t gain, int8_t thresh, bool mon, bool autoGain,
+                     uint16_t& number, bool* link) {
   RecStartReq q;
   q.source = source;
   q.gain = gain;
@@ -103,6 +105,7 @@ RecResult recStartSd(uint8_t source, int8_t gain, int8_t thresh, bool mon, uint1
   q.mon = mon ? 1 : 0;
   q.number = 1;  // the first free on the card: the project has no part in it
   q.toSd = 1;
+  q.autoGain = autoGain ? 1 : 0;
   return recStart(q, number, link);
 }
 

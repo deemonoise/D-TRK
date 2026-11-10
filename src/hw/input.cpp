@@ -10,6 +10,7 @@ namespace {
 QueueHandle_t queue;
 pcnt_unit_handle_t unit;
 int encAcc = 0;
+uint8_t encDetentPhase = 0;
 bool shiftHeld = false;
 
 // Integrating debouncer on an expander pin: state flips after 5 equal 1 ms samples
@@ -52,9 +53,12 @@ constexpr UBaseType_t kKeyRoom = 6;  // queue slots kept for buttons: turns wait
 
 void setupEncoder() {
   pcnt_unit_config_t ucfg = {};
-  ucfg.low_limit = -1000;
-  ucfg.high_limit = 1000;
+  ucfg.low_limit = -30000;
+  ucfg.high_limit = 30000;
+  ucfg.flags.accum_count = 1;
   ESP_ERROR_CHECK(pcnt_new_unit(&ucfg, &unit));
+  ESP_ERROR_CHECK(pcnt_unit_add_watch_point(unit, ucfg.low_limit));
+  ESP_ERROR_CHECK(pcnt_unit_add_watch_point(unit, ucfg.high_limit));
   pcnt_glitch_filter_config_t fcfg = {};
   fcfg.max_glitch_ns = 1000;
   ESP_ERROR_CHECK(pcnt_unit_set_glitch_filter(unit, &fcfg));
@@ -76,20 +80,29 @@ void setupEncoder() {
   gpio_pullup_en(static_cast<gpio_num_t>(pins::kEncB));
 
   ESP_ERROR_CHECK(pcnt_unit_enable(unit));
+  encDetentPhase = gpio_get_level(static_cast<gpio_num_t>(pins::kEncA)) |
+                   (gpio_get_level(static_cast<gpio_num_t>(pins::kEncB)) << 1);
   ESP_ERROR_CHECK(pcnt_unit_clear_count(unit));
+  encAcc = 0;
   ESP_ERROR_CHECK(pcnt_unit_start(unit));
 }
 
-// EC11: 4 counts per detent. Keeps the sub-detent remainder.
+// EC11: four edges return to the resting A/B phase sampled at boot. Finish only there:
+// carrying a stray edge across detents would swallow the first click after a reversal.
 int readDetents() {
-  int c = 0;
+  int c = 0, after = 0;
   pcnt_unit_get_count(unit, &c);
-  const int d = (c - encAcc) / 4;
-  encAcc += d * 4;
-  if (encAcc > 800 || encAcc < -800) {  // well before the +-1000 limit: restart at 0, keep the remainder
-    pcnt_unit_clear_count(unit);
-    encAcc = -(c - encAcc);
-  }
+  const uint8_t phase = gpio_get_level(static_cast<gpio_num_t>(pins::kEncA)) |
+                        (gpio_get_level(static_cast<gpio_num_t>(pins::kEncB)) << 1);
+  pcnt_unit_get_count(unit, &after);
+  if (c != after || phase != encDetentPhase) return 0;
+  // Unsigned subtraction also handles the accumulated counter's signed 32-bit wrap.
+  const int32_t pulses = static_cast<int32_t>(static_cast<uint32_t>(c) - static_cast<uint32_t>(encAcc));
+  // At the resting phase, tolerate one missed/extra edge per sampled span. One-edge bounce
+  // produces no event. Always re-anchor here, including after an incomplete turn back to rest.
+  const int d = static_cast<int>((static_cast<int64_t>(pulses) + (pulses < 0 ? -1 : 1)) / 4);
+  encAcc = c;
+  // Overflow is accumulated by PCNT; never clear a running counter (read + clear loses edges).
   return d;
 }
 

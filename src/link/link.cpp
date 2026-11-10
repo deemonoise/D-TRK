@@ -63,7 +63,8 @@ uint8_t parkCount = 0;  // Status::parks, latest
 char logLines[kLogLines][Log::kMax + 1];
 int logHead = 0, logCount = 0;
 
-// The one outstanding request (UI task waits, link task completes it).
+// The one outstanding request (UI or space-query task waits, link task completes it).
+// mux protects its buffer lifetime, including timeout versus an incoming reply.
 SemaphoreHandle_t reqMutex = nullptr;
 SemaphoreHandle_t reqDone = nullptr;
 volatile bool reqActive = false;
@@ -143,30 +144,31 @@ void onStatus(Reader& r) {
 }
 
 void dispatch(const Decoder& d) {
+  portENTER_CRITICAL(&mux);
   if (reqActive && d.type() == reqType && d.seq() == reqSeq) {
     // Refresh before waking the caller: the next file block must not see a dead peer
     // merely because the reply arrived before the delayed periodic Status.
-    portENTER_CRITICAL(&mux);
     lastContactMs = millis();
-    portEXIT_CRITICAL(&mux);
     const int n = d.size() < kMaxPayload ? d.size() : kMaxPayload;
     memcpy(reqBuf, d.payload(), n);
     reqLen = n;
     reqActive = false;
     xSemaphoreGive(reqDone);
+    portEXIT_CRITICAL(&mux);
     return;
   }
   Reader r(d.payload(), d.size());
   if (reqActive && static_cast<Msg>(d.type()) == Msg::Progress && d.seq() == reqSeq) {
     Progress pr;
-    if (!decode(r, pr)) return;
-    portENTER_CRITICAL(&mux);
-    lastContactMs = millis();
-    progLatest = pr;
-    progNew = true;
+    if (decode(r, pr)) {
+      lastContactMs = millis();
+      progLatest = pr;
+      progNew = true;
+    }
     portEXIT_CRITICAL(&mux);
     return;
   }
+  portEXIT_CRITICAL(&mux);
   switch (static_cast<Msg>(d.type())) {
     case Msg::Hello: {
       Hello h;
@@ -243,7 +245,7 @@ void run(void*) {
 }
 
 bool queueFrame(Msg t, uint8_t seq, const uint8_t* p, int n, TickType_t wait) {
-  static Bulk b;  // UI task only
+  Bulk b{};  // UI and the SD-space worker can enqueue concurrently; each owns its encoded frame.
   b.n = static_cast<uint16_t>(encode(static_cast<uint8_t>(t), seq, p, n, b.d));
   return b.n > 0 && bulkQ && xQueueSend(bulkQ, &b, wait) == pdTRUE;
 }
@@ -290,16 +292,22 @@ bool request(Msg type, const uint8_t* p, int n, Msg replyType, uint8_t* reply, i
   xSemaphoreTake(reqDone, 0);  // a late reply of an earlier request
   for (int attempt = 0; attempt < 3 && !ok; ++attempt) {
     if (attempt) retries.fetch_add(1, std::memory_order_relaxed);
+    portENTER_CRITICAL(&mux);
     reqBuf = reply;
     reqType = static_cast<uint8_t>(replyType);
     reqSeq = seq;
     reqActive = true;
+    portEXIT_CRITICAL(&mux);
     if (!queueFrame(type, seq, p, n, pdMS_TO_TICKS(timeoutMs))) {
+      portENTER_CRITICAL(&mux);
       reqActive = false;
+      portEXIT_CRITICAL(&mux);
       continue;
     }
     ok = xSemaphoreTake(reqDone, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+    portENTER_CRITICAL(&mux);
     reqActive = false;
+    portEXIT_CRITICAL(&mux);
   }
   if (ok) replyLen = reqLen;
   requestPending.store(false);
@@ -315,11 +323,11 @@ bool requestLong(Msg type, const uint8_t* p, int n, uint8_t* reply, int& replyLe
   xSemaphoreTake(reqDone, 0);
   portENTER_CRITICAL(&mux);
   progNew = false;
-  portEXIT_CRITICAL(&mux);
   reqBuf = reply;
   reqType = static_cast<uint8_t>(type);
   reqSeq = seq;
   reqActive = true;
+  portEXIT_CRITICAL(&mux);
   bool ok = false;
   int tries = 0;
   bool sent = queueFrame(type, seq, p, n, pdMS_TO_TICKS(200));
@@ -346,7 +354,9 @@ bool requestLong(Msg type, const uint8_t* p, int n, uint8_t* reply, int& replyLe
     sent = queueFrame(type, seq, p, n, pdMS_TO_TICKS(200));
     heard = now;
   }
+  portENTER_CRITICAL(&mux);
   reqActive = false;
+  portEXIT_CRITICAL(&mux);
   if (ok) replyLen = reqLen;
   requestPending.store(false);
   xSemaphoreGive(reqMutex);
