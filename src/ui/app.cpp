@@ -1045,12 +1045,6 @@ mt::PadLearn* App::padsMut() {
   return &none;
 }
 
-const mt::PadLearn& App::pads() const {
-  static const mt::PadLearn none;
-  const int i = devs_.activeIn();
-  return i >= 0 ? devs_.at(i).pads : none;
-}
-
 void App::devicesChanged() {
   storage::saveDevices(devs_);
   applyDevices();

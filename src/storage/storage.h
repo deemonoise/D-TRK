@@ -30,14 +30,6 @@ using SyncProgress = void (*)(const char* file, uint32_t done, uint32_t total, v
 // resource writes may have completed in part and are retried by the next save.
 Result save(mt::Project& live, const char* name, SyncProgress cb = nullptr, void* ctx = nullptr);
 
-// /projects/<live.name>/<sample>.wav for every listed sample that is cached and whose file is absent
-// or has another crc ("mtcr"; a file without one is rewritten), written by the synth board from its
-// bank (AssetsSave; wavetables in .../wt/); other .wav files there are removed.
-// Samples not cached (missing) keep their files; from (the folder the project came from, Save As): such
-// a sample without its current file here gets a copy of /projects/<from>/<sample>.wav. Leftover .tmp
-// files go too. Orphans are only removed when every write succeeded. Works while playing.
-Result syncFolder(const mt::Project& live, const char* from = nullptr, SyncProgress cb = nullptr, void* ctx = nullptr);
-
 // After load / autoload, engine stopped, the sound state mirrored: every listed sample / wavetable not
 // cached is imported by the synth board from /projects/<live.name>/ (BankSync). *missing = entries left
 // without data; they stay in the list and play silent. A file older than the sample list is not

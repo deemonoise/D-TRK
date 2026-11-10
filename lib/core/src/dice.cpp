@@ -1795,11 +1795,6 @@ void swapWritten(Project& p, DiceSnap& s, uint16_t bpm) {
 
 }  // namespace
 
-const char* diceRoleName(DiceRole r) {
-  const int i = static_cast<int>(r);
-  return kRoleNames[i >= 0 && i < kDiceRoles ? i : 0];
-}
-
 int dicePatternCount(const DiceOpts& opts) {
   return opts.form == DiceForm::Arrange && opts.change == DiceChange::Wild &&
                  (opts.targetMask & 0x3f) == 0x3f && (opts.layers & kDicePattern)

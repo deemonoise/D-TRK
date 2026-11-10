@@ -25,13 +25,6 @@ void copySel(const Pattern& p, const Sel& s, Clipboard& cb) {
     for (int i = 0; i < cb.steps; ++i) cb.data[t][i] = p.steps[s.t0 + t][s.s0 + i];
 }
 
-void pasteAt(Pattern& p, const Clipboard& cb, int track, int step) {
-  if (track < 0 || step < 0) return;
-  int len = p.length < kMaxSteps ? p.length : kMaxSteps;
-  for (int t = 0; t < cb.tracks && track + t < kTracks; ++t)
-    for (int i = 0; i < cb.steps && step + i < len; ++i) p.steps[track + t][step + i] = cb.data[t][i];
-}
-
 void clearSel(Pattern& p, const Sel& s) {
   for (int t = s.t0; t <= s.t1; ++t)
     for (int i = s.s0; i <= s.s1; ++i) p.steps[t][i] = Step();

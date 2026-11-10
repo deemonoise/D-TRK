@@ -157,7 +157,7 @@ bool writeLast(const char* name) {
   return ok;
 }
 
-Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb, void* ctx, bool clean);
+Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb, void* ctx);
 Result cleanProjectFolder(const mt::Project& live);
 
 bool transposeDropped = false;  // set by the last readFile, see songTransposeDropped()
@@ -398,7 +398,7 @@ Result save(mt::Project& live, const char* name, SyncProgress cb, void* ctx) {
   Result r = writeTmp(tmp.s, *snap);
   if (r == Result::Ok && readFile(tmp.s, *snap) != Result::Ok) r = Result::WriteFail;
   // readFile reused the workspace; it still contains the verified snapshot, including nm.
-  if (r == Result::Ok && syncFolderImpl(*snap, from, cb, ctx, false) != Result::Ok)
+  if (r == Result::Ok && syncFolderImpl(*snap, from, cb, ctx) != Result::Ok)
     r = Result::SamplesNotSaved;
   freeProject(snap);
   if (r != Result::Ok) {
@@ -423,7 +423,7 @@ Result save(mt::Project& live, const char* name, SyncProgress cb, void* ctx) {
 }
 
 namespace {
-Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb, void* ctx, bool clean) {
+Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb, void* ctx) {
   if (!hw::sdReady()) return Result::NoSd;
   if (!mt::projectBaseValid(live.name)) return Result::BadFile;
   char dir[32];
@@ -473,9 +473,7 @@ Result syncFolderImpl(const mt::Project& live, const char* from, SyncProgress cb
       r = Result::WriteFail;
     }
   }
-  // A failed write may leave the only good copy of a listed sample under another name: clean up next time.
-  if (r != Result::Ok) return r;
-  return clean ? cleanProjectFolder(live) : Result::Ok;
+  return r;  // save() only cleans the folder after the project file has been committed.
 }
 
 Result cleanProjectFolder(const mt::Project& live) {
@@ -495,10 +493,6 @@ Result cleanProjectFolder(const mt::Project& live) {
 }
 
 }  // namespace
-
-Result syncFolder(const mt::Project& live, const char* from, SyncProgress cb, void* ctx) {
-  return syncFolderImpl(live, from, cb, ctx, true);
-}
 
 Result pullSamples(mt::Project& live, int* missing, SyncProgress cb, void* ctx) {
   // A file older than the sample list: its instruments name samples no list has, they stay missing.

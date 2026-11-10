@@ -37,20 +37,6 @@ void wtResample(const float* x, int n, double start, double len, float* out);
 // Naive one-cycle shapes, kWtFrameLen points, peak 1 (the mip levels band-limit them).
 enum class WtShape : uint8_t { Sin, Tri, Saw, Sqr, Count };
 void wtShape(WtShape s, float* out);
-void wtSmooth(float* f);  // one [1 2 1] / 4 pass, circular
-
-// Drawing keyframes: frame 0..63 and one cycle in -1..1.
-constexpr int kWtKeysMax = 16;
-struct WtKey {
-  uint8_t frame = 0;
-  float pts[kWtFrameLen] = {};
-};
-void wtSortKeys(WtKey* keys, int n);
-// Frame f between the keys (sorted, n >= 1): the key itself, or linear between its neighbours;
-// before the first / after the last key that key.
-void wtKeyAt(const WtKey* keys, int n, int f, float* out);
-// All 64 frames into src (kWtSrcSamples): sorts the keys; false unless keys 0 and 63 are there.
-bool wtFromKeys(WtKey* keys, int n, int16_t* src);
 
 // Pitch (YIN-lite). d[t] for t in [t0, t1): sum over j < w of (x[j] - x[j + t])^2; x holds w + t1 - 1.
 void wtDiff(const float* x, int w, int t0, int t1, float* d);

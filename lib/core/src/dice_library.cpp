@@ -121,7 +121,7 @@ int DicePhraseFeatures::scoreForStyle(DiceRole role, uint8_t bars, uint32_t role
   return result + distance * 100 / target;
 }
 
-DiceMidiLibrary::DiceMidiLibrary(const uint8_t* data, size_t size) : data_(data), size_(size) {
+DiceMidiLibrary::DiceMidiLibrary(const uint8_t* data, size_t size) : data_(data) {
   if (!data || size < kHead || size > kDiceLibraryMaxBytes || memcmp(data, "DML1", 4) ||
       u16(data + 4) != 1 || u16(data + 6) != kEntry) return;
   const uint32_t count = u32(data + 8);

@@ -147,8 +147,6 @@ class App {
   bool midiRecHold() const { return midiRecHold_; }
   void setMidiRecHold(bool on);
   mt::MidiRouter& midiRouter() { return midi_; }
-  // The active IN device's learned pad banks (all unlearned when there is none).
-  const mt::PadLearn& pads() const;
   void padsForget(mt::PadMode m);  // that bank not learned (saved); the pads sounding end
   // The remembered BLE MIDI devices (UI task only). After any change: devicesChanged() saves the list
   // and hands the active IN / OUT to hw::ble; a new active IN ends the sounding pads.

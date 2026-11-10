@@ -32,8 +32,6 @@ class TouchTracker {
   // raw: a touch-down inside the work area (kAreaY .. kTabY) starts a raw gesture (Down, Move per
   // kRawStep, Up) instead of Tap / Drag; it stays raw until lifted whatever raw says meanwhile.
   bool poll(LGFX& lcd, TouchEvent& ev, bool hdrag, bool raw = false);
-  // Start point of the current (or last) gesture.
-  int16_t startY() const { return y0_; }
 
  private:
   bool down_ = false, longSent_ = false, dragging_ = false, hdragging_ = false;

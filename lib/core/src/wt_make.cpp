@@ -103,58 +103,6 @@ void wtShape(WtShape sh, float* out) {
   }
 }
 
-void wtSmooth(float* f) {
-  float prev = f[N - 1];
-  const float first = f[0];
-  for (int i = 0; i < N; ++i) {
-    const float next = i + 1 < N ? f[i + 1] : first;
-    const float cur = f[i];
-    f[i] = 0.25f * prev + 0.5f * cur + 0.25f * next;
-    prev = cur;
-  }
-}
-
-void wtSortKeys(WtKey* keys, int n) {
-  for (int i = 1; i < n; ++i)  // insertion sort by swapping (few keys)
-    for (int j = i; j > 0 && keys[j - 1].frame > keys[j].frame; --j) {
-      WtKey t = keys[j];
-      keys[j] = keys[j - 1];
-      keys[j - 1] = t;
-    }
-}
-
-void wtKeyAt(const WtKey* keys, int n, int f, float* out) {
-  if (n <= 0) {
-    memset(out, 0, sizeof(float) * N);
-    return;
-  }
-  int b = 0;
-  while (b < n && keys[b].frame < f) ++b;
-  if (b == n || keys[b].frame == f || b == 0) {
-    memcpy(out, keys[b == n ? n - 1 : b].pts, sizeof(float) * N);
-    return;
-  }
-  const WtKey& A = keys[b - 1];
-  const WtKey& B = keys[b];
-  const float t = static_cast<float>(f - A.frame) / (B.frame - A.frame);
-  for (int i = 0; i < N; ++i) out[i] = (1 - t) * A.pts[i] + t * B.pts[i];
-}
-
-bool wtFromKeys(WtKey* keys, int n, int16_t* src) {
-  if (n < 2) return false;
-  wtSortKeys(keys, n);
-  if (keys[0].frame != 0 || keys[n - 1].frame != kWtFrames - 1) return false;
-  float f[N];
-  for (int k = 0; k < kWtFrames; ++k) {
-    wtKeyAt(keys, n, k, f);
-    for (int i = 0; i < N; ++i) {
-      const float v = f[i] < -1 ? -1 : (f[i] > 1 ? 1 : f[i]);
-      src[k * N + i] = static_cast<int16_t>(lrintf(v * kWtPeak));
-    }
-  }
-  return true;
-}
-
 void wtDiff(const float* x, int w, int t0, int t1, float* d) {
   for (int t = t0; t < t1; ++t) {
     float s = 0;

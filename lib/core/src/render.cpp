@@ -75,14 +75,6 @@ void normalizeSamples(int16_t* b, uint32_t n, int16_t peak, float target) {
   }
 }
 
-uint32_t trimTail(const int16_t* b, uint32_t n, uint32_t block) {
-  uint32_t last = 0;
-  for (uint32_t i = 0; i < 2 * n; ++i)
-    if (b[i] > kSilence || b[i] < -kSilence) last = i / 2 + 1;
-  const uint32_t keep = (last + block - 1) / block * block;
-  return keep < block ? block : (keep > n ? n : keep);
-}
-
 void nextResampleName(const Project& p, char out[kSampleNameMax + 1]) {
   for (int n = 1;; ++n) {
     snprintf(out, kSampleNameMax + 1, "RS%d", n);

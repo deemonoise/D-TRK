@@ -40,7 +40,6 @@ uint8_t sceneMstBase(const SynthModel& m, int p);
 uint8_t sceneTrkEff(const SynthModel& m, int t, int p);
 uint8_t sceneMstEff(const SynthModel& m, int p);
 bool sceneTrkLive(const SynthModel& m, int t, int p);  // scene A or B holds it
-bool sceneMstLive(const SynthModel& m, int p);
 
 inline bool sceneTrkIsSet(const Scene& s, int t, int p) { return (s.trkMask[t] >> p) & 1u; }
 inline bool sceneMstIsSet(const Scene& s, int p) { return (s.mstMask >> p) & 1u; }

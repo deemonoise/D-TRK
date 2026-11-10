@@ -46,7 +46,6 @@ class DiceMidiLibrary final : public DicePhraseSource {
   bool pickForStyle(int genre, int style, DiceRole role, uint32_t seed, DicePhrase& out) const override;
  private:
   const uint8_t* data_ = nullptr;
-  size_t size_ = 0;
   uint32_t count_ = 0;
 };
 struct DicePhraseResult { bool changed = false, approximate = false; uint16_t dropped = 0; };

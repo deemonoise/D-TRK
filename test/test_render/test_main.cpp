@@ -84,16 +84,6 @@ void test_normalize_peak() {
   TEST_ASSERT_EQUAL(0, z[0]);
 }
 
-void test_trim_tail() {
-  int16_t b[800] = {0};  // 400 frames, interleaved
-  b[2 * 10] = 1000;
-  b[2 * 300 + 1] = 40;  // R, above -60 dBFS (33)
-  b[2 * 350] = 20;      // below
-  TEST_ASSERT_EQUAL(384, trimTail(b, 400, 128));  // 301 rounded up to a block
-  int16_t s[512] = {0};
-  TEST_ASSERT_EQUAL(128, trimTail(s, 256, 128));  // never less than one block
-}
-
 void test_next_resample_name() {
   Project& p = *mkProj();
   char nm[kSampleNameMax + 1];
@@ -1123,7 +1113,6 @@ int main() {
   RUN_TEST(test_song_us_sums_slot_passes);
   RUN_TEST(test_song_us_follows_slot_bpm);
   RUN_TEST(test_normalize_peak);
-  RUN_TEST(test_trim_tail);
   RUN_TEST(test_next_resample_name);
   RUN_TEST(test_note_lands_in_its_block);
   RUN_TEST(test_pattern_spec_picks_pattern);

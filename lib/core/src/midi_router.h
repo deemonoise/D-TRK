@@ -9,8 +9,6 @@ namespace mt {
 // Note is a reserved legacy slot in the saved device blob; it is ignored.
 enum class PadMode : uint8_t { Note, Pat, Perf, Mute, Count };
 constexpr int kPads = 16;
-// NOTE pad on a KIT track: pads 1-16 are its lanes 1-16; -1 = no lane.
-inline int kitPadLane(int pad) { return pad >= 0 && pad < kKitLanes && pad < kPads ? pad : -1; }
 // Destination of an ordinary incoming MIDI note; note -1 means ignored.
 struct MidiNoteTarget { int note; int lane; };
 MidiNoteTarget midiNoteTarget(int note, const Instrument* kit, uint8_t base);

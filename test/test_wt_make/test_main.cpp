@@ -149,54 +149,6 @@ void test_shapes() {
   TEST_ASSERT_EQUAL_FLOAT(-1.0f, f[200]);
 }
 
-void test_smooth() {
-  float f[N];
-  for (float& v : f) v = 0.5f;
-  wtSmooth(f);
-  for (float v : f) TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, v);
-  for (float& v : f) v = 0;
-  f[0] = 1;
-  wtSmooth(f);
-  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, f[0]);
-  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.25f, f[1]);
-  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.25f, f[N - 1]);
-}
-
-void test_from_keys() {
-  static WtKey keys[3];
-  keys[0].frame = 63;
-  keys[1].frame = 0;
-  keys[2].frame = 21;
-  for (int i = 0; i < N; ++i) {
-    keys[0].pts[i] = -0.5f;
-    keys[1].pts[i] = 0.5f;
-    keys[2].pts[i] = 1.0f;
-  }
-  static int16_t src[kWtSrcSamples];
-  TEST_ASSERT_TRUE(wtFromKeys(keys, 3, src));
-  TEST_ASSERT_EQUAL(0, keys[0].frame);  // sorted
-  TEST_ASSERT_EQUAL(21, keys[1].frame);
-  TEST_ASSERT_EQUAL(63, keys[2].frame);
-  TEST_ASSERT_EQUAL(kWtPeak / 2, src[0]);
-  TEST_ASSERT_EQUAL(kWtPeak, src[21 * N + 5]);
-  TEST_ASSERT_EQUAL(-kWtPeak / 2, src[63 * N + 7]);
-  // Midpoint of 21 (1.0) and 63 (-0.5) at 42: 0.25.
-  TEST_ASSERT_INT_WITHIN(1, kWtPeak / 4, src[42 * N]);
-  float f[N];
-  wtKeyAt(keys, 3, 10, f);  // 0.5 + 10/21 * 0.5
-  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f + 10.0f / 21 * 0.5f, f[3]);
-}
-
-void test_from_keys_needs_ends() {
-  static WtKey keys[2];
-  static int16_t src[kWtSrcSamples];
-  keys[0].frame = 0;
-  keys[1].frame = 62;
-  TEST_ASSERT_FALSE(wtFromKeys(keys, 2, src));
-  keys[1].frame = 63;
-  TEST_ASSERT_TRUE(wtFromKeys(keys, 2, src));
-}
-
 // --- pitch
 
 void test_yin_periods() {
@@ -456,9 +408,6 @@ int main() {
   RUN_TEST(test_resample_area_no_alias);
   RUN_TEST(test_resample_cubic_hits_samples);
   RUN_TEST(test_shapes);
-  RUN_TEST(test_smooth);
-  RUN_TEST(test_from_keys);
-  RUN_TEST(test_from_keys_needs_ends);
   RUN_TEST(test_yin_periods);
   RUN_TEST(test_yin_noise_no_pitch);
   RUN_TEST(test_cum_norm);

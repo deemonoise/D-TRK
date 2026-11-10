@@ -38,7 +38,6 @@ class ImportDialog {
 
   bool readAndParse(const char* dir, const char* name);
   void buildRows();
-  bool isAction(int row) const { return row == importRow_ || row == cancelRow_; }
   void action(int row);
   void confirm();
   void commit();

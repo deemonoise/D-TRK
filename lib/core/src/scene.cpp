@@ -87,10 +87,6 @@ bool sceneTrkLive(const SynthModel& m, int t, int p) {
   return p >= 0 && p < kScnTrk && (sceneTrkIsSet(*live(m, 0), t, p) || sceneTrkIsSet(*live(m, 1), t, p));
 }
 
-bool sceneMstLive(const SynthModel& m, int p) {
-  return p >= 0 && p < kScnMst && (sceneMstIsSet(*live(m, 0), p) || sceneMstIsSet(*live(m, 1), p));
-}
-
 void sceneSetTrk(Scene& s, int t, int p, int v) {
   if (t < 0 || t >= kTracks || p < 0 || p >= kScnTrk) return;
   s.trk[t][p] = sceneClampTrk(p, p == kScnDty ? clampi(v, 0, sceneTrkMax(p)) : v);

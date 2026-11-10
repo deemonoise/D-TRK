@@ -445,14 +445,6 @@ void flushOut() {
   port.flush();
 }
 
-FrameTxStats txStats() {
-#ifdef LINK_DESK
-  return deskTx ? deskTx->stats() : FrameTxStats{};
-#else
-  return {};
-#endif
-}
-
 void statusIfDue() {
 #ifdef LINK_DESK
   pumpDeskTx();

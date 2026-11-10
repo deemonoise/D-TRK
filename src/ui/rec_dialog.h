@@ -67,7 +67,6 @@ class RecDialog {
   // The transport starts from stopped (App, before it posts the start): a START waiting for Play
   // (RESAMPLE) sends its RecStart now, so the take already runs at the first note.
   void onPlay();
-  bool waitsPlay() const { return waitPlay_ && open_; }
   void poll();
   // A tapped alone (no turn while held, App's AbKeys) in the open window: as the big button (toggle()).
   void aTap();

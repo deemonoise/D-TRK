@@ -125,7 +125,6 @@ class AbKeys {
     return out(AbAction::AClick);
   }
   bool aHeld() const { return a_; }
-  bool bHeld() const { return b_; }
   // Input was dropped (long operation): forget held buttons.
   void reset() { a_ = b_ = aUsed_ = bUsed_ = editing_ = both_ = aFirst_ = false; }
 

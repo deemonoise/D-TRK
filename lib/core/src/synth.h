@@ -240,10 +240,8 @@ class Synth {
   bool profiling() const { return clock_ != nullptr; }
   // Requested state (any task): what the last setProfiler asked for.
   bool profilerArmed() const { return clockReq_.load(std::memory_order_relaxed) != nullptr; }
-  void addProfile(int stage, uint32_t cycles) { prof_[stage] += cycles; }
   // Copies the sums, counts (and the blocks rendered) and clears them.
   void takeProfile(uint32_t out[kProfStages], uint32_t count[kProfStages], uint32_t& blocks);
-  uint32_t profNow() const { return clock_ ? clock_() : 0; }
   // Newest allocated voice of the track, or -1.
   int trackVoice(uint8_t track) const;
   int voiceInstr(int v) const { return voices_[v].instr; }

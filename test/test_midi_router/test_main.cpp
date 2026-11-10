@@ -253,15 +253,6 @@ void test_project_reset_clears_knobs() {
   TEST_ASSERT_EQUAL(0, p->knobs[0].label[0]);
 }
 
-// KIT: pads 1-16 are its lanes 1-16; anything else plays nothing.
-void test_kit_pad_lane() {
-  TEST_ASSERT_EQUAL(0, mt::kitPadLane(0));
-  TEST_ASSERT_EQUAL(8, mt::kitPadLane(8));
-  TEST_ASSERT_EQUAL(15, mt::kitPadLane(15));
-  TEST_ASSERT_EQUAL(-1, mt::kitPadLane(16));
-  TEST_ASSERT_EQUAL(-1, mt::kitPadLane(-1));
-}
-
 void test_kit_midi_base_maps_lanes_and_preserves_melody() {
   Instrument kit;
   kitSetDefaults(kit);
@@ -306,6 +297,5 @@ int main(int, char**) {
   RUN_TEST(test_forget_drops_absolute);
   RUN_TEST(test_other_messages_none);
   RUN_TEST(test_project_reset_clears_knobs);
-  RUN_TEST(test_kit_pad_lane);
   return UNITY_END();
 }

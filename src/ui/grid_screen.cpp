@@ -864,11 +864,6 @@ mt::Sel GridScreen::curSel() const {
   return mt::makeSel(selT0_, clampi(selS0_, 0, last), selT1_, clampi(selS1_, 0, last));
 }
 
-mt::Sel GridScreen::trackSel() const {
-  const int last = len() - 1;
-  return mt::makeSel(track(), 0, track(), last);
-}
-
 void GridScreen::openMenu() {
   menuCtx_.pattern = app_.editPattern();
   menuCtx_.track = track(); menuCtx_.step = cur(); menuCtx_.length = len();

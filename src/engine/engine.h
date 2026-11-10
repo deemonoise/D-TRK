@@ -92,14 +92,10 @@ bool savedBpm(uint16_t& bpm);
 // lockProject() itself: do not call holding it.
 uint16_t projectBpm(const mt::Project& p);
 // Track generators, holding lockProject(): the register after the heard step (the reset one while
-// stopped), and the register the next planned step starts from with that step of `track` in pattern pat
-// (Capture; step 0 while stopped or another pattern plays; stopped: the reset register).
+// stopped).
 mt::GenState heardGen(int track);
-mt::GenState nextGen(int track, int pat, int& fromStep);
-// Track evolve, holding lockProject(): the state after the heard step of `track` (copied; the reset one
-// while stopped) and the passes counted towards its next mutation.
-void heardEvo(int track, mt::EvoTrack& out, uint8_t& passes);
-// The same without the copy (UI header): mutations, changed steps of the first len, passes counted.
+// Track evolve, holding lockProject() (UI header): mutations, changed steps of the first len,
+// and passes counted towards the next mutation.
 struct EvoInfo {
   uint32_t n;
   int changed;

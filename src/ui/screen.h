@@ -65,20 +65,4 @@ class Screen {
   }
 };
 
-// Stand-in for screens that are not implemented yet.
-class TodoScreen : public Screen {
- public:
-  explicit TodoScreen(const char* name) : name_(name) {}
-  void onInput(const hw::InputEvent&) override {}
-  void onTouch(const TouchEvent&) override {}
-  void draw(LGFX_Sprite& s, int y0, int h) override {
-    s.setTextColor(kDim);
-    s.drawString(name_, 16, y0 + 16);
-    s.drawString("TODO", (kScreenW - 4 * kCharW) / 2, y0 + (h - kCharH) / 2);
-  }
-
- private:
-  const char* name_;
-};
-
 }  // namespace ui

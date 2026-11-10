@@ -33,7 +33,6 @@ class SynthStream : public AudioStream {
     uint16_t outPeak;
   };
   Stats take();
-  void addLost() { lost_++; }
   // The slowest block's cycles since the previous call (CPU profile), cleared.
   uint32_t takeProfPeak() {
     const uint32_t c = profPeak_;

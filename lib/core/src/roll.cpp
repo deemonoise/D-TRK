@@ -63,17 +63,6 @@ RollKey rollKey(int note, uint8_t root, ScaleType t) {
   return inScale(note, root, t) ? RollKey::In : RollKey::Out;
 }
 
-bool rollToggleLane(Step& s, int lane) {
-  if (lane < 0 || lane >= kKitLanes) return false;
-  if (!s.hasNote()) {
-    s.note = 0;
-    setLaneMask(s, 0);
-  }
-  const bool on = !laneOn(s, lane);
-  setLane(s, lane, on);
-  return on;
-}
-
 int rollFollow(int first, int cur, int visible, int total) {
   if (total <= visible) return 0;
   if (cur < first) first = cur;

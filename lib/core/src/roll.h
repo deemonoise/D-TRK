@@ -36,10 +36,6 @@ struct RollKeyRow {
 };
 RollKeyRow rollKeyRow(int note);
 
-// KIT: flips lane's bit (0..kKitLanes-1); an empty (or OFF) step becomes a note step at the track's
-// velocity (note 0) with no other lanes. True when the lane is now on; out of range: nothing, false.
-bool rollToggleLane(Step& s, int lane);
-
 // The first visible of total items (rows, notes) after the least scroll that shows cur, visible at once.
 int rollFollow(int first, int cur, int visible, int total);
 // The page of page columns holding cur: its first column.

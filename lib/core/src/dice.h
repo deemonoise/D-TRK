@@ -23,7 +23,6 @@ enum : uint8_t { kDiceTempo = 1, kDiceSounds = 2, kDicePattern = 4, kDiceAll = 7
 
 // Track of each role (tracks 1..6).
 constexpr uint8_t kDiceTrack[kDiceRoles] = {0, 1, 2, 3, 4, 5};
-const char* diceRoleName(DiceRole r);  // "DRUMS", "BASS", "CHORDS", "LEAD", "ARP", "FX" (track names)
 
 constexpr int kDicePats = 4;  // legacy Classic/Develop pattern count stays stable
 constexpr int kDiceMaxPats = 6;

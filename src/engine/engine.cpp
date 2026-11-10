@@ -246,25 +246,6 @@ uint16_t projectBpm(const mt::Project& p) {
 
 mt::GenState heardGen(int track) { return seq ? seq->heardGen(track) : mt::GenState{}; }
 
-mt::GenState nextGen(int track, int pat, int& fromStep) {
-  if (!seq) {
-    fromStep = 0;
-    return mt::GenState{};
-  }
-  fromStep = seq->genFromStep(track, pat);
-  return seq->genNext(track);  // the track's register goes on over patterns
-}
-
-void heardEvo(int track, mt::EvoTrack& out, uint8_t& passes) {
-  if (!seq) {
-    mt::evoReset(out);
-    passes = 0;
-    return;
-  }
-  out = seq->heardEvo(track);
-  passes = seq->evoPasses(track);
-}
-
 EvoInfo heardEvoInfo(int track, int len) {
   if (!seq) return EvoInfo{0, 0, 0};
   const mt::EvoTrack& e = seq->heardEvo(track);

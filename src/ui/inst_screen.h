@@ -143,7 +143,6 @@ class InstScreen : public Screen {
   void changeInstr(int d);
   void syncParams();  // rows of the current type
   Param* typeRows() { return rowsOf(shown_); }  // row array of the current type
-  int typeCount() const { return countOf(shown_); }  // the type's own rows
   Param* rowsOf(mt::InstrType t);
   static int countOf(mt::InstrType t);
   // The rows page (Page) shows for type t, nullptr when none (no such page, the sample editor, KIT LANES).

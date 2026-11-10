@@ -46,7 +46,6 @@ class GridScreen : public Screen {
   }
   bool notesArmed() const { return rec_; }
   bool recording() const { return rec_ && !dialogOpen(); }
-  uint8_t lastNote(int tr) const { return lastNote_[tr]; }  // the octave melodic pads play in
   // A controller pad into the heard step of track tr (REC, playing): lane >= 0 sets that drum lane,
   // else the melodic note with velocity vel (1..127). No preview (the pad sounds by itself).
   // GRID's octave (lastNote_) stays: the pads keep their notes while recording.
@@ -172,7 +171,6 @@ class GridScreen : public Screen {
   void selFollow();  // selection end follows the cursor
   void onMenu(int id);
   void apply(const mt::Sel& sel, int id);  // clear / note off under pushUndo + lock
-  mt::Sel trackSel() const;
   mt::Sel curSel() const;
   bool hit(int x, int y, int& step, int& tr, int& field) const;
   // Drum track: the track's instrument is a KIT, steps are lane masks.

@@ -33,9 +33,6 @@ uint64_t trackLoopTicks(const Pattern& pt, int track);
 void normalizePeak(int16_t* lr, uint32_t frames, int16_t peak, float target = kNormPeak);
 // The same on n samples of any layout (mono). target: the peak's level after (kNormPeak / kNormPeakHot).
 void normalizeSamples(int16_t* b, uint32_t n, int16_t peak, float target = kNormPeak);
-// Frames to keep of interleaved stereo: past the last frame with a sample above kSilence, rounded up
-// to `block`, at least one block.
-uint32_t trimTail(const int16_t* lr, uint32_t frames, uint32_t block);
 // The toast of a render into the bank (Resample, one-shot): "NAME 3.2s" (tenths cut), ", N CLIPS" when
 // clips (", 1 CLIP"). Cut to n.
 void renderDoneText(const char* name, uint32_t frames, uint32_t clips, char* out, int n);

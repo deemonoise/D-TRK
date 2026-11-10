@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <vector>
 #include "edit_ops.h"
+#include "pattern_tools.h"
 #include "shift_gen.h"
 #include "undo.h"
 
@@ -8,6 +9,7 @@ using namespace mt;
 
 // Large objects live in static storage, not on the stack.
 static Pattern pat;
+static Pattern scratch;
 static Clipboard cb;
 
 void setUp() {
@@ -49,7 +51,7 @@ void test_copy_paste_clipped() {
   TEST_ASSERT_EQUAL(2, cb.tracks);
   TEST_ASSERT_EQUAL(3, cb.steps);
 
-  pasteAt(pat, cb, 6, 14);
+  TEST_ASSERT_EQUAL(ToolResult::Changed, pastePart(pat, scratch, cb, 6, 14, StepPart::All));
   // Pasted: tracks 6-7, steps 14-15.
   for (int dt = 0; dt < 2; ++dt)
     for (int ds = 0; ds < 2; ++ds) {
@@ -75,7 +77,7 @@ void test_paste_clipped_at_track_16() {
   copySel(src, makeSel(0, 0, 2, 0), cb);  // 3 tracks x 1 step
   TEST_ASSERT_EQUAL(3, cb.tracks);
 
-  pasteAt(pat, cb, 14, 0);
+  TEST_ASSERT_EQUAL(ToolResult::Changed, pastePart(pat, scratch, cb, 14, 0, StepPart::All));
   // Pasted: tracks 14-15; the third clipboard track falls off the end.
   TEST_ASSERT_EQUAL(src.steps[0][0].note, pat.steps[14][0].note);
   TEST_ASSERT_EQUAL(src.steps[1][0].note, pat.steps[15][0].note);
@@ -87,7 +89,7 @@ void test_paste_clipped_at_track_16() {
 }
 
 void test_paste_empty_clipboard_noop() {
-  pasteAt(pat, cb, 0, 0);
+  TEST_ASSERT_EQUAL(ToolResult::Invalid, pastePart(pat, scratch, cb, 0, 0, StepPart::All));
   TEST_ASSERT_TRUE(pat.isEmpty());
 }
 
@@ -279,7 +281,7 @@ void test_copy_paste_drum_step_byte_exact() {
   src.steps[2][3].vel = 0xA5;
   src.steps[2][3].fx[0] = {Fx::ACC, 0x81};
   copySel(src, makeSel(2, 3, 2, 3), cb);
-  pasteAt(pat, cb, 4, 5);
+  TEST_ASSERT_EQUAL(ToolResult::Changed, pastePart(pat, scratch, cb, 4, 5, StepPart::All));
   TEST_ASSERT_EQUAL_MEMORY(&src.steps[2][3], &pat.steps[4][5], sizeof(Step));
 }
 
