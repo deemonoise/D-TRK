@@ -1,0 +1,9 @@
+{
+  "command": "python3 -m unittest discover -s scripts/tests -p 'test_*.py'",
+  "result": "OK",
+  "tests": 16,
+  "elapsed_seconds": 51.426,
+  "core_policy_cases": 10,
+  "file_screen_cases": 19,
+  "tool_note": "C++ quality gates are not supported; No source files is not a pass."
+}

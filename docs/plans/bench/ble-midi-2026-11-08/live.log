@@ -1,0 +1,30 @@
+HEAP boot free_internal=207900 largest_internal=147444 min_internal=202624 free_psram=8386036 largest_psram=8257524
+HEADLESS chip=ESP32-S3 revision=2 cpu_mhz=240 flash=16777216 psram=8388608 synth_rate=32000 block=128 revision_code=ble-resource-probe
+PLACEMENT synth_internal=1 reverb_internal=1 sizeof_synth=49264 sizeof_project=488908 free_internal=122768
+HEAP synth_audio_task free_internal=113116 largest_internal=65524 min_internal=113116 free_psram=6854240 largest_psram=6815732
+BENCH phase=preinit case=CHIP16 voices=16 active=16.00 avg_us=1748.39 peak_us=1762 warmup_peak_us=2778 rms=13537.87 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5764 checksum=-12420
+HEAP before_ble_init free_internal=112852 largest_internal=65524 min_internal=112600 free_psram=6854240 largest_psram=6815732
+BLE init=1 init_us=50336 max_connections=1 central=1 observer=1 peripheral=0 broadcaster=0 host_stack=5120 sizeof_client=84 sizeof_scan=72 allocator_internal=1
+HEAP ble_initialized free_internal=52428 largest_internal=31732 min_internal=52220 free_psram=6854240 largest_psram=6815732
+HEAP ble_client_scan_allocated free_internal=52192 largest_internal=31732 min_internal=52164 free_psram=6854240 largest_psram=6815732
+HEAP scan_started free_internal=52124 largest_internal=31732 min_internal=51968 free_psram=6854240 largest_psram=6815732
+BLE scan advertisements=8 target_found=0 scan_interval_ms=100 scan_window_ms=50 active_scan=1
+BLE WAIT EMP16 up to30s exact_name=MIDI PAD-01 plus MIDI service
+BLE APPROVED_TARGET name=MIDI PAD-01 address=a4:c1:38:97:ac:dc
+BLE connected=1
+HEAP after_connect_attempt free_internal=52144 largest_internal=31732 min_internal=51832 free_psram=6854240 largest_psram=6815732
+BLE subscribed=1 mtu=93 interval=50.00
+HEAP connected_subscribed free_internal=51516 largest_internal=31732 min_internal=51508 free_psram=6854240 largest_psram=6815732
+BLE TRAFFIC_READY window=1 duration_s=30 play EMP16 pads/knobs; queued real notes to CHIP track0
+BENCH phase=traffic_50ms case=CHIP_INPUT voices=0 active=0.00 avg_us=363.65 peak_us=542 warmup_peak_us=0 rms=0.00 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5764 checksum=-12420
+HEAP traffic_window free_internal=51516 largest_internal=31732 min_internal=51264 free_psram=6854240 largest_psram=6815732
+BLE PARAM_UPDATE request=1 actual_interval_ms=15.00
+BLE TRAFFIC_READY window=2 duration_s=30 play EMP16 pads/knobs; queued real notes to CHIP track0
+BENCH phase=traffic_fast case=CHIP_INPUT voices=0 active=0.02 avg_us=379.36 peak_us=808 warmup_peak_us=0 rms=80.92 notifications=82 noteon=7 noteoff=7 cc=96 queue_drops=0 queue_high=6 dispatched=110 stack_free=5764 checksum=-13805
+HEAP traffic_window free_internal=51516 largest_internal=31732 min_internal=51256 free_psram=6854240 largest_psram=6815732
+BLE TRAFFIC_READY window=3 duration_s=30 play EMP16 pads/knobs; queued real notes to CHIP track0
+BENCH phase=traffic_fast case=CHIP_INPUT voices=0 active=0.00 avg_us=363.58 peak_us=435 warmup_peak_us=0 rms=0.00 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=6 dispatched=110 stack_free=5764 checksum=-13805
+HEAP traffic_window free_internal=51516 largest_internal=31732 min_internal=51256 free_psram=6854240 largest_psram=6815732
+BLE FINAL connected=1 notifications=82 bytes=466 noteon=7 noteoff=7 cc=96 drops=0 dispatched=110
+HEAP connected_final free_internal=51516 largest_internal=31732 min_internal=51256 free_psram=6854240 largest_psram=6815732
+BENCH DONE ble_compiled=1 queue_drops=0

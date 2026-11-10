@@ -32,6 +32,7 @@ struct LoadNotes {
 
 // Resets out first. Values are clamped to valid ranges; unknown chunks are skipped. Old song chunks
 // (PROJ chain, CHN2, SCNS) are migrated to the song when the file has no SNG3.
+// FMPA projects belong to the unsupported newer Teensy FM family and return BadVersion.
 LoadErr loadProject(ByteSource& in, Project& out, LoadNotes* notes = nullptr);
 
 // One TINS record of len bytes (drive, crushBits, crushRate, driveModel, the gate's fields, ...):

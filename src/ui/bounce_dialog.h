@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include "bounce.h"
+#include "dialog_actions.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "keyboard.h"
@@ -42,9 +43,6 @@ class BounceDialog {
   enum Row : int { kNote, kHold, kVel, kName, kSave, kCancel, kRows };
   static constexpr int kKitRows = 4;  // KIT mode: Hold, Vel, SAVE, Cancel
   static constexpr int kHeaderH = 28;
-  static constexpr int kBtnY = 2, kBtnH = 20;
-  static constexpr int kCancelX = 320, kCancelW = 72;
-  static constexpr int kOkX = 400, kOkW = 64;
   static constexpr int kHoldMin = 1, kHoldMax = 100;  // x 0.05 s
 
   void save();  // checks, then Overwrite? or run()
@@ -60,8 +58,8 @@ class BounceDialog {
     progBase_ = 0;
     pass2_ = false;
   }
-  void drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel);
 
+  DialogActions actions_;
   App& app_;
   Param params_[kRows];
   Param kitParams_[kKitRows];

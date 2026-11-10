@@ -1,0 +1,24 @@
+{
+  "target": "192.168.3.221",
+  "environment": "wt32",
+  "memory_type": "qio_qspi",
+  "flash": "16MB",
+  "track_button_1_bit": 10,
+  "transport": "HTTP OTA /api/update",
+  "image": "firmware.bin",
+  "sha256": "f81cfa341fb5544ab7c4fb9f02902eea2f62496e2bf4846aabe371c1b1b6ec3c",
+  "head": "e7efe3b11dfa73af4225eeae38f598a965a9cdad",
+  "nvs_erased": false,
+  "ota_http_status": 200,
+  "ota_response": "OK",
+  "bytes": 2177344,
+  "runtime_check": {
+    "v12_E8_accepted": true,
+    "download_bytes": 544,
+    "roundtrip_sha256": "6028d5c40bc2db1a3c243d4009fe5a85c3fae6de32566651347bc80ff1cd6593",
+    "cleanup_http": 200,
+    "temporary_file_removed": true,
+    "crashlog_unchanged": true
+  },
+  "wifi_after_reboot": "192.168.3.221, user reopened Wi-Fi, HTTP/read/write/delete passed"
+}

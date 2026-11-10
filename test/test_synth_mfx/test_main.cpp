@@ -79,13 +79,35 @@ static uint32_t referenceScene(Synth& x) {
   return h;
 }
 
-// Measured on the firmware before feature 5's integration (2026-10-14).
-static constexpr uint32_t kRefHash = 0x93E77752;
+// ESP32 32 kHz baseline after clean master gain, smoothed compressor and corrected reverb allpass.
+// The independent sample calibration test below protects the intended clean transfer.
+static constexpr uint32_t kRefHash = 0xE8D1CC5B;
 
-void test_default_render_bit_exact_to_before() {
+void test_default_render_matches_corrected_fx_baseline() {
   const uint32_t h = referenceScene(*s);
   printf("reference hash 0x%08X\n", h);
   TEST_ASSERT_EQUAL_HEX32(kRefHash, h);
+}
+
+// Full Synth, no master helper: unity sample playback at MAIN100 is linear at the historical
+// small-signal level x1.5. At these levels a cubic master would create measurable harmonics.
+void test_default_master_is_clean_and_preserves_small_signal_calibration() {
+  struct Bank : SampleSource {
+    int16_t data[64];
+    Bank(){for(int i=0;i<64;++i)data[i]=static_cast<int16_t>(8000*sinf(6.283185307f*i/32));}
+    const int16_t* find(const char*,uint32_t& n,uint32_t& rate) const override {n=64;rate=kSynthRate;return data;}
+  } bank;
+  auto& m=p->instruments[0];instrSetType(m,InstrType::Sample);strcpy(m.sample,"test");
+  m.root=60;m.loop=1;m.vol=127;m.attack=0;m.decay=0;m.sustain=127;m.send=m.rsend=0;
+  s->setBank(&bank);send(*s,0,0,0x90,60,127);
+  for(int block=0;block<4;++block){
+    s->renderStereo(lr);
+    for(int i=0;i<Synth::kBlock;++i){
+      const float expected=bank.data[i%64]*1.5f*(32767.f/32768.f);
+      TEST_ASSERT_FLOAT_WITHIN(1.01f,expected,static_cast<float>(lr[2*i]));
+      TEST_ASSERT_EQUAL_INT16(lr[2*i],lr[2*i+1]);
+    }
+  }
 }
 
 // ---- A / B renders: the same events into two synths, compared ----
@@ -306,7 +328,8 @@ void test_perf_tape_wobble() {
 
 int main() {
   UNITY_BEGIN();
-  RUN_TEST(test_default_render_bit_exact_to_before);
+  RUN_TEST(test_default_render_matches_corrected_fx_baseline);
+  RUN_TEST(test_default_master_is_clean_and_preserves_small_signal_calibration);
   RUN_TEST(test_mod_send_reaches_mod_bus);
   RUN_TEST(test_mod_off_or_zero_send_bit_exact);
   RUN_TEST(test_mod_lock_and_lfo_target);

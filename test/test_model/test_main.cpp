@@ -74,12 +74,18 @@ void test_project_reset_clears_song() {
   p->song[0] = 5;
   p->song[kSongMax - 1] = 7;
   p->songMute[2] = 0xABCD;
+  p->songTrn[4] = -7;
+  p->songBpm[kSongMax - 1] = 99;
+  p->songTrnMask = 0x0F0F;
   p->reset();
   TEST_ASSERT_EQUAL(0, p->songLen);
   for (int i = 0; i < kSongMax; ++i) {
     TEST_ASSERT_EQUAL(0, p->song[i]);
     TEST_ASSERT_EQUAL_HEX16(0, p->songMute[i]);
+    TEST_ASSERT_EQUAL(0, p->songTrn[i]);
+    TEST_ASSERT_EQUAL(0, p->songBpm[i]);
   }
+  TEST_ASSERT_EQUAL_HEX16(0xFFFF, p->songTrnMask);  // every track follows the slot's TRN
   delete p;
 }
 
@@ -429,7 +435,7 @@ void test_sound_fx_defaults() {
   TEST_ASSERT_EQUAL(50, p.compRel);
   TEST_ASSERT_EQUAL(0, p.scTrack);
   TEST_ASSERT_EQUAL(64, p.scDepth);
-  TEST_ASSERT_EQUAL(17, kLocks);  // + BIT, SRR, PAN, DTY, GTE, MOD, SAT
+  TEST_ASSERT_EQUAL(25, kLocks);  // prior 17 plus eight matrix amounts
   TEST_ASSERT_EQUAL(kLockSrr + 1, kLockPan);
   TEST_ASSERT_EQUAL(kLockPan + 1, kLockDty);
   TEST_ASSERT_EQUAL(kLockDty + 1, kLockGte);

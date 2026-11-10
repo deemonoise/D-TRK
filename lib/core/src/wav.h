@@ -16,14 +16,15 @@ struct WavInfo {
   bool hasCrc = false;                     // "mtcr" chunk present and its frames match frames()
   uint32_t crc = 0;                        // mtcr: crc32 of the int16 data, all channels (sampleCrc)
   uint16_t clmFrame = 0;                   // Serum "clm " chunk: samples per frame, 0 = none
+  bool isFloat = false;                    // IEEE float 32 (format 3), else integer PCM
   uint32_t frameBytes() const { return static_cast<uint32_t>(channels) * (bits / 8); }
   uint32_t frames() const { return frameBytes() ? dataBytes / frameBytes() : 0; }
 };
 
 enum class WavErr : uint8_t { Ok, NotWav, Unsupported, Truncated };
 
-// Reads RIFF/WAVE chunks from src: "fmt " (PCM or WAVE_FORMAT_EXTENSIBLE with a PCM sub-format;
-// 8/16/24 bit, any channel count), "data" (skipped, position recorded) and an optional "smpl"
+// Reads RIFF/WAVE chunks from src: "fmt " (PCM or IEEE float, plain or WAVE_FORMAT_EXTENSIBLE;
+// 8/16/24 bit PCM or 32-bit float, any channel count), "data" (skipped, position recorded) and an optional "smpl"
 // (root note), "mtcr" (our data crc32 and frame count) and "clm " (Serum wavetable frame size)
 // before or after it; other chunks (LIST, fact, cue...) are skipped.
 WavErr wavParse(ByteSource& src, WavInfo& out);
@@ -31,13 +32,20 @@ WavErr wavParse(ByteSource& src, WavInfo& out);
 // RIFF + fmt + smpl + mtcr + data chunk header.
 constexpr uint32_t kWavHeaderBytes = 12 + 24 + 44 + 16 + 8;
 // Header of a 16-bit WAV with `channels` channels (1 mono, 2 interleaved stereo), root note and data
-// crc (sampleCrc over all frames * channels samples); frames * channels * 2 bytes of data follow.
+// crc (sampleCrc; stereo: of the mono mix the bank would import); frames * channels * 2 bytes of data
+// follow.
 // Chunks before "data", so a parser sees them without skipping the data.
 void wavHeader(uint8_t out[kWavHeaderBytes], uint32_t frames, uint32_t rate, uint8_t root, uint32_t crc,
                uint16_t channels = 1);
 
-// Converts frames of raw data (any channels, 8/16/24 bit PCM) to mono int16: channels averaged,
-// 8 bit unsigned (128 = 0), 24 bit keeps the top 16 bits.
+// RIFF + fmt + data: a plain PCM header (no smpl / mtcr), for files that leave the box (export).
+constexpr uint32_t kWavPcmHeaderBytes = 44;
+// Header of a bits-bit (16 / 24) PCM WAV with `channels` interleaved channels; frames follow.
+void wavHeaderPcm(uint8_t out[kWavPcmHeaderBytes], uint32_t frames, uint32_t rate, uint16_t channels, uint16_t bits);
+
+// Converts frames of raw data (any channels, 8/16/24 bit PCM or 32-bit float) to mono int16:
+// channels averaged, 8 bit unsigned (128 = 0), 24 bit keeps the top 16 bits, float clips to -1..1
+// (NaN = 0).
 void wavToMono(const uint8_t* raw, uint32_t frames, const WavInfo& w, int16_t* out);
 
 // Streaming resampler to <= 32 kHz: rates up to 32 kHz pass through; higher rates get a 2-tap

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <unity.h>
 #include "evolve.h"
+#include "mut.h"
 
 using namespace mt;
 
@@ -20,9 +21,9 @@ void test_cfg_defaults() {
   TEST_ASSERT_EQUAL(0, proj.evo[3].amount);
   TEST_ASSERT_FALSE(proj.evoOn(3));
   proj.evo[3].amount = 1;
+  TEST_ASSERT_FALSE(proj.evoOn(3));  // only in MUT mode EVO
+  proj.var[3].mode = static_cast<uint8_t>(VarMode::Evo);
   TEST_ASSERT_TRUE(proj.evoOn(3));
-  proj.evo[3].mask = 0;
-  TEST_ASSERT_FALSE(proj.evoOn(3));
   TEST_ASSERT_FALSE(proj.evoOn(-1));
   TEST_ASSERT_FALSE(proj.evoOn(kTracks));
 }
@@ -431,6 +432,8 @@ void test_shift_swaps_never_adjacent_rot_bounded() {
   TEST_ASSERT_TRUE(rotated);
 }
 
+// Capture live (mut.h) in MUT EVO: writes the track's steps as the state plays them, past the track
+// length and other tracks kept.
 void test_capture_writes_what_plays() {
   Pattern& pt = proj.patterns[0];
   pt.length = 8;
@@ -444,7 +447,9 @@ void test_capture_writes_what_plays() {
   s.step[0].deg = 1;
   s.step[2].flags = kEvoDrop;
   s.step[3].flags = static_cast<uint8_t>(1 << kEvoRtrgShift);
-  EvoApply a = melodic();
+  proj.var[1].mode = static_cast<uint8_t>(VarMode::Evo);
+  proj.evo[1].mask = kEvoMaskAll;
+  const EvoApply a = evoApplyOf(proj, 1);
   static Pattern expect;
   expect = pt;
   for (int i = 0; i < 6; ++i) {
@@ -452,7 +457,8 @@ void test_capture_writes_what_plays() {
     expect.steps[1][i] = evoStep(pt, 1, i, s, a, tmp);
   }
   static Step scratch[kMaxSteps];
-  evoCapture(pt, 1, s, a, scratch);
+  static VarTrack v;
+  captureLive(proj, pt, 1, s, v, GenState(), 0, scratch);
   TEST_ASSERT_EQUAL_MEMORY(expect.steps[1], pt.steps[1], sizeof(pt.steps[1]));
   TEST_ASSERT_EQUAL(99, pt.steps[1][7].note);
   TEST_ASSERT_EQUAL(50, pt.steps[2][0].note);

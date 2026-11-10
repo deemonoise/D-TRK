@@ -12,6 +12,11 @@ uint16_t frameToFrac(uint32_t frame, uint32_t len) {
   return static_cast<uint16_t>(f > 0xFFFF ? 0xFFFF : f);
 }
 
+uint8_t sliceNote(const Instrument& m, int i) {
+  if (i < 0 || i >= kMaxSlices || int(m.root) + i > 127) return kNoteEmpty;
+  return static_cast<uint8_t>(int(m.root) + i);
+}
+
 int sliceInsert(Instrument& m, uint16_t pos) {
   const int n = m.sliceCount;
   if (n >= kMaxSlices) return -1;

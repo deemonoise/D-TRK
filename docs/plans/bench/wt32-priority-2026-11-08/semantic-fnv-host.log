@@ -1,0 +1,1 @@
+PASS: canonical=4363edfc raw zero=7f88d4aa/A5=6fba061c/5A=d499174b, only name-tail normalized, hash_excludes_crc=1, no mutation, actualsaveProject + 3 payload partitions + header/footer guards

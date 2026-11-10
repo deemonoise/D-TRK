@@ -18,6 +18,7 @@
 #include "wt_builtin.h"
 #include "wt_file.h"
 #include "wt_mip.h"
+#include "wt_audition.h"
 
 namespace audio {
 namespace {
@@ -333,6 +334,33 @@ const uint8_t* samplesBase() { return flash.mapped(); }
 uint32_t samplesSize() { return flash.size(); }
 
 void bankSetProject(const mt::Project* p) { project = p; }
+
+BankResult wtFrame16(const char* name, int frame, int16_t out[256]) {
+  if (!name || !out || frame < 0 || frame >= mt::kWtFrames) return BankResult::Unsupported;
+  const int16_t* data = wtSource.findWt(name);
+  if (!data) return BankResult::NoBank;
+  memcpy(out, data + frame * mt::kWtFramePts, mt::kWtFrameLen * sizeof(int16_t));
+  return BankResult::Ok;
+}
+
+BankResult wtAudition(const int16_t frame[256]) {
+  if (!frame) return BankResult::Unsupported;
+  if (!previewStop()) return BankResult::Busy;
+  constexpr unsigned frames = mt::kSynthRate * 3 / 5;
+  // previewBuffer is asynchronous: keep this allocation alive even if a later stop times out.
+  static int16_t* pcm = nullptr;
+  if (!pcm) pcm = static_cast<int16_t*>(heap_caps_malloc(frames * sizeof(int16_t), MALLOC_CAP_SPIRAM));
+  if (!pcm) return BankResult::NoMemory;
+  int16_t active[256], stage[256];
+  float scratch[256];
+  mt::WtAudition audition;
+  audition.bind(active, stage);
+  audition.part(1, 0, frame, 0, scratch);
+  if (!audition.part(1, 1, frame + 128, 0, scratch)) return BankResult::Unsupported;
+  audition.render(pcm, frames);
+  previewBuffer(pcm, frames, mt::kSynthRate);
+  return BankResult::Ok;
+}
 
 namespace {
 

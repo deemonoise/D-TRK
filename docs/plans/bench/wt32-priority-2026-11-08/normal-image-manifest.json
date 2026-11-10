@@ -1,0 +1,41 @@
+{
+  "image": "normal release without auto profile",
+  "target": "WT32 N16R2 qio_qspi",
+  "personal_track1_bit": 10,
+  "production_pins_restored": true,
+  "sha256": {
+    "firmware.bin": "6f84c1e86528df37a6664a5ce669af8759ee65d856a252ff7b073720e8a16e8b",
+    "firmware.elf": "85e696440b169608cb4cf5233a6735cb77e2c9827e8df99ff2fc76dc9fbc5c97"
+  },
+  "bytes": 2193056,
+  "verification": {
+    "host_unittest_methods": 16,
+    "host_result": "PASS",
+    "diagnostic_symbols": "absent",
+    "cold_tools": "flash",
+    "cpp_quality_gates": "N/A: tools do not support C++"
+  },
+  "deployment": "uploaded_http_200_OK",
+  "diagnostic_runs_on_actual_WT32": {
+    "A2": {
+      "render_us": 1963.9957,
+      "yellow_windows": 23,
+      "windows": 48
+    },
+    "B2": {
+      "render_us": 1529.0083,
+      "yellow_windows": 7,
+      "windows": 48
+    },
+    "C_cache_not_applied": {
+      "render_us_rounded": 1539,
+      "yellow_windows": 4,
+      "windows": 48
+    },
+    "model_fnv": "4363edfc",
+    "project_file_unchanged": true,
+    "all_diagnostic_runs_wifi_returned_http": true,
+    "red_or_dma_stalls": 0
+  },
+  "final_boot_note": "Normal firmware has no auto-profile and does not automatically reopen Wi-Fi. Final OTA accepted; no USB/normal-boot telemetry available."
+}

@@ -1,0 +1,135 @@
+ASSET name=Kick606 wt=0 frames=10678 crc=3bd61663 expected=3bd61663 flash=1
+ASSET name=CFunk wt=0 frames=10077 crc=36c26d33 expected=36c26d33 flash=1
+ASSET name=CYDub wt=0 frames=172774 crc=c1129c20 expected=c1129c20 flash=1
+ASSET name=HHDubC wt=0 frames=40326 crc=f5da2985 expected=f5da2985 flash=1
+ASSET name=HHBotlC wt=0 frames=2132 crc=e6ab1036 expected=e6ab1036 flash=1
+ASSET name=PCAbsy1 wt=0 frames=71889 crc=b3d7fd79 expected=b3d7fd79 flash=1
+ASSET name=DIRTY_01 wt=1 frames=49152 crc=137236ff expected=137236ff flash=1
+ASSET name=DISTORTE wt=1 frames=49152 crc=17ef3d52 expected=17ef3d52 flash=1
+REPRO START revision=current rate=32000 block=128 tick_hz=1000 core=0 priority=22 flash=16777216 psram=8388608 sizeof_synth=49264 sizeof_project=488908 profiler_clock_mhz=240 guard=OFF seed=0x5EED samples=flash_mapped_const wt=flash_mapped_mips
+REPRO revision=current pattern=1 placement=allINT synth_int=1 rvb_int=1 profile=1 churn=1 guard=0 blocks=2000 avg_us=1243.137 p95_us=1892 p99_us=2179 peak_us=2930 warm_peak_us=3709 over=0 active=4.010 min_active=2 max_active=8 events=1303 expected_events=1303 queue_rejects=0 missing_sample=0 missing_wt=0 rms=5035.029 pcm_hash=8f64f27b
+CHURN guard=0 min_cap=24 final_cap=24 frames=640 frame_bytes=307200 target_hz=40 core=1 operation=write16
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=queue blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=events blocks=2000 us=12.574 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=cache blocks=2000 us=55.289 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=instLfo blocks=2000 us=70.766 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=ctlMod blocks=2000 us=99.061 n=15.995
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=ctlFlt blocks=2000 us=10.319 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=ctlEng blocks=2000 us=75.934 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=chip blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=sample blocks=2000 us=93.591 n=1.618
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=fm blocks=2000 us=309.267 n=2.191
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=drum blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=synth blocks=2000 us=33.149 n=0.200
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=mix blocks=2000 us=31.900 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=delay blocks=2000 us=54.463 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=reverb blocks=2000 us=161.923 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=comp blocks=2000 us=0.954 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=perf blocks=2000 us=39.812 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=master blocks=2000 us=36.075 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=strip blocks=2000 us=112.894 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=mod blocks=2000 us=35.475 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=shim blocks=2000 us=0.447 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=eq blocks=2000 us=0.656 n=0.000
+STAGE pattern=1 placement=allINT churn=1 guard=0 name=lofi blocks=2000 us=0.000 n=0.000
+REPRO revision=current pattern=1 placement=coreINT_rvbPS synth_int=1 rvb_int=0 profile=1 churn=1 guard=0 blocks=2000 avg_us=1368.072 p95_us=2081 p99_us=2403 peak_us=2572 warm_peak_us=2783 over=0 active=4.010 min_active=2 max_active=8 events=1303 expected_events=1303 queue_rejects=0 missing_sample=0 missing_wt=0 rms=5035.029 pcm_hash=8f64f27b
+CHURN guard=0 min_cap=24 final_cap=24 frames=641 frame_bytes=307200 target_hz=40 core=1 operation=write16
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=queue blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=events blocks=2000 us=9.314 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=cache blocks=2000 us=59.091 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=instLfo blocks=2000 us=72.618 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=ctlMod blocks=2000 us=99.102 n=15.995
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=ctlFlt blocks=2000 us=10.303 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=ctlEng blocks=2000 us=76.053 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=chip blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=sample blocks=2000 us=93.710 n=1.618
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=fm blocks=2000 us=309.330 n=2.191
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=drum blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=synth blocks=2000 us=33.821 n=0.200
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=mix blocks=2000 us=31.897 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=delay blocks=2000 us=54.485 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=reverb blocks=2000 us=277.514 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=comp blocks=2000 us=1.301 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=perf blocks=2000 us=39.771 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=master blocks=2000 us=36.085 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=strip blocks=2000 us=112.890 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=mod blocks=2000 us=40.580 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=shim blocks=2000 us=0.449 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=eq blocks=2000 us=1.061 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=0 name=lofi blocks=2000 us=0.000 n=0.000
+REPRO revision=current pattern=1 placement=corePS_rvbINT synth_int=0 rvb_int=1 profile=1 churn=1 guard=0 blocks=2000 avg_us=1796.884 p95_us=3529 p99_us=4359 peak_us=5674 warm_peak_us=5544 over=48 active=4.010 min_active=2 max_active=8 events=1303 expected_events=1303 queue_rejects=0 missing_sample=0 missing_wt=0 rms=5035.029 pcm_hash=8f64f27b
+CHURN guard=0 min_cap=24 final_cap=24 frames=640 frame_bytes=307200 target_hz=40 core=1 operation=write16
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=queue blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=events blocks=2000 us=20.309 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=cache blocks=2000 us=128.109 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=instLfo blocks=2000 us=115.001 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=ctlMod blocks=2000 us=178.559 n=15.995
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=ctlFlt blocks=2000 us=12.591 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=ctlEng blocks=2000 us=137.571 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=chip blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=sample blocks=2000 us=106.498 n=1.618
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=fm blocks=2000 us=323.297 n=2.191
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=drum blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=synth blocks=2000 us=36.014 n=0.200
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=mix blocks=2000 us=107.491 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=delay blocks=2000 us=67.854 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=reverb blocks=2000 us=175.143 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=comp blocks=2000 us=2.238 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=perf blocks=2000 us=42.116 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=master blocks=2000 us=37.036 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=strip blocks=2000 us=218.742 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=mod blocks=2000 us=52.453 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=shim blocks=2000 us=1.280 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=eq blocks=2000 us=1.812 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=0 name=lofi blocks=2000 us=0.000 n=0.000
+REPRO revision=current pattern=1 placement=coreINT_rvbPS synth_int=1 rvb_int=0 profile=1 churn=1 guard=1 blocks=2000 avg_us=1377.764 p95_us=2091 p99_us=2409 peak_us=2592 warm_peak_us=2808 over=0 active=4.010 min_active=2 max_active=8 events=1303 expected_events=1303 queue_rejects=0 missing_sample=0 missing_wt=0 rms=5035.029 pcm_hash=8f64f27b
+CHURN guard=1 min_cap=24 final_cap=24 frames=641 frame_bytes=307200 target_hz=40 core=1 operation=write16
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=queue blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=events blocks=2000 us=9.657 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=cache blocks=2000 us=59.075 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=instLfo blocks=2000 us=72.775 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=ctlMod blocks=2000 us=108.761 n=15.995
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=ctlFlt blocks=2000 us=10.322 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=ctlEng blocks=2000 us=76.120 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=chip blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=sample blocks=2000 us=93.672 n=1.618
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=fm blocks=2000 us=309.306 n=2.191
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=drum blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=synth blocks=2000 us=33.879 n=0.200
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=mix blocks=2000 us=31.898 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=delay blocks=2000 us=54.459 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=reverb blocks=2000 us=277.090 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=comp blocks=2000 us=1.274 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=perf blocks=2000 us=39.759 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=master blocks=2000 us=36.130 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=strip blocks=2000 us=112.938 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=mod blocks=2000 us=40.467 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=shim blocks=2000 us=0.452 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=eq blocks=2000 us=1.041 n=0.000
+STAGE pattern=1 placement=coreINT_rvbPS churn=1 guard=1 name=lofi blocks=2000 us=0.000 n=0.000
+REPRO revision=current pattern=1 placement=corePS_rvbINT synth_int=0 rvb_int=1 profile=1 churn=1 guard=1 blocks=2000 avg_us=1812.775 p95_us=3490 p99_us=4391 peak_us=5711 warm_peak_us=5589 over=48 active=4.010 min_active=2 max_active=8 events=1303 expected_events=1303 queue_rejects=0 missing_sample=0 missing_wt=0 rms=5035.029 pcm_hash=8f64f27b
+CHURN guard=1 min_cap=24 final_cap=24 frames=640 frame_bytes=307200 target_hz=40 core=1 operation=write16
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=queue blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=events blocks=2000 us=20.685 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=cache blocks=2000 us=128.764 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=instLfo blocks=2000 us=115.533 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=ctlMod blocks=2000 us=189.340 n=15.995
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=ctlFlt blocks=2000 us=12.635 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=ctlEng blocks=2000 us=139.138 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=chip blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=sample blocks=2000 us=106.756 n=1.618
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=fm blocks=2000 us=323.562 n=2.191
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=drum blocks=2000 us=0.000 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=synth blocks=2000 us=35.984 n=0.200
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=mix blocks=2000 us=107.358 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=delay blocks=2000 us=67.707 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=reverb blocks=2000 us=175.192 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=comp blocks=2000 us=2.217 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=perf blocks=2000 us=42.019 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=master blocks=2000 us=37.060 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=strip blocks=2000 us=220.627 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=mod blocks=2000 us=52.465 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=shim blocks=2000 us=1.314 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=eq blocks=2000 us=1.796 n=0.000
+STAGE pattern=1 placement=corePS_rvbINT churn=1 guard=1 name=lofi blocks=2000 us=0.000 n=0.000
+REPRO DONE free_internal=150132 free_psram=6460300 stack_highwater=4616

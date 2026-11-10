@@ -296,4 +296,98 @@ bool jsonAppendDir(char* buf, size_t cap, size_t& len, const char* name, bool fi
   return false;
 }
 
+bool browseUp(char* dir, const char* root, char* left, size_t leftCap) {
+  if (leftCap) left[0] = 0;
+  const size_t rn = strlen(root), dn = strlen(dir);
+  if (dn <= rn || strncmp(dir, root, rn) != 0 || dir[rn] != '/') {
+    if (strcmp(dir, root) == 0) return false;
+    if (dn > rn) {  // not below root: back to it
+      memcpy(dir, root, rn + 1);
+      return true;
+    }
+    return false;
+  }
+  char* slash = strrchr(dir, '/');  // after root's end: dir[rn] is a '/'
+  if (leftCap) snprintf(left, leftCap, "%s", slash + 1);
+  *slash = 0;
+  return true;
+}
+
+int listMove(int sel, int delta, int n) {
+  if (n <= 0) return 0;
+  return ((sel + delta) % n + n) % n;
+}
+
+int listPage(int sel, int delta, int rows, int n) {
+  if (n <= 0) return 0;
+  if (delta > 0) return sel >= n - 1 ? 0 : (sel + delta * rows > n - 1 ? n - 1 : sel + delta * rows);
+  if (delta < 0) return sel <= 0 ? n - 1 : (sel + delta * rows < 0 ? 0 : sel + delta * rows);
+  return sel;
+}
+
+int listClampTop(int top, int rows, int n) {
+  const int maxTop = n > rows ? n - rows : 0;
+  return top < 0 ? 0 : (top > maxTop ? maxTop : top);
+}
+
+int listKeepVisible(int sel, int top, int rows, int n) {
+  if (sel < top) top = sel;
+  if (sel >= top + rows) top = sel - rows + 1;
+  return listClampTop(top, rows, n);
+}
+
+void fitName(const char* name, int max, char* out, size_t cap) {
+  if (!cap) return;
+  if (max > static_cast<int>(cap) - 1) max = static_cast<int>(cap) - 1;
+  const int len = static_cast<int>(strlen(name));
+  if (max <= 0) {
+    out[0] = 0;
+    return;
+  }
+  if (len <= max) {
+    memcpy(out, name, len + 1);
+    return;
+  }
+  memcpy(out, name, max - 1);
+  out[max - 1] = '~';
+  out[max] = 0;
+}
+
+void fitTail(const char* path, int max, char* out, size_t cap) {
+  if (!cap) return;
+  if (max > static_cast<int>(cap) - 1) max = static_cast<int>(cap) - 1;
+  const int len = static_cast<int>(strlen(path));
+  if (max <= 0) {
+    out[0] = 0;
+    return;
+  }
+  if (len <= max) {
+    memcpy(out, path, len + 1);
+    return;
+  }
+  if (max <= 3) {
+    memcpy(out, path + len - max, max + 1);
+    return;
+  }
+  snprintf(out, cap, "...%s", path + len - (max - 3));
+}
+
+int browseDepth(const char* dir, const char* root) {
+  const size_t rn = strlen(root);
+  if (strncmp(dir, root, rn) != 0 || (dir[rn] && dir[rn] != '/')) return -1;
+  int depth = 0;
+  for (const char* p = dir + rn; *p; ++p) depth += *p == '/';
+  return depth;
+}
+
+BrowseResult browseInto(char* dir, size_t cap, const char* root, const char* sub, int depthMax) {
+  if (browseDepth(dir, root) >= depthMax) return BrowseResult::TooDeep;
+  const size_t dn = strlen(dir), sn = strlen(sub);
+  if (dn + 1 + sn >= cap) return BrowseResult::TooLong;
+  dir[dn] = '/';
+  memcpy(dir + dn + 1, sub, sn + 1);
+  return BrowseResult::Ok;
+}
+
+
 }  // namespace mt

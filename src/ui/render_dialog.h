@@ -1,4 +1,5 @@
 #pragma once
+#include "dialog_actions.h"
 #include "hw/input.h"
 #include "hw/lgfx_config.h"
 #include "param_list.h"
@@ -10,10 +11,10 @@ namespace ui {
 
 class App;
 
-// FILE -> Render WAV: Source (PATTERN 01..16, SONG when the song has slots), Tracks (ALL, SOLOED
+// FILE -> Export: Source (PATTERN 01..16, SONG when the song has slots), Tracks (ALL, SOLOED
 // when a solo is on, STEMS), Max slots (SONG only: the render follows the follow-action path from slot
-// 0 (project seed) and stops after the last slot or after this many slot passes), RENDER / CANCEL. Renders the internal synth offline into
-// /samples/render/<project>_P01.wav (or _SONG.wav) with a 2 s tail (storage::renderWav), asking before
+// 0 (project seed) and stops after the last slot or after this many slot passes), EXPORT / CANCEL. Renders the internal synth offline into
+// /samples/render/<project>_P01.wav (or _SONG.wav) with a 2 s tail (storage::renderWav), stopping the transport and asking before
 // it overwrites. STEMS: one file per audible INT track with notes in the source, _P01_T03.wav; each
 // stem has the shared delay / reverb / compressor on its own (no sidechain from other tracks). A SONG
 // stem: the tracks of the slots on the path.
@@ -42,6 +43,8 @@ class RenderDialog {
   uint16_t stemTracks(const mt::RenderSpec& spec) const;  // STEMS: the tracks that get a file
   void runStems(const mt::RenderSpec& spec);
 
+  DialogActions actions_;
+  int y0_ = kAreaY;
   App& app_;
   Param params_[kRows];
   ParamList list_{kAreaY + kHeaderH};

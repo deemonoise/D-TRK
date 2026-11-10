@@ -1,0 +1,7 @@
+case,voices,before_ble_active,before_ble_avg_us,before_ble_peak_us,before_ble_warmup_peak_us,ble_idle_active,ble_idle_avg_us,ble_idle_peak_us,ble_idle_warmup_peak_us,ble_scan_active,ble_scan_avg_us,ble_scan_peak_us,ble_scan_warmup_peak_us,ble_connected_active,ble_connected_avg_us,ble_connected_peak_us,ble_connected_warmup_peak_us,connected_avg_delta_us
+CHIP16,16,16.00,1747.53,1761,2765,16.00,1747.90,1762,2427,16.00,1756.71,1956,2437,16.00,1749.50,1807,2443,1.97
+CHIP24,24,24.00,2188.59,2204,3013,24.00,2188.88,2205,3037,24.00,2200.18,2408,3036,24.00,2200.73,2565,3043,12.14
+FMHAT4,4,4.00,1715.91,1884,2368,4.00,1716.50,1894,2301,4.00,1729.38,2109,2299,4.00,1728.70,1999,2296,12.79
+FMHAT8,8,8.00,2933.45,3260,3785,8.00,2933.50,3261,3797,8.00,2949.40,3430,3791,8.00,2958.77,3372,3802,25.32
+SYNTH8,8,8.00,1481.81,1497,2038,8.00,1481.49,1495,2051,8.00,1488.55,1691,2061,8.00,1490.53,1579,2047,8.72
+SAMPLE16,16,16.00,2108.75,2123,2823,16.00,2109.20,2204,2828,16.00,2115.02,2316,2837,16.00,2126.02,2334,2830,17.27

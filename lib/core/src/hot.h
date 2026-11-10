@@ -12,3 +12,6 @@
 #define MT_DATA
 #endif
 #define MT_INLINE inline __attribute__((always_inline))
+
+// Shared control-rate helpers keep the ESP32 IRAM placement.
+#define MT_CONTROL MT_HOT

@@ -1,0 +1,80 @@
+Processing wt32 (platform: https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip; board: esp32-s3-devkitc-1; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-s3-devkitc-1.html
+PLATFORM: Espressif 32 (55.3.312) > Espressif ESP32-S3-DevKitC-1-N8 (8 MB QD, No PSRAM)
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 8MB Flash
+DEBUG: Current (esp-builtin) On-board (esp-builtin) External (cmsis-dap, esp-bridge, esp-prog, esp-prog-2, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - contrib-piohome @ 3.4.4 
+ - framework-arduinoespressif32 @ 3.3.12 
+ - framework-arduinoespressif32-libs @ 5.5.5+sha.b774170ff46 
+ - tool-esptoolpy @ 5.4.0 
+ - tool-xtensa-esp-elf-gdb @ 17.1.0+20260402 
+ - toolchain-xtensa-esp-elf @ 14.2.0+20260121
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 46 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- LovyanGFX @ 1.2.32
+|-- core
+|-- SD @ 3.3.12
+|-- Wire @ 3.3.12
+|-- SPI @ 3.3.12
+|-- ArduinoOTA @ 3.3.12
+|-- ESPmDNS @ 3.3.12
+|-- Update @ 3.3.12
+|-- WebServer @ 3.3.12
+|-- Preferences @ 3.3.12
+|-- WiFi @ 3.3.12
+|-- FS @ 3.3.12
+Building in release mode
+Compiling .pio/build/wt32/src/core_ram.cpp.o
+Compiling .pio/build/wt32/src/engine/engine.cpp.o
+Compiling .pio/build/wt32/src/main.cpp.o
+Compiling .pio/build/wt32/src/ui/wifi_dialog.cpp.o
+Linking .pio/build/wt32/firmware.elf
+                            Memory Type Usage Summary                             
+Total image size: 2192915 bytes (.bin may be padded larger)
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+Note: The reported total sizes may be smaller than those in the technical reference manual due to reserved memory and application configuration. The total flash size available for the application is not included by default, as it cannot be reliably determined due to the presence of other data like the bootloader, partition table, and application partition size. The total external RAM size is not included either, because the amount of RAM connected to the chip is detected at boot and is not known during the build.
+┃ Memory Type/Section ┃ Used [bytes] ┃ Used [%] ┃ Remain [bytes] ┃ Total [bytes] ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ Flash Code          │      1596864 │          │                │               │
+│    .text            │      1596864 │          │                │               │
+│ Flash Data          │       405456 │          │                │               │
+│    .rodata          │       328388 │          │                │               │
+│    .eh_frame        │        76812 │          │                │               │
+│    .appdesc         │          256 │          │                │               │
+│ DIRAM               │       248843 │    72.81 │          92917 │        341760 │
+│    .text            │       150919 │    44.16 │                │               │
+│    .bss             │        74632 │    21.84 │                │               │
+│    .data            │        23292 │     6.82 │                │               │
+│ IRAM                │        16384 │    100.0 │              0 │         16384 │
+│    .text            │        15356 │    93.73 │                │               │
+│    .vectors         │         1028 │     6.27 │                │               │
+└─────────────────────┴──────────────┴──────────┴────────────────┴───────────────┘
+Retrieving maximum program size .pio/build/wt32/firmware.elf
+Checking size .pio/build/wt32/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [===       ]  29.9% (used 97924 bytes from 327680 bytes)
+Flash: [=======   ]  67.3% (used 2115847 bytes from 3145728 bytes)
+Building .pio/build/wt32/firmware.bin
+esptool v5.4.0
+Creating ESP32-S3 image...
+Merged 3 ELF sections.
+Successfully created ESP32-S3 image.
+Creating binary "firmware.factory.bin" with:
+    Offset   | File
+ -  0x0000   | bootloader.bin
+ -  0x8000   | partitions.bin
+ -  0xe000   | boot_app0.bin
+ -  0x10000  | firmware.bin
+Successfully created combined binary image.
+========================= [SUCCESS] Took 30.38 seconds =========================
+
+Environment    Status    Duration
+-------------  --------  ------------
+wt32           SUCCESS   00:00:30.378
+========================= 1 succeeded in 00:00:30.378 =========================

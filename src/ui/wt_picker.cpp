@@ -3,20 +3,22 @@
 #include <string.h>
 #include <strings.h>
 #include "app.h"
+#include "file_rules.h"
 #include "audio/audio.h"
 #include "audio/bank.h"
 #include "engine/engine.h"
 #include "esp_heap_caps.h"
 #include "sample_set.h"
 #include "storage/storage.h"
+#include "storage/wt_source_file.h"
 #include "wt_builtin.h"
+#include "wt_make.h"
+#include "project_io.h"
 
 namespace ui {
 namespace {
 
 constexpr const char* kRoot = "/wavetables";
-
-int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 void importProgress(uint32_t done, uint32_t total, void* ctx) {
   static_cast<App*>(ctx)->showProgress("IMPORT", done, total);
@@ -44,7 +46,7 @@ bool uniqueName(const mt::Project& p, const char* base, uint32_t crc, char out[m
 
 void drawWtFrame(LGFX_Sprite& s, const int16_t* table, int f, int x0, int y0, int x1, int y1, uint16_t c) {
   if (!table) return;
-  const int16_t* fr = table + clampi(f, 0, mt::kWtFrames - 1) * mt::kWtFramePts;  // level 0
+  const int16_t* fr = table + (f < 0 ? 0 : f >= mt::kWtFrames ? mt::kWtFrames - 1 : f) * mt::kWtFramePts;  // level 0
   const int w = x1 - x0, mid = (y0 + y1) / 2, half = (y1 - y0) / 2;
   auto yAt = [&](int i) { return mid - fr[i] * half / 32768; };
   int px = x0, py = yAt(0);
@@ -56,7 +58,7 @@ void drawWtFrame(LGFX_Sprite& s, const int16_t* table, int f, int x0, int y0, in
   }
 }
 
-bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSampleNameMax + 1]) {
+bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSampleNameMax + 1], bool replaceShared) {
   const engine::Status& st = app.status();
   if (st.playing || st.paused) {
     app.toast(audio::bankResultText(audio::BankResult::Busy));
@@ -77,7 +79,8 @@ bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSa
     app.toast(audio::bankResultText(r));
     return false;
   }
-  if (!uniqueName(p, nm, crc, out)) {
+  if (replaceShared) strlcpy(out, nm, mt::kSampleNameMax + 1);
+  if (!replaceShared && !uniqueName(p, nm, crc, out)) {
     app.toast("TABLE LIST FULL");
     return false;
   }
@@ -92,15 +95,37 @@ bool wtImportFile(App& app, const char* path, const char* base, char out[mt::kSa
   return true;
 }
 
+bool wtSaveSourceFile(App& app, const char* path, const char* name, const int16_t* source,
+                      char out[mt::kSampleNameMax + 1], bool replaceShared) {
+  const auto st=engine::status();
+  if (st.playing || st.paused) { app.toast("STOP PLAYBACK FIRST"); return false; }
+  if (!hw::sdReady()) { app.toast("NO SD CARD"); return false; }
+  if (mt::projWtFind(app.project(),name)<0 && app.project().wavetableCount>=mt::kProjWavetables) {
+    app.toast("TABLE LIST FULL"); return false;
+  }
+  struct ImportContext {
+    App& app;
+    const char* name;
+    char* out;
+    bool replaceShared;
+  } context{app,name,out,replaceShared};
+  const auto import = [](const char* file, void* value) {
+    auto& context = *static_cast<ImportContext*>(value);
+    return wtImportFile(context.app,file,context.name,context.out,context.replaceShared);
+  };
+  const auto result = storage::saveWtSourceFile(path,source,import,&context);
+  if (result == storage::WtSourceSaveResult::Ok) return true;
+  if (result == storage::WtSourceSaveResult::RecoveryNeeded) app.toast("FILE RECOVERY: .BAK KEPT");
+  else if (result == storage::WtSourceSaveResult::ReadbackFail) app.toast("WT VERIFY FAILED");
+  else app.toast("WT WRITE / IMPORT FAILED");
+  return false;
+}
+
 mt::Instrument& WtPicker::inst() { return app_.project().instruments[instr_]; }
 
 void WtPicker::open(int instr, int osc) {
   if (open_) close();
-  names_ = static_cast<char(*)[hw::kNameMax]>(heap_caps_malloc(kMaxEntries * hw::kNameMax, MALLOC_CAP_SPIRAM));
-  if (!names_) {
-    app_.toast(storage::resultText(storage::Result::NoMemory));
-    return;
-  }
+  if (!list_.alloc()) return;
   open_ = true;
   instr_ = instr;
   osc_ = osc & 1;
@@ -108,74 +133,53 @@ void WtPicker::open(int instr, int osc) {
 }
 
 void WtPicker::close() {
+  draw_.close();
   if (!open_) return;
-  heap_caps_free(names_);
-  names_ = nullptr;
-  count_ = 0;
+  if (files_) list_.cursorName(cursor_, sizeof(cursor_));
+  list_.free();
   open_ = false;
   app_.invalidate();
   if (onClose_) onClose_();
 }
 
-void WtPicker::add(Kind k, const char* name) {
-  if (count_ >= kMaxEntries) return;
-  kinds_[count_] = k;
-  strlcpy(names_[count_], name, hw::kNameMax);
-  ++count_;
-}
-
-void WtPicker::setSel(int row) {
-  sel_ = clampi(row, 0, rowCount() - 1);
-  if (sel_ < top_) top_ = sel_;
-  if (sel_ >= top_ + kRows) top_ = sel_ - kRows + 1;
-}
-
 void WtPicker::listTables(const char* select) {
   files_ = false;
-  count_ = 0;
-  for (int i = 0; i < mt::kWtBuiltins; ++i) add(Kind::Table, mt::wtBuiltinName(i));
+  list_.clear();
+  list_.setBack(true);
+  list_.setPreviewDir(nullptr);
+  list_.setNameRight(kPvX0 - 8);
+  for (int i = 0; i < mt::kWtBuiltins; ++i) list_.add(FileList::Kind::File, mt::wtBuiltinName(i), uint8_t(Kind::Table));
   const mt::Project& p = app_.project();
-  for (int i = 0; i < p.wavetableCount; ++i) add(Kind::Table, p.wavetables[i].name);
-  add(Kind::Import, "IMPORT...");
-  top_ = 0;
-  dragAcc_ = 0;
-  int row = 1;
-  for (int i = 0; select && select[0] && i < count_; ++i)
-    if (kinds_[i] == Kind::Table && strcasecmp(names_[i], select) == 0) {
-      row = i + 1;
-      break;
-    }
-  setSel(row);
+  for (int i = 0; i < p.wavetableCount; ++i) list_.add(FileList::Kind::File, p.wavetables[i].name, uint8_t(Kind::Table));
+  list_.add(FileList::Kind::Action, "DRAW...", uint8_t(Kind::Draw));
+  list_.add(FileList::Kind::Action, "IMPORT...", uint8_t(Kind::Import));
+  list_.color = [this](int i) {
+    const Kind k = static_cast<Kind>(list_.tag(i));
+    if (k == Kind::Import || k == Kind::Draw) return kCyan;
+    return (audio::wavetableSource() && audio::wavetableSource()->findWt(list_.name(i))) ? kText : kRed;  // red: not in the bank
+  };
+  list_.mark = [this](int i) {  // set now
+    return static_cast<Kind>(list_.tag(i)) == Kind::Table && strcasecmp(inst().synWt[osc_], list_.name(i)) == 0;
+  };
+  list_.finish(select);
   app_.invalidate();
 }
 
-void WtPicker::listFiles() {
+void WtPicker::listFiles(const char* cursor) {
   files_ = true;
-  count_ = 0;
   // The folder may have been removed (Wi-Fi, card swap): start over at the root.
   if (strcmp(dir_, kRoot) != 0 && !(hw::sdReady() && hw::sdFs().exists(dir_))) strlcpy(dir_, kRoot, sizeof(dir_));
+  list_.clear();
+  list_.color = nullptr;
+  list_.mark = nullptr;
+  list_.setNameRight(FileList::kMarkX - 8);
   // Subfolders first, then .wav (any case), both sorted.
-  count_ = hw::sdListDirs(dir_, names_, kMaxEntries);
-  for (int i = 0; i < count_; ++i) kinds_[i] = Kind::Folder;
-  const int from = count_;
   static constexpr const char* kWavExts[] = {".wav"};
-  count_ += hw::sdListFiles(dir_, kWavExts, 1, names_ + count_, kMaxEntries - count_);
-  for (int i = from; i < count_; ++i) kinds_[i] = Kind::File;
-  // Names the card cannot give back (non-ASCII, shown as "?") would not open: drop them.
-  int n = 0;
-  for (int i = 0; i < count_; ++i) {
-    if (strchr(names_[i], '?')) continue;
-    if (n != i) {
-      kinds_[n] = kinds_[i];
-      memcpy(names_[n], names_[i], hw::kNameMax);
-    }
-    ++n;
-  }
-  count_ = n;
-  top_ = 0;
-  dragAcc_ = 0;
-  setSel(count_ > 0 ? 1 : 0);
-  if (count_ == 0) app_.toast(strcmp(dir_, kRoot) == 0 ? "NO /wavetables/*.wav" : "EMPTY FOLDER");
+  list_.addFolder(dir_, kWavExts, 1);
+  list_.setBack(strcmp(dir_, kRoot) == 0);  // "< Back": to the tables
+  list_.setPreviewDir(dir_);
+  list_.finish(cursor);
+  if (list_.count() == 0 && strcmp(dir_, kRoot) == 0 && hw::sdReady()) app_.toast("NO /wavetables/*.wav");
   app_.invalidate();
 }
 
@@ -192,33 +196,25 @@ void WtPicker::back() {
     close();
     return;
   }
-  if (strcmp(dir_, kRoot) == 0) {  // to the tables, the cursor on IMPORT...
+  char left[hw::kNameMax];
+  if (!mt::browseUp(dir_, kRoot, left, sizeof(left))) {  // to the tables, the cursor on IMPORT...
+    list_.cursorName(cursor_, sizeof(cursor_));
     listTables(nullptr);
-    setSel(rowCount() - 1);
+    list_.select(list_.rows() - 1);
     return;
   }
-  char* slash = strrchr(dir_, '/');
-  char left[hw::kNameMax];
-  strlcpy(left, slash + 1, sizeof(left));
-  *slash = 0;
-  listFiles();
-  // The cursor on the folder we came from.
-  for (int i = 0; i < count_; ++i)
-    if (kinds_[i] == Kind::Folder && strcasecmp(names_[i], left) == 0) {
-      setSel(i + 1);
-      break;
-    }
+  listFiles(left);  // the cursor on the folder we came from
 }
 
 void WtPicker::importFile(int i) {
   char path[sizeof(dir_) + hw::kNameMax];
-  const int n = snprintf(path, sizeof(path), "%s/%s", dir_, names_[i]);
+  const int n = snprintf(path, sizeof(path), "%s/%s", dir_, list_.name(i));
   if (n < 0 || n >= static_cast<int>(sizeof(path))) {
     app_.toast("PATH TOO LONG");
     return;
   }
   char base[hw::kNameMax];
-  strlcpy(base, names_[i], sizeof(base));
+  strlcpy(base, list_.name(i), sizeof(base));
   if (char* dot = strrchr(base, '.')) *dot = 0;
   char nm[mt::kSampleNameMax + 1];
   if (!wtImportFile(app_, path, base, nm)) return;
@@ -229,136 +225,119 @@ void WtPicker::importFile(int i) {
   close();
 }
 
-void WtPicker::choose(int row) {
-  if (row <= 0 || row > count_) {
+void WtPicker::choose() {
+  list_.previewStop();
+  const int i = list_.entry();
+  if (i < 0 || i >= list_.count()) {
     back();
     return;
   }
-  const int i = row - 1;
-  switch (kinds_[i]) {
-    case Kind::Table:
-      setTable(names_[i]);
-      close();
+  if (files_) {
+    if (list_.kind(i) == FileList::Kind::File) {
+      importFile(i);
       return;
+    }
+    switch (mt::browseInto(dir_, sizeof(dir_), kRoot, list_.name(i), FileList::kDepthMax)) {
+      case mt::BrowseResult::TooDeep: app_.toast("TOO DEEP"); return;
+      case mt::BrowseResult::TooLong: app_.toast("PATH TOO LONG"); return;
+      default: listFiles(nullptr); return;
+    }
+  }
+  switch (static_cast<Kind>(list_.tag(i))) {
     case Kind::Import:
       if (!hw::sdReady()) {
         app_.toast(storage::resultText(storage::Result::NoSd));
         return;
       }
-      listFiles();
+      listFiles(cursor_);
       return;
-    case Kind::Folder: {
-      int depth = 0;
-      for (const char* p = dir_ + strlen(kRoot); *p; ++p) depth += *p == '/';
-      if (depth >= kDepthMax) {
-        app_.toast("TOO DEEP");
-        return;
-      }
-      if (strlen(dir_) + 1 + strlen(names_[i]) >= sizeof(dir_)) {
-        app_.toast("PATH TOO LONG");
-        return;
-      }
-      strlcat(dir_, "/", sizeof(dir_));
-      strlcat(dir_, names_[i], sizeof(dir_));
-      listFiles();
+    case Kind::Draw: {
+      const MenuItem items[]={{"Edit current WT",0},{"New wave",1},{"New morph",2}};
+      app_.menu().open("DRAW WT",items,3,[this](int choice) {
+        openDraw(choice==0?inst().synWt[osc_]:"",choice==2);
+      });
       return;
     }
-    case Kind::File: importFile(i); return;
+    default:
+      setTable(list_.name(i));
+      close();
+      return;
   }
 }
 
-void WtPicker::moveSel(int d) {
-  const int n = rowCount();
-  setSel(((sel_ + d) % n + n) % n);
+void WtPicker::openDraw(const char* source,bool morph) {
+  list_.free();
+  if (!draw_.open(source,[this](const char* nm) {
+    setTable(nm);
+    char msg[32]; snprintf(msg,sizeof(msg),"WT %s",nm);
+    app_.toast(msg); close();
+  },morph)) {
+    if (list_.alloc()) listTables("DRAW..."); else close();
+  }
+}
+
+void WtPicker::act(FileList::Act a) {
+  if (a == FileList::Act::Back) {
+    list_.previewStop();
+    back();
+  } else if (a == FileList::Act::Open) {
+    choose();
+  }
 }
 
 void WtPicker::onInput(const hw::InputEvent& ev) {
-  using hw::InputType;
-  switch (ev.type) {
-    case InputType::EncTurn: moveSel(ev.delta); break;
-    case InputType::EncClick: choose(sel_); break;
-    case InputType::EncLong: back(); break;
-    default: break;
+  if (draw_.isOpen()) {
+    draw_.onInput(ev);
+    if (open_ && !draw_.isOpen()) { if (list_.alloc()) listTables("DRAW..."); else close(); }
+    return;
   }
+  if (!list_.ready()) { if (!list_.alloc()) { close(); return; } listTables("DRAW..."); }
+  act(list_.onInput(ev));
+}
+
+bool WtPicker::onPlay() {
+  if (!open_) return false;
+  if (draw_.isOpen()) return draw_.onPlay();
+  return list_.onPlay();  // the tables: no preview, Play starts the transport
 }
 
 void WtPicker::onTouch(const TouchEvent& ev) {
-  const int top = y0_ + kHeaderH;
-  if (ev.type == TouchType::Drag) {
-    dragAcc_ += ev.dy;
-    const int rows = dragAcc_ / kRowH;
-    dragAcc_ -= rows * kRowH;
-    top_ = clampi(top_ - rows, 0, rowCount() > kRows ? rowCount() - kRows : 0);
+  if (draw_.isOpen()) {
+    draw_.onTouch(ev);
+    if (open_ && !draw_.isOpen()) { if (list_.alloc()) listTables("DRAW..."); else close(); }
     return;
   }
-  dragAcc_ = 0;
-  if (ev.type != TouchType::Tap || ev.y < top) return;
-  const int row = top_ + (ev.y - top) / kRowH;
-  if (row >= rowCount()) return;
-  // Tables: the first tap selects (frame preview), a tap on the selected one sets it; the other
-  // rows open at once, as in FILE.
-  if (row > 0 && kinds_[row - 1] == Kind::Table && row != sel_) {
-    setSel(row);
-    return;
-  }
-  sel_ = row;
-  choose(row);
+  if (!list_.ready()) { if (!list_.alloc()) { close(); return; } listTables("DRAW..."); }
+  act(list_.onTouch(ev, y0_ + kHeaderH));
 }
 
 void WtPicker::draw(LGFX_Sprite& s, int y0) {
   y0_ = y0;
-  const int ty = y0 + (kHeaderH - 4 - kCharH) / 2;
-  s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
-  s.setTextColor(kText);
-  char title[64];
+  if (draw_.isOpen()) {
+    draw_.draw(s, y0);
+    return;
+  }
+  if (!list_.ready()) {
+    if (!list_.alloc()) { close(); return; }
+    listTables("DRAW...");
+  }
   if (files_) {
-    // Path tail, so the current folder stays visible.
-    static constexpr const char* kPrefix = "IMPORT WT ";
-    const int fit = (kScreenW - 16 - 16 - 12 * kCharW) / kCharW - static_cast<int>(strlen(kPrefix));
-    const int len = static_cast<int>(strlen(dir_));
-    snprintf(title, sizeof(title), "%s%s%s", kPrefix, len > fit ? "..." : "", dir_ + (len > fit ? len - fit + 3 : 0));
+    FileList::drawHeader(s, y0, "IMPORT WT", dir_);
   } else {
+    char title[16];
     snprintf(title, sizeof(title), "OSC%d TABLE", osc_ + 1);
+    FileList::drawHeader(s, y0, title, nullptr);
   }
-  s.drawString(title, 16, ty);
-  const bool sd = hw::sdReady();
-  s.setTextColor(sd ? kDim : kEditCursor);
-  const char* sdText = sd ? "SD OK" : "NO SD CARD";
-  s.drawString(sdText, kScreenW - 16 - static_cast<int>(strlen(sdText)) * kCharW, ty);
-
   const int top = y0 + kHeaderH;
-  const mt::WtSource* src = audio::wavetableSource();
-  for (int r = 0; r < kRows; ++r) {
-    const int row = top_ + r;
-    if (row >= rowCount()) break;
-    const int ry = top + r * kRowH;
-    const int tyy = ry + (kRowH - kCharH) / 2;
-    const bool sel = row == sel_;
-    if (sel) s.fillRect(0, ry, kScreenW, kRowH, kSelBg);
-    if (row == 0) {
-      s.setTextColor(sel ? kCursor : kDim);
-      s.drawString(files_ && strcmp(dir_, kRoot) != 0 ? "< Up (..)" : "< Back", 16, tyy);
-      continue;
-    }
-    const int i = row - 1;
-    const Kind k = kinds_[i];
-    uint16_t c = kText;
-    if (k == Kind::Import) c = kCyan;
-    else if (k == Kind::Table && !(src && src->findWt(names_[i]))) c = kRed;  // not in the bank
-    s.setTextColor(sel ? kCursor : c);
-    if (k == Kind::Table && strcasecmp(inst().synWt[osc_], names_[i]) == 0) s.drawString(">", 4, tyy);  // set now
-    s.drawString(names_[i], 16, tyy);
-    if (k == Kind::Folder) s.drawString("/", 16 + static_cast<int>(strlen(names_[i])) * kCharW, tyy);
-  }
-  s.setTextColor(kDim);
-  if (top_ > 0) s.drawString("^", kScreenW - 24, top + 4);
-  if (top_ + kRows < rowCount()) s.drawString("v", kScreenW - 24, top + (kRows - 1) * kRowH + 4);
+  list_.draw(s, top);
   // Frame 0 of the selected table.
-  if (!files_ && sel_ > 0 && kinds_[sel_ - 1] == Kind::Table && src) {
-    const int16_t* t = src->findWt(names_[sel_ - 1]);
-    if (t) {
+  const int i = list_.entry();
+  if (!files_ && i >= 0 && static_cast<Kind>(list_.tag(i)) == Kind::Table) {
+    const mt::WtSource* source = audio::wavetableSource();
+    const int16_t* table = source ? source->findWt(list_.name(i)) : nullptr;
+    if (table) {
       s.drawRect(kPvX0 - 4, top + kPvY0 - 4, kPvX1 - kPvX0 + 8, kPvY1 - kPvY0 + 8, kDim);
-      drawWtFrame(s, t, 0, kPvX0, top + kPvY0, kPvX1, top + kPvY1, kGreen);
+      drawWtFrame(s, table, 0, kPvX0, top + kPvY0, kPvX1, top + kPvY1, kGreen);
     }
   }
 }

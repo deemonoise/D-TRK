@@ -1,5 +1,6 @@
 #pragma once
 #include "hw/sdcard.h"
+#include "file_list.h"
 #include "import_dialog.h"
 #include "keyboard.h"
 #include "render_dialog.h"
@@ -10,14 +11,12 @@
 
 namespace ui {
 
-// Three sections, switched in the header: PROJECTS (Save / Save As / Load / New / Import MIDI / Wi-Fi
-// transfer; Load shows /projects/*.mtp), SAMPLES (the project's samples: import WAV from /samples and its
-// subfolders, rename, delete; the flash bank is their cache: compact, clear unused entries) and SYSTEM
-// (device settings saved in NVS, not in the project, and diagnostics: firmware, last reset, RAM,
-// battery, CPU profile).
+// PROJECTS: Save / Save As / Load / New / Import MIDI / Export. SAMPLES manages the
+// project's samples and local flash cache. SYSTEM holds device preferences, Wi-Fi and a
+// nested Diagnostics list. Device settings are separate from project data.
 class FileScreen : public Screen {
  public:
-  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app) { initSystem(); }
+  explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app), list_(app, kMaxFiles) { initSystem(); }
   void onEnter() override;
   void onLeave() override;
   void onProjectReplaced() override;
@@ -29,9 +28,12 @@ class FileScreen : public Screen {
   void onPage(int d) override;
   void poll() override { wifi_.poll(); }
   bool wantsRedraw(const engine::Status&) override;  // Wi-Fi, SYSTEM: Battery / CPU profile rows
+  // FILE -> Wi-Fi as if chosen (asks about unsaved changes first); the synth version screen uses it.
+  void openWifi() { run(kWifi); }
+  bool wifiOpen() const { return wifi_.isOpen(); }
 
  private:
-  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kWifi, kRetry, kActions };
+  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kRetry, kActions, kWifi = 100 };
   enum MenuId : int {
     kCancel, kDiscardLoad, kDiscardNew, kRestoreAuto, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
@@ -41,11 +43,9 @@ class FileScreen : public Screen {
   // SAMPLES rows: Import, Compact, Clear cache, then the project's samples.
   enum SampleRow : int { kSwitchRow = -1, kImportRow, kCompactRow, kClearRow, kFirstSample };
   static constexpr int kHeaderH = 28;
-  static constexpr int kActionH = 27;  // kActions rows fit under the header and the page bar
+  static constexpr int kActionH = 24;  // kActions rows fit under the header and the page bar
   static constexpr int kRowH = 24;
   static constexpr int kMaxFiles = 512;
-  static constexpr int kWavDepthMax = 4;  // subfolders below /samples
-  static constexpr int kListRows = (kAreaH - kHeaderH) / kRowH;  // incl. the Back row
   static constexpr int kInfoH = 24;                                 // SAMPLES: free space bar
   static constexpr int kSampleRows = (kAreaH - kHeaderH - PageBar::kH - kInfoH) / kRowH;
   static_assert(kHeaderH + PageBar::kH + kActions * kActionH <= kAreaH, "FILE actions fit");
@@ -54,7 +54,8 @@ class FileScreen : public Screen {
 
   // SYSTEM rows.
   enum SysRow : int {
-    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kFirmware, kLastReset, kAudioRam, kBattery, kCpuProf, kSysRows
+    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kWifiRow, kDiagnostics,
+    kFirmware, kCard, kSamples, kLastReset, kAudioRam, kRamMin, kPsram, kBattery, kCpuProf, kDiagBack, kSysRows
   };
   static constexpr int kSysListRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;
 
@@ -67,27 +68,33 @@ class FileScreen : public Screen {
   void doSave(const char* name);
   void openList(bool midi);
   void closeList();
-  void chooseFile(int idx);
+  void listAct(FileList::Act a);  // Back: up / close; Open: the selected entry
+  void listOpen();                // the selected entry: a folder, a project / MIDI / WAV file
   void doLoad(bool bak);
   void doNew();
   void startWifi();
-  void listScroll(int rows);
-  // Folder browsing (MIDI import from /midi, WAV import from /samples).
+  // Folder browsing (MIDI import from /midi, WAV import from /samples; Load: /projects only).
   bool browsing() const { return midiList_ || wavList_; }
   char* curDir() { return midiList_ ? midiDir_ : wavDir_; }
   const char* curDir() const { return midiList_ ? midiDir_ : wavDir_; }
   size_t curDirCap() const { return midiList_ ? sizeof(midiDir_) : sizeof(wavDir_); }
   const char* rootDir() const { return midiList_ ? "/midi" : "/samples"; }
   bool atRoot() const;
-  void reopenList();  // lists curDir() again
+  void listDir(const char* cursor);  // lists curDir() (Load: /projects), the cursor on that name
+  char* curCursor() { return midiList_ ? midiCur_ : (wavList_ ? wavCur_ : loadCur_); }
   bool listUp();      // to the parent folder; false at the root
   void drawHeader(LGFX_Sprite& s, int y0);
   void setSection(int section);  // wraps around; the encoder focus goes to the page bar
   // SYSTEM
   void initSystem();
+  void showSystem(bool diagnostics);
+  int systemRow() const { return (diagnostics_ ? kFirmware : 0) + sysList_.sel(); }
+  bool diagnostics_ = false;
+  int systemSel_ = kDiagnostics;
   void systemInput(const hw::InputEvent& ev);
   void systemTouch(const TouchEvent& ev);
   void toggleProfile();  // start, or stop and append the result to /diag/cpuprof.txt
+  void sysAction(int row);
   uint32_t profSecs() const;  // seconds since the profile started
   // SAMPLES
   bool sampleEnabled(int row) const;
@@ -95,9 +102,6 @@ class FileScreen : public Screen {
   void sampleMove(int delta);
   void sampleRun(int row);
   void openWavList();
-  // WAV preview in the import list (Play): stopPreview() also frees the buffer.
-  void togglePreview();
-  void stopPreview();
   void importAs(const char* initial);
   void doImport(const char* name);
   void renameSample(const char* initial);
@@ -119,30 +123,23 @@ class FileScreen : public Screen {
   WifiDialog wifi_;
   int sel_ = kSave;
   int y0_ = kAreaY;
-  // Load / import list, PSRAM while open.
-  char (*names_)[hw::kNameMax] = nullptr;
-  int count_ = 0;
-  int listSel_ = 0;  // 0 = Back, i + 1 = names_[i]
-  int listTop_ = 0;
-  int dragAcc_ = 0;
-  bool midiList_ = false;  // names_ lists folders, then *.mid in midiDir_
-  int dirCount_ = 0;       // folders at the start of names_
+  // Load / import list (PSRAM while open). WAV: Play / the first tap previews through the local audio task.
+  FileList list_;
+  int dragAcc_ = 0;        // SAMPLES drag
+  bool midiList_ = false;  // list_ holds folders, then *.mid in midiDir_
   char midiDir_[160] = "/midi";  // kept between imports
+  // The cursor's name when each list closed (kept while powered).
+  char loadCur_[hw::kNameMax] = {0}, midiCur_[hw::kNameMax] = {0}, wavCur_[hw::kNameMax] = {0};
   char pending_[hw::kNameMax] = {0};  // target of a confirmation menu
   int section_ = kSecProjects;        // Section shown
   int ssel_ = kImportRow;             // SampleRow or kFirstSample + project sample index
   int stop_ = 0;                      // first visible SAMPLES row
-  bool wavList_ = false;              // names_ lists folders, then *.wav in wavDir_
+  bool wavList_ = false;              // list_ holds folders, then *.wav in wavDir_
   char wavDir_[128] = "/samples";     // kept between imports
   char wavFile_[hw::kNameMax] = {0};  // WAV being imported
-  int16_t* pvBuf_ = nullptr;          // previewed WAV, PSRAM
-  static constexpr int kPvLeft = 4;
-  int16_t* pvLeft_[kPvLeft] = {};     // buffers whose stop the audio task did not acknowledge yet
-  int pvLeftN_ = 0;
-  int pvSel_ = -1;                    // listSel_ it belongs to
-  const char* busyLabel_ = "";
-  // cacheBytes() result for this bank generation / project edit.
   uint32_t cacheBytes_ = 0, cacheGen_ = 0, cacheSeq_ = 0;
+  bool cacheValid_ = false;
+  const char* busyLabel_ = "";
   // New: template menu ids are the built-in index, kTplUser + k (userTplNames_[k]), kTplSave,
   // kTplDemos (the demo songs menu) or kTplDemo + i (demo song i).
   static constexpr int kUserTpl = 8, kTplUser = 100, kTplSave = 200, kTplDemos = 300, kTplDemo = 400;
@@ -155,7 +152,6 @@ class FileScreen : public Screen {
   char userTplLabels_[kUserTpl][20] = {};
   bool autoAvail_ = false;  // /projects/<name>.auto exists (checked on enter / after file actions)
   void restoreAutosave();
-  bool cacheValid_ = false;
   Param sysParams_[kSysRows];
   ParamList sysList_{kAreaY + kHeaderH + PageBar::kH};
   uint32_t profStartMs_ = 0;

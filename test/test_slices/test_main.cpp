@@ -7,6 +7,18 @@ using namespace mt;
 void setUp() {}
 void tearDown() {}
 
+void test_slice_preview_note_rejects_unaddressable_slices() {
+  Instrument m;
+  m.root = 60;
+  TEST_ASSERT_EQUAL(60, sliceNote(m, 0));
+  TEST_ASSERT_EQUAL(127, sliceNote(m, 67));
+  TEST_ASSERT_EQUAL(kNoteEmpty, sliceNote(m, 68));
+  TEST_ASSERT_EQUAL(kNoteEmpty, sliceNote(m, -1));
+  m.root = 0;
+  TEST_ASSERT_EQUAL(127, sliceNote(m, 127));
+  TEST_ASSERT_EQUAL(kNoteEmpty, sliceNote(m, kMaxSlices));
+}
+
 void test_insert_keeps_order_and_rejects_duplicates() {
   Instrument m;
   TEST_ASSERT_EQUAL(0, sliceInsert(m, 0x8000));
@@ -100,7 +112,7 @@ void test_last_slice_past_end_plays_to_sample_end() {
 
 void test_chop_equal_clamps_n() {
   Instrument m;
-  m.chopN = 99;
+  m.chopN = 255;
   chopEqual(m);
   TEST_ASSERT_EQUAL(kMaxSlices, m.sliceCount);
 }
@@ -113,6 +125,7 @@ void test_frac_frame_roundtrip() {
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_slice_preview_note_rejects_unaddressable_slices);
   RUN_TEST(test_insert_keeps_order_and_rejects_duplicates);
   RUN_TEST(test_insert_full_fails);
   RUN_TEST(test_remove_and_clear);

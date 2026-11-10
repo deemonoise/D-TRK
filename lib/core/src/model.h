@@ -11,6 +11,16 @@ constexpr int kMinSteps = 4;
 constexpr int kDefaultSteps = 16;
 constexpr int kPatterns = 16;
 constexpr int kSongMax = 128;  // song slots
+// Song slot key and tempo (Project::songTrn / songBpm): TRN -kSongTrnMax..kSongTrnMax semitones, BPM 0 ("-")
+// or kSongBpmMin..kSongBpmMax.
+constexpr int kSongTrnMax = 24;
+constexpr uint16_t kSongBpmMin = 20, kSongBpmMax = 300;
+inline int8_t songTrnClamp(int v) {
+  return static_cast<int8_t>(v < -kSongTrnMax ? -kSongTrnMax : (v > kSongTrnMax ? kSongTrnMax : v));
+}
+inline uint16_t songBpmClamp(int v) {  // 0 stays "-"
+  return static_cast<uint16_t>(v <= 0 ? 0 : (v < kSongBpmMin ? kSongBpmMin : (v > kSongBpmMax ? kSongBpmMax : v)));
+}
 // Follow action of a song slot (Project::songFol, follow.h): what plays after the slot's pass.
 // In files (SFOL): new actions before Count only.
 enum class FollowAct : uint8_t { Next, Prev, Stay, Jump, Random, Count };
@@ -56,7 +66,7 @@ enum class LoopMode : uint8_t { Off, Forward, PingPong, Count };
 // Stored in files: new values go before Count only.
 enum class SliceMode : uint8_t { Off, Note, Fx, Count };  // NOTE: note - root = slice; FX: SLC picks it
 enum class ChopMode : uint8_t { Equal, Trans, Count };
-constexpr int kMaxSlices = 32;
+constexpr int kMaxSlices = 128;
 enum class InstrType : uint8_t { Chip, Sample, Fm, Drum, Synth, Kit, Lofi, Count };
 // UI order of the types (FM, SYNTH, DRUM, SAMPLE, CHIP, LOFI, KIT): position k -> type, type -> position.
 InstrType instrTypeAt(int k);
@@ -105,7 +115,7 @@ enum class FltMode : uint8_t { Off, Lp, Bp, Hp, Count };
 // trance gate's depth, the MOD send, FM SAT (kLockSat, Instrument::fmSat).
 enum LockBit : uint8_t {
   kLockFlt = kFmMacros, kLockRes, kLockDly, kLockDrv, kLockRvb, kLockBit, kLockSrr, kLockPan, kLockDty, kLockGte,
-  kLockMod, kLockSat, kLocks
+  kLockMod, kLockSat, kLockMatrix0, kLocks = kLockMatrix0 + 8
 };
 static_assert(kLocks <= 32, "lockMask is a uint32_t");
 // Byte: a bytebeat formula over the phase (Instrument::lfoByte). Stored in files: new waves before Count only.
@@ -144,6 +154,17 @@ struct LfoCfg {
   uint8_t dest = 0;   // LfoDest
   uint8_t sync = 0;   // kLfoTempo | kLfoFree bits
 };
+enum class ModSource : uint8_t { Off, Lfo1, Lfo2, Lfo3, Lfo4, AmpEnv, FilterEnv, Velocity, Note, Random, Follower, Count };
+enum class ModPolarity : uint8_t { Native, Unipolar, Bipolar, Count };
+constexpr int kModRoutes = 8;
+struct ModRoute {
+  uint8_t source = 0;  // ModSource; Off disables the route
+  uint8_t dest = 0;    // LfoDest; phase reset is not a continuous target
+  int8_t amount = 0;   // -64..63, same target units as LFO depth
+  uint8_t polarity = 0;  // Native preserves each source's range
+  uint8_t via = 0;     // ModSource, Off = full depth; otherwise multiplied by its unipolar value
+};
+static_assert(sizeof(ModRoute) == 5, "matrix record layout");
 static_assert(sizeof(LfoCfg) == 5, "LfoCfg layout (file format)");
 // LFO fx locks (Fx::LFD .. LFT in this order): bit LFO x kLfoLocks + LfoLock of a lock mask.
 enum LfoLock : uint8_t { kLfoLkDepth, kLfoLkRate, kLfoLkWave, kLfoLkDest, kLfoLocks };
@@ -234,6 +255,7 @@ struct Instrument {
   uint8_t lfoByte[kLfos][2] = {{0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}, {0, kByteDefA}};
   // FM SAT 0..127: tanh saturation before the voice's amp (FmParams::sat), 0 = off. FM only; kept on any type.
   uint8_t fmSat = 0;
+  ModRoute mod[kModRoutes];
 };
 // Drops an instrument's insert recommendation (drive, crushBits, crushRate, driveModel).
 MT_INLINE void clearInsert(Instrument& m) { m.drive = m.crushBits = m.crushRate = m.driveModel = 0; }
@@ -319,7 +341,7 @@ float folCoef(uint8_t v);
 enum class Fx : uint8_t {
   None = 0, CHN, RAT, PRB, GAT, TIE, NDG, CHD, STR, CND, VRN, NRN, CCA, CCB, PBN, PGM,
   SLD, VIB, ARP, VSL, OFS, CUT, DCY, COL, SHP, SWP, CON, FLT, RES, SLC, OFF, DLY, ACC, DRV, RVB, ARM, ARS, BIT, SRR,
-  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, SAT, Count
+  LFO, LFD, LFS, LFW, LFT, LFR, PAN, DTY, GTE, MOD, FLP, SAT, AC2, M01, M02, M03, M04, M05, M06, M07, M08, Count
 };
 // LFO (1..kLfos) picks the LFO this step's LFD .. LFR act on (LFO 1 without it; the sequencer sends it
 // first, so the slot order does not matter). LFD / LFS / LFW / LFT lock its depth (signed), rate (raw:
@@ -359,6 +381,7 @@ constexpr uint8_t kCndPre = 0x03, kCndNotPre = 0x04, kCndNei = 0x05, kCndNotNei 
 constexpr uint8_t kSynthStep = 0xF0;
 // Synth message 0xF5 kSynthArpChord chord (a CHD value): the track's ARP cycles that chord's notes.
 constexpr uint8_t kSynthArpChord = 0xF1;
+constexpr uint8_t kSynthClearLocks = 0xF2;
 
 struct FxSlot {
   Fx cmd = Fx::None;
@@ -394,6 +417,16 @@ struct Step {
 };
 // Files store a step as note, vel, then cmd / val per slot (older files: 2 slots, see readPatn).
 static_assert(sizeof(Step) == 2 + 2 * kFxSlots, "Step layout (file format)");
+
+inline void clearNote(Step& s) { s.note = kNoteEmpty; s.vel = kVelDefault; }
+inline uint8_t laneMask(const Step& s) { return s.vel; }
+inline bool laneOn(const Step& s, int lane) { return lane >= 0 && lane < kKitLanes && ((s.vel >> lane) & 1u); }
+inline void setLane(Step& s, int lane, bool on) {
+  if (lane < 0 || lane >= kKitLanes) return;
+  const uint8_t mask = static_cast<uint8_t>(1u << lane);
+  s.vel = on ? static_cast<uint8_t>(s.vel | mask) : static_cast<uint8_t>(s.vel & ~mask);
+}
+inline void setLaneMask(Step& s, uint8_t mask) { s.vel = mask; }
 
 enum class Resolution : uint8_t {
   Quarter, Eighth, Sixteenth, ThirtySecond, EighthTriplet, SixteenthTriplet, Count
@@ -432,7 +465,9 @@ inline uint16_t gatePercent(uint8_t v) {
 // NDG and PBN keep a signed value in the uint8 slot.
 inline int8_t fxSigned(uint8_t v) { return static_cast<int8_t>(v); }
 
+constexpr int kPatternNameMax = 16;
 struct Pattern {
+  char name[kPatternNameMax + 1] = {0};  // optional label; the pattern number stays stable
   uint8_t length = kDefaultSteps;
   Resolution res = Resolution::Sixteenth;
   uint8_t swing = 50;  // 50..75 %
@@ -614,6 +649,7 @@ struct SynthModel {
   TuningTable tuning;
   // Scenes chunk, last: copies of Project::scenes[sceneA / sceneB] (syncSceneLive), all the synth needs.
   Scene sceneLive[2];
+  uint8_t compAttack = 83;
 };
 
 // Shift-register generator of a track (shift_gen.h): plays the project scale live in place of the
@@ -636,8 +672,9 @@ struct GenCfg {
 };
 
 // Evolve of a track (evolve.h): the track's steps drift on the fly every `every` pattern passes, by
-// `amount`, pulled back to the pattern by `home`; mask = what may change. A project setting per track
-// (sequencer only, never sent to the synth). In files (TEVO): new mask bits after the last only.
+// `amount`, pulled back to the pattern by `home`; mask = what may change. Plays only in MUT mode EVO
+// (VarCfg::mode == VarMode::Evo). A project setting per track (sequencer only, never sent to the synth).
+// In files (TEVO): new mask bits after the last only.
 constexpr uint8_t kEvoNote = 1, kEvoRhythm = 2, kEvoRtrgVol = 4, kEvoShift = 8, kEvoMaskAll = 15;
 constexpr uint8_t kEvoEveryMax = 16;
 struct EvoCfg {
@@ -647,10 +684,11 @@ struct EvoCfg {
   uint8_t mask = kEvoNote | kEvoRhythm | kEvoRtrgVol;  // kEvoNote .. kEvoShift
 };
 
-// VAR of a track (var_gen.h): every `every` passes a new generation of a cellular automaton (CA1D, CA2D
-// on a KIT track) or a Markov chain from the track's pattern replaces what it plays. A project setting
-// per track (sequencer only). New modes / rules before Count only.
-enum class VarMode : uint8_t { Off, Ca1d, Ca2d, Markov, Count };
+// MUT of a track (var_gen.h, mutModeOf): one mutator per track, VarCfg::mode picks it. VAR modes: every
+// `every` passes a new generation of a cellular automaton (CA1D, CA2D on a KIT track) or a Markov chain
+// from the track's pattern replaces what it plays. EVO: the track's EvoCfg drifts it (evolve.h). A project
+// setting per track (sequencer only). In files (TVAR mode byte): new modes / rules before Count only.
+enum class VarMode : uint8_t { Off, Ca1d, Ca2d, Markov, Evo, Count };
 enum class VarRule2 : uint8_t { Life, HighLife, Seeds, DayNight, Maze, Count };
 constexpr uint8_t kVarEveryMax = 16, kVarResetMax = 64;
 struct VarCfg {
@@ -675,6 +713,13 @@ struct Project : SynthModel {
   // After slot i's pass the song goes on as songFol[i] says (follow.h). The defaults (NEXT 100 %)
   // play the slots in order. Saved in SFOL.
   SongFollow songFol[kSongMax];
+  // Slot i's key and tempo, for as long as it plays in the song. Notes of the tracks in songTrnMask (KIT
+  // tracks never) sound songTrn[i] semitones higher, the scale root moving with them (CHD, NRN, GEN, MUT
+  // in the new key); a note past 0..127 is dropped. songBpm[i] (kSongBpmMin..kSongBpmMax) is the live tempo
+  // from the slot's start, 0 keeps the tempo; the project BPM stays (Stop restores it). Saved in SSLT.
+  int8_t songTrn[kSongMax] = {0};
+  uint16_t songBpm[kSongMax] = {0};
+  uint16_t songTrnMask = 0xFFFF;  // bit t: track t follows songTrn (TRACK -> MAIN, Song trn)
   // Project seed (UI 1..9999): the follow decisions (follow.h); evolve shares it. Saved in SFOL.
   uint16_t seed = 1;
   // Scenes (scene.h): the ends of the crossfader, indices into scenes. Saved in SCEN.
@@ -690,8 +735,8 @@ struct Project : SynthModel {
   // Saved in PXY. Follows perfDepth (PROJ's Shift+click cancel restores the PERF page as one block).
   uint8_t perfXy[2] = {kPerfXyDefault[0], kPerfXyDefault[1]};
   GenCfg gen[kTracks];  // reset(): all OFF, seed = track + 1. Saved in TGEN.
-  EvoCfg evo[kTracks];  // reset(): all off (amount 0). Saved in TEVO.
-  VarCfg var[kTracks];  // reset(): all off. Saved in TVAR.
+  EvoCfg evo[kTracks];  // reset(): amount 0; plays only in MUT mode EVO (var[t]). Saved in TEVO.
+  VarCfg var[kTracks];  // MUT: reset(): all off. Saved in TVAR.
   // Not saved: the loaded file had a sample list (SMPL chunk). False for files older than the list,
   // whose instrument sample names still have to be migrated (and after reset()).
   bool hasSampleList = false;
@@ -709,8 +754,8 @@ struct Project : SynthModel {
     return t >= 0 && t < kTracks && gen[t].mode != 0 && gen[t].mode < static_cast<uint8_t>(GenMode::Count) &&
            !trackIsDrum(t);
   }
-  // The track's evolve makes new changes (amount > 0 and something in the mask).
-  bool evoOn(int t) const { return t >= 0 && t < kTracks && evo[t].amount > 0 && (evo[t].mask & kEvoMaskAll); }
+  // The track's MUT mode is EVO (its EvoCfg plays; var_gen.h mutModeOf).
+  bool evoOn(int t) const { return t >= 0 && t < kTracks && var[t].mode == static_cast<uint8_t>(VarMode::Evo); }
   // The KIT of track t, nullptr when its instrument is another type (or t out of range).
   const Instrument* kitOf(int t) const {
     if (t < 0 || t >= kTracks) return nullptr;

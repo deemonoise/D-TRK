@@ -47,14 +47,6 @@ bool evoIdle(const EvoTrack& s);   // no change anywhere
 int evoChanged(const EvoTrack& s, int len);  // steps 0..len-1 with a change (UI)
 uint32_t evoRand(uint32_t seed, int track, uint32_t n, int i, uint32_t salt);
 
-// Where evoStep / evoMakeView / evoCapture read track tr's steps: the pattern's (get == nullptr) or a
-// view of them (VAR plays first: varSrc, var_gen.h). get(ctx, k, tmp): step k (0 <= k < kMaxSteps), the
-// pattern's own or tmp.
-struct EvoSrc {
-  const Step& (*get)(const void* ctx, int k, Step& tmp) = nullptr;
-  const void* ctx = nullptr;
-};
-
 // The pattern step output step i (0..len-1) plays: a SHIFT swap first, then the rotation. Without
 // kEvoShift in mask: i.
 int evoSource(const EvoTrack& s, int i, int len, uint8_t mask);
@@ -68,7 +60,7 @@ struct EvoView {
   uint8_t kind[kMaxSteps] = {};
 };
 void evoMakeView(const Pattern& pt, int tr, const EvoTrack& s, uint8_t mask, bool noteOk, ScaleType t,
-                 EvoView& v, const EvoSrc& src = EvoSrc());
+                 EvoView& v);
 
 // How a track plays its state: the mask in effect (RHYTHM off on a GEN GATE track: the generator makes
 // the rhythm), a drum track (note = velocity, vel = lane mask), NOTE allowed (not drum, not GEN), the
@@ -90,18 +82,12 @@ EvoApply evoApplyOf(const Project& p, int tr);
 // kEvoGhostPct % of defVel, without its fx), NOTE (moveDegrees), RTRG+VOL (velocity, a RAT x2 / x3
 // in a free slot unless the step has one). Only the kinds in a.mask. Returns the pattern's step itself
 // when nothing changes, else tmp.
-const Step& evoStep(const Pattern& pt, int tr, int idx, const EvoTrack& s, const EvoApply& a, Step& tmp,
-                    const EvoSrc& src = EvoSrc());
+const Step& evoStep(const Pattern& pt, int tr, int idx, const EvoTrack& s, const EvoApply& a, Step& tmp);
 
 // One mutation of track `track`'s state (n -> n + 1, steps 0..v.len-1): Home first (each change one unit
 // back to the pattern with chance home %: deg 1, vol kEvoVolStep, flags cleared, rot 1), then new
 // changes with strength amount (NOTE, RHYTHM, RTRG+VOL per step, SHIFT once; see the plan). c is clamped.
 void evoMutate(EvoTrack& s, const EvoCfg& c, const EvoView& v, uint32_t seed, int track);
-
-// Capture: writes steps 0..evoLen-1 of track tr as the state plays them (evoStep with a) into pt;
-// scratch: kMaxSteps steps of the caller's (the result is built before any step is overwritten).
-void evoCapture(Pattern& pt, int tr, const EvoTrack& s, const EvoApply& a, Step* scratch,
-                const EvoSrc& src = EvoSrc());
 
 // Values into range (files, UI): amount, home <= 100, every 1..kEvoEveryMax, mask kEvoMaskAll bits.
 void evoClamp(EvoCfg& c);

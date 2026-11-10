@@ -1,0 +1,12 @@
+HEAP boot free_internal=246492 largest_internal=188404 min_internal=241216 free_psram=8386096 largest_psram=8257524
+HEADLESS chip=ESP32-S3 revision=2 cpu_mhz=240 flash=16777216 psram=8388608 synth_rate=32000 block=128 revision_code=ble-resource-probe
+PLACEMENT synth_internal=1 reverb_internal=1 sizeof_synth=49264 sizeof_project=488908 free_internal=161360
+HEAP synth_audio_task free_internal=151708 largest_internal=102388 min_internal=151708 free_psram=6854300 largest_psram=6815732
+BENCH phase=before_ble case=CHIP16 voices=16 active=16.00 avg_us=1747.95 peak_us=1761 warmup_peak_us=2777 rms=13537.87 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5616 checksum=-12420
+BENCH phase=before_ble case=CHIP24 voices=24 active=24.00 avg_us=2189.07 peak_us=2206 warmup_peak_us=3006 rms=13842.04 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5616 checksum=-19591
+BENCH phase=before_ble case=FMHAT4 voices=4 active=4.00 avg_us=1715.85 peak_us=1878 warmup_peak_us=2356 rms=2987.43 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5412 checksum=22111
+BENCH phase=before_ble case=FMHAT8 voices=8 active=8.00 avg_us=2933.30 peak_us=3254 warmup_peak_us=3782 rms=5619.13 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5412 checksum=-25615
+BENCH phase=before_ble case=SYNTH8 voices=8 active=8.00 avg_us=1482.30 peak_us=1496 warmup_peak_us=2028 rms=5918.21 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5412 checksum=-32005
+BENCH phase=before_ble case=SAMPLE16 voices=16 active=16.00 avg_us=2109.16 peak_us=2123 warmup_peak_us=2819 rms=17529.08 notifications=0 noteon=0 noteoff=0 cc=0 queue_drops=0 queue_high=0 dispatched=0 stack_free=5412 checksum=1175
+HEAP before_ble free_internal=151444 largest_internal=102388 min_internal=151192 free_psram=6854300 largest_psram=6815732
+BENCH DONE ble_compiled=0 queue_drops=0

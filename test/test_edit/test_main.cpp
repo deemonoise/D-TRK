@@ -235,6 +235,32 @@ void test_undo_drop_after_wrap() {
   delete[] store;
 }
 
+// An entry may carry one track's GenCfg (Capture live turns GEN off): popped with it; a plain push
+// reusing that slot carries none.
+void test_undo_gen_cfg() {
+  Undo::Entry* store = new Undo::Entry[Undo::kDepth];
+  Undo u(store);
+  static Pattern a, out;
+  GenCfg g;
+  g.mode = static_cast<uint8_t>(GenMode::Pitch);
+  g.seed = 777;
+  g.flip = 33;
+  u.push(2, a, 5, g);
+  uint8_t idx = 0;
+  int tr = -2;
+  GenCfg got;
+  TEST_ASSERT_TRUE(u.pop(idx, out, &tr, &got));
+  TEST_ASSERT_EQUAL(2, idx);
+  TEST_ASSERT_EQUAL(5, tr);
+  TEST_ASSERT_EQUAL(static_cast<int>(GenMode::Pitch), got.mode);
+  TEST_ASSERT_EQUAL(777, got.seed);
+  TEST_ASSERT_EQUAL(33, got.flip);
+  u.push(1, a);  // the same slot again, no GenCfg
+  TEST_ASSERT_TRUE(u.pop(idx, out, &tr, &got));
+  TEST_ASSERT_EQUAL(-1, tr);
+  delete[] store;
+}
+
 void test_transpose_skips_drum_tracks() {
   pat.steps[0][0].note = 60;
   pat.steps[1][0].note = 100;
@@ -309,6 +335,33 @@ void test_song_delete_middle_and_past_end() {
   songDelete(p, -1);
   TEST_ASSERT_EQUAL(2, p.songLen);
   TEST_ASSERT_EQUAL(3, p.song[1]);
+}
+
+// TRN and BPM move with their slot; the freed slot is zeroed; values clamp (BPM 0 = "-" stays).
+void test_song_insert_delete_move_trn_bpm() {
+  static Project p;
+  p.reset();
+  songInsert(p, 0, 1, 0, SongFollow(), 3, 90);
+  songInsert(p, 1, 2, 0, SongFollow(), -2, 0);
+  TEST_ASSERT_TRUE(songInsert(p, 1, 7, 0, SongFollow(), -5, 140));
+  TEST_ASSERT_EQUAL(3, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(90, p.songBpm[0]);
+  TEST_ASSERT_EQUAL(-5, p.songTrn[1]);
+  TEST_ASSERT_EQUAL(140, p.songBpm[1]);
+  TEST_ASSERT_EQUAL(-2, p.songTrn[2]);
+  TEST_ASSERT_EQUAL(0, p.songBpm[2]);
+  songDelete(p, 0);
+  TEST_ASSERT_EQUAL(-5, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(140, p.songBpm[0]);
+  TEST_ASSERT_EQUAL(-2, p.songTrn[1]);
+  TEST_ASSERT_EQUAL(0, p.songTrn[2]);
+  TEST_ASSERT_EQUAL(0, p.songBpm[2]);
+  songInsert(p, 0, 1, 0, SongFollow(), 99, 5);
+  TEST_ASSERT_EQUAL(kSongTrnMax, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(kSongBpmMin, p.songBpm[0]);
+  songInsert(p, 0, 1, 0, SongFollow(), -99, 999);
+  TEST_ASSERT_EQUAL(-kSongTrnMax, p.songTrn[0]);
+  TEST_ASSERT_EQUAL(kSongBpmMax, p.songBpm[0]);
 }
 
 void test_song_insert_clamps_pattern() {
@@ -467,12 +520,14 @@ int main(int, char**) {
   RUN_TEST(test_undo_overflow);
   RUN_TEST(test_undo_drop);
   RUN_TEST(test_undo_drop_after_wrap);
+  RUN_TEST(test_undo_gen_cfg);
   RUN_TEST(test_transpose_skips_drum_tracks);
   RUN_TEST(test_copy_paste_drum_step_byte_exact);
   RUN_TEST(test_song_insert_into_empty);
   RUN_TEST(test_song_insert_middle_shifts);
   RUN_TEST(test_song_insert_full_fails);
   RUN_TEST(test_song_delete_middle_and_past_end);
+  RUN_TEST(test_song_insert_delete_move_trn_bpm);
   RUN_TEST(test_song_insert_clamps_pattern);
   RUN_TEST(test_song_insert_moves_follow_and_jump_targets);
   RUN_TEST(test_song_delete_moves_follow_and_jump_targets);

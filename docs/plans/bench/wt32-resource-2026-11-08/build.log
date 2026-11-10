@@ -1,0 +1,145 @@
+Processing wt32 (platform: https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip; board: esp32-s3-devkitc-1; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-s3-devkitc-1.html
+PLATFORM: Espressif 32 (55.3.312) > Espressif ESP32-S3-DevKitC-1-N8 (8 MB QD, No PSRAM)
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 8MB Flash
+DEBUG: Current (esp-builtin) On-board (esp-builtin) External (cmsis-dap, esp-bridge, esp-prog, esp-prog-2, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - contrib-piohome @ 3.4.4 
+ - framework-arduinoespressif32 @ 3.3.12 
+ - framework-arduinoespressif32-libs @ 5.5.5+sha.b774170ff46 
+ - tool-esptoolpy @ 5.4.0 
+ - tool-xtensa-esp-elf-gdb @ 17.1.0+20260402 
+ - toolchain-xtensa-esp-elf @ 14.2.0+20260121
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 46 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- LovyanGFX @ 1.2.32
+|-- core
+|-- SD @ 3.3.12
+|-- Wire @ 3.3.12
+|-- SPI @ 3.3.12
+|-- ArduinoOTA @ 3.3.12
+|-- ESPmDNS @ 3.3.12
+|-- Update @ 3.3.12
+|-- WebServer @ 3.3.12
+|-- Preferences @ 3.3.12
+|-- WiFi @ 3.3.12
+|-- FS @ 3.3.12
+Building in release mode
+Compiling .pio/build/wt32/libd5e/core/onset.cpp.o
+Compiling .pio/build/wt32/libd5e/core/tempo_detect.cpp.o
+Compiling .pio/build/wt32/libd5e/core/time_stretch.cpp.o
+Compiling .pio/build/wt32/src/audio/sample_tools.cpp.o
+Compiling .pio/build/wt32/src/bench/headless.cpp.o
+Compiling .pio/build/wt32/src/main.cpp.o
+Compiling .pio/build/wt32/src/ui/action_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/app.cpp.o
+Compiling .pio/build/wt32/src/ui/bank_screen.cpp.o
+Compiling .pio/build/wt32/src/ui/bounce_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/dice_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/edit_tools.cpp.o
+Compiling .pio/build/wt32/src/ui/file_list.cpp.o
+Compiling .pio/build/wt32/src/ui/file_screen.cpp.o
+Compiling .pio/build/wt32/src/ui/fill_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/fill_dialog_gen.cpp.o
+Compiling .pio/build/wt32/src/ui/grid_automation.cpp.o
+Compiling .pio/build/wt32/src/ui/grid_screen.cpp.o
+Compiling .pio/build/wt32/src/ui/import_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/inst_screen.cpp.o
+Compiling .pio/build/wt32/src/ui/pattern_tools.cpp.o
+Compiling .pio/build/wt32/src/ui/perf_pad.cpp.o
+Compiling .pio/build/wt32/src/ui/preset_browser.cpp.o
+Compiling .pio/build/wt32/src/ui/proj_screen.cpp.o
+Compiling .pio/build/wt32/src/ui/recording_setup.cpp.o
+Compiling .pio/build/wt32/src/ui/render_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/sample_editor.cpp.o
+Compiling .pio/build/wt32/src/ui/sample_extract_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/song_screen.cpp.o
+Compiling .pio/build/wt32/src/ui/track_screen.cpp.o
+In file included from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/wctype.h:8,
+                 from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/c++/14.2.0/cwctype:50,
+                 from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/c++/14.2.0/bits/locale_facets.h:39,
+                 from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/c++/14.2.0/bits/basic_ios.h:37,
+                 from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/c++/14.2.0/ios:46,
+                 from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/c++/14.2.0/ostream:40,
+                 from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/c++/14.2.0/bits/unique_ptr.h:43,
+                 from /Users/deemonoise/.platformio/packages/toolchain-xtensa-esp-elf/xtensa-esp-elf/include/c++/14.2.0/memory:78,
+                 from .pio/libdeps/wt32/LovyanGFX/src/lgfx/v1/platforms/esp32/../../../utility/../internal/memory.h:13,
+                 from .pio/libdeps/wt32/LovyanGFX/src/lgfx/v1/platforms/esp32/../../../utility/result.hpp:35,
+                 from .pio/libdeps/wt32/LovyanGFX/src/lgfx/v1/platforms/esp32/common.hpp:22,
+                 from .pio/libdeps/wt32/LovyanGFX/src/lgfx/v1/platforms/common.hpp:22,
+                 from .pio/libdeps/wt32/LovyanGFX/src/lgfx/v1/platforms/device.hpp:20,
+                 from .pio/libdeps/wt32/LovyanGFX/src/lgfx/v1_init.hpp:24,
+                 from .pio/libdeps/wt32/LovyanGFX/src/LovyanGFX.hpp:25,
+                 from src/hw/lgfx_config.h:3,
+                 from src/ui/param_list.h:4,
+                 from src/ui/dialog_actions.h:4,
+                 from src/ui/dice_dialog.h:2,
+                 from src/ui/proj_screen.h:3,
+                 from src/ui/proj_screen.cpp:1:
+src/ui/proj_screen.cpp: In constructor 'ui::ProjScreen::ProjScreen(ui::App&)':
+src/ui/proj_screen.cpp:299:26: warning: 'offsetof' within non-standard-layout type 'mt::Project' is conditionally-supported [-Winvalid-offsetof]
+  299 |   static_assert(offsetof(mt::Project, perfDepth) == offsetof(mt::Project, perfMap) + sizeof(mt::Project::perfMap),
+      |                          ^
+src/ui/proj_screen.cpp:299:62: warning: 'offsetof' within non-standard-layout type 'mt::Project' is conditionally-supported [-Winvalid-offsetof]
+  299 |   static_assert(offsetof(mt::Project, perfDepth) == offsetof(mt::Project, perfMap) + sizeof(mt::Project::perfMap),
+      |                                                              ^
+src/ui/proj_screen.cpp:301:26: warning: 'offsetof' within non-standard-layout type 'mt::Project' is conditionally-supported [-Winvalid-offsetof]
+  301 |   static_assert(offsetof(mt::Project, perfXy) == offsetof(mt::Project, perfDepth) + sizeof(mt::Project::perfDepth),
+      |                          ^
+src/ui/proj_screen.cpp:301:59: warning: 'offsetof' within non-standard-layout type 'mt::Project' is conditionally-supported [-Winvalid-offsetof]
+  301 |   static_assert(offsetof(mt::Project, perfXy) == offsetof(mt::Project, perfDepth) + sizeof(mt::Project::perfDepth),
+      |                                                           ^
+Compiling .pio/build/wt32/src/ui/transpose_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/wifi_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/wt_draw.cpp.o
+Compiling .pio/build/wt32/src/ui/wt_make_dialog.cpp.o
+Compiling .pio/build/wt32/src/ui/wt_picker.cpp.o
+Linking .pio/build/wt32/firmware.elf
+                            Memory Type Usage Summary                             
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Memory Type/Section ┃ Used [bytes] ┃ Used [%] ┃ Remain [bytes] ┃ Total [bytes] ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ Flash Code          │      1596996 │          │                │               │
+│    .text            │      1596996 │          │                │               │
+│ Flash Data          │       405460 │          │                │               │
+│    .rodata          │       328388 │          │                │               │
+│    .eh_frame        │        76816 │          │                │               │
+│    .appdesc         │          256 │          │                │               │
+│ DIRAM               │       248843 │    72.81 │          92917 │        341760 │
+│    .text            │       150919 │    44.16 │                │               │
+│    .bss             │        74632 │    21.84 │                │               │
+│    .data            │        23292 │     6.82 │                │               │
+│ IRAM                │        16384 │    100.0 │              0 │         16384 │
+│    .text            │        15356 │    93.73 │                │               │
+│    .vectors         │         1028 │     6.27 │                │               │
+└─────────────────────┴──────────────┴──────────┴────────────────┴───────────────┘
+Total image size: 2193051 bytes (.bin may be padded larger)
+Note: The reported total sizes may be smaller than those in the technical reference manual due to reserved memory and application configuration. The total flash size available for the application is not included by default, as it cannot be reliably determined due to the presence of other data like the bootloader, partition table, and application partition size. The total external RAM size is not included either, because the amount of RAM connected to the chip is detected at boot and is not known during the build.
+Retrieving maximum program size .pio/build/wt32/firmware.elf
+Checking size .pio/build/wt32/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [===       ]  29.9% (used 97924 bytes from 327680 bytes)
+Flash: [=======   ]  67.3% (used 2115979 bytes from 3145728 bytes)
+Building .pio/build/wt32/firmware.bin
+esptool v5.4.0
+Creating ESP32-S3 image...
+Merged 3 ELF sections.
+Successfully created ESP32-S3 image.
+Creating binary "firmware.factory.bin" with:
+    Offset   | File
+ -  0x0000   | bootloader.bin
+ -  0x8000   | partitions.bin
+ -  0xe000   | boot_app0.bin
+ -  0x10000  | firmware.bin
+Successfully created combined binary image.
+========================= [SUCCESS] Took 22.74 seconds =========================
+
+Environment    Status    Duration
+-------------  --------  ------------
+wt32           SUCCESS   00:00:22.738
+========================= 1 succeeded in 00:00:22.738 =========================

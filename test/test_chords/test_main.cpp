@@ -78,7 +78,7 @@ void test_factory_parses() {
     TEST_ASSERT_TRUE(p.n > 0);
   }
   TEST_ASSERT_NULL(progFactoryName(progFactoryCount()));
-  TEST_ASSERT_EQUAL(32, chordRhythmCount());
+  TEST_ASSERT_EQUAL(33, chordRhythmCount());
   for (int i = 0; i < chordRhythmCount(); ++i) {
     ArpPattern r;
     TEST_ASSERT_TRUE(strlen(chordRhythmName(i)) <= 10);
@@ -86,6 +86,19 @@ void test_factory_parses() {
     TEST_ASSERT_EQUAL_MESSAGE(16, r.len, chordRhythmName(i));
   }
   TEST_ASSERT_NULL(chordRhythmText(-1));
+}
+
+void test_juke_stab_is_appended_and_parses() {
+  TEST_ASSERT_EQUAL_STRING("TRESILLO", chordRhythmName(31));
+  TEST_ASSERT_EQUAL_STRING("JUKE STAB", chordRhythmName(32));
+  ArpPattern r;
+  TEST_ASSERT_TRUE(parseArpPattern(chordRhythmText(32), r));
+  TEST_ASSERT_EQUAL(16, r.len);
+  for (int i=0; i<16; ++i) {
+    const bool hit = i==0 || i==3 || i==6 || i==10 || i==12 || i==15;
+    TEST_ASSERT_EQUAL(hit ? ArpKind::Note : ArpKind::Rest, r.steps[i].kind);
+  }
+  TEST_ASSERT_NULL(chordRhythmText(33));
 }
 
 void test_layout_length() {
@@ -380,6 +393,7 @@ int main() {
   RUN_TEST(test_parse_tokens);
   RUN_TEST(test_steps_and_format);
   RUN_TEST(test_factory_parses);
+  RUN_TEST(test_juke_stab_is_appended_and_parses);
   RUN_TEST(test_layout_length);
   RUN_TEST(test_layout_auto);
   RUN_TEST(test_roman_roots);

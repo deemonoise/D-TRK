@@ -155,7 +155,7 @@ FillDialog::FillDialog(App& app) : app_(app) {
   params_[kOk] = {"OK", nullptr, nullptr};
   params_[kCancel] = {"Cancel", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
   initGenParams();
-  list_.setVisibleRows((kAreaH - kHeaderH) / ParamList::kRowH);
+  list_.setVisibleRows(actions_.listRows(kHeaderH));
   list_.setOnEdit([this] {
     if (f_->type == mt::FillType::Arp && (!listed_ || a_->pattern != resolved_)) syncArp();
     syncGen();
@@ -294,6 +294,7 @@ void FillDialog::buildRows() {
 }
 
 void FillDialog::addRow(int id) {
+  if(id==kOk || id==kCancel)return;
   shownIds_[shownCount_] = id;
   shown_[shownCount_++] = params_[id];
 }
@@ -359,6 +360,7 @@ bool FillDialog::open(int pattern, const mt::Sel& sel, mt::FillSpec* f, mt::ArpS
   buildRows();
   list_.setEdit(false);
   list_.setSel(listRow(kType));
+  actions_.reset(list_);
   open_ = true;
   preview();
   return true;
@@ -562,15 +564,16 @@ void FillDialog::onInput(const hw::InputEvent& ev) {
   switch (ev.type) {
     case InputType::EncLong: cancel(); return;
     case InputType::EncClick:
-      if (ev.shift && !list_.editing()) {  // while editing: ParamList cancels the edit
+      if (ev.shift && !list_.editing() && !actions_.footerFocused()) {  // while editing: ParamList cancels the edit
         reseed();
         return;
       }
-      if (!list_.editing() && action(rowId(list_.sel()))) return;
+      if (!actions_.footerFocused() && !list_.editing() && action(rowId(list_.sel()))) return;
       break;
     default: break;
   }
-  list_.onInput(ev);
+  const int result=actions_.input(list_,shownCount_,ev);
+  if(result>=0)action(result==0?kOk:kCancel);
 }
 
 void FillDialog::onTouch(const TouchEvent& ev) {
@@ -580,32 +583,21 @@ void FillDialog::onTouch(const TouchEvent& ev) {
     app_.invalidate();
     return;
   }
-  if (ev.type == TouchType::Tap && ev.y < y0_ + kHeaderH) {
-    const int by = y0_ + kBtnY;
-    if (ev.y >= by && ev.y < by + kBtnH) {
-      if (ev.x >= kCancelX && ev.x < kCancelX + kCancelW) action(kCancel);
-      else if (ev.x >= kOkX && ev.x < kOkX + kOkW) action(kOk);
-    }
-    return;
+  if(ev.y>=y0_+kAreaH-DialogActions::kH){
+    const int result=actions_.touch(list_,ev,y0_);if(result>=0)action(result==0?kOk:kCancel);return;
   }
   if (ev.type == TouchType::Tap) {
     const int r = list_.rowAt(ev.y);
     const int id = rowId(r);
     if (id == kOk || id == kCancel || id == kReseed || id == kACapture || id == kCCapture || id == kBCapture) {
+      actions_.focusList(list_);
       list_.setSel(r);
       list_.setEdit(false);
       action(id);
       return;
     }
   }
-  list_.onTouch(ev);
-}
-
-void FillDialog::drawButton(LGFX_Sprite& s, int x, int y, int w, const char* label, bool sel) {
-  s.fillRect(x, y, w, kBtnH, sel ? kPlayBg : kMenuBg);
-  s.drawRect(x, y, w, kBtnH, sel ? kCursor : kDim);
-  s.setTextColor(sel ? kCursor : kText);
-  s.drawString(label, x + (w - static_cast<int>(strlen(label)) * kCharW) / 2, y + (kBtnH - kCharH) / 2);
+  actions_.touch(list_,ev,y0_);
 }
 
 void FillDialog::draw(LGFX_Sprite& s, int y0) {
@@ -640,9 +632,8 @@ void FillDialog::draw(LGFX_Sprite& s, int y0) {
     snprintf(buf, sizeof(buf), "FILL T%d-%d %d-%d", sel_.t0 + 1, sel_.t1 + 1, sel_.s0 + 1, sel_.s1 + 1);
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
-  drawButton(s, kCancelX, y0 + kBtnY, kCancelW, "CANCEL", rowId(list_.sel()) == kCancel);
-  drawButton(s, kOkX, y0 + kBtnY, kOkW, "OK", rowId(list_.sel()) == kOk);
   list_.draw(s, y0 + kHeaderH);
+  actions_.draw(s,y0,"APPLY");
 }
 
 }  // namespace ui

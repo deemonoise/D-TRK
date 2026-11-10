@@ -1,0 +1,7 @@
+pattern,placement,old_avg_us,current_avg_us,delta_us,delta_percent,old_peak_us,current_peak_us,old_active,current_active
+1,coreINT_rvbPS,1091.363,1194.302,102.939,9.432,2270,2466,4.010,4.010
+1,corePS_rvbINT,1112.659,1190.011,77.352,6.952,2407,2623,4.010,4.010
+2,coreINT_rvbPS,981.369,1075.352,93.983,9.577,2223,2401,2.821,2.821
+2,corePS_rvbINT,988.174,1069.951,81.777,8.276,2337,2573,2.821,2.821
+3,coreINT_rvbPS,993.430,1089.353,95.923,9.656,2228,2386,2.918,2.918
+3,corePS_rvbINT,1002.199,1083.297,81.098,8.092,2392,2589,2.918,2.918

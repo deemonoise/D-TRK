@@ -4,6 +4,7 @@
 #include "model.h"
 #include "scene.h"
 #include "synth_comp.h"
+#include "synth_gain.h"
 #include "synth_crush.h"
 #include "synth_delay.h"
 #include "synth_drive.h"
@@ -331,7 +332,8 @@ class Synth {
   static void macros(const Voice& v, const Instrument& m, const float* lm, float (&mac)[kFmMacros]);
   static uint8_t velDecay(const Voice& v, const Instrument& m, uint8_t dec);
   void controlFilter(Voice& v, const Instrument& m, float pitch, const float* la);  // la: control()'s LFO sums
-  float lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods);
+  float lfo(Voice& v, const LfoCfg& c, int i, int dt, const LfoMods& mods, bool matrix = false);
+  void matrixSources(const Voice& v, const Instrument& m, uint16_t mask, float* sources) const;
   float lfoRateHz(const LfoCfg& c) const;
   static LfoCfg lfoCfgOf(const Voice* v, const Instrument& m, int i);  // the instrument's + v's locks
   void lfoFx(uint8_t track, Fx f, uint8_t val, bool now);
@@ -343,6 +345,7 @@ class Synth {
   static uint8_t machineOf(const Instrument& m);
   float rnd();
   void renderVoice(Voice& v, float* out, int n);
+  void renderVoiceRamped(Voice& v, float* out, int n);
   void startSample(Voice& v, const Instrument& m) const;
   static void renderSample(Voice& v, float* out, int n);
   static void renderChip(Voice& v, float* out, int n);
@@ -373,7 +376,7 @@ class Synth {
   void refreshStrip(uint8_t track, int nv, int len);
   // The strip of track over the segment trk_[0..n) at block position pos: insert, sends,
   // peak, pan into the mix (or the sidechain bus).
-  void runStrip(uint8_t track, int pos, int n, int scTrack, bool keyAround);
+  void runStrip(uint8_t track, int pos, int n, int scTrack);
   // Envelope followers, at each control boundary before the voices' updates: the sources' levels
   // over the last segment (srcPk_) into the destination tracks' envelopes and their targets.
   void updateFollowers();
@@ -383,6 +386,12 @@ class Synth {
   void snapStrip(TrackStrip& s);
   void runGate(TrackStrip::Gate& g, float* x, int n);
   // The block through the master chain into mixL_ / mixR_ (master gain and soft clip applied).
+  uint32_t bypassLockMask_[kVoices]{};
+  uint16_t bypassLfoMask_[kVoices]{};
+  uint32_t bypassAge_[kVoices]{};
+  GainRamp masterGain_;
+  float scWeight_[kSynthTracks]{};
+  bool scSnap_ = true;
   void renderCore();
 
   const SynthModel& p_;

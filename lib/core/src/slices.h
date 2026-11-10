@@ -7,6 +7,8 @@ namespace mt {
 // Fraction of the sample (/0xFFFF) <-> frame, len = sample frames.
 uint32_t fracToFrame(uint16_t f, uint32_t len);
 uint16_t frameToFrac(uint32_t frame, uint32_t len);
+// MIDI note selecting slice i, or kNoteEmpty when it cannot fit MIDI 0..127.
+uint8_t sliceNote(const Instrument& m, int i);
 // Sorted insert; index, or -1 when full or the position is taken.
 int sliceInsert(Instrument& m, uint16_t pos);
 void sliceRemove(Instrument& m, int i);  // out of range: no-op

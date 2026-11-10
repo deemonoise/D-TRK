@@ -1,0 +1,26 @@
+firmware e7efe3b+, 41 s, 10327 blocks, render 1859 us = 46.5 %
+project TUTU-TUDUTU, synth INTERNAL, seq INTERNAL, rvb PSRAM, internal free 37584 largest 27636 bytes, PSRAM free 521652 largest 516084 bytes
+  peak block 5924 us = 148.1 %
+  queue       22.4 us    0.6 %
+  events      34.0 us    0.8 %
+  cache      158.8 us    4.0 %
+  instLfo    119.8 us    3.0 %
+  ctlMod     117.6 us    2.9 %  n 15.65    7.51 us each
+  ctlFlt      10.7 us    0.3 %
+  ctlEng      77.4 us    1.9 %
+  chip         0.0 us    0.0 %
+  sample     102.0 us    2.5 %  n  1.56   65.44 us each
+  fm         321.8 us    8.0 %  n  2.17  148.11 us each
+  drum         0.0 us    0.0 %
+  synth       38.0 us    0.9 %  n  0.20  192.15 us each
+  mix         32.6 us    0.8 %
+  delay       81.0 us    2.0 %
+  reverb     511.3 us   12.8 %
+  comp         4.0 us    0.1 %
+  perf         2.9 us    0.1 %
+  master      37.1 us    0.9 %
+  strip      116.2 us    2.9 %
+  mod         68.1 us    1.7 %
+  shim         1.7 us    0.0 %
+  eq           1.9 us    0.0 %
+  lofi         0.0 us    0.0 %

@@ -39,7 +39,8 @@ inline void varSetBit(uint8_t* row, int i, bool v) {
 }
 
 uint32_t varRand(uint32_t seed, int track, uint32_t n, int i, uint32_t salt);
-// The mode that plays: CA2D on a melodic track plays as CA1D; Count and above -> Off.
+// The VAR mode that plays: CA2D on a melodic track plays as CA1D; EVO (MUT plays evolve, mut.h), Count
+// and above -> Off.
 VarMode varModeOf(const VarCfg& c, bool kit);
 void varReset(VarTrack& s);  // n = 0, generation 0
 // Values into range (files, UI): mode, every 1..kVarEveryMax, rule2, reset, noise, amount, order 1..2,
@@ -103,20 +104,5 @@ VarApply varApplyOf(const Project& p, int tr);
 // source step whole, REST drops the note; without rhythm only a note step's note / lane mask changes).
 // Returns the pattern's step itself when nothing changes, else tmp.
 const Step& varStep(const Pattern& pt, int tr, int idx, const VarTrack& s, const VarApply& a, Step& tmp);
-
-// Track tr as VAR plays it, the source EVO works on (order pattern -> VAR -> EVO -> GEN). The view must
-// outlive the EvoSrc.
-struct VarView {
-  const Pattern* pt = nullptr;
-  int tr = 0;
-  const VarTrack* s = nullptr;
-  VarApply a;
-};
-EvoSrc varSrc(const VarView& v);
-// Capture: writes steps 0..evoLen-1 of track tr as VAR, then EVO play them (state v, e) into pt; scratch:
-// kMaxSteps steps of the caller's. The caller then clears both states (Sequencer::varClear, and evoClear
-// when e is not idle: its changes are in the pattern now).
-void varCapture(Pattern& pt, int tr, const VarTrack& v, const VarApply& va, const EvoTrack& e, const EvoApply& ea,
-                Step* scratch);
 
 }  // namespace mt

@@ -1,0 +1,23 @@
+...project_frame_retry
+project_frame_both_fail
+project_load_budget
+project_load_failure
+project_load_backup
+psram_diagnostics
+rename
+rename_nomemory
+render_footer
+bounce_footer
+import_footer
+system_diagnostics
+wifi_system
+render_stops_transport
+bounce_stops_countin
+action_apply_touch
+action_cancel_touch
+action_encoder
+............
+----------------------------------------------------------------------
+Ran 15 tests in 36.253s
+
+OK

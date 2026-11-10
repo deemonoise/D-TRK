@@ -7,9 +7,9 @@
 
 namespace ui {
 
-// Settings of App::curTrack(). GEN page: the track generator (shift_gen.h); click on Seed = a new random seed. EVO page: the
-// track evolve (evolve.h), its heard drift in the header. VAR page: the track VAR (var_gen.h), its heard generation
-// in the header. MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
+// Settings of App::curTrack(). GEN page: the track generator (shift_gen.h); click on Seed = a new random seed. MUT page:
+// the track mutator (mut.h): the Mut row picks the mode (OFF / EVO / CA1D / CA2D on KIT / MARKOV), the rows below are
+// the active mode's only; the header shows its heard state (EVO drift, CA generation and cells, MARKOV changes). MIDI-only rows are grey on an INT track. Shift+turn (or a tap on the header arrows) = track -+1.
 // Name: click to edit, turn = character, Shift+turn = position.
 // INS page, Steps (the trance gate's 16-step mask): click = edit; turn = cursor, Shift + turn =
 // rotate the mask, A + turn = toggle at the cursor and step on, a tap on a cell or track button 1-8
@@ -65,19 +65,20 @@ class TrackScreen : public Screen {
   // Rows in page order: MAIN, INS (the INT track's insert chain, then its MOD send), FOL (its envelope follower), NOTE,
   // MIDI (contiguous runs, see
   // kPageFirst).
-  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kDrive, kDriveType, kBitCrush, kDownsample,
+  enum Row : int { kName, kOut, kInstr, kVol, kPan, kMute, kSolo, kSongTrn, kDrive, kDriveType, kBitCrush, kDownsample,
                    kTrance, kTrPattern, kTrSteps, kTrRate, kTrLen, kTrAtk, kTrRel, kModSend,
                    kFolSrc, kFolDest, kFolAmt, kFolAtk, kFolRel, kVel,
                    kGate, kPatLen, kSpeed, kHumanize,
                    kGenMode, kGenLen, kGenFlip, kGenLow, kGenOct, kGenDens, kGenSeed, kGenReg,
                    kGenFormula, kGenA, kGenB, kGenC, kGenZoom,
-                   kEvoAmt, kEvoEvery, kEvoHome, kEvoNote, kEvoRhythm, kEvoRtrg, kEvoShift,
-                   kVarMode, kVarEvery, kVarRule, kVarReset, kVarNoise, kVarAmt, kVarOrder, kVarRhythm,
+                   kMutMode, kEvoAmt, kEvoEvery, kEvoHome, kEvoNote, kEvoRhythm, kEvoRtrg, kEvoShift,
+                   kVarEvery, kVarRule, kVarReset, kVarNoise, kVarAmt, kVarOrder, kVarRhythm,
                    kChannel, kCcA, kCcB, kProgram, kRows };
-  enum Page : int { kPgMain, kPgIns, kPgFol, kPgNote, kPgGen, kPgEvo, kPgVar, kPgMidi, kPages };
-  static constexpr int kPageFirst[kPages + 1] = {kName, kDrive, kFolSrc, kVel, kGenMode, kEvoAmt, kVarMode, kChannel, kRows};
-  static constexpr int kVisibleRows = 9;  // (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH
+  // kPgMut: its rows (kMutMode..kVarRhythm) are shown through mutShown_ (the active mode's only).
+  enum Page : int { kPgMain, kPgIns, kPgFol, kPgNote, kPgGen, kPgMut, kPgMidi, kPages };
+  static constexpr int kPageFirst[kPages + 1] = {kName, kDrive, kFolSrc, kVel, kGenMode, kMutMode, kChannel, kRows};
   static constexpr int kHeaderH = 28;
+  static constexpr int kVisibleRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;
   static constexpr int kArrowW = 96;  // header hit area on each side
   static constexpr int kNameLen = 8;
 
@@ -121,21 +122,28 @@ class TrackScreen : public Screen {
   void drawGen(LGFX_Sprite& s, int y0);
   uint32_t shownGen_ = 0xFFFFFFFF, shownGenN_ = 0, flipAt_ = 0;
   bool flipShown_ = false;
-  // EVO page: the track evolve (Project::evo). Header: mutations and passes to the next one (left), changed
-  // steps of the track's length (right), of the heard state.
+  // MUT page: the track mutator (mut.h). Rows: Mut (the mode), then the active mode's (mutRows); EVO uses
+  // Project::evo, CA / MARKOV Project::var. Every edit posts MutEdit (the engine replans).
+  static constexpr int kMutRowsMax = 1 + kVarEvery - kEvoAmt;  // Mut + EVO's rows, the longest set
+  mt::VarMode mutMode();  // the mode that plays (mt::mutMode of the current track)
+  int mutRows(mt::VarMode m, int* out);  // row indices (Row) the page shows in mode m
+  void syncMut(bool keep);  // the shown rows follow the mode (a Mut edit, a track change, a load); keep: scroll stays
+  Param mutShown_[kMutRowsMax];
+  int mutShownIds_[kMutRowsMax] = {};  // the Row of each of mutShown_
+  int mutShownN_ = 0;
+  mt::VarMode shownMut_ = mt::VarMode::Count;  // the mode mutShown_ was built for
+  void mutEdited();  // under lock: the engine replans
+  // EVO header: mutations and passes to the next one (left), changed steps of the track's length (right), of
+  // the heard state.
   mt::EvoCfg& evo();
-  bool evoDim();     // Evolve OFF
-  void evoEdited();  // under lock: the engine replans
   engine::EvoInfo heardEvo(int& len);  // len: the track's in the heard pattern
   void drawEvo(LGFX_Sprite& s, int y0);
   uint32_t shownEvoN_ = 0xFFFFFFFF;
   uint8_t shownEvoPass_ = 0xFF;
   int shownEvoChg_ = -1;
-  // VAR page: the track VAR (Project::var). Header: the generation and passes to the next one (left), the
-  // heard state's cells (CA; KIT 8 rows) or changed steps (MARKOV) over the track's length (right).
+  // CA / MARKOV header: the generation and passes to the next one (left), the heard state's cells (CA; KIT 8
+  // rows) or changed steps (MARKOV) over the track's length (right).
   mt::VarCfg& var();
-  mt::VarMode varMode();  // the mode that plays (CA2D on a melodic track: CA1D)
-  void varEdited();  // under lock: the engine replans
   engine::VarInfo heardVarInfo();
   void drawVar(LGFX_Sprite& s, int y0);
   uint32_t shownVarN_ = 0xFFFFFFFF;
@@ -155,7 +163,7 @@ class TrackScreen : public Screen {
   // The crossfader row under the 8 strips (kXfX1: the MAIN separator), then the scope across the width:
   // the waveform (auto gain) and a peak meter with CLIP.
   static constexpr int kXfY = kBtnY + kBtnH + 4, kXfH = 20, kXfX1 = kMasterX - 8;
-  static constexpr int kXfLabW = 24, kXfBarX0 = kStripX0 + kXfLabW + 6, kXfBarX1 = kXfX1 - kXfLabW - 6;
+  static constexpr int kXfLabW = 32, kXfBarX0 = kStripX0 + kXfLabW + 6, kXfBarX1 = kXfX1 - kXfLabW - 6;
   static constexpr int kScopeY = kXfY + kXfH + 4, kScopeH = kAreaH - kScopeY - 4, kMeterW = 10;
   static constexpr int kScopeW = kScreenW - 2 * kStripX0;
   // SCENE view: the button panel in place of the crossfader row and the scope, 2 rows x 4.

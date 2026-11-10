@@ -1,6 +1,7 @@
 #include "inst_codec.h"
 #include <string.h>
 #include "bytebeat_lib.h"
+#include "mod_matrix.h"
 
 namespace mt {
 namespace {
@@ -14,6 +15,20 @@ uint8_t clampu(int v, int lo, int hi) { return static_cast<uint8_t>(v < lo ? lo 
 int8_t clamps(int8_t v, int lo, int hi) { return static_cast<int8_t>(v < lo ? lo : (v > hi ? hi : v)); }
 
 }  // namespace
+
+void packMod(const Instrument& m, uint8_t* b) { memcpy(b, m.mod, kModRecSize); }
+void unpackMod(const uint8_t* b, size_t n, Instrument& m) {
+  for (int i = 0; i < kModRoutes && (i + 1) * sizeof(ModRoute) <= n; ++i) {
+    ModRoute r;
+    memcpy(&r, b + i * sizeof(ModRoute), sizeof r);
+    if (r.source >= uint8_t(ModSource::Count) || !modDestValid(r.dest)) r.source = 0;
+    if (!modDestValid(r.dest)) r.dest = 0;
+    r.amount = clamps(r.amount, -64, 63);
+    if (r.polarity >= uint8_t(ModPolarity::Count)) r.polarity = 0;
+    if (r.via >= uint8_t(ModSource::Count)) r.via = 0;
+    m.mod[i] = r;
+  }
+}
 
 void packInst(const Instrument& m, uint8_t* b) {
   memset(b, 0, kInstRecSize);
@@ -125,32 +140,40 @@ void unpackFlt(const uint8_t* b, Instrument& m) {
   m.send = clampu(b[7], 0, 127);
 }
 
-void packSlices(const Instrument& m, uint8_t* b) {
-  memset(b, 0, kSliceRecSize);
+namespace {
+void packSliceRecord(const Instrument& m, uint8_t* b, size_t size, int limit) {
+  memset(b, 0, size);
   b[0] = m.sliceMode;
   b[1] = m.chopMode;
-  b[2] = m.chopN;
+  b[2] = m.chopN > limit ? static_cast<uint8_t>(limit) : m.chopN;
   b[3] = m.chopThresh;
-  const int n = m.sliceCount < kMaxSlices ? m.sliceCount : kMaxSlices;
+  const int n = m.sliceCount < limit ? m.sliceCount : limit;
   b[4] = static_cast<uint8_t>(n);
   for (int i = 0; i < n; ++i) wr16(b + 8 + 2 * i, m.slices[i]);
 }
 
-void unpackSlices(const uint8_t* b, Instrument& m) {
+void unpackSliceRecord(const uint8_t* b, Instrument& m, int limit) {
   m.sliceMode = b[0] < static_cast<int>(SliceMode::Count) ? b[0] : 0;
   m.chopMode = b[1] < static_cast<int>(ChopMode::Count) ? b[1] : 0;
-  m.chopN = clampu(b[2], 2, kMaxSlices);
+  m.chopN = clampu(b[2], 2, limit);
   m.chopThresh = clampu(b[3], 0, 100);
-  const int count = b[4] < kMaxSlices ? b[4] : kMaxSlices;
+  const int count = b[4] < limit ? b[4] : limit;
   int n = 0;
   for (; n < count; ++n) {
     const uint16_t v = rd16(b + 8 + 2 * n);
     if (n && v <= m.slices[n - 1]) break;
     m.slices[n] = v;
   }
+  // Includes the extended tail when loading a legacy record into the larger runtime model.
   for (int i = n; i < kMaxSlices; ++i) m.slices[i] = 0;
   m.sliceCount = static_cast<uint8_t>(n);
 }
+}  // namespace
+
+void packSlices(const Instrument& m, uint8_t* b) { packSliceRecord(m, b, kSliceRecSize, kLegacySlices); }
+void unpackSlices(const uint8_t* b, Instrument& m) { unpackSliceRecord(b, m, kLegacySlices); }
+void packSlicesExt(const Instrument& m, uint8_t* b) { packSliceRecord(m, b, kSliceExtRecSize, kMaxSlices); }
+void unpackSlicesExt(const uint8_t* b, Instrument& m) { unpackSliceRecord(b, m, kMaxSlices); }
 
 void packLfo(const Instrument& m, uint8_t* b) {
   b[0] = m.lfoSync & 3;
@@ -250,6 +273,12 @@ void fixInstrument(Instrument& m) {
   for (uint8_t* l : m.lfoByte) {
     if (l[0] >= byteFormulaCount()) l[0] = 0;
     if (l[1] > 127) l[1] = 127;
+  }
+  for (ModRoute& r : m.mod) {
+    if (!modDestValid(r.dest) || !lfoDestValid(r.dest, m.type)) {
+      r.source = static_cast<uint8_t>(ModSource::Off);
+      r.dest = static_cast<uint8_t>(LfoDest::Pitch);
+    }
   }
 }
 

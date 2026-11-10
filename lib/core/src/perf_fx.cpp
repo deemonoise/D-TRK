@@ -34,11 +34,11 @@ static_assert(sizeof(kRanges) / sizeof(kRanges[0]) == kN - 1, "perf ranges");
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == kN - 1, "perf names");
 static_assert(sizeof(kShorts) / sizeof(kShorts[0]) == kN - 1, "perf short names");
 
-// List-valued depths: labels and lengths in steps, index = depth - lo.
-const char* const kRepeatLbl[] = {"1/2", "1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32"};
-const float kRepeatSteps[] = {8, 4, 2, 4.0f / 3, 1, 2.0f / 3, 0.5f};
-const char* const kGateLbl[] = {"1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32"};
-const float kGateSteps[] = {4, 2, 4.0f / 3, 1, 2.0f / 3, 0.5f};
+// List-valued depths keep PRF2 raw indices; retired triplets alias the nearest straight size.
+const char* const kRepeatLbl[] = {"1/2", "1/4", "1/8", "1/16", "1/16", "1/32", "1/32"};
+const float kRepeatSteps[] = {8, 4, 2, 1, 1, 0.5f, 0.5f};
+const char* const kGateLbl[] = {"1/4", "1/8", "1/16", "1/16", "1/32", "1/32"};
+const float kGateSteps[] = {4, 2, 1, 1, 0.5f, 0.5f};
 const char* const kReverseLbl[] = {"1/4 BAR", "1/2 BAR", "1 BAR", "2 BAR"};
 const float kReverseSteps[] = {4, 8, 16, 32};
 const char* const kScratchLbl[] = {"1/4", "1/8", "1/16", "1/32"};
@@ -57,12 +57,43 @@ MT_INLINE bool valid(PerfFx f) { return f > PerfFx::None && f < PerfFx::Count; }
 // Depth clamped into f's range, as an index from lo.
 MT_INLINE int at(PerfFx f, int depth) {
   const PerfRange r = perfRange(f);
-  return (depth < r.lo ? r.lo : (depth > r.hi ? r.hi : depth)) - r.lo;
+  return perfDepthNormalize(f, depth) - r.lo;
 }
 
 }  // namespace
 
 PerfRange perfRange(PerfFx f) { return valid(f) ? kRanges[static_cast<int>(f) - 1] : PerfRange{0, 0, 0, false}; }
+
+int perfDepthNormalize(PerfFx f, int depth) {
+  const auto r = perfRange(f);
+  depth = depth < r.lo ? r.lo : depth > r.hi ? r.hi : depth;
+  if (f == PerfFx::Repeat && (depth == 3 || depth == 5)) ++depth;
+  if (f == PerfFx::Gate && (depth == 2 || depth == 4)) ++depth;
+  return depth;
+}
+int perfDepthCount(PerfFx f) {
+  const auto r = perfRange(f);
+  return f == PerfFx::Repeat ? 5 : f == PerfFx::Gate ? 4 : r.hi - r.lo + 1;
+}
+int perfDepthAt(PerfFx f, int index) {
+  const int count = perfDepthCount(f);
+  index = index < 0 ? 0 : index >= count ? count - 1 : index;
+  static constexpr int repeat[] = {0, 1, 2, 4, 6}, gate[] = {0, 1, 3, 5};
+  return f == PerfFx::Repeat ? repeat[index] : f == PerfFx::Gate ? gate[index] : perfRange(f).lo + index;
+}
+int perfDepthIndex(PerfFx f, int depth) {
+  const int normalized = perfDepthNormalize(f, depth);
+  if (f == PerfFx::Repeat) return normalized <= 2 ? normalized : normalized == 4 ? 3 : 4;
+  if (f == PerfFx::Gate) return normalized <= 1 ? normalized : normalized == 3 ? 2 : 3;
+  return normalized - perfRange(f).lo;
+}
+int perfDepthStep(PerfFx f, int depth, int delta) {
+  const int64_t next = static_cast<int64_t>(perfDepthIndex(f, depth)) + delta;
+  return perfDepthAt(f, next < 0 ? 0 : next >= perfDepthCount(f) ? perfDepthCount(f) - 1 : static_cast<int>(next));
+}
+int perfDepthDelta(PerfFx f, int from, int to) {
+  return perfDepthIndex(f, to) - perfDepthIndex(f, from);
+}
 
 const char* perfName(PerfFx f) { return valid(f) ? kNames[static_cast<int>(f) - 1] : ""; }
 
@@ -132,15 +163,12 @@ void PerfStack::release(PerfFx f) {
 void PerfStack::turn(int delta) {
   if (!n_) return;
   Slot& s = slot_[n_ - 1];
-  const PerfRange r = perfRange(s.fx);
-  const int d = s.depth + delta;
-  s.depth = static_cast<int8_t>(d < r.lo ? r.lo : (d > r.hi ? r.hi : d));
+  s.depth = static_cast<int8_t>(perfDepthStep(s.fx, s.depth, delta));
 }
 
 int PerfStack::setDepth(PerfFx f, int to, PerfMsg out[2]) {
   if (!valid(f)) return 0;
-  const PerfRange r = perfRange(f);
-  const int want = to < r.lo ? r.lo : (to > r.hi ? r.hi : to);
+  const int want = perfDepthNormalize(f, to);
   const int i = find(f);
   if (i >= 0 && slot_[i].depth == want) return 0;
   int n = 0;
@@ -149,7 +177,7 @@ int PerfStack::setDepth(PerfFx f, int to, PerfMsg out[2]) {
     if (!held(f)) return 0;  // full
     out[n++] = PerfMsg{0, static_cast<uint8_t>(f)};
   }
-  const int d = want - depth(f);  // |d| <= hi - lo <= 127
+  const int d = perfDepthDelta(f, depth(f), want);  // |d| <= hi - lo <= 127
   if (d != 0) {
     turn(d);
     out[n++] = PerfMsg{2, static_cast<uint8_t>(static_cast<int8_t>(d))};

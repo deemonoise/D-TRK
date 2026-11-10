@@ -26,7 +26,8 @@ class SampleEditor {
  public:
   static constexpr int kWaveH = 100;
   static constexpr int kToolH = 24;
-  static constexpr int kListRows = 4;  // (page area 220 - kWaveH - kToolH) / ParamList::kRowH
+  // INST reserves 28 px for its header and 24 px for its page bar.
+  static constexpr int kListRows = (kAreaH - 52 - kWaveH - kToolH) / ParamList::kRowH;
 
   explicit SampleEditor(App& app, int y = kAreaY + 52);
   void bind(int instr);         // instrument index; resets zoom when the sample data changes
@@ -40,7 +41,7 @@ class SampleEditor {
     list_.setEdit(false);
     holdMarker_ = false;
   }
-  uint8_t previewNote();        // NOTE mode with a slice selected: root + slice, else C4
+  uint8_t previewNote();        // NOTE slice: root + slice, or 255 outside MIDI; otherwise C4
   // Track button k (0..7): plays slice (selected slice, or the first) + k to its end, any slice mode.
   void playSlice(int k);
   // Toolbar actions, shared by touch and the hardware (InstScreen).
@@ -53,6 +54,9 @@ class SampleEditor {
   void addSlice(bool onset);
   bool sliceSelected();
   bool hasSlices();
+  // Project sample identity and raw Start..End / selected-slice frames for offline tools.
+  bool wtSource(int& index, uint32_t& from, uint32_t& to, uint32_t& rate);
+  bool extractSource(bool slice, int& index, uint32_t& from, uint32_t& to, uint32_t& rate);
 
  private:
   static constexpr int kMarkerRow = 0, kZoomRow = 1, kSampleRow = 2, kRoot = 3, kStart = 4, kEnd = 5,

@@ -1,0 +1,3 @@
+# Preserve raw benchmark captures and their recorded checksums.
+# Trailing spaces and HTTP header terminators are part of these captured data.
+docs/plans/bench/** -text -whitespace

@@ -8,10 +8,6 @@ namespace {
 bool swapAt(const EvoTrack& s, int i, int len) { return i >= 0 && i + 1 < len && (s.step[i].flags & kEvoSwapNext); }
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 int toward0(int v, int by) { return v > 0 ? (v > by ? v - by : 0) : (v < -by ? v + by : 0); }
-// Step k of track tr as src gives it.
-const Step& at(const EvoSrc& src, const Pattern& pt, int tr, int k, Step& tmp) {
-  return src.get ? src.get(src.ctx, k, tmp) : pt.steps[tr][k];
-}
 // evoRand kinds.
 enum : uint32_t {
   kSaltHomeDeg = 1, kSaltHomeVol, kSaltHomeFlag, kSaltHomeRot, kSaltNote, kSaltRhythm, kSaltRtrg, kSaltVol,
@@ -63,14 +59,13 @@ int evoSource(const EvoTrack& s, int i, int len, uint8_t mask) {
 }
 
 void evoMakeView(const Pattern& pt, int tr, const EvoTrack& s, uint8_t mask, bool noteOk, ScaleType t,
-                 EvoView& v, const EvoSrc& src) {
+                 EvoView& v) {
   const int len = evoLen(pt, tr);
   v.len = static_cast<uint8_t>(len);
   v.degs = static_cast<uint8_t>(scaleDegrees(t));
   v.noteOk = noteOk;
   for (int i = 0; i < len; ++i) {
-    Step tmp;
-    const Step& st = at(src, pt, tr, evoSource(s, i, len, mask), tmp);
+    const Step& st = pt.steps[tr][evoSource(s, i, len, mask)];
     v.kind[i] = st.hasNote() ? kEvoKNote : (st.note == kNoteEmpty ? kEvoKEmpty : kEvoKOther);
   }
 }
@@ -92,23 +87,21 @@ EvoApply evoApplyOf(const Project& p, int tr) {
   return a;
 }
 
-const Step& evoStep(const Pattern& pt, int tr, int idx, const EvoTrack& s, const EvoApply& a, Step& tmp,
-                    const EvoSrc& from) {
+const Step& evoStep(const Pattern& pt, int tr, int idx, const EvoTrack& s, const EvoApply& a, Step& tmp) {
   const int len = evoLen(pt, tr);
-  if (!(a.mask & kEvoMaskAll) || idx < 0 || idx >= len) return at(from, pt, tr, idx < 0 ? 0 : idx, tmp);
+  if (!(a.mask & kEvoMaskAll) || idx < 0 || idx >= len) return pt.steps[tr][idx < 0 ? 0 : idx];
   const int src = evoSource(s, idx, len, a.mask);
-  const Step& base = at(from, pt, tr, src, tmp);  // may be tmp: read before tmp is written
+  const Step& base = pt.steps[tr][src];
   const EvoStep& d = s.step[idx];
   if (src == idx && !d.deg && !d.vol && !(d.flags & ~kEvoSwapNext)) return base;
-  if (&base != &tmp) tmp = base;
+  tmp = base;
   if (a.mask & kEvoRhythm) {
     if ((d.flags & kEvoDrop) && tmp.hasNote()) {
       tmp.note = kNoteEmpty;
       tmp.vel = kVelDefault;
     } else if ((d.flags & kEvoGhost) && tmp.note == kNoteEmpty && len > 1) {
       const int j = (d.flags & kEvoGhostNext) ? (idx + 1) % len : (idx + len - 1) % len;
-      Step nt;
-      const Step& nb = at(from, pt, tr, evoSource(s, j, len, a.mask), nt);
+      const Step& nb = pt.steps[tr][evoSource(s, j, len, a.mask)];
       if (nb.hasNote()) {
         const uint8_t gv = static_cast<uint8_t>(clampi(a.defVel * kEvoGhostPct / 100, 1, 127));
         if (a.drum) {
@@ -210,15 +203,6 @@ void evoMutate(EvoTrack& s, const EvoCfg& cfg, const EvoView& v, uint32_t seed, 
       }
     }
   }
-}
-
-void evoCapture(Pattern& pt, int tr, const EvoTrack& s, const EvoApply& a, Step* scratch, const EvoSrc& src) {
-  const int len = evoLen(pt, tr);
-  for (int i = 0; i < len; ++i) {
-    Step tmp;
-    scratch[i] = evoStep(pt, tr, i, s, a, tmp, src);
-  }
-  for (int i = 0; i < len; ++i) pt.steps[tr][i] = scratch[i];
 }
 
 void evoClamp(EvoCfg& c) {

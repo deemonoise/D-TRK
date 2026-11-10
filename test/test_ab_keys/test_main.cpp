@@ -43,12 +43,25 @@ void test_b_during_a_edit_cancels() {
   expect(AbAction::None, k.aUp(false));  // no EditEnd, no tap
 }
 
-// A then B, nothing else, released: one Both on the first release; no tap, no Back.
+// A then B, nothing else, released: one AThenB on the first release; no tap, no Back.
 void test_a_then_b_is_both() {
   AbKeys k;
   k.aDown();
+  expect(AbAction::None, k.bDown());  // deferred until release
+  expect(AbAction::AThenB, k.bUp(false));
+  expect(AbAction::None, k.aUp(false));
+}
+
+// A-first release clears only after the first release; no second action in either order.
+void test_a_then_b_release_order() {
+  AbKeys k;
+  k.aDown();
   expect(AbAction::None, k.bDown());
-  expect(AbAction::Both, k.bUp(false));
+  expect(AbAction::AThenB, k.aUp(false));
+  expect(AbAction::None, k.bUp(false));
+  k.aDown();
+  expect(AbAction::None, k.bDown());
+  expect(AbAction::AThenB, k.bUp(false));
   expect(AbAction::None, k.aUp(false));
 }
 
@@ -99,11 +112,11 @@ void test_track_chords_no_shift() {
   expect(AbAction::None, k.bUp(false));
 }
 
-void test_b_wins_over_a() {
+void test_both_turn_pages_track_uses_b() {
   AbKeys k;
   k.aDown();
   k.bDown();
-  expect(AbAction::TabTurn, k.turn(1, false));
+  expect(AbAction::PageTurn, k.turn(1, false));
   expect(AbAction::BTrack, k.track(0, false));
   expect(AbAction::QueuePattern, k.track(0, true));
 }
@@ -133,7 +146,7 @@ void test_b_then_a_turn_no_taps() {
   AbKeys k;
   k.bDown();
   expect(AbAction::None, k.aDown());
-  expect(AbAction::TabTurn, k.turn(1, false));
+  expect(AbAction::PageTurn, k.turn(1, false));
   expect(AbAction::None, k.aUp(false));  // no tap
   expect(AbAction::None, k.bUp(false));  // no Back
 }
@@ -155,7 +168,7 @@ void test_both_not_after_turn_track_or_cancel() {
   AbKeys k;
   k.aDown();
   k.bDown();
-  expect(AbAction::TabTurn, k.turn(1, false));
+  expect(AbAction::PageTurn, k.turn(1, false));
   expect(AbAction::None, k.bUp(false));
   expect(AbAction::None, k.aUp(false));
   k.aDown();
@@ -207,7 +220,7 @@ void test_a_click() {
   k.aDown();
   k.bDown();
   expect(AbAction::Pass, k.aClick());  // with B: not an A click, the state stays
-  expect(AbAction::Both, k.bUp(false));
+  expect(AbAction::AThenB, k.bUp(false));
   expect(AbAction::None, k.aUp(false));
   k.aDown();
   k.aClick();
@@ -216,18 +229,51 @@ void test_a_click() {
   expect(AbAction::None, k.aUp(false));
 }
 
+void test_play_chords_consume_button_taps() {
+  AbKeys k;
+  expect(AbAction::Pass, k.play());
+  k.aDown();
+  expect(AbAction::RecordAll, k.play());
+  expect(AbAction::None, k.aUp(false));
+  k.bDown();
+  expect(AbAction::RecordMotion, k.play());
+  expect(AbAction::None, k.bUp(true));
+}
+void test_play_chord_b_wins_and_finishes_existing_edit() {
+  AbKeys k;
+  k.aDown(); k.turn(1,false);
+  expect(AbAction::RecordAll,k.play());
+  expect(AbAction::EditEnd,k.aUp(false));
+  k.aDown(); k.bDown();
+  expect(AbAction::RecordMotion,k.play());
+  expect(AbAction::None,k.bUp(false));
+  expect(AbAction::None,k.aUp(false));
+}
+void test_both_turn_with_shift() {
+  AbKeys k;
+  k.aDown(); k.bDown();
+  AbOut o = k.turn(-3, true);
+  expect(AbAction::PageTurn, o);
+  TEST_ASSERT_EQUAL_INT(-3, o.delta);
+  expect(AbAction::None, k.aUp(false));
+  expect(AbAction::None, k.bUp(false));
+}
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_play_chords_consume_button_taps);
+  RUN_TEST(test_play_chord_b_wins_and_finishes_existing_edit);
+  RUN_TEST(test_both_turn_with_shift);
   RUN_TEST(test_idle_passes_through);
   RUN_TEST(test_a_turn_edits_and_release_ends);
   RUN_TEST(test_a_tap);
   RUN_TEST(test_b_during_a_edit_cancels);
   RUN_TEST(test_a_then_b_is_both);
+  RUN_TEST(test_a_then_b_release_order);
   RUN_TEST(test_b_turn_tabs_and_pages);
   RUN_TEST(test_b_tap_back_and_shift_undo);
   RUN_TEST(test_track_chords);
   RUN_TEST(test_track_chords_no_shift);
-  RUN_TEST(test_b_wins_over_a);
+  RUN_TEST(test_both_turn_pages_track_uses_b);
   RUN_TEST(test_reset_clears_held);
   RUN_TEST(test_release_after_reset_does_nothing);
   RUN_TEST(test_b_then_a_turn_no_taps);

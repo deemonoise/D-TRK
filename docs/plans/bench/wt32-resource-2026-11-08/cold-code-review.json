@@ -1,0 +1,27 @@
+[
+  {
+    "file": "onset.h",
+    "exact_cpp_tokens_except_removed_MT_CONTROL": true,
+    "removed_attributes": 8
+  },
+  {
+    "file": "onset.cpp",
+    "exact_cpp_tokens_except_removed_MT_CONTROL": true,
+    "removed_attributes": 1
+  },
+  {
+    "file": "tempo_detect.h",
+    "exact_cpp_tokens_except_removed_MT_CONTROL": true,
+    "removed_attributes": 1
+  },
+  {
+    "file": "tempo_detect.cpp",
+    "exact_cpp_tokens_except_removed_MT_CONTROL": true,
+    "removed_attributes": 1
+  },
+  {
+    "file": "time_stretch.cpp",
+    "exact_cpp_tokens_except_removed_MT_CONTROL": true,
+    "removed_attributes": 11
+  }
+]

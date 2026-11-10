@@ -1,4 +1,5 @@
 #include "sample_editor.h"
+#include "ui_context.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,6 +9,7 @@
 #include "engine/engine.h"
 #include "note_name.h"
 #include "sample_set.h"
+#include "sample_extract.h"
 #include "slices.h"
 
 namespace ui {
@@ -27,8 +29,8 @@ void permille(uint16_t v, char* o, int n) {
 
 SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToolH), y_(y) {
   rows_[kMarkerRow] = {"Marker", [this](char* o, int n) {
-                         char p[12];
-                         permille(markerFrac(sel_), p, sizeof(p));
+                         char p[32];
+                         mt::markerPosition(markerFrac(sel_), frames_, rate_, p, sizeof(p));
                          if (sel_ >= kSlice0) snprintf(o, n, "#%d %s", sel_ - kSlice0 + 1, p);
                          else snprintf(o, n, "%c %s", "SEL"[sel_], p);
                        },
@@ -378,7 +380,7 @@ void SampleEditor::ensureOnsets() {
 uint8_t SampleEditor::previewNote() {
   const mt::Instrument& m = inst();
   if (m.sliceMode == static_cast<uint8_t>(mt::SliceMode::Note) && sel_ >= kSlice0 && sel_ - kSlice0 < m.sliceCount)
-    return static_cast<uint8_t>(clampi(m.root + sel_ - kSlice0, 0, 127));
+    return mt::sliceNote(m, sel_ - kSlice0);
   return 60;
 }
 
@@ -526,6 +528,20 @@ bool SampleEditor::sliceSelected() {
 }
 
 bool SampleEditor::hasSlices() { return inst().sliceCount > 0; }
+
+bool SampleEditor::wtSource(int& index, uint32_t& from, uint32_t& to, uint32_t& rate) {
+  return extractSource(false, index, from, to, rate);
+}
+
+bool SampleEditor::extractSource(bool slice, int& index, uint32_t& from, uint32_t& to, uint32_t& rate) {
+  sync();
+  index = mt::projSampleFind(app_.project(), inst().sample);
+  if (index < 0 || !frames_ || (slice && !sliceSelected())) return false;
+  if (!mt::sampleExtractRegion(inst(), frames_, slice ? sel_-kSlice0 : -1, from, to)) return false;
+  rate = rate_;
+  return true;
+}
+
 
 void SampleEditor::tool(int t, bool longPress) {
   if (longPress) {
@@ -688,7 +704,7 @@ void SampleEditor::drawWave(LGFX_Sprite& s, int y) {
 }
 
 void SampleEditor::drawTools(LGFX_Sprite& s, int y) {
-  static const char* const kNames[] = {"<", ">", "-", "+", "CHOP", "CLR"};
+  static const char* const kNames[] = {"PREV", "NEXT", "ZOOM-", "ZOOM+", "CHOP", "DELETE"};
   const int ty = y + (kToolH - 4 - kCharH) / 2 + 2;
   s.setTextColor(kCursor);
   for (int i = 0; i <= kClr; ++i) {

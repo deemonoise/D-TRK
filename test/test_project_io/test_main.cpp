@@ -91,7 +91,7 @@ static void fillFull(Project& p) {
   p.perfXy[0] = static_cast<uint8_t>(PerfFx::Repeat);
   p.perfXy[1] = 0;  // None
   p.gen[4] = GenCfg{static_cast<uint8_t>(GenMode::Pitch), 16, 0, 40, 4, 0, 777};
-  p.evo[4] = EvoCfg{55, 3, 12, kEvoRhythm | kEvoShift};
+  p.evo[4] = EvoCfg{55, 3, 12, kEvoRhythm | kEvoShift};  // MUT off: kept as it is (TEVO 0x80)
   p.tracks[6].humanize = 40;
   for (int t = 0; t < kTracks; ++t)
     for (int s = 0; s < 128; s += 3) {
@@ -326,9 +326,9 @@ void test_empty_patterns_not_written() {
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   // Everything but patterns: project, track and audio chunks (< 2 KB) plus the instrument records
-  // (INST 48, FMIN 16, FLTR 8, SLCE 72, SYNI 48, LOFI 8, LFOX 16, LFOB 8, FMEX 4, KITS 176 = 404 bytes each).
+  // (classic records 404 bytes plus SLX1 264 and optional MODM 40 per instrument).
   // One written empty pattern would add ~28 KB, so the bound proves none is.
-  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 410);
+  TEST_ASSERT_TRUE(out.buf.size() < 2048 + kInstruments * 714);
   a.patterns[2].steps[1][1].note = 60;
   VecSink out2;
   TEST_ASSERT_TRUE(saveProject(a, out2));
@@ -1193,14 +1193,14 @@ void test_slices_count_clamped() {
   uint8_t r[kSliceRecSize];
   memset(r, 0, sizeof(r));
   r[4] = 40;
-  for (int i = 0; i < kMaxSlices; ++i) {
+  for (int i = 0; i < kLegacySlices; ++i) {
     const uint16_t v = static_cast<uint16_t>(100 + i * 1000);
     r[8 + 2 * i] = static_cast<uint8_t>(v);
     r[9 + 2 * i] = static_cast<uint8_t>(v >> 8);
   }
   Instrument m;
   unpackSlices(r, m);
-  TEST_ASSERT_EQUAL(kMaxSlices, m.sliceCount);
+  TEST_ASSERT_EQUAL(kLegacySlices, m.sliceCount);
   TEST_ASSERT_EQUAL(100 + 31 * 1000, m.slices[31]);
 }
 
@@ -2100,7 +2100,7 @@ void test_audi_dj_byte_ignored() {
     pos += 8 + (out.buf[pos + 4] | (out.buf[pos + 5] << 8) | (out.buf[pos + 6] << 16) |
                 (static_cast<uint32_t>(out.buf[pos + 7]) << 24));
   TEST_ASSERT_TRUE(pos + 8 + 26 <= out.buf.size());
-  TEST_ASSERT_EQUAL(26, out.buf[pos + 4]);
+  TEST_ASSERT_EQUAL(27, out.buf[pos + 4]);
   TEST_ASSERT_EQUAL(64, out.buf[pos + 8 + 13]);
 }
 
@@ -2256,11 +2256,15 @@ void test_tgen_records_and_garbage() {
 void test_tevo_round_trip_and_missing() {
   a.evo[0] = EvoCfg{70, 2, 30, kEvoNote | kEvoShift};
   a.evo[15] = EvoCfg{100, 16, 0, kEvoMaskAll};
+  a.var[0].mode = a.var[15].mode = static_cast<uint8_t>(VarMode::Evo);
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   TEST_ASSERT_TRUE(hasChunk(out.buf, "TEVO"));
   VecSource in(out.buf);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Evo), b.var[0].mode);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Evo), b.var[15].mode);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Off), b.var[1].mode);
   for (int t = 0; t < kTracks; ++t) {
     TEST_ASSERT_EQUAL(a.evo[t].amount, b.evo[t].amount);
     TEST_ASSERT_EQUAL(a.evo[t].every, b.evo[t].every);
@@ -2274,6 +2278,44 @@ void test_tevo_round_trip_and_missing() {
   TEST_ASSERT_EQUAL(0, b.evo[0].amount);
   TEST_ASSERT_EQUAL(EvoCfg().mask, b.evo[0].mask);
   TEST_ASSERT_EQUAL(0, b.evo[15].amount);
+}
+
+// MUT: an old file with EVO on and VAR off loads as MUT EVO; with VAR on too, VAR stays and EVO's mask
+// is 0. EVO settings outside MUT EVO are saved with their mask and the TEVO bit 0x80 (not the active
+// mode): they reload as they are, EVO stays off.
+void test_mut_fix_on_load_and_parked_evo_kept() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "TEVO", {2, 4, 50, 1, 0, kEvoNote, 50, 1, 0, kEvoShift});
+  putChunk(f, "TVAR", {2, 1, 0, static_cast<uint8_t>(VarMode::Markov)});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Evo), b.var[0].mode);
+  TEST_ASSERT_EQUAL(kEvoNote, b.evo[0].mask);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Markov), b.var[1].mode);
+  TEST_ASSERT_EQUAL(0, b.evo[1].mask);
+  TEST_ASSERT_EQUAL(50, b.evo[1].amount);
+  a.evo[2] = EvoCfg{70, 2, 30, kEvoShift};  // MUT off: left from EVO
+  a.evo[3] = EvoCfg{70, 2, 30, kEvoShift};
+  a.var[3].mode = static_cast<uint8_t>(VarMode::Ca1d);
+  a.evo[4] = EvoCfg{60, 3, 10, kEvoNote | kEvoRhythm};  // MUT EVO: no bit
+  a.var[4].mode = static_cast<uint8_t>(VarMode::Evo);
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Off), b.var[2].mode);
+  TEST_ASSERT_EQUAL(kEvoShift, b.evo[2].mask);
+  TEST_ASSERT_EQUAL(70, b.evo[2].amount);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Ca1d), b.var[3].mode);
+  TEST_ASSERT_EQUAL(kEvoShift, b.evo[3].mask);
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Evo), b.var[4].mode);
+  TEST_ASSERT_EQUAL(kEvoNote | kEvoRhythm, b.evo[4].mask);
+  // The bit on disk: set outside MUT EVO only (old firmware's evoClamp masks it away).
+  f = fileHeader();
+  putChunk(f, "TEVO", {1, 4, 70, 2, 30, static_cast<uint8_t>(0x80 | kEvoShift)});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(static_cast<int>(VarMode::Off), b.var[0].mode);
+  TEST_ASSERT_EQUAL(kEvoShift, b.evo[0].mask);
 }
 
 // Longer records read the known part, a short one keeps the defaults it lacks, values are clamped;
@@ -2460,6 +2502,67 @@ void test_sfol_records_and_garbage() {
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
   f = fileHeader();
   putChunk(f, "SFOL", {1, 0, 2, 3, 0, 0, 100});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+}
+
+// SSLT: the Song trn mask and each slot's TRN / BPM round trip; a file without SSLT: TRN 0, BPM "-", every
+// track follows.
+void test_sslt_round_trip_and_missing() {
+  a.songLen = 3;
+  a.songTrn[0] = 5;
+  a.songTrn[2] = -24;
+  a.songBpm[1] = 140;
+  a.songBpm[2] = 300;
+  a.songTrnMask = 0xA5F0;
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_TRUE(hasChunk(out.buf, "SSLT"));
+  VecSource in(out.buf);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadProject(in, b)));
+  TEST_ASSERT_EQUAL_HEX16(0xA5F0, b.songTrnMask);
+  TEST_ASSERT_EQUAL_INT8_ARRAY(a.songTrn, b.songTrn, 3);
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(a.songBpm, b.songBpm, 3);
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SNG3", {1, 4, 0, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(0, b.songTrn[0]);
+  TEST_ASSERT_EQUAL(0, b.songBpm[0]);
+  TEST_ASSERT_EQUAL_HEX16(0xFFFF, b.songTrnMask);
+}
+
+// TRN clamps to +-24, BPM to 0 or 20..300; a longer record reads the known part, a shorter one keeps the
+// defaults; record size 0 with records or a short chunk is bad. Empty song: the mask alone.
+void test_sslt_records_and_garbage() {
+  std::vector<uint8_t> f = fileHeader();
+  putChunk(f, "SSLT", {0x34, 0x12, 3, 4,  30, 10, 0, 9,  0xD0, 0x2C, 0x01, 9,  0xFD, 0xFF, 0xFF, 9});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL_HEX16(0x1234, b.songTrnMask);
+  TEST_ASSERT_EQUAL(kSongTrnMax, b.songTrn[0]);
+  TEST_ASSERT_EQUAL(kSongBpmMin, b.songBpm[0]);
+  TEST_ASSERT_EQUAL(-kSongTrnMax, b.songTrn[1]);
+  TEST_ASSERT_EQUAL(300, b.songBpm[1]);
+  TEST_ASSERT_EQUAL(-3, b.songTrn[2]);
+  TEST_ASSERT_EQUAL(kSongBpmMax, b.songBpm[2]);
+  f = fileHeader();
+  putChunk(f, "SSLT", {0xFF, 0xFF, 1, 1, 7});  // a shorter record: BPM stays "-"
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL(7, b.songTrn[0]);
+  TEST_ASSERT_EQUAL(0, b.songBpm[0]);
+  f = fileHeader();
+  putChunk(f, "SSLT", {0x03, 0x00, 0, 3});  // no slots: the mask alone
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(f)));
+  TEST_ASSERT_EQUAL_HEX16(0x0003, b.songTrnMask);
+  f = fileHeader();
+  putChunk(f, "SSLT", {1, 0, 2, 0});
+  finish(f);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
+  f = fileHeader();
+  putChunk(f, "SSLT", {1, 0, 2, 3, 0, 0, 0});
   finish(f);
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::BadValue), static_cast<int>(loadBytes(f)));
 }
@@ -2652,13 +2755,15 @@ void test_lofi_garbage_clamped_and_sizes() {
 void test_tvar_round_trip_and_missing() {
   a.var[0] = VarCfg{static_cast<uint8_t>(VarMode::Ca2d), 5, 30, 3, 0, 40, 70, 2, 1};
   a.var[15] = VarCfg{static_cast<uint8_t>(VarMode::Markov), 16, 110, 4, 64, 100, 0, 1, 0};
+  a.var[7] = VarCfg{static_cast<uint8_t>(VarMode::Evo), 3, 90, 0, 16, 0, 50, 1, 0};  // MUT EVO
   VecSink out;
   TEST_ASSERT_TRUE(saveProject(a, out));
   TEST_ASSERT_TRUE(hasChunk(out.buf, "TVAR"));
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
   for (int t = 0; t < kTracks; ++t) {
     const VarCfg &x = a.var[t], &y = b.var[t];
-    TEST_ASSERT_EQUAL(x.mode, y.mode);
+    // CA2D on a melodic track loads as CA1D (mutFix).
+    TEST_ASSERT_EQUAL(t == 0 ? static_cast<uint8_t>(VarMode::Ca1d) : x.mode, y.mode);
     TEST_ASSERT_EQUAL(x.every, y.every);
     TEST_ASSERT_EQUAL(x.rule, y.rule);
     TEST_ASSERT_EQUAL(x.rule2, y.rule2);
@@ -2878,8 +2983,16 @@ void test_fmex_teensy_layout_loads() {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(rec0, c + 2, 4);
 }
 
+void test_comp_attack_roundtrip_and_default() {
+ TEST_ASSERT_EQUAL(83,a.compAttack); a.compAttack=27;
+ VecSink out; TEST_ASSERT_TRUE(saveProject(a,out)); VecSource in(out.buf);
+ TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok),static_cast<int>(loadProject(in,b)));
+ TEST_ASSERT_EQUAL(27,b.compAttack);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_comp_attack_roundtrip_and_default);
   RUN_TEST(test_crc32_reference);
   RUN_TEST(test_samples_bad_names_skipped);
   RUN_TEST(test_round_trip_full_project);
@@ -2950,6 +3063,7 @@ int main() {
   RUN_TEST(test_tgen_records_and_garbage);
   RUN_TEST(test_tevo_round_trip_and_missing);
   RUN_TEST(test_tevo_records_and_garbage);
+  RUN_TEST(test_mut_fix_on_load_and_parked_evo_kept);
   RUN_TEST(test_tfol_records_and_garbage);
   RUN_TEST(test_tins_gate_fields);
   RUN_TEST(test_tins_longer_records_and_garbage);
@@ -2970,6 +3084,8 @@ int main() {
   RUN_TEST(test_tins_mod_send);
   RUN_TEST(test_sfol_round_trip_and_missing);
   RUN_TEST(test_sfol_records_and_garbage);
+  RUN_TEST(test_sslt_round_trip_and_missing);
+  RUN_TEST(test_sslt_records_and_garbage);
   RUN_TEST(test_tune_round_trip);
   RUN_TEST(test_tune_12tet_not_written);
   RUN_TEST(test_tune_bad_chunks_reset_to_12tet);

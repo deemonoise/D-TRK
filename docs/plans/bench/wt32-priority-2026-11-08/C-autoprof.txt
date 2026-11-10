@@ -1,0 +1,5 @@
+AUTOPROFILE DONE policy=A-paired84 validation=A PLACEMENT OK project=TUTU-TUDUTU model_fnv=9400ea4f bytes=66420 seed=0x5eed synthINT=1 seqINT=1 rvbINT=0
+AUTOPROFILE DONE policy=B-synth49 validation=B PLACEMENT OK project=TUTU-TUDUTU model_fnv=4c4f2183 bytes=66420 seed=0x5eed synthINT=1 seqINT=0 rvbINT=1
+AUTOPROFILE DONE policy=A2-paired84 validation=A PLACEMENT OK project=TUTU-TUDUTU model_fnv=4363edfc raw_fnv=06a49af7 bytes=66420 seed=0x5eed synthINT=1 seqINT=1 rvbINT=0
+AUTOPROFILE DONE policy=B2-synth49 validation=B PLACEMENT OK project=TUTU-TUDUTU model_fnv=4363edfc raw_fnv=06a49af7 bytes=66420 seed=0x5eed synthINT=1 seqINT=0 rvbINT=1
+AUTOPROFILE DONE policy=C-cardcache validation=B PLACEMENT OK project=TUTU-TUDUTU model_fnv=4363edfc raw_fnv=7943afbc bytes=66420 seed=0x5eed synthINT=1 seqINT=0 rvbINT=1

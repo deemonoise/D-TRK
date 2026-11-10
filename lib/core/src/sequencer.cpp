@@ -4,6 +4,7 @@
 #include "fx_info.h"
 #include "groove.h"
 #include "record.h"
+#include "automation.h"
 
 namespace mt {
 
@@ -25,6 +26,7 @@ uint32_t Sequencer::newId() {
 
 Sequencer::Sequencer(Project& p, void* cold)
     : p_(p), cold_(static_cast<Cold*>(cold)), ownCold_(cold == nullptr), bpm_(clampBpm(p.bpm)) {
+  projBpm_ = bpmSeen_ = bpm_;
   if (ownCold_) cold_ = new Cold();
   else new (cold_) Cold();  // zeroed
   evoResetAll();
@@ -37,22 +39,75 @@ Sequencer::~Sequencer() {
 
 size_t Sequencer::coldBytes() { return sizeof(Cold); }
 
+Sequencer::Anchor Sequencer::anchorOf(uint64_t tick, int& idx) const {
+  idx = -1;
+  if (tick >= anchorTick_ || oldN_ == 0) return {anchorUs_, anchorRem_, anchorTick_, bpm_};
+  idx = 0;
+  for (int i = oldN_ - 1; i > 0; --i)
+    if (old_[i].tick <= tick) {
+      idx = i;
+      break;
+    }
+  return old_[idx];
+}
+
 uint64_t Sequencer::tickTime(uint64_t tick) const {
-  const int64_t x = static_cast<int64_t>(anchorRem_) + span(tick);
-  return static_cast<uint64_t>(static_cast<int64_t>(anchorUs_) + floorDiv(x, 1000 * bpm_));
+  int i;
+  const Anchor a = anchorOf(tick, i);
+  const int64_t x = static_cast<int64_t>(a.rem) + span(tick, a.tick);
+  return static_cast<uint64_t>(static_cast<int64_t>(a.us) + floorDiv(x, 1000 * a.bpm));
 }
 
 void Sequencer::reanchor(uint64_t tick) {
-  const int64_t u = 1000 * bpm_;
-  const int64_t x = static_cast<int64_t>(anchorRem_) + span(tick);
+  if (tick == anchorTick_) return;
+  int i;
+  const Anchor a = anchorOf(tick, i);
+  const int64_t u = 1000 * a.bpm;
+  const int64_t x = static_cast<int64_t>(a.rem) + span(tick, a.tick);
   const int64_t q = floorDiv(x, u);
-  anchorUs_ = static_cast<uint64_t>(static_cast<int64_t>(anchorUs_) + q);
+  if (tick > anchorTick_) {
+    if (oldN_) pushOld();  // the ticks since the anchor keep its clock
+  } else if (i >= 0) {
+    oldN_ = static_cast<uint8_t>(old_[i].tick < tick ? i + 1 : i);  // the later anchors give way
+  }
+  anchorUs_ = static_cast<uint64_t>(static_cast<int64_t>(a.us) + q);
   anchorRem_ = static_cast<uint64_t>(x - q * u);
   anchorTick_ = tick;
+  bpm_ = a.bpm;
+  pruneAnchors();
 }
 
+void Sequencer::pushOld() {
+  if (oldN_ == kOldAnchors) {
+    memmove(old_, old_ + 1, (kOldAnchors - 1) * sizeof(Anchor));
+    --oldN_;
+  }
+  old_[oldN_++] = {anchorUs_, anchorRem_, anchorTick_, bpm_};
+}
+
+void Sequencer::pruneAnchors() {
+  const uint64_t th = clockTick_ < stepTick_ ? clockTick_ : stepTick_;
+  int k = 0;
+  while (k < oldN_ && (k + 1 < oldN_ ? old_[k + 1].tick : anchorTick_) <= th) ++k;
+  if (!k) return;
+  memmove(old_, old_ + k, (oldN_ - k) * sizeof(Anchor));
+  oldN_ = static_cast<uint8_t>(oldN_ - k);
+}
+
+void Sequencer::tempoAt(uint64_t tick, uint16_t bpm) {
+  reanchor(tick);
+  if (bpm == bpm_) return;
+  if (!oldN_) pushOld();  // the ticks before keep the old tempo
+  anchorRem_ = anchorRem_ * bpm / bpm_;
+  bpm_ = bpm;
+}
+
+// bpm_ is the tempo to play at: it is the live tempo (p.bpm) from now.
 void Sequencer::anchorAt(uint64_t now) {
-  bpm_ = clampBpm(p_.bpm);
+  bpm_ = clampBpm(bpm_);
+  oldN_ = 0;
+  bpmSeen_ = bpm_;
+  heardSerial_ = stepSerial_ - 1;  // the last planned step was heard (pause rewound the rest)
   p_.bpm = bpm_;
   anchorUs_ = now;
   anchorRem_ = 0;
@@ -83,6 +138,12 @@ void Sequencer::start(uint64_t now, MidiSink& out) {
   condBits_ = 0;
   restoreMutes(kNever);  // restart: saved again from the user's mutes
   if (songPos_ >= 0) applyMute(songPos_, now);
+  // Restart: from the project tempo (unless p.bpm was edited); the entry slot's BPM holds from the start.
+  if (!bpmHeld_ || (p_.bpm != bpmSeen_ && !liveBpm_)) projBpm_ = clampBpm(p_.bpm);
+  liveBpm_ = false;
+  bpm_ = slotBpm(songPos_);
+  bpmHeld_ = bpm_ != 0;
+  if (!bpmHeld_) bpm_ = projBpm_;
   for (int i = 0; i < kTracks; ++i) {
     const TrackCfg& t = p_.tracks[i];
     if (internal(i)) {
@@ -163,28 +224,26 @@ const Step& Sequencer::genStep(int tr, const Step& s, Step& tmp) {
   return tmp;
 }
 
+// The stored mode (out of range: OFF), not mutModeOf's: a track's instrument changing type (CA2D <->
+// CA1D in effect) is no mode change here. The VAR state knows the mode that built it (VarTrack::mode):
+// varStep plays the pattern for a state of another mode and varNext starts again from generation 0.
+uint8_t Sequencer::mutKey(int tr) const {
+  const uint8_t m = p_.var[tr].mode;
+  return m < static_cast<uint8_t>(VarMode::Count) ? m : static_cast<uint8_t>(VarMode::Off);
+}
+
 void Sequencer::evoResetAll() {
   for (int tr = 0; tr < kTracks; ++tr) {
     for (int k = 0; k < kEvoRing; ++k) cold_->evo[tr][k].n = kEvoNone;
     evoReset(cold_->evo[tr][0]);  // n = 0
     evoN_[tr] = 0;
     evoCnt_[tr] = 0;
+    mutMode_[tr] = mutKey(tr);
   }
 }
 
 const Step& Sequencer::evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const {
-  VarApply va;  // mode Off
-  if (p_.var[tr].mode != static_cast<uint8_t>(VarMode::Off)) va = varApplyOf(p_, tr);  // VAR off: no lookups
-  const bool var = va.mode != static_cast<uint8_t>(VarMode::Off);
-  if (!(p_.evo[tr].mask & kEvoMaskAll))
-    return var ? varStep(pt, tr, idx, varAt(tr, varN_[tr]), va, tmp) : pt.steps[tr][idx];
-  if (!var) return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp);
-  VarView v;
-  v.pt = &pt;
-  v.tr = tr;
-  v.s = &varAt(tr, varN_[tr]);
-  v.a = va;
-  return evoStep(pt, tr, idx, evoAt(tr, evoN_[tr]), evoApplyOf(p_, tr), tmp, varSrc(v));
+  return mutStep(p_, pt, tr, idx, evoAt(tr, evoN_[tr]), varAt(tr, varN_[tr]), tmp);
 }
 
 const EvoTrack& Sequencer::heardEvo(int tr) const {
@@ -200,13 +259,51 @@ const EvoTrack& Sequencer::heardEvo(int tr) const {
   return e.n == n ? e : evoAt(tr, evoN_[tr]);
 }
 
-void Sequencer::evoClear(uint64_t now, MidiSink& out, int tr) {
-  if (tr < 0 || tr >= kTracks) return;
-  replan(now, out);  // back to the heard step: its state is the one Capture wrote
+void Sequencer::mutReset(int tr) {
   EvoTrack& e = evoAt(tr, evoN_[tr]);
   evoClearDeltas(e);
-  for (int k = 0; k < kEvoRing; ++k)  // older states would bring the changes back on a rewind
+  VarTrack& v = varAt(tr, varN_[tr]);
+  v.sinceReset = 0;                    // generation 0: the (captured) pattern
+  for (int k = 0; k < kEvoRing; ++k) {  // older states would bring the changes back on a rewind
     if (&cold_->evo[tr][k] != &e) cold_->evo[tr][k].n = kEvoNone;
+    if (&cold_->var[tr][k] != &v) cold_->var[tr][k].n = kEvoNone;
+  }
+  mutMode_[tr] = mutKey(tr);
+}
+
+void Sequencer::mutClear(uint64_t now, MidiSink& out, int tr) {
+  if (tr < 0 || tr >= kTracks) return;
+  replan(now, out);  // back to the heard step: its state is the one to clear
+  mutReset(tr);
+}
+
+void Sequencer::mutEdited(uint64_t now, MidiSink& out) {
+  replan(now, out);
+  for (int tr = 0; tr < kTracks; ++tr)
+    if (mutKey(tr) != mutMode_[tr]) {
+      mutReset(tr);
+      evoCnt_[tr] = 0;
+      varCnt_[tr] = 0;
+    }
+}
+
+void Sequencer::replanQuiet(uint64_t now) {
+  if (state_ != State::Playing) return;  // paused: already rewound
+  if (rewind(now)) {
+    tag_ = stepSerial_ - 1;
+    releaseAllTies(tickTime(stepTick_));
+  }
+}
+
+LiveCapture Sequencer::captureLive(uint64_t now, int tr, int pat, Step* scratch) {
+  if (tr < 0 || tr >= kTracks || pat < 0 || pat >= kPatterns) return LiveCapture::Off;
+  if (!p_.genOn(tr) && !mutOn(p_, tr)) return LiveCapture::Off;
+  if (state_ != State::Stopped && pat != heardPattern()) return LiveCapture::OtherPattern;
+  replanQuiet(now);  // the next planned step is the next unheard one now: its state is what plays
+  mt::captureLive(p_, p_.patterns[pat], tr, evoAt(tr, evoN_[tr]), varAt(tr, varN_[tr]), genNext(tr),
+              genFromStep(tr, pat), scratch);
+  mutReset(tr);
+  return LiveCapture::Ok;
 }
 
 void Sequencer::varResetAll() {
@@ -229,15 +326,6 @@ const VarTrack& Sequencer::heardVar(int tr) const {
       }
   const VarTrack& v = varAt(tr, n);
   return v.n == n ? v : varAt(tr, varN_[tr]);
-}
-
-void Sequencer::varClear(uint64_t now, MidiSink& out, int tr) {
-  if (tr < 0 || tr >= kTracks) return;
-  replan(now, out);  // back to the heard step: its state is the one Capture wrote
-  VarTrack& v = varAt(tr, varN_[tr]);
-  v.sinceReset = 0;  // generation 0: the (captured) pattern
-  for (int k = 0; k < kEvoRing; ++k)  // older states would bring the changes back on a rewind
-    if (&cold_->var[tr][k] != &v) cold_->var[tr][k].n = kEvoNone;
 }
 
 // A pass ended (the pattern that plays next is cur_): each track with VAR on counts it and, every `every`
@@ -269,15 +357,15 @@ void Sequencer::varPass(bool newPat) {
   }
 }
 
-// A pass ended (the pattern that plays next is cur_): each track with something in its mask counts it
-// and, every `every` passes, mutates its state into the next ring slot. The mask in effect (evoApplyOf:
-// no RHYTHM on a GEN GATE track) is what may change.
+// A pass ended (the pattern that plays next is cur_): each track in MUT mode EVO with something in its
+// mask counts it and, every `every` passes, mutates its state into the next ring slot. The mask in effect
+// (evoApplyOf: no RHYTHM on a GEN GATE track) is what may change.
 void Sequencer::evoPass() {
   const Pattern& pt = p_.patterns[cur_];
   for (int tr = 0; tr < kTracks; ++tr) {
     EvoCfg c = p_.evo[tr];
     evoClamp(c);
-    if (!c.mask) {
+    if (!c.mask || !p_.evoOn(tr)) {
       evoCnt_[tr] = 0;
       continue;
     }
@@ -287,14 +375,7 @@ void Sequencer::evoPass() {
     c.mask = a.mask;
     const EvoTrack& from = evoAt(tr, evoN_[tr]);
     EvoTrack& to = evoAt(tr, evoN_[tr] + 1);
-    const VarApply va = varApplyOf(p_, tr);
-    VarView v;  // EVO looks at the steps as VAR plays them
-    v.pt = &pt;
-    v.tr = tr;
-    v.s = &varAt(tr, varN_[tr]);
-    v.a = va;
-    evoMakeView(pt, tr, from, c.mask, a.noteOk, a.scale, evoView_,
-                va.mode != static_cast<uint8_t>(VarMode::Off) ? varSrc(v) : EvoSrc());
+    evoMakeView(pt, tr, from, c.mask, a.noteOk, a.scale, evoView_);
     to = from;
     evoMutate(to, c, evoView_, runSeed_, tr);
     evoN_[tr] = to.n;
@@ -339,7 +420,12 @@ void Sequencer::resume(uint64_t now, MidiSink& out) {
   // SPP + clock stays aligned even when the position is not on a sixteenth.
   anchorTick_ = clockTick_ = static_cast<uint64_t>(spp) * 24;
   stepTick_ = static_cast<uint64_t>(pos_) * ticks();
-  anchorAt(now);
+  if (p_.bpm != bpmSeen_) {  // written while paused
+    bpm_ = clampBpm(p_.bpm);
+    if (!liveBpm_) projBpm_ = bpm_;
+  }
+  liveBpm_ = false;
+  anchorAt(now);  // at the tempo of the step it resumes at (pause rewound to it)
   state_ = State::Playing;
 }
 
@@ -356,6 +442,12 @@ void Sequencer::stop(uint64_t now, MidiSink& out) {
   evoResetAll();
   varResetAll();
   restoreMutes(kNever);
+  if (p_.bpm != bpmSeen_ && !liveBpm_) projBpm_ = clampBpm(p_.bpm);  // a write not taken yet
+  liveBpm_ = false;
+  bpmHeld_ = false;  // back to the project BPM
+  bpm_ = bpmSeen_ = projBpm_;
+  oldN_ = 0;
+  p_.bpm = projBpm_;
   showStopped();
 }
 
@@ -406,8 +498,22 @@ void Sequencer::selectPattern(uint8_t idx) {
 }
 
 void Sequencer::setBpm(uint16_t bpm) {
+  liveBpm_ = false;
+  p_.bpm = projBpm_ = clampBpm(bpm);
+  if (state_ != State::Playing) bpm_ = bpmSeen_ = p_.bpm;  // while playing, process() applies it
+}
+
+void Sequencer::setLiveBpm(uint16_t bpm) {
+  if (!bpmHeld_) {
+    setBpm(bpm);
+    return;
+  }
   p_.bpm = clampBpm(bpm);
-  if (state_ != State::Playing) bpm_ = p_.bpm;  // while playing, process() applies it
+  if (state_ != State::Playing) {
+    bpm_ = bpmSeen_ = p_.bpm;
+  } else {
+    liveBpm_ = p_.bpm != bpmSeen_;  // process() applies it
+  }
 }
 
 void Sequencer::sendProgram(uint64_t now, int track, MidiSink& out) {
@@ -494,16 +600,18 @@ void Sequencer::trackOutChanged(uint64_t now, int track, MidiSink& out) {
   arps_[track].n = 0;
 }
 
+// A BPM edit: the project BPM, and the live tempo until a slot with its own BPM.
 void Sequencer::applyBpm(uint64_t now) {
   const uint16_t bpm = clampBpm(p_.bpm);
-  p_.bpm = bpm;
+  p_.bpm = bpmSeen_ = bpm;
+  if (!liveBpm_) projBpm_ = bpm;
+  liveBpm_ = false;
   if (bpm == bpm_) return;
   // Unheard steps are rescheduled at the new tempo; clocks and steps continue
   // on one grid from the next clock.
+  // The ticks before the next clock (a swung unheard step's grid) keep the old tempo.
   const bool selected = rewind(now);
-  reanchor(clockTick_);
-  anchorRem_ = anchorRem_ * bpm / bpm_;
-  bpm_ = bpm;
+  tempoAt(clockTick_, bpm);
   if (selected) {
     tag_ = stepSerial_ - 1;
     releaseAllTies(tickTime(stepTick_));
@@ -548,6 +656,13 @@ bool Sequencer::rewind(uint64_t now) {
       for (int tr = 0; tr < kTracks; ++tr) p_.tracks[tr].mute = (h.mutes >> tr) & 1;
       break;
     }
+  anchorUs_ = h.anchor.us;  // a tempo change among the undone steps is made again
+  anchorRem_ = h.anchor.rem;
+  anchorTick_ = h.anchor.tick;
+  bpm_ = h.anchor.bpm;
+  memcpy(old_, h.old, sizeof(old_));
+  oldN_ = h.oldN;
+  bpmHeld_ = h.bpmHeld;
   songPos_ = h.prevSong;  // a song advance among the undone steps is decided again
   songN_ = h.prevSongN;
   stepTick_ = h.tick;
@@ -573,10 +688,12 @@ bool Sequencer::rewind(uint64_t now) {
 // notes missed by more than the lookahead are dropped, their NoteOffs are no-ops.
 void Sequencer::emitDue(uint64_t now, MidiSink& out) {
   while (tickTime(clockTick_) <= now) {
+    if (clockTick_ % kPpqn == 0) out.beat(tickTime(clockTick_), (clockTick_ / kPpqn) % 4 == 0);
     const uint8_t c = 0xF8;
     out.send(&c, 1);
     clockTick_ += kPpqn / 24;
   }
+  pruneAnchors();
   const uint32_t stale = lookUs();
   while (!heap_.empty() && heap_.top().t <= now) {
     const SchedEvent e = heap_.top();
@@ -588,7 +705,7 @@ void Sequencer::emitDue(uint64_t now, MidiSink& out) {
 
 uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   if (state_ != State::Playing) return kNever;
-  if (p_.bpm != bpm_) applyBpm(now);
+  if (p_.bpm != bpmSeen_) applyBpm(now);
 
   // What is due goes out before planning: a step takes up to ~2 ms to plan on the device, and the
   // synth renders an event's block ~2 ms after the event's time (audio.cpp, kLagUs).
@@ -598,7 +715,9 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   // After a stall, steps already followed by another due step are skipped
   // rather than played together.
   const uint32_t look = lookUs();
-  while (stepTick_ < endTick_ && tickTime(stepTick_) <= now + look) {
+  // Every tempo change still to be clocked holds an anchor: with old_ full (one-step slots, each with its
+  // own BPM) planning waits for the clock to free one rather than drop a clock's tempo.
+  while (stepTick_ < endTick_ && oldN_ < kOldAnchors && tickTime(stepTick_) <= now + look) {
     if (tickTime(stepTick_ + ticks()) <= now) {
       skipStep(now);
     } else {
@@ -615,6 +734,11 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
       heardPat_ = hist(i).pat;
       heardSong_ = hist(i).song;
       heardStepT_ = hist(i).t;
+      // A newly heard step: its tempo is the live one (the synth's Master), e.g. a slot's BPM.
+      if (hist(i).serial != heardSerial_) {
+        heardSerial_ = hist(i).serial;
+        if (hist(i).tempo != p_.bpm && p_.bpm == bpmSeen_) p_.bpm = bpmSeen_ = hist(i).tempo;
+      }
       break;
     }
   }
@@ -622,7 +746,7 @@ uint64_t Sequencer::process(uint64_t now, MidiSink& out) {
   uint64_t next = tickTime(clockTick_);
   const uint64_t grid = tickTime(stepTick_);
   const uint64_t planAt = grid > look ? grid - look : 0;
-  if (planAt < next) next = planAt;
+  if (planAt < next && oldN_ < kOldAnchors) next = planAt;
   if (!heap_.empty() && heap_.top().t < next) next = heap_.top().t;
   return next;
 }
@@ -667,11 +791,16 @@ void Sequencer::scheduleStep(uint64_t now) {
   h.mutes = 0;
   for (int i = 0; i < kTracks; ++i)
     if (p_.tracks[i].mute) h.mutes |= static_cast<uint16_t>(1u << i);
+  h.anchor = {anchorUs_, anchorRem_, anchorTick_, bpm_};
+  memcpy(h.old, old_, sizeof(old_));
+  h.oldN = oldN_;
+  h.bpmHeld = bpmHeld_;
   muteSet_ = false;
   tag_ = stepSerial_;
   minT_ = kNever;
 
   if (pos_ >= p_.patterns[cur_].length) endOfPass();  // length shrank mid-pass
+  h.tempo = bpm_;
   Pattern& pat = p_.patterns[cur_];
   const uint32_t su = stepUs();
   const uint64_t t = static_cast<uint64_t>(static_cast<int64_t>(tickTime(stepTick_)) + stepShift(pat, pos_, su));
@@ -911,6 +1040,7 @@ void Sequencer::endOfPass() {
   pos_ = 0;
   ++loop_;
   int next = queued_;
+  uint16_t tempo = 0;  // a slot's tempo from this pass end, 0 = the same
   if (songActive()) {
     if (songPos_ < 0) {
       songPos_ = songEntry();  // LOOP -> SONG: no decision
@@ -920,10 +1050,14 @@ void Sequencer::endOfPass() {
     }
     next = songAt(songPos_);
     applyMute(songPos_, tickTime(stepTick_));
+    tempo = slotBpm(songPos_);  // "-": the tempo goes on
+    if (tempo) bpmHeld_ = true;
     if (next == cur_) next = -1;  // the same pattern again goes on like a loop (ties, CND)
   } else {
     songPos_ = -1;
     restoreMutes(tickTime(stepTick_));
+    if (bpmHeld_) tempo = projBpm_;  // out of the song: the project BPM
+    bpmHeld_ = false;
   }
   queued_ = -1;
   const bool newPat = next >= 0 && next != cur_;
@@ -935,6 +1069,7 @@ void Sequencer::endOfPass() {
   varPass(newPat);
   evoPass();
   reanchor(stepTick_);  // keeps tick distances small
+  if (tempo) tempoAt(stepTick_, tempo);
 }
 
 bool Sequencer::audible(int track) const {
@@ -1032,9 +1167,23 @@ void Sequencer::silence(uint64_t now, MidiSink& out) {
 // expandStep with the track's instrument (a KIT makes it a drum track) and routing: on an INT
 // track every event's channel is the track number (the key of intVoices_ and of ties), CHN does
 // not apply.
+void Sequencer::setAutomationMute(uint64_t now, uint16_t mask, MidiSink& out) {
+  const uint16_t changed = automationMute_ ^ mask;
+  if (!changed) return;
+  automationMute_ = mask;
+  for (int tr = 0; tr < kTracks; ++tr) if (((changed >> tr) & 1) && internal(tr)) {
+    const uint8_t b[3] = {0xF5, kSynthClearLocks, static_cast<uint8_t>((mask >> tr) & 1 ? 0 : 1)};
+    out.synth(now, static_cast<uint8_t>(tr), b, 3);
+  }
+}
+
 bool Sequencer::expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex) {
   ExpandCtx c = ctx;
   c.kit = p_.kitOf(track);
+  if (const int trn = c.kit ? 0 : songTrn(track)) {  // the slot's key: notes and the scale root
+    c.trn = static_cast<int8_t>(trn);
+    c.scaleRoot = static_cast<uint8_t>(((c.scaleRoot + trn) % 12 + 12) % 12);
+  }
   c.pre = (condBits_ >> track) & 1;
   c.nei = track > 0 && ((condBits_ >> (track - 1)) & 1);
   const bool played = expandStep(s, p_.tracks[track], c, rng_, ex);
@@ -1073,6 +1222,8 @@ void Sequencer::dispatch(const SchedEvent& e, MidiSink& out) {
   const uint8_t kind = e.b[0] & 0xF0;
   const uint8_t ch = e.b[0] & 0x0F;
   const bool toSynth = internal(e.track);
+  if (toSynth && ((automationMute_ >> e.track) & 1) && e.b[0] == 0xF5 &&
+      automationCommand(static_cast<Fx>(e.b[1]))) return;
   // synth fx / release / PERF step clock never reach MIDI
   if ((e.b[0] == 0xF5 || e.b[0] == 0xF6 || e.b[0] == 0xFF) && !toSynth) return;
   if (kind == 0xB0 && toSynth) return;     // CC is MIDI only

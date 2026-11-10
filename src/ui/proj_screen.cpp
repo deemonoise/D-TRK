@@ -1,4 +1,5 @@
 #include "proj_screen.h"
+#include <type_traits>
 #include <Arduino.h>
 #include <esp_random.h>
 #include <math.h>
@@ -8,6 +9,8 @@
 #include <string.h>
 #include "app.h"
 #include "dice.h"
+#include "dice_library.h"
+#include "storage/dice_library_io.h"
 #include "esp_heap_caps.h"
 #include "engine/engine.h"
 #include "fx_info.h"
@@ -29,7 +32,10 @@ int wrapi(int v, int n) { return ((v % n) + n) % n; }
 
 }  // namespace
 
-ProjScreen::ProjScreen(App& app) : app_(app) {
+ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
+  diceDlg_.setHost({[this](const mt::DiceOpts& opts) { roll(opts); },
+                    [this] { undoDice(); },
+                    [this] { return dice_ && dice_->layers != 0; }});
   params_[kBpm] = {"BPM", [this](char* o, int n) { snprintf(o, n, "%d", bpm()); }, [this](int d) { editBpm(d); }};
   params_[kRoot] = {"Scale root", [this](char* o, int n) { snprintf(o, n, "%s", kRootNames[app_.project().scaleRoot % 12]); },
                     [this](int d) { app_.project().scaleRoot = static_cast<uint8_t>(wrapi(app_.project().scaleRoot + d, 12)); }};
@@ -180,6 +186,13 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                          else snprintf(o, n, "OFF");
                        },
                        u7(&mt::Project::compAmt)};
+  params_[kCompAtk] = {"Comp atk",
+                       [this](char* o, int n) {
+                         const uint8_t a = app_.project().compAttack;
+                         const float ms = .5f * powf(100.f, (a > 127 ? 127 : a) / 127.f);
+                         snprintf(o, n, ms < 10.f ? "%.1f ms" : "%.0f ms", ms);
+                       },
+                       u7(&mt::Project::compAttack), noComp};
   params_[kCompRel] = {"Comp rel",
                        [this](char* o, int n) {
                          const float ms = 20.f * powf(50.f, (app_.project().compRel > 127 ? 127 : app_.project().compRel) / 127.f);
@@ -232,8 +245,7 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                                    },
                                    [this, b](int d) {
                                      mt::Project& p = app_.project();
-                                     const mt::PerfRange r = mt::perfRange(static_cast<mt::PerfFx>(p.perfMap[b]));
-                                     p.perfDepth[b] = static_cast<int8_t>(clampi(p.perfDepth[b] + d, r.lo, r.hi));
+                                     p.perfDepth[b] = static_cast<int8_t>(mt::perfDepthStep(static_cast<mt::PerfFx>(p.perfMap[b]),p.perfDepth[b],d));
                                    },
                                    [this, b] { return app_.project().perfMap[b] == 0; }};
   }
@@ -254,6 +266,34 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
                              const uint8_t* xy = app_.project().perfXy;
                              return a == 1 && xy[1] != 0 && mt::perfXyAxis(xy, 1) == mt::PerfFx::None;
                            }};
+  params_[kTuneRoot].hint = [] { return "Select a non-12-TET tuning first"; };
+  params_[kSwing].hint = [] { return "Groove overrides swing; set Groove OFF"; };
+  for (int r=kDlyTime;r<kDlyLevel;++r)
+    params_[r].hint = [] { return "Raise Dly level to hear this parameter"; };
+  params_[kDlyChar].hint = [this] {
+    return P().dlyLevel == 0 ? "Raise Dly level to hear this parameter" : "Wear needs TAPE; Width needs PING-PONG";
+  };
+  for (int r=kRvbSize;r<kRvbLevel;++r)
+    params_[r].hint = [] { return "Raise Rvb level to hear this parameter"; };
+  params_[kRvbShim].hint = params_[kShimInt].hint = [this] {
+    return P().rvbLevel == 0 ? "Raise Rvb level first" : "Select SHIMMER reverb mode";
+  };
+  for (int r=kModRate;r<=kModLevel;++r) params_[r].hint = [this] {
+    return P().modType == 0 ? "Select a Mod type first" : "Raise Mod level first";
+  };
+  params_[kModFb].hint = [this] {
+    if (P().modType == 0) return "Select FLANGER or PHASER first";
+    return P().modLevel == 0 ? "Raise Mod level first" : "Feedback needs FLANGER or PHASER";
+  };
+  params_[kCompAtk].hint = params_[kCompRel].hint = params_[kScTrack].hint = [] { return "Enable the master compressor first"; };
+  params_[kScDepth].hint = [this] {
+    return P().compAmt == 0 ? "Enable the master compressor first" : "Select a sidechain source track first";
+  };
+  for (int b=0;b<mt::kPerfButtons;++b)
+    params_[kPerf1+2*b+1].hint = [] { return "Assign this button's PERF effect first"; };
+  params_[kPerfY].hint = [this] {
+    return P().perfXy[0] == P().perfXy[1] ? "X already controls this effect" : "Only one buffer effect can use the XY pad";
+  };
   // Shift+click cancel on PERF restores the effect and its depth together (a new effect resets the depth),
   // and the XY axes.
   static_assert(offsetof(mt::Project, perfDepth) == offsetof(mt::Project, perfMap) + sizeof(mt::Project::perfMap),
@@ -268,11 +308,16 @@ ProjScreen::ProjScreen(App& app) : app_(app) {
   showPage(kPgSong, false);
 }
 
+int ProjScreen::physicalPage() const { return mt::projectPagePosition(page_); }
+int ProjScreen::firstRow(int page) const { return mt::projectPageRows(page,kPageFirst,kLength).first; }
+int ProjScreen::rowCount(int page) const { return mt::projectPageRows(page,kPageFirst,kLength).count; }
+void ProjScreen::stepPage(int delta,bool bar) { showPage(mt::projectPageAt(physicalPage()+delta),bar); }
+
 void ProjScreen::showPage(int page, bool bar) {
   page_ = (page % kPages + kPages) % kPages;
   list_.setEdit(false);
   list_.setPageBar(true);
-  list_.setParams(params_ + kPageFirst[page_], kPageFirst[page_ + 1] - kPageFirst[page_]);
+  list_.setParams(params_ + firstRow(page_), rowCount(page_));
   list_.setVisibleRows(kListRows);
   if (bar) list_.selectBar();
   else list_.setSel(0);
@@ -290,21 +335,28 @@ void ProjScreen::snapPattern() {
   patIdx_ = app_.editPattern();
 }
 
-int ProjScreen::bpm() {
-  const int cur = app_.project().bpm;
+// The project BPM: while a song slot's BPM holds the live tempo, not the live one (the status bar shows that).
+// Not holding lockProject() (projectBpm takes it).
+int ProjScreen::bpm() { return bpmFrom(engine::projectBpm(app_.project())); }
+
+int ProjScreen::bpmFrom(int cur) {
   if (bpmTarget_ != cur && millis() - bpmPostMs_ >= kBpmSettleMs) bpmTarget_ = cur;  // changed elsewhere
   return bpmTarget_;
 }
 
+// Holding lockProject() (ParamList::edit; the mutex is not recursive): savedBpm, not projectBpm.
 void ProjScreen::editBpm(int delta) {
-  bpmTarget_ = clampi(bpm() + delta, 20, 300);
+  uint16_t pb = 0;
+  const int cur = engine::savedBpm(pb) ? pb : app_.project().bpm;
+  bpmTarget_ = clampi(bpmFrom(cur) + delta, 20, 300);
   bpmPostMs_ = millis();
   engine::post(engine::Cmd::SetBpm, static_cast<uint16_t>(bpmTarget_));
 }
 
 void ProjScreen::onEnter() {
+  diceDlg_.close();
   list_.setEdit(false);
-  bpmTarget_ = app_.project().bpm;
+  bpmTarget_ = engine::projectBpm(app_.project());
   if (!tunUser_) tunUser_ = new (std::nothrow) char[kTunUserMax][hw::kNameMax];
   tunUserN_ = tunUser_ ? storage::listTunings(tunUser_, kTunUserMax) : 0;
   tunPick_ = -1;
@@ -362,25 +414,8 @@ void ProjScreen::applyTuning() {
 }
 
 void ProjScreen::onProjectReplaced() {
-  if (dice_) {  // its undo (and a draft) belong to the old project
-    dice_->layers = 0;
-    dice_->drafted = 0;
-  }
-}
-
-void ProjScreen::diceMenu() {
-  list_.setEdit(false);
-  constexpr int kUndoDice = 100;
-  const MenuItem items[] = {{"Roll all", mt::kDiceAll},
-                            {"Tempo + scale", mt::kDiceTempo},
-                            {"Sounds", mt::kDiceSounds},
-                            {"Pattern", mt::kDicePattern},
-                            {"Sounds + pattern", mt::kDiceSounds | mt::kDicePattern},
-                            {"Undo dice", kUndoDice, dice_ && dice_->layers != 0}};
-  app_.menu().open("DICE", items, 6, [this](int id) {
-    if (id == kUndoDice) undoDice();
-    else roll(static_cast<uint8_t>(id));
-  });
+  diceDlg_.close();
+  if (dice_) { dice_->~DiceSnap(); heap_caps_free(dice_); dice_ = nullptr; }
 }
 
 // The evolve drift is indexed by step: on steps a roll (or its undo) rewrote it would play over notes it
@@ -388,8 +423,7 @@ void ProjScreen::diceMenu() {
 void ProjScreen::evoClearTracks(uint16_t mask) {
   for (int t = 0; t < mt::kTracks; ++t)
     if (mask & (1u << t)) {
-      engine::evoClear(t);
-      engine::varClear(t);  // a rewritten track starts over at VAR generation 0 too
+      engine::mutClear(t);  // a rewritten track starts over: no EVO changes, VAR generation 0
     }
 }
 
@@ -408,73 +442,140 @@ void ProjScreen::afterDice(uint8_t layers) {
     }
   // The planned steps of the rolled tracks (and their GEN, now OFF) are planned again.
   if (layers & mt::kDicePattern) engine::postWait(engine::Cmd::GenEdit);
+  // A new (or restored) song: the sequencer re-reads it. The role tracks' mutes need no message.
+  if (layers & mt::kDiceSong) engine::postWait(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));
   app_.markDirty();
 }
 
-void ProjScreen::roll(uint8_t layers) {
-  if (!dice_) {
-    void* m = heap_caps_malloc(sizeof(mt::DiceSnap), MALLOC_CAP_SPIRAM);
-    if (!m) {
-      app_.toast("NO MEMORY");
+void ProjScreen::roll(const mt::DiceOpts& o) {
+  // One PSRAM snapshot preserves the latest roll for Undo dice.
+  const uint32_t seed = o.seed ? o.seed : esp_random() % 999999u + 1u;
+  mt::DiceResult r;
+  uint8_t applied = 0;
+  const bool wantMidi = (o.layers & mt::kDicePattern) && o.source != mt::DiceSource::Builtin;
+  bool fallback = false;
+  {
+    storage::DiceLibraryData bytes;
+    if (wantMidi) {
+      app_.showBusy("LOADING MIDI LIBRARY...");
+      if (!bytes.load(o.genre, seed, o.style)) {
+        if (o.source == mt::DiceSource::Midi) {
+          app_.toast(bytes.error());
+          app_.invalidate();
+          return;
+        }
+        fallback = true;
+      }
+    }
+    const mt::DicePhraseSource* source = wantMidi && bytes ? &bytes : nullptr;
+    if (!dice_) {
+      void* memory = heap_caps_malloc(sizeof(mt::DiceSnap), MALLOC_CAP_SPIRAM);
+      if (!memory) { app_.toast("NO MEMORY"); app_.invalidate(); return; }
+      dice_ = new (memory) mt::DiceSnap();
+    }
+    mt::DiceSnap* dice = dice_;
+    mt::Project& p = app_.project();
+    // The generators work without the lock. A song slot's BPM may hold the live tempo: the
+    // draft reads the saved project BPM.
+    r =
+        mt::diceDraft(p, o, app_.editPattern(), seed, *dice, engine::projectBpm(p), source);
+    if (wantMidi && o.source == mt::DiceSource::Midi && !r.midiMask) {
+      app_.toast("NO MATCHING MIDI");
+      app_.invalidate();
       return;
     }
-    dice_ = new (m) mt::DiceSnap();
-  }
-  mt::Project& p = app_.project();
-  // The generators run without the lock (the UI is the only writer of what they read); the engine only
-  // waits for the swap.
-  const mt::DiceResult r = mt::diceDraft(p, layers, app_.editPattern(), esp_random(), *dice_);
-  engine::lockProject();
-  mt::diceApply(p, *dice_);
-  evoClearTracks(dice_->patMask);
-  engine::unlockProject();
-  afterDice(layers);
+    engine::lockProject();
+    uint16_t pb = 0;
+    applied = mt::diceApply(p, *dice, engine::savedBpm(pb) ? pb : 0);
+    evoClearTracks(dice->patMask);
+    engine::unlockProject();
+    if (!applied) {
+      app_.toast("DICE: NOTHING TO CHANGE");
+      app_.invalidate();
+      return;
+    }
+  } // selected MIDI phrases are released; the snapshot retains one undo
+  diceDlg_.usedSeed(seed);
+  afterDice(applied);
   char msg[48];
-  if (r.genre >= 0) {
-    snprintf(msg, sizeof(msg), "DICE %s %u %s %s", mt::diceGenre(r.genre).name, static_cast<unsigned>(p.bpm),
-             kRootNames[p.scaleRoot % 12], mt::scaleName(static_cast<mt::ScaleType>(p.scaleType)));
+  if (wantMidi) {
+    unsigned roles = 0;
+    for (int k = 0; k < mt::kDiceRoles; ++k) roles += (r.midiMask >> k) & 1u;
+    snprintf(msg, sizeof(msg), "MIDI %u%s%s #%lu", roles,
+             fallback || r.missingMask ? " FALLBACK" : "", r.midiApproxMask ? " SIMPL" : "",
+             static_cast<unsigned long>(seed));
   } else {
-    snprintf(msg, sizeof(msg), "DICE %s",
-             layers == mt::kDiceSounds ? "SOUNDS" : (layers == mt::kDicePattern ? "PATTERN" : "SOUNDS+PATTERN"));
+    snprintf(msg, sizeof(msg), "DICE %s %s #%lu", mt::diceGenreName(r.genre),
+             mt::diceStyleName(r.genre, r.style), static_cast<unsigned long>(seed));
   }
   app_.toast(msg);
 }
 
+bool ProjScreen::relocateDiceUndo() {
+  static_assert(std::is_trivially_copyable<mt::DiceSnap>::value,"DICE undo relocation is a byte copy");
+  if (!dice_) return true;
+  // Best effort: put the copy farther into free space so the released snapshot and
+  // framebuffer can coalesce. The framebuffer remains allocated during this move;
+  // allocator placement affects only the benefit, never its ability to restore.
+  void* padding = heap_caps_malloc(96 * 1024, MALLOC_CAP_SPIRAM);
+  if (!padding) return false;
+  void* memory = heap_caps_malloc(sizeof(mt::DiceSnap),MALLOC_CAP_SPIRAM);
+  if (!memory) {
+    heap_caps_free(padding);
+    return false;  // Keep the only undo until a replacement exists.
+  }
+  auto* replacement = new (memory) mt::DiceSnap();
+  memcpy(replacement,dice_,sizeof(mt::DiceSnap));
+  auto* previous = dice_;
+  dice_ = replacement;
+  previous->~DiceSnap();
+  heap_caps_free(previous);
+  heap_caps_free(padding);
+  return true;
+}
+
 void ProjScreen::undoDice() {
-  if (!dice_) return;
+  if (!dice_ || !dice_->layers) return;
   engine::lockProject();
-  const uint16_t rolled = dice_->patMask;  // diceUndo empties it
-  const uint8_t l = mt::diceUndo(app_.project(), *dice_);
-  if (l) evoClearTracks(rolled);
+  const uint16_t rolled = dice_->patMask;
+  uint16_t pb = 0;
+  const uint8_t layers = mt::diceUndo(app_.project(), *dice_, engine::savedBpm(pb) ? pb : 0);
+  if (layers) evoClearTracks(rolled);
   engine::unlockProject();
-  if (!l) return;
-  afterDice(l);
+  if (!layers) return;
+  afterDice(layers);
   app_.toast("UNDO DICE");
 }
 
 // A + turn on the page bar: the previous / next page.
 void ProjScreen::onInput(const hw::InputEvent& ev) {
+  if (diceDlg_.isOpen()) { diceDlg_.onInput(ev); return; }
   if (ev.type == hw::InputType::EncLong) {  // the DICE menu (the list has no long press)
-    diceMenu();
+    list_.setEdit(false);
+    diceDlg_.open();
     return;
   }
-  if (const int ov = list_.onInput(ev)) showPage(page_ + ov, true);
+  if (const int ov = list_.onInput(ev)) stepPage(ov, true);
 }
 
 // B + Shift + turn: the previous / next page; the cursor stays on the page bar if it was there.
-void ProjScreen::onPage(int d) { showPage(page_ + d, list_.barSelected()); }
+void ProjScreen::onPage(int d) { if (!diceDlg_.isOpen()) stepPage(d, list_.barSelected()); }
 
 // B: leaves the edit with the value kept.
-void ProjScreen::onBack() { list_.setEdit(false); }
+void ProjScreen::onBack() {
+  if (diceDlg_.isOpen()) diceDlg_.close();
+  else list_.setEdit(false);
+}
 
 void ProjScreen::onTouch(const TouchEvent& ev) {
+  if (diceDlg_.isOpen()) { diceDlg_.onTouch(ev); return; }
   if (ev.type == TouchType::Tap && ev.y < kAreaY + kHeaderH) {
-    if (ev.x >= kDiceX0 && ev.x < kDiceX1) diceMenu();
+    if (ev.x >= kDiceX0 && ev.x < kDiceX1) { list_.setEdit(false); diceDlg_.open(); }
     return;
   }
   const int barY = kAreaY + kHeaderH;
   if (ev.y >= barY && ev.y < barY + PageBar::kH) {
-    if (ev.type == TouchType::Tap) showPage(PageBar::at(ev.x, kPages), true);
+    if (ev.type == TouchType::Tap) showPage(mt::projectPageAt(PageBar::at(ev.x, kPages)), true);
     return;
   }
   list_.onTouch(ev);
@@ -482,17 +583,19 @@ void ProjScreen::onTouch(const TouchEvent& ev) {
 
 void ProjScreen::draw(LGFX_Sprite& s, int y0, int) {
   if (tunPick_ >= 0) applyTuning();
+  if (diceDlg_.isOpen()) { diceDlg_.draw(s, y0); return; }
   char buf[24];
   s.fillRect(0, y0, kScreenW, kHeaderH - 4, kBeatBg);
-  snprintf(buf, sizeof(buf), "PROJECT  (P%02d)", app_.editPattern() + 1);
+  if (page_ == kPgPattern) snprintf(buf, sizeof(buf), "PAT P%02d", app_.editPattern() + 1);
+  else snprintf(buf, sizeof(buf), "PROJECT");
   s.setTextColor(kText);
   s.drawString(buf, ParamList::kLabelX, y0 + (kHeaderH - 4 - kCharH) / 2);
   s.fillRect(kDiceX0, y0 + 2, kDiceX1 - kDiceX0, kHeaderH - 8, kPlayBg);
   s.setTextColor(kCursor);
   s.drawString("DICE", kDiceX0 + (kDiceX1 - kDiceX0 - 4 * kCharW) / 2, y0 + (kHeaderH - 4 - kCharH) / 2);
-  static const char* const kNames[kPages] = {"SONG", "DLY", "RVB", "MOD", "MSTR", "PERF"};
+  static const char* const kNames[kPages] = {"MAIN", "PAT", "DLY", "RVB", "MOD", "MSTR", "PERF"};
   params_[kDlyChar].label = app_.project().dlyMode == static_cast<uint8_t>(mt::DlyMode::PingPong) ? "Width" : "Wear";
-  PageBar::draw(s, y0 + kHeaderH, kNames, kPages, page_);
+  PageBar::draw(s, y0 + kHeaderH, kNames, kPages, physicalPage());
   if (list_.barSelected()) PageBar::drawFocus(s, y0 + kHeaderH);
   list_.draw(s, y0 + kHeaderH + PageBar::kH);
 }

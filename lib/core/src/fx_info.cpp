@@ -65,6 +65,15 @@ constexpr Info kInfo[] = {
     {"MOD", "MOD SEND", 0, 127, 64, false},       // MOD: MOD bus send lock
     {"FLP", "GEN FLIP", 0, 100, 50, false},       // FLP: the track generator's flip chance on this step
     {"SAT", "FM SATURATION", 0, 127, 64, false},  // SAT: FM SAT lock (kLockSat)
+    {"AC2", "RESERVED 16-LANE ACCENT", 0, 255, 0xFF, false},
+    {"M01", "MATRIX 1 DEPTH", -64, 63, 0, true},
+    {"M02", "MATRIX 2 DEPTH", -64, 63, 0, true},
+    {"M03", "MATRIX 3 DEPTH", -64, 63, 0, true},
+    {"M04", "MATRIX 4 DEPTH", -64, 63, 0, true},
+    {"M05", "MATRIX 5 DEPTH", -64, 63, 0, true},
+    {"M06", "MATRIX 6 DEPTH", -64, 63, 0, true},
+    {"M07", "MATRIX 7 DEPTH", -64, 63, 0, true},
+    {"M08", "MATRIX 8 DEPTH", -64, 63, 0, true},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) == static_cast<int>(Fx::Count), "kInfo must cover Fx");
 
@@ -113,15 +122,17 @@ constexpr Fx kOrder[] = {
     Fx::SLD, Fx::VIB, Fx::PBN, Fx::VSL, Fx::ACC,
     Fx::FLT, Fx::RES, Fx::DRV, Fx::DTY, Fx::BIT, Fx::SRR, Fx::GTE, Fx::DCY, Fx::COL, Fx::SHP, Fx::SWP, Fx::CON, Fx::SAT,
     Fx::LFO, Fx::LFD, Fx::LFS, Fx::LFW, Fx::LFT, Fx::LFR,
+    Fx::M01, Fx::M02, Fx::M03, Fx::M04, Fx::M05, Fx::M06, Fx::M07, Fx::M08,
     Fx::OFS, Fx::SLC,
     Fx::DLY, Fx::RVB, Fx::MOD, Fx::PAN,
     Fx::CHN, Fx::CCA, Fx::CCB, Fx::PGM,
 };
 constexpr int kOrderN = sizeof(kOrder) / sizeof(kOrder[0]);
-static_assert(kOrderN == static_cast<int>(Fx::Count), "kOrder must list every Fx once");
+static_assert(kOrderN + 1 == static_cast<int>(Fx::Count), "kOrder excludes reserved AC2");
 
 constexpr bool orderComplete() {
-  for (int f = 0; f < kOrderN; ++f) {
+  for (int f = 0; f < static_cast<int>(Fx::Count); ++f) {
+    if (f == static_cast<int>(Fx::AC2)) continue;
     int n = 0;
     for (int i = 0; i < kOrderN; ++i) n += static_cast<int>(kOrder[i]) == f;
     if (n != 1) return false;
@@ -141,6 +152,7 @@ const char* fxName(Fx f) { return info(f).name; }
 uint8_t fxDefault(Fx f) { return static_cast<uint8_t>(info(f).def); }
 
 void fxFormat(Fx f, uint8_t v, char out[5]) {
+  if (f >= Fx::M01 && f <= Fx::M08) { snprintf(out, 5, "%+3d", fxSigned(v)); return; }
   switch (f) {
     case Fx::None: snprintf(out, 5, "   "); return;
     case Fx::TIE: snprintf(out, 5, " --"); return;
@@ -243,13 +255,36 @@ uint8_t fxStep(Fx f, uint8_t v, int delta) {
   return static_cast<uint8_t>(cur);
 }
 
+uint8_t gatStep(uint8_t v, int delta, bool coarse) {
+  if (!coarse) return fxStep(Fx::GAT, v, delta);
+  int cur = v < 1 ? 1 : (v > 200 ? 200 : v);
+  const int dir = delta < 0 ? -1 : 1;
+  for (int k = delta < 0 ? -delta : delta; k > 0; --k) {
+    const int target = gatePercent(static_cast<uint8_t>(cur)) + dir * 10;
+    int best = cur, bestDist = 0;
+    for (int n = cur + dir; n >= 1 && n <= 200; n += dir) {
+      int dist = gatePercent(static_cast<uint8_t>(n)) - target;
+      if (dist < 0) dist = -dist;
+      if (best == cur || dist < bestDist) {
+        best = n;
+        bestDist = dist;
+      }
+    }
+    if (best == cur) break;  // at the clamp
+    cur = best;
+  }
+  return static_cast<uint8_t>(cur);
+}
+
 bool fxSynthOnly(Fx f) {
   return (f >= Fx::SLD && f <= Fx::SLC) || f == Fx::DLY || (f >= Fx::DRV && f <= Fx::ARM) || f == Fx::BIT || f == Fx::SRR ||
          (f >= Fx::LFO && f <= Fx::LFR) || f == Fx::PAN || f == Fx::DTY || f == Fx::GTE ||
-         f == Fx::MOD || f == Fx::SAT;
+         f == Fx::MOD || f == Fx::SAT || (f >= Fx::M01 && f <= Fx::M08);
 }
 
 bool fxDrumOnly(Fx f) { return f == Fx::ACC; }
+
+bool fxAllowed(Fx f) { return f < Fx::Count && f != Fx::AC2; }
 
 Fx fxNextCmd(Fx f, int delta) {
   int at = 0;

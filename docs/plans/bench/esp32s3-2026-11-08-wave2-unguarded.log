@@ -1,0 +1,106 @@
+HEADLESS chip=ESP32-S3 revision=2 cpu_mhz=240 flash=16777216 psram=8388608 synth_rate=32000 block=128 revision_code=wave2-final
+PLACEMENT synth_internal=1 reverb_internal=1 sizeof_synth=49264 sizeof_project=488908 free_internal=156520
+BENCH IDLE machine=0 voices=0 active=0.00 fx=0 matrix=0 perf=0 guard=0 avg_us=244.26 peak_us=252 load=0.061 rms=0.00 checksum=0
+BENCH IDLE machine=0 voices=0 active=0.00 fx=1 matrix=0 perf=0 guard=0 avg_us=363.60 peak_us=371 load=0.091 rms=0.00 checksum=0
+BENCH CHIP machine=0 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=814.15 peak_us=825 load=0.204 rms=5865.15 checksum=-6719
+BENCH CHIP machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1118.54 peak_us=1132 load=0.280 rms=9023.21 checksum=7898
+BENCH CHIP machine=0 voices=16 active=16.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1701.93 peak_us=1721 load=0.425 rms=13537.87 checksum=-11866
+BENCH CHIP machine=0 voices=24 active=24.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2115.90 peak_us=2141 load=0.529 rms=13842.04 checksum=-21085
+BENCH FM machine=0 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=925.43 peak_us=1015 load=0.231 rms=3593.69 checksum=19837
+BENCH FM machine=0 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1349.77 peak_us=1524 load=0.337 rms=6636.05 checksum=-22963
+BENCH FM machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2189.59 peak_us=2529 load=0.547 rms=10087.43 checksum=24239
+BENCH FM machine=1 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=938.36 peak_us=1027 load=0.235 rms=1506.45 checksum=23884
+BENCH FM machine=1 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1371.58 peak_us=1540 load=0.343 rms=3013.66 checksum=23363
+BENCH FM machine=1 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2241.87 peak_us=2573 load=0.560 rms=5695.66 checksum=22262
+BENCH FM machine=2 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=936.12 peak_us=1021 load=0.234 rms=1704.36 checksum=-21740
+BENCH FM machine=2 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1366.38 peak_us=1525 load=0.342 rms=3409.18 checksum=22335
+BENCH FM machine=2 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2231.84 peak_us=2544 load=0.558 rms=6115.24 checksum=-7176
+BENCH FM machine=3 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=839.30 peak_us=931 load=0.210 rms=3395.26 checksum=-417
+BENCH FM machine=3 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1177.99 peak_us=1344 load=0.294 rms=6316.67 checksum=-13245
+BENCH FM machine=3 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1845.74 peak_us=2163 load=0.461 rms=9606.35 checksum=-15648
+BENCH FM machine=4 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=914.93 peak_us=928 load=0.229 rms=3162.70 checksum=-14423
+BENCH FM machine=4 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1325.97 peak_us=1342 load=0.331 rms=5699.71 checksum=-9360
+BENCH FM machine=4 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2144.34 peak_us=2156 load=0.536 rms=8891.62 checksum=-6920
+BENCH FM machine=5 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1024.87 peak_us=1036 load=0.256 rms=2056.88 checksum=-2517
+BENCH FM machine=5 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1547.69 peak_us=1562 load=0.387 rms=4104.25 checksum=-5011
+BENCH FM machine=5 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2585.55 peak_us=2604 load=0.646 rms=6918.23 checksum=-20929
+BENCH FM machine=6 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=787.84 peak_us=868 load=0.197 rms=562.19 checksum=22136
+BENCH FM machine=6 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1071.19 peak_us=1229 load=0.268 rms=1124.82 checksum=-22413
+BENCH FM machine=6 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1637.23 peak_us=1945 load=0.409 rms=2250.10 checksum=21960
+BENCH FM machine=7 voices=2 active=2.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1097.12 peak_us=1182 load=0.274 rms=1330.37 checksum=-22600
+BENCH FM machine=7 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1689.66 peak_us=1858 load=0.422 rms=2661.17 checksum=17305
+BENCH FM machine=7 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2878.12 peak_us=3203 load=0.720 rms=5142.95 checksum=-26850
+BENCH DRUM machine=0 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1243.48 peak_us=1394 load=0.311 rms=6516.02 checksum=21665
+BENCH DRUM machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1977.29 peak_us=2270 load=0.494 rms=9933.18 checksum=-30596
+BENCH DRUM machine=1 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1234.86 peak_us=1381 load=0.309 rms=1724.13 checksum=-27806
+BENCH DRUM machine=1 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1965.59 peak_us=2248 load=0.491 rms=3404.00 checksum=17552
+BENCH DRUM machine=4 voices=4 active=2.25 fx=1 matrix=0 perf=0 guard=0 avg_us=946.10 peak_us=1466 load=0.237 rms=1195.70 checksum=21381
+BENCH DRUM machine=4 voices=8 active=4.50 fx=1 matrix=0 perf=0 guard=0 avg_us=1385.37 peak_us=2380 load=0.346 rms=2386.52 checksum=17195
+BENCH DRUM machine=9 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1352.70 peak_us=1481 load=0.338 rms=4351.35 checksum=-24637
+BENCH DRUM machine=9 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2198.14 peak_us=2455 load=0.550 rms=7270.87 checksum=29189
+BENCH DRUM machine=15 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1386.86 peak_us=1524 load=0.347 rms=1725.72 checksum=28648
+BENCH DRUM machine=15 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2268.31 peak_us=2540 load=0.567 rms=3209.88 checksum=31920
+BENCH SYNTH machine=0 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=979.42 peak_us=993 load=0.245 rms=3117.47 checksum=27169
+BENCH SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1458.54 peak_us=1474 load=0.365 rms=5918.21 checksum=29483
+BENCH SAMPLE machine=0 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=907.67 peak_us=919 load=0.227 rms=7787.35 checksum=-21949
+BENCH SAMPLE machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1304.41 peak_us=1320 load=0.326 rms=11683.56 checksum=21763
+BENCH SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2071.31 peak_us=2093 load=0.518 rms=17529.08 checksum=-11409
+BENCH PAIR_CHIP machine=0 voices=24 active=24.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2115.89 peak_us=2141 load=0.529 rms=13842.04 checksum=-20630
+BENCH PAIR_FMHAT machine=7 voices=4 active=4.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1763.83 peak_us=1857 load=0.441 rms=2332.15 checksum=22443
+BENCH PAIR_FMHAT machine=7 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=3029.33 peak_us=3203 load=0.757 rms=4602.06 checksum=-24916
+BENCH PAIR_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=0 guard=0 avg_us=1457.22 peak_us=1470 load=0.364 rms=7858.42 checksum=20923
+BENCH PAIR_SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=0 perf=0 guard=0 avg_us=2071.18 peak_us=2086 load=0.518 rms=17529.08 checksum=-10281
+BENCH PAIR_CHIP machine=0 voices=24 active=24.00 fx=1 matrix=0 perf=1 guard=0 avg_us=2348.86 peak_us=2391 load=0.587 rms=20991.52 checksum=-370
+BENCH PAIR_FMHAT machine=7 voices=4 active=4.00 fx=1 matrix=0 perf=1 guard=0 avg_us=1991.52 peak_us=2105 load=0.498 rms=8733.54 checksum=17153
+BENCH PAIR_FMHAT machine=7 voices=8 active=8.00 fx=1 matrix=0 perf=1 guard=0 avg_us=3261.02 peak_us=3456 load=0.815 rms=13793.60 checksum=-18746
+BENCH PAIR_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=0 perf=1 guard=0 avg_us=1690.08 peak_us=1725 load=0.423 rms=16362.51 checksum=11838
+BENCH PAIR_SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=0 perf=1 guard=0 avg_us=2305.59 peak_us=2340 load=0.576 rms=22038.16 checksum=-10490
+BENCH PAIR_CHIP machine=0 voices=24 active=24.00 fx=1 matrix=1 perf=0 guard=0 avg_us=3039.86 peak_us=3059 load=0.760 rms=12677.69 checksum=-30016
+BENCH PAIR_FMHAT machine=7 voices=4 active=4.00 fx=1 matrix=1 perf=0 guard=0 avg_us=1937.07 peak_us=2047 load=0.484 rms=2332.26 checksum=-26731
+BENCH PAIR_FMHAT machine=7 voices=8 active=8.00 fx=1 matrix=1 perf=0 guard=0 avg_us=3375.59 peak_us=3589 load=0.844 rms=4426.27 checksum=-27021
+BENCH PAIR_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=1 perf=0 guard=0 avg_us=1764.30 peak_us=1779 load=0.441 rms=7278.45 checksum=6539
+BENCH PAIR_SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=1 perf=0 guard=0 avg_us=2690.51 peak_us=2703 load=0.673 rms=15948.62 checksum=30766
+BENCH PAIR_CHIP machine=0 voices=24 active=24.00 fx=1 matrix=1 perf=1 guard=0 avg_us=3273.08 peak_us=3313 load=0.818 rms=19130.70 checksum=9644
+BENCH PAIR_FMHAT machine=7 voices=4 active=4.00 fx=1 matrix=1 perf=1 guard=0 avg_us=2165.99 peak_us=2298 load=0.541 rms=8299.96 checksum=-5136
+BENCH PAIR_FMHAT machine=7 voices=8 active=8.00 fx=1 matrix=1 perf=1 guard=0 avg_us=3607.98 peak_us=3843 load=0.902 rms=13340.31 checksum=7902
+BENCH PAIR_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=1 perf=1 guard=0 avg_us=1998.12 peak_us=2035 load=0.500 rms=16718.85 checksum=-10493
+BENCH PAIR_SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=1 perf=1 guard=0 avg_us=2922.01 peak_us=2962 load=0.731 rms=19845.74 checksum=-12296
+BENCH PAIR_CHIP machine=0 voices=24 active=24.00 fx=1 matrix=2 perf=0 guard=0 avg_us=4285.16 peak_us=4673 load=1.071 rms=13130.78 checksum=28711
+BENCH PAIR_FMHAT machine=7 voices=4 active=4.00 fx=1 matrix=2 perf=0 guard=0 avg_us=2371.31 peak_us=2516 load=0.593 rms=3000.67 checksum=-30347
+BENCH PAIR_FMHAT machine=7 voices=8 active=8.00 fx=1 matrix=2 perf=0 guard=0 avg_us=4200.70 peak_us=4465 load=1.050 rms=5519.61 checksum=-30623
+BENCH PAIR_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=2 perf=0 guard=0 avg_us=2287.39 peak_us=2555 load=0.572 rms=8825.09 checksum=-1332
+BENCH PAIR_SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=2 perf=0 guard=0 avg_us=3649.45 peak_us=4080 load=0.912 rms=16975.37 checksum=19225
+BENCH PAIR_CHIP machine=0 voices=24 active=24.00 fx=1 matrix=2 perf=1 guard=0 avg_us=4515.59 peak_us=4907 load=1.129 rms=16332.54 checksum=-9935
+BENCH PAIR_FMHAT machine=7 voices=4 active=4.00 fx=1 matrix=2 perf=1 guard=0 avg_us=2601.05 peak_us=2768 load=0.650 rms=10739.49 checksum=26747
+BENCH PAIR_FMHAT machine=7 voices=8 active=8.00 fx=1 matrix=2 perf=1 guard=0 avg_us=4434.91 peak_us=4707 load=1.109 rms=15810.57 checksum=-10979
+BENCH PAIR_SYNTH machine=0 voices=8 active=8.00 fx=1 matrix=2 perf=1 guard=0 avg_us=2519.13 peak_us=2795 load=0.630 rms=15141.48 checksum=19087
+BENCH PAIR_SAMPLE machine=0 voices=16 active=16.00 fx=1 matrix=2 perf=1 guard=0 avg_us=3879.09 peak_us=4298 load=0.970 rms=18242.46 checksum=-31815
+BENCH CAP_CHIP machine=0 voices=8 active=8.00 fx=1 matrix=2 perf=1 guard=0 avg_us=2165.07 peak_us=2442 load=0.541 rms=17912.13 checksum=-163
+BENCH CAP_CHIP machine=0 voices=16 active=16.00 fx=1 matrix=2 perf=1 guard=0 avg_us=3516.05 peak_us=3964 load=0.879 rms=18087.73 checksum=32583
+BENCH CAP_FMHAT machine=7 voices=2 active=2.00 fx=1 matrix=2 perf=1 guard=0 avg_us=1688.23 peak_us=1784 load=0.422 rms=5712.26 checksum=23989
+BENCH CAP_SYNTH machine=0 voices=4 active=4.00 fx=1 matrix=2 perf=1 guard=0 avg_us=1629.37 peak_us=1774 load=0.407 rms=9319.98 checksum=20700
+BENCH CAP_SAMPLE machine=0 voices=4 active=4.00 fx=1 matrix=2 perf=1 guard=0 avg_us=1548.50 peak_us=1706 load=0.387 rms=17247.65 checksum=-30739
+BENCH CAP_SAMPLE machine=0 voices=8 active=8.00 fx=1 matrix=2 perf=1 guard=0 avg_us=2347.82 peak_us=2636 load=0.587 rms=18517.36 checksum=-27904
+BENCH GUARD_CHIP machine=0 voices=24 active=12.00 fx=1 matrix=2 perf=1 guard=1 avg_us=2811.20 peak_us=3103 load=0.703 rms=17198.19 checksum=14135
+BENCH GUARD_SAMPLE machine=0 voices=16 active=11.00 fx=1 matrix=2 perf=1 guard=1 avg_us=2893.78 peak_us=3171 load=0.723 rms=18175.58 checksum=-12430
+OFFLINE EXTRACT_COPY seconds=2 total_us=2520 workspace_internal=2048 checksum=-832
+OFFLINE FLOAT32 seconds=2 total_us=28433 workspace_internal=6144 checksum=768
+OFFLINE NORMALIZE seconds=2 total_us=9281 max_step_us=95 peak=13499 workspace_internal=2048
+OFFLINE TEMPO seconds=2 total_us=52961 max_step_us=791 onsets=4 bpm10=1199 confidence=1000 workspace_psram=2036 workspace_internal=3072
+OFFLINE STRETCH seconds=2 ratio=50 total_us=1261453 max_step_us=30073 frames=32000 state=1 workspace_internal_delta=0 workspace_psram_delta=8452 workspace_declared_max=8192
+OFFLINE STRETCH seconds=2 ratio=100 total_us=6588 max_step_us=70 frames=64000 state=1 workspace_internal_delta=0 workspace_psram_delta=0 workspace_declared_max=8192
+OFFLINE STRETCH seconds=2 ratio=200 total_us=5099827 max_step_us=30005 frames=128000 state=1 workspace_internal_delta=0 workspace_psram_delta=8452 workspace_declared_max=8192
+OFFLINE WT seconds=2 mode=0 total_us=2742469 max_step_us=6090 pitched=63 result=0 workspace_psram=48400 output_bytes=32768
+OFFLINE WT seconds=2 mode=1 total_us=268672 max_step_us=6047 pitched=64 result=0 workspace_psram=33796 output_bytes=32768
+OFFLINE EXTRACT_COPY seconds=8 total_us=8867 workspace_internal=2048 checksum=-1883
+OFFLINE FLOAT32 seconds=8 total_us=113646 workspace_internal=6144 checksum=-1883
+OFFLINE NORMALIZE seconds=8 total_us=37019 max_step_us=95 peak=13499 workspace_internal=2048
+OFFLINE TEMPO seconds=8 total_us=210384 max_step_us=790 onsets=16 bpm10=1200 confidence=1000 workspace_psram=2036 workspace_internal=3072
+OFFLINE STRETCH seconds=8 ratio=50 total_us=5139664 max_step_us=30073 frames=128000 state=1 workspace_internal_delta=0 workspace_psram_delta=8452 workspace_declared_max=8192
+OFFLINE STRETCH seconds=8 ratio=100 total_us=30371 max_step_us=60 frames=256000 state=1 workspace_internal_delta=0 workspace_psram_delta=0 workspace_declared_max=8192
+OFFLINE STRETCH seconds=8 ratio=200 total_us=20610735 max_step_us=30022 frames=512000 state=1 workspace_internal_delta=0 workspace_psram_delta=8452 workspace_declared_max=8192
+OFFLINE WT seconds=8 mode=0 total_us=2762694 max_step_us=6053 pitched=64 result=0 workspace_psram=48400 output_bytes=32768
+OFFLINE WT seconds=8 mode=1 total_us=671724 max_step_us=6071 pitched=64 result=0 workspace_psram=33796 output_bytes=32768
+OFFLINE TEMPO128 total_us=53814 bpm10=0 workspace_internal=1024
+OFFLINE AUDITION_PREP total_us=59273 workspace_internal=1536
+BENCH DONE free_internal=156168 min_internal=145728

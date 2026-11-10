@@ -1,0 +1,10 @@
+{
+  "label": "B2",
+  "policy": "B2-synth49",
+  "bin_sha256": "8868007dfb34c59a6dfdc74bb72676838e03edc6447ce267df299cd0e6ece253",
+  "bytes": 2197248,
+  "wifi_return_seconds_after_upload": 42.4,
+  "project_unchanged": true,
+  "profile_added_bytes": 3750,
+  "last_status": "AUTOPROFILE DONE policy=B2-synth49 validation=B PLACEMENT OK project=TUTU-TUDUTU model_fnv=4363edfc raw_fnv=06a49af7 bytes=66420 seed=0x5eed synthINT=1 seqINT=0 rvbINT=1"
+}

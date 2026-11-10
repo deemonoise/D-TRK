@@ -2,6 +2,7 @@
 #include "bytebeat_lib.h"
 #include "fastmath.h"
 #include "hot.h"
+#include "mod_matrix.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +14,7 @@ constexpr float kRate = 32000.f;  // = kSynthRate (synth_osc.h)
 }
 
 void Pattern::clear() {
+  memset(name, 0, sizeof(name));
   length = kDefaultSteps;
   res = Resolution::Sixteenth;
   swing = 50;
@@ -79,6 +81,7 @@ void Project::reset() {
   rvbLevel = 80;
   compAmt = 0;
   compRel = 50;
+  compAttack = 83;
   scTrack = 0;
   scDepth = 64;
   memcpy(perfMap, kPerfDefaultMap, sizeof(perfMap));
@@ -118,6 +121,9 @@ void Project::reset() {
   memset(songMute, 0, sizeof(songMute));
   songLen = 0;
   for (SongFollow& f : songFol) f = SongFollow();
+  memset(songTrn, 0, sizeof(songTrn));
+  memset(songBpm, 0, sizeof(songBpm));
+  songTrnMask = 0xFFFF;
   seed = 1;
 }
 
@@ -325,6 +331,12 @@ void instrSetType(Instrument& m, InstrType t) {
     uint8_t& dest = lfoRef(m, i).dest;
     if (!lfoDestValid(dest, t)) dest = static_cast<uint8_t>(LfoDest::Pitch);
   }
+  for (ModRoute& r : m.mod) {
+    if (!modDestValid(r.dest) || !lfoDestValid(r.dest, t)) {
+      r.source = static_cast<uint8_t>(ModSource::Off);
+      r.dest = static_cast<uint8_t>(LfoDest::Pitch);
+    }
+  }
 }
 
 void kitSetDefaults(Instrument& m) {
@@ -334,7 +346,7 @@ void kitSetDefaults(Instrument& m) {
   }
 }
 
-bool lfoDestValid(uint8_t dest, InstrType t) {
+MT_HOT bool lfoDestValid(uint8_t dest, InstrType t) {
   if (dest >= static_cast<uint8_t>(LfoDest::Count)) return false;
   const auto d = static_cast<LfoDest>(dest);
   if (d >= LfoDest::Dec && d <= LfoDest::Con)

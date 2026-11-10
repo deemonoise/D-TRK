@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdio.h>
 #include <unity.h>
 #include "arp_gen.h"
 #include "model.h"
@@ -110,11 +111,15 @@ void test_virus_patterns() {
   int first = -1;
   for (int i = 0; i < arpFactoryCount(); ++i)
     if (strcmp(arpFactoryName(i), "VIRUS 01") == 0) first = i;
-  TEST_ASSERT_TRUE(first >= 0);
-  TEST_ASSERT_EQUAL(first + 64, arpFactoryCount());  // VIRUS 01..64 close the list
+  TEST_ASSERT_EQUAL(42, first);  // saved VIRUS indices remain 42..105
+  TEST_ASSERT_EQUAL(107, arpFactoryCount());
+  TEST_ASSERT_EQUAL(first + 65, arpFactoryCount());  // new assets append after the VIRUS bank
   TEST_ASSERT_EQUAL_STRING("VIRUS 64", arpFactoryName(first + 63));
   bool nudged = false;
   for (int i = first; i < first + 64; ++i) {
+    char name[12];
+    snprintf(name, sizeof(name), "VIRUS %02d", i - first + 1);
+    TEST_ASSERT_EQUAL_STRING(name, arpFactoryName(i));
     ArpPattern p;
     TEST_ASSERT_TRUE_MESSAGE(parseArpPattern(arpFactoryText(i), p), arpFactoryName(i));
     TEST_ASSERT_EQUAL_MESSAGE(kArpPatMax, p.len, arpFactoryName(i));
@@ -130,6 +135,17 @@ void test_virus_patterns() {
   for (int k = 0; k < kArpPatMax; ++k) {
     TEST_ASSERT_EQUAL(k % 2 ? ArpKind::Rest : ArpKind::Note, v1.steps[k].kind);
     if (k % 2 == 0) TEST_ASSERT_EQUAL(100, v1.steps[k].gatePct);
+  }
+}
+
+void test_juke_hit_is_appended_and_parses() {
+  TEST_ASSERT_EQUAL_STRING("JUKE HIT", arpFactoryName(106));
+  ArpPattern p;
+  TEST_ASSERT_TRUE(parseArpPattern(arpFactoryText(106), p));
+  TEST_ASSERT_EQUAL(16, p.len);
+  for (int i=0; i<16; ++i) {
+    const bool hit = i==0 || i==3 || i==6 || i==9 || i==12 || i==14;
+    TEST_ASSERT_EQUAL(hit ? ArpKind::Note : ArpKind::Rest, p.steps[i].kind);
   }
 }
 
@@ -673,6 +689,7 @@ int main() {
   RUN_TEST(test_format_exact_fields);
   RUN_TEST(test_factory_patterns_parse);
   RUN_TEST(test_virus_patterns);
+  RUN_TEST(test_juke_hit_is_appended_and_parses);
   RUN_TEST(test_modes_triad);
   RUN_TEST(test_modes_seventh);
   RUN_TEST(test_chord_mode_writes_chd);

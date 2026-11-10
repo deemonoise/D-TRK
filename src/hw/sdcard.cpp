@@ -182,9 +182,9 @@ bool sdNextEntry(fs::File& dir, String& name, bool& isDir) {
 }
 
 int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, bool (*accept)(const char*)) {
-  if (!ready) return 0;
+  if (!ready) return -1;
   fs::File d = SD.open(dir);
-  if (!d || !d.isDirectory()) return 0;
+  if (!d || !d.isDirectory()) return -1;
   const size_t extLen = strlen(ext);
   int n = 0;
   String entry;
@@ -195,10 +195,19 @@ int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, b
     const char* name = entry.c_str();
     const size_t len = strlen(name);
     if (len <= extLen || len - extLen >= kNameMax || name[0] == '.') continue;
-    if (strcasecmp(name + len - extLen, ext) != 0) continue;
+    const bool backup = extLen == 4 && (strcmp(ext, ".mtp") == 0 || strcmp(ext, ".mti") == 0) &&
+                        strcasecmp(name + len - extLen, ".bak") == 0;
+    if (!backup && strcasecmp(name + len - extLen, ext) != 0) continue;
     memcpy(base, name, len - extLen);
     base[len - extLen] = 0;
     if (accept && !accept(base)) continue;
+    if (backup) {
+      // Show interrupted rotations under their normal name; loading restores the backup.
+      // Renaming while enumerating could cause duplicate visits on FAT.
+      char dst[256];
+      const int dn = snprintf(dst, sizeof(dst), "%s/%s%s", dir, base, ext);
+      if (dn < 0 || dn >= static_cast<int>(sizeof(dst)) || SD.exists(dst)) continue;
+    }
     n = keepName(names, n, max, base, len - extLen);
   }
   qsort(names, n, kNameMax, cmpName);
@@ -206,9 +215,9 @@ int sdList(const char* dir, const char* ext, char (*names)[kNameMax], int max, b
 }
 
 int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*names)[kNameMax], int max) {
-  if (!ready) return 0;
+  if (!ready) return -1;
   fs::File d = SD.open(dir);
-  if (!d || !d.isDirectory()) return 0;
+  if (!d || !d.isDirectory()) return -1;
   int n = 0;
   String entry;
   bool isDir;
@@ -230,9 +239,9 @@ int sdListFiles(const char* dir, const char* const* exts, int extCount, char (*n
 }
 
 int sdListDirs(const char* dir, char (*names)[kNameMax], int max) {
-  if (!ready) return 0;
+  if (!ready) return -1;
   fs::File d = SD.open(dir);
-  if (!d || !d.isDirectory()) return 0;
+  if (!d || !d.isDirectory()) return -1;
   int n = 0;
   String entry;
   bool isDir;

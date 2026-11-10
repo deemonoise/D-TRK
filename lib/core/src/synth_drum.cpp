@@ -492,7 +492,7 @@ MT_HOT void DrumVoice::noise(float* __restrict s, const float* __restrict m, int
   impulse_ = impulse;
 }
 
-MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp) {
+MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp, float ampStep) {
   // Each part in a pass of its own over kSeg samples (state in registers), summed in the old order;
   // parts whose envelope has snapped to 0 are skipped (on / off fixed for the whole call).
   const bool tonesOn = (toneLvl_[0] != 0 || toneLvl_[1] != 0 || toneLvl_[2] != 0) && (toneE_ != 0 || fastE_ != 0);
@@ -525,6 +525,7 @@ MT_HOT void DrumVoice::render(float* __restrict out, int n, float amp) {
       const float s = softSat(sb[i] * driveGain);
       last = s * amp + tailV;
       o[i] += last;
+      amp += ampStep;
       tailV *= chokeK;
     }
   }

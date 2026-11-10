@@ -3,6 +3,7 @@
 #include "event_heap.h"
 #include "evolve.h"
 #include "follow.h"
+#include "mut.h"
 #include "model.h"
 #include "rng.h"
 #include "shift_gen.h"
@@ -16,6 +17,8 @@ class MidiSink {
  public:
   virtual ~MidiSink() = default;
   virtual void send(const uint8_t* b, uint8_t len) = 0;
+  // Live monitor clock. Offline sinks ignore it; never becomes MIDI or rendered audio.
+  virtual void beat(uint64_t time, bool accent) { (void)time; (void)accent; }
   // Message for the internal synth (INT tracks), see Synth::event. t: when it should sound, us
   // (the scheduled time, at or a little before the call; the time passed to the call otherwise).
   virtual void synth(uint64_t t, uint8_t track, const uint8_t* b, uint8_t len) {
@@ -82,6 +85,11 @@ class Sequencer {
   Sequencer& operator=(const Sequencer&) = delete;
   static size_t coldBytes();
 
+  // Tempo the next stopped start uses (count-in must match a SONG entry slot).
+  uint16_t startTempo() const {
+    const auto slot = songActive() ? slotBpm(songEntry()) : 0;
+    return slot ? slot : clampBpm(p_.bpm);
+  }
   void start(uint64_t now, MidiSink& out);
   void pause(uint64_t now, MidiSink& out);
   void resume(uint64_t now, MidiSink& out);
@@ -90,7 +98,11 @@ class Sequencer {
 
   void queuePattern(uint8_t idx);   // switch at the end of the current pass; ignored while the song plays
   void selectPattern(uint8_t idx);  // switch from the next step
+  void setAutomationMute(uint64_t now, uint16_t mask, MidiSink& out);
   void setBpm(uint16_t bpm);
+  // The header BPM: while a song slot's BPM holds the live tempo, the live tempo only (until the next slot
+  // with its own BPM, leaving the song or Stop; the project BPM stays); else setBpm.
+  void setLiveBpm(uint16_t bpm);
   // Program change of one track, sent now (nothing for kNoProgram).
   void sendProgram(uint64_t now, int track, MidiSink& out);
   // Replans the unheard steps from the (edited) pattern, then ends every held TIE now
@@ -108,6 +120,13 @@ class Sequencer {
   bool savedMutes(uint16_t& bits) const {
     bits = savedMute_;
     return muteHeld_;
+  }
+  // The project BPM while a song slot's BPM holds the live tempo (p.bpm); false when none holds (p.bpm is
+  // the project's). A slot with its BPM sets the live tempo from its start ("-" keeps it); a BPM edit
+  // (setBpm, a write to p.bpm) sets both; Stop and leaving the song go back to the project BPM.
+  bool savedBpm(uint16_t& bpm) const {
+    bpm = projBpm_;
+    return bpmHeld_;
   }
   // After TrackCfg::out of a track changed: ends its sounding notes on both outputs.
   void trackOutChanged(uint64_t now, int track, MidiSink& out);
@@ -157,38 +176,35 @@ class Sequencer {
   GenState heardGen(int tr) const;
   uint32_t stepDuration() const { return stepUs(); }
 
-  // Evolve (Project::evo, evolve.h). A pass = a pattern pass (endOfPass: the pattern's end or a song slot's),
-  // counted per track from start() across pattern / slot changes. Every `every` passes the track's state
-  // mutates from the one before (the follow run seed, not rng_); every track step plays through it
-  // (evoStep) before GEN; the pattern is never written. start() / stop() reset every state; rewound
-  // with the unheard steps.
-  // After an EvoCfg edit while playing: the unheard steps are planned again with it.
-  void evoEdited(uint64_t now, MidiSink& out) { replan(now, out); }
-  // After Capture of track tr: replanned, then its changes and rotation cleared (n and the pass count go on).
-  void evoClear(uint64_t now, MidiSink& out, int tr);
-  // The state after the heard step of tr (UI, Capture); the reset one while stopped. Valid until the next
-  // call on the sequencer (hold the project lock).
+  // MUT (mut.h): one mutator per track, Project::var[t].mode: EVO (Project::evo, evolve.h) or a VAR mode
+  // (var_gen.h). A pass = a pattern pass (endOfPass: the pattern's end or a song slot's), counted per
+  // track from start() across pattern / slot changes; only the active mode counts and, every `every`
+  // passes, advances its state from the one before (the follow run seed, not rng_): EVO mutates, VAR takes
+  // its next generation (another pattern next: VAR back to generation 0, the pass count from 0). A track
+  // step plays pattern -> MUT (mutStep) -> GEN; the pattern is never written. start() / stop() reset every
+  // state; rewound with the unheard steps.
+  // After a Project::evo / var edit (engine Cmd::MutEdit): the unheard steps are planned again with it; a
+  // track whose stored mode (VarCfg::mode) changed restarts from no EVO changes and VAR generation 0. An
+  // instrument type change (CA2D <-> CA1D in effect) needs no command: the VAR state carries its mode.
+  void mutEdited(uint64_t now, MidiSink& out);
+  // Replanned, then track tr's MUT state cleared: EVO changes and rotation, VAR generation 0 (n and the
+  // pass counts go on). A rewritten track (Dice).
+  void mutClear(uint64_t now, MidiSink& out, int tr);
+  // Capture live of track tr into pattern pat (holding the project lock, any task): the unheard steps
+  // are undone (no events sent: the engine plans them again from the result), then mt::captureLive from
+  // the state the next step plays (MUT, the GEN register, its track step), GEN off, the MUT state
+  // cleared as mutClear. Off: nothing plays on the track; OtherPattern: playing / paused and pat is not
+  // the heard pattern. scratch: kMaxSteps steps of the caller's.
+  LiveCapture captureLive(uint64_t now, int tr, int pat, Step* scratch);
+  // The state after the heard step of tr (UI); the reset one while stopped. Valid until the next call
+  // on the sequencer (hold the project lock).
   const EvoTrack& heardEvo(int tr) const;
-  // Passes counted towards the next mutation of tr (0..every-1).
+  const VarTrack& heardVar(int tr) const;
+  // Passes counted towards the next EVO mutation / VAR generation of tr (0..every-1).
   uint8_t evoPasses(int tr) const { return tr >= 0 && tr < kTracks ? evoCnt_[tr] : 0; }
+  uint8_t varPasses(int tr) const { return tr >= 0 && tr < kTracks ? varCnt_[tr] : 0; }
   // Tests only: the state the next planned step of tr plays.
   EvoTrack& evoDebugState(int tr) { return evoAt(tr, evoN_[tr]); }
-
-  // VAR (Project::var, var_gen.h). Passes as for Evolve: every `every` passes the track's state takes its
-  // next generation (varNext, the follow run seed), at the pass end before Evolve mutates. A track step
-  // plays pattern -> VAR (varStep) -> EVO (on VAR's output) -> GEN. Another pattern next (a queued one, a
-  // song slot with another pattern): back to generation 0, the pass count from 0. start() / stop() reset
-  // every state; rewound with the unheard steps; the pattern is never written.
-  // After a VarCfg edit while playing: the unheard steps are planned again with it.
-  void varEdited(uint64_t now, MidiSink& out) { replan(now, out); }
-  // After Capture of track tr (varCapture): replanned, then its state back to generation 0 (n and the pass
-  // count go on).
-  void varClear(uint64_t now, MidiSink& out, int tr);
-  // The state after the heard step of tr (UI, Capture); the reset one while stopped. Valid until the next
-  // call on the sequencer (hold the project lock).
-  const VarTrack& heardVar(int tr) const;
-  // Passes counted towards the next generation of tr (0..every-1).
-  uint8_t varPasses(int tr) const { return tr >= 0 && tr < kTracks ? varCnt_[tr] : 0; }
 
  private:
   enum class State : uint8_t { Stopped, Playing, Paused };
@@ -198,6 +214,14 @@ class Sequencer {
     uint32_t id = 0;
     uint64_t onT = 0;  // the held NoteOn's time: a release must not come before it
   };
+
+  // A tick clock: the time of tick is us + rem / (1000 * bpm) us; the ticks after it run at bpm.
+  struct Anchor {
+    uint64_t us, rem, tick;
+    uint16_t bpm;
+  };
+  // Anchors before the current one (tempo changes whose clocks or steps are still to come), oldest first.
+  static constexpr int kOldAnchors = 4;
 
   struct Sched {  // a scheduled step and the state just before it, to undo it
     uint64_t t;      // step time incl. swing
@@ -224,6 +248,11 @@ class Sequencer {
     bool muteSet;         // the step's pass end started a slot or left the song (mutes written)
     bool held;            // muteHeld_ before
     uint16_t saved;       // savedMute_ before
+    Anchor anchor;                  // the tick clock before (a tempo change among the undone steps is undone)
+    Anchor old[kOldAnchors];        // old_ before
+    uint8_t oldN;
+    uint16_t tempo;        // the step's tempo (p.bpm once it is heard)
+    bool bpmHeld;          // bpmHeld_ before
   };
   static constexpr int kHist = 16;           // covers every scheduled but unheard step
   static_assert((kHist & (kHist - 1)) == 0, "hist ring");
@@ -241,15 +270,23 @@ class Sequencer {
   uint16_t ticks() const { return ticksPerStep(p_.patterns[cur_].res); }
   uint32_t stepUs() const { return 625000u * ticks() / bpm_; }
   uint32_t lookUs() const { return 625000u * kLookTicks / bpm_; }
-  // Time of tick relative to the anchor, in ns*bpm (exact).
-  int64_t span(uint64_t tick) const {
-    return tick >= anchorTick_ ? static_cast<int64_t>((tick - anchorTick_) * kTickNs)
-                               : -static_cast<int64_t>((anchorTick_ - tick) * kTickNs);
+  // Time of tick relative to tick base, in ns*bpm (exact).
+  static int64_t span(uint64_t tick, uint64_t base) {
+    return tick >= base ? static_cast<int64_t>((tick - base) * kTickNs) : -static_cast<int64_t>((base - tick) * kTickNs);
   }
+  // The clock of tick: the current anchor, before it the older anchor it follows (the oldest for earlier
+  // ticks). idx: its old_ index, -1 = the current one.
+  Anchor anchorOf(uint64_t tick, int& idx) const;
   uint64_t tickTime(uint64_t tick) const;
+  // Moves the anchor to tick, keeping every tick's time.
   void reanchor(uint64_t tick);
+  void pushOld();       // the current anchor into old_ (full: the oldest drops)
+  void pruneAnchors();  // drops old anchors only ticks before the next clock and step use
+  // A tempo change at tick (reanchored there): the ticks before it keep their time and tempo.
+  void tempoAt(uint64_t tick, uint16_t bpm);
   void anchorAt(uint64_t now);
   void applyBpm(uint64_t now);
+  uint16_t slotBpm(int slot) const { return slot >= 0 && slot < songLen() ? songBpmClamp(p_.songBpm[slot]) : 0; }
   bool rewind(uint64_t now);
   void scheduleStep(uint64_t now);
   void skipStep(uint64_t now);
@@ -266,8 +303,12 @@ class Sequencer {
   EvoTrack& evoAt(int tr, uint32_t n) { return cold_->evo[tr][n % kEvoRing]; }
   const EvoTrack& evoAt(int tr, uint32_t n) const { return cold_->evo[tr][n % kEvoRing]; }
   void evoResetAll();
-  // The step a track step plays before GEN: the pattern's through VAR, then EVO (pt's step or tmp).
+  // The step a track step plays before GEN: the pattern's through the active MUT mode (pt's step or tmp).
   const Step& evoPick(const Pattern& pt, int tr, int idx, Step& tmp) const;
+  // Track tr's MUT state cleared (no replan): EVO changes, VAR generation 0, older ring states dropped.
+  void mutReset(int tr);
+  // Unheard steps undone without sending (captureLive: any task); their tie releases kept.
+  void replanQuiet(uint64_t now);
   void evoPass();  // endOfPass: counts the pass, mutates the tracks due
   // VAR: generation n of tr in the ring (as Evolve's).
   VarTrack& varAt(int tr, uint32_t n) { return cold_->var[tr][n % kEvoRing]; }
@@ -287,6 +328,11 @@ class Sequencer {
   void synthTransport(uint64_t now, MidiSink& out, uint8_t msg);
   bool internal(int track) const { return track >= 0 && track < kTracks && p_.trackInternal(track); }
   bool expand(const Step& s, int track, const ExpandCtx& ctx, ExpandOut& ex);
+  // TRN of the planned step's song slot for track (0 outside the song and with its Song trn bit off).
+  int songTrn(int track) const {
+    if (songPos_ < 0 || songPos_ >= songLen() || !((p_.songTrnMask >> track) & 1)) return 0;
+    return songTrnClamp(p_.songTrn[songPos_]);
+  }
   // A track's sub-steps per pattern step (mul) and its own step: su us, tps ticks (TrackSpeed).
   struct TrackTiming {
     int mul;
@@ -332,6 +378,7 @@ class Sequencer {
   Sched& hist(int i) { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
   const Sched& hist(int i) const { return cold_->hist[(histHead_ + i) & (kHist - 1)]; }
 
+  uint16_t automationMute_ = 0;
   Project& p_;
   Cold* cold_;
   bool ownCold_;
@@ -361,6 +408,13 @@ class Sequencer {
   uint64_t anchorUs_ = 0;   // time of anchorTick_ is anchorUs_ + anchorRem_ / (1000 * bpm_) us
   uint64_t anchorRem_ = 0;  // < 1000 * bpm_
   uint64_t anchorTick_ = 0;
+  Anchor old_[kOldAnchors];  // see kOldAnchors
+  uint8_t oldN_ = 0;
+  uint16_t projBpm_;    // the project BPM (savedBpm)
+  uint16_t bpmSeen_;    // p.bpm as the sequencer wrote or took it: another value is a BPM edit
+  uint32_t heardSerial_ = 0;  // serial of the heard step: a newly heard one publishes its tempo
+  bool bpmHeld_ = false;  // a slot's BPM holds the live tempo (savedBpm)
+  bool liveBpm_ = false;  // the pending p.bpm write is setLiveBpm's: the project BPM stays
   uint64_t stepTick_ = 0;   // tick of the next step to schedule
   // Ticks since start() to the next step (not pass-relative, not reset by resume): the song clock
   // of the trance gates (Synth 0xF6 5), rewound with the steps.
@@ -386,6 +440,8 @@ class Sequencer {
   EvoView evoView_;               // scratch for evoPass
   uint32_t varN_[kTracks] = {};   // VAR: each track's generation, as the next step to plan finds it
   uint8_t varCnt_[kTracks] = {};  // passes since the last generation
+  uint8_t mutMode_[kTracks] = {};  // the stored MUT mode (mutKey) each track's state is for: mutEdited
+  uint8_t mutKey(int tr) const;
   ExpandOut ex_;  // scratch for scheduleStep: too big for the engine task stack
 };
 

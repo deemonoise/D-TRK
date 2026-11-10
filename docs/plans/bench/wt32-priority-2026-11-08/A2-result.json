@@ -1,0 +1,10 @@
+{
+  "label": "A2",
+  "policy": "A2-paired84",
+  "bin_sha256": "5126a14bf92aa286d841f8908a32865808628a7d7da77376d357529be54d5021",
+  "bytes": 2197424,
+  "wifi_return_seconds_after_upload": 39.9,
+  "project_unchanged": true,
+  "profile_added_bytes": 3768,
+  "last_status": "AUTOPROFILE DONE policy=A2-paired84 validation=A PLACEMENT OK project=TUTU-TUDUTU model_fnv=4363edfc raw_fnv=06a49af7 bytes=66420 seed=0x5eed synthINT=1 seqINT=1 rvbINT=0"
+}
