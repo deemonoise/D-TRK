@@ -523,12 +523,12 @@ void FileScreen::onBack() {
   }
 }
 
-// B + Shift + turn: the previous / next section.
+// A + B (or B + Shift) + turn: retain row versus page-bar focus, as on INST / TRACK / PROJ.
 void FileScreen::onPage(int d) {
   if (midiDlg_.isOpen()) { midiDlg_.onPage(d); return; }
   if (kb_.isOpen() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() || list_.ready())
     return;
-  setSection(section_ + d);
+  setSection(section_ + d, sectionBarSelected());
 }
 
 void FileScreen::onTouch(const TouchEvent& ev) {
@@ -648,30 +648,36 @@ void FileScreen::drawHeader(LGFX_Sprite& s, int y0) {
       return;
     }
     PageBar::draw(s, by, kNames, kSections, section_);
-    const bool focus = section_ == kSecSamples  ? ssel_ == kSwitchRow
-                       : section_ == kSecSystem ? sysList_.barSelected()
-                                                : sel_ == kSectionSel;
-    if (focus) PageBar::drawFocus(s, by);
+    if (sectionBarSelected()) PageBar::drawFocus(s, by);
   }
   s.setTextColor(sd ? kDim : kEditCursor);
   const char* sdText = sd ? "SD OK" : "NO SD CARD";
   s.drawString(sdText, kScreenW - 16 - static_cast<int>(strlen(sdText)) * kCharW, ty);
 }
 
-void FileScreen::setSection(int section) {
+bool FileScreen::sectionBarSelected() const {
+  return section_ == kSecSamples ? ssel_ == kSwitchRow
+         : section_ == kSecSystem ? sysList_.barSelected()
+                                  : sel_ == kSectionSel;
+}
+
+void FileScreen::setSection(int section, bool bar) {
   section_ = (section % kSections + kSections) % kSections;
-  // Focus stays on the switch, so turning the encoder continues in the new section.
+  sysList_.setEdit(false);
   switch (section_) {
     case kSecSamples:
-      ssel_ = kSwitchRow;
+      ssel_ = bar ? kSwitchRow : kImportRow;
       stop_ = 0;
       break;
     case kSecSystem:
       showSystem(false);
-      sysList_.setEdit(false);
-      sysList_.selectBar();
+      if (bar) sysList_.selectBar();
+      else sysList_.setSel(0);
       break;
-    default: sel_ = kSectionSel; break;
+    default:
+      sel_ = bar ? kSectionSel : kSave;
+      if (!enabled(sel_)) moveSel(1);
+      break;
   }
   app_.invalidate();
 }

@@ -91,7 +91,9 @@ class FileScreen : public Screen {
   char* curCursor() { return midiList_ ? midiCur_ : (wavList_ ? wavCur_ : loadCur_); }
   bool listUp();      // to the parent folder; false at the root
   void drawHeader(LGFX_Sprite& s, int y0);
-  void setSection(int section);  // wraps around; the encoder focus goes to the page bar
+  bool sectionBarSelected() const;
+  // Wraps around; bar keeps the page bar selected, otherwise selects the first content row.
+  void setSection(int section, bool bar = true);
   // SYSTEM
   void initSystem();
   void showSystem(bool diagnostics);
