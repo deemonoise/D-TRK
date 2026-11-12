@@ -7,6 +7,22 @@
 
 namespace mt {
 namespace {
+struct LibraryProfile { uint16_t bpm; uint8_t bassPerBar, leadPerBar, arpPerBar; };
+constexpr LibraryProfile kProfiles[9][7] = {
+  {{122,0,0,0},{126,0,0,0},{123,12,4,4},{120,0,0,0},{124,8,8,8},{0,0,0,0},{0,0,0,0},},
+  {{126,0,0,0},{122,0,0,0},{130,12,4,8},{145,12,4,8},{135,6,4,8},{124,8,8,8},{128,16,4,8},},
+  {{138,4,8,8},{143,12,6,8},{150,12,4,8},{145,12,6,8},{134,4,8,8},{0,0,0,0},{0,0,0,0},},
+  {{174,0,0,0},{174,4,4,2},{174,3,2,2},{165,0,0,0},{172,2,4,4},{0,0,0,0},{0,0,0,0},},
+  {{130,0,0,0},{132,0,0,0},{127,0,6,6},{140,2,2,2},{0,0,0,0},{0,0,0,0},{0,0,0,0},},
+  {{90,0,0,0},{80,0,0,0},{140,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},},
+  {{150,0,0,0},{115,0,0,0},{110,0,0,0},{160,6,4,6},{0,0,0,0},{0,0,0,0},{0,0,0,0},},
+  {{70,0,0,0},{65,1,2,2},{60,1,2,2},{0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},},
+  {{110,8,0,0},{118,8,0,0},{90,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0},},
+};
+const LibraryProfile* libraryProfile(int genre, int style) {
+  if (genre < 0 || genre >= 9 || style < 0 || style >= 7 || !kProfiles[genre][style].bpm) return nullptr;
+  return &kProfiles[genre][style];
+}
 uint16_t u16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }
 uint32_t u32(const uint8_t* p) { return u16(p) | (static_cast<uint32_t>(u16(p + 2)) << 16); }
 constexpr uint32_t kHead = 16, kEntry = 64, kEvent = 8;
@@ -58,6 +74,12 @@ bool fitChord(const uint8_t* notes, int n, int root, ScaleType scale, Step& s) {
 }
 }  // namespace
 
+int diceLibraryStyleCount(int genre) {
+  int n = 0;
+  while (libraryProfile(genre, n)) ++n;
+  return n;
+}
+
 int diceCandidateSlot(uint32_t seen, uint32_t random) {
   if (seen <= kDicePhraseCandidates) return static_cast<int>(seen) - 1;
   return random < kDicePhraseCandidates ? static_cast<int>(random) : -1;
@@ -99,9 +121,9 @@ int DicePhraseFeatures::score(DiceRole role, uint8_t bars, uint32_t roleSeed) co
 int DicePhraseFeatures::scoreForStyle(DiceRole role, uint8_t bars, uint32_t roleSeed,
                                       int genre, int style, uint16_t bpm) const {
   const int base = score(role, bars, roleSeed);
-  const DiceRecipe* recipe = diceRecipe(genre, style);
+  const LibraryProfile* recipe = libraryProfile(genre, style);
   if (base == INT_MAX || !recipe) return base;
-  const DiceMusicProfile& music = diceMusicProfile(genre, style);
+  const LibraryProfile& music = *recipe;
   const int k = static_cast<int>(role);
   const int desired = k == 1 ? music.bassPerBar : k == 3 ? music.leadPerBar : k == 4 ? music.arpPerBar : 0;
   int result = base;

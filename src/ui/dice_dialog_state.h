@@ -13,12 +13,12 @@ struct Prefs {
   uint8_t genre = 0, style = 0, variety = mt::kDiceVarietyDefault, scope = kScAll, song = 1;
   uint8_t len = 0;  // index into kLens: 0 = AUTO
   uint8_t target = 0, change = 2, form = 1, feel = 35, density = 1;
-  uint8_t source = 0, clean = 1, fixedSeed = 0, locks = 0;
+  uint8_t variant = mt::kDiceVariantAuto, clean = 1, fixedSeed = 0, locks = 0, keepKey = 0;
   uint32_t seed = 1;
   bool operator!=(const Prefs& o) const {
     return density != o.density || target != o.target || change != o.change || form != o.form || feel != o.feel || genre != o.genre || style != o.style || variety != o.variety || scope != o.scope || song != o.song ||
-           len != o.len || source != o.source || clean != o.clean || fixedSeed != o.fixedSeed ||
-           locks != o.locks || seed != o.seed;
+           len != o.len || variant != o.variant || clean != o.clean || fixedSeed != o.fixedSeed ||
+           locks != o.locks || keepKey != o.keepKey || seed != o.seed;
   }
 };
 inline uint8_t clampForm(uint8_t form) {
@@ -50,11 +50,35 @@ inline mt::DiceOpts options(const Prefs& prefs) {
   o.len = kLens[prefs.len % kLenCount];
   o.layers = scopeLayers[prefs.scope % kScopes];
   if (patterns(prefs) && prefs.song) o.layers |= mt::kDiceSong;
-  o.source = static_cast<mt::DiceSource>(prefs.source);
+  o.variant = prefs.variant <= mt::kDiceVariantAuto ? prefs.variant : mt::kDiceVariantAuto;
   o.clean = prefs.clean != 0;
   o.lockMask = prefs.locks;
   o.seed = prefs.fixedSeed ? prefs.seed : 0;
+  o.keepKey = prefs.keepKey != 0;
   return o;
+}
+struct LastRoll {
+  uint8_t genre=255,style=255,variant=255;
+  void remember(const Prefs& p,uint8_t selected) {genre=p.genre;style=p.style;variant=selected;}
+  uint8_t avoid(const Prefs& p) const {return !p.fixedSeed && p.genre==genre && p.style==style ? variant : 255;}
+};
+// Audition the generated MAIN; partial edits stay on an existing generated section.
+inline int audition(const mt::DiceOpts& o,uint8_t applied,int current,int first) {
+  if(!(applied&mt::kDicePattern)) return -1;
+  const bool full=(o.targetMask&63)==63 && o.change==mt::DiceChange::Wild;
+  if(!full && current>=first && current<first+mt::dicePatternCount(o)) return -1;
+  return first+(o.form==mt::DiceForm::Classic ? 0 : 1);
+}
+inline void rollSummary(char* out,size_t size,uint8_t layers,uint8_t root,uint8_t scale,uint32_t seed,bool fixed,bool partial,mt::DiceChange change=mt::DiceChange::Wild) {
+  static const char* roots[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+  if(!(layers&mt::kDicePattern) && (layers&mt::kDiceSounds)) {
+    snprintf(out,size,"SOUNDS ONLY #%lu%s",static_cast<unsigned long>(seed),partial ? " PARTIAL" : "");return;
+  }
+  if((layers&mt::kDicePattern) && change==mt::DiceChange::Subtle) {
+    snprintf(out,size,"DYNAMICS ONLY #%lu",static_cast<unsigned long>(seed));return;
+  }
+  const char* scope=(layers&mt::kDiceAll)==mt::kDiceAll ? "ALL" : (layers&mt::kDicePattern) ? "NOTES" : "KEY/TEMPO";
+  snprintf(out,size,"%s %s %s %s #%lu%s",change==mt::DiceChange::Normal ? "BLEND" : fixed ? "FIXED" : "NEW",scope,roots[root%12],mt::scaleName(static_cast<mt::ScaleType>(scale)),static_cast<unsigned long>(seed),partial ? " PARTIAL" : "");
 }
 struct Range {
   int first = -1;

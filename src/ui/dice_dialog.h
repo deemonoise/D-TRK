@@ -13,16 +13,8 @@ namespace ui {
 
 class App;
 
-// The DICE window over PROJ (header DICE / a long encoder press), fills the work area: Genre, Style
-// (of the genre; a new genre starts at its first style), Variety 0..100 (Shift x10), Length AUTO / 16 / 32 / 64 / 128
-// (AUTO = the style's length), Scope ALL / TEMPO
-// / SOUNDS / PATTERNS, Song ON / OFF, source BUILTIN / MIDI / HYBRID, Clean, seed and role locks.
-// Target/Change/Form/Feel and generation settings scroll above the ROLL / CLOSE footer.
-// No history snapshots are retained after a roll.
-// ROLL keeps the window open (NEW seed mode draws again; FIXED repeats the displayed seed); before patterns with notes are written it
-// asks OVERWRITE Pxx-Pyy? once per target range while the window stays open. B / a long press closes. The settings are device
-// settings (NVS, App::saveSettingsIdle). The Param edits run under engine::lockProject(): they only
-// change members.
+// Guide groups/styles, 16 named variants, six dynamic track roles and scoped generation.
+// ROLL asks once before replacing the displayed pattern range. Settings persist in NVS.
 class DiceDialog {
  public:
   struct Host {
@@ -33,7 +25,7 @@ class DiceDialog {
   void loadPrefs();  // NVS, at boot
   void savePrefs();  // NVS: the changed settings (App::saveSettingsIdle: stopped, idle)
   void open();
-  void usedSeed(uint32_t seed);  // remember the successful roll for FIXED/replay
+  void usedSeed(uint32_t seed,uint8_t variant);  // remember seed and AUTO selection
   bool isOpen() const { return open_; }
   void close();
   void onInput(const hw::InputEvent& ev);
@@ -42,7 +34,7 @@ class DiceDialog {
 
  private:
   enum Row : int {
-    kGenre, kStyle, kTarget, kChange, kForm, kFeel, kDensity, kVariety, kLength, kScope, kSong, kSource, kClean, kSeedMode, kSeed,
+    kGenre, kStyle, kVariant, kKey, kTarget, kChange, kForm, kFeel, kDensity, kVariety, kLength, kScope, kSong, kClean, kSeedMode, kSeed,
     kLockDrums, kLockBass, kLockChords, kLockLead, kLockArp, kLockFx,
     kRoll, kClose, kRows
   };
@@ -61,6 +53,7 @@ class DiceDialog {
   Param params_[kRows];
   ParamList list_{kAreaY + kHeaderH};
   Prefs pr_, saved_;
+  dice_dialog::LastRoll last_;
   dice_dialog::Range confirmed_;  // full range answered or rolled in this session
   int y0_ = kAreaY;
   bool open_ = false;

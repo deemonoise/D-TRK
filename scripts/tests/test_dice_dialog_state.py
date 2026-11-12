@@ -34,15 +34,15 @@ int main() {
  for(int scope=0;scope<kScopes;++scope){p=Prefs();p.scope=scope;auto o=options(p);
   assert(o.layers==masks[scope]);assert(o.targetMask==63);assert(o.form==mt::DiceForm::Develop);
   assert(o.change==mt::DiceChange::Wild && o.seed==0 && o.root==-1);
-  assert(o.groove==35 && o.density==mt::DiceDensity::Normal && o.variety==30);
-  assert(o.len==0 && o.source==mt::DiceSource::Builtin && o.clean && !o.lockMask);
+  assert(o.groove==35 && o.density==mt::DiceDensity::Normal && o.variety==35);
+  assert(o.len==0 && o.variant==mt::kDiceVariantAuto && o.clean && !o.lockMask);
  }
  p=Prefs();p.genre=3;p.style=2;p.target=3;p.change=0;p.form=2;p.feel=67;p.density=2;
- p.source=1;p.clean=0;p.locks=17;p.fixedSeed=1;p.seed=345;p.len=3;p.song=0;p.variety=80;
+ p.variant=15;p.clean=0;p.locks=17;p.fixedSeed=1;p.seed=345;p.len=3;p.song=0;p.variety=80;
  auto o=options(p);
  assert(o.genre==3 && o.style==2 && o.targetMask==4 && o.change==mt::DiceChange::Subtle);
  assert(o.form==mt::DiceForm::Arrange && o.groove==67 && o.density==mt::DiceDensity::Busy);
- assert(o.source==mt::DiceSource::Midi && !o.clean && o.lockMask==17 && o.seed==345);
+ assert(o.variant==15 && !o.clean && o.lockMask==17 && o.seed==345);
  assert(o.len==64 && o.layers==mt::kDiceAll && o.variety==80);
  p.scope=kScTempo;o=options(p);assert(o.targetMask==63 && o.change==mt::DiceChange::Wild);
  p=Prefs();p.form=2;o=options(p);auto six=range(o,15);
@@ -61,6 +61,23 @@ int main() {
  Range confirmed;assert((confirmed!=Range{0,4}));confirmed={0,4};
  assert((confirmed==Range{0,4}));assert((confirmed!=Range{0,6}));
  assert((confirmed!=Range{1,4}));
+ mt::DiceOpts auditionOpts;
+ assert(audition(auditionOpts,mt::kDicePattern,15,0)==1);
+ assert(audition(auditionOpts,mt::kDicePattern,0,0)==1);
+ auditionOpts.form=mt::DiceForm::Classic;
+ assert(audition(auditionOpts,mt::kDicePattern,15,0)==0);
+ auditionOpts.targetMask=2;
+ assert(audition(auditionOpts,mt::kDicePattern,2,0)==-1);
+ assert(audition(auditionOpts,mt::kDicePattern,15,0)==0);
+ assert(audition(auditionOpts,mt::kDiceSounds,15,0)==-1);
+ p=Prefs();assert(!options(p).keepKey);p.keepKey=1;assert(options(p).keepKey);
+ rollSummary(label,sizeof(label),mt::kDiceSounds,9,2,123,false,false);assert(strstr(label,"SOUNDS ONLY") && !strstr(label,"NOTES"));
+ rollSummary(label,sizeof(label),mt::kDiceAll,9,2,123,false,false);assert(strstr(label,"NEW ALL") && strstr(label,"Minor"));
+ rollSummary(label,sizeof(label),mt::kDicePattern,9,2,123,true,false);assert(strstr(label,"FIXED NOTES"));
+ rollSummary(label,sizeof(label),mt::kDicePattern,9,2,123,false,false,mt::DiceChange::Subtle);assert(strstr(label,"DYNAMICS ONLY"));
+ LastRoll last;p=Prefs();assert(last.avoid(p)==255);last.remember(p,3);assert(last.avoid(p)==3);
+ p.fixedSeed=1;assert(last.avoid(p)==255);p.fixedSeed=0;++p.style;assert(last.avoid(p)==255);
+
 }
 '''
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,7 +86,7 @@ int main() {
             command = ["clang++", "-std=c++17", "-fsanitize=address,undefined",
                        "-ffunction-sections", "-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections",
                        "-I" + str(ROOT / "src"), "-I" + str(ROOT / "lib/core/src"),
-                       str(folder / "test.cpp"), str(ROOT / "lib/core/src/dice.cpp"),
+                       str(folder / "test.cpp"), str(ROOT / "lib/core/src/dice.cpp"), str(ROOT / "lib/core/src/scale.cpp"),
                        "-o", str(folder / "test")]
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

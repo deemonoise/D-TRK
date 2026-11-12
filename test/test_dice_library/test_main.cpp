@@ -115,8 +115,7 @@ void test_style_scoring_preserves_legacy_and_checks_tempo_octaves(){
 }
 void test_style_foreground_scoring_prefers_profile_density(){
  for(DiceRole role:{DiceRole::Lead,DiceRole::Arp}){
-  const DiceMusicProfile& music=diceMusicProfile(2,0);
-  const int desired=role==DiceRole::Lead?music.leadPerBar:music.arpPerBar;
+  const int desired=8;  // DML1 UPLIFT phrase profile (independent of the guide)
   TEST_ASSERT_GREATER_THAN(0,desired);
   DicePhraseFeatures fitting,crowded;
   for(int i=0;i<desired;++i)fitting.add({static_cast<uint16_t>(i*384/desired),18,72,100,255});

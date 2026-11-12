@@ -129,11 +129,11 @@ void test_partial_and_nonpattern_dice_rolls_preserve_names() {
     for(int i=0;i<kPatterns;++i){char name[17];snprintf(name,sizeof(name),"Section-%02d",i+1);TEST_ASSERT_EQUAL_STRING(name,p.patterns[i].name);}
   }
 }
-void test_dice_role_lock_and_failed_midi_keep_correct_name_undo() {
-  static DiceSnap snap;handwrittenNames();DiceOpts o;o.form=DiceForm::Arrange;o.lockMask=4;
+void test_dice_noop_keeps_correct_name_undo() {
+  static DiceSnap snap;handwrittenNames();DiceOpts o;o.form=DiceForm::Arrange;
   diceRoll(p,o,15,777,snap);TEST_ASSERT_EQUAL_STRING("BUILD",p.patterns[3].name);
-  o.source=DiceSource::Midi;
-  auto result=diceRoll(p,o,7,778,snap,0,nullptr);TEST_ASSERT_EQUAL(0,result.midiMask);
+  o.lockMask=63;
+  auto result=diceRoll(p,o,7,778,snap);TEST_ASSERT_EQUAL(0,result.written);
   TEST_ASSERT_EQUAL_STRING("BUILD",p.patterns[3].name);
   TEST_ASSERT_TRUE(diceUndo(p,snap));
   for(int i=0;i<kPatterns;++i){char name[17];snprintf(name,sizeof(name),"Section-%02d",i+1);TEST_ASSERT_EQUAL_STRING(name,p.patterns[i].name);}
@@ -148,5 +148,5 @@ int main(){UNITY_BEGIN();
  RUN_TEST(test_pattern_copy_clear_and_undo_include_name);
  RUN_TEST(test_dice_names_each_form_and_undo_restores_original_labels);
  RUN_TEST(test_partial_and_nonpattern_dice_rolls_preserve_names);
- RUN_TEST(test_dice_role_lock_and_failed_midi_keep_correct_name_undo);
+ RUN_TEST(test_dice_noop_keeps_correct_name_undo);
  return UNITY_END();}
