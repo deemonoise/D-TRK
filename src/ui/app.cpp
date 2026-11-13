@@ -1598,8 +1598,10 @@ void App::drawBarrier(int y0) {
 
 void App::draw() {
   if (!spr_) return;
+  spr_->setFont(font());  // includes a theme loaded from NVS or changed since the last frame
   spr_->fillScreen(kBg);
   drawStatus();
+  if (opalStyle()) spr_->drawFastHLine(0, kStatusH - 1, kScreenW, kLine);
   spr_->setClipRect(0, kAreaY, kScreenW, kAreaH);
   const bool xy = xyMode();
   if (versionBarrier()) drawBarrier(kAreaY);
@@ -1787,13 +1789,17 @@ void App::drawTabs() {
   static const char* const kNames[] = {"GRID", "TRACK", "INST", "MIX", "BANK", "SONG", "PROJ", "FILE"};
   static_assert(sizeof(kNames) / sizeof(kNames[0]) == static_cast<int>(Tab::Count), "tab names");
   spr_->fillRect(0, kTabY, kScreenW, kTabH, kStatusBg);
+  if (opalStyle()) spr_->drawFastHLine(0, kTabY, kScreenW, kLine);
   for (int i = 0; i < static_cast<int>(Tab::Count); ++i) {
     const int x = i * kTabW;
     const bool active = i == static_cast<int>(tab_);
-    if (active) spr_->fillRect(x, kTabY, kTabW, kTabH, kPlayBg);
-    if (i > 0) spr_->drawFastVLine(x, kTabY + 4, kTabH - 8, kDim);
+    if (active) {
+      spr_->fillRect(x, kTabY, kTabW, kTabH, opalStyle() ? kSelBg : kPlayBg);
+      if (opalStyle()) spr_->drawFastHLine(x + 4, kTabY, kTabW - 8, kCursor);
+    }
+    if (i > 0 && !opalStyle()) spr_->drawFastVLine(x, kTabY + 4, kTabH - 8, kDim);
     const char* label = kNames[i];
-    uint16_t color = !screens_[i] ? kDim : (active ? kCursor : kText);
+    uint16_t color = !screens_[i] ? kDim : (active ? kCursor : (opalStyle() ? kDim : kText));
     if (shift_ && i == static_cast<int>(Tab::Count) - 1) {  // SHIFT indicator over the last tab
       label = "SHIFT";
       color = kCursor;

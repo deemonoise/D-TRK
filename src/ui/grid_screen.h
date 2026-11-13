@@ -1,6 +1,7 @@
 #pragma once
 #include "edit_ops.h"
 #include "grid_context.h"
+#include "grid_overview_layout.h"
 #include "automation.h"
 #include "quantize.h"
 #include "pattern_tools.h"
@@ -69,14 +70,16 @@ class GridScreen : public Screen {
   static constexpr int kRowH = 16;
   static constexpr int kNumW = 32;
   static constexpr int kColW = 56;     // Overview track column
+  static constexpr int kInspectorH = 2 * kRowH;
   static constexpr int kOverviewTracks = mt::kTrackButtons;  // overview columns: one half of the tracks
   static_assert(kNumW + kOverviewTracks * kColW <= kScreenW, "Overview columns must fit");
   static_assert(mt::kTracks % kOverviewTracks == 0, "halves must tile the tracks");
+  static_assert(GridOverviewLayout::kWidth == kScreenW && GridOverviewLayout::kTracks == kOverviewTracks &&
+                GridOverviewLayout::kGutter == kNumW, "Overview geometry must match the screen");
   static constexpr int kDetW = kScreenW - kNumW;  // Detail: the current track only
   static constexpr int kFieldW = 32;   // Detail field pitch: kFields fill kDetW
   static_assert(kFields * kFieldW <= kDetW, "Detail fields must fit");
-  static constexpr int kKbH = 48;      // mini keyboard height
-  static constexpr int kKeyW = 40;
+  static constexpr int kKbH = 48;      // drum lane pad height
   // Lane pad (drum track): 2 rows of 8, lanes 1-8 on top, 9-16 below; 60 x 24 px buttons.
   static constexpr int kPadCols = 8;
   static constexpr int kPadW = kScreenW / kPadCols;
@@ -177,9 +180,19 @@ class GridScreen : public Screen {
   bool drumAt(int tr) const;
   bool drum() const { return drumAt(track()); }
   // Not while A holds the edit: the grid keeps its rows.
-  bool keyboardShown() const { return edit_ && !holdEdit_ && curField_ == kNote && !drum(); }
-  bool padShown() const { return edit_ && !holdEdit_ && curField_ == kNote && drum(); }  // lane pad instead of the keyboard
+  bool padShown() const { return edit_ && !holdEdit_ && curField_ == kNote && drum(); }
+  GridOverviewLayout overviewLayout() const { return {edit_ ? track() - firstTrack() : -1}; }
+  bool inspectorShown() const {
+    return view_ == View::Overview && edit_ && !holdEdit_ && !padShown();
+  }
+  int focusField(int column) const { return column < 2 ? column : kFx1 + 2 * focusFx_ + column - 2; }
+  void drawOverviewFocus(LGFX_Sprite& s, int x, int y, const mt::Step& step, bool lit, bool laneCursor);
+  void drawInspector(LGFX_Sprite& s, int y);
+  void inspectorTouch(const TouchEvent& ev);
+  void focusFieldSelect(int field);
   void toggleLane(int lane);
+  void editLane(int delta);           // A + turn: move one added hit over the original lane mask
+  void finishLaneEdit(bool cancel);   // A up commits; B while A is held restores this gesture
   // Roll: Shift + turn moves the pitch (KIT: the lane); A places the row's note (KIT: toggles the lane),
   // A + turn sets its GAT value (10 per detent); one undo snapshot per A press.
   void rollMove(int d);
@@ -190,7 +203,6 @@ class GridScreen : public Screen {
   void drawRoll(LGFX_Sprite& s, int y0, int h);
   void drawOverview(LGFX_Sprite& s, int gridY);
   void drawDetail(LGFX_Sprite& s, int gridY);
-  void drawKeyboard(LGFX_Sprite& s, int y);
   // Lane mask as squares: 2 rows of 8 in both modes (Overview column; compact: Detail NOTE field).
   void drawMask(LGFX_Sprite& s, int x, int y, uint16_t mask, bool audible, int cursorLane, bool compact);
   void drawPad(LGFX_Sprite& s, int y);
@@ -204,6 +216,7 @@ class GridScreen : public Screen {
   int rows_ = (kAreaH - kNamesH) / kRowH;
   int curStep_ = 0;
   int curField_ = kNote;
+  int focusFx_ = 0;  // FX pair shown in the expanded Overview column
   int top_ = 0;
   View view_ = View::Overview;
   bool edit_ = false;
@@ -222,6 +235,9 @@ class GridScreen : public Screen {
   uint32_t lastMoveMs_ = 0;
   uint8_t lastNote_[mt::kTracks];  // set to 60 in the constructor
   int lane_ = 0;  // drum track, NOTE field in edit: the lane under the encoder (Roll: the cursor row)
+  bool laneHeld_ = false, laneHadUndo_ = false;
+  int lanePat_ = -1, laneTr_ = 0, laneStep_ = 0;
+  mt::Step laneOrig_{};  // before this A gesture; independent of the whole edit session's cellOrig_
   int rollNote_ = 60;   // Roll: the pitch of the cursor row
   int rollLow_ = 52;    // Roll: the lowest note on screen
   int rollLeft_ = 0;    // Roll: the first step on screen (a page of kRollCols), set by draw

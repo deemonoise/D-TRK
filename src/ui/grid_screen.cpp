@@ -76,7 +76,8 @@ int GridScreen::track() const { return app_.curTrack(); }
 bool GridScreen::drumAt(int tr) const { return app_.project().trackIsDrum(tr); }
 
 int GridScreen::rowsFor(int h) const {
-  return (h - kNamesH - (keyboardShown() || padShown() ? kKbH : 0)) / kRowH;
+  const int footer = padShown() ? kKbH : (inspectorShown() ? kInspectorH : 0);
+  return (h - kNamesH - footer) / kRowH;
 }
 
 void GridScreen::onEnter() {
@@ -90,12 +91,14 @@ void GridScreen::onEnter() {
 
 // App releases the PERF effects and keeps / frees the buffer.
 void GridScreen::onLeave() {
+  finishLaneEdit(false);
   fill_.cancel();
   transpose_.cancel();
   action_.cancel();
 }
 
 void GridScreen::onProjectReplaced() {
+  laneHeld_ = false;
   fill_.abandon();
   transpose_.cancel();
   action_.cancel();
@@ -103,12 +106,11 @@ void GridScreen::onProjectReplaced() {
 
 // The Fill dialog keeps editing the pattern it was opened for.
 void GridScreen::onPatternChange() {
+  setEdit(false);
   autoAnchor_ = -1;
   recLoop_ = UINT32_MAX;  // REC hits on the new pattern get their own undo snapshot
   curStep_ = 0;
   top_ = 0;
-  edit_ = false;
-  holdEdit_ = false;
   editPushed_ = false;
   rollHeld_ = false;
   selOn_ = false;
@@ -130,6 +132,7 @@ void GridScreen::selFollow() {
 }
 
 void GridScreen::cursorMoved() {
+  finishLaneEdit(false);
   fxCycled_ = false;
   if (edit_) snapCell();
   selFollow();
@@ -157,6 +160,7 @@ void GridScreen::moveField(int d) {
 }
 
 void GridScreen::setEdit(bool on) {
+  if (!on) finishLaneEdit(false);
   if (on) {  // edit is exclusive with the live modes
     setRec(false);
     setPerf(false);
@@ -167,9 +171,12 @@ void GridScreen::setEdit(bool on) {
     app_.toast(kFieldNames[curField_]);
   }
   edit_ = on;
-  if (!on) holdEdit_ = false;
+  if (!on) {
+    holdEdit_ = false;
+    if (view_ == View::Overview) curField_ = kNote;
+  }
   if (on) snapCell();
-  needVisible_ = true;  // the keyboard changes the row count
+  needVisible_ = true;  // the pad / inspector changes the row count
 }
 
 void GridScreen::snapCell() {
@@ -283,6 +290,49 @@ void GridScreen::toggleLane(int lane) {
     if (const mt::Instrument* k = app_.project().kitOf(track())) previewNote(k->kit[lane].note);
 }
 
+void GridScreen::editLane(int delta) {
+  if (!delta) return;
+  const bool first = !laneHeld_;
+  if (first) {
+    laneHeld_ = true;
+    laneHadUndo_ = editPushed_;
+    lanePat_ = app_.editPattern();
+    laneTr_ = track();
+    laneStep_ = cur();
+    laneOrig_ = pat().steps[laneTr_][laneStep_];
+  }
+  const int next = clampi(lane_ + delta, 0, mt::kKitLanes - 1);
+  if (!first && next == lane_) return;
+  lane_ = next;
+  mt::Step st = laneOrig_;  // every turn replaces only the hit added by this A gesture
+  if (!st.hasNote()) {
+    st.note = 0;
+    mt::setLaneMask(st, 0);
+  }
+  mt::setLane(st, lane_, true);
+  if (memcmp(&st, &pat().steps[laneTr_][laneStep_], sizeof(st)) != 0) writeStep(st);
+  if (const mt::Instrument* k = app_.project().kitOf(track())) previewNote(k->kit[lane_].note);
+}
+
+void GridScreen::finishLaneEdit(bool cancel) {
+  if (!laneHeld_) return;
+  laneHeld_ = false;
+  mt::Step& st = app_.project().patterns[lanePat_].steps[laneTr_][laneStep_];
+  const bool changed = memcmp(&st, &laneOrig_, sizeof(st)) != 0;
+  if (cancel && changed) {
+    engine::lockProject();
+    st = laneOrig_;
+    engine::unlockProject();
+    engine::post(engine::Cmd::ReleaseTies);
+    app_.markDirty();
+  }
+  if (!laneHadUndo_ && editPushed_ && (cancel || !changed)) {
+    app_.dropUndo();  // a cancelled gesture, or one that returned to the original mask
+    editPushed_ = false;
+  }
+  if (cancel) app_.toast("CANCEL");
+}
+
 uint8_t GridScreen::degreeNote(int button, bool octaveUp, int ref) const {
   const mt::Project& p = app_.project();
   const int base = ref / 12 * 12 + (octaveUp ? 12 : 0);
@@ -299,9 +349,8 @@ void GridScreen::enterDegree(int button, bool octaveUp) {
 
 void GridScreen::setRec(bool on) {
   if (on) {
+    setEdit(false);
     setPerf(false);
-    edit_ = false;
-    holdEdit_ = false;
     recLoop_ = UINT32_MAX;
   }
   rec_ = on;
@@ -310,10 +359,9 @@ void GridScreen::setRec(bool on) {
 
 void GridScreen::setPerf(bool on) {
   if (on) {
+    setEdit(false);
     rec_ = false;
     app_.syncRecordArm();
-    edit_ = false;
-    holdEdit_ = false;
   }
   app_.perf().setOn(on);
 }
@@ -560,7 +608,10 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
   switch (ev.type) {
     case InputType::EncTurn:
       if (app_.perf().turn(ev.delta, ev.shift)) break;  // the last pressed effect's depth; the cursor stays
-      if (edit_) editTurn(ev.delta, ev.shift);
+      if (edit_ && view_ == View::Overview && ev.shift) {
+        const int field = ((curField_ + ev.delta) % kFields + kFields) % kFields;
+        if (field != curField_) focusFieldSelect(field);
+      } else if (edit_) editTurn(ev.delta, ev.shift);
       else if (!ev.shift) moveStep(ev.delta);
       else if (roll()) rollMove(ev.delta);
       else if (detail()) moveField(ev.delta);
@@ -588,16 +639,21 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
         setEdit(true);
         holdEdit_ = true;
       }
-      editTurn(ev.delta, ev.shift);
+      if (drum() && curField_ == kNote) editLane(ev.delta);
+      else editTurn(ev.delta, ev.shift);
       break;
     case InputType::EditEnd:
+      finishLaneEdit(false);
       if (holdEdit_ && edit_) setEdit(false);
       holdEdit_ = false;
       if (rollHeld_) editPushed_ = false;  // the next A press is its own undo step
       rollHeld_ = false;
       break;
-    case InputType::EditCancel:  // B while A + turn edits: A + B clears (the edit mode entered by A ends)
-      if (edit_ || rollHeld_) {
+    case InputType::EditCancel:  // drum lane gesture: restore; other A edits retain the clear chord
+      if (laneHeld_) {
+        finishLaneEdit(true);
+        if (holdEdit_) setEdit(false);
+      } else if (edit_ || rollHeld_) {
         chordClear();
         if (holdEdit_) setEdit(false);
       }
@@ -633,7 +689,8 @@ bool GridScreen::chordClear() {
   return true;
 }
 
-// A tap: empty step = the track's last note (drum: the lane under the cursor), a note step = hear it.
+// A tap: melodic empty step = last note, a note step = hear it. Drums: add the last selected lane;
+// in NOTE edit toggle it, keeping the editor open.
 // Shift + A does nothing here (clear is hold A + B). In edit, an entered note moves the cursor by Edit
 // step like a track button.
 void GridScreen::onATap(bool shift) {
@@ -654,12 +711,10 @@ void GridScreen::onATap(bool shift) {
   }
   const mt::Step& st = pat().steps[tr][step];
   if (drum()) {
-    if (!st.hasNote()) {
+    if ((edit_ && curField_ == kNote) || !st.hasNote() || !mt::laneOn(st, lane_)) {
       toggleLane(lane_);  // the cursor stays, as with a track button
     } else if (const mt::Instrument* k = app_.project().kitOf(tr)) {
-      int lane = lane_;  // the cursor lane, else the first lane of the step
-      for (int l = 0; !mt::laneOn(st, lane) && l < mt::kKitLanes; ++l) lane = l;
-      if (mt::laneOn(st, lane)) previewNote(k->kit[lane].note);
+      previewNote(k->kit[lane_].note);
     }
     return;
   }
@@ -735,10 +790,11 @@ bool GridScreen::hit(int x, int y, int& step, int& tr, int& field) const {
   step = top_ + row;
   if (step >= len()) return false;
   if (!detail()) {
-    const int col = (x - kNumW) / kColW;
-    if (col >= kOverviewTracks) return false;
+    const auto layout = overviewLayout();
+    const int col = layout.columnAt(x);
+    if (col < 0) return false;
     tr = firstTrack() + col;
-    field = kNote;
+    field = col == layout.focus ? focusField((x - layout.x(col)) / kFieldW) : kNote;
     return true;
   }
   tr = track();
@@ -762,6 +818,10 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     rollTouch(ev);
     return;
   }
+  if (inspectorShown() && ev.y >= y0_ + h_ - kInspectorH) {
+    inspectorTouch(ev);
+    return;
+  }
   if (ev.type == TouchType::Drag) {
     const int n = len();
     const int maxTop = n > rows_ ? n - rows_ : 0;
@@ -782,21 +842,11 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     return;
   }
 
-  // Mini keyboard.
-  if (keyboardShown() && ev.y >= y0_ + h_ - kKbH) {
-    if (ev.type != TouchType::Tap) return;
-    const mt::Step& st = pat().steps[track()][curStep_];
-    const int base = ((st.hasNote() ? st.note : lastNote_[track()]) / 12) * 12;
-    const int n = base + clampi(ev.x / kKeyW, 0, 11);
-    if (n <= 127) setNote(static_cast<uint8_t>(n));
-    return;
-  }
-
   // Track names: mute, Shift = solo. REC: picks the track to record into (the buttons are notes).
   if (ev.y < y0_ + kNamesH) {
     if (ev.type != TouchType::Tap || ev.x < kNumW) return;
-    const int col = (ev.x - kNumW) / kColW;
-    if (!detail() && col >= kOverviewTracks) return;
+    const int col = overviewLayout().columnAt(ev.x);
+    if (!detail() && col < 0) return;
     const int tr = detail() ? track() : firstTrack() + col;
     if (rec_ && !app_.shift()) {
       app_.setCurTrack(tr);
@@ -818,7 +868,7 @@ void GridScreen::onTouch(const TouchEvent& ev) {
   auto moveTo = [&]() {
     curStep_ = step;
     app_.setCurTrack(tr);
-    curField_ = field;
+    curField_ = detail() ? field : kNote;
     cursorMoved();
   };
 
@@ -842,6 +892,10 @@ void GridScreen::onTouch(const TouchEvent& ev) {
     return;
   }
   selOn_ = false;
+  if (view_ == View::Overview && edit_ && step == curStep_ && tr == track() && field != curField_) {
+    focusFieldSelect(field);
+    return;
+  }
   if (same) {
     setEdit(!edit_);
   } else {
@@ -1213,7 +1267,7 @@ void GridScreen::draw(LGFX_Sprite& s, int y0, int h) {
   if (detail()) drawDetail(s, gridY);
   else drawOverview(s, gridY);
   if (padShown()) drawPad(s, y0 + h - kKbH);
-  else if (keyboardShown()) drawKeyboard(s, y0 + h - kKbH);
+  else if (inspectorShown()) drawInspector(s, y0 + h - kInspectorH);
 }
 
 // Piano roll of the current track: step numbers on top, keys (KIT: lane names) on the left, a row per
@@ -1393,6 +1447,7 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   const engine::Status& st = app_.status();
   const mt::Pattern& pt = pat();
   const int n = len();
+  const auto layout = overviewLayout();
   char buf[12];
 
   // Header: the visible half over the step numbers, track names coloured by mute/solo. The PERF
@@ -1411,11 +1466,22 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
   for (int col = 0; col < kOverviewTracks; ++col) {
     const int tr = firstTrack() + col;
     const mt::TrackCfg& t = p.tracks[tr];
-    if (kNumW + col * kColW + 4 < badgeW) continue;
+    const int x = layout.x(col), w = layout.width(col);
+    if (x + 4 < badgeW) continue;
     s.setTextColor(t.solo ? kCursor : (p.trackAudible(tr) ? kText : kDim));
-    s.drawString(t.name, kNumW + col * kColW + 4, gridY - kNamesH);
+    const int chars = (w - 4) / kCharW - (p.genOn(tr) ? 1 : 0);
+    snprintf(buf, sizeof(buf), "%.*s", col == layout.focus ? 3 : chars, t.name);
+    s.drawString(buf, x + 4, gridY - kNamesH);
+    if (col == layout.focus) {
+      s.setTextColor(kDim);
+      s.drawString("VEL", x + kFieldW + 4, gridY - kNamesH);
+      snprintf(buf, sizeof(buf), "FX%d", focusFx_ + 1);
+      s.drawString(buf, x + 2 * kFieldW + 4, gridY - kNamesH);
+    }
+    if (opalStyle() && tr == track())
+      s.drawFastHLine(x + 4, gridY - 2, w - 8, kCursor);
     if (p.genOn(tr)) {  // the track generator plays its notes
-      const int gx = kNumW + (col + 1) * kColW - kCharW - 1;
+      const int gx = x + w - kCharW - 1;
       s.fillRect(gx - 1, gridY - kNamesH, kCharW + 1, kNamesH, kBg);
       s.setTextColor(kCursor);
       s.drawString("G", gx, gridY - kNamesH);
@@ -1436,25 +1502,36 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
     for (int col = 0; col < kOverviewTracks; ++col) {
       const int tr = firstTrack() + col;
       const mt::Step& c = pt.steps[tr][step];
-      const int x = kNumW + col * kColW;
-      if (selected(tr, step)) s.fillRect(x, y, kColW, kRowH, kSelBg);
+      const int x = layout.x(col), w = layout.width(col);
+      if (selected(tr, step)) s.fillRect(x, y, w, kRowH, kSelBg);
+      if (opalStyle()) s.drawFastVLine(x, y, kRowH, kLine);
       // Past the track's own length: never played, drawn grey; a line marks where it loops.
       const uint8_t tl = pt.trackLen[tr];
       const bool past = tl && tl < n && step >= tl;
-      if (tl && tl < n && step == tl) s.drawFastHLine(x, y, kColW, kCursor);
+      if (tl && tl < n && step == tl) s.drawFastHLine(x, y, w, kCursor);
       const bool lit = p.trackAudible(tr) && !past;
       const bool drumTr = drumAt(tr);
-      if (drumTr && c.hasNote()) {
-        drawMask(s, x, y, mt::laneMask(c), lit, -1, false);
+      const bool laneCur = edit_ && curField_ == kNote && step == curStep_ && tr == track();
+      if (col == layout.focus) {
+        drawOverviewFocus(s, x, y, c, lit, laneCur);
+        if (step == curStep_) {
+          const int f = curField_ < kFx1 ? curField_ : 2 + (curField_ - kFx1) % 2;
+          s.drawRect(x + f * kFieldW, y, kFieldW, kRowH, kEditCursor);
+        }
+        continue;
+      }
+      if (drumTr && (c.hasNote() || laneCur)) {
+        drawMask(s, x, y, c.hasNote() ? mt::laneMask(c) : 0, lit, laneCur ? lane_ : -1, w < kColW);
       } else {
         char nn[4];
         mt::noteName(c.note, nn);
-        s.setTextColor(c.hasNote() && lit ? kText : kDim);
+        if (opalStyle() && c.note == mt::kNoteEmpty) snprintf(nn, sizeof(nn), ".");
+        s.setTextColor(c.hasNote() && lit ? (opalStyle() && tr == track() ? kCursor : kText) : kDim);
         s.drawString(nn, x + 4, y);
       }
       if (c.hasNote() && !drumTr) {
         const uint8_t vel = c.vel ? c.vel : p.tracks[tr].defVel;
-        s.fillRect(x + 32, y + 12, (vel * 20) / 127, 2, kDim);
+        s.fillRect(x + 32, y + 12, (vel * (w - 36)) / 127, 2, opalStyle() && lit ? kCursor : kDim);
       }
       if (c.hasFx()) {
         // Dim when every fx is ignored: a synth fx on a MIDI track, a drum fx off a drum track.
@@ -1462,12 +1539,76 @@ void GridScreen::drawOverview(LGFX_Sprite& s, int gridY) {
         for (const mt::FxSlot& f : c.fx)
           live |= f.cmd != mt::Fx::None && (p.trackInternal(tr) || !mt::fxSynthOnly(f.cmd)) &&
                   (drumTr || !mt::fxDrumOnly(f.cmd));
-        s.fillRect(drumTr ? x + 51 : x + 48, drumTr ? y + 1 : y + 6, 3, 3,  // drum: right of the mask (ends x + 48)
+        s.fillRect(x + w - 5, drumTr ? y + 1 : y + 6, 3, 3,
                     live ? kCursor : kDim);
       }
-      if (step == curStep_ && tr == track()) s.drawRect(x, y, kColW, kRowH, edit_ ? kEditCursor : kCursor);
+      if (step == curStep_ && tr == track()) s.drawRect(x, y, w, kRowH, edit_ ? kEditCursor : kCursor);
     }
   }
+}
+
+// Four fields in the focused column; the remaining seven tracks keep their note overview.
+void GridScreen::drawOverviewFocus(LGFX_Sprite& s, int x, int y, const mt::Step& step, bool lit, bool laneCursor) {
+  const mt::Project& p = app_.project();
+  const int tr = track();
+  const bool drumTr = drumAt(tr);
+  for (int column = 0; column < 4; ++column) {
+    const int field = focusField(column), px = x + column * kFieldW;
+    if (drumTr && field == kNote && (step.hasNote() || laneCursor)) {
+      drawMask(s, px, y, step.hasNote() ? mt::laneMask(step) : 0, lit, laneCursor ? lane_ : -1, true);
+      continue;
+    }
+    char txt[5];
+    bool has = fieldText(step, field, txt);
+    if (drumTr && field == kVel) {
+      has = step.hasNote() && step.note;
+      if (has) snprintf(txt, sizeof(txt), "%3u", step.note);
+      else snprintf(txt, sizeof(txt), "...");
+    }
+    const mt::Fx cmd = field >= kFx1 ? step.fx[focusFx_].cmd : mt::Fx::None;
+    const bool ignored = field == kNote ? p.genOn(tr) :
+        (field >= kFx1 && ((!p.trackInternal(tr) && mt::fxSynthOnly(cmd)) ||
+                          (!drumTr && mt::fxDrumOnly(cmd)) || (cmd == mt::Fx::FLP && !p.genOn(tr))));
+    s.setTextColor(has && lit && !ignored ? kText : kDim);
+    s.drawString(txt, px + (strlen(txt) > 3 ? 0 : 4), y);
+  }
+}
+
+void GridScreen::focusFieldSelect(int field) {
+  finishLaneEdit(false);
+  curField_ = field;
+  if (field >= kFx1) focusFx_ = (field - kFx1) / 2;
+  fxCycled_ = false;
+  needVisible_ = true;
+  app_.toast(kFieldNames[field]);
+}
+
+void GridScreen::drawInspector(LGFX_Sprite& s, int y) {
+  const mt::Step& step = pat().steps[track()][cur()];
+  s.fillRect(0, y, kScreenW, kInspectorH, kStatusBg);
+  for (int column = 0; column < 4; ++column) {
+    const int field = focusField(column), x = column * (kScreenW / 4);
+    char value[5], label[16];
+    fieldText(step, field, value);
+    if (drum() && field == kVel) snprintf(value, sizeof(value), "%3u", step.hasNote() ? step.note : 0);
+    snprintf(label, sizeof(label), "%s %s", kFieldNames[field], value);
+    if (drum() && field == kNote) snprintf(label, sizeof(label), "LANE %02d", lane_ + 1);
+    s.setTextColor(curField_ == field ? kEditCursor : kText);
+    s.drawString(label, x + 2, y);
+  }
+  for (int slot = 0; slot < mt::kFxSlots; ++slot) {
+    const int x = slot * (kScreenW / mt::kFxSlots);
+    char label[12];
+    snprintf(label, sizeof(label), "%d:%s", slot + 1, mt::fxName(step.fx[slot].cmd));
+    s.setTextColor(slot == focusFx_ ? kEditCursor : kDim);
+    s.drawString(label, x + 2, y + kRowH);
+  }
+}
+
+void GridScreen::inspectorTouch(const TouchEvent& ev) {
+  if (ev.type != TouchType::Tap || ev.x < 0 || ev.x >= kScreenW || ev.y >= y0_ + h_) return;
+  if (ev.y < y0_ + h_ - kRowH) focusFieldSelect(focusField(ev.x / (kScreenW / 4)));
+  else focusFieldSelect(kFx1 + 2 * (ev.x / (kScreenW / mt::kFxSlots)));
 }
 
 void GridScreen::drawDetail(LGFX_Sprite& s, int gridY) {
@@ -1592,6 +1733,9 @@ int GridScreen::drawBadge(LGFX_Sprite& s, int y) {
 // NOTE field): 3 x 5 px cells at a 4 / 7 px pitch, 31 px wide; cursorLane >= 0 draws that lane in the
 // edit cursor colour (no room for a frame between 1 px gaps; the lane pad below shows it framed).
 void GridScreen::drawMask(LGFX_Sprite& s, int x, int y, uint16_t mask, bool audible, int cursorLane, bool compact) {
+  // Removing the last hit keeps the step's velocity/FX, but leaves no lane mask to display.
+  // Keep the empty mask visible only while navigating its lanes in the editor.
+  if (!mask && cursorLane < 0) return;
   const int w = compact ? 3 : 5, pitch = compact ? 4 : 6;
   for (int l = 0; l < mt::kKitLanes; ++l) {
     const int sx = x + (compact ? 1 : 2) + (l % 8) * pitch;
@@ -1621,34 +1765,6 @@ void GridScreen::drawPad(LGFX_Sprite& s, int y) {
     else snprintf(txt, sizeof(txt), "%d %.4s", l + 1, nm);
     s.setTextColor(on ? kText : kDim);
     s.drawString(txt, x + 2, py + (kPadRowH - kCharH) / 2);
-  }
-}
-
-void GridScreen::drawKeyboard(LGFX_Sprite& s, int y) {
-  const mt::Project& p = app_.project();
-  const mt::ScaleType scale = static_cast<mt::ScaleType>(p.scaleType);
-  const mt::Step& c = pat().steps[track()][curStep_];
-  const int curNote = c.hasNote() ? c.note : -1;
-  const int base = ((c.hasNote() ? c.note : lastNote_[track()]) / 12) * 12;
-  s.fillRect(0, y, kScreenW, kKbH, kBg);
-  for (int k = 0; k < 12; ++k) {
-    const int n = base + k;
-    const int x = k * kKeyW;
-    const bool black = isBlackKey(k);
-    if (n > 127) {
-      s.drawRect(x + 1, y + 1, kKeyW - 2, kKbH - 2, kDim);
-      continue;
-    }
-    s.fillRect(x + 1, y + 1, kKeyW - 2, kKbH - 2, black ? kKeyBlack : kKeyWhite);
-    if (mt::inScale(n, p.scaleRoot, scale)) s.fillRect(x + 1, y + kKbH - 7, kKeyW - 2, 6, kCursor);
-    if (n == curNote) {
-      s.drawRect(x, y, kKeyW, kKbH, kEditCursor);
-      s.drawRect(x + 1, y + 1, kKeyW - 2, kKbH - 2, kEditCursor);
-    }
-    char nn[4];
-    mt::noteName(static_cast<uint8_t>(n), nn);
-    s.setTextColor(black ? kText : kBg);
-    s.drawString(nn, x + 8, y + 12);
   }
 }
 

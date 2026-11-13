@@ -4,6 +4,8 @@
 
 namespace ui {
 
+enum class ThemeStyle : uint8_t { Classic, Opal };
+
 // Colour theme (RGB565). The k... colours below are references into the current theme, so a theme
 // change takes effect on the next redraw; read them when drawing, never copy them into statics.
 struct Theme {
@@ -20,6 +22,8 @@ struct Theme {
   uint16_t edit;      // cursor while editing
   uint16_t red, green, yellow, cyan;  // states: rec / clip / mute, ok, solo / fill / warning, markers
   uint16_t keyWhite, keyBlack;        // the lane pad / keyboard keys
+  ThemeStyle style = ThemeStyle::Classic;
+  uint16_t line = 0;                 // fine dividers in the Opal style
 };
 
 extern Theme gTheme;  // the current one
@@ -45,6 +49,9 @@ inline const uint16_t& kYellow = gTheme.yellow;
 inline const uint16_t& kCyan = gTheme.cyan;
 inline const uint16_t& kKeyWhite = gTheme.keyWhite;
 inline const uint16_t& kKeyBlack = gTheme.keyBlack;
+inline const uint16_t& kLine = gTheme.line;
+
+inline bool opalStyle() { return gTheme.style == ThemeStyle::Opal; }
 
 constexpr int kScreenW = 480;
 constexpr int kScreenH = 320;
@@ -56,6 +63,7 @@ constexpr int kTabY = kAreaY + kAreaH;               // 296
 constexpr int kCharW = 8;
 constexpr int kCharH = 16;
 
-inline const lgfx::IFont* font() { return &fonts::AsciiFont8x16; }
+// Both fonts advance exactly 8 px and occupy 16 px: all tracker columns keep their alignment.
+const lgfx::IFont* font();
 
 }  // namespace ui
