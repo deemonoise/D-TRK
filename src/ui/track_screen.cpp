@@ -1339,6 +1339,7 @@ void TrackScreen::drawFader(LGFX_Sprite& s, int x, int y, int value, int max, ui
 // material still fills the box; the meter shows the real level), the peak meter and CLIP (held 1 s).
 void TrackScreen::drawScope(LGFX_Sprite& s, int y0) {
   scopeMs_ = millis();
+  const uint16_t signal = opalStyle() ? kCursor : kGreen;
   constexpr int kX = kStripX0, kW = kScopeW, kH = kScopeH;
   constexpr int kN = kW - kMeterW - 4;  // one sample per pixel
   const int y = y0 + kScopeY, mid = y + kH / 2;
@@ -1358,7 +1359,7 @@ void TrackScreen::drawScope(LGFX_Sprite& s, int y0) {
   for (int i = 0; i < kN; ++i) {
     int yy = mid - static_cast<int>(buf[i] * k);
     yy = clampi(yy, y, y + kH - 1);
-    if (i) s.drawLine(kX + i - 1, prev, kX + i, yy, kGreen);
+    if (i) s.drawLine(kX + i - 1, prev, kX + i, yy, signal);
     prev = yy;
   }
   const int16_t peak = audio::scopePeak();
@@ -1366,7 +1367,7 @@ void TrackScreen::drawScope(LGFX_Sprite& s, int y0) {
   meter_ = peak > meter_ ? peak : meter_ * 7 / 8;  // fast up, slow down
   const int mx = kX + kW - kMeterW;
   const int mh = meter_ * kH / 32768;
-  s.fillRect(mx, y + kH - mh, kMeterW, mh, meter_ > 29000 ? kYellow : kGreen);
+  s.fillRect(mx, y + kH - mh, kMeterW, mh, meter_ > 29000 ? kYellow : signal);
   s.setTextColor(kDim);
   char gain[8];
   snprintf(gain, sizeof(gain), "x%d", static_cast<int>(scopeGain_ + 0.5f));
@@ -1397,6 +1398,7 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     return;
   }
   const mt::Project& p = app_.project();
+  const uint16_t signal = opalStyle() ? kCursor : kGreen;
   char buf[12];
   updateMeters();
   const uint32_t now = millis();
@@ -1419,13 +1421,13 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
       const int ev = mt::sceneTrkEff(p, tr, mt::kScnVol);
       s.fillRect(fx - 2, fy + kFaderH - 1 - ev * (kFaderH - 2) / 127, kFaderW + 4, 2, kYellow);
     }
-    if (internal) {  // level meter: green, yellow above -6 dB, red for a second after full scale
+    if (internal) {  // level meter: theme signal colour, yellow above -6 dB, red after full scale
       const int mx = fx + kFaderW + 3;
       s.fillRect(mx, fy, kMeterBarW, kFaderH, kBeatBg);
       const int mh = static_cast<int>(level_[tr] * kFaderH + 0.5f);
       const int yel = static_cast<int>(kFaderH * 42.f / 48.f);  // -6 dB
       const bool clip = clipAt_[tr] && now - clipAt_[tr] < 1000;
-      if (mh > 0) s.fillRect(mx, fy + kFaderH - (mh < yel ? mh : yel), kMeterBarW, mh < yel ? mh : yel, kGreen);
+      if (mh > 0) s.fillRect(mx, fy + kFaderH - (mh < yel ? mh : yel), kMeterBarW, mh < yel ? mh : yel, signal);
       if (mh > yel) s.fillRect(mx, fy + kFaderH - mh, kMeterBarW, mh - yel, kYellow);
       if (clip) s.fillRect(mx, fy, kMeterBarW, 3, kRed);
     }

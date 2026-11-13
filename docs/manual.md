@@ -29,7 +29,7 @@ A tracker with a built-in synthesizer on two boards: the WT32-SC01 Plus (ESP32-S
 
 1.  Insert a microSD card formatted **FAT32** or **exFAT** into the synth board (Teensy 4.1) and power on the device. Without a card, a demo beat loads on tracks 1–3.
 2.  Press <kbd>Play</kbd>. The sequencer sends MIDI Start and plays from the first step. Press again to stop.
-3.  In the **GRID** tab, tap a cell, then tap it again to enter edit mode. Press keys on the mini keyboard at the bottom or turn the encoder.
+3.  In the **GRID** tab, tap a cell, then tap it again to enter edit mode. Enter notes with the track buttons or turn the encoder.
 4.  In the **FILE** tab, choose **Save As…**, enter a name and press OK. The project loads automatically at the next power-on.
 
 <a id="hw"></a>
@@ -86,8 +86,8 @@ Two buttons: B under Shift, A under Play. Both are chord buttons: hold one and t
 | Hold <kbd>A</kbd> + encoder click in MIX, SCENE view | Unset the master parameter's lock in the edited scene (see [SCENE view](#scenes)). Elsewhere the click works as usual. |
 | Hold <kbd>A</kbd> + <kbd>Shift</kbd> + turn | Whatever <kbd>Shift</kbd>+turn does in edit mode: ×10, a note by octaves, a sample marker to the nearest onset, the cursor position on a name row. |
 | Hold <kbd>A</kbd>, press <kbd>B</kbd> | Cancel the edit: the value made with A is restored. In GRID it clears instead (next rows). |
-| <kbd>A</kbd> tap in GRID | Empty step: put the track's last note (on a [drum track](#drumtrack), toggle the lane under the cursor). Step with a note: hear it. |
-| Hold <kbd>A</kbd>, press <kbd>B</kbd> in GRID (all three views, KIT tracks too) | Without a preceding edit, clear on release without turning; after A + turn, clear immediately on B press. Clear: the selection if there is one, else the whole step under the cursor (note, velocity, fx). One undo step; after A + turn the press and the clear are one undo step together, and the edit mode A entered ends. B does not go Back and A does not tap. With [PERF](#live) on, A then B without a turn stays the [XY pad](#xypad) toggle (clear through the menu). <kbd>Shift</kbd>+<kbd>A</kbd> does nothing in GRID. |
+| <kbd>A</kbd> tap in GRID | Melodic track: an empty step gets the last note; an existing note is auditioned. On a [drum track](#drumtrack), add a hit on the last selected lane; in NOTE edit, toggle it while keeping the editor open. |
+| Hold <kbd>A</kbd>, press <kbd>B</kbd> in GRID (all three views, KIT tracks too) | Without a preceding edit, clear on release without turning; after A + turn, clear immediately on B press. Clear: the selection if there is one, else the whole step under the cursor (note, velocity, fx). One undo step; after A + turn the press and the clear are one undo step together, and the edit mode A entered ends. B does not go Back and A does not tap. With [PERF](#live) on, A then B without a turn stays the [XY pad](#xypad) toggle (clear through the menu). <kbd>Shift</kbd>+<kbd>A</kbd> does nothing in GRID. On a drum track NOTE field, B after A + turn cancels the added-hit gesture instead of clearing (see [Drum track](#drumtrack)). |
 | <kbd>Shift</kbd>+<kbd>A</kbd> in MIX | Open / close the [SCENE view](#scenes). |
 | <kbd>A</kbd> tap / <kbd>Shift</kbd>+<kbd>A</kbd> in the sample editor (INST, SMPL page) | Next / previous marker, like **\>** / **\<** — see [SAMPLE](#sample). |
 | <kbd>A</kbd> tap in the [REC window](#rec) (SAMPLE and MIX) | START / STOP, like the big button (with or without Shift). A + turn still edits. |
@@ -113,7 +113,7 @@ The display board's built-in microSD slot and its NS4168 amplifier are not used:
 
 ### Shared interface rules
 
-- The status bar is 24 pixels high, with no dedicated message row. GRID shows 16 steps without the keyboard open. Toasts temporarily replace the left side (project, BPM and position), preserving PLAY/STOP, battery and critical indicators on the right. Covered controls do not respond to taps.
+- The status bar is 24 pixels high, with no dedicated message row. GRID shows 16 steps outside edit mode. Toasts temporarily replace the left side (project, BPM and position), preserving PLAY/STOP, battery and critical indicators on the right. Covered controls do not respond to taps.
 - **B** / tapping **<** returns through nested menus with selection restored. Long encoder press or tapping outside closes the menu tree.
 - Rotate, Velocity, Transpose, Fill, Import, Export, Save one-shot, Wavetable Make and Dice have persistent action/cancel buttons at the bottom. Encoder focus reaches them after the last parameter row. Fill retains its live preview and restoration on cancel.
 - Selecting inactive rows explains the condition (e.g. Enable Filter or INT tracks only). Preconfiguring an inactive value remains possible where previously supported. Read-only rows do not enter edit mode.
@@ -288,25 +288,33 @@ only the visual count-in is available. Both boards need protocol **20 or later**
 | Input | Outside edit mode | In edit mode |
 |-------|-------------------|--------------|
 | Turn | Step up/down (wraps around) | Change the field value |
-| <kbd>Shift</kbd>+turn | Overview: another track. Detail: another field | Coarse step |
+| <kbd>Shift</kbd>+turn | Overview: another track. Detail: another field | Overview: select a parameter; Detail: coarse step |
 | Click | Enter edit mode (toast with the field name) | Leave edit mode |
 | <kbd>Shift</kbd>+click | Next view: Overview → Detail → [Piano roll](#pianoroll) → Automation → Overview | |
 | Long press | Context menu | |
-| Hold <kbd>A</kbd> + turn | Enter edit mode and change the value (the mini keyboard / lane pad stays hidden); releasing A leaves edit mode | Change the value; releasing A keeps edit mode on |
+| Hold <kbd>A</kbd> + turn | Enter edit mode and change the value (the edit panel / lane pad stays hidden); releasing A leaves edit mode | Change the value; releasing A keeps edit mode on |
 | Hold <kbd>A</kbd>, press <kbd>B</kbd> | Clear the selection, else the step under the cursor | Clear the step; edit mode stays (if A entered it, it ends) |
 
 ### What a turn changes in edit mode
 
-- **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, mini keyboard, track buttons) sounds immediately with the track's instrument if Preview is on (FILE → SYSTEM).
+In the expanded Overview track, **Shift + turn selects a parameter**, wrapping through NOTE → VEL → FX1 → FX1 VAL → … → FX6 VAL → NOTE. Selection never writes data or leaves the current step or track. An ordinary turn changes the selected value. For coarse value changes in Overview, hold **A + Shift** while turning; Detail still uses Shift alone. The Shift increments below refer to value edits using these combinations.
+
+- **NOTE.** On an empty step, the track's last entered note is placed (C-4 at first). After that the note moves by degrees of the project scale, by octaves with Shift. The encoder cannot clear a step or set OFF; use the menu for that. On an INT track every entered note (encoder, track buttons) sounds immediately with the track's instrument if Preview is on (FILE → SYSTEM).
 - **VEL.** 0–127, ×10 with Shift. A value of 0 is shown as `...` and means "the track's default velocity".
 - **FX1…FX6.** Cycles through the commands by group, related ones next to each other: `...`; notes and arp CHD, STR, ARP, ARM, ARS; time RAT, NDG, GAT, TIE, OFF, CUT; randomness PRB, CND, VRN, NRN, FLP; pitch and volume SLD, VIB, PBN, VSL, ACC, AC2; sound FLT, RES, DRV, DTY, BIT, SRR, GTE, DEC, COL, SHP, SWP, CON, SAT; LFO LFO, LFD, LFS, LFW, LFT, LFR, M01–M08; sample OFS, SLC; sends and pan DLY, RVB, MOD, PAN; MIDI only CHN, CCA, CCB, PGM (turning back from an empty slot goes straight to PGM). The order is the same as in the [table](#fx). Choosing a command sets its default value and shows its full name in the status line (for example, VIBRATO). On an empty slot, the first turn places the last fx written to this slot on this track, with the same value — handy for repeating an fx step after step; further turns cycle through the commands as usual.
 - **FX VAL.** ±1, ×10 with Shift. For CND the step is the same with Shift. For GAT Shift moves ±10 % of the shown value, to the nearest GAT value in the turn's direction (below 100 % exactly ±10 %; above 100 % the values go 7 % apart, so Shift moves one value: 95 → 107, 100 → 107, 114 → 107). On an empty slot the first turn likewise inserts the track's last fx; if there was none yet, the value doesn't change.
 
 One edit session (from entering to leaving edit mode) is one undo step.
 
-### Mini keyboard
+### Editing in Overview
 
-Appears at the bottom of the screen when editing the NOTE field. Twelve keys — the octave of the current note. A yellow bar marks scale notes, a red frame the current note. Tapping a key writes the note — any note; the scale doesn't restrict it here. <kbd>Shift</kbd>+encoder turn changes the octave.
+Selecting a track keeps all eight columns equally wide. Entering edit mode (click, a second tap, or A + turn) expands only the selected track: NOTE, VEL and one FX command/value pair; the other seven tracks remain visible. B or a click ends editing and restores equal widths.
+
+Tap another field of the **current step** in the expanded track to select it without leaving edit mode. Turn to change the value, Shift + turn to select another parameter, and A + Shift + turn for coarse value changes. Tapping another step or track ends editing and selects the note at the new position. Track names still toggle mute, or solo with Shift.
+
+A two-row edit panel appears at the bottom. The top row selects NOTE, VEL, the FX command or its value; the bottom row selects one of the six FX slots. No touch is needed: Shift + turn cycles through every field and an ordinary turn changes its value. The panel also remains tappable. The panel leaves 14 visible steps instead of the normal 16. A temporary A-held edit hides the panel and keeps all 16 rows in place. Drum NOTE editing retains the existing lane pad; selecting VEL or FX shows the panel.
+
+The mini keyboard has been removed. Enter notes with the encoder, track buttons or Piano roll; track buttons and A/B chords are preserved; Shift + turn in Overview editing selects a field. Switching fields within the current step keeps one undo session; Shift + click restores that step's changes from the session.
 
 <a id="drumtrack"></a>
 
@@ -316,7 +324,9 @@ A track whose TRACK → Instr is set to a [KIT](#kit) instrument is a drum track
 
 - **Overview:** the cell shows 16 small squares in two rows of 8 (lanes 1–8 on top, 9–16 below); a filled one means the lane sounds. There is no velocity bar; the fx dot is in the top corner of the cell.
 - **Detail:** the NOTE field shows the same squares, the VEL field the step velocity (`...` — the track's Def vel).
-- **Editing NOTE:** a turn moves the red frame across lanes, <kbd>Shift</kbd>+turn toggles the lane under the frame. Instead of the mini keyboard, the bottom shows a **pad of 16 buttons** in two rows of 8 (lanes 1–8 on top, 9–16 below) with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same for lanes 1–8 in edit mode, <kbd>Shift</kbd>+button N for lane N + 8. A lane sounds as soon as it's turned on (Preview in FILE → SYSTEM).
+- **Editing NOTE:** an encoder click opens the editor; a turn selects a lane, and a short <kbd>A</kbd> toggles it in the step while keeping the editor open. Click the encoder to finish. The selected square is highlighted in both Overview and Detail, including on an empty step. In Detail, <kbd>Shift</kbd>+turn also toggles the selected lane; in Overview it selects a parameter (NOTE, VEL, FX). The bottom shows a **pad of 16 buttons** in two rows of 8 (lanes 1–8 on top, 9–16 below) with the lanes' sample (or instrument) names; a lit one means the lane is in the step; a tap toggles the lane. [Track buttons](#trackkeys) 1–8 do the same for lanes 1–8 in edit mode, <kbd>Shift</kbd>+button N for lane N + 8. A lane sounds as soon as it's turned on (Preview in FILE → SYSTEM).
+- **A + turn in NOTE:** selects and auditions a lane, moving one added hit between lanes. Existing hits, velocity and FX are preserved. Releasing A commits the selected hit; pressing B while holding A cancels only this gesture and restores the original step. An editor opened by a click stays open. A gesture is one undo entry, or part of the current edit session. Auditioning respects Preview in FILE → SYSTEM.
+- **Short A outside edit mode:** adds a hit on the last selected lane; a lane already enabled is auditioned and stays enabled.
 - **Editing VEL:** 1–127, ×10 with Shift.
 - A step with all lanes turned off stays (silent, fx still work) — remove it with Clear step. OFF is set as usual through the menu and releases all lanes.
 - A step's fx apply to all its lanes: RAT repeats each one, NDG shifts them, PRB and CND decide for the whole step, DEC / FLT / DLY and other locks apply per voice. CHD, NRN, STR, TIE, ARP, SLD, VIB and SLC do nothing on a drum track. The **ACC** and **AC2** fx are for drum tracks only.
@@ -2105,7 +2115,7 @@ The **MOD bus** is the third shared send effect for the internal sound, for modu
 
 **Scales:** Chromatic, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor, Pentatonic major, Pentatonic minor, Blues. The default is C Chromatic, i.e. no restriction.
 
-**How the scale works.** Notes are not filtered; the scale defines the scale degrees. These move by scale degree: note entry with the encoder, Transpose in SCALE mode, NRN, CHD and Fill (RAMP and RANDOM for notes). An out-of-scale note is first snapped to the nearest lower scale note on the first move. Octave shifts and the mini keyboard ignore the scale. Changing the scale does not rewrite notes already entered.
+**How the scale works.** Notes are not filtered; the scale defines the scale degrees. These move by scale degree: note entry with the encoder, Transpose in SCALE mode, NRN, CHD and Fill (RAMP and RANDOM for notes). An out-of-scale note is first snapped to the nearest lower scale note on the first move. Octave shifts ignore the scale. Changing the scale does not rewrite notes already entered.
 
 **Swing** delays every second step: 75% means by half a step.
 
@@ -2117,7 +2127,7 @@ The built-in sound can play in tunings other than 12-tone equal temperament. The
 
 **Factory tunings:** JUST 5-LIMIT (5-limit just intonation), PYTHAGOREAN (wolf fifth G#–Eb), MEANTONE 1/4 (quarter-comma meantone), WERCKMEISTER3 (a well temperament, every key playable), 19-EDO, 24-EDO, 31-EDO (equal divisions), SLENDRO (5 degrees) and PELOG (7 degrees), gamelan approximations, BOHLEN-PIERCE (13 degrees, the period is a twelfth, 3/1). The Tuning list: 12-TET, the factory tunings, then the files in `/presets/TUN` alphabetically.
 
-**How keys map.** The root (Tuning root) is the key that sounds as in 12-TET; AUTO is C-4 plus Scale root, so just intonation plays in the project's key. Each next key is the next degree; after the last degree the tuning repeats, shifted by the period. In 12-degree tunings (JUST, PYTHAGOREAN, MEANTONE, WERCKMEISTER) the keys stay the same and the intervals change. In tunings with another degree count an "octave" of the keyboard spans N keys: in 24-EDO C-4 → C#4 is a quarter tone, and the octave above the root is 24 keys up. Note names in GRID, the track buttons, the mini keyboard and Scale stay 12-tone: the scale picks keys, not tuning pitches.
+**How keys map.** The root (Tuning root) is the key that sounds as in 12-TET; AUTO is C-4 plus Scale root, so just intonation plays in the project's key. Each next key is the next degree; after the last degree the tuning repeats, shifted by the period. In 12-degree tunings (JUST, PYTHAGOREAN, MEANTONE, WERCKMEISTER) the keys stay the same and the intervals change. In tunings with another degree count an "octave" of the keyboard spans N keys: in 24-EDO C-4 → C#4 is a quarter tone, and the octave above the root is 24 keys up. Note names in GRID, the track buttons and Scale stay 12-tone: the scale picks keys, not tuning pitches.
 
 **Tuned:** CHIP (noise waves included), SAMPLE pitched by note, FM machines TONE, TOY and CHORD, SYNTH, STRING. **Not tuned:** DRUM, FM drum machines (BD MODERN…HH BASIC), [KIT](#kit) lanes, SAMPLE with note slices, MIDI out.
 
@@ -2464,7 +2474,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 |---|---|---|
 | Phones | 0–100%, default 100% | device: live output level (headphones / speaker), attenuation only; not in Export, the project's master is MIX → MAIN. Stored in the board's memory one second after a change |
 | Preview | ON / OFF, default ON | device: entering a note in GRID on an INT track sounds it immediately. Shared by all projects and stored in the board's memory like Phones; not saved with the project |
-| Theme | 17 themes, default CLASSIC | device: interface colors (see below) |
+| Theme | 18 themes, default CLASSIC | device: interface colors (see below) |
 | Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |
 | Firmware | build commit | display only: firmware version ("+" means built with local changes) |
 | Synth fw | version and protocol (`Pn`), NO SYNTH | display only: the synth board's firmware; "!" after it means its protocol does not match the tracker's (the status bar shows `SYNTH FW`); NO SYNTH — the board does not answer |
@@ -2480,7 +2490,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 
 <a id="themes"></a>
 
-**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like Phones: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast) and PAPER (light).
+**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like Phones: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast), PAPER (light), and OPAL (inspired by Fors Opal: graphite background, violet accent, light sans-serif type, outlined page tabs, and grid dividers). OPAL keeps the 8×16 character cell, so columns and touch targets stay aligned.
 
 <a id="wifi"></a>
 

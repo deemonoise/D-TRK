@@ -1,4 +1,5 @@
 #include "theme.h"
+#include "opal_font.h"
 
 namespace ui {
 namespace {
@@ -60,6 +61,10 @@ constexpr Theme kThemes[] = {
     {"PAPER", c(0xF2EEE3), c(0xE2DCCB), c(0xC5D3E8), c(0xD6CFBB), c(0xD0DCEC), c(0xE8E2D2), c(0x1E1E1E),
      c(0x7A746A), c(0x0050C8), c(0xC82020), c(0xC82020), c(0x1E7A30), c(0xA06C00), c(0x007888), c(0xFFFFFF),
      c(0x5A564E)},
+    // Append only: the device stores theme indices in NVS.
+    {"OPAL", c(0x141416), c(0x222225), c(0x332644), c(0x19191C), c(0x2B223B), c(0x1E1D23), c(0xC9C7CE),
+     c(0x949099), c(0xA477FF), c(0xE5C2FF), c(0xFF7D93), c(0x97C9AD), c(0xDCC080), c(0x9DADE2), c(0xBDBAC5),
+     c(0x28262E), ThemeStyle::Opal, c(0x45424C)},
 };
 constexpr int kCount = sizeof(kThemes) / sizeof(kThemes[0]);
 
@@ -72,5 +77,7 @@ int themeCount() { return kCount; }
 const Theme& themeAt(int i) { return kThemes[i < 0 ? 0 : (i >= kCount ? kCount - 1 : i)]; }
 
 void applyTheme(int i) { gTheme = themeAt(i); }
+
+const lgfx::IFont* font() { return opalStyle() ? &kOpalFont : &fonts::AsciiFont8x16; }
 
 }  // namespace ui

@@ -18,7 +18,12 @@ struct PageBar {
     const int w = width(n), ty = y + (kH - 4 - kCharH) / 2;
     for (int i = 0; i < n; ++i) {
       const bool on = i == cur;
-      s.fillRect(i * w + 1, y, w - 2, kH - 4, on ? kPlayBg : kBeatBg);
+      if (opalStyle()) {
+        s.fillRect(i * w + 1, y, w - 2, kH - 4, kBg);
+        s.drawRoundRect(i * w + 2, y, w - 4, kH - 4, 3, on ? kCursor : kLine);
+      } else {
+        s.fillRect(i * w + 1, y, w - 2, kH - 4, on ? kPlayBg : kBeatBg);
+      }
       s.setTextColor(on ? kCursor : kDim);
       s.drawString(names[i], i * w + (w - static_cast<int>(strlen(names[i])) * kCharW) / 2, ty);
     }
