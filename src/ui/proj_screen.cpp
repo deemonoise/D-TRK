@@ -8,8 +8,6 @@
 #include <string.h>
 #include "app.h"
 #include "dice.h"
-#include "dice_library.h"
-#include "storage/dice_library_io.h"
 #include "storage/project_memory.h"
 #include "esp_heap_caps.h"
 #include "engine/engine.h"
@@ -465,22 +463,7 @@ void ProjScreen::roll(const mt::DiceOpts& o) {
   const uint32_t seed = o.seed ? o.seed : esp_random() % 999999u + 1u;
   mt::DiceResult r;
   uint8_t applied = 0;
-  const bool wantMidi = (o.layers & mt::kDicePattern) && o.source != mt::DiceSource::Builtin;
-  bool fallback = false;
   {
-    storage::DiceLibraryData bytes;
-    if (wantMidi) {
-      app_.showBusy("LOADING MIDI LIBRARY...");
-      if (!bytes.load(o.genre, seed, o.style)) {
-        if (o.source == mt::DiceSource::Midi) {
-          app_.toast(bytes.error());
-          app_.invalidate();
-          return;
-        }
-        fallback = true;
-      }
-    }
-    const mt::DicePhraseSource* source = wantMidi && bytes ? &bytes : nullptr;
     struct DraftLease {
       mt::DiceSnap* value;
       DraftLease() {
@@ -497,36 +480,25 @@ void ProjScreen::roll(const mt::DiceOpts& o) {
     // The generators work without the lock. A song slot's BPM may hold the live tempo: the
     // draft reads the saved project BPM.
     r =
-        mt::diceDraft(p, o, app_.editPattern(), seed, *dice, engine::projectBpm(p), source);
-    if (wantMidi && o.source == mt::DiceSource::Midi && !r.midiMask) {
-      app_.toast("NO MATCHING MIDI");
-      app_.invalidate();
-      return;
-    }
+        mt::diceDraft(p, o, app_.editPattern(), seed, *dice, engine::projectBpm(p));
     engine::lockProject();
     uint16_t pb = 0;
     applied = mt::diceApply(p, *dice, engine::savedBpm(pb) ? pb : 0);
     evoClearTracks(dice->patMask);
     engine::unlockProject();
     if (!applied) {
-      app_.toast("DICE: NOTHING TO CHANGE");
+      app_.toast(r.missingMask ? "DICE: TRACKS PROTECTED" : "DICE: NOTHING TO CHANGE");
       app_.invalidate();
       return;
     }
-  } // both the draft and selected MIDI phrases are no longer retained
-  diceDlg_.usedSeed(seed);
+  } // draft memory is no longer retained
+  diceDlg_.usedSeed(seed,r.variant);
   afterDice(applied);
+  const int preview=dice_dialog::audition(o,applied,app_.editPattern(),r.first);
+  if(preview>=0) engine::postWait(engine::Cmd::SelectPattern,static_cast<uint16_t>(preview));
   char msg[48];
-  if (wantMidi) {
-    unsigned roles = 0;
-    for (int k = 0; k < mt::kDiceRoles; ++k) roles += (r.midiMask >> k) & 1u;
-    snprintf(msg, sizeof(msg), "MIDI %u%s%s #%lu", roles,
-             fallback || r.missingMask ? " FALLBACK" : "", r.midiApproxMask ? " SIMPL" : "",
-             static_cast<unsigned long>(seed));
-  } else {
-    snprintf(msg, sizeof(msg), "DICE %s %s #%lu", mt::diceGenreName(r.genre),
-             mt::diceStyleName(r.genre, r.style), static_cast<unsigned long>(seed));
-  }
+  const auto& current=app_.project();
+  dice_dialog::rollSummary(msg,sizeof(msg),applied,current.scaleRoot,current.scaleType,seed,o.seed!=0,r.missingMask!=0,o.change);
   app_.toast(msg);
 }
 

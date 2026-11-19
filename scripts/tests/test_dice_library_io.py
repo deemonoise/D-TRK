@@ -94,7 +94,7 @@ int main(int argc,char** argv){
  assert(a.count==b.count && !strcmp(a.name,b.name) && a.events[0].note==b.events[0].note);
  assert(!data.pick(0,(mt::DiceRole)k,seed+1,a));}
  // The same bounded reservoir and style scoring must agree in memory and on SD.
- for(int genre=0;genre<9;++genre)for(int style=0;style<mt::diceStyleCount(genre);++style)
+ for(int genre=0;genre<9;++genre)for(int style=0;style<mt::diceLibraryStyleCount(genre);++style)
  for(uint32_t seed:{1u,777u,8765u}){
   assert(data.load(genre,seed,style));
   for(int k=0;k<6;++k){mt::DicePhrase a,b;uint32_t rs=seed^(0x9E3779B9u*(k+1));
@@ -102,7 +102,7 @@ int main(int argc,char** argv){
    assert(data.pickForStyle(genre,style,(mt::DiceRole)k,rs,b));
    assert(a.count==b.count && !strcmp(a.name,b.name) &&
           !memcmp(a.events,b.events,a.count*sizeof(mt::DicePhraseEvent)));
-   assert(!data.pickForStyle(genre,(style+1)%mt::diceStyleCount(genre),(mt::DiceRole)k,rs,b));
+   assert(!data.pickForStyle(genre,(style+1)%mt::diceLibraryStyleCount(genre),(mt::DiceRole)k,rs,b));
   }
  }
  hw::shortRead=true;assert(!data.load() && !data && allocations==0);hw::shortRead=false;
@@ -130,7 +130,7 @@ int main(int argc,char** argv){
     if(expected)assert(a.count==b.count && !strcmp(a.name,b.name) &&
         !memcmp(a.events,b.events,a.count*sizeof(mt::DicePhraseEvent)));
    }
-   for(int style=0;style<mt::diceStyleCount(genre);++style){
+   for(int style=0;style<mt::diceLibraryStyleCount(genre);++style){
     assert(streamed.load(genre,seed,style));
     for(int role=0;role<6;++role){mt::DicePhrase a,b;uint32_t rs=seed^(0x9E3779B9u*(role+1));
      bool expected=reference.pickForStyle(genre,style,(mt::DiceRole)role,rs,a);

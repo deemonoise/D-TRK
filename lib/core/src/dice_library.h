@@ -2,8 +2,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "dice_recipes.h"
+#include "scale.h"
 
 namespace mt {
+// DML1 file roles and style IDs are independent of the new guide catalogue.
+enum class DiceRole : uint8_t { Drums, Bass, Chords, Lead, Arp, Fx, Count };
+int diceLibraryStyleCount(int genre);
 constexpr int kDiceMidiEvents = 512;
 constexpr uint32_t kDiceLibraryMaxBytes = 4u * 1024 * 1024;
 struct DicePhraseEvent {

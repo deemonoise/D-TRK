@@ -89,7 +89,7 @@ bool DiceLibraryData::load(int genre, uint32_t seed, int style) {
     error_ = "BAD MIDI LIBRARY"; return false;
   }
   genre_ = genre >= 0 && genre < 9 ? genre : 0;
-  style_ = mt::diceRecipe(genre_, style) ? style : -1;
+  style_ = (style >= 0 && style < mt::diceLibraryStyleCount(genre_)) ? style : -1;
   seed_ = seed;
   mt::Rng rng[mt::kDiceRoles];
   uint32_t seen[mt::kDiceRoles] = {};
@@ -144,7 +144,7 @@ bool DiceLibraryData::pick(int genre, mt::DiceRole role, uint32_t seed, mt::Dice
   return true;
 }
 bool DiceLibraryData::pickForStyle(int genre, int style, mt::DiceRole role, uint32_t seed, mt::DicePhrase& out) const {
-  const int requested = mt::diceRecipe(genre, style) ? style : -1;
+  const int requested = (style >= 0 && style < mt::diceLibraryStyleCount(genre)) ? style : -1;
   return requested == style_ && pick(genre, role, seed, out);
 }
 }  // namespace storage

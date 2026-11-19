@@ -1,1732 +1,151 @@
 #include "dice.h"
-#include "dice_variation.h"
-#include "dice_music.h"
-#include "dice_arrangement.h"
-#include <stdio.h>
 #include <algorithm>
-#include <stdlib.h>
-#include <string.h>
-#include <initializer_list>
+#include <cstring>
+#include <cstdio>
 #include "gen_util.h"
-#include "groove.h"
-#include "preset_io.h"
-#include "midi_import.h"
-#include "presets_factory.h"
+#include "dice_kit.h"
+#include "dice_sounds.h"
+#include "dice_phrase.h"
+#include "dice_key.h"
+#include "dice_hybrid.h"
 #include "rng.h"
 
 namespace mt {
 namespace {
+int clamp(int value, int lo, int hi) { return std::max(lo, std::min(hi, value)); }
+uint8_t bit(int track) { return static_cast<uint8_t>(1u << track); }
 
-static_assert(kInstruments <= 32 && kDiceRoles <= 8, "dice masks");
-
-constexpr const char* kRoleNames[kDiceRoles] = {"DRUMS", "BASS", "CHORDS", "LEAD", "ARP", "FX"};
-constexpr uint32_t kCanonSeed = 0x0D1CE5u;  // generator seed at Variety 0
-constexpr int kLeadBase = 72;              // C5: LEAD motifs' tonic octave
-constexpr int kFxNote = 60;
-constexpr int kLeadMain = 6;  // w.full track of MAIN / FILL's lead
-constexpr int kDevelopCounter = 7, kDevelopTops = 8;  // existing scratch rows, frozen before density
-
-// ---- Weighted picks ------------------------------------------------------------------------------
-template <class T>
-int listLen(const T* l) {
-  int n = 0;
-  if (l)
-    while (l[n].w) ++n;
-  return n;
+int pitch(const DiceVoice& voice, const DiceVariant& v, const DiceParts& d, const Instrument* instrument) {
+  int base=60+voice.pitch;
+  if(static_cast<DiceVoiceKind>(voice.kind)==DiceVoiceKind::Bass) base-=12;
+  if(!dicePercussion(voice)) base+=static_cast<int>(d.scaleRoot)-v.root;
+  return base-(instrument ? instrument->transpose : 0);
 }
-
-// Variety 0: the heaviest (first of them), no draw. Above: weights flattened towards the heaviest's, so
-// at 100 every option is as likely.
-template <class T>
-int pick(const T* l, int v, Rng& r) {
-  const int n = listLen(l);
-  if (n == 0) return -1;
-  int best = 0;
-  for (int i = 1; i < n; ++i)
-    if (l[i].w > l[best].w) best = i;
-  if (v <= 0) return best;
-  const uint32_t mx = l[best].w;
-  auto weight = [&](int i) { return static_cast<uint32_t>(l[i].w) * static_cast<uint32_t>(100 - v) + mx * v; };
-  uint32_t total = 0;
-  for (int i = 0; i < n; ++i) total += weight(i);
-  uint32_t k = r.below(total);
-  for (int i = 0; i < n; ++i) {
-    if (k < weight(i)) return i;
-    k -= weight(i);
-  }
-  return n - 1;
+void eventFx(Step& step, const DiceEvent& e, const DiceVoice& voice, bool melodic) {
+  const int chance=e.probability*voice.chance/100;
+  if(chance<100) putFx(step,Fx::PRB,chance);
+  if(e.condition) putFx(step,Fx::CND,e.condition);
+  if(e.repeats>1) putFx(step,Fx::RAT,e.repeats);
+  if(melodic && static_cast<DiceVoiceKind>(voice.kind)==DiceVoiceKind::Pad)
+    putFx(step,Fx::GAT,200);  // 800%: allow the recipe pad envelope to develop
+  if(melodic && diceChord(voice)!=255) putFx(step,Fx::CHD,diceChord(voice));
+  if(e.cutoff!=255) putFx(step,Fx::FLT,e.cutoff);
+  if(e.resonance!=255) putFx(step,Fx::RES,e.resonance);
+  if(e.delay!=255) putFx(step,Fx::DLY,e.delay);
+  if(e.reverb!=255) putFx(step,Fx::RVB,e.reverb);
 }
-
-int byName(int n, const char* (*nameOf)(int), const char* s) {
-  if (!s) return -1;
-  for (int i = 0; i < n; ++i) {
-    const char* x = nameOf(i);
-    if (x && strcmp(x, s) == 0) return i;
-  }
-  return -1;
-}
-
-int presetIndex(InstrType t, const char* name) {
-  if (!name) return -1;
-  for (int i = 0; i < factoryCount(t); ++i)
-    if (strcmp(factoryPreset(t, i).name, name) == 0) return i;
-  return -1;
-}
-
-int grooveIndex(const char* name) {
-  if (!name) return 0;
-  for (int i = 1; i < grooveCount(); ++i)
-    if (strcmp(grooveAt(i).name, name) == 0) return i;
-  return 0;
-}
-
-// ---- Slots (which instrument each role writes) ---------------------------------------------------
-bool isRoleTrack(int t) { return t >= 0 && t < kDiceRoles; }
-
-void markPlayed(const TrackCfg* tracks, const Instrument* instruments, const TrackCfg& c, bool* used,
-                bool lanesOnly = false) {
-  (void)tracks;
-  if (c.out != TrackOut::Int) return;
-  const int i = c.instr % kInstruments;
-  if (!lanesOnly) used[i] = true;
-  if (instruments[i].type != InstrType::Kit) return;
-  for (const KitLane& l : instruments[i].kit)
-    if (l.instr < kInstruments) used[l.instr] = true;
-}
-
-// role[k]: track k's settings (k < kDiceRoles); all: every track's.
-void slotsOf(const TrackCfg* role, const TrackCfg* all, const Instrument* instruments, uint8_t out[kDiceRoles], uint8_t locks = 0) {
-  bool used[kInstruments] = {};  // played by a track the roll leaves alone
-  bool own[kInstruments] = {};   // a role track's instrument: kept for that role
-  for (int t = 0; t < kTracks; ++t)
-    if (!isRoleTrack(t)) markPlayed(all, instruments, all[t], used);
-  for (int k = 0; k < kDiceRoles; ++k) {
-    own[role[k].instr % kInstruments] = true;
-    if (k > 0) markPlayed(all, instruments, role[k], used, true);  // a KIT on a melodic role
-  }
-  for (int k = 0; k < kDiceRoles; ++k)
-    if (locks & (1u << k)) {
-      used[role[k].instr % kInstruments] = true;
-      markPlayed(all, instruments, role[k], used);
-    }
-  const int kit = role[0].instr % kInstruments;
-  const int block = factoryKitBlock(kit);
-  bool free = !used[kit];
-  for (int l = 0; l < kKitBlock; ++l) free &= !used[block + l];
-  if (free) {
-    out[0] = static_cast<uint8_t>(kit);
-    used[kit] = true;
-    for (int l = 0; l < kKitBlock; ++l) used[block + l] = true;
-  } else {
-    out[0] = kNoInstr;
-    markPlayed(all, instruments, role[0], used);  // the kit stays, so do its lanes
-  }
-  for (int k = 1; k < kDiceRoles; ++k) {
-    if (locks & (1u << k)) { out[k] = kNoInstr; continue; }
-    int s = role[k].instr % kInstruments;
-    if (used[s]) {
-      s = 0;
-      while (s < kInstruments && (used[s] || own[s])) ++s;
-    }
-    if (s >= kInstruments) {
-      out[k] = kNoInstr;
-      continue;
-    }
-    out[k] = static_cast<uint8_t>(s);
-    used[s] = true;
-  }
-}
-
-// The role plays the notes as written: FM TONE/TOY (the other machines are one-shot drums or a chord
-// of their own; FX takes them), CHORDS needs polyphony, no KIT on a melodic role.
-bool roleFits(DiceRole role, const Instrument& m) {
-  if (m.type == InstrType::Kit || m.type == InstrType::Sample) return false;
-  if (role == DiceRole::Fx) return true;
-  if (m.type == InstrType::Fm && m.machine != static_cast<uint8_t>(FmMachine::Tone) &&
-      m.machine != static_cast<uint8_t>(FmMachine::Toy)) return false;
-  return !(role == DiceRole::Chords && m.mono);
-}
-
-// ---- Steps ---------------------------------------------------------------------------------------
-int effVel(uint8_t v) { return v ? v : 100; }
-bool isHit(char c) { return c == 'x' || c == 'X' || c == 'o' || (c >= '2' && c <= '4'); }
-uint8_t hitVel(char c) { return c == 'X' ? 127 : c == 'o' ? 45 : 0; }
-
-// Drum hit velocity of char c at step i by the style's feel ('X' accent, 'o' ghost, else by position).
-uint8_t feelVel(const DiceFeel& f, char c, int i) { return c == 'X' ? f.accent : c == 'o' ? f.ghost : f.vel[i & 3]; }
-
-// Lane hit at step i: the step's velocity is its loudest hit's.
-void drumHit(Step& st, int lane, uint8_t v) {
-  if (!st.hasNote()) {
-    st.note = v;
-    setLaneMask(st, 0);
-  } else if (effVel(v) > effVel(st.note)) {
-    st.note = v;
-  }
-  setLane(st, lane, true);
-}
-// Exactly one lane hits.
-bool oneLane(const Step& st) {
-  const uint16_t m = laneMask(st);
-  return st.hasNote() && m && !(m & (m - 1));
-}
-
-void clearSteps(Step* tr) {
-  for (int i = 0; i < kMaxSteps; ++i) tr[i] = Step();
-}
-
-void putNote(Step& st, int note, uint8_t vel, int gatePct) {
-  st = Step();
-  st.note = static_cast<uint8_t>(note < 0 ? 0 : note > 127 ? 127 : note);
-  st.vel = vel;
-  if (gatePct > 0) putFx(st, Fx::GAT, gateValue(gatePct));
-}
-
-bool startsWith(const char* s, const char* p) { return strncmp(s, p, strlen(p)) == 0; }
-
-// Drum lane of each DiceLane in the kit, by its drums' names (-1 = none).
-void kitLanes(const Instrument& kit, const Instrument* instruments, int8_t out[kDiceLanes]) {
-  int8_t cls[kKitLanes];
-  const char* names[kKitLanes];
-  for (int l = 0; l < kKitLanes; ++l) {
-    cls[l] = -1;
-    const uint8_t i = kit.kit[l].instr;
-    names[l] = i < kInstruments ? instruments[i].name : "";
-  }
-  for (int l = 0; l < kKitLanes; ++l) {
-    const char* n = names[l];
-    if (!n[0]) continue;
-    if (startsWith(n, "BD") || strstr(n, "KICK")) cls[l] = kDiceKick;
-    else if (!strcmp(n, "HHLONG") || startsWith(n, "OH") || strstr(n, " OH") || strstr(n, "HAT O") || strstr(n, "HHR O") ||
-             (startsWith(n, "HAT") && n[strlen(n) - 1] == 'O'))  // FM HAT 909O
-      cls[l] = kDiceOpen;
-    else if (startsWith(n, "CH") || startsWith(n, "HH") || startsWith(n, "HAT") || strstr(n, "HHR C") ||
-             strstr(n, " HH"))  // HAT C, HAT TGHT, HAT SOFT...
-      cls[l] = kDiceHat;
-    else if (startsWith(n, "SD") || strstr(n, "SN")) cls[l] = kDiceSnare;
-    else if (startsWith(n, "CP") || strstr(n, "CLAP")) cls[l] = kDiceClap;
-  }
-  for (int k = 0; k < kDiceLanes; ++k) out[k] = -1;
-  for (int l = kKitLanes - 1; l >= 0; --l)
-    if (cls[l] >= 0) out[cls[l]] = static_cast<int8_t>(l);  // the first lane of each wins
-  static const char* const kPerc[] = {"PC", "RS", "RIM", "CL", "CB", "COW", "CONGA", "WOOD", "METAL", "BLIP", "TOM"};
-  for (const char* pre : kPerc) {
-    for (int l = 0; l < kKitLanes && out[kDicePerc] < 0; ++l)
-      if (cls[l] < 0 && names[l][0] && startsWith(names[l], pre)) out[kDicePerc] = static_cast<int8_t>(l);
-    if (out[kDicePerc] >= 0) break;
-  }
-  for (int l = 0; l < kKitLanes && out[kDicePerc] < 0; ++l)
-    if (cls[l] < 0 && names[l][0]) out[kDicePerc] = static_cast<int8_t>(l);
-  if (out[kDiceKick] < 0 && out[kDiceSnare] < 0 && out[kDiceHat] < 0) {  // no names: the usual layout
-    static constexpr int8_t kDefault[kDiceLanes] = {0, 1, 4, 2, 3, 5};
-    memcpy(out, kDefault, sizeof(kDefault));
-    return;
-  }
-  if (out[kDiceClap] < 0) out[kDiceClap] = out[kDiceSnare];
-  if (out[kDiceOpen] < 0) out[kDiceOpen] = out[kDiceHat];
-  if (out[kDiceHat] < 0) {  // no hats (FM PERC): a short perc lane other than PERC's ticks them
-    static const char* const kTick[] = {"WOOD", "METAL", "RIDE", "CY", "BLIP", "CL", "RS", "RIM", "CONGA"};
-    for (const char* pre : kTick) {
-      for (int l = 0; l < kKitLanes && out[kDiceHat] < 0; ++l)
-        if (cls[l] < 0 && l != out[kDicePerc] && names[l][0] && startsWith(names[l], pre))
-          out[kDiceHat] = static_cast<int8_t>(l);
-      if (out[kDiceHat] >= 0) break;
-    }
-    if (out[kDiceHat] < 0) out[kDiceHat] = out[kDicePerc];
-    if (out[kDiceOpen] < 0 || out[kDiceOpen] == out[kDicePerc]) out[kDiceOpen] = out[kDiceHat];
-  }
-}
-
-// ---- The roll ------------------------------------------------------------------------------------
-struct Picks {
-  int8_t drum[kDiceLanes];        // item of the recipe's kit lane list, -1 = none
-  int8_t jd[kDiceLanes] = {}, jt[kDiceLanes] = {};  // Variety: DECAY / TONE macro offsets
-  int sound[kDiceRoles];  // factory index of the role's preset (type: rec.sounds), -1 = none
-  int8_t soundItem[kDiceRoles];
-  const char* drums[kDiceLanes];
-  int fill = 0;
-  int prog = -1, rhythm = 0, bass = -1, arp = -1, leadArp = -1, motif = -1;
-  uint8_t arpMode = 0, leadArpMode = 0, arpOct = 1;
-  DiceLead lead = DiceLead::None;
-  bool riser = false;
-  const char* fxHits = nullptr;
-  int percRot = 0;
-  uint32_t seed = kCanonSeed;
-};
-
-struct Ctx {
-  const DiceRecipe& rec;
-  const DiceMusicProfile& music;
-  int v;
-  Picks pk;
-  uint8_t root;
-  ScaleType sc;
-  int len;
-  Rng mr;  // mutations (Variety > 0)
-  Rng pr;  // phrase variations: a fixed seed at Variety 0
-  uint8_t drumVar;              // drum variation strength 1..3 (kTraits)
-  uint8_t addNotes;             // chord notes added: 0 none, 1 7th / 9th, 2 sus (kTraits)
-  uint8_t bar[kMaxSteps / 16];  // Bar of each phrase unit (phraseBars)
-};
-
-// Style traits (dice_recipes.cpp order): drum variation strength 1..3 (low nibble, 0 = 2), chord notes
-// added (high nibble, Ctx::addNotes).
-constexpr uint8_t kTraits[9][kDiceStyleSlots] = {
-    {0x12, 0x02, 0x02, 0x02, 0x02},        // HOUSE: DEEP 7/9
-    {0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01},  // TECHNO, EBM
-    {0x22, 0x22, 0x22, 0x22, 0x22},        // TRANCE: sus
-    {0x13, 0x03, 0x03, 0x03, 0x03},        // DNB: LIQUID 7/9
-    {0x03, 0x03, 0x03, 0x01},              // BREAKS, DEEP DUB
-    {0x03, 0x13, 0x03},                    // HIPHOP: LOFI 7/9
-    {0x03, 0x03, 0x13, 0x03},              // IDM: ELECTRONICA 7/9, FOOTWORK
-    {0x11, 0x11, 0x11},                    // AMBIENT 7/9
-    {0x02, 0x02, 0x12},                    // SYNTHWAVE: CHILLWAVE 7/9
-};
-
-// Phrase: units of a bar (16 steps; 8 in a 16-step pattern), four to a phrase A A' A B (two units: A B;
-// 128 steps: two phrases, the 8th bar a fill).
-enum Bar : uint8_t { kBarA, kBarA2, kBarB, kBarBig };
-int unitLen(int len) { return len <= 16 ? 8 : 16; }
-
-void phraseBars(Ctx& c) {
-  static constexpr uint8_t kPhrase[4] = {kBarA, kBarA2, kBarA, kBarB};
-  const int n = c.len / unitLen(c.len);
-  for (int j = 0; j < n; ++j) {
-    uint8_t b = n == 2 ? (j ? kBarB : kBarA) : kPhrase[j % 4];
-    if (n == 8 && j == 7) b = kBarBig;
-    if (b == kBarA && j > 0 && c.v > 0 && c.pr.below(200) < static_cast<uint32_t>(c.v)) b = kBarA2;
-    c.bar[j] = b;
-  }
-}
-
-void rollPicks(Ctx& c, Rng& r) {
-  const DiceRecipe& R = c.rec;
-  Picks& k = c.pk;
-  const int v = c.v;
-  int i;
-  for (int l = 0; l < kDiceLanes; ++l) {
-    i = R.kit ? pick(R.kit->lane[l], v, r) : -1;
-    k.drum[l] = static_cast<int8_t>(i);
-    if (v > 0 && i >= 0) {  // a small spread around the drum: +-v/8
-      const int a = v / 8;
-      k.jd[l] = static_cast<int8_t>(static_cast<int>(r.below(static_cast<uint32_t>(2 * a + 1))) - a);
-      k.jt[l] = static_cast<int8_t>(static_cast<int>(r.below(static_cast<uint32_t>(2 * a + 1))) - a);
-    }
-  }
-  for (int role = 0; role < kDiceRoles; ++role) {
-    k.sound[role] = -1;
-    k.soundItem[role] = -1;
-    if (role == 0 || !R.sounds[role]) continue;
-    i = pick(R.sounds[role], v, r);
-    if (i < 0) continue;
-    k.soundItem[role] = static_cast<int8_t>(i);
-    k.sound[role] = presetIndex(R.sounds[role][i].type, R.sounds[role][i].name);
-  }
-  for (int l = 0; l < kDiceLanes; ++l) {
-    i = pick(R.drums[l], v, r);
-    k.drums[l] = i >= 0 ? R.drums[l][i].name : nullptr;
-  }
-  k.fill = pick(diceFills(), v, r);
-  i = pick(R.progs, v, r);
-  k.prog = i >= 0 ? byName(progFactoryCount(), progFactoryName, R.progs[i].name) : -1;
-  i = pick(R.rhythms, v, r);
-  k.rhythm = i >= 0 ? byName(chordRhythmCount(), chordRhythmName, R.rhythms[i].name) : -1;
-  if (k.rhythm < 0) k.rhythm = 0;
-  i = pick(R.basses, v, r);
-  k.bass = i >= 0 ? byName(bassFactoryCount(), bassFactoryName, R.basses[i].name) : -1;
-  i = pick(R.arps, v, r);
-  k.arp = i >= 0 ? byName(arpFactoryCount(), arpFactoryName, R.arps[i].name) : -1;
-  i = pick(R.arpModes, v, r);
-  k.arpMode = i >= 0 ? R.arpModes[i].v : 0;
-  i = pick(R.leads, v, r);
-  k.lead = i >= 0 ? static_cast<DiceLead>(R.leads[i].v) : DiceLead::None;
-  i = pick(R.arps, v, r);
-  k.leadArp = i >= 0 ? byName(arpFactoryCount(), arpFactoryName, R.arps[i].name) : -1;
-  i = pick(R.arpModes, v, r);
-  k.leadArpMode = i >= 0 ? R.arpModes[i].v : 0;
-  i = pick(R.motifs, v, r);
-  k.motif = i >= 0 ? byName(diceMotifCount(), diceMotifName, R.motifs[i].name) : -1;
-  static constexpr DiceName kFxDefault[] = {{"x...............", 1}, {nullptr, 0}};
-  const DiceName* fh = R.fxHits ? R.fxHits : kFxDefault;
-  i = pick(fh, v, r);
-  k.fxHits = i >= 0 ? fh[i].name : nullptr;
-  if (k.sound[5] >= 0) k.riser = strcmp(factoryPreset(R.sounds[5][k.soundItem[5]].type, k.sound[5]).category, "FX") == 0;
-  if (v > 0) {
-    k.arpOct = static_cast<uint8_t>(r.below(100) < static_cast<uint32_t>(v) / 2 ? 2 : 1);
-    k.percRot = r.below(100) < static_cast<uint32_t>(v) / 2 ? 1 + static_cast<int>(r.below(3)) : 0;
-    k.seed = r.next();
-  }
-}
-
-// Drum fill fill (diceFills) over steps [from, from + n), n 4 or 8.
-void writeFill(Ctx& c, Step* tr, const int8_t lane[kDiceLanes], int fill, int from, int n) {
-  const DiceFill& f = diceFills()[fill >= 0 ? fill : 0];
-  uint8_t rat[8] = {};
-  for (int i = from; i < from + n; ++i) {
-    const bool kick = lane[kDiceKick] >= 0 && tr[i].hasNote() && laneOn(tr[i], lane[kDiceKick]);
-    const uint8_t velocity = tr[i].note;
-    tr[i] = Step();
-    if (kick) drumHit(tr[i], lane[kDiceKick], velocity);
-  }
-  const int perc = lane[kDicePerc] >= 0 ? lane[kDicePerc] : lane[kDiceSnare];
-  const struct {
-    const char* s;
-    int lane;
-  } parts[] = {{f.kick, lane[kDiceKick]}, {f.snare, lane[kDiceSnare]}, {f.perc, perc}};
-  for (const auto& pa : parts) {
-    if (!pa.s || pa.lane < 0) continue;
-    for (int i = 0; i < n; ++i) {
-      const char ch = pa.s[8 - n + i];
-      if (!isHit(ch)) continue;
-      drumHit(tr[from + i], pa.lane, feelVel(*c.rec.feel, ch, from + i));
-      if (ch >= '2' && ch <= '4') rat[i] = static_cast<uint8_t>(ch - '0');
-    }
-  }
-  for (int i = 0; i < n; ++i)
-    if (rat[i] && oneLane(tr[from + i])) putFx(tr[from + i], Fx::RAT, rat[i]);
-}
-
-// ---- Phrase variations ---------------------------------------------------------------------------
-bool hasLane(const Step& st, int l) { return st.hasNote() && laneOn(st, l); }
-void dropLane(Step& st, int l) {
-  if (!hasLane(st, l)) return;
-  setLane(st, l, false);
-  if (!laneMask(st)) st = Step();
-}
-// Adds lane l at s[o] (b + o in the pattern); false: already there.
-bool addLane(const DiceFeel& f, Step* s, int b, int o, int l, uint8_t vel = 0) {
-  if (l < 0 || hasLane(s[o], l)) return false;
-  drumHit(s[o], l, vel ? vel : f.vel[(b + o) & 3]);
-  return true;
-}
-void solo(Step& st, int l, uint8_t rat) {
-  if (hasLane(st, l) && oneLane(st)) putFx(st, Fx::RAT, rat);
-}
-
-// A' edit kind on unit s (u steps from b): 0 an extra kick, 1 a snare ghost, 2 the open hat on another
-// beat, 3 a 16th hat. False: nothing changed.
-bool drumEdit(const DiceFeel& f, Step* s, int u, int b, const int8_t* lane, int kind) {
-  const int kick = lane[kDiceKick], sn = lane[kDiceSnare], oh = lane[kDiceOpen], hat = lane[kDiceHat];
-  switch (kind) {
-    case 0:
-      for (int o : {u - 3, u - 6, u - 2})
-        if (addLane(f, s, b, o, kick)) return true;
-      return false;
-    case 1:
-      for (int o : {u - 1, u - 5, u / 2 - 1, 3})
-        if (!s[o].hasNote() && addLane(f, s, b, o, sn, f.ghost)) return true;
-      return false;
-    case 2:
-      if (oh < 0) return false;
-      for (int o = 0; o < u; ++o) {
-        const int t = (o + 2) % u;
-        if (!hasLane(s[o], oh) || hasLane(s[t], oh)) continue;
-        dropLane(s[o], oh);
-        addLane(f, s, b, t, oh);
-        return true;
+void writeVoice(DicePat& dst, int t, const DiceVoice& voice, const DiceRecipe& recipe,
+                const DiceVariant& v, const DiceParts& d, const Instrument* m,
+                bool preserveTiming, int source, const dice_detail::PhrasePlan& plan, DiceDensity density, int feel, Rng& rng, bool kitGrid=false,const Step* prior=nullptr) {
+  const TrackSpeed sourceSpeed=toSpeed(voice.speed);
+  const TrackSpeed destSpeed=(preserveTiming || kitGrid) ? toSpeed(dst.trackSpeed[t]) : sourceSpeed;
+  const int sourceTicks=ticksPerStep(static_cast<Resolution>(recipe.resolution))*speedDiv(sourceSpeed)/speedMul(sourceSpeed);
+  const int destTicks=ticksPerStep(dst.res)*speedDiv(destSpeed)/speedMul(destSpeed);
+  const int period=(voice.length ? voice.length : recipe.length)*sourceTicks;
+  const int base=pitch(voice,v,d,m);
+  Step* row=dst.steps[t];
+  for(int cycle=0;cycle*period<dst.length*destTicks;++cycle)
+    for(int i=0;i<diceEventCount(voice);++i) {
+      const DiceEvent& e=diceEvent(voice,i);
+      if(e.at>=recipe.length || (voice.length && e.at>=voice.length)) continue;
+      const int tick=cycle*period+e.at*sourceTicks;
+      int at=(tick+destTicks/2)/destTicks;
+      if(at>=dst.length || row[at].hasNote()) continue;
+      // Preserve the first source attack and strong anchors; SPARSE only thins softer hits.
+      if(density==DiceDensity::Sparse && i && e.velocity<110 && rng.below(3)==0) continue;
+      Step& step=row[at];
+      step.note=clamp(base+e.note,0,127);
+      if(!dicePercussion(voice) && d.scaleType!=v.scale) {
+        const int transpose=m ? m->transpose : 0;
+        step.note=clamp(moveDegrees(clamp(step.note+transpose,0,127),0,d.scaleRoot,static_cast<ScaleType>(d.scaleType))-transpose,0,127);
       }
-      return addLane(f, s, b, u - 2, oh);
-    default:
-      for (int o : {u - 1, u - 3, u / 2 + 1})
-        if (addLane(f, s, b, o, hat, f.ghost)) return true;
-      return false;
-  }
-}
-
-// B mini-fill kind in the unit's last beat: 0 a snare roll, 1 a flam, 2 an open-hat lift,
-// 3 perc hits, 4 a triplet hat lift.
-bool drumFill(const DiceFeel& f, Step* s, int u, int b, const int8_t* lane, int kind) {
-  const int sn = lane[kDiceSnare], hat = lane[kDiceHat];
-  const int perc = lane[kDicePerc] >= 0 ? lane[kDicePerc] : lane[kDiceClap];
-  bool ch = false;
-  switch (kind) {
-    case 0:
-      for (int i = 0; i < 4; ++i) ch |= addLane(f, s, b, u - 4 + i, sn, feelVel(f, "oxxX"[i], b + u - 4 + i));
-      break;
-    case 1:
-      ch = addLane(f, s, b, u - 2, sn, f.ghost);
-      ch |= addLane(f, s, b, u - 1, sn, f.accent);
-      if (ch) solo(s[u - 1], sn, 2);
-      break;
-    case 2:
-      // The groove's kick anchors survive mini-fills; BREAK owns deliberate kick removal.
-      ch = addLane(f, s, b, u - 2, lane[kDiceOpen]);
-      break;
-    case 3:
-      ch = addLane(f, s, b, u - 3, perc);
-      ch |= addLane(f, s, b, u - 1, perc, f.accent);
-      break;
-    default:
-      ch = addLane(f, s, b, u - 4, hat);
-      ch |= addLane(f, s, b, u - 2, hat);
-      if (ch) solo(s[u - 2], hat, 3);
-      break;
-  }
-  return ch;
-}
-
-// Lane l of unit s turned by `by` steps.
-void turnLane(const DiceFeel& f, Step* s, int u, int b, int l, int by) {
-  if (l < 0) return;
-  uint16_t hit = 0;
-  for (int o = 0; o < u; ++o)
-    if (hasLane(s[o], l)) hit = static_cast<uint16_t>(hit | (1u << o)), dropLane(s[o], l);
-  for (int o = 0; o < u; ++o)
-    if (hit & (1u << o)) addLane(f, s, b, (o + by) % u, l);
-}
-
-// The drums over the phrase: A' small edits, B a mini-fill (perc turned), the 8th bar of 128 a fill.
-// Variety 0: the style's first kinds; above: drawn, more of them.
-void phraseDrums(Ctx& c, Step* tr, const int8_t lane[kDiceLanes]) {
-  static constexpr uint8_t kEdits[3][4] = {{2, 0, 3, 1}, {0, 2, 1, 3}, {1, 0, 3, 2}};
-  static constexpr uint8_t kFills[3][5] = {{2, 3, 1, 0, 4}, {1, 2, 3, 0, 4}, {0, 4, 1, 3, 2}};
-  const DiceFeel& f = *c.rec.feel;
-  const int u = unitLen(c.len), str = c.drumVar, v = c.v;
-  for (int j = 0; j < c.len / u; ++j) {
-    const int b = j * u, role = c.bar[j];
-    Step* s = tr + b;
-    if (role == kBarA) continue;
-    if (role == kBarBig) {
-      writeFill(c, tr, lane, (c.pk.fill + 1) % listLen(diceFills()), b + u - 8, 8);
-      continue;
+      step.vel=e.velocity;
+      eventFx(step,e,voice,!dicePercussion(voice));
+      const int displacement=tick-at*destTicks;
+      const int human=feel && e.at%4 ? (int(rng.below(9))-4)*feel/100 : 0;
+      const int nudge=clamp(displacement*100/destTicks+human,-50,50);
+      if(nudge) putFx(step,Fx::NDG,static_cast<uint8_t>(static_cast<int8_t>(nudge)));
+      if(density==DiceDensity::Busy && e.velocity<110 && e.repeats==1 && i%5==4)
+        putFx(step,Fx::RAT,2);
     }
-    const bool b2 = role == kBarB;
-    const uint8_t* kinds = b2 ? kFills[str - 1] : kEdits[str - 1];
-    const int nk = b2 ? 5 : 4;
-    int count = b2 || str < 3 ? 1 : 2;
-    if (v > 0 && c.pr.below(100) < static_cast<uint32_t>(v / 2)) ++count;
-    if (str >= 2 && (b2 || (v > 0 && c.pr.below(100) < static_cast<uint32_t>(v / 3))))
-      turnLane(f, s, u, b, lane[kDicePerc], 2);
-    const int at = v > 0 ? static_cast<int>(c.pr.below(static_cast<uint32_t>(nk))) : 0;
-    for (int t = 0; t < nk && count > 0; ++t) {
-      const int kind = kinds[(at + t) % nk];
-      if (b2 ? drumFill(f, s, u, b, lane, kind) : drumEdit(f, s, u, b, lane, kind)) --count;
+  if(!preserveTiming && !kitGrid) {
+    dst.trackLen[t]=voice.length ? std::min<int>(dst.length,std::max(1,voice.length*sourceTicks/destTicks)) : 0;
+    dst.trackSpeed[t]=voice.speed;
+  }
+  const int played=dst.trackLen[t] ? std::min<int>(dst.length,dst.trackLen[t]) : dst.length;
+  if(!kitGrid) dice_detail::developVoice(row,played,destTicks,source,recipe,v,d.scaleRoot,d.scaleType,m ? m->transpose : 0,plan,nullptr,prior);
+}
+void repairTies(const Pattern& prior, DicePat& dst, int t) {
+  for(int i=0;i<dst.length;++i) {
+    Step& step=dst.steps[t][i];
+    if(!step.hasNote() || !step.find(Fx::TIE)) continue;
+    int distance=1;
+    while(distance<dst.length && !prior.steps[t][(i+distance)%dst.length].hasNote()) ++distance;
+    if(dst.steps[t][(i+distance)%dst.length].hasNote()) continue;
+    for(auto& fx:step.fx) if(fx.cmd==Fx::TIE) fx=FxSlot();
+    putFx(step,Fx::GAT,200);  // a removed terminator must not leave an indefinite hold
+  }
+}
+void blend(const Pattern& prior, DicePat& dst, int t, DiceChange change, bool kit, Rng& rng) {
+  if(change==DiceChange::Wild) return;
+  const bool subtle=change==DiceChange::Subtle;
+  int attacks=0, count=0, first=-1;
+  uint8_t candidates[kMaxSteps]; bool selected[kMaxSteps]={};
+  for(int i=0;i<dst.length;++i) {
+    const Step& old=prior.steps[t][i];
+    if(old.hasNote()) { ++attacks; if(first<0) first=i; }
+    if(subtle ? old.hasNote() : memcmp(&old,&dst.steps[t][i],sizeof(Step))!=0) candidates[count++]=i;
+  }
+  if(!attacks) return;
+  const int budget=std::min(count,std::max(1,attacks/(subtle ? 4 : 2)));
+  for(int j=0;j<budget;++j) {
+    const int pick=j+rng.below(count-j); std::swap(candidates[j],candidates[pick]);
+    selected[candidates[j]]=true;
+  }
+  for(int i=0;i<kMaxSteps;++i) {
+    Step& step=dst.steps[t][i];
+    if(!selected[i]) { step=prior.steps[t][i]; continue; }
+    if(subtle) {
+      const int velocity=kit ? step.note : step.vel;
+      step=prior.steps[t][i];
+      const int old=kit ? step.note : step.vel ? step.vel : 100;
+      const int next=clamp(velocity ? velocity : old+5,std::max(1,old-8),std::min(127,old+8));
+      if(kit) step.note=next; else step.vel=next;
     }
   }
+  bool any=false;
+  for(int i=0;i<dst.length;++i) any|=dst.steps[t][i].hasNote();
+  if(!any) dst.steps[t][first]=prior.steps[t][first];
+  repairTies(prior,dst,t);
 }
-
-// Writes the lanes' hits on drum track tr; mutations by Variety.
-void writeDrums(Ctx& c, Step* tr, const int8_t lane[kDiceLanes]) {
-  const int len = c.len;
-  const DiceFeel& f = *c.rec.feel;
-  uint8_t rat[kMaxSteps] = {};
-  for (int l = 0; l < kDiceLanes; ++l) {
-    const char* s = c.pk.drums[l];
-    if (!s || lane[l] < 0) continue;
-    const int n = static_cast<int>(strlen(s));
-    const int rot = l == kDicePerc ? c.pk.percRot : 0;
-    for (int i = 0; i < len; ++i) {
-      const char ch = s[i % n];
-      if (!isHit(ch)) continue;
-      const int at = (i + rot) % len;
-      drumHit(tr[at], lane[l], feelVel(f, ch, at));
-      if (ch >= '2' && ch <= '4') rat[at] = static_cast<uint8_t>(ch - '0');
+// Section reductions act on the guide theme, never synthesize a missing role or pitch.
+void section(DicePat& dst, int t, const DiceVoice& voice, DiceForm form, int index) {
+  bool thin=false, withdraw=false;
+  const bool variation=(form==DiceForm::Classic && index==1) ||
+    (form==DiceForm::Develop && index==2) || (form==DiceForm::Arrange && index==3);
+  const auto kind=static_cast<DiceVoiceKind>(voice.kind);
+  const bool low=kind==DiceVoiceKind::Kick || kind==DiceVoiceKind::Bass;
+  if(form==DiceForm::Classic) { thin=index==2 && low; withdraw=index==2; }
+  if(form==DiceForm::Develop) { thin=(index==0 && low); withdraw=index==3; }
+  if(form==DiceForm::Arrange) { thin=(index==0 || index==2 || index==3) && low; withdraw=index==5; }
+  int seen=0;
+  for(int i=0;i<dst.length;++i) if(dst.steps[t][i].hasNote()) {
+    if((thin && seen++%2) || (withdraw && i>=dst.length*3/4)) dst.steps[t][i]=Step();
+    else if(variation && i>=dst.length*3/4) {
+      Step& step=dst.steps[t][i];
+      if(dicePercussion(voice)) putFx(step,Fx::RAT,2);
+      else step.vel=clamp(step.vel+6,1,127);
     }
   }
-  if (c.v > 0) {
-    const int v = c.v;
-    const int hat = lane[kDiceHat], sn = lane[kDiceSnare], kick = lane[kDiceKick];
-    for (int i = 0; i < len; ++i) {
-      Step& st = tr[i];
-      const uint16_t m = st.hasNote() ? laneMask(st) : 0;
-      if (hat >= 0 && !hasLane(st, hat) && (i & 1) && c.mr.below(100) < static_cast<uint32_t>(v / 5))
-        drumHit(st, hat, f.ghost);
-      if (sn >= 0 && !m && c.mr.below(100) < static_cast<uint32_t>(v / 10)) drumHit(st, sn, f.ghost);
-      if (hasLane(st, hat) && oneLane(st) && c.mr.below(100) < static_cast<uint32_t>(v / 4))
-        putFx(st, Fx::PRB, static_cast<uint8_t>(50 + c.mr.below(41)));
-      (void)kick;
-      // Velocity spread grows with Variety: up to +-v/7 (+-14 at 100).
-      if (st.hasNote() && st.note) {
-        const int a = v / 7;
-        const int x = st.note + static_cast<int>(c.mr.below(static_cast<uint32_t>(2 * a + 1))) - a;
-        st.note = static_cast<uint8_t>(x < 1 ? 1 : x > 127 ? 127 : x);
-      }
-    }
-  }
-  for (int i = 0; i < len; ++i)
-    if (rat[i] && oneLane(tr[i])) putFx(tr[i], Fx::RAT, rat[i]);
-  phraseDrums(c, tr, lane);
+  if(withdraw && !dicePercussion(voice)) dst.steps[t][dst.length*3/4].note=kNoteOff;
+}
+void song(DiceSong& out, DiceForm form) {
+  out=DiceSong();
+  static const uint8_t chains[][12]={{0,0,1,0,2,3,1},{0,1,1,2,1,2,3},{0,0,1,1,2,3,4,4,1,3,4,5}};
+  out.songLen=form==DiceForm::Arrange ? 12 : 7;
+  for(int i=0;i<out.songLen;++i) out.song[i]=chains[static_cast<int>(form)][i];
 }
 
-// ---- Melodic phrase --------------------------------------------------------------------------------
-const ChordSeg* segAt(const ChordSeg* segs, int n, int i) {
-  for (int k = 0; k < n; ++k)
-    if (i >= segs[k].start && i < segs[k].start + segs[k].steps) return &segs[k];
-  return nullptr;
-}
-
-// The note nearest x (up first on ties) of seg's chord.
-int chordTone(int x, const ChordSeg& sg, uint8_t root, ScaleType sc) {
-  uint8_t ns[4];
-  const int n = chordNotes(sg.root, sg.chd, root, sc, ns);
-  for (int a = 0; a <= 6; ++a)
-    for (int y : {x + a, x - a})
-      for (int i = 0; i < n; ++i)
-        if (y >= 0 && y <= 127 && (ns[i] - y) % 12 == 0) return y;
-  return x;
-}
-
-struct Tok {
-  char kind;  // '.', '-', 'n'
-  int8_t deg, oct;
-};
-bool sameTok(const Tok& a, const Tok& b) { return a.kind == b.kind && a.deg == b.deg && a.oct == b.oct; }
-
-int parseMotif(const char* text, Tok* tok, int cap) {
-  if (!text || diceMotifSteps(text) <= 0) return 0;
-  int k = 0;
-  for (const char* p = text; *p && k < cap;) {
-    if (*p == ' ') {
-      ++p;
-      continue;
-    }
-    Tok& t = tok[k++];
-    t.kind = *p == '.' || *p == '-' ? *p : 'n';
-    t.deg = t.kind == 'n' ? static_cast<int8_t>(*p - '1') : 0;
-    t.oct = 0;
-    ++p;
-    if (*p == '^') t.oct = 1, ++p;
-    else if (*p == 'v') t.oct = -1, ++p;
-  }
-  return k;
-}
-
-// One unit of the lead phrase from the motif's tokens ut (in place): A' its tail turned (inverted round
-// its first note, shifted or delayed), B an answer (head a third up, tail moved on, the last note the
-// tonic / fifth: *cad its offset). Variety: notes added / dropped, leaps, steps.
-void leadUnit(Ctx& c, Tok* ut, int u, int role, Rng& r, int* cad) {
-  const int v = c.v, h = u / 2;
-  Tok src[16];
-  memcpy(src, ut, sizeof(Tok) * u);
-  *cad = -1;
-  if (role == kBarA2) {
-    const int t0 = u - u / 4, mode = v > 0 ? static_cast<int>(r.below(3)) : 0;
-    int pivot = -99;
-    if (mode == 2) {
-      for (int i = u - 1; i > t0; --i) ut[i] = ut[i - 1];
-      ut[t0].kind = '.';
-    } else {
-      for (int i = t0; i < u; ++i) {
-        if (ut[i].kind != 'n') continue;
-        if (mode == 1) ut[i].deg = static_cast<int8_t>(ut[i].deg + 1 + static_cast<int>(r.below(2)));
-        else if (pivot == -99) pivot = ut[i].deg;
-        else ut[i].deg = static_cast<int8_t>(2 * pivot - ut[i].deg);
-      }
-    }
-  } else if (role >= kBarB) {
-    const int lift = v > 0 ? 1 + static_cast<int>(r.below(3)) : 2, by = v > 0 ? 1 + static_cast<int>(r.below(3)) : 2;
-    for (int i = 0; i < h; ++i)
-      if (ut[i].kind == 'n') ut[i].deg = static_cast<int8_t>(ut[i].deg + lift);
-    for (int i = h; i < u; ++i) ut[i] = src[h + (i - h + h - by) % h];
-    int last = -1, prev = 0;
-    for (int i = 0; i < u; ++i)
-      if (ut[i].kind == 'n') (i >= h ? last : prev) = i;
-    if (last < 0) {
-      last = h;
-      ut[h].kind = 'n';
-    }
-    const int pd = ut[prev].kind == 'n' ? ut[prev].deg : 0;
-    ut[last].deg = static_cast<int8_t>(v > 0 && r.below(3) == 0 ? 4 : pd >= 4 ? 7 : 0);
-    ut[last].oct = 0;
-    *cad = last;
-  }
-  if (v > 0) {
-    int pd = 0;
-    for (int i = 0; i < u; ++i) {
-      Tok& t = ut[i];
-      if (i == *cad) {
-        pd = t.deg;
-        continue;
-      }
-      if (t.kind == '.' && i && !(i & 1) && r.below(100) < static_cast<uint32_t>(v / 8)) {
-        t.kind = 'n';
-        t.deg = static_cast<int8_t>(pd + (r.below(2) ? 1 : -1));
-        t.oct = 0;
-      } else if (t.kind == 'n' && i && r.below(100) < static_cast<uint32_t>(v / 12)) {
-        t.kind = '.';
-      } else if (t.kind == 'n') {
-        if (r.below(100) < static_cast<uint32_t>(v / 3)) t.deg = static_cast<int8_t>(t.deg + (r.below(2) ? 1 : -1));
-        if (t.oct < 1 && r.below(100) < static_cast<uint32_t>(v / 12)) ++t.oct;
-      }
-      if (t.kind == 'n') pd = t.deg;
-    }
-  }
-  bool same = true;
-  for (int i = 0; i < u; ++i) same &= sameTok(ut[i], src[i]);
-  if (same && role != kBarA)  // nothing moved (a tail of holds): the unit's last note a step up
-    for (int i = u - 1; i >= 0; --i)
-      if (ut[i].kind == 'n') {
-        ut[i].deg = static_cast<int8_t>(ut[i].deg + 2);
-        break;
-      }
-}
-
-// LEAD motif over the phrase (c.bar, leadUnit); strong beats (but the cadence) take the chord's nearest
-// note. simple (MAIN / FILL): A and A' only, velocity -20%. r: its own draws, so both takes share A.
-void writeLead(Ctx& c, Step* tr, const char* text, const ChordSeg* segs, int segN, bool simple, Rng r) {
-  Tok tok[32];
-  const int k = parseMotif(text, tok, 32);
-  if (k <= 0) return;
-  const int u = unitLen(c.len);
-  int last = -1, held = 0;
-  for (int j = 0; j < c.len / u; ++j) {
-    const int b = j * u;
-    const int role = simple && c.bar[j] >= kBarB ? kBarA : c.bar[j];
-    Tok ut[16];
-    for (int i = 0; i < u; ++i) ut[i] = tok[(b + i) % k];
-    int cad;
-    leadUnit(c, ut, u, role, r, &cad);
-    for (int i = 0; i < u; ++i) {
-      const Tok& t = ut[i];
-      if (t.kind == '.') {
-        last = -1;
-        continue;
-      }
-      if (t.kind == '-') {
-        if (last >= 0) putFx(tr[last], Fx::GAT, gateValue(100 * (++held + 1) - 10));
-        continue;
-      }
-      int note = moveDegrees(kLeadBase + c.root, t.deg, c.root, c.sc) + 12 * t.oct;
-      const ChordSeg* sg = segAt(segs, segN, b + i);
-      if (sg && !(i & 3) && i != cad) note = chordTone(note, *sg, c.root, c.sc);
-      putNote(tr[b + i], note, simple ? 80 : 0, 0);
-      last = b + i;
-      held = 0;
-    }
-  }
-}
-
-// Note steps of unit [b, b + u) (offsets), returns their count.
-int onsets(const Step* tr, int b, int u, uint8_t* at) {
-  int n = 0;
-  for (int o = 0; o < u; ++o)
-    if (tr[b + o].hasNote()) at[n++] = static_cast<uint8_t>(o);
-  return n;
-}
-
-// BASS over the phrase: A' a beat note pushed early or skipped; A' and B an approach in the last beat to
-// the next bar's root (a scale step in A', chromatic in B); B now and then an octave leap.
-void phraseBass(Ctx& c, Step* tr, const ChordSeg* segs, int segN) {
-  if (!c.v || c.music.bassMotion != DiceBassMotion::Phrase) return;
-  const int len = c.len, u = unitLen(len), h = u / 2;
-  for (int j = 0; j < len / u; ++j) {
-    const int role = c.bar[j], b = j * u;
-    if (role == kBarA) continue;
-    Step* s = tr + b;
-    if (role == kBarA2) {
-      if (!(c.v > 0 && c.pr.below(2)) && s[h].hasNote() && !s[h - 1].hasNote()) {
-        s[h - 1] = s[h];
-        s[h] = Step();
-      } else {
-        for (int o : {u / 4, 3 * u / 4})
-          if (s[o].hasNote()) {
-            s[o] = Step();
-            break;
-          }
-      }
-    }
-    uint8_t at[16];
-    const int n = onsets(tr, b, u, at);
-    int pos = n && at[n - 1] >= u - 4 ? at[n - 1] : u - 2;
-    const int ref = s[pos].hasNote() ? s[pos].note : n ? s[at[n - 1]].note : 36 + c.root;
-    const int next = (b + u) % len;
-    int t;
-    if (tr[next].hasNote()) {
-      t = tr[next].note;
-    } else {
-      const ChordSeg* sg = segAt(segs, segN, next);
-      if (!sg) continue;
-      const int d = ((sg->root - ref) % 12 + 12) % 12;
-      t = d <= 6 ? ref + d : ref + d - 12;
-    }
-    const bool chroma = role != kBarA2 || (c.v > 0 && c.pr.below(3) == 0);
-    const int dir = ref <= t ? -1 : 1;
-    const int a = chroma ? t + dir : moveDegrees(t, dir, c.root, c.sc);
-    if (s[pos].hasNote()) s[pos].note = static_cast<uint8_t>(a < 0 ? 0 : a > 127 ? 127 : a);
-    else putNote(s[pos], a, 0, 50);
-    if (role != kBarA2 && c.v > 0 && c.pr.below(100) < static_cast<uint32_t>(c.v / 4))
-      for (int o = u / 4; o <= h; ++o)
-        if (s[o].hasNote() && s[o].note <= 60) {
-          s[o].note = static_cast<uint8_t>(s[o].note + 12);
-          break;
-        }
-  }
-}
-
-// ARP (and an arp LEAD) over the phrase: B an octave over (under, when high), or (Variety) reversed.
-void phraseArp(Ctx& c, Step* tr) {
-  const int u = unitLen(c.len);
-  for (int j = 0; j < c.len / u; ++j) {
-    if (c.bar[j] < kBarB) continue;
-    const int b = j * u;
-    uint8_t at[16];
-    const int n = onsets(tr, b, u, at);
-    bool moved = false;
-    if (c.v > 0 && c.pr.below(2))
-      for (int i = 0; i < n / 2; ++i) {
-        Step &x = tr[b + at[i]], &y = tr[b + at[n - 1 - i]];
-        moved |= x.note != y.note;
-        const uint8_t t = x.note;
-        x.note = y.note;
-        y.note = t;
-      }
-    if (moved) continue;
-    bool high = false;
-    for (int i = 0; i < n; ++i) high |= tr[b + at[i]].note > 96;
-    for (int i = 0; i < n; ++i) tr[b + at[i]].note = static_cast<uint8_t>(tr[b + at[i]].note + (high ? -12 : 12));
-  }
-}
-
-// The progression over the pattern: repeated while a chord would last over 2 bars (a turnaround on the
-// last pass by Variety); the style's added notes on its diatonic chords (Variety 0: on the last one).
-void phraseProg(Ctx& c, Progression& p) {
-  if (p.steps || !p.n) return;
-  int sum = 0;
-  for (int i = 0; i < p.n; ++i) sum += p.c[i].len;
-  int reps = 1;
-  while (sum > 0 && p.n * reps * 2 <= kProgMax && c.len / (sum * reps) > 32) reps *= 2;
-  const int n0 = p.n;
-  for (int r = 1; r < reps; ++r) memcpy(&p.c[r * n0], &p.c[0], sizeof(ProgChord) * n0);
-  p.n = static_cast<uint8_t>(n0 * reps);
-  if (reps > 1 && c.v > 0 && c.pr.below(100) < static_cast<uint32_t>(c.v)) {
-    ProgChord& e = p.c[p.n - 1];
-    const int d = e.roman ? -1 : e.degree;
-    const uint8_t l = e.len;
-    e = ProgChord();
-    e.degree = static_cast<int8_t>(d == 4 ? 3 : 4);
-    e.len = l;
-  }
-  if (!c.addNotes) return;
-  const uint8_t type = c.addNotes == 2 ? kChordSus4 : c.v > 0 && c.pr.below(2) ? kChordNinth : kChordSeventh;
-  for (int i = 0; i < p.n; ++i) {
-    ProgChord& e = p.c[i];
-    if (e.type >= 0 || e.roman) continue;  // named / Roman chords keep theirs
-    if (c.v > 0 ? c.pr.below(100) < static_cast<uint32_t>(c.v / 2) : i == p.n - 1) e.type = static_cast<int8_t>(type);
-  }
-}
-
-// CHORDS: B's last '&' takes the next bar's chord (a push).
-void phraseChords(Ctx& c, Step* tr) {
-  const int u = unitLen(c.len);
-  for (int j = 0; j < c.len / u; ++j) {
-    if (c.bar[j] < kBarB) continue;
-    const int p = j * u + u - 2, next = (j * u + u) % c.len;
-    if (tr[next].hasNote()) tr[p] = tr[next];
-  }
-}
-
-// FX percussion hits on track tr.
-void writeFxHits(Ctx& c, Step* tr) {
-  const char* s = c.pk.fxHits;
-  if (!s) return;
-  const int n = static_cast<int>(strlen(s));
-  for (int i = 0; i < c.len; ++i) {
-    const char ch = s[i % n];
-    if (!isHit(ch)) continue;
-    putNote(tr[i], kFxNote, hitVel(ch), 0);
-    if (ch >= '2' && ch <= '4') putFx(tr[i], Fx::RAT, static_cast<uint8_t>(ch - '0'));
-  }
-}
-
-Sel trackSel(int t, int len) {
-  return Sel{static_cast<uint8_t>(t), static_cast<uint8_t>(t), 0, static_cast<uint8_t>(len - 1)};
-}
-
-// MAIN with every role into w.full (DROP's lead included; MAIN's simpler lead on track 7). on: per role.
-void generate(Ctx& c, DiceWork& w, const Instrument* instruments, const TrackCfg* tracks, const bool* on) {
-  Pattern& pt = w.full;
-  const int len = c.len;
-  for (auto& tr : pt.steps) clearSteps(tr);
-  const Picks& k = c.pk;
-  // DRUMS
-  if (on[0]) {
-    const Instrument& kit = instruments[tracks[0].instr % kInstruments];
-    int8_t lane[kDiceLanes];
-    kitLanes(kit, instruments, lane);
-    writeDrums(c, pt.steps[0], lane);
-  }
-  // CHORDS (also the source of BASS / ARP / LEAD)
-  ChordSpec cs;
-  cs.random = false;
-  cs.octave = c.rec.chordOct;
-  cs.flavor = c.rec.flavor;
-  cs.voicing = ChordVoicing::Close;
-  cs.length = 0;
-  cs.dest = 2;
-  cs.rhythm = static_cast<uint8_t>(k.rhythm);
-  cs.seed = k.seed;
-  w.prog = Progression();
-  bool chords = false;
-  if (k.prog >= 0 && parseProgression(progFactoryText(k.prog), w.prog)) {
-    phraseProg(c, w.prog);
-    parseArpPattern(chordRhythmText(cs.rhythm), w.rhythm);
-    chords = applyChords(pt, trackSel(2, len), cs, w.prog, w.rhythm, c.root, c.sc, nullptr);
-  }
-  const int segN = layoutChords(w.prog, cs, len, c.root, c.sc, w.segs);
-  // BASS
-  if (on[1] && k.bass >= 0) {
-    BassSpec bs;
-    bs.source = BassSource::Progression;
-    bs.octave = 2;
-    bs.dest = 1;
-    bs.pattern = static_cast<uint8_t>(k.bass);
-    bs.seed = k.seed;
-    bs.mutate = c.music.bassMotion == DiceBassMotion::Pulse || c.music.bassMotion == DiceBassMotion::Hold
-                    ? 0 : static_cast<uint8_t>(c.v / 4);
-    parseBassPattern(bassFactoryText(k.bass), w.bass);
-    applyBass(pt, pt, trackSel(1, len), bs, w.bass, c.root, c.sc, w.segs, segN, nullptr);
-    phraseBass(c, pt.steps[1], w.segs, segN);
-  }
-  auto arp = [&](int dest, int pattern, uint8_t mode, uint8_t octaves, uint32_t seed) {
-    if (pattern < 0) return;
-    ArpSpec as;
-    as.source = chords ? ArpSource::Selection : ArpSource::Chord;
-    as.root = static_cast<uint8_t>(60 + c.root);
-    as.chord = kChordTriad;
-    as.dest = static_cast<uint8_t>(dest);
-    as.mode = static_cast<ArpMode>(mode < static_cast<uint8_t>(ArpMode::Count) ? mode : 0);
-    as.octaves = octaves;
-    as.pattern = static_cast<uint8_t>(pattern);
-    as.seed = seed;
-    as.mutate = static_cast<uint8_t>(c.v / 3);
-    parseArpPattern(arpFactoryText(pattern), w.arp);
-    // SELECTION reads the CHORDS track (sel.t0..t1) and writes only Dest.
-    applyArp(pt, pt, trackSel(chords ? 2 : dest, len), as, w.arp, c.root, c.sc, nullptr);
-  };
-  if (on[4]) {
-    if (c.music.acidArp) {
-      // A 303 phrase is monophonic bass movement, not cycling the upper chord tones.
-      const char* name = k.arp >= 0 ? arpFactoryName(k.arp) : "ACID 1";
-      int pattern = byName(bassFactoryCount(), bassFactoryName, name);
-      if (pattern < 0) pattern = byName(bassFactoryCount(), bassFactoryName, "ACID 1");
-      BassSpec acid;
-      acid.source = BassSource::Progression;
-      acid.octave = 2;
-      acid.dest = 4;
-      acid.seed = k.seed + 1;
-      parseBassPattern(bassFactoryText(pattern), w.bass);
-      applyBass(pt, pt, trackSel(4, len), acid, w.bass, c.root, c.sc, w.segs, segN, nullptr);
-    } else {
-      arp(4, k.arp, k.arpMode, k.arpOct, k.seed + 1);
-      phraseArp(c, pt.steps[4]);
-    }
-  }
-  if (on[3]) {
-    Step* simple = pt.steps[kLeadMain];
-    if (k.lead == DiceLead::Arp) {
-      arp(3, k.leadArp, k.leadArpMode, 1, k.seed + 2);
-      for (int i = 0; i < len; ++i) {
-        Step& st = pt.steps[3][i];
-        if (st.hasNote() && st.note <= 115) st.note = static_cast<uint8_t>(st.note + 12);
-        simple[i] = st;
-        if (st.hasNote()) simple[i].vel = static_cast<uint8_t>(effVel(st.vel) * 4 / 5);
-      }
-      phraseArp(c, pt.steps[3]);
-    } else if (k.lead == DiceLead::Motif) {
-      const Rng r(c.pr.next());
-      writeLead(c, pt.steps[3], diceMotifText(k.motif), w.segs, segN, false, r);
-      writeLead(c, simple, diceMotifText(k.motif), w.segs, segN, true, r);
-    }
-  }
-  if (chords) phraseChords(c, pt.steps[2]);
-  if (on[5] && !k.riser) writeFxHits(c, pt.steps[5]);
-}
-
-void removeLane(Step* tr, int len, int lane) {
-  if (lane < 0) return;
-  for (int i = 0; i < len; ++i) {
-    Step& st = tr[i];
-    if (!st.hasNote()) continue;
-    setLane(st, lane, false);
-    if (!laneMask(st)) st = Step();
-  }
-}
-
-// Everything a roll may write, bit for bit (memcpy: padding too, so an undo compares equal).
-void load(const Project& p, int first, int count, DiceParts& d) {
-  d.bpm = p.bpm;
-  d.scaleRoot = p.scaleRoot;
-  d.scaleType = p.scaleType;
-  memcpy(d.tracks, p.tracks, sizeof(d.tracks));
-  memcpy(d.instruments, p.instruments, sizeof(d.instruments));
-  memcpy(d.gen, p.gen, sizeof(d.gen));
-  memcpy(d.var, p.var, sizeof(d.var));
-  for (int i = 0; i < count; ++i) {
-    const Pattern& pt = p.patterns[first + i];
-    DicePat& dp = d.pats[i];
-    memcpy(dp.name, pt.name, sizeof(dp.name));
-    dp.length = pt.length;
-    dp.res = pt.res;
-    dp.swing = pt.swing;
-    dp.groove = pt.groove;
-    memcpy(dp.trackLen, pt.trackLen, sizeof(dp.trackLen));
-    memcpy(dp.trackSpeed, pt.trackSpeed, sizeof(dp.trackSpeed));
-    memcpy(dp.steps, pt.steps, sizeof(dp.steps));
-  }
-  DiceSong& s = d.song;
-  memcpy(s.song, p.song, sizeof(s.song));
-  memcpy(s.songMute, p.songMute, sizeof(s.songMute));
-  s.songLen = p.songLen;
-  memcpy(s.songFol, p.songFol, sizeof(s.songFol));
-  memcpy(s.songTrn, p.songTrn, sizeof(s.songTrn));
-  memcpy(s.songBpm, p.songBpm, sizeof(s.songBpm));
-}
-
-uint8_t capU7(uint8_t v, uint8_t cap) { return cap != kDiceKeep && v > cap ? cap : v; }
-uint8_t addU7(uint8_t v, int d) {
-  const int x = v + d;
-  return static_cast<uint8_t>(x < 0 ? 0 : x > 127 ? 127 : x);
-}
-
-// The style's kit into instruments[slot], its drums into the block from factoryKitBlock (DiceLane l on kit
-// lane kDiceKitLane[l], transposed down by the lane as factoryBuildKit does); lanes 7, 8 empty. Writes the
-// slots it fills into mask; false: no kit.
-bool buildKit(const Ctx& c, Instrument* ins, int slot, uint32_t& mask) {
-  const DiceKit* dk = c.rec.kit;
-  if (!dk) return false;
-  Instrument& kit = ins[slot];
-  kit = Instrument();
-  kit.type = InstrType::Kit;
-  snprintf(kit.name, sizeof(kit.name), "%.8s", c.rec.style);
-  kitSetDefaults(kit);
-  const DiceTone& t = c.rec.mix->role[0];
-  const int first = factoryKitBlock(slot);
-  for (int l = 0; l < kDiceLanes; ++l) {
-    const int item = c.pk.drum[l];
-    if (item < 0) continue;
-    const DiceDrum& dr = dk->lane[l][item];
-    const int x = presetIndex(dr.type, dr.name);
-    if (x < 0) continue;
-    const int kl = kDiceKitLane[l];
-    Instrument& m = ins[first + kl];
-    factoryBuild(dr.type, x, m);
-    clearInsert(m);  // behind a lane: no track insert takes the drum's recommendation
-    m.transpose = static_cast<int8_t>(m.transpose - kl);
-    m.vol = dr.vol;
-    if (m.type == InstrType::Fm) {
-      m.fmParam[3] = addU7(m.fmParam[3], dr.dec + c.pk.jd[l]);
-      const uint8_t tone = fmMacroParam(m.machine, kMacCol);
-      if (*fmParamName(m.machine, tone)) m.fmParam[tone] = addU7(m.fmParam[tone], dr.tone + c.pk.jt[l]);
-    } else if (m.type == InstrType::Drum) {
-      m.macro[kMacDec] = addU7(m.macro[kMacDec], dr.dec + c.pk.jd[l]);
-      m.macro[kMacCol] = addU7(m.macro[kMacCol], dr.tone + c.pk.jt[l]);
-    }
-    const bool kick = l == kDiceKick;
-    m.rsend = kick ? 0 : t.rvb != kDiceKeep ? t.rvb : m.rsend;
-    m.send = l == kDicePerc && t.dly != kDiceKeep ? t.dly : kick ? 0 : m.send;
-    kit.kit[kl].instr = static_cast<uint8_t>(first + kl);
-    kit.kit[kl].vol = dr.vol;
-    mask |= 1u << (first + kl);
-  }
-  return true;
-}
-
-// A melodic role's tone on top of its preset (see DiceTone).
-void applyTone(Instrument& m, TrackCfg& cfg, const DiceTone& t) {
-  if (t.cut != kDiceKeep) {
-    const FltMode f = static_cast<FltMode>(m.fltMode);
-    if (f == FltMode::Off) {
-      m.fltMode = static_cast<uint8_t>(FltMode::Lp);
-      m.cutoff = t.cut;
-      m.reso = 0;
-    } else if (f == FltMode::Lp || f == FltMode::Ladder || f == FltMode::Ms20 || f == FltMode::Sid) {
-      m.cutoff = capU7(m.cutoff, t.cut);
-    }
-  }
-  m.reso = capU7(m.reso, t.res);
-  if (t.fenv != kDiceKeep && m.fenv > static_cast<int>(t.fenv)) m.fenv = static_cast<int8_t>(t.fenv > 63 ? 63 : t.fenv);
-  if (m.attack < t.atk) m.attack = t.atk;
-  if (m.release < t.rel) m.release = t.rel;
-  cfg.drive = capU7(cfg.drive, t.drv);
-  m.synFold = capU7(m.synFold, t.drv);
-  m.synRing = capU7(m.synRing, t.drv);
-  m.fmSat = capU7(m.fmSat, t.drv);
-  cfg.crushBits = capU7(cfg.crushBits, t.crush);
-  cfg.crushRate = capU7(cfg.crushRate, t.crush);
-  if (t.dly != kDiceKeep) m.send = t.dly;
-  if (t.rvb != kDiceKeep) m.rsend = t.rvb;
-}
-
-void rollSounds(Ctx& c, DiceParts& d, const Project& p, DiceSnap& s, const bool* present, const DiceOpts& opts) {
-  uint8_t slot[kDiceRoles];
-  slotsOf(d.tracks, p.tracks, d.instruments, slot, opts.lockMask);
-  for (int k = 0; k < kDiceRoles; ++k) {
-    if (!present[k] || (opts.lockMask & (1u << k)) || slot[k] == kNoInstr) continue;
-    const DiceRole role = static_cast<DiceRole>(k);
-    if (role == DiceRole::Drums) {
-      if (!buildKit(c, d.instruments, slot[k], s.instrMask)) continue;
-    } else {
-      if (c.pk.sound[k] < 0) continue;
-      const InstrType t = c.rec.sounds[k][c.pk.soundItem[k]].type;
-      factoryBuild(t, c.pk.sound[k], s.work.tmp);
-      if (!roleFits(role, s.work.tmp)) continue;
-      memcpy(&d.instruments[slot[k]], &s.work.tmp, sizeof(Instrument));
-    }
-    s.instrMask |= 1u << slot[k];
-    TrackCfg& cfg = d.tracks[k];
-    if (opts.clean) {
-      const TrackCfg defaults;
-      cfg.defVel = defaults.defVel; cfg.defGate = defaults.defGate;
-      cfg.gateDepth = 0; cfg.gateMask = defaults.gateMask; cfg.gateRate = defaults.gateRate;
-      cfg.gateLen = defaults.gateLen; cfg.gateAtk = defaults.gateAtk; cfg.gateRel = defaults.gateRel;
-      cfg.folSrc = 0; cfg.folAmt = 0; cfg.folDest = defaults.folDest;
-      cfg.folAtk = defaults.folAtk; cfg.folRel = defaults.folRel;
-      cfg.modSend = 0; cfg.humanize = 0;
-    }
-    cfg.out = TrackOut::Int;
-    cfg.instr = slot[k];
-    snprintf(cfg.name, sizeof(cfg.name), "%s", kRoleNames[k]);
-    takePresetInsert(d.instruments[slot[k]], cfg);  // as the preset browser: the recommended insert
-    const DiceTone& t = c.rec.mix->role[k];
-    if (role == DiceRole::Drums) {
-      cfg.drive = capU7(cfg.drive, t.drv);
-      cfg.crushBits = capU7(cfg.crushBits, t.crush);
-      cfg.crushRate = capU7(cfg.crushRate, t.crush);
-      cfg.humanize = static_cast<uint8_t>(c.rec.feel->human * c.v / 100);
-    } else {
-      applyTone(d.instruments[slot[k]], cfg, t);
-    }
-    cfg.vol = t.vol;
-    cfg.pan = t.pan;
-    s.cfgMask = static_cast<uint8_t>(s.cfgMask | (1u << k));
-  }
-}
-
-// Choose a common octave for the entire bass phrase, considering the actual sound's transpose.
-// Prefer an audible fundamental; a SYNTH sub stays at least C0 (two octaves below C2).
-void bassRegister(Step* steps, int len, const Instrument& sound) {
-  int lo = 128, hi = -1;
-  for (int i = 0; i < len; ++i) if (steps[i].hasNote()) {
-    lo = std::min(lo, static_cast<int>(steps[i].note));
-    hi = std::max(hi, static_cast<int>(steps[i].note));
-  }
-  if (hi < 0) return;
-  const int sub = sound.type == InstrType::Synth && sound.synSub ? (sound.synSubOct ? 24 : 12) : 0;
-  int best = 0, score = 100000;
-  for (int shift = -60; shift <= 60; shift += 12) {
-    if (lo + shift < 0 || hi + shift > 127) continue;
-    const int low = lo + shift + sound.transpose, high = hi + shift + sound.transpose;
-    const int penalty = std::max(0, 28 - low) * 20 + std::max(0, high - 60) * 6 +
-                        std::max(0, 12 - (low - sub)) * 20 + abs((low + high) / 2 - 40);
-    if (penalty < score) { score = penalty; best = shift; }
-  }
-  for (int i = 0; i < len; ++i) if (steps[i].hasNote()) steps[i].note += best;
-}
-
-void alignChordSteps(Step* steps, const Step* chords, int len, uint8_t root, ScaleType scale, Resolution res, bool all) {
-  const Step* chord = nullptr;
-  for (int i = 0; i < len; ++i) if (chords[i].hasNote()) chord = &chords[i];
-  for (int i = 0; i < len; ++i) {
-    const Step& c = chords[i];
-    if (c.hasNote()) chord = &c;
-    Step& n = steps[i];
-    if (!chord || !n.hasNote() || (!all && (i * ticksPerStep(res)) % kPpqn)) continue;
-    const FxSlot* f = chord->find(Fx::CHD);
-    const ChordSeg seg{chord->note, static_cast<uint8_t>(f ? f->val : kChordTriad), 0, static_cast<uint8_t>(len)};
-    n.note = static_cast<uint8_t>(chordTone(n.note, seg, root, scale));
-  }
-}
-void alignHarmony(Pattern& pt, int track, uint8_t root, ScaleType scale, bool all) {
-  alignChordSteps(pt.steps[track], pt.steps[2], pt.length, root, scale, pt.res, all);
-}
-
-void libraryPatterns(Ctx& c, DiceWork& w, const DiceParts& d, const DiceOpts& opts,
-                     const DicePhraseSource* library, const bool* on, int genre, int style, uint32_t seed,
-                     DiceResult& result) {
-  static constexpr int order[kDiceRoles] = {2, 0, 1, 4, 3, 5};
-  for (int role : order) {
-    if (!library || opts.source == DiceSource::Builtin) break;
-    if (!on[role] || (opts.lockMask & (1u << role))) continue;
-    Rng choice(seed ^ (0x85EBCA6Bu * (role + 1)));
-    if (opts.source == DiceSource::Hybrid && choice.below(100) >= 50) continue;
-    if (!library->pickForStyle(genre, style, static_cast<DiceRole>(role), seed ^ (0x9E3779B9u * (role + 1)), w.phrase)) {
-      result.missingMask |= 1u << role; continue;
-    }
-    const Instrument& m = d.instruments[d.tracks[role].instr % kInstruments];
-    const auto applied = diceWritePhrase(w.phrase, static_cast<DiceRole>(role), w.midiSteps, c.len,
-                                        c.rec.res, c.root, c.sc, role == 0 ? &m : nullptr);
-    if (!applied.changed) { result.missingMask |= 1u << role; continue; }
-    if (role == 0) {
-      int8_t lanes[kDiceLanes];
-      kitLanes(m, d.instruments, lanes);
-      const int kick = lanes[kDiceKick];
-      bool importedKick = false;
-      for (int i = 0; i < c.len; ++i) importedKick |= kick >= 0 && hasLane(w.midiSteps[i], kick);
-      // A hats/snare-only phrase is a top loop, not permission to erase the style's kick.
-      if (!importedKick && kick >= 0)
-        for (int i = 0; i < c.len; ++i) if (hasLane(w.full.steps[0][i], kick))
-          drumHit(w.midiSteps[i], kick, w.full.steps[0][i].note);
-    }
-    memcpy(w.full.steps[role], w.midiSteps, sizeof(w.midiSteps));
-    result.midiMask |= 1u << role;
-    if (applied.approximate) result.midiApproxMask |= 1u << role;
-    if (role == 3) memcpy(w.full.steps[kLeadMain], w.midiSteps, sizeof(w.midiSteps));
-  }
-  if ((result.midiMask & (1u << 2)) || (opts.lockMask & (1u << 2))) {
-    for (int role : {1, 3, 4}) if (on[role] && !(opts.lockMask & (1u << role)))
-      {
-      alignHarmony(w.full, role, c.root, c.sc, role == 4);
-      if (role == 3) alignHarmony(w.full, kLeadMain, c.root, c.sc, false);
-    }
-  } else {
-    for (int role : {1, 3, 4}) if (result.midiMask & (1u << role))
-      {
-      alignHarmony(w.full, role, c.root, c.sc, role == 4);
-      if (role == 3) alignHarmony(w.full, kLeadMain, c.root, c.sc, false);
-    }
-  }
-  if (result.midiMask & (1u << 3))
-    memcpy(w.full.steps[kLeadMain], w.full.steps[3], sizeof(w.midiSteps));
-}
-
-void developPatterns(DiceParts& d, DiceSnap& snap, const DiceOpts& opts);
-
-// Keep fixed role tracks (and locks) stable. Sparse borrowed notes fill only holes
-// between sounding roles; leading/trailing silence remains part of the arrangement.
-void fillPatternGaps(Ctx& c, DiceParts& d, DiceSnap& snap, const Project& original, const DiceOpts& opts) {
-  if (!opts.fillGaps || opts.change != DiceChange::Wild || (opts.targetMask & 0x3f) != 0x3f) return;
-  for (int pat = 0; pat < snap.patCount; ++pat) {
-    DicePat& dp = d.pats[pat];
-    bool occupied[kDiceRoles] = {};
-    int first = kDiceRoles, last = -1;
-    for (int role = 0; role < kDiceRoles; ++role) {
-      const Step* row = snap.patMask & (1u << role) ? dp.steps[role] : original.patterns[snap.first + pat].steps[role];
-      for (int at = 0; at < dp.length; ++at) occupied[role] |= row[at].hasNote();
-      if (occupied[role]) { first = std::min(first, role); last = role; }
-    }
-    // Chords must be ready before melodic filler notes are aligned to them.
-    const int order[kDiceRoles] = {2, 1, 3, 4, 0, 5};
-    for (int role : order) {
-      if (role <= first || role >= last || occupied[role] || !(snap.patMask & (1u << role)) ||
-          (opts.lockMask & (1u << role))) continue;
-      const Step* source = snap.work.full.steps[role];
-      for (int dest : {0, static_cast<int>(dp.length) / 2}) {
-        const int sourceAt = dest * ticksPerStep(dp.res) / ticksPerStep(c.rec.res) % c.len;
-        for (int offset = 0; offset < c.len; ++offset) {
-          const Step& note = source[(sourceAt + offset) % c.len];
-          if (!note.hasNote()) continue;
-          Step placed = note;
-          for (auto& fx : placed.fx) {
-            if (fx.cmd == Fx::GAT)
-              fx.val = nearestGate(static_cast<uint32_t>(gatePercent(fx.val)) * ticksPerStep(c.rec.res),
-                                   static_cast<int64_t>(ticksPerStep(dp.res)) * kPpqn * 100);
-            else if (fx.cmd == Fx::NDG || fx.cmd == Fx::RAT || fx.cmd == Fx::TIE || fx.cmd == Fx::SLD) fx = FxSlot();
-          }
-          if (role != 0) putFx(placed, Fx::GAT, gateValue(role == 2 ? 100 : 50));
-          if (role == 0) placed.note = static_cast<uint8_t>(std::max(1, effVel(placed.note) * 3 / 4));
-          else placed.vel = static_cast<uint8_t>(std::max(1, effVel(placed.vel) * 3 / 4));
-          dp.steps[role][dest] = placed;
-          occupied[role] = true;
-          break;
-        }
-      }
-      if (!occupied[role]) continue; // unsupported output/instrument: do not change its settings
-      d.tracks[role].mute = false;
-      if (role == 1 || role == 3 || role == 4) {
-        const Step* chords = opts.lockMask & 4 ? original.patterns[snap.first + pat].steps[2] : dp.steps[2];
-        alignChordSteps(dp.steps[role], chords, dp.length, c.root, c.sc, dp.res, true);
-      }
-    }
-  }
-}
-
-void rollPatterns(Ctx& c, DiceParts& d, DiceSnap& s, const bool* present, const Project& original,
-                  const DiceOpts& opts, const DicePhraseSource* library, int genre, int style, uint32_t seed,
-                  DiceResult& result) {
-  DiceWork& w = s.work;
-  bool writable[kDiceRoles], on[kDiceRoles];
-  for (int k = 0; k < kDiceRoles; ++k) {
-    const bool kit = d.instruments[d.tracks[k].instr % kInstruments].type == InstrType::Kit;
-    writable[k] = k == 0 ? kit : !kit;
-    on[k] = present[k] && writable[k];
-  }
-  w.full.length = static_cast<uint8_t>(c.len);
-  w.full.res = c.rec.res;
-  phraseBars(c);
-  generate(c, w, d.instruments, d.tracks, on);
-  if (opts.lockMask & (1u << 2))
-    memcpy(w.full.steps[2], original.patterns[s.first].steps[2], sizeof(w.full.steps[2]));
-  libraryPatterns(c, w, d, opts, library, on, genre, style, seed, result);
-  if (on[1] && !(opts.lockMask & (1u << 1)))
-    bassRegister(w.full.steps[1], c.len, d.instruments[d.tracks[1].instr % kInstruments]);
-  int8_t lane[kDiceLanes];
-  kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, lane);
-  const bool leadOn = present[3] && (c.pk.lead != DiceLead::None || (result.midiMask & (1u << 3)));
-  const int fxNote = kFxNote + c.root;
-  for (int i = 0; i < s.patCount; ++i) {
-    DicePat& dp = d.pats[i];
-    dp.length = static_cast<uint8_t>(c.len);
-    dp.res = c.rec.res;
-    dp.swing = c.rec.swing;
-    dp.groove = static_cast<uint8_t>(grooveIndex(c.rec.groove));
-    for (int k = 0; k < kDiceRoles; ++k) {
-      dp.trackLen[k] = 0;
-      dp.trackSpeed[k] = 0;
-      clearSteps(dp.steps[k]);
-      if (on[k]) memcpy(dp.steps[k], w.full.steps[k], sizeof(Step) * c.len);
-    }
-    const int len = c.len;
-    if (opts.form == DiceForm::Arrange) continue;  // six complete themes; the late arranger owns sections
-    switch (i) {
-      case kDiceMain:
-      case kDiceFill:
-        clearSteps(dp.steps[3]);
-        if (on[3]) memcpy(dp.steps[3], w.full.steps[kLeadMain], sizeof(Step) * len);
-        if (i == kDiceMain) break;
-        if (on[0]) writeFill(c, dp.steps[0], lane, c.pk.fill, len - (len <= 16 ? 4 : 8), len <= 16 ? 4 : 8);
-        if (on[5] && c.pk.riser) putNote(dp.steps[5][len - 8], fxNote, 0, 790);
-        break;
-      case kDiceBreak:
-        if (on[0]) removeLane(dp.steps[0], len, lane[kDiceKick]);
-        clearSteps(dp.steps[1]);
-        clearSteps(dp.steps[3]);
-        clearSteps(dp.steps[4]);
-        if (on[5] && c.pk.riser) {
-          putNote(dp.steps[5][0], fxNote, 0, 790);
-          putNote(dp.steps[5][len - 8], fxNote, 0, 790);
-        }
-        break;
-      case kDiceDrop:
-        if (on[5] && c.pk.riser) putNote(dp.steps[5][0], fxNote, 127, 100);
-        break;
-    }
-  }
-  developPatterns(d, s, opts);
-  if (s.preserveHeaders) {
-    for (int pat = 0; pat < s.patCount; ++pat) {
-      DicePat& dp = d.pats[pat];
-      const Pattern& target = original.patterns[s.first + pat];
-      const int fromQ = ticksPerStep(c.rec.res), toQ = ticksPerStep(target.res);
-      for (int k = 0; k < kDiceRoles; ++k) {
-        if (opts.lockMask & (1u << k)) continue;
-        for (auto& step : w.midiSteps) step = Step();
-        for (int loop = 0; loop * c.len * fromQ < target.length * toQ; ++loop)
-          for (int j = 0; j < c.len; ++j) {
-            const Step& source = dp.steps[k][j];
-            if (source.isEmpty()) continue;
-            const FxSlot* ndg = source.find(Fx::NDG);
-            const int time = (loop * c.len + j) * fromQ +
-                             (ndg ? static_cast<int8_t>(ndg->val) * fromQ / 100 : 0);
-            const int to = (time + toQ / 2) / toQ;
-            if (time < 0 || to >= target.length) continue;
-            Step converted = source;
-            for (auto& fx : converted.fx) {
-              if (fx.cmd == Fx::GAT)
-                fx.val = nearestGate(static_cast<uint32_t>(gatePercent(fx.val)) * fromQ,
-                                     static_cast<int64_t>(toQ) * kPpqn * 100);
-              else if (fx.cmd == Fx::NDG) fx = FxSlot();
-            }
-            const int offset = (time - to * toQ) * 100 / toQ;
-            if (offset) for (auto& fx : converted.fx) if (fx.cmd == Fx::None) {
-              fx = {Fx::NDG, static_cast<uint8_t>(static_cast<int8_t>(offset))}; break;
-            }
-            if (k == 0 && w.midiSteps[to].hasNote() && converted.hasNote()) {
-              setLaneMask(w.midiSteps[to], laneMask(w.midiSteps[to]) | laneMask(converted));
-              w.midiSteps[to].note = std::max(w.midiSteps[to].note, converted.note);
-            } else w.midiSteps[to] = converted;
-          }
-        memcpy(dp.steps[k], w.midiSteps, sizeof(w.midiSteps));
-      }
-      // Later processing must use the destination grid, just like the converted notes.
-      dp.length = target.length;
-      dp.res = target.res;
-      dp.swing = target.swing;
-      dp.groove = target.groove;
-    }
-  }
-  if (opts.lockMask & (1u << 2)) {
-    for (int pat = 0; pat < s.patCount; ++pat)
-      for (int role : {1, 3, 4}) if (on[role] && !(opts.lockMask & (1u << role)))
-        alignChordSteps(d.pats[pat].steps[role], original.patterns[s.first + pat].steps[2],
-                        original.patterns[s.first + pat].length, c.root, c.sc, original.patterns[s.first + pat].res, role == 4);
-  }
-  for (int k = 0; k < kDiceRoles; ++k) {
-    if (opts.lockMask & (1u << k)) continue;
-    const bool absent = !present[k] || (k == 3 && !leadOn);
-    if (!absent && !writable[k]) continue;  // a role this track cannot play: left alone
-    s.patMask = static_cast<uint8_t>(s.patMask | (1u << k));
-    s.muteMask = static_cast<uint8_t>(s.muteMask | (1u << k));
-    d.tracks[k].mute = absent;
-    d.gen[k].mode = static_cast<uint8_t>(GenMode::Off);
-    d.var[k].mode = static_cast<uint8_t>(VarMode::Off);
-  }
-}
-
-void developPatterns(DiceParts& d, DiceSnap& snap, const DiceOpts& opts) {
-  if (opts.change != DiceChange::Wild || (opts.targetMask & 0x3f) != 0x3f) return;
-  const uint8_t writable = static_cast<uint8_t>(~opts.lockMask) & 0x3f;
-  if (opts.form == DiceForm::Develop) {
-    // Reorder legacy MAIN/FILL/BREAK/DROP into INTRO/MAIN/VAR/OUTRO. Final section arrangement
-    // follows the foreground/support caps, so the old FILL becomes a withdrawing OUTRO.
-    // Reorder the existing drafts in place using one existing scratch row, never a stack pattern.
-    for (int role = 0; role < kDiceRoles; ++role) {
-      if (!(writable & (1u << role))) continue;
-      memcpy(snap.work.midiSteps, d.pats[0].steps[role], sizeof(snap.work.midiSteps));
-      memcpy(d.pats[0].steps[role], d.pats[2].steps[role], sizeof(snap.work.midiSteps));
-      memcpy(d.pats[2].steps[role], d.pats[3].steps[role], sizeof(snap.work.midiSteps));
-      memcpy(d.pats[3].steps[role], d.pats[1].steps[role], sizeof(snap.work.midiSteps));
-      memcpy(d.pats[1].steps[role], snap.work.midiSteps, sizeof(snap.work.midiSteps));
-      Step* intro = d.pats[0].steps[role];
-      if (role == 3 || role == 4) clearSteps(intro);
-      if (role == 0) {
-        // A sparse pulse remains where the style's BREAK would otherwise contain only hats.
-        const Step* main = d.pats[1].steps[role];
-        int8_t lanes[kDiceLanes];
-        kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, lanes);
-        const int kick = lanes[kDiceKick], q = ticksPerStep(d.pats[0].res);
-        int lastKickBar = -1;
-        for (int i = 0; i < d.pats[0].length; ++i) {
-          intro[i] = (i % 4 == 0) ? main[i] : Step();
-          const int bar = i * q / (4 * kPpqn);
-          if (kick >= 0 && hasLane(main[i], kick) && bar != lastKickBar) {
-            drumHit(intro[i], kick, main[i].note);
-            lastKickBar = bar;
-          }
-        }
-      }
-    }
-  }
-}
-
-// Musical post-processing works on the same bounded draft as the generators: no heap or
-// additional project snapshot. Existing imported note delays remain exactly as recorded.
-void musicalDraft(const Project& original, DiceParts& d, DiceSnap& snap, const DiceOpts& opts, uint32_t seed,
-                  uint8_t midiMask) {
-  if (opts.change != DiceChange::Wild) return;  // bounded motif edits own their articulation
-  const uint8_t writable = snap.patMask;
-
-  for (int pat = 0; pat < snap.patCount; ++pat) {
-    DicePat& dp = d.pats[pat];
-    const int q = ticksPerStep(dp.res);
-    const Step* harmony = (opts.lockMask & (1u << 2)) ? original.patterns[snap.first + pat].steps[2] : dp.steps[2];
-    // A repeated shared timing/velocity contour locks the band together instead of independent jitter.
-    Rng rng(seed ^ 0x67D4C91Bu);
-    int8_t contour[16];
-    for (int i = 0; i < 16; ++i) contour[i] = static_cast<int8_t>(rng.below(5)) - 2;
-    for (int role = 0; role < kDiceRoles; ++role) {
-      if (!(writable & (1u << role))) continue;
-      Step* tr = dp.steps[role];
-      const Step* chord = nullptr;
-      // If the progression starts late, its last chord is the preceding loop's harmony.
-      for (int i = 0; i < dp.length; ++i)
-        if (harmony[i].hasNote()) chord = &harmony[i];
-      for (int i = 0; i < dp.length; ++i) {
-        if (harmony[i].hasNote()) chord = &harmony[i];
-        Step& st = tr[i];
-        if (!st.hasNote()) continue;
-        const int time = i * q;
-        const bool strong = time % kPpqn == 0;
-        if (chord && ((midiMask & ((1u << role) | (1u << 2))) || (opts.lockMask & (1u << 2))) &&
-            (role == 1 || role == 3 || role == 4) && (strong || role == 4)) {
-          const FxSlot* cf = chord->find(Fx::CHD);
-          const ChordSeg seg{chord->note, static_cast<uint8_t>(cf ? cf->val : kChordTriad),
-                             0, dp.length};
-          st.note = static_cast<uint8_t>(chordTone(st.note, seg, d.scaleRoot,
-                                                 static_cast<ScaleType>(d.scaleType)));
-        }
-        // MIDI already carries intentional timing and dynamics; don't double-humanize it.
-        if (!opts.groove || (midiMask & (1u << role))) continue;
-        const int amount = std::min(100, static_cast<int>(opts.groove));
-        const int sixteenth = time / (kPpqn / 4);
-        uint8_t& vel = role == 0 ? st.note : st.vel;
-        const int delta = ((strong ? 3 : -2) + contour[sixteenth & 15]) * amount / 100;
-        vel = static_cast<uint8_t>(std::max(1, std::min(127, effVel(vel) + delta)));
-        if (!strong && !st.find(Fx::NDG)) {
-          const int delay = (5 + (sixteenth & 1) * 3 + contour[sixteenth & 15]) * amount / 100;
-          if (delay) putFx(st, Fx::NDG, static_cast<uint8_t>(delay));
-        }
-      }
-    }
-  }
-}
-
-// Density changes event count, independently of Variety's musical choices. The NORMAL path
-// leaves every byte and RNG draw untouched. Only WILD pattern rolls use this extra pass.
-void densityDraft(const Project& original, DiceParts& d, DiceSnap& snap,
-                  const DiceOpts& opts, uint32_t seed) {
-  if (opts.change != DiceChange::Wild || opts.density == DiceDensity::Normal ||
-      static_cast<uint8_t>(opts.density) > static_cast<uint8_t>(DiceDensity::Busy)) return;
-  int8_t lanes[kDiceLanes];
-  kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, lanes);
-  uint16_t anchors = 0;
-  for (int lane : {kDiceKick, kDiceSnare, kDiceClap})
-    if (lanes[lane] >= 0) anchors |= 1u << lanes[lane];
-  const int ghostLane = lanes[kDiceHat] >= 0 ? lanes[kDiceHat] : lanes[kDicePerc];
-  for (int pat = 0; pat < snap.patCount; ++pat) {
-    DicePat& dp = d.pats[pat];
-    const int len = dp.length, q = ticksPerStep(dp.res);
-    for (int role : {0, 1, 3, 4}) {
-      const uint8_t bit = static_cast<uint8_t>(1u << role);
-      if (!(snap.patMask & opts.targetMask & bit) || (opts.lockMask & bit)) continue;
-      Step* row = dp.steps[role];
-      memcpy(snap.work.midiSteps, row, sizeof(snap.work.midiSteps));
-      const Step* source = snap.work.midiSteps;
-      int count = 0;
-      for (int i = 0; i < len; ++i) count += source[i].hasNote();
-      if (!count) continue;  // an intentional absent part remains absent
-      if (opts.density == DiceDensity::Sparse) {
-        for (int i = 0; i < len && count > 1; ++i) {
-          const Step& note = source[i];
-          if (!note.hasNote() || note.find(Fx::CHD) || (i * q) % kPpqn == 0 ||
-              (role == 0 && (laneMask(note) & anchors))) continue;
-          // The same thinning contour across the band produces space rather than independent jitter.
-          Rng choice(seed ^ (0x85EBCA6Bu * (pat + 1)) ^ (0x9E3779B9u * (i + 1)));
-          if (choice.below(100) >= 55) continue;
-          row[i] = Step();
-          --count;
-        }
-        continue;
-      }
-      if (role == 0 && ghostLane < 0) continue;
-      int budget = std::max(1, len / (role == 0 ? 8 : 16));
-      if (opts.form == DiceForm::Develop && opts.targetMask == 0x3f && pat == 0)
-        budget = std::max(1, budget / 2);
-      const int phase = role == 1 ? 2 : role == 4 ? 1 : 3;
-      const Step* chords = opts.lockMask & 4 ? original.patterns[snap.first + pat].steps[2] : dp.steps[2];
-      Rng start(seed ^ (0x27D4EB2Du * (pat + 1)) ^ (0x165667B1u * (role + 1)));
-      const int from = start.below(len);
-      for (int offset = 0; offset < len && budget; ++offset) {
-        const int at = (from + offset) % len;
-        if (!source[at].isEmpty() || (at * q * 4 / kPpqn) % 4 != phase) continue;
-        int previous = -1, distance = 0;
-        bool released = false;
-        for (int back = 1; back < len; ++back) {
-          const int pos = (at + len - back) % len;
-          const Step& prior = source[pos];
-          const FxSlot* off = prior.find(Fx::OFF);
-          if (prior.note == kNoteOff || (off && off->val <= back * q)) released = true;
-          if (prior.hasNote()) { previous = pos; distance = back; break; }
-        }
-        if (previous < 0) continue;
-        const Step& note = source[previous];
-        const FxSlot* gate = note.find(Fx::GAT);
-        const FxSlot* delay = note.find(Fx::NDG);
-        const int duration = gatePercent(gate ? gate->val : d.tracks[role].defGate);
-        // Inserting a note inside a held gate would retrigger/choke it. Respect the loop boundary too.
-        if (!released && (note.find(Fx::TIE) ||
-            duration + (delay ? static_cast<int8_t>(delay->val) : 0) > distance * 100)) continue;
-        Step added;
-        if (role == 0) {
-          added.note = static_cast<uint8_t>(std::min(64, std::max(1, effVel(note.note) / 2)));
-          setLaneMask(added, 1u << ghostLane);
-        } else {
-          added.note = note.note;
-          added.vel = static_cast<uint8_t>(std::min(72, std::max(1, effVel(note.vel) * 3 / 5)));
-          const Step* chord = nullptr;
-          for (int j = 0; j < len; ++j) if (chords[j].hasNote()) chord = &chords[j];
-          for (int j = 0; j <= at; ++j) if (chords[j].hasNote()) chord = &chords[j];
-          if (chord) {
-            const auto* fx = chord->find(Fx::CHD);
-            const ChordSeg seg{chord->note, static_cast<uint8_t>(fx ? fx->val : kChordTriad), 0, dp.length};
-            added.note = static_cast<uint8_t>(chordTone(added.note, seg, d.scaleRoot,
-                                                       static_cast<ScaleType>(d.scaleType)));
-          }
-        }
-        putFx(added, Fx::GAT, gateValue(25));
-        row[at] = added;
-        --budget;
-      }
-    }
-  }
-}
-
-// Choose a phrase-wide octave: preset transpose is part of the audible register.
-void melodicRegister(Step* steps, int len, const Instrument& sound, int bottom, int top) {
-  int low = 128, high = -1;
-  for (int i = 0; i < len; ++i) if (steps[i].hasNote()) {
-    low = std::min(low, static_cast<int>(steps[i].note));
-    high = std::max(high, static_cast<int>(steps[i].note));
-  }
-  if (high < 0) return;
-  int shift = 0, best = 100000;
-  for (int octave = -8; octave <= 8; ++octave) {
-    const int by = octave * 12;
-    if (low + by < 0 || high + by > 127) continue;
-    const int lo = low + by + sound.transpose, hi = high + by + sound.transpose;
-    const int score = (std::max(0, bottom - lo) + std::max(0, hi - top)) * 100 +
-                      abs(lo + hi - bottom - top);
-    if (score < best) { best = score; shift = by; }
-  }
-  for (int i = 0; i < len; ++i) if (steps[i].hasNote()) steps[i].note += shift;
-}
-
-void foregroundDraft(DiceParts& d, const DiceSnap& snap, const DiceOpts& opts, const DiceMusicProfile& profile) {
-  if (opts.change != DiceChange::Wild) return;
-  for (int i = 0; i < snap.patCount; ++i) {
-    DicePat& pat = d.pats[i];
-    if ((snap.patMask & 8) && !(opts.lockMask & 8))
-      dice_detail::limitAttacks(pat.steps[3], pat.length, pat.res, profile.leadPerBar, false);
-    if ((snap.patMask & 16) && !(opts.lockMask & 16))
-      dice_detail::limitAttacks(pat.steps[4], pat.length, pat.res, profile.arpPerBar, false);
-  }
-}
-
-void supportDraft(DiceParts& d, const DiceSnap& snap, const DiceOpts& opts, uint8_t supportRoles) {
-  for (int role = 1; role < kDiceRoles - 1; ++role) {
-    if (!(supportRoles & snap.patMask & (1u << role)) || (opts.lockMask & (1u << role))) continue;
-    for (int i = 0; i < snap.patCount; ++i) {
-      DicePat& pat = d.pats[i];
-      dice_detail::limitAttacks(pat.steps[role], pat.length, pat.res, 1, true);
-    }
-  }
-}
-
-void registerDraft(DiceParts& d, const DiceSnap& snap, const DiceOpts& opts, const DiceMusicProfile& profile) {
-  if (opts.change != DiceChange::Wild || !(snap.patMask & 16) || (opts.lockMask & 16) ||
-      (!profile.arpLow && profile.arpHigh == 127)) return;
-  const Instrument& sound = d.instruments[d.tracks[4].instr % kInstruments];
-  for (int i = 0; i < snap.patCount; ++i) {
-    DicePat& pat = d.pats[i];
-    melodicRegister(pat.steps[4], pat.length, sound, profile.arpLow, profile.arpHigh);
-  }
-}
-
-int phraseAttacks(const Step* row, int len) {
-  int count = 0;
-  for (int i = 0; i < len; ++i) count += row[i].hasNote();
-  return count;
-}
-
-// Freeze source masks before density edits: Sparse cannot resurrect discarded attacks and
-// Busy cannot erase retained ones merely by changing the ordinal position of a new attack.
-int prepareDevelop(DiceParts& d, DiceSnap& snap, const DiceOpts& opts, uint8_t nativeRoles) {
-  if (opts.form != DiceForm::Develop || opts.change != DiceChange::Wild ||
-      (opts.targetMask & 0x3f) != 0x3f) return -1;
-  const uint8_t writable = snap.patMask & static_cast<uint8_t>(~opts.lockMask);
-  const DicePat& main = d.pats[1];
-  const DicePat& variation = d.pats[2];
-  int counter = -1;
-  for (int role : {4, 3, 2}) {
-    if (!(nativeRoles & writable & (1u << role))) continue;
-    const int full = phraseAttacks(variation.steps[role], variation.length);
-    if (full < 2 || !phraseAttacks(main.steps[role], main.length)) continue;
-    Step* source = snap.work.full.steps[kDevelopCounter];
-    memcpy(source, main.steps[role], sizeof(main.steps[role]));
-    dice_detail::thinPhrase(source, main.length, std::max(1, full / 2));
-    for (int i = 0; i < main.length; ++i)
-      if (main.steps[role][i].hasNote() && !source[i].hasNote()) source[i].note = kNoteOff;
-    counter = role;
-    break;
-  }
-  if (nativeRoles & writable & 1) {
-    Step* source = snap.work.full.steps[kDevelopTops];
-    memcpy(source, main.steps[0], sizeof(main.steps[0]));
-    int8_t lanes[kDiceLanes];
-    kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, lanes);
-    for (int lane : {lanes[kDiceHat], lanes[kDiceOpen], lanes[kDicePerc]}) {
-      if (lane < 0) continue;
-      int hit = 0;
-      for (int i = 0; i < main.length; ++i)
-        if (hasLane(source[i], lane) && (hit++ & 1)) dropLane(source[i], lane);
-    }
-    for (int i = 0; i < main.length; ++i) {
-      const uint16_t deleted = (main.steps[0][i].hasNote() ? laneMask(main.steps[0][i]) : 0) &
-                               ~(source[i].hasNote() ? laneMask(source[i]) : 0);
-      source[i] = Step();
-      if (deleted) { source[i].note = 1; setLaneMask(source[i], deleted); }
-    }
-  }
-  // Freeze late-pickup recovery before density; the final pass only enforces the same withdrawal.
-  DicePat& outro = d.pats[3];
-  const int cutoff = std::max(1, static_cast<int>(outro.length) / 2);
-  for (int role = 1; role < kDiceRoles; ++role) if (writable & (1u << role))
-    dice_detail::endPhrase(outro.steps[role], outro.length, cutoff);
-  return counter;
-}
-
-// Section contrast is the last note pass: later density/caps cannot collapse MAIN and VAR.
-void arrangeDevelop(DiceParts& d, const DiceSnap& snap, const DiceOpts& opts, uint8_t nativeRoles, int counter) {
-  if (opts.form != DiceForm::Develop || opts.change != DiceChange::Wild ||
-      (opts.targetMask & 0x3f) != 0x3f) return;
-  const uint8_t writable = snap.patMask & static_cast<uint8_t>(~opts.lockMask);
-  DicePat& main = d.pats[1];
-  if (counter >= 0)
-    dice_detail::retainAttacks(main.steps[counter], main.length, snap.work.full.steps[kDevelopCounter]);
-  if (nativeRoles & writable & 1) {
-    int8_t lanes[kDiceLanes];
-    kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, lanes);
-    const Step* source = snap.work.full.steps[kDevelopTops];
-    for (int i = 0; i < main.length; ++i)
-      for (int lane : {lanes[kDiceHat], lanes[kDiceOpen], lanes[kDicePerc]})
-        if (lane >= 0 && hasLane(source[i], lane)) dropLane(main.steps[0][i], lane);
-  }
-  DicePat& outro = d.pats[3];
-  const int cutoff = std::max(1, static_cast<int>(outro.length) / 2);
-  for (int role = 1; role < kDiceRoles; ++role) if (writable & (1u << role))
-    dice_detail::endPhrase(outro.steps[role], outro.length, cutoff);
-  if ((nativeRoles & writable & 1)) {
-    int8_t lanes[kDiceLanes];
-    kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, lanes);
-    // Keep the original kick anchors while the rhythm section withdraws around them.
-    for (int i = cutoff; i < outro.length; ++i)
-      for (int lane : {lanes[kDiceSnare], lanes[kDiceClap], lanes[kDiceHat], lanes[kDiceOpen], lanes[kDicePerc]})
-        if (lane >= 0) dropLane(outro.steps[0][i], lane);
-  }
-}
-
-uint8_t envAtMostMs(uint8_t current, int milliseconds) {
-  while (current && envTimeMs(current) > milliseconds) --current;
-  return current;
-}
-void fitPhraseSounds(DiceParts& d, DiceSnap& snap) {
-  for (int role = 1; role < kDiceRoles - 1; ++role) {
-    if (!(snap.cfgMask & snap.patMask & (1u << role))) continue;
-    const int slot = d.tracks[role].instr % kInstruments;
-    if (!(snap.instrMask & (1u << slot))) continue;
-    Instrument& sound = d.instruments[slot];
-    int notes = 0, gates = 0, spacing = 0;
-    for (int index = 0; index < snap.patCount; ++index) {
-      const DicePat& pat = d.pats[index];
-      int first = -1, previous = -1;
-      const int stepMs = ticksPerStep(pat.res) * 60000 / (std::max(20, static_cast<int>(d.bpm)) * kPpqn);
-      for (int i = 0; i < pat.length; ++i) if (pat.steps[role][i].hasNote()) {
-        const auto* g = pat.steps[role][i].find(Fx::GAT);
-        gates += stepMs * gatePercent(g ? g->val : d.tracks[role].defGate) / 100;
-        if (previous >= 0) spacing += (i - previous) * stepMs;
-        else first = i;
-        previous = i;
-        ++notes;
-      }
-      if (first >= 0) spacing += (pat.length - previous + first) * stepMs;
-    }
-    if (!notes) continue;
-    const int gateMs = std::max(5, gates / notes), gapMs = std::max(10, spacing / notes);
-    // A slow preset attack must not hide a short phrase; dense lines must stop before the next attack.
-    sound.attack = envAtMostMs(sound.attack, std::max(2, gateMs / 3));
-    sound.release = envAtMostMs(sound.release, std::max(15, std::min(gateMs, gapMs / 2)));
-    // Sustained chord phrases need a sustaining voice, but short plucks retain their character.
-    if (role == 2 && gateMs >= 350) sound.sustain = std::max<uint8_t>(sound.sustain, 75);
-  }
-}
-
-void rollSong(DiceParts& d, int first, DiceForm form) {
-  static constexpr uint8_t kOrder[kDiceSongLen] = {kDiceMain, kDiceMain, kDiceFill, kDiceBreak,
-                                                   kDiceDrop, kDiceDrop, kDiceFill};
-  DiceSong& s = d.song;
-  for (int i = 0; i < kDiceSongLen; ++i) {
-    s.song[i] = static_cast<uint8_t>(first + (form == DiceForm::Develop ? (i == 0 ? 0 : i == 3 || i == 6 ? 3 : i >= 4 ? 2 : 1) : kOrder[i]));
-    s.songMute[i] = 0;
-    s.songFol[i] = SongFollow();
-    s.songTrn[i] = 0;
-    s.songBpm[i] = 0;
-  }
-  s.songLen = kDiceSongLen;
-}
-
-void namePatterns(DiceSnap& s, DiceForm form) {
-  static const char* const classic[] = {"MAIN", "FILL", "BREAK", "DROP"};
-  static const char* const develop[] = {"INTRO", "MAIN", "VAR", "OUTRO"};
-  static const char* const arrange[] = {"INTRO", "MAIN", "BREAK", "BUILD", "DROP", "OUTRO"};
-  const char* const* names = form == DiceForm::Arrange ? arrange :
-                            form == DiceForm::Develop ? develop : classic;
-  for (int i = 0; i < s.patCount; ++i) {
-    auto& name = s.parts.pats[i].name;
-    memset(name, 0, sizeof(name));
-    memcpy(name, names[i], strlen(names[i]));
-  }
-}
-
-// Byte swap without a temporary (a track's steps are kilobytes; the UI task's stack is small).
 void swapBytes(void* a, void* b, size_t n) {
   uint8_t* x = static_cast<uint8_t*>(a);
   uint8_t* y = static_cast<uint8_t*>(b);
@@ -1794,217 +213,180 @@ void swapWritten(Project& p, DiceSnap& s, uint16_t bpm) {
 }
 
 }  // namespace
-
-int dicePatternCount(const DiceOpts& opts) {
-  return opts.form == DiceForm::Arrange && opts.change == DiceChange::Wild &&
-                 (opts.targetMask & 0x3f) == 0x3f && (opts.layers & kDicePattern)
-             ? kDiceMaxPats : kDicePats;
+int dicePatternCount(const DiceOpts& o) {
+  return o.form==DiceForm::Arrange && o.change==DiceChange::Wild &&
+    (o.targetMask&63)==63 && (o.layers&kDicePattern) ? kDiceMaxPats : kDicePats;
+}
+int diceFirstPattern(int, int) { return 0; }
+uint16_t diceOverwrites(const Project& p, int, int count) {
+  uint16_t result=0;
+  for(int i=0;i<clamp(count,1,kDiceMaxPats);++i) if(!p.patterns[i].isEmpty()) result|=1u<<i;
+  return result;
 }
 
-int diceFirstPattern(int editPattern, int count) {
-  // Dice always replaces the project starter, independent of the pattern selected in the editor.
-  (void)editPattern;
-  (void)count;
-  return 0;
-}
-
-uint16_t diceOverwrites(const Project& p, int editPattern, int count) {
-  count = std::max(1, std::min(kDiceMaxPats, count));
-  const int first = diceFirstPattern(editPattern, count);
-  uint16_t m = 0;
-  for (int i = 0; i < count; ++i)
-    if (!p.patterns[first + i].isEmpty()) m = static_cast<uint16_t>(m | (1u << i));
-  return m;
-}
-
-void diceSlots(const Project& p, uint8_t out[kDiceRoles]) { slotsOf(p.tracks, p.tracks, p.instruments, out); }
-
-DiceResult diceDraft(const Project& p, const DiceOpts& input, int editPattern, uint32_t seed, DiceSnap& s, uint16_t bpm, const DicePhraseSource* library) {
-  DiceOpts o = input;
-  if (o.form == DiceForm::Arrange && dicePatternCount(o) != kDiceMaxPats) o.form = DiceForm::Develop;
-  const int patCount = dicePatternCount(o);
-  o.lockMask |= static_cast<uint8_t>((~o.targetMask) & 0x3f);
-  if ((o.targetMask & 0x3f) != 0x3f) o.layers &= static_cast<uint8_t>(~(kDiceTempo | kDiceSong));
-  if (!(o.layers & kDicePattern)) o.change = DiceChange::Wild;
-  if (o.change != DiceChange::Wild) o.layers &= kDicePattern;
-  DiceResult res;
-  if ((o.lockMask & 0x3f) == 0x3f || !o.layers) return res;
-  seed = o.seed ? o.seed : seed;
-  res.seed = seed;
-  int g = o.genre, st = o.style;
-  if (!diceRecipe(g, st)) g = 0, st = 0;
-  DiceRecipe rec = *diceRecipe(g, st);
-  const bool targeted = (o.targetMask & 0x3f) != 0x3f;
-  const bool complete = o.fillGaps && !targeted && o.change == DiceChange::Wild && (o.layers & kDicePattern);
-  const uint8_t recipeRoles = rec.roles;
-  if (complete) {
-    int firstRole = 0, lastRole = kDiceRoles - 1;
-    while (firstRole < kDiceRoles && !(rec.roles & (1u << firstRole))) ++firstRole;
-    while (lastRole >= firstRole && !(rec.roles & (1u << lastRole))) --lastRole;
-    for (int role = firstRole; role <= lastRole; ++role) rec.roles |= 1u << role;
+DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed, DiceSnap& s, uint16_t bpm) {
+  DiceOpts o=input;
+  seed=o.seed ? o.seed : seed;
+  if(!diceRecipe(o.genre,o.style)) o.genre=o.style=0;
+  if(o.variant>=kDiceVariants) {
+    const int skip=!o.seed && o.avoidVariant<kDiceVariants ? o.avoidVariant : kDiceVariants;
+    Rng choice(seed ^ 0x85EBCA6Bu);o.variant=choice.below(skip<kDiceVariants ? kDiceVariants-1 : kDiceVariants);
+    if(skip<kDiceVariants && o.variant>=skip) ++o.variant;
   }
-  if (targeted || complete) {
-    // An explicit target requests that part even in styles that normally omit it.
-    if (targeted) rec.roles |= o.targetMask & 0x3f;
-    const DiceRecipe& fallback = *diceRecipe(0, 0);
-    if (!rec.kit) rec.kit = fallback.kit;
-    bool drumRhythm = false;
-    for (const DiceName* rhythm : rec.drums) drumRhythm |= rhythm && rhythm[0].w;
-    if (!drumRhythm)
-      for (int lane = 0; lane < kDiceLanes; ++lane) rec.drums[lane] = fallback.drums[lane];
-    if (!rec.progs || !rec.progs[0].w) rec.progs = fallback.progs;
-    if (!rec.rhythms || !rec.rhythms[0].w) rec.rhythms = fallback.rhythms;
-    for (int role = 1; role < kDiceRoles; ++role)
-      if (!rec.sounds[role] || !rec.sounds[role][0].w) rec.sounds[role] = fallback.sounds[role];
-    if (!rec.arps || !rec.arps[0].w) rec.arps = fallback.arps;
-    if (!rec.basses || !rec.basses[0].w) rec.basses = fallback.basses;
-    if (!rec.motifs || !rec.motifs[0].w) rec.motifs = fallback.motifs;
+  if(o.form>DiceForm::Arrange) o.form=DiceForm::Develop;
+  if(o.change>DiceChange::Wild) o.change=DiceChange::Wild;
+  if(!(o.layers&kDicePattern)) o.change=DiceChange::Wild;
+  if((o.layers&kDiceAll)==kDiceTempo) { o.lockMask=0; o.targetMask=63; }
+  const uint8_t active=o.targetMask & ~o.lockMask & 63;
+  const bool full=(o.targetMask&63)==63 && !(o.lockMask&63) && o.change==DiceChange::Wild;
+  uint8_t layers=o.layers & (kDiceAll|kDiceSong);
+  if(!full) layers &= ~(kDiceTempo|kDiceSong);
+  if(!(layers&kDicePattern)) layers &= ~kDiceSong;
+  if((o.layers&kDicePattern) && o.change!=DiceChange::Wild) layers &= ~kDiceSounds;
+  DiceResult result; result.seed=seed; result.genre=o.genre; result.style=o.style; result.variant=o.variant;
+  s.drafted=0;
+  if(!active || !layers) return result;
+  const auto& recipe=*diceRecipe(o.genre,o.style);
+  const auto& v=*diceVariant(o.genre,o.style,o.variant);
+  s.layers=0; s.first=0; s.patCount=dicePatternCount(o);
+  s.cfgMask=s.patMask=s.muteMask=0; s.instrMask=0;
+  s.preserveHeaders=!full; s.namePatterns=full && (layers&kDicePattern);
+  DiceParts& d=s.parts;
+  d.bpm=(layers&kDiceTempo) ? v.bpm : bpm ? bpm : p.bpm;
+  const auto key=(layers&kDiceTempo) ? dice_detail::rollKey(p,v,o,seed) : dice_detail::RollKey{p.scaleRoot,p.scaleType};
+  d.scaleRoot=key.root;d.scaleType=key.scale;
+  std::copy(p.instruments,p.instruments+kInstruments,d.instruments);
+  const DiceLayout layout=diceLayout(v);
+  auto plan=dice_detail::phrasePlan(v,seed,clamp(o.variety,0,100));
+  if(s.preserveHeaders) {
+    plan.harmonic[1]=plan.harmonic[2]=0;
+    std::fill(plan.progression,plan.progression+4,0);
   }
-  if (o.lockMask || o.change != DiceChange::Wild) rec.res = p.patterns[diceFirstPattern(editPattern, patCount)].res;
-  uint8_t layers = o.layers & (kDiceAll | kDiceSong);
-  if (!(layers & kDicePattern)) layers &= static_cast<uint8_t>(~kDiceSong);
-  const int first = diceFirstPattern(editPattern, patCount);
-  if ((layers & kDicePattern) && o.source == DiceSource::Midi) {
-    bool any = false;
-    uint8_t slots[kDiceRoles];
-    slotsOf(p.tracks, p.tracks, p.instruments, slots, o.lockMask);
-    Instrument previewKit;
-    kitSetDefaults(previewKit);
-    for (int lane = 0; lane < 6; ++lane) previewKit.kit[lane].instr = 0;
-    const int previewLen = o.lockMask ? p.patterns[first].length :
-                           (o.len == 16 || o.len == 32 || o.len == 64 || o.len == 128 ? o.len : rec.len);
-    for (int k = 0; k < kDiceRoles; ++k) {
-      if (!(rec.roles & (1u << k)) || (o.lockMask & (1u << k)) || !library ||
-          !library->pickForStyle(g, st, static_cast<DiceRole>(k), seed ^ (0x9E3779B9u * (k + 1)), s.work.phrase)) continue;
-      const bool newSound = (layers & kDiceSounds) && slots[k] != kNoInstr;
-      const Instrument* kit = k == 0 ? (newSound ? &previewKit : p.kitOf(0)) : nullptr;
-      if ((k == 0 && !kit) || (k > 0 && !newSound && p.kitOf(k))) continue;
-      const auto usable = diceWritePhrase(s.work.phrase, static_cast<DiceRole>(k), s.work.midiSteps,
-                                         previewLen, rec.res, 0, ScaleType::Minor, kit);
-      any |= usable.changed;
+  const uint8_t protectedMask=dice_detail::protectedFormats(p,layout,active,(layers&kDicePattern) ? s.patCount : 0,layers&kDiceSounds);
+  const uint8_t writable=active & ~protectedMask;
+  result.missingMask=protectedMask;
+  const auto allocated=dice_detail::allocate(p,layout,(layers&kDiceSounds) ? writable : 0);
+  for(int t=0;t<kDiceRoles;++t) {
+    d.tracks[t]=p.tracks[t];d.gen[t]=p.gen[t];d.var[t]=p.var[t];
+    if(!(writable&bit(t))) continue;
+    const int source=layout.source[t];
+    const int slot=allocated.track[t];
+    if(layers&kDiceSounds) {
+      if(source==kDiceUnusedTrack) {
+        snprintf(d.tracks[t].name,sizeof(d.tracks[t].name),"-");s.cfgMask|=bit(t);
+      } else if(slot==kNoInstr) result.missingMask|=bit(t);
+      else if(source>=0) {
+        Rng rng(seed ^ (0xC2B2AE35u*(source+1)));
+        dice_detail::buildVoice(diceVoice(v,source),d.instruments[slot],d.tracks[t],o.clean,clamp(o.variety,0,100),rng);
+        d.tracks[t].instr=slot;s.instrMask|=1u<<slot;s.cfgMask|=bit(t);
+      } else if(diceSupplement(source)) {
+        dice_detail::buildCompanion(dicePartKind(source),v,d.instruments[slot],d.tracks[t],o.clean,
+          clamp(o.variety,0,100),seed ^ (0xC2B2AE35u*(t+1)));
+        d.tracks[t].instr=slot;s.instrMask|=1u<<slot;s.cfgMask|=bit(t);
+      } else {
+        Instrument& kit=d.instruments[slot];kit=Instrument();kit.type=InstrType::Kit;kitSetDefaults(kit);
+        snprintf(kit.name,sizeof(kit.name),"DICE KIT");
+        if(o.clean) d.tracks[t]=TrackCfg();
+        snprintf(d.tracks[t].name,sizeof(d.tracks[t].name),"DRUMS");
+        d.tracks[t].instr=slot;d.tracks[t].out=TrackOut::Int;d.tracks[t].vol=100;
+        int delay=0,reverb=0,drive=0,voices=0;
+        for(int voice=0;voice<kDiceRoles;++voice) if(layout.drums&bit(voice)) {
+          const int instrument=allocated.drum[voice],lane=layout.lane[voice];
+          TrackCfg level;Rng rng(seed ^ (0xC2B2AE35u*(voice+1)));
+          const DiceVoice& spec=diceVoice(v,voice);
+          delay+=spec.delay;reverb+=spec.reverb;++voices;
+          dice_detail::buildVoice(spec,d.instruments[instrument],level,true,clamp(o.variety,0,100),rng);
+          auto& drum=d.instruments[instrument];drive+=level.drive;drum.vol=drum.vol*level.vol/100;drum.transpose=clamp(spec.pitch-lane,-24,24);
+          kit.kit[lane].instr=instrument;kit.kit[lane].vol=level.vol;
+          s.instrMask|=1u<<instrument;
+        }
+        kit.send=delay/voices;kit.rsend=reverb/voices;d.tracks[t].drive=drive/voices;  // KIT shares its send buses
+        s.instrMask|=1u<<slot;s.cfgMask|=bit(t);
+      }
     }
-    if (!any) return res;  // preserve both the project and the previous undo on failed conversion
+    if((layers&kDiceSounds) && source==kDiceKitTrack && slot==kNoInstr) continue;
+    if(!(layers&kDicePattern)) continue;
+    const bool kit=d.tracks[t].out==TrackOut::Int && d.tracks[t].instr<kInstruments && d.instruments[d.tracks[t].instr].type==InstrType::Kit;
+    if(source!=kDiceUnusedTrack && kit!=(source==kDiceKitTrack)) {result.missingMask|=bit(t);continue;}
+    const auto& cfg=d.tracks[t];
+    const Instrument* instrument=cfg.out==TrackOut::Int && cfg.instr<kInstruments ? &d.instruments[cfg.instr] : nullptr;
+    if(diceSupplement(source) && !dice_detail::companionPlayable(cfg,instrument,dicePartKind(source))) {result.missingMask|=bit(t);continue;}
+    s.patMask|=bit(t);s.muteMask|=bit(t);d.gen[t].mode=0;d.var[t].mode=0;
+    bool hasEvents=diceSupplement(source);
+    for(int voice=0;voice<kDiceRoles;++voice)
+      if(voice==source || (source==kDiceKitTrack && (layout.drums&bit(voice)))) hasEvents|=diceEventCount(diceVoice(v,voice))>0;
+    d.tracks[t].mute=o.change==DiceChange::Wild ? !hasEvents : p.tracks[t].mute;
   }
-  s.preserveHeaders = o.lockMask != 0 || o.change != DiceChange::Wild;
-  s.namePatterns = false;
-  s.layers = 0;  // parts are about to be overwritten: the previous undo is gone
-  s.drafted = layers;
-  s.first = static_cast<uint8_t>(first);
-  s.patCount = static_cast<uint8_t>(patCount);
-  s.cfgMask = s.muteMask = s.patMask = 0;
-  s.instrMask = 0;
-  DiceParts& d = s.parts;
-  load(p, first, patCount, d);
-  if (bpm) d.bpm = bpm;
-  res.genre = static_cast<int8_t>(g);
-  res.style = static_cast<int8_t>(st);
-  res.first = static_cast<uint8_t>(first);
-
-  const int v = o.variety > 100 ? 100 : o.variety;
-  Rng r(seed);
-  // TEMPO
-  uint16_t tempo = rec.bpm;
-  if (v > 0) {
-    const int spread = (rec.bpmHi - rec.bpmLo) * v / 100;
-    int b = rec.bpm + static_cast<int>(r.below(static_cast<uint32_t>(2 * spread + 1))) - spread;
-    b = b < rec.bpmLo ? rec.bpmLo : b > rec.bpmHi ? rec.bpmHi : b;
-    tempo = static_cast<uint16_t>(b);
-  }
-  const int si = pick(rec.scales, v, r);
-  const uint8_t scale = si >= 0 ? rec.scales[si].v : static_cast<uint8_t>(ScaleType::Minor);
-  const uint8_t root = o.root >= 0 && o.root < 12 ? static_cast<uint8_t>(o.root) : static_cast<uint8_t>(r.below(12));
-  if (layers & kDiceTempo) {
-    d.bpm = tempo;
-    if (!(o.lockMask & 0x3E)) { d.scaleRoot = root; d.scaleType = scale; }
-  }
-  // The generators work in the project's key (the rolled one with TEMPO); a scale without 7 notes takes
-  // the style's.
-  ScaleType sc = d.scaleType < static_cast<uint8_t>(ScaleType::Count) ? static_cast<ScaleType>(d.scaleType)
-                                                                       : ScaleType::Minor;
-  if (scaleDegrees(sc) != 7) sc = static_cast<ScaleType>(scale);
-  const int requestedLen = o.len == 16 || o.len == 32 || o.len == 64 || o.len == 128 ? o.len : rec.len;
-  const int len = s.preserveHeaders ? std::max(16, static_cast<int>(p.patterns[first].length)) : requestedLen;
-  const uint8_t tr = static_cast<unsigned>(g) < sizeof(kTraits) / sizeof(kTraits[0]) &&
-                             static_cast<unsigned>(st) < sizeof(kTraits[0]) / sizeof(kTraits[0][0])
-                         ? kTraits[g][st] : 0;
-  Ctx c{rec,
-        diceMusicProfile(g, st),
-        v,
-        Picks(),
-        static_cast<uint8_t>(d.scaleRoot % 12),
-        sc,
-        len,
-        Rng(seed ^ 0x9E3779B9u),
-        Rng(v > 0 ? seed * 2654435761u + 7u : kCanonSeed),
-        static_cast<uint8_t>(tr & 15 ? tr & 15 : 2),
-        static_cast<uint8_t>(tr >> 4),
-        {}};
-  rollPicks(c, r);
-  if (((targeted && (o.targetMask & (1u << 3))) || (complete && (rec.roles & (1u << 3)))) && c.pk.lead == DiceLead::None) {
-    c.pk.lead = DiceLead::Motif;
-    if (c.pk.motif < 0) c.pk.motif = 0;
-  }
-  bool present[kDiceRoles];
-  for (int k = 0; k < kDiceRoles; ++k) present[k] = (rec.roles >> k) & 1;
-  if (layers & kDiceSounds) {
-    rollSounds(c, d, p, s, present, o);
-    for (int role = 0; role < kDiceRoles; ++role)
-      if (complete && (s.cfgMask & (1u << role)) && !(recipeRoles & (1u << role)))
-        d.tracks[role].vol = static_cast<uint8_t>(d.tracks[role].vol * 3 / 4);
-  }
-  if (layers & kDicePattern) rollPatterns(c, d, s, present, p, o, library, g, st, seed, res);
-  if (layers & kDicePattern) {
-    fillPatternGaps(c, d, s, p, o);
-    musicalDraft(p, d, s, o, seed, res.midiMask);
-    diceVaryDraft(p, o, seed, s);
-    foregroundDraft(d, s, o, c.music);
-    const bool developing = o.form == DiceForm::Develop && o.change == DiceChange::Wild &&
-                            (o.targetMask & 0x3f) == 0x3f;
-    if (developing) registerDraft(d, s, o, c.music);
-    const int developCounter = prepareDevelop(d, s, o, recipeRoles);
-    densityDraft(p, d, s, o, seed);
-    supportDraft(d, s, o, complete ? static_cast<uint8_t>(rec.roles & ~recipeRoles) : 0);
-    if (!developing) registerDraft(d, s, o, c.music);
-    arrangeDevelop(d, s, o, recipeRoles, developCounter);
-    if (o.form == DiceForm::Arrange) {
-      DiceArrangeSpec spec{rec, c.music, g, recipeRoles, res.midiMask, {}};
-      kitLanes(d.instruments[d.tracks[0].instr % kInstruments], d.instruments, spec.lanes);
-      diceArrangeDraft(p, o, spec, seed, s);
-      if (layers & kDiceSong) diceArrangeSong(p, o, spec, s);
+  static const char* names[][6]={{"MAIN","FILL","BREAK","DROP"},{"INTRO","MAIN","VAR","OUTRO"},
+    {"INTRO","MAIN","BREAK","BUILD","DROP","OUTRO"}};
+  for(int i=0;i<s.patCount;++i) {
+    auto& dst=d.pats[i];const auto& prior=p.patterns[i];
+    snprintf(dst.name,sizeof(dst.name),"%s",s.namePatterns ? names[static_cast<int>(o.form)][i] : prior.name);
+    dst.length=s.preserveHeaders ? prior.length : (o.len==16 || o.len==32 || o.len==64 || o.len==128) ? o.len : recipe.length;
+    dst.res=s.preserveHeaders ? prior.res : static_cast<Resolution>(recipe.resolution);
+    dst.swing=s.preserveHeaders ? prior.swing : v.swing;dst.groove=s.preserveHeaders ? prior.groove : 0;
+    for(int t=0;t<kDiceRoles;++t) {
+      dst.trackLen[t]=prior.trackLen[t];dst.trackSpeed[t]=prior.trackSpeed[t];
+      if(!(s.patMask&bit(t))) continue;
+      std::fill(dst.steps[t],dst.steps[t]+kMaxSteps,Step());
+      const int source=layout.source[t];
+      if(source==kDiceUnusedTrack) {
+        if(o.change!=DiceChange::Wild) std::copy(prior.steps[t],prior.steps[t]+kMaxSteps,dst.steps[t]);
+        continue;
+      }
+      const auto& cfg=d.tracks[t];
+      const Instrument* m=cfg.out==TrackOut::Int && cfg.instr<kInstruments ? &d.instruments[cfg.instr] : nullptr;
+      const bool sections=(o.targetMask&63)==63 && o.change==DiceChange::Wild;
+      if(source>=0) {
+        const auto& voice=diceVoice(v,source);Rng rng(seed ^ (0x9E3779B9u*(source+1)));
+        writeVoice(dst,t,voice,recipe,v,d,m,s.preserveHeaders,source,plan,
+          o.change==DiceChange::Wild ? o.density : DiceDensity::Normal,clamp(o.groove,0,100),rng,false,(!o.seed && o.change==DiceChange::Wild) ? prior.steps[t] : nullptr);
+        if(sections) section(dst,t,voice,o.form,i);
+      } else if(diceSupplement(source)) {
+        dice_detail::writeCompanion(dst,t,dicePartKind(source),recipe,v,d,m,plan,s.hybrid,
+          s.preserveHeaders,o.form,sections ? i : -1,o.change==DiceChange::Wild ? o.density : DiceDensity::Normal);
+      } else {
+        if(!s.preserveHeaders) {dst.trackLen[t]=0;dst.trackSpeed[t]=0;}
+        auto& rows=s.voices;rows.length=dst.length;rows.res=dst.res;
+        for(auto& row:rows.steps) std::fill(row,row+kMaxSteps,Step());
+        for(int voice=0;voice<kDiceRoles;++voice) if(layout.drums&bit(voice)) {
+          rows.trackSpeed[voice]=dst.trackSpeed[t];rows.trackLen[voice]=dst.trackLen[t];
+          Rng rng(seed ^ (0x9E3779B9u*(voice+1)));const auto& spec=diceVoice(v,voice);
+          writeVoice(rows,voice,spec,recipe,v,d,nullptr,true,voice,plan,
+            o.change==DiceChange::Wild ? o.density : DiceDensity::Normal,clamp(o.groove,0,100),rng,true);
+          if(sections) section(rows,voice,spec,o.form,i);
+        }
+        const auto speed=toSpeed(dst.trackSpeed[t]);
+        const int stepTicks=ticksPerStep(dst.res)*speedDiv(speed)/speedMul(speed);
+        for(int voice=0;voice<kDiceRoles;++voice) if(layout.drums&bit(voice))
+          dice_detail::developVoice(rows.steps[voice],rows.length,stepTicks,voice,recipe,v,d.scaleRoot,d.scaleType,0,plan,rows.steps);
+        const bool fill=(o.form==DiceForm::Classic && i==1) || (o.form==DiceForm::Develop && i==2) || (o.form==DiceForm::Arrange && i==3);
+        dice_detail::packKit(dst,rows,layout,seed,fill);
+      }
+      Rng blendRng(seed ^ (0x9E3779B9u*(t+1)));blend(prior,dst,t,o.change,source==kDiceKitTrack,blendRng);
     }
-    if (layers & kDiceSounds) fitPhraseSounds(d, s);
   }
-  if ((layers & kDiceSong) && o.form != DiceForm::Arrange) rollSong(d, first, o.form);
-  s.namePatterns = (layers & kDicePattern) && !targeted && o.change == DiceChange::Wild && s.patMask;
-  if (s.namePatterns) namePatterns(s, o.form);
-  res.written = static_cast<uint16_t>(s.cfgMask | s.patMask | s.muteMask);
-  return res;
+  if(layers&kDiceSong) song(d.song,o.form);
+  if(!s.cfgMask) layers &= ~kDiceSounds;
+  if(!s.patMask) layers &= ~(kDicePattern|kDiceSong);
+  s.drafted=layers;
+  result.written=s.cfgMask|s.patMask|s.muteMask;
+  return result;
 }
-
 uint8_t diceApply(Project& p, DiceSnap& s, uint16_t bpm) {
-  const uint8_t l = s.drafted;
-  if (!l) return 0;  // nothing drafted: the applied roll's undo stays
-  s.drafted = 0;
-  s.layers = l;
-  swapWritten(p, s, bpm ? bpm : p.bpm);
-  return l;
+  if(!s.drafted) return 0;
+  s.layers=s.drafted; s.drafted=0;
+  swapWritten(p,s,bpm ? bpm : p.bpm);
+  return s.layers;
 }
-
-DiceResult diceRoll(Project& p, const DiceOpts& o, int editPattern, uint32_t seed, DiceSnap& s, uint16_t bpm,
-                    const DicePhraseSource* library) {
-  const DiceResult res = diceDraft(p, o, editPattern, seed, s, bpm, library);
-  if (o.source != DiceSource::Midi || !(o.layers & kDicePattern) || res.midiMask) diceApply(p, s, bpm);
-  return res;
+DiceResult diceRoll(Project& p, const DiceOpts& o, int edit, uint32_t seed, DiceSnap& s, uint16_t bpm) {
+  const auto result=diceDraft(p,o,edit,seed,s,bpm); diceApply(p,s,bpm); return result;
 }
-
 uint8_t diceUndo(Project& p, DiceSnap& s, uint16_t bpm) {
-  const uint8_t l = s.layers;
-  if (!l) return 0;
-  swapWritten(p, s, bpm ? bpm : p.bpm);
-  s.layers = 0;
-  s.cfgMask = s.muteMask = s.patMask = 0;
-  s.instrMask = 0;
-  return l;
+  const uint8_t layers=s.layers;
+  if(!layers) return 0;
+  swapWritten(p,s,bpm ? bpm : p.bpm);
+  s.layers=0; s.cfgMask=s.patMask=s.muteMask=0; s.instrMask=0;
+  return layers;
 }
-
 }  // namespace mt
