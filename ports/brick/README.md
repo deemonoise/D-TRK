@@ -1,77 +1,65 @@
-# D-TRK для TrimUI Brick с KNULLI
+# D-TRK for TrimUI Brick on KNULLI
 
-## Установка и запуск
+[Русская версия](README_ru.md)
 
-1. Распакуйте `d-trk-brick.zip` в `/userdata/roms/ports/` на консоли. В этой папке рядом должны лежать файл `D-TRK.sh` и каталог `d-trk/`.
-2. В главном меню KNULLI нажмите **Start → Game Settings → Update Gamelists**. Откройте **Ports → D-TRK**.
-3. При первом запуске откроется демопроект. Нажмите **Start**, чтобы его услышать, и ещё раз, чтобы остановить. Для своего паттерна откройте **FILE → New** и выберите пустой шаблон.
+## Installation and launch
 
-Если при запуске появляется `Permission denied`, выполните на консоли `chmod +x /userdata/roms/ports/D-TRK.sh /userdata/roms/ports/d-trk/d-trk`.
+1. Extract `d-trk-brick.zip` into `/userdata/roms/ports/` on the handheld. The folder should contain `D-TRK.sh` next to the `d-trk/` directory.
+2. In KNULLI, choose **Start → Game Settings → Update Gamelists**, then open **Ports → D-TRK**.
+3. The first launch opens a demo project. Press **Start** to play it and again to stop. To write your own pattern, open **FILE → New** and choose an empty template.
 
-Процент в верхней строке берётся у контроллера питания консоли. Вилка над батареей означает, что подключено питание USB. Она остаётся видна при **100%**. Молния внутри батареи означает, что сейчас идёт зарядка.
+The percentage in the top bar comes from the handheld's power controller. The plug above the battery means USB power is connected and stays visible at **100%**. The lightning bolt inside the battery means it is charging.
 
-## Звук и запись
+## Controls
 
-Звуковой движок Brick выделяет до 64 голосов. Число одновременно звучащих нот зависит от инструментов, эффектов и модуляции. При заполнении бюджета синтезатор освобождает голоса по обычным правилам приоритета.
-
-Для встроенного динамика и проводных наушников запускайте трекер через **Ports → D-TRK**. На время работы приложение получает прямой доступ к звуковой карте Brick через ALSA. Оно может одновременно воспроизводить паттерн и записывать встроенный микрофон. После выхода в меню KNULLI восстановятся прежний звуковой профиль и настройки входа, в том числе при аварийном завершении приложения. Если до запуска в KNULLI выбран Bluetooth- или USB-выход, трекер использует системный маршрут звука.
-
-При прямой записи встроенного **MIC** параметр **Gain** показывает поправку записи: **+0 дБ** означает единичное цифровое усиление. Для внешних входов действует их обычная шкала.
-
-## Набор паттерна
-
-| Кнопка на Brick | Действие |
+| Buttons | Action |
 |---|---|
-| **↑ / ↓** | Перейти на предыдущий или следующий шаг. В списке — выбрать строку. |
-| **← / →** | В GRID Overview — выбрать дорожку, в Detail — поле NOTE, VEL или FX. |
-| **A** | На пустом NOTE мелодической дорожки — поставить последнюю ноту этой дорожки и перейти на следующий шаг согласно Edit step. В меню — подтвердить выбор. |
-| **A + стрелки** | На ноте ↑/↓ меняют высоту на ступень лада, ←/→ — на октаву. На числовом параметре ←/→ меняют значение на 1, ↑/↓ — на 10. В списках вариантов один шаг выбирает соседнее значение. После отпускания A курсор остаётся на месте. |
-| **B / X** | B — вернуться. X — контекстное меню. В GRID здесь доступны Undo и **Edit step… → Note OFF / Clear all**. |
-| **L1 / R1** | Предыдущий или следующий экран. Из GRID нажмите **L1**, чтобы сразу открыть FILE. |
-| **L2 / R2** | Предыдущая или следующая вкладка внутри экрана. В GRID листают Overview, Detail, Piano roll и Automation. В режиме TRACKS экрана MIX выбирают дорожку. |
-| **Y** | Клик энкодера. **Select + Y** — клик с Shift. В GRID обычный клик переключает режим редактирования там, где он есть. |
-| **Select** | Shift. Удерживайте **Select + L2 / R2** для выбора дорожки в GRID, TRACK или INST. |
-| **Select + A / B** | **A** очищает шаг или выделение в GRID, в Automation — точку текущего параметра. **B** отменяет правку в GRID и SONG. |
-| **Start** | Запустить или остановить воспроизведение. |
-| **L2 + Start** | Активировать Fill во время воспроизведения. **Select + Start** используется KNULLI для снимка экрана. |
-| **Vol− / Vol+** | Убавить или прибавить громкость. |
+| **L1 / R1** | Switch screens. From GRID, L1 opens FILE. |
+| **L2 / R2** | Switch tabs or GRID views. In **MIX → X → Track controls**, select a track. |
+| **D-pad** | Move the cursor or selection. |
+| **A / B** | Confirm or go back. In GRID, A enters a note and **A + D-pad** edits a value. |
+| **X / Y** | Open the context menu or click the encoder. |
+| **Select + A / B** | Clear a step or selection in GRID, or undo an edit in GRID or SONG. Select acts as Shift. |
+| **Start**, **Vol− / Vol+** | Start or stop playback, or adjust the handheld volume. |
 
-**Рисование и касания.** Откройте **FILE → SYSTEM → Touch pointer**. Стрелки двигают указатель, **L2** даёт точный шаг, **A** нажимает в выбранной точке. Удерживайте **A** и двигайте указатель для перетаскивания. **R2** возвращает обычное управление.
+In **MIX**, up and down adjust the master volume, while left and right move the crossfader. In **Track controls**, the D-pad adjusts track volume and pan. Press **A** to toggle solo or **B** to toggle mute.
 
-**MIX.** При входе открыт режим **MAIN**. **↑/↓** меняют мастер-громкость проекта, **←/→** двигают кроссфейдер. В **X → Track controls** те же стрелки регулируют громкость и панораму выбранной дорожки. **L2/R2** выбирают дорожку, **A** переключает solo, **B** — mute. **X → Main controls** возвращает управление мастером. В обоих режимах удержание стрелки повторяет шаг, а **Select** увеличивает его до восьми. В меню **X** также доступны запись, сцены, PERF и выбор сцен A/B.
+To exit, save with **FILE → Save**, then choose **Quit tracker**. If you have unsaved edits, **Keep editing** returns you to the project.
 
-**Названия.** На строке Name в TRACK и INST стрелки **←/→** двигают каретку, **↑/↓** выбирают соседний символ. На экранной клавиатуре нажмите **↑** с верхнего ряда, чтобы перейти в поле текста. **A** возвращает в сетку клавиш. Набор вставляет символ у каретки, **DEL** удаляет символ слева.
+## Audio and recording
 
-**BANK и экранная клавиатура QWERTY.** Стрелки двигают выделение между соседними ячейками по горизонтали и вертикали. В **INST** нажмите **X** для предпрослушивания или **Select + X** для меню пресетов. Настройки записи нот и движений доступны через **GRID → X → Recording setup**.
+The Brick audio engine allocates up to 64 voices. How many notes can sound at once depends on the instruments, effects and modulation. When the budget fills, the synthesizer releases voices according to its usual priority rules.
 
-## Сохранение и обмен файлами
+For the built-in speaker and wired headphones, launch the tracker from **Ports → D-TRK**. The app opens the Brick sound card directly through ALSA, so it can play a pattern while recording from the built-in microphone. The launcher restores the previous KNULLI audio profile and input settings even if the tracker exits unexpectedly. If you selected a Bluetooth or USB output in KNULLI before launching, the tracker uses the system audio route.
 
-На экране **FILE** доступны **Save As…** для сохранения под новым именем, **Save** для записи текущего проекта и **Load…** для открытия сохранённого проекта.
+Open **MIX → X → Record…** and choose a source.
 
-**Выход в KNULLI.** Откройте **FILE**, выделите стрелками строку **Quit tracker** и нажмите **A**. Сохранённый проект закроется сразу. Если есть несохранённые изменения, трекер предложит **Keep editing** (вернуться к работе) или **Quit without saving** (выйти и отбросить правки). Чтобы сохранить работу перед выходом, выберите **Keep editing**, затем **Save**.
+- **MIC** records from the built-in microphone when the app has direct access to the Brick codec. In this mode, **Gain +0 dB** means unity digital gain.
+- **LINE** uses an available SDL capture input. To use an external USB input, select it as the system audio source in KNULLI. Availability depends on the selected audio route.
+- **RESAMPLE** records the tracker's own output. If playback is stopped, press **Start** after starting the recording.
 
-Данные лежат в `/userdata/saves/d-trk/`. Для переноса одного проекта скопируйте `projects/ИМЯ.mtp` вместе с одноимённой папкой `projects/ИМЯ/`, если она есть. В ней лежат сэмплы и пользовательские волновые таблицы проекта. Для полного резервного копирования закройте трекер и скопируйте весь каталог `saves/d-trk/`. Входные MIDI-файлы кладите в `midi/`, WAV для импорта — в `samples/`. Журнал последнего запуска находится в `launcher.log`.
+## Project files
 
-Для обмена по Wi-Fi откройте **FILE → SYSTEM → Network file transfer…**. На экране появится IP консоли. На Mac откройте в Finder **Переход → Подключение к серверу** и введите `smb://IP/share`. В Проводнике Windows введите `\\IP\share`. Подставьте адрес консоли. Внутри общей папки доступны `saves/d-trk/` для музыки и `roms/ports/` для установки приложения. [Сетевой обмен в KNULLI](https://knulli.org/play/add-games/network-transfer/)
+Data lives in `/userdata/saves/d-trk/`. To transfer a project, copy `projects/NAME.mtp` along with the matching `projects/NAME/` directory, if present. That directory contains the project's samples and custom wavetables. For a full backup, close the tracker and copy the entire `saves/d-trk/` directory. Put MIDI files for import in `midi/` and WAV files in `samples/`. The last launch log is in `launcher.log`.
 
-Если общий ресурс SMB отключён, экран покажет адрес SCP при работающем SSH. В этом случае тот же каталог доступен по пути `/userdata/saves/d-trk/`.
+For Wi-Fi transfers, open **FILE → SYSTEM → Network file transfer…** to find the handheld's IP address. On macOS, choose **Go → Connect to Server** in Finder and enter `smb://IP/share`. In Windows File Explorer, enter `\\IP\share`. Replace `IP` with the handheld's address. In the share, use `saves/d-trk/` for project data and `roms/ports/` for the app. [KNULLI network transfer](https://knulli.org/play/add-games/network-transfer/)
 
-## Сборка и самопроверка
+If SMB is disabled and SSH is running, the screen shows the SCP address. The same data is available at `/userdata/saves/d-trk/`.
 
-Из корня репозитория на компьютере с компилятором C++17, Make и SDL2 (`sdl2-config` в PATH) выполните команды ниже.
+## Building for Brick
+
+The SDL build needs a C++17 compiler, Make and SDL2 with `sdl2-config` on your PATH. Run these commands from the repository root.
 
 ```sh
 make -C ports/brick -j4 all check-navigation
 target/brick/native/d-trk --self-test
-target/brick/native/d-trk --windowed
+ports/brick/package.sh
 ```
 
-`--self-test` создаёт временный проект и проверяет ввод 16 шагов, правку, звук, сохранение, загрузку и восемь экранов. Для сборки архива Linux ARM64 через Docker запустите `ports/brick/package.sh`. Для упаковки уже собранного бинарного файла передайте скрипту путь к нему. Результат появится в `target/brick/d-trk-brick.zip`.
+The last command builds the ARM64 archive with Docker. To package an existing ARM64 ELF, pass the path to it as an argument. The archive is written to `target/brick/d-trk-brick.zip`.
 
-## Пробная сборка для Anbernic RG35XXSP
+## Troubleshooting
 
-Архив `d-trk-rg35xxsp.zip` распаковывается в `/userdata/roms/ports/`. После обновления списка игр запускайте **Ports → D-TRK-RG35XXSP**. Проекты и настройки лежат отдельно в `/userdata/saves/d-trk-rg35xxsp/`.
-
-Кнопки соответствуют таблице выше. **L1/R1** листают экраны, **L2/R2** — вкладки и виды GRID, **A** подтверждает выбор, **B** возвращает назад. Выход — **FILE → Quit tracker**. Кнопки громкости обслуживает KNULLI.
-
-Сборка рассчитана на SDL Mali и системный ALSA/PipeWire в KNULLI. Кодек SP поддерживает воспроизведение. В меню записи доступен внутренний **RESAMPLE**. Упаковка готового ARM64 ELF выполняется командой `DTRK_TARGET=rg35xxsp ports/brick/package.sh <путь-к-ELF>`.
+- **Missing from Ports.** Check that `D-TRK.sh` and the `d-trk/` directory are directly inside `/userdata/roms/ports/`, then update the gamelists.
+- **Permission denied.** Restore execute permissions with `chmod +x /userdata/roms/ports/D-TRK.sh /userdata/roms/ports/d-trk/d-trk`.
+- **No audio or MIC is unavailable.** Check the output selected in KNULLI and launch the app from Ports. For the built-in mic, select the built-in audio output before launching. Audio routing and SDL messages are in `/userdata/saves/d-trk/launcher.log`.

@@ -1,6 +1,7 @@
 #include "hw/lgfx_config.h"
+#include "brick/display_profile.h"
 #include "ui/opal_font.h"
-#include "sp_font.h"
+#include "rg35xxsp/sp_font.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -18,16 +19,22 @@ int sharpCoord(int p, int logical, int physical) {
 }
 int sharpX(int x) { return sharpCoord(x, LGFX::width, LGFX::sharpWidth); }
 int sharpY(int y) { return sharpCoord(y, LGFX::height, LGFX::sharpHeight); }
+bool spDisplaySize(SDL_Renderer* renderer) {
+  int width = 0, height = 0;
+  return SDL_GetRendererOutputSize(renderer, &width, &height) == 0 &&
+         width == rg35xxsp::kDisplayWidth && height == rg35xxsp::kDisplayHeight;
+}
 }  // namespace
 
 bool LGFX::begin(bool fullscreen, bool headless) {
   lines_.resize(width * height);
   native_.resize(width * height);
   if (!headless) {
-    const char* mode = SDL_getenv("DTRK_SP_NATIVE_TEXT");
+    const char* mode = SDL_getenv(rg35xxsp::kNativeTextOption);
     const bool requested = mode && std::strcmp(mode, "1") == 0;
     window_ = SDL_CreateWindow("MIDI Tracker", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                               requested ? 640 : 960, requested ? 480 : 720,
+                               requested ? rg35xxsp::kDisplayWidth : brick::kWindowedWidth,
+                               requested ? rg35xxsp::kDisplayHeight : brick::kWindowedHeight,
                                fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_RESIZABLE);
     if (!window_) return false;
     renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
@@ -40,12 +47,11 @@ bool LGFX::begin(bool fullscreen, bool headless) {
   return true;
 }
 bool LGFX::createTextures(bool requested) {
-  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, brick::kDefaultScaleQuality);
   if (SDL_RenderSetLogicalSize(renderer_, width, height) != 0) return false;
   texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, width, height);
   if (!texture_) return false;
-  int w = 0, h = 0;
-  if (requested && SDL_GetRendererOutputSize(renderer_, &w, &h) == 0 && w == 640 && h == 480) {
+  if (requested && spDisplaySize(renderer_)) {
     sharpTexture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING,
                                       sharpWidth, sharpHeight);
     if (sharpTexture_) {
@@ -82,9 +88,7 @@ void LGFX::present(const uint16_t* frame, const uint16_t* sharp) {
     frame = composite;
     if (sharp) sharp = composite_->sharpPixels_.data();
   }
-  int w = 0, h = 0;
-  const bool drawSharp = sharp && sharpTexture_ &&
-                         SDL_GetRendererOutputSize(renderer_, &w, &h) == 0 && w == 640 && h == 480;
+  const bool drawSharp = sharp && sharpTexture_ && spDisplaySize(renderer_);
   const uint16_t* source = drawSharp ? sharp : frame;
   const int pixels = drawSharp ? sharpWidth * sharpHeight : width * height;
   for (int i = 0; i < pixels; ++i) {
@@ -212,12 +216,12 @@ void LGFX_Sprite::drawSharpString(const char* text, int x, int y, uint16_t color
   const int top = sharpY(clip_.y), bottom = sharpY(clip_.y + clip_.h);
   const int anchorY = sharpY(y);
   const int firstRow = std::max(0, top - anchorY);
-  const int endRow = std::min(brick::kSpGlyphRows, bottom - anchorY);
+  const int endRow = std::min(rg35xxsp::kSpGlyphRows, bottom - anchorY);
   for (; *text && x < clip_.x + clip_.w; ++text, x += 8) {
     const auto ch = static_cast<unsigned char>(*text);
     if (ch == ' ') continue;
     const int anchorX = sharpX(x);
-    const auto* glyph = brick::kSpGlyph[(ch >= 32 && ch <= 126) ? ch - 32 : '?' - 32];
+    const auto* glyph = rg35xxsp::kSpGlyph[(ch >= 32 && ch <= 126) ? ch - 32 : '?' - 32];
     for (int row = firstRow; row < endRow; ++row) {
       auto* line = sharpPixels_.data() + (anchorY + row) * LGFX::sharpWidth;
       unsigned bits = glyph[row];

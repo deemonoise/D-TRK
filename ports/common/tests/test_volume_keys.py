@@ -8,7 +8,7 @@ import threading
 import unittest
 from unittest.mock import Mock, call, patch
 
-sys.path.insert(0, str(Path(__file__).absolute().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "brick"))
 import audio_lease
 import volume_keys as volume
 

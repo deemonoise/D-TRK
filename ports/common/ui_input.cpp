@@ -1,4 +1,7 @@
 #include "ui_brick_controls.h"
+#include "brick/input_profile.h"
+#include "rg35xxsp/input_profile.h"
+#include <cstddef>
 #include <cstring>
 
 namespace brick {
@@ -68,24 +71,18 @@ B controller(int key) {
       return B::Count;
   }
 }
-// KNULLI's es_input.cfg physical IDs for "TRIMUI Brick Controller".
-// 0/1 are volume, 14 is the system hotkey, and front F1/F2 (15/16) are unused.
-B brickButton(int id) {
-  static constexpr B keys[] = {B::B, B::A, B::X, B::Y, B::L1, B::R1, B::L2, B::R2, B::Select, B::Start};
-  return id >= 4 && id <= 13 ? keys[id - 4] : B::Count;
+template <std::size_t Count>
+B rawButton(int id, int firstId, const B (&buttons)[Count]) {
+  const int index = id - firstId;
+  return index >= 0 && static_cast<std::size_t>(index) < Count ? buttons[index] : B::Count;
 }
 
-bool isBrick(const char* name) { return name && std::strcmp(name, "TRIMUI Brick Controller") == 0; }
-bool isSp(const char* name) { return name && std::strcmp(name, "Anbernic RG35XX-SP Controller") == 0; }
+bool isBrick(const char* name) { return name && std::strcmp(name, kControllerName) == 0; }
+bool isSp(const char* name) { return name && std::strcmp(name, rg35xxsp::kControllerName) == 0; }
 
-// RG35XX-SP IDs from KNULLI's internal es_input.cfg. Directions arrive on hat 0.
 B handheldButton(const char* name, int id) {
-  if (isBrick(name)) return brickButton(id);
-  if (isSp(name)) {
-    static constexpr B keys[] = {B::A, B::B, B::Y, B::X, B::L1, B::R1, B::Select, B::Start,
-                                 B::Count, B::L2, B::R2};
-    return id >= 3 && id <= 13 ? keys[id - 3] : B::Count;
-  }
+  if (isBrick(name)) return rawButton(id, kFirstButtonId, kButtons);
+  if (isSp(name)) return rawButton(id, rg35xxsp::kFirstButtonId, rg35xxsp::kButtons);
   return B::Count;
 }
 }  // namespace

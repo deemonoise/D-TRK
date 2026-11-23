@@ -1,4 +1,5 @@
 #pragma once
+#include "rg35xxsp/display_profile.h"
 #include <SDL.h>
 #include <cstdint>
 #include <functional>
@@ -36,7 +37,7 @@ class LGFX {
   void invertDisplay(bool on) { inverted_ = on; }
   void writeCommand(int command) { idleColor_ = command == 0x39; }
   static constexpr int width = 480, height = 320;
-  static constexpr int sharpWidth = 640, sharpHeight = 426;
+  static constexpr int sharpWidth = rg35xxsp::kDisplayWidth, sharpHeight = rg35xxsp::kRasterHeight;
   bool sharpText() const { return sharpTexture_ != nullptr; }
 
  private:
