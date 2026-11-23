@@ -11,6 +11,7 @@
 #include "scale.h"
 #include "engine/engine.h"
 #include "hw/input.h"
+#include "ui/grid_fx_input.h"
 #include "ui/theme.h"
 #include "ui/touch.h"
 #include "ui/grid_overview_layout.h"
@@ -159,7 +160,7 @@ struct GridScreen {
   void toggleLane(int);
   void setNote(uint8_t);
   void previewNote(uint8_t);
-  void editTurn(int,bool);
+  void editTurn(const hw::InputEvent&);
   void editLane(int);
   void finishLaneEdit(bool);
   void onInput(const hw::InputEvent&);

@@ -13,7 +13,7 @@ inline bool numericFxValue(mt::Fx fx) {
     default: return true;
   }
 }
-inline bool coarseFxEdit(const hw::InputEvent& ev, mt::Fx fx) {
+inline bool coarseFxEdit(const hw::InputEvent& ev, [[maybe_unused]] mt::Fx fx) {
 #ifdef DTRK_BRICK
   if (ev.axis != hw::InputAxis::Encoder && !numericFxValue(fx)) return false;
 #endif

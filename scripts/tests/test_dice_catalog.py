@@ -1,7 +1,6 @@
-"""The firmware table must remain a reproducible copy of the checked-in facts."""
-import gzip
-import copy
-import json
+"""Check the Dice catalogue generator without local source data."""
+from contextlib import redirect_stderr
+import io
 import pathlib
 import sys
 import tempfile
@@ -12,35 +11,9 @@ from scripts import generate_dice_catalog as catalog
 
 
 class DiceCatalogTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.data = json.loads(gzip.decompress((catalog.ROOT / "data/dice_guide.json.gz").read_bytes()))
-
-    def test_generated_firmware_matches_all_source_facts(self):
-        expected = (catalog.ROOT / "lib/core/src/dice_catalog.inc").read_text()
-        self.assertEqual(expected, catalog.compile_catalog(self.data))
-
     def test_literals_escape_names_without_changing_numbers(self):
         self.assertEqual('{"quoted \\"name\\"",-12,255}', catalog.row(['quoted "name"', -12, 255]))
         self.assertEqual('const int x[] = {\n  1,2,\n};\n', catalog.table('const int x', ['1,2']))
-
-    def test_generated_menu_has_ten_families_and_legacy_style_references(self):
-        compiled = catalog.compile_styles(self.data)
-        menu = compiled.split("static const Group kMenuFamilies[] = {\n", 1)[1]
-        names = ("Acid", "Techno", "Drum & Bass", "Trance", "Hardcore & Gabber",
-                 "IDM", "Ambient", "Industrial", "UK Garage", "Rave")
-        groups = [json.loads("[" + line.strip()[1:-2] + "]") for line in menu.splitlines() if line.startswith('  {"')]
-        self.assertEqual(list(names), [name for name, _, _ in groups])
-        next_first = 0
-        for (name, first, count), expected in zip(groups, (4, 6, 6, 6, 4, 4, 4, 3, 5, 4)):
-            self.assertEqual(next_first, first)
-            self.assertEqual(expected, count, name)
-            next_first += count
-        self.assertEqual(46, next_first)
-        choices = compiled.split("static const DiceChoice kMenuChoices[] = {\n", 1)[1].split("};", 1)[0]
-        self.assertEqual(46, len(set(choices.splitlines())))
-        acid_group = next(i for i, group in enumerate(self.data["groups"]) if group["id"] == "acid")
-        self.assertTrue(choices.startswith(f"  {{{acid_group},1}},\n"))
 
     def test_menu_rejects_unknown_or_duplicate_choices(self):
         for styles in (("Missing",), ("Known", "Known")):
@@ -66,12 +39,6 @@ class DiceCatalogTest(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 catalog.compile_timbres(data)
 
-    def test_incomplete_variant_catalogue_is_rejected(self):
-        data = copy.deepcopy(self.data)
-        data["styles"][0]["variants"].pop()
-        with self.assertRaises(AssertionError):
-            catalog.compile_styles(data)
-
     def test_production_row_preserves_endpoints_and_rejects_invalid_fields(self):
         base = ["Example", "character", "source", "Warm", "1", "-2"]
         def read(cells):
@@ -94,28 +61,16 @@ class DiceCatalogTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Duplicate"):
                 catalog.production_directions(path)
 
-    def test_missing_style_direction_is_rejected(self):
-        with patch.object(catalog, "production_directions", return_value={}):
-            with self.assertRaisesRegex(ValueError, "do not match"):
-                catalog.compile_styles(self.data)
-
-    def test_cli_detects_stale_table_and_rebuilds_it(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = pathlib.Path(folder)
-            (root / "data").mkdir()
-            (root / "data/dice-styles.md").write_bytes((catalog.ROOT / "data/dice-styles.md").read_bytes())
-            (root / "lib/core/src").mkdir(parents=True)
-            (root / "data/dice_guide.json.gz").write_bytes(gzip.compress(json.dumps(self.data).encode()))
-            target = root / "lib/core/src/dice_catalog.inc"
-            target.write_text("stale")
-            with patch.object(catalog, "ROOT", root), patch.object(sys, "argv", ["catalog", "--check"]):
-                with self.assertRaisesRegex(SystemExit, "stale"):
-                    catalog.main()
-            with patch.object(catalog, "ROOT", root), patch.object(sys, "argv", ["catalog"]):
+    def test_cli_names_missing_local_inputs(self):
+        errors = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder, patch.object(catalog, "ROOT", pathlib.Path(folder)), \
+                patch.object(sys, "argv", ["catalog", "--check"]), redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as failure:
                 catalog.main()
-            with patch.object(catalog, "ROOT", root), patch.object(sys, "argv", ["catalog", "--check"]):
-                catalog.main()
-            self.assertEqual(catalog.compile_catalog(self.data), target.read_text())
+        self.assertEqual(2, failure.exception.code)
+        self.assertIn("missing local Dice catalogue inputs", errors.getvalue())
+        self.assertIn(str(catalog.CATALOG_SOURCE), errors.getvalue())
+        self.assertIn(str(catalog.STYLE_SOURCE), errors.getvalue())
 
 
 if __name__ == "__main__":

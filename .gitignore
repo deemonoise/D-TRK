@@ -24,6 +24,9 @@ docs/automation_checklist_ru.md
 # Local Virus wavetable recordings
 /assets/wavetables/virus/
 
+# Local Dice catalogue sources
+/data/
+
 # Local verification reports
 .metrics/
 target/

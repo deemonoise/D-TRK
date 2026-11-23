@@ -10,6 +10,12 @@ else:
     import dice_timbres
 
 ROOT = Path(__file__).resolve().parents[1]
+CATALOG_SOURCE = Path("data/dice_guide.json.gz")
+STYLE_SOURCE = Path("data/dice-styles.md")
+
+
+def missing_sources():
+    return [path for path in (CATALOG_SOURCE, STYLE_SOURCE) if not (ROOT / path).is_file()]
 
 
 def row(values):
@@ -130,7 +136,7 @@ def production_directions(path):
 
 
 def compile_styles(data):
-    directions = production_directions(ROOT / "data/dice-styles.md")
+    directions = production_directions(ROOT / STYLE_SOURCE)
     if directions.keys() != {s["name"] for s in data["styles"]}:
         raise ValueError("Dice style directions do not match the catalogue")
     styles, variants, groups, addresses = [], [], [], {}
@@ -159,7 +165,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    data = json.loads(gzip.decompress((ROOT / "data/dice_guide.json.gz").read_bytes()))
+    missing = missing_sources()
+    if missing:
+        parser.error("missing local Dice catalogue inputs: " + ", ".join(map(str, missing)))
+    data = json.loads(gzip.decompress((ROOT / CATALOG_SOURCE).read_bytes()))
     generated = compile_catalog(data)
     target = ROOT / "lib/core/src/dice_catalog.inc"
     if args.check:
