@@ -28,6 +28,12 @@
 
 **BANK and the on-screen QWERTY keyboard.** Use the D-pad to move between cells horizontally or vertically. In **INST**, press **X** to preview or **Select + X** to open the preset menu. For note and movement recording settings, open **GRID → X → Recording setup**.
 
+## Bluetooth MIDI
+
+Enable Bluetooth in KNULLI. Put the controller in BLE MIDI discovery mode, then open **FILE → SYSTEM → MIDI devices… → Add device…** in D-TRK. Select the controller by name and choose **IN** for a controller or **OUT** for a sound module. The Avatar EMP-16 appears as **MIDI PAD-01** when its **WIRELESS** indicator blinks.
+
+D-TRK connects after you select the device and retries a lost connection while the device is enabled in the list. KNULLI's standard Bluetooth, PipeWire and ALSA services carry the data. USB MIDI devices still appear in the same list.
+
 ## Saving and transferring files
 
 On **FILE**, use **Save As…** to save the project under a new name, **Save** to update the current project and **Load…** to open a saved project.

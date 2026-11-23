@@ -40,6 +40,7 @@ esac
 mkdir -p "$stage/$directory"
 install -m 755 "$binary" "$stage/$directory/d-trk"
 install -m 755 "$device/$launcher" "$stage/$launcher"
+cp "$project/ports/common/ble_midi_bridge.py" "$stage/$directory/"
 if [ "$target" = brick ]; then
     cp "$device/audio_lease.py" "$device/volume_keys.py" "$stage/$directory/"
 fi

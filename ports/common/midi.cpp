@@ -1,8 +1,9 @@
-// KNULLI exposes USB instruments and connected Bluetooth MIDI endpoints through ALSA.
+// USB uses ALSA directly. KNULLI's PipeWire BLE devices use private ALSA ports.
 #include <atomic>
 #include <mutex>
 
 #include "Arduino.h"
+#include "ble_midi_pipewire.h"
 #include "hw/ble_midi.h"
 #ifdef __linux__
 #include <fcntl.h>
@@ -21,6 +22,10 @@ uint32_t connections = 0;
 std::mutex endpointMutex;
 #ifdef __linux__
 snd_seq_addr local{}, peers[2]{};
+bool bluetooth[2]{};
+int bridgePorts[2]{-1, -1};
+pid_t bridgeChild = -1;
+uint32_t lastBridgeStart = 0;
 bool openPort() {
   if (fd >= 0) return true;
   fd = open("/dev/snd/seq", O_RDWR | O_NONBLOCK | O_CLOEXEC);
@@ -83,22 +88,72 @@ void subscribe(int i, snd_seq_addr remote, bool connect) {
     ++connections;
   peers[i] = remote;
 }
+void closeBridge() {
+  pipewire::stop(bridgeChild);
+  for (auto& port : bridgePorts) {
+    if (fd >= 0 && port >= 0) {
+      snd_seq_port_info info{};
+      info.addr = {local.client, static_cast<uint8_t>(port)};
+      ioctl(fd, SNDRV_SEQ_IOCTL_DELETE_PORT, &info);
+    }
+    port = -1;
+  }
+}
+int createBridgePort(int slot) {
+  snd_seq_port_info info{};
+  info.addr.client = local.client;
+  info.capability = slot ? SNDRV_SEQ_PORT_CAP_READ | SNDRV_SEQ_PORT_CAP_SUBS_READ
+                         : SNDRV_SEQ_PORT_CAP_WRITE | SNDRV_SEQ_PORT_CAP_SUBS_WRITE;
+  info.type = SNDRV_SEQ_PORT_TYPE_MIDI_GENERIC | SNDRV_SEQ_PORT_TYPE_HARDWARE;
+  strcpy(info.name, slot ? "BLE MIDI output" : "BLE MIDI input");
+  return ioctl(fd, SNDRV_SEQ_IOCTL_CREATE_PORT, &info) == 0 ? info.addr.port : -1;
+}
+void refreshBridge() {
+  if ((!bluetooth[0] && !bluetooth[1]) || pipewire::running(bridgeChild)) return;
+  const auto now = millis();
+  if (now - lastBridgeStart < 5000) return;
+  lastBridgeStart = now;
+  closeBridge();
+  for (int i = 0; i < 2; ++i)
+    if (bluetooth[i]) bridgePorts[i] = createBridgePort(i);
+  if ((!bluetooth[0] || bridgePorts[0] >= 0) && (!bluetooth[1] || bridgePorts[1] >= 0))
+    bridgeChild = pipewire::start(local.client, bluetooth[0] ? selected[0].c_str() : "", bridgePorts[0],
+                                 bluetooth[1] ? selected[1].c_str() : "", bridgePorts[1]);
+  if (bridgeChild < 0) closeBridge();
+}
+bool bridgeLinked(int i) {
+  if (bridgeChild < 0 || bridgePorts[i] < 0) return false;
+  snd_seq_port_info info{};
+  info.addr = {local.client, static_cast<uint8_t>(bridgePorts[i])};
+  return ioctl(fd, SNDRV_SEQ_IOCTL_GET_PORT_INFO, &info) == 0 &&
+         (i ? info.read_use > 0 : info.write_use > 0);
+}
 void refresh() {
   if (!openPort()) return;
+  refreshBridge();
   bool seen[2]{};
   forPorts([&](const Found& dev, const snd_seq_port_info& p) {
     for (int i = 0; i < 2; ++i)
-      if (selected[i] == dev.addr) {
+      if (!bluetooth[i] && selected[i] == dev.addr) {
         seen[i] = true;
         if (!active[i] || peers[i].client != p.addr.client) subscribe(i, p.addr, true);
         if (active[i]) labels[i] = dev.name;
       }
   });
-  for (int i = 0; i < 2; ++i)
-    if (!seen[i]) {
+  for (int i = 0; i < 2; ++i) {
+    if (bluetooth[i]) {
+      const bool linked = bridgeLinked(i);
+      if (linked && !active[i]) {
+        if (i) fresh = true;
+        else ++connections;
+      }
+      active[i] = linked;
+      if (i) ready = linked;
+    } else if (!seen[i]) {
       active[i] = false;
       if (i) ready = false;
     }
+  }
 }
 bool decode(const snd_seq_event& ev, mt::MidiMsg& m) {
   auto n = ev.data.note;
@@ -140,8 +195,13 @@ bool decode(const snd_seq_event& ev, mt::MidiMsg& m) {
 bool output(const uint8_t* b, uint8_t n) {
   if (!n) return false;
   snd_seq_event ev{};
-  ev.source = local;
-  ev.dest = peers[1];
+  if (bluetooth[1]) {
+    ev.source = {local.client, static_cast<uint8_t>(bridgePorts[1])};
+    ev.dest = {SNDRV_SEQ_ADDRESS_SUBSCRIBERS, 0};
+  } else {
+    ev.source = local;
+    ev.dest = peers[1];
+  }
   ev.queue = SNDRV_SEQ_QUEUE_DIRECT;
   const int high = b[0] >> 4, ch = b[0] & 15;
   if (high == 15) {
@@ -194,6 +254,7 @@ void begin() {
 void end() {
   std::lock_guard<std::mutex> lock(endpointMutex);
 #ifdef __linux__
+  closeBridge();
   if (fd >= 0) close(fd);
 #endif
   fd = -1;
@@ -210,27 +271,48 @@ const char* name(Slot s) { return active[int(s)] ? labels[int(s)].c_str() : ""; 
 int scan(Found* out, int max) {
   int count = 0;
 #ifdef __linux__
-  if (openPort())
-    forPorts([&](const Found& d, const auto&) {
-      if (count < max) out[count++] = d;
-    });
+  {
+    std::lock_guard<std::mutex> guard(endpointMutex);
+    if (openPort())
+      forPorts([&](const Found& d, const auto&) {
+        if (count < max) out[count++] = d;
+      });
+  }
+  if (count < max) count += pipewire::scan(out + count, max - count);
 #endif
   return count;
 }
-void setActive(const char* ia, uint8_t, const char* in, const char* oa, uint8_t, const char* on) {
+void setActive(const char* ia, uint8_t inType, const char* in, const char* oa, uint8_t outType, const char* on) {
   std::lock_guard<std::mutex> lock(endpointMutex);
+#ifdef __linux__
+  bool restartBridge = false;
+#endif
   for (int i = 0; i < 2; ++i) {
     const char* a = i ? oa : ia;
-    if (selected[i] != (a ? a : "")) {
+    bool changed = selected[i] != (a ? a : "");
 #ifdef __linux__
-      if (active[i]) subscribe(i, peers[i], false);
-#endif
-      selected[i] = a ? a : "";
+    const bool throughBluetooth = a && *a && (i ? outType : inType) == pipewire::kDeviceType;
+    changed = changed || bluetooth[i] != throughBluetooth;
+    if (changed) {
+      restartBridge = restartBridge || bluetooth[i] || throughBluetooth;
+      if (active[i] && !bluetooth[i]) subscribe(i, peers[i], false);
+      if (i) ready = false;
+      active[i] = false;
     }
+    bluetooth[i] = throughBluetooth;
+#else
+    (void)inType;
+    (void)outType;
+#endif
+    if (changed) selected[i] = a ? a : "";
     const char* label = i ? on : in;
     labels[i] = label ? label : "";
   }
 #ifdef __linux__
+  if (restartBridge) {
+    closeBridge();
+    lastBridgeStart = millis() - 5000;
+  }
   if (wanted()) refresh();
 #endif
 }
@@ -243,7 +325,9 @@ bool next(mt::MidiMsg& m) {
   }
   snd_seq_event ev{};
   while (fd >= 0 && read(fd, &ev, sizeof(ev)) == sizeof(ev))
-    if (active[0] && ev.source.client == peers[0].client && ev.source.port == peers[0].port && decode(ev, m))
+    if (active[0] && (bluetooth[0] ? ev.dest.port == bridgePorts[0]
+                                   : ev.source.client == peers[0].client && ev.source.port == peers[0].port) &&
+        decode(ev, m))
       return true;
 #endif
   return false;
