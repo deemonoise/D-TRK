@@ -74,6 +74,20 @@ B brickButton(int id) {
   static constexpr B keys[] = {B::B, B::A, B::X, B::Y, B::L1, B::R1, B::L2, B::R2, B::Select, B::Start};
   return id >= 4 && id <= 13 ? keys[id - 4] : B::Count;
 }
+
+bool isBrick(const char* name) { return name && std::strcmp(name, "TRIMUI Brick Controller") == 0; }
+bool isSp(const char* name) { return name && std::strcmp(name, "Anbernic RG35XX-SP Controller") == 0; }
+
+// RG35XX-SP IDs from KNULLI's internal es_input.cfg. Directions arrive on hat 0.
+B handheldButton(const char* name, int id) {
+  if (isBrick(name)) return brickButton(id);
+  if (isSp(name)) {
+    static constexpr B keys[] = {B::A, B::B, B::Y, B::X, B::L1, B::R1, B::Select, B::Start,
+                                 B::Count, B::L2, B::R2};
+    return id >= 3 && id <= 13 ? keys[id - 3] : B::Count;
+  }
+  return B::Count;
+}
 }  // namespace
 Input::Input(Controls& controls) : controls_(controls) {
   for (int i = 0; i < SDL_NumJoysticks() && id_ < 0; ++i) open(i);
@@ -82,7 +96,7 @@ Input::~Input() { close(); }
 void Input::open(int index) {
   if (id_ >= 0) return;
   const char* name = SDL_JoystickNameForIndex(index);
-  if (name && std::strcmp(name, "TRIMUI Brick Controller") == 0)
+  if (isBrick(name) || isSp(name))
     joystick_ = SDL_JoystickOpen(index);
   else if (SDL_IsGameController(index)) {
     controller_ = SDL_GameControllerOpen(index);
@@ -119,7 +133,7 @@ void Input::event(const SDL_Event& e) {
     case SDL_JOYBUTTONDOWN:
     case SDL_JOYBUTTONUP:
       if (!controller_ && e.jbutton.which == id_)
-        controls_.press(brickButton(e.jbutton.button), e.type == SDL_JOYBUTTONDOWN);
+        controls_.press(handheldButton(SDL_JoystickName(joystick_), e.jbutton.button), e.type == SDL_JOYBUTTONDOWN);
       break;
     case SDL_JOYHATMOTION:
       if (!controller_ && e.jhat.which == id_ && e.jhat.hat == 0) {
@@ -164,9 +178,8 @@ bool inputPoll(InputEvent& out, TickType_t) {
       bool cancel = type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_s || e.key.keysym.sym == SDLK_RETURN);
       if (type == SDL_JOYBUTTONDOWN) {
         const char* name = SDL_JoystickName(SDL_JoystickFromInstanceID(e.jbutton.which));
-        cancel = name && std::strcmp(name, "TRIMUI Brick Controller") == 0 &&
-                 (brick::brickButton(e.jbutton.button) == brick::Button::X ||
-                  brick::brickButton(e.jbutton.button) == brick::Button::Start);
+        const auto button = brick::handheldButton(name, e.jbutton.button);
+        cancel = button == brick::Button::X || button == brick::Button::Start;
       }
       if (type == SDL_CONTROLLERBUTTONDOWN)
         cancel =

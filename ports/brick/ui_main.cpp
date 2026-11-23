@@ -89,47 +89,64 @@ bool checkOutputGain() {
   return matches(65536, 65536, source) && matches(0, 0, {0, 0, 0, 0}) &&
          matches(32768, 131072, {10000, -32768, -16384, 32767});
 }
-bool checkBrickInput(brick::Input& input, LGFX& lcd, ui::App& app) {
+bool checkHandheldInput(brick::Input& input, LGFX& lcd, ui::App& app) {
+  struct Mapping {
+    const char* name;
+    uint8_t a, b, x, y, l1, r1, l2, r2, ignored;
+  };
+  static constexpr Mapping maps[] = {
+      {"TRIMUI Brick Controller", 5, 4, 6, 7, 8, 9, 10, 11, 16},
+      {"Anbernic RG35XX-SP Controller", 3, 4, 6, 5, 7, 8, 12, 13, 11},
+  };
   for (int i = 0; i < SDL_NumJoysticks(); ++i) {
     const char* name = SDL_JoystickNameForIndex(i);
-    if (!name || std::strcmp(name, "TRIMUI Brick Controller") != 0) continue;
-    auto tapRaw = [&](uint8_t id) {
-      SDL_Event event{};
-      event.jbutton.which = SDL_JoystickGetDeviceInstanceID(i);
-      event.jbutton.button = id;
-      event.type = SDL_JOYBUTTONDOWN;
-      input.event(event);
-      event.type = SDL_JOYBUTTONUP;
-      input.event(event);
-    };
-    tapRaw(15);  // Front F1/F2 must be ignored.
-    tapRaw(16);
-    tapRaw(7);  // Y enters edit by clicking the encoder.
-    if (!app.grid().blocksTabChange() || lcd.overlay || app.menu().isOpen()) return false;
-    tapRaw(7);  // Y leaves edit.
-    if (app.grid().blocksTabChange()) return false;
-    tapRaw(10);  // L2 wraps Overview -> Automation.
-    if (!app.grid().wantsHDrag()) return false;
-    tapRaw(11);  // R2 wraps Automation -> Overview.
-    if (app.grid().wantsHDrag()) return false;
-    tapRaw(6);  // X opens the GRID context menu
-    if (!app.menu().isOpen()) return false;
-    tapRaw(4);
-    if (app.menu().isOpen()) return false;
-    for (int tab = 0; tab < 3; ++tab) tapRaw(9);  // R1 to MIX
-    if (app.tab() != ui::Tab::Mix || app.curTrack() != 0) return false;
-    tapRaw(6);  // X -> Track controls.
-    tapRaw(5);
-    tapRaw(16);
-    if (app.curTrack() != 0) return false;
-    tapRaw(11);
-    if (app.curTrack() != 1) return false;
-    tapRaw(10);
-    if (app.curTrack() != 0) return false;
-    for (int tab = 0; tab < 3; ++tab) tapRaw(8);  // L1 to GRID
-    if (app.tab() != ui::Tab::Grid) return false;
-    std::puts("Brick raw controller: Y click, X/B menu, L1/R1 screens, L2/R2 views/tracks and inactive F1/F2 OK");
-    return true;
+    if (!name) continue;
+    for (const auto& map : maps) {
+      if (std::strcmp(name, map.name) != 0) continue;
+      auto tapRaw = [&](uint8_t id) {
+        SDL_Event event{};
+        event.jbutton.which = SDL_JoystickGetDeviceInstanceID(i);
+        event.jbutton.button = id;
+        event.type = SDL_JOYBUTTONDOWN;
+        input.event(event);
+        event.type = SDL_JOYBUTTONUP;
+        input.event(event);
+      };
+      tapRaw(map.y);
+      if (!app.grid().blocksTabChange() || lcd.overlay || app.menu().isOpen()) return false;
+      tapRaw(map.y);
+      if (app.grid().blocksTabChange()) return false;
+      tapRaw(map.l2);
+      if (!app.grid().wantsHDrag()) return false;
+      tapRaw(map.r2);
+      if (app.grid().wantsHDrag()) return false;
+      tapRaw(map.x);
+      if (!app.menu().isOpen()) return false;
+      SDL_Event hat{};
+      hat.jhat.type = SDL_JOYHATMOTION;
+      hat.jhat.which = SDL_JoystickGetDeviceInstanceID(i);
+      hat.jhat.hat = 0;
+      hat.jhat.value = SDL_HAT_DOWN;
+      input.event(hat);
+      hat.jhat.value = SDL_HAT_CENTERED;
+      input.event(hat);
+      tapRaw(map.b);
+      if (app.menu().isOpen()) return false;
+      for (int tab = 0; tab < 3; ++tab) tapRaw(map.r1);
+      if (app.tab() != ui::Tab::Mix || app.curTrack() != 0) return false;
+      tapRaw(map.x);
+      tapRaw(map.a);
+      tapRaw(map.ignored);
+      if (app.curTrack() != 0) return false;
+      tapRaw(map.r2);
+      if (app.curTrack() != 1) return false;
+      tapRaw(map.l2);
+      if (app.curTrack() != 0) return false;
+      for (int tab = 0; tab < 3; ++tab) tapRaw(map.l1);
+      if (app.tab() != ui::Tab::Grid) return false;
+      std::printf("%s: raw buttons, hat, views, menu and mixer tracks OK\n", name);
+      return true;
+    }
   }
   return true;
 }
@@ -247,9 +264,16 @@ bool verify(brick::Controls& controls, ui::App& app, Device& device, LGFX& lcd) 
   if (!engine::status().playing || !producesAudio()) return fail("reloaded pattern audio");
   const auto before = engine::nowUs();
   SDL_PauseAudioDevice(device.id, 0);
-  SDL_Delay(180);
+  tap(B::R1);
+  app.tick();
+  SDL_Delay(120);
+  tap(B::L1);
+  app.tick();
+  SDL_Delay(120);
   SDL_PauseAudioDevice(device.id, 1);
-  if (engine::nowUs() == before) return fail("SDL output callback");
+  if (engine::nowUs() == before || !engine::status().playing || app.tab() != ui::Tab::Grid)
+    return fail("SDL output callback during navigation");
+  std::printf("SDL %s output advances while changing screens\n", SDL_GetCurrentAudioDriver());
   engine::post(engine::Cmd::Stop);
   app.tick();
   auto switchScreen = [](brick::Controls& input, B direction) {
@@ -552,7 +576,11 @@ int run(bool test, bool fullscreen, bool headless) {
       return 1;
     }
     std::puts("Live stereo playback gain: unity, attenuation, mute and boost saturation OK");
-    return checkBrickInput(input, lcd, *app) && verify(controls, *app, device, lcd) ? 0 : 1;
+    if (!checkHandheldInput(input, lcd, *app)) {
+      SDL_Log("SELF-TEST failed: handheld raw controller mapping");
+      return 1;
+    }
+    return verify(controls, *app, device, lcd) ? 0 : 1;
   }
   SDL_PauseAudioDevice(device.id, 0);
   while (!controls.exiting()) {

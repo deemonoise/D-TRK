@@ -1,5 +1,6 @@
 #include "hw/lgfx_config.h"
 #include "ui/opal_font.h"
+#include "sp_font.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -9,24 +10,53 @@ const lgfx::IFont AsciiFont8x16 = ui::kOpalFont;
 const lgfx::IFont Font0{ui::kOpalFontBitmap, ui::kOpalFontInfo, 6, 8, 7};
 }  // namespace fonts
 
+namespace {
+// Round logical edges to physical pixel boundaries, including negative text anchors.
+int sharpCoord(int p, int logical, int physical) {
+  const int magnitude = (std::abs(p) * physical + logical / 2) / logical;
+  return p < 0 ? -magnitude : magnitude;
+}
+int sharpX(int x) { return sharpCoord(x, LGFX::width, LGFX::sharpWidth); }
+int sharpY(int y) { return sharpCoord(y, LGFX::height, LGFX::sharpHeight); }
+}  // namespace
+
 bool LGFX::begin(bool fullscreen, bool headless) {
-  composite_ = std::make_unique<LGFX_Sprite>(this);
-  composite_->createSprite(width, height);
   lines_.resize(width * height);
   native_.resize(width * height);
-  if (headless) return true;
-  window_ = SDL_CreateWindow("MIDI Tracker", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 720,
-                             fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_RESIZABLE);
-  if (!window_) return false;
-  renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
-  if (!renderer_) renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
-  if (!renderer_) return false;
+  if (!headless) {
+    const char* mode = SDL_getenv("DTRK_SP_NATIVE_TEXT");
+    const bool requested = mode && std::strcmp(mode, "1") == 0;
+    window_ = SDL_CreateWindow("MIDI Tracker", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                               requested ? 640 : 960, requested ? 480 : 720,
+                               fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_RESIZABLE);
+    if (!window_) return false;
+    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer_) renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+    if (!renderer_) return false;
+    if (!createTextures(requested)) return false;
+  }
+  composite_ = std::make_unique<LGFX_Sprite>(this);
+  composite_->createSprite(width, height);
+  return true;
+}
+bool LGFX::createTextures(bool requested) {
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
   if (SDL_RenderSetLogicalSize(renderer_, width, height) != 0) return false;
   texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, width, height);
-  return texture_ != nullptr;
+  if (!texture_) return false;
+  int w = 0, h = 0;
+  if (requested && SDL_GetRendererOutputSize(renderer_, &w, &h) == 0 && w == 640 && h == 480) {
+    sharpTexture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING,
+                                      sharpWidth, sharpHeight);
+    if (sharpTexture_) {
+      SDL_SetTextureScaleMode(sharpTexture_, SDL_ScaleModeNearest);
+      native_.resize(sharpWidth * sharpHeight);
+    }
+  }
+  return true;
 }
 LGFX::~LGFX() {
+  if (sharpTexture_) SDL_DestroyTexture(sharpTexture_);
   if (texture_) SDL_DestroyTexture(texture_);
   if (renderer_) SDL_DestroyRenderer(renderer_);
   if (window_) SDL_DestroyWindow(window_);
@@ -42,26 +72,49 @@ void LGFX::touch(int x, int y, bool pressed) {
   touchY_ = y;
   pressed_ = pressed;
 }
-void LGFX::present(const uint16_t* frame) {
+void LGFX::present(const uint16_t* frame, const uint16_t* sharp) {
   if (!frame) return;
   if (overlay) {
     auto* composite = static_cast<uint16_t*>(composite_->getBuffer());
-    std::copy_n(frame, native_.size(), composite);
+    std::copy_n(frame, width * height, composite);
+    if (sharp) std::copy_n(sharp, sharpWidth * sharpHeight, composite_->sharpPixels_.data());
     overlay(*composite_);
     frame = composite;
+    if (sharp) sharp = composite_->sharpPixels_.data();
   }
-  for (size_t i = 0; i < native_.size(); ++i) {
-    uint16_t v = SDL_SwapBE16(frame[i]);
+  int w = 0, h = 0;
+  const bool drawSharp = sharp && sharpTexture_ &&
+                         SDL_GetRendererOutputSize(renderer_, &w, &h) == 0 && w == 640 && h == 480;
+  const uint16_t* source = drawSharp ? sharp : frame;
+  const int pixels = drawSharp ? sharpWidth * sharpHeight : width * height;
+  for (int i = 0; i < pixels; ++i) {
+    uint16_t v = SDL_SwapBE16(source[i]);
     if (idleColor_)
       v = ((v & 0x8000) ? 0xf800 : 0) | ((v & 0x0400) ? 0x07e0 : 0) | ((v & 0x0010) ? 0x001f : 0);
     native_[i] = inverted_ ? static_cast<uint16_t>(~v) : v;
   }
-  if (!texture_) return;
-  SDL_UpdateTexture(texture_, nullptr, native_.data(), width * sizeof(uint16_t));
-  SDL_RenderClear(renderer_);
-  SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+  SDL_Texture* texture = drawSharp ? sharpTexture_ : texture_;
+  if (!texture) return;
+  SDL_UpdateTexture(texture, nullptr, native_.data(), (drawSharp ? sharpWidth : width) * sizeof(uint16_t));
+  copyFrame(drawSharp);
   SDL_RenderPresent(renderer_);
 }
+
+void LGFX::copyFrame(bool sharp) {
+  SDL_RenderClear(renderer_);
+  if (sharp) {
+    // Present this raster 1:1. Keep SDL's logical viewport for pointing and the PERF fallback.
+    float sx, sy;
+    SDL_RenderGetScale(renderer_, &sx, &sy);
+    SDL_RenderSetScale(renderer_, 1.f, 1.f);
+    const SDL_Rect dst{0, 0, sharpWidth, sharpHeight};
+    SDL_RenderCopy(renderer_, sharpTexture_, nullptr, &dst);
+    SDL_RenderSetScale(renderer_, sx, sy);
+  } else {
+    SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+  }
+}
+
 void LGFX::pushImageDMA(int x, int y, int w, int h, const lgfx::swap565_t* data) {
   if (x < 0 || y < 0 || w < 0 || h < 0 || x + w > width || y + h > height) return;
   for (int row = 0; row < h; ++row) std::copy_n(data + row * w, w, lines_.data() + (row + y) * width + x);
@@ -71,6 +124,10 @@ void* LGFX_Sprite::createSprite(int w, int h) {
   width_ = w;
   height_ = h;
   pixels_.resize(w * h);
+  if (display_->sharpText() && w == LGFX::width && h == LGFX::height)
+    sharpPixels_.resize(LGFX::sharpWidth * LGFX::sharpHeight);
+  else
+    sharpPixels_.clear();
   clearClipRect();
   return pixels_.data();
 }
@@ -86,6 +143,12 @@ void LGFX_Sprite::fillRect(int x, int y, int w, int h, uint16_t color) {
   for (int row = 0; row < area.h; ++row) {
     std::fill_n(dst, area.w, value);
     if (row + 1 < area.h) dst += width_;
+  }
+  if (!sharpPixels_.empty()) {
+    const int left = sharpX(area.x), right = sharpX(area.x + area.w);
+    const int top = sharpY(area.y), bottom = sharpY(area.y + area.h);
+    for (int row = top; row < bottom; ++row)
+      std::fill_n(sharpPixels_.data() + row * LGFX::sharpWidth + left, right - left, value);
   }
 }
 void LGFX_Sprite::drawRect(int x, int y, int w, int h, uint16_t c) {
@@ -144,6 +207,29 @@ void LGFX_Sprite::fillTriangle(int x, int y, int x2, int y2, int x3, int y3, uin
     }
   }
 }
+void LGFX_Sprite::drawSharpString(const char* text, int x, int y, uint16_t color) {
+  const int left = sharpX(clip_.x), right = sharpX(clip_.x + clip_.w);
+  const int top = sharpY(clip_.y), bottom = sharpY(clip_.y + clip_.h);
+  const int anchorY = sharpY(y);
+  const int firstRow = std::max(0, top - anchorY);
+  const int endRow = std::min(brick::kSpGlyphRows, bottom - anchorY);
+  for (; *text && x < clip_.x + clip_.w; ++text, x += 8) {
+    const auto ch = static_cast<unsigned char>(*text);
+    if (ch == ' ') continue;
+    const int anchorX = sharpX(x);
+    const auto* glyph = brick::kSpGlyph[(ch >= 32 && ch <= 126) ? ch - 32 : '?' - 32];
+    for (int row = firstRow; row < endRow; ++row) {
+      auto* line = sharpPixels_.data() + (anchorY + row) * LGFX::sharpWidth;
+      unsigned bits = glyph[row];
+      while (bits) {
+        const int col = anchorX + __builtin_ctz(bits);
+        if (col >= left && col < right) line[col] = color;
+        bits &= bits - 1;
+      }
+    }
+  }
+}
+
 void LGFX_Sprite::drawString(const char* text, int x, int y) {
   if (!text || !font_) return;
   if (textSize_ == 1 && font_->width == 8 && font_->height == 16) {
@@ -153,6 +239,7 @@ void LGFX_Sprite::drawString(const char* text, int x, int y) {
     if (top >= bottom) return;
     const int clipRight = clip_.x + clip_.w;
     const uint16_t color = SDL_SwapBE16(textColor_);
+    if (!sharpPixels_.empty()) drawSharpString(text, x, y, color);
     for (; *text && x < clipRight; ++text, x += 8) {
       const int left = std::max(0, clip_.x - x);
       const int right = std::min(8, clipRight - x);

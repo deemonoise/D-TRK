@@ -29,13 +29,20 @@ case "$(LC_ALL=C file -b "$binary")" in
     "ELF 64-bit LSB "*executable*", ARM aarch64"*) ;;
     *) echo "Expected a Linux ARM64 executable: $binary" >&2; exit 1 ;;
 esac
-mkdir -p "$stage/d-trk"
-install -m 755 "$binary" "$stage/d-trk/d-trk"
-install -m 755 "$project/ports/brick/D-TRK.sh" "$stage/D-TRK.sh"
-cp "$project/ports/brick/audio_lease.py" "$project/ports/brick/volume_keys.py" "$stage/d-trk/"
-cp "$project/ports/brick/README.md" "$stage/d-trk/README.md"
-cp "$project/LICENSE" "$stage/d-trk/"
-cp -R "$project/LICENSES" "$stage/d-trk/"
-(cd "$stage" && zip -qr d-trk-brick.zip 'D-TRK.sh' d-trk)
-mv "$stage/d-trk-brick.zip" "$output/"
-printf '%s\n' "$output/d-trk-brick.zip"
+case "${DTRK_TARGET:-brick}" in
+    brick) launcher=D-TRK.sh; directory=d-trk; archive=d-trk-brick.zip ;;
+    rg35xxsp) launcher=D-TRK-RG35XXSP.sh; directory=d-trk-rg35xxsp; archive=d-trk-rg35xxsp.zip ;;
+    *) echo "Unknown DTRK_TARGET: $DTRK_TARGET" >&2; exit 2 ;;
+esac
+mkdir -p "$stage/$directory"
+install -m 755 "$binary" "$stage/$directory/d-trk"
+install -m 755 "$project/ports/brick/$launcher" "$stage/$launcher"
+if [ "$directory" = d-trk ]; then
+    cp "$project/ports/brick/audio_lease.py" "$project/ports/brick/volume_keys.py" "$stage/$directory/"
+fi
+cp "$project/ports/brick/README.md" "$stage/$directory/README.md"
+cp "$project/LICENSE" "$stage/$directory/"
+cp -R "$project/LICENSES" "$stage/$directory/"
+(cd "$stage" && zip -qr "$archive" "$launcher" "$directory")
+mv "$stage/$archive" "$output/"
+printf '%s\n' "$output/$archive"

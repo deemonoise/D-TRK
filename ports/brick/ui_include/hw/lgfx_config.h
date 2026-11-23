@@ -29,19 +29,24 @@ class LGFX {
   std::function<void(LGFX_Sprite&)> overlay;
   bool getTouch(int32_t* x, int32_t* y);
   void touch(int x, int y, bool pressed);
-  void present(const uint16_t* frame);
+  void present(const uint16_t* frame, const uint16_t* sharp = nullptr);
   void startWrite() {}
   void endWrite() { present(lines_.data()); }
   void pushImageDMA(int x, int y, int width, int height, const lgfx::swap565_t* data);
   void invertDisplay(bool on) { inverted_ = on; }
   void writeCommand(int command) { idleColor_ = command == 0x39; }
   static constexpr int width = 480, height = 320;
+  static constexpr int sharpWidth = 640, sharpHeight = 426;
+  bool sharpText() const { return sharpTexture_ != nullptr; }
 
  private:
+  bool createTextures(bool sharpRequested);
+  void copyFrame(bool sharp);
   std::unique_ptr<LGFX_Sprite> composite_;
   SDL_Window* window_ = nullptr;
   SDL_Renderer* renderer_ = nullptr;
   SDL_Texture* texture_ = nullptr;
+  SDL_Texture* sharpTexture_ = nullptr;
   std::vector<uint16_t> lines_, native_;
   bool inverted_ = false, idleColor_ = false, pressed_ = false;
   int touchX_ = 0, touchY_ = 0;
@@ -54,7 +59,7 @@ class LGFX_Sprite {
   void setColorDepth(int) {}
   void* createSprite(int w, int h);
   void* getBuffer() { return pixels_.data(); }
-  void pushSprite(int, int) { display_->present(pixels_.data()); }
+  void pushSprite(int, int) { display_->present(pixels_.data(), sharpPixels_.empty() ? nullptr : sharpPixels_.data()); }
   void fillScreen(uint16_t color) { fillRect(0, 0, width_, height_, color); }
   void setClipRect(int x, int y, int w, int h);
   void clearClipRect() { clip_ = {0, 0, width_, height_}; }
@@ -72,8 +77,10 @@ class LGFX_Sprite {
   void drawString(const char* text, int x, int y);
 
  private:
+  friend class LGFX;
+  void drawSharpString(const char* text, int x, int y, uint16_t color);
   LGFX* display_;
-  std::vector<uint16_t> pixels_;
+  std::vector<uint16_t> pixels_, sharpPixels_;
   int width_ = 0, height_ = 0, textSize_ = 1;
   uint16_t textColor_ = 0xffff;
   const lgfx::IFont* font_ = &fonts::AsciiFont8x16;

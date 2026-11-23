@@ -76,6 +76,7 @@ bool tryInput(const char* name, RecSource source) {
 }
 bool openInput(RecSource source) {
   if (input) return true;
+  if (std::getenv("DTRK_NO_CAPTURE")) return false;
   const int count = SDL_GetNumAudioDevices(1);
   if (const char* selected = std::getenv("DTRK_CAPTURE_DEVICE")) {
     if (*selected && tryInput(selected, source)) return true;
@@ -136,9 +137,11 @@ namespace audio {
 bool recLevel(mt::link::RecLevelRep& rep) {
   rep = {};
   if (file) drain();
-  const int candidates = SDL_GetNumAudioDevices(1);
-  rep.codec =
-      input != 0 || (candidates > 0 && (candidates != failedDeviceCount || SDL_GetTicks() - failedAt >= 5000));
+  if (!std::getenv("DTRK_NO_CAPTURE")) {
+    const int candidates = SDL_GetNumAudioDevices(1);
+    rep.codec = input != 0 ||
+                (candidates > 0 && (candidates != failedDeviceCount || SDL_GetTicks() - failedAt >= 5000));
+  }
   capture.meter().take(rep.peak, rep.clips);
   if (automatic && millis() - gainTime >= mt::RecAutoGain::kWindowMs) {
     gainTime = millis();
