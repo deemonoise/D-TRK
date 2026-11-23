@@ -240,7 +240,7 @@ void test_debug() {
 }
 
 void test_protocol_and_debug_id() {
-  TEST_ASSERT_EQUAL(29, kProtocol);  // 29: MIC/LINE auto gain; unchanged model layout.
+  TEST_ASSERT_EQUAL(30, kProtocol);  // Acid instrument field and new DSP modes.
                                      // 13: recording (Rec*); 14: one-shot (RenderStartReq::src, normalize 2);
                                      // 15: FM SAT (Instrument::fmSat); 16: CHIP SID / AY, SID filter, STEP;
                                      // 17: FsCopy; 18: REC -> SD (RecStartReq::toSd, RecLevelRep::left,

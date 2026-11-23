@@ -1,4 +1,4 @@
-// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, HHR (Drum2Voice). This project is GPL-3.0; parts of
+// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, HHR and LX METAL (Drum2Voice). This project is GPL-3.0; parts of
 // this file are float re-implementations at 44.1 kHz, on this project's structures, of the drum voices
 // collected in the ctag-tbd DrumRack (github.com/ctag-fh-kiel/ctag-tbd):
 //
@@ -28,6 +28,8 @@
 // - CPX, RSX: after ctag-tbd synthesis/Clap and synthesis/Rimshot, (c) 2024 Robert Manzke, GPL-3.0
 //   (https://www.gnu.org/licenses/gpl-3.0.txt); the clap's 16 patterns of delays and amplitudes are
 //   taken from it. RSX derives from the MIT snare above (notice above).
+// - LX METAL: original DSP inspired by LXR-02's metal voice, with independent phase modulators
+//   and a pitch transient (Erica Synths, github.com/EricaSynths/LXR-02).
 //
 // Differences from the sources: envelopes run per sample; the rim shot renders exactly n samples; noise is reseeded per hit (repeatable hits); DC
 // blockers after the synthetic kick / snare; knob ranges fitted to five 0..1 macros.
@@ -46,6 +48,7 @@ constexpr float kOff = 1e-4f;                // -80 dB: done
 constexpr float kChokeK = 0.92466f;          // per sample: -60 dB in 2 ms
 constexpr float kPeakK = 0.99968569f;        // peak follower: -6 dB in 50 ms
 constexpr float kLog1e4 = 9.2103404f;        // -ln(1e-4): an AD envelope's -80 dB
+constexpr float kPhaseUnits = 4294967296.f;  // fixed-point oscillator phase units per cycle
 
 MT_INLINE float clamp01(float x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 MT_INLINE float semi(float x) { return fastExp2(x * (1.f / 12.f)); }  // 2^(x / 12)
@@ -152,7 +155,8 @@ int clapPattern(float knob) { return static_cast<int>(clamp01(knob) * 15.99f); }
 }  // namespace
 
 float drum2BaseHz(Drum2Kind k) {
-  static const float kHz[] = {55, 200, 50, 180, 1, 470, 55, 1};  // Unused6 plays as BDA
+  static const float kHz[] = {55, 200, 50, 180, 1, 470, 55, 1, 830};  // Unused6 plays as BDA
+  static_assert(sizeof(kHz) / sizeof(kHz[0]) == static_cast<size_t>(Drum2Kind::Count), "one pitch per kind");
   const int i = static_cast<int>(k);
   return i < static_cast<int>(Drum2Kind::Count) ? kHz[i] : 1.f;
 }
@@ -205,6 +209,10 @@ void Drum2Voice::trigger(Drum2Kind k, float accent, bool keepTail) {
       s_.rsx.pulseLeft = static_cast<int>(0.25e-3f * kFs);
       s_.rsx.pulseH = 3.f + 7.f * a;
       s_.rsx.env = 1.f;
+      break;
+    case Drum2Kind::LxMetal:
+      s_.lxMetal.env = 1.f;
+      s_.lxMetal.pitchEnv = 1.f;
       break;
     default:
       break;
@@ -363,6 +371,25 @@ void Drum2Voice::control(const Drum2Params& p, int span) {
       v.cutK = 1.f - 0.0025f * semi(-m[0] * 36.f);
       if (latch) v.env = (1.5f + 0.5f * (1.f - m[0])) * (0.3f + 0.7f * a);
       v.env = snap(v.env);
+      break;
+    }
+    case Drum2Kind::LxMetal: {  // DECAY TONE FM1 FM2 SNAP
+      LxMetal& v = s_.lxMetal;
+      const float pitch = fclamp(hz / kFs, 1.e-5f, 0.4f);
+      v.carrierInc = pitch * kPhaseUnits;
+      v.modInc1 = static_cast<uint32_t>(minf(pitch * 1.63f, 0.39f) * kPhaseUnits);
+      v.modInc2 = static_cast<uint32_t>(minf(pitch * 2.39f, 0.43f) * kPhaseUnits);
+      // The sum stays strictly within ±half a turn, so it fits in a signed phase offset.
+      v.fmDepth1 = (0.30f * kPhaseUnits) * m[2];
+      v.fmDepth2 = (0.19f * kPhaseUnits) * m[3];
+      v.snapDepth = 2.6f * m[4] * m[4];
+      v.envK = adK(0.08f + 2.22f * m[0] * m[0]);
+      v.pitchK = adK(0.018f);
+      const float tone = 1200.f * fastExp2(3.f * m[1]) / kFs;
+      svfSet(v.bp, fastTan(kPi * tone), 0.9f + 0.7f * m[1]);
+      v.gain = 0.92f * (0.35f + 0.65f * a);
+      v.env = snap(v.env);
+      v.pitchEnv = snap(v.pitchEnv);
       break;
     }
     default:
@@ -643,6 +670,23 @@ MT_HOT void Drum2Voice::renderHhr(float* o, int n) {
   }
 }
 
+// Two inharmonic sideband families under a resonant band-pass. SNAP sweeps only the carrier.
+MT_HOT void Drum2Voice::renderLxMetal(float* o, int n) {
+  LxMetal& v = s_.lxMetal;
+  for (int i = 0; i < n; ++i) {
+    const float phaseOffset = tableSine(v.modPhase1) * v.fmDepth1 + tableSine(v.modPhase2) * v.fmDepth2;
+    const uint32_t offset = static_cast<uint32_t>(static_cast<int32_t>(phaseOffset));
+    const float carrier = tableSine(v.carrierPhase + offset);
+    o[i] = (0.3f * carrier + svfBp(v.bp, carrier)) * (v.env * v.gain);
+    const float inc = v.carrierInc * (1.f + v.snapDepth * v.pitchEnv);
+    v.carrierPhase += static_cast<uint32_t>(minf(inc, 0.44f * kPhaseUnits));
+    v.modPhase1 += v.modInc1;
+    v.modPhase2 += v.modInc2;
+    v.env *= v.envK;
+    v.pitchEnv *= v.pitchK;
+  }
+}
+
 MT_HOT void Drum2Voice::render(float* __restrict out, int n, float amp, float ampStep) {
   float buf[64];
   float tailV = tailV_, last = last_, pk = pk_;
@@ -657,6 +701,7 @@ MT_HOT void Drum2Voice::render(float* __restrict out, int n, float amp, float am
         case Drum2Kind::Cpx: renderCpx(buf, m); break;
         case Drum2Kind::Rsx: renderRsx(buf, m); break;
         case Drum2Kind::Hhr: renderHhr(buf, m); break;
+        case Drum2Kind::LxMetal: renderLxMetal(buf, m); break;
         default: memset(buf, 0, sizeof(float) * m); break;
       }
     } else {

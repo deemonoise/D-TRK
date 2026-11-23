@@ -1354,7 +1354,7 @@ Choose a free **Name**, optionally turn **Normalize** to **−1 dBFS**, then pre
 
 The operation stops transport and runs offline, with progress. A long encoder press or Play cancels processing. REC must be stopped first. On success the new sample is added to the project and assigned to this instrument; Start/End become the full new sample, and loop/slices are cleared. The original sample and other instruments are retained. An occupied name, error, cancellation or changed source leaves the project and binding untouched. Save the project normally to persist its new sample entry and asset copy.
 
-Both firmwares must support link protocol **29**. Existing projects and presets still load; new files retain up to 128 slices.
+Both firmwares must support link protocol **30**. Existing projects and presets still load; new files retain up to 128 slices.
 
 <a id="sample-stretch"></a>
 
@@ -1550,7 +1550,7 @@ In INST a machine is picked with two rows: **Machine** — the group, **Model** 
 | TOM | 808 → TOM8, 909 → TOM9 |
 | CLAP | 808 → CP8, 909 → CP9, MULTI → CPX |
 | RIM | 808 → RS8, 909 → RS9, MODAL → RSX |
-| HAT | 808 → HH8, 909 → HH9, RING → HHR |
+| HAT | 808 → HH8, 909 → HH9, RING → HHR, METAL → LX METAL |
 | CYMBL | 808 → CY8, 909 → CY9 |
 | PERC | CLAVE → CL8, BELL → CB8 |
 
@@ -1601,9 +1601,13 @@ The other 7 machines. They follow the same rules (one-shot, choke, note relative
 
 Factory presets: two per machine — BDA, BDA BOOM, SDA, SDA SNAP, BDS, BDS DIRT, SDS, SDS FM, CPX, CPX WIDE, RSX, RSX NOIS, HHR C, HHR O (category ANALOG); and the kit **ANALOG** (KIT, category DRUM) built from them.
 
+**LX METAL** is a digital percussion voice with two independent phase modulators (**FM1**, **FM2**) and a short carrier pitch sweep (**SNAP**). **DECAY** sets the tail and **TONE** the output band. Find it under DRUM → HAT → METAL or load the LX METAL preset from ANALOG.
+
 <a id="synth"></a>
 
 ### SYNTH: oscillators and wavetables
+
+For **303-style accents**, choose `ACID` in SYNTH → MAIN → Mode or load **ACID 303** from the BASS presets. Velocity **110+** adds a short gain and cutoff swell and doubles the filter envelope’s decay rate. `SLD` uses the same mono glide as MONO, keeping the oscillator phase and envelope on overlapping notes.
 
 SYNTH amplitude ADSR and the LP cutoff/resonance controls are calibrated against dry Virus TI Snow reference recordings. Attack is linear; Decay and Release are exponential, and their displayed times describe the 90% → 10% transition. LP resonance includes level compensation. Other instrument types and the other filter models keep their own response. Existing SYNTH sounds therefore change; this is not a complete Virus emulation.
 
@@ -1929,7 +1933,7 @@ Example: Route 1 LFO 1 → CUTOFF at +24; Route 2 LFO 1 → PAN at −16. Both s
 
 **Automation:** M01–M08 lock route depth for the step's notes, or sounding notes on a note-less step. Range −64…+63, insertion default 0. Motion REC, MIDI Learn on the depth row, Automation view, signed ramps and lock bypass are supported. Source, target and Depth via remain unchanged by these commands. Existing base parameter, p-lock and scene rules remain; the matrix adds modulation in the same units as LFOs. Sends, insert and pan retain the newest sounding voice's track-wide behavior.
 
-Projects store MODM (omitted when empty); presets use v11. Older files load with an empty matrix. Older firmware skips MODM and drops its routes when saving; it cannot read v11 presets. Update **both boards** for link protocol 29.
+Projects store MODM (omitted when empty); presets use v11. Older files load with an empty matrix. Older firmware skips MODM and drops its routes when saving; it cannot read v11 presets. Update **both boards** for link protocol 30.
 
 <a id="kit"></a>
 
@@ -2067,7 +2071,7 @@ Seven pages: **MAIN** (tempo, scale, tuning, seed), **PAT** (current pattern len
 | Shim int | +12, +7, +24, default +12 | project: shimmer interval in semitones: octave, fifth, two octaves |
 | Rvb level | 0–127, default 80 | project: reverb volume; 0 = off, the tail is cleared |
 | **MOD** | | |
-| Mod type | OFF, CHORUS, ENSEMBLE, FLANGER, PHASER, default OFF | project: the [MOD bus](#modbus) effect; OFF — the bus is off (the tracks' Mod send is gray) |
+| Mod type | OFF, CHORUS, ENSEMBLE, FLANGER, PHASER, JUNO I / II / I+II, default OFF | project: the [MOD bus](#modbus) effect; OFF — the bus is off (the tracks' Mod send is gray) |
 | Mod rate | 0.05–8 Hz, default ≈ 0.17 Hz | project: effect LFO speed |
 | Mod depth | 0–127, default 64 | project: modulation depth |
 | Mod fb | 0–127, default 40 | project: feedback, FLANGER and PHASER only (a sharper "whoosh") |
@@ -2109,6 +2113,8 @@ Older projects open with Comp atk ≈ 10 ms. Projects with active compression in
 
 The **MOD bus** is the third shared send effect for the internal sound, for modulation effects: CHORUS (one line, gentle thickening), ENSEMBLE (three lines with different phases — a wide "string" chorus), FLANGER (a short delay with feedback, Mod fb), PHASER (allpass stages, Mod fb — resonance). The send belongs to the track: TRACK → INS → **Mod send** (each INT track has its own, after its insert, before pan); steps use the MOD fx, the instrument LFO the MOD target, and the follower can drive it too. Mono in, stereo return, added to the mix before the delay and reverb (the MOD return does not go into them). Mod type OFF, Mod level 0 or all sends at 0 — the sound is unchanged. Changing the type on the fly does a short fade out and in, no click.
 
+**JUNO I**, **JUNO II** and **JUNO I+II** use two modulated delay taps with BBD-style filtering and saturation for a stereo return. Rate and Depth at 64 give the reference setting of each mode. Mod fb is inactive. Choose the mode in PROJ → MOD, set Mod level and turn up the track’s Mod send.
+
 <a id="eq"></a>
 
 **Master EQ** (PROJ → MSTR): two shelves on all internal sound — low at 120 Hz and high at 5 kHz, ±12 dB each; opposite values give a "tilt" (darker / brighter). It sits after the compressor (the compressor does not react to the boost) and before the PERF effects. 0 dB / 0 dB — the EQ is off.
@@ -2141,19 +2147,19 @@ The project stores the name and the table itself: it plays in tune without the f
 
 ### Dice
 
-**DICE** in the PROJ header (or a long encoder press on PROJ) opens the generator. B or a long press closes it. This experimental branch combines the old generator’s six-part composition with Genre Lab: **54 groups, 317 styles, 16 variants each**, based on the [supplied guide](https://claude.ai/artifact/UeVf5nnXrrpLsn3fHgb9xh).
+**DICE** in the PROJ header (or a long encoder press on PROJ) opens the generator. B or a long press closes it. The menu offers **46 styles across ten genres**, with **16 variants per style**. The genres are Acid, Techno, Drum & Bass, Trance, Hardcore & Gabber, IDM, Ambient, Industrial, UK Garage and Rave. Full-On is under Trance. Genre Lab supplies the source rhythms and instrument descriptions. [Source guide](https://claude.ai/artifact/UeVf5nnXrrpLsn3fHgb9xh)
 
 | Row | Action |
 |---|---|
-| Group / Style | Select a family and style. Changing group selects its first style. |
+| Genre / Style | Select a genre and style. Changing the genre selects its first style. |
 | Variant | AUTO chooses one of16 rhythm/character variants from the seed; NEW avoids the preceding variant. Melodies are generated separately. |
 | Key | AUTO chooses a seeded tonic and compatible mode on full ALL/TEMPO rolls; NEW avoids the previous ones. KEEP preserves the project key. Partial rolls,SOUNDS and PATTERNS always retain it. |
 | Target | ALL or T1–T6, with the destination role name. Percussion shares DRUMS / KIT on T1, followed by pitched voices. Single targets preserve other parts, headers, tempo, scale and song. |
 | Notes | NEW creates fresh parts. DYNAMICS changes some existing velocities; BLEND replaces some events. Both retain sounds,key,tempo and grid. |
 | Form | **CLASSIC**: MAIN / FILL / BREAK / DROP. **DEVELOP**: INTRO / MAIN / VAR / OUTRO. **ARRANGE**: INTRO / MAIN / BREAK / BUILD / DROP / OUTRO. ARRANGE uses P01–P06 for full NEW pattern rolls; other requests use P01–P04. |
 | Feel | 0–100: small additional timing offsets. 0 retains authored attack positions. |
-| Density | NORMAL retains the recipe rhythm; SPARSE removes some secondary attacks, BUSY adds repeats to existing hits. NEW only. |
-| Variety | 0–100,default35. The seed builds fresh repeating per-role motifs; higher amounts develop more notes and shared harmony. Notes follow chords or the chosen scale; the recipe supplies rhythm/character/timbres. NEW avoids identical consecutive played melodic parts even with Key KEEP. 0 retains the source contour in the chosen key. |
+| Density | Note density for NEW. SPARSE thins softer hits, NORMAL uses the source density, and BUSY adds repeats. Each setting works with the fresh phrasing at high Variety. |
+| Variety | 0–100, default 35. At 0 the source contour follows the selected key. Up to 60, Dice develops notes on the source attack grid. Above 60 a full NEW roll progressively rewrites the rhythm and contour of phrases. At 100 it uses the new idea in every eligible bar. ARRANGE can also choose a different song chain when Song is enabled. |
 | Length | AUTO, 16, 32, 64, 128. Repeats/crops the theme. Locks and partial changes preserve existing headers and track speeds. |
 | Scope | ALL, TEMPO (BPM and new key), SOUNDS (recipe-built timbres), PATTERNS. Explicit TEMPO changes global settings independently of track locks. |
 | Song | ON builds a chain from the selected sections. Locks, single targets and DYNAMICS / BLEND preserve the song. |
@@ -2165,9 +2171,13 @@ The project stores the name and the table itself: it plays in tune without the f
 
 **Six-part hybrid.** Native pitched recipe voices are retained and percussion shares one KIT. Empty tracks receive complementary bass, chords, lead, arp, counter-melody or FX parts. Acid House becomes DRUMS / Bass / Stab / LEAD / ARP / FX. Ambient and noise styles receive sparse pads/textures; recipes with six pitched voices retain all six. Supplements reuse the BASS/ARP rhythm generators and shared harmony, with quieter recipe-built catalogue timbres. Tracks 7–16 and patterns beyond the displayed range are preserved. SOUNDS builds timbres from explicit FM, DRUM, SYNTH, STRING or CHIP parameters: machines/oscillators, envelopes, filter and modulation follow the recipe. These are our interpretations of the guide’s sample descriptions; no factory preset selection is used. Polyphonic chords receive level compensation; the default stab has a softer filter and short tail. The synthesizer engine and project format are unchanged.
 
-**Music and sound:** rhythms, velocities, relative notes, probability, A:B/FILL conditions, repeats, supported parameter locks, track lengths and speeds are carried over. Grid conversion considers track speed and NDG. Chord type follows the sound character (triad, seventh or explicitly described major/minor 7/9); single plucks stay single. Pads receive a long gate. Sections thin the source theme, add end-of-variation rolls and withdraw parts towards the end of OUTRO. Supplements enter gradually, leave more space in MAIN and develop in FILL/VAR/DROP. For the source contour,choose an explicit variant,NORMAL density,Feel0,Variety0 and Key KEEP with the guide tonic/mode; the full MAIN is the first CLASSIC pattern or second DEVELOP/ARRANGE pattern.
+**Music and sound:** rhythms, velocities, relative notes, probability, A:B/FILL conditions, repeats, supported parameter locks, track lengths and speeds are carried over. Grid conversion considers track speed and NDG. Chord type follows the sound character (triad, seventh or explicitly described major/minor 7/9); single plucks stay single. Pads receive a long gate. Bass and melody gates follow the space before the next attack. Noise FX hits in the kit use a short damped rimshot. Sections thin the source theme and withdraw parts towards the end of OUTRO. On full WILD rolls with Variety above zero, FILL, VAR and BUILD can lead into the next section with a solo snare double, two percussion accents, a short rest or the original groove. The choice follows drum density and the next bass entry. Supplements enter gradually, leave more space in MAIN and develop in FILL/VAR/DROP. For the source contour,choose an explicit variant,NORMAL density,Feel0,Variety0 and Key KEEP with the guide tonic/mode; the full MAIN is the first CLASSIC pattern or second DEVELOP/ARRANGE pattern.
 
 The source actually describes **Model:Samples**. Its samples, vocals, slicing, reverse audio and exact parameter curves are interpreted through numerical synthesis recipes. Some source variants are algorithmic. See [data provenance and parameter mapping](../data/dice-guide.md).
+
+With **ALL**, **Clean ON** and **Variety above 0**, Dice balances its six parts for the chosen genre. Acid puts accented filter movement and slides on the 303. Techno delays bass attacks that share a step with the kick and ducks the bass as the kit hits. Trance brings the lead forward and gives the arp room to answer. In Ambient recipes without a kick, DEVELOP and ARRANGE space out percussive textures.
+
+Jump Up gives the sub and formant response separate tracks. Dark Psy leaves space for three bass sixteenths after the kick. Each bass note retriggers a sine and a quieter triangle an octave above it. Minimal Techno keeps its loop dry and its added parts quiet. In DEVELOP and ARRANGE, Dub Techno develops a motif over held chords and adds a short answer at the transition. Liquid DnB places warm harmony over a dry sub and rolling break.
 
 KIT steps share FX and send buses. Conflicting per-lane conditions/probability are resolved deterministically; differing ratchet/tone locks are not applied to the whole KIT, so an unconditional kick is neither repeated nor suppressed. ACC represents quieter hits, and KIT sends average the source voices.
 
@@ -2177,7 +2187,7 @@ KIT steps share FX and send buses. Conflicting per-lane conditions/probability a
 
 A full ROLL selects the generated MAIN so the result is immediately reachable without creating another project. Partial rolls retain the current section when it is in range, otherwise they select MAIN too. Play/stop state is preserved.
 
-ROLL shows its pattern range and asks `OVERWRITE Pxx-Pyy?` once per range while the window remains open if it contains data. Written tracks' GEN and MUT are disabled. Device settings are separate from the old catalogue. The dialog retains no Undo/Redo or A/B snapshots; its temporary draft uses the shared reserved PSRAM workspace. The result message shows the style, actual variant number and seed.
+ROLL shows its pattern range and asks `OVERWRITE Pxx-Pyy?` once per range while the window remains open if it contains data. Written tracks' GEN and MUT are disabled. The generator restores saved styles still in the menu. For a retired style it opens the first style in a compatible genre, or Acid if the old group has no match. The dialog retains no Undo/Redo or A/B snapshots; its temporary draft uses the shared reserved PSRAM workspace. The result message shows the style, actual variant number and seed.
 
 MIDI/HYBRID source selection is absent from this generator. Existing DML1 files and library upload utilities retain their original format independently of the new genre IDs.
 
@@ -2451,7 +2461,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 |---|---|---|
 | Phones | 0–100%, default 100% | device: live output level (headphones / speaker), attenuation only; not in Export, the project's master is MIX → MAIN. Stored in the board's memory one second after a change |
 | Preview | ON / OFF, default ON | device: entering a note in GRID on an INT track sounds it immediately. Shared by all projects and stored in the board's memory like Phones; not saved with the project |
-| Theme | 18 themes, default CLASSIC | device: interface colors (see below) |
+| Theme | 19 themes, default CLASSIC | device: interface colors (see below) |
 | Autosave | OFF, 1, 2, 5, 10 min, default 5 | device: [autosave](#file) interval |
 | Firmware | build commit | display only: firmware version ("+" means built with local changes) |
 | Synth fw | version and protocol (`Pn`), NO SYNTH | display only: the synth board's firmware; "!" after it means its protocol does not match the tracker's (the status bar shows `SYNTH FW`); NO SYNTH — the board does not answer |
@@ -2467,7 +2477,7 @@ Settings of the device itself and diagnostics, the same for every project. The s
 
 <a id="themes"></a>
 
-**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like Phones: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast), PAPER (light), and OPAL (inspired by Fors Opal: graphite background, violet accent, light sans-serif type, outlined page tabs, and grid dividers). OPAL keeps the 8×16 character cell, so columns and touch targets stay aligned.
+**Themes.** They change as soon as you turn the encoder. The choice is a device setting, like Phones: it is stored in the board's memory after a second (when the transport is stopped); the project and file are not changed. Themes: CLASSIC (the original), AMBER and PHOSPHOR (monochrome terminals), NORD, DRACULA, SOLARIZED, GRUVBOX, MONOKAI, TOKYO, MOCHA, ROSE PINE (inspired by well-known editor palettes), GAMEBOY, C64 (retro), SYNTHWAVE, OCEAN, CONTRAST (maximum contrast), PAPER (light), and OPAL (inspired by Fors Opal: graphite background, violet accent, light sans-serif type, outlined page tabs, and grid dividers). OPAL keeps the 8×16 character cell, so columns and touch targets stay aligned. SAGE pairs green graphite backgrounds with warm ivory text and pale lime accents, using the classic monospace font.
 
 <a id="wifi"></a>
 

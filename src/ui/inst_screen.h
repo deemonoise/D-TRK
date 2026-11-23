@@ -50,6 +50,9 @@ class InstScreen : public Screen {
  public:
   explicit InstScreen(App& app);
   void onEnter() override;
+#ifdef DTRK_BRICK
+  bool blocksTabChange() const override { return list_.editing() || editor_.editing() || presets_.isOpen() || wt_.isOpen() || wtMake_.isOpen() || extract_.isOpen() || bounce_.isOpen(); }
+#endif
   void onLeave() override;
   // The track buttons play slices (sample editor page): no hold-button volume then.
   bool buttonsBusy() const;

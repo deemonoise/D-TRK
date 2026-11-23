@@ -39,7 +39,7 @@ constexpr uint8_t kNoProgram = 0xFF;
 constexpr int kInstruments = 32;
 constexpr int kWavetables = 16;
 constexpr int kSampleNameMax = 16;
-constexpr int kProjSamples = 128;  // = kBankEntries
+constexpr int kProjSamples = 128;  // maximum references in a .mtp project
 
 // A sample of the project: name seen by instruments, data identified by crc32 of the int16 data.
 struct ProjSample {
@@ -132,7 +132,7 @@ enum SynMacro : uint8_t { kMacShp1 = kMacDec, kMacShp2 = kMacCol, kMacMix = kMac
 // machines go before Count only.
 enum class DrumMachine : uint8_t {
   Bd8, Sd8, Tom8, Cp8, Rs8, Cl8, Cb8, Hh8, Cy8, Bd9, Sd9, Tom9, Cp9, Rs9, Hh9, Cy9,
-  Bda, Sda, Bds, Sds, Cpx, Rsx, Unused22, Hhr, Count  // Unused22: was BDF, plays as BDA
+  Bda, Sda, Bds, Sds, Cpx, Rsx, Unused22, Hhr, LxMetal, Count  // Unused22: was BDF, plays as BDA
 };
 // First DRUM machine of the second engine (Drum2Voice, synth_drum2.h).
 constexpr uint8_t kDrum2First = static_cast<uint8_t>(DrumMachine::Bda);
@@ -223,7 +223,7 @@ constexpr uint8_t kDlyTimeMax = 16;     // delay time, sixteenths
 // ShimInt = PitchShift::Interval (synth_shimmer.h).
 enum class DlyMode : uint8_t { Digital, Tape, PingPong, Count };
 enum class RvbMode : uint8_t { Plain, Shimmer, Count };
-enum class ModType : uint8_t { Off, Chorus, Ensemble, Flanger, Phaser, Count };
+enum class ModType : uint8_t { Off, Chorus, Ensemble, Flanger, Phaser, JunoI, JunoII, JunoBoth, Count };
 enum class ShimInt : uint8_t { Oct, Fifth, TwoOct, Count };
 
 struct Instrument {
@@ -243,6 +243,7 @@ struct Instrument {
   uint8_t root = 60;
   uint16_t start = 0, end = 0xFFFF;  // fraction of the sample, /0xFFFF
   uint8_t loop = 0;                  // LoopMode
+  bool synAcid = false;              // SYNTH mono accent profile, FMEX byte 3; occupies alignment padding
   uint16_t loopStart = 0;
   bool reverse = false;
   // Slices: start points, fractions of the whole sample (/0xFFFF), ascending. Slice i plays

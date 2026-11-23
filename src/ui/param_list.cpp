@@ -135,12 +135,22 @@ bool ParamList::holdEdit() {
   return true;
 }
 
+int ParamList::editDelta(const hw::InputEvent& ev) const {
+  bool coarse = hw::coarseEdit(ev);
+#ifdef DTRK_BRICK
+  if (ev.axis != hw::InputAxis::Encoder) {
+    if (const auto* row = selected()) coarse = coarse && row->brickCoarse;
+  }
+#endif
+  return hw::editDirection(ev) * (coarse ? 10 : 1);
+}
+
 int ParamList::onInput(const hw::InputEvent& ev) {
   using hw::InputType;
   switch (ev.type) {
     case InputType::EncTurn: {
       if (edit_) {
-        edit(ev.delta * (ev.shift ? 10 : 1));
+        edit(editDelta(ev));
         break;
       }
       // Round and round: the rows, and the page bar before the first one.
@@ -168,7 +178,7 @@ int ParamList::onInput(const hw::InputEvent& ev) {
       break;
     case InputType::EditTurn:
       if (bar_ && sel_ < 0) return ev.delta;
-      if (holdEdit()) edit(ev.delta * (ev.shift ? 10 : 1));
+      if (holdEdit()) edit(editDelta(ev));
       break;
     case InputType::EditEnd:  // A released: a hold edit keeps its value
       if (hold_) edit_ = false;

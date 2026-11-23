@@ -1,5 +1,5 @@
 #pragma once
-// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, HHR: a separate engine (Drum2Voice) from the
+// DRUM machines BDA, SDA, BDS, SDS, CPX, RSX, HHR, LX METAL: a separate engine (Drum2Voice) from the
 // parametric DrumVoice. Pure C++17, no allocation; render is the hot path. Algorithms and licences:
 // see the header of synth_drum2.cpp.
 #include <stdint.h>
@@ -9,9 +9,9 @@
 namespace mt {
 
 // Unused6 (was BDF, as DrumMachine::Unused22) triggers as BDA.
-enum class Drum2Kind : uint8_t { Bda, Sda, Bds, Sds, Cpx, Rsx, Unused6, Hhr, Count };
+enum class Drum2Kind : uint8_t { Bda, Sda, Bds, Sds, Cpx, Rsx, Unused6, Hhr, LxMetal, Count };
 static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == static_cast<int>(Drum2Kind::Count),
-              "DrumMachine BDA..HHR = Drum2Kind");
+              "DrumMachine BDA..LX METAL = Drum2Kind");
 // DRUM machine (>= kDrum2First) -> engine kind.
 inline Drum2Kind drum2Kind(uint8_t machine) { return static_cast<Drum2Kind>(machine - kDrum2First); }
 
@@ -21,7 +21,7 @@ struct Drum2Params {  // control rate
 };
 
 // Base frequency at C-4: BDA 55, SDA 200, BDS 50, SDS 180, CPX 1 (filter multiplier), RSX 470,
-// Unused6 as BDA, HHR 1 (frequency multiplier).
+// Unused6 as BDA, HHR 1 (frequency multiplier), LX METAL 830.
 float drum2BaseHz(Drum2Kind k);
 // CPX: start of clap i (0..3) of pattern p (0..15) at SPREAD s (0..1), ms after the trigger.
 float drum2ClapBurstMs(int p, float spread, int i);
@@ -93,6 +93,12 @@ class Drum2Voice {
     uint8_t pairs;
     Svf bp, hp;
   };
+  struct LxMetal {
+    uint32_t carrierPhase, modPhase1, modPhase2, modInc1, modInc2;
+    float carrierInc, fmDepth1, fmDepth2, snapDepth;
+    float env, envK, pitchEnv, pitchK, gain;
+    Svf bp;
+  };
   union State {
     Bda bda;
     Sda sda;
@@ -101,6 +107,7 @@ class Drum2Voice {
     Cpx cpx;
     Rsx rsx;
     Hhr hhr;
+    LxMetal lxMetal;
   };
 
   void renderBda(float* o, int n);
@@ -110,6 +117,7 @@ class Drum2Voice {
   void renderCpx(float* o, int n);
   void renderRsx(float* o, int n);
   void renderHhr(float* o, int n);
+  void renderLxMetal(float* o, int n);
   float rnd();  // uniform 0..1
 
   State s_;

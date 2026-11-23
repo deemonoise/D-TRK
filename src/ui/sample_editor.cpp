@@ -118,6 +118,9 @@ SampleEditor::SampleEditor(App& app, int y) : app_(app), list_(y + kWaveH + kToo
                       if (m.chopMode) m.chopThresh = static_cast<uint8_t>(clampi(m.chopThresh + d, 0, 100));
                       else m.chopN = static_cast<uint8_t>(clampi(m.chopN + d, 2, mt::kMaxSlices));
                     }};
+#ifdef DTRK_BRICK
+  for (int row : {kZoomRow, kSampleRow, kRoot, kLoop, kReverse, kSlices, kChop}) rows_[row].brickCoarse = false;
+#endif
   list_.setParams(rows_, kRows);
   list_.setVisibleRows(kListRows);
   list_.setPageBar(true);

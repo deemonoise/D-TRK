@@ -8,6 +8,7 @@ using namespace mt;
 
 static constexpr int kN = 128, kRate = kSynthRate;
 static constexpr uint8_t kChorus = 1, kEnsemble = 2, kFlanger = 3, kPhaser = 4;
+static constexpr uint8_t kJunoI = 5, kJunoBoth = 7;
 static ModFx fx;
 
 static int16_t fxLine[ModFx::kLineLen];
@@ -33,7 +34,7 @@ void test_bypass_is_bit_exact() {
   float in[kN], l[kN], r[kN], l0[kN], r0[kN];
   for (int i = 0; i < kN; ++i) in[i] = noise(), l0[i] = l[i] = noise(), r0[i] = r[i] = noise();
   for (int b = 0; b < 8; ++b) fx.process(in, l, r, kN, 0, 60, 64, 40, 127);  // OFF
-  for (uint8_t t = kChorus; t <= kPhaser; ++t) {
+  for (uint8_t t = kChorus; t <= kJunoBoth; ++t) {
     fx.reset();
     for (int b = 0; b < 8; ++b) fx.process(in, l, r, kN, t, 60, 64, 40, 0);  // level 0
     float z[kN] = {};
@@ -46,7 +47,7 @@ void test_bypass_is_bit_exact() {
 
 // Every type: noise in -> a stereo return (L != R), bounded, finite; at full fb for 10 s.
 void test_each_type_stereo_bounded() {
-  for (uint8_t t = kChorus; t <= kPhaser; ++t) {
+  for (uint8_t t = kChorus; t <= kJunoBoth; ++t) {
     fx.reset();
     float in[kN], l[kN], r[kN];
     double diff = 0, pow = 0;
@@ -111,6 +112,62 @@ void test_chorus_modulates_delay() {
   TEST_ASSERT_TRUE(hi - lo > ms(1.9f));
 }
 
+void test_juno_modes_have_distinct_antiphase_sweeps() {
+  constexpr int spacing = 3 * kN;  // A delay line's whole swing fits between strikes.
+  constexpr float expectedHz[] = {0.514f, 0.842f, 7.85f};
+  constexpr float expectedDepthMs[] = {2.13f, 1.71f, 0.236f};
+  for (uint8_t t = kJunoI; t <= kJunoBoth; ++t) {
+    fx.reset();
+    int lo = spacing, hi = 0, crossings = 0;
+    bool high = false;
+    for (int hit = 0; hit < 5 * kRate / spacing; ++hit) {
+      float l[spacing] = {}, r[spacing] = {};
+      for (int off = 0; off < spacing; off += kN) {
+        float in[kN] = {};
+        if (off == 0) in[0] = 0.8f;
+        fx.process(in, l + off, r + off, kN, t, 64, 64, 0, 127);
+      }
+      int left = 0, right = 0;
+      for (int i = 1; i < spacing; ++i) {
+        if (fabsf(l[i]) > fabsf(l[left])) left = i;
+        if (fabsf(r[i]) > fabsf(r[right])) right = i;
+      }
+      TEST_ASSERT_TRUE(left > 0 && right > 0);
+      if (hit < 10) continue;  // Depth follows the target smoothly.
+      // The two taps see slightly different LFO positions before both echoes have arrived.
+      TEST_ASSERT_INT_WITHIN(14, ms(6.6f), left + right);
+      if (left < lo) lo = left;
+      if (left > hi) hi = left;
+      if (left >= ms(3.30f) + 4 && !high) {
+        ++crossings;
+        high = true;
+      } else if (left <= ms(3.30f) - 4) {
+        high = false;
+      }
+    }
+    TEST_ASSERT_INT_WITHIN(7, ms(2.f * expectedDepthMs[t - kJunoI]), hi - lo);
+    TEST_ASSERT_FLOAT_WITHIN(0.38f, expectedHz[t - kJunoI], crossings / (5.f - 10.f * spacing / kRate));
+  }
+}
+
+void test_juno_bbd_rolls_off_high_frequencies() {
+  auto wetPower = [](float hz) {
+    fx.reset();
+    float sum = 0;
+    for (int b = 0; b < 16; ++b) {
+      float in[kN], l[kN] = {}, r[kN] = {};
+      for (int i = 0; i < kN; ++i) in[i] = 0.5f * sinf(6.2831853f * hz * (b * kN + i) / kRate);
+      fx.process(in, l, r, kN, kJunoI, 64, 0, 0, 127);
+      if (b > 3)
+        for (int i = 0; i < kN; ++i) sum += l[i] * l[i] + r[i] * r[i];
+    }
+    return sum;
+  };
+  const float low = wetPower(500.f);
+  TEST_ASSERT_TRUE(low > 30.f);
+  TEST_ASSERT_TRUE(wetPower(16000.f) < low * 0.08f);
+}
+
 // Amplitude ratio (max / min of the 256-sample RMS) of dry + return for a 1 kHz sine over 4 s.
 static float sweepRatio(uint8_t type, uint8_t depth) {
   fx.reset();
@@ -148,7 +205,7 @@ void test_flanger_sweeps() {
 }
 
 void test_goes_idle_after_silence() {
-  for (uint8_t t = kChorus; t <= kPhaser; ++t) {
+  for (uint8_t t = kChorus; t <= kJunoBoth; ++t) {
     fx.reset();
     float in[kN] = {}, l[kN] = {}, r[kN] = {};
     in[0] = 1.f;
@@ -169,21 +226,29 @@ void test_goes_idle_after_silence() {
 // Type change: the old type fades out in 64 samples, the line is cleared: with a silent send the
 // new type returns nothing after the fade.
 void test_type_change_fades_and_clears() {
-  float in[kN], l[kN], r[kN];
-  for (int b = 0; b < 50; ++b) {
-    for (int i = 0; i < kN; ++i) in[i] = noise(), l[i] = r[i] = 0;
-    fx.process(in, l, r, kN, kChorus, 60, 100, 0, 127);
+  constexpr uint8_t sources[] = {kChorus, kJunoI};
+  for (uint8_t source : sources) {
+    fx.reset();
+    float in[kN], l[kN], r[kN];
+    for (int b = 0; b < 50; ++b) {
+      for (int i = 0; i < kN; ++i) {
+        in[i] = 0.5f * sinf(6.2831853f * 200.f * (b * kN + i) / kRate);
+        l[i] = r[i] = 0;
+      }
+      fx.process(in, l, r, kN, source, 60, 100, 0, 127);
+    }
+    const float last = l[kN - 1];
+    const uint8_t target = source == kChorus ? kFlanger : kJunoBoth;
+    for (int i = 0; i < kN; ++i) in[i] = 0, l[i] = r[i] = 0;
+    fx.process(in, l, r, kN, target, 60, 100, 100, 127);
+    TEST_ASSERT_TRUE(fabsf(l[0] - last) < 0.08f);
+    for (int i = 0; i < 64; ++i) TEST_ASSERT_TRUE(fabsf(l[i]) <= 1.5f * (64 - i) / 64.f + 1e-6f);
+    for (int i = 64; i < kN; ++i) TEST_ASSERT_EQUAL_FLOAT(0.f, l[i]);
+    TEST_ASSERT_EQUAL_INT(target, static_cast<int>(fx.type()));
+    for (int i = 0; i < kN; ++i) l[i] = r[i] = 0;
+    fx.process(in, l, r, kN, target, 60, 100, 100, 127);
+    for (int i = 0; i < kN; ++i) TEST_ASSERT_EQUAL_FLOAT(0.f, l[i]);
   }
-  float last = l[kN - 1];
-  for (int i = 0; i < kN; ++i) in[i] = 0, l[i] = r[i] = 0;
-  fx.process(in, l, r, kN, kFlanger, 60, 100, 100, 127);
-  TEST_ASSERT_TRUE(fabsf(l[0] - last) < 0.5f);
-  for (int i = 0; i < 64; ++i) TEST_ASSERT_TRUE(fabsf(l[i]) <= 1.5f * (64 - i) / 64.f + 1e-6f);
-  for (int i = 64; i < kN; ++i) TEST_ASSERT_EQUAL_FLOAT(0.f, l[i]);
-  TEST_ASSERT_EQUAL_INT(static_cast<int>(ModFxType::Flanger), static_cast<int>(fx.type()));
-  for (int i = 0; i < kN; ++i) l[i] = r[i] = 0;
-  fx.process(in, l, r, kN, kFlanger, 60, 100, 100, 127);
-  for (int i = 0; i < kN; ++i) TEST_ASSERT_EQUAL_FLOAT(0.f, l[i]);
 }
 
 // Max sample-to-sample step of the return of a 200 Hz sine while `change` moves a param mid-run.
@@ -207,7 +272,7 @@ static float maxStep(uint8_t type, int change) {
 
 void test_param_changes_are_smooth() {
   // 200 Hz, 0.5: the sine's own step is 0.0196; a click would be ~0.5.
-  for (uint8_t t = kChorus; t <= kPhaser; ++t) {
+  for (uint8_t t = kChorus; t <= kJunoBoth; ++t) {
     TEST_ASSERT_TRUE(maxStep(t, 0) < 0.04f);
     TEST_ASSERT_TRUE(maxStep(t, 1) < 0.08f);  // depth jump
     TEST_ASSERT_TRUE(maxStep(t, 2) < 0.08f);  // level 0 -> 127
@@ -221,6 +286,8 @@ int main() {
   RUN_TEST(test_bypass_is_bit_exact);
   RUN_TEST(test_each_type_stereo_bounded);
   RUN_TEST(test_chorus_modulates_delay);
+  RUN_TEST(test_juno_modes_have_distinct_antiphase_sweeps);
+  RUN_TEST(test_juno_bbd_rolls_off_high_frequencies);
   RUN_TEST(test_phaser_notch_moves);
   RUN_TEST(test_flanger_sweeps);
   RUN_TEST(test_goes_idle_after_silence);

@@ -10,6 +10,9 @@ class BankScreen : public Screen {
  public:
   explicit BankScreen(App& app) : app_(app) {}
   void onEnter() override;
+#ifdef DTRK_BRICK
+  bool blocksTabChange() const override { return kb_.isOpen() || copyFrom_ >= 0; }
+#endif
   void onLeave() override { kb_.close(); }
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;

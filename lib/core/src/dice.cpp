@@ -1,4 +1,7 @@
 #include "dice.h"
+#include "dice_arrangement.h"
+#include "dice_band.h"
+#include "dice_dub.h"
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -6,6 +9,8 @@
 #include "dice_kit.h"
 #include "dice_sounds.h"
 #include "dice_phrase.h"
+#include "dice_production.h"
+#include "dice_reference.h"
 #include "dice_key.h"
 #include "dice_hybrid.h"
 #include "rng.h"
@@ -15,10 +20,18 @@ namespace {
 int clamp(int value, int lo, int hi) { return std::max(lo, std::min(hi, value)); }
 uint8_t bit(int track) { return static_cast<uint8_t>(1u << track); }
 
-int pitch(const DiceVoice& voice, const DiceVariant& v, const DiceParts& d, const Instrument* instrument) {
+int pitch(const DiceVoice& voice, const DiceVariant& v, const DiceParts& d, const Instrument* instrument,
+          bool seatBass) {
   int base=60+voice.pitch;
   if(static_cast<DiceVoiceKind>(voice.kind)==DiceVoiceKind::Bass) base-=12;
   if(!dicePercussion(voice)) base+=static_cast<int>(d.scaleRoot)-v.root;
+  if(seatBass) {
+    // Move the whole riff together. The guide offset is relative to a sample's
+    // root and can put the synth's fundamental an octave outside the bass range.
+    const int guideNote=diceEvent(voice,0).note;
+    while(base+guideNote<33) base+=12;
+    while(base+guideNote>44) base-=12;
+  }
   return base-(instrument ? instrument->transpose : 0);
 }
 void eventFx(Step& step, const DiceEvent& e, const DiceVoice& voice, bool melodic) {
@@ -41,14 +54,23 @@ void writeVoice(DicePat& dst, int t, const DiceVoice& voice, const DiceRecipe& r
   const TrackSpeed destSpeed=(preserveTiming || kitGrid) ? toSpeed(dst.trackSpeed[t]) : sourceSpeed;
   const int sourceTicks=ticksPerStep(static_cast<Resolution>(recipe.resolution))*speedDiv(sourceSpeed)/speedMul(sourceSpeed);
   const int destTicks=ticksPerStep(dst.res)*speedDiv(destSpeed)/speedMul(destSpeed);
+  if(!preserveTiming && !kitGrid) {
+    dst.trackLen[t]=voice.length ? std::min<int>(dst.length,std::max(1,voice.length*sourceTicks/destTicks)) : 0;
+    dst.trackSpeed[t]=voice.speed;
+  }
+  const int played=dst.trackLen[t] ? std::min<int>(dst.length,dst.trackLen[t]) : dst.length;
+  if(!preserveTiming && !kitGrid &&
+     dice_detail::composeBandLine(dst.steps[t],played,destTicks,source,v,recipe,d,plan,m ? m->transpose : 0,density)) return;
   const int period=(voice.length ? voice.length : recipe.length)*sourceTicks;
-  const int base=pitch(voice,v,d,m);
+  const int base=pitch(voice,v,d,m,source==plan.bassSource);
   Step* row=dst.steps[t];
+  const bool ride=kitGrid && dice_detail::bandRide(voice,recipe,plan.band);
   for(int cycle=0;cycle*period<dst.length*destTicks;++cycle)
     for(int i=0;i<diceEventCount(voice);++i) {
       const DiceEvent& e=diceEvent(voice,i);
       if(e.at>=recipe.length || (voice.length && e.at>=voice.length)) continue;
       const int tick=cycle*period+e.at*sourceTicks;
+      if(ride && !dice_detail::rideAccent(plan.band,tick)) continue;
       int at=(tick+destTicks/2)/destTicks;
       if(at>=dst.length || row[at].hasNote()) continue;
       // Preserve the first source attack and strong anchors; SPARSE only thins softer hits.
@@ -68,11 +90,6 @@ void writeVoice(DicePat& dst, int t, const DiceVoice& voice, const DiceRecipe& r
       if(density==DiceDensity::Busy && e.velocity<110 && e.repeats==1 && i%5==4)
         putFx(step,Fx::RAT,2);
     }
-  if(!preserveTiming && !kitGrid) {
-    dst.trackLen[t]=voice.length ? std::min<int>(dst.length,std::max(1,voice.length*sourceTicks/destTicks)) : 0;
-    dst.trackSpeed[t]=voice.speed;
-  }
-  const int played=dst.trackLen[t] ? std::min<int>(dst.length,dst.trackLen[t]) : dst.length;
   if(!kitGrid) dice_detail::developVoice(row,played,destTicks,source,recipe,v,d.scaleRoot,d.scaleType,m ? m->transpose : 0,plan,nullptr,prior);
 }
 void repairTies(const Pattern& prior, DicePat& dst, int t) {
@@ -118,11 +135,14 @@ void blend(const Pattern& prior, DicePat& dst, int t, DiceChange change, bool ki
   if(!any) dst.steps[t][first]=prior.steps[t][first];
   repairTies(prior,dst,t);
 }
+// The next section is the first return from this fill in the form's song chain.
+struct Transition { int fill, next; };
+constexpr Transition transitions[] = {{kDiceFill, kDiceMain}, {2, 1}, {kArrangeBuild, kArrangeDrop}};
+
 // Section reductions act on the guide theme, never synthesize a missing role or pitch.
 void section(DicePat& dst, int t, const DiceVoice& voice, DiceForm form, int index) {
   bool thin=false, withdraw=false;
-  const bool variation=(form==DiceForm::Classic && index==1) ||
-    (form==DiceForm::Develop && index==2) || (form==DiceForm::Arrange && index==3);
+  const bool lift=index==transitions[static_cast<int>(form)].fill && !dicePercussion(voice);
   const auto kind=static_cast<DiceVoiceKind>(voice.kind);
   const bool low=kind==DiceVoiceKind::Kick || kind==DiceVoiceKind::Bass;
   if(form==DiceForm::Classic) { thin=index==2 && low; withdraw=index==2; }
@@ -131,19 +151,29 @@ void section(DicePat& dst, int t, const DiceVoice& voice, DiceForm form, int ind
   int seen=0;
   for(int i=0;i<dst.length;++i) if(dst.steps[t][i].hasNote()) {
     if((thin && seen++%2) || (withdraw && i>=dst.length*3/4)) dst.steps[t][i]=Step();
-    else if(variation && i>=dst.length*3/4) {
+    else if(lift && i>=dst.length*3/4) {
       Step& step=dst.steps[t][i];
-      if(dicePercussion(voice)) putFx(step,Fx::RAT,2);
-      else step.vel=clamp(step.vel+6,1,127);
+      step.vel=clamp(step.vel+6,1,127);
     }
   }
   if(withdraw && !dicePercussion(voice)) dst.steps[t][dst.length*3/4].note=kNoteOff;
 }
-void song(DiceSong& out, DiceForm form) {
+void song(DiceSong& out, DiceForm form,const dice_detail::PhrasePlan& plan) {
   out=DiceSong();
   static const uint8_t chains[][12]={{0,0,1,0,2,3,1},{0,1,1,2,1,2,3},{0,0,1,1,2,3,4,4,1,3,4,5}};
+  static const uint8_t arrangements[][12]={
+    {0,1,3,4,1,2,2,3,4,4,1,5}, // early drop, long second build-up
+    {0,1,1,2,3,4,1,2,3,4,4,5}, // two passes through the break
+    {0,0,1,2,1,1,3,4,4,2,1,5}  // hold the drop until late
+  };
   out.songLen=form==DiceForm::Arrange ? 12 : 7;
-  for(int i=0;i<out.songLen;++i) out.song[i]=chains[static_cast<int>(form)][i];
+  const auto* chain=chains[static_cast<int>(form)];
+  if(form==DiceForm::Arrange && plan.hook.active(0)) {
+    Rng rng(plan.seed ^ 0xD00FAB16u);
+    const unsigned choice=rng.below(4);
+    if(choice) chain=arrangements[choice-1];
+  }
+  std::copy_n(chain,out.songLen,out.song);
 }
 
 void swapBytes(void* a, void* b, size_t n) {
@@ -248,6 +278,8 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed
   if(!active || !layers) return result;
   const auto& recipe=*diceRecipe(o.genre,o.style);
   const auto& v=*diceVariant(o.genre,o.style,o.variant);
+  const auto family=full && o.clean && o.variety && (layers&kDiceAll)==kDiceAll
+      ? diceFamilyOf({o.genre,o.style}) : DiceFamily::Count;
   s.layers=0; s.first=0; s.patCount=dicePatternCount(o);
   s.cfgMask=s.patMask=s.muteMask=0; s.instrMask=0;
   s.preserveHeaders=!full; s.namePatterns=full && (layers&kDicePattern);
@@ -257,8 +289,12 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed
   d.scaleRoot=key.root;d.scaleType=key.scale;
   std::copy(p.instruments,p.instruments+kInstruments,d.instruments);
   const DiceLayout layout=diceLayout(v);
-  auto plan=dice_detail::phrasePlan(v,seed,clamp(o.variety,0,100));
+  auto plan=dice_detail::phrasePlan(v,seed,clamp(o.variety,0,100),recipe.feel,
+      full && (layers&kDicePattern),o.density==DiceDensity::Sparse);
+  plan.production=recipe.production;
+  if(o.change==DiceChange::Wild) plan.band=dice_detail::rollBand(diceGenreName(o.genre),recipe,seed,o.variety,o.groove);
   if(s.preserveHeaders) {
+    plan.padHarmony=false;
     plan.harmonic[1]=plan.harmonic[2]=0;
     std::fill(plan.progression,plan.progression+4,0);
   }
@@ -266,6 +302,8 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed
   const uint8_t writable=active & ~protectedMask;
   result.missingMask=protectedMask;
   const auto allocated=dice_detail::allocate(p,layout,(layers&kDiceSounds) ? writable : 0);
+  dice_detail::DiceMix mix;
+  if(layers&kDiceSounds) mix=dice_detail::planMix(p,v,layout,allocated.track,plan);
   for(int t=0;t<kDiceRoles;++t) {
     d.tracks[t]=p.tracks[t];d.gen[t]=p.gen[t];d.var[t]=p.var[t];
     if(!(writable&bit(t))) continue;
@@ -277,11 +315,10 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed
       } else if(slot==kNoInstr) result.missingMask|=bit(t);
       else if(source>=0) {
         Rng rng(seed ^ (0xC2B2AE35u*(source+1)));
-        dice_detail::buildVoice(diceVoice(v,source),d.instruments[slot],d.tracks[t],o.clean,clamp(o.variety,0,100),rng);
+        dice_detail::buildGuideVoice(diceVoice(v,source),mix.patch[t],d.instruments[slot],d.tracks[t],o.clean,rng,plan);
         d.tracks[t].instr=slot;s.instrMask|=1u<<slot;s.cfgMask|=bit(t);
       } else if(diceSupplement(source)) {
-        dice_detail::buildCompanion(dicePartKind(source),v,d.instruments[slot],d.tracks[t],o.clean,
-          clamp(o.variety,0,100),seed ^ (0xC2B2AE35u*(t+1)));
+        dice_detail::buildCompanion(dicePartKind(source),mix.patch[t],v,d.instruments[slot],d.tracks[t],o.clean,plan);
         d.tracks[t].instr=slot;s.instrMask|=1u<<slot;s.cfgMask|=bit(t);
       } else {
         Instrument& kit=d.instruments[slot];kit=Instrument();kit.type=InstrType::Kit;kitSetDefaults(kit);
@@ -295,14 +332,27 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed
           TrackCfg level;Rng rng(seed ^ (0xC2B2AE35u*(voice+1)));
           const DiceVoice& spec=diceVoice(v,voice);
           delay+=spec.delay;reverb+=spec.reverb;++voices;
-          dice_detail::buildVoice(spec,d.instruments[instrument],level,true,clamp(o.variety,0,100),rng);
+          dice_detail::buildVoice(spec,d.instruments[instrument],level,true,clamp(o.variety,0,100),rng,recipe.feel,DicePart::Count,plan.production);
           auto& drum=d.instruments[instrument];drive+=level.drive;drum.vol=drum.vol*level.vol/100;drum.transpose=clamp(spec.pitch-lane,-24,24);
+          if(plan.band.family==dice_detail::BandFamily::Gabber && spec.kind==uint8_t(DiceVoiceKind::Kick) &&
+             drum.type==InstrType::Drum && drum.machine==uint8_t(DrumMachine::Bd9)) {
+            // The untransposed 909 settles at 49.5 Hz, approximately MIDI G1.
+            const int keyNote=25+(d.scaleRoot+11)%12; // C#1 through C2
+            drum.transpose=keyNote-31-lane;
+          }
           kit.kit[lane].instr=instrument;kit.kit[lane].vol=level.vol;
           s.instrMask|=1u<<instrument;
         }
         kit.send=delay/voices;kit.rsend=reverb/voices;d.tracks[t].drive=drive/voices;  // KIT shares its send buses
+        if(plan.band.family==dice_detail::BandFamily::Gabber) {
+          d.tracks[t].driveModel=uint8_t(DriveModel::Fold);
+          d.tracks[t].drive=66+3*plan.band.sound;
+          d.tracks[t].vol=72;
+          kit.send=0;kit.rsend=0;
+        }
         s.instrMask|=1u<<slot;s.cfgMask|=bit(t);
       }
+      if(o.clean && slot!=kNoInstr) d.tracks[t].pan=64+mix.panOffset[t];
     }
     if((layers&kDiceSounds) && source==kDiceKitTrack && slot==kNoInstr) continue;
     if(!(layers&kDicePattern)) continue;
@@ -317,6 +367,13 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed
       if(voice==source || (source==kDiceKitTrack && (layout.drums&bit(voice)))) hasEvents|=diceEventCount(diceVoice(v,voice))>0;
     d.tracks[t].mute=o.change==DiceChange::Wild ? !hasEvents : p.tracks[t].mute;
   }
+  const bool produced=family!=DiceFamily::Count && s.cfgMask==63 && s.patMask==63 && !result.missingMask;
+  const bool texture=produced && o.form!=DiceForm::Classic && dice_detail::ambientTexture(layout,v,family);
+  const auto profile=produced ? dice_detail::timbreProfile(recipe) : dice_detail::TimbreProfile::Family;
+  const bool familyProduction=produced && dice_detail::usesFamilyProduction(profile);
+  if(familyProduction) dice_detail::produceMix(d,layout,v,plan,family);
+  if(profile!=dice_detail::TimbreProfile::Family) dice_detail::produceTimbres(d,layout,v,plan,profile);
+  const Transition transition=transitions[static_cast<int>(o.form)];
   static const char* names[][6]={{"MAIN","FILL","BREAK","DROP"},{"INTRO","MAIN","VAR","OUTRO"},
     {"INTRO","MAIN","BREAK","BUILD","DROP","OUTRO"}};
   for(int i=0;i<s.patCount;++i) {
@@ -358,15 +415,33 @@ DiceResult diceDraft(const Project& p, const DiceOpts& input, int, uint32_t seed
         }
         const auto speed=toSpeed(dst.trackSpeed[t]);
         const int stepTicks=ticksPerStep(dst.res)*speedDiv(speed)/speedMul(speed);
-        for(int voice=0;voice<kDiceRoles;++voice) if(layout.drums&bit(voice))
+        for(int voice=0;voice<kDiceRoles;++voice) if(layout.drums&bit(voice)) {
           dice_detail::developVoice(rows.steps[voice],rows.length,stepTicks,voice,recipe,v,d.scaleRoot,d.scaleType,0,plan,rows.steps);
-        const bool fill=(o.form==DiceForm::Classic && i==1) || (o.form==DiceForm::Develop && i==2) || (o.form==DiceForm::Arrange && i==3);
-        dice_detail::packKit(dst,rows,layout,seed,fill);
+          if(texture) dice_detail::breatheTexture(rows.steps[voice],rows.length,stepTicks,o.density);
+        }
+        dice_detail::packKit(dst,rows,layout,seed,i==transition.fill);
       }
       Rng blendRng(seed ^ (0x9E3779B9u*(t+1)));blend(prior,dst,t,o.change,source==kDiceKitTrack,blendRng);
     }
+    if(s.patMask && o.change==DiceChange::Wild && plan.amount) {
+      if(full && plan.band.family!=dice_detail::BandFamily::Gabber && ((o.form==DiceForm::Develop && i==2) ||
+          (o.form==DiceForm::Arrange && i==kArrangeDrop && plan.hook.active(3))))
+        dice_detail::phraseExchange(dst,d,layout,v,recipe,plan,s.patMask);
+      dice_detail::voiceArpeggios(dst,prior,d,layout,v,s.patMask);
+    }
+    if(familyProduction) dice_detail::produceSection(dst,d,layout,v,plan,family,o.form,i,o.density);
   }
-  if(layers&kDiceSong) song(d.song,o.form);
+  if(full && plan.amount && layout.drums && (s.patMask&1) && !texture)
+    dice_detail::drumFill(d.pats[transition.fill],d.pats[transition.next],p.patterns[transition.next],
+                          d,layout,v,plan,s.patMask);
+  if(profile==dice_detail::TimbreProfile::DarkPsy && o.form!=DiceForm::Classic && plan.amount)
+    for(int i=0;i<s.patCount;++i)
+      dice_detail::produceDarkPsySection(d.pats[i],layout,v,o.form,i,o.density);
+  if(profile==dice_detail::TimbreProfile::DubTechno && o.form!=DiceForm::Classic)
+    dice_detail::produceDubChords(d,layout,v,s.patCount,seed,o.density);
+  if(produced && o.form!=DiceForm::Classic && profile!=dice_detail::TimbreProfile::DubTechno)
+    dice_detail::applyReferenceEdits(d,recipe,v,layout,o.form,s.patCount,o.density);
+  if(layers&kDiceSong) song(d.song,o.form,plan);
   if(!s.cfgMask) layers &= ~kDiceSounds;
   if(!s.patMask) layers &= ~(kDicePattern|kDiceSong);
   s.drafted=layers;

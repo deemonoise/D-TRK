@@ -5,18 +5,19 @@
 namespace mt {
 
 // MOD send bus: one selectable modulation effect, mono in (the bus) -> stereo return added to the
-// mix. CHORUS, ENSEMBLE and FLANGER share one int16 line (kLineLen samples = 32 ms, 2 KB, a member:
-// internal RAM inside Synth); PHASER is 6 first-order allpasses per side. LFOs and coefficients are
+// mix. All delay effects share one int16 line (2 KB owned by the caller).
+// PHASER is 6 first-order allpasses per side. LFOs and coefficients are
 // computed once per kFxSeg samples and ramped in between.
 //   CHORUS   2 taps (L, R), 12 ms +- depth x 6 ms, LFOs 90 deg apart.
 //   ENSEMBLE 3 taps 120 deg apart (L, C, R), 10 ms +- depth x 5 ms slow (rate) + 0.75 ms at 6.3 Hz.
 //   FLANGER  1 tap per side, 0.3 .. 0.3 + depth x 7.7 ms, R 90 deg off, feedback fb x 0.9.
 //   PHASER   notch sweep 200 Hz .. 4 kHz (exp, depth = range around ~900 Hz), R 90 deg off,
 //            feedback fb x 0.85. The dry track in the mix makes the notches.
+//   JUNO     2 BBD-coloured taps in antiphase, centred on 3.3 ms, with triangle I / II and sine I+II.
 // Bypass: type OFF, level 0 or idle (silent bus and tails below -100 dB) -> mix untouched,
 // bit-exact. Level ramps over the block; depth and fb are smoothed per segment; a type change fades
 // the old type out (64 samples), clears the line and states, and fades the new one in.
-enum class ModFxType : uint8_t { Off, Chorus, Ensemble, Flanger, Phaser, Count };
+enum class ModFxType : uint8_t { Off, Chorus, Ensemble, Flanger, Phaser, JunoI, JunoII, JunoBoth, Count };
 
 class ModFx {
  public:
@@ -29,33 +30,46 @@ class ModFx {
   ModFx() { reset(); }
   void reset();
   // The delay line (kLineLen int16, owned by the caller: the Synth's reverb block), nullptr = the
-  // line effects (CHORUS, ENSEMBLE, FLANGER) silent; the PHASER needs none. Resets the effect.
+  // delay effects silent; PHASER needs none. Resets the effect.
   void setBuffer(int16_t* line) {
     line_ = line;
     reset();
   }
-  // type: ModFxType; rate, depth, fb, level: 0..127 (SynthModel::mod*). rate 0..127 -> 0.05..8 Hz.
+  // rate, depth, fb, level: 0..127 (SynthModel::mod*). JUNO rate/depth are nominal at 64,
+  // feedback unused. Other effects use the standard rate range (0.05..8 Hz).
   void process(const float* in, float* mixL, float* mixR, int n, uint8_t type, uint8_t rate, uint8_t depth,
                uint8_t fb, uint8_t level);
   bool idle() const { return idle_; }
   ModFxType type() const { return static_cast<ModFxType>(type_); }
 
  private:
+  struct BbdLowPass {
+    float s1 = 0, s2 = 0, pole = 0;
+    float tick(float input);
+    void flush();
+  };
+
   void clearState();
   // Returns the peak of the return before level / fade (idle test).
   float segment(const float* in, float* mixL, float* mixR, int k, float lv, float dLv);
   int targets(int k, float* t);
+  void bbdTargets(int k, float* t);
+  bool primeBbdLine(const float* in, int n, uint32_t& write);
+  float bbdLoop(const float* in, float* mixL, float* mixR, int k, const float* gg, const float* o,
+                const float* dO);
 
   int16_t* line_ = nullptr;
   uint32_t w_ = 0;
   FxLfo lfo_, fast_;
   float hz_ = 0;
+  float bbdRateScale_ = 1.f;
   uint8_t rate_ = 0xFF;
   float off_[3] = {};     // tap offsets at the segment start (samples)
   float apA_[2] = {};     // phaser coefficients at the segment start
   float ap_[2][kStages] = {};
   float apY_[2] = {};     // phaser last outputs (feedback)
   float flY_ = 0;         // flanger last taps' mean (feedback)
+  BbdLowPass bbdPre_, bbdPost_[2];
   float depth_ = 0, fb_ = 0;  // smoothed 0..1
   float lv_ = 0;          // current level
   float xf_ = 1;          // type crossfade gain

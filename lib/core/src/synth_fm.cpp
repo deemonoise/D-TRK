@@ -36,7 +36,7 @@ MT_INLINE float blep(float t, float dt) {
 // Harmonic magnitude candidates from the five WAVE reference cuts. Odd-harmonic recurrence
 // needs one sine lookup; only the even-rich range needs a quadrature lookup. Intermediate
 // values are interpolation candidates, not a reconstruction of Elektron's wavetable bank.
-static FM_TABLE const float kReferenceHarmonics[128][6]={
+static FM_TABLE constexpr float kReferenceHarmonics[128][6]={
   {0.0000000f, 0.0000000f, 0.0000000f, 0.0000000f, 0.0000000f, 0.0000000f},
   {0.0081250f, 0.0029219f, 0.0008938f, 0.0000000f, 0.0000000f, 0.0000000f},
   {0.0162500f, 0.0058437f, 0.0017875f, 0.0000000f, 0.0000000f, 0.0000000f},
@@ -166,6 +166,15 @@ static FM_TABLE const float kReferenceHarmonics[128][6]={
   {0.0069355f, 0.0012903f, 0.0004839f, 0.2041935f, 0.1296774f, 0.0130645f},
   {0.0000000f, 0.0000000f, 0.0000000f, 0.2110000f, 0.1340000f, 0.0000000f},
 };
+#ifdef DTRK_BRICK
+constexpr int kLastShortReferenceRow = 64;
+static_assert([] {
+  for (int row = 0; row <= kLastShortReferenceRow; ++row)
+    if (kReferenceHarmonics[row][3] || kReferenceHarmonics[row][4] || kReferenceHarmonics[row][5])
+      return false;
+  return true;
+}(), "The short reference path requires H11, H15 and H2 to be zero");
+#endif
 MT_INLINE float referenceWave(uint32_t phase,float wave,float inc) {
   const float sine=tableSine(phase);
   if(wave<=4)return sine;  // row zero is a pure sine; important for TONE without PNCH
@@ -180,6 +189,9 @@ MT_INLINE float referenceWave(uint32_t phase,float wave,float inc) {
     const float following=twiceCos2*current-previous;previous=current;current=following;
     const float weight=harmonic==5?coefficient(1):harmonic==7?coefficient(2):harmonic==11?coefficient(3):harmonic==15?coefficient(4):0;
     if(inc*harmonic<2147483648.f)y+=weight*current;
+#ifdef DTRK_BRICK
+    if (harmonic == 7 && position <= kLastShortReferenceRow) return y;
+#endif
   }
   const float even=coefficient(5);
   if(even!=0 && inc*2<2147483648.f)y+=even*2*sine*tableSine(phase+0x40000000u);

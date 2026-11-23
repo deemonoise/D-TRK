@@ -29,7 +29,7 @@ struct DiceTimbre {
   const char* name;
   uint8_t type,machine,osc[2];
   int8_t semi;
-  uint8_t params[8],env[4];
+  uint8_t params[8],env[4];  // SYNTH: five macros, SynEnvDest, modulation decay, osc2 phase
   uint8_t sub,noise,glide,drive,level,filter,cutoff,resonance;
   int8_t fenv;
   uint8_t fdec,chord,lfo[4];
@@ -40,10 +40,22 @@ struct DiceVariant {
   uint8_t swing, root, scale;
   uint16_t voices[kDiceRoles];
 };
+enum class DiceFeel : uint8_t { Pocket, Broken, Air, Keys, Echo, Motor, Anthem };
+enum class DiceVoicing : uint8_t {
+  Default, Minimal, PsyRoll, Liquid, Warm, Glitch, Noise, Acid, Drone, Anthem,
+  Air, Breaks, Swing, Sub, Reese, Dub, Club, Roots, Hard, Count
+};
+struct DiceProduction {
+  DiceVoicing voice = DiceVoicing::Default;
+  uint8_t backingHits = 4;
+  int8_t shade = 0;
+};
 struct DiceRecipe {
   const char* style;
   uint16_t firstVariant;
   uint8_t length, resolution;
+  DiceFeel feel;
+  DiceProduction production;
 };
 int diceGenreCount();
 const char* diceGenreName(int genre);
@@ -51,6 +63,16 @@ int diceStyleCount(int genre);
 const char* diceStyleName(int genre, int style);
 const DiceRecipe* diceRecipe(int genre, int style);
 const DiceVariant* diceVariant(int genre, int style, int variant);
+// Menu positions index the curated collection. Choices retain catalogue IDs.
+struct DiceChoice { uint8_t genre, style; };
+struct DiceMenuPosition { uint8_t family, style; };
+enum class DiceFamily : uint8_t { Acid, Techno, Dnb, Trance, Hardcore, Idm, Ambient, Industrial, UkGarage, Rave, Count };
+int diceFamilyCount();
+const char* diceFamilyName(int family);
+int diceFamilyStyleCount(int family);
+DiceChoice diceMenuChoice(DiceMenuPosition position);
+DiceMenuPosition diceMenuPosition(DiceChoice choice);
+DiceFamily diceFamilyOf(DiceChoice choice);
 const DiceVoice& diceVoice(const DiceVariant& variant, int track);
 const DiceTimbre& diceTimbre(const DiceVoice& voice);
 uint8_t diceChord(const DiceVoice& voice);  // tracker CHD value, 255 for a single note

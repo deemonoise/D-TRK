@@ -7,6 +7,9 @@
 #include "link/rec_client.h"
 #include "rec.h"
 #include "storage/space_query.h"
+#ifdef DTRK_BRICK
+#include "capture_controls.h"
+#endif
 
 namespace ui {
 
@@ -53,10 +56,14 @@ RecDialog::RecDialog(App& app) : app_(app) {
                         [this] { return src_ == RecSource::Resample; }};
   params_[kGain] = {"Gain",
                     [this](char* o, int n) {
-                      const int g = autoGain() ? appliedGain_ : gain();
+                      int g = autoGain() ? appliedGain_ : gain();
                       const char* suffix = autoGain() ? "  AUTO" : "";
-                      if (src_ == RecSource::Mic) snprintf(o, n, "+%d dB%s", g, suffix);
-                      else if (src_ == RecSource::Line) snprintf(o, n, "%d%s", g, suffix);
+                      if (src_ == RecSource::Mic) {
+#ifdef DTRK_BRICK
+                        g = brick::microphoneGainDb(g);
+#endif
+                        snprintf(o, n, "%+d dB%s", g, suffix);
+                      } else if (src_ == RecSource::Line) snprintf(o, n, "%d%s", g, suffix);
                       else snprintf(o, n, "-");
                     },
                     [this](int d) {
@@ -91,6 +98,9 @@ RecDialog::RecDialog(App& app) : app_(app) {
                    }};
   params_[kCancel] = {"Cancel", [this](char* o, int n) { snprintf(o, n, "%s", mt::recCancelText(btnState())); },
                       nullptr};
+#ifdef DTRK_BRICK
+  for (Row row : {kSource, kAutoGain, kMon}) params_[row].brickCoarse = false;
+#endif
   list_.setParams(params_, kRows);
   list_.setVisibleRows(kRows);  // all of them: the START / STOP button below
 }

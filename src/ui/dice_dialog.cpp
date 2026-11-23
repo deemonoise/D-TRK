@@ -19,23 +19,21 @@ enum : int { kMenuCancel, kMenuOverwrite };
 
 }  // namespace
 
+const char* DiceDialog::roleName(int track) const {
+  if(pr_.genre==last_.genre && pr_.style==last_.style &&
+     (pr_.variant==mt::kDiceVariantAuto || pr_.variant==last_.variant)) {
+    const auto& current=app_.project().tracks[track];
+    if(current.name[0]) return current.name;
+  }
+  const auto* variant=mt::diceVariant(pr_.genre,pr_.style,pr_.variant==mt::kDiceVariantAuto ? 0 : pr_.variant);
+  return variant ? mt::diceTrackName(*variant,track) : "-";
+}
+
 DiceDialog::DiceDialog(App& app) : app_(app) {
-  params_[kGenre] = {"Group",
-                     [this](char* o, int n) {
-                       const char* g = mt::diceGenreName(pr_.genre);
-                       snprintf(o, n, "%s", g ? g : "-");
-                     },
-                     [this](int d) {
-                       const int g = wrapi(pr_.genre + d, mt::diceGenreCount());
-                       if (g != pr_.genre) pr_.style = 0;  // the styles are the genre's
-                       pr_.genre = static_cast<uint8_t>(g);
-                     }};
-  params_[kStyle] = {"Style",
-                     [this](char* o, int n) {
-                       const char* st = mt::diceStyleName(pr_.genre, pr_.style);
-                       snprintf(o, n, "%s", st ? st : "-");
-                     },
-                     [this](int d) { pr_.style = static_cast<uint8_t>(wrapi(pr_.style + d, mt::diceStyleCount(pr_.genre))); }};
+  params_[kGenre] = {"Genre", [this](char* o, int n) { snprintf(o, n, "%s", genreLabel(pr_)); },
+                     [this](int d) { stepGenre(pr_, d); }};
+  params_[kStyle] = {"Style", [this](char* o, int n) { snprintf(o, n, "%s", styleLabel(pr_)); },
+                     [this](int d) { stepStyle(pr_, d); }};
   params_[kVariant] = {"Variant", [this](char* o,int n) {
       if(pr_.variant==mt::kDiceVariantAuto) { snprintf(o,n,"AUTO"); return; }
       const auto* variant=mt::diceVariant(pr_.genre,pr_.style,pr_.variant);
@@ -47,8 +45,7 @@ DiceDialog::DiceDialog(App& app) : app_(app) {
     []{return "KEY CHANGES ON FULL ALL OR TEMPO ROLL";}};
   static const char* const changes[]={"DYNAMICS","BLEND","NEW"};
   params_[kTarget]={"Target",[this](char* o,int n){if(!pr_.target) snprintf(o,n,"ALL");
-      else { const auto* v=mt::diceVariant(pr_.genre,pr_.style,0);
-        snprintf(o,n,"T%u %s",pr_.target,v ? mt::diceTrackName(*v,pr_.target-1) : "-"); }},
+      else snprintf(o,n,"T%u %s",pr_.target,roleName(pr_.target-1));},
     [this](int d){pr_.target=clampi(pr_.target+d,0,6);},[this]{return pr_.scope==kScTempo;}};
   params_[kChange]={"Notes",[this](char* o,int n){snprintf(o,n,"%s",changes[pr_.change]);},
     [this](int d){pr_.change=clampi(pr_.change+d,0,2);},[this]{return !patterns();}};
@@ -90,8 +87,8 @@ DiceDialog::DiceDialog(App& app) : app_(app) {
     static const char* const labels[] = {"Lock T1", "Lock T2", "Lock T3", "Lock T4", "Lock T5", "Lock T6"};
     params_[kLockDrums + role] = {
         labels[role],
-        [this, role](char* o, int n) { const auto* v=mt::diceVariant(pr_.genre,pr_.style,0);
-          snprintf(o,n,"%s %s",pr_.locks & (1u << role) ? "ON" : "OFF",v ? mt::diceTrackName(*v,role) : "-"); },
+        [this, role](char* o, int n) {
+          snprintf(o,n,"%s %s",pr_.locks & (1u << role) ? "ON" : "OFF",roleName(role)); },
         [this, role](int d) {
           if (d > 0) pr_.locks |= static_cast<uint8_t>(1u << role);
           else pr_.locks &= static_cast<uint8_t>(~(1u << role));
@@ -99,19 +96,20 @@ DiceDialog::DiceDialog(App& app) : app_(app) {
   }
   params_[kRoll] = {"Roll", nullptr, nullptr};
   params_[kClose] = {"Close", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
+#ifdef DTRK_BRICK
+  for (int i = 0; i < kRoll; ++i) params_[i].brickCoarse = i == kFeel || i == kVariety || i == kSeed;
+#endif
   list_.setParams(params_, kRoll);
   list_.setEditScope([this]() -> void* { return &pr_; }, sizeof(pr_));
   list_.setVisibleRows(actions_.listRows(kHeaderH));
 }
 
 void DiceDialog::clampPrefs() {
-  if (pr_.genre >= mt::diceGenreCount()) pr_.genre = 0;
-  if (pr_.style >= mt::diceStyleCount(pr_.genre)) pr_.style = 0;
+  clampSelection(pr_);
   if (pr_.variety > 100) pr_.variety = mt::kDiceVarietyDefault;
   if (pr_.scope >= kScopes) pr_.scope = kScAll;
   pr_.song = pr_.song ? 1 : 0;
   if (pr_.len >= kLenCount) pr_.len = 0;
-  if (pr_.variant > mt::kDiceVariantAuto) pr_.variant = mt::kDiceVariantAuto;
   pr_.clean = pr_.clean ? 1 : 0;
   pr_.fixedSeed = pr_.fixedSeed ? 1 : 0;
   pr_.keepKey = pr_.keepKey ? 1 : 0;
@@ -126,8 +124,7 @@ void DiceDialog::clampPrefs() {
 
 void DiceDialog::loadPrefs() {
   const Prefs d;
-  pr_.genre = storage::loadSetting("dg2gen", d.genre);
-  pr_.style = storage::loadSetting("dg2sty", d.style);
+  loadSelection(pr_, storage::loadSetting);
   pr_.variety = storage::loadSetting("dg2var", d.variety);
   pr_.scope = storage::loadSetting("dg2scp", d.scope);
   pr_.song = storage::loadSetting("dg2song", d.song);
@@ -135,7 +132,6 @@ void DiceDialog::loadPrefs() {
   pr_.len = 0;
   for (int i = 0; i < kLenCount; ++i)
     if (kLens[i] == steps) pr_.len = static_cast<uint8_t>(i);
-  pr_.variant = storage::loadSetting("dg2variant", d.variant);
   pr_.clean = storage::loadSetting("dg2clean", d.clean);
   pr_.fixedSeed = storage::loadSetting("dg2fixed", d.fixedSeed);
   pr_.keepKey = storage::loadSetting("dg4key", d.keepKey);
@@ -154,13 +150,11 @@ void DiceDialog::loadPrefs() {
 
 void DiceDialog::savePrefs() {
   if (!(pr_ != saved_)) return;
-  if (pr_.genre != saved_.genre) storage::saveSetting("dg2gen", pr_.genre);
-  if (pr_.style != saved_.style) storage::saveSetting("dg2sty", pr_.style);
+  saveSelection(pr_, saved_, storage::saveSetting);
   if (pr_.variety != saved_.variety) storage::saveSetting("dg2var", pr_.variety);
   if (pr_.scope != saved_.scope) storage::saveSetting("dg2scp", pr_.scope);
   if (pr_.song != saved_.song) storage::saveSetting("dg2song", pr_.song);
   if (pr_.len != saved_.len) storage::saveSetting("dg2len", kLens[pr_.len % kLenCount]);
-  if (pr_.variant != saved_.variant) storage::saveSetting("dg2variant", pr_.variant);
   if (pr_.clean != saved_.clean) storage::saveSetting("dg2clean", pr_.clean);
   if (pr_.fixedSeed != saved_.fixedSeed) storage::saveSetting("dg2fixed", pr_.fixedSeed);
   if (pr_.keepKey != saved_.keepKey) storage::saveSetting("dg4key", pr_.keepKey);

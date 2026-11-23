@@ -1,4 +1,5 @@
 #include "import_dialog.h"
+#include <utility>
 #include <new>
 #include <stdio.h>
 #include <string.h>
@@ -148,6 +149,12 @@ void ImportDialog::buildRows() {
   mt::ImportMap& map = st.map;
   Param* p = st.params;
   int r = 0;
+  auto addChoice = [&](Param choice) {
+#ifdef DTRK_BRICK
+    choice.brickCoarse = false;
+#endif
+    p[r++] = std::move(choice);
+  };
   int track = 0;
   for (int s = 0; s < st.info.sourceCount && s < mt::kSmfMaxSources; ++s) {
     const mt::SmfSource& src = st.info.src[s];
@@ -156,7 +163,7 @@ void ImportDialog::buildRows() {
     // map.useSourceChannel stays OFF by default on purpose: tracks keep their own channel.
     if (src.name[0]) snprintf(st.labels[s], sizeof(st.labels[s]), "%.12s ch%u", src.name, src.channel + 1);
     else snprintf(st.labels[s], sizeof(st.labels[s]), "Trk%u ch%u", src.track + 1, src.channel + 1);
-    p[r++] = {st.labels[s],
+    addChoice({st.labels[s],
               [this, s](char* o, int n) {
                 const mt::SmfSource& sc = state_->info.src[s];
                 const int t = state_->map.target[s];
@@ -169,7 +176,7 @@ void ImportDialog::buildRows() {
               },
               [this, s](int d) {
                 state_->map.target[s] = static_cast<int8_t>(clampi(state_->map.target[s] + d, -1, mt::kTracks - 1));
-              }};
+              }});
     p[r++] = {"  transpose", [this, s](char* o, int n) { snprintf(o, n, "%+d", state_->map.transpose[s]); },
               [this, s](int d) {
                 state_->map.transpose[s] = static_cast<int8_t>(clampi(state_->map.transpose[s] + d, -24, 24));
@@ -177,32 +184,32 @@ void ImportDialog::buildRows() {
   }
   p[r++] = {"Offset bars", [this](char* o, int n) { snprintf(o, n, "%u", state_->map.offsetBars); },
             [this](int d) { state_->map.offsetBars = static_cast<uint16_t>(clampi(state_->map.offsetBars + d, 0, 999)); }};
-  p[r++] = {"Quantize", [this](char* o, int n) { snprintf(o, n, "%s", resName(state_->map.quant)); },
+  addChoice({"Quantize", [this](char* o, int n) { snprintf(o, n, "%s", resName(state_->map.quant)); },
             [this](int d) {
               const int q = clampi(static_cast<int>(state_->map.quant) + d, 0, static_cast<int>(mt::Resolution::Count) - 1);
               state_->map.quant = static_cast<mt::Resolution>(q);
-            }};
+            }});
   p[r++] = {"Pattern length", [this](char* o, int n) { snprintf(o, n, "%u", state_->map.patternLen); },
             [this](int d) {
               state_->map.patternLen = static_cast<uint8_t>(clampi(state_->map.patternLen + d, mt::kMinSteps, mt::kMaxSteps));
             }};
-  p[r++] = {"First pattern", [this](char* o, int n) { snprintf(o, n, "P%02d", state_->map.firstPattern + 1); },
+  addChoice({"First pattern", [this](char* o, int n) { snprintf(o, n, "P%02d", state_->map.firstPattern + 1); },
             [this](int d) {
               state_->map.firstPattern = static_cast<uint8_t>(clampi(state_->map.firstPattern + d, 0, mt::kPatterns - 1));
-            }};
-  p[r++] = {"Mono", [this](char* o, int n) { snprintf(o, n, "%s", kMonoNames[static_cast<int>(state_->map.mono)]); },
-            [this](int d) { state_->map.mono = static_cast<mt::MonoMode>(clampi(static_cast<int>(state_->map.mono) + d, 0, 2)); }};
-  p[r++] = {"Source channel", [this](char* o, int n) { onOff(state_->map.useSourceChannel, o, n); },
-            [this](int d) { state_->map.useSourceChannel = d > 0; }};
-  p[r++] = {"Use tempo",
+            }});
+  addChoice({"Mono", [this](char* o, int n) { snprintf(o, n, "%s", kMonoNames[static_cast<int>(state_->map.mono)]); },
+            [this](int d) { state_->map.mono = static_cast<mt::MonoMode>(clampi(static_cast<int>(state_->map.mono) + d, 0, 2)); }});
+  addChoice({"Source channel", [this](char* o, int n) { onOff(state_->map.useSourceChannel, o, n); },
+            [this](int d) { state_->map.useSourceChannel = d > 0; }});
+  addChoice({"Use tempo",
             [this](char* o, int n) {
               if (!state_->map.useTempo) snprintf(o, n, "OFF");
               else if (state_->info.firstTempoUsPerQ == 0) snprintf(o, n, "ON  (keep)");
               else snprintf(o, n, "ON  (%u BPM)", fileBpm(state_->info.firstTempoUsPerQ));
             },
-            [this](int d) { state_->map.useTempo = d > 0; }};
-  p[r++] = {"Microtiming", [this](char* o, int n) { onOff(state_->map.keepMicrotiming, o, n); },
-            [this](int d) { state_->map.keepMicrotiming = d > 0; }};
+            [this](int d) { state_->map.useTempo = d > 0; }});
+  addChoice({"Microtiming", [this](char* o, int n) { onOff(state_->map.keepMicrotiming, o, n); },
+            [this](int d) { state_->map.keepMicrotiming = d > 0; }});
   importRow_ = r;
   p[r++] = {"IMPORT", nullptr, nullptr};
   cancelRow_ = r;

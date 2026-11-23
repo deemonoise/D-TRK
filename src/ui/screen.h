@@ -14,6 +14,9 @@ class Screen {
   virtual ~Screen() = default;
   virtual void onEnter() {}
   virtual void onLeave() {}
+#ifdef DTRK_BRICK
+  virtual bool blocksTabChange() const { return false; }
+#endif
   // Heard pattern changed (called on every screen, active or not).
   virtual void onPatternChange() {}
   // Project loaded / new (called on every screen, before onPatternChange): drop references to old data.

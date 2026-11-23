@@ -6,7 +6,7 @@
 // Link messages: frame type ids and payload codecs (little-endian), shared by both firmwares.
 namespace mt::link {
 
-constexpr uint16_t kProtocol = 29;  // 29: MIC/LINE auto gain and applied-gain feedback; update both boards
+constexpr uint16_t kProtocol = 30;  // 30: Acid instrument field and new DSP modes; update both boards
                                     // 28: instrument modulation matrix / signed depth locks
                                     // 27: offline stretch / tempo, 128 slices
                                     // 25: independent eight-parameter FM instrument layout

@@ -365,7 +365,10 @@ static_assert(static_cast<int>(DelayMode::Count) == static_cast<int>(DlyMode::Co
               "DlyMode follows DelayMode");
 static_assert(static_cast<int>(ModFxType::Count) == static_cast<int>(ModType::Count) &&
                   static_cast<int>(ModFxType::Chorus) == static_cast<int>(ModType::Chorus) &&
-                  static_cast<int>(ModFxType::Phaser) == static_cast<int>(ModType::Phaser),
+                  static_cast<int>(ModFxType::Phaser) == static_cast<int>(ModType::Phaser) &&
+                  static_cast<int>(ModFxType::JunoI) == static_cast<int>(ModType::JunoI) &&
+                  static_cast<int>(ModFxType::JunoII) == static_cast<int>(ModType::JunoII) &&
+                  static_cast<int>(ModFxType::JunoBoth) == static_cast<int>(ModType::JunoBoth),
               "ModType follows ModFxType");
 static_assert(PitchShift::kIntervals == static_cast<int>(ShimInt::Count) && PitchShift::Fifth == 1 &&
                   PitchShift::TwoOct == 2,
@@ -917,7 +920,8 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
                            machine == static_cast<uint8_t>(FmMachine::Toy));
   // TONE/TOY may be poly; FM drums and the internally voiced CHORD take one track voice.
   // A KIT lane is mono through its own note (below), so the track is poly across lanes.
-  const bool mono = kitLane ? false : fm ? (tone ? m.mono : true) : (drumT ? true : m.mono);
+  const bool acid = synT && m.synAcid;
+  const bool mono = !kitLane && (fm ? (!tone || m.mono) : (drumT || m.mono || acid));
   // Tuning: melodic voices only (not drums, FM drum machines, KIT lanes, NOTE slices). Their pitches are
   // keys without fine: control() maps them and adds fine in cents.
   const bool tuned = tune_.on() && !kitLane && !drum && !slicePitch;
@@ -980,6 +984,14 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
                     cost, budget_);
   }
   Voice& v = voices_[vi];
+  if (acid && !kitLane) {
+    // A track switching from POLY can still have held notes; carry the selected
+    // voice into the slide and fade the other notes at the next Acid onset.
+    for (auto& other : voices_)
+      if (&other != &v && other.on && other.track == track && !other.env.idle() &&
+          other.env.stage() != Env::Stage::Release)
+        other.env.fade(kStealMs);
+  }
   const bool wasSample = v.sample;
   // allocVoice clears `stolen` on the chosen slot, so recognize the internal wave tag too.
   if (!v.sample && v.wave == kStealTailWave) {
@@ -1134,6 +1146,7 @@ void Synth::noteOn(uint8_t track, uint8_t note, uint8_t vel) {
       v.sv().trigger(phaseMode, m.synPhase[0], m.synPhase[1], phaseSeed, keepSynPhase);
       v.senvT = 0;
     }
+    if (m.synAcid) v.sv().acid().note(v.vel, overlap && wasSyn && keepSynPhase);
   }
   // Every STRING note strikes (legato too: the string glides, the strike adds energy). Into the running
   // resonance only when the voice was a STRING; else from silence (its line cleared by the next render).
@@ -1254,8 +1267,11 @@ void Synth::releaseTrack(uint8_t track) {
 void Synth::matrixSources(const Voice& v, const Instrument& m, uint16_t mask, float* src) const {
   for (int i = 0; i < kLfos; ++i) src[int(ModSource::Lfo1) + i] = v.modLfo[i];
   src[int(ModSource::AmpEnv)] = v.env.level();
-  if (mask & (1u << int(ModSource::FilterEnv)))
-    src[int(ModSource::FilterEnv)] = v.syn ? synModEnv(v.fenvT, m.fAtk, m.fDec) : filterEnv(v.fenvT, m.fAtk, m.fDec);
+  if (mask & (1u << int(ModSource::FilterEnv))) {
+    src[int(ModSource::FilterEnv)] = !v.syn ? filterEnv(v.fenvT, m.fAtk, m.fDec)
+                                   : m.synAcid ? v.sv().acid().envelope()
+                                               : synModEnv(v.fenvT, m.fAtk, m.fDec);
+  }
   src[int(ModSource::Velocity)] = v.vel * (1.f / 127.f);
   src[int(ModSource::Note)] = v.note * (1.f / 127.f);
   // Independent deterministic note random: adding an empty route cannot consume the synth RNG.
@@ -1343,8 +1359,20 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   // Targets invalid for the type are summed and never read, so are L1..L4 RATE / DEPTH / RTRG: they
   // act through mods, LFO -> LFO from the last update's outputs and wraps (shared LFOs' wraps: advanceInstLfos). A
   // dt = 0 update (note-on, fx) neither restarts nor consumes the wraps.
+  if (v.syn && m.synAcid) {
+    auto& acid = v.sv().acid();
+    if (!acid.armed()) acid.note(v.vel, false);  // profile enabled on a sounding note
+    acid.advance(dt, m.fAtk, m.fDec);
+  } else if (v.syn && v.sv().acid().armed()) {
+    v.sv().acid().reset();
+  }
   LfoCfg cs[kLfos];  // the instrument's LFOs with this note's LFO fx locks
-  for (int i = 0; i < kLfos; ++i) cs[i] = lfoCfgOf(&v, m, i);
+#ifdef DTRK_BRICK
+  if (v.lfoLockMask == 0) {
+    for (int i = 0; i < kLfos; ++i) cs[i] = lfoAt(m, i);
+  } else
+#endif
+    for (int i = 0; i < kLfos; ++i) cs[i] = lfoCfgOf(&v, m, i);
   float la[kLfoDests] = {};
   float lfoVol = 1;
   const uint16_t matrixMask = modSourceMask(m);
@@ -1397,7 +1425,7 @@ MT_HOT void Synth::control(Voice& v, int dt) {
   }
   pitch += 12.f * la[ld(LfoDest::Pitch)] + la[ld(LfoDest::Fine)];
   if (!v.lofi && budget_ < kVoiceBudgetOff) {
-    uint8_t potential = modCostPotential(m) | costPotential(v.track < kTracks ? &p_.tracks[v.track] : nullptr,
+    uint8_t potential = costPotential(v.track < kTracks ? &p_.tracks[v.track] : nullptr,
                                             v.lfoLockMask, cs, v.lockMask, v.lock);
     if (v.syn && morphT(v.track, kScnRes, m.reso) >= 77) potential |= kCostPotentialSynLpLimit;
     float chipHz = 0;
@@ -1556,7 +1584,11 @@ MT_HOT void Synth::controlFilter(Voice& v, const Instrument& m, float pitch, con
   float oct = analog ? synAnalogOctaves(rawCut, mode - static_cast<uint8_t>(FltMode::Analog1) + 1)
                      : synLp ? synLpOctaves(rawCut) : rawCut * (9.451211f / 127.f);  // log2(700)
   const float fenv = clampf(m.fenv + 64.f * la[ld(LfoDest::Fenv)], -64.f, 63.f);
-  if (fenv != 0 && !v.fenvDone) {
+  if (v.syn && m.synAcid) {
+    const auto& acid = v.sv().acid();
+    const float depth = (synLp || analog) ? synFenvOctaves(fenv) : fenv * (6.f / 64.f);
+    oct += depth * acid.envelope() + acid.cutoffOctaves();
+  } else if (fenv != 0 && !v.fenvDone) {
     const float e = v.syn ? v.sv().cachedModEnv(v.fenvT, m.fAtk, m.fDec, false) : filterEnv(v.fenvT, m.fAtk, m.fDec);
     // The -60 dB tail moves the cutoff < 0.01 octave: drop it (not the start of a slow attack).
     if (e < 1e-3f && v.fenvT > (v.syn ? synModAttackMs(m.fAtk) : envTimeMs(m.fAtk)) * (kSynthRate / 1000.f)) v.fenvDone = true;
@@ -1868,7 +1900,8 @@ MT_HOT void Synth::controlSyn(Voice& v, const Instrument& m, float pitch, int dt
   const uint8_t iv = m.vol > 127 ? 127 : m.vol;
   const float filterGain = v.fltOn && m.fltMode == static_cast<uint8_t>(FltMode::Lp)
                                ? v.sv().cachedLpGain(v.fltRes - 128.f) : 1.f;
-  controlAmp(v, v.gain * iv * vol * filterGain * (1.f / 127.f), dt ? dt : ctlLeft_, dt > 0);
+  const float gain = v.gain * iv * vol * filterGain * (1.f / 127.f);
+  controlAmp(v, m.synAcid ? gain * v.sv().acid().gain() : gain, dt ? dt : ctlLeft_, dt > 0);
 }
 
 // LOFI: macros as DRUM (A B C TONE LOOP / WIDTH TONE DRIFT SMOOTH), no params cache (all cheap). The

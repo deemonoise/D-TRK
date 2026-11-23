@@ -65,6 +65,10 @@ constexpr Theme kThemes[] = {
     {"OPAL", c(0x141416), c(0x222225), c(0x332644), c(0x19191C), c(0x2B223B), c(0x1E1D23), c(0xC9C7CE),
      c(0x949099), c(0xA477FF), c(0xE5C2FF), c(0xFF7D93), c(0x97C9AD), c(0xDCC080), c(0x9DADE2), c(0xBDBAC5),
      c(0x28262E), ThemeStyle::Opal, c(0x45424C)},
+    // Green graphite, warm ivory type and pale lime accents from the tracker mockup.
+    {"SAGE", c(0x141C1A), c(0x1D2824), c(0x314636), c(0x111A17), c(0x2B3D2F), c(0x1D2922), c(0xF0EEDC),
+     c(0x9CA99A), c(0xAACB7C), c(0xC5E67C), c(0xE18B78), c(0xADD38A), c(0xDFCC8B), c(0x9ABFB0), c(0xD2D8BE),
+     c(0x25352B)},
 };
 constexpr int kCount = sizeof(kThemes) / sizeof(kThemes[0]);
 

@@ -101,10 +101,68 @@ void App::begin(LGFX* lcd, mt::Project* p) {
   dirty_ = true;
 }
 
+#ifdef DTRK_BRICK
+bool App::brickOverlayActive() {
+  return menu_.isOpen() || bpmEdit_ || rec_.isOpen() || versionBarrier() || xyMode();
+}
+
+bool App::cycleBrickTab(int delta) {
+  if (brickOverlayActive() || screen()->blocksTabChange()) return false;
+  cycleTab(delta);
+  return true;
+}
+
+void App::cycleBrickPage(int delta) {
+  if (brickOverlayActive()) return;
+  if (tab_ == Tab::File) file_.brickPage(delta);  // The MIDI dialog owns its own page bar.
+  else if (!screen()->blocksTabChange()) screen()->onPage(delta);
+  invalidate();
+}
+
+void App::moveBrickTrack(int delta) {
+  if (brickOverlayActive() || screen()->blocksTabChange()) return;
+  if (tab_ == Tab::Grid || tab_ == Tab::Track || tab_ == Tab::Inst || (brickMixer() && track_.brickTrackControls())) {
+    setCurTrack(curTrack_ + delta);
+    invalidate();
+  }
+}
+
+bool App::brickGridActive() {
+  return tab_ == Tab::Grid && !brickOverlayActive() && !grid_.dialogOpen();
+}
+
+bool App::clearBrickGrid() {
+  return brickGridActive() && !perf_.on() && grid_.chordClear();
+}
+
+bool App::brickUndoAvailable() {
+  return brickGridActive() || (tab_ == Tab::Song && !brickOverlayActive());
+}
+
+TrackScreen* App::brickMixer() {
+  return tab_ == Tab::Mix && !brickOverlayActive() && track_.brickMixerActive() ? &track_ : nullptr;
+}
+
+void App::requestQuit() {
+  if (!projectDirty()) {
+    quitConfirmed_ = true;
+    return;
+  }
+  const MenuItem choices[] = {{"Keep editing", 0}, {"Quit without saving", 1}};
+  menu_.open("UNSAVED CHANGES", choices, 2, [this](int choice) { quitConfirmed_ = choice == 1; });
+  invalidate();
+}
+#endif
+
 void App::setTab(Tab t) {
   if (t == Tab::Count || !screens_[static_cast<int>(t)]) return;
   setBpmEdit(false);
-  if (t == tab_) return;
+  if (t == tab_) {
+#ifdef DTRK_BRICK
+    if (t == Tab::File) file_.onEnter();
+#endif
+    return;
+  }
   rawTouchScreen_ = nullptr;
   rawTouchXy_ = false;
   perf_.setXy(false);  // the pad belongs to the tab it was opened on
@@ -197,7 +255,11 @@ void App::setBpmEdit(bool on) {
 void App::onInput(const hw::InputEvent& ev) {
   lastInputMs_ = millis();
   using hw::InputType;
+#ifdef DTRK_BRICK
+  shift_ = ev.axis == hw::InputAxis::Encoder ? ev.shift : ev.physicalShift;
+#else
   shift_ = ev.shift;
+#endif
   dirty_ = true;
   switch (ev.type) {
     case InputType::ADown: abAction(ab_.aDown()); return;
@@ -300,7 +362,7 @@ void App::onInput(const hw::InputEvent& ev) {
   if (bpmEdit_) {
     if (ev.type == InputType::EditCancel) return;  // A chord: BPM edit stays
     if (ev.type == InputType::EncTurn || ev.type == InputType::EditTurn) {
-      const int bpm = bpmTarget_ + ev.delta * (ev.shift ? 10 : 1);
+      const int bpm = bpmTarget_ + hw::editDirection(ev) * (hw::coarseEdit(ev) ? 10 : 1);
       bpmTarget_ = bpm < 20 ? 20 : (bpm > 300 ? 300 : bpm);
       engine::post(engine::Cmd::SetLiveBpm, static_cast<uint16_t>(bpmTarget_));
       bpmTurned_ = true;
@@ -329,13 +391,20 @@ void App::abAction(const mt::AbOut& o) {
     case AbAction::EditCancel: t = hw::InputType::EditCancel; break;
     case AbAction::TabTurn:
       if (sceneKeys()) track_.sceneMasterParam(o.delta);  // SCENE view: B + turn = the master parameter
+#ifdef DTRK_BRICK
+      else cycleBrickTab(o.delta);
+#else
       else cycleTab(o.delta);
+#endif
       return;
     case AbAction::PageTurn:
       if (xyMode()) return;  // the pad hides the screen
       if (!menu_.isOpen() && !bpmEdit_) screen()->onPage(o.delta);
       return;
     case AbAction::Undo:
+#ifdef DTRK_BRICK
+      if (brickOverlayActive()) return;
+#endif
       if (menu_.isOpen()) return;
       if (tab_ == Tab::Grid && grid_.dialogOpen()) return;  // the Fill / Transpose preview owns the pattern
       setBpmEdit(false);
@@ -378,9 +447,13 @@ void App::abAction(const mt::AbOut& o) {
       if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
     case AbAction::AThenB:  // A then B released without turning: clear GRID, otherwise toggle XY
+#ifdef DTRK_BRICK
+      if (clearBrickGrid()) return;
+#else
       if (tab_ == Tab::Grid && !perf_.on() && !xyMode() && !menu_.isOpen() && !bpmEdit_ && !rec_.isOpen() &&
           !versionBarrier() && grid_.chordClear())
         return;
+#endif
       if (!menu_.isOpen() && !bpmEdit_) toggleXy();
       return;
     default: return;
@@ -1538,6 +1611,24 @@ void App::pollSynth(uint32_t now) {
 // battery, the SYS row shows "---". The status bar redraws when the percent, charging or
 // freshness changes (its colour follows from them); batSeq_ tells FILE SYSTEM of every change.
 void App::pollBattery(uint32_t now) {
+#ifdef DTRK_BRICK
+  if (batteryPolled_ && now - batAt_ < 1000) return;
+  batteryPolled_ = true;
+  batAt_ = now;
+  const auto sample = brick::readBattery();
+  if (brickBattery_.update(sample, now)) {
+    ++batSeq_;
+    dirty_ = true;
+  }
+  if (sample.capacity > mt::BatteryGauge::kRearmPct || sample.usb == brick::UsbPower::Online)
+    lowBatteryArmed_ = true;
+  if (lowBatteryArmed_ && sample.usb == brick::UsbPower::Offline &&
+      sample.status == brick::ChargeStatus::Discharging && sample.capacity >= 0 &&
+      sample.capacity <= mt::BatteryGauge::kLowPct) {
+    lowBatteryArmed_ = false;
+    toast("BATTERY LOW - SAVE");
+  }
+#else
   if (now - batAt_ < kBatMs) return;
   batAt_ = now;
   hw::BatterySample s;
@@ -1558,6 +1649,7 @@ void App::pollBattery(uint32_t now) {
     batChg_ = gauge_.charging();
     dirty_ = true;
   }
+#endif
 }
 
 bool App::versionBarrier() { return synth_ == Synth::Mismatch && !(tab_ == Tab::File && file_.wifiOpen()); }
@@ -1744,11 +1836,33 @@ void App::drawStatus() {
 // Status bar battery: icon (body 14x10, nub, fill by percent, a bolt while charging) and "85%".
 // Green while charging, red <= 10 %, yellow <= 20 %. Nothing without the sensor or a fresh sample.
 void App::drawBattery() {
+#ifdef DTRK_BRICK
+  const auto& battery = brickBattery_.state();
+  const int pct = battery.capacity;
+  const bool chg = battery.status == brick::ChargeStatus::Charging;
+  const bool plugged = battery.usb == brick::UsbPower::Online;
+  const uint16_t c = plugged || chg ? kGreen : (pct < 0 ? kDim : pct <= 10 ? kRed : pct <= 20 ? kYellow : kDim);
+#else
   const int pct = gauge_.percent();
   if (!hw::batteryPresent() || !batFresh_ || pct < 0) return;
   const bool chg = gauge_.charging();
   const uint16_t c = chg ? kGreen : (pct <= 10 ? kRed : (pct <= 20 ? kYellow : kDim));
+#endif
   constexpr int x = 360, y = 7;
+#ifdef DTRK_BRICK
+  // A plug above the battery stays visible even when charging has completed.
+  if (plugged) {
+    spr_->drawFastVLine(x + 3, 1, 3, c);
+    spr_->drawFastVLine(x + 8, 1, 3, c);
+    spr_->fillRect(x + 2, 4, 8, 2, c);
+    spr_->drawFastVLine(x + 5, 5, 2, c);
+  } else if (battery.usb == brick::UsbPower::Unknown) {
+    spr_->drawFastHLine(x + 4, 1, 4, c);
+    spr_->drawFastVLine(x + 7, 2, 2, c);
+    spr_->drawFastHLine(x + 5, 4, 3, c);
+    spr_->fillRect(x + 5, 6, 1, 1, c);
+  }
+#endif
   spr_->drawRect(x, y, 14, 10, c);
   spr_->fillRect(x + 14, y + 3, 2, 4, c);
   int w = pct * 12 / 100;
@@ -1767,7 +1881,11 @@ void App::drawBattery() {
   }
   if (rec_.sdTaking()) return;  // keep the icon; percentage shares space with the take clock
   char buf[8];
+#ifdef DTRK_BRICK
+  battery.percentText(buf, sizeof(buf));
+#else
   snprintf(buf, sizeof(buf), "%d%%", pct);
+#endif
   spr_->setTextColor(c);
   spr_->drawString(buf, 380, 4);  // up to "100%", ends at 412
 }

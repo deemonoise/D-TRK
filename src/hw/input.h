@@ -10,11 +10,34 @@ enum class InputType : uint8_t {
   ADown, AUp, BDown, BUp, EditTurn, EditEnd, EditCancel
 };
 
+#ifdef DTRK_BRICK
+enum class InputAxis : uint8_t { Encoder, Horizontal, Vertical };
+#endif
+
 struct InputEvent {
   InputType type;
   int8_t delta;  // detents for EncTurn, track 0..7 for TrackPress / TrackRelease
   bool shift;    // Shift held when the event happened
+#ifdef DTRK_BRICK
+  InputAxis axis = InputAxis::Encoder;
+  bool physicalShift = false;  // The Select button, independent of the encoder navigation mapping.
+#endif
 };
+
+// A physical D-pad moves down through lists but up increases an edited value.
+inline int editDirection(const InputEvent& ev) {
+#ifdef DTRK_BRICK
+  if (ev.axis == InputAxis::Vertical && ev.type == InputType::EncTurn) return -ev.delta;
+#endif
+  return ev.delta;
+}
+
+inline bool coarseEdit(const InputEvent& ev) {
+#ifdef DTRK_BRICK
+  if (ev.axis != InputAxis::Encoder) return ev.axis == InputAxis::Vertical;
+#endif
+  return ev.shift;
+}
 
 constexpr uint32_t kLongPressMs = 500;
 

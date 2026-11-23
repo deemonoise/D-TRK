@@ -7,13 +7,20 @@ namespace {
 constexpr char kDel = 1, kOk = 2, kCancel = 3, kPage = 4;
 
 // Rows of single-width keys, 10 per row (columns in key units of a 10-wide grid).
+#ifdef DTRK_BRICK
+constexpr const char* kLetterRows[] = {"1234567890", "QWERTYUIOP", "ASDFGHJKL-", "ZXCVBNM_"};
+#else
 constexpr const char* kLetterRows[] = {"1234567890", "ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ-_"};
+#endif
 constexpr const char* kSymbolRows[] = {"!@#$%^&*()", "-_=+[]{}\\|", ";:'\",.<>/?", "`~"};
 
 }  // namespace
 
 void Keyboard::layout() {
   keyCount_ = 0;
+#ifdef DTRK_BRICK
+  preferredCol_ = -1;
+#endif
   auto add = [this](char ch, int col, int row, int w, const char* label) {
     Key& k = keys_[keyCount_++];
     k.ch = ch;
@@ -51,7 +58,10 @@ void Keyboard::open(const char* title, const char* initial, std::function<void(c
   maxLen_ = text ? kMaxText : kMaxLen;
   strlcpy(title_, title ? title : "", sizeof(title_));
   strlcpy(text_, initial ? initial : "", static_cast<size_t>(maxLen_) + 1);
-  len_ = static_cast<int>(strlen(text_));
+  len_ = cursor_ = static_cast<int>(strlen(text_));
+#ifdef DTRK_BRICK
+  fieldFocused_ = false;
+#endif
   layout();
   sel_ = keyCount_ - 1;  // OK
   onOk_ = std::move(onOk);
@@ -79,19 +89,93 @@ void Keyboard::press(int key, bool shift) {
     layout();
     sel_ = keyCount_ - 2;  // stay on the page key
   } else if (c == kDel) {
-    if (len_ > 0) text_[--len_] = 0;
+    if (cursor_ > 0) {
+      memmove(text_ + cursor_ - 1, text_ + cursor_, len_ - cursor_ + 1);
+      --len_;
+      --cursor_;
+    }
   } else if (len_ < maxLen_) {
     const bool lower = c >= 'A' && c <= 'Z' && (textMode_ ? !shift : shift);
-    text_[len_++] = lower ? static_cast<char>(c - 'A' + 'a') : c;
-    text_[len_] = 0;
+    memmove(text_ + cursor_ + 1, text_ + cursor_, len_ - cursor_ + 1);
+    text_[cursor_++] = lower ? static_cast<char>(c - 'A' + 'a') : c;
+    ++len_;
   }
 }
+
+#ifdef DTRK_BRICK
+void Keyboard::cycleChar(int step) {
+  constexpr char nameChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_abcdefghijklmnopqrstuvwxyz";
+  char& ch = text_[cursor_];
+  if (cursor_ == len_) {
+    if (len_ == maxLen_) return;
+    ch = textMode_ ? (step > 0 ? 'a' : '~') : (step > 0 ? 'A' : 'z');
+    text_[++len_] = 0;
+  } else if (textMode_) {
+    constexpr int count = '~' - ' ' + 1;
+    ch = ch >= ' ' && ch <= '~' ? static_cast<char>(' ' + (ch - ' ' + step + count) % count) : 'a';
+  } else {
+    constexpr int count = sizeof(nameChars) - 1;
+    const char* pos = strchr(nameChars, ch);
+    ch = pos ? nameChars[(pos - nameChars + step + count) % count] : 'A';
+  }
+}
+
+void Keyboard::moveKey(hw::InputAxis axis, int direction) {
+  if (!direction) return;
+  const Key& current = keys_[sel_];
+  const int step = direction < 0 ? -1 : 1;
+  if (fieldFocused_) {
+    if (axis == hw::InputAxis::Vertical) cycleChar(-step);  // Up advances one character.
+    else if (cursor_ + step >= 0 && cursor_ + step <= len_) cursor_ += step;
+    return;
+  }
+  if (axis == hw::InputAxis::Vertical && step < 0 && !current.row) {
+    fieldFocused_ = true;
+    return;
+  }
+  if (axis == hw::InputAxis::Horizontal) {
+    const int next = sel_ + step;
+    if (next >= 0 && next < keyCount_ && keys_[next].row == current.row) {
+      sel_ = next;
+      preferredCol_ = -1;
+    }
+    return;
+  }
+  // Keep the column when crossing wide keys such as SPACE, CANCEL and OK.
+  if (preferredCol_ < 0) preferredCol_ = current.col + (current.w - 1) / 2;
+  for (int i = 0; i < keyCount_; ++i) {
+    const Key& next = keys_[i];
+    if (next.row == current.row + step && preferredCol_ >= next.col && preferredCol_ < next.col + next.w) {
+      sel_ = i;
+      return;
+    }
+  }
+}
+#endif
 
 void Keyboard::onInput(const hw::InputEvent& ev) {
   if (!open_) return;
   switch (ev.type) {
-    case hw::InputType::EncTurn: sel_ = ((sel_ + ev.delta) % keyCount_ + keyCount_) % keyCount_; break;
-    case hw::InputType::EncClick: press(sel_, ev.shift); break;
+    case hw::InputType::EncTurn:
+#ifdef DTRK_BRICK
+      if (ev.axis != hw::InputAxis::Encoder) {
+        moveKey(ev.axis, ev.delta);
+        break;
+      }
+      fieldFocused_ = false;
+      preferredCol_ = -1;
+#endif
+      sel_ = ((sel_ + ev.delta) % keyCount_ + keyCount_) % keyCount_;
+      break;
+    case hw::InputType::EncClick:
+#ifdef DTRK_BRICK
+      if (fieldFocused_) {
+        fieldFocused_ = false;
+        break;
+      }
+#endif
+      press(sel_, ev.shift);
+      break;
     case hw::InputType::EncLong: close(); break;
     default: break;
   }
@@ -111,6 +195,10 @@ void Keyboard::onTouch(const TouchEvent& ev, bool shift) {
   const int k = keyAt(ev.x, ev.y);
   if (k < 0) return;
   sel_ = k;
+#ifdef DTRK_BRICK
+  fieldFocused_ = false;
+  preferredCol_ = -1;
+#endif
   press(k, shift);
 }
 
@@ -118,21 +206,31 @@ void Keyboard::draw(LGFX_Sprite& s, int y0) {
   if (!open_) return;
   y0_ = y0;
   s.fillRect(0, y0, kScreenW, kFieldH - 4, kBeatBg);
-  s.setTextColor(kDim);
-  s.drawString(title_, kLeft, y0 + (kFieldH - 4 - kCharH) / 2);
   const int tx = kLeft + (static_cast<int>(strlen(title_)) + 1) * kCharW;
-  // Long text: show the tail so the cursor stays visible.
   const int fit = (kScreenW - kLeft - tx) / kCharW - 1;
-  const int skip = len_ > fit ? len_ - fit : 0;
+  const int skip = cursor_ > fit ? cursor_ - fit : 0;
+  int textY = y0 + (kFieldH - 4 - kCharH) / 2;
+#ifdef DTRK_BRICK
+  textY = y0 + 1;
+  if (fieldFocused_) s.drawRect(0, y0, kScreenW, kFieldH - 4, kCursor);
+  s.setTextColor(fieldFocused_ ? kCursor : kDim);
+  s.drawString(fieldFocused_ ? "LEFT/RIGHT MOVE   UP/DOWN CHANGE   A KEYS" : "PRESS UP FROM THE TOP ROW TO EDIT TEXT",
+               kLeft, textY + kCharH + 2);
+#endif
+  s.setTextColor(kDim);
+  s.drawString(title_, kLeft, textY);
   s.setTextColor(kText);
-  s.drawString(text_ + skip, tx, y0 + (kFieldH - 4 - kCharH) / 2);
-  s.fillRect(tx + (len_ - skip) * kCharW, y0 + (kFieldH - 4 + kCharH) / 2, kCharW, 2, kEditCursor);
+  s.drawString(text_ + skip, tx, textY);
+  s.fillRect(tx + (cursor_ - skip) * kCharW, textY + kCharH, kCharW, 2, kEditCursor);
 
   for (int i = 0; i < keyCount_; ++i) {
     const Key& k = keys_[i];
     const int x = kLeft + k.col * kKeyW, y = y0 + kFieldH + k.row * kKeyH;
     const int w = k.w * kKeyW - kGap, h = kKeyH - kGap;
-    const bool sel = i == sel_;
+    bool sel = i == sel_;
+#ifdef DTRK_BRICK
+    if (fieldFocused_) sel = false;
+#endif
     s.fillRect(x, y, w, h, sel ? kPlayBg : kSelBg);
     if (sel) s.drawRect(x, y, w, h, kCursor);
     s.setTextColor(sel ? kCursor : kText);

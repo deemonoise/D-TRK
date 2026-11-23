@@ -534,7 +534,7 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
       if (folField_ >= 0) {
         if (ev.shift) nextFolField(ev.delta);
         else editFol(ev.delta);
-      } else if (valEdit_ >= 0) editVal(ev.delta, ev.shift);
+      } else if (valEdit_ >= 0) editVal(hw::editDirection(ev), hw::coarseEdit(ev));
       else if (ev.shift) stepCol(ev.delta);
       else if (patEdit_) editPat(ev.delta);
       else if (n > 0) setRow(row_ + ev.delta);
@@ -585,7 +585,7 @@ void SongScreen::onInput(const hw::InputEvent& ev) {
           holdVal_ = true;
         }
         touched();
-        editVal(ev.delta, ev.shift);
+        editVal(hw::editDirection(ev), hw::coarseEdit(ev));
         break;
       }
       if (col_ == kFolCol && n > 0) {  // on FOL: hold edit of the follow, from the action

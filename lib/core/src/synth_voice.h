@@ -200,6 +200,7 @@ struct Voice {
   DrumVoice& drv() { return eng.drum.drv; }
   const DrumVoice& drv() const { return eng.drum.drv; }
   SynVoice& sv() { return eng.syn; }
+  const SynVoice& sv() const { return eng.syn; }
   StringVoice& stv() { return eng.stg; }
   LofiVoice& lv() { return eng.lofi.lv; }
   LofiParams& lp() { return eng.lofi.lp; }

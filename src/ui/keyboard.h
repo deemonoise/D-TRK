@@ -39,12 +39,19 @@ class Keyboard {
   void layout();  // fills keys_ for text_ mode and page
   void press(int key, bool shift);
   int keyAt(int x, int y) const;
+#ifdef DTRK_BRICK
+  void moveKey(hw::InputAxis axis, int direction);
+  void cycleChar(int step);
+  bool fieldFocused_ = false;
+  int preferredCol_ = -1;
+#endif
 
   char title_[24] = {0};
   char text_[kMaxText + 1] = {0};
   Key keys_[kMaxKeys];
   int keyCount_ = 0;
   int len_ = 0;
+  int cursor_ = 0;
   int maxLen_ = kMaxLen;
   bool textMode_ = false;
   bool symbols_ = false;

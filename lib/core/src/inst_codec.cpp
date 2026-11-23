@@ -283,12 +283,14 @@ void packFmEx(const Instrument& m, uint8_t* b) {
   b[0] = m.fmSat;
   b[1] = m.chipStep ? 1 : 0;
   b[2] = m.synSatType;
+  b[3] = m.synAcid ? 1 : 0;
 }
 
 void unpackFmEx(const uint8_t* b, size_t n, Instrument& m) {
   if (n > 0) m.fmSat = clampu(b[0], 0, 127);
   if (n > 1) m.chipStep = b[1] != 0;
   m.synSatType = n > 2 && b[2] < static_cast<int>(SynSatType::Count) ? b[2] : 0;
+  m.synAcid = n > 3 && b[3] == 1;
 }
 
 namespace {

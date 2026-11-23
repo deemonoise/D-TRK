@@ -21,6 +21,10 @@ class GridScreen : public Screen {
     for (uint8_t& n : lastNote_) n = 60;
   }
   void onEnter() override;
+#ifdef DTRK_BRICK
+  bool blocksTabChange() const override { return dialogOpen() || edit_ || rollHeld_; }
+  void onPage(int d) override { nextView(d); }
+#endif
   void onLeave() override;
   void onProjectReplaced() override;
   void onPatternChange() override;
@@ -36,7 +40,8 @@ class GridScreen : public Screen {
   // The track buttons play notes / lanes / effects here (edit, REC, PERF): no hold-and-turn volume.
   bool buttonsBusy() const;
   void undo();  // with a toast; the next edit takes a fresh snapshot
-  void nextView();
+  void nextView(int delta = 1);
+  void insertAndAdvance();  // step entry from the Brick A button
   bool dialogOpen() const { return fill_.isOpen() || transpose_.isOpen() || action_.isOpen(); }  // modal pattern operations
   // Hold A + B: clears the selection, else the step under the cursor. False (nothing done) under a dialog.
   bool chordClear();
@@ -60,7 +65,7 @@ class GridScreen : public Screen {
     kCopyStep, kPaste, kCopyTrack, kClearTrack, kTranspose, kSelect,
     kToggleFollow, kCopySel, kClearSel, kDropSel, kNoteOff, kFill,
     kPerf, kResampleTrack, kResamplePattern, kEditStep, kCaptureLive,
-    kRecordingSetup, kEditTools, kProcessMenu, kTrackMenu, kResampleMenu, kGridSettings,
+    kRecordingSetup, kEditTools, kProcessMenu, kTrackMenu, kResampleMenu, kGridSettings, kUndo,
     kQuantize, kAutomationToggle, kRotate, kVelocity,
     kEditStepVal = 100  // + N: the Edit step submenu
   };
@@ -143,11 +148,11 @@ class GridScreen : public Screen {
   void snapCell();    // edit: the cell under the cursor as it is now, for cancelCell()
   void cancelCell();  // Shift+click in edit: the cell back as it was, edit off
   void openEditStepMenu();
-  void toggleView();  // Overview -> Detail -> Roll -> Overview
+  void toggleView(int delta = 1);
   void setView(View v);
   bool detail() const { return view_ == View::Detail; }
   bool roll() const { return view_ == View::Roll; }
-  void editTurn(int delta, bool shift);
+  void editTurn(const hw::InputEvent& ev);
   void setNote(uint8_t note);
   void previewNote(uint8_t note);
   void enterDegree(int button, bool octaveUp);

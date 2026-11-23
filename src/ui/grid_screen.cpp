@@ -1,4 +1,5 @@
 #include "grid_screen.h"
+#include "grid_fx_input.h"
 #include "edit_ops.h"
 #include <stdio.h>
 #include <string.h>
@@ -205,21 +206,17 @@ void GridScreen::cancelCell() {
   app_.toast("CANCEL");
 }
 
-void GridScreen::nextView() {
+void GridScreen::nextView(int delta) {
   if (dialogOpen()) return;
-  toggleView();
+  toggleView(delta);
   static const char* const names[] = {"GRID: OVERVIEW", "GRID: DETAIL", "GRID: PIANO ROLL", "GRID: AUTOMATION"};
   app_.toast(names[static_cast<int>(view_)]);
   app_.invalidate();
 }
 
-void GridScreen::toggleView() {
-  switch (view_) {
-    case View::Overview: setView(View::Detail); break;
-    case View::Detail: setView(View::Roll); break;
-    case View::Roll: setView(View::Automation); break;
-    case View::Automation: setView(View::Overview); break;
-  }
+void GridScreen::toggleView(int delta) {
+  constexpr int views = static_cast<int>(View::Automation) + 1;
+  setView(static_cast<View>((static_cast<int>(view_) + delta % views + views) % views));
 }
 
 void GridScreen::setView(View v) {
@@ -538,7 +535,9 @@ void GridScreen::rollTouch(const TouchEvent& ev) {
   if (ev.type == TouchType::LongPress) openMenu();
 }
 
-void GridScreen::editTurn(int delta, bool shift) {
+void GridScreen::editTurn(const hw::InputEvent& ev) {
+  const int delta = curField_ == kNote ? ev.delta : hw::editDirection(ev);
+  const bool shift = curField_ == kNote ? ev.shift : hw::coarseEdit(ev);
   const int tr = track();
   mt::Step st = pat().steps[tr][cur()];
   const mt::Project& p = app_.project();
@@ -577,7 +576,7 @@ void GridScreen::editTurn(int delta, bool shift) {
         f.val = f.cmd == mt::Fx::None ? 0 : mt::fxDefault(f.cmd);
       } else {
         if (f.cmd == mt::Fx::None) return;
-        const int mult = shift && f.cmd != mt::Fx::CND ? 10 : 1;
+        const int mult = f.cmd != mt::Fx::CND && coarseFxEdit(ev, f.cmd) ? 10 : 1;
         f.val = f.cmd == mt::Fx::GAT ? mt::gatStep(f.val, delta, shift)  // Shift: +-10 % as shown
                                      : mt::fxStep(f.cmd, f.val, delta * mult);
       }
@@ -608,10 +607,14 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
   switch (ev.type) {
     case InputType::EncTurn:
       if (app_.perf().turn(ev.delta, ev.shift)) break;  // the last pressed effect's depth; the cursor stays
-      if (edit_ && view_ == View::Overview && ev.shift) {
+      if (edit_ && view_ == View::Overview && ev.shift
+#ifdef DTRK_BRICK
+          && (ev.axis == hw::InputAxis::Encoder || (ev.axis == hw::InputAxis::Horizontal && ev.physicalShift))
+#endif
+      ) {
         const int field = ((curField_ + ev.delta) % kFields + kFields) % kFields;
         if (field != curField_) focusFieldSelect(field);
-      } else if (edit_) editTurn(ev.delta, ev.shift);
+      } else if (edit_) editTurn(ev);
       else if (!ev.shift) moveStep(ev.delta);
       else if (roll()) rollMove(ev.delta);
       else if (detail()) moveField(ev.delta);
@@ -631,7 +634,7 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
     case InputType::EditTurn:  // A + turn: edits the cell, entering edit for as long as A is held
       if (app_.perf().xfadeTurn(ev.delta, ev.shift)) break;  // PERF, nothing held: the scene crossfader
       if (roll()) {
-        rollStretch(ev.delta, ev.shift);
+        rollStretch(hw::editDirection(ev), hw::coarseEdit(ev));
         break;
       }
       if (!edit_) {
@@ -640,7 +643,7 @@ void GridScreen::onInput(const hw::InputEvent& ev) {
         holdEdit_ = true;
       }
       if (drum() && curField_ == kNote) editLane(ev.delta);
-      else editTurn(ev.delta, ev.shift);
+      else editTurn(ev);
       break;
     case InputType::EditEnd:
       finishLaneEdit(false);
@@ -687,6 +690,14 @@ bool GridScreen::chordClear() {
   editPushed_ = false;  // the clear has its own snapshot; edit continues from the cleared cell
   if (edit_) snapCell();
   return true;
+}
+
+void GridScreen::insertAndAdvance() {
+  const bool advance = !dialogOpen() && !edit_ && !roll() && view_ != View::Automation &&
+                       !drum() && curField_ == kNote && !pat().steps[track()][cur()].hasNote();
+  onATap(false);
+  if (advance) moveStep(editStep_);
+  app_.invalidate();
 }
 
 // A tap: melodic empty step = last note, a note step = hear it. Drums: add the last selected lane;
@@ -924,6 +935,9 @@ void GridScreen::openMenu() {
   menuCtx_.selected = selOn_; menuCtx_.selection = curSel();
   const auto* cb = app_.clipboard();
   const MenuItem items[] = {
+#ifdef DTRK_BRICK
+    {"Undo", kUndo, app_.undo() && app_.undo()->size() > 0},
+#endif
     {selOn_ ? "Copy selection" : "Copy step", selOn_ ? kCopySel : kCopyStep, cb != nullptr},
     {"Paste...", kPaste, cb && cb->tracks > 0 && cb->steps > 0},
     {selOn_ ? "End selection" : "Select", selOn_ ? kDropSel : kSelect},
@@ -933,9 +947,10 @@ void GridScreen::openMenu() {
     {perf() ? "PERF: ON" : "PERF: OFF", kPerf},
     {"Recording setup...", kRecordingSetup},
     {"Resample...", kResampleMenu},
-    {"Grid settings...", kGridSettings}};
+    {"Grid settings...", kGridSettings},
+  };
   char title[28]; menuScopeTitle(title, sizeof(title), menuCtx_.editScope());
-  app_.menu().open(title, items, 10, [this](int id) { onMenu(id); });
+  app_.menu().open(title, items, sizeof(items) / sizeof(items[0]), [this](int id) { onMenu(id); });
 }
 
 bool GridScreen::menuTargetValid() {
@@ -1176,6 +1191,7 @@ void GridScreen::onMenu(int id) {
     return;
   }
   if (id == kGridSettings) { openGridSettings(); return; }
+  if (id == kUndo) { undo(); return; }
   const bool anyPattern = id == kToggleFollow || id == kPerf || id == kDropSel || id == kRecordingSetup;
   if (!anyPattern && !menuTargetValid()) return;
   if ((id == kCopySel || id == kDropSel) && !menuCtx_.selected) return;

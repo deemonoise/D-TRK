@@ -26,6 +26,26 @@ class DiceTimbresTest(unittest.TestCase):
         self.assertGreater(acid["resonance"], 50)
         self.assertGreater(acid["fenv"], 20)
 
+    def test_noise_accents_and_hats_have_distinct_bodies_and_decay(self):
+        rim = dice_timbres.build(voice("noise", decay=127, tone=2))
+        self.assertEqual((3, 13), (rim["type"], rim["machine"]))
+        self.assertEqual(3, dice_timbres.build(voice("noise", cut=1))["filter"])
+        self.assertLess(rim["params"][2], 10)  # RS9 stick noise
+        for decay in (0, 64, 127):
+            closed = dice_timbres.build(voice("hat", decay=decay))
+            opened = dice_timbres.build(voice("openhat", decay=decay))
+            self.assertLess(closed["params"][3], 32)  # HH BASIC's first decay range
+            self.assertGreater(opened["params"][3], closed["params"][3])
+        snare = dice_timbres.build(voice("snare", tone=2))
+        self.assertEqual((2, 1), (snare["type"], snare["machine"]))
+        self.assertLess(snare["params"][5], 40)  # SD BASIC feedback also feeds its noise burst
+
+    def test_bright_tonal_fm_keeps_its_fundamental(self):
+        for family in ("bell", "fmkeys"):
+            tone = dice_timbres.build(voice(family, cut=1))
+            self.assertEqual(1, tone["filter"])
+        self.assertEqual(3, dice_timbres.build(voice("hat", cut=1))["filter"])
+
     def test_tone_and_grit_change_parameters_without_changing_family(self):
         soft = dice_timbres.build(voice("pad", tone=-2, grit=0))
         hard = dice_timbres.build(voice("pad", tone=2, grit=2))

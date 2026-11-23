@@ -3,6 +3,7 @@
 #include <math.h>
 #include "hot.h"
 #include "model.h"
+#include "synth_acid.h"
 #include "synth_osc.h"
 #include "wt_mip.h"
 #include "synth_syn_sat.h"
@@ -126,6 +127,10 @@ struct WtOsc {
     if (fade) --fade;
     return r;
   }
+#ifdef DTRK_BRICK
+  // Free-running block with a fixed frame position, a valid table and no mip transition.
+  void renderFixed(const int16_t* table, uint32_t dph, float pos, float* out, int n);
+#endif
 
  private:
   // Share the three reset-edge reads rather than duplicating both mip interpolators
@@ -137,6 +142,10 @@ struct WtOsc {
     const float old = readLevel(table, pos, phase, oldOff, oldLb);
     return y + (old - y) * (fade * (1.f / 32.f));
   }
+  static MT_INLINE float readFrame(const int16_t* frame, uint32_t i0, uint32_t i1, float fraction) {
+    const float first = frame[i0];
+    return first + (frame[i1] - first) * fraction;
+  }
   static MT_INLINE float readLevel(const int16_t* table, float pos, uint32_t phase, int offset, int bits) {
     const int f0 = static_cast<int>(pos);
     const float ff = pos - f0;
@@ -146,9 +155,8 @@ struct WtOsc {
     const uint32_t i0 = phase >> (32 - bits);
     const uint32_t i1 = (i0 + 1) & ((1u << bits) - 1);
     const float fr = static_cast<int32_t>((phase << bits) >> 8) * (1.f / 16777216.f);
-    const float a0 = a[i0], b0 = b[i0];
-    const float va = a0 + (a[i1] - a0) * fr;
-    const float vb = b0 + (b[i1] - b0) * fr;
+    const float va = readFrame(a, i0, i1, fr);
+    const float vb = readFrame(b, i0, i1, fr);
     return (va + (vb - va) * ff) * (1.f / kWtPeak);
   }
 };
@@ -183,6 +191,8 @@ class SynVoice {
   // Next control period of n samples: shape and mix ramp to p over it.
   void control(const SynParams& p, int n);
   void render(float* out, int n, float amp);
+  AcidAccent& acid() { return acid_; }
+  const AcidAccent& acid() const { return acid_; }
   // Pure calibration coefficients survive retrigger; Filter/Shape entries stay independent.
   float cachedModEnv(uint32_t samples, uint8_t attack, uint8_t decay, bool shape);
   MT_INLINE float cachedLpGain(float raw) {
@@ -198,6 +208,7 @@ class SynVoice {
     bool valid = false;
   };
   ModEnvCache modEnv_[2];
+  AcidAccent acid_;
   float gainRaw_ = -1.f, gainValue_ = 1.f;
   // Oscillator k over n samples into dst; shape ramps from shape_[k]. sync: osc 1 wraps per
   // sample (or nullptr); wrap: this oscillator's wraps (or nullptr).

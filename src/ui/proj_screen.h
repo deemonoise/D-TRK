@@ -22,6 +22,9 @@ class ProjScreen : public Screen {
  public:
   explicit ProjScreen(App& app);
   void onEnter() override;
+#ifdef DTRK_BRICK
+  bool blocksTabChange() const override { return diceDlg_.isOpen() || list_.editing(); }
+#endif
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
   void onTouch(const TouchEvent& ev) override;

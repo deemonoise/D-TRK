@@ -21,6 +21,53 @@ struct Prefs {
            locks != o.locks || keepKey != o.keepKey || seed != o.seed;
   }
 };
+inline mt::DiceMenuPosition menuPosition(const Prefs& prefs) {
+  return mt::diceMenuPosition({prefs.genre, prefs.style});
+}
+inline void select(Prefs& prefs, mt::DiceMenuPosition position) {
+  const auto choice = mt::diceMenuChoice(position);
+  prefs.genre = choice.genre;
+  prefs.style = choice.style;
+}
+inline const char* genreLabel(const Prefs& prefs) {
+  return mt::diceFamilyName(menuPosition(prefs).family);
+}
+inline const char* styleLabel(const Prefs& prefs) {
+  const auto* label = mt::diceStyleName(prefs.genre, prefs.style);
+  return label ? label : "-";
+}
+inline uint8_t moveChoice(int index, int delta, int count) {
+  return static_cast<uint8_t>((index + delta % count + count) % count);
+}
+inline void stepGenre(Prefs& prefs, int delta) {
+  const auto position = menuPosition(prefs);
+  const auto family = moveChoice(position.family, delta, mt::diceFamilyCount());
+  if (family != position.family) select(prefs, {family, 0});
+}
+inline void stepStyle(Prefs& prefs, int delta) {
+  auto position = menuPosition(prefs);
+  position.style = moveChoice(position.style, delta, mt::diceFamilyStyleCount(position.family));
+  select(prefs, position);
+}
+inline void clampSelection(Prefs& prefs) {
+  select(prefs, menuPosition(prefs));
+  if (prefs.variant > mt::kDiceVariantAuto) prefs.variant = mt::kDiceVariantAuto;
+}
+inline void loadSelection(Prefs& prefs, uint8_t (*load)(const char*, uint8_t)) {
+  const Prefs defaults;
+  prefs.genre = load("dg2gen", defaults.genre);
+  prefs.style = load("dg2sty", defaults.style);
+  prefs.variant = load("dg2variant", defaults.variant);
+  clampSelection(prefs);
+}
+inline void saveSelection(const Prefs& prefs, const Prefs& saved, void (*save)(const char*, uint8_t)) {
+  // The loaded selection may be a fallback for an older pair on disk.
+  if (prefs.genre != saved.genre || prefs.style != saved.style) {
+    save("dg2gen", prefs.genre);
+    save("dg2sty", prefs.style);
+  }
+  if (prefs.variant != saved.variant) save("dg2variant", prefs.variant);
+}
 inline uint8_t clampForm(uint8_t form) {
   return form <= static_cast<uint8_t>(mt::DiceForm::Arrange) ? form :
          static_cast<uint8_t>(mt::DiceForm::Develop);

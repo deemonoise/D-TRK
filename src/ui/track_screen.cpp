@@ -474,6 +474,12 @@ TrackScreen::TrackScreen(App& app) : app_(app) {
                          engine::post(engine::Cmd::SongEdit, static_cast<uint16_t>(mt::SongOp::Edit));  // replan
                        },
                        [this] { return app_.project().trackIsDrum(app_.curTrack()); }};
+#ifdef DTRK_BRICK
+  for (int row : {kOut, kInstr, kMute, kSolo, kSongTrn, kDriveType, kTrPattern, kTrSteps, kTrRate,
+                  kFolSrc, kFolDest, kSpeed, kGenMode, kGenFormula, kMutMode, kVarRule,
+                  kVarReset, kVarRhythm})
+    params_[row].brickCoarse = false;
+#endif
   for (int r : {kInstr, kVol, kPan, kDrive, kBitCrush, kDownsample, kTrance, kFolSrc})
     params_[r].hint = [] { return "INT tracks only"; };
   params_[kDriveType].hint = [this] { return !internal() ? "INT tracks only" : "Enable Drive"; };
@@ -777,6 +783,9 @@ void TrackScreen::followTrack() {
 }
 
 void TrackScreen::onEnter() {
+#ifdef DTRK_BRICK
+  if (mixer_) brickMixTracks_ = false;
+#endif
   leaveEdit();
   editTrack_ = app_.curTrack();
   audio::setMeters(mixer_);
@@ -838,24 +847,20 @@ void TrackScreen::onInput(const hw::InputEvent& ev) {
     return;
   }
   const bool wasName = nameEdit();
-  if (ev.type == hw::InputType::EncTurn && ev.shift) {
+  if (ev.type == hw::InputType::EncTurn) {
     if (wasName) {
-      namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+      if (moveNameCaret(ev)) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+      else list_.edit(hw::editDirection(ev));
       return;
     }
-    if (!list_.editing()) {
+    if (ev.shift && !list_.editing()) {
       changeTrack(ev.delta);
       return;
     }
   }
-  if (wasName && ev.type == hw::InputType::EncTurn) {
-    list_.edit(ev.delta);  // no x10 for characters
-    return;
-  }
-  // A + turn on the name row: a character, Shift = the position.
   if (ev.type == hw::InputType::EditTurn && page_ == kPgMain && list_.sel() == kName && list_.holdEdit()) {
-    if (ev.shift) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
-    else list_.edit(ev.delta);
+    if (moveNameCaret(ev)) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+    else list_.edit(hw::editDirection(ev));
     return;
   }
   if (const int ov = list_.onInput(ev)) {  // A + turn on the page bar: the previous / next page
@@ -1221,6 +1226,70 @@ void TrackScreen::toggleMuteSolo(int track, bool solo) {
   app_.markDirty();
 }
 
+#ifdef DTRK_BRICK
+void TrackScreen::brickMixArrow(bool horizontal, int delta, bool coarse) {
+  if (!brickMixerActive()) return;
+  const int step = delta * (coarse ? 8 : 1);
+  if (!brickMixTracks_) {
+    const auto& project = app_.project();
+    if (horizontal) setXfade(project.xfade + step);
+    else setMasterVol(project.masterVol + step);
+    return;
+  }
+  const int track = app_.curTrack();
+  const auto& strip = app_.project().tracks[track];
+  if (strip.out != mt::TrackOut::Int) {
+    app_.toast("MIDI TRACK");
+    return;
+  }
+  if (horizontal) setPan(track, strip.pan + step);
+  else setVol(track, strip.vol + step);
+}
+
+void TrackScreen::brickMixToggle(bool solo) {
+  if (brickMixerActive() && brickMixTracks_) toggleMuteSolo(app_.curTrack(), solo);
+}
+
+void TrackScreen::brickSceneEndMenu(bool endB) {
+  const auto& p = app_.project();
+  const int active = endB ? p.sceneB : p.sceneA;
+  char names[mt::kScenes][24];
+  MenuItem choices[mt::kScenes];
+  for (int i = 0; i < mt::kScenes; ++i) {
+    snprintf(names[i], sizeof(names[i]), "Scene %d%s", i + 1, i == active ? " (current)" : "");
+    choices[i] = {names[i], i};
+  }
+  app_.menu().openChild(endB ? "SCENE B" : "SCENE A", choices, mt::kScenes, [this, endB](int scene) {
+    const auto& project = app_.project();
+    if (brickMixerActive() && scene != (endB ? project.sceneB : project.sceneA)) setSceneEnd(endB, scene);
+  });
+}
+
+void TrackScreen::brickMixMenu() {
+  if (!brickMixerActive()) return;
+  enum { Controls, Record, Scenes, Perf, SceneA, SceneB };
+  const MenuItem items[] = {{brickMixTracks_ ? "Main controls" : "Track controls", Controls},
+                            {app_.rec().sdTaking() ? "Stop recording" : "Record...", Record},
+                            {"Scenes...", Scenes}, {app_.perf().on() ? "PERF off" : "PERF on", Perf},
+                            {"Scene A...", SceneA}, {"Scene B...", SceneB}};
+  app_.menu().open("MIX", items, sizeof(items) / sizeof(items[0]), [this](int id) {
+    if (!brickMixerActive()) return;
+    switch (id) {
+      case Controls:
+        brickMixTracks_ = !brickMixTracks_;
+        app_.toast(brickMixTracks_ ? "TRACKS: UP/DN VOL  L/R PAN" : "MAIN: UP/DN VOL  L/R FADE");
+        break;
+      case Record: if (app_.rec().sdTaking()) app_.rec().stop(); else openRec(); break;
+      case Scenes: setSceneView(true); break;
+      case Perf: togglePerf(); break;
+      case SceneA: case SceneB: brickSceneEndMenu(id == SceneB); break;
+    }
+    app_.invalidate();
+  });
+  app_.invalidate();
+}
+#endif
+
 void TrackScreen::mixerInput(const hw::InputEvent& ev) {
   if (scnView_) {
     sceneInput(ev);
@@ -1408,6 +1477,9 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
     const bool internal = t.out == mt::TrackOut::Int;
     const bool audible = p.trackAudible(tr);
     const int x = kStripX0 + k * kStripW;
+#ifdef DTRK_BRICK
+    if (brickMixTracks_ && tr == app_.curTrack()) s.drawRect(x, y0, kStripW - 1, kBtnY + kBtnH + 2, kCursor);
+#endif
     snprintf(buf, sizeof(buf), "%.6s", t.name);  // 6 x 8 px fit the strip
     // A scene end holds one of the track's parameters: the name in yellow (the base may not be what sounds).
     bool scn = false;
@@ -1449,13 +1521,14 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
         s.fillRect(bx + mt::sceneTrkEff(p, tr, mt::kScnPan) * (bw - 2) / 127, by - 3, 2, 3, kYellow);
     }
     const mt::Instrument& in = p.instruments[t.instr % mt::kInstruments];
+    const int sendX = x + 3 + (2 * kBtnW + 2 - 4 * kCharW) / 2;  // centre over the M / S button pair
     s.setTextColor(kDim);
-    if (internal) snprintf(buf, sizeof(buf), "S%3u", in.send);
-    else snprintf(buf, sizeof(buf), "S --");
-    s.drawString(buf, x + 6, y0 + kSendY);
+    if (internal) snprintf(buf, sizeof(buf), "D%3u", in.send);
+    else snprintf(buf, sizeof(buf), "D --");
+    s.drawString(buf, sendX, y0 + kSendY);
     if (internal) snprintf(buf, sizeof(buf), "R%3u", in.rsend);
     else snprintf(buf, sizeof(buf), "R --");
-    s.drawString(buf, x + 6, y0 + kSendY + kSendDy);
+    s.drawString(buf, sendX, y0 + kSendY + kSendDy);
     const int by = y0 + kBtnY;
     s.fillRect(x + 3, by, kBtnW, kBtnH, t.mute ? kRed : kBeatBg);
     s.fillRect(x + 3 + kBtnW + 2, by, kBtnW, kBtnH, t.solo ? kCursor : kBeatBg);
@@ -1467,6 +1540,12 @@ void TrackScreen::drawMixer(LGFX_Sprite& s, int y0) {
   // Master: masterVol 0..200 %; above 100 % the fill turns yellow (the soft clip works harder).
   s.drawFastVLine(kMasterX - 4, y0, kScopeY - 4, kDim);  // the crossfader stays left of it, the scope spans the width
   s.setTextColor(kText);
+#ifdef DTRK_BRICK
+  if (!brickMixTracks_) {
+    s.drawRect(kMasterX, y0, kMasterW, kPanY - 2, kCursor);
+    s.setTextColor(kCursor);
+  }
+#endif
   s.drawString("MAIN", kMasterX + (kMasterW - 4 * kCharW) / 2, y0 + kNameY);
   const int mv = p.masterVol;
   drawFader(s, kMasterX + (kMasterW - kFaderW) / 2, y0 + kFaderY, mv, mt::kMasterVolMax, mv > 100 ? kCursor : kText);
@@ -1562,7 +1641,11 @@ void TrackScreen::drawXfade(LGFX_Sprite& s, int y0) {
   const int my = y + kXfH / 2;
   s.fillRect(kXfBarX0, my - 1, kXfBarX1 - kXfBarX0, 2, live ? kText : kDim);
   const int kx = kXfBarX0 + p.xfade * (kXfBarX1 - kXfBarX0) / 127;
-  const uint16_t kc = xfSel_ == kXfFader ? kCursor : (live ? kYellow : kDim);
+  bool faderFocused = xfSel_ == kXfFader;
+#ifdef DTRK_BRICK
+  if (!brickMixTracks_) faderFocused = true;
+#endif
+  const uint16_t kc = faderFocused ? kCursor : (live ? kYellow : kDim);
   s.fillRect(kx - 4, y + 2, 9, kXfH - 4, kc);
 }
 

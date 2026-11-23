@@ -69,6 +69,9 @@ RenderDialog::RenderDialog(App& app) : app_(app) {
                      }};
   params_[kFormat] = {"Format", [this](char* o, int n) { snprintf(o, n, "%s", bits16_ ? "16 BIT" : "24 BIT"); },
                       [this](int d) { bits16_ = d > 0; }};
+#ifdef DTRK_BRICK
+  for (Row row : {kSource, kLoops, kTail, kTracks, kStems, kFormat}) params_[row].brickCoarse = false;
+#endif
   list_.setParams(params_, kExport);
   list_.setVisibleRows(actions_.listRows(kHeaderH));
 }

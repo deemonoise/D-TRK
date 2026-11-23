@@ -1,5 +1,6 @@
 #pragma once
 #include <string.h>
+#include "hw/input.h"
 
 namespace ui {
 
@@ -7,6 +8,13 @@ namespace ui {
 // the stored name stays trimmed (no trailing spaces). name holds maxLen chars + the terminator.
 constexpr char kNameChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ ";
 constexpr int kNameCharCount = sizeof(kNameChars) - 1;
+
+inline bool moveNameCaret(const hw::InputEvent& ev) {
+#ifdef DTRK_BRICK
+  if (ev.axis != hw::InputAxis::Encoder) return ev.axis == hw::InputAxis::Horizontal;
+#endif
+  return ev.shift;
+}
 
 inline int nameCharIndex(char c) {
   if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');

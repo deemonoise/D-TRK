@@ -35,6 +35,9 @@ void SampleExtractDialog::open(int instrument, int index, uint32_t from, uint32_
   normalize_ = false;
   params_[kNormalize] = {"Normalize", [this](char* out,int n){snprintf(out,n,"%s",normalize_?"-1 DBFS":"OFF");},
                          [this](int delta){normalize_=delta>0;}};
+#ifdef DTRK_BRICK
+  params_[kNormalize].brickCoarse = false;
+#endif
   list_.setParams(params_,2);
   target_ = mt::SampleExtractTarget{};
   target_.instrument = instrument;

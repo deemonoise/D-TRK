@@ -1,4 +1,5 @@
 #include "fill_dialog.h"
+#include "grid_fx_input.h"
 #include <algorithm>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -155,6 +156,13 @@ FillDialog::FillDialog(App& app) : app_(app) {
   params_[kOk] = {"OK", nullptr, nullptr};
   params_[kCancel] = {"Cancel", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
   initGenParams();
+#ifdef DTRK_BRICK
+  for (const auto choice : {kType, kWhere, kTarget, kCmd, kLane, kValue, kMode,
+                            kASource, kARoot, kAChord, kADest, kAMode, kAOct, kAPattern, kARate,
+                            kCProg, kCOctave, kCFlavor, kCVoicing, kCDest, kCRhythm,
+                            kBSource, kBRoot, kBOctave, kBDest, kBPattern, kBRate})
+    params_[choice].brickCoarse = false;
+#endif
   list_.setVisibleRows(actions_.listRows(kHeaderH));
   list_.setOnEdit([this] {
     if (f_->type == mt::FillType::Arp && (!listed_ || a_->pattern != resolved_)) syncArp();
@@ -248,6 +256,10 @@ void FillDialog::buildRows() {
   const bool fx = f_->target == mt::FillTarget::Fx;
   const bool values = !lane && !(fx && f_->cmd == mt::Fx::None);
   const bool seeded = f_->where == mt::FillWhere::Random || (values && f_->value == mt::FillValue::Random);
+#ifdef DTRK_BRICK
+  const bool numeric = f_->target == mt::FillTarget::Vel || (fx && numericFxValue(f_->cmd));
+  params_[kFrom].brickCoarse = params_[kTo].brickCoarse = numeric;
+#endif
   params_[kFrom].label = f_->value == mt::FillValue::Const ? "Value" : "From";
   shownCount_ = 0;
   if (f_->type == mt::FillType::Chords) {

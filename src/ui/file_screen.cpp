@@ -26,8 +26,13 @@
 namespace ui {
 namespace {
 
-constexpr const char* kLabels[] = {"Save",           "Save As...",        "Load...", "New",
-                                   "Import MIDI...", "Export...", "Retry"};
+constexpr const char* kLabels[] = {
+    "Save", "Save As...", "Load...", "New", "Import MIDI...", "Export...",
+#ifdef DTRK_BRICK
+    "Quit tracker",
+#endif
+    "Retry"
+};
 // The last row: Retry without a card, Restore autosave with one (they never need the row together).
 constexpr const char* kRestoreLabel = "Restore autosave";
 
@@ -48,7 +53,11 @@ void FileScreen::onEnter() {
   midiDlg_.close();
   closeList();
   autoAvail_ = storage::autosaveExists(app_.project().name);
+#ifdef DTRK_BRICK
+  setSection(kSecProjects, !hw::sdReady());
+#else
   if (!enabled(sel_)) moveSel(1);
+#endif
   audio::bankViewStale();
   midiDlg_.projectReplaced();  // a KNOBS edit of the old project's bind
   if (section_ == kSecSamples) sampleMove(0);  // the bank may have changed
@@ -72,6 +81,9 @@ void FileScreen::onLeave() {
 bool FileScreen::enabled(int a) const {
   const bool sd = hw::sdReady();
   switch (a) {
+#ifdef DTRK_BRICK
+    case kQuit:
+#endif
     case kSectionSel: return true;
     case kMidi:
     case kWifi: return true;  // connections do not need an SD card
@@ -99,6 +111,9 @@ void FileScreen::run(int a) {
   if (a >= 0 && a < kActions) sel_ = a;
   switch (a) {
     case kSectionSel: return;  // switched by A + turn / a tap on the page bar
+#ifdef DTRK_BRICK
+    case kQuit: app_.requestQuit(); break;
+#endif
     case kSave: save(); break;
     case kSaveAs: {
       const char* cur = app_.project().name;
@@ -112,6 +127,10 @@ void FileScreen::run(int a) {
     case kNew: openNewMenu(); break;
       break;
     case kWifi:
+#ifdef DTRK_BRICK
+      startWifi();
+      break;
+#endif
       if (app_.projectDirty()) {
         // A firmware update reboots the device: offer to save first.
         const bool named = strcmp(app_.project().name, "untitled") != 0;
@@ -616,6 +635,7 @@ void FileScreen::draw(LGFX_Sprite& s, int y0, int) {
     sysList_.draw(s, top);
     return;
   }
+  static_assert(sizeof(kLabels) / sizeof(kLabels[0]) == kActions, "every action needs a label");
   for (int a = 0; a < kActions; ++a) {
     if (a == kRetry && sd && !autoAvail_) break;
     const int ry = top + a * kActionH;
@@ -1084,6 +1104,9 @@ void FileScreen::initSystem() {
   // Sensor voltage, current (CHG while charging) and the gauge's percent; redrawn per sample.
   sysParams_[kBattery] = {"Battery",
                           [this](char* o, int n) {
+#ifdef DTRK_BRICK
+                            app_.brickBattery().describe(o, n);
+#else
                             hw::BatterySample b;
                             if (!hw::batteryPresent()) {
                               snprintf(o, n, "NOT FOUND");
@@ -1099,6 +1122,7 @@ void FileScreen::initSystem() {
                             if (g.percent() >= 0) snprintf(pct, sizeof(pct), "%d%%", g.percent());
                             else snprintf(pct, sizeof(pct), "--%%");
                             snprintf(o, n, "%.2fV %s%dmA %s", b.volts, g.charging() ? "CHG " : "", ma, pct);
+#endif
                           },
                           nullptr};
   // Click: start; play a while (on the screen to measure), click again: the time per stage of the
@@ -1111,7 +1135,14 @@ void FileScreen::initSystem() {
                               snprintf(o, n, "CLICK TO START");
                           },
                           nullptr};
+#ifdef DTRK_BRICK
+  for (SysRow row : {kPreview, kPerfVis, kTheme, kAutosave}) sysParams_[row].brickCoarse = false;
+  sysParams_[kTouchPointer] = {"Touch pointer", nullptr, nullptr};
+  sysParams_[kWifiRow] = {"Network file transfer...",nullptr,nullptr};
+  sysParams_[kUpdSynth] = {"App updates", [](char* o,int n){snprintf(o,n,"KNULLI PORTS");}, nullptr};
+#else
   sysParams_[kWifiRow] = {"Wi-Fi firmware...",nullptr,nullptr};
+#endif
   sysParams_[kMidiRow] = {"MIDI devices...",nullptr,nullptr};
   sysParams_[kDiagnostics] = {"Diagnostics...",nullptr,nullptr};
   sysParams_[kDiagBack] = {"Back to SYSTEM",nullptr,nullptr};
@@ -1140,7 +1171,7 @@ void FileScreen::showSystem(bool diagnostics) {
 void FileScreen::systemInput(const hw::InputEvent& ev) {
   if (ev.type==hw::InputType::EncClick && !sysList_.editing()) {
     const int row=systemRow();
-    if(row==kCpuProf || row==kUpdSynth || row==kWifiRow || row==kMidiRow || row==kDiagnostics || row==kDiagBack) {
+    if((row >= kWifiRow && row <= kDiagnostics) || row == kCpuProf || row == kDiagBack) {
       sysAction(row);return;
     }
   }
@@ -1150,14 +1181,21 @@ void FileScreen::systemInput(const hw::InputEvent& ev) {
 void FileScreen::systemTouch(const TouchEvent& ev) {
   const int r=sysList_.rowAt(ev.y);
   const int row=(diagnostics_?kFirmware:0)+r;
-  if(ev.type==TouchType::Tap && r>=0 && (row==kCpuProf || row==kUpdSynth || row==kWifiRow || row==kMidiRow || row==kDiagnostics || row==kDiagBack)) {
+  if(ev.type==TouchType::Tap && r>=0 && ((row >= kWifiRow && row <= kDiagnostics) || row == kCpuProf || row == kDiagBack)) {
     sysList_.setEdit(false);sysList_.setSel(r);sysAction(row);return;
   }
   sysList_.onTouch(ev);
 }
 
 void FileScreen::sysAction(int row) {
+#ifdef DTRK_BRICK
+  if (row == kTouchPointer) {
+    if (app_.enterBrickPointer) app_.enterBrickPointer();
+  }
+  else if(row==kUpdSynth) startWifi();
+#else
   if(row==kUpdSynth) askUpdateSynth();
+#endif
   else if(row==kCpuProf) toggleProfile();
   else if(row==kWifiRow) run(kWifi);
   else if(row==kMidiRow) run(kMidi);

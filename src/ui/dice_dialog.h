@@ -42,6 +42,7 @@ class DiceDialog {
   static constexpr int kHeaderH = 28;
 
   bool patterns() const { return dice_dialog::patterns(pr_); }
+  const char* roleName(int track) const;
   void clampPrefs();
   void roll();            // asks before overwriting, then rollNow()
   void rollNow(const mt::DiceOpts& opts, dice_dialog::Range range);

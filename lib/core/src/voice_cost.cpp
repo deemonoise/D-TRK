@@ -50,6 +50,74 @@ MT_CONTROL uint8_t configuredPotential(const Instrument& m) {
   }
   return flags;
 }
+#ifdef DTRK_BRICK
+MT_HOT int brickVoiceCost(const Instrument& m, InstrType type, uint8_t machine, uint8_t potential,
+                          float effectiveHz, float sampleFrameStep) {
+  // Cortex-A53 prices calibrated against the 44.1 kHz Brick render path.
+  int cost = 30;
+  const auto fm = static_cast<FmMachine>(machine);
+  const auto drum = static_cast<DrumMachine>(machine);
+  switch (type) {
+    case InstrType::Chip:
+      cost = 28;
+      if (m.wave == static_cast<uint8_t>(Wave::AyToneNoise)) cost += ayToneNoiseCost(effectiveHz) / 3;
+      else if (m.wave >= static_cast<uint8_t>(Wave::SidTs)) cost += 8;
+      else if (m.wave > static_cast<uint8_t>(Wave::Saw)) cost += 4;
+      if (m.chipStep) cost += 6;
+      break;
+    case InstrType::Sample:
+      cost = (samplePlaybackCost(sampleFrameStep, (potential & kCostPotentialSamplePitch) ||
+                 samplePitchModulated(m)) + 3) / 4;
+      break;
+    case InstrType::Fm:
+      cost = fm == FmMachine::Tone ? 47 : fm == FmMachine::Chord ? 120 : 112;
+      if (fm == FmMachine::Tone && m.fmParam[2]) cost += 20;
+      if (m.fmParam[7] || (potential & kCostPotentialSat)) cost += 12;
+      break;
+    case InstrType::Drum:
+      cost = drum == DrumMachine::Bd8 ? 42 : drum == DrumMachine::Hhr || drum == DrumMachine::LxMetal ? 106 :
+             machine >= kDrum2First ? 78 : 57;
+      break;
+    case InstrType::Synth: {
+      const auto osc1 = static_cast<SynOsc>(m.synOsc[0]);
+      const auto osc2 = static_cast<SynOsc>(m.synOsc[1]);
+      const bool wt = osc1 == SynOsc::Wt || osc2 == SynOsc::Wt;
+      const bool hyper = osc1 == SynOsc::HyperSaw;
+      cost = hyper ? 51 : wt ? 45 : 35;
+      if (m.synSub) cost += 5;
+      if (m.synAcid) cost += 4;
+      if (m.synNoise) cost += 3;
+      if (m.synSync) cost += wt ? 13 : 7;
+      if (m.synFold || (potential & kCostPotentialFold)) cost += 4;
+      if (!hyper && (m.synRing || (potential & kCostPotentialRing))) cost += 2;
+      if (m.fltMode == static_cast<uint8_t>(FltMode::Lp) &&
+          (m.reso >= 77 || (potential & kCostPotentialSynLpLimit))) cost += 9;
+      if (!synAnalog(m.fltMode) && m.synSatType > 0 && m.synSatType < static_cast<uint8_t>(SynSatType::Count)) cost += 8;
+      if (wt && m.macro[kMacSenv] != 64) cost += 8;
+      break;
+    }
+    case InstrType::String:
+      cost = machine == static_cast<uint8_t>(StringModel::String) ? 41 : 47;
+      break;
+    case InstrType::Lofi:
+      cost = machine == static_cast<uint8_t>(LofiMachine::Byte) ? 25 + byteCost(m, effectiveHz) / 8 : 30;
+      break;
+    default: break;
+  }
+  switch (static_cast<FltMode>(m.fltMode)) {
+    case FltMode::Ladder: case FltMode::Ms20: case FltMode::Sid: cost += 4; break;
+    case FltMode::Formant: cost += 8; break;
+    case FltMode::Comb: cost += type == InstrType::String ? 0 : 6; break;
+    case FltMode::Analog1: case FltMode::Analog2: case FltMode::Analog3: case FltMode::Analog4: cost += 13; break;
+    default: break;
+  }
+  cost += (m.lfoDepth != 0) * 4;
+  for (const auto& lfo : m.lfo) cost += (lfo.depth != 0) * 4;
+  if (modSourceMask(m)) cost += 12;
+  return cost;
+}
+#endif
+
 }
 
 MT_CONTROL int samplePlaybackCost(float frameStep, bool pitchModulated) {
@@ -77,6 +145,9 @@ MT_HOT int voiceCost(const Instrument& m, bool sample, uint8_t potential, float 
   const uint8_t machine = actualMachine == 255 ? m.machine : actualMachine;
   if (type == InstrType::Synth || type == InstrType::Fm)
     potential |= configuredPotential(m);
+#ifdef DTRK_BRICK
+  return brickVoiceCost(m, type, machine, potential, effectiveHz, sampleFrameStep);
+#else
   // A sample voice runs m's filter too (controlFilter): the add-ons below apply (a KIT sampler
   // lane builds fltMode Off: the base).
   int c = kCostChip;
@@ -91,7 +162,7 @@ MT_HOT int voiceCost(const Instrument& m, bool sample, uint8_t potential, float 
       break;
     }
     case InstrType::Drum:  // constant indices, no .rodata table (RAM1): see STRING below
-      static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == 8 && kDrum2First == 16,
+      static_assert(static_cast<int>(DrumMachine::Count) - kDrum2First == 9 && kDrum2First == 16,
                     "voiceCost: a case per machine");
       switch (static_cast<DrumMachine>(machine)) {
         case DrumMachine::Bda:
@@ -102,6 +173,7 @@ MT_HOT int voiceCost(const Instrument& m, bool sample, uint8_t potential, float 
         case DrumMachine::Cpx: c = kCostDrum2[4]; break;
         case DrumMachine::Rsx: c = kCostDrum2[5]; break;
         case DrumMachine::Hhr: c = kCostDrum2[7]; break;
+        case DrumMachine::LxMetal: c = kCostDrum2[8]; break;
         case DrumMachine::Bd8: c = kCostDrum[0]; break;
         case DrumMachine::Sd8: c = kCostDrum[1]; break;
         case DrumMachine::Tom8: c = kCostDrum[2]; break;
@@ -124,6 +196,7 @@ MT_HOT int voiceCost(const Instrument& m, bool sample, uint8_t potential, float 
       const uint8_t wt = static_cast<uint8_t>(SynOsc::Wt);
       const bool hyper = m.synOsc[0] == static_cast<uint8_t>(SynOsc::HyperSaw);
       c = hyper ? kCostSynHyper : m.synOsc[0] == wt || m.synOsc[1] == wt ? kCostSynWt : kCostSynBl;
+      if (m.synAcid) c += kCostSynAcid;
       if (m.fltMode == static_cast<uint8_t>(FltMode::Lp) &&
           (m.reso >= 77 || (potential & kCostPotentialSynLpLimit))) c += kCostSynLpLimit;
       if (!synAnalog(m.fltMode) && m.synSatType > 0 && m.synSatType < static_cast<uint8_t>(SynSatType::Count)) c += kCostSynSat;
@@ -158,6 +231,7 @@ MT_HOT int voiceCost(const Instrument& m, bool sample, uint8_t potential, float 
     default: break;
   }
   return c;
+#endif
 }
 
 }  // namespace mt

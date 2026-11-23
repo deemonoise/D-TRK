@@ -192,6 +192,20 @@ InstScreen::InstScreen(App& app) : app_(app) {
     else snprintf(o, n, "%d st", mt::lofiLoopSteps(v));
   };
   // SYNTH: ADSR, mode and glide as CHIP. Oscillator k rows, then the shared ones.
+  syn_[kMode] = {"Mode",
+                 [this](char* o, int n) {
+                   const auto& m = inst();
+                   snprintf(o, n, "%s", m.synAcid ? "ACID" : m.mono ? "MONO" : "POLY");
+                 },
+                 [this](int d) {
+                   auto& m = inst();
+                   const int current = m.synAcid ? 2 : m.mono ? 1 : 0;
+                   const int mode = clampi(current + d, 0, 2);
+                   m.synAcid = mode == 2;
+                   m.mono = mode != 0;
+                 },
+                 {}, {}, [] { return "ACID: MONO, VELOCITY 110+ ACCENTS"; }};
+  syn_[kGlide].dim = [this] { return !inst().mono && !inst().synAcid; };
   auto hyper = [this] { return inst().synOsc[0] == static_cast<uint8_t>(mt::SynOsc::HyperSaw); };
   for (int k = 0; k < 2; ++k) {
     const int base = k ? kOsc2 : kOsc1;
@@ -361,6 +375,16 @@ InstScreen::InstScreen(App& app) : app_(app) {
                         else snprintf(o, n, "%.1f ms", static_cast<double>(0.5f + 20.0f * e * e));
                       },
                       macroEdit(mt::kMacExc)};
+#ifdef DTRK_BRICK
+  for (auto* rows : {chip_, sample_, fm_, drum_, syn_, string_, lofi_})
+    for (int row : {kType, kMode}) rows[row].brickCoarse = false;
+  chip_[kWave].brickCoarse = chip_[kChipStep].brickCoarse = false;
+  fm_[kMachine].brickCoarse = drum_[kMachine].brickCoarse = drum_[kDrumModel].brickCoarse = false;
+  lofi_[kMachine].brickCoarse = lofi_[kFormula].brickCoarse = lofi_[kLofiSync].brickCoarse = false;
+  for (int row : {kOsc1, kOsc2, kTable1, kTable2, kSync, kPhaseMode, kSubWave, kSubOct, kEnvTarget, kSatType})
+    syn_[row].brickCoarse = false;
+  string_[kStrModel].brickCoarse = false;
+#endif
   initTail(chip_ + kChipRows);
   initTail(sample_ + kCommon);
   initTail(fm_ + kFmRows);
@@ -403,6 +427,9 @@ void InstScreen::initMatrix() {
   matrix_[5] = {"Depth via", [route](char* o,int n) { snprintf(o,n,"%s",mt::modSourceName(route().via)); },
     [route](int d) { route().via=clampi(route().via+d,0,int(mt::ModSource::Count)-1); },off};
   for (int i=2;i<6;++i) matrix_[i].hint=[] { return "Select a matrix Source"; };
+#ifdef DTRK_BRICK
+  for (int row : {0, 1, 2, 4, 5}) matrix_[row].brickCoarse = false;
+#endif
 }
 
 void InstScreen::initKit() {
@@ -486,6 +513,13 @@ void InstScreen::initKit() {
                       lane().note = mt::kitFreeNote(inst(), l, lane().note + d, dir);
                     }};
   }
+#ifdef DTRK_BRICK
+  kit_[kType].brickCoarse = false;
+  for (int lane = 0; lane < mt::kKitLanes; ++lane) {
+    auto* rows = kit_ + kKitMain + lane * kLaneRows;
+    for (int row : {kLaneSrc, kLaneSample, kLaneInstr, kLaneNote}) rows[row].brickCoarse = false;
+  }
+#endif
 }
 
 void InstScreen::buildLanes(int first, bool keep) {
@@ -639,6 +673,10 @@ void InstScreen::initTail(Param* t) {
                 b[1] = static_cast<uint8_t>(clampi(b[1] + d, 0, 127));
               },
               [this, notByte] { return notByte() || !(mt::byteUses(mt::byteCode(inst().lfoByte[lfoSel_][0])) & 1); }};
+#ifdef DTRK_BRICK
+  for (int row : {kFltMode, kLfoSel, kLfoWave, kLfoSync, kLfoRetrig, kLfoDest, kLfoFormula})
+    t[row].brickCoarse = false;
+#endif
   for (int r : {kCutoff, kReso, kFEnv}) t[r].hint = [] { return "Enable Filter"; };
   for (int r : {kFAtk, kFDec})
     t[r].hint = [off] { return off() ? "Enable Filter" : "Set Flt env above/below zero"; };
@@ -1185,24 +1223,20 @@ void InstScreen::onInput(const hw::InputEvent& ev) {
     else preview();
     return;
   }
-  if (ev.type == hw::InputType::EncTurn && ev.shift) {
+  if (ev.type == hw::InputType::EncTurn) {
     if (wasName) {
-      namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+      if (moveNameCaret(ev)) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+      else list_.edit(hw::editDirection(ev));
       return;
     }
-    if (!(onEditor() ? editor_.editing() : list_.editing())) {
+    if (ev.shift && !(onEditor() ? editor_.editing() : list_.editing())) {
       changeInstr(ev.delta);
       return;
     }
   }
-  if (wasName && ev.type == hw::InputType::EncTurn) {
-    list_.edit(ev.delta);  // no x10 for characters
-    return;
-  }
-  // A + turn on the name row: a character, Shift = the position.
   if (ev.type == hw::InputType::EditTurn && page_ == kPgMain && list_.sel() == kName && list_.holdEdit()) {
-    if (ev.shift) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
-    else list_.edit(ev.delta);
+    if (moveNameCaret(ev)) namePos_ = clampi(namePos_ + ev.delta, 0, kNameLen - 1);
+    else list_.edit(hw::editDirection(ev));
     return;
   }
   const int ov = onEditor() ? editor_.onInput(ev) : list_.onInput(ev);

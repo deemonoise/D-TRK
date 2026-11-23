@@ -156,14 +156,26 @@ ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
                        mode(&mt::Project::shimInt, static_cast<int>(mt::ShimInt::Count)), noShim};
   params_[kRvbLevel] = {"Rvb level", num(&mt::Project::rvbLevel), u7(&mt::Project::rvbLevel)};
   // MOD bus: the tracks' Mod send (TRACK) into one effect, its stereo return into the mix.
-  static const char* const kModTypes[] = {"OFF", "CHORUS", "ENSEMBLE", "FLANGER", "PHASER"};
-  static_assert(sizeof(kModTypes) / sizeof(kModTypes[0]) == static_cast<int>(mt::ModType::Count), "mod types");
+  static const char* const kModTypes[] = {"OFF", "CHORUS", "ENSEMBLE", "FLANGER", "PHASER", "JUNO I", "JUNO II", "JUNO I+II"};
+  constexpr int kModCount = static_cast<int>(mt::ModType::Count);
+  static_assert(sizeof(kModTypes) / sizeof(kModTypes[0]) == kModCount, "mod types");
+  auto juno = [](uint8_t type) { return type >= static_cast<uint8_t>(mt::ModType::JunoI) && type < kModCount; };
   auto noMod = [this] { return P().modType == 0 || P().modLevel == 0; };
-  params_[kModType] = {"Mod type", named(&mt::Project::modType, kModTypes, 5),
-                       mode(&mt::Project::modType, static_cast<int>(mt::ModType::Count))};
+  params_[kModType] = {"Mod type", named(&mt::Project::modType, kModTypes, kModCount), [this, juno](int d) {
+                       auto& p = app_.project();
+                       const auto next = static_cast<uint8_t>(clampi(p.modType + d, 0, kModCount - 1));
+                       if (juno(next) && !juno(p.modType)) p.modRate = 64;
+                       p.modType = next;
+                     }};
   params_[kModRate] = {"Mod rate",
-                       [this](char* o, int n) {
-                         const float hz = mt::fxRateHz(app_.project().modRate);
+                       [this, juno](char* o, int n) {
+                         const auto& p = app_.project();
+                         if (juno(p.modType)) {
+                           if (p.modRate == 64) snprintf(o, n, "64 REF");
+                           else snprintf(o, n, "%u", p.modRate);
+                           return;
+                         }
+                         const float hz = mt::fxRateHz(p.modRate);
                          snprintf(o, n, hz < 1.f ? "%.2f Hz" : "%.1f Hz", hz);
                        },
                        u7(&mt::Project::modRate), noMod};
@@ -263,6 +275,12 @@ ProjScreen::ProjScreen(App& app) : diceDlg_(app), app_(app) {
                              const uint8_t* xy = app_.project().perfXy;
                              return a == 1 && xy[1] != 0 && mt::perfXyAxis(xy, 1) == mt::PerfFx::None;
                            }};
+#ifdef DTRK_BRICK
+  for (Row row : {kRoot, kScale, kTuning, kTuneRoot, kRes, kGroove, kDlyMode, kRvbMode, kShimInt,
+                  kModType, kScTrack, kPerfX, kPerfY})
+    params_[row].brickCoarse = false;
+  for (int b = 0; b < mt::kPerfButtons; ++b) params_[kPerf1 + 2 * b].brickCoarse = false;
+#endif
   params_[kTuneRoot].hint = [] { return "Select a non-12-TET tuning first"; };
   params_[kSwing].hint = [] { return "Groove overrides swing; set Groove OFF"; };
   for (int r=kDlyTime;r<kDlyLevel;++r)
@@ -513,6 +531,15 @@ void ProjScreen::onInput(const hw::InputEvent& ev) {
     diceDlg_.open();
     return;
   }
+#ifdef DTRK_BRICK
+  if (page_ == kPgPerf) {
+    const int row = list_.sel();
+    if (row >= 0 && row < 2 * mt::kPerfButtons && row % 2 == 1) {
+      const auto fx = static_cast<mt::PerfFx>(P().perfMap[row / 2]);
+      params_[kPerf1 + row].brickCoarse = mt::perfRange(fx).coarse;
+    }
+  }
+#endif
   if (const int ov = list_.onInput(ev)) stepPage(ov, true);
 }
 

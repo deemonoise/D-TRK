@@ -1,6 +1,7 @@
 #include "app.h"
 #include "fx_info.h"
 #include "grid_screen.h"
+#include "grid_fx_input.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -42,7 +43,7 @@ void GridScreen::automationInput(const hw::InputEvent &ev) {
                    mt::kAutomationParams;
       autoAnchor_ = -1;
     } else if (edit_)
-      automationEdit(mt::fxStep(fx, value, ev.delta * (ev.shift ? 10 : 1)));
+      automationEdit(mt::fxStep(fx, value, hw::editDirection(ev) * (coarseFxEdit(ev, fx) ? 10 : 1)));
     else {
       moveStep(ev.delta);
       editPushed_ = false;
@@ -51,7 +52,7 @@ void GridScreen::automationInput(const hw::InputEvent &ev) {
   case InputType::EditTurn:
     if (!holdEdit_) editPushed_ = false;
     holdEdit_ = true;
-    automationEdit(mt::fxStep(fx, value, ev.delta * (ev.shift ? 10 : 1)));
+    automationEdit(mt::fxStep(fx, value, hw::editDirection(ev) * (coarseFxEdit(ev, fx) ? 10 : 1)));
     break;
   case InputType::EditEnd:
     holdEdit_ = false;
@@ -114,7 +115,9 @@ void GridScreen::openAutomationMenu(bool refresh) {
       {"Clear lock", 3},
       {"Clear parameter lane", 4},
       {"Copy parameter lane", 5},
-      {"Paste parameter lane", 6, autoClip_.len > 0}};
+      {"Paste parameter lane", 6, autoClip_.len > 0},
+  };
+  const int count = sizeof(items) / sizeof(items[0]);
   const int pattern = app_.editPattern(), tr = track(), param = autoParam_;
   auto cb = [this, pattern, tr, param](int id) {
     if (id == 11) { app_.toggleAutomationMute(tr); return; }
@@ -173,8 +176,8 @@ void GridScreen::openAutomationMenu(bool refresh) {
       app_.toast("AUTOMATION APPLIED");
     }
   };
-  if (refresh) app_.menu().replace("AUTOMATION",items,9,cb);
-  else app_.menu().open("AUTOMATION",items,9,cb);
+  if (refresh) app_.menu().replace("AUTOMATION",items,count,cb);
+  else app_.menu().open("AUTOMATION",items,count,cb);
 }
 
 void GridScreen::openAutomationParams() {

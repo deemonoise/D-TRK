@@ -197,7 +197,21 @@ void BankScreen::onInput(const hw::InputEvent& ev) {
   if (kb_.isOpen()) { kb_.onInput(ev); return; }
   using hw::InputType;
   switch (ev.type) {
-    case InputType::EncTurn: sel_ = ((sel_ + ev.delta) % mt::kPatterns + mt::kPatterns) % mt::kPatterns; break;
+    case InputType::EncTurn:
+#ifdef DTRK_BRICK
+      if (ev.axis == hw::InputAxis::Horizontal) {
+        const int col = sel_ % kCols + ev.delta;
+        if (col >= 0 && col < kCols) sel_ = sel_ / kCols * kCols + col;
+        break;
+      }
+      if (ev.axis == hw::InputAxis::Vertical) {
+        const int next = sel_ + ev.delta * kCols;
+        if (next >= 0 && next < mt::kPatterns) sel_ = next;
+        break;
+      }
+#endif
+      sel_ = ((sel_ + ev.delta) % mt::kPatterns + mt::kPatterns) % mt::kPatterns;
+      break;
     case InputType::EncClick: activate(sel_, ev.shift); break;
     case InputType::EncLong: openMenu(sel_); break;
     default: break;

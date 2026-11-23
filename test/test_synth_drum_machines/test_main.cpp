@@ -55,12 +55,17 @@ void test_hh8_decay_monotonic() {
 void test_drum2_enum_names() {
   TEST_ASSERT_EQUAL(16, static_cast<int>(DrumMachine::Bda));
   TEST_ASSERT_EQUAL(23, static_cast<int>(DrumMachine::Hhr));
-  TEST_ASSERT_EQUAL(24, static_cast<int>(DrumMachine::Count));
+  TEST_ASSERT_EQUAL(24, static_cast<int>(DrumMachine::LxMetal));
+  TEST_ASSERT_EQUAL(25, static_cast<int>(DrumMachine::Count));
   TEST_ASSERT_EQUAL(16, kDrum2First);
-  const char* n[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "---", "HHR"};
-  for (int k = 0; k < 8; ++k) TEST_ASSERT_EQUAL_STRING(n[k], drumMachineName(static_cast<uint8_t>(16 + k)));
+  const char* n[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "---", "HHR", "LX METAL"};
+  for (int k = 0; k < 9; ++k) TEST_ASSERT_EQUAL_STRING(n[k], drumMachineName(static_cast<uint8_t>(16 + k)));
   TEST_ASSERT_EQUAL_STRING("", drumMacroName(static_cast<uint8_t>(DrumMachine::Bda), 4));
   TEST_ASSERT_EQUAL_STRING("PATTERN", drumMacroName(static_cast<uint8_t>(DrumMachine::Cpx), 4));
+  const uint8_t metal = static_cast<uint8_t>(DrumMachine::LxMetal);
+  TEST_ASSERT_EQUAL_STRING("FM1", drumMacroName(metal, kMacShp));
+  TEST_ASSERT_EQUAL_STRING("FM2", drumMacroName(metal, kMacSwp));
+  TEST_ASSERT_EQUAL_STRING("SNAP", drumMacroName(metal, kMacCon));
   float mac[kFmMacros] = {64, 64, 64, 64, 64};
   DrumParams p;
   p.toneHz[0] = 123;

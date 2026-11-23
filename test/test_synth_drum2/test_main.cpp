@@ -190,6 +190,7 @@ const Spec kSds = {Drum2Kind::Sds, {55, 60, 70, 40, 0}, true, 20, 80, 2};
 const Spec kCpx = {Drum2Kind::Cpx, {60, 64, 64, 64, 0}, false, 0, 0, -1};
 const Spec kRsx = {Drum2Kind::Rsx, {40, 64, 40, 0, 0}, true, 20, 80, 2};
 const Spec kHhr = {Drum2Kind::Hhr, {30, 64, 30, 0, 0}, false, 0, 0, -1};
+const Spec kLxMetal = {Drum2Kind::LxMetal, {52, 72, 75, 52, 40}, false, 0, 0, -1};
 
 }  // namespace
 
@@ -458,11 +459,11 @@ void test_edges_bounded() {
 
 // Every kind's default hit (velocity 127, note 60, drumSetMachine defaults) peaks at -1 +-1.5 dBFS.
 void test_default_peaks() {
-  const Spec* specs[] = {&kBda, &kSda, &kBds, &kSds, &kCpx, &kRsx, &kHhr};
-  const char* names[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "HHR"};
+  const Spec* specs[] = {&kBda, &kSda, &kBds, &kSds, &kCpx, &kRsx, &kHhr, &kLxMetal};
+  const char* names[] = {"BDA", "SDA", "BDS", "SDS", "CPX", "RSX", "HHR", "LX METAL"};
   bool ok = true;
   char msg[64];
-  for (int i = 0; i < 7; ++i) {
+  for (size_t i = 0; i < sizeof(specs) / sizeof(specs[0]); ++i) {
     float d[5];
     defaults(specs[i]->def, d);
     const float db = 20.f * log10f(peak(hit(specs[i]->k, d, 60, 127, kFs)) + 1e-12f);
@@ -524,8 +525,43 @@ void test_amp_ramp_render_partition_invariant() {
   for(int i=0;i<32;++i)TEST_ASSERT_FLOAT_WITHIN(1e-6f,x[i],y[i]);
 }
 
+void test_lx_metal_snap_is_short_pitch_transient() {
+  constexpr auto kind = Drum2Kind::LxMetal;
+  const float dryKnobs[5] = {0.7f, 0.65f, 0.f, 0.f, 0.f};
+  const float snapKnobs[5] = {0.7f, 0.65f, 0.f, 0.f, 1.f};
+  const auto dry = hit(kind, dryKnobs, 60, 127, ms(120));
+  const auto snapped = hit(kind, snapKnobs, 60, 127, ms(120));
+  const float earlyPitch = zeroCrossHz(dry, 0, ms(5));
+  TEST_ASSERT_TRUE(earlyPitch > 100.f);
+  TEST_ASSERT_TRUE(zeroCrossHz(snapped, 0, ms(5)) > earlyPitch * 1.3f);
+  const float tailPitch = zeroCrossHz(dry, ms(40), ms(90));
+  TEST_ASSERT_FLOAT_WITHIN(20.f, tailPitch, zeroCrossHz(snapped, ms(40), ms(90)));
+}
+
+void test_lx_metal_both_modulators_create_sidebands() {
+  constexpr auto kind = Drum2Kind::LxMetal;
+  const float off[5] = {0.7f, 0.65f, 0.f, 0.f, 0.f};
+  const float first[5] = {0.7f, 0.65f, 0.7f, 0.f, 0.f};
+  const float second[5] = {0.7f, 0.65f, 0.f, 0.7f, 0.f};
+  const auto x = hit(kind, off, 60, 127, ms(120));
+  const auto a = hit(kind, first, 60, 127, ms(120));
+  const auto b = hit(kind, second, 60, 127, ms(120));
+  const float baseEnergy = energyAbove(x, ms(20), 1500.f);
+  TEST_ASSERT_TRUE(energyAbove(a, ms(20), 1500.f) > baseEnergy + 1.f);
+  TEST_ASSERT_TRUE(energyAbove(b, ms(20), 1500.f) > baseEnergy + 1.f);
+  const auto aSpectrum = spectrum(a, ms(20));
+  const auto bSpectrum = spectrum(b, ms(20));
+  // Upper sidebands at the base pitch plus each modulator's pitch.
+  const int fm1Bin = static_cast<int>(lroundf(2183.f * 1024 / kFs));
+  const int fm2Bin = static_cast<int>(lroundf(2814.f * 1024 / kFs));
+  TEST_ASSERT_TRUE(aSpectrum[fm1Bin] > 5.f * bSpectrum[fm1Bin]);
+  TEST_ASSERT_TRUE(bSpectrum[fm2Bin] > 5.f * aSpectrum[fm2Bin]);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_lx_metal_snap_is_short_pitch_transient);
+  RUN_TEST(test_lx_metal_both_modulators_create_sidebands);
   RUN_TEST(test_amp_ramp_and_choke_keep_output_gain);
   RUN_TEST(test_amp_ramp_render_partition_invariant);
   RUN_TEST(test_stub_silent_done);

@@ -19,6 +19,10 @@ class FileScreen : public Screen {
  public:
   explicit FileScreen(App& app) : app_(app), import_(app), render_(app), wifi_(app), midiDlg_(app), list_(app, kMaxFiles) { initSystem(); }
   void onEnter() override;
+#ifdef DTRK_BRICK
+  void brickPage(int d) { if (!sysList_.editing()) onPage(d); }
+  bool blocksTabChange() const override { return kb_.isOpen() || list_.ready() || import_.isOpen() || render_.isOpen() || wifi_.isOpen() || midiDlg_.isOpen() || sysList_.editing(); }
+#endif
   void onLeave() override;
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
@@ -40,7 +44,13 @@ class FileScreen : public Screen {
   void askUpdateSynth();
 
  private:
-  enum Action : int { kSave, kSaveAs, kLoad, kNew, kImport, kRender, kRetry, kActions, kWifi = 100, kMidi };
+  enum Action : int {
+    kSave, kSaveAs, kLoad, kNew, kImport, kRender,
+#ifdef DTRK_BRICK
+    kQuit,
+#endif
+    kRetry, kActions, kWifi = 100, kMidi
+  };
   enum MenuId : int {
     kCancel, kDiscardLoad, kDiscardNew, kRestoreAuto, kLoadBak, kOverwrite, kSaveWifi, kDiscardWifi, kOverwriteSample,
     kRenameSample, kDeleteSample, kDeleteUsed, kClearCache
@@ -61,7 +71,11 @@ class FileScreen : public Screen {
 
   // SYSTEM rows.
   enum SysRow : int {
-    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kWifiRow, kMidiRow, kUpdSynth, kDiagnostics,
+    kPhones, kPreview, kPerfVis, kTheme, kAutosave, kWifiRow,
+#ifdef DTRK_BRICK
+    kTouchPointer,
+#endif
+    kMidiRow, kUpdSynth, kDiagnostics,
     kFirmware, kSynthFw, kCard, kSamples, kLink, kLastReset, kAudioRam, kRamMin, kBattery, kCpuProf, kDiagBack, kSysRows
   };
   static constexpr int kSysListRows = (kAreaH - kHeaderH - PageBar::kH) / ParamList::kRowH;

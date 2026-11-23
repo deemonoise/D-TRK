@@ -37,7 +37,7 @@ static void assertSameInst(const Instrument& a, const Instrument& b, const char*
 void setUp() {}
 void tearDown() {}
 
-// Two factory DRUM presets per machine BDA .. HHR, unique short names; the ANALOG KIT plays them.
+// The original DRUM2 machines have two presets; LX METAL starts with one.
 void test_drum2_presets() {
   int per[static_cast<int>(DrumMachine::Count)] = {};
   const int n = factoryCount(InstrType::Drum);
@@ -50,8 +50,11 @@ void test_drum2_presets() {
     TEST_ASSERT_TRUE(m.machine < static_cast<int>(DrumMachine::Count));
     ++per[m.machine];
   }
-  for (int mc = kDrum2First; mc < static_cast<int>(DrumMachine::Count); ++mc)
-    TEST_ASSERT_EQUAL(mc == static_cast<int>(DrumMachine::Unused22) ? 0 : 2, per[mc]);
+  for (int mc = kDrum2First; mc < static_cast<int>(DrumMachine::Count); ++mc) {
+    const auto machine = static_cast<DrumMachine>(mc);
+    const int expected = machine == DrumMachine::Unused22 ? 0 : machine == DrumMachine::LxMetal ? 1 : 2;
+    TEST_ASSERT_EQUAL(expected, per[mc]);
+  }
   bool found = false;
   for (int i = 0; i < factoryCount(InstrType::Kit); ++i) {
     const FactoryPreset& k = factoryPreset(InstrType::Kit, i);

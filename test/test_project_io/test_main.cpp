@@ -3198,6 +3198,28 @@ void test_lfob_garbage_clamped_and_sizes() {
 
 // ---- FMEX: FM SAT per instrument ----
 
+void test_new_sound_settings_round_trip() {
+  a.modType = 7;  // Juno I+II, appended after the four existing effects.
+  auto& synth = a.instruments[0];
+  instrSetType(synth, InstrType::Synth);
+  const uint8_t extension[kFmExRecSize] = {0, 0, 0, 1};  // opt-in Acid profile
+  unpackFmEx(extension, sizeof(extension), synth);
+  auto& drum = a.instruments[1];
+  instrSetType(drum, InstrType::Drum);
+  drum.machine = 24;  // LX METAL, appended after HHR
+  VecSink out;
+  TEST_ASSERT_TRUE(saveProject(a, out));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(out.buf)));
+  uint8_t saved[kFmExRecSize];
+  packFmEx(b.instruments[0], saved);
+  TEST_ASSERT_EQUAL(1, saved[3]);
+  TEST_ASSERT_EQUAL(7, b.modType);
+  TEST_ASSERT_EQUAL(24, b.instruments[1].machine);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadBytes(withoutChunks(out.buf, {"FMEX"}))));
+  packFmEx(b.instruments[0], saved);
+  TEST_ASSERT_EQUAL(0, saved[3]);
+}
+
 void test_fmex_round_trip_and_missing() {
   instrSetType(a.instruments[2], InstrType::Fm);
   a.instruments[2].fmSat = 90;
@@ -3507,6 +3529,7 @@ int main() {
   RUN_TEST(test_lfob_round_trip_and_missing);
   RUN_TEST(test_lfob_garbage_clamped_and_sizes);
   RUN_TEST(test_fmex_round_trip_and_missing);
+  RUN_TEST(test_new_sound_settings_round_trip);
   RUN_TEST(test_fmex_garbage_clamped_and_sizes);
   RUN_TEST(test_knob_round_trip_and_missing);
   RUN_TEST(test_knob_none_bound_not_written);

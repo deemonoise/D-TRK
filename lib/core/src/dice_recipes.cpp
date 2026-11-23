@@ -8,6 +8,7 @@ struct Sequence { uint32_t first; uint16_t count; };
 struct Group { const char* name; uint16_t first; uint8_t count; };
 #include "dice_catalog.inc"
 constexpr int kGroupsCount = sizeof(kGroups) / sizeof(kGroups[0]);
+static_assert(sizeof(kMenuFamilies) / sizeof(kMenuFamilies[0]) == unsigned(DiceFamily::Count));
 }
 int diceGenreCount() { return kGroupsCount; }
 const char* diceGenreName(int genre) {
@@ -26,6 +27,36 @@ const char* diceStyleName(int genre, int style) {
 const DiceVariant* diceVariant(int genre, int style, int variant) {
   const auto* recipe = diceRecipe(genre, style);
   return recipe && variant >= 0 && variant < kDiceVariants ? &kVariants[recipe->firstVariant + variant] : nullptr;
+}
+int diceFamilyCount() { return sizeof(kMenuFamilies) / sizeof(kMenuFamilies[0]); }
+const char* diceFamilyName(int family) {
+  return family >= 0 && family < diceFamilyCount() ? kMenuFamilies[family].name : nullptr;
+}
+int diceFamilyStyleCount(int family) {
+  return diceFamilyName(family) ? kMenuFamilies[family].count : 0;
+}
+DiceChoice diceMenuChoice(DiceMenuPosition position) {
+  if (position.style >= diceFamilyStyleCount(position.family)) return kMenuChoices[0];
+  return kMenuChoices[kMenuFamilies[position.family].first + position.style];
+}
+DiceMenuPosition diceMenuPosition(DiceChoice choice) {
+  DiceMenuPosition fallback{};
+  bool foundGenre = false;
+  for (uint8_t family = 0; family < diceFamilyCount(); ++family) {
+    for (uint8_t style = 0; style < diceFamilyStyleCount(family); ++style) {
+      const auto entry = diceMenuChoice({family, style});
+      if (entry.genre != choice.genre) continue;
+      if (entry.style == choice.style) return {family, style};
+      if (!foundGenre) { fallback = {family, 0}; foundGenre = true; }
+    }
+  }
+  return fallback;
+}
+DiceFamily diceFamilyOf(DiceChoice choice) {
+  const auto position = diceMenuPosition(choice);
+  const auto entry = diceMenuChoice(position);
+  return entry.genre == choice.genre && entry.style == choice.style
+             ? static_cast<DiceFamily>(position.family) : DiceFamily::Count;
 }
 const DiceVoice& diceVoice(const DiceVariant& variant, int track) {
   return kVoices[variant.voices[track >= 0 && track < kDiceRoles ? track : 0]];

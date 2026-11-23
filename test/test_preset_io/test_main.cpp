@@ -885,13 +885,15 @@ void test_syn_old_reserved_bytes_restore_defaults() {
 }
 void test_syn_extension_preset_roundtrip() {
   Instrument a = synthInst(); a.synPhaseMode = 1; a.synPhase[0] = 17; a.synPhase[1] = 53;
-  a.synEnvDest = 3; a.synSubWave = 1;
+  a.synEnvDest = 3; a.synSubWave = 1; a.synAcid = true;
   VecSink out; TEST_ASSERT_TRUE(savePreset(a, out));
   TEST_ASSERT_EQUAL(kPresetSize, out.buf.size());
+  TEST_ASSERT_EQUAL(1, out.buf[kPresetSizeV7 - 1]);  // FMEX byte 3
   VecSource in(out.buf); Instrument b;
   TEST_ASSERT_EQUAL(static_cast<int>(LoadErr::Ok), static_cast<int>(loadPreset(in, b)));
   TEST_ASSERT_EQUAL(1, b.synPhaseMode); TEST_ASSERT_EQUAL(17, b.synPhase[0]);
   TEST_ASSERT_EQUAL(53, b.synPhase[1]); TEST_ASSERT_EQUAL(3, b.synEnvDest); TEST_ASSERT_EQUAL(1, b.synSubWave);
+  TEST_ASSERT_TRUE(b.synAcid);
 }
 
 void test_reference_fm_eight_controls_roundtrip() {

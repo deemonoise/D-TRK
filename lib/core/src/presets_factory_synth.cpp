@@ -55,6 +55,10 @@ constexpr FactoryPreset kTable[] = {
        two(m, SynOsc::Saw, SynOsc::Saw, 0, 64); ld(m, 46, 82, 38, 50); env(m, 0, 70, 90, 35); m.mono = true; m.glide = 8; m.velCut = 12; m.vol = 62; }},
     {InstrType::Synth, "BASS", "ACIDSQ", [](I& m) {  // square 303
        two(m, SynOsc::Square, SynOsc::Square, 0, 64); m.macro[kMacShp1] = 20; ld(m, 44, 78, 40, 45); env(m, 0, 68, 80, 35); m.mono = true; m.glide = 8; m.velCut = 12; m.vol = 62; }},
+    {InstrType::Synth, "BASS", "ACID 303", [](I& m) {
+       two(m, SynOsc::Saw, SynOsc::Saw, 0, 64); ld(m, 44, 87, 42, 48);
+       env(m, 0, 70, 86, 30); m.synAcid = true; m.mono = true; m.glide = 8;
+       m.synPhaseMode = static_cast<uint8_t>(SynPhaseMode::Free); m.vol = 59; }},
     {InstrType::Synth, "BASS", "REESEWRM", [](I& m) {  // slow beating, soft top
        two(m, SynOsc::Saw, SynOsc::Saw, 64, 75); m.synSub = 50; ld(m, 62, 12, 0, 40); env(m, 0, 70, 120, 45); m.mono = true; m.vol = 66; lfo1(m, LfoWave::Sine, LfoDest::Cutoff, 25, 6); }},
     {InstrType::Synth, "BASS", "NEURO", [](I& m) {  // growl, 1/16 filter

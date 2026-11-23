@@ -39,6 +39,9 @@ BounceDialog::BounceDialog(App& app) : app_(app) {
   params_[kName] = {"Name", [this](char* o, int n) { snprintf(o, n, "%s", name_); }, nullptr};
   params_[kSave] = {"SAVE", nullptr, nullptr};
   params_[kCancel] = {"Cancel", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
+#ifdef DTRK_BRICK
+  params_[kNote].brickCoarse = false;
+#endif
   kitParams_[0] = params_[kHold];
   kitParams_[1] = params_[kVel];
   kitParams_[2] = params_[kSave];

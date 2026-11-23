@@ -23,6 +23,9 @@ TransposeDialog::TransposeDialog(App& app) : app_(app) {
                       degrees_ = d < 0;
                       clampAmount();
                     }};
+#ifdef DTRK_BRICK
+  params_[kMode].brickCoarse = false;
+#endif
   list_.setParams(params_, kOk);
   list_.setVisibleRows(actions_.listRows(kHeaderH));
 }
@@ -80,14 +83,14 @@ void TransposeDialog::onInput(const hw::InputEvent& ev) {
       return;
 
     case InputType::EncTurn:
-      if (list_.editing() && list_.sel() == kAmount && ev.shift) {  // octave steps, not ParamList's x10
-        list_.edit(ev.delta * octave());
+      if (list_.editing() && list_.sel() == kAmount && hw::coarseEdit(ev)) {  // octave steps, not ParamList's x10
+        list_.edit(hw::editDirection(ev) * octave());
         return;
       }
       break;
     case InputType::EditTurn:  // A + turn: the same, entering the edit if needed
-      if (!actions_.footerFocused() && list_.sel() == kAmount && ev.shift && list_.holdEdit()) {
-        list_.edit(ev.delta * octave());
+      if (!actions_.footerFocused() && list_.sel() == kAmount && hw::coarseEdit(ev) && list_.holdEdit()) {
+        list_.edit(hw::editDirection(ev) * octave());
         return;
       }
       break;

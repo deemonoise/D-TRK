@@ -19,6 +19,9 @@ struct Param {
   std::function<bool()> dim;            // true: drawn grey (does not apply now); empty = never
   std::function<bool()> warn;           // true: value drawn red (e.g. missing sample); empty = never
   std::function<const char*()> hint;    // explanation while dim (display only; editing semantics unchanged)
+#ifdef DTRK_BRICK
+  bool brickCoarse = true;  // Numeric rows step by ten vertically; choices step by one.
+#endif
 };
 
 // MIDI knob: turns the row of rows[0, count) whose label matches `label` in its first maxLen chars by
@@ -126,6 +129,7 @@ class ParamList {
  private:
   int shown() const { return visible_ > 0 && visible_ < count_ ? visible_ : count_; }
   void ensureVisible();
+  int editDelta(const hw::InputEvent& ev) const;
   void beginEdit();  // remembers the value for cancelEdit()
   void notifyHint(bool attempted = false) const;
 

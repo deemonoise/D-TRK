@@ -43,6 +43,14 @@ class TrackScreen : public Screen {
  public:
   explicit TrackScreen(App& app);
   void onEnter() override;
+#ifdef DTRK_BRICK
+  bool brickMixerActive() const { return mixer_ && !recShown() && !scnView_; }
+  bool brickTrackControls() const { return brickMixTracks_; }
+  void brickMixArrow(bool horizontal, int delta, bool coarse);
+  void brickMixToggle(bool solo);
+  void brickMixMenu();
+  bool blocksTabChange() const override { return list_.editing(); }
+#endif
   void onLeave() override;
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;
@@ -72,6 +80,10 @@ class TrackScreen : public Screen {
   bool knobBusy(int track) override { return list_.editing() && track == editTrack_; }  // its edit open
 
  private:
+#ifdef DTRK_BRICK
+  bool brickMixTracks_ = false;
+  void brickSceneEndMenu(bool endB);
+#endif
   // Rows in page order: MAIN, INS (the INT track's insert chain, then its MOD send), FOL (its envelope follower), NOTE,
   // MIDI (contiguous runs, see
   // kPageFirst).

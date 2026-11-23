@@ -42,12 +42,15 @@ void GridScreen::openPasteMenu(){
 void GridScreen::openRotateDialog(){
   const auto s=toolScope();const int max=s.s1-s.s0;
   rotateAmount_=0;
-  const Param rows[]={
+  Param rows[]={
     {"Steps",[this](char* o,int n){snprintf(o,n,"%+d",rotateAmount_);},
       [this,max](int d){rotateAmount_=clamp(rotateAmount_+d,-max,max);}},
     {"Move",[this](char* o,int n){const char* names[]={"ALL","NOTES ONLY","AUTOMATION"};snprintf(o,n,"%s",names[static_cast<int>(rotatePart_)]);},
       [this](int d){rotatePart_=static_cast<mt::StepPart>(clamp(static_cast<int>(rotatePart_)+d,0,2));}}};
   char scope[28],title[48];menuScopeTitle(scope,sizeof(scope),s,!menuCtx_.selected);
+#ifdef DTRK_BRICK
+  rows[1].brickCoarse = false;
+#endif
   snprintf(title,sizeof(title),"ROTATE %s",scope);setEdit(false);
   action_.open(title,rows,2,[this,s]{
     applyTool([this,s](mt::Pattern& p,mt::Pattern& scratch){return mt::rotateSteps(p,scratch,s,rotateAmount_,rotatePart_);});
@@ -55,7 +58,7 @@ void GridScreen::openRotateDialog(){
 }
 void GridScreen::openVelocityDialog(){
   const auto s=toolScope();
-  const Param rows[]={
+  Param rows[]={
     {"Mode",[this](char* o,int n){const char* modes[]={"SET","ADD","RAMP","HUMANIZE"};snprintf(o,n,"%s",modes[static_cast<int>(velocitySpec_.mode)]);},
       [this](int d){
         const int mode=clamp(static_cast<int>(velocitySpec_.mode)+d,0,3);
@@ -75,6 +78,9 @@ void GridScreen::openVelocityDialog(){
       [this](int d){if(velocitySpec_.mode==mt::VelocityMode::Ramp)velocitySpec_.end=clamp(velocitySpec_.end+d,1,127);},
       [this]{return velocitySpec_.mode!=mt::VelocityMode::Ramp;}, {}, []{return "SELECT RAMP MODE";}}};
   char scope[28],title[48];menuScopeTitle(scope,sizeof(scope),s,!menuCtx_.selected);
+#ifdef DTRK_BRICK
+  rows[0].brickCoarse = false;
+#endif
   snprintf(title,sizeof(title),"VELOCITY %s",scope);setEdit(false);
   action_.open(title,rows,3,[this,s]{
     velocitySpec_.seed=micros();

@@ -26,6 +26,9 @@ WtMakeDialog::WtMakeDialog(App& app) : app_(app) {
   params_[kName] = {"Name", [this](char* o, int n) { snprintf(o, n, "%s", name_); }, nullptr};
   params_[kMake] = {"MAKE", nullptr, nullptr};
   params_[kCancel] = {"Cancel", [](char* o, int n) { snprintf(o, n, "LONG PRESS"); }, nullptr};
+#ifdef DTRK_BRICK
+  for (Row row : {kMode, kNorm, kSeam}) params_[row].brickCoarse = false;
+#endif
   list_.setParams(params_, kMake);
   list_.setVisibleRows(actions_.listRows(kHeaderH));
 }

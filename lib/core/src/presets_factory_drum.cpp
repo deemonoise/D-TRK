@@ -66,6 +66,7 @@ constexpr FactoryPreset kTable[] = {
     {InstrType::Drum, "ANALOG", "RSX NOIS", [](I& m) { dr(m, DrumMachine::Rsx); m.macro[kMacShp] = 110; }},
     {InstrType::Drum, "ANALOG", "HHR C", [](I& m) { dr(m, DrumMachine::Hhr); m.macro[kMacDec] = 25; }},
     {InstrType::Drum, "ANALOG", "HHR O", [](I& m) { dr(m, DrumMachine::Hhr); m.macro[kMacDec] = 95; }},
+    {InstrType::Drum, "ANALOG", "LX METAL", [](I& m) { dr(m, DrumMachine::LxMetal); }},
     // Genre sets for DICE (first engine only: the second has exactly two presets per machine).
     // Levels: kicks ~100, snares / claps ~85, hats ~70, cymbals ~60; drive or reverb lowers vol.
     {InstrType::Drum, "HOUSE", "BD DEEP", [](I& m) {  // round, warm, a little low

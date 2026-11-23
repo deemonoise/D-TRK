@@ -14,9 +14,16 @@ struct BankFlash {
   virtual const uint8_t* mapped() const = 0;  // whole region, or nullptr
 };
 
+#if defined(DTRK_BRICK)
+// The host cache also stores samples (the Teensy keeps them in its separate SD store).
+// Leave space for all 128 project samples, 32 wavetables, built-ins and an import in flight.
+constexpr int kBankEntries = 256;
+constexpr uint32_t kBankAlign = 8192;
+#else
 constexpr int kBankEntries = 128;
 constexpr uint32_t kBankAlign = 4096;
-constexpr uint32_t kBankHeader = 8192;  // two table copies, one sector each
+#endif
+constexpr uint32_t kBankHeader = 2 * kBankAlign;  // two table copies, one sector each
 
 struct BankEntry {
   char name[kSampleNameMax + 1];

@@ -3,6 +3,9 @@
 #include "ab_keys.h"
 #include "bank_screen.h"
 #include "battery_gauge.h"
+#ifdef DTRK_BRICK
+#include "brick_battery.h"
+#endif
 #include "edit_ops.h"
 #include "engine/engine.h"
 #include "file_screen.h"
@@ -49,8 +52,21 @@ class App {
   void pollMotion();
   void tick();  // touch, engine status, redraw (at most every kFrameMs)
   void setTab(Tab t);
+#ifdef DTRK_BRICK
+  std::function<void()> enterBrickPointer;
+  bool cycleBrickTab(int delta);
+  void cycleBrickPage(int delta);
+  void moveBrickTrack(int delta);
+  bool brickGridActive();
+  bool clearBrickGrid();
+  bool brickUndoAvailable();
+  TrackScreen* brickMixer();
+  void requestQuit();
+  bool quitConfirmed() const { return quitConfirmed_; }
+#endif
   Tab tab() const { return tab_; }
   Menu& menu() { return menu_; }
+  GridScreen& grid() { return grid_; }
   mt::Project& project() { return *p_; }
   const mt::Project& project() const { return *p_; }
   const engine::Status& status() const { return status_; }
@@ -99,11 +115,15 @@ class App {
   void toast(const char* msg);
   // Battery (FILE SYSTEM row): the gauge and the last sample it took (false before the first or
   // when stale); batterySeq() changes with every new sample or freshness change.
+#ifdef DTRK_BRICK
+  const brick::BatteryState& brickBattery() const { return brickBattery_.state(); }
+#else
   const mt::BatteryGauge& battery() const { return gauge_; }
   bool batterySample(hw::BatterySample& out) const {
     out = batSample_;
     return batFresh_;
   }
+#endif
   uint32_t batterySeq() const { return batSeq_; }
   // Draws msg over the current frame and pushes it right away: call before blocking SD I/O.
   void showBusy(const char* msg);
@@ -187,6 +207,9 @@ class App {
   static constexpr int kBarrierBtnW = 148, kBarrierBtnH = 36;
   static constexpr int kBarrierBtnY = kAreaY + 176;
 
+#ifdef DTRK_BRICK
+  bool brickOverlayActive();
+#endif
   Screen* screen() { return screens_[static_cast<int>(tab_)]; }
   static bool perfTab(Tab t) { return t == Tab::Grid || t == Tab::Song || t == Tab::Mix; }
   void onTouch(const TouchEvent& ev);
@@ -317,14 +340,20 @@ class App {
   int8_t playWait_ = -1;     // a start (engine::Cmd) held back until the synth is synced, -1 = none
   uint32_t playWaitAt_ = 0;
   uint32_t syncSince_ = 0;  // millis() the synth board fell behind the model, 0: in sync
+  uint32_t batAt_ = 0;
+  uint32_t batSeq_ = 0;
+#ifdef DTRK_BRICK
+  brick::BatteryCache brickBattery_;
+  bool batteryPolled_ = false;
+  bool lowBatteryArmed_ = true;
+#else
   mt::BatteryGauge gauge_;
   hw::BatterySample batSample_{0.f, 0.f, 0};  // last sample fed to gauge_
   bool batHave_ = false;     // batSample_ is valid
-  uint32_t batAt_ = 0;       // last poll
   bool batFresh_ = false;    // batSample_ is no older than kBatStaleMs
-  uint32_t batSeq_ = 0;      // bumped per new sample / freshness change
   int batPct_ = -1;          // percent (-1 when stale) and charging as last drawn
   bool batChg_ = false;
+#endif
   int bpmTarget_ = 120;  // local while editing: p_->bpm lags behind the engine queue
   bool bpmEdit_ = false;
   int bpmOrig_ = 120;  // project BPM when the edit began (Shift+click puts it back)
@@ -347,6 +376,9 @@ class App {
   mt::HoldMode holdMode_ = mt::HoldMode::Vol;  // what the held button's turn sets (until released)
   uint32_t fillDownMs_ = 0;
   bool transportLocked_ = false;
+#ifdef DTRK_BRICK
+  bool quitConfirmed_ = false;
+#endif
   bool dirty_ = true;
   uint32_t lastDraw_ = 0;
 

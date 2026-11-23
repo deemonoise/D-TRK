@@ -9,11 +9,57 @@ constexpr float kMs = kFxRate / 1000.f;  // samples per ms
 constexpr float kQuiet = 1e-5f;          // -100 dB
 constexpr float kSmooth = 0.15f;         // depth / fb smoothing per segment (~7 ms)
 
+// BBD voicing adapted from Deluge BRUNO CHORUS (bribes-v1.39, bruno106_chorus.cpp, GPL-3.0-or-later).
+// Portions Copyright (C) 2026 Karl LaRocca (Ultramaster KR-106, GPL-3.0).
+// Deluge integration Copyright (C) 2026 the Deluge community.
+// D-TRK shares the mono send's delay line and adds only the wet signal.
+constexpr float kBbdCenter = 3.30f;
+constexpr float kBbdClockTrim = 0.015f;
+constexpr float kBbdMinMs = 0.1f;
+constexpr float kBbdDepthI = 2.13f;
+static_assert(kFxRate == 44100.f, "BBD filters are tuned at 44.1 kHz");
+static_assert(kBbdMinMs * kMs >= 2.f, "cubic read needs two newer samples");
+static_assert((kBbdCenter + kBbdDepthI * 127.f / 64.f) * (1.f + kBbdClockTrim) * kMs <= ModFx::kLineLen - 3,
+              "deepest BBD tap fits in the MOD line");
+
+MT_INLINE bool isBbd(ModFxType type) { return type >= ModFxType::JunoI && type <= ModFxType::JunoBoth; }
+
+MT_CONTROL __attribute__((noinline)) float bbdRateScale(uint8_t rate) {
+  return fastExp2((static_cast<float>(rate > 127 ? 127 : rate) - 64.f) * (1.f / 32.f));
+}
+
 // Line write, truncated toward zero: a feedback loop of 0.9 cannot hold 1 LSB forever.
 MT_INLINE int16_t lineWrite(float x) {
   x *= ModFx::kScale;
   x = x > 32767.f ? 32767.f : (x < -32768.f ? -32768.f : x);
   return static_cast<int16_t>(x);
+}
+
+// Fractional BBD tap in the same int16 ring as the existing modulation effects.
+MT_INLINE float bbdRead(const int16_t* line, uint32_t write, float offset) {
+  constexpr uint32_t mask = ModFx::kLineLen - 1;
+  const auto whole = static_cast<uint32_t>(offset);
+  const float fraction = offset - static_cast<float>(whole);
+  const uint32_t at = write - whole;
+  const float previous = line[(at + 1u) & mask], near = line[at & mask];
+  const float far = line[(at - 1u) & mask], next = line[(at - 2u) & mask];
+  const float c1 = 0.5f * (far - previous);
+  const float c2 = previous - 2.5f * near + 2.f * far - 0.5f * next;
+  const float c3 = 0.5f * (next - previous) + 1.5f * (near - far);
+  return (((c3 * fraction + c2) * fraction + c1) * fraction + near) * (1.f / ModFx::kScale);
+}
+
+// MN3009 charge transfer loses a little more gain at slower clock rates.
+MT_INLINE float bbdClockGain(float offset) {
+  constexpr float loss = 4468.f;
+  constexpr float invNominalClock = 1.f / 40000.f;
+  constexpr float invClockPerSample = 0.002f / (256.f * kMs);
+  return (1.f + loss * invNominalClock) - (loss * invClockPerSample) * offset;
+}
+
+MT_INLINE int16_t bbdLineWrite(float x) {
+  constexpr float drive = 0.12f;
+  return lineWrite(tanhSoft(drive * x) * (1.f / drive));
 }
 
 // Phaser allpass coefficient for an LFO value s (-1..1) and depth d (0..1).
@@ -31,6 +77,28 @@ MT_INLINE float apCoef(float s, float d) {
 }
 }  // namespace
 
+MT_INLINE float ModFx::BbdLowPass::tick(float input) {
+  // 9.66 kHz Butterworth and one pole at 0.45 Fs, at the fixed 44.1 kHz synth rate.
+  constexpr float g = 0.82236413f;
+  constexpr float a1 = 1.f / (1.f + g / 0.7071f + g * g);
+  constexpr float a2 = g * a1, a3 = g * a2;
+  const float v3 = input - s2;
+  const float v1 = a1 * s1 + a2 * v3;
+  const float v2 = s2 + a2 * s1 + a3 * v3;
+  s1 = 2.f * v1 - s1;
+  s2 = 2.f * v2 - s2;
+  const float v = (v2 - pole) * 0.86327126f;
+  const float low = pole + v;
+  pole = low + v;
+  return low;
+}
+
+MT_INLINE void ModFx::BbdLowPass::flush() {
+  s1 = fabsf(s1) < 1e-15f ? 0.f : s1;
+  s2 = fabsf(s2) < 1e-15f ? 0.f : s2;
+  pole = fabsf(pole) < 1e-15f ? 0.f : pole;
+}
+
 void ModFx::clearState() {
   if (line_) memset(line_, 0, kLineLen * sizeof(int16_t));
   w_ = 0;
@@ -39,6 +107,7 @@ void ModFx::clearState() {
     apY_[c] = 0;
   }
   flY_ = 0;
+  bbdPre_ = bbdPost_[0] = bbdPost_[1] = {};
   first_ = true;
   quiet_ = 0;
 }
@@ -52,6 +121,20 @@ void ModFx::reset() {
   xf_ = 1;
   idle_ = true;
   type_ = want_ = 0;
+}
+
+// Level zero keeps a short history for the next wet ramp. This branch returns no audio.
+MT_CONTROL __attribute__((noinline)) bool ModFx::primeBbdLine(const float* in, int n, uint32_t& write) {
+  constexpr uint32_t mask = kLineLen - 1;
+  uint32_t w = write;
+  bool input = false;
+  for (int i = 0; i < n; ++i, w = (w + 1) & mask) {
+    line_[w] = bbdLineWrite(bbdPre_.tick(in[i]));
+    input = input || in[i] != 0.f;
+  }
+  bbdPre_.flush();
+  write = w;
+  return input;
 }
 
 MT_HOT void ModFx::process(const float* in, float* mixL, float* mixR, int n, uint8_t type, uint8_t rate,
@@ -76,9 +159,13 @@ MT_HOT void ModFx::process(const float* in, float* mixL, float* mixR, int n, uin
       constexpr uint32_t kMask = kLineLen - 1;
       uint32_t w = w_;
       bool input = false;
-      for (int i = 0; i < n; ++i, w = (w + 1) & kMask) {
-        line_[w] = lineWrite(in[i]);
-        input = input || in[i] != 0.f;
+      if (isBbd(static_cast<ModFxType>(type_))) {
+        input = primeBbdLine(in, n, w);
+      } else {
+        for (int i = 0; i < n; ++i, w = (w + 1) & kMask) {
+          line_[w] = lineWrite(in[i]);
+          input = input || in[i] != 0.f;
+        }
       }
       w_ = w;
       // Idle once the line holds only silence (as after clearState).
@@ -103,6 +190,7 @@ MT_HOT void ModFx::process(const float* in, float* mixL, float* mixR, int n, uin
   if (rate != rate_) {
     rate_ = rate;
     hz_ = fxRateHz(rate);
+    bbdRateScale_ = bbdRateScale(rate);
   }
   const float dT = (depth > 127 ? 127 : depth) * (1.f / 127.f);
   const float fT = (fb > 127 ? 127 : fb) * (1.f / 127.f);
@@ -191,14 +279,30 @@ MT_INLINE float lineLoop(int kTaps, int16_t* line, uint32_t& wRef, const float* 
 }
 }  // namespace
 
+MT_CONTROL __attribute__((noinline)) void ModFx::bbdTargets(int k, float* t) {
+  constexpr float rates[] = {0.514f, 0.842f, 7.85f};
+  constexpr float depths[] = {kBbdDepthI, 1.71f, 0.236f};
+  const auto index = type_ - static_cast<uint8_t>(ModFxType::JunoI);
+  lfo_.advance(rates[index] * bbdRateScale_, k);
+  const auto mode = static_cast<ModFxType>(type_);
+  const float wave = mode == ModFxType::JunoBoth ? lfo_.at(0.f) : 1.f - 4.f * fabsf(lfo_.ph - 0.5f);
+  const float sweep = wave * depths[index] * (127.f / 64.f) * depth_;
+  t[0] = maxf(kBbdMinMs, (kBbdCenter + sweep) * (1.f - kBbdClockTrim)) * kMs;
+  t[1] = maxf(kBbdMinMs, (kBbdCenter - sweep) * (1.f + kBbdClockTrim)) * kMs;
+}
+
 // One segment of k <= kFxSeg samples: LFO targets at the segment end, offsets / coefficients ramped.
 // The segment's targets at its end (per segment of kFxSeg samples, ~1 kHz: hot): the LFOs move,
 // then the phaser's two coefficients (t[0..1]) or the line taps' offsets (t[0..taps)). Returns the
 // tap count (2 for the phaser).
 MT_HOT int ModFx::targets(int k, float* t) {
-  lfo_.advance(hz_, k);
   const ModFxType ty = static_cast<ModFxType>(type_);
   const float d = depth_;
+  if (isBbd(ty)) {
+    bbdTargets(k, t);
+    return 2;
+  }
+  lfo_.advance(hz_, k);
   if (ty == ModFxType::Phaser) {
     t[0] = apCoef(lfo_.at(0.f), d);
     t[1] = apCoef(lfo_.at(0.25f), d);
@@ -221,6 +325,33 @@ MT_HOT int ModFx::targets(int k, float* t) {
   t[0] = 0.3f * kMs + d * 7.7f * kMs * (0.5f + 0.5f * lfo_.at(0.f));
   t[1] = 0.3f * kMs + d * 7.7f * kMs * (0.5f + 0.5f * lfo_.at(0.25f));
   return 2;
+}
+
+MT_HOT float ModFx::bbdLoop(const float* in, float* mixL, float* mixR, int k, const float* gg, const float* o,
+                           const float* dO) {
+  constexpr uint32_t mask = kLineLen - 1;
+  uint32_t w = w_;
+  BbdLowPass pre = bbdPre_, left = bbdPost_[0], right = bbdPost_[1];
+  float oL = o[0], oR = o[1], peak = 0.f;
+  for (int j = 0; j < k; ++j) {
+    line_[w] = bbdLineWrite(pre.tick(in[j]));
+    oL += dO[0];
+    oR += dO[1];
+    const float l = left.tick(bbdRead(line_, w, oL)) * (1.04f * bbdClockGain(oL));
+    const float r = right.tick(bbdRead(line_, w, oR)) * (0.96f * bbdClockGain(oR));
+    mixL[j] += l * gg[j];
+    mixR[j] += r * gg[j];
+    peak = maxf(peak, maxf(fabsf(l), fabsf(r)));
+    w = (w + 1) & mask;
+  }
+  pre.flush();
+  left.flush();
+  right.flush();
+  bbdPre_ = pre;
+  bbdPost_[0] = left;
+  bbdPost_[1] = right;
+  w_ = w;
+  return peak;
 }
 
 MT_HOT float ModFx::segment(const float* in, float* mixL, float* mixR, int k, float lv, float dLv) {
@@ -283,11 +414,15 @@ MT_HOT float ModFx::segment(const float* in, float* mixL, float* mixR, int k, fl
   }
   float o[3] = {}, dO[3] = {};
   for (int q = 0; q < taps; ++q) o[q] = off_[q], dO[q] = (oT[q] - off_[q]) * kInv;
-  const float g = t == ModFxType::Flanger ? fb_ * 0.9f : 0.f;
-  float fy = flY_;
-  pk = lineLoop(taps, line_, w_, in, mixL, mixR, k, gg, o, dO, g, fy);
+  if (isBbd(t)) {
+    pk = bbdLoop(in, mixL, mixR, k, gg, o, dO);
+  } else {
+    const float g = t == ModFxType::Flanger ? fb_ * 0.9f : 0.f;
+    float fy = flY_;
+    pk = lineLoop(taps, line_, w_, in, mixL, mixR, k, gg, o, dO, g, fy);
+    flY_ = fabsf(fy) < 1e-15f ? 0.f : fy;
+  }
   for (int q = 0; q < taps; ++q) off_[q] = oT[q];
-  flY_ = fabsf(fy) < 1e-15f ? 0.f : fy;
   return pk;
 }
 

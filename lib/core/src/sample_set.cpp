@@ -9,7 +9,7 @@
 
 namespace mt {
 
-static_assert(kProjSamples == kBankEntries, "every listed sample must fit the bank cache");
+static_assert(kProjSamples <= kBankEntries, "every listed sample must fit the bank cache");
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "sampleCrc hashes int16 data as stored bytes");
 
 namespace {

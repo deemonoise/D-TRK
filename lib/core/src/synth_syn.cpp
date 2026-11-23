@@ -11,6 +11,36 @@ MT_HOT __attribute__((noinline)) float WtOsc::syncRead(const int16_t* table, flo
   return read(table, pos, phase);
 }
 
+#ifdef DTRK_BRICK
+MT_HOT void WtOsc::renderFixed(const int16_t* __restrict table, uint32_t dph, float pos,
+                              float* __restrict out, int n) {
+  const int frame = static_cast<int>(pos);
+  const float blend = pos - frame;
+  const int16_t* a = table + frame * kWtFramePts + off;
+  const int16_t* b = frame + 1 < kWtFrames ? a + kWtFramePts : a;
+  const int bits = lb;
+  const uint32_t mask = (1u << bits) - 1;
+  uint32_t phase = ph;
+  float sample = prev;
+  auto render = [&](const int16_t* neighbor) {
+    for (int i = 0; i < n; ++i) {
+      out[i] = sample;
+      phase += dph;
+      const uint32_t i0 = phase >> (32 - bits);
+      const uint32_t i1 = (i0 + 1) & mask;
+      const float fraction = static_cast<int32_t>((phase << bits) >> 8) * (1.f / 16777216.f);
+      const float first = readFrame(a, i0, i1, fraction);
+      const float mixed = neighbor ? first + (readFrame(neighbor, i0, i1, fraction) - first) * blend : first;
+      sample = mixed * (1.f / kWtPeak);
+    }
+  };
+  if (blend == 0.f) render(nullptr);
+  else render(b);
+  ph = phase;
+  prev = sample;
+}
+#endif
+
 float wtLevelPos(float hz) {
   const float x = log2f(hz * kWtHarm / 8000.f);
   return x < 0 ? 0 : (x > kWtLevels - 1 ? kWtLevels - 1 : x);
@@ -264,6 +294,12 @@ MT_HOT void SynVoice::oscBlock(int k, float* dst, const float* sync, float* wrap
       }
       const uint32_t dph = WtOsc::step(dt);
       if (!wrap) {
+#ifdef DTRK_BRICK
+        if (tab && ds == 0.f && !o.fade) {
+          o.renderFixed(tab, dph, s * fs, dst, n);
+          break;
+        }
+#endif
         for (int i = 0; i < n; ++i, s += ds) dst[i] = o.next(tab, dph, s * fs);
         break;
       }

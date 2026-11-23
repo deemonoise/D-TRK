@@ -16,6 +16,13 @@ The one-time browser extraction and import conversion are retained in the ignore
 JavaScript engine, JSON parser, SD catalogue dependency or heap allocation in the
 generation path.
 
+The [style catalogue and listening sources](dice-styles.md) also feeds the table
+compiler. Each style specifies its voicing, the attack budget for auxiliary
+parts, and a brightness offset. Primary bass phrases shift together by octaves
+to put their anchor in MIDI 33–44. The kick transient, bass envelope and backing
+levels then follow the style. Rolling psy bass uses shorter pickups, while the
+hardcore kick can carry the low end with its driven tail.
+
 Regenerate the flash tables:
 
 ```sh
@@ -25,7 +32,10 @@ python3 scripts/generate_dice_catalog.py --check
 
 ## Device controls
 
-PROJ → DICE: choose **Group → Style → Variant**. AUTO picks one of the 16
+PROJ → DICE: choose **Genre → Style → Variant**. The device menu exposes 46
+styles across ten genres. The [compiler's menu list](../scripts/generate_dice_catalog.py)
+projects the source catalogue onto those genres and retains its recipe IDs
+for stored device preferences. AUTO picks one of the 16
 variants from the seed (the default); FIXED seed repeats the same selection.
 Variants can also be selected explicitly by name, with
 `01 CLASSIC` representing the source theme. Target and six locks show each
@@ -44,16 +54,45 @@ Key KEEP retains the project key. SOUNDS, PATTERNS and partial edits always keep
 it. The result toast states NEW ALL/NOTES, FIXED, SOUNDS ONLY or DYNAMICS ONLY.
 
 The guide supplies source rhythm/roles/character, not a fixed final composition.
-Variety35 (default) writes fresh per-role16slot melodic contours from the seed,
-with related responses and a bounded register. Higher amounts develop more notes.
-Notes follow actual source chords, or the chosen scale without a chord part.
+At the default Variety of 35, a seed picks a genre-specific four-attack motif
+and ensemble. Roles rotate or invert the cell and answer it in alternate bars.
+Single-pitch guide lines develop more attacks than lines with an existing tune.
+Bass and leads shape their gate to the space before the next attack.
+Comping uses the genre's offbeats and accents. In ambient recipes with several
+single-note pads, the supporting pads voice a triad over the anchor drone.
 Harmony shifts are shared across pitched parts and respect held pad/chord attacks;
 independently looping parts retain stable harmonic development. Repeated NEW rolls
 check the actually played loop,avoiding identical consecutive melodic parts even
 with Key KEEP. One percussion voice may add a quiet hit on a globally empty KIT
-step. Sound identity,engine,machine and oscillators stay fixed. Variety0 retains
+step. For a fixed recipe and role, Variety varies the patch colour within its genre voicing. Variety0 retains
 the source contour,adapted to the chosen key;use KEEP with the guide key/mode,
 an explicit variant,Normal density and Feel0 to inspect source phrasing.
+
+On a full NEW pattern roll, Variety above 60 progressively introduces another
+rhythm and melodic contour. At 100 every eligible bar uses them. A roll shares
+a three- to eight-note motif between the lead and its replies. Source chords
+and independent loops keep their attack grids. Sustained supporting pads vary
+their chord tones and register. On the sixteenth grid, sparse upper lines keep
+their attack count, bass pickups can move around the beat, and rolling psy bass
+chooses a pulse that leaves room for the kick. With ARRANGE, the drop can answer
+the main hook and an enabled song can select one of four section orders.
+
+With Variety above zero, a full Develop roll can give two melodic parts a
+call and response in VAR (P03). Their opening stays recognizable. Near the end
+they take turns within the bar, using their own accents and the chord sounding
+at each attack. Short independent loops, chord voices, sustained pads and bass
+keep their original roles. At the default Variety the exchange uses up to two bars.
+
+On a full WILD roll with Variety above zero, Dice listens for the bass entry
+in the next section and counts the occupied KIT steps in the final bar. Classic
+FILL, Develop VAR and Arrange BUILD can end with a rising snare double, a pair
+of percussion accents, a short rest or the original groove. Pickups use voices
+already playing in the bar. A generated double occupies a solo snare step so
+the kick keeps its pulse. Variety 0 keeps the guide’s programmed repeats.
+
+An arpeggio sharing a pattern with a low bass part keeps its rhythm and pitch
+classes. Dice raises low arp notes by whole octaves to give the bass its own
+register. A targeted pattern roll also reads the bass notes already on the grid.
 
 NEW/AUTO avoids the immediately preceding rhythm variant; FIXED is deterministic.
 Full rolls audition MAIN while preserving transport state.
@@ -71,17 +110,28 @@ schema2 retains each voice's sound family, brightness, grit and chord character,
 derived from the saved sample descriptions. `scripts/dice_timbres.py` constructs
 complete numerical synthesis blueprints: engine and machine, oscillators/macros or
 FM parameters, amplitude/filter envelopes, filter, sub, modulation, drive and level.
-The firmware copies these blueprints into instruments; DICE performs no factory
-preset lookup. Native voices use their exact blueprints; supplemental roles use
-compatible blueprint palettes from the catalogue. 808/909 drums use DRUM; other percussion and
-bells use FM, guitar/mallet use STRING, textures use CHIP noise, and bass/keys/pads
+The sound roll voices each blueprint for its genre. For example, the general bass
+uses two detuned saws in breakbeats and a triangle with a short octave pulse in
+Chillhop. Electric keys bring in ring modulation at the attack. A pluck starts
+with folded harmonics, then settles into the fundamental. Pads slowly vary the
+oscillator mix, and anthem lead hooks use HyperSaw. Both native and companion
+parts respond to velocity through the filter. The same seed replays the sound.
+SOUNDS can apply these patches to the current notes. 808/909 drums use DRUM; other percussion and
+bells use FM, guitar/mallet use STRING, noise FX hits use a damped RS9 rim, and bass/keys/pads
 use SYNTH (metallic keys may use FM). Families include sine sub, detuned Reese,
 resonant acid, organ, acoustic string and formant voice. The guide describes samples,
 so oscillator architectures are our authored interpretation, not settings literally
-specified by the source. Relative guide levels and blueprint headroom both apply.
+specified by the source. Companion textures use a drone, pulse or pluck. Pitched vibrato uses FINE and
+the default hats have a shorter decay. Relative guide levels and blueprint headroom both apply.
 Synthesized chord voices receive power compensation for three/four simultaneous
 notes: a sample containing a chord must not become three/four full-level voices.
-The default stab uses triangle/saw, a softer filter envelope and a short release.
+When assigning accompaniment, Dice first reserves the guide's own timbres and the
+current patches of untouched internal tracks among the six Dice roles. Each added
+part tries its genre palette and then role-appropriate alternatives to avoid
+doubling a patch that is already playing. With Clean on, the kit, bass, named lead
+and ambient anchor stay in the centre. Other parts alternate sides, with a wider
+spread for ambient pads. Clean off retains the player's track pans.
+The default stab opens with a brighter oscillator blend and decays through a ladder filter.
 All 5072 variants retain their own rhythms, velocities and controls.
 
 Explicit relative notes, probability, A:B/FILL conditions, repeats, filter and

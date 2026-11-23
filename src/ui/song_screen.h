@@ -22,6 +22,10 @@ class SongScreen : public Screen {
  public:
   explicit SongScreen(App& app) : app_(app) {}
   void onEnter() override;
+#ifdef DTRK_BRICK
+  void onPage(int) override { toggleView(); }
+  bool blocksTabChange() const override { return patEdit_ || folField_ >= 0 || valEdit_ >= 0; }
+#endif
   void onPatternChange() override { masksStale_ = true; }
   void onProjectReplaced() override;
   void onInput(const hw::InputEvent& ev) override;

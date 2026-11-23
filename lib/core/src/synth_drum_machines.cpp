@@ -47,6 +47,7 @@ constexpr Names kNames[static_cast<int>(DrumMachine::Count)] = {
     {"RSX", {"DECAY", "TONE", "NOISE", "", ""}},
     {"---", {"DECAY", "", "", "", ""}},  // Unused22
     {"HHR", {"DECAY", "TONE", "NOISE", "", ""}},
+    {"LX METAL", {"DECAY", "TONE", "FM1", "FM2", "SNAP"}},
 };
 
 // Macros as 0..1, DECAY also as ms (fmDecayMs range, fractional).
@@ -551,7 +552,7 @@ constexpr Group kGroups[] = {
     {"TOM", 2, {"808", "909"}, {D::Tom8, D::Tom9}},
     {"CLAP", 3, {"808", "909", "MULTI"}, {D::Cp8, D::Cp9, D::Cpx}},
     {"RIM", 3, {"808", "909", "MODAL"}, {D::Rs8, D::Rs9, D::Rsx}},
-    {"HAT", 3, {"808", "909", "RING"}, {D::Hh8, D::Hh9, D::Hhr}},
+    {"HAT", 4, {"808", "909", "RING", "METAL"}, {D::Hh8, D::Hh9, D::Hhr, D::LxMetal}},
     {"CYMBL", 2, {"808", "909"}, {D::Cy8, D::Cy9}},
     {"PERC", 2, {"CLAVE", "BELL"}, {D::Cl8, D::Cb8}},
 };
