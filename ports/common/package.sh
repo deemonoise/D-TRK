@@ -7,14 +7,20 @@ if [ "$#" -gt 1 ]; then
     exit 2
 fi
 target=${DTRK_TARGET:-brick}
+output="$project/target/brick"
 case "$target" in
     brick) launcher=D-TRK.sh; directory=d-trk ;;
     rg35xxsp) launcher=D-TRK-RG35XXSP.sh; directory=d-trk-rg35xxsp ;;
+    rg351v)
+        launcher=D-TRK.sh; directory=d-trk-rg351v; output="$project/target/rg351v"
+        if [ "$#" -eq 0 ]; then
+            echo "usage: $0 <Linux ARM64 executable built for ArkOS>" >&2
+            exit 2
+        fi ;;
     *) echo "Unknown DTRK_TARGET: $target" >&2; exit 2 ;;
 esac
 device="$project/ports/$target"
 archive="d-trk-$target.zip"
-output="$project/target/brick"
 mkdir -p "$output"
 stage=$(mktemp -d "$output/.package.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
@@ -24,7 +30,7 @@ if [ "$#" -eq 0 ]; then
         docker build --platform linux/arm64 -t "$BRICK_IMAGE" - <"$project/ports/common/Dockerfile"
     fi
     # Copy sources only. This also works when Docker cannot mount the user's project directory.
-    COPYFILE_DISABLE=1 tar -cf "$stage/sources.tar" -C "$project" lib/core/src src ports/common ports/brick ports/rg35xxsp
+    COPYFILE_DISABLE=1 tar -cf "$stage/sources.tar" -C "$project" lib/core/src src ports/common ports/brick ports/rg35xxsp ports/rg351v
     binary="$stage/d-trk.aarch64"
     docker run --rm -i --platform linux/arm64 --workdir /project "$BRICK_IMAGE" \
         sh -ec 'tar xf -; make -C ports/common -j"$(nproc)" BUILD=../../target/ports/aarch64 >&2
@@ -45,6 +51,10 @@ if [ "$target" = brick ]; then
     cp "$device/audio_lease.py" "$device/volume_keys.py" "$stage/$directory/"
 fi
 for readme in README.md README_ru.md; do
+    if [ "$target" = rg351v ]; then
+        cp "$device/$readme" "$stage/$directory/"
+        continue
+    fi
     {
         cat "$device/$readme"
         printf '\n'

@@ -1,4 +1,5 @@
 #include "brick_battery.h"
+#include "rg351v/port_profile.h"
 
 #include <charconv>
 #include <cstdio>
@@ -25,11 +26,14 @@ int readPercent(const std::string& path) {
 
 BatteryState readBattery(const std::string& root) {
   BatteryState out;
-  const auto online = readLine(root + "/axp2202-usb/online");
-  if (online == "1") out.usb = UsbPower::Online;
-  if (online == "0") out.usb = UsbPower::Offline;
+  const bool arkos = rg351v::selected();
+  const auto usb = readLine(root + (arkos ? "/usb/online" : "/axp2202-usb/online"));
+  // ArkOS exposes USB and mains as separate power supplies.
+  const auto ac = arkos ? readLine(root + "/ac/online") : "0";
+  if (usb == "1" || ac == "1") out.usb = UsbPower::Online;
+  if (usb == "0" && ac == "0") out.usb = UsbPower::Offline;
 
-  const auto battery = root + "/axp2202-battery/";
+  const auto battery = root + (arkos ? "/battery/" : "/axp2202-battery/");
   if (readLine(battery + "present") == "0") return out;
   out.capacity = readPercent(battery + "capacity");
   const auto status = readLine(battery + "status");

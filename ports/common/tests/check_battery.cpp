@@ -81,6 +81,29 @@ void run(const fs::path& root) {
   std::ofstream(battery / "capacity") << "0\n";
   expect(-1, ChargeStatus::Unknown, UsbPower::Online, "absent battery with USB");
 }
+
+void runArkOS(const fs::path& root) {
+  check(setenv("DTRK_DEVICE", "rg351v", 1) == 0, "select RG351V profile");
+  fs::create_directories(root / "battery");
+  fs::create_directory(root / "ac");
+  fs::create_directory(root / "usb");
+  std::ofstream(root / "battery/capacity") << "93\n";
+  std::ofstream(root / "battery/status") << "Discharging\n";
+  std::ofstream(root / "ac/online") << "0\n";
+  std::ofstream(root / "usb/online") << "0\n";
+  auto read = [&] { return brick::readBattery(root.string()); };
+  check(read() == brick::BatteryState{93, ChargeStatus::Discharging, UsbPower::Offline}, "ArkOS discharging");
+  std::ofstream(root / "usb/online") << "1\n";
+  std::ofstream(root / "battery/status") << "Charging\n";
+  check(read() == brick::BatteryState{93, ChargeStatus::Charging, UsbPower::Online}, "ArkOS USB charge");
+  std::ofstream(root / "usb/online") << "0\n";
+  std::ofstream(root / "ac/online") << "1\n";
+  std::ofstream(root / "battery/capacity") << "100\n";
+  std::ofstream(root / "battery/status") << "Full\n";
+  check(read() == brick::BatteryState{100, ChargeStatus::Full, UsbPower::Online}, "ArkOS AC connected at full");
+  fs::remove(root / "ac/online");
+  check(read() == brick::BatteryState{100, ChargeStatus::Full, UsbPower::Unknown}, "ArkOS missing AC status");
+}
 }  // namespace
 
 int main() {
@@ -88,8 +111,10 @@ int main() {
   if (!mkdtemp(path)) return 1;
   int result = 0;
   try {
+    check(unsetenv("DTRK_DEVICE") == 0, "use the default battery profile");
     run(path);
-    std::cout << "Brick battery: capacity boundaries, USB, charging, full, unplugged and unknown states OK\n";
+    runArkOS(fs::path(path) / "arkos");
+    std::cout << "Brick and ArkOS battery: capacity, power and charge status OK\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
     result = 1;

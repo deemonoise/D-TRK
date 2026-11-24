@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "rg351v/port_profile.h"
 #include "ui/app.h"
 #include "ui/wifi_dialog.h"
 
@@ -82,6 +83,19 @@ void WifiDialog::draw(LGFX_Sprite& s, int y) {
   auto ip = localAddress();
   s.fillRect(0, y, kScreenW, kAreaH, kBg);
   s.setTextColor(kText);
+  if (rg351v::selected()) {
+    s.drawString("ARKOS FILE TRANSFER", 12, y + 12);
+    s.drawString((ip.empty() ? "Offline - connect in ArkOS Options" : "IP  " + ip).c_str(), 12, y + 52);
+    if (listening(ip.c_str(), 22))
+      s.drawString(("SCP: ark@" + ip).c_str(), 12, y + 78);
+    else
+      s.drawString("Enable Remote Services in ArkOS Options", 12, y + 78);
+    if (const char* data = std::getenv("DTRK_DATA"))
+      s.drawString(("Data: " + std::string(data)).c_str(), 12, y + 124);
+    s.drawString("App: /roms/ports or /roms2/ports", 12, y + 152);
+    s.drawString("A / B  Back", 12, y + 212);
+    return;
+  }
   s.drawString("KNULLI FILE TRANSFER", 12, y + 12);
   if (ip.empty())
     s.drawString("Offline - connect in KNULLI Network Settings", 12, y + 52);

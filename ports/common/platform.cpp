@@ -5,6 +5,7 @@
 #include "link/link.h"
 #include "link/synth_fw.h"
 #include "offline_render.h"
+#include "rg351v/port_profile.h"
 #include "storage/crashlog.h"
 #include "synth.h"
 namespace slink {
@@ -33,7 +34,7 @@ const char* rejectText(uint8_t) { return "USE KNULLI PORTS"; }
 bool rebooted(uint32_t) { return false; }
 }  // namespace synthfw
 namespace storage {
-const char* firmwareRev() { return "D-TRK Brick"; }
+const char* firmwareRev() { return rg351v::selected() ? "D-TRK RG351V" : "D-TRK Brick"; }
 const char* lastResetText() { return "APP START"; }
 bool appendCpuProfile(const char* head, const audio::Profile& profile) {
   std::ofstream out(fs::resolve("/diag/cpuprof.txt"), std::ios::app);
