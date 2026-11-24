@@ -17,9 +17,13 @@ class LeaseTests(unittest.TestCase):
     def test_codec_routes_and_restoration(self):
         codec = lease.CODEC
         sink, source = "alsa_output." + codec + ".speaker", "alsa_input." + codec + ".mic"
-        for active, output, input_, direct in [
-                ("on", sink, source, True), ("on", "auto_null", "bluez_input.a", True),
-                ("on", "bluez_output.a", source, False), (None, sink, source, False)]:
+        for active, output, input_, direct, alsa_env, base in [
+                ("on", sink, source, True, {}, "/usr/share/alsa/alsa.conf"),
+                ("on", sink, source, True, {"ALSA_CONFIG_DIR": "/tmp/alsa"}, "/tmp/alsa/alsa.conf"),
+                ("on", "auto_null", "bluez_input.a", True,
+                 {"ALSA_CONFIG_PATH": "/tmp/base.conf:/tmp/custom.conf"}, "/tmp/base.conf:/tmp/custom.conf"),
+                ("on", "bluez_output.a", source, False, {"ALSA_CONFIG_PATH": "/tmp/bluetooth.conf"}, None),
+                (None, sink, source, False, {}, None)]:
             with self.subTest(output=output, active=active):
                 def answer(*args):
                     if args[1] == "-f":
@@ -27,20 +31,33 @@ class LeaseTests(unittest.TestCase):
                         return json.dumps([{"name": "unrelated", "active_profile": "broken"},
                                            {"name": lease.CARD, "active_profile": active}])
                     return {"get-default-sink": output, "get-default-source": input_}.get(args[1], "")
+                original = {"X": "Y", **alsa_env}
                 with patch.object(lease, "DirectVolume") as volume, \
                      patch.object(lease, "run", side_effect=answer) as command, \
                      patch.object(lease, "controls", return_value={"adc": "0,0"}) as adc, \
-                     patch.object(lease, "wait_for_release") as wait, patch.dict(os.environ, {"X": "Y"}, clear=True):
+                     patch.object(lease, "wait_for_release") as wait, patch.dict(os.environ, original, clear=True):
                     volume.return_value.recovery.return_value = []
                     volume.return_value.gain_file.return_value = "/tmp/gain"
                     with self.assertRaisesRegex(RuntimeError, "child error"):
                         with lease.codec_environment() as env:
-                            expected = {"X": "Y"}
+                            expected = original.copy()
                             if direct:
-                                expected.update(SDL_AUDIODRIVER="alsa", AUDIODEV="hw:0,0",
+                                self.assertEqual(env["AUDIODEV"], "dtrk_codec")
+                                cfg_path, sep, overlay = env["ALSA_CONFIG_PATH"].rpartition(":")
+                                self.assertEqual((cfg_path, sep), (base, ":"))
+                                config = Path(overlay)
+                                self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+                                self.assertRegex(config.read_text(),
+                                                 r'pcm\.dtrk_codec\s*\{\s*type plug\s*slave\s*\{\s*'
+                                                 r'pcm "hw:0,0"\s*rate 48000\s*\}\s*\}\s*\Z')
+                                expected.update(SDL_AUDIODRIVER="alsa", AUDIODEV="dtrk_codec",
+                                                ALSA_CONFIG_PATH=env["ALSA_CONFIG_PATH"],
                                                 DTRK_BRICK_ADC="/dev/snd/controlC0", DTRK_VOLUME_FILE="/tmp/gain")
                             self.assertEqual(env, expected)
                             raise RuntimeError("child error")
+                    if direct:
+                        self.assertFalse(config.exists())
+                    self.assertEqual(os.environ, original)
                 expected = [call("pactl", "-f", "json", "list", "cards")]
                 if active:
                     expected.append(call("pactl", "get-default-sink"))

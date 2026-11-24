@@ -170,8 +170,15 @@ def codec_environment():
         try:
             path = use_builtin_codec(route)
             if path:
-                env.update(SDL_AUDIODRIVER="alsa", AUDIODEV="hw:0,0", DTRK_BRICK_ADC="/dev/snd/controlC0",
-                           DTRK_VOLUME_FILE=path)
+                # The Brick's codec clocks PCM at about 48 kHz even when hw:0,0
+                # advertises 44.1 kHz. Let ALSA convert both playback and capture.
+                overlay = route.enter_context(tempfile.NamedTemporaryFile(dir="/tmp", prefix="d-trk-alsa-"))
+                overlay.write(b'pcm.dtrk_codec { type plug slave { pcm "hw:0,0" rate 48000 } }\n')
+                overlay.flush()
+                config_dir = env.get("ALSA_CONFIG_DIR") or "/usr/share/alsa"
+                config = env.get("ALSA_CONFIG_PATH") or f"{config_dir}/alsa.conf"
+                env.update(SDL_AUDIODRIVER="alsa", AUDIODEV="dtrk_codec", DTRK_BRICK_ADC="/dev/snd/controlC0",
+                           DTRK_VOLUME_FILE=path, ALSA_CONFIG_PATH=f"{config}:{overlay.name}")
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             route.close()
             print(f"Using the system SDL audio route: {error}", file=sys.stderr)
